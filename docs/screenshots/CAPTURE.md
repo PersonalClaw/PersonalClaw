@@ -23,8 +23,11 @@ pages are added — append new routes, don't renumber existing ones.
    binding (onboarding needs a model before the main app renders). Configure one provider
    app + key + binding, or seed a demo instance (below).
 2. **Seeded scenario data** (recommended) so screens show believable content rather than
-   empty states. Until a `demo` seed fixture ships (roadmap: DISCOVERABILITY-LAUNCH T3.1),
-   drive a few real actions once — create a knowledge note, a task, run a short loop.
+   empty states. `personalclaw gateway --seed demo-home --seed-replace` populates an
+   isolated `$PERSONALCLAW_HOME` with two projects, ten tasks across every status, and
+   markdown memory, and skips onboarding. It does **not** carry knowledge items or a loop
+   — those stores are SQLite-only and a seed fixture is a plain file copy — so for the
+   Knowledge and loop-cockpit shots, drive those two by hand once on the seeded home.
 3. **Playwright**: `npm i -D playwright && npx playwright install chromium`.
 
 ## Run

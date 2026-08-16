@@ -289,7 +289,7 @@ per-route contract.
 | Method + path | What it does |
 |---|---|
 | `GET /api/security/stats` · `.../denied-commands` · `.../egress` | Security posture: stats, active deny patterns, egress policy. |
-| `GET /api/sel/events` · `GET /api/sel/verify` · `POST /api/sel/rotate` | Tamper-evident security event log: read, HMAC-verify, key rotation. |
+| `GET /api/security/audit` · `GET /api/security/audit/verify` · `POST /api/sel/rotate` | Tamper-evident security event log: paginated/filtered read, HMAC-verify, key rotation. The two reads are owner-only and refuse an app-scoped token. |
 | `GET /api/approvals` · `POST /api/approvals/{id}/{action}` | Pending tool approvals; approve/deny. |
 
 ## Voice & speech

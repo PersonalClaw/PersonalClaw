@@ -251,7 +251,9 @@ export function InboxPage({ query, setQuery, navigate }: Pick<RouteProps, 'query
         )
       })()}
 
-      <div className="mx-auto px-l py-l" style={{ maxWidth: 'var(--content-width)' }}>
+      {/* `data-tour="inbox"` — the product tour's inbox stop points at the queue column
+          (ONBOARDING-UX T5.1). The wrapper, not the list, so an empty inbox still anchors. */}
+      <div data-tour="inbox" className="mx-auto px-l py-l" style={{ maxWidth: 'var(--content-width)' }}>
         {/* Kind chips. Only rendered once MORE THAN ONE kind is present: on an inbox that
             only ever receives messages, a single "Messages" chip is a control with nothing
             to choose. Uses the canonical Segmented so it matches every other pick-one in

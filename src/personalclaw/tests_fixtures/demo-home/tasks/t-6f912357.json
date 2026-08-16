@@ -1,0 +1,72 @@
+{
+  "id": "t-6f912357",
+  "title": "Verify the offsite backup actually restores",
+  "status": "in_progress",
+  "description": "A backup that has never been restored is a hypothesis. Restore last month's snapshot into a scratch directory and diff it against the live tree.",
+  "provider": "native",
+  "project": "",
+  "task_list_id": "tl-5e1a83b4",
+  "dependencies": [],
+  "author": "",
+  "assignee": "",
+  "priority": "critical",
+  "labels": [
+    "backup",
+    "verify"
+  ],
+  "due": "",
+  "order": 1.0,
+  "exit_criteria": [
+    {
+      "description": "Snapshot restores without an error",
+      "status": "complete",
+      "comment": "",
+      "met": true
+    },
+    {
+      "description": "Restored tree diffs clean against live",
+      "status": "incomplete",
+      "comment": "",
+      "met": false
+    }
+  ],
+  "action_plan": [
+    {
+      "sequence": 1,
+      "content": "Restore last month's snapshot to a scratch directory",
+      "description": "Restore last month's snapshot to a scratch directory",
+      "completed": true
+    },
+    {
+      "sequence": 2,
+      "content": "Diff the restored tree against the live one",
+      "description": "Diff the restored tree against the live one",
+      "completed": false
+    },
+    {
+      "sequence": 3,
+      "content": "Write down how long the restore took",
+      "description": "Write down how long the restore took",
+      "completed": false
+    }
+  ],
+  "notes": [
+    {
+      "content": "Restore took 11 minutes for 40 GB. Slower than expected but not alarming.",
+      "timestamp": "2026-08-12T20:18:03Z"
+    }
+  ],
+  "research_notes": [],
+  "execution_notes": [],
+  "agent_instructions_template": "",
+  "blocked_reason_kind": "",
+  "workflow_binding": null,
+  "blocked_kind": "",
+  "preview": "",
+  "done_criterion": "A restored snapshot diffs clean against the live tree.",
+  "evidence": [],
+  "attempts": [],
+  "created_at": "2026-08-05T09:33:12Z",
+  "updated_at": "2026-08-12T20:18:03Z",
+  "url": ""
+}

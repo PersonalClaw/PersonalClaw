@@ -93,7 +93,7 @@ export function DesignCockpitPage({ id, onBack, onDeleted, onOpenProject, onBuil
 
   // Live: refetch tokens (overrides may change) + artifacts (new components) + the
   // loop snapshot on every lifecycle event.
-  useRunStream(id, !notFound, {
+  const { connected } = useRunStream(id, !notFound, {
     onSnapshot: (l) => setLoop(l),
     onLifecycle: () => { loadLoop(); loadTokens(); loadArtifacts() },
   })
@@ -201,7 +201,23 @@ export function DesignCockpitPage({ id, onBack, onDeleted, onOpenProject, onBuil
               <span className="truncate text-on-surface text-[0.9375rem] leading-tight" style={fvs(600)}>
                 {loop.name || loop.task}
               </span>
-              <span className="text-on-surface-low text-[0.75rem]">Design loop</span>
+              <span className="inline-flex items-center gap-1.5 text-on-surface-low text-[0.75rem]">
+                Design loop
+                {/* FEED liveness, distinct from the loop's own status. A running design loop whose
+                    stream dropped keeps showing its last phase while nothing arrives — the same defect
+                    already fixed for the workflow run view and the loop cockpit, and this page is the
+                    third full-page watch surface on the same hook. Same dot-plus-WORD form
+                    `settings/DiagnosticsPanel` ships, so the vocabulary is not re-invented; the colour
+                    only confirms the word. Shown only while `running` — a finished loop has no stream.
+                    (No PR numbers here: `tokenLint` reads a `#nnnn` reference as a raw hex colour.) */}
+                {running && (
+                  <>
+                    <span className="inline-block size-1.5 rounded-pill"
+                      style={{ background: connected ? 'var(--color-ok)' : 'var(--color-on-surface-low)' }} />
+                    {connected ? 'Streaming' : 'Connecting…'}
+                  </>
+                )}
+              </span>
             </div>
             <IconButton icon={linkCopied ? Check : Link2} label={linkCopied ? 'Link copied' : 'Copy link'} size={32} onClick={copyLink} />
           </div>

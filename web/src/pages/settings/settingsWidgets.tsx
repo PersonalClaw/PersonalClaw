@@ -95,7 +95,7 @@ const useDurability = () => useCachedData('settings:durability-card', async () =
 // "0 archived sessions". Every hub tile turns a failure into a permanent shimmer — one idiom, ~30
 // tiles, logged as its own family rather than fixed inside this change.
 const useArchives = () => useCachedData('settings:archives', () => api.sessionArchives(), { persist: true })
-const useAudit = () => useCachedData('settings:audit-verify', () => api.selVerify().catch(() => null as SelVerify | null), { persist: false })
+const useAudit = () => useCachedData('settings:audit-verify', () => api.auditVerify().catch(() => null as SelVerify | null), { persist: false })
 const useLogLevel = () => useCachedData('settings:log-level', () => api.logLevel().catch(() => null as string | null), { persist: true }).data
 const useVoice = () => useCachedData('settings:voice', async () => {
   const [active, stt, tts] = await Promise.all([
@@ -500,9 +500,9 @@ export const SETTINGS_WIDGETS: SettingsWidget[] = [
       const { data: v } = useAudit()
       return (
         <BentoCard icon={ScrollText} title="Audit log" query={query} onClick={() => go('audit')} loading={v === undefined}>
-          {v && (v.valid
-            ? <><StatusPill label="Chain intact" tone="ok" />{typeof v.count === 'number' && <div className="mt-1.5 text-on-surface-low text-[0.75rem]">{v.count} events verified</div>}</>
-            : <><StatusPill label="Chain broken" tone="warn" />{v.error && <div className="mt-1.5 text-on-surface-low text-[0.75rem]">{v.error}</div>}</>)}
+          {v && (v.ok
+            ? <><StatusPill label="Chain intact" tone="ok" />{typeof v.checked === 'number' && <div className="mt-1.5 text-on-surface-low text-[0.75rem]">{v.checked} events verified</div>}</>
+            : <><StatusPill label="Chain broken" tone="warn" />{(v.error || v.tampered) && <div className="mt-1.5 text-on-surface-low text-[0.75rem]">{v.error || `${v.tampered} altered`}</div>}</>)}
         </BentoCard>
       )
     },

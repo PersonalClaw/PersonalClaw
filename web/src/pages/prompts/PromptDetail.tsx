@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
+import { toneChipSkin } from '../../design/accent'
 import { Pencil, Trash2, Check, X, Play, Loader2, Lock, Code2, Eye, Puzzle, Rocket } from 'lucide-react'
 import { Button } from '../../ui/Button'
 import { FormFooter } from '../../ui/FormFooter'
@@ -77,7 +78,13 @@ export function PromptDetail({ prompt, onSaved, onDeleted, editing: editingProp,
       <div className="flex flex-col gap-l">
         <div className="flex items-center gap-s">
           <span className="inline-flex items-center gap-1.5 text-on-surface-low text-[0.8125rem]"><Pencil size={13} /> Editing</span>
-          <span className="ml-auto inline-flex items-center rounded-pill px-m h-6 text-[0.75rem]" style={{ background: `color-mix(in srgb, ${sourceTone(prompt.source)} 16%, transparent)`, color: sourceTone(prompt.source) }}>{sourceLabel(prompt.source)}</span>
+          {/* `toneChipSkin`, not a tint of the tone itself. `sourceTone` returns `--color-primary`
+              for a USER-authored prompt — which is the DEFAULT and, in a real home, effectively all of
+              them (47 of 47 here) — and coral ink over a 16% tint of itself measures **3.85:1** in
+              light at 12px against a 4.5 floor. Measured by opening prompts on `#/prompts`. The other
+              sources keep their tint and pass: `marketplace` is info, bundled/provider is
+              `on-surface-low`. See `design/accentChipTone.test.tsx`. */}
+          <span className="ml-auto inline-flex items-center rounded-pill px-m h-6 text-[0.75rem]" style={toneChipSkin(sourceTone(prompt.source), 16)}>{sourceLabel(prompt.source)}</span>
         </div>
         {err && <FieldError>{err}</FieldError>}
         <PromptEditFields draft={draft} onChange={setDraft} Section={Section} />
@@ -121,7 +128,7 @@ export function PromptDetail({ prompt, onSaved, onDeleted, editing: editingProp,
         {full.launch_spec && Object.keys(full.launch_spec).length > 0 && (
           <span className="inline-flex items-center gap-1 rounded-pill px-m h-6 text-[0.75rem]" style={accentChip}><Rocket size={11} /> runnable</span>
         )}
-        <span className="ml-auto inline-flex items-center rounded-pill px-m h-6 text-[0.75rem]" style={{ background: `color-mix(in srgb, ${sourceTone(prompt.source)} 16%, transparent)`, color: sourceTone(prompt.source) }}>{sourceLabel(prompt.source)}</span>
+        <span className="ml-auto inline-flex items-center rounded-pill px-m h-6 text-[0.75rem]" style={toneChipSkin(sourceTone(prompt.source), 16)}>{sourceLabel(prompt.source)}</span>
       </div>
       {err && <FieldError>{err}</FieldError>}
 

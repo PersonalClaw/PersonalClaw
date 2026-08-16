@@ -1,6 +1,7 @@
 """HTTP API handlers for dashboard chat endpoints."""
 
 import asyncio
+import base64
 import json
 import logging
 import os
@@ -1076,6 +1077,268 @@ async def api_chat_session_stop(request: web.Request) -> web.Response:
         metadata={"session": name, "force": False},
     )
     return web.json_response({"ok": True})
+
+
+async def api_chat_screen_state(request: web.Request) -> web.Response:
+    """GET /api/chat/screen-frame?session=<id> — can this session share its screen?
+
+    Returns ``{enabled, delivery, reason, staged}``. The composer reads this to
+    decide whether to offer the share control at all (``enabled``) and, when the
+    bound model can't be given the frame in any form, to render the control
+    disabled carrying ``reason`` — which is composed server-side so the UI can't
+    drift into its own explanation of a decision it doesn't make.
+    """
+    from personalclaw.dashboard import screen_context
+
+    state: DashboardState = request.app["state"]
+    name = str(request.query.get("session") or "")
+    session = state._sessions.get(name)
+    enabled = bool(AppConfig.load().dashboard.screen_share_enabled)
+    model_label = getattr(session, "model", "") or "" if session else ""
+    delivery, reason = screen_context.resolve_delivery(model_label)
+    return web.json_response(
+        {
+            "enabled": enabled,
+            "delivery": delivery,
+            "reason": reason,
+            "staged": bool(session and screen_context.pending(session.key)),
+        }
+    )
+
+
+async def api_chat_screen_frame(request: web.Request) -> web.Response:
+    """POST /api/chat/screen-frame — stage one screen frame for the next chat turn.
+
+    MULTIMODAL-IO §5.3. Body: ``{session, action, frame_b64}`` where ``action`` is
+    one of:
+
+    * ``start`` — the user just picked a screen/window in the browser's share
+      dialog. Audited, and clears any stale slot so a share always begins blank.
+    * ``frame`` (the default) — stage ``frame_b64`` for the next turn, REPLACING
+      any frame already staged (latest-wins, §5.4).
+    * ``stop`` — sharing ended (chip, browser stop button, or session close).
+      Audited, and drops the slot immediately rather than waiting for a drain.
+
+    **The config gate is enforced HERE, not only in the UI.** ``screen_share_enabled``
+    is read per request and a frame is refused with 403 when it is off, so a client
+    that kept a stale bundle, forged the call by hand, or simply had the toggle
+    flipped off underneath it cannot stage anything. The hidden button is a
+    convenience; this check is the control.
+    """
+    from personalclaw.dashboard import screen_context
+
+    state: DashboardState = request.app["state"]
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response({"error": "invalid JSON"}, status=400)
+    if not isinstance(body, dict):
+        return web.json_response({"error": "JSON body must be an object"}, status=400)
+
+    name = str(body.get("session") or "")
+    session = state._sessions.get(name)
+    if not session:
+        return web.json_response({"error": "not found"}, status=404)
+    session_key = session.key
+
+    # App tokens have no business capturing the operator's screen: this is a
+    # human-consent surface driven from the dashboard's own composer, and an app
+    # holding a session token is not the human who clicked "share".
+    request_app = request.get("app", "")
+    if request_app:
+        sel().log_api_access(
+            caller=request_app,
+            operation="chat.screen_frame",
+            outcome="denied",
+            source="screen_share",
+            resources=f"session={session_key}",
+            error="screen frames are dashboard-only",
+        )
+        return web.json_response({"error": "screen frames are dashboard-only"}, status=403)
+
+    action = str(body.get("action") or "frame").strip().lower()
+    if action not in ("start", "frame", "stop"):
+        return web.json_response({"error": "action must be start, frame or stop"}, status=400)
+
+    # `stop` is allowed unconditionally: tearing a share down must never depend on
+    # the switch that permitted it, or turning the feature off would strand a slot.
+    if action == "stop":
+        screen_context.clear(session_key)
+        sel().log_api_access(
+            caller="dashboard",
+            operation="chat.screen_share_stop",
+            outcome="success",
+            source="screen_share",
+            resources=f"session={session_key}",
+        )
+        return web.json_response({"ok": True, "sharing": False})
+
+    if not AppConfig.load().dashboard.screen_share_enabled:
+        # Drop anything already staged as well. Withdrawing consent mid-session must
+        # take effect on the frame in hand, not just on the next one.
+        screen_context.clear(session_key)
+        sel().log_api_access(
+            caller="dashboard",
+            operation=f"chat.screen_{'share_start' if action == 'start' else 'frame'}",
+            outcome="denied",
+            source="screen_share",
+            resources=f"session={session_key}",
+            error="dashboard.screen_share_enabled is off",
+        )
+        return web.json_response(
+            {
+                "error": "Screen sharing is off. Turn it on in Settings → Chat.",
+                "code": "screen_share_disabled",
+            },
+            status=403,
+        )
+
+    if action == "start":
+        screen_context.clear(session_key)
+        sel().log_api_access(
+            caller="dashboard",
+            operation="chat.screen_share_start",
+            outcome="success",
+            source="screen_share",
+            resources=f"session={session_key}",
+        )
+        return web.json_response({"ok": True, "sharing": True})
+
+    try:
+        frame = screen_context.parse_frame(str(body.get("frame_b64") or ""))
+    except screen_context.FrameRejected as exc:
+        # `str(exc)` never contains the payload — see parse_frame's docstring.
+        sel().log_api_access(
+            caller="dashboard",
+            operation="chat.screen_frame",
+            outcome="denied",
+            source="screen_share",
+            resources=f"session={session_key}",
+            error=str(exc),
+        )
+        return web.json_response({"error": str(exc)}, status=400)
+
+    screen_context.stage(session_key, frame)
+    # Audit the SHAPE of the frame (type + size), never the frame. A length is not
+    # content; a base64 blob in the security log would be the leak this feature is
+    # built to avoid.
+    sel().log_api_access(
+        caller="dashboard",
+        operation="chat.screen_frame",
+        outcome="success",
+        source="screen_share",
+        resources=f"session={session_key}:{frame.media_type}:{frame.byte_len}b",
+    )
+    return web.json_response({"ok": True, "staged": True})
+
+
+async def api_chat_screen_frame_pin(request: web.Request) -> web.Response:
+    """POST /api/chat/screen-frame/pin — promote one frame to an ordinary attachment.
+
+    MULTIMODAL-IO §5.4. Pinning is the ONLY way a screen frame becomes a file, and it
+    is deliberately a separate verb from sharing: sharing is a read, pinning is a
+    write. The bytes come from the CLIENT rather than from a server-side slot,
+    because there is no server-side slot to take them from once a turn has drained it
+    — which is the ephemerality guarantee working as designed, not a limitation.
+
+    Once written, the frame is an ordinary upload: the uploads dir, the same
+    sanitized-name + random-prefix + 0600 treatment, and the same content extraction
+    every attachment gets. Sending it on to the knowledge library is then the user's
+    normal explicit ingest action; nothing here touches knowledge.db or memory.db.
+
+    Refused in incognito/temporary sessions — "writes suppressed" is the whole
+    contract of those modes, and a pinned screenshot is a write.
+    """
+    import mimetypes as _mt
+    import re
+    import uuid as _uuid
+
+    from personalclaw.dashboard import screen_context
+    from personalclaw.dashboard.attachment_extract import get_extractor
+    from personalclaw.dashboard.handlers.files import _upload_dir
+    from personalclaw.uploads.policy import check_upload
+
+    state: DashboardState = request.app["state"]
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response({"error": "invalid JSON"}, status=400)
+    if not isinstance(body, dict):
+        return web.json_response({"error": "JSON body must be an object"}, status=400)
+
+    name = str(body.get("session") or "")
+    session = state._sessions.get(name)
+    if not session:
+        return web.json_response({"error": "not found"}, status=404)
+
+    if request.get("app", ""):
+        return web.json_response({"error": "screen frames are dashboard-only"}, status=403)
+
+    if not AppConfig.load().dashboard.screen_share_enabled:
+        sel().log_api_access(
+            caller="dashboard",
+            operation="chat.screen_frame_pin",
+            outcome="denied",
+            source="screen_share",
+            resources=f"session={session.key}",
+            error="dashboard.screen_share_enabled is off",
+        )
+        return web.json_response(
+            {
+                "error": "Screen sharing is off. Turn it on in Settings → Chat.",
+                "code": "screen_share_disabled",
+            },
+            status=403,
+        )
+
+    if session.is_restricted:
+        sel().log_api_access(
+            caller="dashboard",
+            operation="chat.screen_frame_pin",
+            outcome="denied",
+            source="screen_share",
+            resources=f"session={session.key}:{session.memory_mode}",
+            error="writes are suppressed in this session",
+        )
+        return web.json_response(
+            {
+                "error": "This chat is temporary — pinning a frame would write it to disk.",
+                "code": "session_restricted",
+            },
+            status=409,
+        )
+
+    try:
+        frame = screen_context.parse_frame(str(body.get("frame_b64") or ""))
+    except screen_context.FrameRejected as exc:
+        return web.json_response({"error": str(exc)}, status=400)
+
+    ext = {"image/jpeg": ".jpg", "image/png": ".png", "image/webp": ".webp"}[frame.media_type]
+    stamp = datetime.now(tz=timezone.utc).strftime("%Y%m%d-%H%M%S")
+    filename = f"screen-{stamp}{ext}"
+    raw = base64.b64decode(frame.b64)
+    check = check_upload(filename, frame.media_type, size=len(raw))
+    if not check.ok:
+        return web.json_response({"error": check.reason}, status=check.status)
+
+    _upload_dir().mkdir(parents=True, exist_ok=True)
+    safe = re.sub(r"[^\w.\-]", "_", filename)
+    dest = _upload_dir() / f"{_uuid.uuid4().hex}_{safe}"
+    dest.write_bytes(raw)
+    os.chmod(dest, 0o600)
+    try:
+        get_extractor().start(str(dest), frame.media_type or _mt.guess_type(str(dest))[0])
+    except Exception:
+        logger.debug("pinned-frame extract kickoff failed", exc_info=True)
+
+    sel().log_api_access(
+        caller="dashboard",
+        operation="chat.screen_frame_pin",
+        outcome="success",
+        source="screen_share",
+        resources=f"session={session.key}:{frame.media_type}:{frame.byte_len}b",
+    )
+    return web.json_response({"ok": True, "path": str(dest), "name": filename})
 
 
 async def api_chat_session_interrupt(request: web.Request) -> web.Response:

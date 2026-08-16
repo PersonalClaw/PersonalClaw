@@ -3,14 +3,14 @@ import { ArrowLeft, Network, Layers, Highlighter } from 'lucide-react'
 import { TopBar } from '../../ui/TopBar'
 import { PageTitle } from '../../ui/PageTitle'
 import { WorkbenchLayout } from '../../ui/WorkbenchLayout'
+import { LoadError } from '../../ui/ListScaffold'
 import { SidePanel } from '../../ui/SidePanel'
 import { IconButton } from '../../ui/IconButton'
 import { Markdown } from '../../ui/Markdown'
 import { KnowledgeDetail } from './KnowledgeDetail'
 import { AnnotationList } from './ReadingView'
-import { getKnowledge } from './knowledgeStore'
 import { resolveType, typeLabel } from './knowledgeMeta'
-import { api, type KnowledgeAnnotation, type KnowledgeItem, type ExtractedContent } from '../../lib/api'
+import { api, type KnowledgeAnnotation, type KnowledgeItem, type ExtractedContent, ApiError } from '../../lib/api'
 import { useQueryParam, type RouteProps } from '../../app/useQueryState'
 
 /** Accent ink for a `knowledgeMeta` tone painted as TEXT on the **canvas** — the ground
@@ -41,6 +41,8 @@ export function KnowledgeDetailPage({ id, onBack, onOpenItem, query, setQuery }:
 }) {
   const [item, setItem] = useState<KnowledgeItem | null>(null)
   const [missing, setMissing] = useState(false)
+  // A failure that is NOT a 404 — the item may well exist; the server just could not say.
+  const [loadErr, setLoadErr] = useState<unknown>(null)
   // The "More details" panel open-state lives in the URL (?details=1) so it's a navigable
   // history step — the browser Back button closes the panel rather than leaving the page,
   // matching the app-wide "every open/close panel is a navigable link" guidance.
@@ -67,8 +69,19 @@ export function KnowledgeDetailPage({ id, onBack, onOpenItem, query, setQuery }:
 
   useEffect(() => {
     let alive = true
-    setItem(null); setMissing(false)
-    getKnowledge(id).then((d) => { if (!alive) return; if (d) setItem(d); else setMissing(true) }).catch(() => alive && setMissing(true))
+    setItem(null); setMissing(false); setLoadErr(null)
+    // 🪤 `getKnowledge` collapses EVERY failure into `null` (`catch { return null }`), so a 500 and a
+    // real 404 were indistinguishable here — and this page then told the user their item "no longer
+    // exists". Call the API directly so `ApiError.status` survives: only a 404 is a deletion; anything
+    // else is a load failure the user can retry. The repo already draws this line in
+    // `ProjectsSection`'s `dirErrorMessage` (404 → gone, else → couldn't read).
+    api.knowledgeItem(id)
+      .then((d) => { if (!alive) return; if (d) setItem(d); else setMissing(true) })
+      .catch((e) => {
+        if (!alive) return
+        if (e instanceof ApiError && e.status === 404) setMissing(true)
+        else setLoadErr(e)
+      })
     api.knowledgeExtracted(id).then((d) => { if (alive) setPool(d.contents || []) }).catch(() => {})
     api.knowledgeItemRelated(id).then((r) => { if (alive) setRelated(r) }).catch(() => {})
     return () => { alive = false }
@@ -130,7 +143,7 @@ export function KnowledgeDetailPage({ id, onBack, onOpenItem, query, setQuery }:
                       surface, so a screen-reader user skipping by heading landed on nothing and had
                       to read the DOM in order to orient. `PageTitle` is this span with the tag it
                       should have had (same `data-type="title-l"`), so nothing moves. */}
-                  <PageTitle className="truncate min-w-0">{item?.title || item?.url_title || (missing ? 'Not found' : 'Loading…')}</PageTitle>
+                  <PageTitle className="truncate min-w-0">{item?.title || item?.url_title || (missing ? 'Not found' : loadErr ? "Couldn't load" : 'Loading…')}</PageTitle>
                 </div>
               )}
               {/* Magic-wand sits NEXT TO the title (not floating to the right edge). */}
@@ -155,7 +168,10 @@ export function KnowledgeDetailPage({ id, onBack, onOpenItem, query, setQuery }:
           cramped even at the 'full' (100%) width preset. w-full makes it fill up to
           max-width (the toggle), then mx-auto centers any remainder. */}
       <div className="mx-auto flex h-full min-h-0 w-full flex-col px-l pt-l" style={{ maxWidth: 'var(--content-width)' }}>
-        {missing ? (
+        {loadErr ? (
+          // Not "no longer exists": the load failed, so offer the retry rather than assert a deletion.
+          <LoadError what="knowledge item" error={loadErr} onRetry={() => setReloadKey((k) => k + 1)} />
+        ) : missing ? (
           <div className="grid h-full place-items-center text-on-surface-low text-[0.8125rem]">This knowledge item no longer exists.</div>
         ) : item ? (
           <KnowledgeDetail

@@ -453,11 +453,20 @@ export function KnowledgeListPage({ onCreate, onOpenItem, onOpenSources, query, 
           (with its own zoom/pan), laying bare against the page background. */}
       {view === 'graph' && !empty && (
         <div className="flex-1 min-h-0 px-l pb-l pt-m">
-          <KnowledgeGraph selectedId={selectedEntity} onSelect={setSelectedEntity} />
+          {/* `regenerate` is handed down because its own header control is `view === 'library'`-only:
+              from the Graph tab the one action that turns items into entities is off screen, so the
+              graph's empty state carries it. */}
+          <KnowledgeGraph selectedId={selectedEntity} onSelect={setSelectedEntity}
+            onRegenerate={regenerate} regenerating={regenning} />
         </div>
       )}
 
-      {view !== 'graph' && (
+      {/* 🪤 `|| empty` is load-bearing: with 0 items the graph above is gated off by `!empty`, and
+          this block used to be gated off by `view !== 'graph'`, so the Graph tab rendered NOTHING
+          below the stat chips — measured at 116 characters of panel against the Library's 311. The
+          shared "Knowledge base is empty" state below is the right answer for every view, graph
+          included; it was simply unreachable from one of them. */}
+      {(view !== 'graph' || empty) && (
       <div className="mx-auto px-l py-l" style={{ maxWidth: 'var(--content-width)' }}>
         {items === null ? (itemsLoading ? <ListSkeleton what="items" /> : null) : empty ? (
               <EmptyState icon={BookOpen} title="Knowledge base is empty" hint="Add notes, code gists, bookmarks, documents, images, audio, and video. Content is extracted, entities surfaced, and everything indexed for agents to retrieve." action={{ label: 'Add knowledge', onClick: onCreate, icon: Plus }} />
@@ -662,7 +671,7 @@ export function KnowledgeListPage({ onCreate, onOpenItem, onOpenSources, query, 
                               {it.processing_status === 'partial' && !(it.processing_error || '').startsWith('Skipped (optional steps unavailable):') && (
                                 <span className="shrink-0 inline-flex items-center gap-1 rounded-pill bg-surface-high px-1.5 text-[0.75rem]" style={{ color: 'var(--color-warning)' }} title={`${it.processing_error || 'Enrichment incomplete'} — open to regenerate`}><CircleAlert size={10} /> Incomplete</span>
                               )}
-                              {it.is_archived && <span className="shrink-0 rounded-pill bg-surface-high px-1.5 text-on-surface-low text-[0.75rem]">archived</span>}
+                              {it.is_archived && <span className="shrink-0 rounded-pill bg-surface-high px-1.5 text-on-surface-low text-[0.75rem]">Archived</span>}
                               {it._match_type && <span className="shrink-0 rounded-pill bg-surface-high px-1.5 text-on-surface-low text-[0.75rem]">{it._match_type}</span>}
                             </div>
                             <div className="mt-0.5 flex flex-wrap items-center gap-x-m gap-y-0.5 text-on-surface-low text-[0.8125rem]">

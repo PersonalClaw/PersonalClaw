@@ -267,6 +267,12 @@
     "type": "int"
   },
   {
+    "default": false,
+    "path": "dashboard.screen_share_enabled",
+    "sensitive": false,
+    "type": "bool"
+  },
+  {
     "default": true,
     "path": "dashboard.send_on_enter",
     "sensitive": false,

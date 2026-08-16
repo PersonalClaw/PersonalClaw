@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { toneChipSkin } from '../../design/accent'
 import { FieldError } from '../../ui/forms'
 import { Pencil, Trash2, Check, X, PlayCircle, Loader2, MessagesSquare, ChevronRight, AlertTriangle, FlaskConical } from 'lucide-react'
 import { Button } from '../../ui/Button'
@@ -189,10 +190,18 @@ export function ScheduleDetail({ job, onSaved, onDeleted, onChanged, editing, on
       {err && <FieldError>{err}</FieldError>}
       {note && !running && <p className="text-ok text-[0.8125rem]">{note}</p>}
 
+      {/* `toneChipSkin`, not a tint of the tone itself. `scheduleMeta` makes TWO of these coral —
+          the `cron` kind and the `agent` mode — and coral ink over a 16% tint of itself measures
+          **3.85:1** in light against a 4.5 floor. Measured live by opening each schedule trigger:
+          **9 failing chips across all 5** in this home, both the kind chip and the mode chip, because
+          a cron schedule that invokes an agent lands two coral chips side by side. Dark is unaffected
+          (the tint darkens away from a light accent). The other tones — `every`/`script` (info),
+          `at` (warn), `command` (ok) — keep the tint, which is why the helper remaps one tone rather
+          than the registry. See `design/accentChipTone.test.tsx`. */}
       {/* schedule + mode summary */}
       <div className="flex flex-wrap items-center gap-s">
-        <span className="inline-flex items-center gap-1.5 rounded-pill px-m h-7 text-[0.8125rem]" style={{ background: `color-mix(in srgb, ${km.tone} 16%, transparent)`, color: km.tone }}><km.icon size={13} /> {job.schedule}</span>
-        <span className="inline-flex items-center gap-1.5 rounded-pill px-m h-7 text-[0.8125rem]" style={{ background: `color-mix(in srgb, ${mm.tone} 16%, transparent)`, color: mm.tone }}><ActionIcon size={13} /> {actLabel}</span>
+        <span className="inline-flex items-center gap-1.5 rounded-pill px-m h-7 text-[0.8125rem]" style={toneChipSkin(km.tone, 16)}><km.icon size={13} /> {job.schedule}</span>
+        <span className="inline-flex items-center gap-1.5 rounded-pill px-m h-7 text-[0.8125rem]" style={toneChipSkin(mm.tone, 16)}><ActionIcon size={13} /> {actLabel}</span>
         {job.enabled && job.next_run_ts && <span className="text-on-surface-low text-[0.8125rem]">next {relFuture(job.next_run_ts)} · {absTime(job.next_run_ts)}</span>}
       </div>
 

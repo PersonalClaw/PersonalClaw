@@ -13,7 +13,7 @@ import { api, type SavedAgent, type DiscoveredAgent, type McpActiveServer, type 
 import { useActiveChatModelOptions } from '../../lib/agents'
 import { providerMeta, isReservedAgent } from './agentMeta'
 import { AgentForm, toDraft, draftToPayload, type AgentDraft } from './AgentForm'
-import { accentChip } from '../../design/accent'
+import { accentChip, toneChipSkin } from '../../design/accent'
 
 /** Native agent inspector: view ↔ in-panel edit (full builder), set-as-default,
  *  delete. */
@@ -281,7 +281,7 @@ export function DiscoveredAgentDetail({ agent, providerId }: { agent: Discovered
       <p className="text-on-surface-low text-[0.8125rem]">This agent is defined and run by the {pm.label} runtime. It can't be edited here, but you can use it from the chat agent picker.</p>
 
       <div className="flex flex-wrap items-center gap-s text-[0.8125rem]">
-        <span className="inline-flex items-center gap-1.5 rounded-pill px-m h-7" style={{ background: `color-mix(in srgb, ${pm.tone} 16%, transparent)`, color: pm.tone }}><pm.icon size={13} /> {pm.label}</span>
+        <span className="inline-flex items-center gap-1.5 rounded-pill px-m h-7" style={toneChipSkin(pm.tone, 16)}><pm.icon size={13} /> {pm.label}</span>
         {agent.reasoning_effort && <span className="rounded-pill bg-surface-high px-m h-7 inline-flex items-center text-on-surface-var">{agent.reasoning_effort} effort</span>}
       </div>
 

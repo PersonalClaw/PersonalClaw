@@ -462,7 +462,16 @@ function UseCaseRow({ useCase, activeModels, allModels, health, onChanged }: {
         try { const j = JSON.parse(e.data) as import('../../lib/api').ReindexJob; setReindex(j); if (j.status !== 'running') es.close() } catch { /* ignore */ }
       }
       for (const ev of ['snapshot', 'progress', 'done', 'error']) es.addEventListener(ev, onFrame as EventListener)
-      es.onerror = () => es.close()
+      // A stream failure is NOT a re-index failure: the job keeps running server-side, we just lost
+      // the progress feed. Closing silently froze this panel on its last percentage forever, so a
+      // user could not tell "still working" from "we stopped hearing about it". Recorded on the job
+      // itself, which this panel already renders — and the copy says what is actually known.
+      es.onerror = () => {
+        es.close()
+        setReindex((r) => (r && r.status === 'running'
+          ? { ...r, status: 'error', error: 'Lost the progress feed — the re-index may still be running in the background. Reload to check.' }
+          : r))
+      }
     }).catch((err) => {
       // 409 model_not_ready (or any failure): the change stands but vectors weren't
       // wiped — tell the user the index is stale until the model is ready.
@@ -583,8 +592,11 @@ function UseCaseRow({ useCase, activeModels, allModels, health, onChanged }: {
           {useCase === 'embedding' && reindex && (
             <div className="rounded-md px-3 py-2 text-[0.75rem]"
               style={{ background: reindex.status === 'error' ? 'color-mix(in srgb, var(--color-danger) 10%, transparent)' : 'var(--color-surface-high)' }}>
+              {/* "Re-index not started" is only true when the POST itself failed — that path sets
+                  `id: ''`. A job with an id DID start (e.g. its progress feed dropped), so its message
+                  speaks for itself rather than carrying a prefix that contradicts it. */}
               {reindex.status === 'error' ? (
-                <span style={{ color: 'var(--color-danger)' }}>Re-index not started: {reindex.error}</span>
+                <span style={{ color: 'var(--color-danger)' }}>{reindex.id ? reindex.error : `Re-index not started: ${reindex.error}`}</span>
               ) : reindex.status === 'done' ? (
                 <span style={{ color: 'var(--color-ok)' }}>Re-indexed {reindex.knowledge} knowledge + {reindex.memory} memory embeddings.</span>
               ) : (

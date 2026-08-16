@@ -184,8 +184,8 @@ function ProjectListPage({ onOpen, query, setQuery }: { onOpen: (id: string) => 
                     <div className="flex items-center gap-1.5">
                       {p.id === activeId && <Star size={12} className="shrink-0 text-primary" style={{ fill: 'var(--color-primary)' }} aria-label="Active project" />}
                       <span className="truncate text-on-surface text-[0.9375rem]">{p.name}</span>
-                      {p.is_builtin && <span className="shrink-0 rounded-pill bg-surface-high px-1.5 py-0.5 text-[0.75rem] text-on-surface-low">builtin</span>}
-                      {p.status === 'archived' && <span className="shrink-0 rounded-pill bg-surface-high px-1.5 py-0.5 text-[0.75rem] text-on-surface-low">archived</span>}
+                      {p.is_builtin && <span className="shrink-0 rounded-pill bg-surface-high px-1.5 py-0.5 text-[0.75rem] text-on-surface-low">Built-in</span>}
+                      {p.status === 'archived' && <span className="shrink-0 rounded-pill bg-surface-high px-1.5 py-0.5 text-[0.75rem] text-on-surface-low">Archived</span>}
                     </div>
                     <div className="truncate text-on-surface-low text-[0.75rem]">
                       {p.workspace_dir ? p.workspace_dir.split('/').slice(-2).join('/') : 'no workspace'}
@@ -479,7 +479,9 @@ function Field({ label, hint, children }: { label: string; hint?: string; childr
 }
 
 function ProjectDetailPage({ id, onBack, navigate, query, setQuery }: { id: string; onBack: () => void; navigate: (to: string) => void } & Pick<RouteProps, 'query' | 'setQuery'>) {
-  const { data: project, loading, refresh } = useCachedData(`projects:detail:${id}`, () => api.project(id))
+  // `error` was previously discarded, so a 500 fell through to `!project` and the page claimed the
+  // project was deleted. A failed read is not a deletion.
+  const { data: project, loading, error: detailErr, refresh } = useCachedData(`projects:detail:${id}`, () => api.project(id))
   const { data: lists } = useCachedData(`projects:lists:${id}`, () => api.taskLists(id))
   // The Work board: runs + legacy loops + tasks in one
   // state-grouped board. Local-first (persist) + stale-while-revalidate, the same seam
@@ -555,6 +557,9 @@ function ProjectDetailPage({ id, onBack, navigate, query, setQuery }: { id: stri
 
   if (loading && !project) {
     return <Shell onBack={onBack} title="Project"><div className="flex h-full items-center justify-center"><Loader2 size={20} className="animate-spin text-on-surface-low" /></div></Shell>
+  }
+  if (!project && detailErr) {
+    return <Shell onBack={onBack} title="Project"><LoadError what="project" error={detailErr} onRetry={refresh} /></Shell>
   }
   if (!project) {
     return <Shell onBack={onBack} title="Project"><div className="flex h-full flex-col items-center justify-center gap-3 text-center"><p className="text-on-surface text-[0.9375rem]">This project no longer exists.</p><Button onClick={onBack}><ListChecks size={15} /> Back to projects</Button></div></Shell>

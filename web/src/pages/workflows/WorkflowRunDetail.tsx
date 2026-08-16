@@ -83,7 +83,7 @@ export function WorkflowRunDetail({ runId, onBack }: { runId: string; onBack: ()
   useEffect(() => () => { if (pending.current !== null) window.clearTimeout(pending.current) }, [])
 
   const live = !!run && !isTerminal(run.status)
-  useWorkflowStream(runId, live, {
+  const { connected } = useWorkflowStream(runId, live, {
     onSnapshot: (snap) => { setRun(snap); setLoading(false) },
     onLifecycle: () => scheduleRefetch(),
   })
@@ -263,6 +263,19 @@ export function WorkflowRunDetail({ runId, onBack }: { runId: string; onBack: ()
               five surfaces measured agree, and it is the row lesson from cycle 161 one level up: a
               destination is named by its identity, not by its category. */}
           {run && <PageTitle className="truncate">{run.workflow}</PageTitle>}
+          {/* FEED liveness, distinct from the RUN's status beside it. A live run whose stream has
+              dropped keeps showing "Running" while nothing arrives — indistinguishable from a run that
+              is simply quiet. Same dot-plus-WORD form `settings/DiagnosticsPanel` already ships for its
+              own SSE feed, so the vocabulary is not re-invented; the colour only confirms the word,
+              which is what keeps it clear of 1.4.1. Shown only while `live` — a terminal run has no
+              stream to be connected to. */}
+          {live && (
+            <span className="inline-flex shrink-0 items-center gap-1 text-on-surface-low text-[0.75rem]">
+              <span className="inline-block size-1.5 rounded-pill"
+                style={{ background: connected ? 'var(--color-ok)' : 'var(--color-on-surface-low)' }} />
+              {connected ? 'Streaming' : 'Connecting…'}
+            </span>
+          )}
           {look && StatusIcon && (
             <span className={`inline-flex shrink-0 items-center gap-1 text-[0.75rem] ${look.tone}`}>
               <StatusIcon size={13} className={look.spin ? 'animate-spin' : ''} /> {look.label}

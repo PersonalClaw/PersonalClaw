@@ -20,6 +20,7 @@ from personalclaw.config.loader import (  # noqa: F401 — re-exported for test 
     env_path,
 )
 from personalclaw.constants import DATA_WARNING
+from personalclaw.env import browser_available
 from personalclaw.orchestrator_skill import generate_orchestrator_skill
 from personalclaw.skills import SkillsLoader
 
@@ -61,6 +62,23 @@ def _fix_shell_profiles() -> None:
     if cleaned_profiles:
         sources = " or ".join(f"`source ~/{p}`" for p in cleaned_profiles)
         print(f"  ⚠️  Run {sources} or open a new terminal for PATH changes to take effect.")
+
+
+def _print_dashboard_pointer() -> None:
+    """Point at the dashboard's guided first run — one line (ONBOARDING-UX T1.4).
+
+    The dashboard is the canonical onboarding surface: it installs a model provider,
+    binds a chat model and runs a real first success without leaving the flow. This
+    wizard stays credentials-first and unchanged — the plan's open question ("should
+    ``setup`` gain full parity?") is answered "no, the dashboard owns it" — so setup
+    does not duplicate that flow, it says where the flow is.
+
+    Printed only where a browser can actually reach it: on a headless remote box the
+    line would be an instruction the user cannot follow, so it is suppressed there and
+    the ``doctor``/``gateway`` next-step line stands on its own.
+    """
+    if browser_available():
+        print("  Guided first run — model provider, then a first success — is in the dashboard.")
 
 
 def _setup(
@@ -134,6 +152,7 @@ def _setup(
 
     if agent_only:
         print("\nDone! Try: personalclaw gateway")
+        _print_dashboard_pointer()
         return
 
     # 3. App-contributed setup steps. Each installed + enabled app whose manifest
@@ -152,6 +171,7 @@ def _setup(
     _maybe_setup_custom_domain()
 
     print("\nDone! Try: personalclaw doctor && personalclaw gateway")
+    _print_dashboard_pointer()
 
 
 def _setup_noninteractive(

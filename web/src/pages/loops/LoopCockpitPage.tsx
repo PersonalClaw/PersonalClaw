@@ -317,7 +317,7 @@ export function LoopCockpitPage({ id, onBack, onDeleted, onOpenArtifact, onOpenT
   // report/findings (which the stream signals but doesn't carry in full).
   // Don't open (or keep) the per-loop SSE once the loop is confirmed gone —
   // EventSource would auto-retry a 404 /stream forever on a stale tab.
-  useRunStream(id, !notFound, {
+  const { connected } = useRunStream(id, !notFound, {
     onSnapshot: (l) => setC(loopToGoalLoop(l)),
     onLifecycle: (event, data) => {
       // Fold each lifecycle event through the shared reducer (judge_error → degraded,
@@ -489,6 +489,18 @@ export function LoopCockpitPage({ id, onBack, onDeleted, onOpenArtifact, onOpenT
         <span className="size-1.5 rounded-pill" style={{ background: c.status === 'failed' ? 'var(--color-danger)' : c.status === 'complete' ? 'var(--color-primary)' : 'var(--color-on-surface-low)' }} />
       )}
       {running ? (statusText || 'Working') : statusLabel(c.status)}
+      {/* FEED liveness, distinct from the LOOP's status beside it. A running loop whose stream has
+          dropped keeps saying "Working" while nothing arrives — indistinguishable from a loop that is
+          simply thinking. Same dot-plus-WORD form `settings/DiagnosticsPanel` ships and
+          `workflows/WorkflowRunDetail` adopted, so the vocabulary is not re-invented and the colour only
+          confirms the word. Shown only while `running`: a finished loop has no stream to be connected to. */}
+      {running && (
+        <span className="inline-flex shrink-0 items-center gap-1 text-on-surface-low">
+          <span className="inline-block size-1.5 rounded-pill"
+            style={{ background: connected ? 'var(--color-ok)' : 'var(--color-on-surface-low)' }} />
+          {connected ? 'Streaming' : 'Connecting…'}
+        </span>
+      )}
     </span>
   )
 

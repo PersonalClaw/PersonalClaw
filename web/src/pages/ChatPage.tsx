@@ -36,6 +36,8 @@ import { PromptPalette } from './chat/PromptPalette'
 import { SessionSkillsReview } from './chat/SessionSkillsReview'
 import { RoutingChip, type RoutingSuggestion } from './chat/RoutingChip'
 import { OrganizeChip } from './chat/OrganizeChip'
+import { ScreenShareChip } from '../ui/ScreenShareChip'
+import { useScreenShare } from '../ui/composer/useScreenShare'
 import { DotGlow } from '../ui/DotGlow'
 import { EmptyState, ListSkeleton, LoadError, Skeleton, LoadingStatus } from '../ui/ListScaffold'
 import { FieldError } from '../ui/forms'
@@ -60,7 +62,9 @@ import { Modal } from '../ui/Modal'
 import { confirm, promptInput } from '../ui/dialog'
 import { type ChatTurn, type Segment, type ToolSegment, type ApprovalSegment, type ActivitySegment, type SubagentCard, type HistMsg, type MemoryCitation, userTurn, assistantTurn, hydrateTurns, turnText, deriveActivity } from './chat/chatTypes'
 import { useIdentity, firstNameOf } from '../app/identity'
-import { useIsMac } from '../app/usePlatform'
+import { usePlatform } from '../app/usePlatform'
+import { SnipOverlay } from '../ui/SnipOverlay'
+import { chooseCaptureProvider, cropToPngFile, displayCaptureSupported, grabOneFrame, type SnipRect } from '../ui/composer/displayCapture'
 import { notify } from '../app/appSdk'
 import { spring, stagger, listItemEnter, expr } from '../design/motion'
 import { api, type ApprovalMode, type TaskMode, type ReasoningEffort, type ChatSessionSummary, type ChatHistoryMsg, type DiscoveredAgent, type MemoryMode, type NudgeLoop, type ChatFolder, type ChatTag, type RetagJob, type SessionTemplate } from '../lib/api'
@@ -595,7 +599,15 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
   // composer extras: prompt history (↑/↓), context-usage %, optimize-in-flight,
   // memory mode for the next NEW session, queued-while-streaming message.
   const [attachedPaths, setAttachedPaths] = useState<string[]>([])
-  const isMac = useIsMac()  // gates the macOS-only "Capture screenshot" composer action
+  // Which provider the "Capture screen area" entry uses — macOS keeps the native
+  // `screencapture -i` snip, everywhere else grabs a frame in the browser and crops it
+  // in-app. One decision point (chooseCaptureProvider), two providers.
+  const platform = usePlatform()
+  const displayCapture = displayCaptureSupported()
+  const captureProvider = chooseCaptureProvider(platform, displayCapture)
+  // A captured frame awaiting a crop. Non-null = SnipOverlay is up; the capture is
+  // ALREADY stopped by then, so nothing is watching the screen while the user crops.
+  const [snip, setSnip] = useState<{ url: string; width: number; height: number; source: HTMLCanvasElement } | null>(null)
   // Live upload progress for a large attach (chunked/resumable). name → pct; a
   // small file completes in one POST and never shows here.
   const [uploads, setUploads] = useState<{ name: string; pct: number }[]>([])
@@ -608,6 +620,14 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
   // revert if they don't like the optimized version (otherwise it's lost).
   const [preOptimize, setPreOptimize] = useState<string | null>(null)
   const [micError, setMicError] = useState<string | null>(null)
+  // Screen context. The HOST owns the display stream because it
+  // also owns the header chip that must stay lit for the stream's whole life — a
+  // composer-local stream could not keep a header indicator honest. Errors ride the
+  // existing transient line above the composer rather than a second mechanism.
+  const screenShare = useScreenShare(sessionId ?? '', (m) => {
+    setMicError(m)
+    window.setTimeout(() => setMicError(null), 6000)
+  })
   const [toast, setToast] = useState<string | null>(null)  // transient confirmation (brief/workspace-dir)
   // Upload rejection (oversize / upload failure) — a message the user must ACT on
   // (pick a smaller file), so it's dismissible-but-persistent, NOT a 6s-vanishing
@@ -1534,9 +1554,39 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
       // the post-create remount paints it immediately (no skeleton over the user's
       // own words) — mirrors the persisted history shape hydrateTurns expects.
       const seed: HistMsg[] = [{ role: 'user', content: llmText, ts: clientTs, meta: meta as HistMsg['meta'] }]
-      await api.sendChat(llmText, await ensureSession(seed), meta, undefined, opts?.inputOrigin)
+      const sid = await ensureSession(seed)
+      // Frame-on-send: capture ONE frame at the instant the question is asked,
+      // so the model sees the screen the user was looking at when they asked — not a
+      // continuous stream, and not a frame from whenever sharing happened to start.
+      // Awaited before sendChat so the slot is staged when the runner drains it.
+      if (screenShare.sharing) await screenShare.captureAndStage(sid)
+      await api.sendChat(llmText, sid, meta, undefined, opts?.inputOrigin)
     }
     catch (e) { markStreaming(false); patchLastAssistant((segs) => [...segs, { kind: 'text', text: `⚠️ ${(e as Error).message}` }]) }
+  }
+
+  // Pin the frame currently being shared. The bytes come from the client
+  // because the server kept none — the drain destroyed the staged copy the moment the
+  // turn used it. On success the pinned file joins the turn like any other
+  // attachment, so from here on it is an ordinary upload with nothing screen-specific
+  // about it.
+  async function pinScreenFrame() {
+    const sid = sessionRef.current
+    const frame = screenShare.lastFrame()
+    if (!sid) return
+    if (!frame) {
+      setMicError('Send a message while sharing first — there is no frame to pin yet.')
+      window.setTimeout(() => setMicError(null), 6000)
+      return
+    }
+    try {
+      const r = await api.pinScreenFrame(sid, frame)
+      if (r?.path) setAttachedPaths((prev) => [...prev, r.path])
+    } catch (e) {
+      // Surface the server's own reason (incognito, switch off) rather than inventing one.
+      setMicError((e as Error)?.message || 'Could not pin the frame.')
+      window.setTimeout(() => setMicError(null), 6000)
+    }
   }
 
   // Optimize the current draft via the prompt optimizer (last 10 turns as context).
@@ -2097,21 +2147,64 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
     if (paths.length) setAttachedPaths((prev) => [...prev, ...paths.filter((p) => !prev.includes(p))])
   }
 
-  // macOS: interactive region capture → attach the resulting PNG to the next send.
-  // The screenshot lands in a server dir already readable by the send path, so we
-  // thread its path straight into attachedPaths (same pipeline as an upload result).
-  async function captureScreenshot() {
-    setAttachError(null)
+  // macOS: interactive region capture on the GATEWAY host (`screencapture -i`) →
+  // attach the resulting PNG to the next send. The screenshot lands in a server dir the
+  // send path already reads, so we thread its path straight into attachedPaths (same
+  // pipeline as an upload result). Returns '' when it handled the request (attached, or
+  // the user cancelled), else the reason it could not run.
+  async function captureNative(): Promise<string> {
     try {
       const r = await api.screenshot()
-      if (r.error) { setAttachError(r.error); return }
+      if (r.error) return r.error
       if (r.path) setAttachedPaths((prev) => (prev.includes(r.path) ? prev : [...prev, r.path]))
       // r.path === '' means the user cancelled the capture — no-op, no error.
-    } catch (e) { setAttachError((e as Error).message) }
+      return ''
+    } catch (e) { return (e as Error).message || 'Screen capture failed' }
+  }
+
+  // Everywhere else: one frame out of the browser's display capture (tracks stopped
+  // immediately), then crop it in-app. The PNG goes through the ORDINARY upload path,
+  // so it gets the same policy check, uploads dir, extraction-at-upload and chip as a
+  // dragged-in file — a snip is an attachment, not a special case.
+  async function captureInBrowser() {
+    const r = await grabOneFrame()
+    if ('error' in r) {
+      // A dismissed picker is a decision, not a failure — say nothing.
+      if (r.error === 'cancelled') return
+      setAttachError(r.error === 'unsupported'
+        ? 'This browser cannot capture the screen.'
+        : 'The screen capture did not produce a frame.')
+      return
+    }
+    setSnip({ url: r.frame.toDataURL('image/png'), width: r.frame.width, height: r.frame.height, source: r.frame })
+  }
+
+  async function captureScreenArea() {
+    setAttachError(null)
+    if (captureProvider === 'native') {
+      const err = await captureNative()
+      if (!err) return
+      // The native snip could not run on this host (no display server, binary refused).
+      // Re-run the SAME decision with the native path marked failed rather than writing
+      // a second fallback policy here; only dead-end with the error if nothing is left.
+      if (chooseCaptureProvider(platform, displayCapture, true) !== 'browser') { setAttachError(err); return }
+    }
+    await captureInBrowser()
+  }
+
+  async function attachSnip(rect: SnipRect) {
+    const src = snip
+    setSnip(null)
+    if (!src) return
+    const file = await cropToPngFile(src.source, rect)
+    if (!file) { setAttachError('The cropped capture could not be encoded.'); return }
+    await attach([file])
   }
 
   const stage = (
-    <div className="w-full" style={{ maxWidth: 'var(--content-width)' }}>
+    // `data-tour="chat"` — the product tour's chat stop points at the composer stage
+    // (ONBOARDING-UX T5.1). On the chat route this wrapper is the composer.
+    <div data-tour="chat" className="w-full" style={{ maxWidth: 'var(--content-width)' }}>
       {/* Memory-mode notice: incognito/temporary sessions look identical to a
           normal one otherwise, so surface a subtle reminder above the composer
           that this chat won't be remembered — important before the user types. */}
@@ -2232,6 +2325,13 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
             onRemove={(slug) => setMentionedArtifacts((prev) => prev.filter((a) => a.slug !== slug))}
             onClose={() => setArtifactPickerOpen(false)} />
         )}
+        {/* Crop step for a browser-captured frame. The capture is already stopped by
+            the time this renders, so cancelling leaves nothing behind — neither an
+            attachment nor a live track. */}
+        {snip && (
+          <SnipOverlay frame={snip.url} width={snip.width} height={snip.height}
+            onCancel={() => setSnip(null)} onConfirm={(rect) => { void attachSnip(rect) }} />
+        )}
         {knowledgePickerOpen && (
           <KnowledgeContextPicker
             attached={mentionedKnowledge}
@@ -2270,7 +2370,21 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
             <>
               <MenuRow icon={<BookText size={16} />} label="Add knowledge" hint="Search the library → attach to the prompt" onClick={() => { close(); setKnowledgePickerOpen(true) }} />
               <MenuRow icon={<Boxes size={16} />} label="Reference an artifact" hint="Ground the reply in an artifact's current version" onClick={() => { close(); setArtifactPickerOpen(true) }} />
-              {isMac && <MenuRow icon={<Camera size={16} />} label="Capture screenshot" hint="Snip a region → attach" onClick={() => { close(); void captureScreenshot() }} />}
+              {/* Feature-detected out entirely where neither provider exists (iOS
+                  Safari has no getDisplayMedia and no gateway binary to shell out to) —
+                  a control that can only fail is worse than no control. */}
+              {captureProvider !== 'none' && <MenuRow icon={<Camera size={16} />} label="Capture screen area" hint="Snip a region → attach" onClick={() => { close(); void captureScreenArea() }} />}
+              {/* Pin the shared frame — the ONE deliberate promotion from
+                  ephemeral to file. Offered only while sharing, because the frame it
+                  pins is the one the browser still holds: nothing older can be pinned,
+                  since retaining past frames client-side is exactly the retention this
+                  feature exists not to do. Suppressed in a temporary/incognito chat by
+                  the server (writes are suppressed there), which is why the failure
+                  path surfaces the server's reason rather than a guess. */}
+              {screenShare.sharing && sessionRef.current && (
+                <MenuRow icon={<Pin size={16} />} label="Pin shared frame" hint="Save the current screen frame as an ordinary attachment"
+                  onClick={() => { close(); void pinScreenFrame() }} />
+              )}
               {started && sessionRef.current && <AutoNudgeMenuItem session={sessionRef.current!} onOpen={close} />}
             </>
           )}
@@ -2279,7 +2393,8 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
           onOptimize={optimize} optimizing={optimizing} history={promptHistory}
           onTranscribe={transcribe} onMicError={(m) => { setMicError(m); window.setTimeout(() => setMicError(null), 6000) }} canQueue contextPct={contextPct}
           handsFree={{ confirmationPhrases: voiceCfg.confirmation_phrases, exitPhrases: voiceCfg.exit_phrases, speaking: speakingTurn !== null, muteWhileSpeaking: voiceCfg.duplex_mute_enabled }}
-          onHandsFreeSubmit={(t) => void send(t, { inputOrigin: 'voice' })} />
+          onHandsFreeSubmit={(t) => void send(t, { inputOrigin: 'voice' })}
+          screenShare={{ available: screenShare.available, sharing: screenShare.sharing, disabledReason: screenShare.disabledReason, onToggle: screenShare.toggle }} />
       </div>
       {/* CREATE-TIME session setup — project binding + memory mode. Both are frozen
           once the chat starts, so they are NOT composer controls (the composer's
@@ -2340,6 +2455,12 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
                   {regenningTitle ? <Loader2 size={12} className="animate-spin" /> : <Sparkles size={12} />}
                 </button>
               )}
+              {/* Screen sharing. Deliberately in the header rather than the
+                  composer: it must stay visible while the user scrolls the transcript,
+                  because an indicator you can scroll away from is not an indicator.
+                  Mounted off the LIVE stream state, so the browser's own stop button
+                  clears it too. */}
+              {screenShare.sharing && <ScreenShareChip onStop={screenShare.toggle} />}
               {/* Project binding stays visible once started — the chat is scoped to this
                   project's workspace + context; click to open the project. */}
               {projectName && (

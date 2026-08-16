@@ -3,7 +3,7 @@
 //
 // Prereqs:
 //   1. A gateway running with a configured model provider and (ideally) seeded
-//      scenario data:  personalclaw gateway --seed demo --json-ready
+//      scenario data:  personalclaw gateway --seed demo-home --json-ready
 //      (copy the printed port + token, or run with PERSONALCLAW_AUTH_MODE=none
 //      on loopback for a token-free local capture).
 //   2. Playwright:  npm i -D playwright && npx playwright install chromium

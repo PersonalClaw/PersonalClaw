@@ -10,6 +10,14 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Added
 
+- **A guided tour of the app, and you can take it again whenever you like.**
+- **Empty pages now explain themselves and give you something to press.**
+- **The audit log can now answer "what did my agent actually do?" — and tell you which record was tampered with.**
+- **First run now picks up where you left it, and you can walk out of it at any point.**
+- **Moving between pages now crossfades instead of cutting.**
+- **The two shipped personalities now arrive with their own motion and their own tone.**
+- **You can show the assistant your screen for one message — off until you turn it on.**
+- **You can snip a region of your screen into a message, on any platform.**
 - **Optional sound cues, off until you turn them on.**
 - **First run now ends with three things you can actually do, not a tour.**
 - **A knowledge item now has a reading mode, and a passage you highlight in it stays highlighted.**
@@ -55,6 +63,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 - **You can now ask which runs of a template went a different way — and get warned when they start going a worse way.**
 - **Work that nobody reads now says so.**
+- **A second starter home, for looking around before you commit anything.**
 
 ### Changed
 - **The assistant now needs to see a habit work three times, not twice, before it offers to make it a standing principle.**
@@ -93,6 +102,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Fixed
 
+- **The Loops page no longer tells you that you have no loops when it simply could not load them.**
 - **A security-audit write that fails is no longer swallowed.**
 
 - **A lesson saved for one project no longer becomes a rule for every project.**

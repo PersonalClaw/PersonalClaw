@@ -4,7 +4,7 @@ import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { RungChip } from '../ui/RungChip'
 import { RUNG_PRESENTATION } from '../lib/rungs'
-import { accentChip } from './accent'
+import { accentChip, toneChipSkin } from './accent'
 
 // ── The accent-chip failure, THIRD SPELLING: the tone arrives from a REGISTRY ──────────────────────
 //
@@ -60,6 +60,7 @@ import { accentChip } from './accent'
 // Moving those would repaint five surfaces for no accessibility reason.
 
 const SRC = join(process.cwd(), 'src')
+const read = (rel: string) => readFileSync(join(SRC, rel), 'utf8')
 const walk = (d: string): string[] =>
   readdirSync(d).flatMap((n) => {
     const p = join(d, n)
@@ -140,5 +141,168 @@ describe('a rung chip inks coral through the container pair, not a tint of itsel
   it("the family's rail points here, so the third spelling is findable from it", () => {
     expect(readFileSync(join(SRC, 'design/accentChip.test.ts'), 'utf8'))
       .toMatch(/accentChipTone\.test\.tsx/)
+  })
+})
+
+// ── Cycle 175: the SECOND adopter, so the rule moved to `design/accent` ───────────────────────────
+//
+// Cycle 172 kept the coral remap inline in `RungChip` and recorded that it should move to
+// `design/accent` "when the NEXT cycle converges NotificationsPage/ScheduleDetail — with real
+// adopters, not speculatively". That cycle is this one.
+//
+// 🔑 THE SECOND SITE, MEASURED LIVE. `NotificationsPage`'s kind chip in the detail panel paints
+// `toneChipBg(km.tone)` (a 16% tint) under `km.tone` ink. Driven at `#/notifications` with a row
+// OPEN — which is why no surface census ever saw it, the default state has no panel — the coral
+// kinds measure **3.85:1** in light at 13px against a 4.5 floor; dark is clean. `notificationMeta`
+// declares **13** coral kinds, and this validation home holds 36 `proposal` + 6 `subagent`
+// notifications, so it is the common case rather than an edge.
+//
+// 🪤 AND THE FIRST ATTEMPT TO MEASURE IT INVENTED A NUMBER. The tint resolves to
+// `color(srgb 0.784314 0.270588 0.180392 / 0.16)`; a probe that pulls the first three numbers out of
+// that string reads 0.78/0.27/0.18 as RGB — near-black — and reports ~1.27:1 on anything. Same bug had
+// already faked a finding on an `oklab()` backdrop the cycle before. `probes/lib/color.mjs` now owns
+// the conversion (srgb components are 0-1, NOT 0-255) and REFUSES to guess on notations it cannot
+// parse rather than returning a plausible lie.
+//
+// 🔑 THE THIRD ADOPTER, and the widest one. `ScheduleDetail`'s summary row paints TWO of these:
+// the schedule KIND and the exec MODE, and `scheduleMeta` makes both `cron` and `agent` coral. Driven
+// by opening every schedule trigger on `#/triggers` (the detail is a panel there, not a route of its
+// own — there is no `/api/schedule`; a schedule is the `kind:'schedule'` projection of a Trigger):
+// **9 failing chips at 3.85:1 across all 5** schedule triggers in this home, because a cron schedule
+// that invokes an agent lands two coral chips side by side. Dark: 0.
+//
+// 🪤 `strength` stays a parameter. The two adopters ship 14% and 16%, and those percentages apply
+// only to tones that already pass — collapsing them would repaint passing chips for no accessibility
+// reason. The coral branch has no strength at all, which is the half cycle 146 cared about.
+//
+// 🪤 `toneChipBg`'s ICON-ONLY consumers are still NOT migrated, and that is the distinction this rail
+// exists to protect: `NotificationBell` and `NotificationsPage`'s list tile tint a square behind an
+// icon, which carries a 3:1 non-text floor it clears at every strength. Moving them would repaint
+// five surfaces for nothing.
+
+describe('toneChipSkin is the one rule the tone-registry chips share', () => {
+  it('routes coral to the container pair, with no tint left to fail', () => {
+    const skin = toneChipSkin('var(--color-primary)', 14)
+    expect(skin).toEqual({ ...accentChip })
+    expect(JSON.stringify(skin)).not.toMatch(/color-mix|%/)
+  })
+
+  it('leaves every passing tone on its own tint, at the caller\'s strength', () => {
+    for (const tone of ['var(--color-info)', 'var(--color-ok)', 'var(--color-warn)', 'var(--color-danger)',
+                        'var(--color-on-surface-low)', 'var(--color-on-surface-var)']) {
+      expect(toneChipSkin(tone, 16)).toEqual({
+        background: `color-mix(in srgb, ${tone} 16%, transparent)`, color: tone,
+      })
+    }
+  })
+
+  it('honours each adopter\'s own strength rather than unifying them', () => {
+    expect(toneChipSkin('var(--color-info)', 14).background).toContain('14%')
+    expect(toneChipSkin('var(--color-info)', 16).background).toContain('16%')
+    // …and the coral branch ignores it entirely, because a container has no strength.
+    expect(toneChipSkin('var(--color-primary)', 20).background).toBe(accentChip.background)
+  })
+
+  it('every adopter goes through it, so none can re-decide the rule', () => {
+    const rung = read('ui/RungChip.tsx')
+    expect(rung).toMatch(/toneChipSkin\(meta\.tone, 14\)/)
+    expect(rung, 'the inline ternary it replaced must be gone').not.toMatch(/\? accentChip\s*\n/)
+    const notif = read('pages/notifications/NotificationsPage.tsx')
+    expect(notif, 'the LABELLED kind chip').toMatch(/style=\{toneChipSkin\(km\.tone, 16\)\}/)
+    // Cycle 176: BOTH of ScheduleDetail's summary chips — the schedule KIND and the exec MODE.
+    const sched = read('pages/schedule/ScheduleDetail.tsx')
+    expect(sched, 'the schedule-kind chip').toMatch(/style=\{toneChipSkin\(km\.tone, 16\)\}/)
+    expect(sched, 'the exec-mode chip').toMatch(/style=\{toneChipSkin\(mm\.tone, 16\)\}/)
+    expect(sched, 'no raw tint of a tone may remain on this surface')
+      .not.toMatch(/color-mix\(in srgb, \$\{(?:km|mm)\.tone\}/)
+  })
+
+  it('the prompt SOURCE pills go through it too — the default source is coral', () => {
+    // Cycle 177, the fourth adopter. `sourceTone` is a FUNCTION, not a `tone:` field, which is why a
+    // registry grep for `tone: 'var(--color-primary)'` missed it entirely — and it returns coral for
+    // `user`/undefined, i.e. the DEFAULT. In this validation home that is 47 of 47 prompts, so the
+    // failing state was every prompt on the surface, measured at **3.85:1** (12px) in light.
+    for (const rel of ['pages/prompts/PromptDetail.tsx', 'pages/prompts/SnippetDetail.tsx']) {
+      const code = read(rel)
+      expect(code, `${rel} source pill`).toMatch(/style=\{toneChipSkin\(sourceTone\(\w+\.source\), 16\)\}/)
+      expect(code, `${rel} must keep no raw tint of the tone`)
+        .not.toMatch(/color-mix\(in srgb, \$\{sourceTone\(/)
+    }
+  })
+
+  it('the prompt tone function still returns coral for the default source', () => {
+    // THE VACUITY FLOOR for this adopter. If `sourceTone` stopped returning coral for `user` the
+    // remap would be dead code that still reads as an enforced rule; if a SECOND source became coral
+    // the "only the default" claim above would quietly stop being true.
+    const meta = read('pages/prompts/promptMeta.ts')
+    expect(meta).toMatch(/if \(!source \|\| source === 'user'\) return 'var\(--color-primary\)'/)
+    const coralReturns = [...meta.matchAll(/return 'var\(--color-primary\)'/g)]
+    expect(coralReturns, 'exactly one coral branch in sourceTone').toHaveLength(1)
+  })
+
+  it('the icon-only and accent-BAR uses of the same tone are untouched', () => {
+    // `PromptsListPage` spends `sourceTone` on a square icon tile, two SidePanel icons and a
+    // `ListRow accent=` bar. All non-text (3:1 floor, or not text at all), so migrating them would
+    // repaint the list for no accessibility reason — the same distinction as `toneChipBg`'s tiles.
+    const list = read('pages/prompts/PromptsListPage.tsx')
+    expect(list, 'the square icon tile keeps its plain tint')
+      .toMatch(/size-10 items-center justify-center rounded-lg" style=\{\{ background: `color-mix\(in srgb, \$\{sourceTone\(r\.source\)\} 16%, transparent\)` \}\}/)
+    expect(list).toMatch(/accent=\{sourceTone\(r\.source\)\}/)
+  })
+
+  it('the last two coral-capable registry chips go through it too', () => {
+    // Cycle 178 closes the family's registry sweep. NEITHER of these was reachable with this
+    // validation home's data, so they are SOURCE-verified only — stated rather than implied:
+    //   · `InboxDetail`'s kind chip renders only in the ELSE of the classification branch, and all
+    //     45 inbox items here HAVE a classification (39 needs_reply, 6 fyi). Measured, not assumed.
+    //   · `AgentDetail`'s provider chip at the summary row did not render for a native agent; the
+    //     chip that DID render is line 84, which already uses `accentChip` and measured **13.1:1**
+    //     live. So this convergence is onto a form proven in the same file.
+    // The pairing they used — coral ink over a 16% tint of itself — is the one measured at
+    // **3.85:1** on four other sites this session, which is why they are converged rather than left.
+    const inbox = read('pages/inbox/InboxDetail.tsx')
+    expect(inbox, 'the kind chip').toMatch(/style=\{toneChipSkin\(km\.tone, 16\)\}/)
+    expect(inbox).not.toMatch(/color-mix\(in srgb, \$\{km\.tone\}/)
+    const agent = read('pages/agents/AgentDetail.tsx')
+    expect(agent, 'the provider chip').toMatch(/style=\{toneChipSkin\(pm\.tone, 16\)\}/)
+    expect(agent).not.toMatch(/color-mix\(in srgb, \$\{pm\.tone\}/)
+  })
+
+  it('only the coral-capable registries were touched — the census that removed work', () => {
+    // 🔑 TWO censuses are needed, and running only the first is why this family looked smaller than
+    // it was for four cycles:
+    //   1. a `tone:` FIELD in a registry table      → grep "tone: 'var(--color-primary)'"
+    //   2. a `return 'var(--color-primary)'` inside a tone FUNCTION → invisible to (1)
+    // Census (2) is what found `promptMeta.sourceTone` and `agentMeta.providerMeta`.
+    //
+    // And the registries WITHOUT coral are why 8 flagged sites needed nothing at all: `taskMeta`
+    // has none, so TaskDetail/TasksListPage/TaskBoard's tinted chips are all semantic tones. Pinned
+    // so a later pass does not "finish" them.
+    expect(read('pages/tasks/taskMeta.tsx'), 'no coral in the task registry')
+      .not.toMatch(/var\(--color-primary\)/)
+    // inboxMeta's coral is exactly the three message-ish kinds; classMeta/confMeta have none, which
+    // is why only ONE of InboxDetail's three chips moved.
+    const inboxMeta = read('pages/inbox/inboxMeta.ts')
+    const coralKinds = [...inboxMeta.matchAll(/key: '(\w+)', label: '[^']*', tone: 'var\(--color-primary\)'/g)].map((m) => m[1])
+    expect(coralKinds).toEqual(['message', 'mention', 'email'])
+    // providerMeta returns coral for the native runtime only.
+    const agentMeta = read('pages/agents/agentMeta.ts')
+    expect([...agentMeta.matchAll(/return \{ label: '[^']*', icon: \w+, tone: 'var\(--color-primary\)' \}/g)]).toHaveLength(1)
+  })
+
+  it('the schedule registry still has exactly the two coral tones this covers', () => {
+    // THE VACUITY FLOOR for the third adopter. `cron` (kind) and `agent` (mode) are the coral pair;
+    // if a third became coral the measurement above would stop describing the surface, and if one
+    // stopped being coral the remap would be dead code that still reads as an enforced rule.
+    const meta = read('pages/schedule/scheduleMeta.ts')
+    const coral = [...meta.matchAll(/key: '(\w+)'[^}]*tone: 'var\(--color-primary\)'/g)].map((m) => m[1])
+    expect(coral.sort()).toEqual(['agent', 'cron'])
+  })
+
+  it('the icon-only tiles keep the plain tint — the distinction, not an oversight', () => {
+    const notif = read('pages/notifications/NotificationsPage.tsx')
+    // The list tile: a tint behind an ICON, 3:1 floor, deliberately untouched.
+    expect(notif).toMatch(/style=\{\{ background: toneChipBg\(km\.tone\) \}\}><km\.icon/)
+    expect(read('ui/NotificationBell.tsx')).toMatch(/background: toneChipBg\(km\.tone\)/)
   })
 })

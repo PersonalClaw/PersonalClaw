@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest'
+import type { ReactElement } from 'react'
 import { render, screen } from '@testing-library/react'
 import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
@@ -73,7 +74,7 @@ describe('LoadingStatus is the announcement', () => {
 })
 
 describe('every shared skeleton says something', () => {
-  const CASES: [string, () => JSX.Element][] = [
+  const CASES: [string, () => ReactElement][] = [
     ['ListSkeleton', () => <ListSkeleton rows={2} />],
     ['FormSkeleton', () => <FormSkeleton sections={1} rows={1} />],
     ['CardGridSkeleton', () => <CardGridSkeleton cards={2} />],

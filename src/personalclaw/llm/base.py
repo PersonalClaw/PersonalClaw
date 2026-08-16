@@ -128,6 +128,22 @@ class ModelProvider(ABC):
         """Refresh provider activity timestamp without I/O. Default no-op."""
         return None
 
+    def stage_image_part(self, data_url: str) -> bool:
+        """Attach *data_url* as an image content part on the NEXT user turn.
+
+        Returns True only if this provider will actually put the image on the wire.
+        The default is **False**, and that default is the safety property: a caller
+        (MULTIMODAL-IO §5.3's screen-context channel) uses the return value to decide
+        between handing the model pixels and degrading to a text description. A
+        provider that inherits this no-op therefore routes to the description path
+        instead of having its image silently dropped — "declared support" can never
+        stand in for "delivered".
+
+        One-shot by contract: the staged part rides exactly one turn and is cleared as
+        the request is built, so a later turn can't inherit an earlier image.
+        """
+        return False
+
     def set_workspace(self, path: Path) -> None:
         """Override the working directory used for subsequent provider activity.
 

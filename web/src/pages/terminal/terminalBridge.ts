@@ -4,6 +4,8 @@
  *  pass props. Each mounted TerminalView registers a send(text) for its session;
  *  the most-recently-registered live one is the "active" target. */
 
+import { notify } from '../../app/appSdk'
+
 type Sender = (text: string) => boolean
 
 const senders = new Map<string, Sender>()
@@ -53,7 +55,18 @@ export function runInTerminalWhenReady(command: string, getId?: () => string | u
   const attempt = () => {
     if (runInTerminal(command, getId?.())) return
     if (Date.now() - started < 15_000) timer = setTimeout(attempt, 100)
-    else console.warn('Run command dropped — terminal never became ready:', command)
+    else {
+      // The RETRY above exists because a one-shot send dropped every cold "Run tests" click
+      // (see terminalBridge.test.ts). At the 15s boundary that same silent drop came back: the
+      // user pressed Run, waited, and got nothing — the only record was this console line, which
+      // no user reads. A dropped user action has to say so on screen.
+      //
+      // `notify` rather than a bespoke surface: it is how the app already reports a failed action
+      // (a rejected config PATCH, an install that needs a restart), and the sender lives in a
+      // module with no tree of its own to render into.
+      notify('Couldn\'t run the command — the terminal never became ready. Open a terminal and try again.', 'error')
+      console.warn('Run command dropped — terminal never became ready:', command)
+    }
   }
   attempt()
   return () => clearTimeout(timer)

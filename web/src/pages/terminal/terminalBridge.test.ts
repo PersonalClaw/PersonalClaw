@@ -18,6 +18,57 @@ afterEach(() => {
   vi.useRealTimers()
 })
 
+describe('a dropped command says so on screen', () => {
+  // 🔑 THE SAME DEFECT THIS FILE WAS WRITTEN ABOUT, at the other end of the retry. The retry exists
+  // because a one-shot send dropped every cold "Run tests" click (the docblock above). At the 15s
+  // boundary the silent drop returned: the user pressed Run, waited fifteen seconds, and got nothing.
+  // The only record was a `console.warn`, which no user reads — the same shape as
+  // `serviceWorkerBlockedReason` reaching only `console.info` (cycle 181).
+  it('raises a toast when the terminal never becomes ready, not just a console warning', () => {
+    vi.useFakeTimers()
+    const toasts: { message: string; level: string }[] = []
+    const onToast = (e: Event) => toasts.push((e as CustomEvent).detail)
+    window.addEventListener('ne:toast', onToast)
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      // never registered → every attempt fails until the deadline
+      runInTerminalWhenReady('pytest -x', () => 'never-live')
+      expect(toasts, 'silent while it is still retrying').toHaveLength(0)
+      vi.advanceTimersByTime(15_100)
+      expect(toasts, 'exactly one toast, once').toHaveLength(1)
+      expect(toasts[0].level, 'a dropped user action is an error, not info').toBe('error')
+      expect(toasts[0].message).toMatch(/never became ready/)
+      expect(toasts[0].message, 'and it says what to do next').toMatch(/Open a terminal and try again/)
+      // the developer signal stays — it carries the command, which the toast deliberately omits
+      expect(warn).toHaveBeenCalledTimes(1)
+      expect(String(warn.mock.calls[0][1])).toBe('pytest -x')
+    } finally {
+      window.removeEventListener('ne:toast', onToast)
+      warn.mockRestore()
+    }
+  })
+
+  it('says nothing when the command DOES land — no toast on the happy path', () => {
+    vi.useFakeTimers()
+    const toasts: unknown[] = []
+    const onToast = (e: Event) => toasts.push((e as CustomEvent).detail)
+    window.addEventListener('ne:toast', onToast)
+    try {
+      let open = false
+      registerTerminal('t1', (t) => (open ? (delivered.push(t), true) : false))
+      const delivered: string[] = []
+      runInTerminalWhenReady('ls', () => 't1')
+      open = true
+      vi.advanceTimersByTime(300)
+      expect(toasts, 'a successful run must stay quiet').toHaveLength(0)
+      vi.advanceTimersByTime(20_000)
+      expect(toasts, 'and must not toast later either').toHaveLength(0)
+    } finally {
+      window.removeEventListener('ne:toast', onToast)
+    }
+  })
+})
+
 describe('runInTerminalWhenReady', () => {
   it('retries a sender that is registered but not yet OPEN, then delivers exactly once', () => {
     vi.useFakeTimers()

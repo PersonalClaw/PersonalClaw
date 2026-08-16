@@ -591,8 +591,22 @@ function TaskRow({ t, index, onOpen, onProject, selected, selecting, onToggleSel
           🪤 Hand-rolling a bespoke element here is what the primitive-adoption ratchet is for: it went
           red at 273/272, and the right answer was `ui/RowHitTarget`, which exists for exactly this
           shape. It then went red a SECOND time on this very comment, because the scanner counts the
-          literal tag text wherever it appears — prose included. */}
-      <RowHitTarget label={t.title} />
+          literal tag text wherever it appears — prose included.
+
+          🔴 THE STATUS IS IN THE NAME because in this row it is in NOTHING ELSE. Measured on a seeded
+          home, ten tasks spanning all five statuses: the row's only status carrier is the glyph below,
+          a lucide icon that ships `aria-hidden` — so the row text held no status word, there was no
+          sr-only copy, and this name was the bare title. Every task therefore read identically to
+          assistive tech: done, blocked and cancelled indistinguishable from not-started.
+          The other three surfaces in this family already say it — the detail chip renders
+          `{sm.label}`, the card renders the same chip, and a board column names its group
+          "<label> — N tasks". The compact row is the one that dropped it, so it says it here rather
+          than growing a chip the dense list deliberately does without.
+          🪤 NOT `rowSubject()`, the shared row-name helper: it caps at 55 characters, and 3 of those
+          10 titles are already longer — it would have silently truncated away the very word being
+          added. Its own docstring draws that line ("capping data is not the same as bounding a name
+          you assembled"). Title first, status appended, uncapped — the `AppsSection` idiom. */}
+      <RowHitTarget label={`${t.title} — ${sm.label}`} />
       {/* Selection checkbox — visible on hover, or always once a selection is active. */}
       {/* 20x20 painted, 24x24 CLICKED. Measured 30 of these on `#/tasks`, and SC 2.5.8's spacing
           exception cannot rescue them: each sits INSIDE this row's own 1212x47 clickable surface, so

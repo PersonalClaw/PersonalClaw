@@ -19,6 +19,14 @@ interface Identity {
   clearName: () => Promise<void>  // re-triggers onboarding
 }
 
+/** The name identity falls back to when the user declines to give one.
+ *
+ *  Two places need the SAME word: onboarding's "Skip setup" path (which commits identity
+ *  without ever having asked, because a non-empty name is what releases the route guard) and
+ *  the Settings → Account field (which refuses to save an empty name). A second literal would
+ *  mean skipping setup named you one thing and clearing the field named you another. */
+export const DEFAULT_USER_NAME = 'Operator'
+
 const IdentityCtx = createContext<Identity>({ name: '', onboarded: false, loaded: false, setName: async () => {}, clearName: async () => {} })
 
 export function IdentityProvider({ children }: { children: ReactNode }) {

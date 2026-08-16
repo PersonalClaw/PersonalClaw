@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { toneChipSkin } from '../../design/accent'
 import { Pencil, Trash2, Check, X, Play, Loader2, Lock } from 'lucide-react'
 import { Button } from '../../ui/Button'
 import { FormFooter } from '../../ui/FormFooter'
@@ -85,7 +86,7 @@ export function SnippetDetail({ snippet, onSaved, onDeleted, editing: editingPro
             <Button size="sm" variant="ghost" onClick={del}><Trash2 size={14} /> Delete</Button>
           </>
         )}
-        <span className="ml-auto inline-flex items-center rounded-pill px-m h-6 text-[0.75rem]" style={{ background: `color-mix(in srgb, ${sourceTone(snippet.source)} 16%, transparent)`, color: sourceTone(snippet.source) }}>{sourceLabel(snippet.source)}</span>
+        <span className="ml-auto inline-flex items-center rounded-pill px-m h-6 text-[0.75rem]" style={toneChipSkin(sourceTone(snippet.source), 16)}>{sourceLabel(snippet.source)}</span>
       </div>
       {err && <FieldError>{err}</FieldError>}
 

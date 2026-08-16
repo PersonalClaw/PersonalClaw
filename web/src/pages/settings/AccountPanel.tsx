@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Check, RotateCcw } from 'lucide-react'
-import { useIdentity } from '../../app/identity'
+import { useIdentity, DEFAULT_USER_NAME } from '../../app/identity'
 import { confirm } from '../../ui/dialog'
 import { notify } from '../../app/appSdk'
 import { api } from '../../lib/api'
@@ -32,7 +32,7 @@ export function AccountPanel() {
   const [draft, setDraft] = useState(name)
   const [saved, setSaved] = useState(false)
 
-  const save = () => { setName(draft.trim() || 'Operator'); setSaved(true); setTimeout(() => setSaved(false), 1800) }
+  const save = () => { setName(draft.trim() || DEFAULT_USER_NAME); setSaved(true); setTimeout(() => setSaved(false), 1800) }
   const dirty = draft.trim() !== name
 
   // Attribution handle (dashboard.username) — stamped onto records this user

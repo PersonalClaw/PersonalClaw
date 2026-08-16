@@ -887,6 +887,15 @@ async def api_screenshot(request: web.Request) -> web.Response:
         return web.json_response({"error": "screenshot timed out"}, status=504)
     if not dest.exists():
         return web.json_response({"path": ""})  # user cancelled
+    # Same head start an upload gets: begin extracting (OCR for a screenshot) while the
+    # user is still typing, so the turn does not wait on it. The runner awaits it per
+    # file before answering either way.
+    try:
+        from personalclaw.dashboard.attachment_extract import get_extractor
+
+        get_extractor().start(str(dest), "image/png")
+    except Exception:
+        logger.debug("screenshot extraction kickoff failed", exc_info=True)
     return web.json_response({"path": str(dest)})
 
 
@@ -2828,6 +2837,9 @@ async def api_dashboard_config(request: web.Request) -> web.Response:
             "offer_check_work",
             "stream_reveal",
             "confirm_close_session",
+            # The screen-context master switch. Writable here (the panel the
+            # Settings toggle drives) as well as through the PATCH allowlist.
+            "screen_share_enabled",
             # home dashboard widget layout (customization; per-user)
             "dashboard_layout",
         }
@@ -2922,6 +2934,7 @@ async def api_dashboard_config(request: web.Request) -> web.Response:
             "offer_check_work",
             "confirm_close_session",
             "auto_tag_sessions",
+            "screen_share_enabled",
         ):
             if _bool_field in body:
                 val = body[_bool_field]
@@ -2973,6 +2986,7 @@ async def api_dashboard_config(request: web.Request) -> web.Response:
             "offer_check_work": cfg.dashboard.offer_check_work,
             "stream_reveal": cfg.dashboard.stream_reveal,
             "confirm_close_session": cfg.dashboard.confirm_close_session,
+            "screen_share_enabled": cfg.dashboard.screen_share_enabled,
             "dashboard_layout": cfg.dashboard.dashboard_layout or {},
         }
     )

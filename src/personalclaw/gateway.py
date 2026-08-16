@@ -62,7 +62,7 @@ from personalclaw.dashboard.token_auth import (
     DEFAULT_BROWSER_SESSION_TTL_SECS,
     generate_token,
 )
-from personalclaw.env import _is_wsl
+from personalclaw.env import _is_wsl, browser_available
 from personalclaw.frontend import build_frontend_async
 from personalclaw.heartbeat import HeartbeatService, is_keep_response, strip_keep_sentinel
 from personalclaw.history import ConversationLog, HistoryConsolidator
@@ -3935,13 +3935,12 @@ class GatewayOrchestrator:
                 ):
                     print(line)
 
-                # Auto-open dashboard — skip on headless remote sessions
-                _is_ssh = bool(os.environ.get("SSH_CONNECTION") or os.environ.get("SSH_CLIENT"))
-                _has_display = bool(os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY"))
-                _skip_open = _is_ssh and not _has_display and sys.platform != "darwin"
+                # Auto-open dashboard — skip on headless remote sessions. The predicate
+                # lives in `env.browser_available()` because `personalclaw setup` asks the
+                # same question to decide whether to point at this dashboard flow.
                 if self._no_open or not self._cfg.dashboard.auto_open_browser:
                     pass  # suppressed via --no-open flag or config
-                elif _skip_open:
+                elif not browser_available():
                     print("Headless remote session — skipping browser auto-open")
                 else:
                     _open_dashboard(dashboard_url)

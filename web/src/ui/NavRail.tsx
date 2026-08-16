@@ -196,7 +196,10 @@ export function NavRail({
   // makes no sense once you've deliberately opened it).
   const showFull = overlay ? true : !collapsed
   const railBody = (
-    <nav className="flex h-full flex-col gap-1 overflow-y-auto overflow-x-hidden px-m py-l"
+    // `data-tour` is the product tour's anchor for its first stop. A
+    // literal, not a prop: the rail is the shell's one navigation and the tour points at it
+    // by name, so a prop would only let a second rail claim the same anchor.
+    <nav data-tour="rail" className="flex h-full flex-col gap-1 overflow-y-auto overflow-x-hidden px-m py-l"
       style={{ width: overlay ? OVERLAY_W : w, background: 'var(--color-rail)' }}>
       {/* header — logo (the collapse toggle lives in the main area, not here) */}
       <div className={cx('flex items-center pb-m', showFull ? 'px-s' : 'justify-center')}>
@@ -280,11 +283,10 @@ export function NavRail({
           // surfaces; it was the single most widespread violation in the app.
           // `inert` removes focusability, pointer events and the a11y tree in one attribute,
           // which is exactly the "closed drawer" semantics.
-          // React 18 has no typed `inert` prop and forwards unknown attributes as STRINGS — and
-          // `inert="false"` is still inert (its mere presence applies). So it must be `''` when
-          // closed and OMITTED when open; a boolean would trap focus in the OPEN drawer.
-          // (React 19 types it as a boolean; revisit on upgrade.)
-          {...(overlayOpen ? {} : { inert: '' })}
+          // React 19 types `inert` as a real boolean and OMITS the attribute when false, so the
+          // plain prop is correct here. The attribute's mere presence applies, so it must be
+          // absent (not `inert="false"`) while open or focus would be trapped in the OPEN drawer.
+          inert={!overlayOpen}
           style={{ width: OVERLAY_W }}>
           {railBody}
         </motion.div>

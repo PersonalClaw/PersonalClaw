@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Loader2 } from 'lucide-react'
+import { Loader2, Network, Sparkles } from 'lucide-react'
 import { GraphZoomControls } from '../../ui/GraphZoomControls'
+import { EmptyState } from '../../ui/ListScaffold'
 
 interface GraphNode { id: string; name?: string; type?: string }
 interface GraphEdge { source: string; target: string; type?: string }
@@ -9,9 +10,14 @@ interface GraphEdge { source: string; target: string; type?: string }
  *  the available width/height; supports wheel/pinch zoom and drag-to-pan via an SVG
  *  viewBox transform, plus zoom buttons and a reset-to-fit control. Hover highlights
  *  a node + its edges; click selects it (opens the entity in the sidebar). */
-export function KnowledgeGraph({ selectedId, onSelect }: {
+export function KnowledgeGraph({ selectedId, onSelect, onRegenerate, regenerating }: {
   selectedId?: string | null
   onSelect?: (name: string) => void
+  /** Runs the ingestion node-graph over items missing insights — the ONLY thing that turns
+   *  items into the entities this view draws. Its header control is `view === 'library'`-only,
+   *  so on this tab it is off screen; the empty state below carries it instead of describing it. */
+  onRegenerate?: () => void
+  regenerating?: boolean
 } = {}) {
   const [graph, setGraph] = useState<{ nodes: GraphNode[]; edges: GraphEdge[] } | null>(null)
   const [hover, setHover] = useState<string | null>(null)
@@ -75,7 +81,25 @@ export function KnowledgeGraph({ selectedId, onSelect }: {
   const endDrag = () => { drag.current = null }
 
   if (!graph) return <div className="grid h-full place-items-center text-on-surface-low"><Loader2 size={20} className="animate-spin" /></div>
-  if (graph.nodes.length === 0) return <div className="grid h-full place-items-center text-on-surface-low text-[0.8125rem]">No entities extracted yet. Add documents to build the graph.</div>
+  // 🔴 THIS STATE MEANS "ITEMS EXIST, ENTITIES DO NOT" — never "the library is empty". The parent
+  // renders this view only when `!empty` (`stats.items > 0`), so the old copy here — "Add documents
+  // to build the graph" — was shown ONLY to people who had already added documents, and never in
+  // the one state where it would have been true. Measured on a seeded home: 6 items, 0 entities,
+  // and that instruction on screen.
+  //
+  // What is actually missing is the enrichment pass, and its control is `view === 'library'`-only,
+  // so it is off screen from here. The empty state carries the action itself rather than pointing at
+  // a button the user cannot see. Through the `EmptyState` primitive, like every other empty state
+  // on this page — the hand-rolled centered div was also the `emptystate` lens's outlier here.
+  if (graph.nodes.length === 0) {
+    return (
+      <div className="grid h-full place-items-center">
+        <EmptyState icon={Network} title="No entities extracted yet"
+          hint="Your items have not been through entity extraction, so there is nothing to draw. Running it re-derives insights for items that are missing them."
+          action={onRegenerate ? { label: regenerating ? 'Extracting…' : 'Regenerate intelligence', onClick: regenerating ? () => {} : onRegenerate, icon: Sparkles } : undefined} />
+      </div>
+    )
+  }
 
   const degree = new Map<string, number>()
   for (const e of graph.edges) { degree.set(e.source, (degree.get(e.source) ?? 0) + 1); degree.set(e.target, (degree.get(e.target) ?? 0) + 1) }
