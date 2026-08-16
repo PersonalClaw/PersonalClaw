@@ -395,7 +395,8 @@
           "done_when": "KnowledgeDetailPage gains a reading mode with the editorial-document house-style reading type scale and a progress indicator; an in-reader highlight persists as a mention/note linked to the item and reappears on the item; a long article reads well; reduced-motion/theme/token-lint pass",
           "deps": [
             "KL-1"
-          ]
+          ],
+          "pr": 1442
         },
         {
           "id": "KL-8",
