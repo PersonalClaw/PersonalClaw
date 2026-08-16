@@ -271,7 +271,7 @@ export function CodeCockpitPage({ id, onBack, onDeleted, onNewTarget, onOpenProj
   // Live updates: snapshot replaces the project; lifecycle events refetch. A
   // gate_check is transient (not persisted) — record a failure, don't refetch;
   // any real lifecycle change clears a stale gate failure + refetches.
-  useRunStream(id, project !== 'missing', {
+  const { connected } = useRunStream(id, project !== 'missing', {
     onSnapshot: (p) => setProject(loopToCodeProject(p)),
     onLifecycle: (event, data) => {
       // The transient gate/stall/judge banners fold through the ONE shared pure reducer
@@ -619,6 +619,19 @@ export function CodeCockpitPage({ id, onBack, onDeleted, onNewTarget, onOpenProj
           )}
           {/* StageTrail (phase-execution status) moved OUT of the title row into the
               dedicated status bar below the header (CockpitMeta) — item 14. */}
+          {/* FEED liveness — the last of the four `useRunStream` consumers to get it, after the
+              workflow run view, the loop cockpit and the design cockpit. A running code loop whose
+              stream dropped keeps showing its last stage while nothing arrives, indistinguishable from
+              a loop that is simply working. Same dot-plus-WORD form `settings/DiagnosticsPanel` ships,
+              so the vocabulary is not re-invented and the colour only confirms the word. Shown only
+              while `active` — a finished loop has no stream to be connected to. */}
+          {active && (
+            <span className="inline-flex shrink-0 items-center gap-1 text-on-surface-low text-[0.75rem]">
+              <span className="inline-block size-1.5 rounded-pill"
+                style={{ background: connected ? 'var(--color-ok)' : 'var(--color-on-surface-low)' }} />
+              {connected ? 'Streaming' : 'Connecting…'}
+            </span>
+          )}
         </div>}
         right={<HeaderActions>
           {/* Run controls + terminal toggle are primary/default (frequent, contextual);

@@ -65,15 +65,21 @@ describe('the loop cockpit says whether its feed is alive', () => {
     expect(code, 'a finished loop has no stream').toMatch(/\{running && \(/)
   })
 
-  it('CodeCockpitPage is the ONE remaining consumer, and that is stated not hidden', () => {
-    // It has the gate already (`const active = p.status === 'running'`) but its TopBar left slot sits
-    // deep in a 3000-line file with no clean insertion anchor, so it was left rather than guessed at.
-    // LoopPlanReview stays a genuine opt-out: a review panel is not a live watch surface.
+  it('CodeCockpitPage now has it too — every watch surface on this hook is covered', () => {
+    // This test previously asserted the OPPOSITE (that CodeCockpitPage was not yet wired), so the gap
+    // could not be mistaken for done. Wiring it and leaving that guard would have turned the rail red —
+    // which is exactly what a guard like that is for.
     const code = read('pages/code/CodeCockpitPage.tsx')
-    expect(code, 'still calls the hook').toMatch(/useRunStream\(/)
-    expect(code, 'and already has the gate a future cycle needs').toMatch(/const active = p\.status === 'running'/)
-    expect(code, 'not yet wired — remove this assertion when it is')
-      .not.toMatch(/const \{ connected \} = useRunStream/)
+    expect(code).toMatch(/const \{ connected \} = useRunStream/)
+    expect(code).toMatch(/\{connected \? 'Streaming' : 'Connecting…'\}/)
+    expect(code, 'gated on its own running flag').toMatch(/\{active && \(/)
+  })
+
+  it('LoopPlanReview stays the one deliberate opt-out', () => {
+    // A review panel is not a live watch surface. It calls the hook and ignores the flag.
+    const code = read('pages/loops/LoopPlanReview.tsx')
+    expect(code).toMatch(/useRunStream\(/)
+    expect(code).not.toMatch(/const \{ connected \} = useRunStream/)
   })
 
   it('the remaining consumers still compile against the new return', () => {
