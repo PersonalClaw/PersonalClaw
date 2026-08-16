@@ -281,7 +281,7 @@
         {
           "id": "MGAV-6",
           "title": "Two-way readable vault: mode config, wikilink projection, sync pass, vault lints, raw capture, seeding, snapshot",
-          "status": "todo",
+          "status": "done",
           "scope": "\u00a75.1 mirror\u2192two-way projection, \u00a75.2 edits flow back, \u00a75.3 structure conventions+lints, \u00a75.5 interop (symlink, raw/ capture, starter seeding, static export, git/snapshot); Session 4",
           "done_when": "memory.vault_mode off|mirror|two_way (back-reads vault_enabled); pages carry frontmatter+source_hash and [[wikilinks]] generated from mem_links with compiled-truth+append-only-timeline shape; on-cadence/on-demand POST /api/memory/vault/sync parses hash-changed pages back through the MemoryService write path (S5 scan, WAL, edit-wins, sync-conflict flag, no data loss); vault lints (backlink symmetry, stale hash, broken links, orphans); raw/ sweep routes files to the knowledge ingest queue only; starter seeding writes only missing/pristine files; snapshot.py adds the vault dir",
           "deps": [
@@ -7720,8 +7720,8 @@
         "plan": "MC"
       },
       {
-        "id": "MGAV-6",
-        "title": "Two-way readable vault: mode config, wikilink projection, sync pass, vault lints, raw capture, seeding, snapshot",
+        "id": "MGAV-9",
+        "title": "FE surfaces: MemoryPanel tabs, MemoryGraph viz + HTML export, full config wiring + as-a-user validation",
         "plan": "MGAV"
       },
       {
@@ -9646,9 +9646,9 @@
         "code": "MGAV",
         "plan": "MEMORY-GRAPH-AND-VAULT",
         "total_atoms": 9,
-        "done": 7,
+        "done": 8,
         "in_progress": 0,
-        "todo": 2,
+        "todo": 1,
         "blocked": 0
       },
       {

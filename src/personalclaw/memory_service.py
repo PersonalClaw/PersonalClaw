@@ -508,13 +508,60 @@ class MemoryService:
         return vs.delete_episodic(mem_id, source=source) if vs else False
 
     def lint(self) -> dict:
-        """Run the memory-health sweep over the backing store; report dict."""
+        """Run the memory-health sweep over the backing store; report dict.
+
+        Also runs the readable-vault checks (§5.3) when a vault is configured — the
+        vault is where a two-way edit can get stuck, so its conflicts belong in the
+        same Health surface as every other memory-health finding rather than in a
+        second report nobody opens."""
         vs = self._vs
         if vs is None:
             return {}
         from personalclaw.memory_lint import lint_memory
+        from personalclaw.memory_vault import vault_for
 
-        return lint_memory(vs).to_dict()
+        try:
+            vault = vault_for(self)
+        except Exception:
+            logger.debug("lint: vault unavailable", exc_info=True)
+            vault = None
+        return lint_memory(vs, vault=vault).to_dict()
+
+    def apply_vault_edit(self, key: str, value: str) -> tuple[bool, str]:
+        """Write a hand-edited vault page back into memory (§5.2). ``(ok, detail)``.
+
+        The normal semantic write path, entered with ``source="vault_edit"`` — chosen
+        for two properties that pull in opposite directions:
+
+        * **The human is authoritative.** ``vault_edit`` is treated like
+          ``user_explicit`` by conflict resolution, so an edit wins over the stored
+          value instead of being refused as "an automated source cannot overwrite a
+          user fact". Without that, editing a fact you typed yourself would silently
+          do nothing — the exact failure §5.2's propose-don't-write inversion exists
+          to avoid.
+        * **The bytes are not.** ``vault_edit`` is deliberately NOT in
+          :attr:`_TRUSTED_WRITE_SOURCES`, so the text passes the S5 injection scan.
+          A vault file is a file: it can hold pasted output from anywhere, and
+          "a human saved it" is not evidence about what is in it.
+
+        Confidence is 1.0 because there is nothing to be unsure about — a person typed
+        it. The write logs its own ``memory_events`` row, so ``undo_event`` restores the
+        pre-edit value; that is what keeps edit-wins recoverable.
+        """
+        vs = self._vs
+        if vs is None:
+            return (False, "no vector store")
+        if self._memory_write_blocked(value, "vault_edit"):
+            return (False, "blocked: injection/steering payload in the edited page")
+        try:
+            rejection = vs.set_semantic(key, value, 1.0, "vault_edit")
+        except Exception as exc:  # a cap/validation error must not lose the page
+            logger.info("vault edit to %s refused: %s", key, exc)
+            return (False, f"refused: {exc}")
+        if rejection is not None:
+            code, reason = rejection
+            return (False, f"rejected ({getattr(code, 'value', code)}): {reason}")
+        return (True, "applied")
 
     # ── entity graph (MEMORY-GRAPH-AND-VAULT §1) ──────────────────────────────
     # Every method degrades to an empty answer when the backing store has no graph

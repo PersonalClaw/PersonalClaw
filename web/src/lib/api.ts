@@ -1715,7 +1715,8 @@ export interface NotificationRulePatch {
   targets?: NotificationTarget[]
   conditions?: { keywords?: string[]; name_mention?: boolean }
 }
-export interface MemorySettings { history_idle_hours: number; history_max_days: number; migrated?: boolean; l1_manifest?: boolean; active_recall?: boolean; proactive_commitments?: boolean; vault_enabled?: boolean; vault_path?: string; graph_enabled?: boolean; push_context?: boolean; push_min_confidence?: number }
+export type MemoryVaultMode = 'off' | 'mirror' | 'two_way'
+export interface MemorySettings { history_idle_hours: number; history_max_days: number; migrated?: boolean; l1_manifest?: boolean; active_recall?: boolean; proactive_commitments?: boolean; vault_mode?: MemoryVaultMode; vault_path?: string; graph_enabled?: boolean; push_context?: boolean; push_min_confidence?: number }
 
 /** Per-arm volunteered-vs-used precision for the push reflex
  *  (MEMORY-GRAPH-AND-VAULT §3). `used` = the record's recall count rose after it
@@ -1727,8 +1728,8 @@ export interface VolunteerStats {
   enabled: boolean
   min_confidence: number
 }
-export interface MemoryVaultStatus { enabled: boolean; path: string; files: number; exists: boolean }
-export interface MemoryVaultSyncResult { records: number; files: number; written: number; pruned: number; path: string }
+export interface MemoryVaultStatus { enabled: boolean; mode: MemoryVaultMode; path: string; files: number; exists: boolean }
+export interface MemoryVaultSyncResult { records: number; files: number; written: number; pruned: number; path: string; mode: MemoryVaultMode; absorbed: number; rejected: number; conflicts: number; raw_ingested: number; seeded: number }
 export interface DailyDigest { day: string; text: string; created_at: string }
 export interface MemoryStats {
   semantic_active: number; semantic_deleted: number; episodic_active: number; episodic_deleted: number

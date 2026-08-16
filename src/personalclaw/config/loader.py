@@ -627,6 +627,31 @@ def _expose_flag(value: object) -> bool:
     return False
 
 
+# The readable-vault modes (MEMORY-GRAPH-AND-VAULT §5.1). Declared here, next to the
+# field, and imported by `memory_vault` + the memory settings handler so the three
+# readers cannot drift into three spellings of "two-way".
+MEMORY_VAULT_MODES = ("off", "mirror", "two_way")
+
+
+def _vault_mode(memory_data: dict) -> str:
+    """Resolve ``memory.vault_mode``, back-reading the retired ``vault_enabled`` flag.
+
+    ``vault_enabled: true`` was the whole vault control before §5.1 split it three ways,
+    so an existing install that turned the mirror on must keep it on across the upgrade —
+    the same back-read shape as ``conductor_skill`` → ``orchestrator_skill``. The legacy
+    flag maps to ``mirror``, never to ``two_way``: reading a user's files back into memory
+    is a new capability and must be chosen, not inherited.
+
+    An unrecognized ``vault_mode`` falls back to the legacy read rather than to ``off``,
+    so a typo in a hand-edited config cannot silently stop mirroring a vault the user is
+    already browsing.
+    """
+    raw = str(memory_data.get("vault_mode", "") or "").strip().lower()
+    if raw in MEMORY_VAULT_MODES:
+        return raw
+    return "mirror" if bool(memory_data.get("vault_enabled", False)) else "off"
+
+
 _BOT_NAME_MAX = 50
 _BOT_NAME_RE = _re.compile(r"[^a-zA-Z0-9 _\-.]")
 
@@ -1293,13 +1318,16 @@ class MemoryConfig:
         default=False,
         metadata=_meta("Migrated", "Whether memory has been migrated to vector store."),
     )
-    vault_enabled: bool = field(
-        default=False,
+    vault_mode: str = field(
+        default="off",
         metadata=_meta(
-            "Memory Vault (Obsidian mirror)",
-            "Mirror memory to a browsable markdown vault (Obsidian-compatible: "
-            "YAML frontmatter + [[wikilinks]] + graph view). Read-only — the vault "
-            "is regenerated from the memory store, never edited by hand. Off by default.",
+            "Memory Vault (Obsidian)",
+            "off = no vault. mirror = write memory out as a browsable markdown vault "
+            "(Obsidian-compatible: YAML frontmatter + [[wikilinks]] + graph view), "
+            "regenerated from the store and never read back. two_way = also read your "
+            "edits back into memory on the next sync — a page you change wins over the "
+            "stored value, and a page the sync cannot parse is left untouched and "
+            "reported in Memory → Health rather than overwritten.",
         ),
     )
     vault_path: str = field(
@@ -4102,15 +4130,17 @@ class AppConfig:
                 auto_promote_enabled=memory_data.get("auto_promote_enabled", True),
                 auto_promote_every_n=memory_data.get("auto_promote_every_n", 10),
                 auto_promote_max_per_run=memory_data.get("auto_promote_max_per_run", 5),
-                # Vault mirror (mem-fs-mirror) — same map-it-through discipline as
-                # the behavior flags above, else a saved toggle reads its default.
-                vault_enabled=memory_data.get("vault_enabled", False),
+                # Readable vault (§5.1) — same map-it-through discipline as the behavior
+                # flags above, else a saved setting reads its default. The mode
+                # back-reads the retired `vault_enabled` bool; see `_vault_mode`.
+                vault_mode=_vault_mode(memory_data),
                 vault_path=memory_data.get("vault_path", "memory-vault"),
                 graph_enabled=_guard_flag(memory_data.get("graph_enabled")),
                 # Opt-in, so a plain read defaulting False — NOT `_guard_flag`, which
                 # fails ON and would silently enable volunteering for every existing
-                # user on upgrade. Same shape as `vault_enabled` above. `_expose_flag`
-                # is reserved for flags that open a network surface; this one doesn't.
+                # user on upgrade. Same shape as `vault_mode` above, which defaults to
+                # "off". `_expose_flag` is reserved for flags that open a network
+                # surface; this one doesn't.
                 push_context=bool(memory_data.get("push_context", False)),
                 push_min_confidence=max(
                     0.0, min(1.0, float(memory_data.get("push_min_confidence", 0.7) or 0.7))
