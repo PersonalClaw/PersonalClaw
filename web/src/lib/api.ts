@@ -2049,6 +2049,35 @@ export interface ReindexJob {
   id: string; model: string; status: 'running' | 'done' | 'error'
   phase: string; done: number; total: number; knowledge: number; memory: number; error: string
 }
+// One resident model occupying RAM right now (matches loaded_occupants() in
+// local_models/residency.py, LMMV §7). `rss_mb` is null for an in-process model — the
+// gateway's heap cannot be attributed per-model, so the honest value is "unknown", never a
+// fabricated split. `is_active` is ATTRIBUTION, not liveness: false means still loaded but
+// no longer bound to any use case, which is the reclaimable case.
+export interface LoadedModel {
+  provider: string; model: string
+  kind: 'in-process' | 'sidecar'
+  rss_mb: number | null
+  is_active: boolean
+  generation?: number; pid?: number
+}
+// A system memory snapshot with the local_models.pressure_warn_pct threshold applied.
+// `source: 'unavailable'` means the host's memory could not be read — every number is 0
+// and `warn` is false, because a false alarm about memory is worse than no alarm.
+export interface MemoryPressure {
+  total_mb: number; used_mb: number; available_mb: number; used_pct: number
+  warn_pct: number; warn: boolean
+  source: 'vm_stat' | 'meminfo' | 'unavailable'
+}
+export interface ResidentProvider {
+  provider: string; display_name: string; ok: boolean
+  state: 'ready' | 'loading' | 'unavailable'
+  kind: 'in-process' | 'sidecar'
+  sidecar: { generation: number; restarts: number; rss_mb: number; alive: boolean } | null
+}
+export interface ResidencySnapshot {
+  loaded: LoadedModel[]; providers: ResidentProvider[]; pressure: MemoryPressure
+}
 export interface DashboardConfig {
   restore_sessions: boolean; restore_window_minutes: number; merge_queued_messages: boolean
   // AI auto-tagging at title-generation time (default on; never touches
@@ -2851,6 +2880,31 @@ export const api = {
     post<{ removed: number; freed_bytes: number }>('/api/models/downloads/cleanup', { confirm: true }),
   deleteLocalModel: (provider: string, model: string) =>
     del(`/api/models/local/${encodeURIComponent(provider)}/${encodeURIComponent(model)}`),
+  // What is occupying RAM right now (LMMV §7) — resident models with attribution, each
+  // provider's readiness, and the system pressure snapshot. One fetch backs both the
+  // Settings section and the dashboard's "On this machine" band.
+  modelsLoaded: () => get<ResidencySnapshot>('/api/models/loaded'),
+  // Idempotent: unloading a provider that holds nothing reports freed:false rather than
+  // pretending. The reply carries a FRESH pressure snapshot, so the UI can show that the
+  // unload actually freed memory instead of asserting it.
+  unloadModelProvider: (provider: string) =>
+    post<{ ok: boolean; provider: string; kind: string; freed: boolean; pressure: MemoryPressure }>(
+      '/api/models/unload', { provider }),
+  // The resumable sidecar install (LMMV §3.2) for a provider declaring execution: sidecar.
+  sidecarInstallStatus: (provider: string) =>
+    get<{
+      provider: string; installed: boolean; managed: boolean; install_dir: string
+      job: {
+        state: string; progress: number
+        steps: { name: string; status: string; detail: string }[]
+        log_tail: string[]; error: string; reason: string; remediation: string
+        weights_progress: number
+      }
+    }>(`/api/models/sidecar/${encodeURIComponent(provider)}/install/status`),
+  startSidecarInstall: (provider: string) =>
+    post<DownloadJob>(`/api/models/sidecar/${encodeURIComponent(provider)}/install`),
+  deleteSidecarInstall: (provider: string) =>
+    del(`/api/models/sidecar/${encodeURIComponent(provider)}/install`),
   // Search a searchable provider's remote installable catalog (ollama's library).
   searchLocalModels: (provider: string, q: string) =>
     get<{ models: LocalModel[] }>(`/api/models/local/${encodeURIComponent(provider)}/search?q=${encodeURIComponent(q)}`).then((d) => d.models ?? []),

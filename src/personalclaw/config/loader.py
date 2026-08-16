@@ -913,6 +913,37 @@ class CompanionConfig:
 
 
 @dataclass
+class LocalModelsConfig:
+    """Local model-manager knobs (LOCAL-MODEL-MANAGER-V2 §9).
+
+    ``pressure_warn_pct`` is where the loaded-models widget's memory bar starts warning —
+    a threshold, not a limit: nothing is ever blocked or unloaded automatically, because
+    on a single-user machine the person watching the bar is the one who gets to decide
+    what to close. ``sidecar_restart_max`` bounds how many times in a row a crashed
+    sidecar child is respawned before the runner stops trying; without a bound, a provider
+    whose venv is genuinely broken becomes a respawn busy-loop instead of one honest
+    error.
+    """
+
+    pressure_warn_pct: int = field(
+        default=85,
+        metadata=_meta(
+            "Memory pressure warning",
+            "Percent of system RAM in use at which the loaded-models bar warns. Advisory "
+            "only — nothing is unloaded for you.",
+        ),
+    )
+    sidecar_restart_max: int = field(
+        default=3,
+        metadata=_meta(
+            "Sidecar restart limit",
+            "How many times in a row a crashed model sidecar is respawned before the "
+            "runner gives up and reports the failure instead.",
+        ),
+    )
+
+
+@dataclass
 class SourcesConfig:
     """Watched-source engine settings (WATCHED-SOURCES §Plug-in Map, SC#12).
 
@@ -3766,6 +3797,12 @@ class AppConfig:
             "Companion apps", "LAN discovery + instance name for native companion clients."
         ),
     )
+    local_models: LocalModelsConfig = field(
+        default_factory=LocalModelsConfig,
+        metadata=_meta(
+            "Local models", "Memory-pressure warning threshold + sidecar restart budget."
+        ),
+    )
     sources: SourcesConfig = field(
         default_factory=SourcesConfig,
         metadata=_meta("Watched sources", "Poll engine for watched feeds, pages and directories."),
@@ -3893,6 +3930,9 @@ class AppConfig:
         companion_data = data.get("companion", {})
         if not isinstance(companion_data, dict):
             companion_data = {}
+        local_models_data = data.get("local_models", {})
+        if not isinstance(local_models_data, dict):
+            local_models_data = {}
         sources_data = data.get("sources", {})
         if not isinstance(sources_data, dict):
             sources_data = {}
@@ -4178,6 +4218,17 @@ class AppConfig:
                 # the user never asked to expose.
                 discovery_enabled=bool(companion_data.get("discovery_enabled", False)),
                 instance_name=str(companion_data.get("instance_name", "") or ""),
+            ),
+            local_models=LocalModelsConfig(
+                # Clamped to a real percentage: a threshold of 0 would warn permanently
+                # and one above 100 could never warn, and both read as "the bar is broken".
+                pressure_warn_pct=min(
+                    100, max(1, _safe_int(local_models_data.get("pressure_warn_pct"), 85))
+                ),
+                # 0 is a coherent choice ("never respawn"); negative is not.
+                sidecar_restart_max=max(
+                    0, _safe_int(local_models_data.get("sidecar_restart_max"), 3)
+                ),
             ),
             sources=SourcesConfig(
                 enabled=bool(sources_data.get("enabled", True)),
@@ -4701,6 +4752,7 @@ class AppConfig:
             "legibility": asdict(self.legibility),
             "ambient": asdict(self.ambient),
             "companion": asdict(self.companion),
+            "local_models": asdict(self.local_models),
             "sources": asdict(self.sources),
             "packs": asdict(self.packs),
             "hooks": self.hooks,
