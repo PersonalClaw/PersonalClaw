@@ -15,7 +15,9 @@
     "playwright": "^1.62.1"
   },
   "overrides": {
-    "@types/react": "^18.3.18",
-    "@types/react-dom": "^18.3.5"
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8",
+    "@types/react": "^19.2.18",
+    "@types/react-dom": "^19.2.4"
   }
 }
