@@ -1,8 +1,8 @@
 {
-  "generatedAt": "2026-08-16T00:36:36.674Z",
+  "generatedAt": "2026-08-16T03:51:57.064Z",
   "totals": {
     "driftHits": 7,
-    "filesScanned": 467,
+    "filesScanned": 470,
     "filesWithDrift": 6
   },
   "byCategory": {
@@ -217,7 +217,7 @@
   "a11y": {
     "outlineNoneCount": 136,
     "outlineNoneFiles": 63,
-    "localFocusVisibleFiles": 30,
+    "localFocusVisibleFiles": 32,
     "reducedMotionFiles": 9,
     "animatedFiles": 162,
     "hasGlobalReducedMotion": true,

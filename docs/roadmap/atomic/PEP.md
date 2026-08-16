@@ -10,7 +10,7 @@ Each atom below executes start-to-finish in one go. If an atom lists dependencie
 
 | Atom | Status | Title | Depends on | Done when |
 |---|---|---|---|---|
-| `PEP-1` | ⬜ | PresetEmptyState primitive + Triggers/Schedule preset on-ramp | — | On a fresh dev home the Triggers empty state shows preset cards; clicking e.g. 'Morning briefing' opens the create flow pre-filled to a working schedule trigger; the expert blank-create path still works unchanged; keyboard/focus a11y verified. |
+| `PEP-1` | ✅ | PresetEmptyState primitive + Triggers/Schedule preset on-ramp | — | On a fresh dev home the Triggers empty state shows preset cards; clicking e.g. 'Morning briefing' opens the create flow pre-filled to a working schedule trigger; the expert blank-create path still works unchanged; keyboard/focus a11y verified. |
 | `PEP-2` | ⬜ | Cross-surface preset empty-state sweep | `PEP-1` | No list surface presents a bare form with no on-ramp; each empty surface deep-links into its existing create flow; expert paths unchanged; validation recorded with screenshots. |
 | `PEP-3` | ⬜ | App Store persistent category/source rail + card polish | `EXT:APP-PLATFORM-EVOLUTION:quality-manifest-block` | Wide viewport shows the rail persistently and narrow falls back to the dropdown; selecting a category/source filters the grid and survives reload via the URL; cards render art-forward with and without hero art; rail is keyboard-navigable with aria-pressed category buttons. |
 | `PEP-4` | ✅ | Onboarding import engine (scanners + writers) | — | A fixture ~/.claude yields instruction+mcp+skills items with secrets counted-and-skipped and re-scan idempotent; importing the fixture creates the memories, MCP entries, and skills/imported/claude_code/*, and a conflicting item reports 'conflict' rather than silently overwriting. |
@@ -26,11 +26,64 @@ Each atom below executes start-to-finish in one go. If an atom lists dependencie
 
 ### `PEP-1` — PresetEmptyState primitive + Triggers/Schedule preset on-ramp
 
-**Status:** todo
+**Status:** done
 
 Build a reusable PresetEmptyState + PresetCard primitive (icon, title, cadence/summary line, description, onPick(prefill)) in the shared UI with keyboard and focus-visible a11y. Apply it to the Triggers/Schedule surface: a data-driven preset catalog (cadence derived from the locale-format seam, not frozen en-US copy), empty-state cards that deep-link into the existing TriggerCreatePage/ScheduleForm with a prefill payload, and grouping of the lifecycle-event combobox (live events first, dormant ones collapsed under 'advanced'). Presets only seed the existing form; the blank expert create path is left unchanged.
 
 **Done when:** On a fresh dev home the Triggers empty state shows preset cards; clicking e.g. 'Morning briefing' opens the create flow pre-filled to a working schedule trigger; the expert blank-create path still works unchanged; keyboard/focus a11y verified.
+
+**DONE.** `web/src/ui/PresetEmptyState.tsx` is the primitive: `PresetCard` (icon, title,
+cadence/summary line, description, `onPick(prefill)`) composing **`TileButton`** for its chrome and
+button semantics — so a preset card inherits the kit's card look and its `focus-visible` ring rather
+than growing a second one — plus `PresetEmptyState` (headline, hint, responsive 1/2-column grid, and
+a `footer` slot for the expert blank path). `prefill` is a type parameter the primitive never reads,
+which is how each surface keeps its own `Prefill` shape. `PresetEmptyState.doc.ts` documents both.
+
+The Triggers catalog is `pages/triggers/triggerPresets.ts`: four presets (Morning briefing, Weekly
+digest, Nightly check, Standup reminder) built by one `preset()` factory so **the id, the title and
+the cadence are each declared once and used twice** — the id as the catalog key AND the `?preset=`
+payload, the title as the card heading AND the trigger's name, the cadence as the card's summary
+line AND the saved cron. A card can therefore never advertise a cadence the saved trigger does not
+have. Cadence is a structured `Cadence` union and its label goes through the **locale seam**
+(`toLocaleTimeString`/`toLocaleDateString`, no explicit locale) rather than frozen copy: measured
+`en-US` "Every day · 8:00 AM" vs `de-DE` "Every day · 8:00" (no meridiem), and Monday/Montag/月曜日.
+
+The seed rides in the URL — `#/triggers/new?kind=schedule&preset=<id>` — like `kind`/`pattern`
+already do, so a seeded flow is deep-linkable, back/forward-safe and survives a reload.
+`TriggerCreatePage` seeds the name and the cadence as lazy `useState` initializers and the ACTION in
+an effect, because the action's config defaults come from the provider's FETCHED `settingsSchema`;
+`seedActionConfig` first, then the preset's values, so `notify`'s `kind: 'info'` default survives the
+merge. `findTriggerPreset('')` and an unknown id both return `null`, which is exactly what leaves the
+expert blank path byte-for-byte what it was.
+
+**Driven on a fresh dev home (port 10021, its own `.dev-home`), not just tested:** the empty state
+renders all four cards; they are tab stops **28–31** with a real focus ring (a **5-layer** box-shadow,
+inset 2px, `:focus-visible` matching) and **Enter activates**; the seeded form arrived with name
+`Morning briefing`, cron `0 8 * * *` and the task prompt filled, plus a line saying it was filled in
+from a preset; Create saved `schedule:clock:morning-briefing` with **`next_run` set**, and
+`POST /api/triggers/<id>/run` returned `{"ok": true, "result": "ran"}` — as did the second preset
+(`Standup reminder`, `45 9 * * 1-5`, `notify`, whose action needs no model). `#/triggers/new` with no
+preset still opens empty with Create `aria-disabled="true"` and the action picker unset. One column at
+420px, two at 1440px. Zero console errors, zero failed requests.
+
+**Two DEVIATIONS, both measured rather than chosen.** (1) The scope asks for the lifecycle combobox's
+dormant events "collapsed under 'advanced'". `Combobox` has no collapsible group, and building one
+would be a new mechanism on a shared primitive; live-first ordering plus a heading that names the dead
+half is how the kit expresses it (`lifecycleEventOptions` in `triggerMeta.ts`). (2) More importantly,
+the plan's premise for that half is **stale**: it describes "~15 events, 7 of which warn 'never
+fires'", and `GET /api/triggers/variables` on a current build returns **15 events, 0 dormant**. An
+unconditional heading would label all fifteen "Live events" and separate nothing, so the headings are
+emitted only when something IS dormant — the picker is unchanged today and both groups appear the
+moment one appears. Both branches are asserted in `lifecycleEventOptions.test.ts`, so the rail is not
+vacuous even though its dormant half currently matches nothing live.
+
+**DISCOVERY for `PEP-2`:** a fresh dev home is **not** trigger-empty. `reconcile_digest_cron`
+registers `system:notification-digest` at boot, so a newcomer's first Triggers visit shows one
+machine-named system row and — because the empty state is gated on `counts.all === 0` — no on-ramp at
+all. That is arguably worse than the empty case this atom fixes. Left alone deliberately: gating the
+empty state on "no USER triggers" would render a list row and an empty state simultaneously, which is
+incoherent. It wants an owner call on whether system-created triggers belong in that list at all.
+
 
 ### `PEP-2` — Cross-surface preset empty-state sweep
 

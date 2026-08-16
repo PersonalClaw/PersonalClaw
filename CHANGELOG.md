@@ -10,6 +10,12 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Added
 
+- **An empty Triggers page now offers four working starters instead of a blank form.** Morning
+  briefing, weekly digest, nightly check and a standup reminder each show their cadence in your
+  own locale's clock, and picking one opens the ordinary create form already filled in — review it,
+  change anything, save. The cards are fully keyboard-operable, and the blank "New trigger" path is
+  exactly where it was.
+
 - **A voice is now a thing you own, not a dropdown value.** Voice profiles hold a name, the
   engine that renders them, a reference clip, a pinned seed and a spoken-consent record, and you
   can bind a different one per surface — one voice in the web dashboard, another for a Slack
