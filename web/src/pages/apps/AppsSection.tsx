@@ -30,7 +30,9 @@ import { useCachedData, invalidateCache } from '../../lib/useCachedData'
 import {
   api, type AppSummary, type AppDepClassification, type AppCatalogEntry,
 } from '../../lib/api'
-import { useGuardedInstall, guardedFromApp, type GuardedResult } from '../../lib/useGuardedInstall'
+import {
+  useGuardedInstall, guardedFromApp, isBlockingResult, terminalRefusalReason, type GuardedResult,
+} from '../../lib/useGuardedInstall'
 import { AppIcon } from './appIcon'
 import { AppConfigFields, useAppConfig } from './appConfigForm'
 import { isInNav, setInNav } from './navApps'
@@ -659,10 +661,10 @@ function StoreView({ catalog, catalogError, result, totalKnown, installedCount, 
     const r = await guarded.install()
     setBusy(null)
     if (r?.ok) { onInstalled(); reloadCatalog(); return }
-    // A scan verdict (warning → consentable, or dangerous → blocked) OR a P21
-    // client-install directive (the one-liner) opens the panel; a plain error
+    // A consentable warning, a terminal refusal (dangerous content or an invalid
+    // signature), OR a P21 client-install directive opens the panel; a plain error
     // already surfaced via `guarded.error`.
-    if (r && (r.needsConsent || r.scan?.verdict === 'dangerous' || r.clientInstall)) setPending({ source, label })
+    if (isBlockingResult(r)) setPending({ source, label })
   }
 
   async function confirmPending() {
@@ -748,7 +750,7 @@ function SourcesPanel({ catalog, reloadCatalog, onInstalled }: {
     const r = await guarded.install()
     setBusy(null)
     if (r?.ok) { onInstalled(); reloadCatalog(); return }
-    if (r && (r.needsConsent || r.scan?.verdict === 'dangerous' || r.clientInstall)) setPending({ source, label })
+    if (isBlockingResult(r)) setPending({ source, label })
   }
 
   async function confirmPending() {
@@ -1043,7 +1045,7 @@ function InstallModal({ onClose, onInstalled }: { onClose: () => void; onInstall
     if (r?.ok) onInstalled()
   }
 
-  const dangerous = guarded.blocked?.scan?.verdict === 'dangerous'
+  const refusal = terminalRefusalReason(guarded.blocked)
   const needsConsent = guarded.blocked?.needsConsent
 
   return (
@@ -1068,9 +1070,9 @@ function InstallModal({ onClose, onInstalled }: { onClose: () => void; onInstall
               {guarded.busy ? <Loader2 size={16} className="animate-spin" /> : <ShieldAlert size={16} />} Install anyway
             </Button>
           ) : (
-            <Button variant="primary" disabled={guarded.busy || dangerous || !source.trim()} onClick={() => doInstall(false)}
-              // `dangerous` is a SECURITY verdict, not a missing field — it needs its own sentence.
-              disabledReason={dangerous ? 'The security scan flagged this app as dangerous' : !source.trim() ? 'Enter a source first' : undefined}>
+            <Button variant="primary" disabled={guarded.busy || !!refusal || !source.trim()} onClick={() => doInstall(false)}
+              // A terminal refusal is a SECURITY outcome, not a missing field — it needs its own sentence.
+              disabledReason={refusal || (!source.trim() ? 'Enter a source first' : undefined)}>
               {guarded.busy ? <Loader2 size={16} className="animate-spin" /> : <Download size={16} />} Install
             </Button>
           )}
@@ -1092,7 +1094,7 @@ function UpdateModal({ name, onClose, onUpdated }: { name: string; onClose: () =
     if (r?.ok) onUpdated()
   }
 
-  const dangerous = guarded.blocked?.scan?.verdict === 'dangerous'
+  const refusal = terminalRefusalReason(guarded.blocked)
   const needsConsent = guarded.blocked?.needsConsent
 
   return (
@@ -1115,8 +1117,8 @@ function UpdateModal({ name, onClose, onUpdated }: { name: string; onClose: () =
               {guarded.busy ? <Loader2 size={16} className="animate-spin" /> : <ShieldAlert size={16} />} Update anyway
             </Button>
           ) : (
-            <Button variant="primary" disabled={guarded.busy || dangerous || !source.trim()} onClick={() => doUpdate(false)}
-              disabledReason={dangerous ? 'The security scan flagged this update as dangerous' : !source.trim() ? 'Enter a source first' : undefined}>
+            <Button variant="primary" disabled={guarded.busy || !!refusal || !source.trim()} onClick={() => doUpdate(false)}
+              disabledReason={refusal || (!source.trim() ? 'Enter a source first' : undefined)}>
               {guarded.busy ? <Loader2 size={16} className="animate-spin" /> : <RefreshCw size={16} />} Update
             </Button>
           )}
@@ -1289,7 +1291,7 @@ function StoreDetailPanel({ item, onInstalled }: { item: StoreItem; onInstalled:
   async function install(confirm: boolean) {
     const r = confirm ? await guarded.confirmInstall() : await guarded.install()
     if (r?.ok) { onInstalled(); return }
-    if (r && (r.needsConsent || r.scan?.verdict === 'dangerous')) setConsent(r)
+    if (isBlockingResult(r)) setConsent(r)
   }
 
   return (

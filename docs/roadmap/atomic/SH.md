@@ -12,7 +12,7 @@ Each atom below executes start-to-finish in one go. If an atom lists dependencie
 |---|---|---|---|---|
 | `SH-1` | ✅ | Keychain credential backend selector behind save_credential/read, keyring optional extra, headless fail-closed to .env 0600, doctor reports active backend | — | reads are backend-transparent; headless fixture (no keyring) falls back to .env 0600 with a doctor warning (never plaintext-elsewhere); doctor reports the active backend; unit tests cover both backends; keyring added as optional extra in pyproject.toml |
 | `SH-2` | ⬜ | credential_keychain gate (class B) + m_*_credentials_to_keychain migration (snapshot-backed, rollback restores .env) + Settings 'move to keychain' action | `SH-1` | migration fixture (fake keyring) moves .env secrets to keychain and removes the keys, idempotent + verify passes; rollback restores .env; portability export still excludes secrets; Settings action runs the migration with a visible snapshot-confirm step; macOS migrate/rollback + headless .env-fallback validation both recorded |
-| `SH-3` | ⬜ | Signing scheme decision + scripts/sign_app.py + in-tree public key; Store verifies signature at install; ScanReport/consent payload gains signature {state,signer}; unsigned stays community-tier installable | — | signing scheme doc records rationale (minisign recommended); signing+verifying a sample bundle round-trips locally; signed first-party bundle shows 'signed by PersonalClaw'; tampered signature refused with reason; unsigned bundle installs at community tier; consent UI renders the signature state |
+| `SH-3` | ✅ | Signing scheme decision + scripts/sign_app.py + in-tree public key; Store verifies signature at install; ScanReport/consent payload gains signature {state,signer}; unsigned stays community-tier installable | — | signing scheme doc records rationale (minisign recommended); signing+verifying a sample bundle round-trips locally; signed first-party bundle shows 'signed by PersonalClaw'; tampered signature refused with reason; unsigned bundle installs at community tier; consent UI renders the signature state |
 | `SH-4` | ⬜ | Release pipeline signs first-party app bundles + core release artifacts; registry records signer identity per listing | `SH-3`, `EXT:CI-RELEASE-ENGINEERING:release.yml pipeline to sign artifacts (present/done)`, `EXT:ECOSYSTEM-TOOLING:registry.json listings record signer identity` | released bundles carry valid signatures verified in CI; registry validation script records signer per listing |
 | `SH-5` | ✅ | Adversarial corpus harness (archive/integrity-race/verdict-evasion/invisible-char/degenerate-manifest) against SkillScanner/install_guarded + scanned==installed race invariant + nightly CI job + published methodology doc | — | each of the five attack classes has >=1 asserting test; a swap-after-scan race fixture proves scanned-bytes==installed-bytes holds; nightly job in full.yml runs the corpus; docs/security/scanner-testing.md lets an outsider reproduce; a deliberate scanner weakness on a branch turns the corpus red |
 | `SH-6` | ✅ | Baseline denylist as packaged data file (baseline_denylist.json + sha256) with integrity re-assert on read + periodic re-verify, SEL baseline_denylist_reasserted/_tamper_attempt events, strictly-additive user config, shared source with guardrails/denylist.py | — | mutating the in-memory denylist at runtime is healed on next denied_command_patterns() read and SEL-logged; effective set is provably a superset of the packaged baseline (property test); user additions still merge (dedupe, no shrink path); guardrails/denylist.py loads the same packaged source |
@@ -87,12 +87,70 @@ Session 1 T1.2/T1.3/V1; Contracts C1 migration m_*_credentials_to_keychain; owne
 
 ### `SH-3` — Signing scheme decision + scripts/sign_app.py + in-tree public key; Store verifies signature at install; ScanReport/consent payload gains signature {state,signer}; unsigned stays community-tier installable
 
-**Status:** todo
+**Status:** done
 
 Session 2 — Signed manifests + registry trust / T2.1, T2.2, V2; Design S2; Contracts C2; owner task 2 (generate signing key)
 
 **Done when:** signing scheme doc records rationale (minisign recommended); signing+verifying a sample bundle round-trips locally; signed first-party bundle shows 'signed by PersonalClaw'; tampered signature refused with reason; unsigned bundle installs at community tier; consent UI renders the signature state
 
+**DONE (2026-08-15):** the scheme decision is **detached Ed25519 signatures in minisign's on-wire
+format over a whole-tree digest manifest** — recorded with its rejected alternatives in
+`docs/security/signing.md` (Sigstore keyless: moves the trust root to a cert chain + transparency
+log, so verifying an install would want network on a path that must be offline/deterministic, and
+its recovery story is worse for a solo maintainer; signing `app.json` alone: the classic swap hole,
+worse than nothing because it renders as trust; stdlib HMAC: symmetric, so every verifier could
+forge; PyNaCl: a new wheel when `cryptography` was already transitive; hand-rolled Ed25519: never;
+minisign's scrypt-encrypted SECRET-key format: key derivation for no security gain — the public-key
+and signature formats ARE minisign's, so the reference CLI interoperates both ways).
+
+`src/personalclaw/signing.py` is the verifier: a signed bundle carries `.pclaw-signature.sha256`
+(canonical `pclaw-sig-v1` + sorted `sha256  relpath` for **every** file) and
+`.pclaw-signature.sha256.minisig` over that file's exact bytes. Verification re-derives the manifest
+from the tree and requires **byte equality**, so modified / **added** / removed / renamed files are
+one comparison — the added-file case is the one a plain digest list misses. Nothing is excluded but
+the two signature files; symlinks are refused rather than skipped, because an uncovered tree entry
+IS the hole. Every failure path returns `invalid` with a reason (missing half, malformed base64,
+short block, unknown algorithm, absent trusted comment, unknown key, non-verifying signature,
+tampered trusted comment, manifest drift, and a missing Ed25519 backend — a signature that cannot be
+checked is refused, not accepted).
+
+`apps/app_manager.py::_signature_gate` runs it at step 3 of `install()` **and** `update()`, on the
+quarantined staged copy, before the content scan and before the commit — `update()` included, or
+"update" would be the way around signing. `invalid` is terminal and `confirm=True` does not override
+it (consent covers risk, not tampering); `signed` raises a `community` origin to `official` and never
+lowers a tier; `unsigned` installs unchanged at community tier. `ScanReport` gained
+`signature: SignatureInfo` serializing `{state, signer, reason}`, defaulting to `unsigned` so a path
+that never verified cannot render "signed by". The consent surface renders all three states
+(`installConsent.tsx::SignatureRow`), and `useGuardedInstall.ts::terminalRefusalReason` replaced the
+three copied `verdict === 'dangerous'` checks with one predicate, so the second terminal cause could
+not be forgotten on one of the three install surfaces.
+
+`scripts/sign_app.py` is the maintainer half (`gen-key` / `sign` / `verify`); the tests import THAT
+module rather than a parallel test signer, so a broken verifier cannot be agreed with by a
+sympathetic fixture. **No private key material is in the repo** — the trust store
+(`src/personalclaw/trusted_keys/`, packaged via `pyproject.toml`) ships public halves only and tests
+generate ephemeral keypairs at runtime, asserted by
+`test_no_private_key_material_is_committed`. `cryptography>=42` is now a DECLARED core dep
+(previously transitive via `pdfplumber`→`pdfminer.six`, so zero added install weight): asymmetric
+signing is a requirement, not a preference, and a security control must not rest on someone else's
+transitive dep.
+
+`tests/security/test_app_signature.py` — 34 tests. The load-bearing one is `TestSwapTheUnsignedHalf`
+(swap the payload / add an unlisted file / remove a signed file after signing → refused), with a
+meta-assertion that builds the weak manifest-only check in-process and proves it WOULD pass the swap.
+Ordering is measured, not asserted: the gate is instrumented to record step order and whether the
+live app dir existed at verify time, and a tampered bundle's `setup.onInstall` marker file proves the
+payload never executed. Falsified with 7 mutations, each reding ≥1 test: unconditional `signed` (24
+red), manifest-only coverage (9), verify-after-scan (2, incl. "the scan ran after a terminal
+signature refusal"), always-true Ed25519 (2), half-signature→`unsigned` (2), no tier elevation (1),
+signer taken from the bundle's own comment (4).
+
+**OWNER TASK 2 OUTSTANDING (not a blocker on this atom):** the production keypair is deliberately
+NOT generated here — an agent must not create the private key it would then hand over. The trust
+store therefore ships EMPTY, which is the safe direction: unknown key → refused, and unsigned
+bundles are unaffected, so shipped behaviour is unchanged until the owner runs
+`scripts/sign_app.py gen-key --signer PersonalClaw` and drops the `.pub` in. Until then "signed by
+PersonalClaw" is provable only under an ephemeral key in tests. `SH-4` wires the release pipeline.
 ### `SH-4` — Release pipeline signs first-party app bundles + core release artifacts; registry records signer identity per listing
 
 **Status:** todo
