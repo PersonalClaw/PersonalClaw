@@ -232,10 +232,21 @@ export function KnowledgeDetail({ item, onChanged, onDeleted, onTagClick, onShow
         label={(full.read_state || 'unread') === 'reading' ? 'Reading — mark read'
           : full.read_state === 'read' ? 'Read — mark unread' : 'Mark as reading'}
         active={(full.read_state || 'unread') !== 'unread'} onClick={cycleReadState} />
-      <HeaderControl icon={Star} label={full.favorited ? 'Favorited' : 'Favorite'}
-        active={!!full.favorited} onClick={toggleFavorite} />
-      <HeaderControl icon={Pin} label={full.is_pinned ? 'Pinned' : 'Pin'} active={full.is_pinned} onClick={() => toggleFlag('is_pinned')} />
-      <HeaderControl icon={Archive} label={full.is_archived ? 'Archived' : 'Archive'} active={full.is_archived} onClick={() => toggleFlag('is_archived')} />
+      {/* These three name the ACTION and never restate the state, because `active` already
+          becomes `aria-pressed` (HeaderActions.tsx) and the pressed styling already shows it.
+          They used to flip to the past participle — "Favorited" / "Pinned" / "Archived" — which
+          the ARIA toggle-button pattern warns against combining with `aria-pressed`: the state
+          then arrives twice ("Favorited, pressed") while the one thing the user needs, what
+          this click will DO, is never said. It also made the button the only control here whose
+          name changed under the user, so a spoken label could not be relied on to find it.
+          The five other `active` header controls in the tree ("Activity", "Chat history",
+          "Inbox settings", "Details", "More details") already keep their labels constant — this
+          converges onto that, rather than inventing a form.
+          The read-state control ABOVE deliberately does NOT follow this: it cycles through
+          three states, so a constant label could not say what the next press does. */}
+      <HeaderControl icon={Star} label="Favorite" active={!!full.favorited} onClick={toggleFavorite} />
+      <HeaderControl icon={Pin} label="Pin" active={full.is_pinned} onClick={() => toggleFlag('is_pinned')} />
+      <HeaderControl icon={Archive} label="Archive" active={full.is_archived} onClick={() => toggleFlag('is_archived')} />
       {onShowDetails && (
         <HeaderControl icon={Layers} label={`More details${detailsCount ? ` · ${detailsCount}` : ''}`} active={detailsOpen} priority="low" onClick={onShowDetails} />
       )}
