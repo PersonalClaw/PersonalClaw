@@ -208,6 +208,128 @@ async def api_model_download_cleanup(request: web.Request) -> web.Response:
     return web.json_response({"removed": removed, "freed_bytes": freed})
 
 
+async def api_sidecar_install_start(request: web.Request) -> web.Response:
+    """POST /api/models/sidecar/{provider}/install — start the resumable install.
+
+    Returns ``202`` with the canonical job record. Safe to call again: an in-flight job is
+    returned as-is and a finished install re-runs steps that existence-check themselves
+    into ``skipped``, so a killed install resumes rather than starting over (§3.2).
+    """
+    provider = request.match_info["provider"]
+    job, error = _registry(request).start_install(provider)
+    if error is not None:
+        return web.json_response({"error": error}, status=400)
+    assert job is not None  # start_install returns one of the two
+    return web.json_response(job.to_dict(), status=202)
+
+
+async def api_sidecar_install_status(request: web.Request) -> web.Response:
+    """GET /api/models/sidecar/{provider}/install/status — the rich install poll shape.
+
+    ``{provider, installed, managed, install_dir, job: {state, steps, log_tail, error,
+    remediation, weights_progress}}``. ``remediation`` is deliberately separate from
+    ``error``: the error says what broke, the remediation says what the user should DO,
+    which is the difference between a dead end and a next step.
+    """
+    provider = request.match_info["provider"]
+    registry = _registry(request)
+    install = registry.install(provider)
+    if install is None:
+        return web.json_response(
+            {"error": f"{provider!r} declares no sidecar provider"}, status=404
+        )
+    status = install.status()
+    job = registry.install_job(provider)
+    status["job"] = {
+        "state": job.state if job is not None else "idle",
+        "progress": job.progress if job is not None else 0.0,
+        "steps": status.pop("steps"),
+        "log_tail": status.pop("log_tail"),
+        "error": status.pop("error"),
+        "reason": status.pop("reason"),
+        "remediation": status.pop("remediation"),
+        "weights_progress": _weights_progress(registry, provider),
+    }
+    return web.json_response(status)
+
+
+def _weights_progress(registry, provider: str) -> float:
+    """Progress of a live WEIGHTS job for *provider* (0.0 when none is running).
+
+    The install surface reports weights progress without owning it: the weights fetch is
+    the ordinary download job, read here from the same canonical record the download UI
+    reads (§4.1). One writer, two readers — never a second progress source.
+    """
+    for job in registry.list():
+        if job.provider == provider and job.kind == "weights" and job.state == "running":
+            return job.progress
+    return 0.0
+
+
+async def api_sidecar_install_delete(request: web.Request) -> web.Response:
+    """DELETE /api/models/sidecar/{provider}/install — remove a CORE-created venv.
+
+    ``409`` while a job runs (deleting the tree under a live pip is how you get a
+    half-installed venv that every later step believes), and ``400`` for a venv core did
+    not create — a user-managed environment is never deleted, because core cannot know
+    what else depends on it.
+    """
+    provider = request.match_info["provider"]
+    registry = _registry(request)
+    install = registry.install(provider)
+    if install is None:
+        return web.json_response(
+            {"error": f"{provider!r} declares no sidecar provider"}, status=404
+        )
+    job = registry.install_job(provider)
+    if job is not None and job.state in ("queued", "running"):
+        return web.json_response(
+            {"error": "install in progress", "reason": "install_running"}, status=409
+        )
+    if not install.managed:
+        return web.json_response(
+            {
+                "error": "this venv was not created by PersonalClaw and is never deleted",
+                "reason": "unmanaged_venv",
+            },
+            status=400,
+        )
+    from personalclaw.local_models.sidecar import unregister_runner
+
+    unregister_runner(provider)  # stop the child before its interpreter disappears
+    return web.json_response({"ok": install.delete()})
+
+
+async def api_models_loaded(request: web.Request) -> web.Response:
+    """GET /api/models/loaded — every resident model + the memory-pressure snapshot.
+
+    Answers "what is occupying my RAM right now", including the reclaimable case: a model
+    still resident after its binding moved elsewhere reports ``is_active: false``.
+    """
+    from personalclaw.local_models.residency import residency_snapshot
+
+    return web.json_response(await residency_snapshot())
+
+
+async def api_models_unload(request: web.Request) -> web.Response:
+    """POST /api/models/unload {provider} — free what a provider holds. Idempotent.
+
+    The reply carries a FRESH pressure snapshot, so the surface can show that the unload
+    actually freed memory instead of asserting it (Success Criterion 8).
+    """
+    from personalclaw.local_models.residency import unload_provider
+
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    provider = str((body or {}).get("provider", "")) if isinstance(body, dict) else ""
+    if not provider:
+        return web.json_response({"error": "Missing 'provider'"}, status=400)
+    result = await unload_provider(provider)
+    return web.json_response(result, status=200 if result.get("ok") else 404)
+
+
 async def api_local_model_search(request: web.Request) -> web.Response:
     """GET /api/models/local/{provider}/search?q= — search a searchable provider's
     remote catalog (ollama's library). Empty for fixed-catalog providers."""
@@ -242,6 +364,14 @@ def register_model_download_routes(app: web.Application) -> None:
     app.router.add_post("/api/models/downloads/cleanup", api_model_download_cleanup)
     app.router.add_get("/api/models/downloads/{id}/stream", api_model_download_stream)
     app.router.add_delete("/api/models/downloads/{id}", api_model_download_cancel)
+    # Sidecar isolation (LMMV §3.2): the resumable install job for a provider that
+    # declares `execution: sidecar`. Same job registry + SSE hub as a weights download.
+    app.router.add_post("/api/models/sidecar/{provider}/install", api_sidecar_install_start)
+    app.router.add_get("/api/models/sidecar/{provider}/install/status", api_sidecar_install_status)
+    app.router.add_delete("/api/models/sidecar/{provider}/install", api_sidecar_install_delete)
+    # Residency / memory pressure (LMMV §7).
+    app.router.add_get("/api/models/loaded", api_models_loaded)
+    app.router.add_post("/api/models/unload", api_models_unload)
     # Generic per-provider local-model management (replaces the per-kind routes).
     app.router.add_get("/api/models/local/{provider}/search", api_local_model_search)
     app.router.add_delete("/api/models/local/{provider}/{model}", api_local_model_delete)

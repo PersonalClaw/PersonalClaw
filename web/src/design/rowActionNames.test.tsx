@@ -69,6 +69,9 @@ describe('every row-scoped RowAction names its row', () => {
     ['pages/dashboard/widgets/PinnedArtifacts.tsx', 1, 0],
     ['pages/dashboard/widgets/ActiveWork.tsx', 2, 1],   // the composer's Send is a singleton
     ['pages/dashboard/widgets/SystemHealth.tsx', 0, 2], // doctor + update: one each, no rows
+    // One Unload per resident model (LMMV-5) — five rows of a bare "Unload" is this rail's
+    // exact defect, so the name carries the model.
+    ['pages/dashboard/widgets/OnThisMachine.tsx', 1, 0],
   ]
 
   for (const [rel, named, singletons] of WIDGETS) {

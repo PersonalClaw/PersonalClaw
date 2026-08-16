@@ -2566,7 +2566,7 @@
         {
           "id": "LMMV-5",
           "title": "Session 4 \u2014 Sidecar isolation runner + resumable install jobs + loaded-models/memory-pressure widget",
-          "status": "todo",
+          "status": "done",
           "scope": "\u00a73 Sidecar Isolation (dedicated-venv subprocesses); \u00a73.2 Resumable install jobs; \u00a77 Loaded-Models / Memory-Pressure Widget; \u00a79 pressure_warn_pct / sidecar_restart_max config fields",
           "done_when": "local_models/sidecar.py runner owns a per-app dedicated venv, a newline-JSON stdio child (5 verbs), process-generation counters, and a watchdog; ProviderConfig gains execution: in-process|sidecar (default in-process, PROVIDER_TYPES/handler set untouched); the sentence-transformers sidecar variant, killed mid-encode, keeps the gateway alive, raises typed SidecarCrashed, respawns, and search recovers without restart (Success Criterion 1); resumable/idempotent install jobs run on ModelDownloadRegistry via GET /api/models/sidecar/{provider}/install/status (steps/log_tail/remediation, DELETE refuses 409 while running); GET /api/models/loaded + POST /api/models/unload back a compact FE loaded-models section (rows + Unload + pressure bar) and a Dashboard bento 'On this machine' tile via ABC loaded_models()/unload()/ensure_ready(); Unload frees RSS per the pressure snapshot and a model resident after a binding switch shows is_active:false (Success Criterion 8); child-reported rss_mb stat frames feed the widget.",
           "deps": [
@@ -7690,11 +7690,6 @@
         "plan": "KL"
       },
       {
-        "id": "LMMV-5",
-        "title": "Session 4 \u2014 Sidecar isolation runner + resumable install jobs + loaded-models/memory-pressure widget",
-        "plan": "LMMV"
-      },
-      {
         "id": "LMMV-6",
         "title": "Session 5a \u2014 Subscription-credential model providers (credential_source resolver + one reference app)",
         "plan": "LMMV"
@@ -9817,9 +9812,9 @@
         "code": "LMMV",
         "plan": "LOCAL-MODEL-MANAGER-V2",
         "total_atoms": 7,
-        "done": 4,
+        "done": 5,
         "in_progress": 0,
-        "todo": 3,
+        "todo": 2,
         "blocked": 0
       },
       {

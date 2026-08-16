@@ -342,5 +342,11 @@ def load_all_extensions() -> None:
         from personalclaw.apps.backend_runtime import start_backend_watchdog
 
         start_backend_watchdog()
+        # Same semantics, different children: a model sidecar (LMMV §3.1) is respawned on
+        # crash and never survives the gateway. A sweep over an empty runner table is
+        # free, so this costs nothing until an app declares `execution: sidecar`.
+        from personalclaw.local_models.sidecar import start_sidecar_watchdog
+
+        start_sidecar_watchdog()
     except Exception:
         logger.debug("app backend startup launch failed", exc_info=True)

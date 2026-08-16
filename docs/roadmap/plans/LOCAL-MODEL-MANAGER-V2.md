@@ -405,3 +405,93 @@ Where each piece plugs into the pluggable-provider architecture (recon: provider
   byte-sum/host-token/license-sniff helpers. This keeps the atom dependency-complete without a
   half-built mechanism; Success Criterion 6's "download/bind/RUN" through the real app UI completes
   when the apps-repo cards land.
+
+- 2026-08-16 — **DONE (LMMV-5 / Session 4 — Sidecar isolation + resumable installs + the
+  residency surface). Success Criterion 1 proven against a real killed child; Success
+  Criterion 8's attribution + free-and-verify proven; two DEVIATIONS.**
+
+  `local_models/sidecar.py` (runner, install jobs, live-runner table, watchdog) +
+  `_sidecar_child.py` (the stdlib-only child harness, loaded by path because the app's
+  dedicated venv has no `personalclaw` in it) + `local_models/residency.py` (what is resident,
+  what it costs, and the unload lever). `ProviderConfig.execution` is a FIELD on the existing
+  `model` type — `PROVIDER_TYPES` and the `_TypeHandler` set are untouched, and the default
+  stays `in-process` under test, because a sidecar default would silently change the runtime of
+  every provider already installed on every machine.
+
+  **Success Criterion 1, the only way it means anything.** A real child is really `SIGKILL`ed
+  mid-encode: the caller gets `SidecarCrashed(reason="signal_9")`, the gateway lives, and the
+  next call brings generation 2 up and returns a real result. A mocked crash would have skipped
+  the code that decides whether a half-written frame is believed — which is exactly where the
+  first measured finding was.
+
+  **Finding 1 — a truncated frame is only dangerous when it is VALID JSON.** The first test
+  killed the child mid-fragment and asserted a crash; removing the newline-completeness guard
+  still passed, because `json.loads` rejects `{"result": {"vector": [0.1,` on its own. The
+  guard's unique job is narrower and worse: a frame that is complete, valid, and carries the
+  pending request id, but has no terminating newline because the process died between the write
+  and the flush. The test now produces exactly that, and without the guard the caller is handed
+  `{'vector': ['HALF']}` from a dead process. A mutation that reds nothing is a lead, and this
+  one led to a real hole in the test rather than a real hole in the code.
+
+  **Finding 2 — a mis-nested `call` payload was silently dropped.** Worker arguments belong
+  under `payload`; `{"method": "encode", "hang": true}` reached the worker as `{}` and the call
+  returned instantly with a plausible answer. That is the arg-nesting bug class, so the child
+  now REFUSES an unexpected top-level key instead of handing the worker an empty dict.
+
+  **Two design calls worth naming.** (a) *The generation fence lives in exactly one place.*
+  `deliver()` fences a superseded frame; `_await_reply` matches only on request id and
+  deliberately does not repeat the generation compare. Two overlapping half-rules mask each
+  other, and a mutation of either then reds nothing — the redundancy would have made the fence
+  untestable. Ids are `"<generation>:<seq>"`, so the test forges the CURRENT id onto a
+  previous-generation frame, the one shape only the counter can catch. (b) *`restarts` counts on
+  generation, not on a live child handle.* The first version keyed off the handle and
+  undercounted, because a crash detaches it — precisely the case the counter exists to report.
+
+  **The watchdog is inspectable by construction** — `watchdog_sweep()` returns
+  `{action: noop|respawned|budget_exhausted, generation, restarts}`, so the tests assert the
+  decision instead of sleeping and hoping. `sidecar_restart_max` bounds consecutive respawns: a
+  genuinely broken venv yields one honest error rather than a respawn busy-loop.
+
+  **Installs ride the existing job registry** (§3.2 as written): `kind: "sidecar-install"` was
+  already reserved in LMMV-3's canonical record, so there is no second registry and no second
+  SSE hub. The deps receipt is written only after pip exits zero — that single ordering is what
+  makes a killed install RESUME instead of skip. `DELETE` answers 409 while a job runs (deleting
+  the tree under a live pip is how a half-installed venv is born) and 400 for a venv core did
+  not create.
+
+  **Residency is honest about what it cannot know.** A sidecar's `rss_mb` is child-reported
+  (`stat` frames); an in-process model's is `None`, never a fabricated split of the gateway's
+  own heap. `is_active` is ATTRIBUTION — a model still resident after its binding moved reads
+  `is_active: false`, which is the reclaimable row and therefore sorts first — and it is matched
+  under BOTH spellings of the provider name (the registry's app name and `provider.name`), or a
+  bound model would show as reclaimable. Unload returns a fresh pressure snapshot, so "Unload
+  frees RSS" is shown rather than asserted.
+
+  **DEVIATION 1 — there is no Dashboard bento to put a tile in.** §7 says "reusing the existing
+  Dashboard bento surface", but `DashboardPage.tsx` records that the bento grid and its per-user
+  layout persistence were deliberately retired ("no bento boxes"). "On this machine" therefore
+  ships as a hard-imported widget in a `<Section>` band — the shape `PinnedArtifacts` uses,
+  which is what the retirement left in place. One `Meter` primitive was added to `ui/` (with its
+  required `.doc.ts`) instead of hand-rolling a fourth linear bar next to the three that already
+  exist, and both surfaces share `lib/residency.ts` so they cannot drift on which model is
+  reclaimable.
+
+  **DEVIATION 2 — the sentence-transformers sidecar VARIANT is an apps-repo follow-up**, the
+  same cross-repo boundary LMMV-2 recorded: `git ls-files apps/` is still 0 here, so no provider
+  app is tracked in core and an edit to a seeded copy is not a durable change. The variant is an
+  `app.json` with `execution: "sidecar"` plus a worker module, both app-side. Everything core
+  owes it exists and is proven end-to-end against a real child; what the apps-repo change adds is
+  that the child is sentence-transformers. The env-var band-aids
+  (`TOKENIZERS_PARALLELISM=false`, forced single-process encode) become that worker's internal
+  defaults there, so §11's "DEMOTED to sidecar-internal defaults" completes with it.
+
+  **Config:** a new `local_models` section (`pressure_warn_pct`, `sidecar_restart_max`) through
+  all five wiring points + `config-baseline.json`. Both advisory: the threshold blocks nothing
+  and nothing is ever auto-unloaded — on a single-user machine the person watching the bar is
+  the one who decides what to close.
+
+  **Gates:** `make lint` clean (mypy 876 files) · `tests/test_local_model_sidecar.py` 57 passed ·
+  the rails (config-baseline / config-roundtrip / inert-surface / portability /
+  durability-inventory / resilience-degraded / agent-reference / spawn-ceiling / dag-derived +
+  the three local-model suites) 280 passed · `web` 275 files, 2745 tests, typecheck clean. Six
+  mutations run; the one that reded nothing exposed a weak test (see Finding 1).

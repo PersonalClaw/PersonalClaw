@@ -867,6 +867,12 @@ _EDITABLE_CONFIG: dict[str, dict] = {
     # is the opt-in to announcing this gateway on the local network.
     "companion.discovery_enabled": {"type": "bool"},
     "companion.instance_name": {"type": "str", "max_len": 64},
+    # Local models (LOCAL-MODEL-MANAGER-V2 §9) — the memory-pressure warning threshold the
+    # loaded-models bar reads, and the crashed-sidecar respawn budget. Both are advisory
+    # knobs on the user's own machine: the threshold blocks nothing, and the restart bound
+    # only decides when the runner stops retrying a genuinely broken install.
+    "local_models.pressure_warn_pct": {"type": "int", "min": 1, "max": 100},
+    "local_models.sidecar_restart_max": {"type": "int", "min": 0, "max": 20},
     # Watched sources (WATCHED-SOURCES SC#12) — the poll engine's runtime knobs. The
     # network floor is bounded at 300s (the R1-class rate floor) so a UI edit cannot make
     # the engine poll a third party abusively.

@@ -755,6 +755,18 @@
     "type": "bool"
   },
   {
+    "default": 85,
+    "path": "local_models.pressure_warn_pct",
+    "sensitive": false,
+    "type": "int"
+  },
+  {
+    "default": 3,
+    "path": "local_models.sidecar_restart_max",
+    "sensitive": false,
+    "type": "int"
+  },
+  {
     "default": false,
     "path": "loops.check_work_stages",
     "sensitive": false,

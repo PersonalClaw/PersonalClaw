@@ -46,6 +46,11 @@ logger = logging.getLogger(__name__)
 # How often the byte-poller samples on-disk size and publishes a progress frame.
 _POLL_SECS = 0.7
 
+# The ``model`` slot of a sidecar-install job. An install is per-PROVIDER — there is no
+# model to name — so the dedupe key needs a stable non-empty placeholder that no real
+# model id can collide with.
+_INSTALL_MODEL = "__sidecar_install__"
+
 
 def registry_key(job_id: str) -> str:
     """The SSE hub key for a download job's progress stream."""
@@ -276,6 +281,7 @@ class ModelDownloadRegistry:
         self._jobs: dict[str, ModelDownloadJob] = {}
         self._running: dict[str, _Running] = {}
         self._by_model: dict[tuple[str, str], str] = {}  # (provider, model) → job id
+        self._installs: dict[str, Any] = {}  # provider → SidecarInstall (its step state)
         self._sse = SseRegistry()
         self._counter = 0
 
@@ -338,6 +344,97 @@ class ModelDownloadRegistry:
         self._running[job.id] = run
         run.tasks.add(asyncio.ensure_future(self._drive(run)))
         return job, None
+
+    # ── sidecar installs (LMMV §3.2) ────────────────────────────────────────
+    # A sidecar install (venv + pip + weights check) is a background job with the same
+    # lifecycle as a weights fetch, so it rides THIS registry and the same SSE hub rather
+    # than a second one. It differs only in ``kind`` and in carrying step detail, which
+    # lives on the install object because the canonical job record (§4.1) is deliberately
+    # one flat shape for every kind.
+
+    def install(self, provider: str) -> Any:
+        """The tracked :class:`~personalclaw.local_models.sidecar.SidecarInstall`.
+
+        Created on first use and RETAINED, so a poll after the job finished still sees
+        which steps ran and which were skipped. None when the app is not installed or
+        declares ``execution: in-process`` (no sidecar to install).
+        """
+        existing = self._installs.get(provider)
+        if existing is not None:
+            return existing
+        from personalclaw.local_models.sidecar import SidecarInstall
+
+        created = SidecarInstall.for_app(provider)
+        if created is not None:
+            self._installs[provider] = created
+        return created
+
+    def install_job(self, provider: str) -> ModelDownloadJob | None:
+        """The current/last install job for *provider* (None if never started)."""
+        job_id = self._by_model.get((provider, _INSTALL_MODEL))
+        return self._jobs.get(job_id) if job_id else None
+
+    def start_install(self, provider: str) -> tuple[ModelDownloadJob | None, str | None]:
+        """Begin (or re-use) the resumable sidecar install for *provider*.
+
+        Idempotent twice over: an in-flight job is returned as-is, and re-running a
+        finished install re-runs steps that existence-check themselves into ``skipped``.
+        """
+        if not provider:
+            return None, "Missing 'provider'"
+        install = self.install(provider)
+        if install is None:
+            return None, f"{provider!r} declares no sidecar provider to install"
+
+        existing_id = self._by_model.get((provider, _INSTALL_MODEL))
+        if (
+            existing_id
+            and (existing := self._jobs.get(existing_id))
+            and existing.state in ("queued", "running")
+        ):
+            return existing, None
+
+        job = ModelDownloadJob(
+            id=self._next_id(), provider=provider, model=_INSTALL_MODEL, kind="sidecar-install"
+        )
+        self._jobs[job.id] = job
+        self._by_model[(provider, _INSTALL_MODEL)] = job.id
+        run = _Running(job=job)
+        self._running[job.id] = run
+        run.tasks.add(asyncio.ensure_future(self._drive_install(run, install)))
+        return job, None
+
+    async def _drive_install(self, run: _Running, install: Any) -> None:
+        """Run the install step by step, publishing a frame after each one."""
+        job = run.job
+        job.state = "running"
+        self._publish(job, "progress")
+        total = max(1, len(install.steps))
+        try:
+            for index, step in enumerate(list(install.steps)):
+                ok = await asyncio.to_thread(install.run_one, step.name)
+                job.progress = round((index + 1) / total, 3)
+                if not ok:
+                    job.state = "error"
+                    job.error = install.error
+                    job.reason = install.reason
+                    self._publish(job, "error")
+                    return
+                self._publish(job, "progress")
+            job.state = "done"
+            job.progress = 1.0
+            event = "done"
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001 — surface any install failure to the UI
+            logger.warning("sidecar install failed (%s): %s", job.provider, exc)
+            job.state = "error"
+            job.error = str(exc)[:200]
+            job.reason = "install_failed"
+            event = "error"
+        finally:
+            self._running.pop(job.id, None)
+        self._publish(job, event)
 
     def cancel(self, job_id: str) -> bool:
         """Detach a job: stop its tasks, publish ``cancelled``, drop it.

@@ -3,7 +3,7 @@ import { motion } from 'framer-motion'
 import {
   MessageSquare, History, type LucideIcon,
   MessageSquarePlus, ListTodo, BookOpen, FolderKanban, FileCode2, TerminalSquare, Sparkles, Compass,
-  Package,
+  Package, HardDrive,
 } from 'lucide-react'
 import { DashboardLiveProvider } from './DashboardLive'
 import { PinnedTiles } from './PinnedTiles'
@@ -14,6 +14,7 @@ import { TasksWidget } from './widgets/TasksWidget'
 import { Suggestions } from './widgets/Suggestions'
 import { Discover } from './widgets/Discover'
 import { PinnedArtifacts } from './widgets/PinnedArtifacts'
+import { OnThisMachine } from './widgets/OnThisMachine'
 import { ScheduleWidget } from './widgets/ScheduleWidget'
 import { SystemHealth } from './widgets/SystemHealth'
 import { TopBar } from '../../ui/TopBar'
@@ -109,6 +110,14 @@ export function DashboardPage(route: RouteProps) {
                 list that THIS component renders. */}
             <Section label="Pinned artifacts" icon={Package}>
               <PinnedArtifacts {...route} />
+            </Section>
+
+            {/* On this machine (LOCAL-MODEL-MANAGER-V2 §7) — which local models are
+                holding RAM right now, and the machine's memory pressure. Same shape as
+                Pinned artifacts: a hard-imported widget in a Section band, because the
+                bento tile registry was retired. */}
+            <Section label="On this machine" icon={HardDrive}>
+              <OnThisMachine />
             </Section>
 
             <Section label="Recent activity" icon={History}>
