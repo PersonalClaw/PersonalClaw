@@ -280,11 +280,10 @@ export function NavRail({
           // surfaces; it was the single most widespread violation in the app.
           // `inert` removes focusability, pointer events and the a11y tree in one attribute,
           // which is exactly the "closed drawer" semantics.
-          // React 18 has no typed `inert` prop and forwards unknown attributes as STRINGS — and
-          // `inert="false"` is still inert (its mere presence applies). So it must be `''` when
-          // closed and OMITTED when open; a boolean would trap focus in the OPEN drawer.
-          // (React 19 types it as a boolean; revisit on upgrade.)
-          {...(overlayOpen ? {} : { inert: '' })}
+          // React 19 types `inert` as a real boolean and OMITS the attribute when false, so the
+          // plain prop is correct here. The attribute's mere presence applies, so it must be
+          // absent (not `inert="false"`) while open or focus would be trapped in the OPEN drawer.
+          inert={!overlayOpen}
           style={{ width: OVERLAY_W }}>
           {railBody}
         </motion.div>
