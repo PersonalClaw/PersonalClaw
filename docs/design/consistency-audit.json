@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-08-16T03:51:57.064Z",
+  "generatedAt": "2026-08-16T03:44:56.219Z",
   "totals": {
     "driftHits": 7,
     "filesScanned": 470,
@@ -217,7 +217,7 @@
   "a11y": {
     "outlineNoneCount": 136,
     "outlineNoneFiles": 63,
-    "localFocusVisibleFiles": 32,
+    "localFocusVisibleFiles": 30,
     "reducedMotionFiles": 9,
     "animatedFiles": 162,
     "hasGlobalReducedMotion": true,
@@ -471,6 +471,11 @@
     "pages/knowledge/KnowledgeListPage.tsx": {
       "raw-button": 7,
       "raw-input": 3,
+      "raw-dialog": 0
+    },
+    "pages/knowledge/SourceCreatePage.tsx": {
+      "raw-button": 0,
+      "raw-input": 1,
       "raw-dialog": 0
     },
     "pages/loop/LoopComposer.tsx": {

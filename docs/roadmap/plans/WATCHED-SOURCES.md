@@ -530,3 +530,169 @@ Trigger-side work (`web_watch` wiring, morning-digest template install, triage d
   whole is still store-only. `WS-9` (Sources UI in the Knowledge section + as-a-user validation) owns that
   surface; `WS-3` owns the web-source preview+create flow. Announcing feeds now would promise something
   nobody can reach, so the user-facing entry lands with `WS-9`.
+
+- [WS-9] DONE: **§2.4 create-flow UI + §6.3 'no AI' chip + §12 health rollups + §11 step 5's UI
+  half.** This is the atom that made the feature exist. `store.create_source` had **zero non-test
+  callers**, so WS-2's store, WS-3's five-detector web kind, WS-4's feeds and WS-5's directory
+  observer were all complete and **entirely unreachable** — no route, no CLI, no UI. Shipped: four
+  routes in `dashboard/handlers/knowledge.py` (`GET`/`POST /api/knowledge/sources`,
+  `POST …/sources/preview`, `PATCH …/sources/{id}`), a URL-addressable `#/knowledge/sources`
+  (+ `/sources/new`) destination in the Knowledge section reached from a `Sources` header control on
+  the library page, and `store.update_source`.
+  **Every closed vocabulary and remediation string is READ FROM THE PROVIDER, not retyped in
+  TypeScript.** Health statuses come from `base.SOURCE_HEALTH`, the tune step's detector list from
+  `web_source.DETECTOR_ORDER`, the feed recipes from `feed_source.PRESETS`, the folder defaults from
+  `dir_source.DEFAULT_INCLUDE`, and the two remediations from `LISTING_PAGE_GUIDANCE` /
+  `RENDER_TIER_GUIDANCE`. The list response ships the vocabularies (`health_statuses`,
+  `raw_enrichment`) rather than the UI carrying copies, and a Python rail asserts the TS
+  `HEALTH_META` keys equal `SOURCE_HEALTH` exactly, that the UI's `RAW_ENRICHMENT`/
+  `HEALTH_NEEDS_RENDER` literals equal the Python ones, and that the create page has a form branch
+  for every `form` the catalog can emit — each with a vacuity assertion, because a matcher that
+  stopped matching would make all of them true. Specs are validated by the provider's OWN
+  `validate_spec` on create AND on edit, so save-time validation is byte-identical to the poll-time
+  re-validation WS-3/WS-5 already do; there is no second copy of the rules in the handler.
+  **The preview asymmetry is reported honestly rather than faked, which was the main design call.**
+  WS-3 deliberately kept `preview` off the `KnowledgeSourceProvider` ABC (a feed's or a folder's
+  preview IS its poll, so an abstract `preview` would be a stub on two of three providers), so
+  `SourceKind.previewable` is **measured** — `callable(getattr(prov, "preview", None))` — and the
+  create page renders a paste-URL dry run for the web kind and, for the other two, says plainly
+  that their first poll is their preview. A provider without one is refused with that reason instead
+  of answered with an empty item list that reads like a failure. §2.2's `SPEC_SCHEMA` is deliberately
+  NOT shipped to the client: the authoritative validator is the provider's, and a TS re-walker over
+  the schema would be exactly the second artifact WS-3's schema-first inversion exists to avoid.
+  **DEVIATION (recorded): `SourceEngine.egress_policy` became a `staticmethod`.** A preview is a
+  real fetch at the same targets a poll uses and it happens in an HTTP handler with no engine
+  instance in reach; two call sites resolving the `SOURCE` profile independently would be two egress
+  postures for one act. One definition, reachable from both. Asserted: the policy the preview hands
+  `fetch_fn` is `name == "source"` with the engine's own `max_bytes`.
+  **The two remediations stay OPPOSITE — the anti-collapse property is the atom's real risk.**
+  `needs render tier` → the render-tier guidance plus a live "Allow the render tier" button (one
+  `budget.allow_render` PATCH); a wrong-URL failure → the listing-page guidance plus a URL field
+  prefilled with the current URL. Neither surface offers the other's control, at create time or on a
+  saved row. The knob is offered only while it is OFF: allowed-but-failing (a render that raised, or
+  the `js-render` extra absent) is advice, and a button that re-sets a set flag lies about what
+  pressing it does — that path instead surfaces the poll's own reason as `detail`, and only when it
+  says something the guidance does not. The match is a PREFIX test rather than equality because
+  `record_poll` clips `last_error_summary` to 200 chars and `LISTING_PAGE_GUIDANCE` is ~270:
+  equality would have silently never fired for exactly the longer of the two messages, and the test
+  asserts `len(guidance) > 200` so that cannot regress unnoticed.
+  **`update_source` is a CLOSED allowlist, and there is deliberately no `delete_source`.**
+  `_EDITABLE_SOURCE_FIELDS` excludes `provider`/`kind` (they decide which validator a spec is read
+  against, so changing them in place would silently reinterpret a validated spec — that is a new
+  source, not an edit) and every engine rollup (a generic setter would let a client overwrite a
+  poll's verdict with what it believed the verdict to be). An unknown field RAISES rather than being
+  ignored, because an edit that silently does nothing is the shape where a UI reports success and
+  the row never moved. No delete: the `done_when` needs remediation, not removal, `enabled: false`
+  already stops a source polling, and a hard delete would orphan `source_seen` rows and strand
+  `items.source_id` — WS-4 already documents that an item whose source row vanished degrades to raw,
+  so deletion is a state-shape decision that wants its own atom, not a convenience here.
+  **FOUR defects found by driving the real thing, all fixed at source rather than papered over.**
+  (1) WordPress `title.rendered` is HTML-**escaped**, so every one of 20 previewed rows on
+  `github.blog/changelog` read `Don&#8217;t stop early`; decoded in a new `_rendered_title`, scoped
+  to the title only — `content` is markup where the same escaping is meaningful (an escaped
+  `&lt;script&gt;` in a post body is *shown code*) and decoding it would hand live markup to
+  `sanitize_html`. (2) An item's `content` IS markup and the client renders the snippet as TEXT, so
+  every preview row showed `<p>…</p>` with `&#8217;` for apostrophes; converted through the app's
+  ONE html→text seam (`connectors.base.html_to_text`, which `web_source`'s own `html_to_markdown`
+  post-process already calls) so a snippet and an ingested item read the same way. (3)
+  `sources.health_status` DEFAULTS to `ok`, so a source saved seconds ago rendered "Healthy · never
+  polled" in one breath — the row now reports "Not polled yet" until a poll has written a verdict;
+  fixed in the UI, not by inventing a fifth status outside `SOURCE_HEALTH`. (4) `record_poll`'s
+  `next_poll_at` was written on the SUCCESS path ONLY, so the two rows carrying a remediation were
+  exactly the two that could not say a retry was coming — the same shape WS-3 fixed for
+  `last_escalations`, now recorded on all four exits via `_next_poll_at` (a display rollup only;
+  scheduling still measures from `last_poll_at`). Plus a header-overflow fix: at 390px a bare create
+  pill laid out 44→206px and painted over BOTH the back button (44→84) and the page title, squeezed
+  to **8px** of width — routed through `HeaderActions`/`HeaderControl`, the app's one responsive
+  cluster, after which the title measures 67px and pairwise overlap among header controls is **0**.
+  Two smaller ones: the feed Format select defaulted to `csv` (the alphabetical first of a
+  VOCABULARY, not a preference order) so a user pasting an RSS URL got the CSV parser preselected;
+  and the cadence select's options excluded the dir provider's own 300s default, so a `<select>`
+  whose value matched no option DISPLAYED "Every 15 min" while holding 5 minutes.
+  **Falsification: 9 mutations, and ONE reded nothing — the test was fixed, not noted.** The empty
+  one is worth recording: removing the snippet's html→text conversion entirely left all 38 green,
+  because that test used a `semantic_html` fixture and DOM extraction yields already-decoded plain
+  text — the assertion held for a reason unrelated to the code under test. **The five detectors are
+  not interchangeable fixtures; only WordPress produces markup in `content`.** Re-routed through a
+  WordPress REST fixture, the same mutation now reds with
+  `AssertionError: the client renders this as text, so markup would show up raw`. Mutations that
+  reded correctly: the 'no AI' chip made unconditional →
+  `a full-enrichment source must not claim no AI: expected <span …> to be null`; the listing-page
+  verdict swapped for the render-tier one → `assert 'render_tier' == 'listing_page'` **and**
+  `assert 'render_tier' != 'render_tier'` (the anti-collapse test); the editable-field allowlist
+  made silent → `Failed: DID NOT RAISE KeyError`; `previewable` declared uniformly true →
+  `assert {'watched-dir': True} != {'watched-dir': False}`; save-time `validate_spec` removed →
+  `assert 201 == 400` on both the bad-URL and the sensitive-path cases; the WordPress title left
+  escaped → `assert 'Don&#8217;t …' == 'Don’t …'`; `next_poll_at` dropped from the soft-failure path
+  → `a failing source that will be retried must say so`; the never-polled chip reverted to the
+  stored default → `Unable to find an element with the text: Not polled yet`; the listing-page URL
+  field removed → `Unable to find an accessible element with the role "textbox" and name
+  /Listing-page URL for Product changelog/`. Also fixed a flake I authored: the next-check assertion
+  used an exact 20-minute offset, which `relFuture`'s floor renders as 19m or 20m depending on
+  whether a millisecond elapsed (1 red in 3 runs) — moved mid-bucket, then 5 consecutive green runs.
+  **Gates:** `make lint` clean (black 1684 files, isort, flake8, mypy **869** source files);
+  `tests/test_knowledge_sources_api.py` = **38 passed**; `test_web_source.py` = **47**;
+  `test_source_engine.py` + `test_feed_source.py` + `test_dir_source.py` + the API suite = **146**;
+  repo-wide rails `test_api_manifest_drift.py` + `test_inert_surface_baseline.py` +
+  `test_portability.py` + `test_durability_inventory.py` + `test_config_baseline.py` +
+  `test_resilience_degraded_lint.py` + `test_roadmap_dag_derived.py` = **124 passed**. Web gate (this
+  atom changes `web/`, so it is mandatory): `npm run typecheck` clean; the **FULL** `npm test` =
+  **2625 passed / 264 files / 0 failed**; `npm run build` exit 0. The full suite caught two real
+  things a path-scoped run would have skipped — `accentChip` (an alpha primary tint under primary
+  ink measures 3.64–4.20:1 in light, below AA; adopted the shared `design/accent` pair, and note the
+  rule scans COMMENTS too, so the first fix tripped it by quoting the utility names) and
+  `toggleDisabledReason`'s pinned census, which the test's own words ask to be a deliberate PR line:
+  14 → 15, my site added to the enumerated in-flight class (it gates on `busy`, so a
+  `disabledReason` there would be a regression) and the `disabledReason` count held at 4. No config
+  field, no new enum/trigger-kind/SDK export, so `test_config_baseline` needed no regeneration and
+  the inert-surface counts are unchanged. `src/personalclaw/reference/{index,routes}.md` regenerated
+  for the four new routes (docstring first lines reworded so the generated summaries read as
+  sentences), and `docs/design/consistency-audit.json` moved 467 → 470 files scanned with
+  `driftHits` unchanged at 7.
+  **As-a-user validation — what was actually driven, on `PERSONALCLAW_HOME=$PWD/.dev-home`, port
+  10099 (`:10000` was squatted by another instance).** Onboarded, then from `#/knowledge` pressed
+  the new `Sources` control → `#/knowledge/sources`. Created all three kinds **from the frontend**:
+  a **web page** (`https://github.blog/changelog/` — preview returned **20 items via
+  `wordpress_api` in 2 requests**, then saved; the engine polled it within 30s and wrote 20 items
+  that appear in `GET /api/knowledge/items` with `provider: watched-page` and the right
+  `source_id`), a **RAW feed** (`hn_algolia` preset, enrichment Raw — **20 items**, and the row
+  carries the `no AI` chip while the enriched page row does not), and a **watched folder**
+  (`.dev-home/watched-notes` with two markdown files; a first attempt at `~/.ssh` was refused by
+  `dir_source`'s own guard with "path is a sensitive location and cannot be watched", surfaced as a
+  `role="alert"` field error). Drove **both remediations on real URLs**: `https://example.com/`
+  polled to `degraded` + the listing-page strip + a URL field, and `https://excalidraw.com/` polled
+  to `needs render tier` + the render-tier strip + the knob — the two rendered side by side with
+  different chips, different messages and different controls. Pressed **"Allow the render tier"**
+  (button vanished, advice remained, toast announced); pressed **"Point it here"** with a new URL
+  (spec updated, toast confirmed); **paused** a source (chip appeared, "next in" dropped, switch
+  relabelled to Resume). Also drove the create-time preview against a homepage (listing-page
+  guidance) and a JS shell ("Allow the render tier and retry"). **A11y measured, not assumed:**
+  on the populated list **16 of 16** controls focusable with **0** unnamed and **0** nested
+  interactive, the one `aria-disabled` control still reachable with its reason; at **390px** the
+  create page had 0 overflowing controls, 0 sub-24px targets, 0 header overlap and no horizontal
+  scroll. Every status change goes through `notify()` into the `Toaster`'s live region. Console was
+  clean apart from the browser's own log of an intentional 400 (the sensitive-path refusal) and a
+  burst of `ERR_CONNECTION_REFUSED` from reloading during a gateway restart; `gateway.log` showed
+  only the expected `no model provider resolves for use case 'background'` from ingestion
+  enrichment, which is this dev home having no model bound, not this surface.
+  **OBSERVED, not changed (WS-3's decision, stated so it is not lost):** after both fixes landed
+  the two rows re-polled to `ok` with zero new items and no escalations — and for the JS shell that
+  is a **304**. The cursor still carries the ETag from the first poll, so `web_source` returns
+  "not modified" (no items, no error) and the engine records `HEALTH_OK`, which OVERWRITES the
+  `needs render tier` verdict even though the page still needs the tier. That is WS-3's
+  conditional-GET contract working as specified (its own falsification list includes "a 304 treated
+  as a detection failure" as a mutation that SHOULD red), and the health column is a per-poll rollup
+  by design, so nothing here was changed. But it means a JS-heavy source can oscillate between
+  `needs render tier` and `ok` depending on whether the server answers 304, and whichever atom next
+  owns health should decide deliberately whether a 304 may clear a diagnosis it did not re-test.
+  The other row's `0 new` is correct and is WS-4 working: repointed at the GitHub changelog it saw
+  URLs an existing source had already ingested, so the sightings became attributions on those items
+  rather than duplicates.
+  **What I could NOT verify:** the render tier actually SUCCEEDING (this environment has no
+  `personalclaw[js-render]`, so the allowed-and-installed path is unit-tested only); dir
+  create/modify/delete propagation past the first seeding pass (WS-5 seeds only on pass one and its
+  own suite covers the debounce); and light theme, which was not swept.
+  **CHANGELOG: yes.** WS-3 and WS-4 both withheld an entry because nobody could reach the feature.
+  This atom is what makes watched sources reachable, so the entry covers the whole capability —
+  web/feed/folder sources, the paste-URL preview, the raw no-AI mode and the health/remediation
+  surface — not just the UI.

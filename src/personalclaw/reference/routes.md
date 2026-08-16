@@ -303,6 +303,10 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `GET /api/knowledge/providers` — _(no summary)_
 - `POST /api/knowledge/regenerate-intelligence` — - re-run the full ingestion
 - `GET /api/knowledge/search-for-context` — _(no summary)_
+- `GET /api/knowledge/sources` — the watched sources, with health, plus the kind catalog.
+- `POST /api/knowledge/sources` — save a source, after its provider validates the spec.
+- `POST /api/knowledge/sources/preview` — §2.4's dry run for the paste-URL create flow.
+- `PATCH /api/knowledge/sources/{id}` — apply a remediation, rename, or pause a source.
 - `GET /api/knowledge/stats` — _(no summary)_
 - `GET /api/knowledge/tag-tree` — every tag with its parent and live usage count.
 - `GET /api/knowledge/tags` — - distinct tags (frequency-ordered) for autocomplete.

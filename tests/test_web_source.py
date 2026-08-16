@@ -406,6 +406,36 @@ async def test_wordpress_api_detector_pulls_structured_posts(store):
 
 
 @pytest.mark.asyncio
+async def test_a_wordpress_title_is_decoded_not_left_html_escaped(store):
+    """WP's REST API HTML-ESCAPES `title.rendered`, and a title is plain text on every
+    surface. Found by driving WS-9's create flow against a real WordPress changelog: all 20
+    previewed rows read `Don&#8217;t stop early` rather than the apostrophe. The excerpt is
+    deliberately NOT decoded — it is markup whose escaping is meaningful — so the same
+    fixture asserts both halves."""
+    posts = json.dumps(
+        [
+            {
+                "id": 7,
+                "link": "https://app.example.com/2026/07/dont-stop",
+                "title": {"rendered": "Don&#8217;t stop early: case-folding at speed"},
+                "excerpt": {"rendered": "<p>An escaped &lt;script&gt; tag, shown as code.</p>"},
+                "date_gmt": "2026-07-03T10:00:00",
+            }
+        ]
+    )
+    fetcher = _Fetcher(routes={"wp-json": _Resp(posts), "changelog": _Resp(_wordpress_page())})
+    provider = WebSourceProvider(store, fetch_fn=fetcher)
+
+    preview = await provider.preview({"url": PAGE_URL})
+
+    assert preview.detector == DETECTOR_WORDPRESS_API
+    assert preview.items[0].title == "Don\u2019t stop early: case-folding at speed"
+    # The excerpt keeps its escaping: decoding it would turn shown code back into live markup
+    # before `sanitize_html` ever saw it.
+    assert "&lt;script&gt;" in preview.items[0].content
+
+
+@pytest.mark.asyncio
 async def test_json_state_detector_reads_an_spa_state_blob(store):
     provider = WebSourceProvider(store, fetch_fn=_Fetcher(_Resp(_next_data_page())))
     preview = await provider.preview({"url": PAGE_URL})
