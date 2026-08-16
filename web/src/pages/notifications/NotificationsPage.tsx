@@ -26,7 +26,7 @@ import { kindMeta, kindsPresent, bucketOf, BUCKET_ORDER, relTime, clockTime, fir
 import { fvs } from '../../design/fontWeight'
 import { useQueryParam, type RouteProps } from '../../app/useQueryState'
 import { PageTitle } from '../../ui/PageTitle'
-import { accentChip } from '../../design/accent'
+import { accentChip, toneChipSkin } from '../../design/accent'
 import { notify } from '../../app/appSdk'
 
 /** Notifications = a triage feed of agent/schedule/trigger/task events. Items are
@@ -159,7 +159,7 @@ export function NotificationsPage({ query, setQuery, navigate }: Pick<RouteProps
         <SidePanel key={open.ts} fillHeight storeKey="notif-panel-w" icon={(() => { const km = kindMeta(open.kind); return <km.icon size={18} style={{ color: km.tone }} /> })()} title={open.title} onClose={() => setOpenTs("")}>
           <div className="flex flex-col gap-l">
             <div className="flex flex-wrap items-center gap-s text-[0.8125rem]">
-              {(() => { const km = kindMeta(open.kind); return <span className="inline-flex items-center gap-1.5 rounded-pill px-m h-7" style={{ background: toneChipBg(km.tone), color: km.tone }}><km.icon size={13} /> {km.label}</span> })()}
+              {(() => { const km = kindMeta(open.kind); return <span className="inline-flex items-center gap-1.5 rounded-pill px-m h-7" style={toneChipSkin(km.tone, 16)}><km.icon size={13} /> {km.label}</span> })()}
               <span className="text-on-surface-low">{clockTime(open.ts)}</span>
               {open.acked && <span className="text-on-surface-low inline-flex items-center gap-1"><Check size={13} /> read</span>}
             </div>
