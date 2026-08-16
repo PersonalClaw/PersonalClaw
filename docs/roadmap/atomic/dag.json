@@ -6447,7 +6447,8 @@
           "status": "done",
           "scope": "Session 1 \u2014 OS keychain credential storage / T1.1; Design S1; Contracts C1 (credential backend selector)",
           "done_when": "reads are backend-transparent; headless fixture (no keyring) falls back to .env 0600 with a doctor warning (never plaintext-elsewhere); doctor reports the active backend; unit tests cover both backends; keyring added as optional extra in pyproject.toml",
-          "deps": []
+          "deps": [],
+          "pr": 1419
         },
         {
           "id": "SH-2",
