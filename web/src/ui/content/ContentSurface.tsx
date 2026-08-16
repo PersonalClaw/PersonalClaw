@@ -234,12 +234,23 @@ export const ContentSurface = forwardRef<ContentSurfaceHandle, ContentSurfacePro
   return (
     <div className="flex h-full flex-col">
       {/* toolbar — host chrome (left) + view toggle + edit/host actions (right) */}
+      {/* `flex-wrap` unconditionally, not `compact ? 'flex-wrap' : ''`. Wrapping was already
+          understood to be the right behaviour here — it was just gated on DENSITY when the thing
+          that actually decides it is AVAILABLE SPACE, which is what flex-wrap reads natively. A
+          non-compact host at a phone width therefore had a toolbar that could not give: measured
+          on the artifact viewer at 390px, #root was 411px wide with no scrollable ancestor, so
+          21px were CLIPPED and the last action ("Snapshot") was unreachable. Wrapping costs
+          nothing when the row already fits, so every wide layout is byte-identical. */}
       {showToolbar && (
-        <div className={`flex items-center gap-s border-b border-outline/40 px-m py-1.5 ${compact ? 'flex-wrap' : ''}`}>
+        <div className="flex flex-wrap items-center gap-s border-b border-outline/40 px-m py-1.5">
           {headerLeft}
           {truncated && <span className="shrink-0 rounded px-1.5 py-0.5 text-[0.75rem] text-on-surface-low" style={{ background: 'var(--color-surface-high)' }} title="Only the first part of this large file was loaded — read-only so a save can't truncate the rest.">truncated · read-only</span>}
           {dirty && <span className="size-1.5 shrink-0 rounded-full" style={{ background: 'var(--color-primary)' }} title="Unsaved changes" />}
-          <div className="ml-auto flex items-center gap-1">
+          {/* This cluster wraps too, and both halves are needed: it is 399px wide on its own at a
+              390px viewport, so letting only the OUTER row wrap would drop it onto a line it still
+              could not fit. `justify-end` keeps every wrapped line flush right, matching where
+              `ml-auto` puts it on one line. */}
+          <div className="ml-auto flex flex-wrap items-center justify-end gap-1">
             {/* view toggle — shown for any editable+previewable type so there's
                 always a way into edit mode; Split only when the type supports it */}
             {editable && previewable && (
