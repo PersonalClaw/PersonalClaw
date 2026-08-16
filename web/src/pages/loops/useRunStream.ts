@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { api, type Loop } from '../../lib/api'
 
 // The COMPLETE set of lifecycle events the unified per-loop SSE (loop_sse) can emit
@@ -96,7 +96,13 @@ export function useRunStream(id: string | null, enabled: boolean, handlers: {
   const ref = useRef(handlers)
   ref.current = handlers
 
+  // Is the FEED alive? Same reasoning as `workflows/useWorkflowStream`: EventSource retries forever, so
+  // `onerror` is not a failure — it is the transport saying it is between attempts. Unsurfaced, a dead
+  // feed and a quiet loop are identical: the cockpit stops updating and nothing says why.
+  const [connected, setConnected] = useState(false)
+
   useEffect(() => {
+    setConnected(false)
     if (!enabled || !id) return
     let es: EventSource | null = null
     try { es = new EventSource(api.uLoopStreamUrl(id)) } catch { return }
@@ -119,7 +125,12 @@ export function useRunStream(id: string | null, enabled: boolean, handlers: {
       try { data = JSON.parse((e as MessageEvent).data) } catch { return }
       for (const m of unwrapRunBatch(data)) ref.current.onLifecycle(m.event, m.data)
     })
-    es.onerror = () => { /* transient — EventSource retries automatically */ }
-    return () => { es?.close() }
+    es.onopen = () => setConnected(true)
+    // Still transient — the browser reconnects on its own. We only record that the feed is down
+    // so the cockpit can say so; we never close or resubscribe here.
+    es.onerror = () => setConnected(false)
+    return () => { es?.close(); setConnected(false) }
   }, [id, enabled])
+
+  return { connected }
 }
