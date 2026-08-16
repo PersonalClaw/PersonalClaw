@@ -593,3 +593,100 @@ Owner rulings, mapped onto the existing sessions honestly:
   matches how theme, rail width and rail collapse already behave. Moving it server-side would mean a
   probe on every boot and either a flash of the wrong rail or a new boot gate, for a preference the
   rest of the family keeps local.
+- [2026-08-16][OU-4] **DONE — the flow's done screen, its resume, one door out, and a CLI pointer.**
+  Shipped in `web/src/app/Onboarding.tsx` (+ `identity.tsx`, `pages/settings/AccountPanel.tsx`,
+  `src/personalclaw/env.py`, `gateway.py`, `cli_setup.py`). Details of what each part does and why
+  live in [`../atomic/OU.md`](../atomic/OU.md) `OU-4`; this entry records the findings and V1.
+- [2026-08-16][OU-4] **The reader was the whole point.** `step` had three writers (OU-1 stored it,
+  OU-2/OU-3 wrote it) and no reader, which reads exactly like a working resume until someone
+  reloads. Every mid-flow reload restarted at the essentials step and offered to redo installs the
+  home had already recorded. The fix is small; the shape of the bug is the lesson — a stored key
+  whose reader is a later atom is indistinguishable from a working feature until the reader lands.
+- [2026-08-16][OU-4] **DISCOVERY — the "skip" the atom asks for made DEAD CODE live.**
+  `finish()` has always ended `setName(savedName || 'Operator')`, and that fallback was
+  unreachable: `commitName` refuses an empty name and no row can be jumped forward, so `savedName`
+  was always non-empty at finish. A full-skip path is precisely what reaches it. `'Operator'` was
+  also a second literal — `AccountPanel`'s empty-name save falls back to the same word — so it
+  became `identity.DEFAULT_USER_NAME`, used by both. The skip link NAMES the default it will use
+  ("Skip setup — start as Operator, rename yourself in Settings"): a visible default beats a
+  silent rename.
+- [2026-08-16][OU-4] **DEVIATION (resume asks for the name first).** `done_when` says "resumes at
+  the persisted step". A resumed flow lands on the name step, and committing it jumps to the
+  persisted step. The name is deliberately NOT in this state (OU-1's ruling: identity lives on the
+  server, `onboarded` is derived from it being non-empty) and it is committed only at the end, so
+  the alternatives were to fabricate a name for someone who typed one before the reload, or to keep
+  a second copy of the name in a device-local draft. Re-typing one field is the honest cost of
+  OU-1's ruling; nothing the earlier visit actually DID is redone.
+- [2026-08-16][OU-4] **DEVIATION (`done` is not a resume target).** Only `essentials` and
+  `first_success` resume. A stored `done` means a previous run finished — "Restart onboarding" in
+  Settings → Account, or a `finish()` whose identity write never landed — and dropping such a user
+  on the recap would skip the very steps they asked to run again. It needs no extra write path and
+  leaves `AccountPanel`'s restart untouched.
+- [2026-08-16][OU-4] **DEVIATION (a resumed try-one visit restores the count, not the cards).**
+  Only the `first_success` FLAGS survive a reload, not the outcomes the cards rendered, so the
+  cards start idle and `leaveTryOne` floors the recap at the persisted count. Measured live: card
+  run → reload → recap read "First success: 1 of 3 tried" rather than "Nothing tried yet".
+- [2026-08-16][OU-4] **The done screen hands over controls rather than describing them.** The
+  Bounciness dial is `ScalarControl` on the `--bounciness` token — the same object
+  `#/settings/design` renders, so there is no parallel dial to keep in step — and "Show every
+  surface" is OU-5's one setting, with the same accessible name the Appearance switch uses. The
+  switch only states intent; `finish()` performs the single `setNavMode` write, so C4's
+  fresh-install marker and the user's choice cannot disagree and an abandoned flow leaves NO
+  record (absence is how the shell tells an upgrade from a fresh install). Measured: flipping it
+  wrote nothing to `localStorage` until "Start using".
+- [2026-08-16][OU-4] **The CLI predicate was extracted, not copied.** `personalclaw setup` needs
+  the same "is a browser reachable" answer the gateway's auto-open branch had inlined
+  (`SSH_CONNECTION`/`SSH_CLIENT` + `DISPLAY`/`WAYLAND_DISPLAY` + a darwin exemption). It moved to
+  `env.browser_available()`; `gateway.py` calls it, and a rail asserts those env names no longer
+  appear in `gateway.py` at all. Deliberately NOT merged with `origin.py`/`cli_doctor`'s
+  "is this host remote" checks — a remote host WITH a display can open a browser. The wizard is
+  otherwise unchanged, which answers this plan's open question with "the dashboard owns onboarding".
+- [2026-08-16][OU-4] **V1 (driven as a user, real gateway from this worktree, isolated home).**
+  `PERSONALCLAW_HOME=/private/tmp/ou4-home`, `AUTH_MODE=none` (loopback-only), port `:10044`, its
+  own `static/dist` symlink so the served SPA is this build. Three of the four legs verified, one
+  partially:
+  · **mid-flow reload → resumes at the persisted step — VERIFIED, twice.** Name → Continue wrote
+    `step: "essentials"` (identity still `""`, so the flow still gates); reload → step 1; name →
+    Continue → **Step 2**. Then "Set up later" wrote `step: "first_success"`; reload → name →
+    Continue → **"Step 3 of 4: Try one"** with the essentials step NOT re-run, and the stored step
+    still `first_success` (never walked back).
+  · **full-skip path → working dashboard — VERIFIED.** Fresh home, fresh browser context, one
+    click on "Skip setup — start as Operator…" from step 1 → `#/dashboard` rendered
+    ("Good afternoon, Operator"), `user_name: "Operator"`, `step: "done"`, rail
+    **Home · Chat · Inbox · Store · "Everything +13" · Settings**, store `{"mode":"starter","pinned":[]}`.
+  · **existing-home upgrade shows NO onboarding — VERIFIED.** Home with a name, `onboarding.json`
+    deleted (a pre-OU-1 home) and `localStorage` cleared: deep-linking `#/onboarding` bounced to
+    `#/dashboard`, no onboarding UI, and the rail showed all 18 destinations + "Show fewer" with
+    the disclosure record still `null` — the upgrade default.
+  · **full flow to first success under 5 min — PARTIAL.** Name → essentials → all three try-one
+    cards → done screen measured **9.3 s** of driven interaction (all three cards green:
+    `{"knowledge":true,"trigger":true,"loop":true}`, recap "3 of 3 tried"). The provider segment
+    (install → key → Test → bind) was NOT exercised: it needs a real credential, which this
+    session did not have, so the essentials step was skipped every run. The <5 min claim therefore
+    stands only for the flow around that segment.
+  · **The three done-screen pointers, driven:** "Open the Inbox instead" left the flow and landed
+    on a rendered `#/inbox` (`h1: "Inbox 0 pending · 0 total"`) with `step: "done"` recorded; the
+    unlock switch ON at finish produced `{"mode":"expert"}` and the full 19-row rail; the
+    Bounciness slider is the real `ScalarControl` (`min 0 / max 1`, its own "Reset Bounciness").
+    Keyboard: all four new controls are in the tab order and the focused switch measured
+    `outline: 2px solid` (the app's `:focus-visible` ring). **Zero console errors across the run.**
+- [2026-08-16][OU-4] **Harness artifact worth recording (not a defect).** Re-pointing the SAME
+  browser context at a wiped home showed `#/dashboard` and greeted the OLD name while the server
+  returned `user_name: ""` — a stale service-worker/HTTP cache from the previous home, in a
+  profile that had been driven through onboarding minutes earlier. In a genuinely fresh isolated
+  context the same URL landed on onboarding. Wipe the context (or use a new one) between home
+  resets, or the guard looks broken when it is not.
+- [2026-08-16][OU-4] **Falsified, three mutations, all red.** (1) `resumeTarget` returning `null`
+  for `first_success` → **4 RED** in `onboardingProgress.test.tsx`
+  (`Unable to find role="button" and name "stub-tried"`;
+  `AssertionError: expected [ 'essentials' ] to deeply equal [ 'first_success' ]`). (2) `finish()`
+  writing `setNavMode('starter')` unconditionally, ignoring the done screen's switch → **1 RED**
+  in `doneScreen.test.tsx` (`AssertionError: expected 'starter' to be 'expert'`). (3) Dropping the
+  `_print_dashboard_pointer()` call after the wizard's full-run completion line → **1 RED** in
+  `test_onboarding_setup_pointer.py` (`assert 1 == 2` on
+  `len(pointer_calls) == len(done_prints)`) — the AST rail catches a pointer that exists but is
+  never reached on one of the two paths.
+- [2026-08-16][OU-4] **Note for OU-10 (now on the ready frontier).** The done screen is where the
+  tour launches from, and it already carries three controls plus the finish button; the tour entry
+  belongs alongside them, not instead of one. `exitTo.ts` is the seam for anything that has to
+  leave the flow — a plain link cannot, because the route guard bounces it.

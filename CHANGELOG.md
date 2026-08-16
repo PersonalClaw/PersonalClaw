@@ -10,6 +10,21 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Added
 
+- **First run now picks up where you left it, and you can walk out of it at any point.** Reload
+  the page halfway through setup and you come back to the step you were on rather than the
+  beginning — the apps you installed stay installed, and a card you already ran still counts as
+  your first success. You do have to type your name again, because your name is only saved at the
+  end and inventing one for you would be worse. Every step also has a way out now: one link under
+  the stepper leaves setup and drops you straight into a working dashboard, and if you leave
+  before telling us your name it says which name it will use so nothing is renamed behind your
+  back. Everything you skipped is still in Settings, and skipping never takes a feature away.
+  The last screen finishes the job: it recaps what actually happened, then hands you the three
+  things worth knowing on day one — where work comes back to you (with a link straight to the
+  Inbox instead of the dashboard), the live dial that decides how much the interface moves, and a
+  switch that opens the whole sidebar from the start if a short one is not for you. Those are the
+  real Settings controls, not previews, so moving them here sticks. And `personalclaw setup` now
+  says where the guided setup lives — one line, and only when you are somewhere a browser can
+  actually open it.
 - **Moving between pages now crossfades instead of cutting.** Clicking a nav item — or going
   back and forward in your browser — fades the old page into the new one on the same curve the
   rest of the app moves on, so navigating feels continuous rather than like a hard cut. It is
