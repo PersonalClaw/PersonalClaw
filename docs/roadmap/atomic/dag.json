@@ -4937,7 +4937,8 @@
           "done_when": "web/src/design/soundCues.ts lazily creates one gesture-gated AudioContext and plays the closed cue set (turn_complete, approval_needed, error); a master toggle (default OFF) added to the Personality picker; cues wired at turn-settled (ChatPage), approval-requested (useApprovalToasts), and error toast (Toaster); no sound ever plays with toggle off, under prefers-reduced-motion, or when document.hidden (tests mock the media query); CI grep confirms zero audio files shipped in the bundle",
           "deps": [
             "PT-1"
-          ]
+          ],
+          "pr": 1440
         },
         {
           "id": "PT-3",
@@ -6354,7 +6355,8 @@
           "deps": [
             "OU-1",
             "OU-2"
-          ]
+          ],
+          "pr": 1440
         },
         {
           "id": "OU-4",
