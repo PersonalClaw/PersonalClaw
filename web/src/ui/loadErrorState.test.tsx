@@ -142,6 +142,17 @@ describe('the migrated surfaces read the error', () => {
   // anywhere**, and its capture-week panel — the whole point of the surface, the days capture never
   // ran — simply vanished. The most confident possible way to say the opposite of what happened.
   const ADOPTERS = [
+    // `#/tasks` joined last and was the sharpest remaining member: its fetcher carried
+    // `.catch(() => [] as TaskItem[])`, the harsher variant — the rejection never reached the hook,
+    // so `error` could not have been read even by a caller that tried, and the failure arrived as an
+    // EMPTY ARRAY. Measured with `/api/tasks` at 500 and a cold sessionStorage, on all three views
+    // and the peek: "No tasks — Break a goal into tracked work. Create a task, or let an agent plan
+    // from a chat." plus the New-task CTA, no alert, no retry — a create-your-first-task pitch shown
+    // to a user who may have a hundred. Both halves were needed: dropping the swallow alone would
+    // have hung the surface on its skeleton forever, because `tasks === null` also satisfies the
+    // skeleton branch. After: heading "Couldn't load your tasks", the server's own message, and a
+    // Retry that recovers (driven: 0 rows -> 12, and the alert clears).
+    'pages/tasks/TasksListPage.tsx',
     'pages/projects/ProjectsSection.tsx',
     'pages/code/CodeSection.tsx',
     'pages/learning/LearningPage.tsx',
