@@ -250,6 +250,46 @@ describe('toneChipSkin is the one rule the tone-registry chips share', () => {
     expect(list).toMatch(/accent=\{sourceTone\(r\.source\)\}/)
   })
 
+  it('the last two coral-capable registry chips go through it too', () => {
+    // Cycle 178 closes the family's registry sweep. NEITHER of these was reachable with this
+    // validation home's data, so they are SOURCE-verified only — stated rather than implied:
+    //   · `InboxDetail`'s kind chip renders only in the ELSE of the classification branch, and all
+    //     45 inbox items here HAVE a classification (39 needs_reply, 6 fyi). Measured, not assumed.
+    //   · `AgentDetail`'s provider chip at the summary row did not render for a native agent; the
+    //     chip that DID render is line 84, which already uses `accentChip` and measured **13.1:1**
+    //     live. So this convergence is onto a form proven in the same file.
+    // The pairing they used — coral ink over a 16% tint of itself — is the one measured at
+    // **3.85:1** on four other sites this session, which is why they are converged rather than left.
+    const inbox = read('pages/inbox/InboxDetail.tsx')
+    expect(inbox, 'the kind chip').toMatch(/style=\{toneChipSkin\(km\.tone, 16\)\}/)
+    expect(inbox).not.toMatch(/color-mix\(in srgb, \$\{km\.tone\}/)
+    const agent = read('pages/agents/AgentDetail.tsx')
+    expect(agent, 'the provider chip').toMatch(/style=\{toneChipSkin\(pm\.tone, 16\)\}/)
+    expect(agent).not.toMatch(/color-mix\(in srgb, \$\{pm\.tone\}/)
+  })
+
+  it('only the coral-capable registries were touched — the census that removed work', () => {
+    // 🔑 TWO censuses are needed, and running only the first is why this family looked smaller than
+    // it was for four cycles:
+    //   1. a `tone:` FIELD in a registry table      → grep "tone: 'var(--color-primary)'"
+    //   2. a `return 'var(--color-primary)'` inside a tone FUNCTION → invisible to (1)
+    // Census (2) is what found `promptMeta.sourceTone` and `agentMeta.providerMeta`.
+    //
+    // And the registries WITHOUT coral are why 8 flagged sites needed nothing at all: `taskMeta`
+    // has none, so TaskDetail/TasksListPage/TaskBoard's tinted chips are all semantic tones. Pinned
+    // so a later pass does not "finish" them.
+    expect(read('pages/tasks/taskMeta.tsx'), 'no coral in the task registry')
+      .not.toMatch(/var\(--color-primary\)/)
+    // inboxMeta's coral is exactly the three message-ish kinds; classMeta/confMeta have none, which
+    // is why only ONE of InboxDetail's three chips moved.
+    const inboxMeta = read('pages/inbox/inboxMeta.ts')
+    const coralKinds = [...inboxMeta.matchAll(/key: '(\w+)', label: '[^']*', tone: 'var\(--color-primary\)'/g)].map((m) => m[1])
+    expect(coralKinds).toEqual(['message', 'mention', 'email'])
+    // providerMeta returns coral for the native runtime only.
+    const agentMeta = read('pages/agents/agentMeta.ts')
+    expect([...agentMeta.matchAll(/return \{ label: '[^']*', icon: \w+, tone: 'var\(--color-primary\)' \}/g)]).toHaveLength(1)
+  })
+
   it('the schedule registry still has exactly the two coral tones this covers', () => {
     // THE VACUITY FLOOR for the third adopter. `cron` (kind) and `agent` (mode) are the coral pair;
     // if a third became coral the measurement above would stop describing the surface, and if one

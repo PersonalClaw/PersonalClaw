@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { toneChipSkin } from '../../design/accent'
 import { fvs } from '../../design/fontWeight'
 import { Sparkles, Send, Check, XCircle, BellOff, Loader2, Star, ExternalLink, RotateCcw, Filter } from 'lucide-react'
 import { Button } from '../../ui/Button'
@@ -84,7 +85,7 @@ export function InboxDetail({ item, onChanged, navigate }: { item: InboxItem; on
             )}
           </>
         ) : (
-          <span className="inline-flex items-center gap-1.5 rounded-pill px-m h-7 text-[0.8125rem]" style={{ background: `color-mix(in srgb, ${km.tone} 16%, transparent)`, color: km.tone }}><km.icon size={13} /> {km.label}</span>
+          <span className="inline-flex items-center gap-1.5 rounded-pill px-m h-7 text-[0.8125rem]" style={toneChipSkin(km.tone, 16)}><km.icon size={13} /> {km.label}</span>
         )}
         <span className="ml-auto inline-flex items-center gap-1.5 text-on-surface-low text-[0.8125rem]">{(() => { const sm = statusMeta(item.status); return <><sm.icon size={13} style={{ color: sm.tone }} /> {sm.label}</> })()}</span>
         {/* Investigate (plan 60): open a chat pre-loaded with this item's full
