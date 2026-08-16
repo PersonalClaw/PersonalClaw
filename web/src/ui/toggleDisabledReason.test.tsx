@@ -121,6 +121,9 @@ describe('the triage, pinned per site', () => {
       'pages/schedule/ScheduleDetail.tsx',
       'pages/tools/ToolGroupsTile.tsx',
       'pages/triggers/StoreTriggerDetail.tsx',
+      // WS-9's pause switch on a watched source: the only reason it is ever unavailable is an
+      // in-flight PATCH, so it belongs in this class rather than the precondition one.
+      'pages/knowledge/SourcesPage.tsx',
     ]) {
       const src = readFileSync(join(SRC, rel), 'utf8')
       const tag = src.match(/<Toggle\b[\s\S]{0,300}?\/>/)?.[0] ?? ''
@@ -129,7 +132,7 @@ describe('the triage, pinned per site', () => {
     }
   })
 
-  it('the census is reproducible — 14 disabled Toggle sites, not vacuously zero', () => {
+  it('the census is reproducible — 15 disabled Toggle sites, not vacuously zero', () => {
     // If this count drops, a site was converted or deleted; if it climbs, a new one arrived
     // un-triaged. Either way it should be a deliberate line in a PR, not a silent drift.
     const walk = (d: string): string[] =>
@@ -140,7 +143,7 @@ describe('the triage, pinned per site', () => {
     const sites = walk(SRC).flatMap((abs) =>
       [...readFileSync(abs, 'utf8').matchAll(/<Toggle\b[\s\S]{0,400}?\/>/g)]
         .filter((m) => /(?<!aria-)disabled=/.test(m[0])))
-    expect(sites.length).toBe(14)
-    expect(sites.filter((m) => /disabledReason/.test(m[0])).length, 'four carry a reason; ten stay native').toBe(4)
+    expect(sites.length).toBe(15)
+    expect(sites.filter((m) => /disabledReason/.test(m[0])).length, 'four carry a reason; eleven stay native').toBe(4)
   })
 })

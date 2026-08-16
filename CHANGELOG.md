@@ -10,6 +10,33 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Added
 
+- **PersonalClaw can now watch things for you, and new entries land in your library on their
+  own.** Knowledge → **Sources** is a new page where you point it at three kinds of thing: a
+  **web page** (a changelog, blog index, category or newsroom page), a **feed** (RSS, Atom, JSON
+  Feed or a CSV export, with ready-made recipes for Hacker News and GitHub), or a **folder on this
+  machine** (new and edited files are indexed; a deleted file's item is archived, never destroyed).
+  Each source polls on a cadence you pick and every new entry becomes an ordinary knowledge item —
+  searchable, in the graph, pickable with `@` in the composer — with no extra wiring.
+  For a web page, paste the URL and press **Preview** first: it runs the detection once and shows
+  you the items it *would* save and which detector found them, so you can tune the stack and only
+  then save. **No model is involved in any of this** — detection, parsing and de-duplication are
+  plain deterministic code, so a source costs zero tokens to watch. If you want that guarantee to
+  extend all the way through ingestion, set a source to **Raw**: its items get indexed and embedded
+  locally and never reach a model at all, and the source is labelled **no AI** wherever you see it.
+  The same story arriving from two sources becomes ONE item carrying both attributions, and polling
+  the same feed twice adds nothing.
+  When a source stops working the page tells you which fix to try, because the two common failures
+  need **opposite** answers: a page that rendered fine but yielded nothing is usually the wrong URL
+  (auto-detection reads pages that LIST entries, not homepages or single posts) and you get a field
+  to point it somewhere better; a page that builds itself with JavaScript needs the render tier and
+  you get a one-press button to allow it. Each row also shows when it last ran, how many entries
+  arrived, whether it had to climb to the expensive fetch tier, and when it will check again — and
+  you can pause any source without losing what it has already collected.
+  Every fetch goes through the same guarded egress path the rest of PersonalClaw uses (host
+  classification, private-address denial, per-redirect re-checks, byte caps and a per-poll request
+  budget), a watched folder is refused if it points at a sensitive location, and scraped content is
+  sanitised at extraction and fenced at every model boundary.
+
 - **A voice is now a thing you own, not a dropdown value.** Voice profiles hold a name, the
   engine that renders them, a reference clip, a pinned seed and a spoken-consent record, and you
   can bind a different one per surface — one voice in the web dashboard, another for a Slack

@@ -5,6 +5,7 @@ import logging
 import pathlib
 from collections import defaultdict
 from datetime import datetime
+from typing import Any, Callable
 from uuid import uuid4
 
 from personalclaw.sqlite_compat import FTS5_REMEDY, probe, sqlite3
@@ -941,6 +942,50 @@ class KnowledgeStore:
             sql += " WHERE enabled = 1"
         sql += " ORDER BY created_at"
         return [self._serialize_source(r) for r in self.db.execute(sql).fetchall()]
+
+    #: The `sources` columns a user may edit after creation, and how each is coerced on the
+    #: way in. Deliberately a CLOSED map rather than "whatever keys the caller sent": the
+    #: same row carries the engine's own rollups (`health_status`, `last_escalations`,
+    #: `last_poll_at`, the cursor's twin), and a generic setter would let an edit path
+    #: overwrite a poll's verdict with whatever a client believed it to be.
+    #:
+    #: `provider`/`kind` are NOT here on purpose. They decide which provider polls the row
+    #: and therefore what its `spec` even means, so changing them in place would silently
+    #: reinterpret a validated spec against a different validator — that is a new source,
+    #: not an edit.
+    _EDITABLE_SOURCE_FIELDS: dict[str, Callable[[Any], Any]] = {
+        "name": str,
+        "enabled": lambda v: 1 if v else 0,
+        "enrichment": str,
+        "poll_interval_secs": int,
+        "item_type": str,
+        "spec": lambda v: json.dumps(v or {}),
+        "budget": lambda v: json.dumps(v or {}),
+    }
+
+    def update_source(self, source_id: str, **fields: Any) -> dict | None:
+        """Patch a WatchedSource's user-owned fields; return the updated row (None if gone).
+
+        Partial by construction — an absent key is untouched, so a caller flipping
+        ``budget.allow_render`` cannot blank a name it never sent. Raises ``KeyError`` on a
+        field outside :data:`_EDITABLE_SOURCE_FIELDS` rather than ignoring it: an edit that
+        silently does nothing is the shape of bug where a UI reports success and the row
+        never moved.
+        """
+        unknown = sorted(set(fields) - set(self._EDITABLE_SOURCE_FIELDS))
+        if unknown:
+            raise KeyError(f"not an editable source field: {', '.join(unknown)}")
+        if self.get_source(source_id) is None:
+            return None
+        if fields:
+            cols = ", ".join(f"{k} = ?" for k in fields)
+            vals = [self._EDITABLE_SOURCE_FIELDS[k](v) for k, v in fields.items()]
+            self.db.execute(
+                f"UPDATE sources SET {cols}, updated_at = ? WHERE id = ?",
+                (*vals, datetime.now().isoformat(), source_id),
+            )
+            self.db.commit()
+        return self.get_source(source_id)
 
     def get_source_cursor(self, source_id: str) -> str:
         """The opaque cursor last persisted for a source (empty string if never polled)."""
