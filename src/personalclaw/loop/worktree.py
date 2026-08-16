@@ -24,6 +24,7 @@ import os
 import re
 import shutil
 import subprocess
+import time
 from typing import NamedTuple
 
 logger = logging.getLogger(__name__)
@@ -140,23 +141,145 @@ def branch_name(task_id: str) -> str:
     return f"{_BRANCH_PREFIX}{task_id}"
 
 
+# ── creation-cost instrumentation (HARNESS-CRAFT §1.1 "measure first", HC-1) ──
+#
+# §1 is explicitly a MEASURED-bottleneck plan: the hydration tuning in §1.2 (sparse
+# checkout, pooled creation, a reuse pool) is only allowed to be built if a fan-out
+# actually pays for it. That decision needs a number from the real function, on real
+# repos, over time — so the timing line ships whether or not the gate opens.
+#
+# The line is a CONTRACT, not a debug aid, because its whole purpose is comparison
+# across runs and across machines. Hence a fixed prefix and fixed `key=value` fields:
+#
+#   worktree add outcome=created task=t-abc ms=812 files=10432 size_class=large
+#
+# * ``outcome`` first, because it decides whether the row is a hydration sample at all.
+#   ``created`` is the cost §1.2 would attack; ``reused`` is add_worktree's idempotent
+#   early return (near-zero, and the datapoint a reuse pool would be judged against);
+#   ``failed`` carries a duration too — a creation that burned the whole ``_TIMEOUT``
+#   before failing is the most interesting row on the page, and dropping it would make
+#   the timeout case invisible in exactly the measurement meant to find it.
+# * ``ms`` is an integer of milliseconds. Not seconds-with-decimals: these are compared
+#   by eye and by grep, and a float would print `1e-05` on the reuse path.
+# * ``files`` AND ``size_class`` both, even though the class is derived from the count.
+#   The count is what makes two runs comparable when a repo grows; the class is what
+#   makes a mixed log greppable without arithmetic.
+# * ``task`` so a fan-out's N rows can be told apart and joined to the run.
+TIMING_LOG_PREFIX = "worktree add"
+
+OUTCOME_CREATED = "created"
+OUTCOME_REUSED = "reused"
+OUTCOME_FAILED = "failed"
+
+#: Upper bound (exclusive) of tracked files per class name. Decade buckets, so the
+#: benchmark case §1.1 names — a 10K-file repo — sits exactly on the ``large`` floor
+#: rather than straddling a boundary. Coarse on purpose: the tag exists to say which
+#: measurements may be compared with which, and a finer class would imply the timing
+#: number is repeatable to a precision it does not have.
+_SIZE_CLASSES: tuple[tuple[int, str], ...] = (
+    (100, "tiny"),
+    (1_000, "small"),
+    (10_000, "medium"),
+    (100_000, "large"),
+)
+SIZE_CLASS_HUGE = "huge"
+#: Reported when git cannot answer. Distinct from any real class so a reader never
+#: mistakes an unmeasured repo for a small one.
+SIZE_CLASS_UNKNOWN = "unknown"
+
+#: Sentinel for "git could not count". 0 cannot double as unknown — an empty repo is a
+#: real answer, and conflating them would tag it ``unknown`` forever.
+FILE_COUNT_UNKNOWN = -1
+
+#: workspace abspath → tracked-file count. Cached for the PROCESS because
+#: ``git ls-files`` on the very repo we are timing is itself a full index walk — run
+#: per creation it would make the instrumentation a share of the cost it reports, which
+#: is the one thing a measurement may not do. Staleness is harmless at decade
+#: granularity: a repo has to grow 10x to change its class. Failures are cached too,
+#: for the same reason — a workspace with no git must not re-pay the probe N times.
+_FILE_COUNT_CACHE: dict[str, int] = {}
+
+
+def size_class(file_count: int) -> str:
+    """The size-class tag for a tracked-file count (``FILE_COUNT_UNKNOWN`` → unknown)."""
+    if file_count < 0:
+        return SIZE_CLASS_UNKNOWN
+    for ceiling, name in _SIZE_CLASSES:
+        if file_count < ceiling:
+            return name
+    return SIZE_CLASS_HUGE
+
+
+def repo_file_count(workspace: str) -> int:
+    """Tracked files in ``workspace`` (``git ls-files``), cached per workspace.
+
+    ``FILE_COUNT_UNKNOWN`` when git cannot answer. Counts non-empty lines of the
+    combined git output; ``_git`` merges stderr, so a git warning could inflate the
+    count by a line or two — which cannot move a decade bucket, and reusing ``_git``
+    keeps every git call in this module behind the one resource-ceilinged runner
+    instead of adding a second, unshimmed subprocess path just to count files.
+    """
+    key = os.path.abspath(workspace or "")
+    cached = _FILE_COUNT_CACHE.get(key)
+    if cached is not None:
+        return cached
+    rc, out = _git(workspace, "ls-files")
+    count = sum(1 for ln in out.splitlines() if ln.strip()) if rc == 0 else FILE_COUNT_UNKNOWN
+    _FILE_COUNT_CACHE[key] = count
+    return count
+
+
+def repo_size_class(workspace: str) -> str:
+    """The cached size class of ``workspace``."""
+    return size_class(repo_file_count(workspace))
+
+
+def _log_creation(workspace: str, task_id: str, elapsed: float, outcome: str) -> None:
+    """Emit the one timing line. Called AFTER the clock stops, always.
+
+    The size class is resolved here rather than up front precisely so a cache MISS
+    (one ``git ls-files``) lands outside the measured window. Instrumented the other
+    way round, the first worktree of every process would report its own probe as part
+    of the hydration cost — and the first is the one a fan-out benchmark reads.
+    """
+    count = repo_file_count(workspace)
+    logger.info(
+        "%s outcome=%s task=%s ms=%d files=%d size_class=%s",
+        TIMING_LOG_PREFIX,
+        outcome,
+        task_id,
+        round(elapsed * 1000),
+        count,
+        size_class(count),
+    )
+
+
 def add_worktree(workspace: str, task_id: str, project_id: str = "") -> str | None:
     """Create (idempotently) a worktree + branch for ``task_id``; return its path,
     or None on failure (caller falls back). Requires at least one commit on HEAD;
-    on a fresh repo the caller makes an initial commit first (see ensure_base_commit)."""
+    on a fresh repo the caller makes an initial commit first (see ensure_base_commit).
+
+    Emits one ``TIMING_LOG_PREFIX`` line per call (see the block above): the duration
+    covers the work that call actually did, so ``reused`` reports the real cost of the
+    idempotent early return rather than a fabricated zero."""
     if not _safe_task_id(task_id):
         logger.warning("worktree add refused — unsafe task_id %r", task_id)
         return None
+    started = time.perf_counter()
     path = worktree_path(workspace, task_id, project_id)
     if os.path.isdir(path):
+        _log_creation(workspace, task_id, time.perf_counter() - started, OUTCOME_REUSED)
         return path  # already exists (resume / re-schedule)
     os.makedirs(os.path.dirname(path), exist_ok=True)
     branch = branch_name(task_id)
     # -B resets the branch if it somehow exists; -f tolerates a stale registration.
     rc, out = _git(workspace, "worktree", "add", "-f", "-B", branch, path, "HEAD")
+    elapsed = time.perf_counter() - started
     if rc != 0:
+        _log_creation(workspace, task_id, elapsed, OUTCOME_FAILED)
         logger.debug("worktree add failed for %s: %s", task_id, out.strip()[:200])
         return None
+    _log_creation(workspace, task_id, elapsed, OUTCOME_CREATED)
     return path
 
 

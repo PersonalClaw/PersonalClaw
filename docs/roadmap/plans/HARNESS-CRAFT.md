@@ -162,3 +162,124 @@ Session 1 is fully independent (Wave 2, or whenever fan-out slowness is observed
   money), so claiming `done` would assert a validation nobody ran. Every seam is unit-proven;
   what remains is one owner run on the dev instance. Status is `blocked` so a later tick does
   not re-implement the core.
+
+- **[2026-08-16][S1] HC-1 DONE — instrumentation shipped; gate verdict `proceed`, with a named
+  contention caveat at the floor.**
+  **Premise correction (DEVIATION):** §1.1 says "instrument `create_worktree`". No such function
+  exists. The real single creator is `loop.worktree.add_worktree`, and both production callers go
+  through it (`loop/kinds/sdlc.py:1360` phase fan-out, `workflows/provisioning.py:487` for
+  `mode: worktree` runs). Instrumented there rather than at either wrapper, so one line covers both
+  paths.
+  **The line (a contract, not a debug aid):**
+  `worktree add outcome=created task=t-x ms=812 files=10432 size_class=large`, behind
+  `TIMING_LOG_PREFIX`. `outcome` ∈ `created|reused|failed` because the three populations must never
+  be averaged together — `reused` is `add_worktree`'s idempotent early return (near zero, and the
+  datapoint §1.2's reuse pool would be judged against) and `failed` carries the duration that burned
+  the 30 s `_TIMEOUT`. `files` AND `size_class` both: the count makes two runs comparable as a repo
+  grows, the class makes a mixed log greppable without arithmetic. Decade buckets
+  (tiny/small/medium/large/huge) so §1.1's 10K benchmark case lands ON the `large` floor instead of
+  straddling a boundary; `unknown` is distinct from every real class so an unmeasurable repo never
+  reads as a cheap one.
+  **Cache:** `repo_file_count()` memoizes `git ls-files` per workspace abspath for the process, and
+  `_log_creation` resolves the class only AFTER the clock stops. Both matter: instrumented the other
+  way round, the first worktree of every process — the one a benchmark reads first — would report its
+  own probe as hydration. A test injects a 600 ms `ls-files` and asserts the logged duration does not
+  contain it.
+  **Benchmark:** `harness/worktree_bench.py` + `python -m harness worktree-bench`. It parses the
+  SHIPPED log line instead of keeping its own stopwatch — one measurement, not two that can drift,
+  and the log contract gains a real reader. This repo has **3,047** tracked files and does NOT
+  qualify as the ≥10K benchmark case, so the tool synthesizes a deterministic 10,000-file repo
+  (100 files/dir, ~200 B each, content a function of the file index so two syntheses produce
+  identical trees) under a `tempfile.TemporaryDirectory`. Nothing enters the committed tree. It
+  refuses to run against the real `~/.personalclaw` (worktrees land under `config_dir()`, and its own
+  cleanup would then delete inside the user's home).
+  **RECORDED BASELINE — fan-out of 4, 10,000 files, sequential (today's path):** samples
+  `[10442, 4501, 2947, 2975]` ms · mean **5216 ms/worktree** · median 3738 · max 10442 · spread 7495
+  · sequential total **20.9 s** · outcomes `{created: 4}`.
+  **CONTENTION CAVEAT (evidence, not a hedge):** every number in this session was taken while other
+  agents ran full test suites and npm builds. Load average **21–35 on 18 cores** across the runs
+  (captured with `uptime` before and after each). Two earlier trials of the same configuration:
+  mean 13042 ms with samples `[23014, 11351, 4760]` **and one worktree FAILED at the 30 s
+  `_TIMEOUT`**, and mean 6720 ms with `[13758, 6144, 3009, 3971]`. Run-to-run variation on identical
+  input is therefore ~2x, and it is all in the upper tail. To separate hydration from the machine, a
+  **40-file control arm was run in the same window**: mean **286 ms**, spread **18 ms**, total
+  1142 ms. Subtracting that floor leaves ~2.7 s of genuine hydration in even the cheapest 10K
+  sample, so the cost is size-driven, not ambient.
+  **GATE VERDICT: `proceed` to `HC-2`** — unanimous: all four worktrees exceeded the 2000 ms gate,
+  the cheapest by 947 ms. **The margin at the floor is thin and I am not going to dress it up:** a
+  ~1.25x idle speedup would move that cheapest sample into the ±20% unresolved band. Consequence for
+  `HC-2`: it is unblocked, but re-run `python -m harness worktree-bench --files 10000` on an idle
+  machine and confirm before spending the atom. Independently of the threshold, trial 1's lost
+  worktree is a second bottleneck signal that no contention discount removes — at this repo size a
+  fan-out can drop a task's worktree entirely, not merely slow it.
+  **DEVIATION (gate statistic).** The plan phrases the gate as "<2s per worktree", which reads as a
+  mean. Implemented as UNANIMITY over the samples instead, and the measurement is what forced it: an
+  intermediate version refused on a spread-exceeds-mean rule and would have reported `unresolved`
+  for an arm whose every observation was more than twice the gate, while a mean-versus-threshold test
+  would have decided the atom on which of four samples got descheduled. A right-skewed four-sample
+  arm has no trustworthy central estimate; agreement is the only thing it can support. Under-size
+  repos, narrower fan-outs, empty arms and straddling samples are all `unresolved` — a third outcome
+  the `done_when` does not name, kept because "the measurement cannot answer" is a real result and
+  rounding it to `skip` or `proceed` would be the failure this atom exists to avoid.
+  **Falsifications (each run, mutation applied then reverted).**
+  1. Duration hard-coded to `0` → 1 red:
+     `AssertionError: logged 0ms ignores the injected sleep / assert 0 >= ((0.3 * 1000) * 0.9)`.
+  2. Duration hard-coded to `999999` → the same test's OTHER bound reds:
+     `AssertionError: logged 999999ms exceeds observed 718.5775419929996ms`. Both bounds are
+     load-safe by construction — the floor is a sleep injected into the git call, the ceiling is a
+     wall clock around that same call, so contention moves them together and neither is a fixed
+     threshold.
+  3. `size_class=` dropped from the line → **7 red** across both halves, incl.
+     `test_creation_logs_one_parseable_row_with_the_repo_size`,
+     `test_a_failed_creation_still_reports_its_duration`, and the harness's
+     `test_parses_the_line_the_module_actually_emits` (the row regex is anchored on the full field
+     set on purpose, so a lost tag is a parse failure, not a defaulted field).
+  4. `repo_file_count` moved INSIDE the timed window → 1 red:
+     `AssertionError: ['size-probe', 'git-worktree-add-returned', 'size-probe']`.
+  5. `logger.info` → `logger.debug` → **7 red** (5 instrumentation + 2 harness). Worth recording
+     because I predicted this one wrong: I expected the harness half to survive, since
+     `collect_timing_rows` raises the logger level itself. It does not — raising the level to INFO
+     does not resurrect a DEBUG call, so the collector is a level guard after all.
+  6. **A mutation that reded NOTHING, called out as required:** `median_ms` replaced by a constant
+     `0.0` → **46 passed, 0 red.** The median was printed by the CLI and by `to_dict` and asserted
+     by nothing — a reported number nobody was defending. Closed in the same commit by asserting
+     every field `to_dict` emits (`test_to_dict_carries_every_reported_number_and_the_verdict`);
+     re-running the same mutation now reds. This is the one place these tests were weaker than they
+     looked, and it was the report rather than the measurement.
+  **One of my own tests was wall-clock-flaky and the contention caught it.** The first version of
+  `test_the_size_probe_is_not_inside_the_measured_window` made `git ls-files` sleep 600 ms and
+  asserted the logged duration stayed under that. It went red mid-gate —
+  `logged 801ms contains the 600ms size probe` — because under load the real `git worktree add`
+  itself took 801 ms. The assertion had quietly assumed the work was cheaper than the probe.
+  Rewritten as `test_the_size_probe_runs_after_the_clock_stops`: an ORDERING assertion (the probe
+  must be called only after `git worktree add` returns), which is the actual invariant, has no
+  threshold, and cannot be flaked by load. Mutation 4 still reds against it.
+  **A real-home rail red that was NOT mine.** One combined gate run reported
+  `real-home rail FAILED: 2 entries under /Users/golani/.personalclaw changed` — `memory.db-shm`
+  (32768 B) and `memory.db-wal` (0 B). Both are SQLite WAL sidecars that any reader creates, not
+  state. Isolated it: the two new files alone, the pre-existing files alone, and the full combined
+  selection all re-ran with `~/.personalclaw unchanged`, twice. Attributed to concurrent activity on
+  this shared machine (other agents were running full suites in the same window) rather than to this
+  change. Recorded rather than silently re-run, and NOT added to `ALLOWED_RESIDUE`.
+  **Gate (all from `/private/tmp/hc1-wt`).** `make lint` clean — black 1686 files, isort, flake8,
+  mypy "no issues found in 870 source files". `pytest tests/test_loop_worktree_timing.py
+  tests/test_harness_worktree_bench.py` → **11 + 26 = 37 passed**. Existing `add_worktree`
+  consumers green: `test_loop_worktree.py`, `test_workflows_provisioning.py`,
+  `test_workflows_worktrees.py`, `test_loop_manager.py`. Ratchets/gates green:
+  `test_inert_surface_baseline.py` (no new config key, enum member, trigger kind, `_EDITABLE_CONFIG`
+  entry or SDK export, so the census is untouched — baseline NOT regenerated),
+  `test_portability.py`, `test_durability_inventory.py`, `test_resilience_degraded_lint.py`,
+  `test_roadmap_dag_derived.py` (incl.
+  `test_regenerating_the_committed_file_is_a_no_op` after
+  `PYTHONPATH=…/src python3 tools/regen_dag_derived.py` — 640 atoms, 125 ready, 876 edges, 0
+  dangling, no `regressed:` line), `harness`'s own `test_harness_validate.py` +
+  `python -m harness validate` (15 specs valid, 0 warnings). `test_config_baseline.py` not
+  applicable: no config field was added (§1.3's `loop.worktree_sparse` belongs to `HC-2`). CLI exit
+  codes verified against the `fanout-measure` precedent: `2` for a measurement that could not happen
+  (`not a git repo`), `0` for an honest `unresolved` verdict.
+  **Full suite:** `pytest tests/ --no-cov -q -p no:randomly -n 4` →
+  **20421 passed, 30 skipped, 12 xfailed, 0 failed** in 16m44s, `real-home rail:
+  ~/.personalclaw unchanged by this run`.
+  **CHANGELOG: no entry.** This is developer instrumentation plus a dev-harness benchmark — a log
+  line at INFO and a `python -m harness` subcommand. No user-facing surface, no config field, no
+  behavior change to any run: `add_worktree` returns exactly what it returned before.
