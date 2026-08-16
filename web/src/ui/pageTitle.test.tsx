@@ -206,6 +206,15 @@ describe('an entity is the destination when the URL says so', () => {
       .toMatch(/<PageTitle className="truncate">\{project\.name\}<\/PageTitle>/)
     expect(read('pages/apps/AppFrame.tsx'), 'the installed app')
       .toMatch(/<PageTitle className="flex items-center gap-s">/)
+    // Named in this file's own prose as "measured h1-less today" but never converted: the last
+    // inventory surface still without a heading of ANY level. Its path identifies the entity
+    // (`#/knowledge/item/<id>`), so the settled rule gives it the h1. Driven before the change:
+    // 48 surfaces, 46 with an h1, and this one had ZERO headings at 1s/2.5s/5s/9s — persistent,
+    // not a loading frame. (`#/settings/models` LOOKED h1-less in the same census and is not: it
+    // returns a bare `ListSkeleton` while models load, so a 1.1s sample caught it before its
+    // `PanelHeader`. Sample a heading census past the skeleton, or it lies.)
+    expect(read('pages/knowledge/KnowledgeDetailPage.tsx'), 'the knowledge item')
+      .toMatch(/<PageTitle className="truncate min-w-0">/)
   })
 
   it('a peek does NOT take one — the list is still the destination', () => {
@@ -221,7 +230,7 @@ describe('an entity is the destination when the URL says so', () => {
 
   it('none of the four kept the bare span it replaced', () => {
     for (const rel of ['pages/workflows/WorkflowRunDetail.tsx', 'pages/workflows/WorkflowDefDetail.tsx',
-      'pages/apps/AppFrame.tsx']) {
+      'pages/apps/AppFrame.tsx', 'pages/knowledge/KnowledgeDetailPage.tsx']) {
       expect(read(rel), `${rel} still hand-rolls a title`).not.toMatch(/<span data-type="title-l"/)
     }
     // ProjectsSection keeps ONE such span deliberately: the rename editor's input is not a heading.
