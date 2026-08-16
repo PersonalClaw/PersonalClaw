@@ -334,3 +334,42 @@ describe('a hyphenated aria prop on a kit component is a dropped name', () => {
     expect(src).toMatch(/setMarketplace\(e\.target\.value\)\} aria-label="Marketplace"/)
   })
 })
+
+// ── A name that de-underscores its own visible label stops containing it ───────────────────────────
+//
+// WS-9's Sources form renders each detector as a checkbox whose VISIBLE label is the provider's raw
+// key in mono — `wordpress_api`, `json_ld`, `semantic_html`, `json_state`, `selector_frequency` — which
+// is deliberate: those are identifiers, and the surrounding `Field` label and hint carry the prose.
+// The checkbox also carried an explicit `ariaLabel` built with `d.replace(/_/g, ' ')`, which OVERRODE
+// the wrapping `<label>` with a different string. Driven on `#/knowledge/sources/new` after picking
+// "Watched page", comparing each checkbox's computed name against its visible label text:
+//
+//   visible "wordpress_api"       name "Run the wordpress api detector"        → 5 of 5 MISMATCH
+//   visible "json_ld"             name "Run the json ld detector"
+//   …
+//
+// **WCAG 2.5.3 Label in Name**: the accessible name must CONTAIN the visible label. A voice-control
+// user reading `wordpress_api` off the screen and saying it matched nothing. `ui/forms`' own precedence
+// rule already records the principle — "the visible label is the better name, so aria-label is not
+// emitted at all (two competing names would be worse)" — and this was a competing name.
+//
+// Fixed by keeping the key in the sentence (`Run the ${d} detector`), which contains the visible text
+// AND still says what ticking the box does. Re-driven: 5 of 5 pass.
+describe('the detector checkboxes keep their visible key inside the name', () => {
+  it('does not de-underscore the key it is naming', () => {
+    const code = codeOf('pages/knowledge/SourceCreatePage.tsx')
+    expect(code, 'a name that rewrites its own visible label stops containing it (WCAG 2.5.3)')
+      .not.toMatch(/ariaLabel=\{`Run the \$\{d\.replace/)
+  })
+
+  it('names the action AND carries the raw key', () => {
+    const code = codeOf('pages/knowledge/SourceCreatePage.tsx')
+    expect(code).toMatch(/ariaLabel=\{`Run the \$\{d\} detector`\}/)
+  })
+
+  it('the visible label is still the bare key in mono — the name adds, it does not replace', () => {
+    // If this span ever became prose, the name would have to follow it instead.
+    expect(codeOf('pages/knowledge/SourceCreatePage.tsx'))
+      .toMatch(/<span className="font-mono">\{d\}<\/span>/)
+  })
+})
