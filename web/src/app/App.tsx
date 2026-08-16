@@ -1,6 +1,7 @@
 import { lazy, Suspense, useEffect, useRef, useState } from 'react'
 import { MotionConfig, motion } from 'framer-motion'
 import { ease, duration } from '../design/motion'
+import { armCueAudio } from '../design/soundCues'
 import { Bell, Blocks, BookOpen, Brain, Compass, FileCode, FileText, Files, FolderKanban, Inbox, LayoutDashboard, ListChecks, Loader2, MessageSquare, Settings, Sparkles, Terminal, Users, Workflow, Wrench, Zap } from 'lucide-react'
 import { NavRail, type NavItem } from '../ui/NavRail'
 import { ShellCornerLeft, ShellCornerRight } from '../ui/ShellCorners'
@@ -164,6 +165,12 @@ function AppInner() {
   // `sub` on the chat route (excluding the new/history list routes).
   const activeChatSession = route === 'chat' && sub && sub !== 'new' && sub !== 'history' ? sub : ''
   useApprovalToasts(activeChatSession)
+  // Sound cues need their AudioContext built inside a real user gesture, and the
+  // three cue points (turn settled, approval requested, error toast) are none of
+  // them. So the shell arms a one-shot primer here and the next click/keypress
+  // builds the single context. Does nothing while the toggle is off (Settings →
+  // Design → Personality), which is the default.
+  useEffect(() => { armCueAudio() }, [])
   const { onboarded, loaded } = useIdentity()
   const [navCollapsed, setNavCollapsed] = useState(() => localStorage.getItem(NAV_COLLAPSED_KEY) === '1')
   useEffect(() => { localStorage.setItem(NAV_COLLAPSED_KEY, navCollapsed ? '1' : '0') }, [navCollapsed])
