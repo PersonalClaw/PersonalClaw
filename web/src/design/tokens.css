@@ -431,6 +431,28 @@
   .blueprint-scan { display: none; }
 }
 
+/* ── Route crossfade (FLUID-MOTION §C3 — atom FM-5) ───────────────────────────
+   The hash router starts a View Transition when the ROUTE changes
+   (`useHashRoute.ts` → `viewTransition()`), and the UA's default for it is a
+   250ms cross-fade on its own curve. This is the taste layer over that default:
+   it puts the page change on the app's emphasized-decelerate curve at the
+   `duration.medium` used by every other entrance, so navigating reads as part of
+   one motion language rather than as a browser effect.
+
+   The MECHANISM is the JS gate, not this rule — deleting these two selectors
+   leaves a (browser-flavoured) crossfade behind, it does not leave navigation
+   un-animated.
+
+   There is deliberately NO prefers-reduced-motion override here, and the global
+   `*` reset above cannot reach these pseudo-elements: the router never STARTS a
+   transition when the query matches, so a rule suppressing them would be a
+   second, unreachable mechanism — the same reasoning as `.crt-beam` below. */
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation-duration: 300ms;
+  animation-timing-function: var(--ease-emphasized-decel);
+}
+
 /* ── CRT raster (PERSONALITY-THEMES §S2 — the `terminal-scanlines` shell element) ──
    Two layers for ui/personality/TerminalStrip.tsx, split along the motion line:
    `.crt-raster` is the STATIC frame (a fixed lattice of hairlines, the whole thing a

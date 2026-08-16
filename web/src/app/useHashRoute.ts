@@ -1,4 +1,7 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
+import { flushSync } from 'react-dom'
+
+import { viewTransition } from '../design/motion'
 
 /** Minimal hash router — keeps the active page + view-state in `location.hash`
  *  so every page, sub-page, tab, filter, and open panel is URL-addressable:
@@ -64,9 +67,47 @@ function buildHash(path: string, query: Record<string, string>): string {
 export function useHashRoute(fallback: string): HashRoute {
   const [state, setState] = useState(() => parseHash(fallback))
   const [navEpoch, setNavEpoch] = useState(0)
+  /** The route last applied to `state` — a mirror, never a source of truth. It exists
+   *  because the `hashchange` listener below is registered once with `[]` deps, so its
+   *  closure would hold the FIRST render's `state.route` forever; and it decides only
+   *  whether to crossfade, never what to render. */
+  const applied = useRef(state.route)
+
+  /** Pull the live hash into React state. The one place `state` is written. */
+  const applyHash = () => {
+    const next = parseHash(fallback)
+    applied.current = next.route
+    setState(next)
+  }
 
   useEffect(() => {
-    const onHash = () => setState(parseHash(fallback))
+    // The ONE animated seam (plan FLUID-MOTION §C3, atom FM-5). Every navigation the
+    // user performs arrives here as a `hashchange` — a nav click (apply's push branch
+    // below) and browser back/forward alike — so wrapping this single listener
+    // crossfades all of them with no page opting in.
+    //
+    // COSMETIC ONLY, three ways:
+    //  • The URL is written by `apply` BEFORE this runs and outside any transition, so
+    //    the address bar and history can never be gated on an animation.
+    //  • `viewTransition` runs its callback on every path (no API, a throwing API) and
+    //    never awaits the animation, so the state change can't be lost either.
+    //  • Nothing about focus or scroll is touched: the transition animates snapshots
+    //    of the old and new frames, and the real DOM swap is the same one React
+    //    already did — a route change moves focus exactly as far as it did before.
+    //
+    // Only a `route` (first path segment) change animates. Sub-page, tab, filter and
+    // search updates land here too, and crossfading the whole page on every keystroke
+    // of a search box would fight the task instead of decorating it.
+    //
+    // `flushSync` is load-bearing: the browser captures the "after" snapshot as soon as
+    // the callback returns, while React 18 commits a plain `setState` later on the
+    // scheduler — without the flush BOTH snapshots would be the old DOM and the
+    // crossfade would animate nothing. It is safe precisely here because a native
+    // listener is never inside a React render or commit.
+    const onHash = () => {
+      if (parseHash(fallback).route === applied.current) { applyHash(); return }
+      viewTransition(() => { flushSync(applyHash) })
+    }
     window.addEventListener('hashchange', onHash)
     if (!location.hash) location.replace(`#/${fallback}`)
     return () => window.removeEventListener('hashchange', onHash)
@@ -79,13 +120,15 @@ export function useHashRoute(fallback: string): HashRoute {
   const apply = (next: string, replace: boolean, bumpEpoch: boolean) => {
     if (bumpEpoch) setNavEpoch((n) => n + 1)
     const live = rawHash()
-    if (live === next) { setState(parseHash(fallback)); return }
+    if (live === next) { applyHash(); return }
     if (replace) {
-      // replaceState doesn't emit hashchange — re-sync state ourselves.
+      // replaceState doesn't emit hashchange — re-sync state ourselves. A replace is a
+      // URL CORRECTION (a redirect, an in-place refinement), not a navigation the user
+      // performed, so it deliberately does not crossfade.
       history.replaceState(null, '', `#/${next}`)
-      setState(parseHash(fallback))
+      applyHash()
     } else {
-      location.hash = `#/${next}`   // emits hashchange → onHash re-parses
+      location.hash = `#/${next}`   // emits hashchange → onHash re-parses (+ crossfades)
     }
   }
 

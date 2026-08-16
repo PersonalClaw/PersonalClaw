@@ -231,3 +231,69 @@ always firing. Zero console errors across the pass.
 
 **Not in this atom, by scope:** `expressiveness=0`/`bounciness=0`/reduced-motion zero-motion CI
 guard and the 60fps pass are `FM-7`, which now inherits a working assertion instead of a comment.
+
+### 2026-08-16 — `FM-5` (S3: T3.1; contract §C3) — **DONE**
+
+§Landscape item 4 said "navigation is instant; `viewTransition` exists but isn't wired to the
+router". It was more literal than that: `viewTransition()` had **zero call sites** anywhere in the
+repo — FM-1 shipped the wrapper and nothing consumed it. It is now wired at exactly one seam, the
+`hashchange` listener in `web/src/app/useHashRoute.ts`. Every navigation a user performs lands
+there — a nav click through `apply`'s push branch, and browser back/forward — so a single listener
+crossfades all of them and no page opts in. The curve and duration are declared in `tokens.css`
+under `::view-transition-old/new(root)` so a page change moves on the app's own
+emphasized-decelerate curve rather than the UA's default; that rule is taste, the JS is the
+mechanism.
+
+**§C3's "cosmetic only" is structural here, not a promise in a comment.** The URL write
+(`location.hash =` / `history.replaceState`) stays in `apply`, *outside* the transition, so the
+address bar and history can never wait on an animation. The route commit is inside it, so
+`viewTransition` was hardened to run its callback **exactly once on every path**: no API (jsdom, and
+any browser without View Transitions), a `startViewTransition` that throws, and an animation that
+never settles — the transition object is dropped rather than awaited, and the function is
+deliberately not `async` so `await`ing it is not expressible. `flushSync` on the commit is required
+rather than defensive: the browser captures the "after" frame as soon as the callback returns, while
+React 18 would commit a plain `setState` later on the scheduler, so without it both snapshots are
+the old frame and the crossfade animates nothing.
+
+**Only the `route` animates**, and that gate is load-bearing rather than decorative. A pushed
+`?open=<id>` detail panel reaches the same `hashchange` seam a nav click does, so without the route
+comparison the whole page would fade underneath an opening panel; replaced tab/filter/search
+updates and `replace` redirects stay instant for the same reason (the soul guardrail's "no motion
+that delays a user action or fights readability"). Reduced motion resolves to **none** — the instant
+swap — gated inside `viewTransition` at call time.
+
+**DEVIATION — FM-1's `reduce` parameter was deleted, not passed.** `viewTransition(update, reduce)`
+let any call site pass `reduce: false` straight over the user's OS setting, and it had zero callers
+to migrate. The reduced-motion read moved inside the function so there is one gate, unforgettable
+and un-overridable, rather than a second escapable one at each call site. FM-1's version also
+dropped the update entirely when `startViewTransition` threw; that is now recovered behind a
+run-once latch.
+
+**DISCOVERY — falsification found a swallowed render error.** The `catch` recovering a refused
+transition sits on the same path as an error thrown by `update` itself, so the first version
+swallowed a render error and would have left a silently blank page with nothing in the console.
+`update`'s own error is now re-raised and only a refusal to *start* is recovered. Two mutations also
+reded nothing on the first pass and both were genuine test gaps rather than redundant code: the
+route-only gate was only exercised through `replace` updates, which never emit a `hashchange` at
+all, and the `flushSync` ordering property was unasserted until a test read the DOM from *inside*
+the transition callback (where the compositor stands). One mutation still reds nothing by design —
+deleting the `typeof startViewTransition !== 'function'` fast path — because the `catch` is the layer
+that actually carries update-survival: calling `undefined` throws a `TypeError` the catch recovers.
+The guard is kept as a statement of intent and to keep roughly a third of browsers off
+exception-driven control flow on every navigation, and that reasoning is recorded in the function's
+doc comment instead of being pinned by a test that cannot exist.
+
+**Rails.** `web/src/app/routeTransition.test.tsx` (14) asserts the three failure modes on the route
+STATE rather than the URL — the URL write is outside the transition by construction, so a URL-only
+assertion passes even with the commit trapped inside a broken transition — plus reduced motion,
+back/forward, both non-animating classes, the `applied` mirror across a return to the starting
+route, the flushSync capture ordering, and that navEpoch/sub/query semantics are untouched.
+`web/src/design/motion.test.ts` grows 8 for `viewTransition` itself. The frontend URL-state test the
+done-when names, `tests/test_url_navigation_doctrine.py` (6), still passes — including
+`test_router_still_owns_history_mechanics`, which is what keeps the `location.hash`/`replaceState`
+mechanics in the router file where this atom left them. `docs/design/motion.md` §6 documents the
+one rule (a view transition may never gate a state change) with the wrong/right pair.
+
+**Not in this atom, by scope:** the shared-element *morph* half of §C3's "crossfades/morphs" is
+`FM-2`'s `Morph.tsx`; this atom ships the crossfade. `FM-7` still owns the 60fps budget proof and
+the zero-motion CI guard, and now inherits a wired route transition to measure.
