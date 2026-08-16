@@ -54,6 +54,28 @@ describe('the loop cockpit says whether its feed is alive', () => {
     expect(read('pages/settings/DiagnosticsPanel.tsx')).toMatch(/connected \? 'Streaming' : 'Connecting…'/)
   })
 
+  it('the DESIGN cockpit shows it too — the loops family is now complete', () => {
+    // Cycle 593. `DesignCockpitPage` is the third full-page watch surface on this hook, and the one my
+    // ux-592 probe accidentally proved is reachable (a `design`-kind loop routes here, not to
+    // LoopCockpitPage). Same gate, same vocabulary.
+    const code = read('pages/loops/DesignCockpitPage.tsx')
+    expect(code).toMatch(/const \{ connected \} = useRunStream/)
+    expect(code).toMatch(/\{connected \? 'Streaming' : 'Connecting…'\}/)
+    expect(code).toMatch(/background: connected \? 'var\(--color-ok\)' : 'var\(--color-on-surface-low\)'/)
+    expect(code, 'a finished loop has no stream').toMatch(/\{running && \(/)
+  })
+
+  it('CodeCockpitPage is the ONE remaining consumer, and that is stated not hidden', () => {
+    // It has the gate already (`const active = p.status === 'running'`) but its TopBar left slot sits
+    // deep in a 3000-line file with no clean insertion anchor, so it was left rather than guessed at.
+    // LoopPlanReview stays a genuine opt-out: a review panel is not a live watch surface.
+    const code = read('pages/code/CodeCockpitPage.tsx')
+    expect(code, 'still calls the hook').toMatch(/useRunStream\(/)
+    expect(code, 'and already has the gate a future cycle needs').toMatch(/const active = p\.status === 'running'/)
+    expect(code, 'not yet wired — remove this assertion when it is')
+      .not.toMatch(/const \{ connected \} = useRunStream/)
+  })
+
   it('the remaining consumers still compile against the new return', () => {
     // Backwards-compatible by construction: they ignore the value.
     for (const rel of ['pages/loops/DesignCockpitPage.tsx', 'pages/code/CodeCockpitPage.tsx', 'pages/loops/LoopPlanReview.tsx']) {
