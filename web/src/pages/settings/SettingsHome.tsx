@@ -46,7 +46,11 @@ export function SettingsHome({ go }: { go: (id: string) => void }) {
               of the scroll area (its own surface bg masks cards sliding under it),
               with a constant gap below so the first row never crowds it. */}
           <div className="sticky top-0 z-20 -mx-2xl bg-canvas px-2xl pt-2xl pb-l">
-            <div className="mx-auto w-full" style={{ maxWidth: 720 }}>
+            {/* `data-tour="settings"` — the product tour's last stop (ONBOARDING-UX T5.1).
+                On the SEARCH, not on the page: the bento is as tall and wide as the viewport,
+                so ringing the whole thing dims nothing and the card has nowhere to sit that
+                is not on top of it. The search is also what the stop's copy is about. */}
+            <div data-tour="settings" className="mx-auto w-full" style={{ maxWidth: 720 }}>
               <SearchField value={query} onChange={setQuery} autoFocus
                 placeholder="Search settings — name, description, or any value inside"
                 ariaLabel="Search settings" />

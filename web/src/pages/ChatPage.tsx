@@ -2151,7 +2151,9 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
   }
 
   const stage = (
-    <div className="w-full" style={{ maxWidth: 'var(--content-width)' }}>
+    // `data-tour="chat"` — the product tour's chat stop points at the composer stage
+    // (ONBOARDING-UX T5.1). On the chat route this wrapper is the composer.
+    <div data-tour="chat" className="w-full" style={{ maxWidth: 'var(--content-width)' }}>
       {/* Memory-mode notice: incognito/temporary sessions look identical to a
           normal one otherwise, so surface a subtle reminder above the composer
           that this chat won't be remembered — important before the user types. */}

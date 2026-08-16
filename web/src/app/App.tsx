@@ -10,6 +10,7 @@ import { ChatPage } from '../pages/ChatPage'
 import { useIdentity } from './identity'
 import { Onboarding } from './Onboarding'
 import { peekOnboardingExit, clearOnboardingExit } from './onboarding/exitTo'
+import { ProductTour } from './onboarding/ProductTour'
 import { useHashRoute } from './useHashRoute'
 import { useIsMobile } from './useIsMobile'
 import type { RouteProps } from './useQueryState'
@@ -529,6 +530,11 @@ function AppInner() {
         </ErrorBoundary>
       </main>
       <CommandPalette commands={commands} />
+      {/* The replayable product tour (ONBOARDING-UX T5.1) — shell-level because its stops
+          are shell surfaces (the rail, chat, inbox, the home approvals band, settings) and
+          it walks between them. Renders NOTHING until the onboarding done screen or the
+          Discover hub's "Replay the tour" card asks for it. */}
+      <ProductTour route={rendered} navigate={navigate} />
       {/* The active personality's decorative shell element (PERSONALITY-THEMES §S2).
           Renders NOTHING for the default identity and for every standard scheme;
           under a personality that declares one it mounts an aria-hidden,

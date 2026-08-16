@@ -6431,13 +6431,14 @@
         {
           "id": "OU-10",
           "title": "Replayable product tour component + Discover 'Replay the tour' card",
-          "status": "todo",
+          "status": "done",
           "scope": "2026-07-26 Amendment Session 5 T5.1 + T5.2 (rulings b + c); PlanningWalkthrough.tsx is the pattern donor; Discover named as the progressive-disclosure arm",
           "done_when": "web/src/app/onboarding/ProductTour.tsx spotlight tour (rail -> chat -> inbox -> approvals -> settings) runs post-onboarding end-to-end, launched from the done-screen; Esc exits anywhere leaving a fully working app; reduced-motion honored; zero requests logged for tour progress (no telemetry); re-launchable from DiscoverPage 'Replay the tour' card; S2 auto-pin behavior unchanged",
           "deps": [
             "OU-4",
             "OU-5"
-          ]
+          ],
+          "pr": 1483
         },
         {
           "id": "OU-11",
@@ -7753,8 +7754,8 @@
         "plan": "OU"
       },
       {
-        "id": "OU-10",
-        "title": "Replayable product tour component + Discover 'Replay the tour' card",
+        "id": "OU-11",
+        "title": "Stranger-validation facilitator kit + 3 think-aloud sessions",
         "plan": "OU"
       },
       {
@@ -10165,9 +10166,9 @@
         "code": "OU",
         "plan": "ONBOARDING-UX",
         "total_atoms": 11,
-        "done": 7,
+        "done": 8,
         "in_progress": 0,
-        "todo": 4,
+        "todo": 3,
         "blocked": 0
       },
       {

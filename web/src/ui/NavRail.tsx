@@ -196,7 +196,10 @@ export function NavRail({
   // makes no sense once you've deliberately opened it).
   const showFull = overlay ? true : !collapsed
   const railBody = (
-    <nav className="flex h-full flex-col gap-1 overflow-y-auto overflow-x-hidden px-m py-l"
+    // `data-tour` is the product tour's anchor for its first stop (ONBOARDING-UX T5.1). A
+    // literal, not a prop: the rail is the shell's one navigation and the tour points at it
+    // by name, so a prop would only let a second rail claim the same anchor.
+    <nav data-tour="rail" className="flex h-full flex-col gap-1 overflow-y-auto overflow-x-hidden px-m py-l"
       style={{ width: overlay ? OVERLAY_W : w, background: 'var(--color-rail)' }}>
       {/* header — logo (the collapse toggle lives in the main area, not here) */}
       <div className={cx('flex items-center pb-m', showFull ? 'px-s' : 'justify-center')}>
