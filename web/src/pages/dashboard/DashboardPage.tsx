@@ -80,7 +80,7 @@ export function DashboardPage(route: RouteProps) {
             {/* Prime signal: what needs you + what's running, side by side on wide
                 screens, stacked on narrow. Bare sections, hairline-labelled. */}
             <div className="grid grid-cols-1 gap-2xl lg:grid-cols-2">
-              <Section label="Needs you" icon={ListTodo}>
+              <Section label="Needs you" icon={ListTodo} tour="approvals">
                 <ActionCenter {...route} />
               </Section>
               <Section label="Active work" icon={Sparkles}>
@@ -271,9 +271,14 @@ function Launcher({ navigate }: RouteProps) {
 // ── Bare section header ───────────────────────────────────────────────────────
 // A section is a label + hairline, NOT a bordered card. Content flows directly
 // beneath, owning the horizontal space.
-function Section({ label, icon: Icon, children }: { label: string; icon: LucideIcon; children: ReactNode }) {
+function Section({ label, icon: Icon, children, tour }: {
+  label: string; icon: LucideIcon; children: ReactNode
+  /** Product-tour anchor for this band (ONBOARDING-UX T5.1) — set on the band rather than
+   *  on the widget inside it, so a band whose widget swaps to its empty state still anchors. */
+  tour?: string
+}) {
   return (
-    <section className="flex min-w-0 flex-col gap-s">
+    <section data-tour={tour} className="flex min-w-0 flex-col gap-s">
       <div className="flex items-center gap-s">
         <Icon size={14} className="shrink-0 text-on-surface-low" />
         {/* h2, not h3: this is a top-level section directly under the page's h1 greeting, and

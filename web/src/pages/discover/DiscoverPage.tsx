@@ -1,5 +1,5 @@
 import { motion } from 'framer-motion'
-import { Compass, ArrowUpRight, X } from 'lucide-react'
+import { Compass, ArrowUpRight, Play, X } from 'lucide-react'
 import { TopBar } from '../../ui/TopBar'
 import { Button } from '../../ui/Button'
 import { IconButton } from '../../ui/IconButton'
@@ -10,6 +10,7 @@ import { useCachedData } from '../../lib/useCachedData'
 import { api, type DiscoverTip, type DiscoverTryIt } from '../../lib/api'
 import type { RouteProps } from '../../app/useQueryState'
 import { PageTitle } from '../../ui/PageTitle'
+import { requestProductTour } from '../../app/onboarding/tourLaunch'
 import { accentChip } from '../../design/accent'
 
 /** Discover hub (§6) — the full curated tour of PersonalClaw, grouped by area.
@@ -58,7 +59,14 @@ export function DiscoverPage({ navigate }: Pick<RouteProps, 'navigate'>) {
         />
       }
     >
-      <div className="mx-auto px-l py-l" style={{ maxWidth: 'var(--content-width)' }}>
+      <div className="mx-auto flex flex-col gap-l px-l py-l" style={{ maxWidth: 'var(--content-width)' }}>
+        {/* Deliberately OUTSIDE every branch below (T5.2). Discover is the progressive-
+            disclosure arm, and the tour is the one thing on it that is never earned and
+            never used up: a user who dismissed every tip, or who switched tips off
+            entirely, must still be able to be shown around. So it is not a catalog tip —
+            a server-authored tip carries a dismiss, and dismissing the tour would remove
+            the only replay entry the product has. */}
+        <ReplayTourCard />
         {data === undefined && error ? (
           // Before the loading branch, or a failed fetch spins the skeleton forever.
           <LoadError what="tips" error={error} onRetry={refresh} />
@@ -75,13 +83,17 @@ export function DiscoverPage({ navigate }: Pick<RouteProps, 'navigate'>) {
           <EmptyState
             icon={Compass}
             title="You've explored every part of PersonalClaw"
-            hint="Nice. New tips will appear here as PersonalClaw grows — and anything you dismissed stays hidden."
+            hint="Nice. New tips will appear here as PersonalClaw grows — and anything you dismissed stays hidden. The tour above stays too."
           />
         ) : (
           <div className="flex flex-col gap-2xl">
+            {/* T5.2's copy pass: Discover is named as the disclosure arm beside the S2
+                starter rail, so the two mechanisms read as one idea — the rail holds a
+                surface back until you reach it, and this is where you find out it exists. */}
             <p data-type="body-m" className="max-w-[520px] text-on-surface-var">
-              A guided tour of the parts of PersonalClaw you haven&rsquo;t tried yet. Each tip links
-              straight into the feature; dismiss any you&rsquo;re not interested in.
+              The parts of PersonalClaw you haven&rsquo;t tried yet. Your sidebar starts short and
+              grows as you open things &mdash; this is where you find out what else is there. Each
+              tip links straight into the feature; dismiss any you&rsquo;re not interested in.
             </p>
             {data.areas.map((group) => (
               <section key={group.area} className="flex min-w-0 flex-col gap-m">
@@ -106,6 +118,37 @@ export function DiscoverPage({ navigate }: Pick<RouteProps, 'navigate'>) {
         )}
       </div>
     </WorkbenchLayout>
+  )
+}
+
+/** "Replay the tour" (T5.2) — the one entry on this page that is not a catalog tip.
+ *
+ *  It has no dismiss and no earned/used-up state on purpose: it is the product's only
+ *  replay entry for the guided walk, and Discover is the arm that has to keep working for
+ *  a user who dismissed everything else. Clicking it hands a request to the shell (see
+ *  `app/onboarding/tourLaunch.ts`) — this page does not host the tour, because the tour
+ *  walks off this page onto chat, the inbox, the home approvals band and settings.
+ *
+ *  It also lands focus back here when the tour ends: `useFocusTrap` restores to whatever
+ *  was focused before the overlay opened, which is this button. */
+function ReplayTourCard() {
+  return (
+    <div className="flex items-center gap-m rounded-lg bg-surface-container px-l py-m">
+      <span className="inline-flex size-10 shrink-0 items-center justify-center rounded-lg"
+        style={{ background: 'color-mix(in srgb, var(--color-primary) 14%, transparent)' }}>
+        <Play size={18} className="text-primary" aria-hidden="true" />
+      </span>
+      <div className="min-w-0 flex-1">
+        <p data-type="label-l" className="text-on-surface">Replay the tour</p>
+        <p data-type="body-m" className="mt-xs text-on-surface-var">
+          The two-minute walk through the sidebar, chat, the Inbox, approvals and Settings.
+          Escape ends it at any point.
+        </p>
+      </div>
+      <Button variant="tonal" size="sm" onClick={requestProductTour} className="shrink-0">
+        Start the tour
+      </Button>
+    </div>
   )
 }
 

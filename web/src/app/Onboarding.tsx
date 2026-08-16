@@ -2,11 +2,12 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { unavailableWhen } from '../ui/unavailable'
 import { withWeight } from '../design/fontWeight'
 import { motion } from 'framer-motion'
-import { ArrowRight, User, Boxes, Rocket, Sparkles, Loader2, Check, Inbox, Waves, PanelLeft } from 'lucide-react'
+import { ArrowRight, User, Boxes, Rocket, Sparkles, Loader2, Check, Compass, Inbox, Waves, PanelLeft } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { ClawMark } from '../ui/ClawMark'
 import { DotGlow } from '../ui/DotGlow'
 import { LoadingStatus } from '../ui/ListScaffold'
+import { Button } from '../ui/Button'
 import { TextLink } from '../ui/TextLink'
 import { Toggle } from '../ui/Toggle'
 import { ScalarControl } from '../ui/TokenControls'
@@ -20,6 +21,7 @@ import { StepRow, type StepState } from './onboarding/StepStack'
 import { EssentialsStep } from './onboarding/EssentialsStep'
 import { TryOneStep } from './onboarding/TryOneStep'
 import { setOnboardingExit } from './onboarding/exitTo'
+import { requestProductTour } from './onboarding/tourLaunch'
 
 type StepId = 'name' | 'essentials' | 'try' | 'ready'
 const ORDER: StepId[] = ['name', 'essentials', 'try', 'ready']
@@ -177,6 +179,14 @@ export function Onboarding() {
   function skipSetup() {
     finish()
   }
+  /** Finish, then walk the app (OU-10 / ruling b). It cannot render the tour itself: the
+   *  very act that ends the flow — `finish()` committing identity — is what replaces this
+   *  component with the app shell, so the request is left for the shell that is about to
+   *  mount. `tourLaunch.ts` explains the seam; it is the same shape as `exitTo`. */
+  function takeTour() {
+    requestProductTour()
+    finish()
+  }
   /** Leave the flow for a real destination — a try-one card's outcome link, or the
    *  Settings deep-link on its failure path. The route guard holds a non-onboarded
    *  user on `#/onboarding`, so the destination is handed to the guard and the name
@@ -244,7 +254,7 @@ export function Onboarding() {
               state={stateOf('ready')}>
               <DoneScreen name={savedName} modelSummary={modelDone} triedSummary={triedSummary}
                 showEverything={showEverything} onShowEverything={setShowEverything}
-                onFinish={finish} onExitTo={exitTo} />
+                onFinish={finish} onTakeTour={takeTour} onExitTo={exitTo} />
             </StepRow>
           </div>
 
@@ -294,12 +304,18 @@ function NameStep({ value, onChange, onSubmit }: { value: string; onChange: (v: 
  *      switch states intent; `finish()` performs the single write (see there).
  *
  *  It teaches by handing over controls, which is why the dial and the switch are the SAME
- *  objects Settings owns — a copy here would be a second mechanism to keep in step. */
-function DoneScreen({ name, modelSummary, triedSummary, showEverything, onShowEverything, onFinish, onExitTo }: {
+ *  objects Settings owns — a copy here would be a second mechanism to keep in step.
+ *
+ *  It is also where the product tour starts (OU-10). The tour sits BESIDE "Start using"
+ *  rather than replacing it: the recap above already hands over three controls, and a
+ *  first-run screen whose only exit is a guided walk is a gate wearing an offer. Both
+ *  buttons finish the flow; one of them then walks the app. */
+function DoneScreen({ name, modelSummary, triedSummary, showEverything, onShowEverything, onFinish, onTakeTour, onExitTo }: {
   name: string; modelSummary: string; triedSummary: string
   showEverything: boolean
   onShowEverything: (v: boolean) => void
   onFinish: () => void
+  onTakeTour: () => void
   onExitTo: (path: string) => void
 }) {
   const chatReady = modelSummary && modelSummary !== 'Set up later'
@@ -336,11 +352,18 @@ function DoneScreen({ name, modelSummary, triedSummary, showEverything, onShowEv
         </Pointer>
       </div>
 
-      <motion.button whileTap={{ scale: 0.98 }} transition={spring.spatialFast} onClick={onFinish} type="button"
-        className="inline-flex items-center justify-center gap-1.5 self-start rounded-pill px-5 h-11 text-[0.9375rem]"
-        style={withWeight({ background: 'var(--color-primary)', color: 'var(--color-on-primary)' }, 500)}>
-        Start using {APP_NAME} <ArrowRight size={17} />
-      </motion.button>
+      <div className="flex flex-wrap items-center gap-s">
+        <motion.button whileTap={{ scale: 0.98 }} transition={spring.spatialFast} onClick={onFinish} type="button"
+          className="inline-flex items-center justify-center gap-1.5 rounded-pill px-5 h-11 text-[0.9375rem]"
+          style={withWeight({ background: 'var(--color-primary)', color: 'var(--color-on-primary)' }, 500)}>
+          Start using {APP_NAME} <ArrowRight size={17} />
+        </motion.button>
+        {/* The tour, offered rather than imposed — it finishes setup either way, and every
+            stop is skippable once it starts (Escape exits from any of them). */}
+        <Button variant="secondary" size="lg" onClick={onTakeTour}>
+          <Compass size={17} /> Take the quick tour
+        </Button>
+      </div>
     </div>
   )
 }

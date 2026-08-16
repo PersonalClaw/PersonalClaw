@@ -10,6 +10,19 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Added
 
+- **A guided tour of the app, and you can take it again whenever you like.** The last screen of
+  setup now offers a quick walk through the five places that matter: the sidebar, chat, the Inbox,
+  where anything risky waits for your permission, and Settings. It happens on the real app — each
+  stop dims the page and puts a ring around the actual thing it is talking about, then takes you to
+  the next one — so you are being shown your own dashboard, not a slideshow of screenshots. Escape
+  ends it at any point and so does clicking anywhere outside the card, and what you are left with is
+  the app, fully working, back on the page you started from. Nothing about it is recorded: there is
+  no progress saved, no "you have seen this" flag, and no step reports anything anywhere, which is
+  also why it can simply be replayed instead of resumed. To take it again, open Discover — there is
+  a "Replay the tour" card at the top that cannot be dismissed away, so it is still there after you
+  have dismissed every tip on the page or turned tips off entirely. If your system asks for reduced
+  motion the spotlight stops pulsing and the card stops sliding; nothing is slowed down, it is just
+  still.
 - **First run now picks up where you left it, and you can walk out of it at any point.** Reload
   the page halfway through setup and you come back to the step you were on rather than the
   beginning — the apps you installed stay installed, and a card you already ran still counts as
