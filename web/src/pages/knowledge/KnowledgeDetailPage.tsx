@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react'
-import { ArrowLeft, Network, Layers } from 'lucide-react'
+import { useCallback, useEffect, useState } from 'react'
+import { ArrowLeft, Network, Layers, Highlighter } from 'lucide-react'
 import { TopBar } from '../../ui/TopBar'
 import { PageTitle } from '../../ui/PageTitle'
 import { WorkbenchLayout } from '../../ui/WorkbenchLayout'
@@ -7,9 +7,10 @@ import { SidePanel } from '../../ui/SidePanel'
 import { IconButton } from '../../ui/IconButton'
 import { Markdown } from '../../ui/Markdown'
 import { KnowledgeDetail } from './KnowledgeDetail'
+import { AnnotationList } from './ReadingView'
 import { getKnowledge } from './knowledgeStore'
 import { resolveType, typeLabel } from './knowledgeMeta'
-import { api, type KnowledgeItem, type ExtractedContent } from '../../lib/api'
+import { api, type KnowledgeAnnotation, type KnowledgeItem, type ExtractedContent } from '../../lib/api'
 import { useQueryParam, type RouteProps } from '../../app/useQueryState'
 
 /** The dedicated, full-screen Knowledge item page (`#/knowledge/item/<id>`).
@@ -32,9 +33,18 @@ export function KnowledgeDetailPage({ id, onBack, onOpenItem, query, setQuery }:
   const [detailsParam, setDetailsParam] = useQueryParam(query, setQuery, 'details', '')
   const showDetails = detailsParam === '1'
   const setShowDetails = (v: boolean) => setDetailsParam(v ? '1' : '')
+  // Reading mode lives in the URL for the same reason the panel does: it's a navigable
+  // step, so Back leaves the reader rather than the item, and a reading link is sharable.
+  const [readParam, setReadParam] = useQueryParam(query, setQuery, 'read', '')
+  const reading = readParam === '1'
+  const toggleReading = useCallback(() => setReadParam(reading ? '' : '1'), [reading, setReadParam])
   // The "more details" payload (counts drive the toggle badge).
   const [pool, setPool] = useState<ExtractedContent[]>([])
   const [related, setRelated] = useState<KnowledgeItem[]>([])
+  // The item's reading highlights are owned HERE, not inside the reader: the More-details
+  // panel lists the same rows, so one fetch feeds both and a delete in the panel re-paints
+  // the prose. Two independent copies would let the two surfaces disagree.
+  const [annotations, setAnnotations] = useState<KnowledgeAnnotation[]>([])
   const [reloadKey, setReloadKey] = useState(0)
   // The detail's title-wand + action cluster, lifted into THIS page's header bar so
   // there's a single header (no stacked page-header + in-body title row). The wand sits
@@ -50,7 +60,23 @@ export function KnowledgeDetailPage({ id, onBack, onOpenItem, query, setQuery }:
     return () => { alive = false }
   }, [id, reloadKey])
 
-  const detailsCount = pool.length + (item?.entities?.length ?? 0) + (item?.relations?.length ?? 0) + related.length
+  // Highlights reload on their own key so keeping one doesn't re-fetch the whole item
+  // (and re-mount the article the reader is scrolled into).
+  const [annotationKey, setAnnotationKey] = useState(0)
+  const reloadAnnotations = useCallback(() => setAnnotationKey((k) => k + 1), [])
+  useEffect(() => {
+    let alive = true
+    api.knowledgeAnnotations(id).then((a) => { if (alive) setAnnotations(a) }).catch(() => {})
+    return () => { alive = false }
+  }, [id, annotationKey])
+
+  const removeAnnotation = useCallback(async (annotationId: string) => {
+    await api.deleteKnowledgeAnnotation(annotationId).catch(() => {})
+    reloadAnnotations()
+  }, [reloadAnnotations])
+
+  const detailsCount =
+    pool.length + (item?.entities?.length ?? 0) + (item?.relations?.length ?? 0) + related.length + annotations.length
   const tm = item ? resolveType(item) : null
 
   return (
@@ -99,7 +125,8 @@ export function KnowledgeDetailPage({ id, onBack, onOpenItem, query, setQuery }:
       panel={
         showDetails && item ? (
           <SidePanel fillHeight storeKey="knowledge-extras-w" icon={<Layers size={18} className="text-primary" />} title="More details" onClose={() => setShowDetails(false)}>
-            <KnowledgeExtras item={item} pool={pool} related={related} onOpenItem={onOpenItem} />
+            <KnowledgeExtras item={item} pool={pool} related={related} onOpenItem={onOpenItem}
+              annotations={annotations} onRemoveAnnotation={removeAnnotation} />
           </SidePanel>
         ) : undefined
       }
@@ -122,6 +149,10 @@ export function KnowledgeDetailPage({ id, onBack, onOpenItem, query, setQuery }:
             onChanged={() => setReloadKey((k) => k + 1)}
             onDeleted={onBack}
             onTagClick={() => onBack()}
+            reading={reading}
+            onToggleReading={toggleReading}
+            annotations={annotations}
+            onAnnotationsChanged={reloadAnnotations}
           />
         ) : (
           <div className="grid h-40 place-items-center text-on-surface-low text-[0.8125rem]">Loading…</div>
@@ -133,19 +164,29 @@ export function KnowledgeDetailPage({ id, onBack, onOpenItem, query, setQuery }:
 
 /** The per-item "more details" content: full content, the extracted-content pool,
  *  entities, relations, and related items — the dedicated page's side-panel body. */
-function KnowledgeExtras({ item, pool, related, onOpenItem }: {
+function KnowledgeExtras({ item, pool, related, onOpenItem, annotations, onRemoveAnnotation }: {
   item: KnowledgeItem
   pool: ExtractedContent[]
   related: KnowledgeItem[]
   onOpenItem: (id: string) => void
+  annotations: KnowledgeAnnotation[]
+  onRemoveAnnotation: (id: string) => void
 }) {
   const entities = item.entities ?? []
   const relations = item.relations ?? []
-  if (pool.length === 0 && entities.length === 0 && relations.length === 0 && related.length === 0 && !item.content) {
+  if (pool.length === 0 && entities.length === 0 && relations.length === 0 && related.length === 0
+    && annotations.length === 0 && !item.content) {
     return <p className="text-on-surface-low text-[0.8125rem]">No extracted content, entities, or related items yet.</p>
   }
   return (
     <div className="flex flex-col gap-l">
+      {/* Highlights lead: they are the only thing here the USER wrote, and they belong on
+          the item whether or not the reader happens to be open. */}
+      {annotations.length > 0 && (
+        <Section label={`Highlights · ${annotations.length}`} icon={Highlighter}>
+          <AnnotationList annotations={annotations} onDelete={onRemoveAnnotation} />
+        </Section>
+      )}
       {pool.length > 0 && (
         <Section label={`Extracted content · ${pool.length}`} icon={Layers}>
           <div className="flex flex-col gap-1.5">

@@ -676,3 +676,100 @@ Sequence these **independently of S1-S3** — they touch the store's indexing la
   **135 passed** (123 → 135, 12 new) · `tests/test_embedding_reindex.py` **12 passed** (7 → 12,
   5 new) · full Python suite **19042 passed, 0 failed**, 30 skipped, 12 xfailed (baseline
   19025 + 17 new). `web/` untouched — backend only.
+
+- 2026-08-16 — **DONE (S3: T3.1 reading view).** `?read=1` on `#/knowledge/item/<id>` is a reading
+  mode: the item's body at the editorial type scale, a scroll-progress ring, and text-selection
+  highlights that persist on the item. Atom `KL-7`.
+  - **T3.1 type scale — the plan says "reuse the editorial-document skill's house style", and it
+    is reused LITERALLY.** `tokens.css` already carried that scale as `.doc` (for the `document`
+    content type). The reading view shares the same block via a second selector rather than
+    getting a second scale — an article and a document are the same reading problem.
+  - **DEVIATION (mechanical, to make that reuse real): the scale block moved OUT of
+    `@layer base`.** `ui/Markdown` pins every prose element with Tailwind utilities tuned for CHAT
+    density (`p`/`li` 0.9375rem, `h2`-`h4` 1.0625rem, muted ink), and utilities live in
+    `@layer utilities`, which beats `@layer base` regardless of specificity — so a layered
+    `.reading` would have been INERT while reading as correct code. Unlayered normal declarations
+    outrank every layered one; that is the whole mechanism, and it is the argument the
+    `::highlight()` registry at the end of the same file already makes. `.doc`'s own host renders
+    raw HTML with no competing utilities, so unlayering changes nothing there. The one thing it
+    cannot reach is the inline `style={fvs(500)}` on `h2`-`h4`; subheads keep weight 500 rather
+    than `.doc`'s 640, because beating an inline style needs `!important`.
+  - **DEVIATION (E-none, the plan asked for this call) — the "annotations as `mentions` vs a
+    dedicated table" open question resolves to a DEDICATED TABLE.** The plan's default was reuse,
+    "promote to its own table only if reading-notes need richer structure (revisit in S3)"; this is
+    S3. `mentions` is `(item_id, entity_id)`-keyed, so a highlight there would have to MINT AN
+    ENTITY per highlighted sentence — reading debris in the entity graph, the `/entities` surfaces
+    and orphan-pruning — and `mentions.context` cannot carry a re-anchoring locator. So
+    `annotations (id, item_id, quote, occurrence, note, created_at)` with `ON DELETE CASCADE`,
+    added through the store's own additive `CREATE TABLE IF NOT EXISTS` ladder — the same
+    store-native route S1 took, no lifecycle gate.
+  - **Anchoring is by TEXT, not offset, and that is forced.** The reader renders markdown, so a
+    character index into the item's source does not survive the transform. A highlight stores its
+    `quote` plus which `occurrence` of that string it is; `readingAnchors.ts` is the invertible
+    pair (flatten the article's text nodes → report quote+occurrence; flatten the same way → paint
+    the Nth match, one `<mark>` per text node the range crosses). The quote comes from the
+    flattened text and NOT from `Selection.toString()`, because the two normalize whitespace
+    differently across block boundaries and an anchor that cannot find its own quote is inert.
+  - **The degradation is designed, not incidental.** An anchor whose passage was edited away stops
+    painting, is counted and reported in the reader, and still lists on the item — a highlight is a
+    note ABOUT a passage and outlives it.
+  - **Curation invariants kept.** Highlighting is a NON-TOUCHING write (`updated_at` asserted
+    unchanged — the contract read-state and favorites already hold to), and T3.2's `merge_items`
+    now moves annotations to the survivor alongside collections/tags/mentions. A merge that dropped
+    them would quietly delete the reader's own work.
+  - **"Reappears on the item" is two surfaces from one fetch.** `KnowledgeDetailPage` owns the
+    annotations, so the painted prose and a `Highlights · N` section in the More-details panel read
+    the same rows; deleting in the panel re-paints the reader. Two independent copies would let the
+    two surfaces disagree.
+  - **The keyboard route is the primary one.** The floating `SelectionPill` (existing shared
+    primitive) activates on `onMouseDown` only, so as the sole affordance it would be unreachable
+    by keyboard. The persistent `Highlight selection` button in the reading rail is the real
+    control, fed by a `selectionchange`-driven capture so a shift+arrow selection reaches it; the
+    pill is the pointer shortcut. Progress is the shared `ProgressRing` (already
+    `role="progressbar"` and named); the article region carries the `tabIndex`/`role`/`aria-label`
+    scroll trio; per-row remove controls are named with their passage.
+  - **DISCOVERY — framer-motion's reduced-motion probe is a module singleton, so a reduced-motion
+    assertion is vacuous unless it owns its file.** With the case inside the main component file it
+    reported 25 swept `stroke-dashoffset` samples under a `matchMedia` stub claiming reduce:
+    `initPrefersReducedMotion` had already cached `false` from an earlier render.
+    `readingViewReducedMotion.test.tsx` therefore stubs at module scope, before any import-time
+    read, and is paired with a tweens-when-allowed case in the main file so neither side is vacuous
+    on its own.
+  - **DISCOVERY — every `self.db.commit()` in `knowledge/store.py` is decorative.** Removing the
+    one in `add_annotation` reded ZERO tests: the connection is opened `isolation_level=None`
+    (autocommit), so all 34 call sites are no-ops. Pre-existing file-wide convention, not
+    introduced here; the new methods keep theirs for consistency with the other 33 rather than
+    becoming the one exception. Worth knowing before anyone writes a test that believes a
+    `commit()` is what makes a write durable in this store.
+  - **VALIDATED AS A USER, and it found two defects a test suite could not.** A seeded 1,633-word
+    article on a real gateway (own dev home, port 10077), scripted Playwright, both themes, zero
+    console/page errors. (1) **The measure was 101 characters per line.** The document reader caps
+    at `72ch`, which sounds like 72 characters and is not — `ch` is the advance of "0", 0.66em in
+    this font, so `72ch` resolved to 758px. Re-set to `35rem`, re-measured at 69 characters, inside
+    the 45-90 band a reader can return-sweep. (2) **The title printed twice.** A saved article's
+    body normally opens with the headline the item is titled after, so the reader's own title and
+    the body's `#` said the same words one line apart at nearly the same size; now suppressed when
+    they match, with tests both ways. Also confirmed on the wire: a highlight made in one browser
+    context was still painted after a reload AND in a FRESH context (different `localStorage`, same
+    server) — real persistence, not a client cache; the mark's tint is the primary token at 26% with
+    inherited ink, so it is legible in both themes (the UA default mark is black-on-yellow, which
+    dark mode would have made unreadable); the More-details panel lists it as `Highlights · 1` with
+    its note. **Probe artifact worth recording:** the first panel check read `false` because
+    `innerText` returns CSS-`text-transform`ed text — the DOM says "Highlights", `innerText` says
+    "HIGHLIGHTS". **Not verified in the browser:** the reduced-motion difference. CDP round-trip
+    latency per sample is the same order as the spring's settle time, so browser sampling could not
+    distinguish jump from sweep; that contract is proven in jsdom with frame stepping instead.
+  - **Falsifications.** Deleting the `INSERT` from `add_annotation` reds 9 tests including
+    `assert [] == ['persisted passage']` read back from a FRESH store handle — the assertion
+    component state cannot pass. Removing the API call from the reader's save reds 3. Dropping
+    `ProgressRing`'s `reduce ?` guard reds the reduced-motion file (25 swept offsets where a jump
+    must show none). Hard-coding `occurrence: 0` reds the repeated-passage round trip.
+  - **Not in scope:** persisting a reading POSITION. This atom's clause is a progress *indicator*;
+    "resumes at the persisted reading position" is `KL-8`'s own done-when.
+  - **Gate:** `make lint` rc 0 (black/isort/flake8/mypy, 873 files) · `web` typecheck clean ·
+    full `npm test --workspace web` **276 files / 2771 tests passed** (no design, token,
+    primitive-adoption or `uiDocs.drift` ratchet moved; `docs/design/consistency-audit.json`
+    regenerated with `driftHits` unchanged at 7) · `npm run build --workspace web` rc 0 ·
+    `tests/test_knowledge_annotations.py` **23 passed** (new) · `test_api_manifest_drift.py`,
+    `test_agent_reference.py`, `test_roadmap_dag_derived.py`, `test_knowledge_merge.py`,
+    `test_knowledge_collections.py` **137 passed** together.

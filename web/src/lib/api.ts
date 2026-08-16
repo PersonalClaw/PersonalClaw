@@ -533,6 +533,13 @@ export interface KnowledgeCollection {
   id: string; name: string; kind: 'manual' | 'smart'; query?: string; icon?: string
   position?: number; item_count?: number | null; created_at?: string; updated_at?: string
 }
+// One reading highlight on a knowledge item (KNOWLEDGE-LIBRARY T3.1). Anchored by TEXT,
+// not by offset: the reader renders markdown, so a character index into the item's source
+// does not survive the transform. `occurrence` says WHICH instance of `quote` this is, so
+// two highlights of a repeated sentence stay distinct. See pages/knowledge/readingAnchors.ts.
+export interface KnowledgeAnnotation {
+  id: string; item_id: string; quote: string; occurrence: number; note: string; created_at: string
+}
 export interface ChatFolder { id: string; name: string; order?: number; collapsed?: boolean; parent_id?: string }
 export interface ChatTag { id: string; name: string; color?: string; order?: number; status?: boolean }
 // A PROPOSED organization for an untagged chat (SM T2.1). `tags` are NAMES, not ids — a
@@ -3516,6 +3523,17 @@ export const api = {
     post<{ ok: boolean; read_state: string }>(`/api/knowledge/items/${encodeURIComponent(id)}/read-state`, { state }),
   setKnowledgeFavorited: (id: string, value: boolean) =>
     post<{ ok: boolean; favorited: boolean }>(`/api/knowledge/items/${encodeURIComponent(id)}/favorite`, { value }),
+  // Reading highlights. Like read-state and favorites these are NON-TOUCHING writes with
+  // their own endpoints, not `updateKnowledgeItem` fields: marking a passage is reading,
+  // not editing, so it must not bump `updated_at` and reshuffle a recency-sorted library.
+  knowledgeAnnotations: (id: string) =>
+    get<{ annotations: KnowledgeAnnotation[] }>(`/api/knowledge/items/${encodeURIComponent(id)}/annotations`).then((d) => d.annotations),
+  createKnowledgeAnnotation: (id: string, body: { quote: string; occurrence: number; note?: string }) =>
+    post<{ ok: boolean; annotation: KnowledgeAnnotation }>(`/api/knowledge/items/${encodeURIComponent(id)}/annotations`, body),
+  // Keyed by the highlight's OWN id, not nested under the item — repeating the item id
+  // would let a caller delete row A while naming item B.
+  deleteKnowledgeAnnotation: (annotationId: string) =>
+    del(`/api/knowledge/annotations/${encodeURIComponent(annotationId)}`),
   // One curation op over many items. Per-item results, because a selection can go
   // stale between the click and the request — the UI reports "38 shelved, 2 not found"
   // rather than treating a partial success as a failure.
