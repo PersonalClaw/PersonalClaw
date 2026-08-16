@@ -1,0 +1,37 @@
+{
+  "id": "t-92c4568a",
+  "title": "Decide whether to replace the drive in bay 2 or retire the array",
+  "status": "blocked",
+  "description": "The drive has 3 reallocated sectors and 4 years on it. Replacing it buys a year; retiring the array means rethinking where the media library lives.",
+  "provider": "native",
+  "project": "",
+  "task_list_id": "tl-5e1a83b4",
+  "dependencies": [],
+  "author": "",
+  "assignee": "",
+  "priority": "high",
+  "labels": [],
+  "due": "",
+  "order": 4.0,
+  "exit_criteria": [],
+  "action_plan": [],
+  "notes": [
+    {
+      "content": "Not a technical question \u2014 it is whether the media library stays local at all.",
+      "timestamp": "2026-08-12T20:16:44Z"
+    }
+  ],
+  "research_notes": [],
+  "execution_notes": [],
+  "agent_instructions_template": "",
+  "blocked_reason_kind": "manual",
+  "workflow_binding": null,
+  "blocked_kind": "needs_input",
+  "preview": "",
+  "done_criterion": "",
+  "evidence": [],
+  "attempts": [],
+  "created_at": "2026-08-11T08:15:30Z",
+  "updated_at": "2026-08-12T20:16:44Z",
+  "url": ""
+}
