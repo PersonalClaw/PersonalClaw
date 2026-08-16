@@ -86,6 +86,44 @@ def test_companion_discovery_defaults_off():
     assert AppConfig().companion.discovery_enabled is False
 
 
+def test_save_load_roundtrip_local_models(cfg_file):
+    """Local-model knobs survive a save/load cycle to disk AND back."""
+    cfg = AppConfig()
+    cfg.local_models.pressure_warn_pct = 70
+    cfg.local_models.sidecar_restart_max = 5
+    cfg.save()
+
+    raw = json.loads(cfg_file.read_text(encoding="utf-8"))
+    assert raw["local_models"] == {"pressure_warn_pct": 70, "sidecar_restart_max": 5}
+
+    loaded = AppConfig.load()
+    assert loaded.local_models.pressure_warn_pct == 70
+    assert loaded.local_models.sidecar_restart_max == 5
+
+
+def test_local_models_fields_in_editable_allowlist():
+    """Both knobs are PATCH-editable (the write path of the round-trip)."""
+    from personalclaw.dashboard.handlers.core import _EDITABLE_CONFIG
+
+    assert _EDITABLE_CONFIG["local_models.pressure_warn_pct"] == {
+        "type": "int",
+        "min": 1,
+        "max": 100,
+    }
+    assert _EDITABLE_CONFIG["local_models.sidecar_restart_max"]["type"] == "int"
+
+
+def test_a_nonsense_pressure_threshold_is_clamped_to_a_real_percentage(cfg_file):
+    """A threshold of 0 would warn forever and 900 could never warn — both read as broken."""
+    cfg_file.write_text(
+        json.dumps({"local_models": {"pressure_warn_pct": 900, "sidecar_restart_max": -4}}),
+        encoding="utf-8",
+    )
+    loaded = AppConfig.load()
+    assert loaded.local_models.pressure_warn_pct == 100
+    assert loaded.local_models.sidecar_restart_max == 0
+
+
 # ---------------------------------------------------------------------------
 # Exhaustive leaf-field round-trip: save() → load() must preserve EVERY field.
 #
@@ -117,6 +155,7 @@ _SECTIONS = [
     "evals",
     "packs",
     "companion",
+    "local_models",
     "proactive",
 ]
 
@@ -147,6 +186,11 @@ _SPECIAL = {
     # memory.push_min_confidence is a probability clamped to [0,1] by load() — the
     # generic rule's out-of-range value would (correctly) come back clamped.
     ("memory", "push_min_confidence"): 0.55,
+    # memory.vault_mode is enum-constrained (off|mirror|two_way) — a generated "off-x"
+    # would (correctly) be refused by load() and fall back through the legacy
+    # `vault_enabled` read to `off`, exactly as `stream_reveal` above. `two_way` is the
+    # real non-default that proves the field round-trips.
+    ("memory", "vault_mode"): "two_way",
     ("skills", "auto_similarity_threshold"): 0.5,
     # surface_mode_default is enum-constrained (off|passive|suggest) — a generated "off-x" would
     # (correctly) be refused by load() and fall back to `off`, exactly as `stream_reveal` above.

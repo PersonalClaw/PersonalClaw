@@ -13,6 +13,11 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **Optional sound cues, off until you turn them on.**
 - **First run now ends with three things you can actually do, not a tour.**
 - **A knowledge item now has a reading mode, and a passage you highlight in it stays highlighted.**
+- **You can now see which local models are eating your RAM, and free one.**
+- **A model provider can now run in its own process, so a crash in a native library can no longer take the gateway down with it.**
+- **A new install now opens on a short sidebar that grows as you use the app.**
+- **You can now open your memory in Obsidian and edit it there.**
+
 - **An empty Triggers page now offers four working starters instead of a blank form.**
 - **PersonalClaw can now watch things for you, and new entries land in your library on their own.**
 - **App installs now check who published the bundle, not just what's in it.**

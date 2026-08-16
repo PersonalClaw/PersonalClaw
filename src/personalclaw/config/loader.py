@@ -627,6 +627,31 @@ def _expose_flag(value: object) -> bool:
     return False
 
 
+# The readable-vault modes. Declared here, next to the
+# field, and imported by `memory_vault` + the memory settings handler so the three
+# readers cannot drift into three spellings of "two-way".
+MEMORY_VAULT_MODES = ("off", "mirror", "two_way")
+
+
+def _vault_mode(memory_data: dict) -> str:
+    """Resolve ``memory.vault_mode``, back-reading the retired ``vault_enabled`` flag.
+
+    ``vault_enabled: true`` was the whole vault control before §5.1 split it three ways,
+    so an existing install that turned the mirror on must keep it on across the upgrade —
+    the same back-read shape as ``conductor_skill`` → ``orchestrator_skill``. The legacy
+    flag maps to ``mirror``, never to ``two_way``: reading a user's files back into memory
+    is a new capability and must be chosen, not inherited.
+
+    An unrecognized ``vault_mode`` falls back to the legacy read rather than to ``off``,
+    so a typo in a hand-edited config cannot silently stop mirroring a vault the user is
+    already browsing.
+    """
+    raw = str(memory_data.get("vault_mode", "") or "").strip().lower()
+    if raw in MEMORY_VAULT_MODES:
+        return raw
+    return "mirror" if bool(memory_data.get("vault_enabled", False)) else "off"
+
+
 _BOT_NAME_MAX = 50
 _BOT_NAME_RE = _re.compile(r"[^a-zA-Z0-9 _\-.]")
 
@@ -908,6 +933,37 @@ class CompanionConfig:
             "Instance name",
             "Friendly name companion apps show for this gateway. Empty falls back to the "
             "machine hostname.",
+        ),
+    )
+
+
+@dataclass
+class LocalModelsConfig:
+    """Local model-manager knobs (LOCAL-MODEL-MANAGER-V2 §9).
+
+    ``pressure_warn_pct`` is where the loaded-models widget's memory bar starts warning —
+    a threshold, not a limit: nothing is ever blocked or unloaded automatically, because
+    on a single-user machine the person watching the bar is the one who gets to decide
+    what to close. ``sidecar_restart_max`` bounds how many times in a row a crashed
+    sidecar child is respawned before the runner stops trying; without a bound, a provider
+    whose venv is genuinely broken becomes a respawn busy-loop instead of one honest
+    error.
+    """
+
+    pressure_warn_pct: int = field(
+        default=85,
+        metadata=_meta(
+            "Memory pressure warning",
+            "Percent of system RAM in use at which the loaded-models bar warns. Advisory "
+            "only — nothing is unloaded for you.",
+        ),
+    )
+    sidecar_restart_max: int = field(
+        default=3,
+        metadata=_meta(
+            "Sidecar restart limit",
+            "How many times in a row a crashed model sidecar is respawned before the "
+            "runner gives up and reports the failure instead.",
         ),
     )
 
@@ -1293,13 +1349,16 @@ class MemoryConfig:
         default=False,
         metadata=_meta("Migrated", "Whether memory has been migrated to vector store."),
     )
-    vault_enabled: bool = field(
-        default=False,
+    vault_mode: str = field(
+        default="off",
         metadata=_meta(
-            "Memory Vault (Obsidian mirror)",
-            "Mirror memory to a browsable markdown vault (Obsidian-compatible: "
-            "YAML frontmatter + [[wikilinks]] + graph view). Read-only — the vault "
-            "is regenerated from the memory store, never edited by hand. Off by default.",
+            "Memory Vault (Obsidian)",
+            "off = no vault. mirror = write memory out as a browsable markdown vault "
+            "(Obsidian-compatible: YAML frontmatter + [[wikilinks]] + graph view), "
+            "regenerated from the store and never read back. two_way = also read your "
+            "edits back into memory on the next sync — a page you change wins over the "
+            "stored value, and a page the sync cannot parse is left untouched and "
+            "reported in Memory → Health rather than overwritten.",
         ),
     )
     vault_path: str = field(
@@ -3766,6 +3825,12 @@ class AppConfig:
             "Companion apps", "LAN discovery + instance name for native companion clients."
         ),
     )
+    local_models: LocalModelsConfig = field(
+        default_factory=LocalModelsConfig,
+        metadata=_meta(
+            "Local models", "Memory-pressure warning threshold + sidecar restart budget."
+        ),
+    )
     sources: SourcesConfig = field(
         default_factory=SourcesConfig,
         metadata=_meta("Watched sources", "Poll engine for watched feeds, pages and directories."),
@@ -3893,6 +3958,9 @@ class AppConfig:
         companion_data = data.get("companion", {})
         if not isinstance(companion_data, dict):
             companion_data = {}
+        local_models_data = data.get("local_models", {})
+        if not isinstance(local_models_data, dict):
+            local_models_data = {}
         sources_data = data.get("sources", {})
         if not isinstance(sources_data, dict):
             sources_data = {}
@@ -4102,15 +4170,17 @@ class AppConfig:
                 auto_promote_enabled=memory_data.get("auto_promote_enabled", True),
                 auto_promote_every_n=memory_data.get("auto_promote_every_n", 10),
                 auto_promote_max_per_run=memory_data.get("auto_promote_max_per_run", 5),
-                # Vault mirror (mem-fs-mirror) — same map-it-through discipline as
-                # the behavior flags above, else a saved toggle reads its default.
-                vault_enabled=memory_data.get("vault_enabled", False),
+                # Readable vault — same map-it-through discipline as the behavior
+                # flags above, else a saved setting reads its default. The mode
+                # back-reads the retired `vault_enabled` bool; see `_vault_mode`.
+                vault_mode=_vault_mode(memory_data),
                 vault_path=memory_data.get("vault_path", "memory-vault"),
                 graph_enabled=_guard_flag(memory_data.get("graph_enabled")),
                 # Opt-in, so a plain read defaulting False — NOT `_guard_flag`, which
                 # fails ON and would silently enable volunteering for every existing
-                # user on upgrade. Same shape as `vault_enabled` above. `_expose_flag`
-                # is reserved for flags that open a network surface; this one doesn't.
+                # user on upgrade. Same shape as `vault_mode` above, which defaults to
+                # "off". `_expose_flag` is reserved for flags that open a network
+                # surface; this one doesn't.
                 push_context=bool(memory_data.get("push_context", False)),
                 push_min_confidence=max(
                     0.0, min(1.0, float(memory_data.get("push_min_confidence", 0.7) or 0.7))
@@ -4178,6 +4248,17 @@ class AppConfig:
                 # the user never asked to expose.
                 discovery_enabled=bool(companion_data.get("discovery_enabled", False)),
                 instance_name=str(companion_data.get("instance_name", "") or ""),
+            ),
+            local_models=LocalModelsConfig(
+                # Clamped to a real percentage: a threshold of 0 would warn permanently
+                # and one above 100 could never warn, and both read as "the bar is broken".
+                pressure_warn_pct=min(
+                    100, max(1, _safe_int(local_models_data.get("pressure_warn_pct"), 85))
+                ),
+                # 0 is a coherent choice ("never respawn"); negative is not.
+                sidecar_restart_max=max(
+                    0, _safe_int(local_models_data.get("sidecar_restart_max"), 3)
+                ),
             ),
             sources=SourcesConfig(
                 enabled=bool(sources_data.get("enabled", True)),
@@ -4701,6 +4782,7 @@ class AppConfig:
             "legibility": asdict(self.legibility),
             "ambient": asdict(self.ambient),
             "companion": asdict(self.companion),
+            "local_models": asdict(self.local_models),
             "sources": asdict(self.sources),
             "packs": asdict(self.packs),
             "hooks": self.hooks,

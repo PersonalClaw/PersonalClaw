@@ -419,8 +419,8 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `GET /api/memory/settings` — memory consolidation config.
 - `PUT /api/memory/settings` — memory consolidation config.
 - `GET /api/memory/stats` — memory system statistics.
-- `GET /api/memory/vault` — the markdown-vault mirror status (mem-fs-mirror).
-- `POST /api/memory/vault/sync` — reconcile the vault to the current records.
+- `GET /api/memory/vault` — the readable-vault status (mode, path, file count).
+- `POST /api/memory/vault/sync` — reconcile the vault against the store.
 - `GET /api/memory/volunteer-stats` — per-arm volunteered-vs-used precision (§3).
 - `GET /api/model-provider-types` — installable model-provider types.
 - `GET /api/model-providers` — list configured model-provider entries.
@@ -448,11 +448,16 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `POST /api/models/embedding/reindex` — start a re-index of all embeddings.
 - `GET /api/models/embedding/reindex/{id}/stream` — per-job progress SSE.
 - `GET /api/models/health` — derived per-provider health (breaker state, latency
+- `GET /api/models/loaded` — every resident model + the memory-pressure snapshot.
 - `GET /api/models/local/{provider}/search` — search a searchable provider's
 - `DELETE /api/models/local/{provider}/{model}` — delete a downloaded local model.
 - `GET /api/models/routing-policy` — the inspectable routing table (§6.1).
 - `PUT /api/models/routing-policy` — set one of the three user levers (§6.2).
+- `DELETE /api/models/sidecar/{provider}/install` — remove a CORE-created venv.
+- `POST /api/models/sidecar/{provider}/install` — start the resumable install.
+- `GET /api/models/sidecar/{provider}/install/status` — the rich install poll shape.
 - `GET /api/models/telemetry` — per-model efficiency rows.
+- `POST /api/models/unload` — {provider} — free what a provider holds. Idempotent.
 - `GET /api/models/use-cases/{use_case}/settings` — _(no summary)_
 - `PUT /api/models/use-cases/{use_case}/settings` — _(no summary)_
 - `DELETE /api/notifications` — delete a single notification by timestamp.

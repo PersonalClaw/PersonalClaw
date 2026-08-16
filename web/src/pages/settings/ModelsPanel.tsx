@@ -7,8 +7,12 @@ import {
 } from 'lucide-react'
 import { api, type AvailableModel, type ProviderHealth } from '../../lib/api'
 import { humanBytes } from '../../lib/chunkedUpload'
+import {
+  occupantDetail, pressureDetail, pressureTone, reclaimableCount, sortOccupants,
+} from '../../lib/residency'
 import { IconButton } from '../../ui/IconButton'
 import { Button } from '../../ui/Button'
+import { Meter } from '../../ui/Meter'
 import { SearchField } from '../../ui/SearchField'
 import { useCachedData, invalidateCache } from '../../lib/useCachedData'
 import { confirm } from '../../ui/dialog'
@@ -239,8 +243,117 @@ export function ModelsPanel() {
           )
         })}
       </Section>
+      <LoadedModelsSection />
       <PromptCacheSection />
     </div>
+  )
+}
+
+/** Loaded models + memory pressure (LMMV §7) — "what is occupying my RAM right now".
+ *
+ *  Answers the question no surface answered before: a model stays resident after its
+ *  binding moves elsewhere, and a sidecar adds a whole child process. Rows are ordered
+ *  reclaimable-first (see lib/residency), because the row a user can act on is the one
+ *  still in memory with nothing bound to it. Unload is idempotent server-side and the
+ *  reply carries a fresh pressure snapshot, so the bar moves as proof rather than the UI
+ *  claiming the memory went. */
+function LoadedModelsSection() {
+  const { data, error: loadErr, refresh } = useCachedData('settings:models-loaded', () =>
+    api.modelsLoaded(), { persist: false },
+  )
+  const [busy, setBusy] = useState('')
+
+  // A failed read must not render as "nothing is loaded" — an empty list and an unreachable
+  // gateway look identical, and one of them is a lie about the machine's memory.
+  if (!data && loadErr) return <LoadError what="loaded models" error={loadErr} onRetry={refresh} />
+  if (!data) return <FormSkeleton sections={1} what="loaded models" />
+
+  const rows = sortOccupants(data.loaded)
+  const reclaimable = reclaimableCount(rows)
+  // A provider paging a multi-gigabyte model in from disk is `loading`, not hung. Saying so
+  // is the whole reason ensure_ready() reports a state instead of a bare boolean — without
+  // this line the payload would carry the answer and the screen would stay silent.
+  const notReady = data.providers.filter((p) => p.state !== 'ready')
+
+  const unload = async (provider: string) => {
+    const ok = await confirm({
+      title: `Unload ${provider}?`,
+      body: 'Frees the memory this provider holds. The next request loads the model again, which takes as long as the first load did.',
+      confirmLabel: 'Unload',
+    })
+    if (!ok) return
+    setBusy(provider)
+    try {
+      await api.unloadModelProvider(provider)
+      refresh()
+    } catch (e) {
+      notify(`Couldn't unload ${provider}: ${String((e as Error)?.message || e)}`, 'error')
+    } finally {
+      setBusy('')
+    }
+  }
+
+  return (
+    <Section
+      title="On this machine"
+      hint={
+        reclaimable > 0
+          ? `${reclaimable} resident model${reclaimable === 1 ? '' : 's'} no longer bound to a use case — unloading frees its memory until something needs it again.`
+          : 'Models currently held in memory, and how much of this machine they are using.'
+      }
+    >
+      <div className="rounded-lg bg-surface-container px-4 py-3">
+        <Meter
+          label="System memory in use"
+          pct={data.pressure.used_pct}
+          tone={pressureTone(data.pressure)}
+          detail={pressureDetail(data.pressure)}
+        />
+        {notReady.length > 0 && (
+          <ul className="mt-3 flex flex-col gap-0.5 text-on-surface-low text-[0.8125rem]">
+            {notReady.map((p) => (
+              <li key={p.provider}>
+                {p.display_name}:{' '}
+                {p.state === 'loading' ? 'loading a model now' : 'unavailable on this machine'}
+              </li>
+            ))}
+          </ul>
+        )}
+        {rows.length === 0 ? (
+          <div className="mt-3 text-on-surface-low text-[0.8125rem]">
+            No models are loaded right now. One loads on its first use.
+          </div>
+        ) : (
+          <div className="mt-3 flex flex-col gap-1.5">
+            {rows.map((row) => (
+              <div
+                key={`${row.provider}:${row.model}`}
+                className="flex items-center gap-2 rounded-md bg-surface-high px-2.5 py-1.5"
+              >
+                <span className="flex min-w-0 flex-1 flex-col">
+                  <span className="truncate text-on-surface text-[0.8125rem]" style={fvs(500)}>
+                    {row.model || row.provider}
+                  </span>
+                  <span className="truncate text-on-surface-low text-[0.75rem]">
+                    {row.provider} · {occupantDetail(row)}
+                  </span>
+                </span>
+                <Button
+                  variant="tonal"
+                  size="xs"
+                  loading={busy === row.provider}
+                  onClick={() => unload(row.provider)}
+                  ariaLabel={`Unload ${row.model || row.provider}`}
+                  title="Free the memory this provider holds"
+                >
+                  Unload
+                </Button>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </Section>
   )
 }
 

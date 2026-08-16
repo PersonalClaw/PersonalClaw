@@ -72,6 +72,18 @@ is a deliberate, documented judgment (also recorded in-module at each site).
    must probe every filesystem layout a provider writes; deletes clear all
    layouts; a binding to a catalog-absent model surfaces as a synthetic
    not-downloaded row rather than disappearing.
+5. **Subscription credentials** — a provider whose vendor bills by subscription
+   has no API key to paste; it rides an agent CLI the user already signed in.
+   `llm/subscription_credentials.py` knows how to read a *declared* credential
+   store read-only and nothing else: the app registers a `SubscriptionSource`
+   (paths, JSON key walk, expiry shape, and its own `login_hint` naming its own
+   login verb) and names it in `BrandedProviderSpec.credential_source`. **Core
+   ships no source rows** — do not add one; a vendor path or login verb in core
+   is the boundary violation, not a shortcut. The resolver sits at one fixed
+   place in the credential order (below `entry.credential` and
+   `options.api_key`, above `spec.api_key_env`), never writes/refreshes the
+   store it reads, and reports not-signed-in through the `availability()` probe
+   `providers/loader.py` derives from that declaration.
 
 ## Case study: how Slack left core
 

@@ -50,7 +50,7 @@ are in Settings → Memory. These are the tuning constants under them:
 | `memory.auto_promote_enabled` | `true` | Periodically promote the most-recalled facts into the L1 manifest. |
 | `memory.auto_promote_every_n` | `10` | Run promotion every N consolidations. |
 | `memory.auto_promote_max_per_run` | `5` | Max facts promoted per run. |
-| `memory.vault_path` | `memory-vault` | Where the Obsidian-compatible markdown mirror is written, relative to `~/.personalclaw` (absolute paths allowed). The enable toggle is in Settings → Memory. |
+| `memory.vault_path` | `memory-vault` | Where the readable markdown vault is written, relative to `~/.personalclaw` (absolute paths allowed). The mode selector (`off`/`mirror`/`two_way`) is in Settings → Memory. Only the DEFAULT path is a declared state entry, so a relocated vault is outside `personalclaw snapshot`. |
 
 ## Skills automation (`skills.*`)
 

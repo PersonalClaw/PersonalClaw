@@ -212,6 +212,79 @@ class LocalModelProvider(ABC):
         """
         return None
 
+    #: Instance attributes that hold a LOADED model, declared by the provider so the
+    #: residency surface can see what is occupying RAM (LMMV §7). An attribute holding a
+    #: dict contributes one row per key. Empty → the reflective default below guesses from
+    #: the conventional names, which is honest-but-coarse.
+    _MODEL_ATTRS: tuple[str, ...] = ()
+
+    #: The names the reflective default probes when a provider declares no
+    #: :attr:`_MODEL_ATTRS`. Deliberately a short, conventional list: guessing widely
+    #: would report a config dict as a resident model.
+    _MODEL_ATTR_GUESSES: tuple[str, ...] = ("_model", "model", "_pipeline", "_models")
+
+    def loaded_models(self) -> list[dict[str, Any]]:
+        """The models this provider currently holds IN MEMORY (LMMV §7).
+
+        ``[]`` means nothing is resident — which is different from "this provider has no
+        models". The reflective default reads :attr:`_MODEL_ATTRS` (or the conventional
+        names) and reports every non-None one, so a provider gets an honest answer without
+        implementing anything; a provider that knows better overrides this.
+
+        Each row is ``{"model": str, "attr": str}``; the caller adds provider, kind and
+        RSS attribution. Never raises — an unreadable attribute is simply not resident.
+        """
+        names = self._MODEL_ATTRS or self._MODEL_ATTR_GUESSES
+        rows: list[dict[str, Any]] = []
+        for attr in names:
+            try:
+                value = getattr(self, attr, None)
+            except Exception:  # noqa: BLE001 — a property that raises is not a resident model
+                continue
+            if value is None:
+                continue
+            if isinstance(value, dict):
+                rows.extend(
+                    {"model": str(k), "attr": attr} for k, v in value.items() if v is not None
+                )
+                continue
+            rows.append({"model": getattr(value, "name", "") or attr.lstrip("_"), "attr": attr})
+        return rows
+
+    def unload(self) -> bool:
+        """Release resident models. Idempotent — True if anything was actually freed.
+
+        The default drops every attribute :meth:`loaded_models` reports, which is what
+        makes RSS available for reclaim; a provider holding its model somewhere subtler
+        overrides. Calling it twice is not an error, and calling it on a provider holding
+        nothing returns False rather than pretending.
+        """
+        freed = False
+        for attr in self._MODEL_ATTRS or self._MODEL_ATTR_GUESSES:
+            if getattr(self, attr, None) is None:
+                continue
+            try:
+                setattr(self, attr, None)
+                freed = True
+            except Exception:  # noqa: BLE001 — a read-only attribute simply can't be freed
+                logger.debug("unload could not clear %s.%s", type(self).__name__, attr)
+        return freed
+
+    async def ensure_ready(self) -> tuple[bool, str]:
+        """``(ok, state)`` where state is ``ready`` / ``loading`` / ``unavailable``.
+
+        Separates the LOAD budget from the INFERENCE budget: a provider paging a
+        multi-gigabyte model in from disk is ``loading``, not hung, and the surface can say
+        so instead of showing a spinner that looks like a bug. The default answers from
+        :meth:`is_available` (never ``loading``, because a provider that doesn't implement
+        warming has no warming state to report).
+        """
+        try:
+            ok = await self.is_available()
+        except Exception:  # noqa: BLE001 — availability must never raise into the surface
+            return False, "unavailable"
+        return (True, "ready") if ok else (False, "unavailable")
+
     def _models_from_catalog(
         self,
         catalog_path: Path,
