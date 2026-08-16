@@ -15,7 +15,7 @@ Each atom below executes start-to-finish in one go. If an atom lists dependencie
 | `MGAV-3` | ✅ | Ambient push-context reflex + volunteer-events table + per-arm stats (migration v8) | `MGAV-2` | Per-turn deterministic reflex volunteers <=3 (hard 5) confidence-gated semantic records via context_engine on every turn (not is_new_session-gated), never injects knowledge (chip only), migration v8 mem_volunteer_events logs entity/arm/confidence/ref with recall_at_volunteer baseline, temporary sessions get nothing and incognito injects-without-logging, push_context + push_min_confidence wired four-point + PUT allowlist, Health tab per-arm precision (min-N gated) |
 | `MGAV-4` | ✅ (##118) | Knowledge-side deterministic alias pre-pass in the ingestion entities stage | `MGAV-1` | link_known_entities runs before the LLM EntityExtractor and unconditionally (incl. pool is None), using the same AliasIndex as memory, adding INSERT-OR-IGNORE mentions for already-known entities; snapshots (name,type,context) across clear_item_entities so a model-present ingest keeps deterministic links; bounded by MAX_INDEXED_ENTITIES/MAX_MENTIONS_PER_ITEM; validated no-model ingest links a declared-alias mention |
 | `MGAV-5` | ✅ | Memory formation: Extract→Gather→Decide consolidation + holder attribution + Louvain topology | `MGAV-1`, `MGAV-2` | _consolidate_locked restructured to Extract→Gather→Decide with one added structured call producing ADD/UPDATE/SUPERSEDE/NOOP mapped to the v4 supersession chain + WAL (no physical deletes, keep-both conflict flag surfaced in lint); optional holder column + weight caps + claim.* prefix with attributed fact-block rendering and holder precedence in Decide; deterministic seeded Louvain post-step writes community into mem_link_stats and materializes a <=400-char topology block gated by graph_topology_in_context (default off) |
-| `MGAV-6` | ⬜ | Two-way readable vault: mode config, wikilink projection, sync pass, vault lints, raw capture, seeding, snapshot | `MGAV-1` | memory.vault_mode off\|mirror\|two_way (back-reads vault_enabled); pages carry frontmatter+source_hash and [[wikilinks]] generated from mem_links with compiled-truth+append-only-timeline shape; on-cadence/on-demand POST /api/memory/vault/sync parses hash-changed pages back through the MemoryService write path (S5 scan, WAL, edit-wins, sync-conflict flag, no data loss); vault lints (backlink symmetry, stale hash, broken links, orphans); raw/ sweep routes files to the knowledge ingest queue only; starter seeding writes only missing/pristine files; snapshot.py adds the vault dir |
+| `MGAV-6` | ✅ | Two-way readable vault: mode config, wikilink projection, sync pass, vault lints, raw capture, seeding, snapshot | `MGAV-1` | memory.vault_mode off\|mirror\|two_way (back-reads vault_enabled); pages carry frontmatter+source_hash and [[wikilinks]] generated from mem_links with compiled-truth+append-only-timeline shape; on-cadence/on-demand POST /api/memory/vault/sync parses hash-changed pages back through the MemoryService write path (S5 scan, WAL, edit-wins, sync-conflict flag, no data loss); vault lints (backlink symmetry, stale hash, broken links, orphans); raw/ sweep routes files to the knowledge ingest queue only; starter seeding writes only missing/pristine files; snapshot.py adds the vault dir |
 | `MGAV-7` | ⬜ | Memory citations in chat + admit-ignorance clause | `MGAV-2` | Memory-backed answers render inline [Memory N] chips in ui/Markdown.tsx deep-linking to the inspect tab (and vault path when present) using recall_with_provenance evidence arms; the system prompt instructs citing injected memories by index and adds the admit-ignorance clause so empty recall yields an explicit 'not in memory' rather than confabulation; no new tool |
 | `MGAV-8` | ✅ | Memory slots: bounded always-injected registers + reflection append hook + self-model | — | slot.<name> prefix added to _BUILTIN_PREFIXES with per-slot size cap enforced at put (over-cap append fails loudly as a trim proposal); lazy built-ins (persona/preferences/pending_items/self_notes/glossary(workspace)/self_model); one bounded Slots block injected in build_session_context adjacent to persona/USER PROFILE; after_turn_review append-only hook (WAL, undo, human-tombstone respected); self-model promotes a line to a behavioral principle only after >=3 reinforcements |
 | `MGAV-9` | ⬜ | FE surfaces: MemoryPanel tabs, MemoryGraph viz + HTML export, full config wiring + as-a-user validation | `MGAV-5`, `MGAV-6`, `MGAV-8` | studio tab gains Slots editor + entity browser + proposed-entity accept queue; inspect tab shows per-record backlinks + evidence tags (citation deep-link target); settings tab exposes vault mode/path, push toggle+min-confidence, slot caps, topology toggle via _EDITABLE_CONFIG PATCH; MemoryGraph.tsx renders entities colored by Louvain community with typed/provenance/min-confidence filtering + side drawer, plus GET /api/memory/graph/export self-contained HTML; all remaining MemoryConfig fields survive the four-point round trip (schema tests) and toggle live; end-to-end write→link→recall→volunteer→edit-vault→undo validation sweep passes with graph_enabled:false / foreign provider degrading cleanly |
@@ -141,11 +141,108 @@ the `/api/memory/settings` payload, so that atom only has to render them.
 
 ### `MGAV-6` — Two-way readable vault: mode config, wikilink projection, sync pass, vault lints, raw capture, seeding, snapshot
 
-**Status:** todo
+**Status:** done
 
 §5.1 mirror→two-way projection, §5.2 edits flow back, §5.3 structure conventions+lints, §5.5 interop (symlink, raw/ capture, starter seeding, static export, git/snapshot); Session 4
 
 **Done when:** memory.vault_mode off|mirror|two_way (back-reads vault_enabled); pages carry frontmatter+source_hash and [[wikilinks]] generated from mem_links with compiled-truth+append-only-timeline shape; on-cadence/on-demand POST /api/memory/vault/sync parses hash-changed pages back through the MemoryService write path (S5 scan, WAL, edit-wins, sync-conflict flag, no data loss); vault lints (backlink symmetry, stale hash, broken links, orphans); raw/ sweep routes files to the knowledge ingest queue only; starter seeding writes only missing/pristine files; snapshot.py adds the vault dir
+
+**DONE (2026-08-16):** `memory_vault.py` grew from a one-way mirror into a mode-driven
+projection. `memory.vault_mode` (`off|mirror|two_way`) **replaces** `vault_enabled` —
+clean-break rename on the `conductor_skill`→`orchestrator_skill` precedent, with a
+one-way back-read in `load()`: a legacy `true` loads as `mirror`, **never** `two_way`,
+because reading a user's files back into memory is a new capability and must be chosen,
+not inherited. A *typo'd* mode also falls back to the legacy read rather than to `off`,
+so a hand-edited config cannot silently stop mirroring a vault someone is browsing;
+through the API the same typo is a **400**, not a coercion.
+
+**`source_hash` covers the BODY ONLY, and that one decision carries the atom.** The sync
+rewrites frontmatter every pass (counters, `updated_at`, the hash itself), so a hash over
+the frontmatter would make every page read as hand-edited *forever* — the mutation
+confirming that reds three tests. Body-only also buys the conflict flag for free:
+stamping `sync_conflict` into a page we refuse to touch does not change its body hash, so
+it keeps reporting itself unresolved instead of quietly becoming clean because we wrote
+to it. `absorb_edits()` runs **before** the re-projection (otherwise the projection
+overwrites the edit before anything reads it), and the bar for applying one is
+deliberately high: frontmatter `id`, a `kind` in `{semantic, preference, note, slot}`, an
+H1, and a non-empty value between the H1 and the `personalclaw:generated` marker.
+Anything else — no heading, empty value, an episodic page (evidence is immutable), a
+lesson's rule/counter-example structure — is **left byte-for-byte as the human wrote it**,
+flagged, and reported. Its manifest entry is carried over so the prune pass cannot delete
+the very file the sync declined to rewrite.
+
+Edits ride `MemoryService.apply_vault_edit` → `set_semantic(source="vault_edit")`.
+`vault_edit` joined `user_explicit` in a new `vector_memory._HUMAN_AUTHORED_SOURCES` so
+conflict resolution lets it win; without that, editing a fact you originally typed would
+be refused as "an automated source cannot overwrite a user fact" and the vault would
+silently discard your change (the mutation reds five tests). It stays OUT of
+`_TRUSTED_WRITE_SOURCES` and out of the reserved `system.` prefix: authority is not trust
+in the bytes. **Measured split between the two injection layers** — `validate_semantic`
+already refuses instruction-override *prose* (`injection_blocked`), while only the S5
+`supply_chain` scan catches a **bidi override** (`validate_semantic` returns `None` for
+it). My first S5 test used prose and was VACUOUS; the real one uses `\u202e` and asserts
+the deeper validator passes it first, so the S5 call is proven load-bearing rather than
+redundant.
+
+Pages carry `type` + `source_hash`; `[[wikilinks]]` come from `mem_links` via one pass
+over `graph_backlinks`, which is what makes record→entity and entity→record two
+projections of the same rows (symmetry true by construction, leaving the lint to catch
+*disk* drift). Entity pages are compiled-truth + `## Backlinks` + an append-only
+`## Timeline`; evidence refs are backticked rather than wikilinked, so a line outliving a
+pruned record does not turn the vault's honest history into a broken-link report.
+
+**Three real defects found and fixed on the way:**
+1. 🔴 **`mirror` mode never restored a hand-edited page.** The write-skip compared the
+   freshly rendered digest to the *manifest*, which says "the projection has not changed",
+   not "the file still holds it". Now it compares the bytes on disk — a read costs less
+   than the write it avoids, and the manifest keeps its real job (knowing what is ours to
+   prune).
+2. 🔴 **Every episodic page has emitted `**Session:** [[session-<id>]]` since the mirror
+   shipped, and no such page was ever written.** Obsidian tolerates an unresolved link, so
+   it went unnoticed until §5.3's broken-link check measured the vault against itself.
+   `render_session_hub` makes those links resolve.
+3. 🔴 **The seeded `raw/README.md` was ingested into Knowledge by the sweep it
+   documented.** `raw/` is now a pure drop box, documented once in the top-level README,
+   so the sweep needs no exception that would also swallow a README the user really
+   dropped.
+
+**Durability decision.** `memory-vault` is now a declared `StateEntry` (tree, domain
+`memory`, `replace_only`) — `audit_home()` reported it *unclaimed* the moment anyone
+enabled the vault, and the audit's synthetic fixture never had one. Deliberately **NOT
+`derived=True`** even though a sync rebuilds the whole vault: in `two_way` a page can hold
+an edit that exists nowhere else, and dropping it as "rebuildable" would lose the one
+thing in there that is not. Restoring is safe *because of* `source_hash` — a restored page
+that still matches its own hash is recognised as an untouched projection and simply
+re-rendered from whatever the store now says, so only a genuine unsynced edit is read
+back, and that write rides the WAL. Only the **default** path is declared; a relocated
+vault is the user putting state outside the manifest's reach, same as any absolute path.
+
+**Deviations.** (a) §5.2's "store version preserved in the supersession chain" is served
+by the `memory_events` row instead — `undo_event` restores the exact prior value, whereas
+minting a synthetic superseded key would pollute the semantic keyspace with rows nothing
+reads. (b) §5.1's `last_updated` frontmatter key is not emitted: `_FM_ORDER` already
+carries the record's `updated_at`, which *is* the store version the pass compares
+against, and two keys for one fact would drift. (c) Starter seeding ships the vault's own
+README rather than reading an agent-profile `memory_seed/` dir — `agents/` is a flat file,
+not per-agent dirs — but `seed()` is the public missing-or-pristine primitive an app's
+`setup` can call with its own dict. (d) §5.3's `connection`/`qa` page types are not
+declared, because nothing generates them.
+
+**Not in scope, still open:** the `--html` static export (§5.5, explicitly "lowest
+priority", shares `MGAV-9`'s renderer) and the reveal/copy-symlink affordance. `index.md`
+stays `MEMORY.md` — renaming the existing front door buys nothing — and it is not injected
+into the L1 manifest region; the done_when names neither.
+
+**Falsification.** 11 mutations; 9 redded 1–6 tests each with the exact messages recorded
+in the session report. **Two redded NOTHING and both were my tests' fault, not the
+code's:** (i) blanking the timeline merge (`merged = []`) passed, because `mem_links` rows
+survive a soft delete (measured) so a rebuild-from-evidence produced byte-identical lines
+— rewritten to drop the edge via `drop_links_for` and to insert a future-dated hand line
+that a re-sort would move; (ii) removing the S5 scan passed, for the layer-redundancy
+reason above. A third gap: dropping `vault=vault` from `MemoryService.lint()` — the only
+thing `GET /api/memory/lint` calls — redded nothing, so the whole vault check could have
+been correct and never reached the Health tab; there is now a test that drives that
+surface.
 
 ### `MGAV-7` — Memory citations in chat + admit-ignorance clause
 

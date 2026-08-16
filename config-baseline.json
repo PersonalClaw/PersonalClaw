@@ -929,10 +929,10 @@
     "type": "list[str]"
   },
   {
-    "default": false,
-    "path": "memory.vault_enabled",
+    "default": "off",
+    "path": "memory.vault_mode",
     "sensitive": false,
-    "type": "bool"
+    "type": "str"
   },
   {
     "default": "memory-vault",

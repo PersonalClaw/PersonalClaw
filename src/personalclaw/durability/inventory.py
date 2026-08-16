@@ -142,6 +142,35 @@ INVENTORY: tuple[StateEntry, ...] = (
         derived=True,
         help="vector index id map (rebuilt with the index)",
     ),
+    # 🔴 UNCLAIMED until MGAV-6. `audit_home()` reported `memory-vault/` the moment a
+    # user turned the vault on, and the synthetic eight-path fixture the audit tests
+    # build never contains it — a declared guard that could not see the store.
+    #
+    # NOT `derived=True`, even though `POST /api/memory/vault/sync` rebuilds the whole
+    # vault from `memory.db`. In `two_way` mode a page may hold an edit the human made
+    # and the sync has not read back yet, and that edit exists NOWHERE else — dropping
+    # it from the backup as "rebuildable" would lose the one thing in here that is not.
+    #
+    # Restoring it is safe *because of* `source_hash`: every page carries a hash of its
+    # own body, so a restored page that still matches is recognized as an untouched
+    # projection and simply re-rendered from whatever the store now says. Only a page
+    # whose body diverges from its hash — a real, unsynced human edit — is read back.
+    # A stale vault therefore cannot push old text over newer memory unless the human
+    # genuinely typed that text and never synced; and that write rides `vault_edit`
+    # through the WAL, so `undo_event` restores the prior value.
+    #
+    # `replace_only`: a markdown tree has no per-record identity to merge by. The path
+    # is the DEFAULT `memory.vault_path`; a vault relocated elsewhere in the home is
+    # the user putting their state outside the manifest's reach, same as any absolute
+    # path.
+    StateEntry(
+        id="memory_vault",
+        kind=KIND_TREE,
+        path="memory-vault",
+        domain=DOMAIN_MEMORY,
+        merge=MERGE_REPLACE_ONLY,
+        help="readable markdown vault (browsable memory; may hold unsynced edits)",
+    ),
     # ── knowledge ──
     StateEntry(
         id="knowledge_db",

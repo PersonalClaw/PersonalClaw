@@ -91,7 +91,14 @@ cosine floor keeps weak vector hits from polluting precise keyword queries.
   `promote_by_heat` is the conservative global gate that promotes only records
   whose accumulated heat crosses the threshold (protects against one-off
   session noise).
-- **`memory_vault.py`** — a human-readable markdown mirror of memory.
+- **`memory_vault.py`** — the human-readable markdown vault. `memory.vault_mode`
+  picks `off` / `mirror` (projection only) / `two_way` (hand edits are read back
+  through `MemoryService.apply_vault_edit`, i.e. the normal semantic write path with
+  the S5 scan and a reversible `memory_events` row). Every page carries a
+  `source_hash` of its BODY, which is what makes an edit detectable and a
+  frontmatter rewrite invisible; a page the parser cannot read is left alone and
+  flagged rather than merged. Files dropped in `<vault>/raw/` are routed to the
+  KNOWLEDGE ingest queue, never into memory — the boundary holds inside the vault.
 - **`learn.py`** — lesson capture; `memory_lint.py` — hygiene checks;
   `engagement_signals.py`, `preference_facets.py` — derived preference data.
 

@@ -96,8 +96,8 @@ Behavior toggles live in Settings → Memory; tuning constants are backend-only.
 | `memory.history_idle_hours` | number (≥0.5) | `3.0` | Settings → Memory | Hours of inactivity before history consolidation. |
 | `memory.history_max_days` | integer (≥7) | `365` | Settings → Memory | Maximum days of history to retain. |
 | `memory.migrated` | boolean | `false` | managed automatically | Whether memory has been migrated to the vector store (set by `personalclaw memory migrate` / the API). |
-| `memory.vault_enabled` | boolean | `false` | Settings → Memory | Mirror memory to a browsable markdown vault (Obsidian-compatible: YAML frontmatter + `[[wikilinks]]` + graph view). Read-only — regenerated from the memory store. |
-| `memory.vault_path` | string | `memory-vault` | Settings → Memory | Where the markdown vault is written. Relative paths resolve under `~/.personalclaw`; absolute paths are used as-is. |
+| `memory.vault_mode` | `off` \| `mirror` \| `two_way` | `off` | Settings → Memory | The readable markdown vault (Obsidian-compatible: YAML frontmatter + `[[wikilinks]]` + graph view). `mirror` writes memory out and never reads it back — hand edits are overwritten. `two_way` also reads hand-edited pages back into memory on the next sync (your edit wins); a page the sync cannot parse confidently is left untouched and reported under Settings → Memory → Health. Back-reads the retired `memory.vault_enabled` bool: `true` loads as `mirror`, never `two_way`. |
+| `memory.vault_path` | string | `memory-vault` | Settings → Memory | Where the markdown vault is written. Relative paths resolve under `~/.personalclaw`; absolute paths are used as-is. Only the default path is covered by `personalclaw snapshot`. |
 
 ## Skills (`skills.*`)
 
