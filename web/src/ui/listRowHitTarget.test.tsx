@@ -136,9 +136,19 @@ describe('the tasks list row and card carry the same overlay', () => {
     // 🪤 The first version of this change hand-rolled the overlay, and the primitive-adoption ratchet
     // went red at 273/272 — correctly: `ui/RowHitTarget` already owns this idiom. The ratchet is what
     // found the primitive.
-    const overlays = [...src.matchAll(/<RowHitTarget label=\{t\.title\} \/>/g)]
+    // Matched on the primitive rather than one exact label expression: the row's name now appends its
+    // status (see `taskStatusAnnounced.test.tsx`), and pinning `label={t.title}` literally would have
+    // read that deliberate improvement as a regression. What this rail is FOR — both wrappers delegate
+    // their tab stop instead of hand-rolling one — is unchanged, and the count still enforces two.
+    const overlays = [...src.matchAll(/<RowHitTarget label=\{/g)]
     expect(overlays.length, 'one for the list row, one for the card').toBeGreaterThanOrEqual(2)
     expect(src, 'through the primitive, not a bespoke element').toMatch(/import \{ RowHitTarget \}/)
+    // And each one still names the row from the task, not from a constant — a hit target labelled
+    // "Open" ×30 is the failure this primitive exists to prevent.
+    for (const m of overlays) {
+      const tail = src.slice(m.index, m.index + 90)
+      expect(tail, 'the name is derived from the task').toMatch(/t\.title/)
+    }
   })
 
   it('neither wrapper claims a role, and both keep tabIndex -1', () => {
