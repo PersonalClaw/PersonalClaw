@@ -63,16 +63,18 @@ async def api_update_check(request: web.Request) -> web.Response:
     return web.json_response(merged)
 
 
+def _redact_log_text(text: str) -> str:
+    """Redact credentials and exfiltration URLs from log text before streaming/buffering."""
+    from personalclaw.security import redact_credentials, redact_exfiltration_urls
+
+    text, _ = redact_credentials(text)
+    text, _ = redact_exfiltration_urls(text)
+    return text
+
+
 async def _do_update_check() -> None:
     """Run git fetch and compare HEAD with remote."""
     global _last_update_check
-
-    def _redact(text: str) -> str:
-        from personalclaw.security import redact_credentials, redact_exfiltration_urls
-
-        text, _ = redact_credentials(text)
-        text, _ = redact_exfiltration_urls(text)
-        return text
 
     proj = os.environ.get("PERSONALCLAW_PROJECT_DIR", "")
     if not proj:
@@ -858,7 +860,7 @@ class _QueueLogHandler(logging.Handler):
 
     def emit(self, record: logging.LogRecord) -> None:
         try:
-            msg = self.format(record)
+            msg = _redact_log_text(self.format(record))
             data = json.dumps({"level": record.levelname, "msg": msg})
             self._queue.put_nowait(data)
         except Exception:
@@ -908,7 +910,7 @@ class _RingLogHandler(logging.Handler):
 
     def emit(self, record: logging.LogRecord) -> None:
         try:
-            msg = self.format(record)
+            msg = _redact_log_text(self.format(record))
             data = json.dumps({"level": record.levelname, "msg": msg})
             self._ring.append(data)
             # Push to WS log subscribers (thread-safe via call_soon_threadsafe)
