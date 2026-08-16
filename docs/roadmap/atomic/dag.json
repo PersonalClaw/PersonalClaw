@@ -5250,7 +5250,8 @@
             "WS-1",
             "WS-2",
             "WS-3"
-          ]
+          ],
+          "pr": 1436
         },
         {
           "id": "WS-9",
@@ -10070,9 +10071,9 @@
         "code": "WS",
         "plan": "WATCHED-SOURCES",
         "total_atoms": 9,
-        "done": 7,
+        "done": 8,
         "in_progress": 0,
-        "todo": 2,
+        "todo": 1,
         "blocked": 0
       },
       {
