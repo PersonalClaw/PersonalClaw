@@ -21,6 +21,7 @@ import { useApprovalToasts } from './useApprovalToasts'
 import { DialogHost } from '../ui/dialog/DialogHost'
 import { UpdateProgressOverlay } from '../ui/UpdateProgressOverlay'
 import { runInTerminal, runInTerminalWhenReady, subscribeTerminal, hasActiveTerminal } from '../pages/terminal/terminalBridge'
+import { LoadingStatus } from '../ui/ListScaffold'
 import { useCachedData } from '../lib/useCachedData'
 import { resolveAppIcon } from '../pages/apps/appIcon'
 import { getNavApps, onNavAppsChange } from '../pages/apps/navApps'
@@ -86,8 +87,25 @@ const NAV: NavItem[] = [
 // (#/loop, #/loops/<id>, #/code/<id>, …) stay reachable.
 const ROUTABLE = new Set([...NAV.map((n) => n.id), 'notifications', 'discover', 'loop', 'loops', 'code', 'app'])
 
+/** The Suspense fallback for every code-split route, so it is what a user sees on EVERY
+ *  navigation whose chunk is not cached yet.
+ *
+ *  It used to be a bare spinning icon: no role, no name, no text. Measured on a cold load of
+ *  `#/terminal` — parent `flex h-full items-center justify-center` with `role=(none)`, the icon
+ *  with `aria-label=(none)`, and the only live region on the page the toast host's EMPTY
+ *  `sr-only` status. So the announcement was nothing, on every route.
+ *
+ *  Fixed the way the tree already does it (`ListSkeleton`): `role="status" aria-busy="true"` on
+ *  the region plus `LoadingStatus`, whose sr-only text is what actually gets announced — an
+ *  `aria-label` on a live region is a NAME, not an announcement, which is the trap
+ *  `LoadingStatus`' own doc records. Nothing visible changes. */
 function PageFallback() {
-  return <div className="flex h-full items-center justify-center"><Loader2 size={22} className="animate-spin text-on-surface-low" /></div>
+  return (
+    <div role="status" aria-busy="true" className="flex h-full items-center justify-center">
+      <LoadingStatus />
+      <Loader2 size={22} className="animate-spin text-on-surface-low" />
+    </div>
+  )
 }
 
 function renderPage(active: string, r: RouteProps) {
