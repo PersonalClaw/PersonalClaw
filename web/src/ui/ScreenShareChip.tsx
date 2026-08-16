@@ -19,6 +19,12 @@ import { MonitorUp } from 'lucide-react'
  *
  * Clicking it stops sharing: the visible indicator is also the off switch, so a user
  * who notices the chip never has to hunt for the control that clears it.
+ *
+ * Which is why its HIT TARGET is held at 24px. Measured at 133x22 before `min-h-6` — 2px under
+ * WCAG 2.5.8's floor — and this is the control that stops a screen capture, so it is the last
+ * one that should be fiddly to hit. `-my-px` absorbs the 2px so the composer row does not grow:
+ * the pairing `ui/DegradedChip` (the near-identical status pill), `dashboard/widgets/kit` and
+ * `DashboardPage` already use.
  */
 export function ScreenShareChip({ onStop }: { onStop: () => void }) {
   return (
@@ -27,7 +33,7 @@ export function ScreenShareChip({ onStop }: { onStop: () => void }) {
       onClick={onStop}
       aria-label="Sharing your screen with this chat — stop sharing"
       title="Sharing your screen with this chat. Click to stop."
-      className="inline-flex shrink-0 items-center gap-1.5 rounded-pill px-2 py-0.5 text-[0.75rem] transition-colors hover:brightness-110"
+      className="inline-flex min-h-6 -my-px shrink-0 items-center gap-1.5 rounded-pill px-2 py-0.5 text-[0.75rem] transition-colors hover:brightness-110"
       style={{
         background: 'color-mix(in srgb, var(--color-warn) 16%, transparent)',
         color: 'var(--color-warn)',
