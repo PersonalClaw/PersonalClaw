@@ -690,3 +690,115 @@ Owner rulings, mapped onto the existing sessions honestly:
   tour launches from, and it already carries three controls plus the finish button; the tour entry
   belongs alongside them, not instead of one. `exitTo.ts` is the seam for anything that has to
   leave the flow — a plain link cannot, because the route guard bounces it.
+- [2026-08-16][OU-10] **DONE (S5 T5.1 + T5.2 / rulings b + c).** The replayable product tour, in
+  two pieces plus five anchors. `web/src/ui/SpotlightTour.tsx` (+ `.doc.ts`) is the presentation
+  primitive: portal, four dim bands around a ring on one element, a step card, focus trap, Escape,
+  reduced motion. `web/src/app/onboarding/ProductTour.tsx` owns the five stops
+  (rail → chat → inbox → approvals → settings), their copy, and the navigation between them;
+  `web/src/app/onboarding/tourLaunch.ts` is the launch seam. Anchors: `data-tour="rail"` on
+  `ui/NavRail`'s `<nav>`, `"chat"` on `ChatPage`'s composer stage, `"inbox"` on `InboxPage`'s queue
+  column, `"approvals"` on `DashboardPage`'s "Needs you" band, `"settings"` on `SettingsHome`'s
+  search. Entry points: a "Take the quick tour" button beside "Start using PersonalClaw" on the
+  done screen, and a non-dismissible "Replay the tour" card at the top of `DiscoverPage`.
+- [2026-08-16][OU-10] **The launch seam exists for the same reason `exitTo.ts` does.** The done
+  screen's tour button runs `finish()`, and `finish()` is what commits identity and flips
+  `onboarded` — which makes `App` render the shell INSTEAD of the flow. The button's own component
+  is gone before a tour could mount, so it cannot render one; it can only leave a request behind.
+  `tourLaunch.ts` is a pending flag plus an in-tab event: the done screen sets the flag before the
+  shell exists and the shell CONSUMES it on mount, while Discover sets it inside an already-mounted
+  shell and a live listener consumes it. Consuming is what stops a request replaying on the next
+  thing that mounts. Module state, not storage — see the telemetry note below.
+- [2026-08-16][OU-10] **Zero telemetry is structural here, not a promise.** The tour has no
+  progress field, no "seen it" flag and no request on any step: the stop index is React state and
+  the launch request is module state. It is REPLAYABLE rather than resumable, which is what lets it
+  have no memory at all. Held by two rails — a recorder over the whole `api` surface asserting no
+  tour-shaped call during a full walk, and a source rail asserting `ProductTour.tsx`,
+  `tourLaunch.ts` and `SpotlightTour.tsx` import no gateway client and name neither
+  `localStorage` nor `sessionStorage`. Confirmed live too: 0 POSTs across a five-stop walk in the
+  browser's network panel (only the shell's own GET polls).
+- [2026-08-16][OU-10] **DEVIATION (the overlay lives in `ui/`, not in `ProductTour.tsx`).** The
+  atom names one file. Two exist, because `primitiveAdoption.baseline.json` holds `rawDialog` at
+  **0** outside `web/src/ui/` — a page-level `role="dialog"` reds the ratchet by construction. So
+  the modal overlay is a `ui/` primitive (with the `.doc.ts` that `uiDocs.drift.test.ts` demands)
+  and `ProductTour.tsx` is the app-specific half: stops, copy, routes, launch. That is also the
+  better layering, and `dialogFocusContract.test.tsx`'s aria-modal census now names it as the
+  fourth entry — with a trap, which is the whole point of that census.
+- [2026-08-16][OU-10] **DEVIATION (the tour NAVIGATES; "S2 auto-pin unchanged" is what makes that
+  safe).** T5.1 asks for "anchor ids on toured surfaces", so the tour goes to each surface rather
+  than describing it from the dashboard. Every route it visits — `chat`, `inbox`, `dashboard`,
+  `settings` — is in `STARTER_NAV_IDS`, so `isDisclosed` is already true and OU-5's auto-pin effect
+  returns before it writes: a full walk leaves the disclosure record byte-identical. Asserted as an
+  outcome (`readNavDisclosure()` unchanged after the walk) with a vacuity guard beside it (a deep
+  link to `#/tools` still pins). Measured live as well: after a browser walk the record was
+  `{"mode":"starter","pinned":["discover"]}` — and `discover` is there because the SESSION opened
+  `#/discover` by URL, not because of the tour.
+- [2026-08-16][OU-10] **DEVIATION (the Discover entry is not a catalog tip).** T5.2 lists the
+  server-side discover catalog in its Files column. A catalog tip carries a dismiss, and dismissing
+  the tour would delete the product's only replay entry — which contradicts the same task's "a
+  dismissed-everything user still finds the tour". So the card is client-side, non-dismissible, and
+  rendered OUTSIDE every branch of the page: it survives Discover being switched off, every tip
+  being dismissed, and a failed `/api/legibility/discover`. Three tests, one per state.
+- [2026-08-16][OU-10] **DISCOVERY (the "pattern donor" donates a pattern, not a mechanism).**
+  `ui/PlanningWalkthrough.tsx` is a full-page split view, not an overlay: it contributes the
+  stepwise idiom, the expressiveness-scaled step choreography and the host-owns-the-index shape.
+  The portal + focus-trap machinery came from `ui/Modal.tsx` and `useFocusTrap`, which is where the
+  repo's overlay contract actually lives.
+- [2026-08-16][OU-10] **Two placement defects found by DRIVING it, invisible to jsdom** (which has
+  no layout, so every rect is 0×0 and the overlay takes its unanchored path). (1) The card was
+  placed under-else-over-else-clamp-to-top, so on the rail stop — an anchor as tall as the viewport
+  — it landed ON the rail and covered the wordmark plus four of the six rows it was describing.
+  `cardPosition` now falls through to BESIDE the box. (2) The ring is the anchor's box plus padding,
+  and the inbox queue column is full-bleed, so its right-hand stroke landed off-screen: a
+  three-sided ring reading as an unfinished box. `ringFor` clamps to the viewport, which also keeps
+  the four dim bands non-negative.
+- [2026-08-16][OU-10] **Focus, and the one honest limit.** The card is a `role="dialog"`
+  `aria-modal="true"` container with `useFocusTrap`, and it re-takes focus on `[index, anchorEl]`
+  rather than on `index` alone — because the host navigates when the stop changes, so the new
+  surface mounts afterwards and `SettingsHome` autofocuses its search. Verified live: on the
+  settings stop the dialog held focus with the search field mounted. On exit, focus returns to the
+  launching control when that control survived (measured: back on Discover's "Start the tour" with
+  `outline: rgb(255,107,91) solid 2px`). When the tour navigated AWAY from the launch surface the
+  trigger is detached, `useFocusTrap` correctly declines to focus a dead node, and focus lands at
+  the document start — which is exactly what every other route change in this shell does. Recorded
+  as a limit rather than papered over with focus management the rest of the app does not have.
+- [2026-08-16][OU-10] **V5 (driven as a user, real gateway from this worktree, isolated home).**
+  `PERSONALCLAW_HOME=/private/tmp/ou10-home`, `AUTH_MODE=none` (loopback only), port `:10066`, its
+  own `static/dist` symlink so the served SPA was this build. Legs driven:
+  · **done-screen launch → tour on a working shell — VERIFIED.** Fresh home, full flow
+    (name → "Set up later" → "Skip this") → "Take the quick tour" → landed on `#/dashboard` with
+    the rail rendered AND the tour on step 1, named
+    `PersonalClaw tour — step 1 of 5: The sidebar is the whole app`.
+  · **all five stops — VERIFIED, screenshot each.** rail (`#/discover`, no navigation) → chat
+    (`#/chat`, composer ringed + halo) → inbox (`#/inbox`) → approvals (`#/dashboard`, the
+    "Needs you" band) → settings (`#/settings`, the search). Every stop resolved its anchor.
+  · **Escape mid-tour → a working app — VERIFIED.** Escape on the settings stop closed the overlay,
+    handed the route back to `#/discover` (where the tour was launched), and the rail still
+    navigated: a click on Inbox rendered `#/inbox`.
+  · **Discover replay — VERIFIED**, including that the card sits above the tips and that ending the
+    tour from step 1 returns focus to its button.
+  · **Zero console errors** across the whole run; the gateway log carried only the expected
+    "no model provider resolves for use case 'background'" warnings (the essentials step was
+    skipped, so this home has no provider).
+  · **NOT driven:** reduced motion (verified by test only — no way to toggle the OS preference from
+    this harness), mobile width, and the degraded stop (an anchor that never mounts), which is
+    covered by unit test. The mobile nav drawer parks off-screen, so the rail stop would fall back
+    to a centred card there; the tour is a desktop-shell feature this session did not widen.
+- [2026-08-16][OU-10] **Falsified, four mutations, all red.** (1) Escape handler emptied → **5 RED**
+  across three files, including the repo's own rail: `SpotlightTour.test.tsx` +
+  `productTour.test.tsx` gave `AssertionError: expected <div role="dialog" …(8)>…(2)</div> to be
+  null` (×4), and `escapeDismissContract.test.tsx` gave `AssertionError: A scrim is a MOUSE
+  dismissal; without an Escape handler a keyboard user cannot close the overlay:`. (2) The halo's
+  `!reduce &&` guard replaced with `true &&` → **2 RED** in
+  `SpotlightTour.reducedMotion.test.tsx`: `expected <div data-tour-halo="true" …(2)></div> to be
+  null` and `the static outline ring must still be drawn: expected 2 to be 1`; the motion-allowed
+  half stayed green, so the pair is non-vacuous in both directions. (3) A
+  `api.saveOnboardingState({step:'done'})` added to the step effect → **2 RED**:
+  `expected [ 'saveOnboardingState', …(16) ] to deeply equal []` and
+  `app/onboarding/ProductTour.tsx must not import the gateway client: expected true to be false`.
+  (4) The inbox stop's route changed to the held-back `tools` surface → **2 RED**, the auto-pin one
+  being `expected { Object (mode, pinned) } to deeply equal { mode: 'starter', pinned: [] }`.
+- [2026-08-16][OU-10] **Gate.** `npm run typecheck --workspace web` clean;
+  `npm test --workspace web` **303 files / 3128 tests passed** (the full suite, so the repo-wide
+  design and a11y ratchets are included); `npm run build --workspace web` clean (92 components in
+  `ui-docs.json`). No Python touched. `docs/design/consistency-audit.json` regenerates on every web
+  run and was restored, not committed.

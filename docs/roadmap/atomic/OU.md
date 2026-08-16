@@ -19,7 +19,7 @@ Each atom below executes start-to-finish in one go. If an atom lists dependencie
 | `OU-7` | ✅ | Blast-radius derivation (approvalMeta.ts pure function) — C2 read-only consumption | — | web/src/pages/chat/approvalMeta.ts maps tool name + existing risk + command-screening classification to writes/network/shell/readOnly chips; unit-tested against representative tools (bash, web_fetch, memory write, read-only); NO security-logic change (E4 if any gap tempts one) |
 | `OU-8` | ✅ | ApprovalCard redesign (what/why/blast-radius/scoped-remember) + toast compact variant | `OU-7` | ApprovalCard renders all four zones; useApprovalToasts gets the compact form; remember-scope (session/tool_always/no) persists via the existing approval-preference path; brief never advocates approval; risky+benign approvals driven as a user and README screenshots produced (feeds DISCOVERABILITY-LAUNCH asset list) |
 | `OU-9` | ⬜ | Structured approval brief over the ChannelDelivery.request_approval seam | `OU-7`, `OU-8`, `EXT:CHANNEL-EXPANSION:ChannelDelivery.request_approval + apps-repo slack renderer consume the structured brief` | the same brief fields (tool + blast-radius line) flow through ChannelDelivery.request_approval payloads as additive meta; apps-repo slack renderer minimally updated to show what it can today; dashboard remains the rich surface |
-| `OU-10` | ⬜ | Replayable product tour component + Discover 'Replay the tour' card | `OU-4`, `OU-5` | web/src/app/onboarding/ProductTour.tsx spotlight tour (rail -> chat -> inbox -> approvals -> settings) runs post-onboarding end-to-end, launched from the done-screen; Esc exits anywhere leaving a fully working app; reduced-motion honored; zero requests logged for tour progress (no telemetry); re-launchable from DiscoverPage 'Replay the tour' card; S2 auto-pin behavior unchanged |
+| `OU-10` | ✅ | Replayable product tour component + Discover 'Replay the tour' card | `OU-4`, `OU-5` | web/src/app/onboarding/ProductTour.tsx spotlight tour (rail -> chat -> inbox -> approvals -> settings) runs post-onboarding end-to-end, launched from the done-screen; Esc exits anywhere leaving a fully working app; reduced-motion honored; zero requests logged for tour progress (no telemetry); re-launchable from DiscoverPage 'Replay the tour' card; S2 auto-pin behavior unchanged |
 | `OU-11` | ⬜ | Stranger-validation facilitator kit + 3 think-aloud sessions | `OU-4`, `OU-8`, `OU-10` | docs/maintainers/usability-kit.md self-contained (facilitator script, consent note, observation sheet; dry-run on self recorded); 3 sessions run (OWNER recruits/hosts strangers); fix-now list (<=1 day) empty by session close; issues filed labeled ux-finding; first-success timing delta vs S1 baseline recorded |
 
 ## Atom scopes
@@ -389,7 +389,7 @@ Session 3 T3.3 (Wave 2); Contracts C2; existing ChannelDelivery seam; apps-repo 
 
 ### `OU-10` — Replayable product tour component + Discover 'Replay the tour' card
 
-**Status:** todo
+**Status:** done
 
 2026-07-26 Amendment Session 5 T5.1 + T5.2 (rulings b + c); PlanningWalkthrough.tsx is the pattern donor; Discover named as the progressive-disclosure arm
 

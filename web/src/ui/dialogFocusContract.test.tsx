@@ -12,6 +12,7 @@ import { join } from 'node:path'
 //
 //   ui/Modal.tsx                    aria-modal + useFocusTrap        ✓
 //   ui/dialog/DialogShell.tsx       aria-modal + useFocusTrap        ✓
+//   ui/SpotlightTour.tsx            aria-modal + useFocusTrap        ✓ (added by ONBOARDING-UX OU-10)
 //   ui/UpdateProgressOverlay.tsx    aria-modal, NO trap              ✗ fixed here
 //   ui/DegradedChip.tsx             role=dialog, no aria-modal       distinction (a popover)
 //   ui/NavRail.tsx                  role=dialog, no aria-modal       distinction (a drawer, `inert`)
@@ -91,6 +92,12 @@ describe('the rail: aria-modal implies a focus trap', () => {
     const modal = files.filter((f) => /aria-modal="true"/.test(f.src)).map((f) => f.rel).sort()
     expect(modal).toEqual([
       'ui/Modal.tsx',
+      // The product tour's step card (ONBOARDING-UX OU-10). It dims the page it sits over,
+      // so it owes containment for exactly the reason this file exists — and it carries the
+      // trap. It re-takes focus on every stop too, because it walks onto surfaces that
+      // autofocus their own fields (Settings' search), which would otherwise leave the trap
+      // holding nothing while the markup still claimed aria-modal.
+      'ui/SpotlightTour.tsx',
       'ui/UpdateProgressOverlay.tsx',
       'ui/dialog/DialogShell.tsx',
     ])
