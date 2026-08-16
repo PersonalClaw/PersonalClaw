@@ -21,6 +21,15 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
   happened rather than a preview, each finished in about a second, and none of them spending a
   single token. Skip any or all of them. If a call fails, the card shows the exact error the server
   gave and offers a one-click jump to the Settings panel that owns it.
+- **A knowledge item now has a reading mode, and a passage you highlight in it stays
+  highlighted.** Open anything with a text body from Knowledge and press **Reading mode**: the
+  article gets the column, real editorial type instead of metadata-sized text, and a ring showing
+  how far through it you are alongside a rough reading time. Select a passage and press **Highlight
+  selection** (or the pill that appears at the selection) to keep it, with an optional note about
+  why it matters. Your highlights are marked in the text when you come back, and they are also
+  listed under **More details**, so they are on the item whether or not you are reading it. If you
+  later edit the body out from under a highlight it stops being marked but is never thrown away,
+  and merging two copies of an item keeps the highlights from both.
 - **An empty Triggers page now offers four working starters instead of a blank form.** Morning
   briefing, weekly digest, nightly check and a standup reminder each show their cadence in your
   own locale's clock, and picking one opens the ordinary create form already filled in — review it,

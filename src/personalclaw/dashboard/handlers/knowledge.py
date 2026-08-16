@@ -900,6 +900,59 @@ async def merge_items(request: web.Request) -> web.Response:
     return web.json_response({"ok": True, "kept": keep_id, "merged": merge_id, "moved": moved})
 
 
+async def list_item_annotations(request: web.Request) -> web.Response:
+    """GET /api/knowledge/items/{id}/annotations — the item's reading highlights."""
+    store = _store(request)
+    item_id = request.match_info["id"]
+    if store.get_item(item_id) is None:
+        return web.json_response({"error": "not found"}, status=404)
+    return web.json_response({"annotations": store.list_annotations(item_id)})
+
+
+async def add_item_annotation(request: web.Request) -> web.Response:
+    """POST /api/knowledge/items/{id}/annotations — keep a highlighted passage.
+
+    `occurrence` disambiguates identical quotes within one document; the reader supplies
+    it because only the reader knows which rendered instance the user selected.
+    """
+    store = _store(request)
+    item_id = request.match_info["id"]
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response({"error": "invalid JSON"}, status=400)
+    if not isinstance(body, dict):
+        return web.json_response({"error": "body must be an object"}, status=400)
+    try:
+        occurrence = int(body.get("occurrence", 0) or 0)
+    except (TypeError, ValueError):
+        return web.json_response({"error": "occurrence must be an integer"}, status=400)
+    try:
+        row = store.add_annotation(
+            item_id,
+            str(body.get("quote") or ""),
+            occurrence=occurrence,
+            note=str(body.get("note") or ""),
+        )
+    except ValueError as exc:
+        return web.json_response({"error": str(exc)}, status=400)
+    if row is None:
+        return web.json_response({"error": "item not found"}, status=404)
+    return web.json_response({"ok": True, "annotation": row})
+
+
+async def delete_item_annotation(request: web.Request) -> web.Response:
+    """DELETE /api/knowledge/annotations/{id} — drop one highlight.
+
+    Keyed by the annotation's own id rather than nested under the item: a highlight is
+    identified globally, and repeating the item id would let a client delete row A while
+    naming item B.
+    """
+    if not _store(request).delete_annotation(request.match_info["id"]):
+        return web.json_response({"error": "not found"}, status=404)
+    return web.json_response({"ok": True})
+
+
 async def get_related_items(request: web.Request) -> web.Response:
     """GET /api/knowledge/items/{id}/related -- items sharing entities with given item."""
     store = _store(request)
@@ -2701,6 +2754,11 @@ def setup_knowledge_routes(app: web.Application) -> None:
     app.router.add_get("/api/knowledge/items/{id}/related", get_related_items)
     app.router.add_get("/api/knowledge/items/{id}/duplicates", get_item_duplicates)
     app.router.add_post("/api/knowledge/items/{id}/merge", merge_items)
+    # Reading highlights (S3 T3.1). Listing/creating is per-item; deleting is keyed by the
+    # highlight's own id, so `/annotations/{id}` is a sibling of `/items`, not nested.
+    app.router.add_get("/api/knowledge/items/{id}/annotations", list_item_annotations)
+    app.router.add_post("/api/knowledge/items/{id}/annotations", add_item_annotation)
+    app.router.add_delete("/api/knowledge/annotations/{id}", delete_item_annotation)
     app.router.add_get("/api/knowledge/entities/by-name/{name}/items", get_entity_items)
     app.router.add_get("/api/knowledge/entities/by-name/{name}/related", get_entity_related)
     app.router.add_get("/api/knowledge/entities/{id}/graph", get_entity_graph)
