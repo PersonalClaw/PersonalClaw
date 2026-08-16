@@ -112,6 +112,8 @@ from personalclaw.dashboard.handlers.core import (  # noqa: E402, F401
     api_token_local,
     favicon,
     index,
+    manifest_webmanifest,
+    service_worker,
 )
 
 # ── Desktop shell capability seam (handlers/desktop.py) ──

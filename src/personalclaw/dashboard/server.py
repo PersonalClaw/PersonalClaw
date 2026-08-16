@@ -378,6 +378,15 @@ async def start_dashboard(
     # Page routes
     app.router.add_get("/", handlers.index)
     app.router.add_get("/claw.svg", handlers.favicon)
+    # PWA (MOBILE-COMPANION T3.1). Both live at the origin ROOT by necessity, not
+    # convention: `/sw.js` because a service worker's scope is its path (served from
+    # `/assets/` it could only control `/assets/`), and the manifest because
+    # `start_url`/`scope` are resolved relative to it. Both remain session-gated —
+    # they are NOT in token_auth's bypass sets — so only the authenticated owner can
+    # install the companion; index.html declares the manifest link with
+    # `crossorigin="use-credentials"` so the browser sends the cookie.
+    app.router.add_get("/manifest.webmanifest", handlers.manifest_webmanifest)
+    app.router.add_get("/sw.js", handlers.service_worker)
 
     # Owner login (REMOTE-USER-AUTH C3). `/login`, `/api/auth/login` and
     # `/api/auth/status` are token-auth EXEMPT — they are how a remote browser obtains a
@@ -1481,6 +1490,18 @@ async def start_dashboard(
         # fallbacks instead of Google Sans Flex/Code (incl. the code editor's mono).
         if (_DIST_DIR / "fonts").is_dir():
             app.router.add_static("/fonts", _DIST_DIR / "fonts", show_index=False)
+        # PWA app icons the manifest declares at stable, unhashed paths (they are
+        # referenced from JSON, so they cannot carry a content hash). Also listed in
+        # spa_fallback's exclusions below: a missing icon must 404, because HTML
+        # returned for an icon URL makes the manifest entry invalid and the install
+        # prompt then just never appears.
+        if (_DIST_DIR / "icons").is_dir():
+            app.router.add_static(
+                "/icons",
+                _DIST_DIR / "icons",
+                show_index=False,
+                append_version=False,  # stable URLs — the manifest names them literally
+            )
         # Vendor shims for the app import map (react, react-dom, react/jsx-runtime)
         if (_DIST_DIR / "vendor").is_dir():
             app.router.add_static(
@@ -1549,8 +1570,11 @@ async def start_dashboard(
         try:
             return await handler(request)  # type: ignore[operator]
         except web.HTTPNotFound:
+            # `/icons/` is excluded for the PWA: a manifest icon that resolves to
+            # index.html is an invalid icon, and the only symptom is an install
+            # prompt that never appears. A 404 is diagnosable; HTML is not.
             if request.method == "GET" and not request.path.startswith(
-                ("/api/", "/assets/", "/sprites/", "/vendor/")
+                ("/api/", "/assets/", "/icons/", "/sprites/", "/vendor/")
             ):
                 return await handlers.index(request)
             raise

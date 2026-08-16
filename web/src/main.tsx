@@ -8,6 +8,7 @@ import { AppearanceProvider } from './app/appearance'
 import { PersonalityProvider } from './app/personality'
 import { IdentityProvider } from './app/identity'
 import { installAppSdk } from './app/appSdk'
+import { registerServiceWorker } from './app/registerServiceWorker'
 import { registerBuiltinContentTypes } from './ui/content/registerBuiltins'
 
 // Define window.__personalclaw_modules so contributed app bundles resolve the
@@ -18,6 +19,11 @@ installAppSdk()
 // engine resolves every artifact / file / chat-embed through — before any
 // ContentSurface mounts.
 registerBuiltinContentTypes()
+
+// Install the service worker (production builds only) so the shell boots offline
+// and the companion can be installed to a phone's home screen. Fire-and-forget:
+// registration never gates the first render, and it swallows its own failures.
+void registerServiceWorker()
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>

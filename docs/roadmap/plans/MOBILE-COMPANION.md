@@ -236,3 +236,87 @@ never `~/.personalclaw`): 390×844, no nav rail, no horizontal overflow, zero co
 all named in the accessibility tree and all in the Tab order: `Refresh approvals` (42×42),
 `Allow Bash` / `Deny Bash` / `Allow WebFetch` / `Deny WebFetch` (44×104 each — a thumb target),
 `Open the full dashboard`. A keyboard-only approve (focus + Enter) resolved the backend future.
+
+### 2026-08-15 — `MC-4` (S3 T3.1 manifest + service worker) — **DONE**
+
+The companion is installable and the service worker **cannot** cache an API response.
+`web/public/manifest.webmanifest` (`display: standalone`, `start_url` `/#/companion`, `scope: /`,
+claw-mark icons) + `web/src/sw.ts`, bundled by `web/scripts/buildServiceWorker.mjs` (esbuild, from a
+Vite `closeBundle` hook) to the dist **ROOT** as `sw.js`. Root placement is not tidiness: a worker's
+scope is its path, so one emitted into `dist/assets/` could only ever control `/assets/`. New gateway
+routes `/manifest.webmanifest` and `/sw.js` plus an `/icons` static mount, and `/icons/` joined
+`spa_fallback`'s exclusion tuple.
+
+**§C2's service-worker rule, as implemented.** All policy is one pure module
+(`web/src/app/swPolicy.ts`) with `sw.ts` as thin plumbing, so the rule that matters is unit-testable
+and cannot drift across the several places a response could enter a cache. `mayCache()` is the ONE
+gate — consulted before every read and every write — and `strategyFor()` is defined in terms of it, so
+a path cannot be assigned a caching strategy without also being cacheable. The default is
+**fail-closed**: an unrecognised path is `network-only`, so a gateway route added later is not
+silently cached because nobody deny-listed it. `/api` resolves to `network-only`, which returns from
+the fetch handler **without** calling `respondWith` — the browser then performs the fetch itself, so
+the response never enters worker JavaScript, a stronger guarantee than `respondWith(fetch(request))`
+and one that also leaves streamed uploads alone. Precache is the app shell ONLY; hashed `/assets/*`
+are runtime `cache-first` on the strength of being content-addressed.
+
+**DEVIATION — the done-when's instrument no longer exists.** Lighthouse **12** removed the PWA
+category and all of its audits. A real 12.8.2 run against this build (`npx lighthouse@12`, system
+Chrome, headless) completed rc 0 and reported categories `performance, accessibility, best-practices,
+seo` — `installable-manifest`, `service-worker`, `maskable-icon`, `apple-touch-icon`, `splash-screen`
+and `themed-omnibox` are all absent from `audits`. So installability is asserted criterion by
+criterion in `web/src/app/manifest.test.ts` (including each PNG's real IHDR dimensions against its
+declared `sizes`), and in `web/e2e/pwa.spec.ts` against the manifest **as Chrome fetched it** through
+CDP `Page.getAppManifest`.
+
+**DISCOVERY — `Page.getInstallabilityErrors` is INERT.** It reads like the perfect replacement for the
+removed audit, and it was measured before being trusted: it returns `[]` for `display: "browser"` AND
+`[]` for a manifest that is not even valid JSON. An assertion on it can never fail. It was written,
+found decorative, and removed. `Page.getAppManifest` was measured the same way and does have teeth
+(an invalid manifest yields `Line: 1, column: 3, Syntax error.`), so the rail rests on that.
+
+**DISCOVERY — Chromium keeps the fragment in a cache key but ignores it when matching.** After a
+reload the shell slot is keyed `…/#/onboarding`, so `cache.keys()` contains no bare `/`, while
+`cache.match('/')` still resolves because the matching algorithm excludes fragments. A key-string
+assertion therefore reads as a broken precache when the precache is fine; the spec asserts by lookup.
+Two harness bugs of the same family were caught and fixed in the spec itself: a `goto` differing only
+in its hash is a SAME-DOCUMENT navigation, so it neither takes control of a client nor fetches
+anything — used for the offline step it would have made the vacuity floor itself vacuous.
+
+**Update strategy — no `skipWaiting()`, no `clients.claim()`,** ratcheted by a source assertion rather
+than left as a comment (the ratchet strips comments first, with a vacuity floor, because `sw.ts`
+documents at length why it does *not* call them and a raw scan matched the prose).
+
+**Security decision — the PWA stays BEHIND auth.** `tests/test_token_auth.py` already carried
+`test_retired_pwa_paths_require_auth`, asserting `/sw.js` and friends must NOT bypass the session.
+That ratchet was honoured rather than relaxed: nothing was added to `_BYPASS_PREFIXES`/`_BYPASS_EXACT`,
+and a new `test_live_pwa_paths_require_auth` locks `/manifest.webmanifest`, `/sw.js` and `/icons/*`
+the same way. The cost is real — browsers fetch a manifest with credentials omitted — and is paid by
+`crossorigin="use-credentials"` on the link, asserted in `manifest.test.ts` because losing it fails
+silently. The handlers also return a 404 **response** rather than raising, since `spa_fallback` turns a
+raised `HTTPNotFound` into index.html and HTML served for `/sw.js` fails registration on a MIME check.
+
+**Root-caused, not baselined:** the three new non-`/api` routes reddened
+`test_api_manifest_drift.py::test_every_non_api_route_is_excluded` AND
+`test_agent_reference.py::test_checked_in_reference_matches_a_fresh_render` — the offline reference is
+rendered from the manifest, so one omission surfaced twice. Fixed by adding `/icons`,
+`/manifest.webmanifest` and `/sw.js` to `MANIFEST_EXCLUDE` with reasons; no generated file was bumped.
+
+**Falsification** (every mutation restored): `/api/approvals` into the precache list → 4 red, incl.
+`mayCache` still refusing it, which is the defence-in-depth working; `display: browser` → installable-
+display red, and Chrome's own `data` showed `"display": "browser"`; `skipWaiting()` added → update-
+strategy rail red; `crossorigin` removed → red; a 192-declared icon pointed at the 512 raster →
+`expected { width: 512, height: 512 } to deeply equal { width: 192, height: 192 }`; and the behavioural
+one — API guard removed from `mayCache` + rebuild → red at three independent layers, ending with
+`offline /api resolved instead of failing: {"ok":true,"status":200,"body":"{\"call\":1,\"secret\":\"payload-1\"}"}`.
+
+**Gate:** `make lint` rc 0 (black/isort/flake8 clean, mypy 871 files) · `npm run typecheck --workspace
+web` clean (now two programs — `src/sw.ts` needs the `webworker` lib, which cannot share a program
+with `dom`, so it has `tsconfig.sw.json`) · full `npm test --workspace web` **267 files / 2665 tests
+passed** (up from 264 / 2625) · `npm run build --workspace web` rc 0 · `web/e2e/pwa.spec.ts` 2 passed ·
+`pytest` on the affected + required files (`test_pwa_file_symlink`, `test_token_auth`,
+`test_frontend_dist_resolve`, `test_api_manifest_drift`, `test_agent_reference`, `test_auth_exposure`)
+**186 passed**.
+
+**Known constraint, documented not hidden:** service workers need a secure context, so a gateway
+reached over plain http at a LAN address gets no install and no offline. `registerServiceWorker()`
+prints one line naming that reason instead of leaving an install affordance that never appears.

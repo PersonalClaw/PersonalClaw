@@ -5780,7 +5780,7 @@
         {
           "id": "MC-4",
           "title": "S3 PWA installability: manifest + service worker (app-shell precache, /api never cached)",
-          "status": "todo",
+          "status": "done",
           "scope": "Session 3 T3.1 + C2 service-worker rule (network-first; explicit no-cache for /api/*)",
           "done_when": "Lighthouse installability passes with manifest (claw-mark icons, standalone, start_url #/companion) and sw.ts precaching app-shell only; API responses are never served from cache (verified with offline toggle).",
           "deps": [
@@ -7707,8 +7707,8 @@
         "plan": "MC"
       },
       {
-        "id": "MC-4",
-        "title": "S3 PWA installability: manifest + service worker (app-shell precache, /api never cached)",
+        "id": "MC-6",
+        "title": "S3.5 rest of companion: loops/tasks/inbox/notifications sections + SW sound/badge mapping",
         "plan": "MC"
       },
       {
@@ -10135,9 +10135,9 @@
         "code": "MC",
         "plan": "MOBILE-COMPANION",
         "total_atoms": 10,
-        "done": 2,
+        "done": 3,
         "in_progress": 0,
-        "todo": 8,
+        "todo": 7,
         "blocked": 0
       },
       {
