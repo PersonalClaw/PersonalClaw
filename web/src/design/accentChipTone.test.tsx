@@ -4,7 +4,7 @@ import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { RungChip } from '../ui/RungChip'
 import { RUNG_PRESENTATION } from '../lib/rungs'
-import { accentChip } from './accent'
+import { accentChip, toneChipSkin } from './accent'
 
 // ── The accent-chip failure, THIRD SPELLING: the tone arrives from a REGISTRY ──────────────────────
 //
@@ -60,6 +60,7 @@ import { accentChip } from './accent'
 // Moving those would repaint five surfaces for no accessibility reason.
 
 const SRC = join(process.cwd(), 'src')
+const read = (rel: string) => readFileSync(join(SRC, rel), 'utf8')
 const walk = (d: string): string[] =>
   readdirSync(d).flatMap((n) => {
     const p = join(d, n)
@@ -140,5 +141,73 @@ describe('a rung chip inks coral through the container pair, not a tint of itsel
   it("the family's rail points here, so the third spelling is findable from it", () => {
     expect(readFileSync(join(SRC, 'design/accentChip.test.ts'), 'utf8'))
       .toMatch(/accentChipTone\.test\.tsx/)
+  })
+})
+
+// ── Cycle 175: the SECOND adopter, so the rule moved to `design/accent` ───────────────────────────
+//
+// Cycle 172 kept the coral remap inline in `RungChip` and recorded that it should move to
+// `design/accent` "when the NEXT cycle converges NotificationsPage/ScheduleDetail — with real
+// adopters, not speculatively". That cycle is this one.
+//
+// 🔑 THE SECOND SITE, MEASURED LIVE. `NotificationsPage`'s kind chip in the detail panel paints
+// `toneChipBg(km.tone)` (a 16% tint) under `km.tone` ink. Driven at `#/notifications` with a row
+// OPEN — which is why no surface census ever saw it, the default state has no panel — the coral
+// kinds measure **3.85:1** in light at 13px against a 4.5 floor; dark is clean. `notificationMeta`
+// declares **13** coral kinds, and this validation home holds 36 `proposal` + 6 `subagent`
+// notifications, so it is the common case rather than an edge.
+//
+// 🪤 AND THE FIRST ATTEMPT TO MEASURE IT INVENTED A NUMBER. The tint resolves to
+// `color(srgb 0.784314 0.270588 0.180392 / 0.16)`; a probe that pulls the first three numbers out of
+// that string reads 0.78/0.27/0.18 as RGB — near-black — and reports ~1.27:1 on anything. Same bug had
+// already faked a finding on an `oklab()` backdrop the cycle before. `probes/lib/color.mjs` now owns
+// the conversion (srgb components are 0-1, NOT 0-255) and REFUSES to guess on notations it cannot
+// parse rather than returning a plausible lie.
+//
+// 🪤 `strength` stays a parameter. The two adopters ship 14% and 16%, and those percentages apply
+// only to tones that already pass — collapsing them would repaint passing chips for no accessibility
+// reason. The coral branch has no strength at all, which is the half cycle 146 cared about.
+//
+// 🪤 `toneChipBg`'s ICON-ONLY consumers are still NOT migrated, and that is the distinction this rail
+// exists to protect: `NotificationBell` and `NotificationsPage`'s list tile tint a square behind an
+// icon, which carries a 3:1 non-text floor it clears at every strength. Moving them would repaint
+// five surfaces for nothing.
+
+describe('toneChipSkin is the one rule the tone-registry chips share', () => {
+  it('routes coral to the container pair, with no tint left to fail', () => {
+    const skin = toneChipSkin('var(--color-primary)', 14)
+    expect(skin).toEqual({ ...accentChip })
+    expect(JSON.stringify(skin)).not.toMatch(/color-mix|%/)
+  })
+
+  it('leaves every passing tone on its own tint, at the caller\'s strength', () => {
+    for (const tone of ['var(--color-info)', 'var(--color-ok)', 'var(--color-warn)', 'var(--color-danger)',
+                        'var(--color-on-surface-low)', 'var(--color-on-surface-var)']) {
+      expect(toneChipSkin(tone, 16)).toEqual({
+        background: `color-mix(in srgb, ${tone} 16%, transparent)`, color: tone,
+      })
+    }
+  })
+
+  it('honours each adopter\'s own strength rather than unifying them', () => {
+    expect(toneChipSkin('var(--color-info)', 14).background).toContain('14%')
+    expect(toneChipSkin('var(--color-info)', 16).background).toContain('16%')
+    // …and the coral branch ignores it entirely, because a container has no strength.
+    expect(toneChipSkin('var(--color-primary)', 20).background).toBe(accentChip.background)
+  })
+
+  it('both adopters go through it, so neither can re-decide the rule', () => {
+    const rung = read('ui/RungChip.tsx')
+    expect(rung).toMatch(/toneChipSkin\(meta\.tone, 14\)/)
+    expect(rung, 'the inline ternary it replaced must be gone').not.toMatch(/\? accentChip\s*\n/)
+    const notif = read('pages/notifications/NotificationsPage.tsx')
+    expect(notif, 'the LABELLED kind chip').toMatch(/style=\{toneChipSkin\(km\.tone, 16\)\}/)
+  })
+
+  it('the icon-only tiles keep the plain tint — the distinction, not an oversight', () => {
+    const notif = read('pages/notifications/NotificationsPage.tsx')
+    // The list tile: a tint behind an ICON, 3:1 floor, deliberately untouched.
+    expect(notif).toMatch(/style=\{\{ background: toneChipBg\(km\.tone\) \}\}><km\.icon/)
+    expect(read('ui/NotificationBell.tsx')).toMatch(/background: toneChipBg\(km\.tone\)/)
   })
 })
