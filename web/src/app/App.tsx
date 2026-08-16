@@ -9,6 +9,7 @@ import { IncidentBanner } from './IncidentBanner'
 import { ChatPage } from '../pages/ChatPage'
 import { useIdentity } from './identity'
 import { Onboarding } from './Onboarding'
+import { peekOnboardingExit, clearOnboardingExit } from './onboarding/exitTo'
 import { useHashRoute } from './useHashRoute'
 import { useIsMobile } from './useIsMobile'
 import type { RouteProps } from './useQueryState'
@@ -308,10 +309,25 @@ function AppInner() {
 
   // Onboarding is a real route (#/onboarding), full-screen, no NavRail. A guard
   // redirects TO it when there's no name and AWAY from it once onboarded.
+  //
+  // The exit branch honours a destination the flow asked for (OU-3): a try-one card's
+  // outcome link and its failure path's Settings deep-link both need to LEAVE the flow
+  // and land somewhere specific. They cannot navigate there themselves — the `!onboarded`
+  // branch above would pull them straight back, and navigating after committing the name
+  // races this effect. So the flow hands the destination over and this one navigation
+  // resolves it. Absent (the ordinary finish), the dashboard default is unchanged.
+  //
+  // `peek` never consumes, because THIS EFFECT IS RE-ENTRANT: `navigate` sets `location.hash`
+  // and `route` only catches up on the browser's async `hashchange`, so the exit branch can run
+  // again with a stale `route === 'onboarding'`. A consuming read made the second run resolve to
+  // the default and overwrite the first run's correct hash — measured live, landing on
+  // `#/dashboard` instead of `#/settings/providers`. Peeking makes every run resolve identically;
+  // the destination is dropped in the third branch, once the route has provably left onboarding.
   useEffect(() => {
     if (!loaded) return
     if (!onboarded && route !== 'onboarding') navigate('onboarding')
-    else if (onboarded && route === 'onboarding') navigate('dashboard')
+    else if (onboarded && route === 'onboarding') navigate(peekOnboardingExit() || 'dashboard')
+    else if (onboarded) clearOnboardingExit()
   }, [loaded, onboarded, route, navigate])
 
   // Persist the embed flag at mount-time so in-page navigation (which strips the

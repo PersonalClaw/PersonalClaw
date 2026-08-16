@@ -418,3 +418,89 @@ Owner rulings, mapped onto the existing sessions honestly:
   Not touched — backend lifecycle, not this atom's file — and the same family as #541. Worth its
   own atom on the owning plan. (`approvalOutcome.test.tsx`'s history-hydration parity tests keep
   the FE side honest for whenever the rows do start persisting.)
+- [2026-08-16][OU-3] **DONE (S1 T1.3).** A fourth step (`name → essentials → try → ready`) with three
+  cards that EXECUTE, not pre-fill: knowledge = `POST /api/knowledge/items` → `GET
+  /api/knowledge/search-for-context` (shows the returned passage, its match type and token cost);
+  reminder = `POST /api/triggers` with the `notify` action → `POST /api/triggers/{id}/run` → `GET
+  /api/notifications` (shows the notification that actually landed + next fire time); loop = `POST
+  /api/loops` (`general`, `max_cycles: 1`) → `PATCH /api/loops/{id}` `{action:'start'}` (shows the
+  status the START response reported). Flows live in `web/src/app/onboarding/tryOneFlows.ts`, apart
+  from `TryOneStep.tsx`'s chrome. `first_success` finally has its writer — OU-1's last remainder —
+  and each card patches only its own key. One backend-facing line: `KnowledgeContextCard.content` in
+  `web/src/lib/api.ts` (the endpoint always sent the passage; the interface omitted it). Not built on
+  PEP-1's `PresetCard`: it is deliberately ONE tab stop with no interactive children, and these cards
+  grow a run button, then an outcome link, then a deep-link and a retry.
+- [2026-08-16][OU-3] **V (driven as a user, scripted Playwright, real gateway, fresh home).**
+  `PERSONALCLAW_HOME=/private/tmp/ou3-wt/.dev-home`, gateway `:10088` from THIS worktree
+  (`PYTHONPATH` + its own `static/dist` symlink). Drove the flow with the essentials step
+  **SKIPPED — no model provider configured at all**, which is the strongest available proof the
+  cards need no paid inference: a card that secretly required a completion would have failed
+  outright. **Click → visible outcome: knowledge 0.94s / 1.05s, reminder 1.01s / 1.14s, loop
+  1.22s / 1.38s** across two runs — the budget is 2 min. Backend really changed:
+  `first_success: {knowledge:true, trigger:true, loop:true}`, `knowledge items=1`, a real
+  `clock:daily-check-in` trigger (`At 09:00 AM`, `next_fire_at 2026-08-16T09:00:00+00:00`), a real
+  loop `status=running cycles=1`, and a real `Your daily check-in` notification. Recap read
+  "First success: 3 of 3 tried"; the ordinary finish still lands on `#/dashboard`. Zero `pageerror`,
+  zero console errors. Shots in `/private/tmp/ou3-live/shots/`.
+- [2026-08-16][OU-3] **V (the failure path, driven for real).** A provider refusal was injected at
+  the HTTP boundary with Playwright `route` — the exact envelope a 401 reaches the SPA as
+  (`{"error": "Incorrect API key provided: sk-abc***xyz. …"}`, status 401) — while the SAME origin
+  answered a healthy `200` to `GET /api/knowledge/stats` in the same page load, so the failure is
+  the real CALL and not the box. Everything downstream is the real system. Measured: the sentence
+  renders **verbatim**; the copy names the passing-Test situation; "Try again" is offered in place;
+  siblings stay usable; the deep-link is present, and clicking it landed on
+  **`#/settings/providers`** with headings `["Providers","Agent providers",…]` — the real panel, not
+  the Settings bento home an unknown sub-segment silently renders. The non-provider variant
+  (`POST /api/loops` → 400 `Task is too short`) routed to **`#/settings/doctor`** and did NOT claim
+  the provider had refused.
+- [2026-08-16][OU-3] **BUG FOUND BY THE LIVE DRIVE — the deep-link mechanism shipped green and
+  broken.** `App.tsx`'s guard holds a non-onboarded user on `#/onboarding`, so the exit destination
+  is handed to the guard (`onboarding/exitTo.ts`) rather than raced against it. v1 cleared the
+  destination on read; every unit test passed and it landed on `#/dashboard` on every real click.
+  Cause: **the guard effect is re-entrant.** `navigate` sets `location.hash`; `route` only updates
+  when the browser's async `hashchange` fires, so any App re-render in that window runs the effect
+  again with `onboarded === true` and a stale `route === 'onboarding'`. Run one read the destination
+  and navigated correctly; run two read `''`, took `|| 'dashboard'`, and overwrote the hash — the
+  guard silently undid itself. Fixed by making the read idempotent (`peekOnboardingExit`) and
+  clearing on a later branch once the route has provably left onboarding. The tests could not see it
+  because they asserted read-and-clear, which was the WRONG contract; the rail now pins idempotence
+  (N reads resolve identically) and forbids the consuming spelling in the guard.
+- [2026-08-16][OU-3] **Falsified, five mutations — one reded NOTHING and was a real defect.**
+  (1) knowledge card returns its outcome without calling either endpoint (the navigate-don't-execute
+  shape) → **4 RED**, incl. `expected "spy" to be called at least once` and `Unable to find an
+  element with the text: /Everything PersonalClaw knows…/`. (2) Settings deep-link removed from the
+  failure branch → **7 RED**, incl. `Unable to find role="button" and name "Open model provider
+  settings"` on all three cards. (3) loop's `status !== 'running'` guard dropped (create-only) →
+  **1 RED**, `Unable to find role="alert"`. (4) knowledge card echoes the REQUEST body as "the
+  passage" instead of the retrieved one → **RED NOTHING.** The fixture's response `content` was a
+  PREFIX of `KNOWLEDGE_SEED.content`, so the assertion could not tell "read off the response" from
+  "echoed the request" — and that vacuity hid a real defect, because the retriever answers from the
+  whole corpus and the matched passage is frequently NOT the note just written, so an echoing card
+  would show text that did not answer the question and label it "the passage". Fixture rewritten to
+  share no phrase with the seed (`RETRIEVED_ONLY`) plus a negative assertion that the SENT note is
+  not shown as the answer; the mutation now reds. (5) guard stops reading the exit destination →
+  **3 RED**.
+- [2026-08-16][OU-3] **Visual defect fixed at source.** The card's run button and the Settings
+  deep-link were `variant="secondary"`, which is `bg-surface-high` — the same token as the card they
+  sit on — so both rendered as plain text with no control chrome (visible in the first capture).
+  Re-toned to `variant="tonal"` (the kit's primary-tinted chip CTA), which is visible on that
+  surface and is not the step's primary; `Continue` keeps that. No baseline was raised: no raw
+  `<button>`, no raw form control and no hand-rolled spinner was added, so
+  `primitiveAdoption.baseline.json` is untouched.
+- [2026-08-16][OU-3] **DISCOVERY — three model-dependent knowledge/loop paths fail OPEN and
+  silently, so no card could have been built on them.** Measured on a home with no provider:
+  `POST /api/knowledge/items`' ingest node-graph logs `ProviderWorker: request failed: No provider
+  entries registered` and still reports `processing_status: "done"` with `insights: {}`;
+  `POST /api/knowledge/items/{id}/generate-intelligence` answers **200** with every `node_phase`
+  `"done"` and `insights` empty; `POST /api/loops/classify` answers **200** in 0.1s with
+  `classified: false` and no error. Each is a live reader of a model that quietly reports success
+  when the model is absent — a card built on any of them could never tell the user its call failed,
+  which is why all three flows use paths whose failure is REPORTED. Not touched: backend behaviour
+  on other plans' surfaces, and each is worth its own atom on the owning plan.
+- [2026-08-16][OU-3] **Note on the regenerated `docs/design/consistency-audit.json`.** Checked
+  rather than assumed, per the generated-baseline rule: `origin/main` re-derives
+  `filesScanned: 476` while the COMMITTED value said `470`, so six of the nine-file delta is
+  pre-existing staleness on main, and this atom contributes exactly **+3** — its three non-test
+  modules (`tryOneFlows.ts`, `TryOneStep.tsx`, `exitTo.ts`); the scanner skips `*.test.*`.
+  `driftHits: 7` and `filesWithDrift: 6` are unchanged in all three states, so the new files add no
+  drift. Regenerated in this commit rather than left dirty.
