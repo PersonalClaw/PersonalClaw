@@ -12,6 +12,20 @@ import { resolveType, typeLabel } from './knowledgeMeta'
 import { api, type KnowledgeItem, type ExtractedContent } from '../../lib/api'
 import { useQueryParam, type RouteProps } from '../../app/useQueryState'
 
+/** Accent ink for a `knowledgeMeta` tone painted as TEXT on the **canvas** — the ground
+ *  cycle 147 named. `--color-primary` measures **4.37:1** on `--color-canvas` in light
+ *  against a 4.5 floor, so the three primary-toned kinds (Note / Fleeting note / Journal)
+ *  failed AA in the breadcrumb trail below; every other tone on that ground measures
+ *  5.71-5.83 and passes, so only this one is remapped. `primary-emphasis` is the mode-aware
+ *  legible sibling — further from the ground in BOTH modes (light `#c8452e`→`#a33922` = 6.0:1,
+ *  dark `#ff6b5b`→`#ff9a86` = 9.33:1) — and is the token cycles 147/155/158 already settled
+ *  for this same failure on the canvas, `surface-high` and `surface-low`.
+ *
+ *  The REGISTRY is deliberately left alone: `knowledgeMeta`'s tone also inks icons in
+ *  `ArtifactCard`, `ArtifactViewer` and `KnowledgeDetail`, which carry a 3:1 non-text floor
+ *  and already pass — cycle 155 checked that icon and left it for exactly this reason. */
+const canvasInk = (tone: string) => (tone === 'var(--color-primary)' ? 'var(--color-primary-emphasis)' : tone)
+
 /** The dedicated, full-screen Knowledge item page (`#/knowledge/item/<id>`).
  *  Mirrors the app's header-bar philosophy: a back button + "Knowledge" breadcrumb
  *  in the TopBar, the item detail as the centered body, and the per-node extracted
@@ -78,7 +92,11 @@ export function KnowledgeDetailPage({ id, onBack, onOpenItem, query, setQuery }:
                 <div className="flex items-center gap-s min-w-0 overflow-hidden">
                   <button type="button" onClick={onBack} className="text-on-surface-low hover:text-on-surface text-[0.9375rem] transition-colors whitespace-nowrap shrink-0">Knowledge</button>
                   <span className="text-on-surface-low shrink-0">/</span>
-                  {tm && item && <span className="shrink-0 inline-flex items-center gap-1.5 text-[0.8125rem] whitespace-nowrap" style={{ color: tm.tone }}><tm.icon size={16} /> {typeLabel(item)}</span>}
+                  {/* `canvasInk`, not `tm.tone`: this segment is 13px accent text on the CANVAS.
+                      The icon travels with the label so the segment stays ONE ink — it passes at
+                      either shade (3:1 non-text floor), and splitting them would read as two
+                      colours for one breadcrumb crumb. */}
+                  {tm && item && <span className="shrink-0 inline-flex items-center gap-1.5 text-[0.8125rem] whitespace-nowrap" style={{ color: canvasInk(tm.tone) }}><tm.icon size={16} /> {typeLabel(item)}</span>}
                   {/* `PageTitle`, not the bare span it replaced: this route's PATH identifies the
                       entity (`#/knowledge/item/<id>`), so by the rule cycle 162 settled — a
                       destination is named by its identity, not by its category — the item's name is
