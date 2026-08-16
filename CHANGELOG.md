@@ -41,6 +41,27 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
   classification, private-address denial, per-redirect re-checks, byte caps and a per-poll request
   budget), a watched folder is refused if it points at a sensitive location, and scraped content is
   sanitised at extraction and fenced at every model boundary.
+- **Memory now decides what to do with a new fact instead of just piling it on.** When a session is
+  consolidated, PersonalClaw first collects the facts it extracted, then looks up what it already
+  knows that might collide with each one, and only then decides per fact: add it, update the
+  existing entry, retire the entry it contradicts, or do nothing because it is already known.
+  **Retiring is never a delete** — the old entry stays readable with a pointer to what replaced it,
+  and the change is in the memory event log, so a wrong call is recoverable. When it genuinely
+  cannot tell which of two contradictory facts is true, it **keeps both and tells you**: the pair
+  shows up as an undecided contradiction in the memory Health checks rather than being averaged
+  away into one confident-sounding answer. Adjudication costs one extra cheap model call, and only
+  when something actually collided; if that call fails, every fact is still saved exactly as before.
+- **Memory can record whose claim something is (opt-in).** Turn on "Attribute Claims to Who Said
+  Them" and a fact that is only true because somebody said it is stored as a claim with its holder —
+  you, the assistant, a named person, or an outside source — and injected into context that way
+  ("Alex believes…, weight 0.40") instead of as established fact. Second-hand claims are capped
+  lower than first-hand ones, and a lower-authority claim can never retire something you stated
+  yourself. Off by default; with it off, every memory is stored unattributed exactly as before.
+- **An optional topology block orients a new session in your memory graph.** "Topology Orientation
+  Block" groups your linked entities into neighbourhoods and shows the biggest few (with their
+  leading entities) at the start of a new session, so the assistant knows which areas exist before
+  it searches. Costs a few hundred characters of context and stays off by default; the grouping is
+  fully deterministic, so the same graph always produces the same neighbourhoods.
 
 - **A voice is now a thing you own, not a dropdown value.** Voice profiles hold a name, the
   engine that renders them, a reference clip, a pinned seed and a spoken-consent record, and you

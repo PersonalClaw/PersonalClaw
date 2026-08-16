@@ -723,3 +723,85 @@ a knowledge-repo-adjacent change with its own ingestion seam and is cleanly sepa
   692 files); backend `tests/test_vector_memory.py::TestEpisodicCitations` (4) +
   `tests/test_context.py` citation clauses (3) + 152 context/memory tests pass; FE `npm run
   typecheck` clean + `Markdown.citations.test.tsx` (4) pass.
+
+- **DONE — MGAV-5: memory formation (§4.1 Extract→Gather→Decide, §4.2 holder attribution, §2.4
+  Louvain topology).** All three clauses landed. `memory_formation.py` restructures
+  `_consolidate_locked`: the existing prompt is Extract, `gather()` is a fully deterministic
+  overlap pass (same key → shared dotted key namespace → keyword overlap → the §2.1 graph arm, zero
+  model calls), and Decide is **ONE structured call for the whole batch**, built only when some
+  candidate actually has an overlap. That gate is the point: with no collisions every verdict is
+  `ADD` by construction, so a normal consolidation still costs one call and "one extra cheap call"
+  stays literally true. `UPDATE` = same-key put; `SUPERSEDE` = write the new row **then**
+  `supersede_semantic` (that order matters — superseding first opens a window where neither value is
+  live); **nothing physically deletes**, the old row keeps `superseded_by` + `invalidated_at`, stays
+  readable, and every verdict lands in the `memory_events` WAL. Every failure path (unresolvable
+  snippet, no model, garbled verdicts, a Gather exception) degrades to "ADD everything" — exactly
+  today's behavior, because adjudication is optional and the user's facts are not.
+
+  **Unsure keeps BOTH, visibly.** An unsure `SUPERSEDE`/cross-key `UPDATE` retires nothing and
+  records the contradiction twice: a `references` edge with `provenance='conflict'` (what the lint
+  reads, what §7.2's viz can draw) plus a `conflict_keep_both` WAL event (what survives with the
+  graph off). The lint's new `keep_both` flag is deliberately **not** gated on `graph_enabled` —
+  it is a data-safety notice about semantic rows, and hiding it behind an unrelated toggle would
+  recreate the invisible-contradiction failure that keeping both exists to prevent. Resolving the
+  pair clears the flag.
+
+  **§4.2:** migration **v10** adds `holder` + `weight` (guarded idempotent `ALTER`, no backfill —
+  every pre-existing row genuinely IS an unattributed plain fact, and back-stamping would invent
+  provenance). `memory_holder.py` quantizes weight to 0.05 and **clamps** to the class ceiling
+  (self-report ≤0.75, secondhand ≤0.55) rather than rejecting: losing a memory because a model
+  over-claimed its strength is the worse bug. A plain fact is never re-weighted and renders
+  byte-identically; `holder=None` means "don't touch", so a plain rewrite can't turn a recorded
+  claim into an asserted fact. `claim.*` joined `_BUILTIN_PREFIXES` (kind inference is key-prefix
+  based — no kind column, per the recon invariant). Both fact-block paths render
+  `[<who>, weight <n>]` with a fence clause; precedence (`user` > plain/`assistant` > `external`
+  /`person:*`) is enforced **at the decision point**, so a lower-authority claim cannot supersede a
+  higher-authority one at all — the reverse direction still supersedes, which is the vacuity guard.
+
+  **§2.4:** `memory_topology.py` runs a seeded Louvain on the existing consolidation maintenance
+  cadence (no new loop), writes `community` into `mem_link_stats`, and materializes a ≤400-char
+  block gated by `memory.graph_topology_in_context` (default off). "New sessions only" comes free:
+  `get_context` is only reached from `build_session_context`. Determinism = sorted iteration
+  everywhere + a per-call `random.Random(42)` + **canonical community numbering** by (size desc,
+  smallest member). Aggregation carries intra-community weight as a **self-loop**; dropping it is
+  the classic Louvain bug that collapses every graph to one community and then reads as "this graph
+  has no structure" rather than as a defect.
+
+  **DEVIATIONS (recorded).** (1) §4.1 asks Gather for a `vector_query` arm; in this schema
+  embeddings live on `episodic_memories`, not `semantic_memory`, so a vector arm would search the
+  wrong table or re-embed every fact each consolidation. The graph arm already covers the
+  wording-independent case, so Gather is same-key + key-namespace + keyword + graph. (2) The holder
+  columns arrive via the migration ladder only, not by also editing `_SCHEMA_V1` — v1's schema must
+  stay v1's, and the ladder runs on a fresh DB (the `_migrate_v9`/`contributor` precedent).
+  (3) Caps clamp instead of rejecting, per the reasoning above. (4) The Decide instructions ship as
+  a bundled **snippet** (`memory-decide`), not a use-case-bound prompt: it is a fragment of the
+  consolidation flow rather than a second consolidation a user would bind a model to, and rendering
+  `""` when unresolvable is exactly the fail-safe Decide wants.
+
+  **KNOWN TENSION (untouched, needs an owner call).** `memory_lint`'s pre-existing
+  `_SUPERSEDED_RETENTION_DAYS` auto-fix physically DELETEs rows superseded more than 90 days ago.
+  That is a shipped bounded retention policy with its own test and is not part of the supersede
+  verdict path, so this atom left it alone — but it means "the superseded row stays readable" holds
+  for 90 days, not forever. Worth deciding alongside §5.2's no-data-loss guarantee.
+
+  **Falsified, not assumed** (every mutation reverted): `SUPERSEDE` → hard delete reds
+  `test_supersede_keeps_the_old_row_readable` ("the superseded row was PHYSICALLY DELETED") and
+  `test_row_count_never_drops_across_a_formation_pass` ("a formation pass removed rows from the
+  table"); a per-run Louvain seed reds `test_the_same_graph_yields_the_same_communities_across_runs`
+  and the cross-**process** test ("communities depend on the interpreter's hash seed"); deleting the
+  precedence check reds "an outside rumour retired what the user said"; a no-op `_lint_conflicts`
+  reds "an undecided contradiction was invisible in the lint". The determinism fixture graph was
+  found by sweeping random graphs for one whose partition genuinely depends on visit order — a clean
+  two-cluster fixture would have passed with the seed removed entirely, proving nothing, so
+  `test_the_seed_is_load_bearing` asserts that at least two seeds disagree on it.
+
+  **Config:** `graph_topology_in_context` + `holder_attribution`, both four-point wired (dataclass
+  `_meta`, explicit `load()` mapping, `to_dict` via asdict, `_EDITABLE_CONFIG` PATCH allowlist) and
+  surfaced in `/api/memory/settings`; `config-baseline.json` regenerated. FE controls are MGAV-9's
+  declared scope, so that atom only has to render two toggles already in the allowlist.
+
+  **Gates:** `make lint` clean (black + isort + flake8 + mypy 874 files) · new
+  `tests/test_memory_formation.py` **47 passed** · all memory/history suites **764 passed** ·
+  rails `test_config_baseline` / `test_config_roundtrip` / `test_inert_surface_baseline` /
+  `test_portability` / `test_durability_inventory` / `test_resilience_degraded_lint` /
+  `test_agent_reference` / `test_roadmap_dag_derived` **132 passed**.

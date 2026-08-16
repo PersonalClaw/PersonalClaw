@@ -974,6 +974,18 @@ class HistoryConsolidator:
 
         return max(1, int(AppConfig.load().memory.proactive_commitments_max_per_day))
 
+    @property
+    def _holder_attribution(self) -> bool:
+        """Whether the holder axis is opted in (MEMORY-GRAPH-AND-VAULT §4.2 — MGAV-5).
+
+        Read fresh per call for the same reason as the commitments gate: the toggle is a
+        Settings switch, not a boot-time decision. OFF means the extraction fragment is
+        not composed AND no holder is persisted — the axis is absent, not merely hidden.
+        """
+        from personalclaw.config.loader import AppConfig
+
+        return bool(AppConfig.load().memory.holder_attribution)
+
     def maybe_consolidate(self, key: str) -> None:
         """Fire preferences/projects consolidation if message threshold exceeded."""
         self._last_activity[key] = _time.time()
@@ -1140,6 +1152,12 @@ class HistoryConsolidator:
                 )
                 keys.append(render_snippet_block("consolidation-key-semantic"))
                 keys.append(render_snippet_block("consolidation-key-episodic"))
+                # Holder attribution (MEMORY-GRAPH-AND-VAULT §4.2 — MGAV-5): opt-in, so
+                # the fragment is only composed when the axis is on. With it off the
+                # extraction prompt is byte-identical to before and nothing downstream
+                # persists a holder — the flag gates the whole axis, not just its display.
+                if self._holder_attribution:
+                    keys.append(render_snippet_block("consolidation-key-claims"))
 
             # Markdown memory (used when not migrated to structured memory)
             if not self._migrated:
@@ -1227,9 +1245,16 @@ class HistoryConsolidator:
                 except Exception:
                     logger.debug("working-memory write failed for %s", key, exc_info=True)
 
-            # Structured memory writes
+            # Structured memory writes — the Extract→Gather→Decide restructure (§4.1).
+            # `result` above IS the Extract phase; the semantic half now runs through
+            # formation (deterministic Gather, then ONE structured Decide call) instead of
+            # being written straight in, so a contradiction becomes a supersession chain
+            # with an undo rather than a second row nobody reconciles. Episodic writes are
+            # unchanged — an episodic fragment is an event, and two accounts of the same
+            # event do not contradict each other.
             if self._svc.has_vector:
-                self._write_structured_memory(result, key)
+                await self._form_semantic_memory(result, key)
+                self._write_episodic_memory(result, key)
 
             # Markdown writes (skipped when migrated to structured memory)
             if not self._migrated:
@@ -1324,6 +1349,19 @@ class HistoryConsolidator:
                         logger.info("Pruned %d volunteer event(s)", pruned_vol)
                 except Exception:
                     logger.debug("Volunteer-log prune failed for %s", key, exc_info=True)
+                # Community topology (MEMORY-GRAPH-AND-VAULT §2.4): deterministic seeded
+                # Louvain over mem_links, writing `community` into mem_link_stats. HERE
+                # rather than in a loop of its own, and after the write paths above, so it
+                # sees this consolidation's new links. Runs regardless of the injection
+                # toggle: the column also feeds the graph visualization, and computing it
+                # only when a display flag is on is how a "topology is empty" bug gets
+                # blamed on Louvain instead of on the flag.
+                try:
+                    communities = self._svc.refresh_topology()
+                    if communities:
+                        logger.info("Topology: assigned %d entity communit(ies)", communities)
+                except Exception:
+                    logger.debug("Topology refresh failed for %s", key, exc_info=True)
                 # Learning curator (LEARNING-FLYWHEEL §2.3): age the learned library
                 # on this same verified cadence. Deliberately NOT a new scheduler —
                 # `skills/curator.run_aging` had no scheduled caller at all, which is
@@ -1513,46 +1551,74 @@ class HistoryConsolidator:
         if count:
             logger.info("Extracted %d lesson(s) from chat (record store)", count)
 
-    def _write_structured_memory(self, result: dict, key: str) -> None:
-        """Write semantic + episodic entries from consolidation result."""
+    async def _form_semantic_memory(self, result: dict, key: str) -> None:
+        """The Gather → Decide → apply half of memory formation (§4.1 — MGAV-5).
+
+        Extract already happened: ``result["semantic"]`` is its output. This method adds
+        the deterministic Gather pass, ONE structured Decide call for the whole batch, and
+        the verdict application (``ADD``/``UPDATE``/``SUPERSEDE``/``NOOP``, with unsure
+        contradictions kept as two flagged rows).
+
+        Every failure path degrades to the pre-MGAV-5 behavior — write every candidate as
+        an ADD — because a formation failure must cost adjudication, never the memories:
+
+        * no candidates, or none with an overlap → no Decide call at all (the common
+          case; this is what keeps "one extra cheap call" honest rather than "one extra
+          call per consolidation");
+        * no Decide prompt (snippet unresolvable) or no model → ADD everything;
+        * unparseable/garbled verdicts → ADD everything, per candidate.
+        """
+        vs = self._vector_store
+        if vs is None:
+            return
+        from personalclaw import memory_formation
+        from personalclaw.vector_memory import _MAX_SEMANTIC_PER_CONSOLIDATION
+
+        semantic_items = result.get("semantic")
+        if not isinstance(semantic_items, list) or not semantic_items:
+            return
+        source = f"consolidation:{key}"
+        candidates = memory_formation.candidates_from_extract(
+            semantic_items,
+            holder_attribution=self._holder_attribution,
+            limit=_MAX_SEMANTIC_PER_CONSOLIDATION,
+        )
+        if not candidates:
+            return
+
+        decisions: dict[int, memory_formation.Decision] = {}
+        degraded = False
+        try:
+            memory_formation.gather(vs, candidates)
+            prompt = memory_formation.build_decide_prompt(candidates)
+            if prompt:
+                decide_result = await self._call_llm(prompt)
+                decisions = memory_formation.parse_decisions(decide_result, candidates)
+                degraded = not decisions
+        except Exception:
+            # Gather reads the store and Decide talks to a model; either can fail on a
+            # box where the other half is fine. Losing the session's facts because we
+            # could not decide about them would be strictly worse than not deciding.
+            logger.warning("Memory formation degraded for %s — writing as ADD", key, exc_info=True)
+            decisions, degraded = {}, True
+
+        report = memory_formation.apply_decisions(
+            vs,
+            candidates,
+            decisions,
+            source=source,
+            holder_attribution=self._holder_attribution,
+        )
+        report.degraded = report.degraded or degraded
+        logger.info("Memory formation for %s: %s", key, report.summary())
+
+    def _write_episodic_memory(self, result: dict, key: str) -> None:
+        """Write episodic entries from a consolidation result (unchanged by MGAV-5)."""
         if not self._svc.has_vector:
             return
-        from personalclaw.vector_memory import (
-            _MAX_EPISODIC_PER_CONSOLIDATION,
-            _MAX_SEMANTIC_PER_CONSOLIDATION,
-        )
+        from personalclaw.vector_memory import _MAX_EPISODIC_PER_CONSOLIDATION
 
         source = f"consolidation:{key}"
-
-        # Semantic entries
-        semantic_items = result.get("semantic")
-        if isinstance(semantic_items, list):
-            written = 0
-            deleted = 0
-            for item in semantic_items[:_MAX_SEMANTIC_PER_CONSOLIDATION]:
-                if not isinstance(item, dict) or "key" not in item:
-                    continue
-                # Handle deletion of stale keys
-                if item.get("delete"):
-                    if self._svc.delete_semantic(item["key"], source):
-                        deleted += 1
-                    continue
-                conf = float(item.get("confidence", 0.5))
-                # Confidence 1.0 means user explicitly stated it — escalate source
-                # so it can overwrite previous user_explicit entries
-                item_source = "user_explicit" if conf >= 1.0 else source
-                err = self._svc.set_semantic(
-                    item["key"],
-                    item.get("value"),
-                    conf,
-                    item_source,
-                )
-                if err is None:
-                    written += 1
-            if written or deleted:
-                logger.info("Semantic consolidation: %d written, %d deleted", written, deleted)
-
-        # Episodic entries
         episodic_items = result.get("episodic")
         if isinstance(episodic_items, list):
             written = 0
