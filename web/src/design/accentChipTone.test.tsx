@@ -164,6 +164,13 @@ describe('a rung chip inks coral through the container pair, not a tint of itsel
 // the conversion (srgb components are 0-1, NOT 0-255) and REFUSES to guess on notations it cannot
 // parse rather than returning a plausible lie.
 //
+// 🔑 THE THIRD ADOPTER, and the widest one. `ScheduleDetail`'s summary row paints TWO of these:
+// the schedule KIND and the exec MODE, and `scheduleMeta` makes both `cron` and `agent` coral. Driven
+// by opening every schedule trigger on `#/triggers` (the detail is a panel there, not a route of its
+// own — there is no `/api/schedule`; a schedule is the `kind:'schedule'` projection of a Trigger):
+// **9 failing chips at 3.85:1 across all 5** schedule triggers in this home, because a cron schedule
+// that invokes an agent lands two coral chips side by side. Dark: 0.
+//
 // 🪤 `strength` stays a parameter. The two adopters ship 14% and 16%, and those percentages apply
 // only to tones that already pass — collapsing them would repaint passing chips for no accessibility
 // reason. The coral branch has no strength at all, which is the half cycle 146 cared about.
@@ -196,12 +203,27 @@ describe('toneChipSkin is the one rule the tone-registry chips share', () => {
     expect(toneChipSkin('var(--color-primary)', 20).background).toBe(accentChip.background)
   })
 
-  it('both adopters go through it, so neither can re-decide the rule', () => {
+  it('every adopter goes through it, so none can re-decide the rule', () => {
     const rung = read('ui/RungChip.tsx')
     expect(rung).toMatch(/toneChipSkin\(meta\.tone, 14\)/)
     expect(rung, 'the inline ternary it replaced must be gone').not.toMatch(/\? accentChip\s*\n/)
     const notif = read('pages/notifications/NotificationsPage.tsx')
     expect(notif, 'the LABELLED kind chip').toMatch(/style=\{toneChipSkin\(km\.tone, 16\)\}/)
+    // Cycle 176: BOTH of ScheduleDetail's summary chips — the schedule KIND and the exec MODE.
+    const sched = read('pages/schedule/ScheduleDetail.tsx')
+    expect(sched, 'the schedule-kind chip').toMatch(/style=\{toneChipSkin\(km\.tone, 16\)\}/)
+    expect(sched, 'the exec-mode chip').toMatch(/style=\{toneChipSkin\(mm\.tone, 16\)\}/)
+    expect(sched, 'no raw tint of a tone may remain on this surface')
+      .not.toMatch(/color-mix\(in srgb, \$\{(?:km|mm)\.tone\}/)
+  })
+
+  it('the schedule registry still has exactly the two coral tones this covers', () => {
+    // THE VACUITY FLOOR for the third adopter. `cron` (kind) and `agent` (mode) are the coral pair;
+    // if a third became coral the measurement above would stop describing the surface, and if one
+    // stopped being coral the remap would be dead code that still reads as an enforced rule.
+    const meta = read('pages/schedule/scheduleMeta.ts')
+    const coral = [...meta.matchAll(/key: '(\w+)'[^}]*tone: 'var\(--color-primary\)'/g)].map((m) => m[1])
+    expect(coral.sort()).toEqual(['agent', 'cron'])
   })
 
   it('the icon-only tiles keep the plain tint — the distinction, not an oversight', () => {
