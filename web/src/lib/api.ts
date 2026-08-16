@@ -2104,6 +2104,9 @@ export interface DashboardConfig {
   simplified_tool_names: boolean; confirm_close_session: boolean
   // Follow-up chips after each reply (default on) + streaming reveal cadence.
   followup_chips: boolean; offer_check_work: boolean; stream_reveal: 'smooth' | 'immediate'
+  // MI-4 master opt-in for the composer's screen-share control. OFF by default; the
+  // server refuses a frame while it is off, so this is a real gate, not just UI state.
+  screen_share_enabled: boolean
   // Vestigial server field from the retired customizable-bento dashboard (the
   // grid + per-user layout persistence were dropped in the v2 launcher-forward
   // redesign — everyone gets one curated content-first layout now). No FE
@@ -2923,6 +2926,20 @@ export const api = {
   // dashboard config (server-persisted prefs incl. the operator name)
   dashboardConfig: () => get<DashboardConfig>('/api/dashboard/config'),
   saveDashboardConfig: (body: Partial<DashboardConfig>) => put<{ ok: boolean }>('/api/dashboard/config', body),
+
+  // Screen context (MULTIMODAL-IO §5). `screenShareState` says whether the control
+  // should be offered and — when the bound model can read a frame in no form —
+  // carries the server-composed reason the control is disabled.
+  screenShareState: (session: string) =>
+    get<{ enabled: boolean; delivery: 'native' | 'described' | 'none'; reason: string; staged: boolean }>(`/api/chat/screen-frame?session=${encodeURIComponent(session)}`),
+  screenShareSignal: (session: string, action: 'start' | 'stop') =>
+    post<{ ok: boolean; sharing: boolean }>('/api/chat/screen-frame', { session, action }),
+  /** Stage ONE frame for the next turn (latest-wins; held in memory, never written). */
+  stageScreenFrame: (session: string, frame_b64: string) =>
+    post<{ ok: boolean; staged: boolean }>('/api/chat/screen-frame', { session, action: 'frame', frame_b64 }),
+  /** Pin a frame — the ONLY path that puts one on disk, as an ordinary attachment. */
+  pinScreenFrame: (session: string, frame_b64: string) =>
+    post<{ ok: boolean; path: string; name: string }>('/api/chat/screen-frame/pin', { session, frame_b64 }),
 
   // onboarding readiness + the in-flow fix (bind a chat model)
   onboarding: () => get<OnboardingState>('/api/onboarding'),

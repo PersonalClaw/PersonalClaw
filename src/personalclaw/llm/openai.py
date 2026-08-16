@@ -91,6 +91,9 @@ class OpenAIProvider(ModelProvider):
         )
         self._history: list[dict[str, Any]] = []
         self._last_context_pct: float = 0.0
+        # One-shot image content part for the next turn (MI-4). None on every ordinary
+        # turn, which is what keeps the untouched wire shape byte-identical.
+        self._pending_image: str = ""
 
     # ── Lifecycle ─────────────────────────────────────────────────────
 
@@ -138,6 +141,53 @@ class OpenAIProvider(ModelProvider):
             logger.warning("OpenAI client close raised", exc_info=True)
         self._history.clear()
 
+    # ── Image content parts (MI-4) ────────────────────────────────────
+
+    def stage_image_part(self, data_url: str) -> bool:
+        """Stage *data_url* onto the next turn's user message. See the base docstring.
+
+        True unconditionally for this provider: the OpenAI Chat Completions wire
+        format carries ``image_url`` parts, so delivery is a property of the
+        TRANSPORT and is always available here. Whether the bound *model* can read
+        the pixels is a separate question, decided by the caller against the model's
+        declared capabilities — this method deliberately does not second-guess it,
+        because a transport that quietly refused would be indistinguishable from one
+        that dropped the image.
+        """
+        if not data_url:
+            return False
+        self._pending_image = data_url
+        return True
+
+    def _with_pending_image(self, messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Return *messages* with any staged image appended to the last user turn.
+
+        Returns the SAME list object when nothing is staged, so an ordinary turn's
+        request payload is byte-identical to what it was before this seam existed.
+        Consumes the stage (one-shot) and never mutates the caller's dicts.
+        """
+        data_url = self._pending_image
+        if not data_url:
+            return messages
+        self._pending_image = ""
+        idx = next(
+            (i for i in range(len(messages) - 1, -1, -1) if messages[i].get("role") == "user"),
+            -1,
+        )
+        if idx < 0:
+            return messages
+        out = list(messages)
+        original = out[idx]
+        content = original.get("content")
+        parts: list[dict[str, Any]]
+        if isinstance(content, list):
+            parts = list(content)
+        else:
+            parts = [{"type": "text", "text": str(content or "")}]
+        parts.append({"type": "image_url", "image_url": {"url": data_url}})
+        out[idx] = {**original, "content": parts}
+        return out
+
     # ── Streaming ─────────────────────────────────────────────────────
 
     async def stream(self, message: str) -> AsyncIterator[LLMEvent]:
@@ -154,7 +204,7 @@ class OpenAIProvider(ModelProvider):
 
         request_kwargs: dict[str, Any] = {
             "model": self._model,
-            "messages": self._history,
+            "messages": self._with_pending_image(self._history),
             "stream": True,
             # Ask the endpoint to emit a final usage chunk so we can report
             # input/output token counts (drives the dashboard token tickers).
@@ -322,7 +372,7 @@ class OpenAIProvider(ModelProvider):
         """
         request_kwargs: dict[str, Any] = {
             "model": model or self._model,
-            "messages": messages,
+            "messages": self._with_pending_image(messages),
             "stream": True,
             # Ask for a final usage chunk (drives the token tickers); without
             # it streaming responses carry no usage and tokens read 0.

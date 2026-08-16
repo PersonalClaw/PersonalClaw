@@ -150,6 +150,30 @@ def _mark_block(block: dict) -> dict:
     return block
 
 
+def _image_block(data_url: str) -> dict | None:
+    """Translate a ``data:<media-type>;base64,<payload>`` URL into an Anthropic
+    ``image`` content block, or ``None`` if it isn't one.
+
+    Anthropic takes the media type and the raw payload as separate fields rather
+    than a joined URL, so this is a real translation and not a rename.
+    """
+    if not data_url.startswith("data:"):
+        return None
+    head, _, payload = data_url.partition(",")
+    if not payload:
+        return None
+    meta = head[len("data:") :]
+    if not meta.endswith(";base64"):
+        return None
+    media_type = meta[: -len(";base64")].strip().lower()
+    if not media_type:
+        return None
+    return {
+        "type": "image",
+        "source": {"type": "base64", "media_type": media_type, "data": payload},
+    }
+
+
 def _translate_messages(messages: list[dict]) -> tuple[str | list[dict], list[dict]]:
     """Split OpenAI-shaped ``messages`` into ``(system_prompt, anthropic_messages)``.
 
@@ -367,6 +391,60 @@ class AnthropicProvider(ModelProvider):
         self._client: Any = anthropic.AsyncAnthropic(**client_kwargs)
         self._history: list[dict[str, Any]] = []
         self._last_context_pct: float = 0.0
+        # One-shot image content part for the next turn (MI-4). Empty on every
+        # ordinary turn, which keeps the untouched wire payload byte-identical.
+        self._pending_image: str = ""
+
+    # ── Image content parts (MI-4) ────────────────────────────────────
+
+    def stage_image_part(self, data_url: str) -> bool:
+        """Stage *data_url* onto the next turn's user message. See the base docstring.
+
+        True unconditionally: the Messages API carries image blocks, so delivery is
+        a transport property. It is delivered in ANTHROPIC's shape — an
+        ``{"type": "image", "source": {"type": "base64", ...}}`` block — which is
+        precisely why this lives in the adapter and not in the caller. The
+        OpenAI-shaped ``image_url`` block the rest of the platform passes around is
+        not a wire format this API accepts; a caller that built one and handed it
+        over would get a 400, not a degraded answer.
+        """
+        if not data_url:
+            return False
+        self._pending_image = data_url
+        return True
+
+    def _with_pending_image(self, messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Return *messages* with any staged image appended to the last user turn.
+
+        Returns the SAME list object when nothing is staged. Consumes the stage
+        (one-shot) and never mutates the caller's dicts. A data URL that doesn't
+        split into ``media_type`` + base64 payload is dropped rather than sent as a
+        malformed block.
+        """
+        data_url = self._pending_image
+        if not data_url:
+            return messages
+        self._pending_image = ""
+        block = _image_block(data_url)
+        if block is None:
+            return messages
+        idx = next(
+            (i for i in range(len(messages) - 1, -1, -1) if messages[i].get("role") == "user"),
+            -1,
+        )
+        if idx < 0:
+            return messages
+        out = list(messages)
+        original = out[idx]
+        content = original.get("content")
+        parts: list[Any]
+        if isinstance(content, list):
+            parts = list(content)
+        else:
+            parts = [{"type": "text", "text": str(content or "")}]
+        parts.append(block)
+        out[idx] = {**original, "content": parts}
+        return out
 
     # ── Lifecycle ─────────────────────────────────────────────────────
 
@@ -415,7 +493,7 @@ class AnthropicProvider(ModelProvider):
 
         request_kwargs: dict[str, Any] = {
             "model": self._model,
-            "messages": self._history,
+            "messages": self._with_pending_image(self._history),
             "max_tokens": self._max_tokens,
         }
         # Allow ``system``, ``tools``, ``temperature``, etc. to flow
@@ -560,7 +638,9 @@ class AnthropicProvider(ModelProvider):
         ``tool_call_id`` = the block id, ``title`` = the tool name, and
         ``tool_input`` = the accumulated JSON argument string.
         """
-        system_prompt, anth_messages = _translate_messages(messages)
+        # Stage the image BEFORE translation so the block rides through as a plain
+        # list-content user message (which `_translate_messages` passes through).
+        system_prompt, anth_messages = _translate_messages(self._with_pending_image(messages))
 
         request_kwargs: dict[str, Any] = {
             "model": model or self._model,

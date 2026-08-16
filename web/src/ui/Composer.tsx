@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { ArrowUp, Square, CornerDownLeft, Sparkles, Mic, Ear, Loader2, Paperclip, Check } from 'lucide-react'
+import { ArrowUp, Square, CornerDownLeft, Sparkles, Mic, Ear, Loader2, Paperclip, Check, MonitorUp } from 'lucide-react'
 import { IconButton } from './IconButton'
 import { spring, physics, expr } from '../design/motion'
 import { AgentPill, ModelPill, ApprovalPill, ReasoningPill, effortsForAgent, PlusMenu } from './composer/controls'
@@ -26,7 +26,7 @@ export function Composer({
   controls = DEFAULT_CONTROLS, data, selection, onSelect, onAttach, onOpenPrompts, plusMenuExtra, onFocusChange,
   mentionProject, onMentionFile, onMentionKnowledge, onLargePaste,
   onOptimize, optimizing, history, onTranscribe, onMicError, canQueue, contextPct, minChars = 1,
-  openModelSignal, openAgentSignal, openReasoningSignal, handsFree, onHandsFreeSubmit,
+  openModelSignal, openAgentSignal, openReasoningSignal, handsFree, onHandsFreeSubmit, screenShare,
 }: ComposerProps) {
   const [focused, setFocused] = useState(false)
   const [dragOver, setDragOver] = useState(false)
@@ -145,6 +145,20 @@ export function Composer({
           active={mic.state !== 'idle'} size={40}
           className={mic.state === 'transcribing' ? '[&_svg]:animate-spin' : undefined}
           onClick={mic.state === 'transcribing' ? undefined : mic.toggle} />
+      )}
+      {/* Screen context (MULTIMODAL-IO §5.2). Rendered only when the config master
+          switch is on, so an install that never opted in has no capture affordance at
+          all. `active` gives it the pressed state; the browser's own picker and capture
+          indicator do the consent work, and the header chip pulses alongside them for
+          as long as the stream is live. When no model can read a frame the control is
+          still SHOWN, disabled, carrying the server's reason — an absent control would
+          leave the user guessing why sharing isn't there. */}
+      {screenShare?.available && (
+        <IconButton icon={MonitorUp} label={screenShare.sharing ? 'Stop sharing screen' : 'Share screen'}
+          active={screenShare.sharing} size={40}
+          disabled={!!screenShare.disabledReason}
+          disabledReason={screenShare.disabledReason}
+          onClick={screenShare.disabledReason ? undefined : screenShare.onToggle} />
       )}
       {/* Hands-free: keeps listening and only sends when a confirmation phrase lands.
           It replaces the push-to-talk button while active so there is one mic owner —

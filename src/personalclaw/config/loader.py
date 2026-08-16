@@ -1604,6 +1604,19 @@ class DashboardConfig:
             "installs (they always update per release).",
         ),
     )
+    screen_share_enabled: bool = field(
+        default=False,
+        metadata=_meta(
+            "Screen Sharing in Chat",
+            "Master opt-in for the composer's 'Share screen' control (MULTIMODAL-IO "
+            "§5). With it on, a chat turn can carry ONE frame of a screen or window "
+            "you explicitly picked in the browser's own share dialog: the frame is "
+            "held in memory for that single turn, never written to disk, and dropped "
+            "the moment it is used. OFF by default — with it off the control is "
+            "hidden AND the server refuses any frame, so nothing can share your "
+            "screen by asking nicely.",
+        ),
+    )
     terminal: dict = field(
         default_factory=lambda: {"enabled": True},
         metadata=_meta(
@@ -4222,6 +4235,11 @@ class AppConfig:
                 confirm_close_session=dashboard_data.get("confirm_close_session", False),
                 auto_open_browser=dashboard_data.get("auto_open_browser", True),
                 update_dev_mode=dashboard_data.get("update_dev_mode", False),
+                # Opt-in, read with a False default: a config.json that is missing the
+                # key (every existing install) must NOT arrive with screen capture
+                # available. `bool()` so a truthy-string hand-edit can't smuggle a
+                # non-bool into the gate the route reads.
+                screen_share_enabled=bool(dashboard_data.get("screen_share_enabled", False)),
                 terminal=dashboard_data.get("terminal", {"enabled": True}),
                 dashboard_layout=dashboard_data.get("dashboard_layout", {}) or {},
             ),

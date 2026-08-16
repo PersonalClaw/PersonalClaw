@@ -36,6 +36,8 @@ import { PromptPalette } from './chat/PromptPalette'
 import { SessionSkillsReview } from './chat/SessionSkillsReview'
 import { RoutingChip, type RoutingSuggestion } from './chat/RoutingChip'
 import { OrganizeChip } from './chat/OrganizeChip'
+import { ScreenShareChip } from '../ui/ScreenShareChip'
+import { useScreenShare } from '../ui/composer/useScreenShare'
 import { DotGlow } from '../ui/DotGlow'
 import { EmptyState, ListSkeleton, LoadError, Skeleton, LoadingStatus } from '../ui/ListScaffold'
 import { FieldError } from '../ui/forms'
@@ -608,6 +610,14 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
   // revert if they don't like the optimized version (otherwise it's lost).
   const [preOptimize, setPreOptimize] = useState<string | null>(null)
   const [micError, setMicError] = useState<string | null>(null)
+  // Screen context (MULTIMODAL-IO §5.2). The HOST owns the display stream because it
+  // also owns the header chip that must stay lit for the stream's whole life — a
+  // composer-local stream could not keep a header indicator honest. Errors ride the
+  // existing transient line above the composer rather than a second mechanism.
+  const screenShare = useScreenShare(sessionId ?? '', (m) => {
+    setMicError(m)
+    window.setTimeout(() => setMicError(null), 6000)
+  })
   const [toast, setToast] = useState<string | null>(null)  // transient confirmation (brief/workspace-dir)
   // Upload rejection (oversize / upload failure) — a message the user must ACT on
   // (pick a smaller file), so it's dismissible-but-persistent, NOT a 6s-vanishing
@@ -1534,9 +1544,39 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
       // the post-create remount paints it immediately (no skeleton over the user's
       // own words) — mirrors the persisted history shape hydrateTurns expects.
       const seed: HistMsg[] = [{ role: 'user', content: llmText, ts: clientTs, meta: meta as HistMsg['meta'] }]
-      await api.sendChat(llmText, await ensureSession(seed), meta, undefined, opts?.inputOrigin)
+      const sid = await ensureSession(seed)
+      // Frame-on-send (§5.2): capture ONE frame at the instant the question is asked,
+      // so the model sees the screen the user was looking at when they asked — not a
+      // continuous stream, and not a frame from whenever sharing happened to start.
+      // Awaited before sendChat so the slot is staged when the runner drains it.
+      if (screenShare.sharing) await screenShare.captureAndStage(sid)
+      await api.sendChat(llmText, sid, meta, undefined, opts?.inputOrigin)
     }
     catch (e) { markStreaming(false); patchLastAssistant((segs) => [...segs, { kind: 'text', text: `⚠️ ${(e as Error).message}` }]) }
+  }
+
+  // Pin the frame currently being shared (§5.4). The bytes come from the client
+  // because the server kept none — the drain destroyed the staged copy the moment the
+  // turn used it. On success the pinned file joins the turn like any other
+  // attachment, so from here on it is an ordinary upload with nothing screen-specific
+  // about it.
+  async function pinScreenFrame() {
+    const sid = sessionRef.current
+    const frame = screenShare.lastFrame()
+    if (!sid) return
+    if (!frame) {
+      setMicError('Send a message while sharing first — there is no frame to pin yet.')
+      window.setTimeout(() => setMicError(null), 6000)
+      return
+    }
+    try {
+      const r = await api.pinScreenFrame(sid, frame)
+      if (r?.path) setAttachedPaths((prev) => [...prev, r.path])
+    } catch (e) {
+      // Surface the server's own reason (incognito, switch off) rather than inventing one.
+      setMicError((e as Error)?.message || 'Could not pin the frame.')
+      window.setTimeout(() => setMicError(null), 6000)
+    }
   }
 
   // Optimize the current draft via the prompt optimizer (last 10 turns as context).
@@ -2271,6 +2311,17 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
               <MenuRow icon={<BookText size={16} />} label="Add knowledge" hint="Search the library → attach to the prompt" onClick={() => { close(); setKnowledgePickerOpen(true) }} />
               <MenuRow icon={<Boxes size={16} />} label="Reference an artifact" hint="Ground the reply in an artifact's current version" onClick={() => { close(); setArtifactPickerOpen(true) }} />
               {isMac && <MenuRow icon={<Camera size={16} />} label="Capture screenshot" hint="Snip a region → attach" onClick={() => { close(); void captureScreenshot() }} />}
+              {/* Pin the shared frame (§5.4) — the ONE deliberate promotion from
+                  ephemeral to file. Offered only while sharing, because the frame it
+                  pins is the one the browser still holds: nothing older can be pinned,
+                  since retaining past frames client-side is exactly the retention this
+                  feature exists not to do. Suppressed in a temporary/incognito chat by
+                  the server (writes are suppressed there), which is why the failure
+                  path surfaces the server's reason rather than a guess. */}
+              {screenShare.sharing && sessionRef.current && (
+                <MenuRow icon={<Pin size={16} />} label="Pin shared frame" hint="Save the current screen frame as an ordinary attachment"
+                  onClick={() => { close(); void pinScreenFrame() }} />
+              )}
               {started && sessionRef.current && <AutoNudgeMenuItem session={sessionRef.current!} onOpen={close} />}
             </>
           )}
@@ -2279,7 +2330,8 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
           onOptimize={optimize} optimizing={optimizing} history={promptHistory}
           onTranscribe={transcribe} onMicError={(m) => { setMicError(m); window.setTimeout(() => setMicError(null), 6000) }} canQueue contextPct={contextPct}
           handsFree={{ confirmationPhrases: voiceCfg.confirmation_phrases, exitPhrases: voiceCfg.exit_phrases, speaking: speakingTurn !== null, muteWhileSpeaking: voiceCfg.duplex_mute_enabled }}
-          onHandsFreeSubmit={(t) => void send(t, { inputOrigin: 'voice' })} />
+          onHandsFreeSubmit={(t) => void send(t, { inputOrigin: 'voice' })}
+          screenShare={{ available: screenShare.available, sharing: screenShare.sharing, disabledReason: screenShare.disabledReason, onToggle: screenShare.toggle }} />
       </div>
       {/* CREATE-TIME session setup — project binding + memory mode. Both are frozen
           once the chat starts, so they are NOT composer controls (the composer's
@@ -2340,6 +2392,12 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
                   {regenningTitle ? <Loader2 size={12} className="animate-spin" /> : <Sparkles size={12} />}
                 </button>
               )}
+              {/* Screen sharing (MI-4). Deliberately in the header rather than the
+                  composer: it must stay visible while the user scrolls the transcript,
+                  because an indicator you can scroll away from is not an indicator.
+                  Mounted off the LIVE stream state, so the browser's own stop button
+                  clears it too. */}
+              {screenShare.sharing && <ScreenShareChip onStop={screenShare.toggle} />}
               {/* Project binding stays visible once started — the chat is scoped to this
                   project's workspace + context; click to open the project. */}
               {projectName && (

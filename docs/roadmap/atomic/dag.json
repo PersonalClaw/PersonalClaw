@@ -3453,7 +3453,7 @@
         {
           "id": "MI-4",
           "title": "Screen-context observation channel \u2014 opt-in ephemeral screen share into interactive chat (\u00a75 live-session remainder only)",
-          "status": "todo",
+          "status": "done",
           "scope": "\u00a75 Screen-Context Observation Channel (\u00a75.2 FE getDisplayMedia capture + in-app banner chip, frame-on-send; \u00a75.3 POST /api/chat/screen-frame in-memory slot + injection beside _inject_attachment_content with vision-native vs fenced-described routing; \u00a75.4 ephemerality + pin-to-uploads + incognito guard; \u00a75.5 dashboard.screen_share_enabled config + SEL share start/stop)",
           "done_when": "composer screen-share toggle gated by dashboard.screen_share_enabled (OFF by default) with in-app pulsing chip + browser indicator both showing; POST /api/chat/screen-frame stages a latest-wins in-memory per-session frame; chat runner drains it as an image part for vision models, else one-shot describe \u2192 fence_untrusted(source='screen-share') with turn annotated screen_context:described, toggle disabled with reason when no vision binding resolves; Pin writes through the uploads store (suppressed in incognito); test asserts zero image bytes anywhere under ~/.personalclaw after a share turn; screen_share_enabled round-trips through all four wiring points + Settings toggle",
           "deps": []
@@ -7726,11 +7726,6 @@
         "plan": "MI"
       },
       {
-        "id": "MI-4",
-        "title": "Screen-context observation channel \u2014 opt-in ephemeral screen share into interactive chat (\u00a75 live-session remainder only)",
-        "plan": "MI"
-      },
-      {
         "id": "MRI-5",
         "title": "V2 owner validation: drive the surface from a real MCP-enabled client end-to-end",
         "plan": "MRI"
@@ -9889,9 +9884,9 @@
         "code": "MI",
         "plan": "MULTIMODAL-IO",
         "total_atoms": 5,
-        "done": 2,
+        "done": 3,
         "in_progress": 0,
-        "todo": 3,
+        "todo": 2,
         "blocked": 0
       },
       {

@@ -276,6 +276,11 @@ function MessagesSection({ cfg, setCfg }: { cfg: DashboardConfig; setCfg: (c: Da
         <Row label="Offer “Check this work”" hint="After a turn that did real multi-step work, offer a chip that re-derives and re-runs the checks against what the turn claimed. Only ever an offer — the verification cost is spent on your click, never automatically.">
           <Toggle on={cfg.offer_check_work} onChange={(v) => save({ offer_check_work: v })} label="Offer 'Check this work'" />
         </Row>
+        {/* MI-4. Off by default and its own Row, because the hint IS the consent text:
+            a privacy switch whose scope the user has to infer is not consent. */}
+        <Row label="Share screen in chat" hint="Adds a “Share screen” control to the composer. With it on, a message can carry ONE frame of a screen or window you pick in your browser's own share dialog — held in memory for that single turn, never written to disk. Your browser shows its own capture indicator the whole time. Off means the control is hidden and the server refuses any frame.">
+          <Toggle on={cfg.screen_share_enabled} onChange={(v) => save({ screen_share_enabled: v })} label="Share screen in chat" />
+        </Row>
         <Row label="Streaming text reveal" hint="Smooth: steady word-by-word reveal decoupled from network chunks (never lags). Immediate: render each chunk the instant it arrives.">
           <SegPills value={cfg.stream_reveal} onChange={(v) => save({ stream_reveal: v as 'smooth' | 'immediate' })}
             options={[{ key: 'smooth', label: 'Smooth' }, { key: 'immediate', label: 'Immediate' }]} />

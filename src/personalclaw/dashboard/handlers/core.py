@@ -721,6 +721,13 @@ _EDITABLE_CONFIG: dict[str, dict] = {
     "session.auto_archive_days": {"type": "int", "min": 0, "max": 3650},
     "auto_update": {"type": "bool"},
     "dashboard.mcp_probe_timeout_secs": {"type": "int", "min": 5, "max": 120},
+    # MI-4 — the screen-context master switch (default OFF). Runtime-editable because
+    # it is the consent knob: a user turns it on for one working session and off again,
+    # and having to restart the gateway to withdraw that permission would be the wrong
+    # shape for a privacy control. Flipping it off takes effect on the NEXT frame POST
+    # (the route re-reads config per request) and on the next drain, so a slot staged
+    # while it was on is dropped rather than delivered.
+    "dashboard.screen_share_enabled": {"type": "bool"},
     # P25: opt-in tmux-backed terminal persistence (survives a gateway restart). Read as a
     # raw dict from config.json by handlers/terminal.py::_get_config — a 3-part nested path.
     "dashboard.terminal.persist": {"type": "bool"},
