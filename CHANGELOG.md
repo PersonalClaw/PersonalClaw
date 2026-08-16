@@ -436,6 +436,18 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
   one open, one pin or one edit anywhere in those three cycles and it stays silent; a document that
   was deleted counts as *unknown*, never as unread; and if you reject the finding once, it is not
   raised again.
+- **A second starter home, for looking around before you commit anything.**
+  `personalclaw gateway --seed demo-home` fills a scratch home with a system that has clearly been
+  used for a couple of weeks: two projects that each carry a real brief, three lists, and ten tasks
+  spread across in-progress, done, blocked and cancelled — one of them blocked on another task by
+  name, with exit criteria part-ticked and notes explaining why the hard one is still open — plus
+  written-up memory covering preferences, current project context and two days of history. It also
+  arrives past the first-run setup, so it opens on the dashboard rather than the wizard. Use it to
+  take screenshots, try a surface, or see what a populated PersonalClaw looks like without touching
+  your own data: `--seed` **refuses your real home outright**, so point `PERSONALCLAW_HOME` at a
+  throwaway directory and delete it when you are done. Two things it deliberately leaves empty —
+  knowledge items and loops — because those live in databases rather than files and a starter home
+  is only a file copy; create one of each by hand if a screenshot needs them.
 
 ### Changed
 - **The assistant now needs to see a habit work three times, not twice, before it offers to make it

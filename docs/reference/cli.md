@@ -33,6 +33,13 @@ process everything else talks to.
 | `--seed FIXTURE` | Dev tool: populate `$PERSONALCLAW_HOME` from a named fixture (under `tests_fixtures/`) before starting. Refuses the main gateway home (`~/.personalclaw`) and non-empty targets. |
 | `--seed-replace` | With `--seed`, wipe `$PERSONALCLAW_HOME` before copying. Never overrides the main-home rail. |
 
+Two fixtures ship:
+
+| Fixture | Contents |
+|---|---|
+| `empty` | A bare home — just the `fixture.yaml` marker. Everything else is created on first boot. |
+| `demo-home` | A home that looks used, for screenshots and demos: two projects with briefs, three task lists, ten tasks spanning every status (one blocked on a real dependency), and markdown memory (preferences, project context, two days of history). Onboarding is pre-completed, so it boots straight to the dashboard. Knowledge items, semantic/episodic memory records and loops are **not** included — those stores are SQLite-only and a fixture is a plain file copy. |
+
 ## `personalclaw chat`
 
 Chat with the agent from the terminal.
