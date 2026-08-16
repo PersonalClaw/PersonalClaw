@@ -19,6 +19,18 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
   fade at all, just the instant swap. Opening a detail panel, switching a tab, typing in a search
   box and following a redirect all stay instant on purpose — those are refinements, not
   navigation, and fading the page under them would fight what you were doing.
+- **The two shipped personalities now arrive with their own motion and their own tone.** Picking
+  **Claw Arcade** in Settings → Design also sets the backdrop to sparkle dots on an offset lattice
+  and turns the motion language up to its bold end; **Retro Terminal** does the opposite on the same
+  dials — square dots on a straight grid, and springs flattened to no overshoot at all. If you have
+  sound cues switched on, a finished turn in Claw Arcade is an arcade coin and an approval in Retro
+  Terminal is a terminal bell; the panel tells you which moments an identity re-voices, so a
+  different tone is never a mystery. Everything here stays **yours to change**: each dial lands in
+  your own Appearance settings, so moving a slider afterwards sticks, and switching back to
+  PersonalClaw puts every dial back to its default rather than leaving one pinned. Sound is still
+  off until you ask for it, still silent in a background tab and under Reduce Motion, and the
+  sparkle backdrop is a single still frame — never a moving one — when your system asks for reduced
+  motion.
 - **Optional sound cues, off until you turn them on.** Settings → Design → Personality has a new
   switch that gives you a brief tone when a turn finishes, when a tool approval needs you, and when
   something fails — nothing else. It ships **off**, and even switched on it stays quiet while the tab
