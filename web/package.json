@@ -6,9 +6,9 @@
   "description": "PersonalClaw web app \u2014 the dashboard UI",
   "scripts": {
     "dev": "vite",
-    "build": "tsc --noEmit && vite build",
+    "build": "npm run typecheck && vite build",
     "preview": "vite preview",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc --noEmit && tsc -p tsconfig.sw.json",
     "test": "vitest run",
     "test:watch": "vitest",
     "e2e": "playwright test",

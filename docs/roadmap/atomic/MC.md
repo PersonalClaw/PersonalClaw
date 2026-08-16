@@ -13,7 +13,7 @@ Each atom below executes start-to-finish in one go. If an atom lists dependencie
 | `MC-1` | ⬜ | S1 remote-access story: Tailscale-first guide + doctor reachability probe | — | A reader on cell data reaches their dashboard via tailnet following docs/guides/remote-access.md verbatim; `doctor` detects the tailscale interface and prints the phone-ready tokenized URL, and warns when the bind host exposes beyond loopback without auth (tailnet + misconfig fixtures pass). |
 | `MC-2` | ⬜ | S2 device-session consumption + Devices list in Settings | `EXT:COMPANION-APPS:device-session model + unified pairing contract`, `EXT:REMOTE-USER-AUTH:durable session store (auth/sessions.json)` | A roaming-IP phone keeps its device session valid per the plan-54 contract; the Settings > Devices list renders name/minted/last-seen and Revoke; revoking kills the device session on the next request. No new claim added to token_auth.py — the device session comes from plan 54. |
 | `MC-3` | ✅ | S2 approvals-first companion route + approve/reject wiring | — | On a phone viewport, `#/companion` renders full-context approval cards from GET /api/approvals (tool name, arguments, session/agent; plan-43 decision-brief when present, raw fallback until then — do not block on plan 43) and approve/reject round-trips against a dev gateway; all other sections stubbed behind S3.5; URL doctrine holds. |
-| `MC-4` | ⬜ | S3 PWA installability: manifest + service worker (app-shell precache, /api never cached) | `MC-3` | Lighthouse installability passes with manifest (claw-mark icons, standalone, start_url #/companion) and sw.ts precaching app-shell only; API responses are never served from cache (verified with offline toggle). |
+| `MC-4` | ✅ | S3 PWA installability: manifest + service worker (app-shell precache, /api never cached) | `MC-3` | Lighthouse installability passes with manifest (claw-mark icons, standalone, start_url #/companion) and sw.ts precaching app-shell only; API responses are never served from cache (verified with offline toggle). |
 | `MC-5` | ⬜ | S3 push-to-approval milestone 1: web push + ntfy adapter + deep link to the approval | `MC-3`, `MC-4`, `MC-2`, `EXT:INBOX-NOTIFICATIONS-UNIFICATION:rules-engine push target must exist` | VAPID keypair generated via `personalclaw push init` (keys in credential store), per-device subscription endpoint, and a content-free {kind,item_id} sender are wired as plan-42's `push` target; ntfy topic-URL adapter is an alternative backend (config mobile.push_backend/ntfy_topic_url); a locked-phone push → tap opens #/companion?approval=<id> with the correct card focused → approve → the paused run proceeds, <30s on cell data (timed); payload inspection shows ids only. |
 | `MC-6` | ⬜ | S3.5 rest of companion: loops/tasks/inbox/notifications sections + SW sound/badge mapping | `MC-3`, `MC-4`, `EXT:INBOX-NOTIFICATIONS-UNIFICATION:per-(source,kind) sound/badge rules field + inbox resolve API` | Companion adds Running-loops (pause/nudge/stop via loop_routes), tasks, inbox-resolve, and recent-notifications sections working per the original S2 done-whens; the SW maps a push payload's `kind` to per-kind sound/badge using plan-42's rules field (a distinct sound fires for a kind configured in the rules UI). |
 | `MC-7` | ⬜ | S4 Capacitor shell wrapping the served companion route | `MC-3`, `MC-2` | A Capacitor shell (new mobile/ dir; repo-location decision recorded) wraps the served companion URL with config for gateway URL + device token and native safe-areas, no forked UI; builds for iOS+Android and renders the live companion. |
@@ -65,11 +65,68 @@ done-when directs.
 
 ### `MC-4` — S3 PWA installability: manifest + service worker (app-shell precache, /api never cached)
 
-**Status:** todo
+**Status:** done
 
 Session 3 T3.1 + C2 service-worker rule (network-first; explicit no-cache for /api/*)
 
-**Done when:** Lighthouse installability passes with manifest (claw-mark icons, standalone, start_url #/companion) and sw.ts precaching app-shell only; API responses are never served from cache (verified with offline toggle).
+**Done when:** Lighthouse installability passes with manifest (claw-mark icons, standalone, start_url #/companion) and sw.ts precaching app-shell only; API responses are never served from cache (verified with offline toggle). — DONE 2026-08-15.
+
+**Landed.** The companion installs to a home screen, and the service worker cannot cache an API
+response. `web/public/manifest.webmanifest` (`display: standalone`, `start_url` `/#/companion`,
+`scope: /`) plus `web/src/sw.ts`, bundled to the dist **root** as `sw.js` by
+`web/scripts/buildServiceWorker.mjs` from a Vite `closeBundle` hook — a worker emitted into
+`dist/assets/` would be scoped to `/assets/` and could not control the SPA. Gateway routes
+`/manifest.webmanifest`, `/sw.js` and a `/icons` static mount; `/icons/` was added to
+`spa_fallback`'s exclusions so a missing icon 404s instead of coming back as index.html.
+
+**The `/api`-never-cached rule is one gate, proven behaviourally.** All caching policy lives in
+`web/src/app/swPolicy.ts`; `mayCache()` is the single predicate consulted before every cache read
+and every write, and `strategyFor()` is defined in terms of it so the two cannot disagree. The
+default is **fail-closed** — an unrecognised path is `network-only`, so a route added to the gateway
+tomorrow is not silently cached. `/api` resolves to `network-only`, which returns from the fetch
+handler **without** calling `respondWith`: the browser performs the fetch itself, so an API response
+never enters worker JavaScript at all. Precache is the shell only (index.html, favicon, manifest,
+icons, the one preloaded font); hashed `/assets/*` are runtime `cache-first` because they are
+content-addressed and immutable.
+
+Proven in `web/e2e/pwa.spec.ts` against the real build: install the worker, read `/api/ping` twice
+(a counter, so a replay is unmistakable), inspect the real Cache Storage, then take the origin
+genuinely offline by **shutting the server down** — no network emulation to get subtly wrong. Offline,
+a navigation still renders the shell from cache (the vacuity floor: without it, `/api` "failing"
+would prove nothing) while `fetch('/api/ping')` fails in the same instant. Falsified by removing the
+API guard and rebuilding: the test reported the leak verbatim — `offline /api resolved instead of
+failing: {"ok":true,"status":200,"body":"{\"call\":1,\"secret\":\"payload-1\"}"}`.
+
+**Update strategy: no `skipWaiting()`, no `clients.claim()`** (ratcheted by a source assertion, not
+just a comment). Navigations are network-first, so a reachable gateway always serves the freshest
+`index.html` and a stale shell cannot pin an old bundle — `skipWaiting` would buy nothing while
+actively breaking live tabs, since `App.tsx` lazy-loads nearly every route and claiming clients while
+purging the old cache swaps the asset cache out mid-import. The gateway serves this same SPA to the
+desktop app, so a wrong update strategy here is every user's bug, not a phone bug.
+
+**DEVIATION — "Lighthouse installability" no longer exists.** Lighthouse **12** removed the PWA
+category and every audit in it; a 12.8.2 run against this build reports only performance /
+accessibility / best-practices / seo, with no `installable-manifest`, `service-worker` or
+`maskable-icon`. The criteria are asserted directly instead (`web/src/app/manifest.test.ts`, incl.
+each PNG's real IHDR dimensions vs its declared `sizes`) plus, in the e2e spec, the manifest **as
+Chrome fetched it** via `Page.getAppManifest`. `Page.getInstallabilityErrors` was measured and found
+**INERT** — it returns `[]` for an unparseable manifest and for `display: "browser"` — so it is
+deliberately not asserted on; `getAppManifest` was measured to have teeth (`Line: 1, column: 3,
+Syntax error.`) and carries the rail.
+
+**Security posture.** The PWA files stay **behind session auth** — none was added to `token_auth`'s
+bypass sets, honouring the existing `test_retired_pwa_paths_require_auth` ratchet, and
+`test_live_pwa_paths_require_auth` now locks the live paths the same way. The cost is that browsers
+fetch a manifest with credentials omitted, so `index.html` declares the link with
+`crossorigin="use-credentials"`. Only the authenticated owner can install the companion.
+
+**Known constraint (not a gap here):** service workers require a secure context, so a gateway reached
+over plain http at a LAN address cannot install or work offline — `localhost` or a TLS tunnel (MC-1's
+remote-access story) is required. `registerServiceWorker()` says so in one console line rather than
+leaving an install button that silently never appears.
+
+**Remains (later atoms):** `push`/`notificationclick` handlers and the `?approval=<id>` deep link
+(`MC-5`), per-kind sound/badge mapping (`MC-6`) — deliberately absent, not stubbed.
 
 ### `MC-5` — S3 push-to-approval milestone 1: web push + ntfy adapter + deep link to the approval
 

@@ -23,6 +23,23 @@ function uiDocsPlugin(): Plugin {
   }
 }
 
+// After Vite writes dist/, bundle src/sw.ts to dist/sw.js — at the dist ROOT, so
+// the worker registers at scope '/' and can control the SPA (MOBILE-COMPANION
+// T3.1). A normal Vite entry would land in dist/assets/ under a hashed name and
+// be scoped to /assets/. Runs in closeBundle so dist/assets already exists: the
+// cache version is a hash of those filenames. See scripts/buildServiceWorker.mjs.
+function serviceWorkerPlugin(): Plugin {
+  return {
+    name: 'service-worker',
+    apply: 'build',
+    async closeBundle() {
+      const { buildServiceWorker } = await import('./scripts/buildServiceWorker.mjs')
+      const { version, path, assetCount } = await buildServiceWorker(WEB_DIR)
+      this.info?.(`sw.js: cache personalclaw-shell-${version} (${assetCount} assets) → ${path}`)
+    },
+  }
+}
+
 // Replicate PersonalClaw's dev token handshake: when the browser hits the dev
 // server with /?token=xxx, forward to the backend, relay its Set-Cookie
 // (pc_token_<port>) onto our origin, then redirect to clean /. After that the
@@ -51,7 +68,7 @@ function tokenProxyPlugin(): Plugin {
 // PersonalClaw web app.
 // Proxies API/WS to the existing backend so we reuse PersonalClaw's data layer.
 export default defineConfig({
-  plugins: [react(), tailwindcss(), tokenProxyPlugin(), uiDocsPlugin()],
+  plugins: [react(), tailwindcss(), tokenProxyPlugin(), uiDocsPlugin(), serviceWorkerPlugin()],
   server: {
     port: 3100,
     proxy: {
