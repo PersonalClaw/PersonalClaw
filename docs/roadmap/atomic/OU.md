@@ -14,7 +14,7 @@ Each atom below executes start-to-finish in one go. If an atom lists dependencie
 | `OU-2` | ✅ | Essential-apps in-flow onboarding step (model required; search/speech/channel opt-in) | `OU-1` | fresh dev home (PERSONALCLAW_FIRST_PARTY_APPS_DIR fixture): model+search installable and the model bindable entirely in-flow (install -> key -> Test -> chat binding, reusing the 3 existing APIs); skipping all but model still reaches first-success; per-app install consent preserved; no auto-install anywhere |
 | `OU-3` | ✅ | First-success 'try one' cards (knowledge ingest+ask, reminder trigger, seeded loop) | `OU-1`, `OU-2` | each of the three cards executes a real flow and reaches its visible outcome on a fresh home in <2 min; failure path shows the error and offers a Settings deep-link when a real call fails despite a passing Test |
 | `OU-4` | ⬜ | Onboarding done screen + resume + per-step skip + CLI setup pointer | `OU-1`, `OU-2`, `OU-3` | skip at any step lands in a working dashboard; re-entering onboarding resumes at the persisted step; personalclaw setup prints the dashboard-flow pointer when a browser is available (wizard unchanged); V1 recorded in Execution log (full flow <5 min, mid-flow reload, full-skip path, existing-home upgrade shows NO onboarding) |
-| `OU-5` | ⬜ | NavRail progressive disclosure (starter/expert sections, auto-pin-on-visit, expert toggle) + URL-doctrine regression test | — | fresh home shows the starter rail; visiting an Everything surface via deep link/CommandPalette renders AND auto-pins it (test red if a deep link 404s/blanks under starter mode); expert-mode toggle in Appearance shows all permanently; upgrade fixture (onboarding-completed-before-this-version marker) defaults expert ON; keyboard-only, reduced-motion, and mobile-viewport passes hold |
+| `OU-5` | ✅ | NavRail progressive disclosure (starter/expert sections, auto-pin-on-visit, expert toggle) + URL-doctrine regression test | — | fresh home shows the starter rail; visiting an Everything surface via deep link/CommandPalette renders AND auto-pins it (test red if a deep link 404s/blanks under starter mode); expert-mode toggle in Appearance shows all permanently; upgrade fixture (onboarding-completed-before-this-version marker) defaults expert ON; keyboard-only, reduced-motion, and mobile-viewport passes hold |
 | `OU-6` | ⬜ | EmptyState primitive + rollout to the 7 listed pages | — | web/src/ui/EmptyState.tsx exists and is applied to Loops, Workflows, Knowledge, Memory, Skills, Tasks, Triggers with one seeded working action each; copy in PRODUCT.md voice; visual check across both themes |
 | `OU-7` | ✅ | Blast-radius derivation (approvalMeta.ts pure function) — C2 read-only consumption | — | web/src/pages/chat/approvalMeta.ts maps tool name + existing risk + command-screening classification to writes/network/shell/readOnly chips; unit-tested against representative tools (bash, web_fetch, memory write, read-only); NO security-logic change (E4 if any gap tempts one) |
 | `OU-8` | ✅ | ApprovalCard redesign (what/why/blast-radius/scoped-remember) + toast compact variant | `OU-7` | ApprovalCard renders all four zones; useApprovalToasts gets the compact form; remember-scope (session/tool_always/no) persists via the existing approval-preference path; brief never advocates approval; risky+benign approvals driven as a user and README screenshots produced (feeds DISCOVERABILITY-LAUNCH asset list) |
@@ -182,11 +182,71 @@ Session 1 T1.4 + V1; Design done screen (points at Inbox, bounciness slider, unl
 
 ### `OU-5` — NavRail progressive disclosure (starter/expert sections, auto-pin-on-visit, expert toggle) + URL-doctrine regression test
 
-**Status:** todo
+**Status:** done
 
 Session 2 T2.1 + T2.3 + V2; Contracts C4 (NavRail sections, prefs store); Design 'Progressive disclosure'
 
 **Done when:** fresh home shows the starter rail; visiting an Everything surface via deep link/CommandPalette renders AND auto-pins it (test red if a deep link 404s/blanks under starter mode); expert-mode toggle in Appearance shows all permanently; upgrade fixture (onboarding-completed-before-this-version marker) defaults expert ON; keyboard-only, reduced-motion, and mobile-viewport passes hold
+
+**DONE.** New `web/src/app/navDisclosure.ts` owns the whole model — `{mode: 'starter'|'expert',
+pinned: string[]}` in `localStorage['nav-disclosure']`, one `isDisclosed(id, mode, pinned)` rule,
+one `undisclosedCount()`, and a `useNavDisclosure()` hook that reads SYNCHRONOUSLY on mount (no
+probe, so no flash of the wrong rail). `ui/NavRail` gained ONE optional `disclosure`
+prop — `{expanded, moreCount, onToggle}` — and renders an "Everything +N" / "Show fewer" row at
+the end of scroll order with `aria-expanded` and the count in its accessible name; the rail is
+handed already-FILTERED items, so which surfaces are starter and how pins persist stay in one
+place. `App.tsx` filters the rail, computes the count, and carries the auto-pin effect;
+`DesignPanel` (`#/settings/design`, the Appearance panel) gained a **Navigation** section whose
+`Show every surface` switch is the same one setting, not a second mechanism.
+
+**The clause with teeth.** Disclosure governs the RAIL ONLY. `rendered` is untouched by it and
+the CommandPalette is still built from the full `NAV`, so a deep link, a palette "Go to", a
+Discover tip and an in-app link all render a hidden surface — and reaching one PINS it, so the
+rail grows with use instead of asking to be configured. `navDisclosure.test.tsx` drives the real
+shell for this (19 tests): `#/tools` under starter mode is asserted on the page's own `h1`, not on
+a route string, because a blank page and a rendered page both "navigate".
+
+**The upgrade marker is the record's ABSENCE.** C4 asks for an
+"onboarding-completed-before-this-version marker"; it needs no new field. `Onboarding`'s `finish()`
+writes `mode: 'starter'` — the one act only a fresh install performs, since it is what commits
+identity and flips `onboarded` — so a stored record means "onboarded under this version" and no
+record means "onboarded before it", resolving to `expert`. That is also the safe failure
+direction: an absent or unreadable preference shows every surface rather than hiding surfaces
+someone has been using for months. Pins are never cleared by `finish()`, so "Restart onboarding"
+resets the mode without taking a surface away.
+
+**Falsified, seven mutations, and two of them reded nothing at first** — both were real gaps in
+the tests, now closed: dropping `Onboarding`'s marker was invisible (no test drove the fresh-install
+write; two now live in `onboardingProgress.test.tsx`), and removing the `moreCount > 0` guard reded
+only a source rail (a behavioural "renders NO control once nothing is left to reveal" test now
+covers it, doubling as a ratchet on a new rail destination). The five that reded correctly:
+routing `rendered` through `isDisclosed` → 3 RED (`Unable to find … heading "Tools"`); auto-pin as a
+no-op → 3 RED; filtering the palette → 1 RED; defaulting an absent record to `starter` → 4 RED;
+dropping `aria-expanded` → 3 RED.
+
+**DEVIATION (`dashboard` is in the starter set).** The Design names "Chat, Inbox, Apps, Settings".
+`dashboard` (Home) is added because it is the app's LANDING route (`useHashRoute('dashboard')`) — a
+rail that omits the page it opens on is a defect, not a decision. Five starter rows; 13 of the 18
+static destinations held back.
+
+**DEVIATION (section headers are dropped on the starter rail).** Measured live before the fix: five
+rows under three headings, with `PLATFORM` over Inbox alone and `APPS` over Store alone. A heading
+per item groups nothing, and the starter rail is one curated group by construction. Expert keeps
+Platform / Capabilities / Apps untouched.
+
+**DEVIATION (`app/*` tiles are exempt).** A contributed app's tile is already an explicit per-app
+pin ("Show in navigation", persisted in `nav-apps`), so disclosure has nothing to reveal for it and
+hiding it would silently undo a choice made by hand.
+
+**DISCOVERY (the rail has 18 destinations, not 19).** Counted from `NAV`: the expanded rail renders
+19 buttons because one of them is the disclosure control itself. Worth knowing for any later atom
+that quotes a rail count.
+
+**Known limit, deliberate.** The preference is per-DEVICE, which `identity.tsx` already states as
+the house rule ("Per-device prefs (theme, width, nav state) stay in localStorage; identity does
+not"). So a SECOND browser opened against an already-onboarded install has no record and shows the
+full rail. That fails open — it never hides a surface from someone who has been using it — and
+matches how theme, rail width and rail collapse already behave.
 
 ### `OU-6` — EmptyState primitive + rollout to the 7 listed pages
 

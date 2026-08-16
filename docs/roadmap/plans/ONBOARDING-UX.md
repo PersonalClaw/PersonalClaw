@@ -504,3 +504,92 @@ Owner rulings, mapped onto the existing sessions honestly:
   modules (`tryOneFlows.ts`, `TryOneStep.tsx`, `exitTo.ts`); the scanner skips `*.test.*`.
   `driftHits: 7` and `filesWithDrift: 6` are unchanged in all three states, so the new files add no
   drift. Regenerated in this commit rather than left dirty.
+- [2026-08-16][OU-5] **DONE (S2 T2.1 + T2.3 + V2 / C4).** New `web/src/app/navDisclosure.ts` is the
+  whole model in one leaf module: `{mode: 'starter'|'expert', pinned: string[]}` in
+  `localStorage['nav-disclosure']`, one `isDisclosed(id, mode, pinned)` rule, one
+  `undisclosedCount()`, and a `useNavDisclosure()` hook that reads SYNCHRONOUSLY on mount — no
+  probe, therefore no flash of the wrong rail on any load. `ui/NavRail` gained ONE optional
+  `disclosure` prop (`{expanded, moreCount, onToggle}`) and renders an "Everything +N" /
+  "Show fewer" row at the end of scroll order; it is handed already-FILTERED `items`, so which
+  surfaces are starter and how pins persist never live half in the rail. `App.tsx` filters the
+  rail, counts what is held back and carries the auto-pin effect; `DesignPanel` (`#/settings/design`
+  — the panel whose own search keywords are "design theme appearance …") gained a **Navigation**
+  section whose `Show every surface` switch drives the same one setting, not a second mechanism.
+  Five starter rows out of 18 static destinations, so 13 are held back on a fresh install.
+- [2026-08-16][OU-5] **The clause with teeth, and how it is held.** Disclosure hides rail ROWS and
+  nothing else: `rendered` is untouched by it and the CommandPalette is still built from the full
+  `NAV`, so a deep link, a palette "Go to", a Discover tip and an in-app link all render a hidden
+  surface — and reaching one PINS it, so the rail grows with use instead of asking to be
+  configured. `web/src/app/navDisclosure.test.tsx` drives the REAL shell for this (19 tests,
+  `<App/>` under its `main.tsx` provider stack) and asserts `#/tools` on the page's own `h1`, not on
+  a route string, because a blank page and a rendered page both "navigate".
+- [2026-08-16][OU-5] **The upgrade marker is the record's ABSENCE — no new field.** C4 asks for an
+  "onboarding-completed-before-this-version marker". `Onboarding`'s `finish()` writes
+  `mode: 'starter'`, and that is the ONE act only a fresh install performs (it is what commits
+  identity and flips `onboarded`), so a stored record means "onboarded under this version" and no
+  record means "onboarded before it" → `expert`. It is also the safe failure direction: an absent or
+  unreadable preference shows everything rather than hiding surfaces someone has used for months.
+  `finish()` never clears `pinned`, so "Restart onboarding" (Settings → Account) resets the MODE
+  without taking away a surface already reached.
+- [2026-08-16][OU-5] **DEVIATION (`dashboard` joins the Design's starter set).** The Design names
+  "Chat, Inbox, Apps, Settings". `dashboard` (Home) is the app's LANDING route
+  (`useHashRoute('dashboard')`), and a rail that omits the page it opens on is a defect rather than a
+  decision — the very first thing a fresh user would see is a rail with no row for where they are.
+  Owner task 3 ("decide the starter set … before T2.1") has no recorded ruling, so the Design's four
+  plus Home is what shipped; swapping the set is a one-line change to `STARTER_NAV_IDS`.
+- [2026-08-16][OU-5] **DEVIATION (section headers are dropped on the starter rail).** Measured on the
+  live starter rail before the fix: five rows under three headings, with `PLATFORM` sitting over
+  Inbox alone and `APPS` over Store alone. A heading per item groups nothing, and the starter rail is
+  one curated group by construction (essentials + what you have opened) — which is also what the
+  Design means by "two rail sections". Expert mode keeps Platform / Capabilities / Apps untouched.
+- [2026-08-16][OU-5] **DEVIATION (contributed-app tiles are exempt from disclosure).** An `app/<name>`
+  tile only appears in the rail because the user opted it in from the app's detail panel ("Show in
+  navigation", persisted in `nav-apps`). Hiding it would silently undo a choice made by hand, so
+  `isDisclosed` returns true for `app/*` in both modes. The Store tile itself is in the starter set.
+- [2026-08-16][OU-5] **DEVIATION (auto-pin fires in starter mode only).** In expert mode nothing is
+  hidden, so a visit reveals nothing — and pinning every surface browsed while expanded would
+  silently empty out the difference "Show fewer" restores, turning the toggle into a one-way door.
+  The consequence, accepted: surfaces visited while expert is on are not carried into a later
+  starter rail.
+- [2026-08-16][OU-5] **Falsified — seven mutations, and TWO reded nothing at first.** Both were real
+  gaps in the tests rather than vacuous mutations, and both are now closed. (1) Removing
+  `setNavMode('starter')` from `Onboarding.finish()` reded **nothing**: no test drove the
+  fresh-install write, so the starter rail could have shipped to nobody. Two tests now live in
+  `onboardingProgress.test.tsx` (the file that already owns what finishing writes), and the mutation
+  now reds both. (2) Removing the `moreCount > 0` guard reded only a source-level rail — an
+  "Everything +0" control would have shipped. A behavioural test ("renders NO control once nothing is
+  left to reveal", every non-starter id pinned) now covers it and doubles as a ratchet: a new rail
+  destination must be classified starter or listed there. The five that reded correctly: routing
+  `rendered` through `isDisclosed` → 3 RED (`Unable to find … heading "Tools"`); auto-pin as a no-op →
+  3 RED (`expected [] to include 'tools'`); filtering the palette by disclosure → 1 RED
+  (`Unable to find role="option"`); defaulting an absent record to `starter` → 4 RED; dropping
+  `aria-expanded` → 3 RED.
+- [2026-08-16][OU-5] **V2 (driven as a user, scripted Playwright, real gateway, isolated home).**
+  Fresh `PERSONALCLAW_HOME=/private/tmp/ou5-wt/.dev-home-ou5`, gateway on `:10055` from this worktree
+  (`PYTHONPATH` + its own `static/dist` symlink so the served SPA is this build), `AUTH_MODE=none`
+  (loopback-only). Fresh home landed on onboarding (`h1: "Welcome to PersonalClaw"`, no
+  `nav-disclosure` record); name → essentials → "Set up later" → "Start using PersonalClaw" wrote
+  `{"mode":"starter","pinned":[]}` and the rail came up **Home · Chat · Inbox · Store ·
+  "Everything +13" · Settings** with no section headers. Deep link `#/tools` → `h1: "Tools"`, 2292 DOM
+  nodes, rail grew a **Tools** row, store `{"mode":"starter","pinned":["tools"]}`; reload → both
+  survived. ⌘K → typed "Learning" → Enter → `h1: "Learning"` and `pinned:["tools","learning"]` — the
+  palette reaches what the rail hides and the visit pins it. The rail control focused by keyboard
+  measured `outline: solid 2px rgb(154,155,156)`, `boxShadow` layers **0** (the app's ring is
+  `:focus-visible { outline }`, exactly as briefed); Enter expanded it to all 18 destinations with
+  the headers back and the name flipped to "Show fewer, hide 11 surfaces"; reload kept `expert`.
+  `#/settings/design` → the **Navigation** switch read `aria-checked="true"`; clicking it returned
+  the rail to starter **plus the two earned pins**. Upgrade fixture (`localStorage.removeItem` →
+  reload): full 18-row rail, and the store stayed `null` — an expert install writes nothing until the
+  user acts. Mobile 390×844: drawer opened from "Expand sidebar", the control present and named, and
+  Enter on it expanded the rail. Collapsed 64px rail: icon only, `aria-label` intact, visible text
+  empty (the `title` carries it). **Zero console errors and zero pageerrors across the whole run.**
+- [2026-08-16][OU-5] **DISCOVERY (the rail has 18 destinations, not 19).** Counted from `NAV`: the
+  expanded rail renders 19 buttons because one of them is the disclosure control. Worth knowing for
+  OU-10's tour, which anchors on the rail.
+- [2026-08-16][OU-5] **Known limit, deliberate.** The preference is per-DEVICE, which `identity.tsx`
+  already states as the house rule ("Per-device prefs (theme, width, nav state) stay in localStorage;
+  identity does not"). So a SECOND browser opened against an already-onboarded install has no record
+  and shows the full rail. That fails open — it never hides a surface from someone using it — and
+  matches how theme, rail width and rail collapse already behave. Moving it server-side would mean a
+  probe on every boot and either a flash of the wrong rail or a new boot gate, for a preference the
+  rest of the family keeps local.

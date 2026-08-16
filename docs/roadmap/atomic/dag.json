@@ -6374,7 +6374,7 @@
         {
           "id": "OU-5",
           "title": "NavRail progressive disclosure (starter/expert sections, auto-pin-on-visit, expert toggle) + URL-doctrine regression test",
-          "status": "todo",
+          "status": "done",
           "scope": "Session 2 T2.1 + T2.3 + V2; Contracts C4 (NavRail sections, prefs store); Design 'Progressive disclosure'",
           "done_when": "fresh home shows the starter rail; visiting an Everything surface via deep link/CommandPalette renders AND auto-pins it (test red if a deep link 404s/blanks under starter mode); expert-mode toggle in Appearance shows all permanently; upgrade fixture (onboarding-completed-before-this-version marker) defaults expert ON; keyboard-only, reduced-motion, and mobile-viewport passes hold",
           "deps": []
@@ -7752,11 +7752,6 @@
       {
         "id": "OU-4",
         "title": "Onboarding done screen + resume + per-step skip + CLI setup pointer",
-        "plan": "OU"
-      },
-      {
-        "id": "OU-5",
-        "title": "NavRail progressive disclosure (starter/expert sections, auto-pin-on-visit, expert toggle) + URL-doctrine regression test",
         "plan": "OU"
       },
       {
@@ -10177,9 +10172,9 @@
         "code": "OU",
         "plan": "ONBOARDING-UX",
         "total_atoms": 11,
-        "done": 5,
+        "done": 6,
         "in_progress": 0,
-        "todo": 6,
+        "todo": 5,
         "blocked": 0
       },
       {

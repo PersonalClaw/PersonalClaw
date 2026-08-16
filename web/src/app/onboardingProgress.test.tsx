@@ -50,6 +50,7 @@ vi.mock('./onboarding/TryOneStep', () => ({
 }))
 
 import { Onboarding } from './Onboarding'
+import { readNavDisclosure } from './navDisclosure'
 
 beforeEach(() => {
   vi.clearAllMocks()
@@ -120,6 +121,39 @@ describe('every step transition persists its resume point', () => {
     await enterName()
     fireEvent.click(await screen.findByRole('button', { name: 'stub-continue' }))
     for (const [patch] of saveOnboardingState.mock.calls) expect(Object.keys(patch)).toEqual(['step'])
+  })
+})
+
+describe('finishing marks the install as onboarded under THIS version (OU-5 / C4)', () => {
+  // Progressive disclosure needs to tell a fresh install from an upgrade, and the marker is the
+  // absence of a `nav-disclosure` record — so the write has to happen at the one act only a
+  // fresh install performs. Without it a brand-new user lands on the full 19-row rail and the
+  // starter rail never ships to anybody.
+  async function finishFlow() {
+    await enterName()
+    fireEvent.click(await screen.findByRole('button', { name: 'stub-continue' }))
+    // OU-3 landed a fourth step (`try`) between essentials and ready while this atom was in
+    // flight, so the flow has to pass through it to reach the finish button — the same path
+    // every other test in this file already takes.
+    fireEvent.click(await screen.findByRole('button', { name: 'stub-skip-try' }))
+    fireEvent.click(await screen.findByRole('button', { name: /Start using/ }))
+  }
+
+  it('writes the starter-rail marker', async () => {
+    localStorage.clear()
+    // No record reads as "onboarded before this version" — the full rail.
+    expect(readNavDisclosure().mode).toBe('expert')
+    await finishFlow()
+    await waitFor(() => expect(readNavDisclosure().mode).toBe('starter'))
+  })
+
+  it('leaves already-earned pins alone', async () => {
+    // "Restart onboarding" (Settings → Account) runs this flow again on an install that has
+    // history. It may reset the MODE — that is what restarting means — but taking away surfaces
+    // the user had already reached would be a rug-pull.
+    localStorage.setItem('nav-disclosure', JSON.stringify({ mode: 'expert', pinned: ['tools'] }))
+    await finishFlow()
+    await waitFor(() => expect(readNavDisclosure()).toEqual({ mode: 'starter', pinned: ['tools'] }))
   })
 })
 
