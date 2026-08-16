@@ -28,6 +28,7 @@ import { LoadingStatus } from '../ui/ListScaffold'
 import { useCachedData } from '../lib/useCachedData'
 import { resolveAppIcon } from '../pages/apps/appIcon'
 import { getNavApps, onNavAppsChange } from '../pages/apps/navApps'
+import { isDisclosed, undisclosedCount, useNavDisclosure } from './navDisclosure'
 import type { AppSummary } from '../lib/api'
 
 // Heavier / less-frequently-first-viewed pages are code-split so the initial
@@ -331,6 +332,41 @@ function AppInner() {
     else if (onboarded) clearOnboardingExit()
   }, [loaded, onboarded, route, navigate])
 
+  // ── Progressive disclosure over the rail (ONBOARDING-UX C4) ──
+  // Read synchronously from localStorage on mount: no probe, so no flash of the wrong rail,
+  // and no record at all resolves to `expert` — the marker for an install that was onboarded
+  // before this shipped (see app/navDisclosure.ts).
+  const { mode: navMode, pinned: navPinned, setMode: setNavMode, pin: pinNav } = useNavDisclosure()
+
+  // The REAL route to render (loops/code keep their own sections for detail/history/
+  // planning sub-routes; only the BARE route was folded into the #/loop composer).
+  // An unknown route falls back to the home dashboard.
+  const rendered = ROUTABLE.has(route) ? route : 'dashboard'
+  // The nav-HIGHLIGHT route: loops launch from within Projects, so a bare #/loop
+  // composer or a #/loops/<id> / #/code/<id> deep-link lights the Projects tile.
+  // Highlight-only — must NOT change which page renders.
+  const active = (rendered === 'loop' || rendered === 'loops' || rendered === 'code') ? 'projects'
+    : rendered === 'app' ? `app/${(sub ?? '').split('/')[0]}`  // light the specific app tile
+      : rendered
+
+  // Auto-pin on visit. Reaching a surface is the strongest signal it belongs in your rail, so
+  // a visit to one the starter rail is holding back REVEALS it permanently. This is what makes
+  // hiding safe: a deep link, a CommandPalette "Go to", a Discover tip and an in-app link all
+  // render their surface whatever the mode is, and the rail catches up by itself. Nothing is
+  // ever reachable ONLY through the rail.
+  //
+  // Starter mode only, deliberately: in expert mode nothing is hidden, so there is nothing to
+  // reveal — and pinning every surface you browsed while expanded would silently empty out
+  // "Show fewer" and make the toggle a one-way door.
+  //
+  // Placed above the early returns (with `rendered`/`active`) so hook order is stable —
+  // an effect after them would be conditional (React #310).
+  useEffect(() => {
+    if (navMode !== 'starter') return
+    if (isDisclosed(active, navMode, navPinned)) return
+    pinNav(active)
+  }, [active, navMode, navPinned, pinNav])
+
   // Persist the embed flag at mount-time so in-page navigation (which strips the
   // query param from the hash) doesn't lose it. MUST be before any early return so
   // hook order is stable across renders (React #310).
@@ -404,16 +440,6 @@ function AppInner() {
     )
   }
 
-  // The REAL route to render (loops/code keep their own sections for detail/history/
-  // planning sub-routes; only the BARE route was folded into the #/loop composer).
-  // An unknown route falls back to the home dashboard.
-  const rendered = ROUTABLE.has(route) ? route : 'dashboard'
-  // The nav-HIGHLIGHT route: loops launch from within Projects, so a bare #/loop
-  // composer or a #/loops/<id> / #/code/<id> deep-link lights the Projects tile.
-  // Highlight-only — must NOT change which page renders.
-  const active = (rendered === 'loop' || rendered === 'loops' || rendered === 'code') ? 'projects'
-    : rendered === 'app' ? `app/${(sub ?? '').split('/')[0]}`  // light the specific app tile
-    : rendered
   // Ambient active-loop count badges the Projects tile (loops live under projects now).
   // APE-7: installed apps with an available update badge the Store nav tile with a count,
   // so an out-of-date app is visible from any page (computed from the same /api/apps
@@ -447,7 +473,17 @@ function AppInner() {
       }
     }
   }
-  // command palette (⌘K): every nav destination as a "Go to" + global actions
+  // Which rail rows SHOW. Disclosure hides rows; it never removes a route (`rendered` above is
+  // untouched by it) and never removes a command below.
+  const disclosedItems = navItems.filter((n) => isDisclosed(n.id, navMode, navPinned))
+  // What "Everything" would reveal — counted against starter whatever the current mode is, so
+  // the expanded rail can say what collapsing costs.
+  const moreCount = undisclosedCount(navItems.map((n) => n.id), navPinned)
+
+  // command palette (⌘K): every nav destination as a "Go to" + global actions.
+  // Built from the FULL `NAV`, never from `disclosedItems` — the palette is the always-open
+  // door to a surface the starter rail is holding back, and visiting through it pins the
+  // surface (the auto-pin effect above). Filtering it here would make disclosure a gate.
   const commands: Command[] = [
     ...NAV.map((n) => ({ id: `go:${n.id}`, label: n.label, hint: 'Go to', icon: n.icon, keywords: n.section ?? '', run: () => navigate(n.id) })),
     // pinned app tiles are nav destinations too — same "Go to" contract
@@ -459,8 +495,13 @@ function AppInner() {
   ]
   return (
     <div className="flex h-full" style={{ background: 'var(--color-canvas)' }}>
-      <NavRail items={navItems} activeId={active} onSelect={onNavSelect} collapsed={railCollapsed}
-        overlay={isMobile} overlayOpen={isMobile && mobileNavOpen} onScrimClick={() => setMobileNavOpen(false)} />
+      <NavRail items={disclosedItems} activeId={active} onSelect={onNavSelect} collapsed={railCollapsed}
+        overlay={isMobile} overlayOpen={isMobile && mobileNavOpen} onScrimClick={() => setMobileNavOpen(false)}
+        disclosure={{
+          expanded: navMode === 'expert',
+          moreCount,
+          onToggle: () => setNavMode(navMode === 'expert' ? 'starter' : 'expert'),
+        }} />
       <main className="relative flex-1 min-w-0">
         {/* App-shell corner regions — float above page content, not a header row */}
         <ShellCornerLeft collapsed={railCollapsed} onToggle={toggleNav} />

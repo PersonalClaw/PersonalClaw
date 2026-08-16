@@ -46,6 +46,16 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
   changes unless an app asks for it. Installing a sidecar's environment is a resumable background
   job: if it is interrupted, re-running picks up from the step that failed rather than starting
   over, and it tells you the one thing to do about a failure rather than only what broke.
+- **A new install now opens on a short sidebar that grows as you use the app.** Instead of
+  eighteen destinations on day one, a fresh setup shows five — Home, Chat, Inbox, Store and
+  Settings — plus an **Everything +13** row at the bottom of the list. Nothing is locked away:
+  open any other surface from a link, from search (⌘K) or from Discover and it renders exactly as
+  before *and* joins your sidebar for good, so the rail ends up matching what you actually use.
+  One click on **Everything** shows all of them permanently, and the same row (or
+  **Settings → Design → Navigation → Show every surface**) puts it back — turning it back off
+  keeps every surface you had already opened. **If you are upgrading, nothing changes:** an
+  existing install keeps its full sidebar, because the short rail only ever starts for a setup
+  that ran the first-run flow. The preference is per browser, like your theme and sidebar width.
 - **An empty Triggers page now offers four working starters instead of a blank form.** Morning
   briefing, weekly digest, nightly check and a standup reminder each show their cadence in your
   own locale's clock, and picking one opens the ordinary create form already filled in — review it,

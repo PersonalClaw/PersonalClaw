@@ -8,6 +8,7 @@ import { DotGlow } from '../ui/DotGlow'
 import { LoadingStatus } from '../ui/ListScaffold'
 import { spring, stagger, listItemEnter } from '../design/motion'
 import { useIdentity, firstNameOf } from './identity'
+import { setNavMode } from './navDisclosure'
 import { APP_NAME } from './config'
 import { api, type OnboardingState, type OnboardingStatePatch } from '../lib/api'
 import { StepRow, type StepState } from './onboarding/StepStack'
@@ -85,6 +86,13 @@ export function Onboarding() {
   }
   function finish() {
     progress({ step: 'done' })
+    // The fresh-install marker for the rail (ONBOARDING-UX C4). This is the ONE act that can
+    // only happen on a fresh install — it is what commits identity and flips `onboarded` — so
+    // writing the disclosure record here is what tells the shell "onboarded under this
+    // version, start on the starter rail". An install that has no record was onboarded before
+    // this shipped and keeps its full rail; see app/navDisclosure.ts. Pins are left alone, so
+    // restarting onboarding never takes away a surface you had already reached.
+    setNavMode('starter')
     // commit identity LAST so the gate (`onboarded`) flips only on completion
     setName(savedName || 'Operator')
   }
