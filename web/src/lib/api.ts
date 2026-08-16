@@ -259,6 +259,10 @@ export interface SpawnedAgent { id: string; task: string; done: boolean; parent?
 // where in the source the match sits; all optional (null for a structureless type).
 export interface KnowledgeContextCard {
   id: string; title: string; provider?: string; match_type?: string; tokens: number; summary?: string
+  /** The matched PASSAGE. `search_for_context` has always sent it (it is the text the
+   *  composer injects) but it was missing from this interface, so the one thing a
+   *  retrieval card exists to show was untypeable. OU-3's knowledge try-one reads it. */
+  content?: string
   source_type?: string | null; section?: string | null; line_range?: [number, number] | null; deep_link?: string | null
 }
 export interface KnowledgeContextResult { query: string; results: KnowledgeContextCard[]; total_tokens: number; max_tokens: number }

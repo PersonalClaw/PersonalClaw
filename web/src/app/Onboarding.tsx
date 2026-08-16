@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { unavailableWhen } from '../ui/unavailable'
 import { withWeight } from '../design/fontWeight'
 import { motion } from 'framer-motion'
-import { ArrowRight, User, Boxes, Sparkles, Loader2, Check } from 'lucide-react'
+import { ArrowRight, User, Boxes, Rocket, Sparkles, Loader2, Check } from 'lucide-react'
 import { ClawMark } from '../ui/ClawMark'
 import { DotGlow } from '../ui/DotGlow'
 import { LoadingStatus } from '../ui/ListScaffold'
@@ -12,12 +12,16 @@ import { APP_NAME } from './config'
 import { api, type OnboardingState, type OnboardingStatePatch } from '../lib/api'
 import { StepRow, type StepState } from './onboarding/StepStack'
 import { EssentialsStep } from './onboarding/EssentialsStep'
+import { TryOneStep } from './onboarding/TryOneStep'
+import { setOnboardingExit } from './onboarding/exitTo'
 
-type StepId = 'name' | 'essentials' | 'ready'
-const ORDER: StepId[] = ['name', 'essentials', 'ready']
+type StepId = 'name' | 'essentials' | 'try' | 'ready'
+const ORDER: StepId[] = ['name', 'essentials', 'try', 'ready']
 // One source for each step's title — used by both the StepRow headings and the live region that
 // announces progress, so the spoken step name can never drift from the visible one.
-const TITLES: Record<StepId, string> = { name: 'Your name', essentials: 'Essential apps', ready: 'All set' }
+const TITLES: Record<StepId, string> = {
+  name: 'Your name', essentials: 'Essential apps', try: 'Try one', ready: 'All set',
+}
 
 /** First-run welcome — a full-screen branded moment over the chat 3D dot-wave.
  *  A vertically-stacked stepper: each step expands when active and collapses to
@@ -39,9 +43,13 @@ export function Onboarding() {
   const [savedName, setSavedName] = useState('')
   const [readiness, setReadiness] = useState<OnboardingState | null>(null)
   const [modelDone, setModelDone] = useState<string>('')  // '' = not resolved, else summary
+  const [triedSummary, setTriedSummary] = useState<string>('')
 
   // the active step's row drives the 3D glow focus (like the composer in chat)
-  const rowRefs = { name: useRef<HTMLDivElement>(null), essentials: useRef<HTMLDivElement>(null), ready: useRef<HTMLDivElement>(null) }
+  const rowRefs = {
+    name: useRef<HTMLDivElement>(null), essentials: useRef<HTMLDivElement>(null),
+    try: useRef<HTMLDivElement>(null), ready: useRef<HTMLDivElement>(null),
+  }
   const activeRef = rowRefs[step]
 
   const stateOf = (id: StepId): StepState => {
@@ -67,12 +75,26 @@ export function Onboarding() {
     setSavedName(n); setStep('essentials'); progress({ step: 'essentials' })
   }
   function leaveEssentials(summary: string) {
-    setModelDone(summary); setStep('ready'); progress({ step: 'first_success' })
+    setModelDone(summary); setStep('try'); progress({ step: 'first_success' })
+  }
+  /** The try-one step is the LAST persisted resume point (`STEPS` has no id between
+   *  `first_success` and `done`), so moving to the recap writes nothing new — a user
+   *  who reloads on the recap still resumes at the step they have not finished. */
+  function leaveTryOne(summary: string) {
+    setTriedSummary(summary); setStep('ready')
   }
   function finish() {
     progress({ step: 'done' })
     // commit identity LAST so the gate (`onboarded`) flips only on completion
     setName(savedName || 'Operator')
+  }
+  /** Leave the flow for a real destination — a try-one card's outcome link, or the
+   *  Settings deep-link on its failure path. The route guard holds a non-onboarded
+   *  user on `#/onboarding`, so the destination is handed to the guard and the name
+   *  commit is what releases it; `exitTo.ts` explains why navigating instead races. */
+  function exitTo(path: string) {
+    setOnboardingExit(path)
+    finish()
   }
 
   return (
@@ -120,10 +142,18 @@ export function Onboarding() {
                   </div>}
             </StepRow>
 
-            <StepRow ref={rowRefs.ready} index={2} icon={Sparkles} title={TITLES.ready}
+            <StepRow ref={rowRefs.try} index={2} icon={Rocket} title={TITLES.try}
+              subtitle="Watch it actually do something. Each one runs for real — and none of them is required."
+              state={stateOf('try')} doneSummary={triedSummary || undefined}
+              onActivate={() => setStep('try')}>
+              <TryOneStep onProgress={progress} onDone={leaveTryOne}
+                onSkip={() => leaveTryOne('Skipped')} onExitTo={exitTo} />
+            </StepRow>
+
+            <StepRow ref={rowRefs.ready} index={3} icon={Sparkles} title={TITLES.ready}
               subtitle={`You're ready, ${firstNameOf(savedName)}.`}
               state={stateOf('ready')}>
-              <ReadyStep name={savedName} modelSummary={modelDone} onFinish={finish} />
+              <ReadyStep name={savedName} modelSummary={modelDone} triedSummary={triedSummary} onFinish={finish} />
             </StepRow>
           </div>
         </motion.div>
@@ -151,15 +181,19 @@ function NameStep({ value, onChange, onSubmit }: { value: string; onChange: (v: 
   )
 }
 
-/** Step 3 — recap + launch. */
-function ReadyStep({ name, modelSummary, onFinish }: { name: string; modelSummary: string; onFinish: () => void }) {
+/** Final step — recap + launch. */
+function ReadyStep({ name, modelSummary, triedSummary, onFinish }: {
+  name: string; modelSummary: string; triedSummary: string; onFinish: () => void
+}) {
   const chatReady = modelSummary && modelSummary !== 'Set up later'
+  const tried = triedSummary && triedSummary !== 'Skipped'
   return (
     <div className="flex flex-col gap-m">
       <motion.div className="flex flex-col gap-1.5"
         initial="initial" animate="animate" variants={{ animate: { transition: stagger(0.06) } }}>
         <motion.div variants={listItemEnter}><Recap ok label={`Hello, ${firstNameOf(name)}`} /></motion.div>
         <motion.div variants={listItemEnter}><Recap ok={!!chatReady} label={chatReady ? `Chat model: ${modelSummary}` : 'Chat model — set up later in Settings'} /></motion.div>
+        <motion.div variants={listItemEnter}><Recap ok={!!tried} label={tried ? `First success: ${triedSummary}` : 'Nothing tried yet — the cards are in Discover'} /></motion.div>
       </motion.div>
       <motion.button whileTap={{ scale: 0.98 }} transition={spring.spatialFast} onClick={onFinish} type="button"
         className="inline-flex items-center justify-center gap-1.5 self-start rounded-pill px-5 h-11 text-[0.9375rem]"
