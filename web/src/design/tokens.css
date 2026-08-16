@@ -474,36 +474,65 @@
   .hljs-strong { font-weight: 600; }
 }
 
-/* Editorial type scale for the `document` content type (sanitized LLM-authored
-   HTML rendered in-DOM — see content/renderers.tsx DocumentPreview). Theme-aware
-   via tokens; scoped to .doc so it never leaks into app chrome or chat prose. */
-@layer base {
-  .doc { color: var(--color-on-surface); font-size: 1rem; line-height: 1.7; }
-  .doc > :first-child { margin-top: 0; }
-  .doc h1, .doc h2, .doc h3, .doc h4, .doc h5, .doc h6 {
-    line-height: 1.25; margin: 1.8em 0 0.6em; font-variation-settings: "wght" 640; color: var(--color-on-surface);
-  }
-  .doc h1 { font-size: 1.9rem; letter-spacing: -0.01em; }
-  .doc h2 { font-size: 1.45rem; letter-spacing: -0.005em; }
-  .doc h3 { font-size: 1.2rem; }
-  .doc h4 { font-size: 1.02rem; }
-  .doc p, .doc li { margin: 0.6em 0; }
-  .doc ul, .doc ol { padding-left: 1.4em; margin: 0.6em 0; }
-  .doc ul { list-style: disc; } .doc ol { list-style: decimal; }
-  .doc a { color: var(--color-primary); text-decoration: underline; text-underline-offset: 2px; }
-  .doc img { max-width: 100%; height: auto; border-radius: 8px; }
-  .doc blockquote {
-    margin: 1em 0; padding: 0.2em 0 0.2em 1em; border-left: 3px solid var(--color-outline-variant);
-    color: var(--color-on-surface-low);
-  }
-  .doc pre { overflow: auto; background: var(--color-surface-low); padding: 1em; border-radius: 10px; margin: 1em 0; }
-  .doc code { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 0.875em; }
-  .doc :not(pre) > code { background: var(--color-surface-high); padding: 0.12em 0.36em; border-radius: 5px; }
-  .doc table { border-collapse: collapse; width: 100%; margin: 1em 0; font-size: 0.92em; }
-  .doc th, .doc td { border: 1px solid var(--color-outline-variant); padding: 0.5em 0.7em; text-align: left; }
-  .doc th { background: var(--color-surface-high); font-variation-settings: "wght" 600; }
-  .doc hr { border: none; border-top: 1px solid var(--color-outline-variant); margin: 2em 0; }
-  .doc figure { margin: 1.2em 0; } .doc figcaption { color: var(--color-on-surface-low); font-size: 0.85em; text-align: center; margin-top: 0.4em; }
+/* THE editorial type scale — one house style, two hosts:
+     `.doc`      the `document` content type (sanitized LLM-authored HTML rendered
+                 in-DOM — see content/renderers.tsx DocumentPreview).
+     `.reading`  the Knowledge reading view (KNOWLEDGE-LIBRARY T3.1), where the SAME
+                 scale dresses markdown rendered through ui/Markdown.
+   Both are scoped classes, so neither leaks into app chrome or chat prose. Adding a
+   second scale for reading would have been drift: an article and a document are the
+   same reading problem, so they get the same measure, leading and heading ramp.
+
+   DELIBERATELY UNLAYERED (it used to be `@layer base`). ui/Markdown pins every prose
+   element with Tailwind utilities tuned for CHAT density — `p` at 0.9375rem, `li` the
+   same, `h2`-`h4` at 1.0625rem — and utilities live in `@layer utilities`, which beats
+   `@layer base` regardless of specificity. Unlayered normal declarations outrank every
+   layered one, which is the only way a scoped prose scale can win over them without
+   `!important`. Same reasoning as the `::highlight()` registry at the end of this file.
+   `.doc`'s own host renders raw HTML with no competing utilities, so unlayering changes
+   nothing there. What it cannot reach is the inline `style` ui/Markdown puts on
+   `h2`-`h4` (`fvs(500)`) — those headings keep weight 500 instead of 640; a lighter
+   subhead is a nuance, not a defect, and beating an inline style would need
+   `!important`, which is a worse trade. */
+.doc, .reading { color: var(--color-on-surface); font-size: 1rem; line-height: 1.7; }
+.doc > :first-child, .reading > :first-child { margin-top: 0; }
+.doc :is(h1, h2, h3, h4, h5, h6), .reading :is(h1, h2, h3, h4, h5, h6) {
+  line-height: 1.25; margin: 1.8em 0 0.6em; font-variation-settings: "wght" 640; color: var(--color-on-surface);
+}
+.doc h1, .reading h1 { font-size: 1.9rem; letter-spacing: -0.01em; }
+.doc h2, .reading h2 { font-size: 1.45rem; letter-spacing: -0.005em; }
+.doc h3, .reading h3 { font-size: 1.2rem; }
+.doc h4, .reading h4 { font-size: 1.02rem; }
+.doc :is(p, li), .reading :is(p, li) { margin: 0.6em 0; font-size: 1rem; line-height: 1.7; }
+.doc :is(ul, ol), .reading :is(ul, ol) { padding-left: 1.4em; margin: 0.6em 0; }
+.doc ul, .reading ul { list-style: disc; } .doc ol, .reading ol { list-style: decimal; }
+.doc a, .reading a { color: var(--color-primary); text-decoration: underline; text-underline-offset: 2px; }
+.doc img, .reading img { max-width: 100%; height: auto; border-radius: 8px; }
+.doc blockquote, .reading blockquote {
+  margin: 1em 0; padding: 0.2em 0 0.2em 1em; border-left: 3px solid var(--color-outline-variant);
+  color: var(--color-on-surface-low); font-style: italic;
+}
+.doc pre, .reading pre { overflow: auto; background: var(--color-surface-low); padding: 1em; border-radius: 10px; margin: 1em 0; }
+.doc code, .reading code { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 0.875em; }
+.doc :not(pre) > code, .reading :not(pre) > code { background: var(--color-surface-high); padding: 0.12em 0.36em; border-radius: 5px; }
+.doc table, .reading table { border-collapse: collapse; width: 100%; margin: 1em 0; font-size: 0.92em; }
+.doc :is(th, td), .reading :is(th, td) { border: 1px solid var(--color-outline-variant); padding: 0.5em 0.7em; text-align: left; }
+.doc th, .reading th { background: var(--color-surface-high); font-variation-settings: "wght" 600; }
+.doc hr, .reading hr { border: none; border-top: 1px solid var(--color-outline-variant); margin: 2em 0; }
+.doc figure, .reading figure { margin: 1.2em 0; }
+.doc figcaption, .reading figcaption { color: var(--color-on-surface-low); font-size: 0.85em; text-align: center; margin-top: 0.4em; }
+
+/* A persisted reading highlight (KNOWLEDGE-LIBRARY T3.1). A `<mark>` painted around
+   a re-anchored passage — see pages/knowledge/readingAnchors.ts. Unlayered for the
+   same reason as the scale above: it sits inside ui/Markdown's utility-styled prose.
+   `color: inherit` because the UA default paints marks black-on-yellow, which is
+   unreadable in the dark theme and ignores the scheme entirely. No transition: the
+   paint appears with its passage, so there is nothing to animate. */
+.kl-highlight {
+  background-color: color-mix(in srgb, var(--color-primary) 26%, transparent);
+  color: inherit;
+  border-radius: 3px;
+  padding: 0.05em 0;
 }
 
 /* DAG hover lineage (DagView) — hovering a node lights its full transitive

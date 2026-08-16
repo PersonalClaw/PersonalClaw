@@ -1,13 +1,14 @@
 import { useEffect, useState } from 'react'
 import { fvs } from '../../design/fontWeight'
-import { Pencil, Trash2, Check, X, ExternalLink, Sparkles, Layers, Loader2, Pin, Star, BookOpen, Archive, Download, Target, Maximize2, Wand2, ChevronDown, WifiOff, RefreshCw, MessageCircleQuestion } from 'lucide-react'
+import { Pencil, Trash2, Check, X, ExternalLink, Sparkles, Layers, Loader2, Pin, Star, BookOpen, BookOpenText, Archive, Download, Target, Maximize2, Wand2, ChevronDown, WifiOff, RefreshCw, MessageCircleQuestion } from 'lucide-react'
 import { HeaderActions, HeaderControl } from '../../ui/HeaderActions'
 import { useFocusTrap } from '../../ui/useFocusTrap'
 import { investigate } from '../../lib/investigate'
 import { Button } from '../../ui/Button'
 import { Markdown } from '../../ui/Markdown'
 import { ChipInput, FieldError } from '../../ui/forms'
-import type { KnowledgeItem, IntentOutcome, IntentOutcomeField } from '../../lib/api'
+import type { KnowledgeAnnotation, KnowledgeItem, IntentOutcome, IntentOutcomeField } from '../../lib/api'
+import { ReadingView } from './ReadingView'
 import { resolveType, insightRows, fmtBytes, relTime, GIST_LANGUAGES } from './knowledgeMeta'
 import { getKnowledge, updateKnowledge, deleteKnowledge } from './knowledgeStore'
 import { GistEditor } from './GistEditor'
@@ -27,7 +28,7 @@ function gistFence(code: string, lang?: string): string {
  *  image·audio·video / code gist / doc), extracted content, AI insights,
  *  entities/relations/related, and per-type edit + delete. Works against both
  *  backend items and the local stub (knowledgeStore merges them). */
-export function KnowledgeDetail({ item, onChanged, onDeleted, onTagClick, onShowDetails, detailsOpen, detailsCount, onHeader }: { item: KnowledgeItem; onChanged: () => void; onDeleted: () => void; onTagClick?: (tag: string) => void; onShowDetails?: () => void; detailsOpen?: boolean; detailsCount?: number; onHeader?: (parts: { wand: React.ReactNode; actions: React.ReactNode; editing: boolean } | null) => void }) {
+export function KnowledgeDetail({ item, onChanged, onDeleted, onTagClick, onShowDetails, detailsOpen, detailsCount, onHeader, reading = false, onToggleReading, annotations = [], onAnnotationsChanged }: { item: KnowledgeItem; onChanged: () => void; onDeleted: () => void; onTagClick?: (tag: string) => void; onShowDetails?: () => void; detailsOpen?: boolean; detailsCount?: number; onHeader?: (parts: { wand: React.ReactNode; actions: React.ReactNode; editing: boolean } | null) => void; reading?: boolean; onToggleReading?: () => void; annotations?: KnowledgeAnnotation[]; onAnnotationsChanged?: () => void }) {
   const [full, setFull] = useState<KnowledgeItem>(item)
   const [editing, setEditing] = useState(false)
   // Tag autocomplete, fetched lazily when the user first enters edit mode.
@@ -109,6 +110,13 @@ export function KnowledgeDetail({ item, onChanged, onDeleted, onTagClick, onShow
   const [genning, setGenning] = useState(false)
   // Generated insights only make sense for items carrying authored/extracted text.
   const canGenerate = !!(full.content || '').trim()
+  // Same test drives reading mode: a reader needs a body. A bookmark, a bare image or an
+  // item still being ingested has nothing to read, so the toggle goes soft-off with a
+  // reason rather than opening an empty reader.
+  const readable = canGenerate
+  // The URL may say `read=1` on an item that turns out to have no body (a stale link, or
+  // the body was cleared). Gate on BOTH, so the reader never opens empty.
+  const readingMode = reading && readable
 
   async function generateInsights() {
     setGenning(true); setErr('')
@@ -228,6 +236,16 @@ export function KnowledgeDetail({ item, onChanged, onDeleted, onTagClick, onShow
           here would sit outside the overflow logic). */}
       <HeaderControl icon={MessageCircleQuestion} label="Investigate in chat" priority="low"
         onClick={() => { void investigate('knowledge_item', full.id, { backLink: `#/knowledge/item/${full.id}` }) }} />
+      {/* Reading mode (KNOWLEDGE-LIBRARY T3.1). A two-state toggle, so the label stays
+          CONSTANT and names the destination — `active` already becomes `aria-pressed`,
+          which is what carries the state. (The read-state control below is the sanctioned
+          exception because it cycles three.) Soft-off with a reason on an item that has no
+          body to read — a bookmark or a bare image has nothing for a reader to do. */}
+      {onToggleReading && (
+        <HeaderControl icon={BookOpenText} label="Reading mode" active={reading}
+          disabled={!readable} hint={readable ? undefined : 'This item has no text body to read'}
+          onClick={onToggleReading} />
+      )}
       <HeaderControl icon={BookOpen}
         label={(full.read_state || 'unread') === 'reading' ? 'Reading — mark read'
           : full.read_state === 'read' ? 'Read — mark unread' : 'Mark as reading'}
@@ -273,7 +291,9 @@ export function KnowledgeDetail({ item, onChanged, onDeleted, onTagClick, onShow
     // discards the edit. (Deps are still hand-picked — actionCluster/wandBtn are fresh
     // objects every render; listing them would republish unconditionally and loop.)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [full, draft, reingest, aiTitleAvailable, detailsCount, detailsOpen, editing, saving])
+    // `reading` joins them for the same reason: the published Reading-mode control reads it
+    // for `active`, so without it the header would keep showing the pre-toggle state.
+  }, [full, draft, reingest, aiTitleAvailable, detailsCount, detailsOpen, editing, saving, reading])
 
   // Fleeting notes are content-only (auto-titled) and journals are date-driven — neither
   // exposes an editable title (matches the create flow + journal immutability).
@@ -422,13 +442,25 @@ export function KnowledgeDetail({ item, onChanged, onDeleted, onTagClick, onShow
           collide with the content's own controls (e.g. a gist's copy button). The
           per-node pool / entities / relations / related live in the page's "More
           details" side panel (KnowledgeExtras), not inline. */}
-      <Preview item={full} tm={tm} prominent />
-      <InsightsDock
-        open={insightsOpen} onToggle={() => setInsightsOpen((v) => !v)}
-        summary={full.summary} insights={insights} intents={itemIntents}
-        canGenerate={canGenerate} genning={genning} onGenerate={generateInsights}
-        processing={procStatus === 'queued' || procStatus === 'processing'}
-      />
+      {/* Reading mode replaces the preview + insights dock rather than sitting beside
+          them: the whole point is to give the article the column, and a reader competing
+          with a metadata strip and a dock is the data view it exists to escape. The
+          metadata and tag rows above stay — they are one line each and they are how a
+          reader confirms WHAT they are reading. */}
+      {readingMode ? (
+        <ReadingView item={full} annotations={annotations}
+          onAnnotationsChanged={onAnnotationsChanged ?? (() => {})} />
+      ) : (
+        <>
+          <Preview item={full} tm={tm} prominent />
+          <InsightsDock
+            open={insightsOpen} onToggle={() => setInsightsOpen((v) => !v)}
+            summary={full.summary} insights={insights} intents={itemIntents}
+            canGenerate={canGenerate} genning={genning} onGenerate={generateInsights}
+            processing={procStatus === 'queued' || procStatus === 'processing'}
+          />
+        </>
+      )}
     </div>
     </>
   )

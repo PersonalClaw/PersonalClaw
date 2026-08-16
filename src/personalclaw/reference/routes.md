@@ -258,6 +258,7 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `POST /api/incident` — current state; POST /api/incident — activate.
 - `POST /api/incident/resume` — turn incident mode OFF.
 - `POST /api/investigate` — _(no summary)_
+- `DELETE /api/knowledge/annotations/{id}` — drop one highlight.
 - `POST /api/knowledge/bulk` — apply one curation op to many items.
 - `GET /api/knowledge/collections` — every shelf in rail order.
 - `POST /api/knowledge/collections` — create a manual or smart shelf.
@@ -286,6 +287,8 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `DELETE /api/knowledge/items/{id}` — _(no summary)_
 - `GET /api/knowledge/items/{id}` — - single item with its entities + relations.
 - `PATCH /api/knowledge/items/{id}` — - update fields.
+- `GET /api/knowledge/items/{id}/annotations` — the item's reading highlights.
+- `POST /api/knowledge/items/{id}/annotations` — keep a highlighted passage.
 - `GET /api/knowledge/items/{id}/content` — - plain text for clipboard.
 - `GET /api/knowledge/items/{id}/duplicates` — near-duplicates, best match first.
 - `GET /api/knowledge/items/{id}/extracted` — - the per-item extracted-content

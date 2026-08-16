@@ -390,7 +390,7 @@
         {
           "id": "KL-7",
           "title": "S3 reading view: editorial type scale, progress, in-reader highlight\u2192note",
-          "status": "todo",
+          "status": "done",
           "scope": "Session 3 \u2014 T3.1 (reading view); Open question (annotations as mentions vs dedicated table \u2014 default: reuse mentions)",
           "done_when": "KnowledgeDetailPage gains a reading mode with the editorial-document house-style reading type scale and a progress indicator; an in-reader highlight persists as a mention/note linked to the item and reappears on the item; a long article reads well; reduced-motion/theme/token-lint pass",
           "deps": [
@@ -7684,8 +7684,8 @@
         "plan": "KL"
       },
       {
-        "id": "KL-7",
-        "title": "S3 reading view: editorial type scale, progress, in-reader highlight\u2192note",
+        "id": "KL-8",
+        "title": "S3 library home: recently-added / continue-reading / favorites / collection counts",
         "plan": "KL"
       },
       {
@@ -9654,9 +9654,9 @@
         "code": "KL",
         "plan": "KNOWLEDGE-LIBRARY",
         "total_atoms": 12,
-        "done": 9,
+        "done": 10,
         "in_progress": 0,
-        "todo": 3,
+        "todo": 2,
         "blocked": 0
       },
       {
