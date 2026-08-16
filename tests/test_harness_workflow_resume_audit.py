@@ -132,11 +132,21 @@ async def test_mid_flight_kill_resumes_byte_equal() -> None:
     run = _make_run(hang_spec)
     live = RunController(run, hang_spec, services=EngineServices(completion=hang))
     await live.start()
-    # Let node 0 complete and node 1 start (and hang).
-    for _ in range(50):
+    # Wait for node 1 — the hanging `infer` — to be the one running. Waiting for ANY running
+    # instance is not the same condition: node 0 is a transform that completes in microseconds
+    # on an idle machine, but under load a poll tick can land while it is still running, and
+    # the snapshot then says node 0 is running, which is not the state the assertions below
+    # describe. Name the node, and fail loudly rather than snapshotting a half-built frontier.
+    hanging = "root.children[1]"
+    for _ in range(200):
         await asyncio.sleep(0.05)
-        if any(i.state.value == "running" for i in live.instances.values()):
+        inst = live.instances.get(hanging)
+        if inst is not None and inst.state.value == "running":
             break
+    else:
+        states = {p: i.state.value for p, i in sorted(live.instances.items())}
+        await live.stop()
+        raise AssertionError(f"{hanging} never started within 10s; instances={states}")
     pre_kill = resume_audit._frontier_snapshot(live)
     await live.stop()  # THE KILL — leaves the run resumable, not failed.
 
