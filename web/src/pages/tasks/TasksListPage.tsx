@@ -5,7 +5,7 @@ import { TopBar } from '../../ui/TopBar'
 import { fvs } from '../../design/fontWeight'
 import { HeaderActions, HeaderControl, HeaderSegmented } from '../../ui/HeaderActions'
 import { FilterMenu, type FilterSectionDef } from '../../ui/FilterMenu'
-import { EmptyState, ListSkeleton } from '../../ui/ListScaffold'
+import { EmptyState, ListSkeleton, LoadError } from '../../ui/ListScaffold'
 import { Button } from '../../ui/Button'
 import { InlineError } from '../../ui/InlineError'
 import { SearchField } from '../../ui/SearchField'
@@ -91,7 +91,12 @@ export function TasksListPage({ onCreate, view: viewProp, filter, openId, setVie
   // so the optimistic moveTask/patchLocal updates still apply (useCachedData has no
   // setter). The mirror hydrates from the cached data, and a post-mutation load()
   // invalidates + revalidates the cache.
-  const { data: cachedTasks, refresh } = useCachedData('tasks', () => api.tasks().then((d) => d.tasks).catch(() => [] as TaskItem[]), { persist: false })
+  // NO `.catch(() => [])` here. It used to swallow the rejection, so `error` could never be read
+  // even by a caller that tried, and a failed load arrived as an empty array — which the render
+  // below then presented as "No tasks" with a create-a-task CTA. Measured with `/api/tasks` at 500
+  // and a cold sessionStorage: "No tasks — Break a goal into tracked work…" plus the New-task
+  // button, no alert, no retry, told to a user who may have a hundred tasks.
+  const { data: cachedTasks, refresh, error: loadErr } = useCachedData('tasks', () => api.tasks().then((d) => d.tasks), { persist: false })
   const [tasks, setTasks] = useState<TaskItem[] | null>(null)
   // The configured username, so a row can say whether it's mine or someone else's.
   // Only meaningful once a shared provider actually returns other people's work, so
@@ -396,7 +401,11 @@ export function TasksListPage({ onCreate, view: viewProp, filter, openId, setVie
             {moveError && <InlineError animated icon onDismiss={() => setMoveError('')}>{moveError}</InlineError>}
           </div>
           <div className="mx-auto h-full min-h-0 w-full" style={{ maxWidth: 'var(--content-width)' }}>
-            {filtered === null ? <ListSkeleton rows={6} what="tasks" /> : (tasks?.length ?? 0) === 0 ? (
+            {/* Error FIRST: `tasks === null` also satisfies the skeleton and the empty branch, so a
+                later test would be unreachable. Removing the swallow above is only half the fix —
+                without this branch a failed load would hang on the skeleton forever instead. */}
+            {tasks === null && loadErr ? <LoadError what="tasks" error={loadErr} onRetry={() => { invalidateCache('tasks'); refresh() }} />
+              : filtered === null ? <ListSkeleton rows={6} what="tasks" /> : (tasks?.length ?? 0) === 0 ? (
               <EmptyState icon={ListChecksLike} title="No tasks" hint="Break a goal into tracked work. Create a task, or let an agent plan from a chat." action={{ label: 'New task', onClick: onCreate, icon: Plus }} />
             ) : scopedTasks.length === 0 ? (
               <EmptyState icon={ListChecksLike} title="Nothing here" hint="No tasks match this scope." />
@@ -423,7 +432,8 @@ export function TasksListPage({ onCreate, view: viewProp, filter, openId, setVie
                 onPick={(l) => setListFilter(listFilter?.id === l.id ? null : { id: l.id, name: l.name })}
                 onReset={resetList} />
             )}
-            {filtered === null ? <ListSkeleton rows={6} what="tasks" /> : (tasks?.length ?? 0) === 0 ? (
+            {tasks === null && loadErr ? <LoadError what="tasks" error={loadErr} onRetry={() => { invalidateCache('tasks'); refresh() }} />
+              : filtered === null ? <ListSkeleton rows={6} what="tasks" /> : (tasks?.length ?? 0) === 0 ? (
               <EmptyState icon={ListChecksLike} title="No tasks" hint="Break a goal into tracked work. Create a task, or let an agent plan from a chat." action={{ label: 'New task', onClick: onCreate, icon: Plus }} />
             ) : view === 'dag' ? (
               scopedTasks.length === 0
