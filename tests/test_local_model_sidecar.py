@@ -65,12 +65,21 @@ def call(method, payload):
         # Write HALF a frame straight to the protocol fd, then hang. This is what a
         # native library crashing mid-write leaves in the pipe.
         os.write(1, b'{"id": "1:1", "ok": true, "result": {"vector": [0.1, 0.2')
+        # Tell the parent on the LOG fd that the fragment is in the pipe, so the test can
+        # kill us after the write instead of racing it. Without this the kill can land
+        # first, and then there is no truncated frame for the runner to discard.
+        os.write(2, b"fragment-written" + bytes([10]))  # newline via bytes([10]):
+        # the outer _WORKER text is NOT a raw string, so an escape written here is
+        # processed before the child ever sees it. Even in a comment.
         time.sleep(600)
     if method == "half_frame":
         # The DANGEROUS shape: a frame that is COMPLETE, VALID JSON and carries the id the
         # parent is waiting on — but has no terminating newline, because the process died
         # before writing it. Only the newline rule can tell this from a real reply.
         os.write(1, b'{"id": "1:1", "ok": true, "result": {"vector": ["HALF"]}}')
+        os.write(2, b"fragment-written" + bytes([10]))  # newline via bytes([10]):
+        # the outer _WORKER text is NOT a raw string, so an escape written here is
+        # processed before the child ever sees it. Even in a comment.
         time.sleep(600)
     if method == "chatty":
         print("loky: forking 4 workers")  # a stray print must not corrupt the protocol
@@ -130,6 +139,35 @@ def _kill_soon(pid: int, delay: float = 0.4) -> threading.Timer:
     timer.daemon = True
     timer.start()
     return timer
+
+
+def _kill_when(pid: int, ready, *, timeout: float = 20.0) -> threading.Thread:
+    """Kill *pid* once ``ready()`` holds — the write, not the clock.
+
+    A fixed delay races the thing it is trying to interrupt. ``_kill_soon`` is armed
+    BEFORE the call is sent, so on a loaded box the child can die before it writes its
+    fragment: the caller still gets a crash, but nothing was truncated, and an assertion
+    about the discard then fails for a reason that has nothing to do with the property.
+    Worse, a test that only asserts the crash passes VACUOUSLY in that ordering — it never
+    exercised the frame it exists to reject.
+
+    So the child announces the write on its log fd and this waits for it. The kill still
+    happens at *timeout* if the marker never arrives, so a genuine hang fails the call
+    rather than parking the suite on the worker's ``sleep(600)``.
+    """
+
+    def _wait_then_kill() -> None:
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline and not ready():
+            time.sleep(0.02)
+        try:
+            os.kill(pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+
+    thread = threading.Thread(target=_wait_then_kill, daemon=True)
+    thread.start()
+    return thread
 
 
 # ── the protocol: five verbs against a real child ──
@@ -204,7 +242,10 @@ def test_a_frame_truncated_by_the_kill_is_never_read_as_a_result(runner):
     say it threw the fragment away.
     """
     runner.ensure_started()
-    _kill_soon(runner.health()["pid"], delay=0.6)
+    _kill_when(
+        runner.health()["pid"],
+        lambda: any("fragment-written" in line for line in runner.log_tail),
+    )
 
     with pytest.raises(SidecarCrashed):
         runner.call("call", {"method": "dribble"})
@@ -221,13 +262,19 @@ def test_a_valid_frame_with_no_terminating_newline_is_still_refused(runner):
     process that died before it finished writing. The caller must get the crash.
     """
     runner.ensure_started()
-    _kill_soon(runner.health()["pid"], delay=0.6)
+    _kill_when(
+        runner.health()["pid"],
+        lambda: any("fragment-written" in line for line in runner.log_tail),
+    )
 
     with pytest.raises(SidecarCrashed) as caught:
         result = runner.call("call", {"method": "half_frame"})
         raise AssertionError(f"a half-written frame was believed: {result!r}")
 
     assert caught.value.reason == f"signal_{int(signal.SIGKILL)}"
+    # Without this the test passes vacuously when the kill beats the write: assert the
+    # unterminated frame really reached the runner and really was thrown away.
+    assert any("truncated frame discarded" in line for line in runner.log_tail)
 
 
 def test_a_timeout_is_typed_and_reaps_the_hung_child(tmp_path, worker):
@@ -583,9 +630,25 @@ def install_registry(tmp_path, monkeypatch):
     return reg, install
 
 
-async def _settle():
-    for _ in range(40):
+async def _settle(pred=None, *, timeout=10.0):
+    """Drain the loop, or wait for ``pred`` — the transition, not the clock.
+
+    The bare 40x20ms form measures the RUNNER's load rather than the registry: an install
+    that spawns a subprocess does not always reach its terminal state inside 0.8s on a
+    loaded box, and the assertion then reads ``running``. Callers that go on to assert a
+    terminal state pass a predicate and get a real wait with a cap, so a genuine hang still
+    fails instead of passing or hanging.
+    """
+    if pred is None:
+        for _ in range(40):
+            await asyncio.sleep(0.02)
+        return
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if pred():
+            return
         await asyncio.sleep(0.02)
+    raise AssertionError(f"condition never held within {timeout}s")
 
 
 @pytest.mark.asyncio
@@ -594,7 +657,7 @@ async def test_the_install_job_is_a_sidecar_install_kind_on_the_one_registry(ins
     job, err = reg.start_install("fixture-embed")
     assert err is None and job is not None
     assert job.kind == "sidecar-install"
-    await _settle()
+    await _settle(lambda: reg.install_job("fixture-embed").state == "done")
     assert reg.install_job("fixture-embed").state == "done"
     assert reg.install_job("fixture-embed").progress == 1.0
 
@@ -617,7 +680,7 @@ async def test_a_failed_install_reports_the_typed_reason_on_the_job(tmp_path, mo
     monkeypatch.setattr(M.ModelDownloadRegistry, "install", lambda self, provider: install)
     job, err = reg.start_install("fixture-embed")
     assert err is None
-    await _settle()
+    await _settle(lambda: reg.install_job("fixture-embed").state == "error")
     assert reg.install_job("fixture-embed").state == "error"
     assert reg.install_job("fixture-embed").reason == "pip_failed"
 
@@ -665,7 +728,7 @@ async def test_install_status_carries_steps_log_tail_and_remediation(install_reg
             match_info={"provider": "fixture-embed"},
         )
     )
-    await _settle()
+    await _settle(lambda: reg.install_job("fixture-embed").state == "done")
     resp = await H.api_sidecar_install_status(
         _req(
             "GET",
