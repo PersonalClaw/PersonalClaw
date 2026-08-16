@@ -34,6 +34,8 @@
 import { lazy, type ComponentType, type LazyExoticComponent } from 'react'
 
 import type { ErrorTreatmentId } from './errorTreatments'
+import type { DotPattern, DotShape } from './runtime'
+import type { CueName, CuePoint } from './soundCues'
 
 /** The closed set of shell-element ids. A personality may mount ONE registered
  *  decorative component at the App shell — never arbitrary code, never markup it
@@ -78,6 +80,40 @@ export function getShellElement(id: string | undefined): LazyExoticComponent<Com
   return SHELL_ELEMENTS[id as ShellElementId]
 }
 
+/** Motion/backdrop dials a personality presets at activation.
+ *
+ *  Each key names an EXISTING token in `tokenRegistry.ts` (see
+ *  `PERSONALITY_DIAL_TOKENS`), so a preset is applied by writing that token through
+ *  the appearance store — the same call the slider in Settings → Appearance makes.
+ *  Nothing here writes `design/runtime.ts` directly, which matters twice: the
+ *  appearance store's own bridge stays the single writer of the canvas runtime, and
+ *  the preset lands in the user's saved overrides, so they can dial it straight back
+ *  afterwards and it sticks. A personality SEEDS these; it does not own them.
+ *
+ *  Deliberately four dials, not "any token". An identity gets to arrive with a
+ *  motion temperament and a dot glyph; it does not get to resize the type, recolor
+ *  outside its `baseScheme`, or reach the layout. */
+export interface PersonalityDials {
+  /** `--expressiveness`: the primary motion-intensity dial (0 refined … 1 bold). */
+  expressiveness?: number
+  /** `--bounciness`: spring overshoot (0 calm … 1 playful). */
+  bounciness?: number
+  /** `--dot-shape`: the glyph the halftone backdrop paints. */
+  dotShape?: DotShape
+  /** `--dot-pattern`: the lattice the dots sit on. */
+  dotPattern?: DotPattern
+}
+
+/** dial → the token varName it writes. One declaration, so the provider that applies
+ *  a preset and the rail that proves every dial names a REAL token read the same map
+ *  (a dial pointing at a token that no longer exists would silently do nothing). */
+export const PERSONALITY_DIAL_TOKENS: Record<keyof PersonalityDials, string> = {
+  expressiveness: '--expressiveness',
+  bounciness: '--bounciness',
+  dotShape: '--dot-shape',
+  dotPattern: '--dot-pattern',
+}
+
 /** Assistant-name + prompt-persona + chrome behaviors a personality may carry.
  *  Every field is optional: a personality that only recolors is valid. */
 export interface PersonalityBehavior {
@@ -106,6 +142,19 @@ export interface PersonalityBehavior {
    *  of a treatment has no room for copy, actions or roles, so a personality
    *  cannot reword or disarm a failure. Omitted = today's treatment, unchanged. */
   errorTreatment?: ErrorTreatmentId
+  /** Re-voice one or more of the three cue POINTS with another registered cue from
+   *  `design/soundCues.ts`. Both sides are closed: the key must be a cue point and
+   *  the value a registered voice, so an identity can change what a moment sounds
+   *  like but cannot add a moment, cannot author a tone, and cannot make sound the
+   *  master toggle hasn't allowed — every cue still plays through `playCue`, which
+   *  owns the toggle, reduced-motion and hidden-tab gates. Omitted = the default
+   *  voices; the master toggle is OFF by default, so an identity that declares a
+   *  voice is still silent until the user asks for sound. */
+  soundCues?: Partial<Record<CuePoint, CueName>>
+  /** Motion/backdrop dials this identity arrives with, seeded into the user's own
+   *  appearance overrides at activation (see `PersonalityDials`). Omitted = the
+   *  token defaults, which is what makes a standard scheme's motion untouched. */
+  dials?: PersonalityDials
 }
 
 export interface Personality {
@@ -136,9 +185,12 @@ export const PERSONALITIES: Personality[] = [
   },
   {
     // Placeholder identity #1 (plan: "the registry entry shape is the deliverable").
+    // Every field in the closed block is exercised by one of the two proofs, so the
+    // registry shape is demonstrated rather than described — this one carries the
+    // persona snippet and the shell element; the arcade carries neither.
     id: 'retro-terminal',
     label: 'Retro Terminal',
-    hint: 'Mono-green phosphor, dense CLI spacing, and a terse operator voice.',
+    hint: 'Mono-green phosphor, dense CLI spacing, a scanline haze, and a terse operator voice.',
     baseScheme: 'phosphor',
     behavior: {
       displayName: 'TERM',
@@ -149,14 +201,21 @@ export const PERSONALITIES: Personality[] = [
       uiDensity: 'cli',
       shellElement: 'terminal-scanlines',
       errorTreatment: 'terminal-frame',
+      // The ASCII BEL: what a terminal actually does when a job wants you.
+      soundCues: { approval_needed: 'terminal_bell' },
+      // A CRT is orderly and unhurried: square dots on a straight lattice, and the
+      // motion language pulled down to its refined end — no overshoot at all, so
+      // panels arrive flat instead of springing.
+      dials: { expressiveness: 0.25, bounciness: 0, dotShape: 'square', dotPattern: 'grid' },
     },
   },
   {
     // Placeholder identity #2 — deliberately reuses an existing scheme, proving a
-    // personality needs no new palette to be a distinct identity.
+    // personality needs no new palette to be a distinct identity. Its whole
+    // character is carried by the dials, the cue voice and the error skin.
     id: 'claw-arcade',
     label: 'Claw Arcade',
-    hint: 'Amber cabinet glow and a playful, high-energy voice.',
+    hint: 'Amber cabinet glow, sparkle dots, bouncy motion, and a playful, high-energy voice.',
     baseScheme: 'amber',
     behavior: {
       displayName: 'CLAW-1',
@@ -165,6 +224,12 @@ export const PERSONALITIES: Personality[] = [
       faviconHref: '/favicon.svg',
       uiDensity: 'comfortable',
       errorTreatment: 'arcade-panel',
+      // A finished turn is a credit accepted.
+      soundCues: { turn_complete: 'coin_blip' },
+      // The opposite temperament to the terminal's, on the same four dials: motion
+      // at full tilt, and a sparkle glyph on an offset lattice so the backdrop reads
+      // as an attract screen rather than a graph.
+      dials: { expressiveness: 1, bounciness: 1, dotShape: 'sparkle', dotPattern: 'diamond' },
     },
   },
 ]

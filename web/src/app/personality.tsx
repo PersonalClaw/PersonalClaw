@@ -3,11 +3,13 @@ import { useAppearance } from './appearance'
 import {
   DEFAULT_PERSONALITY,
   PERSONALITIES,
+  PERSONALITY_DIAL_TOKENS,
   getShellElement,
   resolvePersonality,
   type Personality,
 } from '../design/personalities'
 import { getErrorTreatment, type ErrorTreatment } from '../design/errorTreatments'
+import { setCueVoices } from '../design/soundCues'
 
 /** Applies the active PERSONALITY's non-color behaviors (PERSONALITY-THEMES §S1).
  *
@@ -68,7 +70,7 @@ function setFavicon(href: string | null) {
 }
 
 export function PersonalityProvider({ children }: { children: ReactNode }) {
-  const { applyScheme, setSelect } = useAppearance()
+  const { applyScheme, setSelect, setScalar, resetToken } = useAppearance()
   const [id, setId] = useState<string>(readStored)
   const personality = useMemo(() => resolvePersonality(id), [id])
   const isDefault = personality.id === DEFAULT_PERSONALITY
@@ -84,6 +86,16 @@ export function PersonalityProvider({ children }: { children: ReactNode }) {
       // without re-reading every token — mirrors how the scheme sets data-theme.
       document.documentElement.dataset.personality = personality.id
     }
+    // Cue VOICES belong here rather than in `activate`, because they are not
+    // persisted anywhere else: the appearance store owns the dials and remembers
+    // them across a reload, while a voice is derived purely from the active
+    // identity. Applying it in the effect means a reload under an identity restores
+    // its voices, and switching to an identity that declares none — the default, and
+    // every standard scheme — clears them. Deliberately NOT `isDefault ? undefined :
+    // …` like the two lines above: the default declares no voices, so the branch
+    // would be unreachable, and `personalityA11y.test.ts` asserts that rather than
+    // leaving an untestable ternary here to say it.
+    setCueVoices(b.soundCues)
   }, [personality, isDefault])
 
   const activate = useCallback(
@@ -98,8 +110,21 @@ export function PersonalityProvider({ children }: { children: ReactNode }) {
       // Colors + density go through the EXISTING appearance mechanisms.
       applyScheme(target.baseScheme)
       setSelect('--ui-density', target.behavior.uiDensity ?? 'comfortable')
+      // Motion/backdrop dials, same discipline: write the TOKEN, let the appearance
+      // store's bridge write `runtime`. A dial the target does not declare is RESET
+      // rather than left alone — otherwise the arcade's sparkle would survive a
+      // switch back to the default identity, which is the residue this provider
+      // exists to prevent. `resetToken` drops the override so the token's own
+      // default applies, so restore needs no second copy of those defaults.
+      const dials = target.behavior.dials
+      for (const [dial, varName] of Object.entries(PERSONALITY_DIAL_TOKENS)) {
+        const v = dials?.[dial as keyof typeof PERSONALITY_DIAL_TOKENS]
+        if (v == null) resetToken(varName)
+        else if (typeof v === 'number') setScalar(varName, v)
+        else setSelect(varName, v)
+      }
     },
-    [applyScheme, setSelect],
+    [applyScheme, setSelect, setScalar, resetToken],
   )
 
   const value = useMemo<Ctx>(

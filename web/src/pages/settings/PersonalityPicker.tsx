@@ -3,7 +3,7 @@ import { Check, Sparkles, Volume2 } from 'lucide-react'
 import { usePersonality } from '../../app/personality'
 import { DEFAULT_PERSONALITY, type Personality } from '../../design/personalities'
 import { prefersReducedMotion } from '../../design/motion'
-import { setSoundCuesEnabled, soundCuesEnabled } from '../../design/soundCues'
+import { setSoundCuesEnabled, soundCuesEnabled, type CuePoint } from '../../design/soundCues'
 import { Modal } from '../../ui/Modal'
 import { Button } from '../../ui/Button'
 import { Toggle } from '../../ui/Toggle'
@@ -37,12 +37,28 @@ import { api } from '../../lib/api'
  *  The prose is deliberately specific about the two things a user would otherwise
  *  have to discover by being annoyed: nothing is downloaded, and a background tab
  *  stays quiet. */
+/** How to name a cue point in prose. Only the three POINTS need a label — a voice is
+ *  something you hear, not something to list — and this is the user-facing wording,
+ *  which is why it lives with the copy rather than in `soundCues.ts`. */
+const CUE_POINT_LABELS: Record<CuePoint, string> = {
+  turn_complete: 'a finished turn',
+  approval_needed: 'an approval',
+  error: 'a failure',
+}
+
 function SoundCuesToggle() {
+  const { personality } = usePersonality()
   const [on, setOn] = useState(soundCuesEnabled)
   const flip = (v: boolean) => {
     setSoundCuesEnabled(v)
     setOn(v)
   }
+  // Which moments the active identity re-voices. Said out loud because otherwise
+  // the only way to discover that this identity sounds different is to hear it and
+  // wonder whether something is broken.
+  const voiced = (Object.keys(personality.behavior.soundCues ?? {}) as CuePoint[])
+    .map((point) => CUE_POINT_LABELS[point])
+    .filter(Boolean)
   return (
     <div className="mt-l flex items-start gap-m rounded-lg bg-surface-container px-m py-3">
       <div className="mt-0.5 shrink-0">
@@ -58,6 +74,11 @@ function SoundCuesToggle() {
           fails. Off by default. The tones are generated in the browser, so nothing is
           downloaded — and a cue never plays while this tab is in the background.
         </p>
+        {voiced.length > 0 && (
+          <p data-type="body-s" className="mt-1 text-on-surface-low">
+            {personality.label} has its own tone for {voiced.join(' and ')}.
+          </p>
+        )}
         {on && prefersReducedMotion() && (
           <p data-type="body-s" className="mt-1 text-on-surface-low">
             Silent right now: your system asks for reduced motion, which turns cues off too.
@@ -121,8 +142,9 @@ export function PersonalityPicker() {
       </div>
       <p className="mb-m text-on-surface-low text-[0.8125rem] leading-relaxed">
         A personality is a whole identity, not just a palette: it sets the colors, the
-        wordmark, the tab title, and the interface density together — and can offer the
-        assistant a matching name. Picking one never changes your saved configuration
+        wordmark, the tab title, the interface density, and the motion and backdrop dials
+        together — and can offer the assistant a matching name. Every one of those stays
+        yours to adjust afterwards, and picking one never changes your saved configuration
         without asking.
       </p>
       <div className="grid grid-cols-2 sm:grid-cols-3 gap-m">
@@ -153,8 +175,8 @@ export function PersonalityPicker() {
         <Modal title={`Switch to ${pending.label}?`} onClose={() => setPending(null)}>
           <div className="flex flex-col gap-m">
             <p className="text-on-surface text-[0.875rem] leading-relaxed">
-              The colors, wordmark, tab title, and density change right away — pick another
-              personality any time to change them back.
+              The colors, wordmark, tab title, density, and motion dials change right away —
+              pick another personality any time to change them back.
             </p>
             <div className="flex items-start gap-m rounded-lg bg-surface-container px-m py-3">
               {/* Toggle is the kit's binary control. The design system has no
