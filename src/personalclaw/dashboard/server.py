@@ -780,6 +780,9 @@ async def start_dashboard(
     app.router.add_get("/api/chat/sessions", chat.api_chat_sessions)
     app.router.add_post("/api/chat/sessions", chat.api_chat_session_create)
     app.router.add_post("/api/chat/sessions/cleanup", chat.api_chat_sessions_cleanup)
+    app.router.add_get("/api/chat/screen-frame", chat.api_chat_screen_state)
+    app.router.add_post("/api/chat/screen-frame", chat.api_chat_screen_frame)
+    app.router.add_post("/api/chat/screen-frame/pin", chat.api_chat_screen_frame_pin)
     # Bulk ops + the session lifecycle (archive/restore/auto-archive). Registered
     # BEFORE the `{session}` routes below so the literal `bulk`/`auto-archive` paths
     # aren't captured as a session name by the dynamic pattern.

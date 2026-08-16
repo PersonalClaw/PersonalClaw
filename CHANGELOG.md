@@ -31,6 +31,20 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
   off until you ask for it, still silent in a background tab and under Reduce Motion, and the
   sparkle backdrop is a single still frame — never a moving one — when your system asks for reduced
   motion.
+- **You can show the assistant your screen for one message — off until you turn it on.** Settings
+  → Chat has a new **Share screen in chat** switch. It ships **off**, and while it is off there is
+  no control in the composer *and* the server refuses a frame outright, so nothing can start
+  sharing your screen by asking. Switch it on and the composer grows a **Share screen** button: your
+  browser's own dialog picks the screen or window, your browser's own indicator stays lit the whole
+  time, and PersonalClaw adds a pulsing **Sharing screen** chip in the chat header so you can also
+  see which conversation is being shown frames. One frame is captured at the moment you send a
+  message — not a stream — it is held in memory for that single turn, never written to disk, and
+  dropped as soon as it is used; sending a second message replaces it rather than piling up. If the
+  model you are talking to cannot read images, a vision model describes the frame instead and the
+  turn says so, so you always know whether it saw pixels or a description. Stopping the share (the
+  chip, your browser's stop button, or closing the tab) clears everything immediately. If you want
+  to keep a frame, "+" → **Pin shared frame** saves it as an ordinary attachment — the only way one
+  ever reaches your disk, and it is refused in a temporary or incognito chat.
 - **Optional sound cues, off until you turn them on.** Settings → Design → Personality has a new
   switch that gives you a brief tone when a turn finishes, when a tool approval needs you, and when
   something fails — nothing else. It ships **off**, and even switched on it stays quiet while the tab

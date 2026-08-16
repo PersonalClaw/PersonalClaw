@@ -88,6 +88,19 @@ export interface ComposerProps {
   /** Called with the accumulated dictation once a confirmation phrase fires the
    *  turn. Required for the hands-free toggle to appear. */
   onHandsFreeSubmit?: (text: string) => void
+  /** Screen-context sharing (MULTIMODAL-IO §5.2). The host owns the display stream
+   *  (it also owns the header chip that must stay lit for its duration), so the
+   *  composer only renders the control. Absent or `available:false` → no control at
+   *  all, which is what the OFF-by-default config flag produces. */
+  screenShare?: {
+    /** `dashboard.screen_share_enabled` is on. */
+    available: boolean
+    /** A display stream is live now. */
+    sharing: boolean
+    /** Non-empty → render the control disabled carrying this as its reason. */
+    disabledReason?: string
+    onToggle: () => void
+  }
   /** When true, the send button becomes a "queue" affordance — the host runs the
    *  message after the in-flight turn finishes instead of dropping it. */
   canQueue?: boolean

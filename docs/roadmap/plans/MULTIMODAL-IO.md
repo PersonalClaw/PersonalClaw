@@ -288,3 +288,109 @@ Approved **AUTO-R20** (WORKFLOWS-V2-AUTOMATION-SUBSTRATE §1.2, `observe` trigge
 8. Pinning a frame produces an ordinary uploads attachment; an incognito session refuses the pin; nothing from either surface ever appears in `memory.db`, and knowledge ingestion of a pinned frame happens only via the user's explicit action.
 9. All new config fields round-trip through load/save/PATCH (four-wiring-points verified by the schema reachability tests) and every toggle changes live behavior as-a-user.
 10. `ALLOWED_HOOK_PROVIDERS`, `PROVIDER_TYPES`, and the type-handler set are byte-identical before and after this plan lands (no accidental provider-family creep — asserted in review).
+
+---
+
+## Execution log
+
+### `MI-4` — Screen-context observation channel — DONE (2026-08-16)
+
+Shipped §5 in full: `dashboard/screen_context.py` (the in-memory latest-wins slot +
+the delivery-routing policy), `GET/POST /api/chat/screen-frame`,
+`POST /api/chat/screen-frame/pin`, the drain-and-deliver step in `chat_runner.py`, a
+`stage_image_part` seam on `ModelProvider` implemented by the OpenAI and Anthropic
+adapters and delegated by `NativeAgentRuntime`, and the FE trio
+(`useScreenShare` + the composer control + the header `ScreenShareChip`) behind
+`dashboard.screen_share_enabled`, **off by default**.
+
+Four things worth recording because they changed the design:
+
+1. **The interactive chat path is text-only.** `chat_runner` calls
+   `client.stream(str)`; there was no channel for an image content part anywhere in
+   the chat path, and the one existing vision call site
+   (`knowledge/pipeline/nodes/_llm.py`) emits an OpenAI-shaped `image_url` block that
+   `AnthropicProvider._translate_messages` passes through **unchanged** — i.e. it
+   would 400 against the Messages API. So the seam had to be per-adapter:
+   `stage_image_part` stages, and each adapter renders its OWN wire shape
+   (`image_url` vs `{"type":"image","source":{...}}`) as the request is built. Base
+   returns `False`, and that default is the safety property — an ACP CLI reports "I
+   cannot carry an image" and the frame degrades to a description instead of being
+   silently dropped.
+
+2. **DEVIATION — the drain runs just before `client.stream(...)`, not beside
+   `_inject_attachment_content`.** §5.3 named the attachment-injection point, but the
+   routing decision needs the live `client` (does this transport carry an image?) and
+   the resolved model id (does this model read images?), neither of which exists at
+   that point in `_run_chat`. Same turn, same one-shot contract, ~650 lines later.
+
+3. **Two independent conditions, not one.** The model's declared vision capability
+   (`infer_capabilities(model_id)` — the same per-model source Settings → Models
+   uses) and the transport's `stage_image_part` verdict are different questions, and
+   BOTH must say yes before pixels are sent. `"auto"`/unknown resolves to *not*
+   vision, so an unconfirmed model gets a description rather than an image it may
+   ignore.
+
+4. **Per-turn pinning is not buildable, and that is the feature.** §5.4 asks for a
+   pin affordance "on any screen-context turn". The client cannot pin an older frame
+   without retaining every frame — exactly the retention this section forbids — and
+   the server destroyed its copy at drain. So the affordance pins the frame currently
+   being shared (composer "+" → **Pin shared frame**), and older turns have none.
+
+**Falsification.** Eleven mutations, ten reddened. The eleventh exposed a **test
+defect**: the leak search looked for the marker raw and as `b64(marker)`, neither of
+which is a substring of `b64(whole_png)` — so a leak stored in the base64 form the
+frame actually ARRIVES in was invisible. Adding that third needle turned both the
+SEL-record mutation and a new disk-leak mutation red, and the disk test now carries a
+vacuity floor that plants each form and requires the search to find it.
+
+**Unverifiable half, stated plainly.** Criterion 7 wants the browser indicator AND the
+chip both showing. Only the chip is assertable in jsdom: the browser's capture
+indicator is user-agent chrome with no DOM presence, and jsdom implements neither
+`getDisplayMedia` nor any capture UI. What is asserted instead is the property that
+keeps the pair honest — the chip is mounted off the LIVE track and torn down on its
+`ended` event, so the browser's own stop button clears it. The two-indicator claim
+itself needs a real browser, and that drive is `MI-5`'s scope (its criteria already
+name "screen share on vision and non-vision models"); no one has run it yet.
+
+### `MI-4` completion pass — reviewing the implementation session's own diff
+
+Fourteen further mutations, all fourteen reddened, plus one that had to STAY green and
+did. Two of them exposed honesty defects in the tests rather than in the code, both the
+same shape — a guarantee the surrounding prose claimed and the code did not deliver:
+
+1. **The no-disk assertion scanned prose as code.** `test_module_holds_no_file_write_path`
+   said it stripped "the docstrings/comments" and stripped only `#` lines. Putting
+   `open(` into the module docstring as pure prose reddened it — so documenting the
+   guarantee would have broken the test asserting it, while a write path hidden behind
+   an aliased import would still have slipped through. Re-asserted over the AST (calls
+   plus imports): prose is invisible to it, and the import check is strictly stronger
+   than the substring scan it replaces.
+2. **A test that asserted neither half of its own name.**
+   `test_no_leftover_bytes_module_import_is_side_effect_free` carried
+   `assert io is not None` — a vacuous assertion whose only job was to keep an unused
+   import past flake8 — and an emptiness check the autouse fixture already guaranteed.
+   Giving the module a genuine import-time side effect left it green, which is the
+   proof. Replaced with a subprocess import under a fresh home asserting both an empty
+   registry and an empty home.
+
+**One real code defect, found by review not by a red test.** `model_reads_images`
+partitioned the model label on its first colon and kept the tail. `provider:model` and
+a bare `model:tag` are syntactically identical, so `llava:latest` became `latest` —
+and `qwen2-vl:7b` and `llama3.2-vision:11b` likewise — reducing three genuine vision
+models to meaningless tags and routing them to the describe path. Both readings are now
+tried; because capability inference is substring-based, consulting the whole label can
+only add a match, never lose one. The regression test asserts the premise first
+(`infer_capabilities` does recognise those ids), so it cannot pass vacuously.
+
+**Documented, not fixed** (it is not fixable at this seam): the state route and the
+runner share `resolve_delivery` but cannot share its input. The runner resolves
+`auto`/empty against the live provider; the route runs before a provider exists and can
+only pass `session.model` as stored. On an `auto` session the route may therefore
+report DESCRIBED or NONE where the runner will go NATIVE. The divergence is
+one-directional and in the safe direction — the UI can only under-promise, never
+promise pixels that do not arrive — and `useScreenShare` deliberately does not surface
+the mode to the user. Recorded in `screen_context.py` beside the policy.
+
+`dashboard.screen_share_enabled` was also added to `docs/reference/configuration.md`,
+which the implementation session missed. (Seven other `dashboard.*` fields are missing
+from that table on `main`; those are pre-existing and left alone.)

@@ -116,6 +116,9 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `PATCH /api/chat/folders/{id}` — rename or reorder a folder.
 - `POST /api/chat/mode` — set the tool APPROVAL mode (whether tools auto-approve).
 - `POST /api/chat/nav/resolve-links` — batch-summarize bare links.
+- `GET /api/chat/screen-frame` — can this session share its screen?
+- `POST /api/chat/screen-frame` — stage one screen frame for the next chat turn.
+- `POST /api/chat/screen-frame/pin` — promote one frame to an ordinary attachment.
 - `GET /api/chat/sessions` — list all chat sessions.
 - `POST /api/chat/sessions` — create a new chat session.
 - `POST /api/chat/sessions/auto-archive` — run (or preview) the auto-archive rule.
