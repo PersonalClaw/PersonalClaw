@@ -197,3 +197,70 @@ describe('the population this reaches, so the primitives were the right place', 
     }
   })
 })
+
+// ── The other half of the contract: a pressed control must name the ACTION ────────────────────
+//
+// Wiring `aria-pressed={active}` fixed controls that said nothing about their state. It also created
+// a second, quieter fault at three call sites that were ALREADY trying to convey state — by flipping
+// their label to the past participle. With `aria-pressed` now in place, `label={fav ? 'Favorited' :
+// 'Favorite'}` announces "Favorited, pressed": the state twice, and the one thing the user needs —
+// what this press will DO — never. The ARIA toggle-button pattern is explicit that a control changes
+// its label OR carries `aria-pressed`, not both. It also made these the only header controls whose
+// name changes under the user, so "click Favorite" stops being findable once it is on.
+//
+// Canonical form (five sites, unchanged by this): constant label + `active` → "Activity",
+// "Chat history", "Inbox settings", "Details", "More details".
+// Deliberate NON-member: knowledge's read-state control cycles unread → reading → read, so its label
+// must say what the next press does; a constant label could not. It is excluded by name below.
+describe('a pressed header control names the action, not the state', () => {
+  const SRC = join(process.cwd(), 'src')
+  const read = (rel: string) => readFileSync(join(SRC, rel), 'utf8')
+  /** Source with comments stripped — this very block names the forbidden strings. */
+  const code = (rel: string) => read(rel)
+    .replace(/\{\s*\/\*[\s\S]*?\*\/\s*\}/g, '')
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/^[ \t]*\/\/.*$/gm, '')
+
+  it('renders one stable name whether it is on or off', () => {
+    const { unmount } = render(<HeaderControl icon={PanelRight} label="Favorite" active onClick={vi.fn()} />)
+    const on = screen.getByRole('button', { name: 'Favorite' })
+    expect(on.getAttribute('aria-pressed')).toBe('true')
+    unmount()
+    render(<HeaderControl icon={PanelRight} label="Favorite" active={false} onClick={vi.fn()} />)
+    const off = screen.getByRole('button', { name: 'Favorite' })
+    expect(off.getAttribute('aria-pressed')).toBe('false')
+  })
+
+  it("knowledge's three two-state toggles carry constant labels", () => {
+    const src = code('pages/knowledge/KnowledgeDetail.tsx')
+    for (const [icon, label] of [['Star', 'Favorite'], ['Pin', 'Pin'], ['Archive', 'Archive']]) {
+      expect(src, `${icon} toggle should pass a constant label="${label}"`)
+        .toMatch(new RegExp(`icon=\\{${icon}\\}\\s+label="${label}"`))
+    }
+  })
+
+  it('no header control restates its state in its label', () => {
+    const src = code('pages/knowledge/KnowledgeDetail.tsx')
+    for (const participle of ['Favorited', 'Pinned', 'Archived']) {
+      expect(src, `"${participle}" is a state, not an action — aria-pressed already carries it`)
+        .not.toMatch(new RegExp(`label=\\{[^}]*'${participle}'`))
+    }
+  })
+
+  it('the read-state cycle is left alone — three states need an action label', () => {
+    // Guards the DISTINCTION, so a later sweep does not "converge" it and lose the affordance.
+    expect(code('pages/knowledge/KnowledgeDetail.tsx')).toMatch(/'Reading — mark read'/)
+  })
+
+  // Vacuity floor: every assertion above is a source scan, so prove the scanned text is real.
+  it('the scanned source is real (guard against a vacuous pass)', () => {
+    const src = code('pages/knowledge/KnowledgeDetail.tsx')
+    expect(src).toContain('<HeaderControl')
+    expect(src).toContain('active={!!full.favorited}')
+    // And prove comment-stripping actually ran, by looking for a phrase that exists ONLY in this
+    // block's prose. The needle is ASSEMBLED rather than written out: a literal
+    // `not.toContain('…')` puts the phrase into the file it is scanning, so the assertion could
+    // never pass — which is the same self-reference this rail exists to catch, and it caught it here.
+    expect(code('ui/activeMeansPressed.test.tsx')).not.toContain(['quieter', 'fault'].join(' '))
+  })
+})
