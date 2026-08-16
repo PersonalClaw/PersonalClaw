@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { ArrowLeft, Network, Layers } from 'lucide-react'
 import { TopBar } from '../../ui/TopBar'
+import { PageTitle } from '../../ui/PageTitle'
 import { WorkbenchLayout } from '../../ui/WorkbenchLayout'
 import { SidePanel } from '../../ui/SidePanel'
 import { IconButton } from '../../ui/IconButton'
@@ -78,7 +79,14 @@ export function KnowledgeDetailPage({ id, onBack, onOpenItem, query, setQuery }:
                   <button type="button" onClick={onBack} className="text-on-surface-low hover:text-on-surface text-[0.9375rem] transition-colors whitespace-nowrap shrink-0">Knowledge</button>
                   <span className="text-on-surface-low shrink-0">/</span>
                   {tm && item && <span className="shrink-0 inline-flex items-center gap-1.5 text-[0.8125rem] whitespace-nowrap" style={{ color: tm.tone }}><tm.icon size={16} /> {typeLabel(item)}</span>}
-                  <span data-type="title-l" className="text-on-surface truncate min-w-0">{item?.title || item?.url_title || (missing ? 'Not found' : 'Loading…')}</span>
+                  {/* `PageTitle`, not the bare span it replaced: this route's PATH identifies the
+                      entity (`#/knowledge/item/<id>`), so by the rule cycle 162 settled — a
+                      destination is named by its identity, not by its category — the item's name is
+                      this page's `h1`. Measured before: ZERO headings of any level on the whole
+                      surface, so a screen-reader user skipping by heading landed on nothing and had
+                      to read the DOM in order to orient. `PageTitle` is this span with the tag it
+                      should have had (same `data-type="title-l"`), so nothing moves. */}
+                  <PageTitle className="truncate min-w-0">{item?.title || item?.url_title || (missing ? 'Not found' : 'Loading…')}</PageTitle>
                 </div>
               )}
               {/* Magic-wand sits NEXT TO the title (not floating to the right edge). */}
