@@ -5243,7 +5243,7 @@
         {
           "id": "WS-8",
           "title": "Connector-pack app kind (parse-only, engine-mediated fetch) + source-recipe directory",
-          "status": "todo",
+          "status": "done",
           "scope": "\u00a77.1 connector packs as knowledge-capability apps with parse-only scripts (fetch_spec + engine net.fetch + stdin body + JSON-lines stdout, sandbox.wrap_argv); \u00a77.2 recipes as data under knowledge/sources/recipes/ + bundled set surfaced in create flow; \u00a7Plug-in Map ALLOWED_HOOK_PROVIDERS note; \u00a711 step 5 (ecosystem half)",
           "done_when": "A connector-pack app installs and registers via KnowledgeTypeHandler; its parse-only script receives an engine-fetched body over stdin (never owns a socket) and emits SourceItem JSON lines that land as items; bundled recipes surface in the create flow; no socket opens outside net.fetch/web/render.py (SC#11 for the pack path)",
           "deps": [
@@ -7943,11 +7943,6 @@
       {
         "id": "WS-7",
         "title": "Streams: SourceItemIngested/SourcePollCompleted/SourceQueryMatched events + saved queries + digest handoff",
-        "plan": "WS"
-      },
-      {
-        "id": "WS-8",
-        "title": "Connector-pack app kind (parse-only, engine-mediated fetch) + source-recipe directory",
         "plan": "WS"
       }
     ],

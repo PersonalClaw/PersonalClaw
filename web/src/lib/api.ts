@@ -1514,6 +1514,27 @@ export interface SourcesResponse {
   health_statuses: string[]
   raw_enrichment: string
 }
+/** One bundled source recipe (§7.2) — a site shape somebody already worked out.
+ *  `spec` on a MATCH arrives already resolved from the pasted URL's capture groups, so the
+ *  create flow saves what it was shown rather than re-deriving it. */
+export interface SourceRecipe {
+  id: string; displayName: string; description: string
+  /** Which registered provider polls it, and the WatchedSource `kind` that implies. */
+  provider: string; kind: string
+  itemType: string; enrichment: string
+  matchPatterns?: string[]
+  urlGuidance?: string
+  spec: Record<string, unknown>
+  tags?: string[]
+  /** Present only on a match: the capture groups the URL supplied. */
+  groups?: Record<string, string>
+}
+export interface SourceRecipesResponse {
+  recipes: SourceRecipe[]
+  /** Present only when a URL was supplied. Empty means "nobody has covered this site". */
+  matches?: SourceRecipe[]
+  url?: string
+}
 /** One extracted item from a §2.4 dry run. `snippet` is untrusted scraped text, clipped
  *  by the backend and rendered as TEXT only. */
 export interface SourcePreviewItem {
@@ -3495,6 +3516,13 @@ export const api = {
   // at somebody else's server. Only the web kind has one (`SourceKind.previewable`).
   previewKnowledgeSource: (body: { provider: string; spec: Record<string, unknown>; budget?: Record<string, unknown> }) =>
     post<SourcePreviewResult>('/api/knowledge/sources/preview', body),
+  // §7.2's recipe directory. With a `url` it answers the create flow's FIRST question — is this
+  // site already worked out? — and each match carries a spec already resolved from the URL, so
+  // the form is filled from what the user was shown rather than re-derived here.
+  knowledgeSourceRecipes: (url?: string) =>
+    get<SourceRecipesResponse>(
+      url ? `/api/knowledge/source-recipes?url=${encodeURIComponent(url)}` : '/api/knowledge/source-recipes',
+    ),
   // Distinct tags (frequency-ordered) for tag-input autocomplete.
   knowledgeTags: () => get<{ tags: string[] }>('/api/knowledge/tags').then((d) => d.tags),
   // ── Knowledge collections (KNOWLEDGE-LIBRARY S1) ──

@@ -1,0 +1,16 @@
+{
+  "id": "pypi-releases",
+  "displayName": "PyPI project releases",
+  "description": "Every new release of one Python package, from the RSS feed PyPI already publishes per project.",
+  "provider": "watched-feed",
+  "itemType": "bookmark",
+  "matchPatterns": [
+    "^https?://pypi\\.org/project/(?P<project>[A-Za-z0-9][A-Za-z0-9._-]*)/?(?:[^?#]*)?(?:[?#].*)?$"
+  ],
+  "urlGuidance": "Paste a project page such as https://pypi.org/project/aiohttp/.",
+  "spec": {
+    "preset": "rss",
+    "url": "https://pypi.org/rss/project/{{project}}/releases.xml"
+  },
+  "tags": ["releases", "python"]
+}
