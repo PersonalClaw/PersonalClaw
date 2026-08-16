@@ -4967,7 +4967,7 @@
         {
           "id": "PT-5",
           "title": "S2: finish claw-arcade proof + extend personalityA11y.test.ts for the new closed maps",
-          "status": "todo",
+          "status": "done",
           "scope": "Design 'S2 ...' (both proofs) and 'A11y invariants'; Task breakdown Session 2 T2.4; Contract C5",
           "done_when": "claw-arcade proof fleshed out (expressiveness preset via runtime dials, sparkle dot shape, coin-blip cue); personalityA11y.test.ts extended to go red on unknown base scheme, dangling shellElement/errorTreatment id, and any cue declared without the master-toggle gate; both proof personalities fully switchable",
           "deps": [
@@ -7853,8 +7853,8 @@
         "plan": "PR2"
       },
       {
-        "id": "PT-5",
-        "title": "S2: finish claw-arcade proof + extend personalityA11y.test.ts for the new closed maps",
+        "id": "PT-6",
+        "title": "S2: V2 end-to-end user validation + full CI gate across both personalities and all modes",
         "plan": "PT"
       },
       {
@@ -10035,9 +10035,9 @@
         "code": "PT",
         "plan": "PERSONALITY-THEMES",
         "total_atoms": 6,
-        "done": 4,
+        "done": 5,
         "in_progress": 0,
-        "todo": 2,
+        "todo": 1,
         "blocked": 0
       },
       {

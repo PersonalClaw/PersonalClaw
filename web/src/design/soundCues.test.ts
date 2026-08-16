@@ -376,11 +376,22 @@ describe('exactly one AudioContext, and only from a user gesture', () => {
 // ── The cue set is closed, and quiet ────────────────────────────────────────
 
 describe('the cue set is closed', () => {
-  it('is exactly the three cue points the plan names', async () => {
+  it('has exactly the three cue POINTS the plan names', async () => {
     const m = await load()
-    // A caller cannot invent `playCue('ka-ching')` — the name is a closed union, so
-    // that is a type error; this pins the runtime side of the same claim.
-    expect(Object.keys(m.CUES).sort()).toEqual(['approval_needed', 'error', 'turn_complete'])
+    // A caller cannot invent `playCue('ka-ching')` — the point is a closed union, so
+    // that is a type error; this pins the runtime side of the same claim. The three
+    // moments are the closed thing: a personality may re-voice one, never add one.
+    expect([...m.CUE_POINTS].sort()).toEqual(['approval_needed', 'error', 'turn_complete'])
+  })
+
+  it('registers a recipe for every point, plus the two personality voices', async () => {
+    const m = await load()
+    // Every point must have a recipe of its own name (that is what `cueVoice` falls
+    // back to), and the extra members are the identity voices PT-5 added.
+    for (const point of m.CUE_POINTS) expect(m.CUES[point], point).toBeDefined()
+    expect(Object.keys(m.CUES).sort()).toEqual([
+      'approval_needed', 'coin_blip', 'error', 'terminal_bell', 'turn_complete',
+    ])
   })
 
   it('every recipe is playable: a real wave, at least one positive frequency, real duration', async () => {
@@ -419,5 +430,84 @@ describe('the cue set is closed', () => {
     m.playCue('error')
     expect(ramps.length).toBeGreaterThan(0)
     expect(Math.max(...ramps.map((r) => r.value))).toBe(0)
+  })
+})
+
+// ── Personality cue voices (PT-5) ───────────────────────────────────────────
+//
+// A personality may re-voice a cue POINT with another registered voice. The whole
+// design intent is that this changes nothing about reachability: the same `playCue`,
+// the same three suppressors, one extra lookup. So the tests below prove the voice
+// arrives, prove it cannot become a way to make an unregistered sound, and prove it
+// is still silenced by the toggle.
+
+describe('a personality can re-voice a cue point', () => {
+  it('plays the installed voice instead of the point’s own', async () => {
+    const m = await audible()
+    m.setCueVoices({ turn_complete: 'coin_blip' })
+    m.playCue('turn_complete')
+    // Asserted against the coin's frequencies, not just "some tone played": the
+    // default recipe also produces two tones, so a count would pass unchanged.
+    expect(tones.map((t) => t.freq)).toEqual(m.CUES.coin_blip.freqs)
+    expect(tones.map((t) => t.freq)).not.toEqual(m.CUES.turn_complete.freqs)
+  })
+
+  it('leaves the points it does not name on their own voices', async () => {
+    const m = await audible()
+    m.setCueVoices({ turn_complete: 'coin_blip' })
+    m.playCue('error')
+    expect(tones.map((t) => t.freq)).toEqual(m.CUES.error.freqs)
+  })
+
+  it('clearing the voices restores every point — no residue you can only hear', async () => {
+    const m = await audible()
+    m.setCueVoices({ turn_complete: 'coin_blip' })
+    m.setCueVoices(undefined)
+    m.playCue('turn_complete')
+    expect(tones.map((t) => t.freq)).toEqual(m.CUES.turn_complete.freqs)
+  })
+
+  it('drops an unregistered voice at install time rather than at play time', async () => {
+    const m = await audible()
+    // A stale persisted override, or a future app-contributed personality naming a
+    // voice this build does not ship. Falling back to the point's own voice is the
+    // only acceptable outcome: silence would be an invisible regression and a throw
+    // would take down the surface that fired the cue.
+    m.setCueVoices({ turn_complete: 'ka-ching' } as never)
+    expect(m.cueVoice('turn_complete')).toBe('turn_complete')
+    m.playCue('turn_complete')
+    expect(tones.map((t) => t.freq)).toEqual(m.CUES.turn_complete.freqs)
+  })
+
+  it('refuses an INHERITED voice name — the prototype-chain hole, closed', async () => {
+    const m = await audible()
+    // `Object.hasOwn`, not `CUES[v] ?? …`: a plain index finds `'constructor'` on the
+    // prototype, so this would hand `synth` the `Object` constructor as a recipe. PT-3
+    // measured exactly this live in both personality registries.
+    for (const inherited of ['constructor', 'toString', 'hasOwnProperty', '__proto__', 'valueOf']) {
+      m.setCueVoices({ error: inherited } as never)
+      expect(m.cueVoice('error'), inherited).toBe('error')
+      tones = []
+      expect(() => m.playCue('error')).not.toThrow()
+      expect(tones.map((t) => t.freq), inherited).toEqual(m.CUES.error.freqs)
+    }
+  })
+
+  it('ignores a key that is not a cue point — a voice cannot invent a moment', async () => {
+    const m = await audible()
+    m.setCueVoices({ turn_complete: 'coin_blip', app_started: 'terminal_bell' } as never)
+    expect(m.cueVoice('turn_complete')).toBe('coin_blip')
+    // Nothing else can be asked for: the three points are the whole surface.
+    expect([...m.CUE_POINTS]).toEqual(['turn_complete', 'approval_needed', 'error'])
+  })
+
+  it('a re-voiced cue is still silenced by the master toggle', async () => {
+    const m = await audible()
+    m.setCueVoices({ turn_complete: 'coin_blip' })
+    localStorage.removeItem(m.SOUND_CUES_KEY)
+    // The point of the whole design: a voice rides `playCue`, so it inherits every
+    // suppressor. If a personality could sound its own cue, this would be audible.
+    m.playCue('turn_complete')
+    expect(tones).toEqual([])
   })
 })

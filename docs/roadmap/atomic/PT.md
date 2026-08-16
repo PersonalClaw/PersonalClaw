@@ -14,7 +14,7 @@ Each atom below executes start-to-finish in one go. If an atom lists dependencie
 | `PT-2` | ✅ | S2: soundCues synth + master toggle (default OFF) + cue wiring at the three cue points | `PT-1` | web/src/design/soundCues.ts lazily creates one gesture-gated AudioContext and plays the closed cue set (turn_complete, approval_needed, error); a master toggle (default OFF) added to the Personality picker; cues wired at turn-settled (ChatPage), approval-requested (useApprovalToasts), and error toast (Toaster); no sound ever plays with toggle off, under prefers-reduced-motion, or when document.hidden (tests mock the media query); CI grep confirms zero audio files shipped in the bundle |
 | `PT-3` | ✅ | S2: shell-element closed registry + TerminalStrip scanline component mounted at App shell | `PT-1` | SHELL_ELEMENTS closed {id -> lazy component} map added to personalities.ts; web/src/ui/personality/TerminalStrip.tsx renders at the App-shell slot only under its personality (aria-hidden, pointer-events-none, static under reduced-motion following DotGlow discipline); axe a11y pass unchanged; reduced-motion renders a static frame |
 | `PT-4` | ✅ | S2: error-treatment variants on ErrorBoundary + IncidentBanner (skin-only) | `PT-1` | ErrorBoundary fallback and IncidentBanner accept an optional visual variant id from the personality context (visual skin only: same copy, same role=alert, same actions, AA-checked); forced error under each personality renders its treatment; under a standard scheme both are pixel-identical to today |
-| `PT-5` | ⬜ | S2: finish claw-arcade proof + extend personalityA11y.test.ts for the new closed maps | `PT-2`, `PT-3`, `PT-4` | claw-arcade proof fleshed out (expressiveness preset via runtime dials, sparkle dot shape, coin-blip cue); personalityA11y.test.ts extended to go red on unknown base scheme, dangling shellElement/errorTreatment id, and any cue declared without the master-toggle gate; both proof personalities fully switchable |
+| `PT-5` | ✅ | S2: finish claw-arcade proof + extend personalityA11y.test.ts for the new closed maps | `PT-2`, `PT-3`, `PT-4` | claw-arcade proof fleshed out (expressiveness preset via runtime dials, sparkle dot shape, coin-blip cue); personalityA11y.test.ts extended to go red on unknown base scheme, dangling shellElement/errorTreatment id, and any cue declared without the master-toggle gate; both proof personalities fully switchable |
 | `PT-6` | ⬜ | S2: V2 end-to-end user validation + full CI gate across both personalities and all modes | `PT-2`, `PT-3`, `PT-4`, `PT-5` | Full as-a-user tour (dev home) of both personalities across chat/settings/error states, sounds on and off, reduced-motion on and off, dark and light; switching back to a standard scheme leaves zero residue (title, favicon, name, DOM); npm run typecheck && npm test && npm run build + e2e a11y all green |
 
 ## Atom scopes
@@ -155,11 +155,37 @@ Design 'S2 ...' (errorTreatment); Task breakdown Session 2 T2.3
 
 ### `PT-5` — S2: finish claw-arcade proof + extend personalityA11y.test.ts for the new closed maps
 
-**Status:** todo
+**Status:** done
 
 Design 'S2 ...' (both proofs) and 'A11y invariants'; Task breakdown Session 2 T2.4; Contract C5
 
 **Done when:** claw-arcade proof fleshed out (expressiveness preset via runtime dials, sparkle dot shape, coin-blip cue); personalityA11y.test.ts extended to go red on unknown base scheme, dangling shellElement/errorTreatment id, and any cue declared without the master-toggle gate; both proof personalities fully switchable
+
+**DONE.** (a) **`behavior.dials`** — the expressiveness preset, declared as four dials
+(`expressiveness`, `bounciness`, `dotShape`, `dotPattern`) that name EXISTING tokens via
+`PERSONALITY_DIAL_TOKENS` and are applied by writing those tokens through the appearance
+store, exactly as the sliders in Settings → Appearance do. Nothing writes `design/runtime.ts`
+directly: the store's own bridge stays the single writer, and the preset lands in the user's
+saved overrides so they can dial it back and it sticks. A dial the target identity does not
+declare is `resetToken`-ed rather than left alone — otherwise the arcade's sparkle would
+survive a switch back to the default, which is the residue the provider exists to prevent.
+(b) **`behavior.soundCues` re-voices a cue POINT**, and PT-2's `playCue(name)` split into
+`CuePoint` (the three moments, closed) and `CueName` (registered voices: the three plus
+`coin_blip` and `terminal_bell`). A personality changes what a moment SOUNDS LIKE — it cannot
+add a moment, cannot author a tone, and cannot sound anything outside `playCue`, which still
+owns all three suppressors. The map is validated at the BOUNDARY (`setCueVoices`) on both
+sides, `Object.hasOwn` for the same prototype-chain reason PT-3 measured live. (c) **Both
+proofs now exercise every key in the closed block between them** — claw-arcade: amber, sparkle
+dots on a diamond lattice, expressiveness 1, a coin blip on a finished turn; retro-terminal:
+the opposite temperament on the same four dials (square/grid, expressiveness 0.25, bounciness
+0) plus the ASCII BEL on an approval. A rail asserts the union covers the block, so a field
+cannot rot unread. (d) **`personalityA11y.test.ts` rebuilt as ten named rails, each proven red
+by a fixture that breaks exactly it** (isolation asserted: a fixture may trip no other rail),
+with the rail↔fixture mapping asserted total in both directions and a non-empty-population
+floor under each of the seven conditional rails. (e) **The cue-gate half reads SOURCE**,
+because that is where the bypass lives: `playCue` checks all three suppressors before reaching
+`synth`, `playCue` is the only caller of `synth`, `synth` is unexported, and no module in
+`web/src` outside the cue module builds an oscillator. 53 tests where there were 11.
 
 ### `PT-6` — S2: V2 end-to-end user validation + full CI gate across both personalities and all modes
 

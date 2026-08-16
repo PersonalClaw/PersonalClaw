@@ -34,10 +34,22 @@
 
 import { prefersReducedMotion } from './motion'
 
-/** The closed cue set. A caller cannot invent a cue: an unknown name is a type
- *  error, and `CUES` is a total `Record`, so adding a member without a recipe
- *  fails to compile. */
-export type CueName = 'turn_complete' | 'approval_needed' | 'error'
+/** The closed set of MOMENTS a cue may fire at. Three, deliberately — see the
+ *  header. `playCue` takes one of these and nothing else, so a caller cannot
+ *  invent a moment (a type error) and cannot fire a voice directly either. */
+export type CuePoint = 'turn_complete' | 'approval_needed' | 'error'
+
+/** The closed set of registered VOICES. Every cue point plays the voice of its own
+ *  name by default; a personality may re-voice a point with any other member (see
+ *  `PersonalityBehavior.soundCues`).
+ *
+ *  Splitting voice from point is what keeps the feature from growing two different
+ *  ways at once. A personality can change what a moment SOUNDS LIKE, because that
+ *  is presentation — but it cannot add a moment (the point union is closed), cannot
+ *  author a tone (it names a voice, it does not supply a recipe), and cannot make
+ *  sound at all outside `playCue`, which owns all three suppressors. `CUES` is a
+ *  total `Record`, so adding a member without a recipe fails to compile. */
+export type CueName = CuePoint | 'coin_blip' | 'terminal_bell'
 
 /** A cue is a short sequence of tones. `freqs` play in order across `durMs`
  *  (one slice each), so a two-entry recipe is an interval and a one-entry recipe
@@ -61,6 +73,58 @@ export const CUES: Record<CueName, CueRecipe> = {
   approval_needed: { wave: 'triangle', freqs: [880, 1108.73, 880], durMs: 210, gain: 0.06 },
   // Something failed: a falling minor second on a harder wave — unmistakably not "done".
   error: { wave: 'square', freqs: [311.13, 233.08], durMs: 170, gain: 0.04 },
+  // A cabinet swallowing a coin: a bright rising fifth on a square wave, the 8-bit
+  // "credit accepted". claw-arcade re-voices `turn_complete` with it.
+  coin_blip: { wave: 'square', freqs: [987.77, 1479.98], durMs: 110, gain: 0.05 },
+  // The ASCII BEL a terminal rings when a job wants you: one flat, high, unadorned
+  // tone. retro-terminal re-voices `approval_needed` with it.
+  terminal_bell: { wave: 'triangle', freqs: [1760], durMs: 90, gain: 0.05 },
+}
+
+/** The active personality's cue-point → voice overrides.
+ *
+ *  A mutable module bridge, the `design/runtime.ts` pattern: `PersonalityProvider`
+ *  writes it whenever the identity changes and `playCue` reads it. That keeps the
+ *  three cue call sites unconditional one-liners with no policy and no knowledge of
+ *  which identity is active — and it keeps this module free of any import from the
+ *  app layer, so `playCue` still cannot be reached except through its own gates.
+ *  Empty (the default identity, and every standard scheme) = every point plays its
+ *  own voice. */
+let voices: Partial<Record<CuePoint, CueName>> = {}
+
+/** The three cue points at runtime. One declaration, read by `setCueVoices` below,
+ *  so "which moments exist" cannot drift between the type and the validator. */
+export const CUE_POINTS: readonly CuePoint[] = ['turn_complete', 'approval_needed', 'error']
+
+/** Install the active personality's overrides, or clear them.
+ *
+ *  Validated at the BOUNDARY rather than at every read, and both sides are checked:
+ *  a key is copied only if it is one of the three points, and a value only if it is a
+ *  registered recipe. That matters because the map arrives from a registry the
+ *  compiler may not have seen — a persisted override, the plan's forward-hooked
+ *  app-contributed manifest. `Object.hasOwn`, not truthiness: a plain index reads the
+ *  PROTOTYPE CHAIN, so a voice named `'constructor'` would otherwise resolve to
+ *  `Object` and be handed to `synth` as a recipe (the same hole PT-3 measured live in
+ *  both personality registries). Anything rejected leaves the point on its own voice.
+ *
+ *  Passing `undefined` is the restore path and must leave NOTHING behind — a
+ *  personality's voice outliving the personality is residue you can only hear. */
+export function setCueVoices(next: Partial<Record<CuePoint, CueName>> | undefined): void {
+  const clean: Partial<Record<CuePoint, CueName>> = {}
+  if (next) {
+    for (const point of CUE_POINTS) {
+      const v = next[point]
+      if (v && Object.hasOwn(CUES, v)) clean[point] = v
+    }
+  }
+  voices = clean
+}
+
+/** The voice a point will actually play — its override if one is installed, else the
+ *  voice of its own name. Total: `setCueVoices` already dropped anything unplayable,
+ *  so this can never hand `synth` a missing recipe. */
+export function cueVoice(point: CuePoint): CueName {
+  return voices[point] ?? point
 }
 
 /** The one preference. `'on'` is the ONLY enabling value — see rule 1. */
@@ -151,12 +215,17 @@ export function setSoundCuesEnabled(on: boolean): void {
   }
 }
 
-/** Play a cue, or (far more often) don't.
+/** Play the cue for a moment, or (far more often) don't.
  *
  *  Returns silently on any of: cues off, reduced motion, hidden tab, no context
  *  yet, no Web Audio. Never throws and never constructs a context — this runs from
- *  a toast render and an error path, where a throw would take the surface with it. */
-export function playCue(name: CueName): void {
+ *  a toast render and an error path, where a throw would take the surface with it.
+ *
+ *  🔑 THIS IS THE ONLY CALLER OF `synth`, and the four gates above it are the whole
+ *  reason. `synth` is module-private and nothing else in here reaches it, so there is
+ *  no way to make sound that skips the master toggle — which is what
+ *  `personalityA11y.test.ts` asserts structurally rather than trusting to review. */
+export function playCue(point: CuePoint): void {
   if (!soundCuesEnabled()) return
   if (prefersReducedMotion()) return
   if (typeof document !== 'undefined' && document.hidden) return
@@ -164,7 +233,7 @@ export function playCue(name: CueName): void {
   if (!c) return
   try {
     if (c.state === 'suspended') void c.resume().catch(() => {})
-    synth(c, CUES[name])
+    synth(c, CUES[cueVoice(point)])
   } catch {
     /* a node the browser refused to build — stay silent, never break the caller */
   }
