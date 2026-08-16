@@ -70,3 +70,62 @@ describe("the task row's checkbox paints 20px and clicks 24px", () => {
     expect(src).toMatch(/size-6 -m-0\.5/)
   })
 })
+
+// ── The deep routes the first census could not see ────────────────────────────────────────────
+//
+// That pass measured `#/tasks`, `#/projects`, `#/knowledge`, `#/artifacts`, `#/inbox` — the LIST
+// routes, which were the whole surface inventory at the time — and drove them to 0 undersized targets.
+// The inventory has since grown to 49 with the path-segment detail routes added, and two of them were
+// never in scope. Re-censused with the app's own audit across all 49 surfaces (drag handles excluded):
+// **15 sub-24px targets on 4 surfaces**, of which the raw icon-BUTTON family is five —
+//
+//   projects-detail   21×21  "Rename"                    ← fixed here
+//   projects-detail   16×16  "Open Context in Files"      ← fixed here
+//   tasks-board       21×21  "Collapse column" ×3         ← NOT fixed; see the trade-off below
+//
+// (The other ten are a different family each: nine 16×16 `Select proposal` CHECKBOXES on
+// `#/inbox?kind=proposal`, already logged, and one 307×18 `Go to path` INPUT on `#/files` whose
+// failure is height-only.)
+//
+// Both fixes use the form this file already asserts — a `size-6` box with a negative margin so the
+// glyph and the layout stay put. Measured: projects-detail goes 2 → 0 undersized, and the pixel diff
+// is **0.0145% dark / 0.0046% light** confined to a 26×30 box, i.e. the two buttons and nothing else.
+//
+// 🪤 WHY `BoardCollapse` IS NOT IN THIS PASS — the margin cannot reach zero shift with a token.
+// Its column-header row height is exactly `button + 4px`, so the button IS the tallest child:
+//
+//   p-1 (21×21, today)      row 25px   first card y=186
+//   size-6 -m-0.5  (−2px)   row 24px   first card y=185   → whole board shifts UP 1px  (diff 2.5–3.6%)
+//   size-6 -mx-0.5 (0px)    row 28px   first card y=189   → whole board shifts DOWN 3px (diff 5.5–7.7%)
+//
+// Zero shift needs a −1.5px vertical pull, which is not a spacing token, and a raw-px class would
+// break the token rule. `tasks-board` is deterministic (two captures of one build diff 0%), so those
+// percentages are real reflow, not noise. Left alone deliberately rather than trading a WCAG note for
+// a 1px reflow across every card on the board; it needs either a new hit-area idiom (an overlay
+// pseudo-element) or an owner call on the 1px.
+describe('the detail routes added after the first census', () => {
+  const SRC = join(process.cwd(), 'src')
+  const read = (rel: string) => readFileSync(join(SRC, rel), 'utf8')
+
+  it("the project header's Rename button carries a 24px hit box", () => {
+    expect(read('pages/projects/ProjectsSection.tsx'))
+      .toMatch(/aria-label="Rename"[\s\S]{0,120}?grid size-6 -m-0\.5 place-items-center/)
+  })
+
+  it("the context/workspace row's Open-in-Files button carries one too", () => {
+    expect(read('pages/projects/ProjectsSection.tsx'))
+      .toMatch(/aria-label=\{`Open \$\{label\} in Files`\}[\s\S]{0,200}?grid size-6 -m-0\.5 place-items-center/)
+  })
+
+  it('neither reintroduces the bare padding that made them undersized', () => {
+    const src = read('pages/projects/ProjectsSection.tsx')
+    expect(src, 'the 21x21 Rename shape').not.toMatch(/aria-label="Rename"[\s\S]{0,120}?rounded-md p-1 /)
+    expect(src, 'the 16x16 Open-in-Files shape').not.toMatch(/in Files`\}[\s\S]{0,200}?rounded p-0\.5 /)
+  })
+
+  // Pins the holdout so it is not "converged" without confronting the reflow measured above.
+  it('BoardCollapse is deliberately still padding-based', () => {
+    expect(read('ui/BoardCollapse.tsx'), 'if this changes, re-measure the board row height first')
+      .toMatch(/rounded-md p-1 /)
+  })
+})
