@@ -94,7 +94,16 @@ export function LearningPage() {
           </QuietButton>
         }
       />
-      <div className="flex-1 overflow-y-auto">
+      {/* The trio, converging on `scrollRegionNamed`'s form rather than inventing one. Chromium puts
+          this scroller in the tab order, and with no role and no label it takes its name from its
+          SUBTREE: measured at tab stop 28 on #/learning, 222px of hidden content and **1066
+          characters** announced as the region's name, beginning "Capture, last 7 days 7
+          silentSun—silentMon—…". A `group` with an explicit `aria-label` does not take its name from
+          content, which is the whole point of the pattern. `tabIndex={0}` makes the stop explicit
+          instead of relying on Chrome auto-focusing scrollers.
+          Named for what it HOLDS — the capture week, the health panel and the proposals list — rather
+          than echoing the page's own "Learning" h1, which would add nothing to the announcement. */}
+      <div tabIndex={0} role="group" aria-label="Capture and proposals" className="flex-1 overflow-y-auto">
         <div className="mx-auto flex flex-col gap-xl px-l py-l pb-2xl" style={{ maxWidth: 'var(--content-width)' }}>
           {err && <InlineError icon onDismiss={() => setErr('')}>{err}</InlineError>}
 
