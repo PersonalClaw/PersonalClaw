@@ -38,6 +38,16 @@ vi.mock('./onboarding/EssentialsStep', () => ({
     </div>
   ),
 }))
+// The OU-3 first-success step, stubbed for the same reason: this file tests the SHELL's resume
+// writes, and `tryOneOutcome.test.tsx` / `tryOneFailure.test.tsx` own the step's own behaviour.
+vi.mock('./onboarding/TryOneStep', () => ({
+  TryOneStep: ({ onDone, onSkip }: { onDone: (s: string) => void; onSkip: () => void }) => (
+    <div>
+      <button type="button" onClick={() => onDone('1 of 3 tried')}>stub-tried</button>
+      <button type="button" onClick={onSkip}>stub-skip-try</button>
+    </div>
+  ),
+}))
 
 import { Onboarding } from './Onboarding'
 
@@ -76,13 +86,34 @@ describe('every step transition persists its resume point', () => {
   it('records `done` and commits the name LAST', async () => {
     await enterName()
     fireEvent.click(await screen.findByRole('button', { name: 'stub-continue' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'stub-tried' }))
     fireEvent.click(await screen.findByRole('button', { name: /Start using/ }))
     await waitFor(() => expect(saveOnboardingState).toHaveBeenCalledWith({ step: 'done' }))
     // `onboarded` is derived from a non-empty server name, so committing it is what
     // closes the flow — it must happen after the terminal step is recorded.
     expect(setName).toHaveBeenCalledWith('Ada Lovelace')
+    // Still exactly three resume points, because `STEPS` in `onboarding.py` has no id between
+    // `first_success` and `done`: OU-3's step IS `first_success`, so leaving it for the recap
+    // writes nothing new and a user who reloads on the recap resumes at the unfinished step.
     const steps = saveOnboardingState.mock.calls.map(([p]) => p.step)
     expect(steps).toEqual(['essentials', 'first_success', 'done'])
+  })
+
+  it('leaving the first-success step does NOT invent a fourth resume point', async () => {
+    await enterName()
+    fireEvent.click(await screen.findByRole('button', { name: 'stub-continue' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'stub-tried' }))
+    // `merge_onboarding_state` rejects an unknown step value with a 400, so a spelled-out
+    // `try`/`ready` here would be a silent 400 on every first run.
+    const steps = saveOnboardingState.mock.calls.map(([p]) => p.step)
+    expect(steps).toEqual(['essentials', 'first_success'])
+  })
+
+  it('skipping the first-success step reaches the recap too', async () => {
+    await enterName()
+    fireEvent.click(await screen.findByRole('button', { name: 'stub-continue' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'stub-skip-try' }))
+    expect(await screen.findByRole('button', { name: /Start using/ })).toBeTruthy()
   })
 
   it('writes only the `step` key — no lane progress the shell did not observe', async () => {
@@ -99,6 +130,7 @@ describe('a failed progress write costs the user nothing', () => {
     // The essentials step is reached regardless: resume is a convenience, not a gate.
     expect(await screen.findByRole('button', { name: 'stub-continue' })).toBeTruthy()
     fireEvent.click(screen.getByRole('button', { name: 'stub-continue' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'stub-tried' }))
     expect(await screen.findByRole('button', { name: /Start using/ })).toBeTruthy()
   })
 })

@@ -6348,7 +6348,7 @@
         {
           "id": "OU-3",
           "title": "First-success 'try one' cards (knowledge ingest+ask, reminder trigger, seeded loop)",
-          "status": "todo",
+          "status": "done",
           "scope": "Session 1 T1.3; Design 'Guided first run' first-success step; Risks (cards degrade gracefully if a bound provider's real call fails)",
           "done_when": "each of the three cards executes a real flow and reaches its visible outcome on a fresh home in <2 min; failure path shows the error and offers a Settings deep-link when a real call fails despite a passing Test",
           "deps": [
@@ -7747,8 +7747,8 @@
         "plan": "MRT"
       },
       {
-        "id": "OU-3",
-        "title": "First-success 'try one' cards (knowledge ingest+ask, reminder trigger, seeded loop)",
+        "id": "OU-4",
+        "title": "Onboarding done screen + resume + per-step skip + CLI setup pointer",
         "plan": "OU"
       },
       {
@@ -10174,9 +10174,9 @@
         "code": "OU",
         "plan": "ONBOARDING-UX",
         "total_atoms": 11,
-        "done": 4,
+        "done": 5,
         "in_progress": 0,
-        "todo": 7,
+        "todo": 6,
         "blocked": 0
       },
       {

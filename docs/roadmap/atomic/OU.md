@@ -12,7 +12,7 @@ Each atom below executes start-to-finish in one go. If an atom lists dependencie
 |---|---|---|---|---|
 | `OU-1` | ✅ | Extend onboarding state backend (step/provider/first_success fields + POST write path) | — | additive fields (step, provider_chosen/essentials, first_success) persist to entity_settings/onboarding.json, survive mid-flow reload, old clients tolerant-read; POST /api/onboarding/state does a partial merge (NOT the config PATCH allowlist, per §2.1 entity-state rule) |
 | `OU-2` | ✅ | Essential-apps in-flow onboarding step (model required; search/speech/channel opt-in) | `OU-1` | fresh dev home (PERSONALCLAW_FIRST_PARTY_APPS_DIR fixture): model+search installable and the model bindable entirely in-flow (install -> key -> Test -> chat binding, reusing the 3 existing APIs); skipping all but model still reaches first-success; per-app install consent preserved; no auto-install anywhere |
-| `OU-3` | ⬜ | First-success 'try one' cards (knowledge ingest+ask, reminder trigger, seeded loop) | `OU-1`, `OU-2` | each of the three cards executes a real flow and reaches its visible outcome on a fresh home in <2 min; failure path shows the error and offers a Settings deep-link when a real call fails despite a passing Test |
+| `OU-3` | ✅ | First-success 'try one' cards (knowledge ingest+ask, reminder trigger, seeded loop) | `OU-1`, `OU-2` | each of the three cards executes a real flow and reaches its visible outcome on a fresh home in <2 min; failure path shows the error and offers a Settings deep-link when a real call fails despite a passing Test |
 | `OU-4` | ⬜ | Onboarding done screen + resume + per-step skip + CLI setup pointer | `OU-1`, `OU-2`, `OU-3` | skip at any step lands in a working dashboard; re-entering onboarding resumes at the persisted step; personalclaw setup prints the dashboard-flow pointer when a browser is available (wizard unchanged); V1 recorded in Execution log (full flow <5 min, mid-flow reload, full-skip path, existing-home upgrade shows NO onboarding) |
 | `OU-5` | ⬜ | NavRail progressive disclosure (starter/expert sections, auto-pin-on-visit, expert toggle) + URL-doctrine regression test | — | fresh home shows the starter rail; visiting an Everything surface via deep link/CommandPalette renders AND auto-pins it (test red if a deep link 404s/blanks under starter mode); expert-mode toggle in Appearance shows all permanently; upgrade fixture (onboarding-completed-before-this-version marker) defaults expert ON; keyboard-only, reduced-motion, and mobile-viewport passes hold |
 | `OU-6` | ⬜ | EmptyState primitive + rollout to the 7 listed pages | — | web/src/ui/EmptyState.tsx exists and is applied to Loops, Workflows, Knowledge, Memory, Skills, Tasks, Triggers with one seeded working action each; copy in PRODUCT.md voice; visual check across both themes |
@@ -95,11 +95,82 @@ reads `step` to resume yet (OU-4), exactly as the DAG orders it.
 
 ### `OU-3` — First-success 'try one' cards (knowledge ingest+ask, reminder trigger, seeded loop)
 
-**Status:** todo
+**Status:** done
 
 Session 1 T1.3; Design 'Guided first run' first-success step; Risks (cards degrade gracefully if a bound provider's real call fails)
 
 **Done when:** each of the three cards executes a real flow and reaches its visible outcome on a fresh home in <2 min; failure path shows the error and offers a Settings deep-link when a real call fails despite a passing Test
+
+**DONE.** A fourth step — `try` — sits between essentials and the recap (`name → essentials → try →
+ready`), holding three cards that each RUN a real endpoint chain and then render facts read back out
+of the real responses. `web/src/app/onboarding/tryOneFlows.ts` holds the flows apart from the chrome
+so what each card executes is checkable in one screen; `TryOneStep.tsx` is the step. `first_success`
+finally has its writer (OU-1's last remainder) — each card patches only its own key.
+
+- **knowledge** — `POST /api/knowledge/items` (real note) → `GET /api/knowledge/search-for-context`
+  (real retrieval). Shows the PASSAGE the retrieval returned, its match type and token cost, and a
+  link to the note. A note that saves but does not come back is a **failure**, not a success.
+- **reminder** — `POST /api/triggers` (`notify` action, `cron: 0 9 * * *`) →
+  `POST /api/triggers/{id}/run` → `GET /api/notifications`. Shows the notification text that actually
+  landed plus the next fire time. `TriggerRunResult.ok === false` on a 200 is treated as a failure —
+  `ok` is whether the ACTION ran (#395), and a silent no-op must not read as a green tick.
+- **loop** — `POST /api/loops` (`kind: general`, `max_cycles: 1`) → `PATCH /api/loops/{id}`
+  `{action: 'start'}`. Shows the status the START response reported. A loop left in `ready` is a
+  failure: `POST /api/loops` answers 201 with `status: "ready"`, so a create-only card would tick
+  green for a loop that never ran.
+
+**No paid inference on any of the three, by construction — and measured.** Each path was picked
+because its outcome is real and observable without a completion call: the retriever builds
+`HybridRetriever(store, embedder=None)` when no embedder is configured, `notify` only calls
+`state.notify(...)`, and `manager.start` writes `status: running` before any agent work and merely
+arms a timer. Validated by driving the whole flow with the essentials step **skipped**, i.e. with no
+model provider at all — a card that secretly needed a completion would have failed outright. The
+loop is capped at one cycle so the work it later does is bounded rather than an open spend.
+
+**The failure path (half the atom).** One shared branch: the gateway's own sentence VERBATIM in an
+`InlineError`, plus a Settings deep-link chosen by `isProviderFailure(message, status)` — a
+provider-shaped refusal (401/402/403, or the provider vocabulary) goes to `settings/providers` and
+says *"The provider passed its test and then refused this call"*; anything else goes to
+`settings/doctor` and does not blame the credential. Siblings stay usable and the card retries in
+place. Two classifier bugs were found by its own rails: `\b` does not split snake_case, so every
+machine-readable code (`insufficient_quota`, `invalid_api_key`) fell through while the prose matched;
+and `new Error('')` stringifies to the literal word `Error`, which would have been shown to a user as
+the gateway's explanation.
+
+**The deep-link needed a new mechanism, and its first version shipped green and broken.**
+`App.tsx`'s guard pulls every route back to `#/onboarding` while `onboarded` is false, so a link out
+of the flow cannot navigate — it is bounced, and navigating after committing the name races the same
+guard. `web/src/app/onboarding/exitTo.ts` hands the destination to the guard instead. v1 cleared on
+read and every unit test passed; driven live it landed on `#/dashboard` every time, because **the
+guard effect is re-entrant**: `navigate` sets `location.hash` and `route` only catches up on the
+browser's async `hashchange`, so the exit branch ran twice and the second run read `''` and took the
+default. `peekOnboardingExit` is now idempotent and `clearOnboardingExit` fires on a later branch,
+once the route has provably left onboarding. The regression rail asserts N reads resolve identically.
+
+**Deviations.** (1) The "ask" is retrieval, not a model-generated sentence — there is no synchronous
+knowledge-answer endpoint (`POST /api/chat` streams a whole session), and retrieval is both the real
+answer path and the part that must work before any model can answer. (2) Leaving the try step writes
+NO new resume point: `STEPS` has no id between `first_success` and `done`, so OU-3's step *is*
+`first_success`, and a user who reloads on the recap correctly resumes at the step they have not
+finished. (3) `stepProgressAnnounced`'s "all three rows read from TITLES" count is now DERIVED from
+`ORDER` — a frozen count turns "every row" into "exactly N rows" and would red for a compliant
+fourth step; deriving it strengthens the claim rather than weakening the rail.
+
+**Not built on PEP-1's `PresetCard`** (read first, as instructed): that primitive is deliberately ONE
+tab stop whose whole body is a `TileButton` with no interactive children, because a button inside a
+button is `nested-interactive`. These cards grow controls after they run — run, then an outcome link,
+then possibly a Settings deep-link and a retry — so they cannot be a single click target, and
+`PresetEmptyState` hardcodes `PresetCard` in its grid. Chrome composed from the kit instead
+(`Button`, `TextLink`, `InlineError`), which is the part that would otherwise drift.
+
+**Backend:** one line — `KnowledgeContextCard.content` added to `web/src/lib/api.ts`.
+`search-for-context` has always sent the matched passage (it is the text the composer injects) but it
+was absent from the interface, so the one thing a retrieval card exists to show was untypeable. No
+endpoint was added for onboarding.
+
+**Confirms PEP-1's finding:** a fresh home is not empty — `system:notification-digest` and a
+"Backup restore drill passed" notification are both present at first boot. The reminder card matches
+its notification by TITLE rather than by "the store was empty", so it is correct on a real home.
 
 ### `OU-4` — Onboarding done screen + resume + per-step skip + CLI setup pointer
 

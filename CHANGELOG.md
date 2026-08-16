@@ -15,6 +15,12 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
   something fails — nothing else. It ships **off**, and even switched on it stays quiet while the tab
   is in the background or while your system asks for reduced motion. The tones are generated in the
   browser, so no audio file is downloaded and none ships in the app.
+- **First run now ends with three things you can actually do, not a tour.** A new **Try one** step
+  saves a note and asks your own library a question, sets a real 9:00 AM reminder and fires it once
+  so you see what it will say, and starts a real one-cycle loop — each showing what actually
+  happened rather than a preview, each finished in about a second, and none of them spending a
+  single token. Skip any or all of them. If a call fails, the card shows the exact error the server
+  gave and offers a one-click jump to the Settings panel that owns it.
 - **An empty Triggers page now offers four working starters instead of a blank form.** Morning
   briefing, weekly digest, nightly check and a standup reminder each show their cadence in your
   own locale's clock, and picking one opens the ordinary create form already filled in — review it,
