@@ -479,7 +479,9 @@ function Field({ label, hint, children }: { label: string; hint?: string; childr
 }
 
 function ProjectDetailPage({ id, onBack, navigate, query, setQuery }: { id: string; onBack: () => void; navigate: (to: string) => void } & Pick<RouteProps, 'query' | 'setQuery'>) {
-  const { data: project, loading, refresh } = useCachedData(`projects:detail:${id}`, () => api.project(id))
+  // `error` was previously discarded, so a 500 fell through to `!project` and the page claimed the
+  // project was deleted. A failed read is not a deletion.
+  const { data: project, loading, error: detailErr, refresh } = useCachedData(`projects:detail:${id}`, () => api.project(id))
   const { data: lists } = useCachedData(`projects:lists:${id}`, () => api.taskLists(id))
   // The Work board (WORK-CONTAINERS §1/§5.2/§6.1): runs + legacy loops + tasks in one
   // state-grouped board. Local-first (persist) + stale-while-revalidate, the same seam
@@ -555,6 +557,9 @@ function ProjectDetailPage({ id, onBack, navigate, query, setQuery }: { id: stri
 
   if (loading && !project) {
     return <Shell onBack={onBack} title="Project"><div className="flex h-full items-center justify-center"><Loader2 size={20} className="animate-spin text-on-surface-low" /></div></Shell>
+  }
+  if (!project && detailErr) {
+    return <Shell onBack={onBack} title="Project"><LoadError what="project" error={detailErr} onRetry={refresh} /></Shell>
   }
   if (!project) {
     return <Shell onBack={onBack} title="Project"><div className="flex h-full flex-col items-center justify-center gap-3 text-center"><p className="text-on-surface text-[0.9375rem]">This project no longer exists.</p><Button onClick={onBack}><ListChecks size={15} /> Back to projects</Button></div></Shell>
