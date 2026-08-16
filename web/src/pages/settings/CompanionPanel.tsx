@@ -1,12 +1,13 @@
 import { useEffect, useState } from 'react'
-import { Check } from 'lucide-react'
+import { Check, ShieldCheck, ShieldAlert } from 'lucide-react'
 import { api } from '../../lib/api'
 import { notify } from '../../app/appSdk'
 import { useCachedData } from '../../lib/useCachedData'
-import { PanelHeader, Section, ToggleRow, Field } from './settingsUI'
+import { PanelHeader, Section, ToggleRow, Field, Row } from './settingsUI'
 import { TextInput } from '../../ui/forms'
 import { Button } from '../../ui/Button'
 import { FormSkeleton, LoadError } from '../../ui/ListScaffold'
+import { serviceWorkerBlockedReason } from '../../app/registerServiceWorker'
 
 // The editable companion.* fields mirror the backend _EDITABLE_CONFIG allowlist
 // (config/loader.py CompanionConfig, COMPANION-APPS CA-4). Each control PATCHes one
@@ -45,6 +46,8 @@ export function CompanionPanel() {
     })
   }
 
+  // Read at render: the answer depends on how the user reached this page (localhost vs LAN).
+  const swBlocked = serviceWorkerBlockedReason()
   const nameDirty = nameDraft !== String(cfg.instance_name ?? '')
   const saveName = () => patch('instance_name', nameDraft, () => {
     setNameSaved(true)
@@ -73,6 +76,29 @@ export function CompanionPanel() {
               </Button>
             </div>
           </Field>
+        </div>
+      </Section>
+
+      {/* INSTALL & OFFLINE (MOBILE-COMPANION T3.1). `serviceWorkerBlockedReason` was written to be
+          said out loud — its own docstring argues that "saying so out loud beats an install button
+          that silently never appears" — but its only consumer was `console.info`, so the sentence
+          reached nobody. A user who opens the dashboard over a LAN address
+          (`http://192.168.1.5:10000`) gets no install affordance and no explanation, because a
+          service worker needs a secure context and plain http on a LAN is not one.
+          This panel is the right home rather than a new surface: it is the MOBILE-COMPANION settings
+          surface, and installing the PWA is how the dashboard gets onto a phone.
+          The state is reported in WORDS as well as tone — a colour-only status would fail 1.4.1. */}
+      <Section title="Install & offline" hint="Whether this browser can install the dashboard as an app and keep its shell available offline.">
+        <div className="rounded-lg bg-surface-container px-4 py-1">
+          <Row label="Install &amp; offline support"
+            hint={swBlocked
+              ? `Unavailable — ${swBlocked}.`
+              : 'Available — the app shell is cached, and your browser can install this page as an app.'}>
+            <span className={`inline-flex items-center gap-1.5 text-[0.8125rem] ${swBlocked ? 'text-warn' : 'text-ok'}`}>
+              {swBlocked ? <ShieldAlert size={14} /> : <ShieldCheck size={14} />}
+              {swBlocked ? 'Unavailable' : 'Available'}
+            </span>
+          </Row>
         </div>
       </Section>
     </div>
