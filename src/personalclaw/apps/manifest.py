@@ -926,6 +926,17 @@ _HOOK_OR_ENTRYPOINT_RE = re.compile(
     r"^[a-zA-Z_][a-zA-Z0-9_]*(\.[a-zA-Z_][a-zA-Z0-9_]*)*:[a-zA-Z_][a-zA-Z0-9_]*$"
 )
 
+# LOCAL-MODEL-MANAGER-V2 §3.1 — where a provider's heavy work runs. This is a field on
+# the EXISTING ``model`` type, deliberately NOT a new provider type: PROVIDER_TYPES above
+# and the ``_TypeHandler`` set are untouched, so ``test_manifest_types_match_handlers``
+# stays green by construction and every registration seam is unchanged.
+EXECUTION_IN_PROCESS = "in-process"
+EXECUTION_SIDECAR = "sidecar"
+#: In-process is the DEFAULT and stays it. A sidecar is earned by a crash history
+#: (§10 "no blanket sidecar migration"): flipping the default would silently change the
+#: runtime of every provider already installed on every machine.
+EXECUTION_MODES = frozenset({EXECUTION_IN_PROCESS, EXECUTION_SIDECAR})
+
 
 @dataclass
 class AutonomyConfig:
@@ -1015,9 +1026,22 @@ class ProviderConfig:
     # ``autonomy`` block declares no action type, and its action keeps exactly the
     # pre-ladder behaviour (denylist + capability fence + creation-time grant).
     autonomy: AutonomyConfig = field(default_factory=AutonomyConfig)
+    # LOCAL-MODEL-MANAGER-V2 §3.1: where this provider's heavy work RUNS.
+    # ``in-process`` (the default, and what every existing app keeps) imports the
+    # provider into the gateway. ``sidecar`` runs it in a child process with its own
+    # venv (``local_models/sidecar.py``), so a native-lib crash kills the child instead
+    # of the gateway. Deliberately NOT a new ``type``: ``PROVIDER_TYPES`` and the
+    # ``_TypeHandler`` set are untouched, so registration, the app-name registry key and
+    # the duck-typed local-model contract all still hold (§9).
+    execution: str = EXECUTION_IN_PROCESS
 
     def validate(self) -> list[str]:
         errors: list[str] = []
+        if self.execution not in EXECUTION_MODES:
+            errors.append(
+                f"provider.execution must be one of {sorted(EXECUTION_MODES)}, "
+                f"got: {self.execution!r}"
+            )
         if not self.type:
             errors.append("provider.type is required")
         elif self.type not in PROVIDER_TYPES:
@@ -1053,6 +1077,10 @@ class ProviderConfig:
         autonomy_d = self.autonomy.to_dict()
         if autonomy_d:
             d["autonomy"] = autonomy_d
+        # Only emitted when it is NOT the default, so an in-process manifest round-trips
+        # byte-identically and no existing app.json grows a key it never declared.
+        if self.execution != EXECUTION_IN_PROCESS:
+            d["execution"] = self.execution
         return d
 
     @classmethod
@@ -1071,6 +1099,7 @@ class ProviderConfig:
                 if isinstance(autonomy_raw, dict)
                 else AutonomyConfig()
             ),
+            execution=str(data.get("execution", EXECUTION_IN_PROCESS) or EXECUTION_IN_PROCESS),
         )
 
 

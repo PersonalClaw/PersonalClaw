@@ -28,6 +28,13 @@ vi.mock('../../lib/api', () => ({
     modelsActive: () => Promise.resolve({}),
     modelsHealth: () => Promise.resolve({ providers: [] }),
     modelDownloadCleanupCandidates: () => Promise.resolve({ candidates: [], reclaimable_bytes: 0 }),
+    // The panel's loaded-models section (LMMV-5) fetches on mount too; an unmocked call
+    // here would make this test fail for a reason that has nothing to do with caching.
+    modelsLoaded: () => Promise.resolve({
+      loaded: [],
+      providers: [],
+      pressure: { total_mb: 0, used_mb: 0, available_mb: 0, used_pct: 0, warn_pct: 85, warn: false, source: 'unavailable' },
+    }),
   },
 }))
 vi.mock('../../app/appSdk', () => ({ notify: vi.fn() }))

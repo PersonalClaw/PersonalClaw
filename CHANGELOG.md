@@ -30,6 +30,22 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
   listed under **More details**, so they are on the item whether or not you are reading it. If you
   later edit the body out from under a highlight it stops being marked but is never thrown away,
   and merging two copies of an item keeps the highlights from both.
+- **You can now see which local models are eating your RAM, and free one.** Settings → Models
+  grows an **On this machine** section — a memory bar for the whole machine and a row per model
+  that is actually loaded right now, each with an **Unload** button — and the dashboard gets the
+  same band. The useful part is the attribution: a model stays in memory after you bind a
+  different one, and those rows are marked *not bound* and sorted to the top, because they are the
+  ones worth reclaiming. Unloading is safe and repeatable; the model loads again the next time
+  something needs it, and the bar moves so you can see the memory actually came back.
+- **A model provider can now run in its own process, so a crash in a native library can no longer
+  take the gateway down with it.** An app opts in with `"execution": "sidecar"` in its manifest
+  and gets its own Python environment for its heavy dependencies — no more waiting for a gateway
+  restart after installing them. If the child process dies mid-request you get a clear typed
+  error instead of a hung page, the next request starts a fresh one, and search keeps working
+  without restarting anything. In-process stays the default for every existing provider; nothing
+  changes unless an app asks for it. Installing a sidecar's environment is a resumable background
+  job: if it is interrupted, re-running picks up from the step that failed rather than starting
+  over, and it tells you the one thing to do about a failure rather than only what broke.
 - **An empty Triggers page now offers four working starters instead of a blank form.** Morning
   briefing, weekly digest, nightly check and a standup reminder each show their cadence in your
   own locale's clock, and picking one opens the ordinary create form already filled in — review it,

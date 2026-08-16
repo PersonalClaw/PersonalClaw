@@ -128,6 +128,21 @@ _CEILING_WRAPPED: dict[str, str] = {
         "connector-pack parse script → tool ceiling via spawn_shim_argv, prepended outside "
         "the OS-sandbox wrap (sync site; rlimits inherit through exec)"
     ),
+    # Model sidecar child (LMMV §3.1) — third-party native model code in its own venv, so
+    # agent-influenced: the ``tool`` profile also gives it the OOM-first bias, which is the
+    # disposition wanted for a process holding a multi-gigabyte model. argv-prepend, not
+    # preexec_fn: this can run off the watchdog thread (the backend_runtime hazard).
+    # Enforced structurally, not just described: test_local_model_sidecar's
+    # `test_every_spawn_in_sidecar_py_is_ceiling_wrapped` AST-checks that both sites here
+    # pass a `spawn_shim_argv` result, so a raw argv reds even with this entry in place.
+    "local_models/sidecar.py::SidecarRunner._spawn::subprocess.Popen": (
+        "model sidecar child → tool ceiling via spawn_shim_argv (argv-prepend)"
+    ),
+    # Sidecar install (venv + pip) — user-initiated but runs third-party setup code, so it
+    # carries the ``build`` profile (NOFILE raised; a pip install opens many fds).
+    "local_models/sidecar.py::SidecarInstall._run::subprocess.run": (
+        "sidecar venv/pip install → build ceiling via spawn_shim_argv"
+    ),
 }
 
 # ── OPERATOR-EXEMPT: operator-initiated spawns that must NOT carry an agent ceiling ──
@@ -238,6 +253,12 @@ _OPERATOR_EXEMPT: dict[str, str] = {
     ),
     "dashboard/handlers_system.py::_collect_system_metrics::subprocess.check_output": (
         "host-fact: system metrics"
+    ),
+    # Memory-pressure snapshot (LMMV §7) — `sysctl -n hw.memsize` + `vm_stat`, both static
+    # argv host-fact READS with no agent-influenced input. Capping a read that exists to
+    # report on memory pressure would be self-defeating.
+    "local_models/residency.py::_darwin_memory::subprocess.check_output": (
+        "host-fact: macOS memory-pressure probe (sysctl/vm_stat, static argv)"
     ),
     # Evals cell child — a seeded, sandboxed evals worker (own isolation, not agent argv).
     "evals/runner.py::_spawn_cell::subprocess.run": (
