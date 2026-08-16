@@ -803,3 +803,37 @@ discipline in [`AGENTS.md`](../../../AGENTS.md))*
   user-observable surface (a new Edges panel section with two new findings), so it is announced in
   the in-app Updates panel. Header "N of 16 shipped" left unchanged (a pre-existing 3-way merge
   artifact with other atoms in flight).
+
+- [PP-12] **BLOCKED — owner decision needed on what guarantee `Lease` provides.** An implementation of
+  this atom already exists, unshipped, on the local branch `feature-pp12-lease-dwell-policies`
+  (`04c9e226`, rebased to `183d27c8`): 297 added lines in `workflows/admission.py`, 455 in
+  `controller.py`, 28 in `pool.py`, and a 579-line `tests/test_workflows_admission_policies.py`. It was
+  found by sweeping local branches for commits absent from `origin/main`; of ~30 such branches it and
+  `DCU-1` were the only two whose atom is still `todo` on `main` — the other 25 are stale branches whose
+  atoms have already landed.
+  **It has never been green.** `test_sixteen_concurrent_claims_on_one_resource_produce_exactly_one_holder`
+  — the race the atom is written around, and its central safety property — fails: **6 to 7 of 16 workers
+  each win the same lease**. Measured 4 times (once at load average 31 with five agents running, three
+  times at idle: `6 holders`, `7 holders`, `7 holders`) and **also at the original pre-rebase commit**, so
+  it is neither a contention flake nor a rebase regression. The branch's `dag.json`/`PP.md` flip PP-12 to
+  `done`; that claim is false and must be reverted before any of it ships.
+  **Root cause, established in the code rather than inferred.** `pool.acquire` is correct — an unexpired
+  lease held by another holder returns `HELD_BY_OTHER` and no lease. The failure is in the durability
+  around it: `claim_task` wraps its read-modify-write in `concurrency.single_flight`, whose own docstring
+  says it is a **"Cross-process single-flight guard"** that yields False only when *"another live process"*
+  holds the lock, with **non-blocking** acquisition. The test drives sixteen **threads in one process**,
+  which is outside that guarantee — so the assertion is not wrong about what is needed, it is wrong about
+  what the mechanism promises.
+  **Why this is an owner decision and not a test fix.** The atom's own scope is *"cap this fan-out because
+  each item holds a rate-limited endpoint"*, and the controller fans out **in-process** with
+  `asyncio.create_task` (`controller.py:2234`). A cross-process-only lease therefore does not deliver the
+  thing this atom exists to provide: two concurrent items in the same gateway would both hold a
+  rate-limited endpoint. The two remedies differ in kind, and both are scope calls on a safety control:
+  (1) give the lease in-process exclusion as well (an async/thread lock layered under `claim_task`, which
+  widens a primitive `pool.py` owns and that other callers share), or (2) narrow the lease's documented
+  guarantee to cross-process only and state plainly that in-process fan-out is not capped — which leaves
+  the atom's stated purpose unmet and makes `Lease` misleading for its only intended caller.
+  Rewriting the test to spawn processes would make the suite green while leaving the in-process hole
+  open, so it is deliberately NOT done here. **Unblock:** the owner picks (1) or (2). Nothing else in the
+  atom is in question — `Dwell` and `MetricGate` reuse `loop.tick.StepConfig`'s parsed thresholds and
+  their tests pass (57 of 58 in the file pass; the one red is the lease race).
