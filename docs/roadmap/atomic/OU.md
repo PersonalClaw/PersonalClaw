@@ -13,7 +13,7 @@ Each atom below executes start-to-finish in one go. If an atom lists dependencie
 | `OU-1` | ✅ | Extend onboarding state backend (step/provider/first_success fields + POST write path) | — | additive fields (step, provider_chosen/essentials, first_success) persist to entity_settings/onboarding.json, survive mid-flow reload, old clients tolerant-read; POST /api/onboarding/state does a partial merge (NOT the config PATCH allowlist, per §2.1 entity-state rule) |
 | `OU-2` | ✅ | Essential-apps in-flow onboarding step (model required; search/speech/channel opt-in) | `OU-1` | fresh dev home (PERSONALCLAW_FIRST_PARTY_APPS_DIR fixture): model+search installable and the model bindable entirely in-flow (install -> key -> Test -> chat binding, reusing the 3 existing APIs); skipping all but model still reaches first-success; per-app install consent preserved; no auto-install anywhere |
 | `OU-3` | ✅ | First-success 'try one' cards (knowledge ingest+ask, reminder trigger, seeded loop) | `OU-1`, `OU-2` | each of the three cards executes a real flow and reaches its visible outcome on a fresh home in <2 min; failure path shows the error and offers a Settings deep-link when a real call fails despite a passing Test |
-| `OU-4` | ⬜ | Onboarding done screen + resume + per-step skip + CLI setup pointer | `OU-1`, `OU-2`, `OU-3` | skip at any step lands in a working dashboard; re-entering onboarding resumes at the persisted step; personalclaw setup prints the dashboard-flow pointer when a browser is available (wizard unchanged); V1 recorded in Execution log (full flow <5 min, mid-flow reload, full-skip path, existing-home upgrade shows NO onboarding) |
+| `OU-4` | ✅ | Onboarding done screen + resume + per-step skip + CLI setup pointer | `OU-1`, `OU-2`, `OU-3` | skip at any step lands in a working dashboard; re-entering onboarding resumes at the persisted step; personalclaw setup prints the dashboard-flow pointer when a browser is available (wizard unchanged); V1 recorded in Execution log (full flow <5 min, mid-flow reload, full-skip path, existing-home upgrade shows NO onboarding) |
 | `OU-5` | ✅ | NavRail progressive disclosure (starter/expert sections, auto-pin-on-visit, expert toggle) + URL-doctrine regression test | — | fresh home shows the starter rail; visiting an Everything surface via deep link/CommandPalette renders AND auto-pins it (test red if a deep link 404s/blanks under starter mode); expert-mode toggle in Appearance shows all permanently; upgrade fixture (onboarding-completed-before-this-version marker) defaults expert ON; keyboard-only, reduced-motion, and mobile-viewport passes hold |
 | `OU-6` | ⬜ | EmptyState primitive + rollout to the 7 listed pages | — | web/src/ui/EmptyState.tsx exists and is applied to Loops, Workflows, Knowledge, Memory, Skills, Tasks, Triggers with one seeded working action each; copy in PRODUCT.md voice; visual check across both themes |
 | `OU-7` | ✅ | Blast-radius derivation (approvalMeta.ts pure function) — C2 read-only consumption | — | web/src/pages/chat/approvalMeta.ts maps tool name + existing risk + command-screening classification to writes/network/shell/readOnly chips; unit-tested against representative tools (bash, web_fetch, memory write, read-only); NO security-logic change (E4 if any gap tempts one) |
@@ -174,11 +174,55 @@ its notification by TITLE rather than by "the store was empty", so it is correct
 
 ### `OU-4` — Onboarding done screen + resume + per-step skip + CLI setup pointer
 
-**Status:** todo
+**Status:** done
 
 Session 1 T1.4 + V1; Design done screen (points at Inbox, bounciness slider, unlock-everything toggle); cli_setup.py one pointer line
 
 **Done when:** skip at any step lands in a working dashboard; re-entering onboarding resumes at the persisted step; personalclaw setup prints the dashboard-flow pointer when a browser is available (wizard unchanged); V1 recorded in Execution log (full flow <5 min, mid-flow reload, full-skip path, existing-home upgrade shows NO onboarding)
+
+**DONE.** The atom that finally READS what OU-1/OU-2/OU-3 wrote. `step` had a writer and no
+reader, which reads exactly like a working resume until someone reloads: every reload restarted
+at the essentials step and silently offered to redo work the home had already recorded.
+
+- **Resume** — one `GET /api/onboarding` on mount now carries both halves (live readiness for
+  the essentials step, the persisted resume point for the shell). `resumeTarget()` maps
+  `essentials → essentials` and `first_success → try`; `name` and `done` are deliberately NOT
+  targets. The transition write records the step it LANDS on, so resuming can never walk the
+  stored point backwards (a `{step: essentials}` write on the way into `first_success` would
+  have decayed the resume one step per reload).
+- **Per-step skip** — one always-visible escape under the stack (`step !== 'ready'`, where
+  "Start using" is the door). It runs the same `finish()` as completing: terminal step recorded,
+  rail marker written, identity committed — committing identity is what releases `App.tsx`'s
+  route guard, so this is what makes the landing a WORKING dashboard rather than a stuck flow.
+  It also makes `finish()`'s `|| 'Operator'` fallback reachable for the first time (it was dead
+  code, since `commitName` refuses an empty name), so that literal became
+  `identity.DEFAULT_USER_NAME` shared with the Settings → Account field that also falls back to
+  it — and the link SAYS the name it will use rather than renaming someone silently.
+- **Done screen** — recap plus the Design's three pointers, each handing over the real control:
+  the Inbox (a `TextLink` through `exitTo.ts`, because the route guard bounces a plain link),
+  the Settings → Design **Bounciness** dial (`ScalarControl` on the `--bounciness` token, not a
+  lookalike bound to the same variable), and **Show every surface** (OU-5's one nav-disclosure
+  setting). The switch states intent and `finish()` performs the single write, so the C4 marker
+  and the user's choice cannot disagree and an abandoned flow leaves no record — absence is how
+  the shell tells an upgrade from a fresh install.
+- **CLI pointer** — `_print_dashboard_pointer()` after both of `_setup`'s completion lines,
+  gated on the new `env.browser_available()`. That predicate is the gateway's own auto-open
+  heuristic, EXTRACTED rather than copied: `gateway.py` no longer derives it from
+  `SSH_CONNECTION`/`DISPLAY` inline, and a rail asserts those names are gone from that file.
+  The wizard itself is unchanged, which answers the plan's open question ("full parity?") with
+  "no — the dashboard owns onboarding".
+
+**Deviations.** (1) A resumed flow still asks for the NAME first, then jumps to the persisted
+step. The name is not part of this state by OU-1's ruling (identity lives on the server and
+`onboarded` is derived from it), and it is committed only at the end — so the alternatives were
+fabricating a name for someone who typed one before the reload, or keeping a second copy of the
+name in a device-local draft. Re-typing one field is the honest cost; everything the earlier
+visit actually DID is what resume restores. (2) The resumed essentials summary is the app name
+from `essentials.model` rather than the bound model label a live run shows, and it is checked
+against `needs_model` so a home whose provider was removed since does not keep promising a
+model. (3) A resumed try-one visit restores the COUNT, not the cards: only the flags survive a
+reload, not the outcomes the cards rendered, so `leaveTryOne` floors the recap at the persisted
+count instead of telling a user who succeeded before the reload that nothing was tried.
 
 ### `OU-5` — NavRail progressive disclosure (starter/expert sections, auto-pin-on-visit, expert toggle) + URL-doctrine regression test
 

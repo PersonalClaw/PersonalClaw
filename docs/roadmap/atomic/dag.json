@@ -6368,14 +6368,15 @@
         {
           "id": "OU-4",
           "title": "Onboarding done screen + resume + per-step skip + CLI setup pointer",
-          "status": "todo",
+          "status": "done",
           "scope": "Session 1 T1.4 + V1; Design done screen (points at Inbox, bounciness slider, unlock-everything toggle); cli_setup.py one pointer line",
           "done_when": "skip at any step lands in a working dashboard; re-entering onboarding resumes at the persisted step; personalclaw setup prints the dashboard-flow pointer when a browser is available (wizard unchanged); V1 recorded in Execution log (full flow <5 min, mid-flow reload, full-skip path, existing-home upgrade shows NO onboarding)",
           "deps": [
             "OU-1",
             "OU-2",
             "OU-3"
-          ]
+          ],
+          "pr": 1472
         },
         {
           "id": "OU-5",
@@ -7742,11 +7743,6 @@
         "plan": "MRT"
       },
       {
-        "id": "OU-4",
-        "title": "Onboarding done screen + resume + per-step skip + CLI setup pointer",
-        "plan": "OU"
-      },
-      {
         "id": "OU-6",
         "title": "EmptyState primitive + rollout to the 7 listed pages",
         "plan": "OU"
@@ -7754,6 +7750,11 @@
       {
         "id": "OU-9",
         "title": "Structured approval brief over the ChannelDelivery.request_approval seam",
+        "plan": "OU"
+      },
+      {
+        "id": "OU-10",
+        "title": "Replayable product tour component + Discover 'Replay the tour' card",
         "plan": "OU"
       },
       {
@@ -10164,9 +10165,9 @@
         "code": "OU",
         "plan": "ONBOARDING-UX",
         "total_atoms": 11,
-        "done": 6,
+        "done": 7,
         "in_progress": 0,
-        "todo": 5,
+        "todo": 4,
         "blocked": 0
       },
       {

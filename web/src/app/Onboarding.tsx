@@ -2,12 +2,17 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { unavailableWhen } from '../ui/unavailable'
 import { withWeight } from '../design/fontWeight'
 import { motion } from 'framer-motion'
-import { ArrowRight, User, Boxes, Rocket, Sparkles, Loader2, Check } from 'lucide-react'
+import { ArrowRight, User, Boxes, Rocket, Sparkles, Loader2, Check, Inbox, Waves, PanelLeft } from 'lucide-react'
+import type { LucideIcon } from 'lucide-react'
 import { ClawMark } from '../ui/ClawMark'
 import { DotGlow } from '../ui/DotGlow'
 import { LoadingStatus } from '../ui/ListScaffold'
+import { TextLink } from '../ui/TextLink'
+import { Toggle } from '../ui/Toggle'
+import { ScalarControl } from '../ui/TokenControls'
+import { TOKENS, type ScalarToken } from '../design/tokenRegistry'
 import { spring, stagger, listItemEnter } from '../design/motion'
-import { useIdentity, firstNameOf } from './identity'
+import { useIdentity, firstNameOf, DEFAULT_USER_NAME } from './identity'
 import { setNavMode } from './navDisclosure'
 import { APP_NAME } from './config'
 import { api, type OnboardingState, type OnboardingStatePatch } from '../lib/api'
@@ -23,6 +28,32 @@ const ORDER: StepId[] = ['name', 'essentials', 'try', 'ready']
 const TITLES: Record<StepId, string> = {
   name: 'Your name', essentials: 'Essential apps', try: 'Try one', ready: 'All set',
 }
+
+/** Where a re-entered flow picks up, from the persisted resume point (`STEPS` in
+ *  `onboarding.py`, written by every transition below).
+ *
+ *  Two of the four stored values are NOT resume targets:
+ *   • `name` is where the stack starts anyway;
+ *   • `done` means a previous run finished. Re-entering after that is a fresh run
+ *     ("Restart onboarding" in Settings → Account, or a finish whose identity write never
+ *     landed), and dropping such a user on the recap would skip the very steps they asked
+ *     to redo.
+ *
+ *  The name step itself always runs, because the name is deliberately NOT part of this
+ *  state (OU-1: identity lives on the server and `onboarded` is derived from it, so storing
+ *  a second copy here would create a second source of truth) and it is committed only at
+ *  the end. Re-typing one field is the honest cost of that; fabricating a name for someone
+ *  who typed one before the reload is not. Everything the earlier visit actually did —
+ *  installed apps, bound model, completed cards — is what resume restores. */
+function resumeTarget(state: OnboardingState): StepId | null {
+  if (state.step === 'essentials') return 'essentials'
+  if (state.step === 'first_success') return 'try'
+  return null
+}
+
+/** The Motion group's Bounciness dial, straight out of the token registry — the done screen
+ *  shows the REAL Settings → Design control, not a lookalike bound to the same variable. */
+const BOUNCINESS = TOKENS.find((t) => t.varName === '--bounciness') as ScalarToken | undefined
 
 /** First-run welcome — a full-screen branded moment over the chat 3D dot-wave.
  *  A vertically-stacked stepper: each step expands when active and collapses to
@@ -45,6 +76,12 @@ export function Onboarding() {
   const [readiness, setReadiness] = useState<OnboardingState | null>(null)
   const [modelDone, setModelDone] = useState<string>('')  // '' = not resolved, else summary
   const [triedSummary, setTriedSummary] = useState<string>('')
+  /** The step a re-entered flow jumps to once the name is in, or null for a first visit. */
+  const [resume, setResume] = useState<StepId | null>(null)
+  /** How many "try one" cards this home has ALREADY completed, per the persisted flags. */
+  const [triedFloor, setTriedFloor] = useState(0)
+  /** The done screen's rail choice, written once by `finish()` — see there. */
+  const [showEverything, setShowEverything] = useState(false)
 
   // the active step's row drives the 3D glow focus (like the composer in chat)
   const rowRefs = {
@@ -65,15 +102,38 @@ export function Onboarding() {
     api.saveOnboardingState(patch).catch(() => { /* resume is a convenience, not a gate */ })
   }, [])
 
-  // fetch readiness when entering the essentials step
+  // ONE fetch, on mount. The same payload carries live model readiness (what the essentials
+  // step needs) AND the persisted resume point (what a reloaded flow needs) — asking for it
+  // when the essentials step opens would already be too late to know where to resume TO.
   useEffect(() => {
-    if (step === 'essentials' && !readiness) api.onboarding().then(setReadiness).catch(() => setReadiness({ needs_model: true, has_model_provider: false, has_chat_binding: false }))
-  }, [step, readiness])
+    let alive = true
+    api.onboarding().then((s) => {
+      if (!alive) return
+      setReadiness(s)
+      setResume(resumeTarget(s))
+      // Past the essentials step, its collapsed row states what is already set up. The claim
+      // is checked against `needs_model` — the LIVE resolution probe — so a run whose provider
+      // was uninstalled since does not keep promising a model it no longer has.
+      if (s.step === 'first_success') {
+        setModelDone(s.needs_model ? 'Set up later' : s.essentials?.model || 'Ready to chat')
+      }
+      setTriedFloor(Object.values(s.first_success ?? {}).filter(Boolean).length)
+    }).catch(() => {
+      if (alive) setReadiness({ needs_model: true, has_model_provider: false, has_chat_binding: false })
+    })
+    return () => { alive = false }
+  }, [])
 
   function commitName() {
     const n = name.trim()
     if (!n) return
-    setSavedName(n); setStep('essentials'); progress({ step: 'essentials' })
+    // Resume is honoured HERE and nowhere else: a fetch that lands after the user has already
+    // moved on must never yank them forward mid-step. It also never walks the stored point
+    // BACKWARDS — recording `essentials` for a run already at `first_success` would lose a
+    // step of progress on the next reload.
+    const target = resume ?? 'essentials'
+    setSavedName(n); setStep(target)
+    progress({ step: target === 'try' ? 'first_success' : 'essentials' })
   }
   function leaveEssentials(summary: string) {
     setModelDone(summary); setStep('try'); progress({ step: 'first_success' })
@@ -82,7 +142,11 @@ export function Onboarding() {
    *  `first_success` and `done`), so moving to the recap writes nothing new — a user
    *  who reloads on the recap still resumes at the step they have not finished. */
   function leaveTryOne(summary: string) {
-    setTriedSummary(summary); setStep('ready')
+    // A resumed visit starts with idle cards: only the FLAGS survive a reload, not the
+    // outcomes the cards rendered. So a user who succeeded, reloaded, then walked past the
+    // step would be told "nothing tried yet" about a first success their own home recorded.
+    setTriedSummary(summary === 'Skipped' && triedFloor > 0 ? `${triedFloor} of 3 tried` : summary)
+    setStep('ready')
   }
   function finish() {
     progress({ step: 'done' })
@@ -92,9 +156,26 @@ export function Onboarding() {
     // version, start on the starter rail". An install that has no record was onboarded before
     // this shipped and keeps its full rail; see app/navDisclosure.ts. Pins are left alone, so
     // restarting onboarding never takes away a surface you had already reached.
-    setNavMode('starter')
+    //
+    // The done screen's "Show every surface" switch resolves into this SAME write rather than
+    // setting the mode itself: one act decides the rail, so the marker and the user's choice
+    // can never disagree, and abandoning the flow leaves no record behind.
+    setNavMode(showEverything ? 'expert' : 'starter')
     // commit identity LAST so the gate (`onboarded`) flips only on completion
-    setName(savedName || 'Operator')
+    setName(savedName || DEFAULT_USER_NAME)
+  }
+  /** Leave setup unfinished, from any step. The flow is guidance, never a gate, and the two
+   *  in-step escapes ("Set up later", "Skip this") only move to the NEXT step — a user who
+   *  wants the app rather than the tour needs one door out.
+   *
+   *  It runs the same `finish()` as completing the flow, which is what makes the landing a
+   *  WORKING dashboard: the terminal step is recorded, the rail marker is written, and
+   *  committing identity is what releases the route guard. Skipping from the first step has no
+   *  name to commit, so identity falls back to `DEFAULT_USER_NAME` — the same word the
+   *  Settings → Account field uses — and the link says so, because a visible default beats a
+   *  silent rename. */
+  function skipSetup() {
+    finish()
   }
   /** Leave the flow for a real destination — a try-one card's outcome link, or the
    *  Settings deep-link on its failure path. The route guard holds a non-onboarded
@@ -161,9 +242,23 @@ export function Onboarding() {
             <StepRow ref={rowRefs.ready} index={3} icon={Sparkles} title={TITLES.ready}
               subtitle={`You're ready, ${firstNameOf(savedName)}.`}
               state={stateOf('ready')}>
-              <ReadyStep name={savedName} modelSummary={modelDone} triedSummary={triedSummary} onFinish={finish} />
+              <DoneScreen name={savedName} modelSummary={modelDone} triedSummary={triedSummary}
+                showEverything={showEverything} onShowEverything={setShowEverything}
+                onFinish={finish} onExitTo={exitTo} />
             </StepRow>
           </div>
+
+          {/* The one door out, on every step but the last — where "Start using" IS the door.
+              Guidance never gates: this is what makes "skip at any step" land somewhere real. */}
+          {step !== 'ready' && (
+            <div className="mt-l flex justify-center">
+              <TextLink size="sm" onClick={skipSetup}>
+                {step === 'name'
+                  ? `Skip setup — start as ${DEFAULT_USER_NAME}, rename yourself in Settings`
+                  : 'Skip setup and go to the dashboard'}
+              </TextLink>
+            </div>
+          )}
         </motion.div>
       </div>
     </div>
@@ -189,25 +284,82 @@ function NameStep({ value, onChange, onSubmit }: { value: string; onChange: (v: 
   )
 }
 
-/** Final step — recap + launch. */
-function ReadyStep({ name, modelSummary, triedSummary, onFinish }: {
-  name: string; modelSummary: string; triedSummary: string; onFinish: () => void
+/** The done screen — a recap of what this run actually did, then the three things worth
+ *  knowing on day one, each with its real control rather than a sentence about one:
+ *
+ *   1. **the Inbox** is where work comes back to you (and you can land there instead);
+ *   2. **Bounciness** — the live Settings → Design dial, so the app's feel reads as yours to
+ *      set from the first minute rather than a taste you have to live with;
+ *   3. **Show every surface** — the starter sidebar is a starting point, not a limit. The
+ *      switch states intent; `finish()` performs the single write (see there).
+ *
+ *  It teaches by handing over controls, which is why the dial and the switch are the SAME
+ *  objects Settings owns — a copy here would be a second mechanism to keep in step. */
+function DoneScreen({ name, modelSummary, triedSummary, showEverything, onShowEverything, onFinish, onExitTo }: {
+  name: string; modelSummary: string; triedSummary: string
+  showEverything: boolean
+  onShowEverything: (v: boolean) => void
+  onFinish: () => void
+  onExitTo: (path: string) => void
 }) {
   const chatReady = modelSummary && modelSummary !== 'Set up later'
   const tried = triedSummary && triedSummary !== 'Skipped'
   return (
-    <div className="flex flex-col gap-m">
+    <div className="flex flex-col gap-l">
       <motion.div className="flex flex-col gap-1.5"
         initial="initial" animate="animate" variants={{ animate: { transition: stagger(0.06) } }}>
         <motion.div variants={listItemEnter}><Recap ok label={`Hello, ${firstNameOf(name)}`} /></motion.div>
         <motion.div variants={listItemEnter}><Recap ok={!!chatReady} label={chatReady ? `Chat model: ${modelSummary}` : 'Chat model — set up later in Settings'} /></motion.div>
         <motion.div variants={listItemEnter}><Recap ok={!!tried} label={tried ? `First success: ${triedSummary}` : 'Nothing tried yet — the cards are in Discover'} /></motion.div>
       </motion.div>
+
+      <div className="flex flex-col gap-s">
+        <p data-type="label-s" className="text-on-surface-low">Three things to know</p>
+        <Pointer icon={Inbox} title="Work comes back to you in the Inbox"
+          body="Approvals, reminders and finished runs queue up there instead of chasing you across the app.">
+          <TextLink size="sm" onClick={() => onExitTo('inbox')}>Open the Inbox instead</TextLink>
+        </Pointer>
+        <Pointer icon={Waves} title="How much the interface moves is a dial"
+          body="Every animation scales with it — all the way down to none. This is the real control from Settings → Design.">
+          {BOUNCINESS && <ScalarControl token={BOUNCINESS} />}
+        </Pointer>
+        <Pointer icon={PanelLeft} title="The sidebar starts short and grows"
+          body={showEverything
+            ? 'It will list every destination from the start. You can shorten it again in Settings → Design.'
+            : 'Five essentials now; any other surface joins it the first time you open one. Nothing is locked away.'}>
+          {/* The switch's own words, visible: its accessible name is "Show every surface" and a
+              sighted user gets the same phrase rather than a bare toggle under a paragraph. */}
+          <div className="flex items-center gap-2">
+            <Toggle on={showEverything} onChange={onShowEverything} label="Show every surface" />
+            <span className="text-on-surface-var text-[0.8125rem]">Show every surface</span>
+          </div>
+        </Pointer>
+      </div>
+
       <motion.button whileTap={{ scale: 0.98 }} transition={spring.spatialFast} onClick={onFinish} type="button"
         className="inline-flex items-center justify-center gap-1.5 self-start rounded-pill px-5 h-11 text-[0.9375rem]"
         style={withWeight({ background: 'var(--color-primary)', color: 'var(--color-on-primary)' }, 500)}>
         Start using {APP_NAME} <ArrowRight size={17} />
       </motion.button>
+    </div>
+  )
+}
+
+/** One done-screen pointer: an icon, a claim, a line of why, and the control it is about. */
+function Pointer({ icon: Icon, title, body, children }: {
+  icon: LucideIcon; title: string; body: string; children: React.ReactNode
+}) {
+  return (
+    <div className="flex items-start gap-2 rounded-lg bg-surface-high p-3">
+      <span className="mt-0.5 inline-flex size-7 shrink-0 items-center justify-center rounded-lg"
+        style={{ background: 'color-mix(in srgb, var(--color-primary) 14%, transparent)' }}>
+        <Icon size={15} className="text-primary" aria-hidden="true" />
+      </span>
+      <div className="min-w-0 flex-1">
+        <p className="text-on-surface text-[0.8125rem]" style={withWeight({}, 600)}>{title}</p>
+        <p className="mt-0.5 text-on-surface-low text-[0.8125rem]">{body}</p>
+        <div className="mt-1.5">{children}</div>
+      </div>
     </div>
   )
 }
