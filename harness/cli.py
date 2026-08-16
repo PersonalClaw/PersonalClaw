@@ -18,6 +18,8 @@ The agent-facing surface of the self-development harness:
 - ``fanout-measure <observations.json>`` — token-matched fan-out vs single-agent verdict
   (WORK-CONTAINERS amendment (e)). Exits 0 for ANY honest verdict including
   ``inconclusive``; only a malformed observation file fails.
+- ``worktree-bench`` — fan-out worktree hydration baseline + HARNESS-CRAFT §1.1's
+  measure-first gate (HC-1). Exits 0 for any honest verdict, ``unresolved`` included.
 
 Exit codes: 0 == clean/pass, 1 == validation errors or a failed command, 2 == usage error
 (unknown task id, no spec set). Warnings print but do not change the exit code.
@@ -446,6 +448,47 @@ def cmd_fanout_measure(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_worktree_bench(args: argparse.Namespace) -> int:
+    """Fan-out worktree hydration baseline + the §1.1 measure-first gate (HARNESS-CRAFT HC-1).
+
+    Exit 0 for every honest verdict, `unresolved` included — same reasoning as
+    ``fanout-measure``: a non-zero exit on "the measurement cannot separate these" would make the
+    honest answer look like a broken run, and the whole point of the gate is that BOTH outcomes
+    (build §1.2, or skip and re-scope) are acceptable results.
+    """
+    from harness import worktree_bench
+
+    try:
+        baseline = worktree_bench.run_benchmark(
+            repo=args.repo,
+            files=args.files or worktree_bench.BENCHMARK_MIN_FILES,
+            width=args.width or worktree_bench.DEFAULT_WIDTH,
+            contended=args.contended,
+        )
+    except worktree_bench.BenchmarkError as exc:
+        print(f"{_FAIL} {exc}", file=sys.stderr)
+        return 2
+
+    verdict = baseline.gate()
+    print(f"repo: {baseline.repo}")
+    print(
+        f"  files={baseline.repo_files} size_class={baseline.size_class} "
+        f"width={baseline.width} outcomes={baseline.outcomes}"
+    )
+    print(
+        f"  per-worktree mean={baseline.mean_ms:.0f}ms median={baseline.median_ms:.0f}ms "
+        f"max={baseline.max_ms}ms spread={baseline.spread_ms}ms  "
+        f"sequential total={baseline.total_ms}ms"
+    )
+    print(f"  gate={worktree_bench.GATE_MS_PER_WORKTREE:.0f}ms/worktree")
+    print(f"{_OK if verdict.conclusive else _WARN} verdict: {verdict.verdict}")
+    for note in verdict.notes:
+        print(f"    - {note}")
+    if args.json:
+        print(json.dumps(baseline.to_dict(), indent=2, sort_keys=True))
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="python -m harness",
@@ -502,6 +545,36 @@ def build_parser() -> argparse.ArgumentParser:
         "--json", action="store_true", help="Also print the machine-readable dict."
     )
     p_fanout.set_defaults(func=cmd_fanout_measure)
+
+    p_wt_bench = sub.add_parser(
+        "worktree-bench",
+        help="Fan-out worktree hydration baseline + HARNESS-CRAFT §1.1's measure-first gate "
+        "(near-boundary == unresolved).",
+    )
+    p_wt_bench.add_argument(
+        "--repo",
+        default=None,
+        help="Existing git repo to measure. Default: synthesize one under a temp dir.",
+    )
+    # Defaults resolve in the command, not here: reading them off the module would force a
+    # top-level `harness.worktree_bench` import (and with it all of core) onto every
+    # `python -m harness validate` run.
+    p_wt_bench.add_argument(
+        "--files",
+        type=int,
+        default=None,
+        help="Files in the synthesized repo (default 10000; ignored with --repo).",
+    )
+    p_wt_bench.add_argument("--width", type=int, default=None, help="Fan-out width (default 4).")
+    p_wt_bench.add_argument(
+        "--contended",
+        action="store_true",
+        help="Record that the machine was under concurrent load (timings are pessimistic).",
+    )
+    p_wt_bench.add_argument(
+        "--json", action="store_true", help="Also print the machine-readable dict."
+    )
+    p_wt_bench.set_defaults(func=cmd_worktree_bench)
 
     return parser
 
