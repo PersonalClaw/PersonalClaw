@@ -230,7 +230,7 @@ personalclaw = [
     # into ~/.personalclaw/evals/scenarios/ on first reference; a wheel without this
     # line ships an empty library, so the line is load-bearing, not cosmetic.
     "evals/library/*.json",
-    "tests_fixtures/*/*",
+    "tests_fixtures/**/*",
     "skills/bundled/*/SKILL.md",
     # Progressive-disclosure companions a bundled SKILL.md links to (HC-4's
     # check-work/references/qa-boundary.md). Without this line the wheel ships a skill

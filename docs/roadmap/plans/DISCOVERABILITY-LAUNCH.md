@@ -113,3 +113,71 @@ No domain/site/docs-site/demo; README screenshot is a placeholder (`docs/assets/
 - **Site/docs drift** — mitigated structurally (build-time sync, no committed copies, link-check CI).
 - **Comparison pages age** — the data file carries retrieval dates; refresh cadence = each release, checklist item in release.yml notes.
 - **Open:** blog collection vs docs-only Starlight — default: enable Starlight's blog only if the launch post wants an RSS feed (it does — LLM crawlers and aggregators both consume RSS; ship it).
+
+## Execution log
+
+### 2026-08-16 — `DL-4` (T3.1) demo-home seed fixture — **PARTIAL / BLOCKED**
+
+**Landed.** `src/personalclaw/tests_fixtures/demo-home/` now ships a home that reads as used:
+two authored projects with briefs (`Reading Pipeline`, `Home Server`) plus the two builtins
+(`Personal`, `Repeatable`) pinned at fixed ids, three task lists, ten tasks spanning
+`open`/`in_progress`/`done`/`blocked`/`cancelled` with exit criteria, action plans and notes,
+one dependency edge that resolves to a real derived block reason, and markdown memory
+(`preferences.md`, `projects.md`, two days of `history/`). A minimal `config.json` sets
+`dashboard.user_name` so the home boots past onboarding. New rails in
+`tests/test_seed_demo_home.py` (11 tests). Docs updated: `docs/reference/cli.md` gains a
+fixture table, and `CAPTURE.md` + `capture.mjs` no longer instruct a `--seed demo` fixture
+that never existed.
+
+**BLOCKED on the done_when's other half — knowledge docs and one loop.** The done_when also
+requires knowledge docs, memory *records* and one loop. All three of those stores are
+SQLite-only, and `--seed` is a bare `shutil.copytree` (`seed.py:269`) with no hydration hook,
+so there is no text representation for a fixture to carry:
+
+- **Knowledge** — `workspace/knowledge/knowledge.db` only (`knowledge/store.py:221`), 35-column
+  `items` plus **external-content FTS5 with no triggers**, and the store refuses to open at all
+  without FTS5 (`store.py:235`). `workspace/knowledge/files/` holds upload bytes reached through
+  an **absolute** `file_path`, so a baked-in path from another home 404s. No boot-time re-ingest
+  from any file. Extra hazard: a row left at `processing_status='queued'` is re-run through the
+  full enrichment graph on every boot (`ingest_queue.recover_pending()`).
+- **Memory records** — `semantic_memory` / `episodic_memories` in `memory.db`. `memory-vault/`
+  is a projection that is **never read** by default (`vault_mode` defaults to `off`), and in
+  `mirror` mode a hand edit is overwritten. The markdown tier we DID author is a genuine,
+  first-class surface (it renders in the Memory studio and feeds the memory graph — measured,
+  23 graph nodes), but it is explicitly "a view, not a parallel store" (`memory.py:50-57`).
+- **Loops** — hybrid, and the SQLite half is the mandatory half: `loop/loops.db` holds the row,
+  and `reap_orphan_dirs()` **deletes any `loop/<8hex>/` directory with no backing DB row at
+  gateway boot** (`store.py:1215-1241` via `manager.py:604`). So a text-only loop fixture is
+  silently wiped on first boot. Findings/verdicts are projected off `events.jsonl`, not off
+  `findings/*.json` (which is ingest-only). Also: never seed `status='running'` or `'planning'`
+  — boot re-arms them and spends real model calls.
+
+The options, for the owner: **(a)** commit prebuilt `.db` files into package data (works today,
+`copytree` handles it, but it is reviewable-as-binary, rots silently on any schema change, and
+has no in-repo precedent); **(b)** give `seed` a post-copy hydration step that replays a
+declarative JSON manifest through the real writers (keeps the fixture text-only and
+schema-proof, but it is new machinery and a design decision beyond this atom); **(c)** leave the
+fixture text-only and document the two-command manual top-up for capture, which is what
+`CAPTURE.md` now says. `DL-4` stays `todo` in `dag.json`/`DL.md` because the done_when is not met.
+
+**DISCOVERY (packaging, fixed here).** `pyproject.toml`'s package-data glob was
+`tests_fixtures/*/*` — exactly one level deep. It covered `empty/fixture.yaml` and nothing else,
+so every nested file this fixture needs would have been **silently absent from the wheel**: a
+source checkout looks perfect and only a real `pip install` shows the fixture half-missing.
+Widened to `tests_fixtures/**/*` and **proved against a built wheel**, not against the config:
+a 4-level probe file appeared at `personalclaw/tests_fixtures/globprobe/a/b/c/deep.txt` inside
+`python -m build --wheel` output. Backed by a coverage rail that walks the real tree and names
+every uncovered file, plus a vacuity floor asserting the fixture is actually nested (a coverage
+check over a flat tree would pass while the bug is wide open).
+
+**Verified as a user** (isolated home, `--seed demo-home --seed-replace`, port 10055, real
+browser): Home greets "Good afternoon, Alex" with 6 open tasks and a task counter of 6; the
+Tasks list renders all ten with project labels, priorities, criteria counts (2/3, 1/2, 1/1, 2/2),
+tags, strikethrough on done and the cancelled row distinct; Projects lists all four with
+`builtin` badges and list counts; the Memory studio shows all three markdown documents and a
+23-node graph carrying the authored prose. Zero console errors, zero gateway-log errors.
+**Not verified because deliberately absent:** Knowledge (0 items), loops (0 — "No active work"),
+and the Semantic/Episodic/Events/Embedded tiles all read 0.
+
+**Known limitation.** The fixture's timestamps are static (mid-August 2026), so relative-time
+labels drift as the fixture ages. Refresh them when the launch capture is taken.
