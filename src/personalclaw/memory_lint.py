@@ -149,6 +149,15 @@ def lint_memory(vs, *, now: datetime | None = None, judge=None) -> LintReport:
                     "lint: contradiction judge failed for %s/%s", key_a, key_b, exc_info=True
                 )
 
+    # ── Flag: kept-both contradictions (MEMORY-GRAPH-AND-VAULT §4.1 — MGAV-5) ──
+    # The Decide phase refuses to guess: a contradiction it is unsure about, or one where
+    # holder precedence forbids the overwrite, is kept as TWO live rows and flagged here.
+    # This check is NOT gated on `graph_enabled` (unlike `_lint_graph` below), because the
+    # flag is a data-safety notice about semantic rows, not a graph-health statistic — a
+    # contradiction the user can never see is the failure mode keeping both exists to
+    # prevent, and hiding it behind an unrelated toggle would recreate it.
+    _lint_conflicts(vs, report)
+
     # ── Flag: graph health (MEMORY-GRAPH-AND-VAULT §2.3) ──
     # All deterministic, all flag-only. An orphan usually means the entity set has a
     # gap, so "fixing" it by deleting the record would destroy the evidence.
@@ -156,6 +165,25 @@ def lint_memory(vs, *, now: datetime | None = None, judge=None) -> LintReport:
 
     logger.info("memory lint: auto-fixed %s, %d flags", report.auto_fixed, len(report.flags))
     return report
+
+
+def _lint_conflicts(vs, report: LintReport) -> None:
+    """Flag every standing kept-both contradiction. Never auto-resolves one.
+
+    Flag-only on purpose: the whole point of keeping both rows is that nothing in the
+    system knows which is true. An auto-fix here would be the silent pick that §4.1
+    exists to refuse.
+    """
+    try:
+        from personalclaw.memory_formation import conflicts
+    except Exception:  # noqa: BLE001 — lint must never fail on an optional check
+        logger.debug("lint: conflict check unavailable", exc_info=True)
+        return
+    for row in conflicts(vs):
+        detail = f"kept alongside {row['old_key']} — undecided contradiction"
+        if row.get("reason"):
+            detail += f" ({row['reason']})"
+        report.add_flag("keep_both", row["new_key"], detail)
 
 
 def _lint_graph(vs, report: LintReport) -> None:

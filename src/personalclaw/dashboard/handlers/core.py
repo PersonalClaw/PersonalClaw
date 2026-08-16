@@ -676,6 +676,13 @@ _EDITABLE_CONFIG: dict[str, dict] = {
     # reads them per turn, so a change takes effect on the next message with no restart.
     "memory.push_context": {"type": "bool"},
     "memory.push_min_confidence": {"type": "float", "min": 0.0, "max": 1.0},
+    # MEMORY-GRAPH-AND-VAULT §2.4 / §4.2 — the topology block and the holder axis. Both
+    # runtime-editable: the block is read per new session and the axis per write, so a
+    # change takes effect without a restart. Turning the axis OFF stops NEW attribution
+    # and stops rendering it; already-attributed rows keep their holder, so flipping it
+    # back on does not need a backfill.
+    "memory.graph_topology_in_context": {"type": "bool"},
+    "memory.holder_attribution": {"type": "bool"},
     "feedback.enabled": {"type": "bool"},
     "feedback.retire_threshold": {"type": "float", "min": 0.1, "max": 0.9},
     "feedback.min_n": {"type": "int", "min": 3, "max": 50},
