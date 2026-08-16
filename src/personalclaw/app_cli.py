@@ -86,7 +86,7 @@ def run_app_setup_steps(only_app: str = "") -> None:
     ``only_app`` restricts the run to that one app (``personalclaw setup --app``).
     A step that raises prints ``⚠️ <app>: <err>`` and setup continues.
     """
-    from personalclaw.config.loader import env_path, save_credential
+    from personalclaw.config.loader import get_credential, save_credential
     from personalclaw.providers.settings import ProviderSettings
     from personalclaw.sel import sel
 
@@ -96,17 +96,6 @@ def run_app_setup_steps(only_app: str = "") -> None:
         if not steps:
             print(f"  ⚠️  No installed+enabled app named {only_app!r} declares a cli.setup step.")
             return
-
-    def _get_credential(key: str) -> str:
-        ep = env_path()
-        if not ep.exists():
-            return ""
-        for line in ep.read_text(encoding="utf-8").splitlines():
-            if "=" in line and not line.startswith("#"):
-                k, _, v = line.partition("=")
-                if k.strip() == key:
-                    return v.strip()
-        return ""
 
     def _safe_input(prompt: str) -> str:
         """Prompt, but return "" on a non-interactive run (closed/empty stdin)
@@ -134,7 +123,7 @@ def run_app_setup_steps(only_app: str = "") -> None:
             continue
         ctx = SetupContext(
             app_name=app_name,
-            get_credential=_get_credential,
+            get_credential=get_credential,
             save_credential=save_credential,
             settings=ProviderSettings,
             input=_safe_input,

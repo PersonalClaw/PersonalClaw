@@ -136,6 +136,92 @@ def credential_backend() -> CredentialBackend: ...   # keychain if available+ena
 
 ## Execution log
 
+### 2026-08-15 — SH-1 (T1.1 / Design S1 / Contract C1) credential backend selector — DONE
+
+- **[SH-1] DONE:** C1 lands in `config/loader.py`: `CredentialBackend = Literal["keychain",
+  "dotenv"]`, `requested_credential_backend()` (intent), `credential_backend()` (**resolved
+  outcome**), `keychain_available()`, `credential_backend_warning()`, plus the two chokepoints
+  `save_credential` / `get_credential`. `[keychain] = ["keyring>=24"]` is a new optional extra;
+  doctor reports the active backend on the CLI and through a new
+  `security.credential_backend` probe. 26 new tests in `tests/test_credential_backend.py`.
+
+**Reads are a UNION; writes are not.** The one design call worth recording. Writes go to the
+ACTIVE backend only (falling back to `.env` 0600 on any keychain failure); reads consult **both**
+stores, keychain first, whichever backend is active. The alternative — reads served only by the
+active backend — loses secrets in a case that will actually happen: an install opts into the
+keychain, and every credential still sitting in `.env` (SH-2's migration has not run yet) reads
+as `""`. Falsification proved the point, see below.
+
+**Fail-closed, measured in three places.** (1) `keyring` absent → `.env` 0600 + doctor warning.
+(2) `keyring.backends.fail` (raises on every call) **and `keyring.backends.null`** are refused as
+unusable. `null` is the dangerous one — `set_password` returns cleanly and the secret is *gone* —
+so the test asserts the credential lands in `.env`, not merely that the selector said "dotenv".
+(3) A `set_password` that raises falls back to `.env` 0600. Never a third location: the fallback
+test asserts `_mode(.env) == 0o600` **and** `{p.name for p in home.iterdir()} == {".env"}`.
+
+**Doctor reports the outcome, in both surfaces.** `cli_doctor._doctor_credentials()` (extracted
+as a helper on the `_doctor_providers()` pattern so it is testable without running the whole
+subprocess/network-touching `_doctor()`, whose auto-fix writes to the real home) and the
+`security.credential_backend` CAPABILITY probe. Both call `credential_backend()` and share one
+`credential_backend_warning()`. The probe's evidence is `backend` / `requested` /
+`keychain_available` / `env_mode` — names, modes and states, never a value (asserted). It also
+flags a group-readable `.env`, read-only: the repair happens on the next credential read.
+
+**Deviations, with reasons.**
+1. **No config field; the opt-in is `PERSONALCLAW_CREDENTIAL_BACKEND`.** T1.1's sibling T1.2/T1.3
+   (SH-2) own the class-B `credential_keychain` gate, the consent migration and the Settings
+   action. A config gate here would build that seam twice and force SH-2 to redefine it. So no
+   `config.json` round-trip, no `_EDITABLE_CONFIG` entry, no baseline regeneration.
+2. **Availability alone does not switch backends.** `keychain` must be *requested*. The plan's own
+   lifecycle is opt-in → default-new-installs → migrate-on-consent; flipping on mere availability
+   would silently split an existing install's secrets across two stores with no migration.
+3. **The keychain key index lives inside the keychain**, one JSON entry (`__personalclaw_key_index__`)
+   holding key NAMES. `keyring` has no portable enumeration API and `load_credentials()` must be
+   able to list what the keychain holds. A sidecar file under the config dir would have needed a
+   durability-inventory claim to be snapshot-safe; names travelling with their own secrets need none.
+4. **`app_cli` had a second `.env` parser** (a private `_get_credential` feeding every app's setup
+   `SetupContext`) — invisible to keychain-stored secrets. Deleted and routed through the loader
+   (clean break). Asserted by a source test so it cannot come back as a shadow.
+5. **`keyring` is NOT in `[dev]`/`[test]`.** CI never installs optional extras, and a test that
+   passed only on a developer's machine would be a CI red in waiting. The no-keyring path is proven
+   by a `sys.meta_path` import blocker; the keychain path by a stub module in `sys.modules`. Nothing
+   in the suite touches a real OS keychain. `keychain_available()` is deliberately **uncached** so a
+   blocked import takes effect immediately without a cache-reset hook.
+
+**Falsification — four mutations, one of which reded NOTHING and found a real test gap.**
+1. `_dotenv_save_credential` chmod `0o600` → `0o644`: **3 red.**
+   `AssertionError: .env must be 0600, found 0o644` · `assert 420 == 384` ·
+   `assert '0644' == '0600'` (the probe's `env_mode` evidence).
+2. `cli_doctor._doctor_credentials` reports `requested_credential_backend()`: **1 red** —
+   `assert '.env 0600' in '  credentials: 🔐 OS keychain (keyring)\n ⚠️  keychain requested but
+   no usable OS keyring backend is available…'`. Exactly the intent-instead-of-outcome defect.
+3. Probe reports the request (`"backend": requested_credential_backend()`): **1 red** —
+   `assert 'keychain' == 'dotenv'`.
+4. `_UNUSABLE_KEYRING_BACKENDS = ()` (adopt `fail`/`null`): **2 red**, both parametrisations.
+5. 🔴 **`get_credential` made active-backend-EXCLUSIVE: 2 passed — reded NOTHING.** The union-read
+   property was asserted only in the direction "keychain value survives switching back to dotenv",
+   never "a `.env`-only value is readable while the keychain is ACTIVE" — which is the pre-migration
+   state of every opt-in install. Test strengthened; re-running the same mutation now reds with
+   `AssertionError: assert '' == 'from-dotenv'`. Recorded because a mutation that reds nothing is a
+   finding, not a formality.
+   Also found while mutating #1: `test_a_fail_or_null_keyring_backend_is_refused` checked the mode
+   *after* a `get_credential` call, so `_dotenv_credentials()`'s permission repair was masking the
+   write. The assertions are now ordered mode-before-read.
+
+**Gate.** `make lint` clean (black 1684 files unchanged, isort, flake8, mypy 869 sources).
+`tests/test_credential_backend.py` **26 passed**. Rails — `test_config_baseline`,
+`test_config_roundtrip`, `test_inert_surface_baseline`, `test_portability`,
+`test_durability_inventory`, `test_resilience_degraded_lint`, `test_resilience_doctor`,
+`test_baseline_denylist_integrity`, `tests/security/`, `test_app_cli`, `test_auth_credentials`,
+`test_sdk_cli`, `test_roadmap_dag_derived`, `test_mc1_remote_reachability` — **318 passed**.
+Full suite `pytest tests/ -n 4`: **20401 passed, 30 skipped, 12 xfailed, 0 failed** (9m30s).
+`tools/regen_dag_derived.py`: 640 atoms, 125 ready, 876 edges, no `regressed:` line; the derived
+diff is SH-1 `todo`→`done`, the SH ready-frontier moving to SH-2, and SH `done` 3→4 / `todo` 6→5.
+No `config.json` field ⇒ no `test_config_baseline` regeneration needed and none done. No `web/`
+change: the Doctor panel renders capabilities generically from `probe.title`, and the `security`
+card already exists, so the new row appears with no frontend edit. The real-home rail reported
+`/Users/golani/.personalclaw unchanged` on every run.
+
 ### 2026-08-14 — SH-10 (Amendment T4.4) the Security panel renders the verified baseline — DONE
 
 SH-6 built the verification; nothing showed it. The panel listed 112 patterns with no way to
