@@ -16,7 +16,7 @@ Each atom below executes start-to-finish in one go. If an atom lists dependencie
 | `PEP-4` | ✅ | Onboarding import engine (scanners + writers) | — | A fixture ~/.claude yields instruction+mcp+skills items with secrets counted-and-skipped and re-scan idempotent; importing the fixture creates the memories, MCP entries, and skills/imported/claude_code/*, and a conflicting item reports 'conflict' rather than silently overwriting. |
 | `PEP-5` | ⬜ | Onboarding import step UI | `PEP-4`, `EXT:ONBOARDING-UX:step-stack-primitive` | Fresh home with a fixture source shows the step; import completes without any secret appearing; re-entry shows already-imported items as 'existing'; skip path works; validation recorded. |
 | `PEP-6` | ✅ | Artifact folders | — | Folders CRUD; filing is metadata-only (no updated_at bump); renaming a folder leaves artifact records untouched; deleting a folder falls its members back to unfiled; membership persists across reload; nested folders validated. |
-| `PEP-7` | ⬜ | Artifacts as an indexed knowledge source | — | Saving a markdown artifact makes it searchable in Knowledge without appearing in the Knowledge list; editing refreshes and deleting removes it from the index; enabling on a home with existing artifacts backfills exactly once and reboot doesn't re-run; a credential in an artifact is redacted before indexing; config round-trips. |
+| `PEP-7` | ✅ | Artifacts as an indexed knowledge source | — | Saving a markdown artifact makes it searchable in Knowledge without appearing in the Knowledge list; editing refreshes and deleting removes it from the index; enabling on a home with existing artifacts backfills exactly once and reboot doesn't re-run; a credential in an artifact is redacted before indexing; config round-trips. |
 | `PEP-8` | ✅ | Local static artifact deploy (webapp kind + serve route) | `PEP-6` | An html widget artifact renders at /artifacts/serve/<slug>/ and can be opened and interacted with in-app; a traversal attempt is refused; the served page cannot call /api (CSP fence validated explicitly); teardown removes the route. |
 | `PEP-9` | ⬜ | React artifact build path | `PEP-8`, `EXT:EXECUTION-ISOLATION:resource-limited-build-spawn` | A small React artifact builds and serves as static files through the deploy route and is interactable in-app; a build failure is legible, not a hang. |
 | `PEP-10` | ⬜ | Always-on conventions viewer + first domain-craft skills | — | The viewer matches what a session actually receives (spot-checked against an assembled prompt) and editing a project instruction round-trips safely; the three new skills load and surface when relevant, validated in a real session. |
@@ -144,11 +144,82 @@ Add an ArtifactFolderStore (flat JSON, opaque 12-char-hex id, parent_id nesting,
 
 ### `PEP-7` — Artifacts as an indexed knowledge source
 
-**Status:** todo
+**Status:** done
 
 Extend the existing knowledge source framework so content-bearing artifacts are mirrored into the Knowledge Library without being listed as knowledge items. Add one aggregate artifact:// source row (source_type 'artifact') with per-artifact item grouping (an artifact's items replaced on edit / removed on delete without touching the rest) and a knowledge.auto_ingest_artifacts config (default on) fully round-tripped (dataclass+_meta, load, to_dict, write path). Emit change events from the artifact store and add a single in-process change-listener -> ingest/replace on upsert, remove on delete, routing artifacts through the existing FileReader path via a kind->extension map (html->prose extraction, md/text/json->text; widget/svg excluded) with redaction on the way in. First-enable backfill tied to source-row creation (idempotent). Artifacts surface only in search results with a provenance badge, never as knowledge items.
 
 **Done when:** Saving a markdown artifact makes it searchable in Knowledge without appearing in the Knowledge list; editing refreshes and deleting removes it from the index; enabling on a home with existing artifacts backfills exactly once and reboot doesn't re-run; a credential in an artifact is redacted before indexing; config round-trips.
+
+**DONE.** `artifacts/changes.py` is the observer seam — a two-word vocabulary (`upsert`/`delete`)
+emitted by `NativeArtifactProvider` from OUTSIDE its lock, so every writer (HTTP handler, MCP tool,
+chat tool) is covered by one subscription and no writer serializes behind someone else's indexing.
+Artifacts deliberately do NOT emit the knowledge library's three-word `created`/`modified`/`deleted`
+vocabulary: choosing between create and modify needs to know whether the MIRROR exists, which is
+knowledge-side state, and a wrong guess either duplicates a row or drops an edit. `set_folder` emits
+nothing — filing is organization (PEP-6's no-bump contract), so dragging ten artifacts costs zero
+re-indexing.
+
+`knowledge/artifact_ingest.py` joins the WatchedSource mechanism rather than paralleling it: ONE
+`sources` row (`provider='artifacts'`, `kind='artifact'`, `spec.uri='artifact://'`), per-artifact
+identity as the store's own `(source_id, guid=slug)` pair so `find_source_item` makes "replace this
+artifact's mirror, touch nothing else" a single-row lookup, and `ingest_queue.enqueue` as the only
+writer — never a hand-written `items_fts` row, which is the failure that looks perfectly present in
+`items` and is invisible to every search. HTML rides the shared reader conversion, extracted from
+`FileReader._read_html` into `readers.html_to_prose` (one primitive, so an `html` artifact and an
+uploaded `.html` reduce to the same prose); dispatch is by KIND, not by path, because every text
+artifact is stored on disk as `current.html` whatever it is. `INDEXABLE_KINDS` is a closed
+allowlist (html/markdown/text/json/csv/document) — the fail-closed direction, so a kind added later
+is not silently indexed, and `widget`/`react`/`svg`/`infographic` are excluded because indexing
+program text makes every search for a variable name outrank the user's notes.
+
+**Four decisions worth naming.** (1) **Enrichment is `raw`, not `full`** — the mirror is automatic
+and default-on, so `full` would spend one model call per artifact the first time a gateway starts on
+an existing home; `raw` routes every mirror through the LLM-free `FeedItemGraph`, and the Sources UI
+already reads that field back as a "no AI" chip. (2) **A delete FORGETS the sighting** where a
+watched directory archives it — new store primitive `forget_source_item(source_id, guid)`, one
+transaction over the item cascade AND its `source_seen` row. Archiving would leave an orphan nothing
+can revive (we own this upstream), and leaving the seen row would make `create_typed_item`'s novelty
+gate refuse a re-created slug **forever, silently** — asserted end-to-end by
+`test_a_recreated_slug_indexes_again`. Removal deliberately ignores the master switch: disabling the
+mirror must not disable deletion. (3) **Idempotence is a content hash**
+(`file_metadata['artifact_sha']` over title + indexed text), not a timestamp, so a re-run backfill
+and a no-op PATCH write nothing and enqueue nothing; the title is in the hash because a rename must
+refresh what a search result shows. (4) **Not listed** is one predicate on one column: the mirror's
+`item_type='artifact'` sits OUTSIDE the twelve authorable knowledge types, so the create API can
+never author one and `list_items`' no-query branch excludes it while the search branch does not —
+an explicit `?type=artifact` still answers, because a filter that silently returns nothing is worse
+than one that does.
+
+The switch is `knowledge.auto_ingest_artifacts` (default on), wired through all five points
+(dataclass + `_meta`, `load()`, `to_dict()` via `asdict`, the `_EDITABLE_CONFIG` PATCH allowlist, and
+a **ToggleRow in Settings → Sources**) plus `config-baseline.json`. It is read PER EVENT, and
+`start()` subscribes unconditionally — subscribing only when it was on at boot would make turning it
+on a setting that quietly needs a restart. With it off no source row exists, so a later turn-on is
+still a FIRST enable and still backfills exactly once; the row's existence IS the idempotency marker,
+so there is no second "did the backfill run" flag to fall out of step with it.
+
+**Two UI honesty fixes were mandatory, not polish.** The Sources row describes a POLLER, so the new
+row read *"No provider · never polled · every 1h"* — a DANGER chip telling the user a working
+mechanism is broken. `_serialize_source` now ships `event_driven`, and the row suppresses the
+poll-shaped verdicts, states *"indexed as artifacts change · turn off in Settings → Sources"*, and
+**renders no pause toggle at all**: the row's `enabled` column is not what the mirror reads, so that
+switch would have saved successfully and changed nothing. `enrolled` stays honestly `false` (nothing
+IS enrolled to poll it) rather than being faked, which would hide a genuinely orphaned row of some
+future kind. Second: `resolveType` fell through its cascade to `note`, so an artifact search hit
+rendered a StickyNote labelled "Note"; `ARTIFACT_TYPE` is its own meta kept OUT of `TYPES` (the
+create picker's catalog), the redundant lowercase `artifacts` provider pill is suppressed where the
+type label already says "Artifact", and the hit carries an **"Open artifact"** link — a mirror is a
+search surface, and a hit that could only ever show extracted text would be a dead end.
+
+31 backend tests (`tests/test_artifact_knowledge_source.py`) + 9 frontend
+(`web/src/pages/knowledge/artifactMirror.test.tsx`). Every claim is an outcome: "searchable" is
+asserted by SEARCHING, "not listed" against the real `list_items` handler, "backfills once" by
+driving the startup path TWICE and comparing counts *and* `updated_at`, redaction from both
+directions (the secret is unfindable by search AND absent from every stored column). Two vacuity
+floors: every allowlisted kind is exercised, and the "No provider" chip is asserted to still appear
+for a genuinely orphaned poller. **Left out deliberately:** `get_stats()['items']` still counts
+mirrors — it is a store-wide `COUNT(*)` that already counts archived rows the list hides, so
+artifacts inherit its existing meaning rather than introducing a new inconsistency.
 
 ### `PEP-8` — Local static artifact deploy (webapp kind + serve route)
 

@@ -19,15 +19,17 @@ type SourcesCfg = Record<string, unknown>
  *  PATCHes one allowlisted path. */
 export function SourcesPanel() {
   const [cfg, setCfg] = useState<SourcesCfg | null>(null)
+  const [knowledgeCfg, setKnowledgeCfg] = useState<SourcesCfg | null>(null)
   const [scratchpad, setScratchpad] = useState<string | null>(null)
 
   const { data } = useCachedData('settings:sources', () =>
     api.personalclawConfig().then((c) => ({
       sources: (c.sources ?? {}) as SourcesCfg,
-      // planning.* is a sibling section, not part of sources.*, so it is fetched with the
-      // same request rather than a second round trip.
+      // planning.* and knowledge.* are sibling sections, not part of sources.*, so they are
+      // fetched with the same request rather than a second round trip.
       scratchpadPath: String(((c.planning ?? {}) as Record<string, unknown>).scratchpad_path ?? ''),
-    })).catch(() => ({ sources: {} as SourcesCfg, scratchpadPath: '' })),
+      knowledge: (c.knowledge ?? {}) as SourcesCfg,
+    })).catch(() => ({ sources: {} as SourcesCfg, scratchpadPath: '', knowledge: {} as SourcesCfg })),
     { persist: true },
   )
 
@@ -35,10 +37,11 @@ export function SourcesPanel() {
     if (data) {
       setCfg(data.sources)
       setScratchpad(data.scratchpadPath)
+      setKnowledgeCfg(data.knowledge)
     }
   }, [data])
 
-  if (!data || !cfg || scratchpad === null) return <FormSkeleton sections={3} />
+  if (!data || !cfg || knowledgeCfg === null || scratchpad === null) return <FormSkeleton sections={4} />
 
   // Optimistic single-field PATCH; a rejected save rolls back and surfaces the error
   // (a swallowed 400 would look exactly like a successful save).
@@ -47,6 +50,18 @@ export function SourcesPanel() {
     setCfg((c) => ({ ...c, [key]: value }))
     api.patchConfig(`sources.${key}`, value).then(() => onSaved?.()).catch((e) => {
       setCfg((c) => ({ ...c, [key]: prev }))
+      notify(`Couldn't save ${key}: ${String((e as Error)?.message || e)}`, 'error')
+    })
+  }
+
+  // The same optimistic single-field PATCH against the sibling `knowledge.*` section. Its own
+  // function rather than a prefix parameter on `patch`: the two sections have separate state,
+  // so one setter reaching into both would roll a failed save back into the wrong object.
+  const patchKnowledge = (key: string, value: unknown, onSaved?: () => void) => {
+    const prev = (knowledgeCfg ?? {})[key]
+    setKnowledgeCfg((c) => ({ ...c, [key]: value }))
+    api.patchConfig(`knowledge.${key}`, value).then(() => onSaved?.()).catch((e) => {
+      setKnowledgeCfg((c) => ({ ...c, [key]: prev }))
       notify(`Couldn't save ${key}: ${String((e as Error)?.message || e)}`, 'error')
     })
   }
@@ -87,6 +102,17 @@ export function SourcesPanel() {
             hint="How many new items one poll may ingest before the rest wait for the next cycle." />
           <NumberRow label="Daily request budget per source" cfg={cfg} field="daily_request_budget" min={1} max={100000} patch={patch}
             hint="Upper bound on network requests one source may make in a rolling day (enforced by the fetching providers)." />
+        </div>
+      </Section>
+
+      {/* PEP-7 lives here rather than in a knowledge panel of its own: this is the panel that
+          already governs what gets pulled into the knowledge library, and the artifact mirror
+          is the one such feed that needs no polling. It is `knowledge.*`, not `sources.*` —
+          see `patchKnowledge`. */}
+      <Section title="Artifacts" hint="Artifacts you and the agent write, mirrored into knowledge search.">
+        <div className="rounded-lg bg-surface-container px-4 py-1">
+          <ToggleRow label="Index artifacts for search" cfg={knowledgeCfg} field="auto_ingest_artifacts" patch={patchKnowledge}
+            hint="Make text artifacts (markdown, HTML, text, JSON, CSV) findable from knowledge search. They stay in the Artifacts library and are never listed as knowledge items — only found by a search. Indexing is local: a mirrored artifact never reaches a model. Off stops indexing new changes and removes nothing already indexed." />
         </div>
       </Section>
 

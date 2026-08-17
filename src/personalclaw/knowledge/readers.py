@@ -349,20 +349,34 @@ class FileReader:
                 html = f.read()
         except Exception as e:
             return f"Error reading file: {e}", {"format": "error", "error": str(e)}
-        # Reduce to the page's content (drop nav/header/footer/aside/script/…) before
-        # conversion — an uploaded .html file shouldn't ingest its site chrome as content
-        # any more than a scraped bookmark should. Same primitive as the bookmark scrape.
-        from personalclaw.knowledge.connectors.base import strip_html_chrome
+        return html_to_prose(html), {"format": "html"}
 
-        html = strip_html_chrome(html)
-        if _html2text_mod is not None:
-            h = _html2text_mod.HTML2Text()
-            h.ignore_links = False
-            h.ignore_images = True
-            return h.handle(html), {"format": "html"}
-        text = re.sub(r"<[^>]+>", " ", html)
-        text = re.sub(r"\s+", " ", text).strip()
-        return text, {"format": "html"}
+
+def html_to_prose(html: str) -> str:
+    """HTML markup → the prose a reader would see, with chrome stripped.
+
+    The conversion half of :meth:`FileReader._read_html`, lifted out because an artifact's
+    body arrives as a STRING from the artifact store rather than as a file on disk (its
+    on-disk name is always ``current.html`` whatever the artifact's kind, so the extension
+    dispatch cannot be reused as-is). One shared primitive rather than two: an ``html``
+    artifact and an uploaded ``.html`` must reduce to the same text, and a second
+    implementation is where "the chrome is stripped for uploads but not for artifacts"
+    comes from.
+
+    Chrome (nav/header/footer/aside/script/…) is dropped BEFORE conversion — the same
+    primitive as the bookmark scrape — and the regex path is the degradation when
+    ``html2text`` is not installed, not a second policy.
+    """
+    from personalclaw.knowledge.connectors.base import strip_html_chrome
+
+    html = strip_html_chrome(html or "")
+    if _html2text_mod is not None:
+        h = _html2text_mod.HTML2Text()
+        h.ignore_links = False
+        h.ignore_images = True
+        return h.handle(html)
+    text = re.sub(r"<[^>]+>", " ", html)
+    return re.sub(r"\s+", " ", text).strip()
 
 
 # ── Structural PDF read (WATCHED-SOURCES §5) ──────────────────────────────────

@@ -600,6 +600,12 @@
   },
   {
     "default": true,
+    "path": "knowledge.auto_ingest_artifacts",
+    "sensitive": false,
+    "type": "bool"
+  },
+  {
+    "default": true,
     "path": "knowledge.conflict_model_pass",
     "sensitive": false,
     "type": "bool"

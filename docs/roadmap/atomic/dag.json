@@ -7127,7 +7127,7 @@
         {
           "id": "PEP-7",
           "title": "Artifacts as an indexed knowledge source",
-          "status": "todo",
+          "status": "done",
           "scope": "Extend the existing knowledge source framework so content-bearing artifacts are mirrored into the Knowledge Library without being listed as knowledge items. Add one aggregate artifact:// source row (source_type 'artifact') with per-artifact item grouping (an artifact's items replaced on edit / removed on delete without touching the rest) and a knowledge.auto_ingest_artifacts config (default on) fully round-tripped (dataclass+_meta, load, to_dict, write path). Emit change events from the artifact store and add a single in-process change-listener -> ingest/replace on upsert, remove on delete, routing artifacts through the existing FileReader path via a kind->extension map (html->prose extraction, md/text/json->text; widget/svg excluded) with redaction on the way in. First-enable backfill tied to source-row creation (idempotent). Artifacts surface only in search results with a provenance badge, never as knowledge items.",
           "done_when": "Saving a markdown artifact makes it searchable in Knowledge without appearing in the Knowledge list; editing refreshes and deleting removes it from the index; enabling on a home with existing artifacts backfills exactly once and reboot doesn't re-run; a credential in an artifact is redacted before indexing; config round-trips.",
           "deps": []
@@ -7790,11 +7790,6 @@
       {
         "id": "PEP-5",
         "title": "Onboarding import step UI",
-        "plan": "PEP"
-      },
-      {
-        "id": "PEP-7",
-        "title": "Artifacts as an indexed knowledge source",
         "plan": "PEP"
       },
       {
@@ -10214,9 +10209,9 @@
         "code": "PEP",
         "plan": "PRODUCT-EXPERIENCE-PARITY",
         "total_atoms": 11,
-        "done": 4,
+        "done": 5,
         "in_progress": 0,
-        "todo": 7,
+        "todo": 6,
         "blocked": 0
       },
       {
