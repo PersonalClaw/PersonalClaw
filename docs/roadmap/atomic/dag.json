@@ -3053,7 +3053,8 @@
           "deps": [
             "AP-2",
             "AP-3"
-          ]
+          ],
+          "pr": 1506
         },
         {
           "id": "AP-5",
@@ -4082,7 +4083,8 @@
           "done_when": "a resolver on the LAN finds the instance by name and can begin pairing; loopback-only gateway is a no-op + log; TXT record asserted to carry no token/content; disabling discovery leaves manual-URL + QR pairing working (degradable, Success Criterion 5)",
           "deps": [
             "CA-4"
-          ]
+          ],
+          "pr": 1506
         },
         {
           "id": "CA-6",
@@ -6686,7 +6688,8 @@
           "status": "done",
           "scope": "Amendment 2026-07-29 (a) + tasks D1 (backend env by allowlist not dict(os.environ), sensitive-prefix scrub floor), D2 (permissions.network: enforce via egress rail OR mark advisory in consent UI/manifest \u2014 not both/neither), D3 (per-app pythonDependencies isolated to app-scoped target so an app cannot shadow a core dep), VD (validation-as-a-user sweep)",
           "done_when": "a planted secret in the gateway env is absent from an app backend's env (test proves it); the Store consent UI's network claim matches enforcement reality; an app pinning a conflicting core dependency does not affect the gateway; every first-party app still boots; the VD user-validation sweep holds",
-          "deps": []
+          "deps": [],
+          "pr": 1506
         }
       ]
     },
