@@ -72,6 +72,63 @@ def test_the_HELD_ACTION_inbox_body_names_the_rung_in_user_words() -> None:
     assert seen >= 4, "the sweep must actually cover the declared types"
 
 
+def test_the_reason_does_not_RENAME_the_action_the_sentence_already_named() -> None:
+    """`route_action_type().reason` is always EMBEDDED in a sentence that has already named the
+    action — "The 'bash' action on trigger t-1 did not run: …", "held for your approval: …". Naming
+    the action TYPE here said it twice, the second time as a code identifier the user has never
+    seen, and often as a *different* name for the thing just called `'bash'`
+    (`action.execute_code`).
+    """
+    seen = 0
+    for spec in rg.CORE_ACTION_TYPES:
+        reason = rg.route_action_type(spec.key).reason
+        assert spec.key not in reason, f"the reason renames the action: {reason!r}"
+        assert reason.startswith("this action "), reason
+        assert rg.rung_label(rg.resolve_rung(spec.key)) in reason, reason
+        seen += 1
+    assert seen >= 4
+
+
+def test_the_key_is_still_carried_where_a_MACHINE_needs_it() -> None:
+    """Dropping the key from the prose must not drop it from the record. It stays on the route for
+    any caller, on the inbox row's `refs["action_type"]`, and in the dedup key."""
+    import inspect
+
+    spec = rg.CORE_ACTION_TYPES[0]
+    assert rg.route_action_type(spec.key).key == spec.key
+    src = inspect.getsource(rg.announce_withheld)
+    assert '"action_type": route.key' in src, "the row must still be findable by type"
+    assert 'dedup_key or f"autonomy_hold:{route.key}"' in src
+
+
+def test_every_call_site_still_EMBEDS_the_reason_rather_than_showing_it_alone() -> None:
+    """The warrant for a subject-less-of-the-key sentence: each of the six consumers supplies the
+    context. If a new call site ever surfaced `reason` on its own, "this action …" would have no
+    referent and the key would need to come back — so the shape is pinned here."""
+    import inspect
+
+    from personalclaw import event_triggers, gateway, hooks
+
+    embedded = 0
+    for mod in (gateway, hooks, event_triggers):
+        src = inspect.getsource(mod)
+        assert "{route.reason}" in src, f"{mod.__name__} should compose the reason"
+        # 🪤 Scan a WINDOW, not the line. The inbox body is a two-line implicit concatenation, so
+        # the line holding `{route.reason}` is just `f"{route.reason}."` and its framing sits above.
+        # A per-line rule failed on the very call site it was written for.
+        at = 0
+        while (at := src.find("{route.reason}", at)) != -1:
+            window = src[max(0, at - 220) : at]
+            # Either wrapped in a sentence that names the action, or prefixed by "held for your
+            # approval" — both establish what "this action" refers to.
+            assert (
+                "did not run" in window or "held for your approval" in window
+            ), f"{mod.__name__}: unframed reason near offset {at}"
+            embedded += 1
+            at += 1
+    assert embedded >= 6, f"expected the six known call sites, found {embedded}"
+
+
 def test_the_NARROWED_branch_names_both_rungs_in_user_words(monkeypatch) -> None:
     """The second half of that sentence: a SafetyProfile that narrows names two rungs, and both
     were code keys. Exercised through a real narrowing profile, not a string built by hand."""
@@ -84,6 +141,11 @@ def test_the_NARROWED_branch_names_both_rungs_in_user_words(monkeypatch) -> None
 
     assert "narrowed" in reason, f"the narrowing branch was not taken: {reason!r}"
     assert _keys_in(reason) == [], f"code name in user copy — {reason!r}"
+    # 🪤 Found by mutation: reverting ONLY this branch to name the action type changed no test.
+    # The sweep above exercises the unnarrowed branch (the default profile does not narrow), so the
+    # narrowed half needs its own assertion for both vocabularies.
+    assert "action.artifact_write" not in reason, f"the reason renames the action: {reason!r}"
+    assert reason.startswith("this action "), reason
     # Both halves, in user words: what it would have been, and what it was narrowed to.
     assert rg.rung_label(rg.RUNG_AUTONOMOUS) in reason
     assert rg.rung_label(rg.RUNG_AUTO_WITH_UNDO) in reason
