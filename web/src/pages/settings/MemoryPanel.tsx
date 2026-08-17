@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   Database, BookOpen, ScrollText, Eye, Settings2, Search, Plus, Trash2,
-  Loader2, RefreshCw, HeartPulse, GraduationCap, AlertTriangle, Share2, FileEdit, Save, UploadCloud, ArrowRightLeft, Moon, type LucideIcon,
+  Loader2, RefreshCw, HeartPulse, GraduationCap, AlertTriangle, Share2, FileEdit, Save, UploadCloud, ArrowRightLeft, Moon,
+  Brain, History, CalendarDays, type LucideIcon,
 } from 'lucide-react'
 import { MemoryGraph } from './MemoryGraph'
 import {
@@ -15,7 +16,7 @@ import {
 import { PanelHeader, Section, Field, Row, Toggle, SavedToast } from './settingsUI'
 import { confirm, confirmDelete } from '../../ui/dialog'
 import { Button } from '../../ui/Button'
-import { ListSkeleton, FormSkeleton, LoadError } from '../../ui/ListScaffold'
+import { ListSkeleton, FormSkeleton, LoadError, EmptyState } from '../../ui/ListScaffold'
 import { TextInput, Select, ChipInput, NumberField } from '../../ui/forms'
 import { SearchField } from '../../ui/SearchField'
 import { SquareIconButton } from '../../ui/SquareIconButton'
@@ -303,7 +304,18 @@ function MemoryStudio({ onChanged, initialSel }: { onChanged: () => void; initia
         </div>
         <div className="min-h-0 flex-1 overflow-y-auto p-1.5">
           {loading ? <ListSkeleton rows={8} /> : shown.length === 0 ? (
-            <p className="py-6 text-center text-on-surface-low text-[0.8125rem]">{q ? 'No matches.' : 'No memories yet.'}</p>
+            // Through the shared primitive, not a bare centered <p>: the explorer is a
+            // list PANEL, which is exactly what EmptyState is for, and the two facts get
+            // different words. A narrowed-to-nothing explorer offers no add path (the
+            // user has memories, just none matching); a genuinely empty one does, wired
+            // to the same add-fact control the footer carries.
+            q || kindFilter !== 'all' ? (
+              <EmptyState icon={Search} title="No matching memories" hint="Try a different term or kind." />
+            ) : (
+              <EmptyState icon={Brain} title="No memories yet"
+                hint="Facts, lessons and past episodes an agent can recall. Add one, or let a chat record them for you."
+                action={{ label: 'Add a fact', onClick: () => { setAddMode('fact'); setSelUid(null) }, icon: Plus }} />
+            )
           ) : shown.map((it) => {
             const on = it.uid === selUid
             const Icon = STUDIO_KIND_META[it.kind].icon
@@ -575,7 +587,15 @@ function AuditTab() {
         <Button variant="secondary" size="sm" ariaLabel="Reload the audit log" onClick={reload}><RefreshCw size={14} /></Button>
       </div>
       {shown.length === 0 ? (
-        <p className="py-6 text-center text-on-surface-low text-[0.8125rem]">No matching events.</p>
+        // Two facts, two sentences. The old single "No matching events." told a user with
+        // an untouched memory that their FILTER was the problem; `events.length` is the
+        // one condition that tells them apart (the load failure is already handled above).
+        events.length === 0 ? (
+          <EmptyState icon={History} title="Nothing recorded yet"
+            hint="Every memory write, update and deletion lands here — reversibly. It fills as agents remember things." />
+        ) : (
+          <EmptyState icon={Search} title="No matching events" hint="Try a different type or key." />
+        )
       ) : (
         <div className="flex flex-col gap-1">
           {shown.map((e) => <AuditRow key={e.id} ev={e} onUndone={reload} />)}
@@ -946,9 +966,13 @@ function EntityGraphSection({ onChanged }: { onChanged: () => void }) {
 
       <div className="mt-3 flex flex-col gap-1.5">
         {entities.length === 0 ? (
-          <p className="text-on-surface-low text-[0.8125rem] italic">
-            No entities yet. Add the people and projects you talk about, or rebuild to seed them from what's already stored.
-          </p>
+          // No `action` here, deliberately: the "Rebuild links" button this empty state
+          // would point at is rendered three lines above and is visible at the same time.
+          // A second control with the same accessible name in the same region gives
+          // assistive tech two indistinguishable "Rebuild links" buttons, so the hint
+          // NAMES the adjacent control instead of cloning it.
+          <EmptyState icon={Share2} title="No entities yet"
+            hint="Entities are the people, projects and tools your memories mention — they let recall follow a name instead of guessing at keywords. Rebuild links to seed them from what's already stored." />
         ) : entities.map((e) => (
           <div key={e.id} className="rounded-lg bg-surface-container px-3 py-2">
             <Button
@@ -1185,7 +1209,11 @@ function DailyDigestSection() {
         {digests && <span className="text-on-surface-low text-[0.8125rem]">{digests.length} digest{digests.length === 1 ? '' : 's'}</span>}
       </div>
       {!digests ? <ListSkeleton rows={3} what="daily digests" /> : digests.length === 0 ? (
-        <p className="py-4 text-center text-on-surface-low text-[0.8125rem]">No daily digests yet — they build from past days with memory activity.</p>
+        // Same reasoning as the entity graph: "Build / refresh" is directly above and
+        // visible, so this states the fact through the shared primitive and names that
+        // control rather than rendering a second button with the same name.
+        <EmptyState icon={CalendarDays} title="No daily digests yet"
+          hint="A digest is one day's memory activity rolled up — 'what happened on day D'. They build on the maintenance cadence, or press Build / refresh above." />
       ) : (
         <div className="flex flex-col gap-1.5">
           {digests.map((d) => <DigestRow key={d.day} digest={d} />)}

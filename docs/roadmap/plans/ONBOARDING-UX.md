@@ -802,3 +802,98 @@ Owner rulings, mapped onto the existing sessions honestly:
   design and a11y ratchets are included); `npm run build --workspace web` clean (92 components in
   `ui-docs.json`). No Python touched. `docs/design/consistency-audit.json` regenerates on every web
   run and was restored, not committed.
+- [2026-08-16][OU-6] **DONE — but the atom's premise was wrong, and correcting it is the decision.**
+  The task line reads "web/src/ui/EmptyState.tsx exists", which reads as a greenfield primitive. It is
+  not one: `EmptyState` predates this atom, exported from the LIST KIT (`ui/ListScaffold.tsx`) beside
+  `LoadError` and `ListSkeleton`, and already answers ~30 call sites across 15+ pages. Shipping a second
+  component at `ui/EmptyState.tsx` would have been a **dual path** (two components, one condition), and
+  it would have contradicted an existing rail that pins the co-location deliberately —
+  `loadErrorState.test.tsx` › "the primitive is exported from the list kit, beside EmptyState":
+  *"Co-located on purpose: the two are alternative answers to the same condition, and a surface reaching
+  for one should see the other."* **Ruling: keep one primitive, where the repo already put it.** The
+  filename clause is recorded as a DEVIATION in `atomic/OU.md`; the PRODUCT clause is what shipped.
+  Rejected alternatives: (a) extract `EmptyState` into its own file and migrate ~30 call sites — a pure
+  churn diff that breaks the co-location rail to satisfy a path string; (b) fold `PresetEmptyState` into
+  `EmptyState` — they answer *different* conditions and each says so in its doc ("Distinct from
+  EmptyState (ListScaffold), which states a fact and offers one CTA"), so merging them would lose the
+  preset-first on-ramp, not remove a duplicate.
+- [2026-08-16][OU-6] **The rollout gap was TWO surfaces, not seven.** Audited all seven before touching
+  anything. Already routed through a shared primitive with an action: Knowledge ("Add knowledge"),
+  Skills ("Browse skills"), Tasks ("New task"), Triggers (`PresetEmptyState`, whose cards *are* the
+  actions). Real gaps: **Memory** — not a page at all but `#/settings/memory`, a multi-tab panel, with
+  **zero** empty-state adoption (four hand-rolled centered `<p>`s, no action); and **Workflows** — using
+  the primitive but with **no action on either** empty state. Fixed both. Memory's audit log also
+  conflated two facts in one sentence ("No matching events." was shown to a user whose memory had
+  recorded nothing), now split into "Nothing recorded yet" vs "No matching events".
+- [2026-08-16][OU-6] 🔴 **DISCOVERY — `#/loops` told a load failure it was an empty list.** Found while
+  auditing the seven, and it is the honesty precondition for shipping an empty state at all: an empty
+  state that renders when the data merely FAILED to load is a confident wrong answer, not an empty
+  state. `LoopsListPage.tsx:63` carried `.catch(() => [] as GoalLoop[])` inside its `useCachedData`
+  fetcher — the harsher variant, so `error` was permanently null and no caller *could* have read it. A
+  failed `GET /api/loops` therefore rendered "No loops yet — Describe a task and let an agent classify,
+  plan, and pursue it autonomously" plus the Start-a-loop CTA. Fixed both halves (drop the swallow, test
+  the error branch first on the same `loops === undefined` condition — dropping the swallow alone would
+  have pinned the page on its skeleton forever). It joined the existing family rail's ADOPTERS list
+  rather than growing a second rail. **Driven:** `page.route` 500 on `/api/loops` with a cold load →
+  `role="alert"` "Couldn't load your loops | HTTP 500 | Retry", `saysNoLoopsYet: false`,
+  `offersStartALoop: false`; un-route + click Retry → alert clears and the honest "No loops yet" + CTA
+  returns.
+- [2026-08-16][OU-6] **Two craft calls, both recorded in code.** (1) Memory's entity-graph and
+  daily-digest empty states take NO action, because the control each would point at ("Rebuild links",
+  "Build / refresh") is rendered a few lines above and visible at the same time — a second button with
+  the same accessible name in the same region hands assistive tech two indistinguishable controls, so
+  the hint NAMES the adjacent control instead of cloning it. (2) Every action is on the
+  genuinely-empty branch only; a narrowed-to-nothing list gets the fact and no CTA, per the canonical
+  shape `emptyStateNoMatch.test.tsx` already documents. Loops' facet no-match branch is the one
+  exception that *gains* an action, and deliberately: "View all loops" resets the filter rather than
+  creating anything, and the branch is reachable only when loops exist.
+- [2026-08-16][OU-6] **Falsified, three mutations, all red, all restored.** (1) Re-introduced Loops'
+  `.catch(() => [] as GoalLoop[])` → **2 RED** in `loadErrorState.test.tsx`:
+  `pages/loops/LoopsListPage.tsx swallows a fetch rejection: expected [ 'loops:62' ] to deeply equal []`
+  and `a swallow here makes every other consumer of the key unable to see the failure: expected [ Array(1) ] to deeply equal []`.
+  (2) Stripped both Workflows actions → **1 RED** in `emptyStateRollout.test.tsx`:
+  `the empty state on Workflows must offer a next step, not just state a fact: expected 0 to be greater than 0`.
+  (3) Created `web/src/ui/EmptyState.tsx` (the dual path this atom could most easily have minted) →
+  **1 RED**: `EmptyState lives in the list kit (ui/ListScaffold.tsx); a second file beside it would be
+  two components for one condition: expected true to be false`. Each mutation was asserted to have
+  applied before the run, so none of the three could read as a green by silently failing to match.
+- [2026-08-16][OU-6] **Two rail bugs found by the rails rejecting CORRECT code — fixed the rail, not the
+  surface.** (1) The action matcher was `action={{ … onClick`, i.e. the object-literal shape only, and it
+  failed `#/skills`, whose `action={!q ? { … } : undefined}` is the *conditional* shape and the better
+  one (it encodes "no CTA while filtered" in the prop itself). Replaced with a brace-matcher over the
+  whole `action={…}` expression, which admits both and cannot be padded. (2) A first draft asserted a
+  `focus-visible:ring-*` utility on the CTA and failed — correctly: this app's keyboard ring is a GLOBAL
+  rule in `design/tokens.css` (`:focus-visible { outline: 2px solid var(--color-primary) }`), so no
+  control carries one, jsdom paints nothing, and the observable property is a control opting OUT with
+  `outline-none` and not replacing it. Both are the "when a rail rejects a new adopter, check the rail
+  before the adopter" lesson that file already teaches.
+- [2026-08-16][OU-6] **One pre-existing census floor moved, in the intended direction.**
+  `loadingNounPairing.test.ts` went red: `skeletons gated on the state a results noun counts: expected 4
+  to be greater than or equal to 5`. Causal, not incidental — `resPaired` is defined as
+  `!errNoun && resultsNoun`, so every surface that adopts `LoadError` moves a skeleton out of that
+  bucket and into `errPaired`. Loops did exactly that. Measured: all=64, err=34 (was 33), res=4 (was 5).
+  Lowered the floor to 4 with the reason in place; it is a vacuity guard, not a target, and the shape it
+  guards is the one the LoadError rollout is deliberately draining.
+- [2026-08-16][OU-6] **Validated as a user** on an isolated home (`/private/tmp/ou6-home`, port 10088,
+  fresh → Skip setup). Rendered with genuinely empty state: `#/loops/history` "No loops yet" + Start a
+  loop · `#/workflows` "No workflow runs yet" + Browse definitions (clicked → `?tab=defs`, the working
+  action) · `#/knowledge` "Knowledge base is empty" + Add knowledge · `#/tasks` "No tasks" + New task ·
+  `#/settings/memory?tab=audit` "Nothing recorded yet" (the new split) · memory studio narrowed to
+  `Facts 0` → "No matching memories". Loops' facet branch driven by serving one terminal loop:
+  h2 "No active loops right now", hint "You have 1 loop — just none in this view.", escape "View all
+  loops" (clicked → `?filter=all`, row appears) and **no** create CTA. Both themes via the app's own
+  toggle: dark `body #0f0f0f / h2 rgb(227,227,227) / CTA rgb(255,107,91)` → light
+  `body rgb(240,244,248) / h2 rgb(31,31,31) / CTA rgb(200,69,46)`, all tokens flipping. The one layout
+  risk I flagged (a page-scale primitive in Memory's 19rem explorer) measured clean: 290px wide in a
+  302px pane, 163px tall in 485px, no overflow, no clipping. **Not driven:** Skills and Triggers —
+  their genuinely-empty branches are unreachable on a fresh home (native skills and
+  `system:notification-digest` ship pre-installed/enabled); both were already correct and are untouched.
+- [2026-08-16][OU-6] ⚠️ **Probe trap worth recording.** Three separate "the fix does not work" readings
+  were all harness artifacts, never code. `useCachedData` caches at module scope, so a hash-only
+  navigation (`location.hash = …`, and `page.goto` to the same document with a different hash) does
+  **not** reload and the stale `[]` keeps satisfying `loops.length === 0`. Worse, killing the gateway and
+  reloading to force a cold failure served **no assets at all** (`ERR_FAILED` on every chunk — the SW did
+  not cover the navigation), leaving an unmounted app that reads exactly like a clean empty state. Only
+  `page.route` interception installed BEFORE boot, plus a real `page.reload()`, plus a mounted-ness
+  floor (`main.querySelectorAll('*').length`) produced a trustworthy measurement. Add the mount floor to
+  any empty-state probe: an empty page and an unmounted page are indistinguishable by text alone.

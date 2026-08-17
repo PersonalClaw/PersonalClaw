@@ -212,6 +212,17 @@ describe('the migrated surfaces read the error', () => {
     // `pages/settings/settingsListHonesty.test.ts` — see its header for why they cannot live here.
     'pages/settings/ArchivePanel.tsx',
     'pages/settings/AuditPanel.tsx',
+    // `#/loops` joined with OU-6, found while auditing the seven surfaces that atom rolls the
+    // empty state out to — which is the point worth keeping: the honesty of an empty state is a
+    // PRECONDITION for shipping one, not a separate concern. Its fetcher carried
+    // `.catch(() => [] as GoalLoop[])` — the harsher variant, so `error` was permanently null and
+    // no caller could have read it. A failed `GET /api/loops` therefore rendered "No loops yet —
+    // Describe a task and let an agent classify, plan, and pursue it autonomously" plus a
+    // Start-a-loop CTA: a pitch to create your first loop, shown to someone whose loops were
+    // merely unreachable. Same both-halves shape as `#/tasks`: dropping the swallow alone would
+    // have pinned the page on its skeleton forever, because `loops === undefined` also satisfies
+    // the skeleton branch, so the error branch is tested FIRST on that same condition.
+    'pages/loops/LoopsListPage.tsx',
   ]
 
   for (const rel of ADOPTERS) {

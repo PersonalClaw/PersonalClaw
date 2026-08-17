@@ -1,14 +1,13 @@
 import { useState } from 'react'
 import { fvs } from '../../design/fontWeight'
 import { motion } from 'framer-motion'
-import { Plus, Pause, Play, Square, Trash2, ExternalLink } from 'lucide-react'
+import { Plus, Pause, Play, Square, Trash2, ExternalLink, Filter, Repeat } from 'lucide-react'
 import { TopBar } from '../../ui/TopBar'
 import { Button } from '../../ui/Button'
-import { TextLink } from '../../ui/TextLink'
 import { IconButton } from '../../ui/IconButton'
 import { FilterMenu, type FilterSectionDef } from '../../ui/FilterMenu'
 import { ListControls } from '../../ui/ListControls'
-import { EmptyState, ListSkeleton } from '../../ui/ListScaffold'
+import { EmptyState, ListSkeleton, LoadError } from '../../ui/ListScaffold'
 import { RowHitTarget } from '../../ui/RowHitTarget'
 import { SidePanel } from '../../ui/SidePanel'
 import { WorkbenchLayout } from '../../ui/WorkbenchLayout'
@@ -16,7 +15,6 @@ import { FeedbackThumbs } from '../../ui/FeedbackThumbs'
 import { InvestigateButton } from '../../ui/InvestigateButton'
 import { Markdown } from '../../ui/Markdown'
 import { useQueryParam, type RouteProps } from '../../app/useQueryState'
-import { Spark } from '../../ui/Spark'
 import { ProgressRing } from '../../ui/ProgressRing'
 import { ContextMenu, type ContextMenuItem } from '../../ui/motion'
 import { spring, expr } from '../../design/motion'
@@ -60,7 +58,12 @@ export function LoopsListPage({ onOpen, onCreate, query, setQuery }: { onOpen: (
   // section at #/code), so it shows ALL non-code kinds — not just goal, which would hide
   // a General or Design loop from the only list that links to it. The goalAdapter is
   // kind-agnostic (defaults for missing fields), so general/design rows render fine.
-  const { data: loops, refresh } = useCachedData('loops', () => api.uLoops().then((ls) => ls.filter((l) => l.kind !== 'code').map(loopToGoalLoop).sort(order)).catch(() => [] as GoalLoop[]), { persist: false })
+  // No `.catch(() => [])` here, deliberately. Swallowing the rejection into an empty
+  // array made `useCachedData`'s `error` permanently null, so a failed `GET /api/loops`
+  // was indistinguishable from having none and the page said "No loops yet — Start a
+  // loop" to a user whose loops were merely unreachable. The rejection propagates so the
+  // one condition below (`error` with no data) can tell the two facts apart.
+  const { data: loops, error: loopsErr, refresh } = useCachedData<GoalLoop[]>('loops', () => api.uLoops().then((ls) => ls.filter((l) => l.kind !== 'code').map(loopToGoalLoop).sort(order)), { persist: false })
   // Row whose delete is armed (first click), cleared on a second click or timeout.
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null)
   // Peek: a row click opens a quick-glance side panel (URL-backed ?peek=<id>);
@@ -150,27 +153,35 @@ export function LoopsListPage({ onOpen, onCreate, query, setQuery }: { onOpen: (
     >
       <div className="flex-1 overflow-y-auto">
         <div className="mx-auto px-l py-2xl" style={{ maxWidth: 'var(--content-width)' }}>
-          {loops === undefined ? (
+          {loops === undefined && loopsErr ? (
+            // "We couldn't load them" is a different fact from "you have none", and it is
+            // the one that must NOT read as an invitation to create your first loop.
+            <LoadError what="loops" error={loopsErr} onRetry={refresh} />
+          ) : loops === undefined ? (
             <ListSkeleton rows={6} what="loops" />
           ) : loops.length === 0 ? (
             <EmptyState
+              icon={Repeat}
               title="No loops yet"
               hint="Describe a task and let an agent classify, plan, and pursue it autonomously."
               action={{ label: 'Start a loop', onClick: onCreate, icon: Plus }}
             />
           ) : loops.filter(matches).length === 0 ? (
-            // Loops exist, but none match the active filter — say so instead of
-            // rendering a blank page (e.g. all loops done while on 'Active').
-            <div className="flex flex-col items-center gap-m py-2xl text-center">
-              <span className="text-on-surface-low opacity-60"><Spark size={28} animated={false} /></span>
-              <p className="text-on-surface-low text-[0.9375rem] max-w-[360px]">
-                {filter === 'active' ? 'No active loops right now.'
-                  : filter === 'ongoing' ? 'No ongoing loops.'
-                  : filter === 'done' ? 'No finished loops yet.'
-                  : 'No loops match this filter.'}
-              </p>
-              <TextLink onClick={() => setFilter('all')} size="sm">View all loops</TextLink>
-            </div>
+            // Loops exist, but none match the active facet — say so through the SHARED
+            // primitive rather than a hand-rolled centered <p>, so this reads like every
+            // other narrowed-to-nothing list. Reachable only with `filter !== 'all'`
+            // (the 'all' facet matches everything and the list is non-empty here), so
+            // "View all loops" is always a real escape. No create affordance: the user
+            // has loops, so offering to make one answers a question they did not ask.
+            <EmptyState
+              icon={Filter}
+              title={filter === 'active' ? 'No active loops right now'
+                : filter === 'ongoing' ? 'No ongoing loops'
+                : filter === 'done' ? 'No finished loops yet'
+                : 'No loops match this filter'}
+              hint={`You have ${loops.length} loop${loops.length === 1 ? '' : 's'} — just none in this view.`}
+              action={{ label: 'View all loops', onClick: () => setFilter('all') }}
+            />
           ) : (
             <div className="flex flex-col gap-s">
               {loops
