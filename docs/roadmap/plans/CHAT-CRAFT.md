@@ -400,6 +400,99 @@ One task row, landing in **S4** (the polish session); **no count change**.
 
 ---
 
+- **2026-08-17 — CC-5 DONE (Amendment (2026-07-26) T4.5 — optimizer polish).** Branch
+  `feature-cc5-optimizer-context`, one commit. Shipped:
+  `web/src/pages/chat/optimizerContext.ts` (new pure module + 9 unit tests), the
+  `UNCHANGED` instruction and a context-aware example in the bundled
+  `task-prompt_optimizer.md`, and a boundary-aware context clip plus tolerant token
+  detection in `dashboard/handlers/optimizer.py`. The plan's 2026-07-26 recon held up
+  exactly: this was polish, not surgery.
+
+  **The UNCHANGED contract was a live reader of an unwritten token.** The handler has
+  honored `optimized.upper() == "UNCHANGED"` since it shipped, but nothing anywhere ever
+  *asked* a model for that token — rule 2 said "return it unchanged", and, worse, the
+  file's **final example demonstrated echoing the input verbatim**. Examples are the
+  strongest instruction in a prompt file, so the one place the contract was shown taught
+  its opposite: an already-good prompt cost a full echo, and then only avoided a spurious
+  `changed:true` because of the whitespace-insensitive comparison further down. Rule 2 now
+  names the exact token, the closing example answers `"UNCHANGED"`, and a test asserts the
+  echo example is *gone* rather than merely that the token is present.
+
+  **Fail direction for a non-token reply: toward keeping the user's draft, and the exact
+  match was the dangerous version.** `_is_unchanged_reply()` reads the reply's first word
+  after stripping quotes/emphasis/trailing punctuation, so `UNCHANGED.`, `**UNCHANGED**`
+  and `UNCHANGED — already specific` all keep the draft. Measured on the pre-change check:
+  a model that complies but adds a period made the handler return
+  `{"optimized": "UNCHANGED.", "changed": true}` — the literal token pasted over the
+  prompt the user wrote. A rewrite that merely *contains* the word ("leaving the public API
+  unchanged") is still a rewrite; that case is asserted, because a substring check here is
+  how an optimizer ships inert. **Unrecognizable prose is still accepted as a rewrite** —
+  there is no way to tell "rewritten prompt" from "answer to the prompt" without a
+  classifier, and refusing all prose would make the feature inert for any model with a
+  preamble. Recoverability carries that case instead: `preOptimize` restores the exact
+  draft, and `/optimize` records the original on the bubble.
+
+  **DEVIATION (authorized by T4.5's own "then raise it in the same task, one knob"): the
+  cap moved from 2000 to 4129.** Ten turns at ~400 chars cannot fit in 2000 — the
+  arithmetic makes the cap the binding constraint, which is the condition the task named.
+  `MAX_CONTEXT_CHARS` is now *derived* (`10 × (400 + len("assistant: ") + len("…")) + 9
+  joining newlines`) from the same three numbers the composer budgets against, so
+  "survives the cap" is true by construction, and a test reads `CTX_MAX_TURNS` /
+  `CTX_TURN_CHARS` **out of the TypeScript file** rather than trusting the comment — the
+  only honest way to hold one number across a language boundary. The FE test asserts the
+  worst case is *exactly* 4129, not merely under it.
+
+  **What the truncation drops is the whole point.** `context[-MAX:]` keeps the correct END
+  but lands mid-line, so the oldest survivor arrives decapitated — a fragment attributed to
+  nobody, which is worse than omitting it. `_clip_context()` snaps forward past that partial
+  line and drops the turn whole; a blob with no line boundary at all (the loop composer
+  passes `''` today, but an app could send anything) keeps the raw tail, since there is no
+  attribution left to lose. That vacuity case is asserted so the snap can't quietly stop
+  matching. One turn per line is load-bearing for this: embedded newlines are flattened in
+  the composer, or the handler could cut mid-turn while still looking boundary-aligned.
+
+  **Fence:** `ChatPage.tsx` is owned by CC-7's open branch, so the touch there is four
+  lines and nothing else — one import, the two `ctx` builders (which were the *whole*
+  200-chars-unlabeled assembly, now one call), and one `requestAnimationFrame` focus
+  restore in `revertOptimize`, copied verbatim from the pattern the same file already uses
+  in three places. Without it, clearing `preOptimize` unmounts the revert button and focus
+  falls to `<body>` — you reverted in order to keep typing.
+
+  **Validated as a user — and one leg is honestly NOT real.** A fresh dev home has **no
+  model provider bound**, so a true optimize round trip cannot resolve. Nothing here claims
+  a live model obeyed the new instruction; the model's half was stubbed in the page. What
+  IS real, driven on the isolated home (port 10366, seeded five-turn transcript about
+  `src/net/client.py`): the gateway serving the built SPA, the transcript hydrating all
+  five turns, and the composer's Optimize button issuing the real request. **The request
+  body carried exactly the intended context** — five lines, every one matching
+  `^(user|assistant): `, chronological with `user: ok noted` last, 412 chars. Drafting
+  "add a test for that file from earlier" and optimizing replaced the draft; the
+  "Optimized — revert to original" control appeared; clicking it restored the exact
+  pre-optimize string and left `document.activeElement === .cm-content`. A stubbed
+  `changed:false` reply (what the handler returns for a bare `UNCHANGED`) left the draft
+  untouched and raised no revert control — the correct no-op. Zero console errors across
+  the drive. **The token contract's plumbing is proven by fixtures; the prompt's
+  persuasiveness is not, and cannot be by these means** — the prompt-text assertions only
+  prove the instruction is present, exact, and no longer contradicted by its own example.
+
+  **A stale service worker nearly faked the focus falsification.** Removing the focus line
+  and rebuilding produced a page still serving `index-f50fSUIN.js` while `dist/index.html`
+  pointed at `index-DEv5WFbo.js` — the SW cache had 510 assets and served the OLD bundle,
+  so the "mutated" run would have reproduced the passing result and read as the line being
+  unnecessary. Caught by comparing the loaded script hash against `dist/index.html`. After
+  unregistering the SW, clearing caches and a cache-busted document URL, the mutated bundle
+  loaded and `document.activeElement` was `BODY` after revert. The restored build's hash
+  returns to `index-f50fSUIN.js`, which is what the earlier passing run was on.
+
+  DoD: `make lint` clean, `tests/test_optimizer.py` 30 passed, web typecheck + 3498 tests
+  (342 files) + build green. Five falsifications recorded: reversed newest-last → 5 FE tests
+  red (`expected [ 'user: NEWEST', …(2) ] to deeply equal [ 'user: OLDEST', …(2) ]`);
+  head-truncation → 3 backend tests red (`assert 'turn19 ' in 'assistant: turn1 zzz…'`);
+  labels dropped → 8 FE tests red; tolerant token check reverted to exact-match → 3 contract
+  cases red, and the handler returns `{"optimized": "UNCHANGED.", "changed": true}`; focus
+  line removed and rebuilt → `document.activeElement` is `BODY` after revert on the live
+  DOM.
+
 ## Amendment (2026-07-29 — owner-approved: Branch, and the plan gate for ordinary chat)
 
 **Provenance.** A design gap analysis (2026-07-28/29). Two mechanics were approved for planning: a **Branch** mechanic (fork a session at any message with isolated inherited context) and a **plan-then-act gate**. Both turn out to be **much closer to done than the analysis suggested**, and one of them **directly contradicts an explicit non-goal in this plan's S1**. This amendment resolves that contradiction rather than silently overriding it.
