@@ -176,7 +176,7 @@ export function ArtifactViewer({ slug, onChanged, onDeleted, onOpenSourceFile, c
           <FileWarning size={26} className="opacity-40" />
           <p className="text-[0.8125rem]">Couldn't open this artifact.</p>
           <p className="text-[0.75rem] text-on-surface-low/80">It may have been deleted. {loadError}</p>
-          <Button variant="ghost" size="xs" onClick={() => reload()} className="mt-1 text-primary"><RotateCcw size={13} /> Try again</Button>
+          <Button variant="ghost-accent" size="xs" onClick={() => reload()} className="mt-1"><RotateCcw size={13} /> Try again</Button>
         </div>
       </div>
     )
