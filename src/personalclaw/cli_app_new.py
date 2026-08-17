@@ -19,6 +19,10 @@ Generated output is MIT-licensed, carries no credentials or placeholder secrets,
 validated against the REAL manifest validator (:meth:`AppManifest.validate`) before
 ``scaffold`` returns — a generator that can emit an invalid app.json is a generator that
 ships broken apps.
+
+``--from-template`` is the third path: fetch the published template repo instead of
+generating. It is the one part of this module that touches the network, so it is written
+as a hostile-input surface — see :func:`from_template` and the refusals around it.
 """
 
 from __future__ import annotations
@@ -27,11 +31,16 @@ import argparse
 import datetime as _dt
 import importlib
 import inspect
+import io
 import json
 import re
+import tarfile
+import urllib.error
+import urllib.request
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
+from urllib.parse import urlsplit
 
 # The single scaffolded app version + the files every type emits. Kept here so the
 # conformance test can assert the file set without re-deriving it.
@@ -597,7 +606,11 @@ def doctor() -> list[DoctorLine]:
 def _render_test_provider_py(
     contract: TypeContract, *, app_name: str, display_name: str, class_name: str
 ) -> str:
-    method_list = ", ".join(repr(m) for m in contract.methods)
+    # Double quotes, not ``repr()``: generated code should already be black-clean, so an
+    # apps repo (or this repo's own pre-commit hook, over scratch/app-template) reformatting
+    # it cannot make the file differ from what the generator emits. Method names are Python
+    # identifiers, so there is nothing to escape.
+    method_list = ", ".join(f'"{m}"' for m in contract.methods)
     contract_note = (
         f"Contract: {contract.sdk_module}:{contract.abc_name}"
         if contract.has_abc
@@ -806,6 +819,255 @@ def scaffold(
 
 
 # ---------------------------------------------------------------------------
+# --from-template: fetch the published template repo
+# ---------------------------------------------------------------------------
+#
+# This is the only network surface in the module, and everything it consumes is
+# attacker-shaped: the response body is a tar archive whose member names, member types
+# and member sizes are all metadata a malicious host controls. So the rules here are
+# allowlist-first and fail-closed, and each one has a named negative test in
+# ``tests/test_app_from_template.py``:
+#
+#   * URL: https only, host on an allowlist, no userinfo, no non-default port — checked
+#     BEFORE any socket is opened (``test_a_non_allowlisted_host_never_reaches_the_network``).
+#   * Response: exactly 200, and NO redirect is followed at all. Not "no cross-host
+#     redirect" — no redirect, so there is no host to re-check (the allowlisted host is
+#     the host that answers).
+#   * Members: regular files and directories only (a symlink, hardlink, device or fifo
+#     member is refused), names relative with no ``..`` component, and every written path
+#     re-verified for containment AFTER canonicalisation.
+#   * Sizes: per-member and whole-archive byte caps, and a member count cap, enforced on
+#     bytes actually READ — never on the size the archive claims.
+#   * Target: refused when it exists and is non-empty (``--force`` overrides), and never
+#     followed through a symlink.
+#
+# Nothing shells out: no ``git clone``, no ``curl``. The URL never reaches a shell.
+
+TEMPLATE_REPO = "personalclaw/app-template"
+TEMPLATE_REF = "main"
+#: codeload serves the tarball directly. ``github.com/…/archive/….tar.gz`` would answer
+#: 302 to this host, and we refuse redirects — so we ask the host that actually serves it.
+TEMPLATE_ARCHIVE_URL = (
+    f"https://codeload.github.com/{TEMPLATE_REPO}/tar.gz/refs/heads/{TEMPLATE_REF}"
+)
+
+#: Schemes and hosts ``--template-url`` may name. Allowlists, not "no localhost" denylists.
+#: Both are read at call time so a test can point the transport at a local server; the
+#: SHIPPED values are pinned by ``test_the_shipped_template_allowlists_are_narrow`` so a
+#: widened default cannot reach a release.
+TEMPLATE_SCHEMES = frozenset({"https"})
+TEMPLATE_HOSTS = frozenset({"codeload.github.com"})
+
+MAX_ARCHIVE_BYTES = 4 * 1024 * 1024
+MAX_MEMBER_BYTES = 1024 * 1024
+MAX_MEMBERS = 400
+_FETCH_TIMEOUT_SECS = 30
+
+
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    """Refuse every redirect rather than re-validating a new host mid-fetch."""
+
+    def redirect_request(self, req: Any, fp: Any, code: int, msg: str, headers: Any, newurl: str):
+        raise ScaffoldError(
+            f"refusing to follow a redirect ({code}) to {newurl} — the template host must "
+            f"serve the archive directly"
+        )
+
+
+@dataclass
+class TemplateResult:
+    """What ``--from-template`` wrote, and where it came from."""
+
+    path: Path
+    source: str
+    files: list[str] = field(default_factory=list)
+
+
+def _validate_template_url(url: str) -> str:
+    """Refuse anything but https-on-an-allowlisted-host, before opening a socket."""
+    parts = urlsplit(url)
+    if parts.scheme not in TEMPLATE_SCHEMES:
+        raise ScaffoldError(
+            f"template URL scheme {parts.scheme or '(none)'!r} is not allowed — "
+            f"allowed: {', '.join(sorted(TEMPLATE_SCHEMES))}. "
+            "Use --template-archive for a tarball already on disk."
+        )
+    if parts.username or parts.password:
+        raise ScaffoldError("template URL must not carry credentials in the userinfo field")
+    host = (parts.hostname or "").lower()
+    if host not in TEMPLATE_HOSTS:
+        raise ScaffoldError(
+            f"template host {host or '(none)'!r} is not allowed — "
+            f"allowed: {', '.join(sorted(TEMPLATE_HOSTS))}"
+        )
+    return url
+
+
+def _read_capped(stream: Any, limit: int, what: str) -> bytes:
+    """Read at most ``limit`` bytes, refusing the moment the stream exceeds it."""
+    data = stream.read(limit + 1)
+    if data is None:  # pragma: no cover - a stream that returns None is already broken
+        return b""
+    if len(data) > limit:
+        raise ScaffoldError(f"{what} is larger than the {limit} byte cap — refusing")
+    return bytes(data)
+
+
+def fetch_template_archive(url: str) -> bytes:
+    """GET ``url`` and return the tarball bytes. https + allowlist + no redirects + 200."""
+    _validate_template_url(url)
+    opener = urllib.request.build_opener(_NoRedirect)
+    request = urllib.request.Request(url, method="GET", headers={"Accept": "application/gzip"})
+    try:
+        with opener.open(request, timeout=_FETCH_TIMEOUT_SECS) as response:
+            status = int(getattr(response, "status", 0) or 0)
+            if status != 200:
+                raise ScaffoldError(f"template fetch returned HTTP {status} (expected 200)")
+            return _read_capped(response, MAX_ARCHIVE_BYTES, "template archive")
+    except urllib.error.HTTPError as exc:
+        raise ScaffoldError(f"template fetch returned HTTP {exc.code} (expected 200)") from exc
+    except urllib.error.URLError as exc:
+        raise ScaffoldError(f"template fetch failed: {exc.reason}") from exc
+    except OSError as exc:  # pragma: no cover - socket-level failures are environmental
+        raise ScaffoldError(f"template fetch failed: {exc}") from exc
+
+
+def _checked_member_name(name: str) -> str:
+    """The member's path, or a refusal. Relative, no ``..``, no drive, no absolute root."""
+    raw = name.replace("\\", "/")
+    if not raw or raw in (".", "./"):
+        return ""
+    if raw.startswith("/") or (len(raw) > 1 and raw[1] == ":"):
+        raise ScaffoldError(f"refusing archive member with an absolute path: {name!r}")
+    parts = [p for p in raw.split("/") if p not in ("", ".")]
+    if any(p == ".." for p in parts):
+        raise ScaffoldError(f"refusing archive member that escapes the target: {name!r}")
+    return "/".join(parts)
+
+
+def _strip_root(names: list[str]) -> str:
+    """The single top-level directory a GitHub tarball wraps everything in, if there is one."""
+    roots = {n.split("/", 1)[0] for n in names if n}
+    if len(roots) == 1 and any("/" in n for n in names):
+        return roots.pop()
+    return ""
+
+
+def _prepare_target(dest: Path, name: str, *, force: bool) -> Path:
+    """Resolve ``dest/name``, refusing a symlink or an existing non-empty directory."""
+    base = Path(dest)
+    target = base / name
+    if target.is_symlink():
+        raise ScaffoldError(f"{target} is a symlink — refusing to write through it")
+    if target.exists():
+        if not target.is_dir():
+            raise ScaffoldError(f"{target} exists and is not a directory")
+        if any(target.iterdir()) and not force:
+            raise ScaffoldError(
+                f"{target} already exists and is not empty (use --force to overwrite)"
+            )
+    return target
+
+
+def extract_template_archive(data: bytes, *, target: Path, force: bool = False) -> list[str]:
+    """Extract a template tarball into ``target``, writing only what the rules above allow.
+
+    Members are written one at a time from their own file objects — not via
+    ``extractall`` — so containment is re-verified after canonicalisation for every single
+    path, and no tar feature (link, device, sparse, pax path override) can act on our
+    behalf.
+    """
+    target = _prepare_target(target.parent, target.name, force=force)
+    with tarfile.open(fileobj=io.BytesIO(data), mode="r:*") as tar:
+        members = tar.getmembers()
+        if len(members) > MAX_MEMBERS:
+            raise ScaffoldError(f"template archive has {len(members)} members (cap {MAX_MEMBERS})")
+        checked: list[tuple[tarfile.TarInfo, str]] = []
+        for member in members:
+            if not (member.isreg() or member.isdir()):
+                kind = "symlink" if member.issym() else "hardlink" if member.islnk() else "special"
+                raise ScaffoldError(
+                    f"refusing {kind} archive member {member.name!r} — the template may "
+                    "contain regular files and directories only"
+                )
+            rel = _checked_member_name(member.name)
+            if rel:
+                checked.append((member, rel))
+        root = _strip_root([rel for _, rel in checked])
+
+        target.mkdir(parents=True, exist_ok=True)
+        anchor = target.resolve()
+        written: list[str] = []
+        budget = MAX_ARCHIVE_BYTES
+        for member, rel in checked:
+            inner = rel[len(root) + 1 :] if root and rel.startswith(root + "/") else rel
+            if root and rel == root:
+                continue
+            if not inner:
+                continue
+            out = (anchor / inner).resolve()
+            if out != anchor and anchor not in out.parents:
+                # Distinct wording from the name-shape refusal above ON PURPOSE: these are
+                # two independent layers, and a test asserting one message must not pass
+                # because the other fired. This one is the backstop that survives a bad
+                # name check — ``test_containment_refuses_even_if_the_name_check_is_bypassed``
+                # bypasses the first layer to prove this layer is live on its own.
+                raise ScaffoldError(
+                    f"refusing archive member that resolves outside the target: {rel!r}"
+                )
+            if member.isdir():
+                out.mkdir(parents=True, exist_ok=True)
+                continue
+            source = tar.extractfile(member)
+            if source is None:  # pragma: no cover - isreg() members always open
+                continue
+            payload = _read_capped(source, min(MAX_MEMBER_BYTES, budget), f"member {inner!r}")
+            budget -= len(payload)
+            out.parent.mkdir(parents=True, exist_ok=True)
+            out.write_bytes(payload)
+            written.append(inner)
+    if not written:
+        raise ScaffoldError(
+            "template archive contained no files — refusing to call this a template"
+        )
+    return sorted(written)
+
+
+def from_template(
+    *,
+    dest: Path,
+    url: str = "",
+    archive: Path | None = None,
+    force: bool = False,
+    dir_name: str = "",
+) -> TemplateResult:
+    """Materialise the template repo into ``dest/<dir_name>``.
+
+    ``archive`` reads a tarball already on disk (offline, and how the tests prove
+    extraction without the org repo existing); otherwise ``url`` — default
+    :data:`TEMPLATE_ARCHIVE_URL` — is fetched.
+    """
+    name = dir_name or TEMPLATE_REPO.split("/")[-1]
+    if not _KEBAB_RE.match(name):
+        raise ScaffoldError(f"template directory name must be kebab-case, got: {name!r}")
+    target = Path(dest) / name
+    if archive is not None:
+        path = Path(archive)
+        if not path.is_file():
+            raise ScaffoldError(f"template archive not found: {path}")
+        data = _read_capped(path.open("rb"), MAX_ARCHIVE_BYTES, f"template archive {path.name!r}")
+        source = str(path)
+    else:
+        source = url or TEMPLATE_ARCHIVE_URL
+        data = fetch_template_archive(source)
+    try:
+        files = extract_template_archive(data, target=target, force=force)
+    except tarfile.TarError as exc:
+        raise ScaffoldError(f"template archive is not a readable tarball: {exc}") from exc
+    return TemplateResult(path=target, source=source, files=files)
+
+
+# ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
 
@@ -827,6 +1089,64 @@ def add_parser(sub: Any) -> None:
     new.add_argument("--description", default="", help="One-line description")
     new.add_argument("--author", default="", help="Author (also the MIT copyright holder)")
     new.add_argument("--force", action="store_true", help="Overwrite a non-empty target directory")
+    new.add_argument(
+        "--from-template",
+        dest="from_template",
+        action="store_true",
+        help=f"Fetch the {TEMPLATE_REPO} repo instead of generating (fork-and-go)",
+    )
+    new.add_argument(
+        "--template-url",
+        dest="template_url",
+        default="",
+        help=f"Override the template archive URL (https, host must be one of: "
+        f"{', '.join(sorted(TEMPLATE_HOSTS))})",
+    )
+    new.add_argument(
+        "--template-archive",
+        dest="template_archive",
+        default="",
+        help="Read the template from a .tar.gz already on disk instead of the network",
+    )
+
+
+def _from_template_cmd(args: argparse.Namespace, *, url: str, archive: str) -> int:
+    """``personalclaw app new --from-template`` — returns the process exit code."""
+    if args.name:
+        print(
+            f"error: --from-template fetches {TEMPLATE_REPO} verbatim, so it cannot also "
+            f"name the app.\n"
+            f"       Fetch it and rename in place (the template README is the walkthrough):\n"
+            f"         personalclaw app new --from-template\n"
+            f"       Or generate a named app directly:\n"
+            f"         personalclaw app new {args.name} --type tool"
+        )
+        return 2
+    if args.type:
+        print("error: --from-template and --type are different paths — pick one")
+        return 2
+    if url and archive:
+        print("error: pass either --template-url or --template-archive, not both")
+        return 2
+    try:
+        result = from_template(
+            dest=Path(args.dest),
+            url=url,
+            archive=Path(archive) if archive else None,
+            force=args.force,
+        )
+    except ScaffoldError as exc:
+        print(f"error: {exc}")
+        return 1
+    print(f"Fetched {result.source}")
+    print(f"Created {result.path} — {len(result.files)} files")
+    for rel in result.files:
+        print(f"  {rel}")
+    print("")
+    print("Next:")
+    print(f"  pytest {result.path}")
+    print(f"  read {result.path / 'README.md'} — clone-to-installed walkthrough")
+    return 0
 
 
 def app_cmd(args: argparse.Namespace) -> int:
@@ -837,6 +1157,13 @@ def app_cmd(args: argparse.Namespace) -> int:
     if getattr(args, "list_types", False):
         print(render_type_table(provider_type_rows()))
         return 0
+    template_url = getattr(args, "template_url", "") or ""
+    template_archive = getattr(args, "template_archive", "") or ""
+    if (template_url or template_archive) and not getattr(args, "from_template", False):
+        print("error: --template-url/--template-archive only apply with --from-template")
+        return 2
+    if getattr(args, "from_template", False):
+        return _from_template_cmd(args, url=template_url, archive=template_archive)
     if not args.name or not args.type:
         print("Usage: personalclaw app new NAME --type TYPE")
         print("       personalclaw app new --list-types")

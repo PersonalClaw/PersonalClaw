@@ -104,3 +104,49 @@ PR validation workflow: manifest fetch+parse (core `apps/manifest.py`), repo liv
 
 - **Registry trust-washing risk:** a listing must never read as an endorsement — card copy says "community-listed, scanned at install" explicitly; verdict display is the honest differentiator.
 - **Open:** scaffold rename/refactor helper (`app new --from <existing>`) — nice-to-have; DISCOVERY-file if demand appears.
+
+## Execution log
+
+- **2026-08-17 — ET-2 (T1.4) DONE.** Template repo content + the guide quickstart + `app new
+  --from-template`. Template content staged at `scratch/app-template/` (the `--type tool`
+  output at the repo root, a hand-written clone-to-installed `README.md`, a root-level variant
+  of the apps-repo CI's four jobs, `.gitignore`); the apps-guide insert is staged at
+  `scratch/apps-guide-quickstart.md` with its own insertion instructions. `scratch/` is outside
+  `testpaths` and outside `make lint`'s targets, so it does not join the core build. **Owner
+  push still required** (Owner task 1) — see `scratch/README.md`.
+- **DISCOVERY — the quickstart was wrong twice until it was run verbatim.** Step 6 claimed
+  `GET /api/apps/{name}` returns top-level `enabled` and `provider` keys; it returns
+  `installed.enabled` and `manifest.provider`. And `personalclaw doctor` prints the section
+  under the app's *name* (`my-tool`), not its displayName. Both were found by executing the
+  text, not by reading it. Measured after correction: **2.4 s wall clock, steps 1-6**, from an
+  empty directory against a freshly-homed gateway (`--list-types` → generate → pytest → token →
+  install+enable → verify). The plan's "<30 min" target is for V1's stranger-shaped run with a
+  real method implemented; this number is first-run only.
+- **DISCOVERY — this repo's pre-commit hook reformats the staged template.** `black` runs over
+  every staged `.py`, including `scratch/app-template/`, and rewrote the generated
+  `CONTRACT_METHODS = ('a', 'b')` to double quotes — silently making the staged template differ
+  from generator output. Fixed at the source: the generator now emits double quotes
+  (`f'"{m}"'`, not `repr(m)`), so scaffold output is black-clean by construction. A template
+  that needs reformatting is the same class of defect as one that needs fixing.
+- **DEVIATION — `--from-template` takes no NAME.** It fetches the template verbatim into
+  `<dir>/app-template`, and refuses a NAME with a message pointing at `--type tool`. Renaming
+  properly spans five files (manifest name/displayName/loggerRoots, the provider class + logger
+  root + `name`/`display_name` bodies, the test's expectations, the README title, the LICENSE
+  holder) — that is the rename helper this plan's Risks section deliberately leaves open, and
+  a partial rename would ship a manifest `name` that disagrees with the provider's `.name`
+  property, which every per-type registry keys on. The template README documents the four-edit
+  rename instead.
+- **MEASURED — the live fetch is UNPROVEN, and honestly so.**
+  `https://codeload.github.com/personalclaw/app-template/tar.gz/refs/heads/main` answers **HTTP
+  404** today, and `app new --from-template` refuses it fail-closed
+  (`error: template fetch returned HTTP 404 (expected 200)`). So the URL, the host allowlist and
+  the real TLS transport are all exercised against the real host; only the repo's *content* is
+  missing. Extraction is proven end-to-end against a local tarball and a loopback HTTP server.
+  Nothing in core changes when the owner pushes.
+- **FALSIFICATION — the traversal tests initially passed for the wrong reason.** Disabling the
+  `..` name check by hand left both traversal tests GREEN: the post-canonicalisation containment
+  check was firing and emitting a message that matched. The two refusals now say different
+  things ("escapes the target" vs "resolves outside the target") and
+  `test_containment_refuses_even_if_the_name_check_is_bypassed` bypasses the first layer so the
+  second is proven live on its own. With BOTH layers disabled, `../../PWNED.txt` really escapes
+  two directories out of the target — measured, not assumed.
