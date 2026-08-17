@@ -392,6 +392,74 @@ Two owner decisions. Code recon (2026-07-26): today's `DashboardPage.tsx` render
 
 ## Execution log
 
+### 2026-08-17 — `AS-2` chatless refresh (§2.1–§2.4) — DONE
+
+The layout/data split, executed: a tile in `ttl` mode re-renders a **stored skeleton** through a
+deterministic LLM-free transform and writes it via the inherited `artifact-update` sink, and the
+tile header reads its cost and its per-source health off the ONE ledger row the refresh writes.
+
+- **`src/personalclaw/dashboard/tile_refresh.py`** (new) — `render_skeleton()` is a thin binding of
+  `workflows.bindings.resolve` rather than a second interpolator: a dashboard slot that resolved
+  `{{a.b | default('x')}}` differently from a workflow binding is a bug nobody would find twice.
+  `refresh_tile()` gates on TTL → dispatches the tile's data nodes → renders → writes → ledgers.
+- **The skeleton is a SEPARATE artifact from the tile's own `ref`.** Not a design flourish: the
+  refresh writes the RENDERED body to the tile's artifact, so a single-artifact design would have
+  had the first refresh destroy the very skeleton the second one needs. The tile's binding carries
+  the skeleton slug; the store keeps two artifacts, and both are versioned/restorable as usual.
+- **The "bound data workflow" is a list of action-provider dispatches**, which is §2.1's own
+  declared degenerate case ("one action node — e.g. `api fetch` or a knowledge query"). No engine
+  run is created, because §2.3 forbids run directories for a refresh — the 1440-run-dirs critique is
+  avoided structurally, not mitigated.
+- **The ledger becomes what PP-4 said it lacked: a SECOND PRODUCER.** `TileLedger(LedgerWriter)`
+  over a four-call store, emitting one new shared-vocabulary kind (`tile_refreshed`) rather than a
+  private `tile_refresh_done` — the "fifth dialect" the extraction exists to prevent. One directory
+  per TILE (bounded by `max_tiles`), never one per refresh. `tokens: 0` / `cost_usd: 0.0` are
+  written EXPLICITLY: a reader that has to infer "free" from a missing key cannot tell a zero-cost
+  refresh from an unrecorded one, and that distinction is the whole of §2.3's cost honesty.
+- **🔴 DISCOVERY — a TTL tile is a FOURTH UNATTENDED DISPATCH SEAM, and the guardrails census
+  caught it.** `test_action_provider_chokepoints` failed with *"these modules reach an action
+  provider but are not in EXECUTION_SITES"*. It is right: a tile fires with nobody watching. So the
+  refresh now carries both unattended gates — `incident_active()` (fail-closed: a dashboard that
+  kept fetching through an incident would be the quiet exception that makes the kill switch
+  useless) and `enforce_action(..., session_key="tile:<key>")`. The key is deliberately non-empty:
+  `session_key=""` classifies as ATTENDED and silently skips the SafetyProfile layer (the PHF-8
+  defect), and the test asserts the ARGUMENT, not merely that the call exists. On top of those, a
+  tile's providers are narrowed to a read-only allowlist (`DATA_PROVIDERS`) — `bash` behind a
+  dashboard panel would be an unattended-execution surface the user never consented to.
+- **🔴 A REAL TTL BUG, found by writing the boundary test rather than an "it refreshed" test.**
+  `_epoch()` first parsed the ledger's UTC stamp with `time.mktime(...) - time.timezone`; that
+  correction is an hour wrong under DST, and a 600s TTL measurably fired again after 599s.
+  `calendar.timegm` is the fix. The test asserts BOTH sides of the boundary, because a refresh that
+  fires on every read and one that never fires both pass a naive check.
+- **`transform` gained a `skeleton` form (the WF2 node the atom names).** `dispatch_transform`
+  reads the artifact and interpolates it; the validator accepts `expr` OR `skeleton`. Chosen over a
+  new `NodeKind`: a new kind costs an enum member, a lane, a validator branch, an inspector and a
+  doc row, and buys nothing here — `transform` already means "zero-token pure reshaping". The
+  node's DISPATCHER is tested, not only the helper, so this cannot ship as a kind nobody can author.
+- **A failed refresh writes nothing at all.** No render, no artifact write — the tile keeps painting
+  its last-good body and the chip goes red. A partial render would have put `{{...}}` literals where
+  a number was, which is a worse version of the empty panel §2.4 exists to kill. Driven through the
+  rendered band (`liveTilePaint.test.tsx`), not just asserted on the backend, because the claim is
+  about what a user sees.
+- **The deep link points at the ledger row's API URL**, deliberately. There is no run-detail page
+  for a tile ledger, and `triggers/delivery.status_url` already established the rule for
+  ledger-weight fires: point somewhere honest rather than at a run that would 404. Inventing a
+  ledger UI here is out of this atom's scope.
+- **DEVIATION — `dashboard_views.json` was never declared in the durability inventory.** AS-1
+  shipped the store and `audit_home()` would report it the moment a user pinned a tile. Declared
+  here alongside the new `dashboard_tiles` ledger, because writing about it would have cost more
+  than fixing it. The new entry is `kind=tree` from the start — the shape `sessions` mis-declared as
+  its leaf kind — and joins `crashes`/`sessions` on the generic per-file tree pass.
+- **`mode: "view"` is deliberately NOT in the accepted vocabulary.** A declared mode with no
+  runtime is a known failure shape in this repo, so `_refresh_from_dict` fails a `"view"` binding
+  open to `manual` and a test asserts that. The ttl→view upgrade is EXT:AUTOMATION-SUBSTRATE step 8.
+- **NOTE — the `AS-1` row in `docs/roadmap/atomic/AS.md` still reads ⬜ while `dag.json` says
+  `done` (PR #910).** Left alone to keep this diff localized; `dag.json` is the truth.
+- **Validated as a user** on port 10355 against an isolated home — see the drive notes in the PR
+  body: a real pinned tile bound to `knowledge-health`, one forced refresh changing the rendered
+  body, a within-TTL poll declining to re-fetch, the ledger row on disk carrying `tokens: 0`, and a
+  deliberately broken source leaving the last-good body painted with a red chip.
+
 ### 2026-08-16 — `AS-5` widget action bridge (Amendment round 1, T5-A1 + T5-A2) — DONE
 
 Extracted the bridge, closed the non-chat gap, and turned the wire into a contract

@@ -167,7 +167,7 @@ Thirteen, and no more. Every orchestration pattern is a *composition*:
 | `infer` | exactly ONE bounded model call — no tools, no session |
 | `visualize` | ONE bounded reasoning-axis call → a genui widget spec — no tools (agency-free) |
 | `branch` | conditional dispatch on a binding |
-| `transform` | zero-token pure data reshaping |
+| `transform` | zero-token pure data reshaping — `expr`, or `skeleton` (see below) |
 | `action` | zero-token action-provider dispatch |
 | `wait` `gate` | deadline / human-input |
 | `subworkflow` | a real nested CHILD run, depth ≤ 3 |
@@ -176,6 +176,14 @@ Thirteen, and no more. Every orchestration pattern is a *composition*:
 a classification should not pay for a subagent, and the lane accounting depends
 on distinguishing them. A judge panel of five `infer` nodes is five bounded
 calls; the same panel as `stage` nodes is five concurrent sessions.
+
+**A `transform` renders either an inline `expr` or a stored `skeleton`.**
+`config.skeleton: "<artifact-slug>"` reads that artifact's body and interpolates the
+same `{{…}}` bindings into it — the layout/data split a live dashboard tile needs
+(AMBIENT-SURFACES §2.1). The skeleton is authored ONCE by a model and every refresh
+after that is pure substitution, so the spec stays readable and a steady-state
+refresh costs zero tokens. Either field satisfies the validator; neither is
+`WF_MISSING_EXPR`.
 
 **Action arguments go under `config.with`.** A flat argument beside `provider`
 reaches the provider as an empty config — it then reports its own required field
