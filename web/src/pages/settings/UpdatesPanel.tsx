@@ -8,6 +8,7 @@ import { FormSkeleton, LoadError } from '../../ui/ListScaffold'
 import { Markdown } from '../../ui/Markdown'
 import { confirm } from '../../ui/dialog'
 import { fvs } from '../../design/fontWeight'
+import { notify } from '../../app/appSdk'
 
 /** Updates — current version, available updates, auto-update toggle, and the
  *  rendered changelog. Backed by /api/update/check + /api/changelog + POST
@@ -53,13 +54,33 @@ export function UpdatesPanel() {
     catch (e) { setMsg(e instanceof Error ? e.message : 'Update failed') }
     setApplying(false)
   }
+  // 🔑 THE EXACT SHAPE `saveFailureReported` WAS WRITTEN FOR, and its sweep could not see these: it
+  // matches `api.save*` and `api.patchConfig` only, so an optimistic write named `set*` is invisible to
+  // it. Both toggles flipped `info` locally, showed "Saved" on `.then` only, and discarded the rejection —
+  // so a refused write left the switch on, no confirmation, and nothing said. A reload silently reverts it.
+  //
+  // `notify` rather than this file's `setMsg`: `msg` renders inside the apply-update block (line ~104),
+  // several sections away from these switches, so a failure message there would appear detached from the
+  // control that caused it. The toast is the app-wide affordance and is announced through `role="alert"`.
+  //
+  // Not reverting the optimistic flip — the family's remedy for this shape is to tell, not to fight the
+  // control the user just touched (see `chat/selectionPersistReported`).
+  const reportSettingFailure = (what: string) => (e: unknown) => {
+    let msg = e instanceof Error ? e.message : 'the request failed'
+    try { const p = JSON.parse(msg); msg = p.error || msg } catch { /* raw text */ }
+    notify(`Couldn't ${what}: ${msg}`, 'error')
+  }
   const toggleAuto = (v: boolean) => {
     setInfo((p) => p && { ...p, auto_update: v })
-    api.setAutoUpdate(v).then(() => { setSaved(true); window.setTimeout(() => setSaved(false), 1600) }).catch(() => {})
+    api.setAutoUpdate(v)
+      .then(() => { setSaved(true); window.setTimeout(() => setSaved(false), 1600) })
+      .catch(reportSettingFailure(`${v ? 'enable' : 'disable'} automatic updates`))
   }
   const toggleDevMode = (v: boolean) => {
     setInfo((p) => p && { ...p, update_dev_mode: v })
-    api.setUpdateDevMode(v).then(() => { setSaved(true); window.setTimeout(() => setSaved(false), 1600) }).catch(() => {})
+    api.setUpdateDevMode(v)
+      .then(() => { setSaved(true); window.setTimeout(() => setSaved(false), 1600) })
+      .catch(reportSettingFailure(`${v ? 'enable' : 'disable'} developer update mode`))
   }
 
   // Error before the skeleton, or the skeleton wins forever.

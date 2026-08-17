@@ -1,12 +1,12 @@
 {
-  "generatedAt": "2026-08-16T08:08:12.636Z",
+  "generatedAt": "2026-08-17T18:57:53.693Z",
   "totals": {
-    "driftHits": 7,
-    "filesScanned": 478,
-    "filesWithDrift": 6
+    "driftHits": 8,
+    "filesScanned": 512,
+    "filesWithDrift": 7
   },
   "byCategory": {
-    "color": 2,
+    "color": 3,
     "spacing": 1,
     "radius": 1,
     "shadow": 0,
@@ -39,14 +39,14 @@
       "detail": "7 raw-button, 9 raw-input"
     },
     {
+      "file": "pages/settings/MemoryPanel.tsx",
+      "score": 19,
+      "detail": "7 raw-button, 5 raw-input"
+    },
+    {
       "file": "pages/loops/LoopCockpitPage.tsx",
       "score": 18,
       "detail": "8 raw-button, 2 raw-input"
-    },
-    {
-      "file": "pages/settings/MemoryPanel.tsx",
-      "score": 18,
-      "detail": "7 raw-button, 4 raw-input"
     },
     {
       "file": "pages/knowledge/KnowledgeDetail.tsx",
@@ -189,6 +189,11 @@
       "detail": "1 raw-button, 5 raw-input"
     },
     {
+      "file": "app/Onboarding.tsx",
+      "score": 6,
+      "detail": "1 color, 1 raw-input"
+    },
+    {
       "file": "pages/apps/AppsSection.tsx",
       "score": 6,
       "detail": "3 raw-button"
@@ -207,23 +212,25 @@
       "file": "pages/prompts/PromptDetail.tsx",
       "score": 6,
       "detail": "1 raw-button, 4 raw-input"
-    },
-    {
-      "file": "pages/prompts/RunnableTemplateField.tsx",
-      "score": 6,
-      "detail": "1 raw-button, 4 raw-input"
     }
   ],
   "a11y": {
-    "outlineNoneCount": 136,
-    "outlineNoneFiles": 63,
-    "localFocusVisibleFiles": 32,
-    "reducedMotionFiles": 9,
-    "animatedFiles": 162,
+    "outlineNoneCount": 137,
+    "outlineNoneFiles": 64,
+    "localFocusVisibleFiles": 33,
+    "reducedMotionFiles": 11,
+    "animatedFiles": 167,
     "hasGlobalReducedMotion": true,
     "hasGlobalFocusRing": true
   },
   "byFile": {
+    "app/Onboarding.tsx": {
+      "color": 1,
+      "spacing": 0,
+      "radius": 0,
+      "shadow": 0,
+      "duration": 0
+    },
     "pages/knowledge/KnowledgeGraph.tsx": {
       "color": 0,
       "spacing": 0,
@@ -600,7 +607,7 @@
     },
     "pages/settings/MemoryPanel.tsx": {
       "raw-button": 7,
-      "raw-input": 4,
+      "raw-input": 5,
       "raw-dialog": 0
     },
     "pages/settings/ModelBackends.tsx": {
@@ -771,20 +778,26 @@
   },
   "drift": [
     {
+      "file": "app/Onboarding.tsx",
+      "line": 265,
+      "category": "color",
+      "snippet": "(measured off the node: rgb(240,244,248)). There, the base accent is **4.37:1** against a"
+    },
+    {
       "file": "pages/knowledge/KnowledgeGraph.tsx",
-      "line": 102,
+      "line": 126,
       "category": "duration",
       "snippet": "<g transform={transform} style={{ transition: drag.current ? 'none' : 'transform 200ms ease-out' }}>"
     },
     {
       "file": "pages/settings/MemoryGraph.tsx",
-      "line": 102,
+      "line": 112,
       "category": "color",
       "snippet": "return `hsl(${h} 55% 60%)`"
     },
     {
       "file": "pages/settings/MemoryGraph.tsx",
-      "line": 148,
+      "line": 158,
       "category": "duration",
       "snippet": "<g transform={transform} style={{ transition: drag.current ? 'none' : 'transform 200ms ease-out' }}>"
     },
@@ -796,7 +809,7 @@
     },
     {
       "file": "pages/settings/SourcesPanel.tsx",
-      "line": 99,
+      "line": 125,
       "category": "color",
       "snippet": "(measured rgb(30,31,32) on rgb(30,31,32) dark, rgb(255,255,255) on rgb(255,255,255)"
     },
@@ -808,7 +821,7 @@
     },
     {
       "file": "ui/widget/WidgetFrame.tsx",
-      "line": 243,
+      "line": 261,
       "category": "spacing",
       "snippet": "style={{ height: expanded ? 'calc(100% - 36px)' : height }}"
     }

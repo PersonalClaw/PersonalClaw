@@ -8,6 +8,7 @@ import { PanelHeader } from './settingsUI'
 import { Button } from '../../ui/Button'
 import { ListSkeleton, LoadError } from '../../ui/ListScaffold'
 import { Field, TextInput, DateInput } from '../../ui/forms'
+import { notify } from '../../app/appSdk'
 
 const OUTCOME_TONE: Record<string, string> = {
   success: 'var(--color-success)', allowed: 'var(--color-success)', approved: 'var(--color-success)',
@@ -107,9 +108,22 @@ export function AuditPanel() {
     setVerify(null)
     try { setVerify(await api.auditVerify()) } catch { setVerify({ ok: false, checked: 0, error: 'verify failed' }) }
   }
+  // 🔑 A CONFIRMED ACTION THAT FAILED SILENTLY, and the confirmed-delete ratchet could not see it: that
+  // sweep matches `api.(delete|purge|revoke)*`, and this one is called `selRotate`. The user confirmed
+  // rotating the audit-log signing key, the request failed, and the panel invalidated its verify cache and
+  // reloaded as though it had worked — so the only signal was that nothing changed.
+  //
+  // `notify` rather than this file's `setError`: that state only renders through `LoadError` while
+  // `!events`, so setting it after a successful load shows nothing at all.
   const rotate = async () => {
     if (!(await confirm({ title: 'Rotate the audit-log signing key?', body: 'Past entries stay verifiable under the old key.', confirmLabel: 'Rotate key' }))) return
-    await api.selRotate().catch(() => {})
+    try { await api.selRotate() }
+    catch (e) {
+      let msg = e instanceof Error ? e.message : 'the request failed'
+      try { const p = JSON.parse(msg); msg = p.error || msg } catch { /* raw text */ }
+      notify(`Couldn't rotate the signing key: ${msg}`, 'error')
+      return   // nothing rotated, so there is nothing to invalidate or reload
+    }
     invalidateCache('settings:audit-verify')
     reload()
   }
