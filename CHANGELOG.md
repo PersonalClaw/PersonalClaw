@@ -61,6 +61,13 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
   **Branched from** link back to the one it came from, which stays there after a reload and
   follows the original if you rename it. Nothing is overwritten, so there is no confirmation
   to click through.
+- **A bad edit is no longer permanent.** Before the agent's first write to a file in a turn,
+  PersonalClaw now saves that file's current bytes. When a turn wrecks something, `/rewind-to-turn N`
+  first *shows* you what it would change — the exact files, with diffs — and only writes after you
+  confirm. It restores the files and leaves the conversation alone, so the transcript still shows what
+  happened (`/undo` remains the one that rolls back the chat). Credential files like `.env` are never
+  copied at all, which also means a rewind will not restore one — the preview says so rather than
+  quietly skipping it. Tune the store under **Settings → Chat → File checkpoints**.
 
 - **Your phone can find this machine on its own now, if you ask it to.** Getting a companion
   device onto your gateway used to start with reading an IP address off one screen and typing it

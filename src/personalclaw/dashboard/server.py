@@ -846,6 +846,10 @@ async def start_dashboard(
         "/api/chat/sessions/{session}/fork-rewound", chat.api_chat_session_fork_rewound
     )
     app.router.add_post("/api/chat/sessions/{session}/undo", chat.api_chat_session_undo)
+    # /rewind-to-turn (EXECUTION-ISOLATION §6) — the FILESYSTEM counterpart of /undo. GET
+    # previews (read-only, no writes); POST applies and requires confirm:true.
+    app.router.add_get("/api/chat/sessions/{session}/rewind", chat.api_chat_session_rewind_preview)
+    app.router.add_post("/api/chat/sessions/{session}/rewind", chat.api_chat_session_rewind)
     # Side chat (ephemeral, isolated Q&A against a frozen parent snapshot)
     app.router.add_post("/api/chat/sessions/{session}/side/open", chat.api_side_open)
     app.router.add_post("/api/chat/sessions/{session}/side/turn", chat.api_side_turn)

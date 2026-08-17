@@ -548,6 +548,13 @@ _EDITABLE_CONFIG: dict[str, dict] = {
     # credential floor still refuses a sensitive name at spawn, so a write here cannot
     # hand a hook the gateway's AWS session.
     "sandbox.env_passthrough": {"type": "str_list", "max_items": 40},
+    # EXECUTION-ISOLATION §6 — bounds on the turn-bound file checkpoint store. Only the
+    # BOUNDS are editable: which files may never be copied is a code-level floor
+    # (turn_checkpoints.NEVER_CAPTURE_GLOBS) with no config field, so no PATCH can widen it.
+    "checkpoints.enabled": {"type": "bool"},
+    "checkpoints.max_mb": {"type": "int", "min": 0, "max": 100_000},
+    "checkpoints.max_turns": {"type": "int", "min": 1, "max": 1_000},
+    "checkpoints.max_file_mb": {"type": "int", "min": 0, "max": 10_000},
     "security.denied_commands": {"type": "str_list", "max_items": 100, "each_regex": True},
     "security.egress": {"type": "egress"},
     # AUTONOMY-GUARDRAILS: the runtime-editable guardrail subset (§7). Incident is

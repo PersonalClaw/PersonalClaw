@@ -1127,9 +1127,26 @@ class NativeBuiltinToolProvider(ToolProvider):
             )
         return _ok_capped(data, session_key=self._session_key)  # type: ignore[arg-type]
 
+    def _checkpoint_pre_edit(self, path: Path) -> None:
+        """Phase 2 of the turn checkpoint (EXECUTION-ISOLATION §6): back up *path*'s current
+        bytes before this turn's first mutation of it.
+
+        Here, in the handler, rather than at the chat runner's TOOL_CALL event: this runs
+        synchronously with the write (no ordering race against an event stream), and it covers
+        every caller of the native file tools — chat, loops, subagents — not just the
+        dashboard. Never raises; the store degrades rather than failing the agent's tool call.
+        """
+        try:
+            from personalclaw import turn_checkpoints
+
+            turn_checkpoints.capture_pre_edit(self._session_key, path, cwd=self._cwd)
+        except Exception:  # noqa: BLE001
+            logger.debug("checkpoint pre-edit skipped for %s", path, exc_info=True)
+
     async def _t_write_file(self, a: dict) -> ToolResult:
         path = self._resolve(str(a["path"]))
         content = str(a.get("content", ""))
+        self._checkpoint_pre_edit(path)
 
         def _write() -> str | None:
             # Returns an error string on a known-failure, else None on success. Guard
@@ -1170,6 +1187,7 @@ class NativeBuiltinToolProvider(ToolProvider):
         path = self._resolve(str(a["path"]))
         old, new = str(a["old_str"]), str(a["new_str"])
         replace_all = bool(a.get("replace_all"))
+        self._checkpoint_pre_edit(path)
 
         def _edit() -> tuple[bool, str]:
             # Returns (ok, message). ok=False carries a stable error string the

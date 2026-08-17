@@ -969,6 +969,16 @@ _SNAPSHOT_COVERAGE_GAPS: frozenset[str] = frozenset(
         # holds no user content to lose and restoring last week's spread would say nothing
         # about this week's bindings. The atom's own done_when specifies snapshot-excluded.
         "sampling_outcomes",
+        # work: EI-8's turn-bound file checkpoint store. The one survivor here that is NOT
+        # rebuildable — the pre-edit bytes exist nowhere else once the agent has overwritten
+        # them — and it is still a deliberate omission, on two grounds the others do not share.
+        # (1) Every manifest entry is an ABSOLUTE host path, so the tree is meaningless in
+        # another home and a restore would drop one machine's workspace copies into another's.
+        # (2) It is a live-session safety net pruned with the session, capped at
+        # `checkpoints.max_mb` PER SESSION, so carrying it would make every snapshot grow by
+        # the size of the user's recent edits for no recoverable benefit. The workspace itself
+        # holds the authoritative copy of every file in here.
+        "turn_checkpoints",
     }
 )
 

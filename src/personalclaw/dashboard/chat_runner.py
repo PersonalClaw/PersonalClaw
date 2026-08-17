@@ -1322,6 +1322,17 @@ async def _run_chat(
     """Stream LLM response into *session*.  Survives browser disconnect."""
     # Reset the per-turn error flag; the except block sets it True on a crash.
     session._last_turn_errored = False
+    # Phase 1 of the turn checkpoint (EXECUTION-ISOLATION §6): open a numbered turn and
+    # record the identity set. Only at depth 0 — a nested `_run_chat` (prompt expansion,
+    # auto-continue) is the SAME user turn, and numbering it separately would make
+    # /rewind-to-turn N mean something the transcript's turn N does not.
+    if _prompt_depth == 0:
+        try:
+            from personalclaw import turn_checkpoints
+
+            turn_checkpoints.begin_turn(session.key, cwd=_file_change_base(session))
+        except Exception:  # noqa: BLE001 — a checkpoint failure must never break a turn
+            logger.debug("turn checkpoint: begin_turn skipped", exc_info=True)
     # Cancel any still-pending follow-up-chip generation from the PRIOR turn (CHAT-CRAFT
     # S3) — the user is sending again, so its chips are moot; the FE hides them on the
     # next stream. Fire-and-forget cancel; the task swallows CancelledError cleanly.
