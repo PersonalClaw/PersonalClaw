@@ -15,7 +15,7 @@ Each atom below executes start-to-finish in one go. If an atom lists dependencie
 | `LV-3` | ⬜ | S2 digest section: learning summary block (new/refined/pending counts + names) | `LV-1`, `EXT:INBOX-NOTIFICATIONS-UNIFICATION:digest builder registration point (plan 42 S5; has skills-page-header fallback)` | weekly digest (or fallback skills-page header) shows the learning block with real counts and names |
 | `LV-4` | ⬜ | Periodic identity report: compose_identity_report + delivery/schedule/config/FE (amendment) | `LV-3`, `EXT:INBOX-NOTIFICATIONS-UNIFICATION:emit_attention_item kind=report (pre-42 source=learning InboxItem fallback)` | fixture home with seeded lessons/facets/skills yields a truthful report whose counts byte-match store contents with zero writes to any learning store (inspected before/after); no-model fixture still produces the deterministic sections; compressed-clock fixture fires the job, item lands in inbox linking the artifact, quiet-hours suppresses the ping but not the artifact, config round-trips and 'off' disables cleanly |
 | `LV-5` | ⬜ | S3 refinement arm: stumble detector -> refine proposal (unified diff) -> diff render + versioned accept | `LV-1`, `EXT:LEARNING-FLYWHEEL:refiner statistical gates slot behind same queue/kind (coordination, non-blocking)` | unit tests per stumble trigger pass and the env-failure fixture never triggers; a stumble fixture yields exactly one refine proposal with a valid diff; approving applies the diff and writes provenance frontmatter while reject leaves the skill untouched; V3 arc (flawed skill->stumble->refine->approve->re-run succeeds) observed |
-| `LV-6` | ⬜ | S4 benchmark protocol doc | — | protocol doc is reviewable before any runs and has owner sign-off (owner task 2); owner-curated ~10-task set frozen (owner task 1) |
+| `LV-6` | ✅ | S4 benchmark protocol doc | — | protocol doc is reviewable before any runs and has owner sign-off (owner task 2); owner-curated ~10-task set frozen (owner task 1) |
 | `LV-7` | ⬜ | S4 benchmark implementation as an eval-substrate study + publish | `LV-6`, `EXT:EVALUATION-SUBSTRATE:S1-2 template-study machinery`, `EXT:DISCOVERABILITY-LAUNCH:site content publish path (plan 36 sync)` | paired runs are reproducible from one command against fixture homes; results page is live with a methodology link; an independent re-run reproduces within stated variance (V4) |
 
 ## Atom scopes
@@ -62,11 +62,21 @@ Session 3 (T3.1 stumble detector at after-turn seam when skills loaded: correcti
 
 ### `LV-6` — S4 benchmark protocol doc
 
-**Status:** todo
+**Status:** done
 
 Session 4 T4.1 (docs/roadmap/research/learning-benchmark-protocol.md: task-set schema, paired skills-on/off design with fresh homes + fixed model/config/seed, metrics {completion, tool_calls, wall_ms}, exclusions, publish-regardless honesty rule)
 
 **Done when:** protocol doc is reviewable before any runs and has owner sign-off (owner task 2); owner-curated ~10-task set frozen (owner task 1)
+
+**DONE.** [`docs/roadmap/research/learning-benchmark-protocol.md`](../research/learning-benchmark-protocol.md)
+is frozen as v1 and owner-signed, with the ten-task register frozen and its selection rule stated
+(one task per bundled skill family with a deterministic assertion; the four excluded skills named).
+Every prescribed measurement cites the code that produces it, and eight of them were executed once
+against `main` — the outputs are in the LEARNING-VISIBILITY execution log. Five preconditions are
+named in the doc's §7 rather than papered over; the blocking one is that **no skills-off arm can be
+run today** (`max_triggered` clamps to ≥1, a fresh home force-syncs 14 bundled skills, and
+`feedback.suppressed_producers` is accuracy-derived, not a switch). The lever is `ES-7` §3.3's
+`arm_mask`, which is unbuilt — so `LV-7` consumes it rather than growing a second toggle.
 
 ### `LV-7` — S4 benchmark implementation as an eval-substrate study + publish
 
