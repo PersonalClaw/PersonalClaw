@@ -259,10 +259,17 @@ export function Onboarding() {
           </div>
 
           {/* The one door out, on every step but the last — where "Start using" IS the door.
-              Guidance never gates: this is what makes "skip at any step" land somewhere real. */}
+              Guidance never gates: this is what makes "skip at any step" land somewhere real.
+
+              `ink="emphasis"` because this link sits OUTSIDE the step card, on `--color-canvas`
+              (measured off the node: rgb(240,244,248)). There, the base accent is **4.37:1** against a
+              4.5 floor at 13px/400 — axe and ux-audit agreeing, the same number the canvas ground has
+              carried since the accent-on-canvas family was named. The emphasis shade measures 6.0 in
+              coral and passes in all 12 schemes. Its three siblings inside the card keep the base ink
+              and pass at 4.83, because they are painted on `--color-surface`: the ground decides. */}
           {step !== 'ready' && (
             <div className="mt-l flex justify-center">
-              <TextLink size="sm" onClick={skipSetup}>
+              <TextLink size="sm" ink="emphasis" onClick={skipSetup}>
                 {step === 'name'
                   ? `Skip setup — start as ${DEFAULT_USER_NAME}, rename yourself in Settings`
                   : 'Skip setup and go to the dashboard'}
@@ -333,7 +340,12 @@ function DoneScreen({ name, modelSummary, triedSummary, showEverything, onShowEv
         <p data-type="label-s" className="text-on-surface-low">Three things to know</p>
         <Pointer icon={Inbox} title="Work comes back to you in the Inbox"
           body="Approvals, reminders and finished runs queue up there instead of chasing you across the app.">
-          <TextLink size="sm" onClick={() => onExitTo('inbox')}>Open the Inbox instead</TextLink>
+          {/* `Pointer` paints `bg-surface-high`, where the base accent is the WORST of the four grounds:
+              4.26:1 in coral at this 13px size, failing in 10 of 12 schemes. Emphasis measures 5.86.
+              Not driven — the `ready` step needs a completed flow — but the ground is declared on the
+              parent rather than assumed, and the same computation reproduces the driven 4.37 exactly on
+              the skip link below. */}
+          <TextLink size="sm" ink="emphasis" onClick={() => onExitTo('inbox')}>Open the Inbox instead</TextLink>
         </Pointer>
         <Pointer icon={Waves} title="How much the interface moves is a dial"
           body="Every animation scales with it — all the way down to none. This is the real control from Settings → Design.">

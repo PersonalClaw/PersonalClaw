@@ -9,6 +9,27 @@ const SIZE: Record<Size, string> = {
   inherit: '',               // inline inside a running sentence — take the paragraph's size
 }
 
+// ── The ink is decided by the GROUND, which is why it is a prop ────────────────────────────────────
+//
+// The accent ink passes or fails AA depending only on what is painted behind it. Computed across the
+// curated scheme set (`design/schemes.ts`), light mode, small text:
+//
+//   ground                        `primary`                      `primary-emphasis`
+//   --color-surface (white)       4.83  passes all 12            passes
+//   --color-canvas                4.37  FAILS 7 of 12            4.82 worst, coral 6.0 — passes all 12
+//   --color-surface-low           4.46  FAILS 6 of 12            4.92 worst — passes all 12
+//   --color-surface-high          4.26  FAILS 10 of 12           4.70 worst — passes all 12
+//
+// So `primary` is only safe on `--color-surface`. Anywhere else, pass `ink="emphasis"` — the shade the
+// design system already ships for exactly this (`accentOnCanvas.test.ts`, 10+ call sites). It is a prop
+// rather than a new default because most links here DO sit on a surface and pass, and re-inking all of
+// them would pre-empt the owner's standing "coral as accent text" decision.
+type Ink = 'primary' | 'emphasis'
+const INK: Record<Ink, string> = {
+  primary: 'text-primary',                    // only correct on `--color-surface`
+  emphasis: 'text-primary-emphasis',          // every other ground
+}
+
 /** The inline text-link idiom — a coral `text-primary` label that underlines on
  *  hover, used for in-sentence navigations ("Browse the Store"), quiet inline
  *  actions ("Remove from queue", "View all loops"), and the occasional real
@@ -23,10 +44,16 @@ const SIZE: Record<Size, string> = {
  *  `iconPosition="trailing"` — plain (icon-less) links stay bare inline so they
  *  flow inside running text without a baseline shift. `size` defaults to
  *  `inherit` (the in-sentence case); pass `xs`/`sm` for standalone links. Extra
- *  layout (`ml-auto`, `mt-1.5`, `normal-case`) rides through `className`. */
+ *  layout (`ml-auto`, `mt-1.5`, `normal-case`) rides through `className`.
+ *
+ *  `ink` defaults to `primary`, which is only AA-safe on `--color-surface`; pass
+ *  `ink="emphasis"` when the link is painted on any other ground (see the table
+ *  above). Do NOT push the ink through `className` — two colour utilities on one
+ *  element resolve by stylesheet order, not by the order you wrote them, so it
+ *  works or does not depending on Tailwind's output. */
 export function TextLink({
   children, href, external = false, onClick, icon: Icon, iconPosition = 'leading',
-  iconSize = 13, size = 'inherit', disabled = false, title, className,
+  iconSize = 13, size = 'inherit', ink = 'primary', disabled = false, title, className,
 }: {
   children: ReactNode
   href?: string
@@ -36,6 +63,7 @@ export function TextLink({
   iconPosition?: 'leading' | 'trailing'
   iconSize?: number
   size?: Size
+  ink?: Ink
   disabled?: boolean
   title?: string
   className?: string
@@ -51,7 +79,8 @@ export function TextLink({
   // a 19.99px line box plus 2+2 measured **23.99** — passing to the eye, failing the 24px floor. Real
   // headroom beats a value that is only exactly right when the font rounds kindly.
   const cls = cx(
-    'text-primary hover:underline disabled:opacity-50 py-1 -my-1',
+    INK[ink],
+    'hover:underline disabled:opacity-50 py-1 -my-1',
     Icon && 'inline-flex items-center gap-1',
     SIZE[size],
     className,

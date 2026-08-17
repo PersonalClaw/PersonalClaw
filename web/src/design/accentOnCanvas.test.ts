@@ -311,3 +311,94 @@ describe('a tone-registry ink painted on the canvas uses the emphasis shade', ()
     expect(read('design/schemeContrast.test.ts')).toMatch(/primary-emphasis as accent text on the CANVAS/)
   })
 })
+
+// ── Cycle 614: THE STATE THE CENSUS COULD NOT SEE — the first-run overlay ─────────────────────────
+//
+// Every ground above was found by a runtime census over 20 routes at both viewports. That census could
+// not observe the onboarding overlay at all, because it only renders on an **unconfigured home** and
+// every sweep ran against a configured one. So the only screens a brand-new user sees had never been
+// contrast-measured — and the overlay renders over EVERY route, so its one failure was the single
+// blocking contrast defect on all of them.
+//
+// Driven on an empty home, walking the flow, measuring the backdrop off each node:
+//
+//   step 0  "Skip setup — start as Operator…"   13px/400  rgb(200,69,46) on rgb(240,244,248)  4.37 ✗
+//   step 1  "Skip setup and go to the dashboard" 13px/400  same ink, same canvas               4.37 ✗
+//   step 1  "Show all 15 model provider apps"    16px      on rgb(255,255,255)                 4.83 ✓
+//   step 1  "Show all 7 web search apps"         16px      on rgb(255,255,255)                 4.83 ✓
+//   step 1  "Set up later"                       16px      on rgb(255,255,255)                 4.83 ✓
+//
+// 🔑 THE PASSING SIBLINGS ARE THE POINT. Three TextLinks with the IDENTICAL ink pass at 4.83 because a
+// card paints `--color-surface` behind them; the two that fail are the same element on the canvas,
+// outside the card. Same component, same token, opposite verdicts — so the fix belongs at the call
+// site, not in the primitive's default. Re-inking all ~16 TextLinks would change three compliant links
+// and pre-empt the owner's standing "coral as accent text" decision.
+//
+// 🔑 SO THE PRIMITIVE GAINED AN `ink` PROP RATHER THAN A NEW DEFAULT, and it cannot be done through
+// `className`: two colour utilities on one element resolve by **stylesheet order**, not by the order
+// they are written, so `className="text-primary-emphasis"` would work or not depending on Tailwind's
+// output. The prop makes the ground an explicit decision.
+//
+// 🪤 DARK WAS ALREADY FINE (6.85 on the canvas), so this is a light-only defect — but the class swap
+// moves both modes, which the PR's AFTER captures show at both.
+//
+// The second site is token-decidable rather than driven, and says so: `Pointer` declares
+// `bg-surface-high` on the link's own parent, the worst ground in the set (coral 4.26, failing in 10 of
+// 12 schemes; emphasis 5.86). The `ready` step needs a completed flow to reach, and the same
+// computation reproduces the driven 4.37 on the canvas exactly — so the arithmetic is validated on a
+// measured site before being trusted on an unmeasured one.
+
+describe('the first-run overlay inks its links by their ground', () => {
+  const LINK = read('ui/TextLink.tsx')
+  const ONB = read('app/Onboarding.tsx')
+
+  it('TextLink exposes the ink as a prop, mapped to the shipped emphasis token', () => {
+    expect(LINK).toMatch(/type Ink = 'primary' \| 'emphasis'/)
+    expect(LINK).toMatch(/primary: 'text-primary',/)
+    expect(LINK).toMatch(/emphasis: 'text-primary-emphasis',/)
+    expect(LINK, 'and the class comes from the map, not a hardcoded ink').toMatch(/const cls = cx\(\s*INK\[ink\],/)
+  })
+
+  it('the default stays `primary`, so no compliant link moved', () => {
+    // The blast-radius floor. If the default ever flips, ~16 links change colour app-wide and this
+    // cycle's reasoning (the ground decides, not the component) no longer holds.
+    expect(LINK).toMatch(/ink = 'primary'/)
+  })
+
+  it('the canvas-painted skip link takes the emphasis ink', () => {
+    expect(ONB).toMatch(/<TextLink size="sm" ink="emphasis" onClick=\{skipSetup\}>/)
+  })
+
+  it('the surface-high Pointer link takes it too', () => {
+    expect(ONB).toMatch(/<TextLink size="sm" ink="emphasis" onClick=\{\(\) => onExitTo\('inbox'\)\}>Open the Inbox instead<\/TextLink>/)
+  })
+
+  it('neither onboarding link carries the failing default any more', () => {
+    expect(ONB).not.toMatch(/<TextLink size="sm" onClick=\{skipSetup\}>/)
+    expect(ONB).not.toMatch(/<TextLink size="sm" onClick=\{\(\) => onExitTo\('inbox'\)\}>/)
+  })
+
+  it('the links INSIDE the step card keep the base ink — they measured 4.83 and pass', () => {
+    // The vacuity floor for "the ground decides". These three are the evidence that the primitive's
+    // default is correct; if they ever gain `ink="emphasis"`, this cycle's finding was mis-scoped and
+    // the reasoning above needs rewriting rather than silently passing.
+    const essentials = read('app/onboarding/EssentialsStep.tsx')
+    const plain = [...essentials.matchAll(/<TextLink(?![^>]*\bink=)/g)]
+    expect(plain.length, 'EssentialsStep links still on the default ink').toBeGreaterThanOrEqual(3)
+  })
+
+  it('both call sites carry the measurement, not just the token', () => {
+    // The family's standing rule: a bare token swap reads like a style preference and gets reverted.
+    expect(ONB).toMatch(/4\.37:1/)
+    expect(ONB).toMatch(/4\.26:1/)
+  })
+
+  it('the emphasis shade exists in light for every scheme, on BOTH grounds this cycle touched', () => {
+    // canvas is already scheme-covered (cycle 147). surface-high is the cycle-155 ground, also covered.
+    const rail = read('design/schemeContrast.test.ts')
+    expect(rail).toMatch(/primary-emphasis as accent text on the CANVAS/)
+    const schemes = read('design/schemes.ts')
+    const defs = [...schemes.matchAll(/primaryEmphasis:\s*\['#[0-9a-fA-F]{6}',\s*'#[0-9a-fA-F]{6}'\]/g)]
+    expect(defs.length, 'schemes defining a light emphasis shade').toBeGreaterThanOrEqual(12)
+  })
+})
