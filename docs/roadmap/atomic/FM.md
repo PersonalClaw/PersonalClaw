@@ -4,7 +4,7 @@
 **Code:** `FM`  
 **Source status:** proposed
 
-FLUID-MOTION is IN PROGRESS — **2 of 7 atoms done** (`FM-1` the physics foundation, `FM-5` route transitions). It is a self-contained frontend motion plan (motion.ts, ui/motion/, tokens, router) that touches no cross-plan shared seams and rides existing cosmetic gates (bounciness/expressiveness/prefers-reduced-motion), so no lifecycle/migration re-scopes apply. Decomposed into 7 atoms across its 3 sessions: the physics foundation (FM-1), two independent morph primitives + their coherence pass (FM-2/3/4), route transitions and orchestrated entrances (FM-5/6), and the capstone budget proof + CI guard (FM-7). One declared cross-plan edge (DESIGN-SYSTEM-CONSISTENCY, already shipped v0.1.2) and one soft coordination edge (KNOWLEDGE-LIBRARY for a demo morph surface, with alternates available).
+FLUID-MOTION is IN PROGRESS — **3 of 7 atoms done** (`FM-1` the physics foundation, `FM-5` route transitions, `FM-6` orchestrated entrances). It is a self-contained frontend motion plan (motion.ts, ui/motion/, tokens, router) that touches no cross-plan shared seams and rides existing cosmetic gates (bounciness/expressiveness/prefers-reduced-motion), so no lifecycle/migration re-scopes apply. Decomposed into 7 atoms across its 3 sessions: the physics foundation (FM-1), two independent morph primitives + their coherence pass (FM-2/3/4), route transitions and orchestrated entrances (FM-5/6), and the capstone budget proof + CI guard (FM-7). One declared cross-plan edge (DESIGN-SYSTEM-CONSISTENCY, already shipped v0.1.2) and one soft coordination edge (KNOWLEDGE-LIBRARY for a demo morph surface, with alternates available).
 
 Each atom below executes start-to-finish in one go. If an atom lists dependencies, they must be `done` before it starts — that is the whole point of the split: no atom should ever need pausing to go execute other work.
 
@@ -15,7 +15,7 @@ Each atom below executes start-to-finish in one go. If an atom lists dependencie
 | `FM-3` | ⬜ | LiquidShape.tsx fluid-blob shape morph (coral-tinted, expr()-scaled) | `FM-1` | shape morphs smoothly between states (SVG-path vs canvas-metaball decided by measurement in T2.2), integrates visually with DotGlow/WavyProgress without clashing, and honors reduced-motion (instant) and expr() scaling |
 | `FM-4` | ⬜ | Coherence pass: unify Morph/LiquidShape/Disintegrate/Bud into one motion vocabulary | `FM-2`, `FM-3` | the morph family shares timing/curves and reads as one system on visual review; documented in motion.md; the card→reading morph + a liquid state transition both stay clean under prefers-reduced-motion and expressiveness=0 |
 | `FM-5` | ✅ | Wire viewTransition() into hash-route changes (cosmetic-only) | `FM-1` | navigation crossfades/morphs; URL/state changes remain ungated on the transition and the frontend URL-state test still passes; reduced-motion → crossfade or none |
-| `FM-6` | ⬜ | Orchestrated staggered entrances for 2-3 key surfaces | `FM-1` | 2-3 key surfaces stagger their regions in via stagger() (expr()-scaled); entrances feel composed not busy; collapse cleanly under prefers-reduced-motion |
+| `FM-6` | ✅ | Orchestrated staggered entrances for 2-3 key surfaces | `FM-1` | 2-3 key surfaces stagger their regions in via stagger() (expr()-scaled); entrances feel composed not busy; collapse cleanly under prefers-reduced-motion |
 | `FM-7` | ⬜ | Motion budget proof: 60fps pass + reduced-motion/expressiveness=0 zero-motion CI guard | `FM-4`, `FM-5`, `FM-6` | 60fps verified on ChatPage + a cockpit with no jank; expressiveness=0 and prefers-reduced-motion both proven to yield instant/crossfade with zero springs; a reduced-motion assertion added to web CI where feasible; full-app motion pass holds at bounciness=1 (delightful) and bounciness=0 (calm) |
 
 ## Atom scopes
@@ -131,11 +131,38 @@ inherits a wired route transition and a reduced-motion assertion to build on. Th
 
 ### `FM-6` — Orchestrated staggered entrances for 2-3 key surfaces
 
-**Status:** todo
+**Status:** done (2026-08-17)
 
 Session 3 — orchestration (T3.2)
 
 **Done when:** 2-3 key surfaces stagger their regions in via stagger() (expr()-scaled); entrances feel composed not busy; collapse cleanly under prefers-reduced-motion
+
+Three surfaces adopt it, chosen for having a real BAND STACK rather than one list in one column: the
+**dashboard home** (8 regions), **Discover** (intro + one region per server-authored area, 6 against
+`demo-home`) and **the inbox** (2 — the source-health banner, then the queue column). `regionStagger()`
+in `motion.ts` is the single decision, `stagger(expr(0.05, 0.4))`, and it is deliberately
+PARAMETERLESS so no surface can pick its own cascade; its one consumer is a new pair in the existing
+motion family, `ui/motion/{EntranceGroup, EntranceRegion}`, on the existing `listItemEnter` variant.
+
+**Reduced motion is an absence, not a speed:** `regionStagger()` returns `null` and both components
+render plain `<div>`s — measured in Chrome as `data-entrance="none"`, zero inline opacity/transform,
+minimum computed opacity 1, zero running animations, all content still on screen. **An entrance never
+gates content:** at the dashboard's first commit (minimum region opacity 0) all eight headings, 29
+buttons and the composer were already in the document.
+
+**Replay rule:** the entrance plays on the MOUNT of its `EntranceGroup` — once per navigation for a
+route surface — and a re-render never replays it. The group goes above every data-dependent branch
+when its regions are static, or on the loaded column when the regions ARE the data; nothing is keyed
+on data. `useCachedData` holding its last value on a same-key revalidation is what makes the first
+placement safe. Driven: a real Discover dismiss (POST + refetch) left the group and 5 surviving
+regions as the same DOM nodes with minimum opacity 0.999.
+
+Measured cascade on the dashboard: 40/62/104/145/196/238/281/329 ms — ~44ms apart, matching
+`expr(0.05, 0.4)` at the default expressiveness 0.8. Rails: `design/motion.test.ts` +6,
+`ui/motion/Entrance.test.tsx` (6), `ui/motion/Entrance.reducedMotion.test.tsx` (5, own file — framer
+caches its reduced-motion probe in a module singleton), `pages/discover/entranceReplay.test.tsx` (3),
+`pages/surfaceEntranceAdoption.test.ts` (8, which also records why settings' re-packing masonry and
+`TaskBoard`'s drag surface are NOT candidates).
 
 ### `FM-7` — Motion budget proof: 60fps pass + reduced-motion/expressiveness=0 zero-motion CI guard
 

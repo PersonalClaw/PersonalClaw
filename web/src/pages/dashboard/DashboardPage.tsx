@@ -23,6 +23,7 @@ import { api, type ChatSessionSummary } from '../../lib/api'
 import { useCachedData } from '../../lib/useCachedData'
 import { sessionRecencyMs } from '../../lib/epoch'
 import { spring, expr } from '../../design/motion'
+import { EntranceGroup, EntranceRegion } from '../../ui/motion'
 import { ComposerStage } from '../../ui/ComposerStage'
 import { useComposerData } from '../../lib/useComposerData'
 import type { ComposerValue } from '../../ui/composer/types'
@@ -63,67 +64,96 @@ export function DashboardPage(route: RouteProps) {
         <div className="min-h-0 flex-1 overflow-y-auto">
           {/* Honor the global content-width preference (Full / narrower presets)
               set from the shell corner — the same --content-width every other
-              centered page column tracks. */}
-          <div className="mx-auto flex w-full flex-col gap-2xl px-l py-xl" style={{ maxWidth: 'var(--content-width)' }}>
-            <Launcher {...route} />
+              centered page column tracks.
+
+              This column is also the dashboard's ENTRANCE GROUP (FLUID-MOTION §S3
+              T3.2): its bands cascade in on arrival rather than all landing at once,
+              which is what makes the home page read as composed rather than as eight
+              widgets appearing simultaneously. The group replaces the plain `div` in
+              place, so the entrance costs no extra DOM and no layout change. It sits
+              above every band's own loading state on purpose — the replay rule in
+              `ui/motion/Entrance` — so a widget's data landing re-renders inside a
+              mounted group instead of remounting it and re-running the cascade. */}
+          <EntranceGroup className="mx-auto flex w-full flex-col gap-2xl px-l py-xl" style={{ maxWidth: 'var(--content-width)' }}>
+            <EntranceRegion><Launcher {...route} /></EntranceRegion>
 
             {/* Live signal strip — the header's Hero Pulse, relocated below the
                 launcher when even the minimized header row won't fit (< lg). */}
-            <div className="min-h-9 lg:hidden"><HeroPulse {...route} /></div>
+            <EntranceRegion className="min-h-9 lg:hidden"><HeroPulse {...route} /></EntranceRegion>
 
             {/* Pinned tiles band (AMBIENT-SURFACES §1) — the ADDITIVE half of the
                 dashboard-as-views registry. Renders the Overview view's artifact
                 tiles only; an empty registry renders NOTHING, so a fresh install is
-                byte-identical to today's fixed layout below. */}
+                byte-identical to today's fixed layout below.
+
+                Deliberately NOT wrapped in an EntranceRegion: it renders `null` on an
+                empty registry, and a region wrapper around nothing is still a flex item,
+                so it would spend a `gap-2xl` of blank vertical space on every install
+                that has pinned no tiles. */}
             <PinnedTiles />
 
             {/* Prime signal: what needs you + what's running, side by side on wide
                 screens, stacked on narrow. Bare sections, hairline-labelled. */}
-            <div className="grid grid-cols-1 gap-2xl lg:grid-cols-2">
+            <EntranceRegion className="grid grid-cols-1 gap-2xl lg:grid-cols-2">
               <Section label="Needs you" icon={ListTodo} tour="approvals">
                 <ActionCenter {...route} />
               </Section>
               <Section label="Active work" icon={Sparkles}>
                 <ActiveWork {...route} />
               </Section>
-            </div>
+            </EntranceRegion>
 
-            <div className="grid grid-cols-1 gap-2xl lg:grid-cols-2">
+            <EntranceRegion className="grid grid-cols-1 gap-2xl lg:grid-cols-2">
               <Section label="Tasks" icon={ListTodo}>
                 <TasksWidget {...route} />
               </Section>
               <Section label="Suggestions" icon={Sparkles}>
                 <Suggestions {...route} />
               </Section>
-            </div>
+            </EntranceRegion>
+
+            {/* The four single-widget bands below carry `min-w-0` on the region rather
+                than relying on the `<section>` inside it: the region is now the column's
+                flex item, and a flex item defaults to `min-width: auto`, which would let
+                a long widget line push the column wider than the content width instead
+                of truncating. The grid rows above don't need it — a grid track already
+                establishes the constraint. */}
 
             {/* Discover (§6) — a curated spotlight of the parts of PersonalClaw you
                 haven't tried yet, each a deep link. The full grouped list is the
                 dedicated Discover hub (the widget's "See all" jumps there). */}
-            <Section label="Discover" icon={Compass}>
-              <Discover {...route} />
-            </Section>
+            <EntranceRegion className="min-w-0">
+              <Section label="Discover" icon={Compass}>
+                <Discover {...route} />
+              </Section>
+            </EntranceRegion>
 
             {/* Pinned artifacts (WORK-CONTAINERS §6.5d) — hard-imported, the established
                 widget pattern. There is no tile registry to register with: the bento grid and
                 per-user layout persistence were deliberately retired, so a pin is a slug in a
                 list that THIS component renders. */}
-            <Section label="Pinned artifacts" icon={Package}>
-              <PinnedArtifacts {...route} />
-            </Section>
+            <EntranceRegion className="min-w-0">
+              <Section label="Pinned artifacts" icon={Package}>
+                <PinnedArtifacts {...route} />
+              </Section>
+            </EntranceRegion>
 
             {/* On this machine (LOCAL-MODEL-MANAGER-V2 §7) — which local models are
                 holding RAM right now, and the machine's memory pressure. Same shape as
                 Pinned artifacts: a hard-imported widget in a Section band, because the
                 bento tile registry was retired. */}
-            <Section label="On this machine" icon={HardDrive}>
-              <OnThisMachine />
-            </Section>
+            <EntranceRegion className="min-w-0">
+              <Section label="On this machine" icon={HardDrive}>
+                <OnThisMachine />
+              </Section>
+            </EntranceRegion>
 
-            <Section label="Recent activity" icon={History}>
-              <ScheduleWidget {...route} />
-            </Section>
-          </div>
+            <EntranceRegion className="min-w-0">
+              <Section label="Recent activity" icon={History}>
+                <ScheduleWidget {...route} />
+              </Section>
+            </EntranceRegion>
+          </EntranceGroup>
         </div>
         {/* System rail — docked to the dashboard's bottom edge, OUTSIDE the scroll
             area above. A flex sibling with `shrink-0` pins it to the bottom while

@@ -6,6 +6,7 @@ import { IconButton } from '../../ui/IconButton'
 import { WorkbenchLayout } from '../../ui/WorkbenchLayout'
 import { EmptyState, ListSkeleton, LoadError } from '../../ui/ListScaffold'
 import { spring } from '../../design/motion'
+import { EntranceGroup, EntranceRegion } from '../../ui/motion'
 import { useCachedData } from '../../lib/useCachedData'
 import { api, type DiscoverTip, type DiscoverTryIt } from '../../lib/api'
 import type { RouteProps } from '../../app/useQueryState'
@@ -86,35 +87,48 @@ export function DiscoverPage({ navigate }: Pick<RouteProps, 'navigate'>) {
             hint="Nice. New tips will appear here as PersonalClaw grows — and anything you dismissed stays hidden. The tour above stays too."
           />
         ) : (
-          <div className="flex flex-col gap-2xl">
+          // The hub's ENTRANCE GROUP (FLUID-MOTION §S3 T3.2) — the intro and each area
+          // band cascade in rather than the whole catalog appearing at once. On THIS
+          // surface the regions ARE the data, so the group sits on the loaded column
+          // rather than above the branch (the replay rule in `ui/motion/Entrance`);
+          // that is safe because a dismiss goes through `refresh()` on an unchanged
+          // key, and `useCachedData` holds the last value on a same-key revalidation
+          // instead of dropping back to `undefined` — so the branch never flips through
+          // the skeleton and the group is never remounted. Areas are keyed by name,
+          // never by index or count, so re-fetching cannot remount a surviving band.
+          <EntranceGroup className="flex flex-col gap-2xl">
             {/* T5.2's copy pass: Discover is named as the disclosure arm beside the S2
                 starter rail, so the two mechanisms read as one idea — the rail holds a
                 surface back until you reach it, and this is where you find out it exists. */}
-            <p data-type="body-m" className="max-w-[520px] text-on-surface-var">
-              The parts of PersonalClaw you haven&rsquo;t tried yet. Your sidebar starts short and
-              grows as you open things &mdash; this is where you find out what else is there. Each
-              tip links straight into the feature; dismiss any you&rsquo;re not interested in.
-            </p>
+            <EntranceRegion>
+              <p data-type="body-m" className="max-w-[520px] text-on-surface-var">
+                The parts of PersonalClaw you haven&rsquo;t tried yet. Your sidebar starts short and
+                grows as you open things &mdash; this is where you find out what else is there. Each
+                tip links straight into the feature; dismiss any you&rsquo;re not interested in.
+              </p>
+            </EntranceRegion>
             {data.areas.map((group) => (
-              <section key={group.area} className="flex min-w-0 flex-col gap-m">
-                <div className="flex items-center gap-s">
-                  <h3 data-type="label-l" className="text-on-surface-var">{group.area}</h3>
-                  <span className="h-px flex-1 bg-outline-variant/40" />
-                </div>
-                <div className="flex flex-col gap-s">
-                  {group.tips.map((tip, i) => (
-                    <TipRow
-                      key={tip.id}
-                      tip={tip}
-                      index={i}
-                      onGo={() => navigate(tryItPath(tip.try_it))}
-                      onDismiss={() => dismiss(tip.id)}
-                    />
-                  ))}
-                </div>
-              </section>
+              <EntranceRegion key={group.area} className="min-w-0">
+                <section className="flex min-w-0 flex-col gap-m">
+                  <div className="flex items-center gap-s">
+                    <h3 data-type="label-l" className="text-on-surface-var">{group.area}</h3>
+                    <span className="h-px flex-1 bg-outline-variant/40" />
+                  </div>
+                  <div className="flex flex-col gap-s">
+                    {group.tips.map((tip, i) => (
+                      <TipRow
+                        key={tip.id}
+                        tip={tip}
+                        index={i}
+                        onGo={() => navigate(tryItPath(tip.try_it))}
+                        onDismiss={() => dismiss(tip.id)}
+                      />
+                    ))}
+                  </div>
+                </section>
+              </EntranceRegion>
             ))}
-          </div>
+          </EntranceGroup>
         )}
       </div>
     </WorkbenchLayout>

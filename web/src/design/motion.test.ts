@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import * as motion from './motion'
 import {
   dragElastic, dragSpring, instant, listItemEnter, overlayEnter, physics,
-  prefersReducedMotion, swipeDismiss, viewTransition,
+  prefersReducedMotion, regionStagger, swipeDismiss, viewTransition,
 } from './motion'
 import { runtime } from './runtime'
 import { TOKENS } from './tokenRegistry'
@@ -45,7 +45,7 @@ function setReducedMotion(on: boolean): void {
   })) as unknown as typeof window.matchMedia)
 }
 
-const DEFAULTS = { bounciness: runtime.bounciness, dragElastic: runtime.dragElastic, swipeVelocity: runtime.swipeVelocity, swipeDistance: runtime.swipeDistance }
+const DEFAULTS = { bounciness: runtime.bounciness, dragElastic: runtime.dragElastic, swipeVelocity: runtime.swipeVelocity, swipeDistance: runtime.swipeDistance, expressiveness: runtime.expressiveness }
 
 afterEach(() => {
   vi.restoreAllMocks()
@@ -152,6 +152,68 @@ describe('preset-bearing variants', () => {
       expect(resolveVariant(variants.animate).transition).toEqual(instant)
     },
   )
+})
+
+// ── The surface-entrance choreography (atom FM-6 / plan §S3 T3.2) ───────────
+// `regionStagger()` is the single decision behind every orchestrated page entrance
+// in the app, so the two claims the atom rests on are pinned here, on the pure
+// function, rather than inferred from a rendered surface:
+//   1. reduced motion is an ABSENCE (null), never a shorter step, and
+//   2. the step is expr()-scaled, so the one expressiveness dial governs the cascade.
+// The component half — that `ui/motion/Entrance` actually renders the null branch as
+// plain DOM, and that a surface adopts it — lives in `ui/motion/Entrance*.test.tsx`.
+describe('regionStagger — the surface entrance choreography', () => {
+  it('is a stagger, and delays nothing before the first region', () => {
+    const t = regionStagger() as { staggerChildren?: number; delayChildren?: number }
+    // A `delayChildren` here would be dead time before ANY content moved, which is the
+    // "motion that delays the user" the plan's soul guardrail rules out.
+    expect(t.delayChildren).toBe(0)
+    expect(t.staggerChildren).toBeGreaterThan(0)
+  })
+
+  it('scales its step with expressiveness — and stays TIGHT, not dead, at 0', () => {
+    runtime.expressiveness = 1
+    const bold = (regionStagger() as { staggerChildren: number }).staggerChildren
+    runtime.expressiveness = 0
+    const refined = (regionStagger() as { staggerChildren: number }).staggerChildren
+    expect(refined).toBeLessThan(bold)
+    // The floor is what separates "refined" from "off": at 0 there is still a cascade,
+    // just a quicker one. Zeroing it would make the aesthetic dial duplicate the a11y
+    // switch, which is exactly the split `expr()` exists to keep.
+    expect(refined).toBeGreaterThan(0)
+    // And it is `expr()` doing the scaling, not an ad-hoc curve: expr(max, floor) is
+    // linear in expressiveness, so the midpoint sits exactly between the two ends.
+    runtime.expressiveness = 0.5
+    const mid = (regionStagger() as { staggerChildren: number }).staggerChildren
+    expect(mid).toBeCloseTo((bold + refined) / 2, 10)
+  })
+
+  it('lands on stagger()`s own default step at the app default expressiveness', () => {
+    // Not decoration: it is what makes the region cascade the HOUSE step, reached
+    // through the dial rather than hardcoded past it.
+    runtime.expressiveness = DEFAULTS.expressiveness
+    const t = regionStagger() as { staggerChildren: number }
+    expect(t.staggerChildren).toBeCloseTo(0.044, 3)
+  })
+
+  it('returns NULL under prefers-reduced-motion — an absence, not a faster cascade', () => {
+    setReducedMotion(true)
+    expect(regionStagger()).toBeNull()
+  })
+
+  it('reads reduced motion at CALL time, not once at import', () => {
+    expect(regionStagger()).not.toBeNull()
+    setReducedMotion(true)
+    expect(regionStagger()).toBeNull()
+    setReducedMotion(false)
+    expect(regionStagger()).not.toBeNull()
+  })
+
+  it('takes no arguments, so no surface can pick its own cascade', () => {
+    // The one-mechanism property, made checkable. A `step` parameter would let call
+    // sites drift apart again and there would be no test that could notice.
+    expect(regionStagger.length).toBe(0)
+  })
 })
 
 describe('gesture helpers', () => {
