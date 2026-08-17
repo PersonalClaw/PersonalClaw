@@ -51,6 +51,11 @@ export const RUN_LIFECYCLE = [
   'workflow_spec_updated', 'workflow_mutation_rejected', 'workflow_forked', 'workflow_progress',
   'workflow_task_materialized', 'workflow_confirmation_pending', 'workflow_confirmation_resolved',
   'workflow_task_verified', 'workflow_cascade_blocked', 'workflow_steering_consumed',
+  // PP-15: the loop's convergence decision (which escalation rung was taken, a replan, or a
+  // recoverable wait). Mirrored here for the same reason as the rest — and the
+  // `stays in step with the workflow hook it mirrors` rail derives this list from
+  // WORKFLOW_LIFECYCLE, so an event added there cannot be silently missing here.
+  'workflow_loop_converged',
 ] as const
 
 export type RunLifecycleEvent = (typeof RUN_LIFECYCLE)[number]

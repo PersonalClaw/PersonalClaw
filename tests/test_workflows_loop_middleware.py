@@ -1,35 +1,75 @@
-"""Tests for loop-node middleware — the breaker's next tier and the escalation ladder.
+"""Tests for loop-node convergence — the failure taxonomy, the escalation ladder, steering.
 
 Two properties are load-bearing and easy to break silently: a recoverable failure must
 never burn an escalation rung (or a 429 surfaces a run that would have succeeded), and
 every declared rung must be REACHABLE (a rung that can never be selected is dead
 configuration that reads as a working feature).
+
+**The decision under test moved (PP-15).** These cases used to drive
+`loop_middleware.check_middleware` over a mutable `LoopState`; the decision is now
+`loop.tick.evaluate` over a frozen `TickState`, and `check_middleware` is deleted. Every
+behavioural assertion below is preserved — same thresholds, same rung order, same nudge
+texts — but the ladder is now ADVANCED by the caller (`tick.applied`) instead of by the
+decision itself, which is what makes the sequence reproducible rather than a function of how
+many times the decision was called.
 """
 
 import pytest
 
+from personalclaw.loop import tick
+from personalclaw.loop.tick import Action, Decision, TickConfig, TickState, evaluate
 from personalclaw.workflows.loop_middleware import (
     CLASS_ENTRY_RUNG,
     DEFAULT_LADDER,
     RECOVERABLE,
-    Action,
     FailureClass,
     InterruptQueue,
-    LoopState,
-    MiddlewareVerdict,
     Rung,
+    _resolve_ladder,
     call_fingerprint,
-    check_middleware,
     classify_failure,
     structured_brief,
 )
 
+#: A fixed clock. `evaluate` takes `now` as a parameter precisely so a test never needs a real
+#: one, and so the same inputs decide the same way forever.
+NOW = 1_000.0
 
-def stalled(state: LoopState, *, n: int = 3, **kw) -> LoopState:
-    """Drive `state` into an identical-call stall."""
+
+def _state(**kw) -> TickState:
+    """A neutral snapshot: no steps, no dwell, nothing recorded."""
+    return TickState(step_index=0, step_started_at=0.0, **kw)
+
+
+def _fail(state: TickState, *, n: int = 1, **kw) -> TickState:
+    """Fold `n` identical failures in, returning the new snapshot."""
     for _ in range(n):
-        state.record_failure(tool="bash", args={"cmd": "make test"}, **kw)
+        state = tick.record_failure(state, **kw)
     return state
+
+
+def stalled(state: TickState | None = None, *, n: int = 3, **kw) -> TickState:
+    """Drive `state` into an identical-call stall."""
+    base = _state() if state is None else state
+    return _fail(base, n=n, tool="bash", args={"cmd": "make test"}, **kw)
+
+
+def _walk(cfg: TickConfig, state: TickState, rounds: int, **fail_kw):
+    """Drive the real decision→apply cycle, collecting every decision.
+
+    The cycle is the point: `evaluate` reads counters and `applied` writes them, so a caller
+    that only ever calls `evaluate` never moves up the ladder. Asserting over this loop is what
+    keeps the rung-reachability rail honest.
+    """
+    seen = []
+    for _ in range(rounds):
+        state = tick.record_failure(state, **fail_kw)
+        decision = evaluate(cfg, state, NOW)
+        seen.append(decision)
+        state = tick.applied(cfg, state, decision)
+        if decision.surfaced:
+            break
+    return seen, state
 
 
 # ── classification ──
@@ -107,39 +147,39 @@ def test_unserializable_arguments_still_fingerprint():
 def test_a_rate_limit_does_not_burn_an_escalation_rung():
     """Burning the ladder on a 429 is how a run that would have succeeded gets
     surfaced to a human instead."""
-    state = LoopState()
-    for _ in range(3):
-        state.record_failure(text="429 rate limited")
-    verdict = check_middleware(state)
-    assert verdict.action is Action.CONTINUE
-    assert verdict.consumed_rung is False
-    assert state.escalation_index == 0
+    cfg = TickConfig()
+    state = _fail(_state(), n=3, text="429 rate limited")
+    decision = evaluate(cfg, state, NOW)
+    assert decision.action is Action.WAITING
+    assert decision.consumed_rung is False
+    assert tick.applied(cfg, state, decision).escalations_taken == 0
 
 
 def test_a_recoverable_failure_asks_for_a_wait():
-    state = LoopState()
-    state.record_failure(text="429 rate limited")
-    assert check_middleware(state).wait_secs > 0
+    state = _fail(_state(), text="429 rate limited")
+    assert evaluate(TickConfig(), state, NOW).wait_secs > 0
 
 
 def test_the_wait_grows_but_is_capped():
-    state = LoopState()
+    cfg = TickConfig()
+    state = _state()
     waits = []
     for _ in range(10):
-        state.record_failure(text="connection reset")
-        waits.append(check_middleware(state).wait_secs)
+        state = tick.record_failure(state, text="connection reset")
+        decision = evaluate(cfg, state, NOW)
+        waits.append(decision.wait_secs)
+        state = tick.applied(cfg, state, decision)
     assert waits[0] < waits[3]
     assert max(waits) <= 60.0
 
 
-def test_persistent_recoverable_failures_eventually_halt():
+def test_persistent_recoverable_failures_eventually_surface():
     """A rate limit that never clears is no longer "wait" — it is a wall."""
-    state = LoopState()
-    for _ in range(12):
-        state.record_failure(text="429 rate limited")
-    verdict = check_middleware(state)
-    assert verdict.action is Action.HALT
-    assert verdict.reason == "recoverable_exhausted"
+    state = _fail(_state(), n=12, text="429 rate limited")
+    decision = evaluate(TickConfig(), state, NOW)
+    assert decision.action is Action.ESCALATE
+    assert decision.surfaced
+    assert decision.reason == "recoverable_exhausted"
 
 
 def test_recoverable_classes_are_exactly_the_worlds_fault():
@@ -149,61 +189,62 @@ def test_recoverable_classes_are_exactly_the_worlds_fault():
 # ── the environment shortcut ──
 
 
-def test_an_environment_failure_halts_immediately():
+def test_an_environment_failure_surfaces_immediately():
     """No retry fixes a missing binary. Walking the ladder would waste every rung."""
-    state = LoopState()
-    state.record_failure(text="command not found: pytest")
-    verdict = check_middleware(state)
-    assert verdict.action is Action.HALT
-    assert verdict.reason == "environment_broken"
+    state = _fail(_state(), text="command not found: pytest")
+    decision = evaluate(TickConfig(), state, NOW)
+    assert decision.action is Action.ESCALATE
+    assert decision.surfaced
+    assert decision.reason == "environment_broken"
 
 
 def test_the_environment_class_enters_at_surface():
     assert CLASS_ENTRY_RUNG[FailureClass.ENVIRONMENT] is Rung.SURFACE
 
 
-# ── the Continue → Nudge → Halt ladder ──
+# ── the Continue → Nudge → Escalate → Surface ladder ──
 
 
 def test_a_stall_gets_a_nudge_before_anything_expensive():
     """Halting a run that one corrective sentence would fix is expensive in exactly the
     way autonomous execution cannot afford."""
-    verdict = check_middleware(stalled(LoopState()))
-    assert verdict.action is Action.NUDGE
-    assert verdict.nudge_text
+    decision = evaluate(TickConfig(), stalled(), NOW)
+    assert decision.action is Action.EXECUTE
+    assert decision.nudge_text
+    assert decision.rung is None, "the first stall must not cost a rung"
 
 
 def test_the_nudge_names_the_actual_stall_when_the_class_is_unknown():
     """ "You ran the same command three times" is precise advice; "change your approach"
     is not."""
-    verdict = check_middleware(stalled(LoopState()))
-    assert "identical command" in verdict.nudge_text
+    assert "identical command" in evaluate(TickConfig(), stalled(), NOW).nudge_text
 
 
 def test_later_nudges_keep_the_specific_stall_text():
     """Measured on a real sequence: the FIRST nudge got "you ran the identical command"
     but cycles 4-5 fell back to the generic "change your approach". The later nudges are
     the ones a worker most needs specifics from."""
-    state = stalled(LoopState())
-    check_middleware(state)  # first nudge
-    state.record_failure(tool="bash", args={"cmd": "make test"})
-    later = check_middleware(state)
-    assert "identical command" in later.nudge_text
+    cfg = TickConfig()
+    state = stalled()
+    state = tick.applied(cfg, state, evaluate(cfg, state, NOW))  # first nudge
+    state = tick.record_failure(state, tool="bash", args={"cmd": "make test"})
+    assert "identical command" in evaluate(cfg, state, NOW).nudge_text
 
 
 def test_a_template_mutation_beats_the_generic_nudge():
-    state = LoopState()
-    for _ in range(3):
-        state.record_failure(text="json decode error", tool="t", args={})
-    verdict = check_middleware(state, failure_mutations={"malformed_output": "MY INSTRUCTION"})
-    assert verdict.nudge_text == "MY INSTRUCTION"
+    cfg = TickConfig(failure_mutations={"malformed_output": "MY INSTRUCTION"})
+    state = _fail(_state(), n=3, text="json decode error", tool="t", args={})
+    assert evaluate(cfg, state, NOW).nudge_text == "MY INSTRUCTION"
 
 
 def test_only_a_stall_that_survives_its_nudge_escalates():
-    state = stalled(LoopState())
-    assert check_middleware(state).action is Action.NUDGE
-    state.record_failure(tool="bash", args={"cmd": "make test"})
-    assert check_middleware(state).rung is not None
+    cfg = TickConfig()
+    state = stalled()
+    first = evaluate(cfg, state, NOW)
+    assert first.rung is None
+    state = tick.applied(cfg, state, first)
+    state = tick.record_failure(state, tool="bash", args={"cmd": "make test"})
+    assert evaluate(cfg, state, NOW).rung is not None
 
 
 def test_every_declared_rung_is_reachable():
@@ -212,28 +253,23 @@ def test_every_declared_rung_is_reachable():
     (cap 3 against a 5-rung ladder). A rung that can never be selected is dead
     configuration that reads as a working feature.
     """
-    state = LoopState()
-    seen: set[Rung] = set()
-    for _ in range(40):
-        state.record_failure(tool="bash", args={"cmd": "make test"})
-        verdict = check_middleware(state)
-        if verdict.rung:
-            seen.add(verdict.rung)
-        if verdict.action is Action.HALT:
-            break
+    cfg = TickConfig()
+    seen_decisions, _ = _walk(cfg, _state(), 40, tool="bash", args={"cmd": "make test"})
+    seen = {d.rung for d in seen_decisions if d.rung}
     for rung in DEFAULT_LADDER:
         assert rung in seen, f"{rung.value} was never selected"
 
 
-def test_an_engine_rung_escalates_rather_than_halting():
-    """Only SURFACE stops the run; fresh_session and model_switch are engine actions."""
-    state = LoopState()
-    for _ in range(3):
-        state.record_failure(tool="t", args={}, hint="wrong_work")
-    check_middleware(state)  # consume the nudge
-    verdict = check_middleware(state)
-    assert verdict.action is Action.ESCALATE
-    assert verdict.rung is Rung.FRESH_SESSION
+def test_an_engine_rung_escalates_rather_than_continuing():
+    """Only SURFACE stops the run; fresh_session and model_switch are engine actions, and
+    CLASSIFIED_RETRY is a re-prompt that keeps executing."""
+    cfg = TickConfig()
+    state = _fail(_state(), n=3, tool="t", args={}, hint="wrong_work")
+    state = tick.applied(cfg, state, evaluate(cfg, state, NOW))  # consume the nudge
+    decision = evaluate(cfg, state, NOW)
+    assert decision.action is Action.ESCALATE
+    assert decision.rung is Rung.FRESH_SESSION
+    assert not decision.surfaced, "an engine rung must not hand the run to a human"
 
 
 def test_wrong_work_skips_the_cheap_rung():
@@ -242,45 +278,41 @@ def test_wrong_work_skips_the_cheap_rung():
 
 
 def test_the_attempt_cap_bounds_attempts_within_a_rung():
-    state = LoopState()
-    rungs = []
-    for _ in range(12):
-        state.record_failure(tool="t", args={})
-        verdict = check_middleware(state, escalation_cfg={"attempt_cap": 1})
-        if verdict.rung:
-            rungs.append(verdict.rung)
-        if verdict.action is Action.HALT:
-            break
+    cfg = TickConfig(attempt_cap=1)
+    decisions, _ = _walk(cfg, _state(), 12, tool="t", args={})
+    rungs = [d.rung for d in decisions if d.rung]
     # With one attempt per rung it walks straight up.
     assert rungs[:2] == [Rung.CLASSIFIED_RETRY, Rung.FRESH_SESSION]
 
 
 def test_a_template_ladder_is_honored():
-    state = LoopState()
-    for _ in range(3):
-        state.record_failure(tool="t", args={})
-    check_middleware(state, escalation_cfg={"ladder": ["classified_retry"]})
-    verdict = check_middleware(state, escalation_cfg={"ladder": ["classified_retry"]})
-    assert verdict.rung in (Rung.CLASSIFIED_RETRY, Rung.SURFACE)
+    cfg = TickConfig(ladder=_resolve_ladder({"ladder": ["classified_retry"]}))
+    state = _fail(_state(), n=3, tool="t", args={})
+    state = tick.applied(cfg, state, evaluate(cfg, state, NOW))
+    assert evaluate(cfg, state, NOW).rung in (Rung.CLASSIFIED_RETRY, Rung.SURFACE)
 
 
 def test_an_unknown_rung_is_dropped_not_fatal():
     """A template with a typo should escalate along the rungs it named correctly."""
-    state = LoopState()
-    for _ in range(3):
-        state.record_failure(tool="t", args={})
-    check_middleware(state, escalation_cfg={"ladder": ["classified_retry", "nonsense"]})
-    verdict = check_middleware(state, escalation_cfg={"ladder": ["classified_retry", "nonsense"]})
-    assert verdict.rung is not None
+    cfg = TickConfig(ladder=_resolve_ladder({"ladder": ["classified_retry", "nonsense"]}))
+    state = _fail(_state(), n=3, tool="t", args={})
+    state = tick.applied(cfg, state, evaluate(cfg, state, NOW))
+    assert evaluate(cfg, state, NOW).rung is not None
 
 
 def test_surface_is_always_the_last_resort():
     """A ladder with no terminal rung would loop at its top forever."""
-    from personalclaw.workflows.loop_middleware import _resolve_ladder
-
     assert _resolve_ladder({"ladder": ["classified_retry"]})[-1] is Rung.SURFACE
     assert _resolve_ladder({})[-1] is Rung.SURFACE
     assert _resolve_ladder({"ladder": "not a list"})[-1] is Rung.SURFACE
+
+
+def test_a_hand_built_ladder_is_forced_surface_terminal_at_read_time():
+    """`_resolve_ladder` guards the TEMPLATE path. A `TickConfig` built in Python bypasses it,
+    so the floor is enforced where the ladder is READ as well — otherwise the one construction
+    path that skips the parser is the one that can wedge."""
+    assert TickConfig(ladder=(Rung.CLASSIFIED_RETRY,)).rungs()[-1] is Rung.SURFACE
+    assert TickConfig(ladder=()).rungs() == DEFAULT_LADDER
 
 
 # ── the other stall shapes ──
@@ -288,50 +320,49 @@ def test_surface_is_always_the_last_resort():
 
 def test_the_same_fix_repeated_abandons_the_hypothesis():
     """The diagnosis is wrong, not the execution."""
-    state = LoopState()
-    for _ in range(3):
-        state.record_failure(text="still failing", fix="add a null check at line 52")
-    state.nudges_issued = 1
-    verdict = check_middleware(state)
-    assert verdict.reason == "hypothesis_exhausted"
+    state = _fail(
+        _state(nudges_issued=1), n=3, text="still failing", fix="add a null check at line 52"
+    )
+    assert evaluate(TickConfig(), state, NOW).reason == "hypothesis_exhausted"
 
 
 def test_flat_progress_across_the_window_is_a_stall():
-    state = LoopState()
+    state = _state(nudges_issued=1)
     for mark in (0.5, 0.5, 0.4, 0.5, 0.3):
-        state.record_progress(mark)
-    state.nudges_issued = 1
-    assert check_middleware(state).reason == "no_progress"
+        state = tick.record_progress(state, mark)
+    assert evaluate(TickConfig(), state, NOW).reason == "no_progress"
 
 
 def test_improving_progress_is_not_a_stall():
-    state = LoopState()
+    state = _state()
     for mark in (0.1, 0.3, 0.5, 0.7, 0.9):
-        state.record_progress(mark)
-    assert check_middleware(state).action is Action.CONTINUE
+        state = tick.record_progress(state, mark)
+    decision = evaluate(TickConfig(), state, NOW)
+    assert decision.action is Action.EXECUTE
+    assert not decision.nudge_text
 
 
 def test_a_clean_state_continues():
-    assert check_middleware(LoopState()).action is Action.CONTINUE
+    decision = evaluate(TickConfig(), _state(), NOW)
+    assert decision.action is Action.EXECUTE
+    assert not decision.nudge_text
+    assert decision.rung is None
 
 
 def test_the_windows_are_template_tunable():
-    state = LoopState()
-    for _ in range(2):
-        state.record_failure(tool="t", args={})
-    assert check_middleware(state).action is Action.CONTINUE
-    assert check_middleware(state, breaker_cfg={"fingerprint_window": 2}).action is Action.NUDGE
+    state = _fail(_state(), n=2, tool="t", args={})
+    assert not evaluate(TickConfig(), state, NOW).nudge_text
+    assert evaluate(TickConfig(fingerprint_window=2), state, NOW).nudge_text
 
 
-@pytest.mark.parametrize(
-    "bogus",
-    [{"fingerprint_window": 0}, {"fingerprint_window": True}, {"fingerprint_window": "x"}],
-)
+@pytest.mark.parametrize("bogus", [0, True, -1])
 def test_a_bogus_window_falls_back_to_the_default(bogus):
     """`True` is an int in Python, so a bool has to be rejected explicitly — a
     `fingerprint_window: true` would otherwise become a window of 1 and trip on the
     first failure."""
-    assert check_middleware(stalled(LoopState()), breaker_cfg=bogus).action is Action.NUDGE
+    one = _fail(_state(), n=1, tool="t", args={})
+    assert not evaluate(TickConfig(fingerprint_window=bogus), one, NOW).nudge_text
+    assert evaluate(TickConfig(fingerprint_window=bogus), stalled(), NOW).nudge_text
 
 
 # ── success resets ──
@@ -339,23 +370,24 @@ def test_a_bogus_window_falls_back_to_the_default(bogus):
 
 def test_success_resets_the_counters():
     """A run that recovers is not on thin ice."""
-    state = stalled(LoopState())
-    state.escalation_index = 2
-    state.reset_after_success()
-    assert state.call_fingerprints == []
-    assert state.escalation_index == 0
+    state = tick.reset_after_success(stalled(_state(escalations_taken=2)))
+    assert state.call_fingerprints == ()
+    assert state.escalations_taken == 0
     assert state.attempts_at_rung == 0
-    assert check_middleware(state).action is Action.CONTINUE
+    decision = evaluate(TickConfig(), state, NOW)
+    assert decision.action is Action.EXECUTE
+    assert not decision.nudge_text
 
 
-# ── the verdict object ──
+# ── the decision object ──
 
 
-def test_the_verdict_has_no_truthiness():
-    """Deliberate: a convenience `__bool__` on a verdict is how `if verdict` came to
-    mean "is this healthy" where the code meant "did I get one"."""
+def test_the_decision_has_no_truthiness():
+    """Deliberate: a convenience `__bool__` on a decision is how `if decision` came to
+    mean "is this healthy" where the code meant "did I get one". Inherited from the deleted
+    `MiddlewareVerdict`, which carried the same guard for the same reason."""
     with pytest.raises(TypeError):
-        bool(MiddlewareVerdict())
+        bool(Decision(Action.EXECUTE, 0))
 
 
 # ── the structured brief ──

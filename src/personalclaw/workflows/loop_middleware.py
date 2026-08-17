@@ -1,8 +1,22 @@
-"""Loop-node middleware — the breaker's next tier, the escalation ladder, and steering.
+"""Loop-node middleware — the escalation VOCABULARY, the nudge texts, and steering.
 
-`resilience.check_breaker` already catches four stalls: max iterations, the same error
-N times, byte-identical output, and a token cap. This adds the tiers that need more than
-counters, and the response machinery for when one trips.
+**The decision moved out (PP-15).** This module used to own a second convergence
+decision (`check_middleware`, over a mutable `LoopState`, returning a
+`MiddlewareVerdict`) alongside `loop.tick.evaluate`'s. Two implementations of "is this
+loop converging?" is how the two engines drifted, so the decision was folded into
+`loop.tick.evaluate` — the pure one — and the copy here was DELETED rather than kept
+behind a flag. `TickState` now carries the counters `LoopState` held, `Decision` carries
+what `MiddlewareVerdict` carried, and `tick.Action` carries the four verdict actions.
+
+What stays is what the decision READS and what acting on it needs: the failure
+taxonomy (`FailureClass`, `classify_failure`), the call fingerprint, the ladder vocabulary
+(`Rung`, `DEFAULT_LADDER`, `CLASS_ENTRY_RUNG`, `_resolve_ladder`), the corrective
+instructions (`nudge_for`), the human-facing brief, and the steering queue. These are
+reused BY `loop.tick`, not duplicated in it.
+
+`resilience.check_breaker` remains the trip detector for max iterations, the same error
+N times, byte-identical output, and a token cap. The tiers below need more than those
+counters, and the response machinery for when one trips lives here.
 
 **Continue → Nudge → Halt, not Continue → Halt.** The existing breaker is binary: it
 trips or it doesn't. But most thrash is recoverable if you tell the worker what it is
@@ -37,7 +51,7 @@ import json
 import logging
 import re
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import Enum
 from typing import Any
 
@@ -148,20 +162,6 @@ def call_fingerprint(tool: str, args: Any) -> str:
 # ── The ladder ──
 
 
-class Action(str, Enum):
-    """What the middleware decided to do about this iteration."""
-
-    CONTINUE = "continue"
-    #: Inject a corrective instruction and keep going — one sentence instead of a human.
-    NUDGE = "nudge"
-    #: Take an escalation rung: the run continues, but with a changed STRATEGY (fresh
-    #: session, different model, workspace reset). Distinct from HALT because these are
-    #: things the ENGINE does — collapsing them into a halt makes every middle rung of
-    #: the ladder unreachable and turns "try a clean session" into "ask the human".
-    ESCALATE = "escalate"
-    HALT = "halt"
-
-
 class Rung(str, Enum):
     """The escalation ladder, in order. Each rung is more expensive than the last."""
 
@@ -201,279 +201,6 @@ CLASS_ENTRY_RUNG: dict[FailureClass, Rung] = {
 DEFAULT_NO_PROGRESS_STOP = 5
 DEFAULT_HYPOTHESIS_ABANDON = 3
 DEFAULT_FINGERPRINT_WINDOW = 3
-
-
-@dataclass
-class LoopState:
-    """What the middleware remembers about one loop node. Counters only.
-
-    Deliberately not a transcript: this evaluates before every iteration, and anything
-    that grows with the run would make the check itself a cost centre.
-    """
-
-    iterations: int = 0
-    #: (tool, args) fingerprints of failing calls, newest last.
-    call_fingerprints: list[str] = field(default_factory=list)
-    failure_classes: list[str] = field(default_factory=list)
-    #: Scores or progress measures, newest last — for no-progress detection.
-    progress_marks: list[float] = field(default_factory=list)
-    #: Fingerprints of attempted FIXES, for hypothesis abandonment.
-    fix_fingerprints: list[str] = field(default_factory=list)
-    escalation_index: int = 0
-    #: Attempts spent at the CURRENT rung. `attempt_cap` bounds this, not the ladder's
-    #: length — see `_nudge_or_halt`.
-    attempts_at_rung: int = 0
-    nudges_issued: int = 0
-    recoverable_waits: int = 0
-
-    def record_failure(
-        self,
-        *,
-        text: str = "",
-        tool: str = "",
-        args: Any = None,
-        fix: str = "",
-        hint: str = "",
-    ) -> FailureClass:
-        """Record one failed iteration and return its class."""
-        self.iterations += 1
-        cls = classify_failure(text, hint=hint)
-        self.failure_classes.append(cls.value)
-        if tool:
-            self.call_fingerprints.append(call_fingerprint(tool, args))
-        if fix:
-            self.fix_fingerprints.append(call_fingerprint("fix", fix))
-        if cls in RECOVERABLE:
-            self.recoverable_waits += 1
-        return cls
-
-    def record_progress(self, mark: float) -> None:
-        self.iterations += 1
-        self.progress_marks.append(float(mark))
-
-    def reset_after_success(self) -> None:
-        """Success resets the counters — a run that recovers is not on thin ice.
-
-        The escalation index resets too: a loop that got unstuck and later gets stuck
-        for a DIFFERENT reason deserves the cheap rungs again, and carrying the index
-        forward would surface it to a human on its first new problem.
-        """
-        self.call_fingerprints.clear()
-        self.failure_classes.clear()
-        self.fix_fingerprints.clear()
-        self.escalation_index = 0
-        self.attempts_at_rung = 0
-        self.nudges_issued = 0
-
-
-@dataclass
-class MiddlewareVerdict:
-    """The decision, and everything needed to act on it."""
-
-    action: Action = Action.CONTINUE
-    reason: str = ""
-    detail: str = ""
-    failure_class: FailureClass = FailureClass.UNKNOWN
-    rung: Rung | None = None
-    #: The corrective instruction to inject, for NUDGE.
-    nudge_text: str = ""
-    #: Seconds to wait before retrying, for recoverable classes.
-    wait_secs: float = 0.0
-    #: True when this failure must NOT advance the escalation ladder.
-    consumed_rung: bool = True
-
-    def __bool__(self) -> bool:  # pragma: no cover - explicit comparison preferred
-        raise TypeError(
-            "MiddlewareVerdict has no truth value — compare .action explicitly. "
-            "A convenience __bool__ on a verdict object is how `if verdict` came to mean "
-            "'is this healthy' where the code meant 'did I get one'."
-        )
-
-
-def _window(cfg: dict, key: str, default: int) -> int:
-    raw = cfg.get(key, default)
-    if not isinstance(raw, int) or isinstance(raw, bool) or raw < 1:
-        return default
-    return raw
-
-
-def check_middleware(
-    state: LoopState,
-    *,
-    breaker_cfg: dict[str, Any] | None = None,
-    escalation_cfg: dict[str, Any] | None = None,
-    failure_mutations: dict[str, str] | None = None,
-) -> MiddlewareVerdict:
-    """Decide Continue / Nudge / Halt before the next iteration. LLM-free.
-
-    Evaluated in cost order: the cheapest tier that can decide, decides. A halt is only
-    reached when a nudge has already been tried and did not help, because halting a run
-    that one corrective sentence would fix is expensive in exactly the way autonomous
-    execution cannot afford.
-    """
-    cfg = breaker_cfg or {}
-    esc = escalation_cfg or {}
-    mutations = failure_mutations or {}
-
-    last_class = (
-        FailureClass(state.failure_classes[-1]) if state.failure_classes else FailureClass.UNKNOWN
-    )
-
-    # ── Recoverable classes first: they are not stalls, and must not burn a rung. ──
-    if last_class in RECOVERABLE:
-        window = _window(cfg, "fingerprint_window", DEFAULT_FINGERPRINT_WINDOW)
-        headroom = window * RECOVERABLE_HEADROOM
-        recent = state.failure_classes[-headroom:]
-        if len(recent) >= headroom and all(FailureClass(c) in RECOVERABLE for c in recent):
-            return MiddlewareVerdict(
-                action=Action.HALT,
-                reason="recoverable_exhausted",
-                detail=f"{headroom} consecutive recoverable failures — the world is not clearing",
-                failure_class=last_class,
-                rung=Rung.SURFACE,
-            )
-        return MiddlewareVerdict(
-            action=Action.CONTINUE,
-            reason="recoverable_wait",
-            detail=f"{last_class.value} — waiting rather than escalating",
-            failure_class=last_class,
-            # Exponential-ish backoff without a clock dependency: the caller sleeps.
-            wait_secs=min(60.0, 2.0 ** min(6, state.recoverable_waits)),
-            consumed_rung=False,
-        )
-
-    # ── An environment failure cannot be retried into working. ──
-    if last_class is FailureClass.ENVIRONMENT:
-        return MiddlewareVerdict(
-            action=Action.HALT,
-            reason="environment_broken",
-            detail="no retry fixes a missing binary or a permission denial",
-            failure_class=last_class,
-            rung=Rung.SURFACE,
-        )
-
-    # ── Identical failing CALL repeated: the worker learned nothing. ──
-    window = _window(cfg, "fingerprint_window", DEFAULT_FINGERPRINT_WINDOW)
-    prints = state.call_fingerprints
-    if len(prints) >= window and len(set(prints[-window:])) == 1:
-        return _nudge_or_halt(
-            state,
-            esc,
-            mutations,
-            last_class,
-            reason="identical_call",
-            detail=f"the same failing call {window}x in a row",
-        )
-
-    # ── Same FIX attempted repeatedly: the hypothesis is wrong, not the execution. ──
-    abandon = _window(cfg, "hypothesis_abandon_after", DEFAULT_HYPOTHESIS_ABANDON)
-    fixes = state.fix_fingerprints
-    if len(fixes) >= abandon and len(set(fixes[-abandon:])) == 1:
-        return _nudge_or_halt(
-            state,
-            esc,
-            mutations,
-            last_class,
-            reason="hypothesis_exhausted",
-            detail=f"the same fix failed {abandon}x — the diagnosis is wrong",
-        )
-
-    # ── No progress: scores flat or declining across a long window. ──
-    stop = _window(cfg, "no_progress_stop", DEFAULT_NO_PROGRESS_STOP)
-    marks = state.progress_marks
-    if len(marks) >= stop:
-        recent_marks = marks[-stop:]
-        if max(recent_marks) <= recent_marks[0]:
-            return _nudge_or_halt(
-                state,
-                esc,
-                mutations,
-                last_class,
-                reason="no_progress",
-                detail=f"{stop} iterations without improving on {recent_marks[0]}",
-            )
-
-    return MiddlewareVerdict(action=Action.CONTINUE, failure_class=last_class)
-
-
-def _nudge_or_halt(
-    state: LoopState,
-    esc: dict[str, Any],
-    mutations: dict[str, str],
-    cls: FailureClass,
-    *,
-    reason: str,
-    detail: str,
-) -> MiddlewareVerdict:
-    """Apply the Continue→Nudge→Halt ladder to a confirmed stall.
-
-    The first stall gets a nudge — a corrective instruction, one injected sentence. Only
-    a stall that survives its nudge escalates, because the cheap fix has to actually be
-    tried before the expensive one is justified.
-    """
-    ladder = _resolve_ladder(esc)
-    attempt_cap = esc.get("attempt_cap", 3)
-    if not isinstance(attempt_cap, int) or attempt_cap < 1:
-        attempt_cap = 3
-
-    if state.nudges_issued < 1:
-        state.nudges_issued += 1
-        return MiddlewareVerdict(
-            action=Action.NUDGE,
-            reason=reason,
-            detail=detail,
-            failure_class=cls,
-            nudge_text=_nudge_for(cls, mutations, detail, stall=reason),
-        )
-
-    entry = CLASS_ENTRY_RUNG.get(cls, Rung.CLASSIFIED_RETRY)
-    try:
-        entry_index = ladder.index(entry)
-    except ValueError:
-        entry_index = 0
-    index = max(state.escalation_index, entry_index)
-
-    # `attempt_cap` bounds attempts WITHIN a rung, not the ladder's length. Treating it
-    # as a position cap made `restart_from_scratch` unreachable under the plan's own
-    # declared values (attempt_cap 3 against a 5-rung ladder) — a rung that can never
-    # be selected is dead configuration that reads as a working feature.
-    if state.attempts_at_rung >= attempt_cap:
-        index = min(index + 1, len(ladder) - 1)
-        state.attempts_at_rung = 0
-
-    if index >= len(ladder) - 1:
-        return MiddlewareVerdict(
-            action=Action.HALT,
-            reason=reason,
-            detail=f"{detail}; escalation ladder exhausted",
-            failure_class=cls,
-            rung=Rung.SURFACE,
-        )
-
-    state.escalation_index = index
-    state.attempts_at_rung += 1
-    rung = ladder[index]
-    # SURFACE is the only rung that stops the run; every other rung is an engine action
-    # that changes strategy and keeps going. Mapping them all to HALT is what made the
-    # middle of the ladder dead code.
-    if rung is Rung.SURFACE:
-        action = Action.HALT
-    elif rung is Rung.CLASSIFIED_RETRY:
-        action = Action.NUDGE
-    else:
-        action = Action.ESCALATE
-    return MiddlewareVerdict(
-        action=action,
-        reason=reason,
-        detail=detail,
-        failure_class=cls,
-        # `stall=reason` here too, not only on the first nudge: measured on a real
-        # sequence, cycles 4-5 fell back to the generic "change your approach" while the
-        # first nudge got the precise "you ran the identical command" text. The later
-        # nudges are the ones a worker most needs specifics from.
-        rung=rung,
-        nudge_text=_nudge_for(cls, mutations, detail, stall=reason),
-    )
 
 
 def _resolve_ladder(esc: dict[str, Any]) -> tuple[Rung, ...]:
@@ -521,9 +248,7 @@ _STALL_NUDGES: dict[str, str] = {
 }
 
 
-def _nudge_for(
-    cls: FailureClass, mutations: dict[str, str], detail: str, *, stall: str = ""
-) -> str:
+def nudge_for(cls: FailureClass, mutations: dict[str, str], detail: str, *, stall: str = "") -> str:
     """The corrective instruction for this failure.
 
     Precedence: the template's own `failure_mutations` (its author knows what "test

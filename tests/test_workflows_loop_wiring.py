@@ -214,7 +214,20 @@ class TestNoddingLoopBlocksDefault:
 class TestBreakerNotDoubleRun:
     async def test_the_thrashing_loop_trips_via_check_breaker_only(self) -> None:
         """A loop repeating identical output escalates on the shipped breaker — and there is no
-        second breaker path (loop_middleware's counter breaker is deliberately not wired)."""
+        second DETECTOR (`loop_middleware`'s counter breaker was deleted in PP-15, not wired).
+
+        PP-15 changed what a trip MEANS, so this test changed with it. It used to assert the run
+        stopped in "far fewer than 20" iterations, which encoded the BINARY failure: the first
+        trip went straight to a human, making every middle rung of the declared ladder
+        unreachable in production. The properties that actually matter survive and are now
+        asserted more strictly:
+
+        * the breaker is still the only thing that DETECTS the thrash;
+        * the response walks the ladder before spending a human; and
+        * the run still terminates in `ESCALATED`, by SURFACING rather than by drifting into its
+          `max_iterations` cap — a ladder that merely delayed the cap would be no better than
+          the binary stop it replaced, and the cap-vs-surface assertion is what tells them apart.
+        """
         spec = {
             "name": "thrash",
             "root": {
@@ -232,10 +245,27 @@ class TestBreakerNotDoubleRun:
         run = _make_run(spec)
         c = RunController(run, spec, services=EngineServices())
         await c.run_to_completion(timeout=25)
-        # The breaker fired (iterations recorded a breaker outcome), and far fewer than 20 ran.
         iters = [r for r in J.ledger(run.id) if r["kind"] == J.ITERATION]
-        assert len(iters) < 20
-        assert any("breaker" in str(r.get("outcome", "")) for r in iters)
+        outcomes = [str(r.get("outcome", "")) for r in iters]
+
+        # The breaker DETECTED it, and it is the only detector that did.
+        assert any("breaker:identical_output" in o for o in outcomes), outcomes
+        assert not any(
+            "max_iterations" in o for o in outcomes
+        ), f"it drifted into its cap instead of surfacing — the ladder only delayed: {outcomes}"
+
+        # The response walked the ladder instead of spending a human on the first trip.
+        entry = next(iter((run.extra.get("convergence") or {}).values()), {})
+        rungs = [d.get("rung") for d in entry.get("log") or []]
+        assert rungs, f"a tripped breaker produced no convergence decision: {run.extra}"
+        assert rungs[0] is None, f"the first trip cost a rung instead of a nudge: {rungs}"
+        assert rungs[-1] == "surface", f"the ladder never reached its terminal rung: {rungs}"
+        assert (
+            len([r for r in rungs if r and r != "surface"]) >= 2
+        ), f"the middle of the ladder is still unreachable: {rungs}"
+
+        # And it still ends where a human can act on it.
+        assert run.status == RunStatus.ESCALATED, run.status
 
 
 # ── until_dry reads the DECLARED progress field (WF2LOO-14) ──

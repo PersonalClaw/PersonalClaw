@@ -43,6 +43,12 @@ export const WORKFLOW_LIFECYCLE = [
   // same reason as the task events above — an unregistered type is silently dropped by EventSource
   // — and backed by `RunController._consume_steering`'s `_publish` + the `steering` ledger kind.
   'workflow_steering_consumed',
+  // PP-15: the loop's convergence decision — which rung the escalation ladder took, a replan, or
+  // a recoverable wait. Registered for the same reason as everything above it: an unregistered
+  // type is silently dropped by EventSource, so a run that quietly switched to a fresh session
+  // would look to the user exactly like a run that was doing nothing. Backed by
+  // `RunController._converge_loop`'s `_publish` and by the persisted decision log on the run row.
+  'workflow_loop_converged',
 ] as const
 
 export type WorkflowLifecycleEvent = (typeof WORKFLOW_LIFECYCLE)[number]

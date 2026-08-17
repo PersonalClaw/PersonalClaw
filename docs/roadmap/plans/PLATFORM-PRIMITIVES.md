@@ -978,3 +978,57 @@ discipline in [`AGENTS.md`](../../../AGENTS.md))*
   deleted; the new file is 45 tests. Not in the inert-surface baseline and not under
   `personalclaw/sdk/`, so no app could have depended on the retired names. `docs/architecture/
   workflows.md` updated for both modules in the same change.
+
+- **DONE — `PP-15` widen the convergence core and wire `SupervisorPolicy` into it.** `Action` gains
+  `ESCALATE` (with `Decision.rung`) and `REPLAN`; `TickState` absorbs `loop_middleware.LoopState`'s
+  counters (call/fix fingerprints, failure classes, progress marks) as TUPLES plus the persisted
+  ladder position (`escalations_taken`, `attempts_at_rung`, `nudges_issued`, `recoverable_waits`,
+  `replans_taken`); `evaluate` grows branches 4-7 (recoverable → environment → plan-critique
+  REPLAN → the Continue→Nudge→Escalate→Surface ladder) above the unchanged progress branches, all
+  vacuous on a default snapshot so a loop that never fails decides exactly what it decided before.
+  **Clean break, not a second brain:** `check_middleware`, `LoopState`, `MiddlewareVerdict`,
+  `_nudge_or_halt`, `_window` and `loop_middleware.Action` are DELETED (-317 net). What survives
+  there is what the decision READS — the taxonomy, `call_fingerprint`, the `Rung`/ladder vocabulary,
+  `nudge_for` (de-privatised), the brief, `InterruptQueue` — reused by `loop.tick`, not duplicated.
+  **The ladder lost its mutability, which was the point:** `check_middleware` advanced
+  `state.escalation_index` inside the decision, so it answered differently on a second call and
+  again after a restart. The rung is now DERIVED; `tick.applied` is the pure write half and
+  `controller._record_convergence` is the one place it lands on disk (`run.extra["convergence"]`,
+  bounded 50-entry log). **Wiring:** `HAS_ZERO_PRODUCTION_CALLERS` flipped `True`→`False` —
+  `RunController._supervisor_policy` parses a loop node's `supervisor:` block and
+  `supervisor_policy.tick_config()` derives the `TickConfig`, so a template's ladder, budget,
+  failure_mutations and gates are what the engine applies. The `WF2LOO-12` two-directional rail was
+  INVERTED (it now reds if the caller disappears while the marker claims one); its coupling
+  invariant `test_the_marker_and_reality_agree` is untouched. `marginal_value_band` became a real
+  metric gate (only when `gates` declares none, so one loop never carries two thresholds).
+  **Three findings worth recording.** (1) A trip's meaning had to be split: `max_iterations` and
+  `token_cap` are DECLARED BUDGETS, not stalls (`_BUDGET_TRIPS`) and keep going straight to the
+  escalation artifact — spending a fresh session on a satisfied cap re-runs the work the cap
+  bounded. Only `repeated_error`/`identical_output` reach the ladder. (2) Only ONE of the breaker's
+  four rules leaves failure signatures behind, so requiring `evaluate` to re-derive an
+  `identical_output` trip from fingerprints it cannot have made the trip a NO-OP — the detector
+  fired, the response tier saw no evidence, and the loop ran on with the breaker silently defeated.
+  Fixed with `TickState.stall_confirmed`: the external detector's verdict is taken first, and the
+  fingerprint detectors serve the loop kinds, which have no breaker. (3) Because the ladder keeps a
+  thrash running, a loop whose iteration budget is smaller than the ladder's attempt budget walked
+  off the end reporting COMPLETE; `_advance_loop` now re-asks the sole detector at the DONE point,
+  restoring the terminal outcome the binary handling gave for free.
+  **`REPLAN` queues a real batch**, not retry-with-a-hint: a `mutations` `insert` built from the
+  judge critique, submitted through `submit_mutation` and applied at the tick loop's drain point,
+  placed after the loop in the root sequence (or at the front of a container body when the loop IS
+  the root). A shape with no structural target SURFACES rather than applying the batch somewhere
+  the critique did not name. Verified end-to-end: the spec gains the node, `spec_version` bumps,
+  `user_edited_mid_flight` is journaled, and the inserted step EXECUTES.
+  **Gate:** `make lint` clean (mypy 903 files — it caught a real `recent` type collision). Runtime
+  import sweep **875/875 modules OK, 0 stranded** (mypy cannot see these). Targeted 392 passed
+  across `test_{loop_tick,workflows_tick,workflows_loop_middleware,workflows_validator_supervisor,
+  pp15_convergence_core,workflows_admission,workflows_loop_wiring,workflows_mutations,
+  ag13_autonomy_policy}` + `test_roadmap_dag_derived` + `test_agent_reference` +
+  `test_inert_surface_baseline`. Broad slice `-k "tick or loop or admission or supervisor or
+  mutation or resilience or breaker"` → 1548 passed, 4 skipped. Falsified three ways, each red:
+  a clock in `evaluate` (`dwell_hold: the decision moved with the clock`); the last engine rung made
+  unreachable (`restart_from_scratch was never selected`); REPLAN degraded to a hint (`REPLAN did
+  not change the spec — this is the retry-with-a-hint behaviour it replaces`).
+  **Four tests were re-contracted, none weakened:** three asserted bounds that encoded the binary
+  failure (`<= 4`, `< 20`, an exact iteration count) and now assert the STRONGER property — the run
+  surfaces through the ladder rather than drifting into its cap, with the nudge tier tried first.

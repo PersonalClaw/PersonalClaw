@@ -1,4 +1,4 @@
-"""``SupervisorPolicy`` — the declaration of a loop's convergence policy (PP-14).
+"""``SupervisorPolicy`` — a loop's convergence policy, declared (PP-14) and WIRED (PP-15).
 
 A loop is not a second engine. **A loop is a graph shape plus a supervisor policy.** The
 shape already exists (`loop` node kind, `LoopMode`, `foreach` with `max_concurrency`); the
@@ -11,23 +11,25 @@ on: it reuses the types that already exist (`RubricCriterion` and `clamp_margina
 `loop.tick`, `Attention` from `autonomy`, `ScopeMode` from `scope`) rather than minting a
 parallel vocabulary.
 
-DELIBERATELY INERT — this module has **zero production callers**.
-================================================================
-It parses and it validates; nothing in the engine reads a ``SupervisorPolicy`` yet. **PP-15
-is the wiring owner** — it widens `loop/tick.evaluate` into the single convergence brain and
-makes ``SupervisorPolicy`` the source of the thresholds `evaluate` reads. Until PP-15 lands,
-no ``frontier()``, no controller and no loop kind may call this: a convergence decision wired
-into the engine before its home is widened would mint the very second brain this program
-exists to retire.
+WIRED — this module now has a production caller.
+===============================================
+It used to parse and validate while nothing in the engine read a ``SupervisorPolicy``, and it
+said so. PP-15 was named as the wiring owner and is that caller:
+``RunController._supervisor_policy`` parses a loop node's ``supervisor:`` block, and
+:func:`tick_config` turns it into the ``TickConfig`` that ``loop.tick.evaluate`` — the ONE
+convergence core, now shared by the workflow ``loop`` node and the loop kinds — reads. The
+thresholds a template declares here are the thresholds the engine applies; the per-kind Python
+that supplied them twice (``loop_middleware.check_middleware``) is deleted.
 
-This is the honesty-marker convention this program established (`WF2LOO-12`): **a control
-with no caller must SAY it has no caller.** The claim is railed in BOTH drift directions by
-``tests/test_workflows_validator_supervisor.py``:
+The honesty-marker convention (`WF2LOO-12`) is what tracked that transition: **a control with
+no caller must SAY it has no caller** — and must stop saying it once it has one.
+``HAS_ZERO_PRODUCTION_CALLERS`` is now ``False``, and
+``tests/test_workflows_validator_supervisor.py`` rails the claim against reality in BOTH drift
+directions, so it can never quietly disagree with the code:
 
-* if a production caller of ``SupervisorPolicy`` appears while this marker still claims zero,
-  the rail goes RED (the marker would be lying); and
-* if this marker is removed while callers are still zero, the rail goes RED (an inert control
-  that has stopped declaring itself inert).
+* if the last production caller disappears while this marker still claims one, the rail goes
+  RED (the module became inert again without saying so); and
+* if the marker claims zero while a caller exists, the rail goes RED (the old lie).
 
 A "production caller" is code outside this module and outside ``tests/`` that CONSTRUCTS a
 ``SupervisorPolicy`` or invokes :func:`parse_supervisor_policy` — i.e. code that wires the
@@ -44,7 +46,7 @@ from typing import TYPE_CHECKING, Any
 
 from personalclaw.guardrails.policy import HEADLESS, SafetyProfile
 from personalclaw.guardrails.registries import path_glob
-from personalclaw.loop.tick import StepConfig
+from personalclaw.loop.tick import StepConfig, TickConfig
 from personalclaw.workflows.autonomy import Attention, Mode
 from personalclaw.workflows.judge_contract import (
     MARGINAL_MIN,
@@ -65,10 +67,10 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-#: The honesty marker (`WF2LOO-12`). ``True`` while this module has zero production callers.
-#: PP-15 flips it when it wires the policy in. The rail asserts this claim matches reality in
-#: both directions, so the constant can never quietly disagree with the code.
-HAS_ZERO_PRODUCTION_CALLERS = True
+#: The honesty marker (`WF2LOO-12`). ``False`` since PP-15 wired the policy into
+#: ``RunController``. The rail asserts this claim matches reality in both directions, so the
+#: constant can never quietly disagree with the code.
+HAS_ZERO_PRODUCTION_CALLERS = False
 
 #: Named in the docstring and here so the wiring owner is discoverable from code, not only prose.
 WIRING_OWNER = "PP-15"
@@ -473,3 +475,42 @@ def write_scope_allows(policy: SupervisorPolicy, path: str, *, workspace: str = 
         return True
     patterns = (*allowed, workspace) if workspace else allowed
     return any(path_glob(path, pattern) for pattern in patterns if pattern)
+
+
+def tick_config(policy: SupervisorPolicy, *, steps: tuple[StepConfig, ...] = ()) -> TickConfig:
+    """The convergence config :func:`loop.tick.evaluate` reads, DERIVED from the policy (PP-15).
+
+    This is the wiring that makes the declaration load-bearing. PP-14 landed
+    ``SupervisorPolicy`` as "parsed, not yet wired" — the thresholds it declares were also
+    hard-coded in the per-kind Python that actually decided. Now they are read from here and
+    nowhere else, so changing a template's ladder or its dwell gate changes what the engine
+    does.
+
+    Only fields the policy genuinely DECLARES are mapped. The fingerprint / hypothesis /
+    no-progress windows and the per-rung attempt cap keep their module defaults because
+    ``SupervisorPolicy`` has no field for them: inventing a mapping (``resilience
+    .identical_streak`` is the nearest, and it counts identical OUTPUT, not identical CALLS)
+    would silently change a threshold under the guise of consolidating one.
+
+    ``steps`` wins over ``policy.gates`` when supplied — a stepwise loop's per-phase configs
+    come from its execution plan, and the policy's single ``gates`` is the loop-level default
+    for a loop that declares no phases.
+    """
+    if steps:
+        resolved = steps
+    else:
+        gates = policy.gates
+        if gates.metric_pass is None and gates.metric_hold is None:
+            # The marginal-value band IS a metric gate, expressed on the 0-5 judge scale:
+            # "below the floor is not worth continuing; at/above the target it may stop".
+            # Read only when `gates` declares no gate of its own, so one loop never carries
+            # two metric thresholds that could disagree.
+            floor, target = policy.marginal_value_band
+            gates = replace(gates, metric_hold=float(floor), metric_pass=float(target))
+        resolved = (gates,)
+    return TickConfig(
+        steps=resolved,
+        max_cycles=max(0, int(policy.budget_max_cycles or 0)),
+        ladder=policy.escalation_ladder or DEFAULT_LADDER,
+        failure_mutations=dict(policy.failure_mutations),
+    )
