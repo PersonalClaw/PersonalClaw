@@ -219,8 +219,9 @@ function SessionsSection({ cfg, setCfg }: { cfg: DashboardConfig; setCfg: (c: Da
   return (
     <Section title="Sessions" hint="What happens to your chats on restart, and while the agent is busy.">
       <div className="rounded-lg bg-surface-container px-4 py-1">
+        {/* Same WCAG 2.5.3 fix as `NotificationsPanel`: the name was a truncation of the visible label. */}
         <Row label="Restore sessions on startup" hint="Re-open recently active sessions when the app starts.">
-          <div className="flex items-center gap-2"><SavedToast show={saved} /><Toggle on={cfg.restore_sessions} onChange={(v) => save({ restore_sessions: v })} label="Restore sessions" /></div>
+          <div className="flex items-center gap-2"><SavedToast show={saved} /><Toggle on={cfg.restore_sessions} onChange={(v) => save({ restore_sessions: v })} label="Restore sessions on startup" /></div>
         </Row>
         {cfg.restore_sessions && (
           <Row label="Restore window" hint="How recently active a session must be to re-open.">
@@ -293,7 +294,7 @@ function MessagesSection({ cfg, setCfg }: { cfg: DashboardConfig; setCfg: (c: Da
             options={[{ key: 'more', label: 'More' }, { key: 'less', label: 'Less' }]} />
         </Row>
         <Row label="Confirm before closing a session" hint="Ask for confirmation when closing a session from the sidebar.">
-          <Toggle on={cfg.confirm_close_session} onChange={(v) => save({ confirm_close_session: v })} label="Confirm before closing" />
+          <Toggle on={cfg.confirm_close_session} onChange={(v) => save({ confirm_close_session: v })} label="Confirm before closing a session" />
         </Row>
       </div>
     </Section>

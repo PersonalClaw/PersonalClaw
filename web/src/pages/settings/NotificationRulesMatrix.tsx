@@ -115,10 +115,14 @@ export function NotificationRulesMatrix({ doc, onSaved }: { doc: NotificationRul
                             onChange={(v) => save(r.key, { conditions: { ...r.conditions, keywords: v } })}
                             placeholder="add a keyword, Enter" ariaLabel="Add an escalation keyword" />
                         </Field>
+                        {/* Same WCAG 2.5.3 fix as the other four, and the one the RUNTIME census could
+                            not see: these rows live inside a collapsed per-kind section, so they are
+                            absent from the initial DOM a page scan reads. The source sweep in
+                            `design/toggleLabelInName.test.ts` is what caught it. */}
                         <Row label="Escalate on name mention" hint="Upgrade when the text mentions you by name.">
                           <Toggle on={r.conditions.name_mention}
                             onChange={(v: boolean) => save(r.key, { conditions: { ...r.conditions, name_mention: v } })}
-                            label="Name mention" />
+                            label="Escalate on name mention" />
                         </Row>
                       </div>
                     )}
