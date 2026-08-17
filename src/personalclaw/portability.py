@@ -1,12 +1,32 @@
-"""Portable zip export/import for PersonalClaw state (dashboard endpoint).
+"""Portable zip export/import for PersonalClaw state — the DSAR surface (§6).
 
-Creates a zip archive of all PersonalClaw settings and memory for download
-via the dashboard, and restores from uploaded zip archives. Designed to
-work over HTTP for remote users (e.g. remote Linux server → local browser).
+Creates a zip archive of PersonalClaw state for download via the dashboard, and
+restores from uploaded zip archives. Designed to work over HTTP for remote users
+(e.g. remote Linux server → local browser).
 
-Credentials (.env, session secrets) are always excluded from exports.
+Two properties this module exists to guarantee, both now enforced by construction
+rather than by a hand-maintained list:
+
+* **`secret ∪ derived` never leaves the machine.** Every write site runs through
+  :func:`_is_excluded`, which projects the inventory's ``secret=True`` *and*
+  ``derived=True`` entries. Measured before this was true: the export's hardcoded
+  database list carried ``memory_index.db`` — declared ``derived=True`` — so a
+  "portable export" shipped a stale vector index that a restore would then pair
+  with a newer store, the exact hazard `inventory.export_entries()` documents.
+* **An export declares its own scope.** A per-domain export (memory / knowledge /
+  work / automation / platform / config) carries only that domain's declared
+  entries, and prunes every *other* domain's entries out of the tree walks — so a
+  ``platform`` export cannot smuggle ``workspace/knowledge/files`` (the user's
+  documents) out under cover of the ``workspace`` tree.
+
+MANIFEST versions (:data:`SUPPORTED_MANIFEST_VERSIONS`): v1/v2 carry sizes only;
+**v3 carries per-member ``bytes`` + ``sha256`` plus ``schema_version``/``machine_id``
+(§2's integrity shape)**, so :func:`validate_import_zip` can detect a corrupted
+archive before an import writes anything. v1/v2 zips still import — there is simply
+nothing to verify them against, which is stated rather than silently assumed.
 """
 
+import hashlib
 import io
 import json
 import logging
@@ -15,6 +35,7 @@ import shutil
 import socket
 import tempfile
 import zipfile
+from collections.abc import Sequence
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 
@@ -95,11 +116,65 @@ EXCLUDE_DIRS = frozenset(
 )
 
 
+#: MANIFEST version this module writes. v3 adds the §2 integrity shape
+#: (``schema_version``/``machine_id`` + per-member ``bytes``/``sha256``) and the
+#: export's declared ``scope``/``domains``.
+MANIFEST_VERSION = 3
+
+#: Versions :func:`validate_import_zip` accepts. Append-only: a zip a user has on
+#: disk must keep importing, so a version is never dropped from this tuple.
+SUPPORTED_MANIFEST_VERSIONS = (1, 2, 3)
+
+
 def _pc_dir() -> Path:
     return Path(os.environ.get("PERSONALCLAW_HOME", config_dir()))
 
 
+def _excluded_entry_paths() -> frozenset[str]:
+    """Home-relative paths of every ``secret=True`` **or** ``derived=True`` entry.
+
+    §6's rule is ``secret ∪ derived`` and only the ``secret`` half was enforced:
+    :data:`EXPORT_EXCLUDE` is a secret-projection (S1) but nothing projected
+    ``derived``, and the export's hardcoded database list named ``memory_index.db``
+    outright. Measured on a seeded home before this existed — the zip contained the
+    derived index *and its rows*. Derived state is rebuildable by definition, so
+    carrying it is pure downside: a stale index restored beside a newer store is
+    worse than no index at all (`inventory.export_entries()`).
+
+    **RAISES rather than falling back to a literal list.** Every other inventory lookup in
+    this module degrades to hand-written literals, and that is right for them — they decide
+    what an export *includes*, so a degraded answer costs completeness. This one decides
+    what an export must NOT include, so a degraded answer costs a leak. An export that
+    fails loudly beats an export that quietly ships a credential.
+
+    It therefore hard-codes NO paths, which is also required for a second reason:
+    `test_the_snapshot_coverage_gap_list_can_only_shrink` decides snapshot coverage partly by
+    grepping THIS module's source for entry paths. A denylist literal here made two genuinely
+    uncovered entries (`memory_faiss`, `memory_ids`) read as covered — a guard that names
+    what it guards falsifies the ratchet watching it.
+    """
+    try:
+        from personalclaw.durability import inventory as inv
+    except Exception as exc:  # noqa: BLE001
+        raise RuntimeError(
+            "cannot determine the secret/derived exclusion set: the state inventory is "
+            "unavailable, so refusing to build an export rather than risk including "
+            f"credentials ({exc})"
+        ) from exc
+    return frozenset(e.path for e in inv.INVENTORY if e.secret or e.derived)
+
+
 def _is_excluded(rel_path: PurePosixPath) -> bool:
+    """Whether a home-relative path must stay out of an export, regardless of domain.
+
+    Ancestor-inclusive against `secret ∪ derived`: excluding only an exact match would
+    carry every file *inside* an excluded directory — the credential store's contents, a
+    vector index's shards — while excluding the directory entry itself.
+
+    Names no entry path on purpose. `test_the_snapshot_coverage_gap_list_can_only_shrink`
+    greps this module for entry paths to decide snapshot coverage, so an example path in a
+    comment here silently marks that entry "covered" (measured: it did, for two of them).
+    """
     if rel_path.name in EXPORT_EXCLUDE:
         return True
     if rel_path.name.endswith(".pid"):
@@ -107,7 +182,50 @@ def _is_excluded(rel_path: PurePosixPath) -> bool:
     for part in rel_path.parts:
         if part in EXCLUDE_DIRS:
             return True
-    return False
+    chain = {rel_path.as_posix()} | {p.as_posix() for p in rel_path.parents if p.as_posix() != "."}
+    return bool(chain & _excluded_entry_paths())
+
+
+def export_domains() -> tuple[str, ...]:
+    """Domains a caller may ask :func:`create_export_zip` for.
+
+    Projected from the inventory rather than listed here, so a new domain becomes
+    exportable the moment an entry declares it. A domain with no exportable entry
+    (every row ``secret``/``derived``) is not offered — an "export" that can only
+    ever be empty is a broken promise, not a feature.
+    """
+    from personalclaw.durability import inventory as inv
+
+    seen: list[str] = []
+    for entry in inv.export_entries():
+        if entry.domain not in seen:
+            seen.append(entry.domain)
+    return tuple(seen)
+
+
+def domain_of(rel: str) -> str:
+    """The inventory domain owning a home-relative path — **longest declared match**.
+
+    Longest-match is load-bearing, not a nicety. ``workspace/knowledge/files`` (the
+    user's documents, domain ``knowledge``) is nested *inside* the ``workspace`` tree
+    entry (domain ``platform``), and both are declared. Measured while building this:
+
+    * an ancestor-wins rule put every user document in a ``platform`` export and
+      produced an **empty** ``knowledge`` export — the exact boundary criterion 9
+      exists to protect, inverted;
+    * a first-declared-wins rule depends on `INVENTORY` ordering, so adding an entry
+      silently re-homes a neighbour's files.
+
+    Longest-match is the only rule under which "which domain is this file's state?"
+    has one answer that survives a new entry.
+    """
+    from personalclaw.durability import inventory as inv
+
+    best_len, best = -1, ""
+    for entry in inv.INVENTORY:
+        if (rel == entry.path or rel.startswith(entry.path + "/")) and len(entry.path) > best_len:
+            best_len, best = len(entry.path), entry.domain
+    return best or _UNDECLARED_LITERAL_DOMAINS.get(rel, "platform")
 
 
 def _wal_checkpoint(db_path: Path) -> None:
@@ -183,22 +301,11 @@ def _is_derived_within(entry_path: str, rel_to_entry: str) -> bool:
         return False
 
 
-def _remaining_export_paths(pc: Path) -> list[str]:
-    """Declared entries the hand-written export lists do not already carry (S182).
-
-    Derived from `durability.inventory.export_entries()` — which excludes `secret=True` and
-    `derived=True` by construction, so a credential cannot arrive here by being newly declared. The
-    three literal lists in `create_export_zip` are subtracted rather than replaced: they encode
-    per-entry reasons (the safe sqlite backup API for the databases, the `skills/auto` skip, the
-    `crons.json` note) that a generic pass would lose.
-
-    Databases are deliberately NOT returned. They are already staged through `_backup_sqlite`, and a
-    filesystem copy of a live WAL store can capture a torn page set — the hazard the snapshot path
-    fixed by routing every declared DB through the backup API.
-    """
-    from personalclaw.durability import inventory as inv
-
-    already = {
+#: Home-relative paths the three hand-written lists in `create_export_zip` already
+#: carry. Subtracted from the inventory-derived sweep so each keeps its per-entry
+#: reason (the safe sqlite backup API, the `skills/auto` skip, the `crons.json` note).
+_LITERAL_EXPORT_PATHS = frozenset(
+    {
         "config.json",
         "hooks.json",
         "triggers.json",
@@ -215,6 +322,38 @@ def _remaining_export_paths(pc: Path) -> list[str]:
         "skills",
         "cron-history",
     }
+)
+
+#: The one literal above the inventory does not declare. `workspace_dir` is a pointer
+#: file (the bound workspace path), grouped with `project_dir` — its sibling pointer,
+#: declared ``domain=config`` — so a per-domain export can place it. Stated here
+#: because a silent default would put an unclaimed file in an arbitrary domain.
+_UNDECLARED_LITERAL_DOMAINS = {"workspace_dir": "config"}
+
+
+def _remaining_export_paths(pc: Path, *, covered: frozenset[str] | None = None) -> list[str]:
+    """Declared entries the hand-written export lists do not already carry (S182).
+
+    Derived from `durability.inventory.export_entries()` — which excludes `secret=True` and
+    `derived=True` by construction, so a credential cannot arrive here by being newly declared. The
+    three literal lists in `create_export_zip` are subtracted rather than replaced: they encode
+    per-entry reasons (the safe sqlite backup API for the databases, the `skills/auto` skip, the
+    `crons.json` note) that a generic pass would lose.
+
+    Databases are deliberately NOT returned. They are already staged through `_backup_sqlite`, and a
+    filesystem copy of a live WAL store can capture a torn page set — the hazard the snapshot path
+    fixed by routing every declared DB through the backup API.
+
+    ``covered`` is the set of paths the literal lists actually wrote for THIS export.
+    It defaults to every literal, reproducing the whole-home behaviour. A per-domain
+    export passes only the literals it selected, so an entry nested inside a literal
+    tree that this export skipped (``workspace/knowledge/files`` under a ``workspace``
+    the ``knowledge`` domain never selects) is exported on its own instead of being
+    silently dropped — the defect a top-level-only filter produces.
+    """
+    from personalclaw.durability import inventory as inv
+
+    already = _LITERAL_EXPORT_PATHS if covered is None else covered
     db_paths = {e.path for e in inv.sqlite_entries()}
     out: list[str] = []
     for entry in inv.export_entries():
@@ -228,18 +367,56 @@ def _remaining_export_paths(pc: Path) -> list[str]:
     return out
 
 
-def create_export_zip() -> tuple[bytes, dict]:
-    """Create a zip archive of PersonalClaw state. Returns (zip_bytes, manifest_dict)."""
-    pc = _pc_dir()
-    ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-    prefix = f"personalclaw-export-{ts}"
+def create_export_zip(domains: Sequence[str] | None = None) -> tuple[bytes, dict]:
+    """Create a zip archive of PersonalClaw state. Returns (zip_bytes, manifest_dict).
 
-    _wal_checkpoint(pc / "memory.db")
-    _wal_checkpoint(pc / "memory_index.db")
-    _wal_checkpoint(pc / "learning.db")
+    ``domains`` restricts the export to those inventory domains (§6's per-domain
+    shard: memory / knowledge / work / automation / platform / config). ``None`` is
+    the full "give me everything PersonalClaw knows about me" export. An unknown
+    domain raises :class:`ValueError` — silently exporting nothing for a typo is the
+    worst failure a DSAR surface can have.
+
+    ``secret ∪ derived`` is excluded on every path, and the returned manifest names
+    the excluded entry ids so the exclusion is auditable from the artifact itself.
+    """
+    pc = _pc_dir()
+    want: frozenset[str] | None = None
+    if domains is not None:
+        want = frozenset(domains)
+        if not want:
+            raise ValueError("domains must be a non-empty list, or None for a full export")
+        unknown = sorted(want - set(export_domains()))
+        if unknown:
+            raise ValueError(
+                f"unknown export domain(s): {', '.join(unknown)}; "
+                f"valid: {', '.join(export_domains())}"
+            )
+
+    def _wanted(rel: str) -> bool:
+        """Whether this export carries the path ``rel``.
+
+        One predicate for all four write sites — the literal file list, the database
+        projection, the tree walks and the inventory sweep. Four independently-written
+        filters is exactly how ``memory_index.db`` stayed exported for four sessions
+        after `EXPORT_EXCLUDE` became a secret-projection.
+        """
+        if _is_excluded(PurePosixPath(rel)):
+            return False
+        return want is None or domain_of(rel) in want
+
+    ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    suffix = "" if want is None else "-" + "-".join(sorted(want))
+    prefix = f"personalclaw-export{suffix}-{ts}"
+
+    # Only checkpoint databases this export will actually read. `memory_index.db` is
+    # deliberately absent: it is `derived=True` and no longer travels at all.
+    for db_rel in ("memory.db", "learning.db"):
+        if _wanted(db_rel):
+            _wal_checkpoint(pc / db_rel)
 
     buf = io.BytesIO()
     contents_summary: dict = {}
+    covered: set[str] = set()
 
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED, compresslevel=6) as zf:
         # Core JSON/text files
@@ -262,6 +439,9 @@ def create_export_zip() -> tuple[bytes, dict]:
             "project_dir",
             "workspace_dir",
         ):
+            if not _wanted(fname):
+                continue
+            covered.add(fname)
             src = pc / fname
             if src.is_file() and not src.is_symlink():
                 zf.write(str(src), f"{prefix}/{fname}")
@@ -278,19 +458,27 @@ def create_export_zip() -> tuple[bytes, dict]:
         # reachable only as a raw filesystem copy inside their parent tree — measured UNUSABLE ("no
         # such table") when the store had a 237 KB uncheckpointed WAL. Routing every declared DB
         # through the backup API is what the snapshot path already does.
+        #
+        # 🔴 `memory_index.db` IS GONE FROM THIS LIST (DAS-10). It was hardcoded here and
+        # is declared `derived=True`, so §6's "`secret ∪ derived` excluded" was only half
+        # enforced. Measured on a seeded home: the zip carried `memory_index.db` AND its
+        # rows. The list is now a pure projection of `export_entries() ∩ sqlite_entries()`,
+        # so a derived database cannot re-enter by being named.
         try:
             from personalclaw.durability import inventory as _inv
 
             _export_paths = {e.path for e in _inv.export_entries()}
-            db_names: list[str] = ["memory.db", "memory_index.db", "learning.db"]
-            db_names += sorted(
-                e.path
-                for e in _inv.sqlite_entries()
-                if e.path in _export_paths and e.path not in db_names
+            db_names: list[str] = sorted(
+                e.path for e in _inv.sqlite_entries() if e.path in _export_paths
             )
         except Exception:  # noqa: BLE001 — an export must work even if this import breaks
-            db_names = ["memory.db", "memory_index.db", "learning.db"]
+            # Fail closed on the derived index: an export without the vector index is
+            # complete (it rebuilds); an export WITH a stale one is a restore hazard.
+            db_names = ["learning.db", "memory.db"]
         for db_name in db_names:
+            if not _wanted(db_name):
+                continue
+            covered.add(db_name)
             src = pc / db_name
             if src.is_file() and not src.is_symlink():
                 if is_sensitive_path(str(src)):
@@ -315,6 +503,9 @@ def create_export_zip() -> tuple[bytes, dict]:
         # indistinguishable from a broken fire path — the same ambiguity the learning staging log
         # travels to avoid (see the note above).
         for dirname in ("workspace", "skills", "cron-history"):
+            if not _wanted(dirname):
+                continue
+            covered.add(dirname)
             src_dir = pc / dirname
             count = 0
             if src_dir.is_dir():
@@ -322,7 +513,7 @@ def create_export_zip() -> tuple[bytes, dict]:
                     if fpath.is_symlink():
                         continue
                     rel = fpath.relative_to(pc)
-                    if _is_excluded(PurePosixPath(str(rel))):
+                    if not _wanted(str(rel)):
                         continue
                     if is_sensitive_path(str(fpath)):
                         continue
@@ -346,7 +537,9 @@ def create_export_zip() -> tuple[bytes, dict]:
         # closed one entry at a time. Deriving the rest from the inventory is what stops the next
         # store from being forgotten — the snapshot side already does exactly this.
         extra_counts: dict[str, int] = {}
-        for entry in _remaining_export_paths(pc):
+        for entry in _remaining_export_paths(pc, covered=frozenset(covered)):
+            if not _wanted(entry):
+                continue
             src = pc / entry
             if src.is_symlink() or is_sensitive_path(str(src)):
                 continue
@@ -359,7 +552,7 @@ def create_export_zip() -> tuple[bytes, dict]:
                     if fpath.is_symlink() or not fpath.is_file():
                         continue
                     rel = fpath.relative_to(pc)
-                    if _is_excluded(PurePosixPath(str(rel))) or is_sensitive_path(str(fpath)):
+                    if not _wanted(str(rel)) or is_sensitive_path(str(fpath)):
                         continue
                     # The entry's own `derived_within` (e.g. `projects/*/worktrees`). Checked
                     # against the path relative to the ENTRY, which is the frame the inventory
@@ -383,18 +576,138 @@ def create_export_zip() -> tuple[bytes, dict]:
         if extra_counts:
             contents_summary["store_files"] = extra_counts
 
-        # Manifest
+        # Manifest — v3 (§2's integrity shape, so an import can detect corruption).
+        #
+        # `members` is the §2 per-shard record applied to a zip: every member's bytes
+        # and sha256, sorted for determinism. Without it a v1/v2 import had NOTHING to
+        # verify against — `validate_import_zip` could only confirm the zip parsed, so a
+        # silently truncated archive imported as far as it went. `contents` is retained
+        # because v2 readers exist (the settings panel, `snapshot._print_manifest`).
+        members = sorted(
+            (
+                {
+                    "path": name.split("/", 1)[1] if "/" in name else name,
+                    "bytes": info.file_size,
+                    "sha256": hashlib.sha256(zf.read(name)).hexdigest(),
+                }
+                for name, info in ((i.filename, i) for i in zf.infolist())
+                if not info.is_dir()
+            ),
+            key=lambda m: str(m["path"]),
+        )
+        excluded = _excluded_entry_paths()
         manifest = {
-            "version": 2,
+            "version": MANIFEST_VERSION,
             "format": "zip",
+            "schema_version": _shard_schema_version(),
+            "machine_id": _machine_id(pc),
             "created_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
             "hostname": socket.gethostname(),
             "user": os.environ.get("USER", "unknown"),
+            "scope": "full" if want is None else "partial",
+            "domains": sorted(want) if want is not None else list(export_domains()),
+            "domain_counts": _domain_counts(members),
+            "excluded": sorted(excluded),
+            "members": members,
             "contents": contents_summary,
         }
-        zf.writestr(f"{prefix}/MANIFEST.json", json.dumps(manifest, indent=2))
+        zf.writestr(f"{prefix}/MANIFEST.json", json.dumps(manifest, indent=2, sort_keys=True))
 
     return buf.getvalue(), manifest
+
+
+def _shard_schema_version() -> int:
+    """§2's shard schema version, so a v3 zip declares the format generation it came from."""
+    try:
+        from personalclaw.durability.shards import SHARD_SCHEMA_VERSION
+
+        return int(SHARD_SCHEMA_VERSION)
+    except Exception:  # noqa: BLE001 — an export must work even if this import breaks
+        return 0
+
+
+def _machine_id(home: Path) -> str:
+    """§2's ``machine_id``, so two machines' exports of the same state are attributable."""
+    try:
+        from personalclaw.durability.shards import machine_id
+
+        return str(machine_id(home))
+    except Exception:  # noqa: BLE001
+        return ""
+
+
+def _domain_counts(members: list[dict]) -> dict[str, dict[str, int]]:
+    """Per-domain ``{files, bytes}`` over the zip's members — the archive browser's row counts.
+
+    Attributed by longest declared-path match, so ``workspace/knowledge/files/doc.pdf``
+    counts as ``knowledge`` (its own entry) and not ``platform`` (the ``workspace`` tree
+    it is nested inside). A shortest-match or first-match rule would report every user
+    document as platform state, which is precisely the boundary criterion 9 is about.
+    """
+    try:
+        from personalclaw.durability import inventory as inv
+
+        by_path = sorted(
+            ((e.path, e.domain) for e in inv.INVENTORY), key=lambda t: len(t[0]), reverse=True
+        )
+    except Exception:  # noqa: BLE001
+        return {}
+    out: dict[str, dict[str, int]] = {}
+    for member in members:
+        rel = str(member["path"])
+        if rel == "MANIFEST.json":
+            continue
+        domain = next(
+            (d for p, d in by_path if rel == p or rel.startswith(p + "/")),
+            _UNDECLARED_LITERAL_DOMAINS.get(rel, "platform"),
+        )
+        bucket = out.setdefault(domain, {"files": 0, "bytes": 0})
+        bucket["files"] += 1
+        bucket["bytes"] += int(member["bytes"])
+    return out
+
+
+def _verify_members(zf: zipfile.ZipFile, prefix: str, members: list) -> str:
+    """Check every declared member's sha256. Returns "" when sound, else the problem.
+
+    Mirrors `shards.validate`: a declared-but-absent member and a hash mismatch are
+    both fatal, and the message NAMES the member — "the archive is corrupt" without a
+    name is not actionable. An UNDECLARED extra member is also fatal: a manifest that
+    does not describe the whole archive cannot vouch for it, and this is the shape a
+    tampered zip takes.
+    """
+    # MANIFEST.json is never in `members`: its hash cannot describe itself (the manifest
+    # is written last, after the member records are computed), so it is excluded from
+    # BOTH sides of the comparison rather than special-cased on one.
+    present = {
+        rel
+        for rel in (
+            (n.split("/", 1)[1] if "/" in n else n)
+            for n in zf.namelist()
+            if not n.endswith("/") and (not prefix or n.startswith(prefix + "/"))
+        )
+        if rel != "MANIFEST.json"
+    }
+    declared: set[str] = set()
+    for member in members:
+        if not isinstance(member, dict):
+            return "Invalid manifest: members must be objects"
+        rel = str(member.get("path", ""))
+        declared.add(rel)
+        if rel == "MANIFEST.json":
+            continue
+        name = f"{prefix}/{rel}" if prefix else rel
+        try:
+            data = zf.read(name)
+        except KeyError:
+            return f"Archive is missing a declared member: {rel}"
+        want = str(member.get("sha256", ""))
+        if want and hashlib.sha256(data).hexdigest() != want:
+            return f"Archive member failed its checksum: {rel}"
+    extra = sorted(present - declared)
+    if extra:
+        return f"Archive has undeclared member(s): {', '.join(extra[:4])}"
+    return ""
 
 
 def validate_import_zip(zip_path: Path) -> tuple[bool, str, dict]:
@@ -419,14 +732,57 @@ def validate_import_zip(zip_path: Path) -> tuple[bool, str, dict]:
 
             manifest_data = json.loads(zf.read(manifest_entries[0]))
             version = manifest_data.get("version")
-            if version not in (1, 2):
+            if version not in SUPPORTED_MANIFEST_VERSIONS:
                 return False, f"Unsupported manifest version: {version}", {}
+
+            # v3 declares per-member hashes (§2), so corruption is DETECTABLE — verify
+            # before an import writes anything. v1/v2 carry sizes only: there is nothing
+            # to verify them against, and refusing them would break every archive a user
+            # already has on disk. So back-compat is "import unverified", stated in the
+            # returned manifest rather than left as an assumption the caller can't see.
+            if version == MANIFEST_VERSION:
+                prefix = PurePosixPath(manifest_entries[0]).parent.as_posix()
+                problem = _verify_members(zf, prefix, manifest_data.get("members") or [])
+                if problem:
+                    return False, problem, {}
+                manifest_data = {**manifest_data, "verified": True}
+            else:
+                manifest_data = {**manifest_data, "verified": False}
 
             return True, "", manifest_data
     except zipfile.BadZipFile:
         return False, "Invalid zip file", {}
     except (json.JSONDecodeError, KeyError) as e:
         return False, f"Invalid manifest: {e}", {}
+
+
+def _strip_excluded_from_staged(snap: Path) -> list[str]:
+    """Delete every `secret ∪ derived` path from a staged import tree. Returns what went.
+
+    Belt-and-suspenders against a hand-built archive (§ amendment: "merge mode
+    additionally never writes any ``secret=True`` entry even if a hand-built archive
+    contains one"). Applied to the STAGED copy, not to the live home, so the later
+    copy/merge passes physically cannot see a credential — no per-branch skip to forget.
+    """
+    removed: list[str] = []
+    excluded = _excluded_entry_paths()
+    for rel in sorted(excluded):
+        target = snap / rel
+        if not target.exists():
+            continue
+        if target.is_dir() and not target.is_symlink():
+            shutil.rmtree(str(target), ignore_errors=True)
+        else:
+            target.unlink(missing_ok=True)
+        removed.append(rel)
+    for fpath in sorted(snap.rglob("*")):
+        if not fpath.exists() or fpath.is_dir():
+            continue
+        rel_posix = fpath.relative_to(snap).as_posix()
+        if fpath.name in EXPORT_EXCLUDE or is_sensitive_path(str(fpath)):
+            fpath.unlink(missing_ok=True)
+            removed.append(rel_posix)
+    return removed
 
 
 def apply_import_zip(zip_path: Path, mode: str = "merge") -> dict:
@@ -437,6 +793,22 @@ def apply_import_zip(zip_path: Path, mode: str = "merge") -> dict:
         mode: "merge" (default, non-destructive) or "replace" (overwrites).
 
     Returns summary dict of what was imported.
+
+    **Failure semantics, stated because this can overwrite a user's home.** Neither
+    mode is transactional — POSIX gives no atomic multi-file swap — so the contract is
+    *recoverability*, not atomicity:
+
+    * ``merge`` is **copy-if-missing on every path**. A failure part-way leaves the home
+      with some of the archive's absent stores present and the rest not; nothing the
+      home already had is ever touched, so a partial merge is a *subset* of a complete
+      one and re-running it is safe and idempotent. There is no hybrid to be left in.
+    * ``replace`` moves each live path into ``pre-restore-<ts>/`` **before** writing the
+      incoming one (`snapshot._do_replace`), so a failure part-way leaves the displaced
+      originals on disk under that directory and the summary reports its path. That
+      directory is the recovery: it is removed only when it ends up empty, i.e. only
+      when nothing was displaced. A replace that dies mid-way is therefore recoverable
+      by hand, which is the honest guarantee — a "hybrid home" with no trace of what it
+      replaced is what this ordering exists to prevent.
     """
     pc = _pc_dir()
     summary: dict = {"mode": mode, "items": []}
@@ -456,27 +828,49 @@ def apply_import_zip(zip_path: Path, mode: str = "merge") -> dict:
             raise ValueError(f"Expected 1 top-level directory in zip, found {len(snap_dirs)}")
         snap = snap_dirs[0]
 
+        # 🔴 STRIP `secret ∪ derived` FROM THE STAGED ARCHIVE, IN BOTH MODES, BEFORE
+        # ANYTHING READS IT. Our own exports cannot contain either — but an import zip is
+        # attacker-or-accident-supplied, and the amendment's belt-and-suspenders rule is
+        # explicit: merge mode must never write a `secret=True` entry "even if a
+        # hand-built archive contains one". Doing it once here rather than per-branch is
+        # what makes it true of the FOURTH hand-written list too, which is where the
+        # per-branch version of this rule kept being forgotten.
+        stripped = _strip_excluded_from_staged(snap)
+        if stripped:
+            logger.warning(
+                "import: refused %d secret/derived path(s) present in the archive: %s",
+                len(stripped),
+                ", ".join(stripped[:6]),
+            )
+            summary["refused"] = stripped
+
         if mode == "replace":
-            # Strip sensitive files and skills/auto/ from snapshot before replace
-            for excluded_name in EXPORT_EXCLUDE:
-                excluded_file = snap / excluded_name
-                if excluded_file.exists():
-                    excluded_file.unlink()
-            for fpath in snap.rglob("*"):
-                if fpath.is_file() and is_sensitive_path(str(fpath)):
-                    fpath.unlink()
+            # Strip skills/auto/ from snapshot before replace (secret/derived already gone).
             auto_dir = snap / "skills" / "auto"
             if auto_dir.is_dir():
                 shutil.rmtree(str(auto_dir))
-            _do_replace(snap, pc, None)
+            before = {p.name for p in pc.glob("pre-restore-*") if p.is_dir()}
+            try:
+                _do_replace(snap, pc, None)
+            finally:
+                # Report the escape hatch whether the replace finished or raised — a
+                # half-done replace is exactly when the user needs to be told where
+                # their displaced state went.
+                new = sorted(
+                    p.name for p in pc.glob("pre-restore-*") if p.is_dir() and p.name not in before
+                )
+                if new:
+                    summary["pre_restore"] = new[-1]
             summary["items"].append("full replace")
         else:
             # Merge mode
+            # `memory_index.db` is NOT copied alongside: it is `derived=True`, so
+            # `_strip_excluded_from_staged` has already removed it from the archive. The
+            # index rebuilds from `memory.db`; restoring a *stale* one beside a newer
+            # store is the failure mode the inventory's derived flag exists to prevent.
             if (snap / "memory.db").is_file():
                 if not (pc / "memory.db").is_file():
                     shutil.copy2(str(snap / "memory.db"), str(pc / "memory.db"))
-                    if (snap / "memory_index.db").is_file():
-                        shutil.copy2(str(snap / "memory_index.db"), str(pc / "memory_index.db"))
                     summary["items"].append("memory (copied)")
                 else:
                     _merge_memory(snap / "memory.db", pc / "memory.db")

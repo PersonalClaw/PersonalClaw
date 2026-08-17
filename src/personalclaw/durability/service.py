@@ -104,6 +104,57 @@ def save_state(state: dict) -> None:
         logger.debug("durability: could not persist service state", exc_info=True)
 
 
+def drill_fields(result: JobResult, *, at: float) -> dict:
+    """The drill OUTCOME fields for `durability_state.json` (§6's "validate status").
+
+    Only `last_drill` (a timestamp) was ever persisted, so the archive browser could
+    say *when* the last drill ran but not whether it PASSED — and a drill that passed
+    and one that failed rendered identically. §6 asks for the validate status, so the
+    verdict is persisted alongside the stamp.
+
+    Built here rather than inline at each call site because there are two: the tick
+    (which owns its own `save_state`) and the on-demand `POST /api/durability/run`.
+    """
+    extra = result.extra or {}
+    return {
+        "last_drill": at,
+        "last_drill_ok": bool(result.ok),
+        "last_drill_detail": result.detail,
+        "last_drill_archive": str(extra.get("snapshot", "") or ""),
+        "last_drill_databases": int(extra.get("databases_checked", 0) or 0),
+    }
+
+
+def persist_drill_result(result: JobResult, *, at: float | None = None) -> None:
+    """Record a drill outcome for callers that do not own a `save_state` of their own."""
+    state = load_state()
+    state.update(drill_fields(result, at=at if at is not None else time.time()))
+    save_state(state)
+
+
+def last_drill() -> dict:
+    """The last drill's verdict, for the archive browser. ``ran`` is False when none has.
+
+    A drill that has never run reports ``ran: False`` rather than a fabricated pass —
+    "not yet verified" is the honest state of a fresh install, and rendering it as
+    green would be the worst possible lie for a backup surface to tell.
+    """
+    state = load_state()
+    at = float(state.get("last_drill", 0) or 0)
+    if not at:
+        return {"ran": False, "ok": None, "at": 0.0, "detail": "", "archive": ""}
+    return {
+        "ran": True,
+        # `last_drill_ok` absent means the stamp predates outcome recording: report
+        # None (unknown), never True.
+        "ok": state.get("last_drill_ok") if "last_drill_ok" in state else None,
+        "at": at,
+        "detail": str(state.get("last_drill_detail", "") or ""),
+        "archive": str(state.get("last_drill_archive", "") or ""),
+        "databases_checked": int(state.get("last_drill_databases", 0) or 0),
+    }
+
+
 def _due(state: dict, key: str, interval: float, *, now: float | None = None) -> bool:
     stamp = float(state.get(key, 0) or 0)
     return (now or time.time()) - stamp >= interval
@@ -479,9 +530,10 @@ def run_due_jobs(*, now: float | None = None, force: str = "", notifier=None) ->
         result = run_restore_drill(notifier=notifier)
         results.append(result)
         # Stamped even on failure: a failing drill must not retry every tick and
-        # bury the user in notifications. The warning is already delivered.
+        # bury the user in notifications. The warning is already delivered — and the
+        # VERDICT is now stamped with it, so the archive browser can show it.
         if not result.skipped:
-            state["last_drill"] = stamp
+            state.update(drill_fields(result, at=stamp))
 
     # Sync (§4): the staleness window is the schedule — pull+push no more often than
     # sync_stale_after_secs. `run_sync_job` is self-guarding (disabled/unconfigured →

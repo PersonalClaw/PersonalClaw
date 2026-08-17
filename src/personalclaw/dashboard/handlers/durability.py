@@ -1,10 +1,24 @@
-"""Durability endpoints: snapshots, schedule status, on-demand jobs (§3).
+"""Durability endpoints: schedule status, on-demand jobs (§3) + the DSAR surface (§6).
 
-Read and run — this session does NOT expose restore over HTTP. Replace-restore
-refuses to run while the gateway is up (`snapshot.py:_is_gateway_running`), so a
-useful restore endpoint needs the staged-swap-on-next-boot machinery the plan
-describes, and half of that is worse than none: an endpoint that appears to restore
-and doesn't is a trap. Restore stays `personalclaw restore` until that lands.
+§6's four routes live here rather than under ``/api/portability`` because they are one
+surface, not two: an export, its import, the archive it lands in and that archive's
+restore are the same user story ("get my data out / put it back"). Shipping a second
+``/api/portability/export`` beside ``POST /api/durability/export`` would be two answers
+to one question, so the portability routes were RETIRED into these (DAS-10) — there is
+one export endpoint, one import endpoint, one archive list and one restore.
+
+**Who may call these.** All four refuse an app-scoped token, matching
+``apps.api_app_token``'s precedent (``request["app"]`` present → 403). An export hands
+the caller everything PersonalClaw knows about the user and an import/restore rewrites
+it; neither is ever an installed app's business, and least privilege here is the owner's
+own session or nothing. The plan does not name a caller for these routes, so this is the
+*restrictive* reading of that silence, stated rather than assumed.
+
+**Confirmation contract.** Both destructive verbs are two-step by construction:
+omitting ``mode`` returns the PLAN and changes nothing (the shape
+``api_durability_restore`` already established), and ``mode=replace`` additionally
+requires ``confirm: true`` — the one verb that deletes a user's current state should not
+be reachable by a single mistyped field.
 """
 
 from __future__ import annotations
@@ -12,9 +26,11 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import tempfile
 from pathlib import Path
 
 from aiohttp import web
+from aiohttp.multipart import BodyPartReader
 
 logger = logging.getLogger(__name__)
 
@@ -28,6 +44,71 @@ def _sel():
     return sel()
 
 
+async def _read_upload_file(request: web.Request) -> tuple[Path | None, web.Response | None]:
+    """Read a multipart ``file`` field into a temp file. Returns (path, None) or (None, error).
+
+    Moved here from the retired ``handlers/portability.py`` — it was that module's only
+    surviving part once its three routes folded into the §6 pair.
+    """
+    ctype = request.headers.get("Content-Type", "")
+    if not ctype.lower().startswith("multipart/"):
+        return None, web.json_response(
+            {
+                "error": {
+                    "code": "multipart_required",
+                    "message": "multipart/form-data with a 'file' field is required",
+                }
+            },
+            status=400,
+        )
+    try:
+        reader = await request.multipart()
+    except (ValueError, AssertionError, RuntimeError) as exc:
+        return None, web.json_response(
+            {
+                "error": {
+                    "code": "bad_multipart",
+                    "message": f"failed to parse multipart body: {exc}",
+                }
+            },
+            status=400,
+        )
+    part = await reader.next()
+    if part is None or not isinstance(part, BodyPartReader) or part.name != "file":
+        return None, web.json_response(
+            {"error": {"code": "file_required", "message": "file field required"}}, status=400
+        )
+
+    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".zip")
+    try:
+        while True:
+            chunk = await part.read_chunk(65536)
+            if not chunk:
+                break
+            tmp.write(chunk)
+        tmp.close()
+        return Path(tmp.name), None
+    except Exception:
+        tmp.close()
+        Path(tmp.name).unlink(missing_ok=True)
+        raise
+
+
+def _reject_app(request: web.Request) -> web.Response | None:
+    """403 an app-scoped caller. See the module docstring's least-privilege note."""
+    if request.get("app", ""):
+        return web.json_response(
+            {
+                "error": {
+                    "code": "owner_only",
+                    "message": "apps may not export, import or restore whole-home state",
+                }
+            },
+            status=403,
+        )
+    return None
+
+
 async def api_durability_status(request: web.Request) -> web.Response:
     """GET /api/durability/status — schedule state + what's due."""
     from personalclaw.durability import service
@@ -36,16 +117,22 @@ async def api_durability_status(request: web.Request) -> web.Response:
     return web.json_response(status)
 
 
-async def api_durability_snapshots(request: web.Request) -> web.Response:
-    """GET /api/durability/snapshots — the archive list with the retention plan.
+async def api_durability_archive(request: web.Request) -> web.Response:
+    """GET /api/durability/archive — the archive browser's list (§6).
 
-    Includes which snapshots the current tier budgets would KEEP versus PRUNE, so
-    the retention policy is inspectable before it deletes anything.
+    Each row carries what the plan asks a browser to show: date, size, whether the
+    retention tiers currently KEEP or PRUNE it (so the policy is inspectable before it
+    deletes anything), the **per-domain counts read from that archive's own manifest**,
+    and the **validate status from the last restore drill** for the archive the drill
+    actually exercised. A row whose manifest predates the per-domain block reports
+    ``domains: null`` rather than zeros — "no counts recorded" and "an empty archive"
+    must not render identically.
+
+    Replaces ``GET /api/durability/snapshots``: same list, the fields §6 requires.
     """
-    from pathlib import Path
-
     from personalclaw.config.loader import AppConfig
-    from personalclaw.durability import retention
+    from personalclaw.durability import archive as arch
+    from personalclaw.durability import retention, service
     from personalclaw.snapshot import _default_snapshot_dir
 
     def _collect() -> dict:
@@ -64,23 +151,187 @@ async def api_durability_snapshots(request: web.Request) -> web.Response:
             snapshots, daily=daily, weekly=weekly, monthly=monthly
         )
         keep_names = {s.name for s in keep}
+        drill = service.last_drill()
         return {
             "directory": str(directory),
-            "snapshots": [
+            "archives": [
                 {
+                    "id": s.name,
                     "name": s.name,
                     "taken_at": s.taken_at.isoformat(),
                     "size": s.size,
                     "retained": s.name in keep_names,
+                    "domains": arch.domain_counts(s.path),
+                    "validate": drill if drill.get("archive") == s.name else None,
                 }
                 for s in snapshots
             ],
             "would_prune": [s.name for s in prune],
             "tiers": {"daily": daily, "weekly": weekly, "monthly": monthly},
+            "last_drill": drill,
         }
 
     payload = await asyncio.get_event_loop().run_in_executor(None, _collect)
     return web.json_response(payload)
+
+
+async def api_durability_export(request: web.Request) -> web.Response:
+    """POST /api/durability/export {domains?} — the DSAR export (§6).
+
+    Body ``{"domains": ["memory"]}`` scopes the zip to those inventory domains;
+    omitting it (or an empty body) is the full "give me everything PersonalClaw knows
+    about me" export. ``secret ∪ derived`` is excluded on every path and the zip's
+    MANIFEST v3 names the excluded entries, so the exclusion is auditable from the
+    artifact rather than only from this code.
+
+    POST rather than GET because the domain selection is a body, and because an export
+    is not a cacheable idempotent read of a URL — it reads the user's entire home.
+    """
+    denied = _reject_app(request)
+    if denied is not None:
+        return denied
+    from personalclaw.portability import create_export_zip
+
+    body: dict = {}
+    if request.can_read_body:
+        try:
+            body = await request.json()
+        except (json.JSONDecodeError, ValueError):
+            return web.json_response(
+                {"error": {"code": "bad_body", "message": "body must be JSON"}}, status=400
+            )
+    if not isinstance(body, dict):
+        return web.json_response(
+            {"error": {"code": "bad_body", "message": "body must be a JSON object"}}, status=400
+        )
+    domains = body.get("domains")
+    if domains is not None:
+        if not isinstance(domains, list) or not all(isinstance(d, str) for d in domains):
+            return web.json_response(
+                {"error": {"code": "bad_domains", "message": "domains must be a list of strings"}},
+                status=400,
+            )
+
+    try:
+        zip_bytes, manifest = await asyncio.to_thread(create_export_zip, domains)
+    except ValueError as exc:
+        # An unknown domain. Naming the valid set beats a bare 400 — the caller is a
+        # settings panel or a script, and both can act on the list.
+        return web.json_response(
+            {"error": {"code": "unknown_domain", "message": str(exc)}}, status=400
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("durability export failed")
+        _audit_api(request, "durability.export", "error", str(exc))
+        return web.json_response(
+            {"error": {"code": "export_failed", "message": "export failed"}}, status=500
+        )
+
+    scope = manifest.get("scope", "full")
+    _audit_api(
+        request,
+        "durability.export",
+        "allowed",
+        f"scope={scope},domains={','.join(manifest.get('domains') or [])},bytes={len(zip_bytes)}",
+    )
+    stamp = str(manifest.get("created_at", "")).replace(":", "").replace("-", "")
+    tag = "" if scope == "full" else "-" + "-".join(manifest.get("domains") or [])
+    return web.Response(
+        body=zip_bytes,
+        content_type="application/zip",
+        headers={
+            "Content-Disposition": f'attachment; filename="personalclaw-export{tag}-{stamp}.zip"',
+            "Content-Length": str(len(zip_bytes)),
+        },
+    )
+
+
+async def api_durability_import(request: web.Request) -> web.Response:
+    """POST /api/durability/import — validate, then apply, an export zip (§6).
+
+    Multipart with a ``file`` field. ``mode`` (query or form) is ``merge`` | ``replace``;
+    **omitting it validates and returns the manifest, changing nothing** — the same
+    plan-first contract ``api_durability_restore`` uses, because both verbs can rewrite
+    a home. ``mode=replace`` additionally requires ``confirm=true``.
+
+    Accepts MANIFEST v1, v2 and v3. A v3 archive is checksum-VERIFIED before anything is
+    written (its manifest declares per-member sha256); v1/v2 carry no hashes, so they
+    import unverified and the response says so via ``manifest.verified``.
+    """
+    denied = _reject_app(request)
+    if denied is not None:
+        return denied
+    from personalclaw.portability import apply_import_zip, validate_import_zip
+
+    mode = request.query.get("mode")
+    confirm = str(request.query.get("confirm", "")).lower() in ("1", "true", "yes")
+    if mode is not None:
+        mode = mode.strip().lower()
+        if mode not in ("merge", "replace"):
+            return web.json_response(
+                {"error": {"code": "bad_mode", "message": "mode must be merge or replace"}},
+                status=400,
+            )
+        if mode == "replace" and not confirm:
+            return web.json_response(
+                {
+                    "error": {
+                        "code": "confirm_required",
+                        "message": ("mode=replace overwrites this home; resend with confirm=true"),
+                    }
+                },
+                status=409,
+            )
+
+    zip_path, err_resp = await _read_upload_file(request)
+    if err_resp is not None:
+        return err_resp
+    assert zip_path is not None
+
+    try:
+        ok, error, manifest = await asyncio.to_thread(validate_import_zip, zip_path)
+        if not ok:
+            _audit_api(request, "durability.import", "denied", error)
+            return web.json_response(
+                {"ok": False, "error": {"code": "invalid_archive", "message": error}}, status=400
+            )
+        if mode is None:
+            # Plan-only: the caller sees what the archive claims and asks again.
+            _audit_api(request, "durability.import", "allowed", "plan")
+            return web.json_response({"ok": True, "applied": False, "manifest": manifest})
+
+        summary = await asyncio.to_thread(apply_import_zip, zip_path, mode)
+        _audit_api(
+            request,
+            "durability.import",
+            "allowed",
+            f"mode={mode},items={len(summary.get('items', []))}",
+        )
+        return web.json_response(
+            {"ok": True, "applied": True, "summary": summary, "manifest": manifest}
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("durability import failed")
+        _audit_api(request, "durability.import", "error", str(exc))
+        return web.json_response(
+            {"ok": False, "error": {"code": "import_failed", "message": str(exc)}}, status=500
+        )
+    finally:
+        zip_path.unlink(missing_ok=True)
+
+
+def _audit_api(request: web.Request, operation: str, outcome: str, resources: str) -> None:
+    """One audit call shape for the §6 routes. Never raises — an audit failure must not
+    turn a successful export into a 500, and the SEL write is already best-effort."""
+    try:
+        _sel().log_api_access(
+            caller=request.get("user", "dashboard"),
+            operation=operation,
+            outcome=outcome,
+            resources=resources[:200],
+        )
+    except Exception:  # noqa: BLE001
+        logger.debug("durability: audit failed", exc_info=True)
 
 
 async def api_durability_run(request: web.Request) -> web.Response:
@@ -110,22 +361,26 @@ async def api_durability_run(request: web.Request) -> web.Response:
         "drill": lambda: service.run_restore_drill(notifier=notifier),
     }
     result = await asyncio.get_event_loop().run_in_executor(None, runners[job])
-    try:
-        _sel().log_api_access(
-            caller=request.get("user", "dashboard"),
-            operation=f"durability_run:{job}",
-            outcome="allowed" if result.ok else "denied",
-            resources=result.detail[:200],
+    if job == "drill" and not result.skipped:
+        # An on-demand drill is a real drill: its verdict must reach the archive browser
+        # exactly as the scheduled tick's does, or "run drill now" would show a stale
+        # pass next to an archive that just failed.
+        await asyncio.get_event_loop().run_in_executor(
+            None, lambda: service.persist_drill_result(result)
         )
-    except Exception:  # noqa: BLE001
-        logger.debug("durability: audit failed", exc_info=True)
+    _audit_api(
+        request,
+        f"durability_run:{job}",
+        "allowed" if result.ok else "denied",
+        result.detail,
+    )
     # 200 even on a failed job: the request succeeded and the report IS the answer.
     # A 500 would imply the endpoint broke rather than the backup.
     return web.json_response(result.to_dict())
 
 
-async def api_durability_restore(request: web.Request) -> web.Response:
-    """POST /api/durability/restore {snapshot, mode?, components?} — the CLI's restore, mirrored.
+async def api_durability_archive_restore(request: web.Request) -> web.Response:
+    """POST /api/durability/archive/{id}/restore {mode?, components?, confirm?} — §6.
 
     🔴 WHY THIS EXISTS. T2-M3 names it and it was absent: the API had `status`, `snapshots`
     and `run`, so a user could take a backup from the dashboard and could not restore one.
@@ -137,38 +392,115 @@ async def api_durability_restore(request: web.Request) -> web.Response:
     **Omitting `mode` returns the PLAN and changes nothing.** That is the safe default for an
     endpoint that can overwrite a home: a caller must see what would happen and then ask again
     with an explicit
-    mode. `mode=replace` is therefore always deliberate, never inferred.
+    mode. `mode=replace` is therefore always deliberate, never inferred — and it now also
+    requires ``confirm: true``, so the one verb that deletes the user's current state takes two
+    independent signals, not one field.
 
-    Refuses while the gateway runs, exactly as the CLI does — this handler IS the gateway, so a
-    restore under it would rewrite state the running process holds open. There is no `--force`
-    mirror on purpose: forcing is a local operator decision at a terminal, not something to
-    expose over HTTP.
+    🔴 **`mode=replace` IS REFUSED HERE, UNCONDITIONALLY** — not delegated to
+    `snapshot.restore_apply`'s guard. DISCOVERED BY DRIVING IT (DAS-10): a
+    `mode=replace&confirm=true` request to a gateway on ``--port 10188`` returned **200 and
+    performed the replace**, over the live home, while serving the request. Cause:
+    `snapshot._is_gateway_running()` probes ``DASHBOARD_PORT`` — the *configured* port — so on
+    any non-default port the guard probes a socket nobody is listening on and reports "not
+    running". The docstring it inherited claimed the opposite.
+
+    A socket probe is the wrong instrument from inside the process anyway: this handler
+    executing IS proof the gateway is up, so the answer is known without asking the network.
+    Refusing here is exact and cannot be defeated by a port. There is no ``--force`` mirror on
+    purpose: overriding it is a local operator decision at a terminal (`personalclaw restore
+    --replace --force`), never an HTTP parameter.
+
+    Replaces ``POST /api/durability/restore``: the archive id moves into the path, which is
+    where §6 puts it and what makes the archive browser's rows addressable.
     """
+    denied = _reject_app(request)
+    if denied is not None:
+        return denied
     from personalclaw import snapshot as snap_mod
 
-    try:
-        body = await request.json()
-    except (json.JSONDecodeError, ValueError):
-        return web.json_response({"error": "body must be JSON"}, status=400)
+    body: dict = {}
+    if request.can_read_body:
+        try:
+            body = await request.json()
+        except (json.JSONDecodeError, ValueError):
+            return web.json_response(
+                {"error": {"code": "bad_body", "message": "body must be JSON"}}, status=400
+            )
+    if not isinstance(body, dict):
+        return web.json_response(
+            {"error": {"code": "bad_body", "message": "body must be a JSON object"}}, status=400
+        )
 
-    raw = str(body.get("snapshot", "") or "").strip()
+    raw = str(request.match_info.get("id", "") or "").strip()
     if not raw:
-        return web.json_response({"error": "snapshot is required"}, status=400)
+        return web.json_response(
+            {"error": {"code": "archive_required", "message": "archive id is required"}}, status=400
+        )
 
     mode = body.get("mode")
     if mode is not None:
         mode = str(mode).strip().lower()
         if mode not in ("merge", "replace"):
-            return web.json_response({"error": "mode must be merge or replace"}, status=400)
+            return web.json_response(
+                {"error": {"code": "bad_mode", "message": "mode must be merge or replace"}},
+                status=400,
+            )
+        if mode == "replace":
+            # See the docstring: the gateway is provably up (we are it), so a replace here
+            # would rewrite state this process holds open. Refused before the confirm check
+            # so the message names the real reason rather than sending the caller to add a
+            # flag that still cannot work.
+            _audit_api(request, "durability_restore:replace", "denied", "gateway_running")
+            return web.json_response(
+                {
+                    "error": {
+                        "code": "gateway_running",
+                        "message": (
+                            "a replace restore rewrites state this gateway holds open; stop "
+                            "the gateway and run `personalclaw restore --replace` instead"
+                        ),
+                    }
+                },
+                status=409,
+            )
+        if body.get("confirm") is not True:
+            # `merge` is non-destructive (copy-if-missing) but still writes into the live
+            # home, so it is confirmed too — one signal for "look", two for "write".
+            return web.json_response(
+                {
+                    "error": {
+                        "code": "confirm_required",
+                        "message": (
+                            "a restore writes into this home; resend with confirm: true "
+                            "(omit mode to see the plan first)"
+                        ),
+                    }
+                },
+                status=409,
+            )
 
     components = body.get("components")
     if components is not None:
         if not isinstance(components, list) or not all(isinstance(c, str) for c in components):
-            return web.json_response({"error": "components must be a list of strings"}, status=400)
+            return web.json_response(
+                {
+                    "error": {
+                        "code": "bad_components",
+                        "message": "components must be a list of strings",
+                    }
+                },
+                status=400,
+            )
         unknown = [c for c in components if c not in snap_mod.VALID_COMPONENTS]
         if unknown:
             return web.json_response(
-                {"error": f"unknown component(s): {', '.join(sorted(unknown))}"}, status=400
+                {
+                    "error": {
+                        "code": "unknown_component",
+                        "message": f"unknown component(s): {', '.join(sorted(unknown))}",
+                    }
+                },
+                status=400,
             )
 
     # Path containment: the archive must be one WE produced, named from the snapshot directory.
@@ -179,7 +511,13 @@ async def api_durability_restore(request: web.Request) -> web.Response:
     candidate = (snap_dir / Path(raw).name).resolve()
     if candidate.parent != snap_dir or not candidate.is_file():
         return web.json_response(
-            {"error": "snapshot not found in the snapshot directory"}, status=404
+            {
+                "error": {
+                    "code": "archive_not_found",
+                    "message": "archive not found in the snapshot directory",
+                }
+            },
+            status=404,
         )
 
     def _run() -> dict:
@@ -191,15 +529,14 @@ async def api_durability_restore(request: web.Request) -> web.Response:
         result = await asyncio.get_event_loop().run_in_executor(None, _run)
     except Exception as exc:  # noqa: BLE001 — report, never 500 on a restore refusal
         logger.warning("durability restore failed", exc_info=True)
-        return web.json_response({"error": str(exc)}, status=400)
-
-    try:
-        _sel().log_api_access(
-            caller=request.get("user", "dashboard"),
-            operation=f"durability_restore:{mode or 'plan'}",
-            outcome="allowed" if result.get("ok", True) else "denied",
-            resources=candidate.name,
+        return web.json_response(
+            {"error": {"code": "restore_refused", "message": str(exc)}}, status=400
         )
-    except Exception:  # noqa: BLE001
-        logger.debug("durability: audit failed", exc_info=True)
+
+    _audit_api(
+        request,
+        f"durability_restore:{mode or 'plan'}",
+        "allowed" if result.get("ok", True) else "denied",
+        candidate.name,
+    )
     return web.json_response(result, status=200 if result.get("ok", True) else 409)

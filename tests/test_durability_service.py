@@ -568,8 +568,13 @@ class TestEndpoints:
 
         app = web.Application()
         app.router.add_get("/api/durability/status", mod.api_durability_status)
-        app.router.add_get("/api/durability/snapshots", mod.api_durability_snapshots)
+        app.router.add_get("/api/durability/archive", mod.api_durability_archive)
         app.router.add_post("/api/durability/run", mod.api_durability_run)
+        app.router.add_post("/api/durability/export", mod.api_durability_export)
+        app.router.add_post("/api/durability/import", mod.api_durability_import)
+        app.router.add_post(
+            "/api/durability/archive/{id}/restore", mod.api_durability_archive_restore
+        )
         return app
 
     @pytest.mark.asyncio
@@ -581,7 +586,7 @@ class TestEndpoints:
         assert "snapshot" in body and "export" in body
 
     @pytest.mark.asyncio
-    async def test_snapshots_shows_the_retention_plan(self, tmp_path):
+    async def test_archive_shows_the_retention_plan(self, tmp_path):
         from aiohttp.test_utils import TestClient, TestServer
 
         from personalclaw.config.loader import config_dir
@@ -592,10 +597,15 @@ class TestEndpoints:
         for i in range(40):
             _snap(snap_dir, base - timedelta(days=i))
         async with TestClient(TestServer(self._app())) as client:
-            body = await (await client.get("/api/durability/snapshots")).json()
-        assert len(body["snapshots"]) == 40
+            body = await (await client.get("/api/durability/archive")).json()
+        assert len(body["archives"]) == 40
         assert body["would_prune"], "the plan must show what a real run would remove"
-        assert any(s["retained"] for s in body["snapshots"])
+        assert any(s["retained"] for s in body["archives"])
+        # §6's row shape: every archive is addressable and carries a domains slot (None
+        # for these fixtures, which are empty files with no manifest inside).
+        assert all(a["id"] == a["name"] for a in body["archives"])
+        assert all("domains" in a and "validate" in a for a in body["archives"])
+        assert body["last_drill"]["ran"] is False
         # Inspecting the plan must not delete anything.
         assert len(list(snap_dir.glob("*.tar.gz"))) == 40
 
