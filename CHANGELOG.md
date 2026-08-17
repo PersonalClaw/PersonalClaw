@@ -19,6 +19,23 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
   never quietly undoes curation you did on the wrong copy. It asks first, and the question names
   which copy survives, which one gets deleted, and that it cannot be undone. If the check itself
   fails, it says so and offers to retry, instead of shrugging and showing you a clean library.
+- **Hold a thought, press a key, keep your hands where they are.** In the desktop app a global
+  shortcut (**⌘⇧Space** by default, and configurable in Settings → Speech & Transcription) starts
+  recording your microphone from wherever you are, even with another app in front. Press it again
+  and what you said is transcribed and dropped into the composer **at your cursor** — your existing
+  draft is kept, not replaced. While it is listening you can see it in three places at once: macOS's
+  own orange microphone dot, `● Listening` in the PersonalClaw menu-bar item, and a chip beside the
+  composer. The middle one matters because the shortcut is global: if the window were hidden behind
+  something, an in-window indicator would be an indicator you cannot see. Ending the recording
+  releases the microphone — the app does not sit on an open mic between captures — and a capture you
+  forget about stops itself after two minutes. Pick a shortcut another app already owns and Settings
+  says so and keeps the one you had, rather than failing quietly until the next launch. Two honest
+  limits: the shortcut **toggles** rather than working while physically held, because reading key
+  releases system-wide would mean asking for a far broader permission than dictation deserves; and
+  PersonalClaw records **the microphone only** — never system audio, since on macOS the only route to
+  that is the screen-recording permission, and asking to record your screen in order to record sound
+  is not a trade worth making quietly.
+
 - **Your phone can find this machine on its own now, if you ask it to.** Getting a companion
   device onto your gateway used to start with reading an IP address off one screen and typing it
   into another. Turn on **Settings → Companion apps → LAN discovery** and the gateway announces

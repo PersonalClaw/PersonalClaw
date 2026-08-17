@@ -30,6 +30,7 @@
       "context-menu.js",
       "find-bin.js",
       "capabilities.js",
+      "pushToTalk.js",
       "preload.js",
       "loading.html",
       "icon.png"

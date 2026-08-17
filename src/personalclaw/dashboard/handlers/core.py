@@ -498,6 +498,21 @@ def _bot_name_sanitizer(value: str) -> str:
     return _sanitize_bot_name(value)
 
 
+def _push_to_talk_chord_sanitizer(value: str) -> str:
+    """Normalize a push-to-talk accelerator at the WRITE boundary (DC-3 T3.1).
+
+    ``" Command + Shift + Space "`` and ``"Command+Shift+Space"`` are the same chord to
+    a user and different strings to `globalShortcut.register`. Collapsing the spacing
+    here means the value the shell is handed is byte-identical to the value stored and
+    to the value the Settings control redisplays — otherwise a chord round-trips as
+    "saved" while binding nothing.
+
+    Empty stays empty: `load()` turns that into the shipped default, which is the one
+    place that decision belongs.
+    """
+    return "+".join(part.strip() for part in value.split("+") if part.strip())
+
+
 def _scratchpad_path_sanitizer(value: str) -> str:
     """Canonicalize the watched-scratchpad path at the WRITE boundary.
 
@@ -574,6 +589,17 @@ _EDITABLE_CONFIG: dict[str, dict] = {
     "voice.duplex_mute_enabled": {"type": "bool"},
     "voice.clean_for_speech_enabled": {"type": "bool"},
     "voice.voice_disclaimer_enabled": {"type": "bool"},
+    # DC-3 T3.1 — the desktop push-to-talk chord. An Electron accelerator string, so
+    # `max_len` and a whitespace normalise are all this boundary can usefully check:
+    # whether the chord is BINDABLE is a question only the shell can answer (another
+    # app may already own it), and it answers with a reason the Settings control
+    # renders. Normalising here keeps the stored value byte-identical to what the
+    # shell is asked to bind.
+    "voice.push_to_talk_chord": {
+        "type": "str",
+        "max_len": 64,
+        "sanitize": _push_to_talk_chord_sanitizer,
+    },
     "resilience.doctor_enabled": {"type": "bool"},
     "resilience.degraded_indicator": {"type": "bool"},
     "resilience.mid_turn_policy": {

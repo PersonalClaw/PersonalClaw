@@ -46,13 +46,16 @@ const mac = (opts = {}) =>
   });
 
 describe("capability vocabulary", () => {
-  it("declares exactly the six DC-2 capabilities", () => {
+  it("declares exactly the seven bridge capabilities", () => {
     assert.deepStrictEqual([...CAPABILITIES].sort(), [
       "audio_capture",
       "global_hotkey",
       "login_item",
       "native_notifications",
       "screen_capture",
+      // DC-3 T3.3 — in the vocabulary precisely so the answer "no, and here is why"
+      // is a state the panel and the gateway can both read, rather than a silence.
+      "system_audio",
       "tray",
     ]);
   });
@@ -66,11 +69,17 @@ describe("capability vocabulary", () => {
 describe("probe", () => {
   it("reports every capability unavailable off the implemented platform", () => {
     const caps = makeCapabilities({ platform: "linux", systemPreferences: sysPrefsStub() });
+    // `system_audio` is excluded from the REASON assertion only, and deliberately: it is
+    // unavailable on macOS too, so "not implemented on linux" would be the wrong
+    // sentence — it is a refusal no platform lifts. Its own reason is pinned in
+    // `pushToTalk.test.js`, across every platform. The three state assertions below
+    // still cover it.
     for (const cap of CAPABILITIES) {
       const s = caps.probe(cap);
       assert.strictEqual(s.available, false, cap);
       assert.strictEqual(s.granted, "unavailable", cap);
       assert.strictEqual(s.requestable, false, cap);
+      if (cap === "system_audio") continue;
       assert.match(s.reason, /not implemented on linux/, cap);
     }
   });

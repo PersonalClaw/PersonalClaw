@@ -1388,6 +1388,12 @@
     "type": "list[str]"
   },
   {
+    "default": "CommandOrControl+Shift+Space",
+    "path": "voice.push_to_talk_chord",
+    "sensitive": false,
+    "type": "str"
+  },
+  {
     "default": true,
     "path": "voice.voice_disclaimer_enabled",
     "sensitive": false,

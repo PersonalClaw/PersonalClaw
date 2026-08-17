@@ -9,6 +9,9 @@ import { ChipInput } from '../../ui/forms'
 import { SquareIconButton } from '../../ui/SquareIconButton'
 import { TextLink } from '../../ui/TextLink'
 import { fvs } from '../../design/fontWeight'
+import { bindChord, chordFromEvent, formatChord, DEFAULT_PUSH_TO_TALK_CHORD } from '../../lib/pushToTalk'
+import { desktopBridge } from '../../lib/desktopBridge'
+import { ShortcutRecorder } from '../../ui/ShortcutRecorder'
 
 /** Speech & Transcription — provider/model-AGNOSTIC behavior for STT (transcription)
  *  + TTS (spoken replies), plus the Vocabulary & corrections section (the user-visible
@@ -107,9 +110,10 @@ export function VoicePanel({ go, query }: { go?: (id: string) => void; query?: R
   )
 }
 
-/** Hands-free voice loop (MULTIMODAL-IO §4.5) — the six `voice.*` config fields.
+/** Hands-free voice loop (MULTIMODAL-IO §4.5) + the desktop push-to-talk chord
+ *  (DESKTOP-CAPABILITIES S3) — the `voice.*` config fields.
  *
- *  All six are comfort knobs, not safety guards: turning one off makes the loop
+ *  They are comfort knobs, not safety guards: turning one off makes the loop
  *  noisier (more echo, code read aloud), never less safe. Each control patches one
  *  config path and flashes its own "Saved ✓". The phrase lists are what the composer's
  *  hands-free toggle gates on, so an empty list would make the mode deaf — the backend
@@ -141,6 +145,11 @@ function HandsFreeSection() {
   return (
     <Section title="Hands-free voice" hint="Keep listening and send only when you say a confirmation phrase. The mic button stays push-to-talk; these settings shape the hands-free loop beside it.">
       <div className="rounded-lg bg-surface-container px-4 py-1">
+        <ChordRow
+          value={typeof cfg.push_to_talk_chord === 'string' && cfg.push_to_talk_chord
+            ? cfg.push_to_talk_chord
+            : DEFAULT_PUSH_TO_TALK_CHORD}
+          onChange={(v, cb) => patch('push_to_talk_chord', v, cb)} />
         <PhraseRow label="Confirmation phrases"
           hint="Dictation accumulates in the composer until one of these ends what you just said — so a half-finished thought is never sent."
           values={phrases('confirmation_phrases')} onChange={(v, cb) => patch('confirmation_phrases', v, cb)} />
@@ -156,6 +165,73 @@ function HandsFreeSection() {
           cfg={cfg} field="voice_disclaimer_enabled" patch={patch} />
       </div>
     </Section>
+  )
+}
+
+/** The desktop push-to-talk chord (DESKTOP-CAPABILITIES S3).
+ *
+ *  A RECORDER, not a text field: the stored value is an Electron accelerator string
+ *  (`CommandOrControl+Shift+Space`), which nobody should have to type or spell. Click,
+ *  press the combination, done — and what is displayed back is `⌘⇧Space`.
+ *
+ *  Two failure modes get their own sentences, because they need different actions:
+ *
+ *  - **Only modifiers pressed** — the recorder keeps listening rather than storing half a
+ *    chord. A bare key is likewise never recorded: the shell refuses to bind one (it
+ *    would be taken from every app on the machine), so offering it here would be
+ *    offering a shortcut that cannot be saved.
+ *  - **Already owned by another app** — the shell answers with the conflict, and the
+ *    previous chord is KEPT. Discovering a clash at the next launch, with the old
+ *    shortcut already thrown away, is the outcome this avoids.
+ *
+ *  In a browser tab there is no shell to bind anything, so the row saves the preference
+ *  and says plainly that the desktop app is what applies it. Hiding the control would
+ *  make the setting undiscoverable for anyone configuring before installing the app.
+ */
+function ChordRow({ value, onChange }: { value: string; onChange: (next: string, onSaved: () => void) => void }) {
+  const [error, setError] = useState('')
+  const [saved, setSaved] = useState(false)
+  const flash = () => { setSaved(true); window.setTimeout(() => setSaved(false), 1500) }
+  const shell = !!desktopBridge()
+
+  const record = async (chord: string) => {
+    if (chord === value) { setError(''); return }
+    if (shell) {
+      // Bind FIRST, save second: a chord that cannot be bound must not become the
+      // stored value, or the setting would claim a shortcut that does nothing.
+      const r = await bindChord(chord)
+      if (!r.ok) { setError(r.reason); return }
+    }
+    setError('')
+    onChange(chord, flash)
+  }
+
+  return (
+    <Field label="Push-to-talk shortcut"
+      hint={shell
+        ? 'Press it to start capturing your microphone, press it again to stop and transcribe into the composer at your cursor. It works while other apps have focus, so a capture indicator stays in the menu bar the whole time.'
+        : 'Used by the desktop app for global push-to-talk. A browser tab has no global shortcuts, so this is saved for when you run the desktop app.'}>
+      <div className="flex flex-wrap items-center gap-2">
+        <ShortcutRecorder label="Push-to-talk shortcut" value={value}
+          format={formatChord} parse={chordFromEvent} onRecord={record} />
+        {value !== DEFAULT_PUSH_TO_TALK_CHORD && (
+          <TextLink size="xs" onClick={async () => {
+            if (shell) {
+              const r = await bindChord(DEFAULT_PUSH_TO_TALK_CHORD)
+              if (!r.ok) { setError(r.reason); return }
+            }
+            setError('')
+            onChange(DEFAULT_PUSH_TO_TALK_CHORD, flash)
+          }}>Reset to default</TextLink>
+        )}
+        <SavedToast show={saved} />
+      </div>
+      {error && (
+        // The conflict/refusal sentence from the shell, verbatim: it names the chord and
+        // what to do, which a generic "couldn't save" would not.
+        <p role="alert" className="mt-1.5 text-[0.75rem]" style={{ color: 'var(--color-error)' }}>{error}</p>
+      )}
+    </Field>
   )
 }
 
