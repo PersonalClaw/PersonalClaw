@@ -344,6 +344,21 @@ export interface DesktopStateWire {
   registered_at: string
   last_seen: string
 }
+/** Live state of the companion LAN advertiser (COMPANION-APPS C3).
+ *  `advertising` is the RUNNING advertiser, not the config flag — the two legitimately
+ *  differ (a loopback-only gateway is a designed no-op). `reason` is a closed set;
+ *  `detail` is the backend's own sentence for it. `txt` is the record verbatim, so the
+ *  panel can show exactly what the network is told. */
+export interface CompanionDiscovery {
+  advertising: boolean
+  reason: 'advertising' | 'disabled' | 'loopback_only' | 'no_lan_address' | 'gateway_not_running'
+  detail: string
+  service_type: string
+  instance_name: string
+  port: number
+  addresses: string[]
+  txt: Record<string, string>
+}
 export interface AppUiPage { route: string; label: string; icon: string }
 export interface AppSummary {
   name: string; displayName: string; version: string; description: string
@@ -2642,6 +2657,13 @@ export const api = {
   // single-field PATCH (allowlisted dotted paths — see _EDITABLE_CONFIG).
   personalclawConfig: () => get<Record<string, any>>('/api/config/personalclaw'),
   patchConfig: (path: string, value: unknown) => patch<Record<string, any>>('/api/config/personalclaw', { path, value }),
+
+  // ── Companion apps (COMPANION-APPS S2) ──
+  // The LIVE state of the LAN advertiser, which is not the same question as whether
+  // companion.discovery_enabled is set: a loopback-only gateway advertises nothing by
+  // design. `detail` is the sentence to show — the backend owns the wording so this
+  // surface never invents a second one for a state it does not own.
+  companionDiscovery: () => get<CompanionDiscovery>('/api/companion/discovery'),
 
   // ── Packs (AGENT-PACKS §3.4/§9, AP-3) ──
   // The installed-pack ledger (each pack's components, connector resolutions +

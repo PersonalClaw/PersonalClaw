@@ -1150,6 +1150,18 @@ async def api_personalclaw_config_patch(request: web.Request) -> web.Response:
         except Exception:
             logger.exception("Failed to apply orchestrator skill toggle")
 
+    # Live-apply LAN discovery (COMPANION-APPS S2): start or stop the mDNS advertiser to
+    # match the new value. Without this the toggle would be a control that needs a gateway
+    # restart to mean anything — and worse, the status route beside it would keep reporting
+    # the old reality while the switch read "on".
+    if path_key in ("companion.discovery_enabled", "companion.instance_name"):
+        try:
+            from personalclaw.companion import discovery as _discovery  # noqa: F811
+
+            _discovery.reconcile()
+        except Exception:
+            logger.exception("Failed to apply the LAN discovery setting")
+
     # Live-apply tool-output projection rules (TokenJuice OP6) so an edit takes effect
     # immediately (no restart) — mirrors the startup install into the projection engine.
     if path_key == "tools.projection_rules":

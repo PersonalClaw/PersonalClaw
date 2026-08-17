@@ -14,7 +14,7 @@ Each atom below executes start-to-finish in one go. If an atom lists dependencie
 | `CA-2` | ⬜ | S1 frontend: Settings → Devices panel (list, revoke, QR pairing) | `CA-1` | a second browser pairs as a device from the shown QR end-to-end over the LAN, appears in the Devices list (name, kind, last-seen, issuer), and revoking it is observed to lock it out live |
 | `CA-3` | ⬜ | S1 supersession reconciliation: fold MOBILE-COMPANION C1/C4 into this pairing contract | — | the two plans reference one pairing mechanism; grep shows no second/parallel device-token design surviving (Success Criterion 1) |
 | `CA-4` | ✅ | S2 config: new `companion` section wired through all 5 config points | — | test_config_roundtrip green; PATCH toggles discovery_enabled and sets instance_name; both fields round-trip through load()/to_dict() |
-| `CA-5` | ⬜ | S2 discovery: optional mDNS advertiser + client resolver + guide | `CA-4` | a resolver on the LAN finds the instance by name and can begin pairing; loopback-only gateway is a no-op + log; TXT record asserted to carry no token/content; disabling discovery leaves manual-URL + QR pairing working (degradable, Success Criterion 5) |
+| `CA-5` | ✅ | S2 discovery: optional mDNS advertiser + client resolver + guide | `CA-4` | a resolver on the LAN finds the instance by name and can begin pairing; loopback-only gateway is a no-op + log; TXT record asserted to carry no token/content; disabling discovery leaves manual-URL + QR pairing working (degradable, Success Criterion 5) |
 | `CA-6` | ⬜ | S3 shared client contract doc + multi-gateway registry (amendment T3.3) | `EXT:PLATFORM-RESILIENCE:degraded-connection contract to reuse` | contract is precise enough that desktop + mobile implement it without re-deciding; two paired gateways are switchable from one client with zero state bleed (distinct sessions/inbox/settings per endpoint id); the doc states the hub veto verbatim; degraded UI reuses the existing contract |
 | `CA-7` | ⬜ | S3 remote-endpoint auth path over wss (no new origin exemption) | `CA-6`, `EXT:REMOTE-USER-AUTH:S4 remote/TLS boundary (public_url, Secure/wss) — already shipped 2026-07-30` | a native client reaches a remote gateway over the owner's tunnel using its device session with no new origin exemption and no cloud middle tier in the path (client->owner-gateway only, Success Criterion 3); killing the tunnel mid-session reconnects/degrades gracefully |
 | `CA-8` | ⬜ | S4 desktop connect-to-gateway mode + multi-gateway switcher (T4.1 + amendment T4.4) | `CA-6`, `CA-7`, `EXT:DESKTOP-CAPABILITIES:Electron shell connect-mode coordination` | the desktop app connects to a gateway it did not spawn (LAN or remote) while defaulting to spawn-local; the connect dialog lists N paired gateways, shows the active one, switches cleanly with graceful reconnect per S3; revoking one gateway's device session breaks only that entry |
@@ -58,11 +58,59 @@ Session 2 T2.1; Contracts C4; config/loader.py dataclass+_meta+load()+to_dict(),
 
 ### `CA-5` — S2 discovery: optional mDNS advertiser + client resolver + guide
 
-**Status:** todo
+**Status:** done
 
 Session 2 T2.2, T2.3 + V2; Contracts C3; new companion/discovery.py (advertise _personalclaw._tcp with token-free TXT only when bound beyond loopback + discovery_enabled) + client resolver + new docs/guides/companion-apps.md fallback section
 
 **Done when:** a resolver on the LAN finds the instance by name and can begin pairing; loopback-only gateway is a no-op + log; TXT record asserted to carry no token/content; disabling discovery leaves manual-URL + QR pairing working (degradable, Success Criterion 5)
+
+**DONE (2026-08-16):** new `personalclaw/companion/discovery.py` — an mDNS/DNS-SD advertiser and
+client resolver for `_personalclaw._tcp.local.`, **written on the standard library** (a hand-rolled
+DNS wire codec over a multicast UDP socket). No third-party responder was added: `SO_REUSEPORT`
+lets the socket coexist with the host's own responder on port 5353, which was the only reason a
+dependency looked necessary. Ships with `GET /api/companion/discovery` (the LIVE advertiser state,
+not the config flag), a live-apply hook on the `companion.*` PATCH path so the toggle needs no
+restart, `personalclaw discover` as the resolver's real caller, a Settings → Companion apps status
+row that shows the broadcast record verbatim, and `docs/guides/companion-apps.md`.
+
+*The security properties, asserted rather than asserted-about:* the TXT record is built from a
+closed four-key set that `build_txt`/`encode_txt` cannot exceed, and a test serializes a real
+announcement with a real `.local_secret`, session token and enroll code on disk and asserts none
+of them appear in the packet bytes. A loopback-only bind is a no-op with a log line naming the fix
+(`PERSONALCLAW_BIND_HOST`), and an unreadable config **fails closed** — this surface broadcasts, so
+a broken read is not permission to announce. Discovery never imports `personalclaw.auth`, and
+`auth/enrollment.py` never imports `companion` (both asserted by AST), so discovery can neither
+carry a credential nor become a precondition for pairing.
+
+*Observed for real (not test-only):* Apple's own `mDNSResponder`, via `dns-sd -B`/`-L`, discovered
+`CA5 Probe Box` by name on the real LAN interface and printed the TXT verbatim
+(`name=… port=10166 requires_pairing=1 schema=1`); the shipped resolver returned
+`base_url http://192.168.86.33:10166` over real multicast; and against a live gateway on :10166 the
+PATCH flipped `advertising` false→true with **no restart**, `personalclaw discover` printed the
+instance, and redeeming an `auth enroll` code at the discovered gateway returned 200 with a
+30-day device session. NOT observed: resolution from a **second host** (no second machine
+available) — same-host multicast only, by two independent resolvers.
+
+*Falsified:* putting the local secret into the TXT keys → `AssertionError: a credential reached the
+wire: s3cr3t-l…` plus two more reds; making the loopback branch advertise anyway →
+`AssertionError: assert True is False`.
+
+**DEVIATION — the done_when's "QR pairing" clause is vacuous today.** There is no QR surface in the
+repo (`grep -i qrcode` → zero hits): QR is a *rendering* of the pairing routes that `CA-1`/`CA-2`
+own, both still todo. So degradability is asserted against the pairing path that DOES exist — the
+typed LAN URL plus `personalclaw auth enroll` — and structurally, by proving `enrollment` cannot
+import `companion`. When `CA-2` ships the QR screen it inherits that property rather than needing
+a new one.
+
+**DISCOVERY (not fixed here — belongs to `CA-1`/REMOTE-USER-AUTH).** Redeeming a pairing code from a
+browser that reached the gateway **by IP** is refused: `POST /api/auth/enroll/complete` with
+`Origin: http://192.168.86.33:10166` → 403 `CSRF check failed: request origin not allowed`, because
+`build_allowed_origins` covers the loopback names and the bare machine hostname but no LAN address.
+Reads from that origin are fine (200); only the state-changing call is rejected. Left alone
+deliberately: the plan requires the pairing path work "with no new origin exemption", so widening
+the allowlist is that plan's call, not this atom's. Documented as a known rough edge in the guide.
+Also measured and NOT a defect: a token already used from another address is refused with
+`IP mismatch` — a fresh `personalclaw token` used first on the other device works.
 
 ### `CA-6` — S3 shared client contract doc + multi-gateway registry (amendment T3.3)
 
