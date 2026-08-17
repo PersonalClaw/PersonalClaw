@@ -55,6 +55,14 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
   does, and every piece inside carries its own fingerprint — change one byte anywhere and the
   whole import is refused before anything is written.
 
+- **Buttons inside a generated widget now work everywhere you can see the widget.** A widget the
+  agent builds can carry real controls, and clicking one used to only do something while you were
+  looking at it inside a conversation — the same button in an artifact's preview or on a dashboard
+  tile quietly did nothing. Now it opens a chat and your click arrives as the first thing you said,
+  form fields and all; pressed inside a conversation it still answers in that conversation rather
+  than starting a new one. A widget still cannot press its own buttons — only a real click counts —
+  and it cannot pad your message either: anything past 16 KB is cut with a visible …truncated so you
+  can see it was shortened.
 - **A guided tour of the app, and you can take it again whenever you like.** The last screen of
   setup now offers a quick walk through the five places that matter: the sidebar, chat, the Inbox,
   where anything risky waits for your permission, and Settings. It happens on the real app — each

@@ -28,6 +28,7 @@ import { runInTerminal, runInTerminalWhenReady, subscribeTerminal, hasActiveTerm
 import { LoadingStatus } from '../ui/ListScaffold'
 import { useCachedData } from '../lib/useCachedData'
 import { resolveAppIcon } from '../pages/apps/appIcon'
+import { useWidgetActionLauncher } from '../ui/widget/useWidgetActionBridge'
 import { getNavApps, onNavAppsChange } from '../pages/apps/navApps'
 import { isDisclosed, undisclosedCount, useNavDisclosure } from './navDisclosure'
 import type { AppSummary } from '../lib/api'
@@ -277,6 +278,11 @@ function AppInner() {
       window.removeEventListener('ne:nav-badge', onBadge as EventListener)
     }
   }, [navigate])
+  // Widget actions raised OUTSIDE a chat (artifact-library preview, dashboard tile
+  // band) route through the same `ne:launch-chat` above. Registered at the shell so
+  // every widget host inherits routing; a mounted chat page claims the bridge ahead
+  // of this fallback, keeping a chat-born action in its own conversation.
+  useWidgetActionLauncher()
   // quick terminal drawer (reachable from any page) — toggled by ⌘` / ⌘K.
   const [termDrawer, setTermDrawer] = useState(false)
   // a command queued by "Run in terminal" while no terminal was live yet — sent

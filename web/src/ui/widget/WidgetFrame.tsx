@@ -7,6 +7,7 @@ import { api } from '../../lib/api'
 import { notify } from '../../app/appSdk'
 import { buildSrcdoc, readThemeVars } from './widgetSrcdoc'
 import { effectiveWidgetSlug } from './widgetSlug'
+import { useWidgetWire } from './useWidgetActionBridge'
 import { BlueprintSkeleton } from './BlueprintSkeleton'
 import { SquareIconButton } from '../SquareIconButton'
 import { spring } from '../../design/motion'
@@ -109,31 +110,20 @@ export function WidgetFrame({ html, title = 'Widget', slug, messageTs, widgetInd
   const liveSlugRef = useRef<{ saved: boolean; slug: string }>({ saved: false, slug: effSlug })
   liveSlugRef.current = { saved, slug: effSlug }
 
-  // height-sync + action→chat bridge from the (trusted) child frame only.
-  useEffect(() => {
-    const handler = (e: MessageEvent) => {
-      if (!iframeRef.current || e.source !== iframeRef.current.contentWindow) return
-      if (e.data?.type === 'widget-height' && typeof e.data.height === 'number') {
-        // No max cap — the frameless inline widget grows to fit its content; the
-        // page (chat scroll pane) is the scroll container, not the widget.
-        const h = Math.max(e.data.height, MIN_HEIGHT)
-        setHeight(h); heightCache.set(key, h)
-        if (typeof e.data.width === 'number' && e.data.width > 0) { setNaturalW(e.data.width + BODY_PAD); widthCache.set(key, e.data.width + BODY_PAD) }
-      } else if (e.data?.type === 'widget-action') {
-        const { action, payload } = e.data
-        const base = payload && Object.keys(payload).length > 0 ? `[UI] ${action}: ${JSON.stringify(payload)}` : `[UI] ${action}`
-        // Living-view (C32): name the source artifact slug so the agent can refresh
-        // THIS view in place (artifact_update <slug>) — fetching fresh data + re-
-        // rendering — rather than spawning a new artifact. Only when the widget is a
-        // saved artifact (has a stable slug the agent can target).
-        const { saved: isSaved, slug: sl } = liveSlugRef.current
-        const text = isSaved && sl ? `${base} (refresh artifact "${sl}" in place)` : base
-        window.dispatchEvent(new CustomEvent('ne:widget-action', { detail: { text } }))
-      }
-    }
-    window.addEventListener('message', handler)
-    return () => window.removeEventListener('message', handler)
-  }, [key])
+  // height-sync + action forwarding, over the shared (provenance-validated) wire.
+  // This child document carries HOST_SCRIPT's `e.isTrusted` click gate, so it is
+  // entitled to forward actions — see useWidgetActionBridge.ts for the contract.
+  useWidgetWire(iframeRef, {
+    forwardActions: true,
+    onHeight: (h, w) => {
+      // No max cap — the frameless inline widget grows to fit its content; the
+      // page (chat scroll pane) is the scroll container, not the widget.
+      const capped = Math.max(h, MIN_HEIGHT)
+      setHeight(capped); heightCache.set(key, capped)
+      if (w) { setNaturalW(w + BODY_PAD); widthCache.set(key, w + BODY_PAD) }
+    },
+    liveArtifact: () => liveSlugRef.current,
+  })
   const [savePending, setSavePending] = useState(false)
   useEffect(() => {
     if (streaming) return

@@ -4,6 +4,7 @@ import { motion } from 'framer-motion'
 import { Maximize2, Minimize2, ExternalLink, AlertTriangle } from 'lucide-react'
 import { useMode } from '../../app/theme'
 import { buildReactSrcdoc, readThemeVars } from './widgetSrcdoc'
+import { useWidgetWire } from './useWidgetActionBridge'
 import { SquareIconButton } from '../SquareIconButton'
 
 const MIN_HEIGHT = 80
@@ -48,19 +49,13 @@ export function ReactWidgetFrame({ jsx, title = 'React widget' }: Props) {
     return () => URL.revokeObjectURL(url)
   }, [srcdoc])
 
-  // height-sync + error surfacing from the (trusted) child frame only.
-  useEffect(() => {
-    const handler = (e: MessageEvent) => {
-      if (!iframeRef.current || e.source !== iframeRef.current.contentWindow) return
-      if (e.data?.type === 'widget-height' && typeof e.data.height === 'number') {
-        setHeight(Math.min(Math.max(e.data.height, MIN_HEIGHT), MAX_HEIGHT))
-      } else if (e.data?.type === 'widget-error') {
-        setError(String(e.data.message || 'Render error'))
-      }
-    }
-    window.addEventListener('message', handler)
-    return () => window.removeEventListener('message', handler)
-  }, [])
+  // height-sync + error surfacing over the shared (provenance-validated) wire.
+  // NOT an action host: the react harness has no `e.isTrusted` click gate, so a
+  // react widget's own script could mint a turn with no human gesture.
+  useWidgetWire(iframeRef, {
+    onHeight: (h) => setHeight(Math.min(Math.max(h, MIN_HEIGHT), MAX_HEIGHT)),
+    onError: setError,
+  })
 
   const openInNewTab = () => {
     const doc = document.implementation.createHTMLDocument(title)
