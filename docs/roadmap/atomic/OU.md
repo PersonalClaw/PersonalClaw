@@ -15,7 +15,7 @@ Each atom below executes start-to-finish in one go. If an atom lists dependencie
 | `OU-3` | ✅ | First-success 'try one' cards (knowledge ingest+ask, reminder trigger, seeded loop) | `OU-1`, `OU-2` | each of the three cards executes a real flow and reaches its visible outcome on a fresh home in <2 min; failure path shows the error and offers a Settings deep-link when a real call fails despite a passing Test |
 | `OU-4` | ✅ | Onboarding done screen + resume + per-step skip + CLI setup pointer | `OU-1`, `OU-2`, `OU-3` | skip at any step lands in a working dashboard; re-entering onboarding resumes at the persisted step; personalclaw setup prints the dashboard-flow pointer when a browser is available (wizard unchanged); V1 recorded in Execution log (full flow <5 min, mid-flow reload, full-skip path, existing-home upgrade shows NO onboarding) |
 | `OU-5` | ✅ | NavRail progressive disclosure (starter/expert sections, auto-pin-on-visit, expert toggle) + URL-doctrine regression test | — | fresh home shows the starter rail; visiting an Everything surface via deep link/CommandPalette renders AND auto-pins it (test red if a deep link 404s/blanks under starter mode); expert-mode toggle in Appearance shows all permanently; upgrade fixture (onboarding-completed-before-this-version marker) defaults expert ON; keyboard-only, reduced-motion, and mobile-viewport passes hold |
-| `OU-6` | ⬜ | EmptyState primitive + rollout to the 7 listed pages | — | web/src/ui/EmptyState.tsx exists and is applied to Loops, Workflows, Knowledge, Memory, Skills, Tasks, Triggers with one seeded working action each; copy in PRODUCT.md voice; visual check across both themes |
+| `OU-6` | ✅ | EmptyState primitive + rollout to the 7 listed pages | — | web/src/ui/EmptyState.tsx exists and is applied to Loops, Workflows, Knowledge, Memory, Skills, Tasks, Triggers with one seeded working action each; copy in PRODUCT.md voice; visual check across both themes |
 | `OU-7` | ✅ | Blast-radius derivation (approvalMeta.ts pure function) — C2 read-only consumption | — | web/src/pages/chat/approvalMeta.ts maps tool name + existing risk + command-screening classification to writes/network/shell/readOnly chips; unit-tested against representative tools (bash, web_fetch, memory write, read-only); NO security-logic change (E4 if any gap tempts one) |
 | `OU-8` | ✅ | ApprovalCard redesign (what/why/blast-radius/scoped-remember) + toast compact variant | `OU-7` | ApprovalCard renders all four zones; useApprovalToasts gets the compact form; remember-scope (session/tool_always/no) persists via the existing approval-preference path; brief never advocates approval; risky+benign approvals driven as a user and README screenshots produced (feeds DISCOVERABILITY-LAUNCH asset list) |
 | `OU-9` | ⬜ | Structured approval brief over the ChannelDelivery.request_approval seam | `OU-7`, `OU-8`, `EXT:CHANNEL-EXPANSION:ChannelDelivery.request_approval + apps-repo slack renderer consume the structured brief` | the same brief fields (tool + blast-radius line) flow through ChannelDelivery.request_approval payloads as additive meta; apps-repo slack renderer minimally updated to show what it can today; dashboard remains the rich surface |
@@ -294,11 +294,36 @@ matches how theme, rail width and rail collapse already behave.
 
 ### `OU-6` — EmptyState primitive + rollout to the 7 listed pages
 
-**Status:** todo
+**Status:** done
 
 Session 2 T2.2; Contracts C3 (EmptyState props); Design 'Empty states as on-ramps'
 
 **Done when:** web/src/ui/EmptyState.tsx exists and is applied to Loops, Workflows, Knowledge, Memory, Skills, Tasks, Triggers with one seeded working action each; copy in PRODUCT.md voice; visual check across both themes
+
+**DEVIATION on the filename clause — `web/src/ui/EmptyState.tsx` deliberately does NOT exist.**
+`EmptyState` predates this atom, exported from the list kit (`ui/ListScaffold.tsx`) beside `LoadError`
+and `ListSkeleton`, and already answers ~30 call sites. A second component beside it would be a dual
+path, and `loadErrorState.test.tsx` already pins the co-location *on purpose* ("alternative answers to
+the same condition, and a surface reaching for one should see the other"). So the atom shipped its
+PRODUCT clause — all seven surfaces explain themselves and offer one working action — and left the
+primitive where the repo already put it. `pages/emptyStateRollout.test.tsx` holds both halves,
+including an assertion that `ui/EmptyState.tsx` stays absent.
+
+**Shipped:** the rollout gap was two surfaces, not seven. Five (Knowledge, Skills, Tasks, Triggers via
+`PresetEmptyState`, and Workflows' no-match branches) already routed through a shared primitive.
+· **Memory** (`settings/MemoryPanel.tsx`) had no empty state at all — four hand-rolled centered `<p>`s;
+now `EmptyState` at all four, with "Add a fact" wired to the studio's own add control, and the audit
+log split into "Nothing recorded yet" vs "No matching events" (one sentence used to serve both, telling
+a user with an untouched memory that their filter was the problem).
+· **Workflows** had two actionless empty states; both now carry a working action ("Start from template",
+"Browse definitions") on the genuinely-empty branch only.
+· **Loops** conflated a failed load with an empty one (`.catch(() => [] as GoalLoop[])` → a 500 rendered
+"No loops yet — Start a loop"); it joined `loadErrorState.test.tsx`'s ADOPTERS, and its facet no-match
+branch moved from a hand-rolled `<p>` to the shared primitive.
+
+Two surfaces' genuinely-empty branches are unreachable on a fresh home and were not driven: **Skills**
+(native skills ship pre-installed) and **Triggers** (`system:notification-digest` ships enabled). Both
+were already correct and are untouched by this atom.
 
 ### `OU-7` — Blast-radius derivation (approvalMeta.ts pure function) — C2 read-only consumption
 

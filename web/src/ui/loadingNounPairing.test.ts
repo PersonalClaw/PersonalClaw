@@ -247,10 +247,18 @@ describe('a skeleton borrows a noun its own surface already declares', () => {
   const errPaired = all.filter((s) => s.errNoun)
   const resPaired = all.filter((s) => !s.errNoun && s.resultsNoun)
 
-  it('finds the population — 57 skeletons, 22 beside a LoadError, 5+ beside a results noun', () => {
+  it('finds the population — 57 skeletons, 22 beside a LoadError, 4+ beside a results noun', () => {
     expect(all.length, 'skeleton call sites outside the primitive').toBeGreaterThanOrEqual(57)
     expect(errPaired.length, 'skeletons with a LoadError noun in reach').toBeGreaterThanOrEqual(22)
-    expect(resPaired.length, 'skeletons gated on the state a results noun counts').toBeGreaterThanOrEqual(5)
+    // 🔻 5 → 4 (OU-6). These are two buckets of ONE population — `resPaired` is defined as
+    // `!errNoun && resultsNoun` — so every surface that adopts `LoadError` moves a skeleton OUT
+    // of here and into `errPaired`. `#/loops` did exactly that: `LoadError what="loops"` now sits
+    // two lines above its `ListSkeleton what="loops"`, well inside the ±40-line reach, so the
+    // bucket went 5 → 4 while `errPaired` went 33 → 34 (measured: all=64, err=34, res=4).
+    // The floor is a VACUITY guard — "the scan still finds this shape at all" — not a target, and
+    // the shape it guards is the one the LoadError rollout is deliberately draining. Lowering it
+    // is the honest move; raising `errPaired` to match would re-pin a number that keeps climbing.
+    expect(resPaired.length, 'skeletons gated on the state a results noun counts').toBeGreaterThanOrEqual(4)
   })
 
   it('every skeleton beside a LoadError passes that sibling noun', () => {

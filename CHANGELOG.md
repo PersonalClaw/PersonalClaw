@@ -23,6 +23,16 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
   have dismissed every tip on the page or turned tips off entirely. If your system asks for reduced
   motion the spotlight stops pulsing and the card stops sliding; nothing is slowed down, it is just
   still.
+- **Empty pages now explain themselves and give you something to press.** Every one of the seven
+  main surfaces — Loops, Workflows, Knowledge, Memory, Skills, Tasks and Triggers — says what the
+  thing it holds actually is when you have none of it, and offers the one obvious next step
+  instead of a blank column. Workflows was the worst of them: two empty screens that told you to
+  go find a control somewhere else. Now "No workflow runs yet" hands you a button that takes you
+  to the definitions, and an empty definitions list starts you from a template. The Memory panel
+  had no real empty states at all — just a few grey sentences — and now matches the rest of the
+  app, with a way to add your first fact right there. A page you have merely filtered down to
+  nothing keeps the explanation but drops the create button, because offering to make your first
+  task when you already have ninety is just noise.
 - **First run now picks up where you left it, and you can walk out of it at any point.** Reload
   the page halfway through setup and you come back to the step you were on rather than the
   beginning — the apps you installed stay installed, and a card you already ran still counts as
@@ -824,6 +834,14 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Fixed
 
+- **The Loops page no longer tells you that you have no loops when it simply could not load
+  them.** If the request failed, the page said "No loops yet" and invited you to start your
+  first — the most confident possible way to say the opposite of what happened, to someone whose
+  loops were fine and merely unreachable. It now says "Couldn't load your loops", shows the
+  server's own reason, and gives you a Retry that puts the list back. The Memory audit log had a
+  smaller version of the same problem: one sentence, "No matching events", served both a log that
+  recorded nothing and a filter that matched nothing. Those are different facts and now read
+  differently.
 - **A security-audit write that fails is no longer swallowed.** When the subagent reaper
   force-kills a subagent that blew its deadline, it writes one security-event row — the only
   record that the kill happened. That write sat inside a catch-all `except`, so on a home that
