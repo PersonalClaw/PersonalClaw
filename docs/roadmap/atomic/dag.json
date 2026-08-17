@@ -7327,7 +7327,7 @@
         {
           "id": "PP-13",
           "title": "Retire `pool.py`'s private frontier onto the unified core",
-          "status": "todo",
+          "status": "done",
           "scope": "`WF2TAS-6` shipped the task pool's own `frontier`/`next` projections and `WF2TAS-10` its lease write path. With `Lease` available as an admission policy (`PP-12`), the pool's private projection is a second implementation of a solved problem. Clean break under the pre-1.0 banner: no dual path, no compatibility shim.",
           "done_when": "`pool.frontier`/`pool.next` are DELETED and the Work board's ready projection is computed by the unified core with a `Lease` policy plus the pool's existing priority/blocking-count/overdue ordering expressed as a comparator. The lease decision functions survive (they are the policy's implementation); only the duplicate projection goes. Verified: the Work board renders an identical ready set before and after over a seeded fixture, leases still survive a gateway kill, and `dependency_failed` cascade plus burst coalescing still fire. Retiring a legacy path is never a pure deletion \u2014 the sweep names every caller before the delete lands.",
           "deps": [
@@ -7777,11 +7777,6 @@
         "id": "PHF-7",
         "title": "Offline fake-model E2E harness + a11y rail",
         "plan": "PHF"
-      },
-      {
-        "id": "PP-13",
-        "title": "Retire `pool.py`'s private frontier onto the unified core",
-        "plan": "PP"
       },
       {
         "id": "PP-15",
@@ -10184,9 +10179,9 @@
         "code": "PP",
         "plan": "PLATFORM-PRIMITIVES",
         "total_atoms": 16,
-        "done": 13,
+        "done": 14,
         "in_progress": 0,
-        "todo": 3,
+        "todo": 2,
         "blocked": 0
       }
     ],
