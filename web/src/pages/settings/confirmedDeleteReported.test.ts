@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { readdirSync, readFileSync } from 'node:fs'
+import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 
 // ── A destructive action the user CONFIRMED must not fail silently ────────────────────────────────
@@ -36,11 +36,26 @@ import { join } from 'node:path'
 //                                          removeFromKnowledgeCollection, deleteKnowledgeAnnotation,
 //                                          deleteArtifact — high-frequency, dismissal-like
 //
-// 🪤 WHY ONLY MemoryPanel THIS TIME, stated so the next pass does not read it as a half-done sweep: the
-// other four sites have **no error surface at all** (`notify` 0, `setErr` 0 in the three loops files), so
-// converging them means introducing a mechanism, not removing drift. That is a bigger call and belongs in
-// its own change. `MemoryPanel.removeSelected` is a complete pass over a coherent subset: one function,
-// three sibling branches, one idiom already in the file.
+// ── SECOND SLICE: the four sites that had no error surface at all ─────────────────────────────────
+//
+// The first pass fixed `MemoryPanel` and pinned the other four as still-swallowing, because they had
+// `notify` 0 / `setErr` 0 — a fix there had to INTRODUCE an affordance, not rewire a `.catch`. They now
+// route through `notify(…, 'error')`, the app's imperative toast (52 files already reach for it, and
+// `ui/Toaster` renders errors into a `role="alert"` live region, so "the user was told" is true for
+// assistive tech too, not just sighted users).
+//
+// 🔑 TWO OF THE FOUR WERE WORSE THAN SILENT — they performed the post-SUCCESS step anyway:
+//
+//   loops/DesignCockpitPage.del()   `onDeleted?.()`            closed the cockpit
+//   loops/LoopCockpitPage.del()     `onDeleted() : onBack()`   navigated back
+//
+// So a failed delete took the user off a loop that still existed, which actively asserts it worked. Both
+// now report and STAY, with the two-step arm still armed so a retry is one click. The other two
+// (`LoopsListPage`, `KnowledgeListPage`) had the milder reappear-unexplained shape.
+//
+// 🪤 `KnowledgeListPage` LOOKED like it had a surface — a `setErr` at line 957 — but that belongs to a
+// different form component further down the file and is not in scope at the delete. Grepping a file for
+// "does it have an error surface" answers the wrong question; the surface has to be in scope AT the call.
 
 const PAGES = join(process.cwd(), 'src', 'pages')
 const MEM = readFileSync(join(PAGES, 'settings', 'MemoryPanel.tsx'), 'utf8')
@@ -81,24 +96,64 @@ describe('a confirmed delete reports its failure', () => {
     expect(MEM).toMatch(/\} else return\s*\n\s*setSelUid\(null\); reloadAll\(\)/)
   })
 
-  it('the four sites left for the next slice are still swallowing — the scope claim', () => {
-    // The vacuity floor for the boundary in the header. If one of these gains an error surface elsewhere,
-    // this list is stale and the "no error surface at all" reasoning needs re-checking rather than
-    // silently passing. If one is FIXED, delete it from here deliberately.
-    const remaining: Array<[string, string]> = [
+  it('the four second-slice sites now report instead of swallowing', () => {
+    // These were PINNED as still-swallowing by the first slice. Now they must all be fixed — the same
+    // list, flipped from a worklist into a ratchet.
+    const slice: Array<[string, string]> = [
       [join('knowledge', 'KnowledgeListPage.tsx'), 'deleteKnowledgeCollection'],
       [join('loops', 'DesignCockpitPage.tsx'), 'deleteULoop'],
       [join('loops', 'LoopCockpitPage.tsx'), 'deleteULoop'],
       [join('loops', 'LoopsListPage.tsx'), 'deleteULoop'],
     ]
-    const still: string[] = []
-    for (const [rel, call] of remaining) {
+    const swallowing: string[] = []
+    for (const [rel, call] of slice) {
       const src = readFileSync(join(PAGES, rel), 'utf8')
       const at = src.indexOf(`api.${call}(`)
-      if (at < 0) continue
-      if (/\.catch\(\(\)\s*=>\s*\{\s*\}\)/.test(src.slice(at, at + 160))) still.push(`${rel}:${call}`)
+      expect(at, `${rel} must still perform the delete`).toBeGreaterThan(-1)
+      if (/\.catch\(\(\)\s*=>\s*\{\s*\}\)/.test(src.slice(at, at + 160))) swallowing.push(`${rel}:${call}`)
+      expect(src, `${rel} must import the toast it reports through`)
+        .toMatch(/import \{ notify \} from '\.\.\/\.\.\/app\/appSdk'/)
+      expect(src, `${rel} must report the failure`).toMatch(/notify\(`Couldn't delete/)
     }
-    expect(still.length, 'the next slice is still there, as the header says').toBe(4)
+    expect(swallowing, 'no second-slice delete may swallow its rejection').toEqual([])
+  })
+
+  it('the two cockpits no longer navigate away on a FAILED delete', () => {
+    // The worst half of the slice: they called the post-success step regardless, which asserts to the
+    // user that the delete worked. The `return` in the catch is what stops that.
+    for (const rel of [join('loops', 'DesignCockpitPage.tsx'), join('loops', 'LoopCockpitPage.tsx')]) {
+      const src = readFileSync(join(PAGES, rel), 'utf8')
+      const at = src.indexOf('api.deleteULoop(')
+      const chain = src.slice(at, at + 260)
+      // 🪤 NOT `[^}]*` — the notify argument is a template literal containing `${…}`, so a
+      // negated-`}` class stops inside it and matches nothing. Same shape as `[^>]*` dying on an arrow
+      // function. Scan lazily to the `return`.
+      expect(chain, `${rel}: the failure path must not fall through to the navigation`)
+        .toMatch(/catch \(e\) \{ notify\([\s\S]{0,160}?\); return \}/)
+    }
+  })
+
+  it('the whole confirmed-delete family is now clean — the app-wide ratchet', () => {
+    // Replaces the per-slice worklist: sweep every page for a destructive call behind a confirm whose
+    // rejection is discarded. This is what stops the shape coming back somewhere new.
+    const walk = (dir: string, out: string[] = []): string[] => {
+      for (const name of readdirSync(dir)) {
+        const abs = join(dir, name)
+        if (statSync(abs).isDirectory()) walk(abs, out)
+        else if (/\.tsx$/.test(name) && !name.includes('.test.')) out.push(abs)
+      }
+      return out
+    }
+    const offenders: string[] = []
+    for (const abs of walk(PAGES)) {
+      const src = readFileSync(abs, 'utf8')
+      for (const m of src.matchAll(/api\.(delete|purge|revoke)[A-Z]\w*\(/g)) {
+        if (!/\.catch\(\(\)\s*=>\s*\{\s*\}\)/.test(src.slice(m.index!, m.index! + 160))) continue
+        const before = src.slice(Math.max(0, m.index! - 900), m.index!)
+        if (/(confirmDelete|await confirm\()/.test(before)) offenders.push(`${abs.replace(PAGES + '/', '')}: ${m[0]}`)
+      }
+    }
+    expect(offenders, 'a confirmed destructive action may not swallow its rejection').toEqual([])
   })
 
   it('no OTHER settings panel swallows a CONFIRMED delete — the ratchet', () => {
