@@ -578,6 +578,19 @@ export interface KnowledgeCollection {
 export interface KnowledgeAnnotation {
   id: string; item_id: string; quote: string; occurrence: number; note: string; created_at: string
 }
+// A near-duplicate candidate for one item (KNOWLEDGE-LIBRARY T3.2). Deliberately NOT a
+// `KnowledgeItem`: the backend returns a lean row and never the embedding, and `reason` is the
+// scorer's own account of WHY these two look alike — the only thing that makes a destructive
+// merge reviewable rather than a leap of faith. See knowledge/store.py::find_duplicates.
+export interface KnowledgeDuplicate {
+  id: string; title: string; item_type: string; created_at: string; word_count: number; reason: string
+}
+// What a merge moved to the survivor. The route reports it per relation so the UI can tell the
+// user what it actually did ("3 collections, 2 mentions") instead of a bare "Merged".
+export interface KnowledgeMergeResult {
+  ok: boolean; kept: string; merged: string
+  moved: { collections: number; tags: number; mentions: number; annotations: number }
+}
 export interface ChatFolder { id: string; name: string; order?: number; collapsed?: boolean; parent_id?: string }
 export interface ChatTag { id: string; name: string; color?: string; order?: number; status?: boolean }
 // A PROPOSED organization for an untagged chat (SM T2.1). `tags` are NAMES, not ids — a
@@ -3868,6 +3881,20 @@ export const api = {
   // would let a caller delete row A while naming item B.
   deleteKnowledgeAnnotation: (annotationId: string) =>
     del(`/api/knowledge/annotations/${encodeURIComponent(annotationId)}`),
+  // ── Dedup / merge (KNOWLEDGE-LIBRARY S3, T3.2) ──
+  // 🔴 NO `.catch(() => [])` HERE, and this one is sharper than the usual case: an empty
+  // duplicates list is the NORMAL answer for almost every item, so a swallowed rejection
+  // renders as "no duplicates" — indistinguishable from the truth, permanently, on the one
+  // surface whose whole job is to tell you two copies exist. The rejection has to reach the
+  // caller so the panel can say the lookup failed instead of silently claiming it is clean.
+  knowledgeDuplicates: (id: string) =>
+    get<{ duplicates: KnowledgeDuplicate[] }>(`/api/knowledge/items/${encodeURIComponent(id)}/duplicates`).then((d) => d.duplicates),
+  // The SURVIVOR is the path id and the loser is in the body — the route's own shape, kept
+  // in the same order here so a caller cannot silently swap them. `confirm: true` is sent by
+  // this helper because the route requires it; the USER's confirmation is a separate, earlier
+  // gate (a named dialog at the call site), not this flag.
+  mergeKnowledgeItems: (keepId: string, mergeId: string) =>
+    post<KnowledgeMergeResult>(`/api/knowledge/items/${encodeURIComponent(keepId)}/merge`, { merge_id: mergeId, confirm: true }),
   // One curation op over many items. Per-item results, because a selection can go
   // stale between the click and the request — the UI reports "38 shelved, 2 not found"
   // rather than treating a partial success as a failure.
