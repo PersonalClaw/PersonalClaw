@@ -69,7 +69,7 @@ import { SnipOverlay } from '../ui/SnipOverlay'
 import { chooseCaptureProvider, cropToPngFile, displayCaptureSupported, grabOneFrame, type SnipRect } from '../ui/composer/displayCapture'
 import { notify } from '../app/appSdk'
 import { spring, stagger, listItemEnter, expr } from '../design/motion'
-import { api, type ApprovalMode, type TaskMode, type ReasoningEffort, type ChatSessionSummary, type ChatHistoryMsg, type DiscoveredAgent, type MemoryMode, type NudgeLoop, type ChatFolder, type ChatTag, type RetagJob, type SessionTemplate } from '../lib/api'
+import { api, type ApprovalMode, type TaskMode, type ReasoningEffort, type ChatSessionSummary, type ChatHistoryMsg, type DiscoveredAgent, type MemoryMode, type NudgeLoop, type ChatFolder, type ChatTag, type RetagJob, type SessionTemplate, type RewindFileWire } from '../lib/api'
 import { useChatSocket, type WsMessage } from '../lib/useChatSocket'
 import { useStreamCoalescer } from './chat/useStreamCoalescer'
 import { FindBar } from './chat/FindBar'
@@ -424,6 +424,7 @@ const SLASH_HELP = [
   '- `/project` — scope this new chat to a project (before it starts)',
   '- `/tools` — open the Tools page',
   '- `/undo [N]` — roll back the last N conversation turns (default 1; side effects are not reverted)',
+  '- `/rewind-to-turn N` — restore the FILES this chat changed after turn N (preview first; add `--confirm` to apply). The conversation is not rewound.',
   '- `/compact` — compact the conversation to free up context',
   '',
   'Type `/` in the message box any time to see and filter the full list.',
@@ -1502,6 +1503,15 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
         void undoTurns(n)
         return
       }
+      // /rewind-to-turn N [--confirm] — restore FILES to their state at the end of turn N.
+      // Two steps on purpose: bare form previews (reads only), --confirm writes. A
+      // destructive filesystem action must be readable before it happens.
+      const rw = t.match(/^\/rewind-to-turn\s+(\d+)(\s+--confirm)?$/i)
+      if (rw) {
+        setInput('')
+        void rewindToTurn(parseInt(rw[1], 10), Boolean(rw[2]))
+        return
+      }
     }
     // GUI-affordance slash commands run instantly and never hit the model.
     if (!isStreaming && handleSlashCommand(t)) return
@@ -1651,6 +1661,45 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
       const rehydrated = hydrateTurns(d.messages || [], false)
       setTurns([...rehydrated, assistantTurn(r.notice)])
     } catch { /* leave the transcript as-is on failure */ }
+  }
+  // /rewind-to-turn N — the FILESYSTEM counterpart of /undo (EXECUTION-ISOLATION §6).
+  // `confirm=false` renders the preview as an assistant notice and stops; `confirm=true`
+  // applies. Nothing on disk changes on the preview pass.
+  async function rewindToTurn(turn: number, confirm: boolean) {
+    const s = sessionRef.current
+    if (!s) return
+    const fmt = (f: RewindFileWire) =>
+      f.action === 'not_captured'
+        ? `- \`${f.path}\` — NOT captured (${f.reason}); it will not be restored`
+        : f.action === 'delete'
+          ? `- \`${f.path}\` — would be DELETED (it did not exist at turn ${turn})`
+          : f.action === 'unchanged'
+            ? `- \`${f.path}\` — already matches turn ${turn}; no change`
+            : `- \`${f.path}\` — restore ${f.current_size} → ${f.restored_size} bytes`
+    try {
+      if (!confirm) {
+        const p = await api.rewindPreview(s, turn)
+        const lines = [
+          `**Rewind to turn ${turn} — preview.** Nothing has been written yet.`,
+          ...(p.warnings || []).map((w) => `> ${w}`),
+          ...(p.files || []).map(fmt),
+          (p.files || []).length === 0 ? '_No recorded file changes after that turn._' : '',
+          `Run \`/rewind-to-turn ${turn} --confirm\` to apply. This restores files only — the conversation stays as the record of what happened.`,
+        ].filter(Boolean)
+        setTurns((prev) => [...prev, assistantTurn(lines.join('\n'))])
+        return
+      }
+      const r = await api.rewindToTurn(s, turn)
+      const lines = [
+        r.notice,
+        ...r.restored.map((p) => `- restored \`${p}\``),
+        ...r.deleted.map((p) => `- deleted \`${p}\``),
+        ...r.errors.map((e) => `- FAILED: ${e}`),
+      ]
+      setTurns((prev) => [...prev, assistantTurn(lines.join('\n'))])
+    } catch (e) {
+      setTurns((prev) => [...prev, assistantTurn(`Rewind failed: ${String(e)}`)])
+    }
   }
   async function transcribe(blob: Blob, opts?: { duplex?: boolean }): Promise<string> {
     const r = await api.transcribeAudio(blob, { duplex: opts?.duplex, session: sessionRef.current || '' })

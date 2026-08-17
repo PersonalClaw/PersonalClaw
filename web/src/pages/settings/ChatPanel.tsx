@@ -25,6 +25,7 @@ export function ChatPanel() {
   const [session, setSession] = useState<Record<string, unknown> | null>(null)
   const [routing, setRouting] = useState<Record<string, unknown> | null>(null)
   const [resilience, setResilience] = useState<Record<string, unknown> | null>(null)
+  const [checkpoints, setCheckpoints] = useState<Record<string, unknown> | null>(null)
   const { options: agentOptions, discovered } = useAgentCatalog()
 
   // Stale-while-revalidate + persist: paint instantly on revisit/reload from a
@@ -47,20 +48,21 @@ export function ChatPanel() {
       session: (plaw.session ?? {}) as Record<string, unknown>,
       routing: (plaw.agents_routing ?? {}) as Record<string, unknown>,
       resilience: (plaw.resilience ?? {}) as Record<string, unknown>,
+      checkpoints: (plaw.checkpoints ?? {}) as Record<string, unknown>,
     }
   }, { persist: true })
 
   useEffect(() => {
     if (data) {
       setCfg(data.cfg); setSession(data.session); setRouting(data.routing)
-      setResilience(data.resilience)
+      setResilience(data.resilience); setCheckpoints(data.checkpoints)
     }
   }, [data])
 
   // Error BEFORE the skeleton, or it is unreachable: `data` is undefined for the loading, failed AND
   // empty cases. Same one-line shape `AgentDefaultsPanel` ships for the same endpoint.
   if (!data && loadErr) return <LoadError what="settings" error={loadErr} onRetry={refresh} />
-  if (!data || !cfg || !session || !routing || !resilience) return <FormSkeleton sections={3} what="settings" />
+  if (!data || !cfg || !session || !routing || !resilience || !checkpoints) return <FormSkeleton sections={3} what="settings" />
 
   return (
     <div>
@@ -71,6 +73,7 @@ export function ChatPanel() {
       <MidTurnSection resilience={resilience} setResilience={setResilience} />
       <RoutingSection routing={routing} setRouting={setRouting} />
       <LifecycleSection session={session} setSession={setSession} agentOptions={agentOptions} discovered={discovered} />
+      <CheckpointsSection checkpoints={checkpoints} setCheckpoints={setCheckpoints} />
       <StartersSection />
     </div>
   )
@@ -292,6 +295,44 @@ function MessagesSection({ cfg, setCfg }: { cfg: DashboardConfig; setCfg: (c: Da
         <Row label="Confirm before closing a session" hint="Ask for confirmation when closing a session from the sidebar.">
           <Toggle on={cfg.confirm_close_session} onChange={(v) => save({ confirm_close_session: v })} label="Confirm before closing" />
         </Row>
+      </div>
+    </Section>
+  )
+}
+
+// ── File checkpoints (checkpoints.* config) ──────────────────────────────────
+/** The bounds on `/rewind-to-turn`'s backing store (EXECUTION-ISOLATION §6).
+ *
+ *  Only the BOUNDS are here. Which files are never copied is a code-level floor with no
+ *  config field, deliberately — so this panel cannot be used to widen what the store may
+ *  hold. The hints say what turning each knob down actually costs, because a cap the user
+ *  lowers silently makes older rewinds impossible. */
+function CheckpointsSection({ checkpoints, setCheckpoints }: {
+  checkpoints: Record<string, unknown>; setCheckpoints: (c: Record<string, unknown>) => void
+}) {
+  const [saved, flash] = useSavedFlash()
+  const patch = (key: string, value: unknown) => {
+    const prev = checkpoints[key]
+    setCheckpoints({ ...checkpoints, [key]: value })
+    api.patchConfig(`checkpoints.${key}`, value).then(flash).catch((e) => {
+      setCheckpoints({ ...checkpoints, [key]: prev })
+      notify(`Couldn't save ${key}: ${String((e as Error)?.message || e)}`, 'error')
+    })
+  }
+  const on = checkpoints.enabled !== false
+  return (
+    <Section title="File checkpoints" hint="Before the agent's first write to a file in a turn, its current bytes are saved so /rewind-to-turn can restore them. Files only — never the conversation. Credential files (.env, keys) are never copied, so they are never restored either.">
+      <div className="rounded-lg bg-surface-container px-4 py-1">
+        <Row label="Back up files before an edit" hint={on ? 'A wrong edit is recoverable with /rewind-to-turn N.' : 'Off — a wrong edit is gone. Nothing is being recorded.'}>
+          <div className="flex items-center gap-2"><SavedToast show={saved} /><Toggle on={on} onChange={(v) => patch('enabled', v)} label="Back up files before an edit" /></div>
+        </Row>
+        {on && (
+          <>
+            <NumberRow label="Store cap per chat" hint="Megabytes of saved file contents kept per chat. When a new backup would exceed this, the oldest turns are dropped — rewinding past them stops being possible. 0 = no byte cap." value={Number(checkpoints.max_mb ?? 200)} min={0} max={100000} step={10} suffix="MB" onCommit={(n) => patch('max_mb', n)} saved={saved} />
+            <NumberRow label="Turns kept" hint="How many recent turns you can rewind to. Older turns are dropped." value={Number(checkpoints.max_turns ?? 50)} min={1} max={1000} step={1} onCommit={(n) => patch('max_turns', n)} saved={saved} />
+            <NumberRow label="Largest file backed up" hint="A file bigger than this is noted but not copied, so a rewind reports it as not captured instead of restoring it. Keeps one big write from filling the whole store. 0 = no limit." value={Number(checkpoints.max_file_mb ?? 8)} min={0} max={10000} step={1} suffix="MB" onCommit={(n) => patch('max_file_mb', n)} saved={saved} />
+          </>
+        )}
       </div>
     </Section>
   )

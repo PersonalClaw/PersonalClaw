@@ -31,6 +31,10 @@ from personalclaw.dashboard.chat_channel import (  # noqa: F401
     api_chat_session_channel_link,
     api_chat_session_handoff,
 )
+from personalclaw.dashboard.chat_file_rewind import (  # noqa: F401
+    api_chat_session_rewind,
+    api_chat_session_rewind_preview,
+)
 from personalclaw.dashboard.chat_folders import (  # noqa: F401
     _generate_folder_icon,
     api_chat_folder_create,

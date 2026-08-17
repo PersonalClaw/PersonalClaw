@@ -2796,6 +2796,41 @@ export interface PackUpdateRec {
   skipped: string[]
 }
 
+// /rewind-to-turn (EXECUTION-ISOLATION §6). `action` is a closed set — "not_captured" is
+// the honest case: the file was deliberately never backed up (credential-shaped, or over
+// the per-file cap), so the rewind will NOT restore it and the UI must say so rather than
+// implying success.
+export interface RewindFileWire {
+  path: string
+  action: 'restore' | 'delete' | 'unchanged' | 'not_captured'
+  turn: number
+  reason: string
+  current_size: number
+  restored_size: number
+  current_sha256: string
+  restored_sha256: string
+  diff: string
+}
+export interface RewindPreviewWire {
+  session: string
+  turn: number
+  turns_affected: number[]
+  warnings: string[]
+  files: RewindFileWire[]
+  notice?: string
+}
+export interface RewindApplyWire {
+  ok: boolean
+  turn: number
+  restored: string[]
+  deleted: string[]
+  skipped: string[]
+  errors: string[]
+  safety_turn: number
+  notice: string
+  preview: RewindPreviewWire
+}
+
 export const api = {
   // agents & providers
   agentsInstalled: () => get<AgentDef[]>('/api/agents/installed'),
@@ -3394,6 +3429,13 @@ export const api = {
   // how many turns were removed + an honest notice that side effects were NOT reverted.
   undoChat: (session: string, n = 1) =>
     post<{ ok: boolean; turns_undone: number; notice: string }>(`/api/chat/sessions/${session}/undo`, { n }),
+  // /rewind-to-turn N (EXECUTION-ISOLATION §6) — the FILESYSTEM counterpart of /undo:
+  // restores files the turns after N wrote, and never touches the transcript. GET is a
+  // read-only preview (what would change, with diffs); POST needs confirm:true.
+  rewindPreview: (session: string, turn: number) =>
+    get<RewindPreviewWire>(`/api/chat/sessions/${session}/rewind?turn=${turn}`),
+  rewindToTurn: (session: string, turn: number) =>
+    post<RewindApplyWire>(`/api/chat/sessions/${session}/rewind`, { turn, confirm: true }),
 
   // auto-nudge: a reactive same-session loop — when a turn completes and no user
   // input arrives within idle_secs, the service injects `message` into the SAME
