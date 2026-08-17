@@ -387,3 +387,62 @@ Two owner decisions. Code recon (2026-07-26): today's `DashboardPage.tsx` render
 | A2-1 | View registry + `dashboard_views.json` (tile store folds into `artifact:` refs) + locked Overview preset + navbar pinning; default state renders ≈ today's page | views store module, `/api/dashboard/views` CRUD (presets read-only), `DashboardPage.tsx`, `widgets/` ref table | Overview matches today's layout; artifact tiles are `artifact:` refs in the same schema; no x/y anywhere; presets refuse edit/delete |
 | A2-2 | Mission Control preset: four attention lanes over the unified attention store; inline approve/deny; pending-question options as actionable card buttons | Mission Control view components, `DashboardLive` | approving from a lane resolves the approval; a pending question answered from the card unblocks its loop; task gated on INBOX-UNIFICATION S1-2 |
 | A2-3 | `AgentActivityFeed` doc + `useAgentActivity()` hook + first-party modern world (interpolated states, reduced-motion static) + APP-PLATFORM-EVOLUTION coordination note for app-contributed worlds | docs, `web/src/lib/useAgentActivity.ts`, world view components | the world renders live states from the hook only (no private endpoints); reduced-motion audit passes; app-world provider is a doc note, not code |
+
+---
+
+## Execution log
+
+### 2026-08-16 — `AS-5` widget action bridge (Amendment round 1, T5-A1 + T5-A2) — DONE
+
+Extracted the bridge, closed the non-chat gap, and turned the wire into a contract
+with teeth. **Behaviour was pinned before it was moved**: nine tests were written and
+run green against the pre-extraction inline path (`WidgetFrame`'s message listener and
+ChatPage's `ne:widget-action` listener, the latter copied verbatim into a throwaway
+host), then the same tests were re-run green against the extracted hook. The child
+document's byte-identity was proved directly — `buildSrcdoc` output was compared
+string-for-string against `HEAD`'s across all eight option combinations before the
+scratch comparison was deleted.
+
+- **`web/src/ui/widget/useWidgetActionBridge.ts`** (new) — one validator
+  (`readWidgetMessage`), one `[UI]` composer (`composeWidgetActionText`), one publisher,
+  one producer hook (`useWidgetWire`), and two consumers. `WidgetFrame`,
+  `ReactWidgetFrame` and the artifact-library preview all validate through it now, where
+  before two hosts carried their own near-identical listener and a third had none.
+- **Non-chat hosts route through the ONE `ne:launch-chat` path.** The fallback consumer
+  is registered once, at the app shell (`App.tsx`), so a *new* widget host inherits
+  routing rather than dropping clicks. A mounted chat host claims the bridge ahead of it,
+  which is what keeps a chat-born action in its own conversation — exactly one consumer
+  runs per action.
+- **The auto-send authority is in memory, not the URL.** `?seed=` deliberately does not
+  send, and a `?send=1` companion would have made "fire a turn at the agent" something a
+  link could do. The `[UI]` text is staged in-process, drained once by the chat host, and
+  expires — so only a real widget action can arm it.
+- **Trust boundary, named and tested.** `docs/architecture/widgets.md` documents the
+  child→parent vocabulary (`widget-height` / `widget-action` / `widget-error`), the
+  reserved `__edit_mode_*` parent→child namespace, and the additive-only evolution rule.
+  The reservation is *enforced*, not just written down: a child claiming that prefix is
+  refused. The human-gesture gate (`isTrusted`, in the child's `HOST_SCRIPT`) is executed
+  in `widgetHostScript.test.ts` rather than grepped for.
+- **`ReactWidgetFrame` deliberately does not forward actions.** Sharing one hook made it
+  visible that the react harness has no `isTrusted` click gate, so a react widget's own
+  script could have minted a turn with no human involved. Action forwarding is opt-in per
+  host and asserted absent there.
+- **DISCOVERY — the plan names the wrong file for the library-preview leg.** T5-A1 lists
+  `ui/content/chatEmbeds.tsx`; the artifact-library preview of a `kind:widget` artifact
+  actually renders through `IframeHtmlPreview` in `ui/content/renderers.tsx` (the content
+  registry's `preview` capability), which had no message listener at all. `chatEmbeds`
+  was never the gap — it renders `WidgetFrame`, which always published; the gap was that
+  nothing outside chat *consumed*. Both are covered now.
+- **Two hardenings beyond a faithful extraction, called out rather than smuggled in:**
+  a 16 KiB byte-exact clip on the `[UI]` text with a `…truncated` marker, and refusal of
+  a payload `JSON.stringify` cannot serialize (`postMessage`'s structured clone carries
+  cycles; the inline version would have thrown inside a window listener — a widget
+  crashing its host). Both are new behaviour only for inputs the old path mishandled.
+- **Validated as a user** against an isolated home on port 10211 (Vite serving this
+  worktree's frontend). All three legs driven with real trusted clicks inside the
+  sandboxed iframe: the dashboard tile band and the artifact-library preview each opened
+  a chat and landed `[UI] refresh: {"view":"sales","formData":{"range":"30d"}}` as the
+  session's first turn (the tile band's copy carrying the C32 `refresh artifact
+  "sales-snapshot" in place` suffix, because that widget is saved); a widget rendered
+  mid-conversation landed `[UI] drill: {"origin":"chat","formData":{"window":"q2"}}` in
+  the SAME session, opening no new one. No console errors.

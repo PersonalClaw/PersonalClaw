@@ -2109,7 +2109,7 @@
         {
           "id": "AS-5",
           "title": "Widget action bridge: extract useWidgetActionBridge, route non-chat hosts, harden",
-          "status": "todo",
+          "status": "done",
           "scope": "Amendment 2026-07-26 round 1 (interactive in-chat widgets), tasks T5-A1 and T5-A2; \u00a75.4's raw-HTML widget path (the leg \u00a75.4 leaves in the iframe). Bridge exists un-extracted today (WidgetFrame.tsx\u2192ne:widget-action\u2192ChatPage.tsx).",
           "done_when": "web/src/ui/widget/useWidgetActionBridge.ts extracted with ChatPage behavior byte-identical; clicking a [data-action] in an artifact-library preview (chatEmbeds) and in the tile band lands the [UI] turn in a chat session via the ne:launch-chat path; the child\u2192parent wire contract (widget-height/widget-action/widget-error; reserved __edit_mode_* parent\u2192child) is documented with a test fixture; isTrusted and e.source spoof fixtures produce no turn; oversized payloads clip at 16 KiB with an honest \u2026truncated marker.",
           "deps": [
@@ -7427,8 +7427,8 @@
         "plan": "AS"
       },
       {
-        "id": "AS-5",
-        "title": "Widget action bridge: extract useWidgetActionBridge, route non-chat hosts, harden",
+        "id": "AS-6",
+        "title": "Genui action routing + app-contributed components + L0/L1/L2 surface overlay + safe mode",
         "plan": "AS"
       },
       {
@@ -9757,9 +9757,9 @@
         "code": "AS",
         "plan": "AMBIENT-SURFACES",
         "total_atoms": 9,
-        "done": 2,
+        "done": 3,
         "in_progress": 0,
-        "todo": 7,
+        "todo": 6,
         "blocked": 0
       },
       {
