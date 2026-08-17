@@ -3,6 +3,7 @@ import { AlertTriangle, Scale, Sparkles } from 'lucide-react'
 import { api, type KnowledgeConflict } from '../../lib/api'
 import { EmptyState, ListSkeleton } from '../../ui/ListScaffold'
 import { fvs } from '../../design/fontWeight'
+import { accentChip } from '../../design/accent'
 
 /** Recorded contradictions in the knowledge store (KNOWLEDGE-SYNTHESIS §3.2).
  *
@@ -106,8 +107,8 @@ function ClaimSide(
       </div>
       {preferred && (
         <span
-          className="shrink-0 rounded px-1.5 py-0.5 text-[0.75rem] text-primary"
-          style={{ background: 'color-mix(in srgb, var(--color-primary) 14%, transparent)' }}>
+          className="shrink-0 rounded px-1.5 py-0.5 text-[0.75rem]"
+          style={accentChip}>
           higher-trust source
         </span>
       )}
