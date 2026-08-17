@@ -23,6 +23,21 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
   have dismissed every tip on the page or turned tips off entirely. If your system asks for reduced
   motion the spotlight stops pulsing and the card stops sliding; nothing is slowed down, it is just
   still.
+- **The audit log can now answer "what did my agent actually do?" — and tell you which record was
+  tampered with.** Settings → Audit log used to hand you the last 200 events and filter them in
+  your browser, so anything older was simply unreachable. It now pages properly: you get the most
+  recent events, a "Load older events" button walks back through the whole log, and the filters
+  (operation, caller, downstream service, and a from/to date range) run on the server, so they
+  search everything rather than only what happened to be on screen. Paging is stable while your
+  agent keeps working — new events landing mid-scroll can no longer make a page repeat rows or,
+  worse, quietly skip them. Each row now carries its own tamper check: if a record was altered on
+  disk after it was written, that row is called out on its own and counted in a banner at the top,
+  and "Verify" tells you how many of how many events still check out. Nothing here leaks
+  credentials — a token that appeared in a command shows as `[REDACTED: credential]` while the
+  rest of the command stays readable, so an entry is still useful for working out what happened.
+  Finally, "Export" downloads exactly what you are looking at as a `.jsonl` file, one event per
+  line, safe to attach to a bug report and readable by anything that speaks JSON. Reading this log
+  is yours alone: an installed app can never fetch it, even one that asks for it.
 - **First run now picks up where you left it, and you can walk out of it at any point.** Reload
   the page halfway through setup and you come back to the step you were on rather than the
   beginning — the apps you installed stay installed, and a card you already ran still counts as

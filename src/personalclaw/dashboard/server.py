@@ -1158,12 +1158,15 @@ async def start_dashboard(
     app.router.add_get("/api/logs", handlers.api_logs)
     app.router.add_get("/api/logs/level", handlers.api_log_level_get)
     app.router.add_post("/api/logs/level", handlers.api_log_level)
-    app.router.add_get("/api/sel/events", handlers.api_sel_events)
-    app.router.add_get("/api/sel/verify", handlers.api_sel_verify)
     app.router.add_post("/api/sel/rotate", handlers.api_sel_rotate)
     app.router.add_get("/api/security/stats", handlers.api_security_stats)
     app.router.add_get("/api/security/denied-commands", handlers.api_security_denied_commands)
     app.router.add_get("/api/security/egress", handlers.api_security_egress)
+    # The SEL read surface: paginated + filtered + chain-verify, owner-only. Superseded
+    # `/api/sel/{events,verify}` — one audit log, one way to read it.
+    from personalclaw.dashboard.handlers.security_audit import register_security_audit_routes
+
+    register_security_audit_routes(app)
     app.router.add_get("/api/approvals", handlers.api_approvals)
     app.router.add_post("/api/approvals/{id}/{action}", handlers.api_approval_resolve)
 

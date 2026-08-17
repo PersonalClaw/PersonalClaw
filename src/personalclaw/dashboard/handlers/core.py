@@ -291,39 +291,6 @@ async def api_stt_transcribe(request: web.Request) -> web.Response:
 # ── Security Event Log API ──
 
 
-async def api_sel_events(request: web.Request) -> web.Response:
-    """GET /api/sel/events — recent security events."""
-
-    try:
-        limit = min(int(request.query.get("limit", "100")), 1000)
-    except (TypeError, ValueError):
-        limit = 100
-    events = _sel().recent(limit=limit)
-    return web.json_response({"events": events, "count": len(events)})
-
-
-async def api_sel_verify(request: web.Request) -> web.Response:
-    """GET /api/sel/verify — verify HMAC chain integrity over the recent window.
-
-    The SEL log is append-only and unbounded, so we sample-verify the most recent
-    entries (fast, bounded) rather than walking the whole chain. ``full=1`` forces
-    an exhaustive check.
-    """
-    from personalclaw.sel import _VERIFY_WINDOW
-
-    full = request.query.get("full") in ("1", "true", "yes")
-    checked, valid = _sel().verify_integrity(max_entries=None if full else _VERIFY_WINDOW)
-    return web.json_response(
-        {
-            "valid": checked == valid,
-            "count": checked,
-            "tampered": checked - valid,
-            "integrity": "ok" if checked == valid else "compromised",
-            "windowed": not full,
-        }
-    )
-
-
 async def api_sel_rotate(request: web.Request) -> web.Response:
     """POST /api/sel/rotate — archive existing SEL log and start a fresh chain.
 

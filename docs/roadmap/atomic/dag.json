@@ -6532,7 +6532,7 @@
         {
           "id": "SH-8",
           "title": "SEL audit surface: paginated /api/security/audit (caller/operation/outcome/downstream_service/time filters) + /api/security/audit/verify wrapping verify_integrity + 'What did my agent do' Settings page with credential-safe JSONL export",
-          "status": "todo",
+          "status": "done",
           "scope": "Session 4 \u2014 SEL surface + external review / T4.1, T4.2, V4; Design S4; Contracts C4",
           "done_when": "filters work; verify endpoint returns (checked, ok) with a tamper fixture showing ok=false; page renders real SEL events and shows a deliberately-broken chain link; export reuses redact and excludes secrets (fixture-verified); both themes/WCAG; export round-trips",
           "deps": []
@@ -7887,11 +7887,6 @@
       {
         "id": "SH-7",
         "title": "Mode-independence matrix: baseline-matched command refused under default/auto/yolo/acceptEdits and trust simulators, deny-before-approval ordering regression-pinned, baseline-tamper corpus class added to S3 harness",
-        "plan": "SH"
-      },
-      {
-        "id": "SH-8",
-        "title": "SEL audit surface: paginated /api/security/audit (caller/operation/outcome/downstream_service/time filters) + /api/security/audit/verify wrapping verify_integrity + 'What did my agent do' Settings page with credential-safe JSONL export",
         "plan": "SH"
       },
       {
@@ -10176,9 +10171,9 @@
         "code": "SH",
         "plan": "SECURITY-HARDENING",
         "total_atoms": 10,
-        "done": 5,
+        "done": 6,
         "in_progress": 0,
-        "todo": 4,
+        "todo": 3,
         "blocked": 1
       },
       {
