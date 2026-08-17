@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { Play, Sparkles, Trash2, Workflow } from 'lucide-react'
+import { Play, Search, Sparkles, Trash2, Workflow } from 'lucide-react'
 import { TopBar } from '../../ui/TopBar'
 import { EmptyState, ListRow, Loading, LoadError } from '../../ui/ListScaffold'
 import { ListControls } from '../../ui/ListControls'
@@ -232,13 +232,20 @@ export function WorkflowsListPage({ navigate, query: routeQuery, setQuery }: Rou
           defsErr ? (
             <LoadError what="workflow definitions" error={defsErr} onRetry={load} />
           ) : filteredDefs.length === 0 ? (
-            <EmptyState
-              icon={Workflow}
-              title={q ? 'No matching definitions' : 'No workflow definitions yet'}
-              hint={q
-                ? 'Try a different search.'
-                : 'Ask in chat to author one — "set up a workflow that…" — or install a template pack.'}
-            />
+            // The action is on the genuinely-empty branch only. A search that matched nothing
+            // gets the fact and nothing else: offering "Start from template" to someone who
+            // mistyped a filter answers a question they did not ask, and the header already
+            // carries that control for when they do.
+            q ? (
+              <EmptyState icon={Search} title="No matching definitions" hint="Try a different search." />
+            ) : (
+              <EmptyState
+                icon={Workflow}
+                title="No workflow definitions yet"
+                hint="A workflow is a repeatable plan an agent runs step by step. Start from a template and describe what you want, or ask in chat to author one."
+                action={{ label: 'Start from template', onClick: startFromTemplate, icon: Sparkles }}
+              />
+            )
           ) : (
             <div className="flex flex-col gap-xs">
               {filteredDefs.map((d, i) => (
@@ -317,11 +324,18 @@ export function WorkflowsListPage({ navigate, query: routeQuery, setQuery }: Rou
         ) : runsErr ? (
           <LoadError what="workflow runs" error={runsErr} onRetry={load} />
         ) : filteredRuns.length === 0 ? (
-          <EmptyState
-            icon={Workflow}
-            title={q ? 'No matching runs' : 'No workflow runs yet'}
-            hint={q ? 'Try a different search.' : 'Start one from the Definitions tab, or ask in chat.'}
-          />
+          q ? (
+            <EmptyState icon={Search} title="No matching runs" hint="Try a different search." />
+          ) : (
+            // The hint used to TELL the user where the Definitions tab was; the action takes
+            // them there, which is the difference between an empty state and a signpost.
+            <EmptyState
+              icon={Workflow}
+              title="No workflow runs yet"
+              hint="A run is one execution of a workflow — every step, its output, and where it stopped. Pick a definition to start your first."
+              action={{ label: 'Browse definitions', onClick: () => setTab('defs'), icon: Workflow }}
+            />
+          )
         ) : (
           <div className="flex flex-col gap-xs">
             {filteredRuns.map((r, i) => {
