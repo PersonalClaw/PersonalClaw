@@ -54,6 +54,20 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
   zip, small enough to paste. Importing one goes through exactly the same checks a pack file
   does, and every piece inside carries its own fingerprint — change one byte anywhere and the
   whole import is refused before anything is written.
+- **You can now edit the memory registers the assistant reads every session, and see who your
+  memories are about.** Memory → Studio grew two new kinds beside Facts and Episodes: **Slots**,
+  the small always-injected registers (persona, preferences, pending items, glossary, self notes,
+  self model), and **Entities**, the people, projects and tools your memories name. Editing a slot
+  shows its live budget, and if a line will not fit nothing is written — you are told exactly which
+  of your own lines to drop instead. Removing one retires it rather than deleting it, so a later
+  reflection pass cannot quietly put it back. Selecting a fact now shows which entities it links
+  to, with the reason for each link, which is how you answer "why is this in my context?". Names
+  that keep coming up but are not entities yet queue up for a yes/no instead of being created
+  behind your back. The graph canvas can switch from records to the entity map, coloured by
+  neighbourhood and filterable by link type, provenance and confidence — and **Export as HTML** in
+  Memory → Health saves it as one file you can mail or archive, which opens years later with no
+  server and no scripts in it. Settings gained the vault folder, a topology-orientation switch, the
+  claim-attribution switch, and a budget for what slots may cost each turn.
 
 - **A guided tour of the app, and you can take it again whenever you like.** The last screen of
   setup now offers a quick walk through the five places that matter: the sidebar, chat, the Inbox,

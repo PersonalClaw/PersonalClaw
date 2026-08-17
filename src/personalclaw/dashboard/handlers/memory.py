@@ -193,6 +193,10 @@ async def api_memory_settings(request: web.Request) -> web.Response:
             "push_min_confidence": cfg.memory.push_min_confidence,
             "graph_topology_in_context": cfg.memory.graph_topology_in_context,
             "holder_attribution": cfg.memory.holder_attribution,
+            # Read here, written through the _EDITABLE_CONFIG PATCH (MGAV-9): the settings
+            # tab needs the current value to render its control, and a read on the panel's
+            # own endpoint is what keeps that control from having to guess the default.
+            "slot_size_cap": cfg.memory.slot_size_cap,
         }
     )
 
@@ -1515,6 +1519,178 @@ async def api_memory_entity_proposals(request: web.Request) -> web.Response:
         None, lambda: svc.graph_accept_proposal(name, entity_type)
     )
     return web.json_response({"ok": True, "id": entity_id})
+
+
+async def api_memory_entity_proposals_list(request: web.Request) -> web.Response:
+    """GET /api/memory/entities/proposals — the accept queue (§7.1).
+
+    The READ half of the propose-don't-write loop. The POST beside it has shipped since
+    MGAV-1, but nothing could list what there was to decide about, so the decision surface
+    existed with no way to reach it. Returns ``[]`` (not an error) with the graph off: an
+    empty queue and a disabled graph are different states, which is what ``enabled`` says.
+    """
+    svc = _get_service(request.app["state"])
+    loop = asyncio.get_event_loop()
+    proposals = await loop.run_in_executor(None, svc.graph_proposals)
+    for proposal in proposals:
+        proposal["name"] = _redact_memory_field(proposal.get("name"))
+    return web.json_response({"proposals": proposals, "enabled": svc.has_graph})
+
+
+async def api_memory_record_links(request: web.Request) -> web.Response:
+    """GET /api/memory/record-links?ref=sem:<key> — one record's entity links (§7.1).
+
+    A query param rather than a path segment because the ref is a composite (``sem:<key>``)
+    whose key can itself contain slashes and colons; encoding that into a path segment reads
+    as a route with two ids.
+    """
+    svc = _get_service(request.app["state"])
+    ref = request.query.get("ref", "")
+    if not ref:
+        return web.json_response({"error": "ref is required"}, status=400)
+    loop = asyncio.get_event_loop()
+    links = await loop.run_in_executor(None, lambda: svc.graph_record_links(ref))
+    for link in links:
+        if link.get("context"):
+            link["context"] = _redact_memory_field(link["context"])
+        link["entity_name"] = _redact_memory_field(link.get("entity_name"))
+    return web.json_response({"links": links, "ref": ref, "enabled": svc.has_graph})
+
+
+async def api_memory_entity_graph(request: web.Request) -> web.Response:
+    """GET /api/memory/graph/entities — the entity topology (§7.2).
+
+    Distinct from ``/api/memory/graph``, which visualizes RECORDS. This one returns the
+    entity-level graph the Louvain pass partitions, each node carrying its community so the
+    canvas colours by the same clustering the topology block describes.
+    """
+    svc = _get_service(request.app["state"])
+    loop = asyncio.get_event_loop()
+    graph = await loop.run_in_executor(None, svc.entity_graph)
+    for node in graph.get("nodes", []):
+        node["name"] = _redact_memory_field(node.get("name"))
+    return web.json_response({**graph, "enabled": svc.has_graph})
+
+
+async def api_memory_graph_export(request: web.Request) -> web.Response:
+    """GET /api/memory/graph/export — the entity graph as ONE self-contained HTML file (§7.2).
+
+    Rendered server-side and script-free; see ``memory_graph_export`` for why that is a
+    deliberate departure from the plan's interactive sketch. Served as a download because the
+    point of the artifact is that it survives leaving this gateway.
+    """
+    from datetime import datetime, timezone
+
+    from personalclaw.memory_graph_export import render_graph_html
+
+    svc = _get_service(request.app["state"])
+    loop = asyncio.get_event_loop()
+    graph = await loop.run_in_executor(None, svc.entity_graph)
+    for node in graph.get("nodes", []):
+        node["name"] = _redact_memory_field(node.get("name"))
+    now = datetime.now(tz=timezone.utc)
+    stamp = now.strftime("%Y-%m-%d %H:%M UTC")
+    try:
+        document = await loop.run_in_executor(
+            None, lambda: render_graph_html(graph, generated_at=stamp)
+        )
+    except Exception:
+        logger.exception("memory graph export failed")
+        _sel().log_tool_invocation(
+            session_key="dashboard", tool_name="memory_graph_export", outcome="failure"
+        )
+        return web.json_response({"error": "failed to render the graph export"}, status=500)
+    _sel().log_tool_invocation(
+        session_key="dashboard", tool_name="memory_graph_export", outcome="success"
+    )
+    filename = f"memory-graph-{now.strftime('%Y%m%d-%H%M%S')}.html"
+    return web.Response(
+        text=document,
+        content_type="text/html",
+        charset="utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+# ── Memory slots (§6/§7.1) ───────────────────────────────────────────────────
+# The editor half of MGAV-8's registers. Reads list every built-in (materialized or not);
+# writes go through MemoryService → memory_slots → set_semantic, so the WAL and undo_event
+# cover a hand-typed slot line exactly as they cover a fact.
+
+
+async def api_memory_slots(request: web.Request) -> web.Response:
+    """GET /api/memory/slots — every slot with its lines, budget and live size."""
+    svc = _get_service(request.app["state"])
+    loop = asyncio.get_event_loop()
+    slots = await loop.run_in_executor(None, svc.slots)
+    for slot in slots:
+        for line in slot.get("lines", []):
+            line["text"] = _redact_memory_field(line.get("text"))
+    from personalclaw import memory_slots as _slots
+    from personalclaw.config.loader import AppConfig  # noqa: F811
+
+    limit = _slots.resolve_block_limit(getattr(AppConfig.load().memory, "slot_size_cap", None))
+    return web.json_response({"slots": slots, "block_limit": limit})
+
+
+async def api_memory_slot_append(request: web.Request) -> web.Response:
+    """POST /api/memory/slots/{name}/lines — append one line.
+
+    An over-cap append is a **409 carrying the trim proposal**, not a 400 and not a silent
+    truncation: MGAV-8's contract is that the human chooses which of their own lines to lose,
+    so the response has to hand the UI the candidate list to offer.
+    """
+    svc = _get_service(request.app["state"])
+    name = request.match_info.get("name", "")
+    try:
+        body = await request.json()
+    except (json.JSONDecodeError, ValueError):
+        return web.json_response({"error": "body must be JSON"}, status=400)
+    text = str(body.get("text", "") or "").strip()
+    if not name:
+        return web.json_response({"error": "slot name is required"}, status=400)
+    if not text:
+        return web.json_response({"error": "text is required"}, status=400)
+    from personalclaw.memory_slots import SlotCapExceeded
+
+    loop = asyncio.get_event_loop()
+    try:
+        lines = await loop.run_in_executor(None, lambda: svc.slot_append(name, text))
+    except SlotCapExceeded as exc:
+        return web.json_response(
+            {"error": exc.proposal.message, "proposal": exc.proposal.to_dict()}, status=409
+        )
+    _sel().log_tool_invocation(
+        session_key="dashboard", tool_name="memory_slot_append", outcome="success"
+    )
+    return web.json_response({"ok": True, "lines": lines})
+
+
+async def api_memory_slot_line_retire(request: web.Request) -> web.Response:
+    """POST /api/memory/slots/{name}/lines/retire — tombstone a line as the HUMAN.
+
+    Tombstone, not delete — hence a retire route rather than a DELETE: the row KEEPS the
+    line, marked, so a reflection pass can never re-derive something the user removed
+    (MGAV-8's resurrection guard reads ``tombstoned_by == "human"``). Calling it DELETE would
+    promise a removal the storage model deliberately does not perform.
+    """
+    svc = _get_service(request.app["state"])
+    name = request.match_info.get("name", "")
+    try:
+        body = await request.json()
+    except (json.JSONDecodeError, ValueError):
+        return web.json_response({"error": "body must be JSON"}, status=400)
+    text = str(body.get("text", "") or "").strip()
+    if not name or not text:
+        return web.json_response({"error": "slot name and text are required"}, status=400)
+    loop = asyncio.get_event_loop()
+    ok = await loop.run_in_executor(None, lambda: svc.slot_tombstone(name, text))
+    if not ok:
+        return web.json_response({"error": "that line is not in the slot"}, status=404)
+    _sel().log_tool_invocation(
+        session_key="dashboard", tool_name="memory_slot_tombstone", outcome="success"
+    )
+    return web.json_response({"ok": True})
 
 
 async def api_memory_graph_rebuild(request: web.Request) -> web.Response:

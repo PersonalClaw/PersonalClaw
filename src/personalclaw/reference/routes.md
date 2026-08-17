@@ -396,6 +396,7 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `POST /api/memory/enable-embeddings` — build the FAISS vector store for the active native model.
 - `GET /api/memory/entities` — the entity set with inbound-link counts.
 - `POST /api/memory/entities` — declare an entity, then re-link the store.
+- `GET /api/memory/entities/proposals` — the accept queue (§7.1).
 - `POST /api/memory/entities/proposals` — accept or reject a proposed entity.
 - `GET /api/memory/entities/{entity_id}/backlinks` — what mentions this entity.
 - `GET /api/memory/episodic` — paginated list of episodic memories.
@@ -404,6 +405,8 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `GET /api/memory/events` — paginated audit trail.
 - `POST /api/memory/events/{event_id}/undo` — reverse a logged memory mutation.
 - `GET /api/memory/graph` — return all memory as nodes + edges for graph visualization.
+- `GET /api/memory/graph/entities` — the entity topology (§7.2).
+- `GET /api/memory/graph/export` — the entity graph as ONE self-contained HTML file (§7.2).
 - `POST /api/memory/graph/rebuild` — seed entities, then link every record.
 - `GET /api/memory/history` — recent daily summaries.
 - `PUT /api/memory/history` — recent daily summaries.
@@ -417,11 +420,15 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `PUT /api/memory/projects` — _(no summary)_
 - `POST /api/memory/promote` — promote repeated episodic patterns to semantic facts.
 - `GET /api/memory/recall` — deep on-demand recall for the agent.
+- `GET /api/memory/record-links` — one record's entity links (§7.1).
 - `GET /api/memory/semantic` — list all semantic memory entries.
 - `PUT /api/memory/semantic` — create/update a semantic entry.
 - `DELETE /api/memory/semantic/{key}` — tombstone a semantic entry.
 - `GET /api/memory/settings` — memory consolidation config.
 - `PUT /api/memory/settings` — memory consolidation config.
+- `GET /api/memory/slots` — every slot with its lines, budget and live size.
+- `POST /api/memory/slots/{name}/lines` — append one line.
+- `POST /api/memory/slots/{name}/lines/retire` — tombstone a line as the HUMAN.
 - `GET /api/memory/stats` — memory system statistics.
 - `GET /api/memory/vault` — the readable-vault status (mode, path, file count).
 - `POST /api/memory/vault/sync` — reconcile the vault against the store.

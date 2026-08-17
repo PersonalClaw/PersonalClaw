@@ -655,11 +655,25 @@ async def start_dashboard(
     app.router.add_get("/api/memory/entities", handlers.api_memory_entities)
     app.router.add_post("/api/memory/entities", handlers.api_memory_entity_create)
     app.router.add_post("/api/memory/entities/proposals", handlers.api_memory_entity_proposals)
+    app.router.add_get("/api/memory/entities/proposals", handlers.api_memory_entity_proposals_list)
     app.router.add_get(
         "/api/memory/entities/{entity_id}/backlinks", handlers.api_memory_entity_backlinks
     )
     app.router.add_post("/api/memory/graph/rebuild", handlers.api_memory_graph_rebuild)
     app.router.add_get("/api/memory/volunteer-stats", handlers.api_memory_volunteer_stats)
+    # MEMORY-GRAPH-AND-VAULT §7.2 (MGAV-9) — the entity topology behind the graph canvas
+    # and its one-file export. Registered BEFORE the record-graph catch-alls above would
+    # matter: both live under /api/memory/graph, so the more specific paths are explicit.
+    app.router.add_get("/api/memory/graph/entities", handlers.api_memory_entity_graph)
+    app.router.add_get("/api/memory/record-links", handlers.api_memory_record_links)
+    app.router.add_get("/api/memory/graph/export", handlers.api_memory_graph_export)
+    # §6/§7.1 — the Slots editor. GET lists every register (built-ins included, even
+    # unmaterialized); the writes ride MemoryService so the WAL/undo cover them.
+    app.router.add_get("/api/memory/slots", handlers.api_memory_slots)
+    app.router.add_post("/api/memory/slots/{name}/lines", handlers.api_memory_slot_append)
+    app.router.add_post(
+        "/api/memory/slots/{name}/lines/retire", handlers.api_memory_slot_line_retire
+    )
 
     # Crons, lessons, spawn, send-message, notifications
     # are registered via _register_mcp_routes() above.

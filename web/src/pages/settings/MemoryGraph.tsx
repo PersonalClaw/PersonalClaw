@@ -15,13 +15,23 @@ import { GraphZoomControls } from '../../ui/GraphZoomControls'
  *     `focusRef` drives an Obsidian-style LOCAL-GRAPH focus: the node with that ref +
  *     its `hopDepth`-hop neighbourhood stay lit; everything else dims. `onSelectRef`
  *     fires when a node is clicked (→ the parent selects that memory). */
-export function MemoryGraph({ data, focusRef, hopDepth = 1, onSelectRef, boxHeight }: {
+export function MemoryGraph({ data, focusRef, hopDepth = 1, onSelectRef, boxHeight, nodeNoun = 'fact', nodeNounPlural, emptyHint }: {
   data?: MemoryGraphData | null
   focusRef?: string | null
   hopDepth?: number
   onSelectRef?: (ref: string) => void
   boxHeight?: number
+  /** What ONE node is, for the counter and the empty state. The canvas renders whatever
+   *  {label,group}/{from,to} set it is handed — records or entities (§7.2) — and calling
+   *  entities "facts" would be the caption lying about the picture. */
+  nodeNoun?: string
+  /** The plural, when it is not `nodeNoun + 's'`. Explicit rather than an inflection rule:
+   *  "entity" → "entitys" is what a naive +s produced, and a caption that misspells the thing
+   *  it is counting undercuts the data beside it. */
+  nodeNounPlural?: string
+  emptyHint?: string
 } = {}) {
+  const plural = nodeNounPlural ?? `${nodeNoun}s`
   const controlled = data !== undefined  // Studio passes data (even null while loading)
   const [selfGraph, setSelfGraph] = useState<MemoryGraphData | null>(null)
   const graph = controlled ? (data ?? null) : selfGraph
@@ -129,7 +139,7 @@ export function MemoryGraph({ data, focusRef, hopDepth = 1, onSelectRef, boxHeig
   const endDrag = () => { drag.current = null }
 
   if (!graph) return <div ref={boxRef} className="grid place-items-center text-on-surface-low" style={{ height: boxH }}><Loader2 size={20} className="animate-spin" /></div>
-  if (graph.nodes.length === 0) return <div ref={boxRef} className="grid place-items-center text-on-surface-low text-[0.8125rem]" style={{ height: boxH }}>No memory graph yet — facts and their links appear here as memory grows.</div>
+  if (graph.nodes.length === 0) return <div ref={boxRef} className="grid place-items-center px-6 text-center text-on-surface-low text-[0.8125rem]" style={{ height: boxH }}>{emptyHint ?? `No memory graph yet — ${plural} and their links appear here as memory grows.`}</div>
 
   const degree = new Map<string, number>()
   for (const e of graph.edges) { degree.set(e.from, (degree.get(e.from) ?? 0) + 1); degree.set(e.to, (degree.get(e.to) ?? 0) + 1) }
@@ -190,7 +200,7 @@ export function MemoryGraph({ data, focusRef, hopDepth = 1, onSelectRef, boxHeig
 
       <GraphZoomControls onZoomIn={() => zoomBy(1.25)} onZoomOut={() => zoomBy(1 / 1.25)} onReset={reset} />
       <div className="absolute bottom-3 left-3 rounded-pill bg-surface-high/80 px-2 py-0.5 text-on-surface-low text-[0.75rem] tabular-nums backdrop-blur">
-        {graph.nodes.length} facts · {graph.edges.length} links · {Math.round(view.scale * 100)}%
+        {graph.nodes.length} {graph.nodes.length === 1 ? nodeNoun : plural} · {graph.edges.length} link{graph.edges.length === 1 ? '' : 's'} · {Math.round(view.scale * 100)}%
       </div>
     </div>
   )

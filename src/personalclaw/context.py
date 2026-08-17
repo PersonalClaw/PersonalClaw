@@ -861,8 +861,12 @@ class ContextBuilder:
         """The ONE bounded Slots block, or "" (MGAV-8).
 
         Fails to "" rather than propagating: a slot row a user hand-edited into an unreadable
-        shape must not be able to stop a session from starting. The ceiling is enforced inside
-        `render_slots_block`, so this wrapper cannot widen it.
+        shape must not be able to stop a session from starting.
+
+        The budget comes from `memory.slot_size_cap` (MGAV-9) through
+        `resolve_block_limit`, which clamps it into the structural range — so a user can tune
+        what slots cost each turn, and neither this wrapper nor config.json can widen it past
+        the hard ceiling.
         """
         if vector_store is None:
             return ""
@@ -879,7 +883,10 @@ class ContextBuilder:
                 logger.warning(
                     "memory slots over cap (hand-edited rows?); block will truncate: %s", excess
                 )
-            return memory_slots.render_slots_block(store)
+            limit = memory_slots.resolve_block_limit(
+                getattr(AppConfig.load().memory, "slot_size_cap", None)
+            )
+            return memory_slots.render_slots_block(store, limit=limit)
         except Exception:
             logger.debug("slots block render failed", exc_info=True)
             return ""

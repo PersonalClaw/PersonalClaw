@@ -903,3 +903,90 @@ a knowledge-repo-adjacent change with its own ingestion seam and is cleanly sepa
   `test_resilience_degraded_lint` / `test_agent_reference` / `test_api_manifest_drift` /
   `test_roadmap_dag_derived` / `test_docs_lint_baseline` / `test_version_consistency` green ·
   full `pytest tests/` green.
+
+### 2026-08-16 — Session 5 (§7.1–7.2 FE + config wiring): PARTIAL (`MGAV-9`)
+
+**Six of seven `done_when` clauses landed; the atom stays `todo` on the seventh** (the
+volunteer / edit-vault / undo legs of the validation sweep were not driven — see BLOCKED-ish note
+at the end). Full clause-by-clause account + the five deviations live in
+`docs/roadmap/atomic/MGAV.md` under `MGAV-9`; this entry records what changed and what it proved.
+
+**The through-line: three shipped mechanisms had no way for a human to reach them.**
+`api.memoryEntityProposal` had existed since `MGAV-1` with **zero FE callers** — the POST could
+decide, but nothing could LIST the queue, so the decision surface was unreachable.
+`graph_recall_evidence` was written "for the inspect/recall surfaces" and had **zero production
+callers**. `memory_slots` (`MGAV-8`) had no editor at all, making a register the plan calls
+"user-editable" machine-only. Each got its read half here.
+
+**Backend.** `MemoryGraphStore.entity_graph()` — entities as nodes carrying the Louvain
+`community` already stored in `mem_link_stats`, plus co-occurrence edges carrying the
+`link_type`/`provenance`/`confidence` that `memory_topology.cooccurrence_edges` deliberately
+drops (which is exactly what §7.2's filters need, so this is a sibling query, not a fork). An
+edge's confidence is `max` over supporting records of `min(both legs)`: a record's support is only
+as strong as its weaker link. Isolated entities are KEPT as nodes — an entity nothing links to is
+the orphan signal the lint reports, and dropping it would hide it. `MemoryService` gained
+`graph_proposals`, `entity_graph`, `graph_record_links` (composite `sem:`/`epi:` ref → the CLOSED
+two-value `from_kind` map; an unrecognized prefix returns `[]` rather than guessing) and
+`slots`/`slot_append`/`slot_tombstone`. Seven routes, all in the regenerated `routes.md`. The
+over-cap append is a **409 carrying the trim proposal**, not a 400 with a message: `MGAV-8`'s
+contract is that the human picks which of their own lines to lose, which only holds if the
+candidate list reaches the UI.
+
+**`memory_graph_export.py`** renders the one-file export. Script-free static SVG rather than the
+plan's interactive `graph.html`, importing `knowledge/reports.py`'s own `assert_self_contained`
+instead of re-deriving a second forbidden-pattern list. The JSON island rides an HTML comment with
+`--` JSON-escaped (`--`), so a name containing `--` cannot close the comment early and the
+island still parses. The viewBox crops to the drawn extent — the ring layout only fills 1000x1000
+once the outer rings do, and the canvas gets away with that because it has zoom while this file
+has none. Node hue is re-derived from the CANVAS's formula so the exported artifact is the picture
+the user saw; that consistency surfaced a real defect (adjacent communities hash to hue 209/210 —
+indistinguishable), left as an owner taste call because the fix is in the shared `groupColor`.
+
+**Config.** `memory.slot_size_cap` (default 1400 = `SLOTS_BLOCK_MAX_CHARS`, so behaviour is
+unchanged) wired through all five points + `config-baseline.json` + `docs/reference/configuration.md`
+— which also gained the FIVE memory rows `MGAV-1`/`-3`/`-5` had left undocumented
+(`graph_enabled`, `push_context`, `push_min_confidence`, `graph_topology_in_context`,
+`holder_attribution`). Clamped at the CONSUMER (`memory_slots.resolve_block_limit`, 200-4000),
+mirroring `HARD_CAP_RECORDS`, so config.json cannot widen the always-injected block by any route.
+
+**Coherence repairs found by driving it.** (a) The Health tab's entity list + backlink expander
+was a SECOND browser over the same objects the Studio explorer now lists; the browse/add/decide
+affordances consolidated into the Studio and Health kept only graph maintenance (relink, counts,
+export). (b) A `slot.*` row appeared BOTH as a Slot and as a raw-JSON Fact — one object, two
+entries, the second uneditable without corrupting the register; `slot.` keys are now excluded from
+the fact list. (c) Four Studio readers carried `.catch(() => [])`, so a failed load rendered "No
+memories yet" to someone whose memories merely failed to load; they now let the rejection reach
+the hook behind a `LoadError` that precedes both the loading and empty branches, and
+`settingsListHonesty.test.ts` gained the explorer as a pinned site.
+
+**Falsified three ways.** (1) Deleting `slot_size_cap` from `load()`'s explicit mapping →
+`assert 1400 == 900` (the silently-dropped-field bug class the `MemoryConfig` comment records).
+(2) Emitting a `<script type="application/json">` island → `SpecError: refusing to export: the
+rendered document contains a script element` from the borrowed guard. (3) Dropping `limit=` from
+`ContextBuilder._slots_block` → **the whole suite stayed GREEN**, because the covering test called
+the primitive directly. That is the "test exercises the mechanism, not its use" shape, so
+`test_the_session_builder_actually_READS_the_configured_budget` now drives the consumer and fails
+with `assert 645 <= 250` when the argument goes missing.
+
+**Drove on a live gateway** (port 10199, isolated home, no reseed): entity creation → write-time
+linking → the typed entity graph with communities → per-record evidence tags → slot append, a real
+over-cap trim proposal (`over_by: 81` naming the exact line), retire-then-re-add proving the human
+tombstone is final → the proposal queue at `mention_count: 3` accepted into a live entity → the
+exported file opened in a browser → the settings controls, including typing `900` into the Slots
+budget and confirming it reached `config.json` **and** came back as the served `block_limit`, and
+an out-of-range `99999` refused with `must be between 200 and 4000` while config stayed intact.
+
+**Gates:** `make lint` clean (black/isort/flake8/mypy, 887 files) · `tests/test_memory_fe_surfaces.py`
+**13 passed** · `tests/test_memory_slots_config.py` **7 passed** · memory + context suites **236
+passed, 1 xfailed** · rails `test_config_roundtrip` / `test_config_baseline` /
+`test_api_manifest_drift` / `test_inert_surface_baseline` / `test_roadmap_dag_derived` /
+`test_docs_lint_baseline` green · `npm run typecheck` clean · full `npm test` **314 files / 3243
+tests passed** (six repo-wide ratchets tripped and were fixed at the source, not loosened: the
+graph-mode switch moved to the canonical `Segmented`, two new buttons took `loading` instead of a
+hand-rolled spinner, a bare tinted `<p>` became `FieldError`, a skeleton noun was matched to its
+`LoadError` sibling, `Select` gained the documented `ariaLabel` the other form primitives already
+had, and the disabled-Toggle census moved 15→16 with the reason recorded in the rail).
+
+**Not claimed:** the volunteer leg needs a real chat turn against a bound model (this dev home has
+none), and edit-vault + undo exercise `MGAV-3`/`MGAV-6` machinery this atom only surfaces. Those
+three legs of clause 7 remain, which is why `MGAV-9` stays `todo`.

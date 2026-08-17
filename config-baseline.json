@@ -941,6 +941,12 @@
     "type": "list[str]"
   },
   {
+    "default": 1400,
+    "path": "memory.slot_size_cap",
+    "sensitive": false,
+    "type": "int"
+  },
+  {
     "default": "off",
     "path": "memory.vault_mode",
     "sensitive": false,
