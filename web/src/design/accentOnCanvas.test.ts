@@ -402,3 +402,61 @@ describe('the first-run overlay inks its links by their ground', () => {
     expect(defs.length, 'schemes defining a light emphasis shade').toBeGreaterThanOrEqual(12)
   })
 })
+
+// ── Cycle 615: THE FAMILY, CLOSED FOR RENDERED LINKS — an exhaustive census ───────────────────────
+//
+// Every ground above was found by a scan for elements where the ink and the background are declared on
+// the SAME element. A link inside a tinted container is invisible to that shape, because the ground is
+// on an ancestor — and a static grep cannot settle it either: 16 files contain both a `TextLink` and a
+// `bg-surface-high`/`bg-canvas` class, which is co-occurrence, not containment.
+//
+// So every RENDERED accent link was measured instead: all 55 surfaces, on a **populated** home (an
+// empty one never renders the data-dependent links), fresh browser context per route, backdrop read
+// off each node. 25 links, 0 route errors:
+//
+//     ground                 links   failing
+//     --color-surface          20        0     4.83 — the base ink is correct here
+//     --color-canvas            4        4     4.37 — all four are `VoicePanel`'s ManageLink
+//     --color-canvas (emph)     1        0     already converged by an earlier cycle
+//
+// Light only; the same sweep in dark reports 0 of 25, because the dark canvas gives 6.85.
+//
+// 🔑 FOUR RENDERED LINKS, TWO CALL SITES. `ManageLink` is one small component mounted twice — once for
+// STT, once for TTS — so two `ink="emphasis"` props fix all four. The row is a bare `<div>` with no
+// background of its own, which is exactly how an accent link ends up on the canvas without anything in
+// its own JSX naming the ground.
+//
+// 🔑 THIS CLOSES THE FAMILY FOR RENDERED LINKS, and the census is the proof rather than the claim: the
+// 20 passing links are what make "the ground decides, so the default stays `primary`" measured instead
+// of asserted. What it does NOT cover: links that only render in states the sweep cannot reach (the
+// first-run overlay was cycle 614's finding, for exactly this reason) and non-link accent text, which
+// the four sections above own.
+
+describe('the voice panel manage-links are inked for the canvas', () => {
+  const VOICE = read('pages/settings/VoicePanel.tsx')
+
+  it('both manage-links take the emphasis ink', () => {
+    const emph = [...VOICE.matchAll(/<TextLink onClick=\{\(\) => go\('(models|providers)'\)\}[^>]*ink="emphasis"/g)]
+    expect(emph.length, 'manage-links on the emphasis shade').toBe(2)
+  })
+
+  it('neither carries the failing default any more', () => {
+    expect(VOICE).not.toMatch(/<TextLink onClick=\{\(\) => go\('models'\)\} icon=\{ArrowRight\} iconPosition="trailing" size="xs">/)
+    expect(VOICE).not.toMatch(/<TextLink onClick=\{\(\) => go\('providers'\)\} icon=\{ArrowRight\} iconPosition="trailing" size="xs">/)
+  })
+
+  it('the call site carries the measurement, not just the token', () => {
+    expect(VOICE).toMatch(/4\.37:1/)
+  })
+
+  it("the panel's OTHER link keeps the base ink — it is on a surface and passes", () => {
+    // The vacuity floor for "the ground decides". `Reset to default` measured 4.83 on
+    // `--color-surface` in the same census. If it ever gains the emphasis ink, this cycle's scope was
+    // wrong and the reasoning above needs rewriting rather than silently passing.
+    expect(VOICE).toMatch(/<TextLink size="xs" onClick=\{async \(\) => \{/)
+  })
+
+  it('the primitive default is still `primary`, so the 20 passing links did not move', () => {
+    expect(read('ui/TextLink.tsx')).toMatch(/ink = 'primary'/)
+  })
+})

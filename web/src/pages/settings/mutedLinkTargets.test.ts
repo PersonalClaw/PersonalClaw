@@ -46,9 +46,15 @@ const codeOf = (s: string) => s.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/
 
 describe('the voice row converges on the link it already had', () => {
   it('the Providers link is a TextLink now', () => {
-    expect(codeOf(voice)).toMatch(
-      /<TextLink onClick=\{\(\) => go\('providers'\)\} icon=\{ArrowRight\} iconPosition="trailing" size="xs">/,
-    )
+    // 🔑 RE-POINTED, NOT RELAXED (cycle 615). This asserted the prop string up to its closing `>`, so
+    // adding the `ink` prop the canvas ground requires broke a match whose INTENT — the hand-rolled
+    // twin became the primitive, with the same job/size/icon — was untouched. It now pins each prop
+    // independently AND the ink, so it checks strictly more than the literal ever did.
+    const code = codeOf(voice)
+    const link = /<TextLink onClick=\{\(\) => go\('providers'\)\}[^>]*>/.exec(code)?.[0] ?? ''
+    expect(link, 'the Providers link is a TextLink').toBeTruthy()
+    for (const prop of ['icon={ArrowRight}', 'iconPosition="trailing"', 'size="xs"', 'ink="emphasis"'])
+      expect(link, `carries ${prop}`).toContain(prop)
   })
 
   it('no hand-rolled muted twin remains', () => {
