@@ -2089,7 +2089,8 @@
           "done_when": "a pinned tile in ttl mode refreshes via a deterministic LLM-free render transform (WF2 node interpolating {{...}} bindings into the stored skeleton); a steady-state refresh makes zero LLM calls confirmed by a ledger-only row carrying near-zero token cost + duration; tile header renders relative freshness + one ok/error dot per data node with error-on-hover + a deep link to the ledger row; a failed refresh keeps last-good content painted and turns the chip red (never an empty panel). View-trigger binding is a later in-place ttl\u2192view upgrade (EXT:AUTOMATION-SUBSTRATE step 8) and is NOT required to complete this atom.",
           "deps": [
             "AS-1"
-          ]
+          ],
+          "pr": 1544
         },
         {
           "id": "AS-3",
