@@ -6683,7 +6683,7 @@
         {
           "id": "EI-12",
           "title": "App-side confinement compounders \u2014 env allowlist, network-perm decision, per-app deps (D1/D2/D3+VD)",
-          "status": "todo",
+          "status": "done",
           "scope": "Amendment 2026-07-29 (a) + tasks D1 (backend env by allowlist not dict(os.environ), sensitive-prefix scrub floor), D2 (permissions.network: enforce via egress rail OR mark advisory in consent UI/manifest \u2014 not both/neither), D3 (per-app pythonDependencies isolated to app-scoped target so an app cannot shadow a core dep), VD (validation-as-a-user sweep)",
           "done_when": "a planted secret in the gateway env is absent from an app backend's env (test proves it); the Store consent UI's network claim matches enforcement reality; an app pinning a conflicting core dependency does not affect the gateway; every first-party app still boots; the VD user-validation sweep holds",
           "deps": []
@@ -7616,11 +7616,6 @@
       {
         "id": "EI-10",
         "title": "Secrets vault UX + presence-only API + grant-to-sandbox toggles",
-        "plan": "EI"
-      },
-      {
-        "id": "EI-12",
-        "title": "App-side confinement compounders \u2014 env allowlist, network-perm decision, per-app deps (D1/D2/D3+VD)",
         "plan": "EI"
       },
       {
@@ -10169,9 +10164,9 @@
         "code": "EI",
         "plan": "EXECUTION-ISOLATION",
         "total_atoms": 12,
-        "done": 3,
+        "done": 4,
         "in_progress": 0,
-        "todo": 9,
+        "todo": 8,
         "blocked": 0
       },
       {

@@ -21,7 +21,7 @@ Each atom below executes start-to-finish in one go. If an atom lists dependencie
 | `EI-9` | ⬜ | Reviewer-comment triage primitive (line-anchored findings → accepted-subset dispatch) | `EI-5`, `EXT:WORK-CONTAINERS:cockpit diff panel to extend`, `EXT:LEARNING-FLYWHEEL:calibration record for rejections` | SC9: a workflow review stage emits line-anchored findings; the triage panel validates anchors against the real diff; the user accepts 2 of 5; the accepted pair auto-dispatches to the originating worker which applies them; rejected findings land in the calibration record; nothing was auto-written without acceptance |
 | `EI-10` | ⬜ | Secrets vault UX + presence-only API + grant-to-sandbox toggles | `EI-1`, `EXT:WORK-CONTAINERS:WORK-R19 secrets store + per-project keychain backend` | SC10: the vault lists global + per-project secrets with presence-only values, inherit-from-host rows rendered distinctly, and consumer links; a secret granted to sandboxed runs reaches a docker leaf's env while an ungranted sibling does not; no value is readable back through any API; project export ZIPs contain presence flags only |
 | `EI-11` | ⬜ | Security docs correction — credential-hiding vs confinement (D0, land first) | — | no public surface claims confinement the code does not provide; the guardrails claim names its unattended scope (reusing the Settings panel wording); the desktop claim matches CI reality; security.md has the explicit sandbox does/doesn't section |
-| `EI-12` | ⬜ | App-side confinement compounders — env allowlist, network-perm decision, per-app deps (D1/D2/D3+VD) | — | a planted secret in the gateway env is absent from an app backend's env (test proves it); the Store consent UI's network claim matches enforcement reality; an app pinning a conflicting core dependency does not affect the gateway; every first-party app still boots; the VD user-validation sweep holds |
+| `EI-12` | ✅ | App-side confinement compounders — env allowlist, network-perm decision, per-app deps (D1/D2/D3+VD) | — | a planted secret in the gateway env is absent from an app backend's env (test proves it); the Store consent UI's network claim matches enforcement reality; an app pinning a conflicting core dependency does not affect the gateway; every first-party app still boots; the VD user-validation sweep holds |
 
 ## Atom scopes
 
@@ -115,8 +115,12 @@ Amendment 2026-07-29 (b) + task D0 — docs-only, dependency-free: correct the w
 
 ### `EI-12` — App-side confinement compounders — env allowlist, network-perm decision, per-app deps (D1/D2/D3+VD)
 
-**Status:** todo — **D1+D2 landed 2026-08-13**; D3/VD outstanding (D3 is BLOCKED as an owner-scope
-architecture decision — see the plan's `## Execution log`)
+**Status:** ✅ done — D1+D2 landed 2026-08-13; **D3 (re-scoped) + VD landed 2026-08-16**. D3 shipped as
+an **admission refusal**, not the app-scoped isolation the row proposed: measured, ZERO of 44
+first-party apps have both a backend and declared `pythonDependencies`, so a backend-scoped
+`PYTHONPATH` would have isolated an empty population. Isolating the in-process providers (where the
+real risk lives) stays the owner-scope seam decision recorded BLOCKED in the plan — see the
+`## Execution log` DEVIATION.
 
 Amendment 2026-07-29 (a) + tasks D1 (backend env by allowlist not dict(os.environ), sensitive-prefix scrub floor), D2 (permissions.network: enforce via egress rail OR mark advisory in consent UI/manifest — not both/neither), D3 (per-app pythonDependencies isolated to app-scoped target so an app cannot shadow a core dep), VD (validation-as-a-user sweep)
 
@@ -131,6 +135,38 @@ declares it** — measured before-state: a declaring app got a "• Network acce
 grants, and a `network: false` app (which `growth` and `minutes`, the only two backend-having apps, both
 are) got no row at all, reading as "blocked". `apps/permissions.py`, `docs/security/limitations.md` §2
 and `docs/architecture/app-platform.md` now describe that surface instead of claiming it generically.
+
+**D3 (done, re-scoped — DEVIATION).** The row proposed installing an app's `pythonDependencies` to an
+app-scoped target and launching *its backend* against it. Census first: of 44 first-party manifests,
+**20 declare `pythonDependencies` and 2 declare a backend, and the sets do not intersect** — `growth`
+and `minutes` declare no deps, and every dep-declaring app is an in-process provider. So the proposed
+mechanism had a **zero-app population**: it would have shipped as an inert control while the real
+shadowing path (pip resolving into the shared venv that the gateway imports from) stayed wide open.
+What shipped instead makes the done-when property true at the only chokepoint that exists without
+redefining the provider seam: `app_manager._reject_core_dependency_conflicts` refuses, before pip is
+spawned, any declared requirement naming a **core-declared** dependency unless the installed version
+already satisfies it — so pip is never in a position to move one. Fail-closed on the two
+can't-prove-it cases (unparseable specifier, core name whose installed version can't be read).
+Extras are excluded **by `extra ==` marker**, which is load-bearing: `openai`, `anthropic`, `boto3`,
+`slack-sdk`, `faster-whisper`, `sentence-transformers`, `piper-tts`, `huggingface-hub` and `faiss-cpu`
+are all extras, and 19 of the 20 dep-declaring apps pin exactly those — treating one as core would
+refuse almost every provider app in the Store. The single real collision is `diarization-onnx`'s
+`numpy>=1.24` against core's `numpy>=1.21,<3`, which is satisfied by the installed 1.26.4 and is
+therefore ALLOWED — the rail's vacuity floor. Out-of-process provider isolation remains the owner-scope
+decision already recorded BLOCKED; it was not re-litigated. `tests/test_app_core_dep_conflicts.py`.
+
+**VD (done).** Isolated home on port 10155, gateway booted from the worktree with two secrets planted
+in **its own** environment. Installed `minutes` (a real first-party app with a backend) through
+`POST /api/apps`; read the backend process's environment from OUTSIDE with `ps eww`: **zero** occurrences
+of either planted name or value, while `ps eww` on the gateway PID shows both verbatim — and the same
+read shows the backend DOES carry `PORT`/`PERSONALCLAW_APP_NAME`/`PERSONALCLAW_APP_DATA_DIR`/`HOME`/`PATH`,
+so the absence is not a failed read. The app works: healthy on `/health`, and a list → create → read-back
+round trip through the gateway proxy (`/apps/minutes/api/meetings`) returns the created record. An app
+pinning `numpy<1.21` is refused over real HTTP with the version-specific reason, and `numpy` reports
+1.26.4 before and after. Enforcement reality re-checked against code for the D2 copy: app backends are
+wrapped only by the resource-ceiling shim, never `sandbox.wrap_argv`, and that profile is
+`(allow default)` plus file-only deny rules with `CLONE_NEWNET` nowhere in the tree — so "PersonalClaw
+does not confine an app's outbound traffic" is literally true.
 
 **Done when:** a planted secret in the gateway env is absent from an app backend's env (test proves it); the Store consent UI's network claim matches enforcement reality; an app pinning a conflicting core dependency does not affect the gateway; every first-party app still boots; the VD user-validation sweep holds
 
