@@ -3751,10 +3751,11 @@
         {
           "id": "CC-5",
           "title": "Optimizer polish: richer role-labeled context + explicit UNCHANGED contract",
-          "status": "todo",
+          "status": "done",
           "scope": "Amendment (2026-07-26) T4.5",
           "done_when": "optimize/optimizeAndSend assemble role-labeled (~10 turns, ~400 chars/turn, newest-last) context that survives the handler's [-2000:] cap; the bundled task-prompt_optimizer.md instructs the exact UNCHANGED token so an already-specific prompt returns changed:false with a short reply (fixture asserts it); a vague prompt referencing 'that file from earlier' optimizes using the labeled referent; the existing revert path is confirmed/tested (restores the exact pre-optimize draft, focus returns)",
-          "deps": []
+          "deps": [],
+          "pr": "feature-cc5-optimizer-context (2026-08-17)"
         },
         {
           "id": "CC-6",
@@ -7461,11 +7462,6 @@
         "plan": "CA"
       },
       {
-        "id": "CC-5",
-        "title": "Optimizer polish: richer role-labeled context + explicit UNCHANGED contract",
-        "plan": "CC"
-      },
-      {
         "id": "CC-6",
         "title": "S4 wrap-up: a11y/SEL/mobile polish + docs + CHANGELOG + full validation gate",
         "plan": "CC"
@@ -9871,9 +9867,9 @@
         "code": "CC",
         "plan": "CHAT-CRAFT",
         "total_atoms": 8,
-        "done": 5,
+        "done": 6,
         "in_progress": 0,
-        "todo": 3,
+        "todo": 2,
         "blocked": 0
       },
       {

@@ -701,6 +701,16 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
   is only a file copy; create one of each by hand if a screenshot needs them.
 
 ### Changed
+- **The Optimize button now knows who said what, and leaves an already-good prompt alone.** The
+  recent conversation it sends along is labelled by speaker and ordered oldest-to-newest, and each
+  turn gets twice the room it used to — so asking it to "add a test for that file from earlier"
+  resolves to the actual file, instead of guessing from an unattributed blob. Twice the room means
+  the ten turns no longer collide with the size limit; when a limit is hit, whole turns are dropped
+  from the oldest end rather than a turn being cut in half and arriving attributed to nobody. And a
+  prompt that is already specific now comes back untouched: the optimizer is told to say so in one
+  word instead of paraphrasing your prompt back at you, which used to be how a good prompt got
+  quietly reworded. Reverting still restores exactly what you typed — and now puts the cursor back
+  in the composer, since you reverted in order to keep typing.
 - **The assistant now needs to see a habit work three times, not twice, before it offers to make it
   a standing principle.** Its self-model — the one part that learns from what quietly *works*
   instead of from corrections — proposes a behavioural principle only after three reinforcements.

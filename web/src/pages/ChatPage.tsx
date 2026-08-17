@@ -63,6 +63,7 @@ import { Modal } from '../ui/Modal'
 import { confirm, promptInput } from '../ui/dialog'
 import { type ChatTurn, type Segment, type ToolSegment, type ApprovalSegment, type ActivitySegment, type SubagentCard, type HistMsg, type MemoryCitation, userTurn, assistantTurn, hydrateTurns, turnText, deriveActivity } from './chat/chatTypes'
 import { branchIndexOf, branchParentKey } from './chat/branchLineage'
+import { buildOptimizerContext } from './chat/optimizerContext'
 import { useIdentity, firstNameOf } from '../app/identity'
 import { usePlatform } from '../app/usePlatform'
 import { SnipOverlay } from '../ui/SnipOverlay'
@@ -1616,13 +1617,15 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
     }
   }
 
-  // Optimize the current draft via the prompt optimizer (last 10 turns as context).
+  // Optimize the current draft via the prompt optimizer. The context is role-labeled
+  // and newest-last (see chat/optimizerContext.ts) — that shape is what lets the
+  // optimizer resolve "that file from earlier" instead of guessing at it.
   async function optimize() {
     const t = input.trim()
     if (!t || optimizing) return
     setOptimizing(true)
     try {
-      const ctx = turns.slice(-10).map((tn) => turnText(tn).slice(0, 200)).join('\n')
+      const ctx = buildOptimizerContext(turns)
       const r = await api.optimizePrompt(t, ctx)
       if (r.changed && r.optimized) { setPreOptimize(input); setInput(r.optimized) }
     } catch { /* keep the draft on failure */ }
@@ -1635,7 +1638,7 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
     setOptimizing(true)
     let optimized = ''
     try {
-      const ctx = turns.slice(-10).map((tn) => turnText(tn).slice(0, 200)).join('\n')
+      const ctx = buildOptimizerContext(turns)
       const r = await api.optimizePrompt(raw, ctx)
       if (r.changed && r.optimized && r.optimized.trim() !== raw) optimized = r.optimized.trim()
     } catch { /* fall through — send the original unchanged */ }
@@ -1648,6 +1651,9 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
     if (preOptimize === null) return
     setInput(preOptimize)
     setPreOptimize(null)
+    // Clearing preOptimize unmounts this button, so without this focus lands on <body>
+    // and the next keystroke goes nowhere — you reverted in order to keep typing.
+    requestAnimationFrame(() => composerRef.current?.querySelector<HTMLElement>('.cm-content')?.focus())
   }
   // /undo [N] — roll back N conversation turns via the backend, then re-hydrate the
   // transcript from the truncated server state (so the UI matches disk) + append an
