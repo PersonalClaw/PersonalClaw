@@ -892,3 +892,89 @@ discipline in [`AGENTS.md`](../../../AGENTS.md))*
   `test_roadmap_dag_derived`; both now say `done` and `regen_dag_derived.py` reports "already
   current", 0 non-ASCII bytes. CHANGELOG entry re-read and left as written: it is still accurate,
   since nothing user-observable changed. Plan header's "N of 16 shipped" left alone, per `PP-8`.
+
+- [PP-13] **DONE — and the caller census is the finding: the retired projection had ZERO production
+  callers, while the surface it was written for had NO ranking at all.** The sweep ran before the
+  delete, as the atom demands. `pool.frontier` / `next_task` / `Candidate` / `Urgency` / `explain` /
+  `PRIORITY_WEIGHT` had exactly **one** importer in the whole repo — `tests/test_workflows_pool.py`.
+  Every production import of `pool` takes something else: `tasks/native.py` (`lifecycle_payload`,
+  `should_fire_completion`), `workflows/surfacing_channels.py` (`HandOff`, `route`),
+  `workflows/settings.py` (`DEFAULT_LEASE_SECS`, `MAX_LEASE_SECS`), `workflows/admission.py`
+  (`acquire`, `Lease`, the TTL constants — `PP-12`), plus two comment-only mentions in `triggers/`.
+  So this was not one of two live schedulers: it was a **complete, correct ranking reachable by
+  nobody**, beside a live funnel that shipped **unranked**. `registry.ready_tasks` — the ONE funnel
+  behind `GET /api/tasks/ready`, `DashboardLive`, `TasksListPage` and the agent's next-task tool —
+  returned `list_all_tasks` provider order (`updated_at` desc) with no priority, no blocking-count
+  and no overdue term. `Task.due` had **no reader anywhere in the product**. The `/work` board is a
+  different projection entirely (`containers.group_board` over runs/loops/tasks, claims via
+  `workflows/leases.py`) and never called the pool. The atom's warning was right for the opposite
+  reason to the expected one: the risk was not a missed caller, it was concluding "no callers, pure
+  deletion" and shipping the retirement without ever wiring the capability up.
+- [PP-13] **What landed.** The ordering moved to `admission.rank_key` — a comparator, deliberately
+  NOT a fourth `AdmissionPolicy`, because a policy answers *how many* and composes by minimum while
+  an order answers *which first* and two orders have no tightest. `admission.ready` /
+  `next_ready` compose the two: blocked items drop, everything else is put to the composed policy
+  list as a `RESOURCE` request keyed by its own id (exactly how `pool.claim_task` keys the sidecar),
+  and the survivors sort by `rank_key`. The leased-work exclusion is therefore the same composed
+  verdict the engine's frontier gets instead of an `if candidate.leased_by`. `registry.ready_tasks`
+  now ranks through it, with the clock and the lease reads confined to one adapter (`_rank_ready`)
+  so `admission.py` stays inside `PP-11`'s purity rail — which still passes unweakened.
+  `blocks_count` is counted over the FULL task map, not the ready subset: a bottleneck's dependents
+  are the BLOCKED tasks, so counting among ready peers would score every bottleneck at zero.
+  Ranking runs AFTER the ownership filter, so an excluded colleague's task cannot consume a
+  position. Deleted from `pool.py`: `frontier`, `next_task`, `Candidate`, `Urgency`, `explain`,
+  `PRIORITY_WEIGHT` (117 lines out, 5 in). The lease decisions stayed untouched.
+- [PP-13] **The equivalence proof, and its vacuity floor.** `tests/fixtures/pool_frontier_golden/`
+  — `seed.json` (12 candidates) and `ready.jsonl` (19 rows), captured from an UNMODIFIED `pool.py`
+  (`ef8497ed…`) at `854529a2` with `PYTHONPATH` pinned to the worktree, per `PP-11`'s finding that a
+  bare `python` imports the main checkout. Hashes: `4a0e965d…` / `7a549e87…`. Both sides read the
+  ONE seed file, because a re-stated seed is a second implementation of the fixture. The new core
+  reproduces the retired output element for element — id, position, urgency, score AND the `explain`
+  line — across `exclusive` (8 rows, `Lease` active, asking as `OBSERVER`) and `inclusive` (10 rows,
+  no `AdmissionState`, so nothing speaks to a `RESOURCE` bucket — what `include_leased=True` meant),
+  plus the `next` head. The floor is a TEST, not a comment, and it denies every way "identical"
+  could be trivially true: ≥5 ranked rows, ≥1 blocked item excluded, ≥2 leased items excluded, an
+  overdue row, a blocking-others row, ≥4 distinct scores, a real score TIE (so both tie-breakers
+  fire), and an order that is neither the seed's nor sorted by id.
+- [PP-13] **DEVIATION — one behaviour is deliberately NOT preserved, and it is a bug fix.** The
+  retired `frontier` filtered on `leased_by` being truthy, so it hid work whose holder was already
+  gone; only a sweep could correct it. `Lease` asks `pool.acquire`, which treats an expired lease as
+  takeable, so the item surfaces at once. That is the same reasoning `containers.board_row` already
+  applies when it drops an expired claim badge rather than rendering it — a badge saying "taken"
+  about free work is worse than no badge. Pinned by `test_an_EXPIRED_lease_no_longer_hides_work`,
+  which measures both directions: a LIVE lease still excludes, and with every lease expired the
+  projection equals the include-leased view.
+- [PP-13] **Falsified three times; the third exposed a defect in my own test.** (i) Dropping the
+  overdue term from `ReadyItem.score` reds the equivalence naming the exact position —
+  `AssertionError: exclusive[3]: t-unknown-prio != t-medium-overdue` — plus three collateral reds.
+  (ii) Stripping the write from `pool._write_lease` (decision kept, persistence gone) reds
+  `test_a_lease_SURVIVES_a_gateway_kill` with `AssertionError: the lease was never persisted` and
+  `test_the_funnel_EXCLUDES_a_task_another_holder_is_leasing` with
+  `assert ['t-held', 't-free'] == ['t-free']`. (iii) Mutating `ready_tasks` to `return ready` —
+  skipping the core entirely — reds three funnel tests, which is what proves the WIRING rather than
+  the pure core. **But `test_an_OVERDUE_task_is_ranked_from_its_due_date` stayed GREEN under (iii)**,
+  because its input list happened to be pre-sorted into its expected order: provider order and
+  ranked order were the same list, so it asserted nothing about the wiring. Input reordered, and it
+  now reds under (iii) as well — 4 of the 5 funnel tests do (the fifth compares `sorted()` and is
+  order-insensitive on purpose). Every mutation was restored from a `cp` file copy, never
+  `git checkout`.
+- [PP-13] **A wrong expectation of mine, corrected against the shipped rule.** I first asserted
+  "overdue beats priority" flatly and it red: `critical` (5.0) outranks `medium`+overdue (4.0),
+  because overdue is a **+2.0 bump, not an override**. The code was right; the test was wrong. It
+  now pins the real shape — an overdue medium outranks a plain `high` (3.0) and stays under a
+  `critical` — which a flat assertion would have gotten wrong while passing against a comparator
+  that clamped the bump.
+- [PP-13] **Gate.** `make lint` clean (black 1752 files, isort, flake8, mypy 902 files, no issues).
+  **`make lint` cannot prove a deletion**, so the covering rail was a RUNTIME import sweep:
+  **32/32** modules naming `pool` or a retired symbol imported OK, and the broad rail imported
+  **872/872** first-party modules OK, with a two-directional name check (nothing retired left on
+  `pool`, nothing missing from `admission`). Targeted: 412 passed across
+  `test_workflows_{ready_projection,pool,admission,admission_policies,frontier_golden,lease_confirm,containers}`
+  + `test_task_ownership` + `test_tasks_{api,dag,hierarchy}` + `test_native_task_tools`;
+  `PP-11`'s golden frontier file re-runs unchanged. `test_roadmap_dag_derived` +
+  `test_agent_reference` + `test_inert_surface_baseline` → 34 passed. Broad slice
+  `-k "workflow or pool or admission or work_board or task"` → **5429 passed, 4 skipped** (the same
+  4 skips `PP-12` recorded). The 13 relocated projection tests were rewritten against the core, not
+  deleted; the new file is 45 tests. Not in the inert-surface baseline and not under
+  `personalclaw/sdk/`, so no app could have depended on the retired names. `docs/architecture/
+  workflows.md` updated for both modules in the same change.

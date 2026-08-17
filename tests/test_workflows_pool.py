@@ -22,10 +22,8 @@ from personalclaw.workflows.pool import (
     DEFAULT_LEASE_SECS,
     HOOK_EVENT_TASK_COMPLETE,
     MAX_LEASE_SECS,
-    PRIORITY_WEIGHT,
     SEED_HANDOFFS,
     Blueprint,
-    Candidate,
     HandOff,
     Hydration,
     Lease,
@@ -33,15 +31,11 @@ from personalclaw.workflows.pool import (
     SurfaceRoute,
     Transition,
     UnblockKind,
-    Urgency,
     acquire,
     build_blueprint,
     carry_context,
     coalesce,
-    explain,
-    frontier,
     lifecycle_payload,
-    next_task,
     plan_edges,
     plan_hydration,
     plan_unblock,
@@ -187,93 +181,6 @@ def test_only_ONE_of_many_concurrent_acquires_can_win():
             state = lease
             winners.append(holder)
     assert winners == ["s-0"], f"{len(winners)} sessions believed they owned one task"
-
-
-# ── projections ──
-
-
-def _cand(**kw) -> Candidate:
-    base = dict(task_id="t", title="", priority="medium", unblocked=True)
-    base.update(kw)
-    return Candidate(**base)
-
-
-def test_the_frontier_EXCLUDES_blocked_tasks():
-    pool = [_cand(task_id="a"), _cand(task_id="b", unblocked=False)]
-    assert [c.task_id for c in frontier(pool)] == ["a"]
-
-
-def test_the_frontier_EXCLUDES_leased_tasks_by_default():
-    """A frontier listing work another session actively holds invites exactly the double-execution
-    the leases prevent."""
-    pool = [_cand(task_id="a"), _cand(task_id="b", leased_by="session-x")]
-    assert [c.task_id for c in frontier(pool)] == ["a"]
-
-
-def test_the_board_can_ASK_for_leased_tasks():
-    """The board shows claims rather than picking work, so it needs the other view."""
-    pool = [_cand(task_id="b", leased_by="session-x")]
-    assert len(frontier(pool, include_leased=True)) == 1
-
-
-def test_higher_priority_ranks_first():
-    pool = [_cand(task_id="low", priority="low"), _cand(task_id="critical", priority="critical")]
-    assert frontier(pool)[0].task_id == "critical"
-
-
-def test_a_task_BLOCKING_others_outranks_an_equal_that_blocks_nothing():
-    """The whole point of a dependency-aware pool: a medium task blocking four others is worth more
-    than a medium task blocking none."""
-    pool = [_cand(task_id="alone"), _cand(task_id="blocker", blocks_count=4)]
-    assert frontier(pool)[0].task_id == "blocker"
-
-
-def test_OVERDUE_beats_priority():
-    pool = [_cand(task_id="high", priority="high"), _cand(task_id="late", overdue=True)]
-    assert frontier(pool)[0].task_id == "late"
-
-
-def test_the_ORDER_IS_STABLE_for_equals():
-    """An unstable "next task" makes an agent thrash between two equals."""
-    pool = [_cand(task_id="b"), _cand(task_id="a")]
-    assert [c.task_id for c in frontier(pool)] == ["a", "b"]
-    assert [c.task_id for c in frontier(list(reversed(pool)))] == ["a", "b"]
-
-
-def test_next_is_the_frontier_HEAD_by_construction():
-    """One function, one answer — this is what stops "what should I work on" from being
-    reimplemented per surface, so the list and the pick cannot disagree."""
-    pool = [_cand(task_id="a"), _cand(task_id="z", priority="critical")]
-    assert next_task(pool) is frontier(pool)[0]
-
-
-def test_next_on_an_EMPTY_pool_is_None():
-    assert next_task([]) is None
-
-
-def test_next_on_an_all_blocked_pool_is_None():
-    assert next_task([_cand(unblocked=False)]) is None
-
-
-def test_the_priority_vocabulary_matches_the_TASK_model():
-    """Two priority scales would disagree about a task, and the looser one would win."""
-    from personalclaw.tasks.models import TaskPriority
-
-    assert set(PRIORITY_WEIGHT) == {p.value for p in TaskPriority}
-
-
-def test_urgency_is_REPORTED_not_just_used_for_sorting():
-    """A ranked list whose order cannot be explained is one a user overrides — and then the
-    projection is decoration."""
-    assert _cand(overdue=True).urgency() is Urgency.OVERDUE
-    assert _cand(blocks_count=2).urgency() is Urgency.BLOCKING_OTHERS
-    assert _cand(priority="high").urgency() is Urgency.HIGH_PRIORITY
-    assert _cand().urgency() is Urgency.NORMAL
-
-
-def test_the_explanation_names_the_reasons():
-    line = explain(_cand(task_id="t-9", priority="high", blocks_count=3, overdue=True))
-    assert "t-9" in line and "overdue" in line and "blocks 3" in line
 
 
 # ── evented unblock ──
