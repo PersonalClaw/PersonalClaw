@@ -218,33 +218,50 @@ async def handle_mcp(request: web.Request) -> web.Response:
         method = str(payload.get("method", ""))
         params: Any = payload.get("params") or {}
         if not isinstance(params, dict):
-            return _done(200, _rpc_error(request_id, _INVALID_PARAMS, "params must be an object"))
+            return _done(
+                200,
+                _rpc_error(request_id, _INVALID_PARAMS, "params must be an object"),
+                refused="params not an object",
+            )
 
         if method == "initialize":
-            # Version negotiation must fail LEGIBLY (G1.3). Previously any requested
-            # revision was ignored and this surface's own string was returned regardless —
-            # so a client pinning a revision we don't speak got a successful handshake and
-            # then failed later on a call whose shape it expected to differ. A mismatch is
-            # a contract disagreement and has to be said out loud, at the handshake.
+            # Version negotiation is a COUNTER-OFFER, not a refusal.
+            #
+            # The spec's lifecycle clause is a MUST in both directions: "If the server
+            # supports the requested protocol version, it MUST respond with the same
+            # version. Otherwise, the server MUST respond with another protocol version it
+            # supports. This SHOULD be the latest version supported by the server." The
+            # client then decides — it SHOULD disconnect if it cannot speak what came back.
+            #
+            # This branch used to answer an unsupported revision with a typed `-32602`
+            # instead, on the reasoning that a mismatch should be "said out loud". It is
+            # said out loud — in `protocolVersion`, the field that exists to say it. The
+            # error was strictly worse: it aborts the handshake, so a client whose default
+            # revision is merely NEWER than ours cannot connect at all, even when it also
+            # speaks a revision we do. Found by driving this surface with a stock MCP SDK
+            # client (MRI-5): its default `2025-11-25` got `-32602` and the session died,
+            # although its supported list contains our `2025-06-18`. The reference server
+            # implementation agrees (`mcp/server/session.py`: requested-if-supported else
+            # latest). See this plan's execution log for the recorded deviation.
+            #
+            # What the old code got RIGHT and is kept: a supported request is ECHOED, not
+            # overridden by our preference, so the session runs under the revision the
+            # client asked for.
             requested = params.get("protocolVersion")
-            if requested is not None:
-                asked = str(requested)
-                if asked not in SUPPORTED_PROTOCOL_VERSIONS:
-                    return _done(
-                        200,
-                        _rpc_error(
-                            request_id,
-                            _INVALID_PARAMS,
-                            "unsupported protocolVersion "
-                            f"{asked!r}; this server speaks "
-                            f"{', '.join(SUPPORTED_PROTOCOL_VERSIONS)}",
-                        ),
-                    )
-                # Echo the agreed revision, not our preferred one: the client asked for a
-                # revision we do speak, so the session runs under THAT contract.
-                negotiated = asked
+            if requested is not None and str(requested) in SUPPORTED_PROTOCOL_VERSIONS:
+                negotiated = str(requested)
             else:
                 negotiated = PROTOCOL_VERSION
+                if requested is not None:
+                    # Not a refusal, so not an audit `refused` — but a client that walks
+                    # away after this needs the cause to be findable in one log line.
+                    logger.info(
+                        "inbound: mcp initialize requested unsupported protocolVersion %r; "
+                        "counter-offered %s (this server speaks %s)",
+                        str(requested),
+                        negotiated,
+                        ", ".join(SUPPORTED_PROTOCOL_VERSIONS),
+                    )
             return _done(
                 200,
                 _rpc_result(
@@ -269,7 +286,10 @@ async def handle_mcp(request: web.Request) -> web.Response:
             arguments = params.get("arguments") or {}
             if not isinstance(arguments, dict):
                 return _done(
-                    200, _rpc_error(request_id, _INVALID_PARAMS, "arguments must be an object")
+                    200,
+                    _rpc_error(request_id, _INVALID_PARAMS, "arguments must be an object"),
+                    refused="arguments not an object",
+                    tool=name,
                 )
             try:
                 result = await call_tool(name, arguments, request.app.get("state"))
@@ -281,7 +301,22 @@ async def handle_mcp(request: web.Request) -> web.Response:
                     tool=name,
                 )
             except ValueError as exc:
-                return _done(200, _rpc_error(request_id, _INVALID_PARAMS, str(exc)), tool=name)
+                # An argument refusal IS a refusal, so it belongs in both trails. It used
+                # to pass no `refused`, which made it the one rejection on this surface
+                # that recorded as an ordinary 200 — a caller probing argument shapes left
+                # no denied trail in the audit log or SEL at all. Found by MRI-5: the audit
+                # file showed `unknown tool` and `rate limit` but nothing for a rejected
+                # argument, against this module's own "every rejection is audited".
+                #
+                # The reason stays generic while `tool` carries the specificity: the
+                # message embeds caller-supplied argument NAMES, and an unbounded
+                # caller-controlled string does not belong in the security event log.
+                return _done(
+                    200,
+                    _rpc_error(request_id, _INVALID_PARAMS, str(exc)),
+                    refused="invalid arguments",
+                    tool=name,
+                )
             except Exception:  # noqa: BLE001
                 logger.warning("inbound: tool %r failed", name, exc_info=True)
                 return _done(
