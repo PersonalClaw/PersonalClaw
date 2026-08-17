@@ -718,6 +718,9 @@ async def start_dashboard(
     app.router.add_get("/api/config/personalclaw", handlers.api_personalclaw_config)
     app.router.add_put("/api/config/personalclaw", handlers.api_personalclaw_config)
     app.router.add_patch("/api/config/personalclaw", handlers.api_personalclaw_config_patch)
+    # Companion apps (COMPANION-APPS S2): whether the LAN advertiser is actually running,
+    # which is not the same question as whether the config flag is set.
+    app.router.add_get("/api/companion/discovery", handlers.api_companion_discovery)
     app.router.add_get("/api/incident", handlers.api_incident)
     app.router.add_post("/api/incident", handlers.api_incident)
     app.router.add_post("/api/incident/resume", handlers.api_incident_resume)
@@ -1480,6 +1483,23 @@ async def start_dashboard(
 
     app.on_cleanup.append(_app_backends_shutdown)
 
+    async def _discovery_shutdown(app_: web.Application) -> None:
+        """Send the mDNS goodbye and release the socket on gateway stop (COMPANION-APPS C3).
+
+        Without it, a restart leaves other devices caching this gateway's address for two
+        minutes pointing at a port nothing is listening on. Registered HERE rather than beside
+        the advertiser's start, because ``runner.setup()`` freezes ``on_cleanup`` before the
+        bind host — and therefore the start decision — is known. A no-op when nothing is
+        advertising, which is the default."""
+        try:
+            from personalclaw.companion import discovery
+
+            discovery.shutdown()
+        except Exception:
+            logger.debug("LAN discovery shutdown failed", exc_info=True)
+
+    app.on_cleanup.append(_discovery_shutdown)
+
     # Static files — React build under /assets, packaged static assets under /static
     if _DIST_DIR.is_dir():
         app.router.add_static(
@@ -1812,6 +1832,22 @@ async def start_dashboard(
     except OSError:
         await runner.cleanup()
         raise
+
+    # Optional LAN discovery (COMPANION-APPS C3). STARTED here, after the site is up, because
+    # the bind host is an OUTCOME (env var, then local_only, then the AuthMode.NONE loopback
+    # invariant above) rather than a config value — the advertiser must be told where the
+    # gateway actually landed, not guess. Off unless companion.discovery_enabled; a
+    # loopback-only bind is a deliberate no-op with a log line naming the fix. The matching
+    # shutdown is registered in the app factory, since the app is frozen by runner.setup().
+    try:
+        from personalclaw.companion import discovery as _discovery
+
+        _discovery.set_gateway_bind(_bind_host, port)
+        _discovery.reconcile()
+    except Exception:
+        # Discovery is a convenience over a path that already works (type the URL). It may
+        # never be the reason a gateway fails to start.
+        logger.warning("LAN discovery failed to start", exc_info=True)
 
     # Fire background MCP probe at startup (non-blocking)
     asyncio.create_task(handlers._bg_mcp_probe())

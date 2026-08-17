@@ -228,3 +228,25 @@ No new session. S3 T3.1's client contract is WHERE the multi-entry registry + ac
 |---|---|---|---|
 | T3.3 | Multi-gateway registry in the client contract: `{active, endpoints[]}` shape, per-endpoint state namespacing (caches/WS/prefs keyed by endpoint id), switcher behavior spec (re-point + reload), and the written no-hub/no-gateway-to-gateway rule | `docs/guides/companion-apps.md` (T3.1's doc), the shared TS helper if T3.1 ships one | two paired gateways switchable from one client with zero state bleed (verify: distinct sessions/inbox/settings render per endpoint); the doc states the hub veto verbatim |
 | T4.4 | Switcher acceptance on both wrappers: desktop connect dialog + mobile shell each list N gateways, show the active one, and switch cleanly (graceful reconnect per S3 on the target) | `desktop/main.js` connect dialog, MOBILE-COMPANION task refs | V4 extended: pair a "work" and a "personal" dev gateway, switch between them on desktop and on the phone; revoking one gateway's device session breaks only that entry |
+
+## Execution log
+
+- [2026-08-16][CA-5] DONE: S2 discovery — stdlib mDNS/DNS-SD advertiser + client resolver
+  (`companion/discovery.py`), `GET /api/companion/discovery`, live-apply on the `companion.*`
+  PATCH path, `personalclaw discover`, a Settings status row showing the broadcast record
+  verbatim, and `docs/guides/companion-apps.md`. **No dependency added** — `SO_REUSEPORT`
+  coexists with the host responder on 5353, so the reason `zeroconf` looked necessary did not
+  hold. Verified against Apple's `mDNSResponder` (`dns-sd -B`/`-L` found it by name on the real
+  LAN interface) and end to end on a live gateway: PATCH flipped advertising with no restart,
+  `discover` printed the instance, and an `auth enroll` code redeemed at the discovered
+  `base_url` returned a 30-day device session.
+- [2026-08-16][CA-5] DEVIATION: the done_when's "QR pairing" clause is vacuous — no QR surface
+  exists yet (it is a rendering of the pairing routes T1.1/T1.2 own). Degradability is asserted
+  against the path that does exist (typed URL + `auth enroll`) and structurally, by proving
+  `auth/enrollment.py` cannot import `companion`.
+- [2026-08-16][CA-5] DISCOVERY (not fixed): redeeming a pairing code from a browser reached **by
+  IP** is refused — `POST /api/auth/enroll/complete` with `Origin: http://<lan-ip>:<port>` → 403
+  `CSRF check failed: request origin not allowed` (`build_allowed_origins` has the loopback names
+  and the bare hostname, no LAN address). Reads from that origin pass. Left to T1.1 /
+  REMOTE-USER-AUTH because C2 requires the pairing path work "with no new origin exemption";
+  recorded as a known rough edge in the guide.

@@ -690,6 +690,22 @@ Examples:
         "provider", help="Channel provider key (e.g. telegram, discord, email)"
     )
 
+    # discover — the client half of LAN discovery (COMPANION-APPS C3). Read-only: it sends
+    # one mDNS query and prints whatever answers. Finding nothing is a normal outcome.
+    discover_parser = sub.add_parser(
+        "discover",
+        help="Find PersonalClaw gateways advertising themselves on the local network",
+    )
+    discover_parser.add_argument(
+        "--timeout",
+        type=float,
+        default=2.0,
+        help="Seconds to listen for answers (default: 2)",
+    )
+    discover_parser.add_argument(
+        "--json", dest="as_json", action="store_true", help="Print the results as JSON"
+    )
+
     # status
     status_parser = sub.add_parser("status", help="Show runtime stats")
     status_parser.add_argument(
@@ -968,6 +984,8 @@ Examples:
         _token(args)
     elif args.command == "pair":
         _pair(args)
+    elif args.command == "discover":
+        _discover(args)
     elif args.command == "logout":
         _logout(resolve_client_port(args.port))
     elif args.command == "status":
@@ -1027,6 +1045,7 @@ from personalclaw.cli_chat import _chat  # noqa: E402
 from personalclaw.cli_commands import (  # noqa: E402
     _automation,
     _cron,
+    _discover,
     _handle_agent,
     _learn,
     _memory_cmd,

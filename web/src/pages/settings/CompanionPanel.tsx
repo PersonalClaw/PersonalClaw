@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react'
-import { Check, ShieldCheck, ShieldAlert } from 'lucide-react'
+import { Fragment, useEffect, useState } from 'react'
+import { Check, Radio, RadioTower, ShieldCheck, ShieldAlert } from 'lucide-react'
 import { api } from '../../lib/api'
 import { notify } from '../../app/appSdk'
 import { useCachedData } from '../../lib/useCachedData'
@@ -27,6 +27,13 @@ export function CompanionPanel() {
     { persist: true },
   )
 
+  // The LIVE advertiser, read separately from the flag that requests it. These two
+  // legitimately disagree — a loopback-only gateway advertises nothing by design — and a
+  // panel that showed only the toggle would render that disagreement as success.
+  const { data: discovery, refresh: refreshDiscovery } = useCachedData(
+    'settings:companion:discovery', () => api.companionDiscovery(),
+  )
+
   useEffect(() => {
     if (data) { setCfg(data); setNameDraft(String(data.instance_name ?? '')) }
   }, [data])
@@ -40,7 +47,12 @@ export function CompanionPanel() {
   const patch = (key: string, value: unknown, onSaved?: () => void) => {
     const prev = cfg[key]
     setCfg((c) => ({ ...c, [key]: value }))
-    api.patchConfig(`companion.${key}`, value).then(() => onSaved?.()).catch((e) => {
+    api.patchConfig(`companion.${key}`, value).then(() => {
+      onSaved?.()
+      // The backend starts or stops the advertiser on this PATCH, so re-read the live
+      // state rather than assuming the toggle got what it asked for.
+      refreshDiscovery()
+    }).catch((e) => {
       setCfg((c) => ({ ...c, [key]: prev }))
       notify(`Couldn't save ${key}: ${String((e as Error)?.message || e)}`, 'error')
     })
@@ -76,8 +88,46 @@ export function CompanionPanel() {
               </Button>
             </div>
           </Field>
+          {/* The advertiser's LIVE state, in words as well as tone (a colour-only status
+              would fail 1.4.1). `detail` is the backend's sentence for the reason code —
+              one vocabulary, so "on but inert" can never read here as "on". */}
+          {discovery ? (
+            <Row label="Status" hint={discovery.detail}>
+              <span className={`inline-flex items-center gap-1.5 text-[0.8125rem] ${discovery.advertising ? 'text-ok' : 'text-on-surface-low'}`}>
+                {discovery.advertising ? <Radio size={14} /> : <RadioTower size={14} />}
+                {discovery.advertising ? 'Advertising' : 'Not advertising'}
+              </span>
+            </Row>
+          ) : null}
         </div>
       </Section>
+
+      {/* What the network is actually told. A discovery record is a broadcast — unauthenticated
+          and readable by every device on the network — so the owner gets to READ it rather than
+          take our word for it. Only rendered while advertising: an empty table beside "not
+          advertising" would suggest the record exists and is blank. */}
+      {discovery?.advertising ? (
+        <Section title="What your network is told" hint="The exact record this gateway broadcasts. It carries no token, no session and no content.">
+          <div className="rounded-lg bg-surface-container px-4 py-3">
+            <dl className="grid grid-cols-[max-content_1fr] gap-x-4 gap-y-1 text-[0.8125rem]">
+              <dt className="text-on-surface-low">service</dt>
+              <dd className="font-mono break-all">{discovery.service_type}</dd>
+              {discovery.addresses.map((addr) => (
+                <Fragment key={addr}>
+                  <dt className="text-on-surface-low">address</dt>
+                  <dd className="font-mono break-all">{addr}:{discovery.port}</dd>
+                </Fragment>
+              ))}
+              {Object.entries(discovery.txt).map(([k, v]) => (
+                <Fragment key={k}>
+                  <dt className="text-on-surface-low">{k}</dt>
+                  <dd className="font-mono break-all">{v}</dd>
+                </Fragment>
+              ))}
+            </dl>
+          </div>
+        </Section>
+      ) : null}
 
       {/* INSTALL & OFFLINE (MOBILE-COMPANION T3.1). `serviceWorkerBlockedReason` was written to be
           said out loud — its own docstring argues that "saying so out loud beats an install button
