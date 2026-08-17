@@ -1767,3 +1767,31 @@ more than one file reds `test_revert_removes_exactly_one_file_and_keeps_the_lock
 **Gate.** `make lint` clean (mypy 826 files). Targeted `test_learning_*`/`test_workflows_*`/`test_skills*`
 green; full suite green but for the known worktree-only `test_harness_validate.py` failures. Web:
 `typecheck:web` clean, `vitest` 2478 passed, `npm run build` clean.
+- **2026-08-17 — DONE (`WF2LEA-10`): skill resource tier + SKILL.md conformance** (#1551). Optional
+  `resources:` frontmatter; `skill_invoke` returns body + an **L0 catalog** (declared paths and
+  descriptions, never contents, block absent entirely when a skill declares none); new
+  `skill_resource(skill, path)` loads exactly one declared path. Three independent defence layers, each
+  proven live rather than read: `_norm_declared_path` rejects `..`/absolute/`~`/drive/backslash at
+  **declaration and request** time; allowlist membership against `resources_for()`; post-`realpath`
+  containment. Removing the allowlist alone left the traversal tests **passing**, so the `..` rejection had
+  to be mutated too — and the secret still never leaked, caught by the third layer. Reads never execute
+  (an executable resource that would `touch` a sentinel left it absent). Content is
+  `fence_untrusted(source_type=skill_resource, …)`; the truncation notice sits OUTSIDE the fence;
+  `RESOURCE_MAX_BYTES = 32_768`. A conformant third-party `SKILL.md` imports **unmodified** with foreign
+  keys preserved-but-unused, and the **DANGEROUS floor stays non-overridable** (defended twice — mutating
+  it reds the new test and the pre-existing `test_dangerous_not_overridable_by_force`). §2.4 tiering was NOT
+  reimplemented in `skills/`. All registration points moved together: `_list_tools`, `_call_tool_inner`,
+  `validation.MCP_CORE_SCHEMAS`, `manifest_meta.TOOL_META`, regenerated `reference/{index,tools}.md`
+  (91→92) and `_RESIDUAL_CORE_TOOLS` (exact-equality, so a miss reds). Gate: lint EXIT=0, mypy clean on
+  902 files, 84 passed + 1 pre-existing xfail.
+- **2026-08-17 — SCOPE CALL + DISCOVERY (`WF2LEA-10`).** **Usage is recorded at skill granularity, not per
+  resource** — `record_use(skill)` fires on a resource load exactly as `skill_invoke` does. Per-resource
+  counters were deliberately NOT added because nothing reads them, which would be a writer-without-reader
+  inert surface. **Consequence: the amendment's prose about a curator ageing unused *resources* is not
+  delivered** — recorded as a scope call rather than a silent omission. Separately, a measured reachability
+  note: `skill_invoke` is in `tool_retrieval._CORE_NAMES` but **`skill_resource` is not**. Harmless today —
+  `_select` returns the whole pool when `total <= DEFAULT_K` (48) and `mcp_core._list_tools` declares 17 —
+  but the catalog text *instructs* calling `skill_resource`, so if the native catalog ever exceeds K and the
+  tool scores out, that instruction becomes unfollowable for a turn (`tool_search` is the escape hatch and
+  `reduced()` does warn). Pairing it with `skill_invoke` in `_CORE_NAMES` is a one-line change deliberately
+  left out of #1551: it alters retrieval behaviour and deserves its own test.

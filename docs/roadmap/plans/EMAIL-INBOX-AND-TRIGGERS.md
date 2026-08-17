@@ -414,3 +414,28 @@ Stored via `ProviderSettings` in the app's `data/` (survives updates, §2.6). A 
   **Gate:** `make lint` clean · targeted `pytest -k "inbox or item_kind or notification or trigger"`
   green · inert-surface + agent-reference + docs-lint + config-roundtrip ratchets green · full suite
   green apart from the known worktree-only `test_harness_validate` trio · real-home rail: unchanged.
+- **2026-08-17 — DONE (`EIAT-3`): `mail-inbox` send_reply over SMTP, draft-by-default** (PersonalClawApps#36).
+  Draft-by-default is the module's *shape*, not a flag read at the send site: the reply is composed
+  unconditionally, then `draft_reason()` — one decision point — returns non-empty for explicit `dry_run`,
+  `PERSONALCLAW_DISABLE_LIVE_WRITES`, `send_enabled` false, or incomplete SMTP config. In every draft case
+  `_make_sender` is never called, so no socket can open. The default is set in two places that must agree
+  (dataclass field and `load()`'s `d.get("send_enabled", False) is True`), so an absent key *and* a
+  hand-edited `"yes"` both read False. Threading asserts real header values (`In-Reply-To`, and
+  `References` = parent chain + parent id per RFC 5322 §3.6.4, deduped); a prompt-bound address sends
+  `From:` the **bound** address so a purpose address cannot leak the account. **No real email was sent** at
+  any point — every send goes through an in-memory fake and the transport tests double `smtplib`. Gate:
+  82 passed, the exact CI boundary lint clean over 101 files, core `AppManifest` round-trip stable with
+  `send` surviving. Five falsifications, all reddening.
+- **2026-08-17 — DISCOVERY (`EIAT-3`): three shipped halves have no reader on the core side.**
+  (1) `MessageSourceProvider.send_reply` has **zero call sites in core** — only the ABC and
+  `filesystem_source`'s stub — so the capability is provider-level and not yet reachable by a user; a core
+  caller is a separate atom. (2) **Nothing in core reads `supports_dry_run` off an inbox provider**; it
+  exists on `ActionProvider` and is read via `getattr` in `workflows/grounding.py` over
+  `ALLOWED_HOOK_PROVIDERS`. Declaration was bound to behaviour by a test rather than shipped as a floating
+  claim. (3) `guardrails.writes.live_writes_disabled` is **not an SDK export**, so an app cannot import it;
+  `outbound.live_writes_disabled()` reads `PERSONALCLAW_DISABLE_LIVE_WRITES` directly (that env var *is* the
+  contract) and mirrors `guardrails.flags.guard_flag` exactly, including any-other-value → guard ON.
+  Promoting it to `personalclaw.sdk.*` is worth a core issue. **No new permission was invented:** core's
+  `Permissions.from_dict` has no outbound-mail key, so declaring one would drop on round-trip and ship an
+  inert consent claim. Contract note: `send_reply` returns `False` for a successful draft because the ABC's
+  `bool` means *delivered*; `reply() -> ReplyOutcome` carries the distinction.
