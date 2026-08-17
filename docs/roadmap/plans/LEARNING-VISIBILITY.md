@@ -123,3 +123,94 @@ Stumble detector at the after-turn seam (only when skills were loaded): correcti
 |---|---|---|---|
 | T2.4 | `compose_identity_report`: deterministic gather over LessonStore/facets/SkillUsageStore/curator-state/proposals/memory_stats + one fenced background narrative pass; degraded floor = sections without narrative; lint map entry added | `src/personalclaw/learning_report.py`, `tests/test_resilience_degraded_lint.py` map | fixture home with seeded lessons/facets/skills yields a truthful report; counts byte-match store contents; zero writes to any learning store (inspected before/after); no-model fixture still produces the sections |
 | T2.5 | Delivery + schedule: monthly system clock job → artifact + inbox item (notify-gated); `learning.identity_report_*` config 4-point wired; FE: report renders from the inbox/artifact view (no modal) | `learning_report.py`, `gateway_services.py` (job registration), `config/loader.py`, inbox/artifact surfaces | job fires on a compressed-clock fixture; item lands in inbox linking the artifact; quiet-hours suppresses the ping but not the artifact; config round-trips; `off` disables cleanly |
+
+---
+
+## Execution log — LV-6 (S4 benchmark protocol doc)
+
+- **LV-6 DONE.** `docs/roadmap/research/learning-benchmark-protocol.md` is frozen as **PROTOCOL v1**
+  and owner-signed (owner task 2), with the ten-task register frozen (owner task 1) and its
+  selection rule stated so it can be checked rather than trusted: **one task per bundled skill
+  family whose procedure has a deterministic, non-judged observable**. The 14 skills under
+  `src/personalclaw/skills/bundled/` were enumerated from a fresh home; four are excluded with
+  reasons (`loop-worker` fires only inside a loop; `pclaw-api`/`pclaw-features` would test doc
+  recall, not a procedure; `infographic-syntax` shares `visual-output`'s observable), leaving
+  exactly ten. No task was chosen after seeing a result — no result exists. Task-set version is
+  anchored mechanically on the library manifest's per-scenario `sha256`, which `RESULTS_COLUMNS`
+  already carries as `scenario_sha256`, so a v2 row cannot be plotted as a v1 row.
+- **The doc prescribes no tooling.** Metrics are specified against surfaces that exist:
+  `evals/child.py::result_from_scenario` (completion + assertion-rate score),
+  `ScenarioResult.elapsed_secs` (wall time), `TurnResult.tool_calls` (`eval/runner.py:448`),
+  SEL `skill_surface` (`skills/loader.py:741`) for arm integrity, and
+  `guardrails/audit.py::AttemptRecord` (`model_calls.jsonl`) for the token denominator. The verdict
+  rule imports `harness/fanout_measure.py`'s three constants rather than restating them.
+- **MEASURED — eight probes executed against `main` in throwaway homes** (never `~/.personalclaw`):
+  (1) `SkillsConfig(max_triggered=0)` → `1` with a warning, `-5` → `1`; (2) a brand-new empty
+  `PERSONALCLAW_HOME` + `SkillsLoader()` → **14 skills** present in `skills/`; (3) `install_library()`
+  → 4 shipped scenarios, all `origin: shipped`, all `fixture_home: empty`; (4)
+  `compute_pin("lesson_application")` → complete except `model_fingerprint`, `is_complete() == False`
+  in an unbound home (so `append_result` would raise `PinRequiredError` — correct behaviour);
+  (5) `harness fanout-measure` on arms named `skills_on`/`skills_off` → refused, exit 2;
+  (6) the same observations renamed `fanout`/`single` → `fanout_wins` with delta 9.67, band 5.0,
+  spread 4.00, token ratio 0.995; (7) `_expand_cells` with an `arm` axis at `trial_count=3` → 6 cells
+  carrying distinct `arm` coords, and an AST census of `evals/child.py` → **exactly one** `coords.get`
+  call, for `"model"`; (8) `result_from_scenario` over a scenario whose turn recorded three tool
+  calls → no tool-call field in either the scenario summary or the cell result.
+- **BLOCKING FINDING (doc §7 G1) — there is no way to run a skills-off arm today.** All three
+  candidate levers fail, each verified: `skills.max_triggered` clamps below 1 to 1
+  (`config/loader.py:1817-1819`); an empty fixture home is not skills-off because `SkillsLoader`
+  force-syncs `skills/bundled/` into the home on construction (`skills/loader.py:293`, `:41`); and
+  `feedback.suppressed_producers` is accuracy-derived and only reaches surfacing as
+  `("skill_synthesis", key)` pairs (`skills/surfacing.py:304`), so it cannot suppress a bundled skill
+  on request. No env override exists. Recorded in the doc as a named precondition on `LV-7`, not
+  papered over with a procedure nobody can run.
+- **DISCOVERY — the arm lever is already owned by EVALUATION-SUBSTRATE, and `LV-7`'s declared deps
+  understate it.** ES §3.3 (atom `ES-7`) specifies replaying runs "with the skill surfaced vs
+  suppressed (`arm_mask`)" — the exact lever this benchmark needs. `arm_mask` appears nowhere in
+  `src/`, `harness/` or `tests/`: designed, unbuilt. `LV-7`'s row declares
+  `EXT:EVALUATION-SUBSTRATE:S1-2` only, but §3 is a later ES session, so `LV-7` is gated on `ES-7`
+  and not merely on S1-2. Left unedited here — the roadmap is owner-maintained and this atom's scope
+  was the protocol doc; `LV-7` must consume `ES-7`'s `arm_mask` rather than grow a second toggle
+  beside it (AGENTS.md §"Shared conventions", one owner per mechanism).
+- **DISCOVERY — a declared axis that nothing reads is worse than a missing one** (doc §7 G2). Because
+  `evals/child.py:162` reads only `coords["model"]`, an `arm` axis today produces N identical runs
+  labelled two ways. Every artifact would look like a real comparison. This is the specific defect
+  the protocol's arm-integrity rule exists to catch, and it is why the doc forbids the axis until the
+  child honours it.
+- **DISCOVERY — the metrics the plan's C4 declares are two-thirds unreachable from the matrix path**
+  (doc §7 G3/G4). `tool_calls` is captured per turn and dropped by BOTH `ScenarioResult.summary()`
+  and `evals/child.py::result_from_scenario`; `RESULTS_COLUMNS` has no column for it or for wall
+  time. Worse and more fixable: the token denominator the honest verdict requires **already exists
+  per-cell** — `AttemptRecord` carries `tokens_in`/`tokens_out`/`dollars_est`/`latency_ms` — but
+  `model_calls.jsonl` and the SEL log are written into the cell's `PERSONALCLAW_HOME`, a
+  `tempfile.TemporaryDirectory` destroyed on exit, while only the cell *artifact* dir survives under
+  the real home. `LV-7` must fold both into the cell payload before the child exits.
+- **DISCOVERY — `run_matrix` has no production caller** (doc §7 G5): only
+  `tests/test_evals_pinning.py` and `tests/test_evals_matrix_runner.py`. No CLI, no handler, no
+  script. `personalclaw eval` does not reach it, and must not be used for benchmark runs because it
+  isolates `PERSONALCLAW_WORKSPACE` but **not** `PERSONALCLAW_HOME` — so a CLI arm would surface the
+  operator's real skills. Separately, `evals.enabled` and `evals.study_default_k` sit in the PATCH
+  allowlist (`dashboard/handlers/core.py:643-644`) and are read by nothing under `personalclaw/evals/`;
+  the doc tells `LV-7` to read `study_default_k` rather than hardcode `k`, and deliberately does not
+  instruct an operator to flip a switch that changes nothing.
+- **DISCOVERY — `personalclaw eval` ignores `fixture_home`.** `eval/scenario.py::_parse_scenario`
+  reads `name`/`description`/`dimensions`/`seed`/`sessions`/`judge_criteria` and neither `version` nor
+  `fixture_home`; those two are read only by the library manifest and `RunPin`. A scenario's declared
+  fixture home is therefore honoured by the matrix path alone.
+- **DISCOVERY — `harness/fanout_measure.py` is arm-name-bound by construction.** `load_observations`
+  requires arms literally named `fanout`/`single` and errors otherwise (probe 5). The statistical
+  posture and the three constants are reusable; `compare()`/`load_observations()` are not. The doc
+  states the two honest options for `LV-7` (generalise the vocabulary in that module — an owner call,
+  since the names are deliberately fixed — or a thin sibling importing the same constants) and rules
+  out the dishonest one (relabelling `skills_on` as `fanout` to get a green run).
+- **NOT DONE deliberately, and reported rather than built:** no paired arm was executed, because
+  G1 means there is no skills-off arm to run and executing one arm twice under two labels is the
+  precise artifact §1 of the protocol exists to prevent. No model was called; no cost incurred; no
+  provider-reported token count observed. The doc says all of this in §9 so a reader is not left to
+  infer that a run happened.
+- **DISCOVERY (adjacent, not acted on) — `ES-1`'s atom row reads `todo` while its named machinery is
+  on `main`:** `MatrixSpec`/`run_matrix`, per-cell artifact retention under `evals/matrices/`, the
+  three-state `PASSED|FAILED|VERIFIER_ABSENT` aggregate, and the `EvalsConfig` PATCH entries all
+  exist, and `ES-2` (which depends on `ES-1`) is already `✅`. The genuinely missing piece is the
+  production caller (G5), not the machinery. Flagged for the owner; the header/row was left alone
+  because this atom does not own the ES plan.
