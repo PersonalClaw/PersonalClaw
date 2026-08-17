@@ -1414,12 +1414,14 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
       // without adding a history entry — and via the router, not a raw
       // history.replaceState bypass.
       navigate(`chat/${created.key}`, { replace: true })
-      if (acp) await api.setSessionAcpAgent(created.key, { provider: acp.providerId, provider_agent: acp.agent.provider_agent, model: selection.model && selection.model !== 'Auto' ? selection.model : undefined }).catch(() => {})
-      if (selection.approval !== 'normal') await api.setApprovalMode(selection.approval, created.key).catch(() => {})
-      if (selection.taskMode !== 'agent') await api.setTaskMode(selection.taskMode, created.key).catch(() => {})
+      // Same contract at session START: the composer already shows these picks, so a swallowed failure
+      // means the brand-new session runs under settings the user can see but does not have.
+      if (acp) await persistSelection('this agent', api.setSessionAcpAgent(created.key, { provider: acp.providerId, provider_agent: acp.agent.provider_agent, model: selection.model && selection.model !== 'Auto' ? selection.model : undefined }))
+      if (selection.approval !== 'normal') await persistSelection('this approval mode', api.setApprovalMode(selection.approval, created.key))
+      if (selection.taskMode !== 'agent') await persistSelection('this task mode', api.setTaskMode(selection.taskMode, created.key))
       // Persist a pre-start reasoning-effort pick (applySelection couldn't, since the
       // session didn't exist yet).
-      if (selection.reasoning) await api.setReasoningEffort(created.key, selection.reasoning).catch(() => {})
+      if (selection.reasoning) await persistSelection('this reasoning effort', api.setReasoningEffort(created.key, selection.reasoning))
       return created.key
     })()
     ensureInFlightRef.current = p
@@ -2066,6 +2068,20 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
     return null
   }
 
+  // 🔑 ONE REPORTER FOR EVERY SELECTION WRITE. `applySelection` flips the composer's local state FIRST
+  // and then fires the persistence calls — the optimistic shape `saveFailureReported` names, where a
+  // swallowed rejection "is a lie, because the control is left showing a value the server refused". Here
+  // that lie is worse than a settings toggle: the composer can show an agent, model or APPROVAL MODE the
+  // session is not actually using, so the user's next message runs under settings they did not pick.
+  //
+  // These are deliberately fire-and-forget (the composer must not block on a round-trip), so the remedy
+  // is the family's: TELL the user. Reverting `setSelection` was considered and rejected — the rail's own
+  // fix for this shape is to report, not to fight the input the user is still editing.
+  //
+  // It is one helper rather than eleven catch blocks because eleven is how one gets missed.
+  const persistSelection = <T,>(what: string, p: Promise<T>): Promise<T | void> =>
+    p.catch((e) => { notify(`Couldn't apply ${what} to this session: ${String((e as Error)?.message || e)}`, 'error') })
+
   function applySelection(patch: Partial<ComposerValue>) {
     const nextSel = { ...selection, ...patch }
     setSelection(nextSel)
@@ -2075,17 +2091,19 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
     if (patch.agent) {
       // ACP agents bind via /acp-agent (provider + provider_agent + model);
       // native agents via /agent.
-      if (acp) api.setSessionAcpAgent(s, { provider: acp.providerId, provider_agent: acp.agent.provider_agent, model: nextSel.model && nextSel.model !== 'Auto' ? nextSel.model : undefined }).catch(() => {})
-      else api.setSessionAgent(s, patch.agent).catch(() => {})
+      if (acp) persistSelection('this agent', api.setSessionAcpAgent(s, { provider: acp.providerId, provider_agent: acp.agent.provider_agent, model: nextSel.model && nextSel.model !== 'Auto' ? nextSel.model : undefined }))
+      else persistSelection('this agent', api.setSessionAgent(s, patch.agent))
     }
     if (patch.model && !patch.agent) {
       // model-only change: ACP model goes through /acp-agent too (re-bind w/ model)
-      if (acp) api.setSessionAcpAgent(s, { provider: acp.providerId, provider_agent: acp.agent.provider_agent, model: patch.model === 'Auto' ? undefined : patch.model }).catch(() => {})
-      else api.setSessionModel(s, patch.model === 'Auto' ? '' : patch.model).catch(() => {})
+      if (acp) persistSelection('this model', api.setSessionAcpAgent(s, { provider: acp.providerId, provider_agent: acp.agent.provider_agent, model: patch.model === 'Auto' ? undefined : patch.model }))
+      else persistSelection('this model', api.setSessionModel(s, patch.model === 'Auto' ? '' : patch.model))
     }
-    if (patch.approval) api.setApprovalMode(patch.approval as ApprovalMode, s).catch(() => {})
-    if (patch.taskMode) api.setTaskMode(patch.taskMode as TaskMode, s).catch(() => {})
-    if (patch.reasoning !== undefined) api.setReasoningEffort(s, patch.reasoning as ReasoningEffort).catch(() => {})
+    // Approval mode first among these three deliberately: it is the one whose silent divergence has a
+    // safety cost, not just a cosmetic one.
+    if (patch.approval) persistSelection('this approval mode', api.setApprovalMode(patch.approval as ApprovalMode, s))
+    if (patch.taskMode) persistSelection('this task mode', api.setTaskMode(patch.taskMode as TaskMode, s))
+    if (patch.reasoning !== undefined) persistSelection('this reasoning effort', api.setReasoningEffort(s, patch.reasoning as ReasoningEffort))
   }
 
   /** Apply a saved starter to the composer (S3 T3.2).
@@ -2138,7 +2156,20 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
   async function switchToAgentAndRun(continuation: string) {
     setSelection((sel) => ({ ...sel, taskMode: 'agent' }))
     const s = sessionRef.current
-    if (s) await api.setTaskMode('agent', s).catch(() => {})
+    // 🔑 THIS ONE DOES NOT JUST REPORT — IT STOPS. The comment above states the invariant: the flip is
+    // awaited "so the continuation turn runs under Agent's gate + framing". It used to swallow the
+    // rejection and send anyway, which breaks exactly that invariant — the turn would run under the
+    // posture the user was escalating OUT of, while the composer showed Agent. For a consent-gated
+    // escalation, proceeding on a failed flip is the one outcome the click did not authorise, so report
+    // and return. The composer keeps showing Agent, which is now the honest state of the user's intent
+    // rather than a claim about the session; the next send re-attempts the flip through `applySelection`.
+    if (s) {
+      try { await api.setTaskMode('agent', s) }
+      catch (e) {
+        notify(`Couldn't switch this session to Agent: ${String((e as Error)?.message || e)}`, 'error')
+        return
+      }
+    }
     const text = continuation.trim() || 'Go ahead and do it.'
     await send(text)
   }
