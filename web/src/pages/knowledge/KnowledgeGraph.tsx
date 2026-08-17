@@ -128,7 +128,12 @@ export function KnowledgeGraph({ selectedId, onSelect, onRegenerate, regeneratin
           const a = pos.get(e.source), b = pos.get(e.target)
           if (!a || !b) return null
           const active = hover === e.source || hover === e.target
-          return <line key={i} x1={a.x} y1={a.y} x2={b.x} y2={b.y} stroke={active ? 'var(--color-primary)' : 'var(--color-outline-variant)'} strokeWidth={active ? 1.6 : 0.6} strokeOpacity={hover && !active ? 0.15 : 0.5} />
+          // Resting relation: `--color-on-surface-low` at 0.7 measures 3.92:1 (dark) / 3.86:1
+          // (light) against the canvas — `--color-outline-variant` at 0.5 measured 1.35:1 / 1.07:1.
+          // Width 1 rather than 0.6 because a sub-pixel stroke lands as partial pixel coverage, so
+          // it cannot reach the ratio its colour promises. 0.15 stays for the DIMMED case: that is
+          // deliberate de-emphasis while the pointer is on another node, not the resting state.
+          return <line key={i} x1={a.x} y1={a.y} x2={b.x} y2={b.y} stroke={active ? 'var(--color-primary)' : 'var(--color-on-surface-low)'} strokeWidth={active ? 1.6 : 1} strokeOpacity={hover && !active ? 0.15 : 0.7} />
         })}
         {graph.nodes.map((n) => {
           const p = pos.get(n.id); if (!p) return null
@@ -141,7 +146,20 @@ export function KnowledgeGraph({ selectedId, onSelect, onRegenerate, regeneratin
               onMouseEnter={() => setHover(n.id)} onMouseLeave={() => setHover(null)}
               onClick={() => onSelect?.(n.name ?? n.id)}
               style={{ cursor: 'pointer' }} opacity={hover && !active ? 0.4 : 1}>
-              <circle r={r} fill={selected ? 'var(--color-primary)' : 'color-mix(in srgb, var(--color-primary) 30%, var(--color-surface))'} stroke={active ? 'var(--color-primary)' : 'var(--color-outline-variant)'} strokeWidth={active ? 2.5 : 1} />
+              {/* 🔑 THE OUTLINE IS WHAT MAKES AN ENTITY PERCEIVABLE, not the fill. The fill is a 30%
+                  primary tint over surface, which measures 1.68:1 (dark) / 1.4:1 (light) against the
+                  canvas — nowhere near SC 1.4.11's 3:1 for a graphical object you need in order to
+                  read the view, and these dots ARE the view. Raising the tint would reach 3:1 in dark
+                  only at 60% and never in light (2.27:1 at 60%), and it would restyle the graph; a
+                  ≥3:1 boundary is the standard remedy for a low-contrast shape, so the stroke carries
+                  it and the fill is left alone.
+                  `--color-on-surface-low` measures 6.88:1 / 8.5:1. `--color-outline` was the closer
+                  neighbour by name and FAILS light at 2.88:1, and `--color-primary` is unavailable
+                  here by meaning, not by number: this very line uses it for `active`, so painting
+                  resting nodes with it would erase hover and selection. Both are NEUTRALS, which is
+                  why two measurements settle all twelve schemes — `design/schemes.ts` re-tints the
+                  accent identity only ("Neutral surfaces stay from tokens.css"). */}
+              <circle r={r} fill={selected ? 'var(--color-primary)' : 'color-mix(in srgb, var(--color-primary) 30%, var(--color-surface))'} stroke={active ? 'var(--color-primary)' : 'var(--color-on-surface-low)'} strokeWidth={active ? 2.5 : 1} />
               {(active || deg > 2 || labelAll) && <text y={-r - 4} textAnchor="middle" className="fill-on-surface" style={{ fontSize: 10 }}>{n.name}</text>}
             </g>
           )
