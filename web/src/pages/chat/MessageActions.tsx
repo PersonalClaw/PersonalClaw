@@ -3,13 +3,14 @@ import { Copy, Check, RotateCcw, GitBranch, Volume2, Square, Pencil, ChevronLeft
 import { unavailableWhen } from '../../ui/unavailable'
 
 /** Action bar below an ASSISTANT turn. Copy + Speak always; Regenerate only on
- *  the last turn (it replaces the latest reply); Fork from any turn (branches a
- *  new session at that point). When a reply has been regenerated, a ‹ n/N ›
- *  variant switcher lets the user page back to a prior answer. Real, wired
- *  actions — no decorative thumbs/more. Reveals on hover of the message
- *  (group/msg) and stays while focused. `speaking` is controlled by the host
- *  (real playback state): the Speak button becomes a Stop toggle while this
- *  turn's audio is playing. */
+ *  the last turn (it replaces the latest reply); Branch from any turn (CC-7 —
+ *  duplicates the conversation up to that point into a new session; branching
+ *  from an ANSWER is the common case, "take this analysis two directions"). When
+ *  a reply has been regenerated, a ‹ n/N › variant switcher lets the user page
+ *  back to a prior answer. Real, wired actions — no decorative thumbs/more.
+ *  Reveals on hover of the message (group/msg) and stays while focused.
+ *  `speaking` is controlled by the host (real playback state): the Speak button
+ *  becomes a Stop toggle while this turn's audio is playing. */
 export function AssistantActions({ text, isLast, speaking, canFork = true, variantCount = 0, variantIdx = 0, onCopy, onRegenerate, onFork, onSpeak, onSwitchVariant }: {
   text: string
   isLast: boolean
@@ -31,7 +32,7 @@ export function AssistantActions({ text, isLast, speaking, canFork = true, varia
       {hasVariants && <VariantSwitcher count={variantCount} idx={variantIdx} onSwitch={onSwitchVariant!} />}
       <ActBtn icon={copied ? Check : Copy} label={copied ? 'Copied' : 'Copy'} onClick={copy} done={copied} />
       {isLast && <ActBtn icon={RotateCcw} label="Regenerate" onClick={onRegenerate} />}
-      {canFork && <ActBtn icon={GitBranch} label="Fork from here" onClick={onFork} />}
+      {canFork && <ActBtn icon={GitBranch} label="Branch from here" onClick={onFork} />}
       <ActBtn icon={speaking ? Square : Volume2} label={speaking ? 'Stop' : 'Speak'} onClick={onSpeak} active={speaking} />
     </div>
   )
@@ -69,8 +70,8 @@ function VariantSwitcher({ count, idx, onSwitch }: { count: number; idx: number;
   )
 }
 
-/** Action bar below a USER turn — Copy, Edit & resend, Rewind, Fork. Right-aligned
- *  to sit under the bubble. `canFork` hides Fork on a non-persistent session (the
+/** Action bar below a USER turn — Copy, Edit & resend, Rewind, Branch. Right-aligned
+ *  to sit under the bubble. `canFork` hides Branch on a non-persistent session (the
  *  backend refuses to fork temporary/incognito). Rewind is offered only on
  *  NON-last user turns (`canRewind`): editing an earlier turn replays from there
  *  and keeps the discarded tail in history (fork-and-swap); the last turn uses
@@ -83,7 +84,7 @@ export function UserActions({ text, canFork = true, canRewind = false, onEdit, o
       <ActBtn icon={copied ? Check : Copy} label={copied ? 'Copied' : 'Copy'} onClick={copy} done={copied} />
       <ActBtn icon={Pencil} label="Edit & resend" onClick={onEdit} />
       {canRewind && onRewind && <ActBtn icon={Rewind} label="Rewind to here" onClick={onRewind} />}
-      {canFork && <ActBtn icon={GitBranch} label="Fork from here" onClick={onFork} />}
+      {canFork && <ActBtn icon={GitBranch} label="Branch from here" onClick={onFork} />}
     </div>
   )
 }

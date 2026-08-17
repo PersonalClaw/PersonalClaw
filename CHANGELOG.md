@@ -53,6 +53,14 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
   what it would replace *and what it would leave alone* before you apply it. A pack update never
   overwrites a file you have edited: your version is kept and the skip is named on screen, with the
   reason, so a respected edit never looks like a silent one.
+- **Branch a conversation from any message, and see where a branch came from.** Hovering any
+  past message — your question or the assistant's answer — reveals a **Branch from here**
+  button that copies the conversation up to that point into a new chat, leaving this one
+  exactly as it was. Branch the same answer twice to take it two directions, or branch a
+  branch; each one is a real, separate chat with its own context. The new chat carries a
+  **Branched from** link back to the one it came from, which stays there after a reload and
+  follows the original if you rename it. Nothing is overwritten, so there is no confirmation
+  to click through.
 
 - **Your phone can find this machine on its own now, if you ask it to.** Getting a companion
   device onto your gateway used to start with reading an IP address off one screen and typing it
@@ -123,6 +131,12 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
   claim-attribution switch, and a budget for what slots may cost each turn.
 
 ### Fixed
+
+- **Forking a conversation could cut it earlier than the message you clicked.** In a chat with
+  tool calls or multi-part answers, the fork was measured by the position of the bubble on
+  screen rather than the message in the transcript, and those drift apart — so you got a
+  plausible-looking copy that quietly stopped short, sometimes before the answer you were
+  forking from. It now cuts exactly where you clicked.
 
 - **A "replace everything" restore could run while the app was running.** Over the web API it was
   supposed to refuse and, on any port other than the default, it silently didn't — it checked whether

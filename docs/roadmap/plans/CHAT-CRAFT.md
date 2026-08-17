@@ -314,6 +314,90 @@ One task row, landing in **S4** (the polish session); **no count change**.
   `screen_capture` / `probe()` / `request()` as the swap point — a comment, not a `TODO`,
   and not an implementation); the a11y/SEL/mobile sweep and the docs guide, which are CC-6.
 
+- **2026-08-17 — CC-7 DONE (Amendment (a) Branch — F1.1, F1.2, VF branch portion).** Branch
+  `feature-cc7-branch-mechanic`, one commit. Shipped: `web/src/pages/chat/branchLineage.ts`
+  (new pure module), the `visibleIndex` stamp in `hydrateTurns`, `forked_from` +
+  `forked_from_title` on the session-detail endpoint, the "Branched from" header chip, the
+  "Session branched" confirmation, and the Branch vocabulary on the message action bars.
+
+  **PREMISE CORRECTION: F1.1's affordance already shipped, and it was WIRED TO THE WRONG
+  INDEX.** The amendment reads as though the branch affordance had to be built. It did not
+  exist as a gap — `MessageActions.tsx` already rendered a `GitBranch` "Fork from here"
+  button on **both** roles, `canFork` already hid it on non-persistent sessions, and
+  `ChatPage.forkAt` already called the endpoint and navigated to the child. So the atom's
+  first clause was satisfied on arrival. What was NOT satisfied is the clause it depends on:
+  *"calls the existing POST .../fork **at that index**"*. `forkAt` passed the turn's array
+  position, on the strength of an in-code comment asserting *"Here every turn is
+  user/assistant, so it's just the turn index."* **That comment is false on any real
+  transcript.** `hydrateTurns` performs two collapses — it drops native ReAct loop
+  re-injections (`chatTypes.ts` "loop re-injection") and merges consecutive assistant
+  messages into one turn via `lastAssistant()` — while the backend's visible list
+  (`chat_fork.py:119`, `role in ("user","assistant")`) counts every one of them. The two
+  indices therefore agree only on a transcript with no tool use and single-message answers,
+  and the gap COMPOUNDS: each collapse adds one. Measured on the validation transcript
+  (one re-injection + a three-message answer), clicking Branch on the final answer sent
+  index 3 where the truth was 5 — and because the endpoint happily forks at 3, the user got
+  a plausible-looking branch cut two messages early, with no error anywhere. Branching the
+  merged answer was worse: the naive index 1 lands on the *re-injected user message*, so
+  the "take this analysis in two directions" case — the amendment's own stated common case
+  — produced a branch containing **no answer at all**.
+
+  Fix: `hydrateTurns` stamps each turn with `visibleIndex`, the backend coordinate of the
+  **last** message folded into it (last, not first, because `at_message_index` is inclusive
+  — an assistant turn must carry its whole answer), and `branchIndexOf` reads it, deriving
+  a coordinate for live WS-built turns from the nearest stamp. Verified live: branching the
+  merged answer sent `at_index=4`, the user turn `at_index=5` (SEL `chat.session_fork`).
+
+  **Where the breadcrumb comes from, and why it survives a reload.** `forked_from` was
+  already persisted (`chat_persistence.py:581`) and restored on load, but **no endpoint
+  served it** — so the only place a child could have learned its parent was the navigation
+  that created it, which a refresh destroys. The session-detail endpoint now returns
+  `forked_from` plus `forked_from_title`, resolved live-then-disk at read time; ChatPage
+  reads it in the same effect that already restores `memory_mode`, which is exactly the
+  reload path. Deliberately a read, not a copy: renaming the parent updates the breadcrumb
+  (the child's own `"Fork of X"` title is the frozen copy, and stays frozen). Two flat
+  fields rather than a nested object, imitating the neighbouring `memory_mode`
+  (AGENTS.md: success envelopes imitate the neighbour). `forked_from_title: ""` with a
+  non-empty `forked_from` means the origin is gone, which is what lets the chip degrade to
+  unlinked text instead of a link into nothing.
+
+  **No confirmation dialog, deliberately.** Branch is one click from a hover icon and a
+  write, which normally argues for a confirm. It is right here because Branch DUPLICATES —
+  it creates a new session and cannot overwrite anything in the current one. Rewind, which
+  *replaces* a timeline, does confirm. The confirmation is therefore a post-hoc toast, and
+  it goes through the shell `notify()` rather than ChatPage's inline strip because
+  navigating to the child unmounts the surface that raised it.
+
+  **DEVIATION (vocabulary): "Fork from here" → "Branch from here".** The amendment names
+  the mechanic **Branch** and the breadcrumb **"Branched from"**; shipping a button labelled
+  "Fork" beside it would split the user-facing vocabulary across one mechanic. Endpoint
+  paths, `forked_from`, and the rewind mechanic's own "Restore as fork" (genuinely a
+  restore-as-fork) are untouched — this is a label change, not a contract change.
+
+  **DISCOVERY (not fixed — out of atom scope, no user-visible symptom found).** The fork
+  endpoint reads history with `conversation_log.read_messages(...)` while session-detail
+  uses `read_messages_chained(...)`. On a session whose history has been consolidated or
+  rotated, the two see different message counts, so the FE coordinate (derived from detail)
+  could miss the endpoint's list. Not observed in the drive, and changing what a shipped
+  fork copies is a behaviour change beyond a frontend affordance atom. Filed here rather
+  than patched.
+
+  Also unchanged deliberately: `editResend` still passes the turn position as its index. It
+  is a *fallback* there — the backend locates the target by `ts` first — and altering the
+  rewind path's targeting is S1's contract, not this atom's.
+
+  **Validated as a user** (isolated home, port 10288, seeded transcript containing both a
+  loop re-injection and a three-message answer): branched from an assistant answer
+  (`at_index=4`, full answer carried), from a user message (`at_index=5`, ends unanswered),
+  the same answer a second time (distinct session, identical transcript, parent untouched),
+  and a branch of a branch (breadcrumb reads "Branched from Fork of Q3 record thread" — the
+  intermediate, not the root). Hard reload with cache bypass: breadcrumb still present. The
+  branch button measured on the live DOM at effective opacity 0 at rest and 1 while focused
+  (`focus-within:opacity-100`, read after a 300ms transition settle), `tabIndex >= 0`, not
+  inside `aria-hidden`, accessible name "Branch from here" — so the hover affordance has a
+  real keyboard route. Zero console errors across the drive. No primitive-adoption ratchet
+  trip (the new chip uses the `ui/` `Button`).
+
 ---
 
 ## Amendment (2026-07-29 — owner-approved: Branch, and the plan gate for ordinary chat)
