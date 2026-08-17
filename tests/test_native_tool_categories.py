@@ -53,6 +53,10 @@ _CATEGORY_PROVIDERS = {
 # entity category.
 _RESIDUAL_CORE_TOOLS = {
     "skill_invoke",
+    # skill_resource (WF2LEA-10) is skill_invoke's deeper tier — it reads one file the
+    # skill declared beside its SKILL.md. Same library-spanning residence as the trio
+    # below: it owns no entity category, it loads part of a skill.
+    "skill_resource",
     "skill_search",
     "skill_remember",
     "wait",

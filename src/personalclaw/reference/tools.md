@@ -849,6 +849,27 @@ Capture a skill the USER just taught you ("from now on…", "always do X", "reme
 }
 ```
 
+### `skill_resource`
+
+Load ONE file a skill declared as a resource (a reference doc, a data file, a helper script). skill_invoke lists a skill's resources as a catalog of path + one-line description WITHOUT their contents; call this to pull exactly the one you need. Only paths the skill declared in its `resources:` frontmatter can be loaded — this is not a general file read, and it never RUNS a script resource, it returns its text. Args: skill (the skill name), path (a path from that skill's catalog).
+
+**Response type:** `skill.resource.content`
+
+**Safety:** requires approval
+
+**Parameters:**
+- `path` (string, required) — The declared resource path, exactly as the catalog lists it (e.g. 'reference/api-notes.md').
+- `skill` (string, required) — The skill that declared the resource (e.g. 'tiny-url').
+
+**Example — Load one reference file a skill declared as a resource:**
+
+```json
+{
+  "path": "reference/api-notes.md",
+  "skill": "pclaw-api"
+}
+```
+
 ### `skill_search`
 
 Find a skill by capability across your ENTIRE skill library — not just the skills surfaced in your context this turn. Use when the task might have a matching skill but you don't see one in the index. Returns ranked name + description; then call skill_invoke(name) to load its full steps. Args: query (str), optional limit (int).
