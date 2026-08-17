@@ -1,11 +1,12 @@
 """Admission policies — the ordered rules that decide what the frontier may launch (PP-11).
 
-Four schedulers in this repo answer the same question — *what may run now, given persisted
-state?* — and share zero lines: `workflows/tick.frontier()` (typed lanes, per-container
+Four schedulers in this repo answered the same question — *what may run now, given persisted
+state?* — and shared zero lines: `workflows/tick.frontier()` (typed lanes, per-container
 `max_concurrency`, WIP=1), `loop/tick.evaluate()` (dwell / `min_findings` / metric gates),
 `workflows/pool.py`'s `frontier`/`next` (priority + blocking-count + overdue with TTL'd leases),
-and `triggers/` `tick_once`. Each holds a capability the others structurally cannot express, so
-every new admission rule lands wherever its author happened to be standing.
+and `triggers/` `tick_once`. Each held a capability the others structurally could not express, so
+every new admission rule landed wherever its author happened to be standing. Three of the four are
+now this module; `triggers/` stays out on purpose (it answers whether to START, on a wall clock).
 
 This module is the seam that makes them one mechanism. `PP-11` introduced **nothing new**: `Lane`,
 `ContainerConcurrency` and `Wip` are exactly the three rules `frontier()` already applied, moved
@@ -23,6 +24,14 @@ pool's flocked claim path uses, and `Dwell`/`MetricGate` parse with the loop's o
 implementation of anything. `default_policies(state=None)` returns `PP-11`'s three, so a spec
 declaring none of the new keys runs the same code it always did — additivity by construction,
 re-proven by the golden file.
+
+`PP-13` retires the last duplicate: `pool.py`'s private `frontier`/`next` projection. What the pool
+knew that this module did not was an ORDER — priority, blocking-count, overdue, then recency then id
+— and that is not a policy, because a policy answers *how many* while an order answers *which
+first*. So it lands as `rank_key`, a comparator, and `ready()` is the two of them composed: the
+`Lease` policy decides who is excluded, the comparator decides who is on top. The exclusion is no
+longer an `if candidate.leased_by` inside one surface's projection — it is the same composed verdict
+the engine's frontier gets, which is the whole of what "one admission core" buys.
 
 **One shape covers both of today's admission questions.** Lane admission asks "may one more `llm`
 node start, given how many are already in flight"; a capped `foreach` asks "may one more item of
@@ -60,7 +69,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Mapping
+from typing import Any, Mapping, Sequence
 
 from personalclaw.loop.tick import Action, Decision, StepConfig, TickConfig, TickState
 from personalclaw.loop.tick import evaluate as evaluate_step
@@ -542,3 +551,142 @@ def default_policies(
     if state is None:
         return base
     return base + (Lease(state=state), Dwell(state=state), MetricGate(state=state))
+
+
+# ── the ready projection: which work is on top, not how much of it may run (PP-13) ──
+
+
+#: The identity the READ-ONLY ready projection asks as. A holder that never takes a lease gets the
+#: honest answer to "what is free right now": work another holder is actively holding is excluded,
+#: and work whose lease has EXPIRED is not — because `pool.acquire` treats an expired lease as
+#: takeable, which is the same reasoning `containers.board_row` applies when it drops an expired
+#: claim badge rather than rendering it. The retired `pool.frontier` filtered on `leased_by` being
+#: truthy, so it hid work whose holder was already gone; that is the one behaviour this retirement
+#: deliberately does not preserve, and it is pinned by its own test.
+OBSERVER = "work-board"
+
+
+class Urgency(str, Enum):
+    """Why an item is at the top. Shown, not just used for sorting.
+
+    A ranked list whose order cannot be explained is one a user overrides, and then the projection
+    is decoration.
+    """
+
+    OVERDUE = "overdue"
+    BLOCKING_OTHERS = "blocking_others"
+    HIGH_PRIORITY = "high_priority"
+    NORMAL = "normal"
+
+
+#: Priority weights, keyed by the REAL `TaskPriority` values. Measured (S60): the shipped rungs are
+#: `critical | high | medium | low | trivial` — there is no `urgent`. A hand-written scale invented
+#: `urgent` and omitted `critical`, so the single most important rung in the product would have
+#: scored as the default and a `critical` task would have ranked below a `high` one.
+PRIORITY_WEIGHT = {
+    "critical": 5.0,
+    "high": 3.0,
+    "medium": 2.0,
+    "low": 1.0,
+    "trivial": 0.5,
+}
+
+
+@dataclass(frozen=True)
+class ReadyItem:
+    """One unit of work as the ready projection sees it. A view, not a `Task`.
+
+    Deliberately not a `Task`: building this from the fields the ranking actually reads means a
+    caller can project from any provider's tasks, and a new `Task` field cannot silently change the
+    ranking. The adapter that fills it is where the clock and the disk live (`tasks/registry.py`),
+    which is what keeps this module's purity rail satisfiable.
+
+    `unblocked` keeps the retired projection's polarity verbatim. This atom's whole bar is "the same
+    ready set, in the same order"; flipping the sense of the boolean the equivalence turns on would
+    add a way to be silently wrong — a polarity bug flips both sides of a test written after the
+    rename — for no gain at all.
+    """
+
+    item_id: str
+    title: str = ""
+    priority: str = "medium"
+    unblocked: bool = True
+    blocks_count: int = 0
+    overdue: bool = False
+    updated_at: float = 0.0
+
+    def urgency(self) -> Urgency:
+        if self.overdue:
+            return Urgency.OVERDUE
+        if self.blocks_count > 0:
+            return Urgency.BLOCKING_OTHERS
+        if PRIORITY_WEIGHT.get(self.priority, 2.0) >= PRIORITY_WEIGHT["high"]:
+            return Urgency.HIGH_PRIORITY
+        return Urgency.NORMAL
+
+    def score(self) -> float:
+        """Rank score: priority, plus how much this item unblocks, plus an overdue bump.
+
+        `blocks_count` is in the score because a medium task blocking four others is more valuable
+        than a high task blocking none — the whole point of a dependency-aware pool.
+        """
+        base = PRIORITY_WEIGHT.get(self.priority, 2.0)
+        return base + min(3.0, 0.5 * self.blocks_count) + (2.0 if self.overdue else 0.0)
+
+
+def rank_key(item: ReadyItem) -> tuple[float, float, str]:
+    """The pool's ordering, as a comparator on the unified core.
+
+    An order is not an admission policy: a policy answers *how many may run* and composes by
+    minimum, while an order answers *which one first* and composes by nothing — two orders do not
+    have a tightest. So it is a separate, named function rather than a fourth thing bolted onto
+    `AdmissionPolicy`, and `ready()` is the two composed.
+
+    Ties break on recency then id. A stable order matters because an unstable "next task" makes an
+    agent thrash between two equals, and it is the reason this returns a total order rather than
+    leaving equal-scoring items in whatever sequence the store happened to yield.
+    """
+    return (-item.score(), -item.updated_at, item.item_id)
+
+
+def explain(item: ReadyItem) -> str:
+    """Why this item ranks where it does, in one line."""
+    reasons = [f"priority={item.priority}"]
+    if item.overdue:
+        reasons.append("overdue")
+    if item.blocks_count:
+        reasons.append(f"blocks {item.blocks_count} other(s)")
+    return f"{item.item_id}: " + ", ".join(reasons)
+
+
+def ready(items: Sequence[ReadyItem], policies: tuple[AdmissionPolicy, ...]) -> list[ReadyItem]:
+    """Everything workable right now, ranked — admission and order, composed.
+
+    Blocked items are dropped first because they are not workable at all, so no policy needs an
+    opinion about them. Everything else is put to the composed policy list as a `RESOURCE` request
+    keyed by its own id, which is exactly how the pool's lease is keyed (`pool.claim_task` writes a
+    sidecar per task id). A capacity of zero means another holder owns it; an abstention (nobody
+    speaks to this bucket) means free.
+
+    Pure, like every `capacity()` above: the clock and the lease records arrive inside the policies'
+    `AdmissionState`, gathered once by the caller that owns them.
+    """
+    admitted = [
+        item
+        for item in items
+        if item.unblocked
+        and compose(policies, AdmissionRequest(scope=Scope.RESOURCE, key=item.item_id)).admits(0)
+    ]
+    return sorted(admitted, key=rank_key)
+
+
+def next_ready(
+    items: Sequence[ReadyItem], policies: tuple[AdmissionPolicy, ...]
+) -> ReadyItem | None:
+    """The single top item, or `None` when nothing is workable.
+
+    `ready()`'s head by construction, so the list and the pick can never disagree — which is what
+    stopped "what should I work on" from being reimplemented per surface.
+    """
+    ranked = ready(items, policies)
+    return ranked[0] if ranked else None

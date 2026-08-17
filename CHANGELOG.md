@@ -162,6 +162,15 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Fixed
 
+- **Your ready-task list was in no particular order.** The list behind **Tasks → Ready** (and the
+  same list an agent reads when it asks what to work on next) came back in whatever order the store
+  happened to return — most-recently-updated first — so a task due today sat below one due next
+  month, and a task blocking three others sat below one blocking none. A due date you had set was
+  read by nothing at all. Ready work is now ranked the way you would expect: priority first, then
+  how many other tasks it unblocks, with an extra bump once it is overdue, and ties broken
+  consistently so the order is stable between refreshes. Nothing about how tasks are stored
+  changed, so no existing task moves except in where it appears in the list.
+
 - **Forking a conversation could cut it earlier than the message you clicked.** In a chat with
   tool calls or multi-part answers, the fork was measured by the position of the bubble on
   screen rather than the message in the transcript, and those drift apart — so you got a
