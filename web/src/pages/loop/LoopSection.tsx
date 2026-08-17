@@ -1,4 +1,5 @@
 import { LoopComposer } from './LoopComposer'
+import { reportingWrite } from '../../app/reportingWrite'
 import { api } from '../../lib/api'
 import { invalidateCache } from '../../lib/useCachedData'
 import type { RouteProps } from '../../app/useQueryState'
@@ -29,8 +30,17 @@ export function LoopSection({ navigate, query }: RouteProps) {
     // shows the cockpit's Start button and silently skips the walkthrough the rigor
     // earned. plan/start is idempotent over prelaunch statuses; the walkthrough view
     // re-uses the same session.
-    if (!planning) await api.uLoopAction(loopId, 'start').catch(() => {})
-    else await api.uLoopPlanStart(loopId).catch(() => {})
+    //
+    // 🪤 THE KICK USED TO BE SWALLOWED, so the outcome the paragraph above says must not happen was
+    // exactly what a failure produced: the user landed on the cockpit, saw a Start button, and the
+    // walkthrough their rigor earned was skipped — SILENTLY. Reporting is what removes the silence.
+    //
+    // Navigation deliberately still happens. The loop itself was created (that is what `onCreated`
+    // means); only the status kick failed, so stranding the user on the composer with a loop they
+    // cannot see would be worse than landing them on it with an explanation. The report names the
+    // kick, so "why is there a Start button" has an answer.
+    if (!planning) await reportingWrite('start this loop', () => api.uLoopAction(loopId, 'start'))
+    else await reportingWrite('start planning for this loop', () => api.uLoopPlanStart(loopId))
     navigate(kind === 'code' ? `code/${loopId}` : `loops/${loopId}`)
   }
   // Optional preselect via query (?project=<id>&kind=<kind>) — e.g. the Code cockpit's

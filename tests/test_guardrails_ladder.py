@@ -255,6 +255,38 @@ def test_withheld_then_granted_then_undone_through_the_REAL_endpoints(_isolated_
     assert ld.reversal_records()[0].reversed_at, "the record is marked, so no second undo"
 
 
+def test_the_HELD_row_names_the_action_ONCE_and_never_by_its_type_key(_isolated_home):
+    """The inbox row a withheld action raises, driven through the REAL fire path.
+
+    Its body is composed as "The <provider> action on trigger <id> did not run: <route.reason>."
+    — so the sentence has already named the action before the reason begins. While the reason
+    carried the action-TYPE key it said it twice, the second time as a code identifier the user has
+    never seen (`app:acme.acme-file-task`) and, for a core provider, as a *different* name for the
+    thing the sentence just called `'bash'` (`action.execute_code`).
+
+    The key is not lost: `refs["action_type"]` still carries it, which is what the card and the
+    ladder panel query by.
+    """
+    _install_app_action(floor=au.RUNG_DRAFT_ONLY, ceiling=au.RUNG_ONE_TAP)
+    outcome = _fire()
+
+    assert getattr(outcome, "ran", True) is False, "a draft_only action must be withheld"
+    rows = [r for r in _inbox_rows(_isolated_home) if (r.get("refs") or {}).get("action_type")]
+    assert len(rows) == 1, rows
+    row = rows[0]
+    message = str(row.get("message", ""))
+
+    assert "did not run" in message, message
+    assert "acme-file-task" in message, "the row must still say WHICH action was held"
+    assert APP_KEY not in message, f"the type key is a code identifier, not user copy: {message!r}"
+    assert "drafts only" in message, f"and the rung in user words: {message!r}"
+    # The machine-facing half is untouched: the row is still findable by type.
+    assert row["refs"]["action_type"] == APP_KEY
+    # And the seam's own outcome string is framed too, so "this action" has a referent there.
+    assert str(getattr(outcome, "reason", "")).startswith("held for your approval: ")
+    assert APP_KEY not in str(getattr(outcome, "reason", ""))
+
+
 def test_the_undo_record_is_what_the_notification_carries(_isolated_home):
     """The affordance is rendered from a persisted record id, not from a raw handle.
 
@@ -404,7 +436,11 @@ def test_the_api_refuses_a_grant_ABOVE_the_declared_ceiling(_isolated_home):
     assert resp.status == 400
     body = _json_body(resp)
     assert body["ok"] is False
-    assert au.RUNG_ONE_TAP in body["error"] and "ceiling" in body["error"]
+    # Re-pointed, not relaxed: this pinned the raw rung KEY (`one_tap`) being in a message the
+    # USER reads. It now asserts the stronger property — the label is there and the key is not.
+    assert "ceiling" in body["error"]
+    assert rg.rung_label(au.RUNG_ONE_TAP) in body["error"], body["error"]
+    assert au.RUNG_ONE_TAP not in body["error"], body["error"]
     assert au.granted_rung(APP_KEY) == au.RUNG_DRAFT_ONLY
 
 
@@ -420,6 +456,82 @@ def test_the_api_refuses_a_grant_DURING_a_demotion_cooldown(_isolated_home):
     assert resp.status == 400
     assert "cannot be promoted again" in _json_body(resp)["error"]
     assert au.granted_rung(APP_KEY) == au.RUNG_DRAFT_ONLY
+
+
+def test_the_record_a_DEMOTED_row_shows_says_when_the_cooldown_LIFTS(_isolated_home):
+    """The panel renders ``record`` verbatim, so whatever it omits, the user cannot learn.
+
+    Every other branch of that sentence quantifies what is missing ("4 of 10 clean approvals
+    so far", "Approvals span 2.5 of the 14 days required"). The cooldown branch held the
+    concrete date on the very same object and said only "A recent demotion is still in
+    cooldown" — so a demoted user saw the demotion, its cause, no promote button, and had no
+    way to tell whether they were blocked by the cooldown or by their track record, nor when
+    it lifts. Driven through the REAL endpoint, because ``record`` is what the row carries.
+    """
+    _install_app_action(floor=au.RUNG_DRAFT_ONLY, ceiling=au.RUNG_AUTO_WITH_UNDO)
+    au.demote(APP_KEY, "rejected once")
+
+    row = _row(_ladder(), APP_KEY)
+
+    assert row["cooldown_until"], "the wire must still carry the full instant"
+    when = row["cooldown_until"][:10]
+    assert "cooldown" in row["record"], "it must still say WHAT is blocking promotion"
+    assert when in row["record"], f"the record must name the end date: {row['record']!r}"
+    # And a date, not a machine instant: the panel prints this string as-is.
+    assert "T" not in row["record"] and "+00:00" not in row["record"], row["record"]
+
+
+def test_the_two_cooldown_EXPLANATIONS_agree_on_the_date_and_its_form(_isolated_home):
+    """One fact, two server-composed sentences — they must not disagree.
+
+    ``record`` answers "why is this row inert"; the grant refusal answers "why was your
+    click refused". Both are legitimate and stay separate (different questions, and the
+    refusal names the key because it travels alone as an API error). What they may not do is
+    state the same cooldown in two different forms — the refusal used to emit the raw ISO
+    instant while the record named no date at all.
+    """
+    _install_app_action(floor=au.RUNG_DRAFT_ONLY, ceiling=au.RUNG_AUTO_WITH_UNDO)
+    au.demote(APP_KEY, "rejected once")
+
+    record = _row(_ladder(), APP_KEY)["record"]
+    resp = asyncio.run(
+        api_h.api_autonomy_grant(
+            _post("/api/autonomy/grant", {"key": APP_KEY, "rung": au.RUNG_ONE_TAP})
+        )
+    )
+    refusal = _json_body(resp)["error"]
+
+    when = au.cooldown_date(_row(_ladder(), APP_KEY)["cooldown_until"])
+    assert when and "T" not in when
+    assert when in record and when in refusal, f"{record!r} vs {refusal!r}"
+    for sentence in (record, refusal):
+        assert "+00:00" not in sentence, f"a raw instant leaked into user copy: {sentence!r}"
+
+
+def test_an_UNPARSEABLE_cooldown_still_reports_the_cooldown_without_inventing_a_date(
+    _isolated_home,
+):
+    """``_in_cooldown`` deliberately treats a corrupt timestamp as STILL RUNNING, so this
+    branch is reachable by design. The cooldown is real; only its end is unknown. The
+    sentence must drop the date and keep the cooldown, never the other way round."""
+    _install_app_action(floor=au.RUNG_DRAFT_ONLY, ceiling=au.RUNG_AUTO_WITH_UNDO)
+    au.demote(APP_KEY, "rejected once")
+    path = au._store_path()
+    data = json.loads(path.read_text(encoding="utf-8"))
+    data[APP_KEY]["demotions"][0]["cooldown_until"] = "not-a-timestamp"
+    path.write_text(json.dumps(data), encoding="utf-8")
+
+    row = _row(_ladder(), APP_KEY)
+
+    assert row["eligible"] is False, "a corrupt cooldown must not read as permission"
+    assert "cooldown" in row["record"]
+    # 🪤 NOT `"not-a-timestamp" not in record` — a formatter that sliced the garbage would emit
+    # "not-a-time" and pass that. Assert the SEMANTIC property: the sentence must not claim an
+    # end date at all, however it were derived.
+    assert (
+        "until" not in row["record"]
+    ), f"it must not claim a date it does not have: {row['record']!r}"
+    assert "not-a-time" not in row["record"], "and it must not print the garbage either"
 
 
 def test_a_grant_for_an_unknown_type_is_refused_by_name(_isolated_home):
@@ -661,8 +773,12 @@ def test_the_authority_sentence_names_YOUR_grant_and_its_evidence(_isolated_home
         )
     )
     row = _row(_ladder(), APP_KEY)
-    assert "You promoted this" in row["authority"]
+    # Re-pointed, not relaxed: this used to pin the literal "You promoted this to <label> on
+    # <date>", which is the shape that read "You promoted this to runs on its own on 2026-08-17".
+    # The properties that matter are the same three, asserted individually.
+    assert "You promoted it" in row["authority"], row["authority"]
     assert "clean approvals" in row["authority"]
+    assert rg.RUNG_LABELS[au.RUNG_ONE_TAP] in row["authority"]
 
 
 def test_the_authority_sentence_says_when_an_incident_HOLDS_a_rung(_isolated_home):
@@ -679,6 +795,85 @@ def test_the_authority_sentence_says_when_an_incident_HOLDS_a_rung(_isolated_hom
         assert _ladder()["incident_active"] is True
     finally:
         resume()
+
+
+def test_EVERY_authority_sentence_gives_the_rung_label_a_subject(_isolated_home):
+    """A rung label is a PREDICATE, and every slot that interpolates one must read as one.
+
+    ``RUNG_LABELS`` is declared "in terms of BEHAVIOUR rather than of the ladder" — "drafts
+    only", "asks first", "runs with undo", "runs on its own". That is right for a chip, and right
+    after a subject. Dropped into a noun slot it mangles: every row of the Guardrails panel used
+    to read *"Runs at runs on its own because that is the rung it was declared with"*.
+
+    This sweeps all three provenance branches — declared, granted, incident-held — because the
+    defect was in one and the shape was in all three. The rule asserted is the one a reader can
+    check without knowing the wording: **the label never directly follows a preposition.**
+    """
+    from personalclaw.guardrails.incident import activate, resume
+
+    bad_prepositions = ("at ", "to ", "earned ", "granted ")
+
+    def offenders(sentence: str) -> list[str]:
+        out = []
+        for label in rg.RUNG_LABELS.values():
+            i = sentence.find(label)
+            while i > 0:
+                before = sentence[:i]
+                if any(before.endswith(p) for p in bad_prepositions):
+                    out.append(f"{before[-14:]!r} + {label!r}")
+                i = sentence.find(label, i + 1)
+        return out
+
+    seen: list[str] = []
+
+    # 1. declared floor
+    _install_app_action(floor=au.RUNG_AUTO_WITH_UNDO, ceiling=au.RUNG_AUTO_WITH_UNDO)
+    seen.append(_row(_ladder(), APP_KEY)["authority"])
+
+    # 2. your grant
+    _install_app_action(floor=au.RUNG_DRAFT_ONLY, ceiling=au.RUNG_AUTO_WITH_UNDO)
+    _seed_clean_record(APP_KEY)
+    asyncio.run(
+        api_h.api_autonomy_grant(
+            _post("/api/autonomy/grant", {"key": APP_KEY, "rung": au.RUNG_ONE_TAP})
+        )
+    )
+    seen.append(_row(_ladder(), APP_KEY)["authority"])
+
+    # 3. held by an incident
+    _install_app_action(floor=au.RUNG_AUTONOMOUS, ceiling=au.RUNG_AUTONOMOUS)
+    activate("testing")
+    try:
+        seen.append(_row(_ladder(), APP_KEY)["authority"])
+    finally:
+        resume()
+
+    # Vacuity floor: a sweep over sentences that contain no label proves nothing.
+    assert len(seen) == 3
+    for sentence in seen:
+        assert any(v in sentence for v in rg.RUNG_LABELS.values()), f"no label in {sentence!r}"
+        assert offenders(sentence) == [], f"{sentence!r} → {offenders(sentence)}"
+
+
+def test_the_PROPOSAL_title_quotes_the_label_instead_of_mangling_it(_isolated_home):
+    """The one slot with no room for a subject: an inbox row title.
+
+    It read "action.digest has earned runs on its own". A title cannot carry a clause, so the
+    predicate is quoted as the name of the rung instead.
+    """
+    _install_app_action(floor=au.RUNG_DRAFT_ONLY, ceiling=au.RUNG_AUTO_WITH_UNDO)
+    _seed_clean_record(APP_KEY)
+    assert ld.propose_promotions() == [APP_KEY]
+    # 🪤 The persisted field is `message` — the title and body joined with a blank line
+    # (`inbox.py`: "Title FIRST, then the body"). There is no `title` key on the row, so reading
+    # one returns "" and the sweep passes while seeing nothing.
+    rows = _inbox_rows(_isolated_home)
+    titles = [str(r.get("message", "")).split("\n")[0] for r in rows]
+    earned = [t for t in titles if "has earned" in t]
+    assert earned, titles
+    label = rg.RUNG_LABELS[au.RUNG_ONE_TAP]
+    assert f"\u201c{label}\u201d" in earned[0], earned[0]
+    assert f"earned {label}" not in earned[0], "the bare predicate must not follow 'earned'"
 
 
 def test_the_ladder_view_carries_the_whole_governed_inventory(_isolated_home):

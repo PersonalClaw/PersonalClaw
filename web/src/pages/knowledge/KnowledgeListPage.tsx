@@ -1,4 +1,5 @@
 import { Fragment, useEffect, useMemo, useState } from 'react'
+import { reportingWrite } from '../../app/reportingWrite'
 import { BookOpen, Plus, Search, Database, Sparkles, Network, Library, Trash2, Target, X, Pin, Star, Archive, Play, FileText, Loader2, CircleAlert, Boxes, WifiOff, Layers, Scale, Tag as TagIcon, Rss, ExternalLink } from 'lucide-react'
 import { TopBar } from '../../ui/TopBar'
 import { fvs } from '../../design/fontWeight'
@@ -22,6 +23,7 @@ import { useCachedData, invalidateCache } from '../../lib/useCachedData'
 import { rowSubject } from '../../lib/rowSubject'
 import { confirm, confirmDelete, promptInput } from '../../ui/dialog'
 import { PageTitle } from '../../ui/PageTitle'
+import { notify } from '../../app/appSdk'
 
 type View = 'library' | 'graph' | 'intents' | 'tags' | 'conflicts'
 
@@ -235,14 +237,24 @@ export function KnowledgeListPage({ onCreate, onOpenItem, onOpenSources, query, 
     } catch { /* the rail just doesn't gain a shelf */ }
   }
 
+  // 🪤 EVERY WRITE ON THIS PAGE IS DATA-DRIVEN: nothing flips locally, the row re-renders from a
+  // refetch. So a swallowed rejection did not leave a lying control — it left NOTHING. The shelf did
+  // not gain the item, the read-state pill did not move, no message appeared, and the refetch ran
+  // anyway, re-rendering the same state so the click read as "nothing happened, twice". That is the
+  // contract `tools/toggleFailureReported` named; `app/reportingWrite` is its one implementation, and
+  // it returns the outcome precisely so the refetch can be skipped when the write never landed.
   async function shelveItem(c: KnowledgeCollection, it: KnowledgeItem) {
-    await api.addToKnowledgeCollection(c.id, [it.id]).catch(() => {})
+    const ok = await reportingWrite(`add "${it.title || 'this item'}" to "${c.name}"`,
+      () => api.addToKnowledgeCollection(c.id, [it.id]))
+    if (!ok) return
     invalidateCache('knowledge:collections')
     refreshCollections()
   }
 
   async function unshelveItem(c: KnowledgeCollection, it: KnowledgeItem) {
-    await api.removeFromKnowledgeCollection(c.id, it.id).catch(() => {})
+    const ok = await reportingWrite(`remove "${it.title || 'this item'}" from "${c.name}"`,
+      () => api.removeFromKnowledgeCollection(c.id, it.id))
+    if (!ok) return
     invalidateCache(itemsKey)
     invalidateCache('knowledge:collections')
     refreshItems(); refreshCollections()
@@ -250,13 +262,18 @@ export function KnowledgeListPage({ onCreate, onOpenItem, onOpenSources, query, 
 
   async function cycleReadState(it: KnowledgeItem) {
     const next = it.read_state === 'reading' ? 'read' : it.read_state === 'read' ? 'unread' : 'reading'
-    await api.setKnowledgeReadState(it.id, next).catch(() => {})
+    const ok = await reportingWrite(`mark "${it.title || 'this item'}" as ${next}`,
+      () => api.setKnowledgeReadState(it.id, next))
+    if (!ok) return
     invalidateCache(itemsKey)
     refreshItems()
   }
 
   async function toggleFavorite(it: KnowledgeItem) {
-    await api.setKnowledgeFavorited(it.id, !it.favorited).catch(() => {})
+    const ok = await reportingWrite(
+      `${it.favorited ? 'unfavourite' : 'favourite'} "${it.title || 'this item'}"`,
+      () => api.setKnowledgeFavorited(it.id, !it.favorited))
+    if (!ok) return
     invalidateCache(itemsKey)
     refreshItems()
   }
@@ -264,7 +281,9 @@ export function KnowledgeListPage({ onCreate, onOpenItem, onOpenSources, query, 
   async function renameCollection(c: KnowledgeCollection) {
     const name = await promptInput({ title: 'Rename shelf', label: 'Shelf name', initial: c.name, confirmLabel: 'Rename' })
     if (!name || name === c.name) return
-    await api.updateKnowledgeCollection(c.id, { name }).catch(() => {})
+    const ok = await reportingWrite(`rename "${c.name}"`,
+      () => api.updateKnowledgeCollection(c.id, { name }))
+    if (!ok) return
     invalidateCache('knowledge:collections')
     refreshCollections()
   }
@@ -279,7 +298,15 @@ export function KnowledgeListPage({ onCreate, onOpenItem, onOpenSources, query, 
       danger: true,
     })
     if (!ok) return
-    await api.deleteKnowledgeCollection(c.id).catch(() => {})
+    // The shelf used to vanish, then reappear on the refetch with nothing said. On failure keep the
+    // shelf selected (`setCollectionTok('')` is the success step) so the message names something the
+    // user can still see.
+    try { await api.deleteKnowledgeCollection(c.id) }
+    catch (e) {
+      notify(`Couldn't delete the shelf "${c.name}": ${String((e as Error)?.message || e)}`, 'error')
+      invalidateCache('knowledge:collections'); refreshCollections()
+      return
+    }
     invalidateCache('knowledge:collections')
     refreshCollections()
     setCollectionTok('')

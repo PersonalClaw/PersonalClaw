@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { reportingWrite } from '../../app/reportingWrite'
 import { motion } from 'framer-motion'
 import { Compass, X } from 'lucide-react'
 import { spring } from '../../design/motion'
@@ -51,8 +52,13 @@ export function RoutingChip({ suggestion, defaultAgent, onRoute, onDismiss }: {
     }
   }
 
+  // 🪤 Same deferred shape as the organize chip: this dismissal BUMPS A COUNTER that mutes the agent
+  // at a threshold, so a swallowed rejection means the suggestion keeps coming and never mutes — the
+  // user's repeated dismissals quietly amount to nothing. The chip still hides (a dismissal is a
+  // request to get something out of the way); the report is what makes the recurrence explicable.
   const dismiss = () => {
-    api.routingDismiss(suggestion.agent).catch(() => {})
+    void reportingWrite(`dismiss the ${suggestion.agent} suggestion`,
+      () => api.routingDismiss(suggestion.agent))
     // Dismissing is negative feedback on the routing pair.
     api.recordFeedback({
       target_kind: 'routing_suggestion', target_id: targetId, verdict: 'down',

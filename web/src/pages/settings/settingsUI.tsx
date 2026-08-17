@@ -191,9 +191,15 @@ export function ToggleRow({ label, hint, cfg, field, patch, danger }: {
   hint?: string
   cfg: Record<string, unknown>
   field: string
-  /** `(key, value, onSaved)` — the panel's own config PATCH. Typed at its widest shape so a
-   *  panel whose callback declares `v: boolean` or a required `cb` still satisfies it. */
-  patch: (k: string, v: never, cb: () => void) => void
+  /** `(key, value, onSaved, label)` — the panel's own config PATCH. Typed at its widest shape so a
+   *  panel whose callback declares `v: boolean` or a required `cb` still satisfies it.
+   *
+   *  🪤 THE LABEL IS THE FOURTH ARGUMENT BECAUSE THE FAILURE TOAST NEEDS IT. This row holds both the
+   *  control's visible name and its config key, and used to hand the patch only the key — so a
+   *  rejected save said "Couldn't save soft_stop_budget_secs" about a control the UI calls "Subagent
+   *  timeout". The user has never seen that string anywhere on screen. Optional, so a panel that has
+   *  not adopted it still type-checks and still shows the key. */
+  patch: (k: string, v: never, cb: () => void, label?: string) => void
   /** Show a warning glyph while ON — for a switch that relaxes a safety default. */
   danger?: boolean
 }) {
@@ -205,7 +211,7 @@ export function ToggleRow({ label, hint, cfg, field, patch, danger }: {
       <div className="flex items-center gap-2">
         <SavedToast show={saved} />
         {danger && on && <AlertTriangle size={14} className="text-warn" />}
-        <Toggle on={on} onChange={(v) => patch(field, v as never, flash)} label={label} />
+        <Toggle on={on} onChange={(v) => patch(field, v as never, flash, label)} label={label} />
       </div>
     </Row>
   )
@@ -233,8 +239,10 @@ export function NumberRow({ label, hint, cfg, field, min, max, patch }: {
   field: string
   min: number
   max: number
-  /** `(key, value, onSaved)` — the panel's own config PATCH, typed at its widest shape. */
-  patch: (k: string, v: never, cb: () => void) => void
+  /** `(key, value, onSaved, label)` — the panel's own config PATCH, typed at its widest shape. The
+   *  label travels so a rejected save can name the control rather than its config key; see
+   *  `ToggleRow` for the measurement. */
+  patch: (k: string, v: never, cb: () => void, label?: string) => void
 }) {
   const [saved, setSaved] = useState(false)
   const flash = () => { setSaved(true); window.setTimeout(() => setSaved(false), 1500) }
@@ -245,7 +253,7 @@ export function NumberRow({ label, hint, cfg, field, min, max, patch }: {
   return (
     <Field label={label} hint={hint}>
       <div className="flex items-center gap-2">
-        <NumberField value={value} min={min} max={max} step={1} onChange={(n) => patch(field, n as never, flash)} ariaLabel={label} />
+        <NumberField value={value} min={min} max={max} step={1} onChange={(n) => patch(field, n as never, flash, label)} ariaLabel={label} />
         <SavedToast show={saved} />
       </div>
     </Field>

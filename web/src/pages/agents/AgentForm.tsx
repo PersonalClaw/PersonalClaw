@@ -142,11 +142,17 @@ function CheckList({ label, hint, options, value, onChange }: {
                       {on && <Check size={12} className="text-on-primary" />}
                     </span>
                     <span className="flex-1 min-w-0">
+                      {/* Both texts take a `title` because both `truncate`. The HINT is the measured
+                          one: at 390px on `#/agents/new` it clips to **310px of up to 2977px** across
+                          14 rows — the same skill descriptions `#/skills` clips, reached through a
+                          different surface. The LABEL was not clipped with this data, but it is the
+                          same element idiom one line up, and leaving it bare would mean a row whose
+                          subtitle recovers and whose title does not. */}
                       <span className="flex items-center gap-1.5">
-                        <span className="truncate text-on-surface text-[0.8125rem]">{o.label}</span>
+                        <span className="truncate text-on-surface text-[0.8125rem]" title={o.label}>{o.label}</span>
                         <RiskTag risk={o.risk} />
                       </span>
-                      {o.hint && <span className="block truncate text-on-surface-low text-[0.75rem]">{o.hint}</span>}
+                      {o.hint && <span className="block truncate text-on-surface-low text-[0.75rem]" title={o.hint}>{o.hint}</span>}
                     </span>
                   </button>
                 )

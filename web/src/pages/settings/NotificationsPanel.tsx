@@ -57,8 +57,13 @@ export function NotificationsPanel() {
       <div className="mb-l flex justify-end"><SavedToast show={saved} /></div>
 
       <Section title="Delivery">
+        {/* The switch's `aria-label` must CONTAIN the visible row label, or a speech-input user who
+            says what they can see does not hit the control — WCAG 2.5.3 Label in Name, Level A. It read
+            "Mute all" against a visible "Mute all notifications". Measured from the accessibility tree,
+            not the source: `ui/Toggle` puts `label` on the switch as `aria-label`, which OVERRIDES every
+            other naming source, so the row's visible text is not in the name at all. */}
         <Row label="Mute all notifications" hint="Pause every notification regardless of severity.">
-          <Toggle on={s.mute_all} onChange={(v) => patch({ mute_all: v })} label="Mute all" />
+          <Toggle on={s.mute_all} onChange={(v) => patch({ mute_all: v })} label="Mute all notifications" />
         </Row>
         <Field label="Minimum severity" hint="Only notify at or above this level.">
           <SegPills value={s.min_severity} onChange={(v) => patch({ min_severity: v })} options={SEVERITIES} />
@@ -67,7 +72,7 @@ export function NotificationsPanel() {
 
       <Section title="Quiet hours" hint="Suppress non-critical notifications during these hours.">
         <Row label="Enable quiet hours">
-          <Toggle on={s.quiet_hours_enabled} onChange={(v) => patch({ quiet_hours_enabled: v })} label="Quiet hours" />
+          <Toggle on={s.quiet_hours_enabled} onChange={(v) => patch({ quiet_hours_enabled: v })} label="Enable quiet hours" />
         </Row>
         {s.quiet_hours_enabled && (
           <Row label="Window" hint="Start and end (24-hour, server time).">

@@ -36,6 +36,7 @@ import { belongsToLoop } from '../workflows/containerKey'
 import { useQueryFlag, type RouteProps } from '../../app/useQueryState'
 import { accentChip } from '../../design/accent'
 import { tabListKeys } from '../../lib/tabListKeys'
+import { notify } from '../../app/appSdk'
 
 /** Decode the `?sel=` Details-rail drill-down ref. */
 function parseSel(raw?: string): { kind: 'log' } | { kind: 'roi' } | { kind: 'cycle'; cycle: number } | null {
@@ -442,7 +443,10 @@ export function LoopCockpitPage({ id, onBack, onDeleted, onOpenArtifact, onOpenT
   // so require a confirming second click instead of firing on the first.
   async function del() {
     if (!confirmDelete) { setConfirmDelete(true); return }
-    await api.deleteULoop(id).catch(() => {})
+    // Same as the design cockpit: navigating back on a FAILED delete tells the user it worked. Report
+    // and stay, with the button still armed for a retry.
+    try { await api.deleteULoop(id) }
+    catch (e) { notify(`Couldn't delete this loop: ${String((e as Error)?.message || e)}`, 'error'); return }
     onDeleted ? onDeleted() : onBack()
   }
   function copyLink() {

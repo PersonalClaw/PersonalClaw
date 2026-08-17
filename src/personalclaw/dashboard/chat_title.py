@@ -1,4 +1,4 @@
-"""Title generation — auto-title, rename, plan rephrase."""
+"""Title generation — auto-title and rename."""
 
 import logging
 
@@ -8,7 +8,6 @@ from personalclaw.config.loader import config_dir
 from personalclaw.dashboard.chat_utils import _history_key_for
 from personalclaw.dashboard.state import DashboardState, _ChatSession
 from personalclaw.llm.base import EVENT_COMPLETE, EVENT_PERMISSION_REQUEST, EVENT_TEXT_CHUNK
-from personalclaw.plan_format import extract_plan_metadata, rephrase_plan
 from personalclaw.security import redact_credentials, redact_exfiltration_urls
 from personalclaw.sel import sel
 from personalclaw.session import BACKGROUND_KEY
@@ -55,43 +54,6 @@ def _reset_auto_run_for_new_plan(session: "_ChatSession") -> None:
                 pass
     session._orch_tracker = None
     session._auto_run = False
-
-
-def _extract_and_redact_plan_metadata(text: str) -> tuple[list[str], str, list[list[str]]]:
-    """Extract stage titles, goal, and descriptions from plan text, redacted."""
-    titles, goal, descriptions = extract_plan_metadata(text)
-    titles = [redact_credentials(redact_exfiltration_urls(t)[0])[0] for t in titles]
-    if goal:
-        goal = redact_credentials(redact_exfiltration_urls(goal)[0])[0]
-    descriptions = [
-        [redact_credentials(redact_exfiltration_urls(d)[0])[0] for d in stage_descs]
-        for stage_descs in descriptions
-    ]
-    return titles, goal, descriptions
-
-
-async def _rephrase_plan_lite(
-    state: DashboardState,
-    text: str,
-    issues: list[str],
-    *,
-    might_not_be_plan: bool = False,
-) -> str | None:
-    """Rephrase a plan using the cheap background session (personalclaw-lite)."""
-
-    try:
-        bg, _new, _resumed = await state.sessions.get_or_create(BACKGROUND_KEY)
-    except Exception:
-        logger.warning("Failed to get background session for plan rephrase", exc_info=True)
-        return None
-    try:
-        result = await rephrase_plan(text, issues, bg, might_not_be_plan=might_not_be_plan)
-    finally:
-        state.sessions.release(BACKGROUND_KEY)
-    if result:
-        result, _ = redact_exfiltration_urls(result)
-        result, _ = redact_credentials(result)
-    return result
 
 
 async def _stream_background_prompt(state: DashboardState, prompt: str) -> str:

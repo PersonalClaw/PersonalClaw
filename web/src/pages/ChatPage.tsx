@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { reportActionFailure, reportingWrite } from '../app/reportingWrite'
 import { unavailableWhen } from '../ui/unavailable'
 
 /** Hands-free voice knobs the composer needs (`voice.*`). */
@@ -63,6 +64,7 @@ import { Modal } from '../ui/Modal'
 import { confirm, promptInput } from '../ui/dialog'
 import { type ChatTurn, type Segment, type ToolSegment, type ApprovalSegment, type ActivitySegment, type SubagentCard, type HistMsg, type MemoryCitation, userTurn, assistantTurn, hydrateTurns, turnText, deriveActivity } from './chat/chatTypes'
 import { branchIndexOf, branchParentKey } from './chat/branchLineage'
+import { buildOptimizerContext } from './chat/optimizerContext'
 import { useIdentity, firstNameOf } from '../app/identity'
 import { usePlatform } from '../app/usePlatform'
 import { SnipOverlay } from '../ui/SnipOverlay'
@@ -434,6 +436,7 @@ const SLASH_HELP = [
  *  #/chat/new is a fresh NEW chat (reachable via "New chat" on the history page
  *  and the "History" button on the new-chat page); opening a session deep-links
  *  to #/chat/<sessionKey>. No left sidebar. */
+
 export function ChatPage({ sub, navigate, navEpoch = 0, query, setQuery }: { sub: string; navigate: (p: string, opts?: { replace?: boolean }) => void; navEpoch?: number; query?: Record<string, string>; setQuery?: RouteProps['setQuery'] }) {
   const seg = (sub || '').split('/')[0]
   // A ?project=<id> on the bare/new route opens a fresh chat PRE-BOUND to that project
@@ -1301,7 +1304,7 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
 
   const approve = useCallback((id: string, action: ApproveAction) => {
     const s = sessionRef.current
-    if (s) api.approve(s, action, id).catch(() => {})
+    if (!s) return
     // A card action that raises the session's standing posture must move the
     // Permission-mode pill to match — otherwise the pill keeps claiming "Normal —
     // ask before every tool" while the session silently auto-approves (a dishonest
@@ -1314,7 +1317,21 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
       : action === 'trust_reads' ? 'trust_reads'
       : action === 'yolo' ? 'yolo'
       : null
-    if (raised) setSelection((sel) => (sel.approval === raised ? sel : { ...sel, approval: raised }))
+    // 🪤 THE MIRROR IS GATED ON THE WRITE, AND THE FAILURE IS REPORTED. Both halves used to be
+    // wrong in the same direction. The request swallowed its rejection, and the mirror ran
+    // regardless — so a failed `yolo` left the pill claiming this chat auto-approves everything
+    // while the server was still asking before every tool. That is the EXACT INVERSE of the
+    // dishonest state the comment above sets out to prevent, and it is a claim about a security
+    // posture, not a cosmetic one. The pill is a mirror of a server flag, so it may only move once
+    // the server has the flag; a failed decision now says so instead of being absorbed.
+    //
+    // The card itself needs nothing here: it renders from `seg.resolved`, which the backend
+    // persists, so an unapproved tool call correctly stays unresolved and still asking.
+    api.approve(s, action, id)
+      .then(() => {
+        if (raised) setSelection((sel) => (sel.approval === raised ? sel : { ...sel, approval: raised }))
+      })
+      .catch(reportActionFailure('record your decision'))
   }, [])
 
   // Auto-scroll the transcript to the bottom as content streams in — but only if
@@ -1413,12 +1430,14 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
       // without adding a history entry — and via the router, not a raw
       // history.replaceState bypass.
       navigate(`chat/${created.key}`, { replace: true })
-      if (acp) await api.setSessionAcpAgent(created.key, { provider: acp.providerId, provider_agent: acp.agent.provider_agent, model: selection.model && selection.model !== 'Auto' ? selection.model : undefined }).catch(() => {})
-      if (selection.approval !== 'normal') await api.setApprovalMode(selection.approval, created.key).catch(() => {})
-      if (selection.taskMode !== 'agent') await api.setTaskMode(selection.taskMode, created.key).catch(() => {})
+      // Same contract at session START: the composer already shows these picks, so a swallowed failure
+      // means the brand-new session runs under settings the user can see but does not have.
+      if (acp) await persistSelection('this agent', api.setSessionAcpAgent(created.key, { provider: acp.providerId, provider_agent: acp.agent.provider_agent, model: selection.model && selection.model !== 'Auto' ? selection.model : undefined }))
+      if (selection.approval !== 'normal') await persistSelection('this approval mode', api.setApprovalMode(selection.approval, created.key))
+      if (selection.taskMode !== 'agent') await persistSelection('this task mode', api.setTaskMode(selection.taskMode, created.key))
       // Persist a pre-start reasoning-effort pick (applySelection couldn't, since the
       // session didn't exist yet).
-      if (selection.reasoning) await api.setReasoningEffort(created.key, selection.reasoning).catch(() => {})
+      if (selection.reasoning) await persistSelection('this reasoning effort', api.setReasoningEffort(created.key, selection.reasoning))
       return created.key
     })()
     ensureInFlightRef.current = p
@@ -1616,13 +1635,15 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
     }
   }
 
-  // Optimize the current draft via the prompt optimizer (last 10 turns as context).
+  // Optimize the current draft via the prompt optimizer. The context is role-labeled
+  // and newest-last (see chat/optimizerContext.ts) — that shape is what lets the
+  // optimizer resolve "that file from earlier" instead of guessing at it.
   async function optimize() {
     const t = input.trim()
     if (!t || optimizing) return
     setOptimizing(true)
     try {
-      const ctx = turns.slice(-10).map((tn) => turnText(tn).slice(0, 200)).join('\n')
+      const ctx = buildOptimizerContext(turns)
       const r = await api.optimizePrompt(t, ctx)
       if (r.changed && r.optimized) { setPreOptimize(input); setInput(r.optimized) }
     } catch { /* keep the draft on failure */ }
@@ -1635,7 +1656,7 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
     setOptimizing(true)
     let optimized = ''
     try {
-      const ctx = turns.slice(-10).map((tn) => turnText(tn).slice(0, 200)).join('\n')
+      const ctx = buildOptimizerContext(turns)
       const r = await api.optimizePrompt(raw, ctx)
       if (r.changed && r.optimized && r.optimized.trim() !== raw) optimized = r.optimized.trim()
     } catch { /* fall through — send the original unchanged */ }
@@ -1648,6 +1669,9 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
     if (preOptimize === null) return
     setInput(preOptimize)
     setPreOptimize(null)
+    // Clearing preOptimize unmounts this button, so without this focus lands on <body>
+    // and the next keystroke goes nowhere — you reverted in order to keep typing.
+    requestAnimationFrame(() => composerRef.current?.querySelector<HTMLElement>('.cm-content')?.focus())
   }
   // /undo [N] — roll back N conversation turns via the backend, then re-hydrate the
   // transcript from the truncated server state (so the UI matches disk) + append an
@@ -1753,7 +1777,7 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
 
   async function stop() {
     markStreaming(false)
-    if (sessionRef.current) await api.stopChat(sessionRef.current).catch(() => {})
+    if (sessionRef.current) await api.stopChat(sessionRef.current).catch(reportActionFailure('stop this turn'))
   }
 
   // ── message actions (stage 4) ──
@@ -2020,7 +2044,7 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
     const s = sessionRef.current
     if (!s) return
     setSubagents((prev) => prev.map((c) => (c.done ? c : { ...c, done: true, error: 'cancelled' })))
-    await api.cancelFanout(s).catch(() => {})
+    await api.cancelFanout(s).catch(reportActionFailure('cancel the subagents'))
   }
 
   // ── side chat (stage 6) ──
@@ -2060,6 +2084,20 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
     return null
   }
 
+  // 🔑 ONE REPORTER FOR EVERY SELECTION WRITE. `applySelection` flips the composer's local state FIRST
+  // and then fires the persistence calls — the optimistic shape `saveFailureReported` names, where a
+  // swallowed rejection "is a lie, because the control is left showing a value the server refused". Here
+  // that lie is worse than a settings toggle: the composer can show an agent, model or APPROVAL MODE the
+  // session is not actually using, so the user's next message runs under settings they did not pick.
+  //
+  // These are deliberately fire-and-forget (the composer must not block on a round-trip), so the remedy
+  // is the family's: TELL the user. Reverting `setSelection` was considered and rejected — the rail's own
+  // fix for this shape is to report, not to fight the input the user is still editing.
+  //
+  // It is one helper rather than eleven catch blocks because eleven is how one gets missed.
+  const persistSelection = <T,>(what: string, p: Promise<T>): Promise<T | void> =>
+    p.catch((e) => { notify(`Couldn't apply ${what} to this session: ${String((e as Error)?.message || e)}`, 'error') })
+
   function applySelection(patch: Partial<ComposerValue>) {
     const nextSel = { ...selection, ...patch }
     setSelection(nextSel)
@@ -2069,17 +2107,19 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
     if (patch.agent) {
       // ACP agents bind via /acp-agent (provider + provider_agent + model);
       // native agents via /agent.
-      if (acp) api.setSessionAcpAgent(s, { provider: acp.providerId, provider_agent: acp.agent.provider_agent, model: nextSel.model && nextSel.model !== 'Auto' ? nextSel.model : undefined }).catch(() => {})
-      else api.setSessionAgent(s, patch.agent).catch(() => {})
+      if (acp) persistSelection('this agent', api.setSessionAcpAgent(s, { provider: acp.providerId, provider_agent: acp.agent.provider_agent, model: nextSel.model && nextSel.model !== 'Auto' ? nextSel.model : undefined }))
+      else persistSelection('this agent', api.setSessionAgent(s, patch.agent))
     }
     if (patch.model && !patch.agent) {
       // model-only change: ACP model goes through /acp-agent too (re-bind w/ model)
-      if (acp) api.setSessionAcpAgent(s, { provider: acp.providerId, provider_agent: acp.agent.provider_agent, model: patch.model === 'Auto' ? undefined : patch.model }).catch(() => {})
-      else api.setSessionModel(s, patch.model === 'Auto' ? '' : patch.model).catch(() => {})
+      if (acp) persistSelection('this model', api.setSessionAcpAgent(s, { provider: acp.providerId, provider_agent: acp.agent.provider_agent, model: patch.model === 'Auto' ? undefined : patch.model }))
+      else persistSelection('this model', api.setSessionModel(s, patch.model === 'Auto' ? '' : patch.model))
     }
-    if (patch.approval) api.setApprovalMode(patch.approval as ApprovalMode, s).catch(() => {})
-    if (patch.taskMode) api.setTaskMode(patch.taskMode as TaskMode, s).catch(() => {})
-    if (patch.reasoning !== undefined) api.setReasoningEffort(s, patch.reasoning as ReasoningEffort).catch(() => {})
+    // Approval mode first among these three deliberately: it is the one whose silent divergence has a
+    // safety cost, not just a cosmetic one.
+    if (patch.approval) persistSelection('this approval mode', api.setApprovalMode(patch.approval as ApprovalMode, s))
+    if (patch.taskMode) persistSelection('this task mode', api.setTaskMode(patch.taskMode as TaskMode, s))
+    if (patch.reasoning !== undefined) persistSelection('this reasoning effort', api.setReasoningEffort(s, patch.reasoning as ReasoningEffort))
   }
 
   /** Apply a saved starter to the composer (S3 T3.2).
@@ -2132,7 +2172,20 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
   async function switchToAgentAndRun(continuation: string) {
     setSelection((sel) => ({ ...sel, taskMode: 'agent' }))
     const s = sessionRef.current
-    if (s) await api.setTaskMode('agent', s).catch(() => {})
+    // 🔑 THIS ONE DOES NOT JUST REPORT — IT STOPS. The comment above states the invariant: the flip is
+    // awaited "so the continuation turn runs under Agent's gate + framing". It used to swallow the
+    // rejection and send anyway, which breaks exactly that invariant — the turn would run under the
+    // posture the user was escalating OUT of, while the composer showed Agent. For a consent-gated
+    // escalation, proceeding on a failed flip is the one outcome the click did not authorise, so report
+    // and return. The composer keeps showing Agent, which is now the honest state of the user's intent
+    // rather than a claim about the session; the next send re-attempts the flip through `applySelection`.
+    if (s) {
+      try { await api.setTaskMode('agent', s) }
+      catch (e) {
+        notify(`Couldn't switch this session to Agent: ${String((e as Error)?.message || e)}`, 'error')
+        return
+      }
+    }
     const text = continuation.trim() || 'Go ahead and do it.'
     await send(text)
   }
@@ -2145,7 +2198,11 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
     setRenaming(false)
     if (!s || !v || v === title) return
     setTitle(v)
-    await api.renameSession(s, v).catch(() => {})
+    // Optimistic, so a swallowed rejection left the header showing a name the server refused — it
+    // reverted on the next load with no explanation. Reported, not reverted: this family's remedy for
+    // an optimistic write is to TELL, and fighting the header while the user may still be editing is
+    // the move `chat/selectionPersistReported` already rejected.
+    await api.renameSession(s, v).catch(reportActionFailure('rename this chat'))
   }
   async function regenTitle() {
     const s = sessionRef.current
@@ -2378,19 +2435,19 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
       {/* Queued messages (typed mid-stream) — the backend sends them one-by-one as
           each turn finishes; each can be cancelled while still pending. */}
       <QueueStack items={queued} canInterrupt={streaming}
-        onCancel={(id) => { setQueued((prev) => prev.filter((q) => q.id !== id)); const s = sessionRef.current; if (s) api.cancelQueued(s, id).catch(() => {}) }}
+        onCancel={(id) => { setQueued((prev) => prev.filter((q) => q.id !== id)); const s = sessionRef.current; if (s) api.cancelQueued(s, id).catch(reportActionFailure('cancel that queued message')) }}
         onEdit={(id, content) => {
           // Honest "edit": there's no queue-edit endpoint, so cancel the pending item
           // and drop its text back in the composer for the user to revise + resend
           // (avoids a fake in-place edit that would silently re-queue at the back).
-          setQueued((prev) => prev.filter((q) => q.id !== id)); const s = sessionRef.current; if (s) api.cancelQueued(s, id).catch(() => {})
+          setQueued((prev) => prev.filter((q) => q.id !== id)); const s = sessionRef.current; if (s) api.cancelQueued(s, id).catch(reportActionFailure('cancel that queued message'))
           setInput((cur) => (cur.trim() ? cur : content))
         }}
         onInterrupt={(id) => {
           // Interrupt-now: soft-stop the running turn and run THIS queued message
           // next (the backend promotes it + the finally-block drain picks it up).
           // The queue_promoted WS echo reorders the strip on every client.
-          const s = sessionRef.current; if (s) api.interruptChat(s, id).catch(() => {})
+          const s = sessionRef.current; if (s) api.interruptChat(s, id).catch(reportActionFailure('interrupt this turn'))
         }} />
       <div className="relative">
         {/* Saved-prompt palette + auto-nudge now live INSIDE the composer's "+"
@@ -3784,7 +3841,7 @@ function ChatHistoryPage({ navigate, query, setQuery }: { navigate: (p: string) 
     }
   })
   async function startRetag() {
-    if (retagRunning) { await api.cancelRetag().catch(() => {}); return }
+    if (retagRunning) { await api.cancelRetag().catch(reportActionFailure('cancel the retag run')); return }
     if (!(await confirm({
       title: 'Generate tags for all chats?',
       body: 'Every chat is re-read and tags generated: fitting tags added, stale ones corrected, obsolete ones removed. Incognito and temporary chats are never touched.',
@@ -3944,7 +4001,12 @@ function ChatHistoryPage({ navigate, query, setQuery }: { navigate: (p: string) 
   // moving between two server-filtered lists).
   async function setLifecycle(key: string, lifecycle: 'active' | 'archived') {
     setSessions((prev) => prev && prev.map((x) => (x.key === key ? { ...x, lifecycle } : x)))
-    await api.setSessionLifecycle(key, { lifecycle }).catch(() => {})
+    // 🪤 THE REFETCH IS DELIBERATELY *NOT* GATED HERE, unlike every other data-driven write in this
+    // family. The optimistic move above already claimed the row changed list, so `load()` on a failure
+    // is what puts it BACK — the refetch is the repair, not a wasted round trip. Skipping it would
+    // leave the archived-looking row lying. Only the silence was the defect.
+    await api.setSessionLifecycle(key, { lifecycle }).catch(
+      reportActionFailure(`${lifecycle === 'archived' ? 'archive' : 'unarchive'} this chat`))
     load()
   }
   async function setNeverArchive(key: string, value: boolean) {
@@ -3954,7 +4016,9 @@ function ChatHistoryPage({ navigate, query, setQuery }: { navigate: (p: string) 
   async function createFolder() {
     const name = await promptInput({ title: 'New folder', label: 'Folder name', placeholder: 'e.g. Research', confirmLabel: 'Create' })
     if (!name) return
-    await api.createChatFolder(name).catch(() => {})
+    // Data-driven: the folder appears only via `load()`. A swallowed rejection meant the user typed a
+    // name into a dialog and nothing appeared, with the reload re-rendering the same list.
+    if (!(await reportingWrite(`create the folder "${name}"`, () => api.createChatFolder(name)))) return
     load()
   }
 

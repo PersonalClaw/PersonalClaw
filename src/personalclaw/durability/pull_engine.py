@@ -120,6 +120,7 @@ def _pull_one_seq(
     registry: Optional[Registry] = None,
     queue: Optional[ConflictQueue] = None,
     now: str = "",
+    codec=None,
 ) -> SeqOutcome:
     prefix = shard_prefix(peer_id, seq)
     out = SeqOutcome(peer_id=peer_id, seq=seq)
@@ -131,6 +132,28 @@ def _pull_one_seq(
         out.detail = "no objects under prefix (partial push?)"
         return out
     objs = transport.pull(refs)
+    if codec is not None:
+        objs, refused = codec.decrypt_after_pull(objs)
+        if refused.keys:
+            # §4.4 receive-side rejection of PLAINTEXT in an encrypted store: a permanent skip.
+            # Verdict payload-bad — which the cursor ADVANCES past — rather than the
+            # prerequisite-absent hold an empty pull would otherwise produce, because a hold
+            # here is precisely the error loop §4.4 forbids: the object will never become
+            # decryptable, so re-pulling it forever is the bug.
+            out.verdict = PAYLOAD_BAD
+            out.detail = "encrypted-store violation: " + "; ".join(refused.reasons[:5])
+            return out
+        if refused.unreadable:
+            # A well-formed ciphertext whose tag failed: wrong passphrase or tampering, and
+            # GCM cannot say which. HOLD — advancing here permanently skipped every peer seq
+            # after a single mistyped-passphrase cycle, and fixing the passphrase did not
+            # bring them back. A hold costs a re-pull; the advance cost the user their data.
+            out.verdict = PREREQ_ABSENT
+            out.detail = (
+                f"{len(refused.unreadable)} object(s) did not decrypt (wrong passphrase, or "
+                "the store was modified) — held for retry"
+            )
+            return out
     with tempfile.TemporaryDirectory() as tmp:
         shard_dir = Path(tmp)
         if _materialize(objs, prefix, shard_dir) == 0:
@@ -202,12 +225,15 @@ def pull_from_peers(
     db_merger: Optional[DbMerger] = None,
     queue: Optional[ConflictQueue] = None,
     now: str = "",
+    codec=None,
 ) -> PullReport:
     """Pull and merge every peer shard set the cursor hasn't consumed, oldest seq first.
 
     Advances the cursor only on a consumed (or payload-bad) seq; a held seq (a not-yet-servable
     prefix, an unknown entry, or a DB entry with no ``db_merger``) leaves the cursor where it
-    is, so it is re-pulled next cycle. Returns a :class:`PullReport` of per-seq outcomes.
+    is, so it is re-pulled next cycle. ``codec`` is the optional DAS-8 sync codec: when present
+    every pulled object is decrypted before it is materialized, and a plaintext one is a
+    permanent skip. Returns a :class:`PullReport` of per-seq outcomes.
     """
     report = PullReport()
     seen = cursor.seen()
@@ -223,6 +249,7 @@ def pull_from_peers(
                 registry=registry,
                 queue=queue,
                 now=now,
+                codec=codec,
             )
             outcome.advanced = cursor.record(peer.machine_id, seq, outcome.verdict)
             report.outcomes.append(outcome)

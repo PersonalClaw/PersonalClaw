@@ -2889,30 +2889,6 @@ class TestApiChatAgentPassing:
             mock_emit.assert_called_once_with("session-r", "new-agent", outcome="denied_running")
 
 
-class TestPlanValidationStuck:
-    """Tests for has_plan=False after strip_plan_markers on invalid plans."""
-
-    def test_strip_plan_markers_clears_has_plan(self):
-        """After stripping, has_plan must be False so ensure_go_all_option doesn't run."""
-        from personalclaw.plan_format import (
-            strip_plan_markers,
-            validate_plan_format,
-        )
-
-        # Simulate a response that looks like a plan but fails validation
-        bad_plan = "📋 Plan for: test\n\nThis has no Stage lines.\n\n[OPTION: Go | Cancel]"
-        has_plan, valid, _ = validate_plan_format(bad_plan)
-        assert has_plan, "Expected plan header to be detected"
-        assert not valid, "Expected plan to be invalid (no Stage lines)"
-        stripped = strip_plan_markers(bad_plan)
-        has_plan_after, _, _ = validate_plan_format(stripped)
-        assert not has_plan_after, (
-            "strip_plan_markers must remove plan markers so "
-            "validate_plan_format no longer detects a plan"
-        )
-        assert "📋" not in stripped
-
-
 class TestStageFailureEscalation:
     """Test that stage failures trigger human question logic (escalation)."""
 

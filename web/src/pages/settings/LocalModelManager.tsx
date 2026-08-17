@@ -39,6 +39,17 @@ export function LocalModelManager({
       setErr(name, msg)
     }
   }
+  // Cancel gets the same per-row error surface as `download` and `remove`. Without it the only write on
+  // this panel that could fail silently was the one whose failure matters most — the request IS the stop.
+  const stopDownload = async (name: string) => {
+    setErr(name, null)
+    try { await cancel(name) }
+    catch (e) {
+      let msg = e instanceof Error ? e.message : 'Cancel failed'
+      try { const p = JSON.parse(msg); msg = p.error || msg } catch { /* raw text */ }
+      setErr(name, `Couldn't cancel this download: ${msg}`)
+    }
+  }
   const remove = async (name: string) => {
     if (!(await confirmDelete('model', name))) return
     setErr(name, null)
@@ -107,7 +118,7 @@ export function LocalModelManager({
           </div>
           {downloading ? (
             <SquareIconButton icon={X} iconSize={13} label={`Cancel ${m.name}`} title="Cancel"
-              onClick={() => cancel(m.name)} className="shrink-0" />
+              onClick={() => stopDownload(m.name)} className="shrink-0" />
           ) : (
             <SquareIconButton icon={m.downloaded ? Trash2 : Download} iconSize={13}
               label={m.downloaded ? `Delete ${m.name}` : `Download ${m.name}`}

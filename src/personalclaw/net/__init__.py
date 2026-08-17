@@ -14,10 +14,13 @@ from personalclaw.net.policy import (
     CONNECTOR,
     LOOPBACK_INTERNAL,
     STRICT,
+    SYNC,
     WEBHOOK,
     EgressPolicy,
+    SyncEndpointRefused,
     egress_policy_for,
     get_policy,
+    sync_egress_policy,
 )
 
 __all__ = [
@@ -33,6 +36,9 @@ __all__ = [
     "CONNECTOR",
     "WEBHOOK",
     "LOOPBACK_INTERNAL",
+    "SYNC",
     "get_policy",
     "egress_policy_for",
+    "sync_egress_policy",
+    "SyncEndpointRefused",
 ]

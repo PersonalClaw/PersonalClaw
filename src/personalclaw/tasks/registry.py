@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+import time
 from typing import Any
 
 from personalclaw.tasks import reconcile
@@ -182,13 +183,78 @@ async def task_graph(provider_filter: str | None = None) -> dict[str, Any]:
     return await asyncio.to_thread(prov.graph)  # type: ignore[attr-defined]
 
 
+def _iso_to_epoch(text: str) -> float:
+    """An ISO timestamp as epoch seconds; 0.0 when absent or unparseable.
+
+    Unparseable reads as 0.0 rather than raising: a malformed `updated_at` should cost a task its
+    recency tie-break, not take down the whole ready projection.
+    """
+    raw = (text or "").strip()
+    if not raw:
+        return 0.0
+    try:
+        from datetime import datetime
+
+        return datetime.fromisoformat(raw.replace("Z", "+00:00")).timestamp()
+    except Exception:
+        return 0.0
+
+
+def _rank_ready(ready: list[Task], task_map: dict[str, Task], *, now: float) -> list[Task]:
+    """Order a ready set through the unified admission core (PP-13).
+
+    This function is the whole of the impurity the core refuses to carry: it reads the wall clock
+    and the lease sidecars, builds one `AdmissionState`, and hands the pure comparator a snapshot.
+    `admission.ready` then applies the SAME composed policy list the engine's frontier gets — the
+    three `PP-11` capacity rules abstain on a `RESOURCE` request, and `Lease` is the one that speaks
+    — so the board's exclusions and the engine's are one mechanism rather than two that agree today.
+
+    The projection asks as `admission.OBSERVER`, an identity that never takes a lease, so a task
+    another holder is actively holding is excluded while one whose lease has EXPIRED is not.
+
+    `blocks_count` is counted over the FULL task map, not the ready subset: a ready task's value
+    comes from the blocked tasks waiting on it, so counting only among its ready peers would score
+    every bottleneck at zero — the exact opposite of the ranking's purpose.
+    """
+    from personalclaw.workflows import admission, pool
+
+    dependents: dict[str, int] = {}
+    for task in task_map.values():
+        for prereq in task.prerequisite_ids():
+            dependents[prereq] = dependents.get(prereq, 0) + 1
+
+    leases: dict[str, pool.Lease] = {}
+    for task in ready:
+        lease = pool.read_lease(task.id)
+        if lease is not None:
+            leases[task.id] = lease
+
+    state = admission.AdmissionState(now=now, holder=admission.OBSERVER, leases=leases)
+    policies = admission.default_policies(
+        admission.Limits(), single_active_feature=False, state=state
+    )
+    items = [
+        admission.ReadyItem(
+            item_id=task.id,
+            title=task.title,
+            priority=task.priority.value,
+            blocks_count=dependents.get(task.id, 0),
+            overdue=bool(task.due) and 0.0 < _iso_to_epoch(task.due) <= now,
+            updated_at=_iso_to_epoch(task.updated_at),
+        )
+        for task in ready
+    ]
+    by_id = {task.id: task for task in ready}
+    return [by_id[item.item_id] for item in admission.ready(items, policies)]
+
+
 async def ready_tasks(
     project: str | None = None,
     task_list_id: str | None = None,
     *,
     mine_only: bool = True,
 ) -> list[Task]:
-    """Tasks that can be started now (no unfinished prerequisites), optionally
+    """Tasks that can be started now (no unfinished prerequisites), RANKED, optionally
     scoped to a project label or a task list.
 
     ``mine_only`` (default True) is the load-bearing guarantee from
@@ -201,19 +267,26 @@ async def ready_tasks(
     Dependency readiness is still computed over the FULL set: a task of mine blocked
     by a colleague's unfinished prerequisite is genuinely not ready, and filtering
     before reconciliation would call it startable.
+
+    The ORDER, and the exclusion of work another holder is leasing, come from the unified
+    admission core (`PP-13`). Before that this funnel returned provider order — so the one
+    projection every work-selection surface reads had no ranking at all, while a second,
+    complete ranking sat unwired in `pool.frontier`. Ranking LAST, after the ownership filter, is
+    deliberate: an excluded colleague's task must not consume a position, and its dependents are
+    still counted because readiness and value are different questions.
     """
     tasks, _ = await list_all_tasks(project=project, task_list_id=task_list_id, limit=10_000)
     task_map = {t.id: t for t in tasks}
     ready_ids = set(reconcile.ready_task_ids(task_map))
     ready = [t for t in tasks if t.id in ready_ids]
-    if not mine_only:
-        return ready
-    from personalclaw.identity import current_username
+    if mine_only:
+        from personalclaw.identity import current_username
 
-    owner = current_username()
-    if not owner:
-        return ready
-    return [t for t in ready if t.belongs_to(owner)]
+        owner = current_username()
+        if owner:
+            ready = [t for t in ready if t.belongs_to(owner)]
+    now = time.time()
+    return await asyncio.to_thread(_rank_ready, ready, task_map, now=now)
 
 
 async def search_tasks(

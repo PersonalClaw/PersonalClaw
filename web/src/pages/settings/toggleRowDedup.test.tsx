@@ -70,8 +70,9 @@ describe('ToggleRow behaviour', () => {
     const { container } = render(<ToggleRow label="Poll" cfg={{ poll: false }} field="poll" patch={patch as never} />)
     fireEvent.click(container.querySelector('[role="switch"]')!)
     // The third argument is what makes "Saved ✓" appear; a panel that dropped it would save
-    // silently, which is the shape a hand-rolled copy got wrong most easily.
-    expect(patch).toHaveBeenCalledWith('poll', true, expect.any(Function))
+    // silently, which is the shape a hand-rolled copy got wrong most easily. The FOURTH is the
+    // control's visible label, so a rejected save can name "Poll" rather than the config key `poll`.
+    expect(patch).toHaveBeenCalledWith('poll', true, expect.any(Function), 'Poll')
   })
 
   it('shows the danger glyph only while ON', () => {

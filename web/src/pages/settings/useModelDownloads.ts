@@ -54,11 +54,20 @@ export function useModelDownloads(provider: string, onSettled: () => void) {
     if (job.state !== 'running') settled.current()  // already-downloaded short-circuit
   }, [provider, attach])
 
+  // 🔑 `cancel` PROPAGATES its failure and clears the row only on success — the shape `start` already
+  // has, and the one `saveFailureReported`'s rail exists to enforce. It used to
+  // `.catch(() => {})` the request and delete the job regardless, which is the failure this surface
+  // cannot afford: the request is what stops the download, so a swallowed rejection leaves the row
+  // reading "not downloading" while the server keeps pulling bytes, and a reload re-attaches to the
+  // still-running job. That is exactly the "left showing a value the server refused" lie the rail names.
+  //
+  // The stream is closed only after the request succeeds, too. Closing it first meant a failed cancel
+  // also blinded the row to the progress that kept arriving.
   const cancel = useCallback(async (model: string) => {
     const job = jobs[model]
     if (!job) return
+    await api.cancelModelDownload(job.id)
     closeStream(job.id)
-    await api.cancelModelDownload(job.id).catch(() => { /* gone */ })
     setJobs((prev) => { const n = { ...prev }; delete n[model]; return n })
     settled.current()
   }, [jobs, closeStream])

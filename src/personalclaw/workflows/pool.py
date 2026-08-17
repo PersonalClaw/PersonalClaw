@@ -1,11 +1,14 @@
-"""Task-pool concurrency: projections, leases, evented unblock.
+"""Task-pool concurrency: leases, evented unblock, hand-offs, blueprints.
 
 PClaw already runs concurrent co-tenant sessions and batch `subagent_run` children sharing one task
 pool. What the pool lacked was concurrency SEMANTICS — three of them:
 
-* **Two projections over ALL tasks.** `frontier` (everything unblocked, ranked) and `next` (the one
-  top task). "What should I work on" was being re-derived per surface, so the dashboard slice and
-  the agent tool could disagree about the same pool.
+* **A ranked projection over ALL tasks** — `frontier` (everything unblocked, ranked) and `next` (the
+  one top task). RETIRED HERE: it lives on the unified admission core as
+  `admission.ready` / `admission.next_ready`, where the ordering is `admission.rank_key` and the
+  leased-work exclusion is the composed `Lease` policy rather than a private `if`. The lease
+  DECISION functions below are that policy's implementation and stay — only the second projection
+  went, because a scheduler implemented twice decides differently exactly once and then lies.
 * **TTL'd lease claims.** Without compare-and-swap leases, engine-projected tasks WILL be
   double-executed by concurrent sessions. The claim is a `os.rename`-class primitive, not a
   read-then-write: S57 measured `unlink`-based single-use failing 36 of 40 races, and a lease that
@@ -182,112 +185,6 @@ def sweep_expired(leases: Iterable[Lease], now: float) -> list[str]:
     remains responsible for touching task files.
     """
     return sorted(lease.task_id for lease in leases if lease.expired(now))
-
-
-# ── projections ──
-
-
-class Urgency(str, Enum):
-    """Why a task is at the top. Shown, not just used for sorting.
-
-    A ranked list whose order cannot be explained is one a user overrides, and then the projection
-    is decoration.
-    """
-
-    OVERDUE = "overdue"
-    BLOCKING_OTHERS = "blocking_others"
-    HIGH_PRIORITY = "high_priority"
-    NORMAL = "normal"
-
-
-#: Priority weights, keyed by the REAL `TaskPriority` values. The shipped rungs are
-#: `critical | high | medium | low | trivial` — there is no `urgent`. A hand-written scale invented
-#: `urgent` and omitted `critical`, so the single most important rung in the product would have
-#: scored as the default and a `critical` task would have ranked below a `high` one.
-PRIORITY_WEIGHT = {
-    "critical": 5.0,
-    "high": 3.0,
-    "medium": 2.0,
-    "low": 1.0,
-    "trivial": 0.5,
-}
-
-
-@dataclass
-class Candidate:
-    """One task as the pool sees it. A view, not a Task — the pool ranks, it does not own.
-
-    Deliberately NOT a `Task`: building this from the fields the ranking actually reads means a
-    caller can project from any provider's tasks, and a new Task field cannot silently change the
-    ranking.
-    """
-
-    task_id: str
-    title: str = ""
-    priority: str = "medium"
-    unblocked: bool = True
-    blocks_count: int = 0
-    overdue: bool = False
-    updated_at: float = 0.0
-    leased_by: str = ""
-
-    def urgency(self) -> Urgency:
-        if self.overdue:
-            return Urgency.OVERDUE
-        if self.blocks_count > 0:
-            return Urgency.BLOCKING_OTHERS
-        if PRIORITY_WEIGHT.get(self.priority, 2.0) >= PRIORITY_WEIGHT["high"]:
-            return Urgency.HIGH_PRIORITY
-        return Urgency.NORMAL
-
-    def score(self) -> float:
-        """Rank score: priority, plus how much this task unblocks, plus an overdue bump.
-
-        `blocks_count` is in the score because a medium task blocking four others is more valuable
-        than a high task blocking none — the whole point of a dependency-aware pool.
-        """
-        base = PRIORITY_WEIGHT.get(self.priority, 2.0)
-        return base + min(3.0, 0.5 * self.blocks_count) + (2.0 if self.overdue else 0.0)
-
-
-def frontier(
-    candidates: Sequence[Candidate], *, now: float = 0.0, include_leased: bool = False
-) -> list[Candidate]:
-    """Everything workable right now, ranked.
-
-    Blocked tasks are excluded (they are not workable) and LEASED tasks are excluded by default —
-    a frontier that lists work another session is actively holding invites exactly the
-    double-execution the leases prevent. `include_leased` exists for the board, which shows claims
-    rather than picking work.
-
-    Ties break on recency then id: a stable order matters because an unstable "next task" makes an
-    agent thrash between two equals.
-    """
-    pool = [c for c in candidates if c.unblocked]
-    if not include_leased:
-        pool = [c for c in pool if not c.leased_by]
-    return sorted(pool, key=lambda c: (-c.score(), -c.updated_at, c.task_id))
-
-
-def next_task(candidates: Sequence[Candidate], *, now: float = 0.0) -> Candidate | None:
-    """The single top task, or None when the pool is empty.
-
-    One function, one answer — this is what stops "what should I work on" from being reimplemented
-    per surface. It is `frontier`'s head by construction, so the list and the pick can never
-    disagree.
-    """
-    ranked = frontier(candidates, now=now)
-    return ranked[0] if ranked else None
-
-
-def explain(candidate: Candidate) -> str:
-    """Why this task ranks where it does, in one line."""
-    reasons = [f"priority={candidate.priority}"]
-    if candidate.overdue:
-        reasons.append("overdue")
-    if candidate.blocks_count:
-        reasons.append(f"blocks {candidate.blocks_count} other(s)")
-    return f"{candidate.task_id}: " + ", ".join(reasons)
 
 
 # ── evented unblock and dependency cascade ──
@@ -720,13 +617,19 @@ def read_lease(task_id: str) -> Lease | None:
 def claim_task(
     task_id: str, *, holder: str, now: float, ttl_seconds: int | None = None
 ) -> tuple[Lease | None, str]:
-    """Acquire or renew a lease, under a cross-process lock. Returns `(lease, error)`.
+    """Acquire or renew a lease, under an exclusive lock. Returns `(lease, error)`.
 
     The read-modify-write is wrapped in `single_flight` — the established flock primitive — because
     per-entity JSON files have no transactions, so "read the lease, decide, write the lease" is
     otherwise a race between the read and the write. A LOSER of the lock is told the task is held
     rather than proceeding: single-flight means don't double-run, and a caller that ignored the miss
     would be doing exactly the double-claim the lock exists to prevent.
+
+    That lock covers THREADS as well as processes (flock is per open file description and
+    `single_flight` opens a fresh one per call), which is the property `PP-12`'s `Lease` admission
+    policy rests on: the engine fans out in-process with `asyncio.create_task`, so a cross-process-
+    only claim would not cap the fan-out shape that actually occurs. Measured both ways — 16 threads
+    on one resource yield exactly one holder with this wrapper, and 3 to 15 holders without it.
 
     The decision itself is `acquire`, unchanged — this function is only the durability around it, so
     there is one rule and one place it is applied.

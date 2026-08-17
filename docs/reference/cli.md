@@ -38,7 +38,7 @@ Two fixtures ship:
 | Fixture | Contents |
 |---|---|
 | `empty` | A bare home — just the `fixture.yaml` marker. Everything else is created on first boot. |
-| `demo-home` | A home that looks used, for screenshots and demos: two projects with briefs, three task lists, ten tasks spanning every status (one blocked on a real dependency), and markdown memory (preferences, project context, two days of history). Onboarding is pre-completed, so it boots straight to the dashboard. Knowledge items, semantic/episodic memory records and loops are **not** included — those stores are SQLite-only and a fixture is a plain file copy. |
+| `demo-home` | A home that looks used, for screenshots and demos: two projects with briefs, three task lists, ten tasks spanning every status (one blocked on a real dependency), markdown memory (preferences, project context, two days of history), five knowledge docs, and one completed loop with a three-phase plan. Onboarding is pre-completed, so it boots straight to the dashboard. Semantic/episodic memory *records* are still not included — that store is SQLite-only with no text tier, unlike the markdown memory the fixture does carry. |
 
 ## `personalclaw chat`
 
@@ -148,6 +148,27 @@ Manage agent definitions.
 | `agent create --name NAME [--provider-agent NAME] [--default-dir PATH] [--memory-store NAME]` | Create an agent. |
 | `agent update NAME [--provider-agent] [--default-dir] [--memory-store]` | Update an agent. |
 | `agent delete NAME` | Delete an agent. |
+
+## `personalclaw app`
+
+Scaffold a third-party app.
+
+| Subcommand | What it does |
+|---|---|
+| `app new --list-types` | Print the provider types this build accepts, derived at runtime from the provider registry — plus the SDK contract each type's stub implements and how many providers of that type are registered. A type added upstream shows up here without a scaffold change. |
+| `app new NAME --type TYPE [--dir DIR] [--display-name] [--description] [--author] [--force]` | Generate an installable app: `app.json` (validated against core's own manifest parser, with the plan-32 `cli.*` seams and `loggerRoots`), a provider stub implementing that type's SDK ABC, a passing `test_provider.py`, `README.md`, and an MIT `LICENSE`. Declares no permissions — add only what the provider uses. |
+| `app new --from-template [--dir DIR] [--template-url URL] [--template-archive FILE] [--force]` | Fork-and-go: fetch the [`personalclaw/app-template`](https://github.com/personalclaw/app-template) repo into `DIR/app-template` instead of generating. Same `--type tool` output, plus CI and a clone-to-installed README. Takes no NAME — renaming is a documented four-edit step in the template's README; use `--type` to generate a named app. |
+
+Names are kebab-case. `pytest <dir>` passes on the generated bundle as-generated, and
+installing it from that local path registers the provider.
+
+`--from-template` is the only part of `app new` that uses the network, and it fails closed:
+`https` only, to an allowlisted host (`codeload.github.com`), no redirects followed at all, a
+non-200 refused, and a per-member/whole-archive byte cap. Archive members must be regular
+files or directories with relative in-tree paths — a symlink, hardlink, device or `../`
+member is refused, and every write path is re-checked for containment after
+canonicalisation. An existing non-empty target is refused unless `--force`.
+`--template-archive` reads a `.tar.gz` already on disk and touches no network.
 
 ## `personalclaw config`
 

@@ -115,7 +115,9 @@ describe('NumberRow behaviour', () => {
     fireEvent.change(input, { target: { value: '20' } })
     fireEvent.blur(input)
     // The third argument is what makes "Saved ✓" appear; without it the row would save silently.
-    expect(patch).toHaveBeenCalledWith('max', 20, expect.any(Function))
+    // The FOURTH is the control's visible label, so a rejected save can name "Max tiles" instead of
+    // the config key `max` — the row holds both and used to hand over only the key.
+    expect(patch).toHaveBeenCalledWith('max', 20, expect.any(Function), 'Max tiles')
   })
 
   it('clamps to max on commit (inherited from NumberField)', () => {
@@ -124,6 +126,6 @@ describe('NumberRow behaviour', () => {
     const input = container.querySelector('input')!
     fireEvent.change(input, { target: { value: '999' } })
     fireEvent.blur(input)
-    expect(patch).toHaveBeenCalledWith('max', 48, expect.any(Function))
+    expect(patch).toHaveBeenCalledWith('max', 48, expect.any(Function), 'Max tiles')
   })
 })

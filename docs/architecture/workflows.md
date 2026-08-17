@@ -41,7 +41,7 @@ while not terminal:
 |---|---|
 | `models.py` | the spec algebra — node kinds, states, run/def records |
 | `tick.py` | `frontier()` — a PURE function from (spec, states) to what may run |
-| `admission.py` | the ordered `AdmissionPolicy` list `frontier()` composes tightest-wins |
+| `admission.py` | the ordered `AdmissionPolicy` list `frontier()` composes tightest-wins, plus the ready projection (`rank_key` comparator + `ready`/`next_ready`) the task pool used to keep privately |
 | `controller.py` | the conductor: one per run, the only writer of run state |
 | `engine.py` | one dispatcher per node kind; the only place real work happens |
 | `bindings.py` | the `{{…}}` expression language and its closed pipe set |
@@ -108,7 +108,7 @@ while not terminal:
 | `confirmation.py` | the one durable ConfirmationRequest record: construction-time redacted previews, per-type expiry policy, the four-verb resolution vocabulary, `require_hitl`, per-stage mute, tool profiles and the DagView approve/deny card |
 | `surfacing.py` | SOP surfacing discipline: the `surface_mode` ladder (off/passive/suggest), trigger-phrase lint + collision check, the shared `!`-negative veto plus planning/paste/named-workflow vetoes, one-source-two-wrappers rendering with a verbatim digest fence, per-def graduation, SOP migration and the reachability doctor |
 | `surfacing_channels.py` | The two non-semantic surfacing channels plus the contracts that gate a suggestion: cadence/recency (freshness gradient, overdue-first sort, once-daily escalation throttle, last-completed derived from real run history), workspace fingerprint packs (weighted globs, bounded scan, propose-don't-enable with per-project dismissal), layered scope resolution with visible shadowing and per-stage overlays, the three-state requirements preflight, schema-driven parameter pre-fill, and the reachability doctor + trigger-accuracy fixtures |
-| `pool.py` | Task-pool concurrency: the `frontier`/`next` projections over all tasks (priority + blocking-count + overdue, leased work excluded), TTL'd compare-and-swap leases with takeover/renew/release rules and an expiry sweep, evented unblock with `dependency_failed` cascade and burst coalescing, delegated write-time acyclicity, hand-off edges with an allowlisted context carry, and blueprint sessions (numbered guided conversations, replace-not-merge hydration) plus the passive/blueprint/run router |
+| `pool.py` | Task-pool concurrency: TTL'd compare-and-swap lease decisions with takeover/renew/release rules, the flocked claim write path and an expiry sweep, evented unblock with `dependency_failed` cascade and burst coalescing, delegated write-time acyclicity, hand-off edges with an allowlisted context carry, and blueprint sessions (numbered guided conversations, replace-not-merge hydration) plus the passive/blueprint/run router. Its private `frontier`/`next` projection was RETIRED by `PP-13` onto `admission.py`; the lease decisions stayed, because they are what the `Lease` policy calls |
 | `settings.py` | The config knobs the runtime actually reads: one resolver per live-editable `WorkflowsConfig` field (`surface_mode_default`, `max_materialized_per_foreach`, `confirmation_ttl_secs`, `lease_ttl_secs`), each with the module constant as a fail-safe fallback, clamped to the bounds the records enforce, and deliberately uncached so a PATCH takes effect without a restart |
 | `scope.py` | filesystem write-scope enforcement by post-hoc diff |
 | `watchdog.py` | the supervisor: adoption, reaping, per-run publishing |

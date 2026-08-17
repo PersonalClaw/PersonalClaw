@@ -40,12 +40,13 @@ ecosystem, which is the point.
 | `triggers` | no — **PersonalClaw extension** | Phrases that auto-surface the skill. See below. |
 | `always` | no | `true` loads the skill on every turn, bypassing trigger matching. |
 | `status` | no | `active` (default) or a lifecycle value the curator sets. |
+| `resources` | no | Files beside `SKILL.md` an agent may load on demand. See below. |
 
 Unknown fields are read and kept, not rejected — a foreign harness's extra
 frontmatter is preserved rather than treated as an error, though PersonalClaw
 does nothing with it.
 
-### `triggers` is the one extension
+### `triggers` — the auto-surfacing extension
 
 `triggers` is **specific to PersonalClaw** and **entirely optional**. It holds
 phrases that cause the skill to be offered when a user's message matches:
@@ -69,6 +70,57 @@ invoked directly or by an agent; it simply never *auto*-surfaces. An empty
 `triggers` value means "never auto-surface" — it is never treated as
 "matches everything".
 
+### `resources` — files the agent loads only when it needs them
+
+A skill directory may carry more than its `SKILL.md`:
+
+```
+<skills root>/vendor-payloads/SKILL.md
+                             /reference/api-notes.md
+                             /scripts/check.sh
+```
+
+Declaring them makes them **addressable** — the agent can pull one by name
+instead of either ignoring them or reading the whole directory:
+
+```yaml
+resources:
+  - path: reference/api-notes.md
+    description: field-by-field notes on the vendor payload
+  - path: scripts/check.sh
+  - reference/changelog.md
+```
+
+`description` is optional, and a bare string (the last item) declares a path on
+its own. As everywhere else in this frontmatter, an inline `# comment` after a
+value is *not* stripped — put comments on their own line.
+
+`skill_invoke` then returns the skill body **plus a catalog** of those
+declarations — one line each, path and description, **never their contents**. The
+agent loads one with `skill_resource(skill, path)`. A skill with no `resources`
+block behaves exactly as before.
+
+`resources` is the one **list-of-mappings** block the frontmatter reader
+understands (see the parser limits below — nested mappings are otherwise skipped).
+It has its own small reader, so `path` and `description` are the only keys read
+inside an item.
+
+**What `skill_resource` will and will not do** — the rules are worth knowing
+because a resource that violates one fails visibly rather than silently:
+
+- **Declared only.** The list is an allowlist. A file that exists in the skill
+  directory but is not declared is refused; so is any path with a `..` segment, an
+  absolute path, or a backslash. Declarations that break those rules are dropped
+  at parse time, so a bad entry never widens what is loadable.
+- **No escaping the skill directory.** A declared path that turns out to be a
+  symlink out of the skill directory is refused after resolution.
+- **Capped, visibly.** A resource larger than 32 KB comes back truncated with an
+  explicit notice — never a silent cut.
+- **Read, never run.** A `scripts/*` resource is returned as *text*. Running it is
+  the ordinary command path's job, with the screening that path applies.
+- Resource content is treated as untrusted data (it is third-party authored), so
+  it arrives fenced: the model reads it, it does not obey it.
+
 ## Interoperability
 
 **Importing a foreign skill.** Vanilla `SKILL.md` files import cleanly. The
@@ -83,6 +135,30 @@ markdown, the scripts, and the description all still apply.
 
 **Practical consequence:** write `triggers` for the benefit of PersonalClaw, and
 keep the body self-contained so the skill still reads correctly without it.
+
+### The conformance delta, stated exactly
+
+PersonalClaw stays on the shared `SKILL.md` + YAML-frontmatter format rather than
+diverging, and the delta is additive in both directions:
+
+| Key | Who defines it | What PersonalClaw does with it |
+|---|---|---|
+| `name`, `description` | the shared format | reads both (falls back to the directory key) |
+| `license`, `allowed-tools`, `metadata`, any other foreign key | another harness | **preserved on disk, unused** — never rewritten, never an error |
+| `triggers`, `always`, `status` | PersonalClaw | auto-surfacing, always-load, curator lifecycle |
+| `resources` | PersonalClaw | the on-demand resource tier described above |
+
+So: **a conformant third-party skill installs unmodified** — same directory shape,
+same frontmatter, no conversion pass, and it lists, loads and (if it declares
+`resources`) exposes its catalog straight away. A PersonalClaw skill handed out
+loses `triggers`/`resources` handling and nothing else.
+
+It buys interoperability and **not** a trust exemption. Every install — foreign or
+local — goes through the one supply-chain gate (quarantine → scan at the source's
+trust tier → commit the exact scanned bytes), and a `dangerous` verdict is refused
+with no override, `--force` included. `tests/test_skill_install_guarded.py` pins
+both halves: the conformant skill committing byte-identical, and the floor holding
+for that same skill when it ships a destructive script.
 
 ## The parser, and its limits
 

@@ -71,12 +71,16 @@ def publish_export(
     manifest_sha: str,
     now: str = "",
     reload_registry=None,
+    codec=None,
 ) -> PushReport:
     """Publish ``export_dir`` as this machine's next seq and announce it via a CAS registry bump.
 
     ``reload_registry`` is an optional ``() -> Registry`` the CAS loop calls to re-pull the
     shared registry after a lost race (the cycle passes one that reads + parses the remote
     ``registry.json``); without it a CAS failure ends the attempt (single-writer/test path).
+    ``codec`` is an optional :class:`~personalclaw.durability.crypto.SyncCodec` (DAS-8): when
+    present, every non-routing object is AES-256-GCM encrypted here — the LAST step before the
+    transport, so no unencrypted shard byte can reach an untrusted store.
     Returns a :class:`PushReport`. The push obligation is recorded in the durable outbox first,
     so a crash between push and registry-commit leaves a pending entry the next cycle re-drains
     (the object keys are insert-only, so that re-drain is a no-op).
@@ -87,6 +91,22 @@ def publish_export(
     prefix = shard_prefix(self_id, seq)
     objects = _objects_for(export_dir, prefix)
     report.objects = len(objects)
+
+    if codec is not None:
+        objects, refused = codec.encrypt_for_push(objects)
+        if refused:
+            # §4.4 send-side rejection. Do NOT announce a seq whose objects are incomplete,
+            # and do not retry: a plaintext object in an encrypted store is a contract
+            # violation, so this is a permanent outcome the outbox records and stops chasing.
+            entry = outbox.enqueue(
+                transport.name, seq, prefix=prefix, local_dir=str(export_dir), now=now
+            )
+            outbox.record_outcome(
+                entry.id, OUTCOME_PERMANENT, now=now, detail="; ".join(refused.reasons[:5])
+            )
+            report.push_outcome = OUTCOME_PERMANENT
+            report.detail = f"encryption refused {len(refused)} plaintext object(s)"
+            return report
 
     # Durable obligation FIRST — if we crash mid-push, the outbox still owes this push.
     entry = outbox.enqueue(transport.name, seq, prefix=prefix, local_dir=str(export_dir), now=now)

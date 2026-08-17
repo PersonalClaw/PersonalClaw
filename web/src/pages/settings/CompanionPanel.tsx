@@ -44,7 +44,7 @@ export function CompanionPanel() {
   if (!data || !cfg) return <FormSkeleton sections={1} what="settings" />
 
   // Optimistic single-field PATCH; a rejected save rolls back and surfaces the error.
-  const patch = (key: string, value: unknown, onSaved?: () => void) => {
+  const patch = (key: string, value: unknown, onSaved?: () => void, label?: string) => {
     const prev = cfg[key]
     setCfg((c) => ({ ...c, [key]: value }))
     api.patchConfig(`companion.${key}`, value).then(() => {
@@ -54,7 +54,7 @@ export function CompanionPanel() {
       refreshDiscovery()
     }).catch((e) => {
       setCfg((c) => ({ ...c, [key]: prev }))
-      notify(`Couldn't save ${key}: ${String((e as Error)?.message || e)}`, 'error')
+      notify(`Couldn't save ${label ?? key}: ${String((e as Error)?.message || e)}`, 'error')
     })
   }
 

@@ -85,6 +85,16 @@ def _clamp_limit(arguments: dict, *, default: int, ceiling: int) -> int:
     return max(1, min(int(raw), ceiling))
 
 
+def _enum_value(value: Any) -> str:
+    """An enum's wire value, never its Python repr.
+
+    MRI-5's client drive got `[TaskStatus.OPEN]` back from `tasks_list` — the repr of a
+    Python enum, handed to a model as if it were the status vocabulary. Anything crossing
+    this boundary is read by a machine that has never seen our class names.
+    """
+    return str(getattr(value, "value", value))
+
+
 def _reject_unknown(arguments: dict, allowed: "tuple[str, ...]") -> None:
     """Refuse arguments we don't recognize (§C3: unknown args → invalid-params).
 
@@ -189,7 +199,7 @@ async def _tasks_list(arguments: dict, state: Any) -> str:
     lines = [f"{len(tasks)} of {total} task(s):"]
     for task in tasks:
         assignee = f" · @{task.assignee}" if task.assignee else ""
-        lines.append(f"- [{task.status}] {task.id}: {task.title}{assignee}")
+        lines.append(f"- [{_enum_value(task.status)}] {task.id}: {task.title}{assignee}")
     return "\n".join(lines)
 
 
@@ -204,7 +214,7 @@ async def _task_get(arguments: dict, state: Any) -> str:
         return f"No task with id {task_id!r}."
     lines = [
         f"{task.id}: {task.title}",
-        f"status: {task.status} · priority: " f"{getattr(task.priority, 'value', task.priority)}",
+        f"status: {_enum_value(task.status)} · priority: {_enum_value(task.priority)}",
     ]
     if task.assignee:
         lines.append(f"assignee: {task.assignee}")

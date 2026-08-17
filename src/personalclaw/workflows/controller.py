@@ -44,11 +44,36 @@ from typing import Any
 from personalclaw import project_context
 from personalclaw.knowledge import session_brief
 from personalclaw.ledger import outcomes
-from personalclaw.workflows import attention, conditions
+from personalclaw.loop import tick as convergence
+from personalclaw.loop.tick import Action as StepAction
+from personalclaw.workflows import (
+    attention,
+    conditions,
+)
 from personalclaw.workflows import context as context_mod
-from personalclaw.workflows import execution_hints, gate_policy
+from personalclaw.workflows import (
+    execution_hints,
+    gate_policy,
+)
 from personalclaw.workflows import journal as journal_mod
-from personalclaw.workflows import judge_calibration, longrun, mutations, ownership, revision, store
+from personalclaw.workflows import (
+    judge_calibration,
+    longrun,
+    mutations,
+    ownership,
+    pool,
+    revision,
+    store,
+    supervisor_policy,
+)
+from personalclaw.workflows.admission import (
+    AdmissionRequest,
+    AdmissionState,
+    MetricGate,
+    Scope,
+    compose,
+    default_policies,
+)
 from personalclaw.workflows.bindings import BindingContext, BindingError, node_deps
 from personalclaw.workflows.effects import (
     EffectRecord,
@@ -69,7 +94,11 @@ from personalclaw.workflows.engine import (
 from personalclaw.workflows.human_input import drop_continuations
 from personalclaw.workflows.journal import CacheKey, Journal, inputs_hash, spec_region_hash
 from personalclaw.workflows.judge_contract import hints_from_dict as judge_hints_from_dict
-from personalclaw.workflows.loop_middleware import InterruptQueue
+from personalclaw.workflows.loop_middleware import (
+    InterruptQueue,
+    call_fingerprint,
+    classify_failure,
+)
 from personalclaw.workflows.models import (
     SUCCESS_STATES,
     TERMINAL_RUN_STATUSES,
@@ -101,6 +130,7 @@ from personalclaw.workflows.scope import diff as scope_diff
 from personalclaw.workflows.scope import enforces_scope, scope_mode
 from personalclaw.workflows.scope import snapshot as scope_snapshot
 from personalclaw.workflows.scope import watch_roots as scope_watch_roots
+from personalclaw.workflows.supervisor_policy import tick_config as convergence_config
 from personalclaw.workflows.tick import (
     Frontier,
     Limits,
@@ -206,6 +236,21 @@ class _InFlight:
     cache_key: CacheKey
 
 
+#: How many convergence decisions per loop the run row keeps. Bounded, because an unbounded
+#: decision log on a run row is a slow leak that reads like an audit trail.
+_CONVERGENCE_LOG_MAX = 50
+
+#: Breaker reasons that are a DECLARED BUDGET being reached, not a stall.
+#:
+#: The distinction decides who answers the trip. A loop that thrashes is recoverable — that is
+#: what the escalation ladder is for, and failing it binary is the bug PP-15 fixes. A loop that
+#: reached the `max_iterations` or token cap ITS AUTHOR SET is not thrashing and has nothing
+#: cheaper to try: spending a fresh session and a model switch on a satisfied budget would
+#: re-run the work the cap existed to bound. So budgets keep going straight to the escalation
+#: artifact, exactly as before, and only thrash reaches the ladder.
+_BUDGET_TRIPS = frozenset({"max_iterations", "token_cap"})
+
+
 class RunController:
     """Drives one run to a terminal state.
 
@@ -254,6 +299,29 @@ class RunController:
         #: the record it dedupes is a scheduling note, and re-journaling one after a resume is
         #: harmless next to carrying a second persisted set to keep in sync.
         self._wip_logged: set[str] = set()
+        #: Resource name → the `holder` string this controller claimed it with. Recorded so
+        #: the release is by the SAME identity that claimed: `pool.release` refuses a non-holder,
+        #: and reconstructing the holder at release time is how a released-by-nobody lease strands.
+        self._held_leases: dict[str, str] = {}
+        #: Whether the on-disk lease records this run already holds have been re-adopted. Once per
+        #: controller: it is a directory scan, and the answer cannot change without this object
+        #: being the one that changed it.
+        self._leases_adopted: bool = False
+        #: Paths whose PP-12 admission hold is already journaled, deduped exactly like
+        #: `_wip_logged` — the frontier re-derives every tick, and one baking step would otherwise
+        #: write a record per tick for the whole bake window.
+        self._admission_logged: set[str] = set()
+        #: Wall clock at which a hold could next change its mind. A bake floor expires at a
+        #: time the engine can NAME, and a lease at its TTL, so the tick loop sleeps until then
+        #: instead of spinning: `_next_wake_delay` returns None for a run with nothing WAITING and
+        #: nothing in flight, and the loop's `sleep(0)` fallback would busy-wait through the window.
+        self._admission_wake: float = 0.0
+        #: `(spec_version, declares)` — whether ANY node declares an admission key. Cached per
+        #: spec version rather than per construction because a mid-flight mutation can add one.
+        self._admission_declared: tuple[int, bool] | None = None
+        #: `<step path>@<epoch>` keys whose metric rollback is already queued, so one regressed step
+        #: queues one rewind instead of one per tick until the drain lands.
+        self._rollbacks_queued: set[str] = set()
         #: `<foreach path>@<epoch>` keys whose collected-failure record is already in the ledger
         #: (WV-13). Seeded from the ledger on first use rather than left empty like
         #: `_wip_logged`: this record's payload is a COUNT of failed items, and a resumed run
@@ -810,7 +878,14 @@ class RunController:
         for path in fr.to_skip:
             self._skip(path)
 
-        for item in fr.ready:
+        # PP-12 admission: the two rules the frontier structurally cannot apply, because both need
+        # a clock and one needs the disk. Skipped entirely for a spec that declares none of their
+        # keys — the same code path as before this existed, which is what "additive" has to mean.
+        admitted = await self._admit_ready(fr.ready)
+        if admitted is None:
+            return True
+
+        for item in admitted:
             if item.path in self._inflight:
                 continue
             await self._launch(item)
@@ -1624,6 +1699,377 @@ class RunController:
                     "another item of the same fan-out is still in flight"
                 ),
             )
+
+    # ── PP-12 admission: the policies that need a clock and the disk ──────────
+    #
+    # `frontier()` is pure, so it can apply neither a lease (occupancy that lives on disk, under a
+    # TTL) nor a bake floor (elapsed time). Both are still ADMISSION — "may this start now, given
+    # persisted state" — so they compose in the same list, through the same `compose()`, against the
+    # same `AdmissionRequest`; only the impure inputs are gathered here, by the one object that
+    # already owns a clock and the run's state. That split is what keeps the frontier replayable
+    # while the new rules still bind for real.
+
+    #: Node config keys the policies read. A spec containing none of them never builds an
+    #: `AdmissionState` and never asks a question — the pre-PP-12 code path, exactly.
+    _ADMISSION_KEYS = ("lease", "min_dwell_secs", "metric_pass")
+
+    #: `root.children[2]` → its parent and index. Sequence children are POSITIONAL in an instance
+    #: path (`tick._visit`), which is what makes "the step before this one" answerable at all.
+    _CHILD_SEGMENT = re.compile(r"^(?P<parent>.+)\.children\[(?P<index>\d+)\]$")
+
+    async def _admit_ready(self, ready: list[ReadyNode]) -> list[ReadyNode] | None:
+        """Apply the lease / bake-floor / metric-gate policies to this tick's ready set.
+
+        Returns what may launch, or `None` when this call FINISHED the run — a metric gate that ran
+        out of rollbacks is the loop's `COMPLETE(blocked)`, and a run whose gate has given up must
+        say so rather than hold a step forever.
+        """
+        if not self._declares_admission_keys():
+            return list(ready)
+        self._adopt_held_leases()
+        self._release_settled_leases()
+        self._admission_wake = 0.0
+        state = self._admission_state(ready)
+        wip = execution_hints.from_runtime_hints(
+            self.spec.get("runtime_hints")
+        ).single_active_feature
+        admitted: list[ReadyNode] = []
+        stalls: list[str] = []
+        for item in ready:
+            ok, fatal = self._admit(item, state, wip=wip, stalls=stalls)
+            if fatal:
+                await self._finish(RunStatus.FAILED, error=fatal)
+                return None
+            if ok:
+                admitted.append(item)
+        if (
+            not admitted
+            and not self._inflight
+            and stalls
+            and not self._admission_wake
+            and not self._pending_mutations
+        ):
+            # Every refusal this tick was one that cannot change by itself, with nothing running to
+            # change it and no rollback queued. Holding forever would be a silent hang; the tick
+            # loop's no-deadline path sleeps zero, so it would be a HOT one.
+            await self._finish(RunStatus.FAILED, error="; ".join(stalls))
+            return None
+        return admitted
+
+    def _admit(
+        self,
+        item: ReadyNode,
+        state: AdmissionState,
+        *,
+        wip: bool,
+        stalls: list[str],
+    ) -> tuple[bool, str]:
+        """One item's verdict: `(may_launch, fatal_error)`.
+
+        The step gate is asked BEFORE the lease is claimed. Reversed, a step held by its metric gate
+        would still take the resource and hold it for the whole bake window — a claim nothing is
+        going to use.
+        """
+        claim = self._lease_claim(item.path)
+        policies = default_policies(
+            self.services.lane_limits or Limits(),
+            single_active_feature=wip,
+            # The holder is per ITEM, so the snapshot is re-stamped rather than rebuilt: two items
+            # of one fan-out must present different identities or the lease would never serialize
+            # them (`pool.acquire` treats a same-holder re-acquire as a renewal).
+            state=replace(state, holder=claim[1] if claim else ""),
+        )
+        request = AdmissionRequest(scope=Scope.STEP, key=item.path, node=item.node)
+        verdict = compose(policies, request)
+        if not verdict.admits(0):
+            binding = verdict.binding
+            reason = ""
+            if isinstance(binding, MetricGate):
+                decision = binding.decision(request)
+                if decision is not None:
+                    reason = decision.reason
+                    if decision.action is StepAction.COMPLETE:
+                        return False, (
+                            f"metric gate on {item.node.id or item.path}: {decision.reason}"
+                        )
+                    if decision.action is StepAction.ROLLBACK:
+                        self._queue_metric_rollback(item, decision)
+                    else:
+                        stalls.append(
+                            f"metric gate on {item.node.id or item.path} holds it: "
+                            f"{decision.reason}"
+                        )
+            self._journal_admission_hold(item, verdict, reason)
+            return False, ""
+        if claim is None:
+            return True, ""
+
+        resource, holder, _scope, ttl = claim
+        request = AdmissionRequest(scope=Scope.RESOURCE, key=resource, node=item.node)
+        verdict = compose(policies, request)
+        if not verdict.admits(0):
+            record = state.leases.get(resource)
+            self._journal_admission_hold(
+                item,
+                verdict,
+                f"{resource!r} is held by {record.holder!r}" if record else f"{resource!r} is held",
+            )
+            if record is not None:
+                self._note_admission_wake(record.expires_at())
+            return False, ""
+        lease, error = pool.claim_task(resource, holder=holder, now=state.now, ttl_seconds=ttl)
+        if lease is None:
+            # The verdict said yes; the flocked compare-and-swap said no. THIS is the authoritative
+            # answer — a policy that advised on a stale read and a claim that lost the race are the
+            # two halves of one mechanism, and skipping the claim because the advice was positive is
+            # exactly the read-then-write S57 measured failing 36 of 40 races.
+            self._journal_admission_hold(item, verdict, f"{resource!r} claim lost: {error}")
+            self._note_admission_wake(state.now + 1.0)
+            return False, ""
+        self._held_leases[resource] = holder
+        return True, ""
+
+    def _declares_admission_keys(self) -> bool:
+        """Whether any node declares a PP-12 key, cached per spec version."""
+        cached = self._admission_declared
+        version = int(self.run.spec_version)
+        if cached is not None and cached[0] == version:
+            return cached[1]
+        declared = any(
+            key in (node.config or {})
+            for _path, node in _walk(self.root)
+            for key in self._ADMISSION_KEYS
+        )
+        self._admission_declared = (version, declared)
+        return declared
+
+    def _admission_state(self, ready: list[ReadyNode]) -> AdmissionState:
+        """Gather the clock-and-disk inputs for this tick's ready set. The only impure step."""
+        now = time.time()
+        leases: dict[str, pool.Lease] = {}
+        ttl = pool.DEFAULT_LEASE_SECS
+        since: dict[str, float] = {}
+        metrics: dict[str, float] = {}
+        floors: dict[str, float] = {}
+        rollbacks: dict[str, int] = {}
+        for item in ready:
+            claim = self._lease_claim(item.path)
+            if claim is not None:
+                resource, _holder, _scope, ttl = claim
+                record = pool.read_lease(resource)
+                if record is not None:
+                    leases[resource] = record
+            config = item.node.config or {}
+            if config.get("min_dwell_secs"):
+                prior_path, _prior_id = self._prior_step(item.path)
+                completed = self._instance(prior_path).completed_at if prior_path else None
+                if completed:
+                    since[item.path] = _epoch(completed)
+            if config.get("metric_pass") is None:
+                continue
+            value = self._resolve_metric(config.get("metric_from"))
+            if value is not None:
+                metrics[item.path] = value
+            floor = _opt_metric(config.get("metric_floor"))
+            if floor is not None:
+                floors[item.path] = floor
+            prior_path, _prior_id = self._prior_step(item.path)
+            if prior_path:
+                # `epoch` IS the consecutive-rollback count: every rollback rewinds the prior step,
+                # and `mutations.next_epoch` bumps it. Persisted, so the cap survives a restart —
+                # an in-memory counter would let a crash-looping run roll back forever.
+                rollbacks[item.path] = int(self._instance(prior_path).epoch)
+        return AdmissionState(
+            now=now,
+            leases=leases,
+            lease_ttl_secs=ttl,
+            since=since,
+            metrics=metrics,
+            floors=floors,
+            rollbacks=rollbacks,
+        )
+
+    def _lease_claim(self, path: str) -> tuple[str, str, str, int] | None:
+        """`(resource, holder, holder scope, ttl)` for a ready item under a `lease:` declaration.
+
+        The holder scope is what RELEASES the lease: the declaring node itself, or — when the
+        declaration is on a container — the ITEM of it this path belongs to, so a `foreach` holding
+        `lease: "endpoint"` serializes its items instead of claiming once for the whole fan-out.
+
+        The OUTERMOST declaration wins. One resource per item is deliberate: two would need a claim
+        ORDER to stay deadlock-free, and an ordered multi-resource lock manager is the distributed
+        substrate this plan's soul guardrail excludes.
+        """
+        nodes = dict(_walk(self.root))
+        segments = path.split(".")
+        for i in range(len(segments)):
+            prefix = ".".join(segments[: i + 1])
+            node = nodes.get(_base_path(prefix))
+            if node is None:
+                continue
+            config = node.config or {}
+            resource = str(config.get("lease", "") or "").strip()
+            if not resource:
+                continue
+            scope = prefix
+            if i + 1 < len(segments) and "#" in segments[i + 1]:
+                scope = ".".join(segments[: i + 2])
+            try:
+                ttl = int(config.get("lease_ttl_secs") or pool.DEFAULT_LEASE_SECS)
+            except (TypeError, ValueError):
+                ttl = pool.DEFAULT_LEASE_SECS
+            return resource, f"{self.run.id}:{scope}", scope, max(1, ttl)
+        return None
+
+    def _prior_step(self, path: str) -> tuple[str, str]:
+        """`(instance path, node id)` of the step immediately before `path` in its parent sequence.
+
+        Empty for the first child, or for a node whose parent is not a sequence: a bake floor has
+        nothing to measure from and a rollback has nowhere to go, and inventing a target would roll
+        back a node the author never put in front of this one.
+        """
+        match = self._CHILD_SEGMENT.match(path)
+        if match is None:
+            return "", ""
+        index = int(match.group("index"))
+        if index == 0:
+            return "", ""
+        prior = f"{match.group('parent')}.children[{index - 1}]"
+        node = dict(_walk(self.root)).get(_base_path(prior))
+        return prior, (node.id if node is not None else "")
+
+    def _resolve_metric(self, raw: Any) -> float | None:
+        """Resolve `metric_from` against the run's outputs.
+
+        Accepts the dotted form (`verify.score`) and the familiar binding form
+        (`{{nodes.verify.output.score}}`) — normalising instead of ignoring, because a metric source
+        the engine silently could not read would leave the gate looking enforced while abstaining on
+        every tick.
+        """
+        source = str(raw or "").strip()
+        if not source:
+            return None
+        source = source.strip("{} ").strip()
+        if source.startswith("nodes."):
+            source = source[len("nodes.") :].replace(".output.", ".", 1)
+        cursor: Any = self._outputs
+        for key in source.split("."):
+            if not isinstance(cursor, dict):
+                return None
+            cursor = cursor.get(key)
+        return _opt_metric(cursor)
+
+    def _queue_metric_rollback(self, item: ReadyNode, decision: Any) -> None:
+        """Roll the prior step back on a metric regression, through the real mutation queue.
+
+        A `rewind` op, not a bespoke reset: `_apply_reentry` already archives outputs, bumps the
+        epoch, invalidates the journal region and drops stale approvals, and a second reset path
+        would be one that forgets whichever of those it was written before.
+        """
+        prior_path, prior_id = self._prior_step(item.path)
+        if not prior_id:
+            return
+        key = f"{item.path}@{self._instance(prior_path).epoch}"
+        if key in self._rollbacks_queued:
+            return
+        self._rollbacks_queued.add(key)
+        body = self.submit_mutation(
+            # `force`, deliberately: without it `mutations.next_epoch` leaves the epoch alone
+            # and the journal's inputs-hash tier REPLAYS the step's cached output. A rollback
+            # that serves the cache re-produces the metric that failed, so the gate would roll
+            # back forever — and the epoch is also the persisted rollback count that caps it.
+            [{"kind": "rewind", "node_id": prior_id, "force": True}],
+            actor="engine",
+            confirm=True,
+        )
+        self.journal.write(
+            journal_mod.DECISION,
+            instance_path=item.path,
+            node_id=item.node.id,
+            decision="metric_rollback",
+            detail=(
+                f"{decision.reason}; rolling back to {prior_id!r} "
+                f"(queued={bool(body.get('queued'))})"
+            ),
+        )
+
+    def _journal_admission_hold(self, item: ReadyNode, verdict: Any, reason: str) -> None:
+        """Record one PP-12 refusal, once. A refusal nobody can read back is indistinguishable from
+        a scheduler that lost the node — the same reasoning `_journal_wip_holds` is built on."""
+        binding = verdict.binding
+        hold = verdict.hold.value or "unrecorded"
+        key = f"{item.path}@{hold}"
+        if key in self._admission_logged:
+            return
+        self._admission_logged.add(key)
+        self.journal.write(
+            journal_mod.DECISION,
+            instance_path=item.path,
+            node_id=item.node.id,
+            decision=f"admission_{hold}",
+            detail=(
+                f"{getattr(binding, 'name', '') or 'admission'} held this step"
+                + (f": {reason}" if reason else "")
+            ),
+        )
+
+    def _note_admission_wake(self, when: float) -> None:
+        """Earliest moment a time-bound hold could change its mind."""
+        if when <= 0:
+            return
+        self._admission_wake = when if not self._admission_wake else min(self._admission_wake, when)
+
+    def _adopt_held_leases(self) -> None:
+        """Re-adopt the leases THIS RUN holds, once — the restart half of the release path.
+
+        A fresh controller has no memory of a claim its predecessor made, and only a holder may
+        release. The holder string is run-scoped, so the records on disk name this run: adopting
+        them is what lets a restarted gateway hand the resource on when the item settles. Without
+        it the release would wait for the TTL — correct, but "the endpoint sits idle for fifteen
+        minutes" is exactly the outcome a named holder exists to prevent.
+        """
+        if self._leases_adopted:
+            return
+        self._leases_adopted = True
+        prefix = f"{self.run.id}:"
+        root = pool.leases_dir()
+        if not root.is_dir():
+            return
+        for path in sorted(root.glob("*.json")):
+            record = pool.read_lease(path.stem)
+            if record is not None and record.task_id and record.holder.startswith(prefix):
+                self._held_leases[record.task_id] = record.holder
+
+    def _release_settled_leases(self) -> None:
+        """Release every lease whose holder scope is finished. The claim is per ITEM, so the release
+        is too — holding until the run ends would serialize the whole fan-out on its first item."""
+        for resource, holder in list(self._held_leases.items()):
+            scope = holder.split(":", 1)[1] if ":" in holder else ""
+            if scope and not self._scope_settled(scope):
+                continue
+            pool.release_task(resource, holder=holder)
+            self._held_leases.pop(resource, None)
+
+    def _release_held_leases(self) -> None:
+        """Release everything this run holds. Called on the terminal write: a lease outliving its
+        run strands the resource until the TTL expires, and the whole point of a named holder is
+        that the holder is the one who gives it back."""
+        for resource, holder in list(self._held_leases.items()):
+            pool.release_task(resource, holder=holder)
+        self._held_leases.clear()
+
+    def _scope_settled(self, scope: str) -> bool:
+        """Whether every instance at or under `scope` is terminal and none is in flight."""
+        if any(path == scope or path.startswith(scope + ".") for path in self._inflight):
+            return False
+        seen = False
+        for path, inst in self.instances.items():
+            if path != scope and not path.startswith(scope + "."):
+                continue
+            seen = True
+            if inst.state not in TERMINAL_STATES:
+                return False
+        return seen
 
     def _journal_collected_items(self, states: dict[str, InstanceState]) -> None:
         """Write each `on_item_error: collect` fan-out's per-item failures once it is terminal.
@@ -2713,6 +3159,237 @@ class RunController:
         # resurrect an instruction the ledger already records as consumed.
         self._save_run()
 
+    # ── convergence: ONE decision, `loop.tick.evaluate` ──────────────────────
+
+    def _supervisor_policy(self, node: Node) -> supervisor_policy.SupervisorPolicy:
+        """The loop's declared convergence policy, or the default posture.
+
+        This is the call that makes `SupervisorPolicy` load-bearing: the thresholds
+        `evaluate` reads come from the TEMPLATE's `supervisor:` block, not from constants
+        buried in the engine. A node that declares none gets the default policy, whose
+        values reproduce what the engine did before it was consulted.
+        """
+        return supervisor_policy.parse_supervisor_policy((node.config or {}).get("supervisor"))
+
+    def _convergence_ledger(self, parent_path: str) -> dict[str, Any]:
+        """This loop's persisted convergence position, on the run row.
+
+        `run.extra` and not the event ledger, deliberately. The position has to be PERSISTED —
+        an in-memory cursor is exactly what the deleted `check_middleware` kept, and it makes
+        the ladder a property of this PROCESS's uptime, so the same run answers differently
+        before and after a crash. But it must not be written as an `iteration` row either: that
+        kind means "the loop body ran once", and a decision *about* the body is not another
+        body run. Recording it there inflates every consumer's iteration count, including the
+        `max_iterations` cap a user set.
+        """
+        book = self.run.extra.setdefault("convergence", {})
+        if not isinstance(book, dict):
+            book = {}
+            self.run.extra["convergence"] = book
+        entry = book.setdefault(parent_path, {})
+        if not isinstance(entry, dict):
+            entry = {}
+            book[parent_path] = entry
+        return entry
+
+    def _convergence_state(
+        self, parent_path: str, node: Node, breaker: BreakerState, *, stall: str = ""
+    ) -> convergence.TickState:
+        """Assemble this loop's convergence snapshot. Pure over what it is handed.
+
+        Two sources, each the one that owns its half:
+
+        * **The failure evidence comes from the BREAKER.** `breaker.error_signatures` is the
+          record the trip detector already collected, so the stall tier fires on the trip
+          instead of waiting to re-observe the same thing N more times. Re-counting the
+          failures here would be a second detector — the redundancy the R-de-dup ruling
+          forbids — and it would also make the response arrive later than the detection.
+        * **The ladder position comes from persisted run state** (`_convergence_ledger`), so a
+          resumed run re-derives the same rung rather than restarting at the cheapest one.
+
+        A loop whose body has stopped failing has no signatures, so the stall tiers are vacuous
+        and `evaluate` falls through to the progress branches — the `reset_after_success`
+        behaviour, obtained structurally rather than by remembering to call it.
+        """
+        book = self._convergence_ledger(parent_path)
+        signatures = [s for s in breaker.error_signatures if s]
+        critique = self.run.extra.get("plan_critique")
+        return convergence.TickState(
+            step_index=0,
+            step_started_at=0.0,
+            # The workflows loop node's "call" is the failing NODE plus its failure signature:
+            # the same node failing the same way repeatedly IS the identical-call signal,
+            # expressed in what the breaker actually holds.
+            call_fingerprints=tuple(call_fingerprint(node.id, sig) for sig in signatures),
+            failure_classes=tuple(classify_failure(sig).value for sig in signatures),
+            nudges_issued=int(book.get("nudges", 0) or 0),
+            escalations_taken=int(book.get("escalations", 0) or 0),
+            attempts_at_rung=int(book.get("attempts", 0) or 0),
+            recoverable_waits=int(book.get("recoverable_waits", 0) or 0),
+            replans_taken=int(book.get("replans", 0) or 0),
+            plan_critique=critique.strip() if isinstance(critique, str) else "",
+            stall_confirmed=stall,
+        )
+
+    def _record_convergence(
+        self,
+        parent_path: str,
+        cfg: convergence.TickConfig,
+        state: convergence.TickState,
+        decision: convergence.Decision,
+    ) -> None:
+        """Persist the counter advance `tick.applied` derives, plus a bounded audit log.
+
+        `tick.applied` is the pure write half: it says what the counters BECOME, and this is the
+        one place that puts them on disk. Splitting it that way is what keeps the position
+        re-derivable — the decision never advances anything itself.
+        """
+        after = convergence.applied(cfg, state, decision)
+        book = self._convergence_ledger(parent_path)
+        book["nudges"] = after.nudges_issued
+        book["escalations"] = after.escalations_taken
+        book["attempts"] = after.attempts_at_rung
+        book["recoverable_waits"] = after.recoverable_waits
+        book["replans"] = after.replans_taken
+        # Bounded: an unbounded decision log on the run row is a slow leak that looks like an
+        # audit trail.
+        log = book.setdefault("log", [])
+        if isinstance(log, list):
+            log.append(decision.to_dict())
+            del log[:-_CONVERGENCE_LOG_MAX]
+        self._save_run()
+
+    def _replan_ops(
+        self, node: Node, decision: convergence.Decision, *, attempt: int
+    ) -> list[dict[str, Any]]:
+        """The REAL mutation batch a `REPLAN` queues.
+
+        Not a retry with the critique stapled to the prompt — that is what this replaces, and it
+        is indistinguishable from the failing attempt in the spec, in `spec_history` and to a
+        human reading either. An `insert` CHANGES the plan: the run's remaining steps now include
+        a step that re-derives them from the critique, the spec version bumps, and the change is
+        auditable. Placed immediately after the loop in the root sequence, so it is the next
+        thing the run does with the work the critique rejected.
+        """
+        root = self.spec.get("root") or {}
+        parent_id = ""
+        at: int | None = None
+        children = root.get("children")
+        if isinstance(children, list):
+            for i, child in enumerate(children):
+                if isinstance(child, dict) and child.get("id") == node.id:
+                    # The realistic shape: the loop is a step in a sequence, so the replan step
+                    # is the next step — literally "the remaining steps changed".
+                    parent_id, at = str(root.get("id") or ""), i + 1
+                    break
+        if at is None:
+            body = root.get("body") if root.get("id") == node.id else None
+            if isinstance(body, dict) and isinstance(body.get("children"), list):
+                # The loop IS the root: its remaining work is its own further iterations, so the
+                # replan step goes at the FRONT of the body and runs before the rejected work
+                # is repeated.
+                parent_id, at = str(body.get("id") or ""), 0
+            else:
+                # No structural target this batch could edit without inventing a container. A
+                # replan that cannot land is not a replan, and quietly applying it somewhere
+                # else would change a different part of the plan than the critique named.
+                return []
+        op: dict[str, Any] = {
+            "op": "insert",
+            "node": {
+                "kind": "infer",
+                "id": f"{node.id}__replan{attempt}",
+                "name": "re-derive remaining steps",
+                "config": {
+                    "prompt": (
+                        "The plan for the remaining work was judged unsound. Critique:\n"
+                        f"{decision.replan_directive}\n\n"
+                        "Re-derive the remaining steps to satisfy the critique. Do not repeat "
+                        "the rejected approach."
+                    )
+                },
+            },
+            "note": f"PP-15 replan {attempt}: {decision.reason}",
+            "index": at,
+        }
+        if parent_id:
+            op["parent_id"] = parent_id
+        return [op]
+
+    def _converge_loop(
+        self,
+        parent_path: str,
+        node: Node,
+        iteration: int,
+        *,
+        breaker_reason: str,
+        breaker_detail: str,
+    ) -> bool:
+        """Ask the ONE convergence core what to do about a tripped loop. `True` = the run stops.
+
+        Replaces the BINARY trip handling. The breaker still detects the stall — it remains the
+        sole trip authority, and nothing here re-counts what it counted — but "a stall was
+        detected" and "therefore a human must look at this" were the same line, which made every
+        middle rung of the declared ladder unreachable. Now the trip is the QUESTION and
+        `evaluate` gives the answer: wait, nudge, change strategy, replan, or surface.
+        """
+        policy = self._supervisor_policy(node)
+        cfg = convergence_config(policy)
+        breaker = self._breakers.setdefault(parent_path, BreakerState())
+        state = self._convergence_state(parent_path, node, breaker, stall=breaker_reason)
+        # `time.time()`, NOT `_now()`: the run clock is an ISO string and `evaluate` does
+        # arithmetic on `now` (the dwell branch). Passing the display clock here is a TypeError
+        # at the first tripped breaker — the one path a happy-path test never reaches.
+        decision = convergence.evaluate(cfg, state, time.time())
+        self._record_convergence(parent_path, cfg, state, decision)
+        self._publish(
+            "workflow_loop_converged",
+            {"instance_path": parent_path, "node_id": node.id, **decision.to_dict()},
+        )
+
+        if decision.action is convergence.Action.REPLAN:
+            ops = self._replan_ops(node, decision, attempt=state.replans_taken + 1)
+            result = (
+                self.submit_mutation(ops, actor="supervisor", confirm=True)
+                if ops
+                else {"ok": False, "issues": [{"code": "WF_REPLAN_NO_TARGET"}]}
+            )
+            if not result.get("queued"):
+                # A replan that could not be queued is not a replan. Surfacing beats looping on
+                # a plan the engine has just declared unsound.
+                self._surface_loop(parent_path, node, reason=decision.reason, detail=str(result))
+                return True
+            # Consumed, so the next tick does not re-decide REPLAN against the same critique and
+            # spend the whole budget re-deriving one plan.
+            self.run.extra.pop("plan_critique", None)
+            self._save_run()
+            return False
+
+        if decision.surfaced:
+            self._surface_loop(
+                parent_path,
+                node,
+                reason=decision.reason or breaker_reason,
+                detail=decision.detail or breaker_detail,
+            )
+            return True
+
+        if decision.nudge_text:
+            existing = self._steering_inject.get(parent_path)
+            self._steering_inject[parent_path] = (
+                f"{existing}\n\n{decision.nudge_text}" if existing else decision.nudge_text
+            )
+        return False
+
+    def _surface_loop(self, parent_path: str, node: Node, *, reason: str, detail: str) -> None:
+        """Hand a loop to a human. ESCALATED, deliberately NOT FAILED: "I gave up and a human
+        must decide" is a different fact from "this broke", and collapsing them loses what the
+        user needs to act on."""
+        loop_inst = self._instance(parent_path)
+        loop_inst.state = InstanceState.ESCALATED
+        loop_inst.completed_at = _now()
+        self._escalate(parent_path, node.id, reason=reason, detail=detail)
+
     def _advance_loop(self, item: ReadyNode) -> None:
         """Advance a loop's iteration counter when its body finished an iteration.
 
@@ -2742,11 +3419,14 @@ class RunController:
         # LLM-free: a loop thrashing on the same error is the most common autonomous-run
         # failure, and paying a model to notice it would be slower and less reliable.
         #
-        # This `check_breaker` is the SOLE trip authority (LOOPS-EVOLUTION R-de-dup). `loop_
-        # middleware.check_middleware` re-implements the same identical-call/no-progress trips;
-        # wiring its breaker half here would be a second, redundant path — a clean-break violation.
-        # Only `loop_middleware`'s non-redundant surface (`InterruptQueue`, used by
-        # `_consume_steering`) is adopted; its counter-based breaker is deliberately not called.
+        # This `check_breaker` is the SOLE trip DETECTOR (LOOPS-EVOLUTION R-de-dup): nothing
+        # below re-counts what it counted. What changed in PP-15 is what a trip MEANS. It used to
+        # mean "escalate to a human", which made the declared five-rung ladder unreachable — the
+        # engine failed binary after two consecutive errors. Now a trip is the question, and
+        # `loop.tick.evaluate` — the ONE convergence core, shared with the loop kinds and driven
+        # by this node's `SupervisorPolicy` — gives the answer: wait, nudge, take a rung, replan,
+        # or surface. `loop_middleware.check_middleware`, which used to hold a second copy of
+        # that reasoning over a mutable cursor, is deleted.
         inst = self._instance(item.path)
         breaker = self._breakers.setdefault(parent_path, BreakerState())
         breaker.record(
@@ -2756,12 +3436,6 @@ class RunController:
         )
         verdict = check_breaker(node, breaker)
         if verdict.tripped:
-            loop_inst = self._instance(parent_path)
-            # ESCALATED, deliberately NOT FAILED: "I gave up and a human must decide" is a
-            # different fact from "this broke", and collapsing them loses what the user
-            # needs to act on.
-            loop_inst.state = InstanceState.ESCALATED
-            loop_inst.completed_at = _now()
             self.journal.iteration(
                 parent_path,
                 node.id,
@@ -2770,8 +3444,18 @@ class RunController:
                 error_signature=breaker.error_signatures[-1] if breaker.error_signatures else "",
                 tokens=inst.tokens,
             )
-            self._escalate(parent_path, node.id, reason=verdict.reason, detail=verdict.detail)
-            return
+            if verdict.reason in _BUDGET_TRIPS:
+                # A satisfied budget is not a stall. Unchanged pre-PP-15 behaviour.
+                self._surface_loop(parent_path, node, reason=verdict.reason, detail=verdict.detail)
+                return
+            if self._converge_loop(
+                parent_path,
+                node,
+                iteration,
+                breaker_reason=verdict.reason,
+                breaker_detail=verdict.detail,
+            ):
+                return
 
         # Consume steering BEFORE the continue decision, so a mid-run instruction reaches the next
         # iteration's prompt (R14). Drained even when the loop is about to end — a dropped
@@ -2813,10 +3497,25 @@ class RunController:
         self._capture_iteration_context(parent_path, node, iteration, output)
         if keep_going:
             self._iterations[parent_path] = iteration + 1
-        else:
-            loop_inst = self._instance(parent_path)
-            loop_inst.state = InstanceState.DONE
-            loop_inst.completed_at = _now()
+            return
+
+        # The loop is out of iterations. If it is STILL thrashing it did not FINISH — it ran out
+        # of room while failing, and `DONE` would hand the user a complete run full of garbage.
+        #
+        # This restores the terminal outcome the binary handling gave for free. Under the old
+        # code a thrash escalated on its FIRST trip, so it could never reach its last iteration;
+        # now the ladder deliberately keeps it running, and a loop whose iteration budget is
+        # smaller than the ladder's attempt budget would otherwise walk off the end reporting
+        # success. Re-asking the SOLE detector is how the two endings are told apart without
+        # inventing a second piece of state: anything tripping here was tripping earlier too.
+        final = check_breaker(node, breaker)
+        if final.tripped and final.reason not in _BUDGET_TRIPS:
+            self._surface_loop(parent_path, node, reason=final.reason, detail=final.detail)
+            return
+
+        loop_inst = self._instance(parent_path)
+        loop_inst.state = InstanceState.DONE
+        loop_inst.completed_at = _now()
 
     def _iteration_complete(self, node: Node, parent_path: str, iteration: int) -> bool:
         """Has this loop iteration's WHOLE body reached a terminal state?
@@ -3393,6 +4092,11 @@ class RunController:
             for i in self.instances.values()
             if i.state == InstanceState.WAITING and i.wake_at
         ]
+        if self._admission_wake:
+            # A bake floor and a lease TTL both expire at a nameable moment. Without this
+            # the tick loop's no-deadline path sleeps zero and spins through the whole window —
+            # a held step is not WAITING, so nothing else here would report its deadline.
+            deadlines.append(self._admission_wake)
         if not deadlines:
             return None
         return max(0.05, min(TICK_WAKE_SECS, min(deadlines) - time.time()))
@@ -3451,6 +4155,10 @@ class RunController:
         if status == RunStatus.CANCELLED:
             store.clear_cancel(self.run.id)
         if status in TERMINAL_RUN_STATUSES:
+            # Give the resources back. A lease that outlives its run strands the resource
+            # until the TTL runs down, and the next run would sit held by a holder that no longer
+            # exists — the one failure mode a named holder is supposed to make impossible.
+            self._release_held_leases()
             # A run that ended answers its own outstanding questions by ending: nothing about
             # it is actionable now. Leaving the rows open would put a permanently unanswerable
             # gate in the inbox — cancel a run mid-gate and the question survives the run.
@@ -4108,6 +4816,20 @@ def _item_label(item: Any) -> str:
 def _clip(text: str) -> str:
     text = " ".join(text.split())  # a newline inside a row breaks the layout
     return text if len(text) <= _ITEM_LABEL_MAX else text[: _ITEM_LABEL_MAX - 1] + "…"
+
+
+def _opt_metric(value: Any) -> float | None:
+    """A metric, or None when there is not a number here (PP-12).
+
+    Booleans are refused: `True` would read as `1.0` and pass a `metric_pass: 1.0` gate on a field
+    that was never a measurement.
+    """
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
 
 
 def _is_engine_install_fault(exc: BaseException) -> bool:

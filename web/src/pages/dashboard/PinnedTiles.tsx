@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
+import { reportActionFailure } from '../../app/reportingWrite'
 import { Check, X, RefreshCw, Sparkles } from 'lucide-react'
 import { api, type DashboardView, type DashboardTile, type Artifact, type TileRefreshRow } from '../../lib/api'
 import { useCachedData, invalidateCache } from '../../lib/useCachedData'
@@ -145,9 +146,11 @@ function PinnedTile({ tile, onResolve }: { tile: DashboardTile; onResolve: (ref:
   // static one.
   const onRefreshClick = useCallback(() => {
     if (!live) { setReloadKey((k) => k + 1); return }
+    // A human asked, so a failure is theirs to know about. The 60s `tick` above deliberately keeps its
+    // silent catch: nobody asked for it, and one toast per failed poll would be a defect of its own.
     api.refreshTile('overview', { ref: tile.ref, force: true })
       .then((r) => { if (r.row?.ts) setRow(r.row); refresh() })
-      .catch(() => {})
+      .catch(reportActionFailure('refresh this tile'))
   }, [live, tile.ref, refresh])
 
   return (

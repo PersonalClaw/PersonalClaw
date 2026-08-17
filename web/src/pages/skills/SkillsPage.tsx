@@ -150,7 +150,12 @@ function Installed({ onBrowse, onProposals, query, setQuery }: { onBrowse: () =>
                         {s.integrity === 'intact' && <ShieldCheck size={12} className="shrink-0 text-ok" aria-label="Integrity verified" role="img" />}
                         {s.integrity === 'tampered' && <span className="shrink-0 inline-flex items-center gap-1 text-danger text-[0.75rem]" title="Integrity check failed — files changed since install"><ShieldAlert size={11} /> tampered</span>}
                       </div>
-                      <p className="mt-0.5 truncate text-on-surface-low text-[0.8125rem]">{s.description}</p>
+                      {/* `title`: measured at 390px, these descriptions clip to **192px of up to
+                          3217px** — 16.8x over, so a phone user sees roughly the first six words of a
+                          sentence written to explain what the skill DOES. The row's other truncating
+                          texts already carry one (`always`, `tampered`), and a `title` on a truncating
+                          element is the app's settled recovery idiom (19 sites). Nothing re-layouts. */}
+                      <p className="mt-0.5 truncate text-on-surface-low text-[0.8125rem]" title={s.description}>{s.description}</p>
                     </div>
                     {s.source !== 'agent-local' && s.loaded_by_agents.length > 0 && <span className="shrink-0 text-on-surface-low text-[0.75rem]">{s.loaded_by_agents.length} agent{s.loaded_by_agents.length === 1 ? '' : 's'}</span>}
                     {/* `toneChipSkin`, not the raw tint: `SOURCE_TONE` maps `bundled` and `native` to

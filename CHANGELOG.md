@@ -14,6 +14,8 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **Point at what is wrong instead of describing it.**
 - **A pinned dashboard tile can now keep its own numbers up to date, for free.**
 
+- **Sync through storage you don't trust, and it still can't read your data.**
+- **Mistyping your sync passphrase is now a mistake you can take back.**
 - **Saved the same article twice? Knowledge will now tell you, and fold the two together.**
 - **Hold a thought, press a key, keep your hands where they are.**
 - **The design-system tool can list what it has, instead of making the assistant guess.**
@@ -30,6 +32,8 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **You can now edit the memory registers the assistant reads every session, and see who your memories are about.**
 
 ### Fixed
+
+- **Your ready-task list was in no particular order.**
 
 - **Forking a conversation could cut it earlier than the message you clicked.**
 
@@ -94,9 +98,11 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **A second starter home, for looking around before you commit anything.**
 
 ### Changed
+- **The Optimize button now knows who said what, and leaves an already-good prompt alone.**
 - **The assistant now needs to see a habit work three times, not twice, before it offers to make it a standing principle.**
 - **A step that reads another step's output no longer needs a hand-written ordering — and steps in different branches of a workflow can now feed each other.**
 - **Autonomous loops now learn the way workflows do.**
+- **A fan-out step that shares a limited resource now waits its turn instead of racing.**
 
 - **A workflow that reads another step's output now refuses to save unless that step is guaranteed to run first.**
 

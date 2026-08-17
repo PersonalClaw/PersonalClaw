@@ -1,4 +1,5 @@
 import { motion } from 'framer-motion'
+import { reportingWrite } from '../../app/reportingWrite'
 import { Compass, ArrowUpRight, Play, X } from 'lucide-react'
 import { TopBar } from '../../ui/TopBar'
 import { Button } from '../../ui/Button'
@@ -36,7 +37,10 @@ export function DiscoverPage({ navigate }: Pick<RouteProps, 'navigate'>) {
 
   // Dismiss persists server-side; on success refetch so the tip drops from every
   // area (and the "explored everything" empty state shows once the last one goes).
-  const dismiss = (id: string) => { api.dismissDiscoverTip(id).then(() => refresh()).catch(() => {}) }
+  const dismiss = async (id: string) => {
+    if (!(await reportingWrite('dismiss that tip', () => api.dismissDiscoverTip(id)))) return
+    refresh()
+  }
 
   return (
     <WorkbenchLayout

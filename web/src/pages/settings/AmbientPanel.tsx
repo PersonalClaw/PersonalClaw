@@ -35,12 +35,12 @@ export function AmbientPanel() {
 
   // Optimistic single-field PATCH; a rejected save rolls back and surfaces the error
   // (a swallowed 400 would look exactly like a successful save).
-  const patch = (key: string, value: unknown, onSaved?: () => void) => {
+  const patch = (key: string, value: unknown, onSaved?: () => void, label?: string) => {
     const prev = cfg[key]
     setCfg((c) => ({ ...c, [key]: value }))
     api.patchConfig(`ambient.${key}`, value).then(() => onSaved?.()).catch((e) => {
       setCfg((c) => ({ ...c, [key]: prev }))
-      notify(`Couldn't save ${key}: ${String((e as Error)?.message || e)}`, 'error')
+      notify(`Couldn't save ${label ?? key}: ${String((e as Error)?.message || e)}`, 'error')
     })
   }
 
