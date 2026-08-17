@@ -550,6 +550,7 @@ def explain_refused_grant(key: str, rung: str) -> str:
     produce the sentence that decision did not carry.
     """
     from personalclaw.guardrails.autonomy import action_type as _spec
+    from personalclaw.guardrails.autonomy import cooldown_date
 
     spec = _spec(key)
     if spec is None:
@@ -563,10 +564,13 @@ def explain_refused_grant(key: str, rung: str) -> str:
     if cooldown:
         el = promotion_eligibility(key)
         if el.cooldown_until:
-            return (
-                f"{key} was demoted recently — it cannot be promoted again until "
-                f"{el.cooldown_until}."
-            )
+            # Same formatter as the panel's record sentence: one fact, one date form.
+            # This used to emit the raw ISO instant, so the two explanations of one
+            # cooldown disagreed on wording AND on format.
+            when = cooldown_date(el.cooldown_until)
+            if when:
+                return f"{key} was demoted recently — it cannot be promoted again until {when}."
+            return f"{key} was demoted recently and is still in cooldown."
     return f"{key} already runs at {granted_rung(key)} or higher."
 
 
