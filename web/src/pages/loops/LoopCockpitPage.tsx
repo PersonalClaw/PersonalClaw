@@ -1003,7 +1003,7 @@ function OutputsPanel({ loop, artifacts, tasks, report, active, onOpenArtifact, 
             })}
           </div>
         ) : (
-          <ArtifactTab artifact={current.artifact} onOpen={onOpenArtifact} />
+          <ArtifactTab artifact={current.artifact} onOpen={onOpenArtifact} loopId={loop.id} />
         )}
       </div>
     </div>
@@ -1036,7 +1036,12 @@ function DeliverableDoc({ report, loop }: { report: string; loop: GoalLoop }) {
 
 /** One artifact's tab body: its metadata + a live render of its content (fetched
  *  on demand), as a document page with a click-through to the full Artifacts page. */
-function ArtifactTab({ artifact, onOpen }: { artifact: Artifact; onOpen?: (slug: string) => void }) {
+function ArtifactTab({ artifact, onOpen, loopId }: { artifact: Artifact; onOpen?: (slug: string) => void
+  /** The owning loop — an element-anchored correction on ITS deliverable belongs in
+   *  the loop's guidance channel (`guidance.txt`, via the steer endpoint), not in a
+   *  fresh chat: the worker that produced this artifact is the thing that must
+   *  regenerate it. This is AS-3's design-loop dispatch target. */
+  loopId?: string }) {
   const [content, setContent] = useState<string | null>(artifact.content ?? null)
   useEffect(() => {
     if (content != null) return
@@ -1064,7 +1069,10 @@ function ArtifactTab({ artifact, onOpen }: { artifact: Artifact; onOpen?: (slug:
   return (
     <div className="rounded-xl overflow-hidden bg-surface ring-1 ring-outline-variant/30" style={{ boxShadow: 'var(--shadow-composer)' }}>
       <div className="flex items-center gap-s bg-surface px-l py-2 text-on-surface-low text-[0.75rem] uppercase tracking-wide border-b border-outline-variant/30">{eyebrow}</div>
-      <div className="h-[60vh]"><ContentSurface type={ctype} content={content} title={artifact.name} docId={artifact.slug} readOnly /></div>
+      <div className="h-[60vh]">
+        <ContentSurface type={ctype} content={content} title={artifact.name} docId={artifact.slug} readOnly
+          iterate={loopId ? { slug: artifact.slug, correction: async (directive) => { await api.uLoopNudge(loopId, directive) } } : undefined} />
+      </div>
     </div>
   )
 }

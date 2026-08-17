@@ -14,6 +14,7 @@
  */
 import type { ComponentType, LazyExoticComponent } from 'react'
 import type { LucideIcon } from 'lucide-react'
+import type { IterationTarget } from '../widget/useArtifactIteration'
 
 /** How a renderer wants its content delivered + isolated. */
 export interface PreviewCapability {
@@ -72,6 +73,11 @@ export interface PreviewProps {
   path?: string
   /** True while the source is still streaming in (progressive render). */
   streaming?: boolean
+  /** What this host offers for ITERATING on the content — EDITMODE tweak controls
+   *  and click-annotation corrections (AMBIENT-SURFACES §3+§4). Present only for a
+   *  host that owns a persistable or correctable document; absent (the default)
+   *  means the renderer paints exactly what it painted before. */
+  iterate?: IterationTarget
 }
 
 /** Props an INLINE-CHAT embed renderer receives (a `<widget kind=…>` block in a

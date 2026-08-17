@@ -2094,7 +2094,7 @@
         {
           "id": "AS-3",
           "title": "Artifact iteration: EDITMODE tweak controls + click-annotation corrections",
-          "status": "todo",
+          "status": "done",
           "scope": "\u00a73 EDITMODE \u2014 Tweakable Artifact Parameters (zero LLM round-trips); \u00a74 Annotate Mode \u2014 Element-Anchored Corrections.",
           "done_when": "dragging an EDITMODE color/range control restyles the artifact live with zero network requests (batched postMessage(__edit_mode_set_keys) into the sandboxed iframe); Save reads live values back, rewrites the marker-fenced /*EDITMODE-BEGIN*/ block, and writes a new artifact version whose restore round-trips exactly; visual-output SKILL documents the \u22648-param authoring protocol; toggling annotate captures selector+context per clicked element (data-testid\u2192id\u2192class\u2192nth-child priority) and click-annotating two elements produces ONE correction directive carrying both anchors, dispatched to chat via the C32 refresh-injection path or into a design loop's guidance.txt.",
           "deps": []
@@ -7423,11 +7423,6 @@
         "plan": "AS"
       },
       {
-        "id": "AS-3",
-        "title": "Artifact iteration: EDITMODE tweak controls + click-annotation corrections",
-        "plan": "AS"
-      },
-      {
         "id": "AS-6",
         "title": "Genui action routing + app-contributed components + L0/L1/L2 surface overlay + safe mode",
         "plan": "AS"
@@ -9748,9 +9743,9 @@
         "code": "AS",
         "plan": "AMBIENT-SURFACES",
         "total_atoms": 9,
-        "done": 3,
+        "done": 4,
         "in_progress": 0,
-        "todo": 6,
+        "todo": 5,
         "blocked": 0
       },
       {

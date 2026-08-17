@@ -1,13 +1,15 @@
 import { useState, useRef, useEffect, useMemo, useCallback } from 'react'
 import { fvs } from '../../design/fontWeight'
 import { motion, AnimatePresence } from 'framer-motion'
-import { Maximize2, Minimize2, ExternalLink, Download, Bookmark, Pin } from 'lucide-react'
+import { Maximize2, Minimize2, ExternalLink, Download, Bookmark, Pin, Sliders } from 'lucide-react'
 import { useMode } from '../../app/theme'
 import { api } from '../../lib/api'
 import { notify } from '../../app/appSdk'
 import { buildSrcdoc, readThemeVars } from './widgetSrcdoc'
 import { effectiveWidgetSlug } from './widgetSlug'
 import { useWidgetWire } from './useWidgetActionBridge'
+import { useArtifactIteration } from './useArtifactIteration'
+import { ArtifactIterationRail } from './ArtifactIterationRail'
 import { BlueprintSkeleton } from './BlueprintSkeleton'
 import { SquareIconButton } from '../SquareIconButton'
 import { spring } from '../../design/motion'
@@ -90,7 +92,10 @@ export function WidgetFrame({ html, title = 'Widget', slug, messageTs, widgetInd
   // Inline chat renders FRAMELESS (transparent iframe body, straight against the
   // app canvas); download/open-in-tab build a solid-bg standalone doc instead.
   const themeVars = useMemo(() => readThemeVars(), [mode])
-  const srcdoc = useMemo(() => buildSrcdoc({ html, themeVars, mode, includeHost: !streaming, transparentBody: true }), [html, themeVars, mode, streaming])
+  // The iteration script rides the INLINE document only (the standalone download /
+  // open-in-tab documents below deliberately keep the byte-identical body they had —
+  // there is no parent to talk to outside the app).
+  const srcdoc = useMemo(() => buildSrcdoc({ html, themeVars, mode, includeHost: !streaming, transparentBody: true, editMode: !streaming }), [html, themeVars, mode, streaming])
   const standaloneSrcdoc = useCallback(() => buildSrcdoc({ html, themeVars, mode, includeHost: false }), [html, themeVars, mode])
 
   // blob: URL (own opaque origin) instead of srcdoc — srcdoc inherits the parent
@@ -110,6 +115,24 @@ export function WidgetFrame({ html, title = 'Widget', slug, messageTs, widgetInd
   const liveSlugRef = useRef<{ saved: boolean; slug: string }>({ saved: false, slug: effSlug })
   liveSlugRef.current = { saved, slug: effSlug }
 
+  // ── artifact iteration (AMBIENT-SURFACES §3+§4) ──
+  // Saving an EDITMODE tweak cuts a new artifact VERSION, so it needs the widget to
+  // BE an artifact: an unsaved widget is saved first (its stable effectiveWidgetSlug),
+  // exactly as pinning does, and thereafter each save snapshots.
+  const persistVersion = useCallback(async (next: string) => {
+    if (!liveSlugRef.current.saved) {
+      await api.createArtifact({ name: title, content: next, kind: 'widget', source: 'chat', slug: effSlug })
+      setSaved(true)
+      return
+    }
+    await api.updateArtifact(effSlug, { content: next, snapshot: true, event_type: 'iterated' })
+  }, [effSlug, title])
+  const [railOpen, setRailOpen] = useState(false)
+  const iteration = useArtifactIteration(iframeRef, {
+    source: html,
+    target: { slug: effSlug, persistVersion },
+  })
+
   // height-sync + action forwarding, over the shared (provenance-validated) wire.
   // This child document carries HOST_SCRIPT's `e.isTrusted` click gate, so it is
   // entitled to forward actions — see useWidgetActionBridge.ts for the contract.
@@ -123,6 +146,7 @@ export function WidgetFrame({ html, title = 'Widget', slug, messageTs, widgetInd
       if (w) { setNaturalW(w + BODY_PAD); widthCache.set(key, w + BODY_PAD) }
     },
     liveArtifact: () => liveSlugRef.current,
+    ...iteration.wire,
   })
   const [savePending, setSavePending] = useState(false)
   useEffect(() => {
@@ -193,6 +217,10 @@ export function WidgetFrame({ html, title = 'Widget', slug, messageTs, widgetInd
 
   const actionCluster = (
     <>
+      <SquareIconButton label={railOpen ? 'Close the iteration rail' : 'Iterate — tweak parameters or mark elements'}
+        onClick={() => setRailOpen((v) => !v)} on={railOpen}>
+        <Sliders size={13} />
+      </SquareIconButton>
       <SquareIconButton label={saved ? 'Saved — click to remove' : 'Save as artifact'} onClick={toggleSave} disabled={savePending} on={saved}>
         <Bookmark size={13} fill={saved ? 'currentColor' : 'none'} />
       </SquareIconButton>
@@ -237,6 +265,10 @@ export function WidgetFrame({ html, title = 'Widget', slug, messageTs, widgetInd
           />
         ) : null}
       </AnimatePresence>
+      {railOpen && !streaming && (
+        <ArtifactIterationRail it={iteration} onClose={() => setRailOpen(false)}
+          className="w-full rounded-b-md border-t" />
+      )}
       {/* hover-revealed action pill (frameless mode) — also keyboard-reachable
           via focus-within so the controls aren't mouse-only. */}
       {!expanded && !streaming && (
