@@ -404,7 +404,12 @@ def run_sync_job() -> JobResult:
             from personalclaw.durability.sync_cycle import run_sync_cycle
 
             home = _home()
-            report = run_sync_cycle(transport, home, self_id=machine_id(home))
+            report = run_sync_cycle(
+                transport,
+                home,
+                self_id=machine_id(home),
+                encrypt=str(getattr(cfg, "sync_encrypt", "auto") or "auto"),
+            )
             # GC tombstone side-logs past the sync horizon (DAS-6c-iii): once every peer
             # has had a chance to see a delete (older than the staleness window * a safety
             # factor), its marker is dead weight. Only after a SUCCESSFUL cycle — a failed
@@ -553,6 +558,21 @@ def run_due_jobs(*, now: float | None = None, force: str = "", notifier=None) ->
     return results
 
 
+def _resolved_encryption(cfg) -> bool:
+    """Whether the CONFIGURED transport's shards will actually be encrypted (§4.4).
+
+    Resolves the tri-state against the transport's own default so the status surface can
+    answer "are my bytes readable in that bucket?" instead of echoing "auto". With no
+    transport chosen there is nothing to resolve, and nothing is being sent — False.
+    """
+    name = str(getattr(cfg, "sync_transport", "") or "")
+    if not name:
+        return False
+    from personalclaw.durability.crypto import encryption_enabled_for
+
+    return encryption_enabled_for(name, str(getattr(cfg, "sync_encrypt", "auto") or "auto"))
+
+
 def status() -> dict:
     """Last-run times + what's due, for the settings surface and diagnostics."""
     state = load_state()
@@ -577,6 +597,12 @@ def status() -> dict:
             **_entry("last_sync", stale),
             "enabled": bool(getattr(cfg, "sync_enabled", False)),
             "transport": getattr(cfg, "sync_transport", "") or "",
+            # The RESOLVED encryption verdict, not the raw tri-state: "auto" tells a user
+            # nothing about whether their bytes are encrypted, which is the only question
+            # this status field exists to answer (§4.4's toggle "states that tradeoff
+            # explicitly"). Names/booleans only — never the passphrase or a key.
+            "encrypt": str(getattr(cfg, "sync_encrypt", "auto") or "auto"),
+            "encrypted": _resolved_encryption(cfg),
         },
     }
 

@@ -708,6 +708,10 @@ class TestConfigContract:
         "sync_enabled",
         "sync_transport",
         "sync_stale_after_secs",
+        # §4.4 (DAS-8) — the encryption tri-state. The PASSPHRASE is deliberately NOT a
+        # field here or on the dataclass: it lives in the credential store, so there is
+        # nothing for a PATCH to carry.
+        "sync_encrypt",
     )
 
     def test_every_field_is_patchable(self):
