@@ -3770,7 +3770,7 @@
         {
           "id": "CC-7",
           "title": "Branch mechanic: hover branch affordance on any message + 'Branched from' breadcrumb",
-          "status": "todo",
+          "status": "done",
           "scope": "Amendment (2026-07-29) (a) Branch; F1.1, F1.2 + VF branch portion",
           "done_when": "a hover branch icon on any past message (user or assistant) calls the existing POST .../fork at that index and navigates to the child; branching from either role, the same message repeatedly, and a branch-of-a-branch all work; the child shows a 'Branched from' breadcrumb reading persisted forked_from that links to the origin; the fork-cap 429 surfaces as a readable message; app-scoped/non-persistent sessions hide the affordance via the endpoint's existing refusals; no primitive-adoption ratchet trips",
           "deps": []
@@ -7473,11 +7473,6 @@
         "plan": "CC"
       },
       {
-        "id": "CC-7",
-        "title": "Branch mechanic: hover branch affordance on any message + 'Branched from' breadcrumb",
-        "plan": "CC"
-      },
-      {
         "id": "CC-8",
         "title": "Chat plan-mode entry + mid-task re-planning bound to the existing planning gate",
         "plan": "CC"
@@ -9878,9 +9873,9 @@
         "code": "CC",
         "plan": "CHAT-CRAFT",
         "total_atoms": 8,
-        "done": 4,
+        "done": 5,
         "in_progress": 0,
-        "todo": 4,
+        "todo": 3,
         "blocked": 0
       },
       {

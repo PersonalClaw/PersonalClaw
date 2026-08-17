@@ -759,6 +759,32 @@ async def api_chat_session_detail(request: web.Request) -> web.Response:
 
     prepared = _prepare_messages(messages, session.running)
 
+    # Branch lineage (CHAT-CRAFT CC-7). `forked_from` is already persisted on the
+    # metadata line and restored on load, so the child's "Branched from" breadcrumb is
+    # a read of existing state — but only if the detail endpoint SERVES it. It is the
+    # request a reopened/reloaded chat makes, so serving it here is what makes the
+    # breadcrumb survive a refresh; holding the parent in navigation state instead
+    # would lose it on the first reload. Same reasoning as `memory_mode` below.
+    #
+    # `forked_from_title` names the parent for a human, resolved live-then-disk at read
+    # time (never a copy frozen at fork time — the parent can be renamed). "" means the
+    # origin no longer resolves at all, which the breadcrumb renders as unlinked text
+    # rather than a link into nothing.
+    forked_from = getattr(session, "forked_from", "") or ""
+    forked_from_title = ""
+    if forked_from:
+        parent_key = forked_from.removeprefix("dashboard:")
+        parent = state._sessions.get(parent_key)
+        if parent is not None:
+            forked_from_title = (parent.title if parent._titled else "") or parent_key
+        elif state.conversation_log:
+            try:
+                parent_meta = state.conversation_log.get_metadata(forked_from)
+            except Exception:
+                parent_meta = {}
+            if parent_meta:
+                forked_from_title = str(parent_meta.get("title") or "") or parent_key
+
     return web.json_response(
         {
             "key": session.key,
@@ -818,6 +844,9 @@ async def api_chat_session_detail(request: web.Request) -> web.Response:
             # fork temporary/incognito). The session-list endpoint already returns
             # this; the detail endpoint must too, or a reopened chat looks persistent.
             "memory_mode": getattr(session, "memory_mode", "persistent") or "persistent",
+            # Branch lineage — see the resolution block above the return.
+            "forked_from": forked_from,
+            "forked_from_title": forked_from_title,
             # True when the turn is parked on an unanswered tool approval. The chat
             # page's idle-reconciler uses this to recover a permission card whose
             # live `approval` WS frame was lost/early (the turn otherwise stalls

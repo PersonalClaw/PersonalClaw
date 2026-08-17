@@ -3307,7 +3307,12 @@ export const api = {
   deleteTagColumn: (id: string) => del(`/api/chat/tag-columns/${encodeURIComponent(id)}`),
   reorderTagColumns: (ids: string[]) => put('/api/chat/tag-columns/order', { ids }),
   dropSessionToColumn: (session: string, columnId: string) => post(`/api/chat/sessions/${encodeURIComponent(session)}/drop`, { column_id: columnId }),
-  chatSessionDetail: (key: string) => get<{ key: string; title: string; messages: ChatHistoryMsg[]; running?: boolean; pending_approval?: boolean; agent?: string; model?: string; mode?: string; acp_provider?: string; acp_provider_agent?: string; reasoning_effort?: string; task_mode?: TaskMode; approval?: ApprovalMode; memory_mode?: string; queue?: { id: string; content: string }[]; side?: { open: boolean; messages: { role: string; content: string }[] } | null }>(`/api/chat/sessions/${encodeURIComponent(key)}`),
+  chatSessionDetail: (key: string) => get<{ key: string; title: string; messages: ChatHistoryMsg[]; running?: boolean; pending_approval?: boolean; agent?: string; model?: string; mode?: string; acp_provider?: string; acp_provider_agent?: string; reasoning_effort?: string; task_mode?: TaskMode; approval?: ApprovalMode; memory_mode?: string; queue?: { id: string; content: string }[]; side?: { open: boolean; messages: { role: string; content: string }[] } | null
+    /** Branch lineage (CC-7): the parent's persisted HISTORY key (`dashboard:<key>`) when
+     *  this session was branched, plus the parent's title resolved at read time. Served
+     *  here — not carried in navigation state — so the breadcrumb survives a reload.
+     *  `forked_from_title: ''` with a non-empty `forked_from` = the origin is gone. */
+    forked_from?: string; forked_from_title?: string }>(`/api/chat/sessions/${encodeURIComponent(key)}`),
   deleteChatSession: (key: string) => del(`/api/chat/sessions/${encodeURIComponent(key)}`),
   // ── session lifecycle + bulk (SESSION-MANAGEMENT S2) ──
   setSessionLifecycle: (session: string, body: { lifecycle?: 'active' | 'archived'; never_archive?: boolean }) =>
