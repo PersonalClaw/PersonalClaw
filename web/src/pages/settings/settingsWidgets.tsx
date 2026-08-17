@@ -82,7 +82,7 @@ const usePromptBindings = () => useCachedData('settings:prompt-bindings', () => 
 const useDurability = () => useCachedData('settings:durability-card', async () => {
   const [status, snaps] = await Promise.all([
     api.durabilityStatus().catch(() => null),
-    api.durabilitySnapshots().catch(() => null),
+    api.durabilityArchive().catch(() => null),
   ])
   return { status, snaps }
 }, { persist: true })
@@ -700,11 +700,11 @@ export const SETTINGS_WIDGETS: SettingsWidget[] = [
       const { data: s } = useDurability()
       return `backups backup durability snapshot snapshots retention restore drill schedule automatic ${
         s ? (s.status?.enabled ? 'on enabled' : 'off disabled') : ''
-      } ${s?.snaps ? `${s.snaps.snapshots.length} snapshots` : ''}`
+      } ${s?.snaps ? `${s.snaps.archives.length} snapshots` : ''}`
     },
     render(query, go) {
       const { data: s } = useDurability()
-      const count = s?.snaps?.snapshots.length
+      const count = s?.snaps?.archives.length
       return (
         <BentoCard icon={HardDriveDownload} title="Backups" query={query} onClick={() => go('durability')} loading={s === undefined}>
           {s && (count === undefined

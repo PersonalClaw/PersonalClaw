@@ -174,18 +174,37 @@ export interface DurabilityStatus {
   snapshot: DurabilityJob
   drill: DurabilityJob
 }
-export interface DurabilitySnapshot {
+/** Per-domain counts recorded INSIDE an archive's manifest. `null` means the
+ *  archive recorded none (it predates MANIFEST v3) — which is NOT the same as an empty
+ *  archive, so it must render as "not recorded" rather than as zeros. */
+export type DurabilityDomainCounts = Record<string, { files: number; bytes: number; rows: number }>
+/** The last restore drill's verdict. `ok: null` = ran, but the outcome was not recorded
+ *  (a pre-DAS-10 stamp). Never render an unknown outcome as a pass. */
+export interface DurabilityDrill {
+  ran: boolean
+  ok: boolean | null
+  at: number
+  detail: string
+  archive: string
+  databases_checked?: number
+}
+export interface DurabilityArchive {
+  id: string
   name: string
   taken_at: string
   size: number
   /** False = the CURRENT retention tiers would prune this one on the next pass. */
   retained: boolean
+  domains: DurabilityDomainCounts | null
+  /** Present only on the archive the last drill actually exercised. */
+  validate: DurabilityDrill | null
 }
-export interface DurabilitySnapshots {
+export interface DurabilityArchives {
   directory: string
-  snapshots: DurabilitySnapshot[]
+  archives: DurabilityArchive[]
   would_prune: string[]
   tiers: { daily: number; weekly: number; monthly: number }
+  last_drill: DurabilityDrill
 }
 export interface DurabilityJobResult {
   job: string
@@ -343,6 +362,21 @@ export interface DesktopStateWire {
   capabilities: Record<string, DesktopCapabilityWire>
   registered_at: string
   last_seen: string
+}
+/** Live state of the companion LAN advertiser.
+ *  `advertising` is the RUNNING advertiser, not the config flag — the two legitimately
+ *  differ (a loopback-only gateway is a designed no-op). `reason` is a closed set;
+ *  `detail` is the backend's own sentence for it. `txt` is the record verbatim, so the
+ *  panel can show exactly what the network is told. */
+export interface CompanionDiscovery {
+  advertising: boolean
+  reason: 'advertising' | 'disabled' | 'loopback_only' | 'no_lan_address' | 'gateway_not_running'
+  detail: string
+  service_type: string
+  instance_name: string
+  port: number
+  addresses: string[]
+  txt: Record<string, string>
 }
 export interface AppUiPage { route: string; label: string; icon: string }
 export interface AppSummary {
@@ -543,6 +577,19 @@ export interface KnowledgeCollection {
 // two highlights of a repeated sentence stay distinct. See pages/knowledge/readingAnchors.ts.
 export interface KnowledgeAnnotation {
   id: string; item_id: string; quote: string; occurrence: number; note: string; created_at: string
+}
+// A near-duplicate candidate for one item. Deliberately NOT a
+// `KnowledgeItem`: the backend returns a lean row and never the embedding, and `reason` is the
+// scorer's own account of WHY these two look alike — the only thing that makes a destructive
+// merge reviewable rather than a leap of faith. See knowledge/store.py::find_duplicates.
+export interface KnowledgeDuplicate {
+  id: string; title: string; item_type: string; created_at: string; word_count: number; reason: string
+}
+// What a merge moved to the survivor. The route reports it per relation so the UI can tell the
+// user what it actually did ("3 collections, 2 mentions") instead of a bare "Merged".
+export interface KnowledgeMergeResult {
+  ok: boolean; kept: string; merged: string
+  moved: { collections: number; tags: number; mentions: number; annotations: number }
 }
 export interface ChatFolder { id: string; name: string; order?: number; collapsed?: boolean; parent_id?: string }
 export interface ChatTag { id: string; name: string; color?: string; order?: number; status?: boolean }
@@ -1415,12 +1462,19 @@ export interface EventFireResult {
 export type KnowledgeType =
   | 'note' | 'fleeting' | 'journal' | 'gist' | 'bookmark'
   | 'image' | 'audio' | 'video' | 'pdf' | 'document' | 'sheet' | 'slides'
+  // The mirrored artifact. Not authorable and never listed — it reaches the UI only
+  // through a search result, which is why it is absent from `TYPES` (the create picker's
+  // catalog) and carried by `ARTIFACT_TYPE` instead.
+  | 'artifact'
 export interface KnowledgeEntity { id: string; name: string; entity_type?: string; description?: string }
 export interface KnowledgeRelation { id: string; source_name?: string; target_name?: string; relation_type?: string; weight?: number }
 export interface KnowledgeItem {
   id: string; title?: string; content?: string; summary?: string
   item_type?: string; tags?: string[]
   provider?: string; status?: string
+  /** A source item's origin identity. For the mirrored artifacts `guid` IS the artifact
+   *  slug, which is what lets a search hit link back to the artifact itself. */
+  source_id?: string | null; guid?: string | null
   is_pinned?: boolean; is_archived?: boolean
   // library curation. read_state is a three-value cycle, not a
   // boolean — "reading" is the state a reading list exists to represent.
@@ -1498,6 +1552,10 @@ export interface WatchedSource {
   last_escalations?: string[]
   /** Is a poll-capable provider registered for this row? False = nothing will poll it. */
   enrolled: boolean
+  /** Fed by an in-process change listener rather than a poll (the artifact mirror).
+   *  True means `enrolled: false`, `poll_interval_secs` and `last_poll_at` describe a
+   *  mechanism this row does not use — the row must not be read as a broken poller. */
+  event_driven?: boolean
   remediation: SourceRemediation
 }
 /** One creatable source kind, derived from the registered providers. `previewable` is
@@ -1690,9 +1748,28 @@ export type SessionTemplateInput = Omit<SessionTemplate, 'id' | 'created_at'>
 export interface PortabilityManifest {
   version: number; format: string; created_at: string; hostname: string; user: string
   contents: Record<string, number>
+  /** v3 only. `scope` is 'full' | 'partial'; `verified` says whether the archive's
+   *  per-member checksums were CHECKED — false for a v1/v2 archive, which carries none. */
+  scope?: 'full' | 'partial'
+  domains?: string[]
+  domain_counts?: DurabilityDomainCounts
+  excluded?: string[]
+  verified?: boolean
 }
-export interface PortabilityPreviewResult { ok: boolean; error?: string; manifest?: PortabilityManifest }
-export interface PortabilityImportResult { ok: boolean; error?: string; summary?: { mode: string; items: string[] }; manifest?: PortabilityManifest }
+/** `applied: false` is the validate-only answer to an import with no `mode`. */
+export interface DurabilityImportResult {
+  ok: boolean
+  applied?: boolean
+  error?: { code: string; message: string }
+  summary?: { mode: string; items: string[]; refused?: string[]; pre_restore?: string }
+  manifest?: PortabilityManifest
+}
+export interface DurabilityRestoreResult {
+  ok?: boolean
+  plan?: boolean
+  error?: { code: string; message: string }
+  [k: string]: unknown
+}
 // One project's archive. `refused` names what did not arrive (a partial import is the normal case
 // for an archive that travelled) and `secrets_expected` names the credentials the far side must
 // re-enter — the archive deliberately carries neither their values nor a way to recover them.
@@ -1736,7 +1813,11 @@ export interface NotificationRulePatch {
   conditions?: { keywords?: string[]; name_mention?: boolean }
 }
 export type MemoryVaultMode = 'off' | 'mirror' | 'two_way'
-export interface MemorySettings { history_idle_hours: number; history_max_days: number; migrated?: boolean; l1_manifest?: boolean; active_recall?: boolean; proactive_commitments?: boolean; vault_mode?: MemoryVaultMode; vault_path?: string; graph_enabled?: boolean; push_context?: boolean; push_min_confidence?: number }
+/** GET /api/memory/settings. Not every field is written the same way: the retention +
+ *  behaviour + vault fields ride the PUT on this same path, while `graph_topology_in_context`,
+ *  `holder_attribution` and `slot_size_cap` ride the `_EDITABLE_CONFIG` PATCH — one writer
+ *  each, never two. See `SettingsTab`'s `patch` vs `patchCfg`. */
+export interface MemorySettings { history_idle_hours: number; history_max_days: number; migrated?: boolean; l1_manifest?: boolean; active_recall?: boolean; proactive_commitments?: boolean; vault_mode?: MemoryVaultMode; vault_path?: string; graph_enabled?: boolean; push_context?: boolean; push_min_confidence?: number; graph_topology_in_context?: boolean; holder_attribution?: boolean; slot_size_cap?: number }
 
 /** Per-arm volunteered-vs-used precision for the push reflex
  *  (MEMORY-GRAPH-AND-VAULT §3). `used` = the record's recall count rose after it
@@ -1828,6 +1909,85 @@ export interface Lesson { rule: string; category: string; ts?: string }
 export interface MemoryGraphNode { id: string; label: string; group?: string; title?: string; ref?: string }
 export interface MemoryGraphEdge { from: string; to: string }
 export interface MemoryGraphData { nodes: MemoryGraphNode[]; edges: MemoryGraphEdge[] }
+// The ENTITY topology — distinct from MemoryGraphData, which is
+// the record-level visualization. `community` is the Louvain partition the topology block also
+// describes, so colouring by it cannot disagree with what the model is told.
+export interface MemoryEntityNode {
+  id: string
+  name: string
+  entity_type: MemoryEntityType
+  aliases: string[]
+  community: number | null
+  inbound_count: number
+}
+/** An edge exists when at least one record links both entities; `records` is how many do.
+ *  `confidence` is that best-supporting record's weaker leg — see `MemoryGraphStore.entity_graph`. */
+export interface MemoryEntityEdge {
+  from: string
+  to: string
+  records: number
+  link_types: string[]
+  provenances: string[]
+  confidence: number
+}
+export interface MemoryEntityGraph {
+  nodes: MemoryEntityNode[]
+  edges: MemoryEntityEdge[]
+  enabled: boolean
+}
+/** A record's outbound entity link. `entity_name` is resolved server-side — a row holding
+ *  only `ent_9f2c` names nothing, and the name IS the evidence tag the inspect view shows. */
+export interface MemoryRecordLink extends MemoryLink { entity_name: string }
+/** A recurring unknown name awaiting an accept/reject decision (the notability gate). */
+export interface MemoryEntityProposal {
+  name: string
+  mention_count: number
+  first_seen_at: string
+  last_seen_at: string
+  refs?: string
+}
+// Memory slots — the bounded registers injected every session. A built-in with
+// `materialized: false` has no row yet (MGAV-8 keeps them lazy); the editor still lists it so
+// the first line can be written. `cap_chars` is fixed in code per slot; `block_limit` (the
+// whole block's budget) is the one configurable number.
+export interface MemorySlotLine {
+  text: string
+  added_at: string
+  tombstoned: boolean
+  tombstoned_by: string
+  reinforcements: number
+}
+export interface MemorySlot {
+  name: string
+  title: string
+  description: string
+  cap_chars: number
+  scope: string
+  builtin: boolean
+  materialized: boolean
+  live_chars: number
+  live_count: number
+  lines: MemorySlotLine[]
+}
+export interface MemorySlotsResponse { slots: MemorySlot[]; block_limit: number }
+/** An append's outcome. `ok: false` with a `proposal` is the cap rejection — nothing was
+ *  written, and `proposal.drop_candidates` is what would have to go for it to fit. */
+export interface MemorySlotAppendResult {
+  ok: boolean
+  lines?: MemorySlotLine[]
+  error?: string
+  proposal?: MemorySlotTrimProposal
+}
+/** What an over-cap append would cost — the 409 body, so the human picks what to drop. */
+export interface MemorySlotTrimProposal {
+  slot: string
+  cap_chars: number
+  current_chars: number
+  incoming_chars: number
+  over_by: number
+  drop_candidates: string[]
+  message: string
+}
 export interface SecurityStats { denied_commands: number; suspicious_patterns: number; tool_schemas: number; redaction_paths: number }
 /** The packaged baseline's identity, as served by /api/security/denied-commands.
  *  `verified` is whether the file on disk still matches the fingerprint captured at
@@ -2632,6 +2792,13 @@ export const api = {
   personalclawConfig: () => get<Record<string, any>>('/api/config/personalclaw'),
   patchConfig: (path: string, value: unknown) => patch<Record<string, any>>('/api/config/personalclaw', { path, value }),
 
+  // ── Companion apps ──
+  // The LIVE state of the LAN advertiser, which is not the same question as whether
+  // companion.discovery_enabled is set: a loopback-only gateway advertises nothing by
+  // design. `detail` is the sentence to show — the backend owns the wording so this
+  // surface never invents a second one for a state it does not own.
+  companionDiscovery: () => get<CompanionDiscovery>('/api/companion/discovery'),
+
   // ── Packs ──
   // The installed-pack ledger (each pack's components, connector resolutions +
   // `connector_missing:<name>` markers, and whether a re-runnable setup interview is
@@ -2690,9 +2857,33 @@ export const api = {
   degraded: () => get<DegradedReport>('/api/resilience/degraded'),
   // ── Scheduled backups ──
   durabilityStatus: () => get<DurabilityStatus>('/api/durability/status'),
-  durabilitySnapshots: () => get<DurabilitySnapshots>('/api/durability/snapshots'),
   durabilityRun: (job: 'export' | 'snapshot' | 'drill') =>
     post<DurabilityJobResult>('/api/durability/run', { job }),
+  // ── §6 DSAR surface ──
+  // These retired `/api/durability/snapshots` and the `/api/portability/*` trio: one
+  // export endpoint, one import endpoint, one archive list, one restore.
+  durabilityArchive: () => get<DurabilityArchives>('/api/durability/archive'),
+  /** POST because the domain selection is a body. `domains` omitted = the full export. */
+  durabilityExport: (domains?: string[]) =>
+    fetch('/api/durability/export', {
+      method: 'POST',
+      headers: { ...SK, 'Content-Type': 'application/json' },
+      body: JSON.stringify(domains && domains.length ? { domains } : {}),
+    }).then(async (r) => {
+      if (!r.ok) throw new ApiError(await errText(r), r.status)
+      return r.blob()
+    }),
+  /** `mode` omitted VALIDATES ONLY and applies nothing — the plan-first contract every
+   *  home-overwriting verb in this API uses. `replace` additionally needs confirm. */
+  durabilityImport: (file: File, mode?: 'merge' | 'replace') => {
+    const fd = new FormData(); fd.append('file', file)
+    const qs = mode ? `?mode=${mode}${mode === 'replace' ? '&confirm=true' : ''}` : ''
+    return fetch(`/api/durability/import${qs}`, { method: 'POST', headers: { ...SK }, body: fd })
+      .then(j<DurabilityImportResult>)
+  },
+  /** `mode` omitted returns the restore PLAN and changes nothing. */
+  durabilityArchiveRestore: (id: string, body: { mode?: 'merge' | 'replace'; components?: string[]; confirm?: boolean } = {}) =>
+    post<DurabilityRestoreResult>(`/api/durability/archive/${encodeURIComponent(id)}/restore`, body),
   // ── Confirm-gated fixes + surfacing simulator ──
   doctorFixes: () => get<{ fixes: DoctorFix[] }>('/api/doctor/fixes'),
   doctorFixApply: (fixId: string) =>
@@ -2726,6 +2917,38 @@ export const api = {
     get<{ links: MemoryLink[] }>(`/api/memory/entities/${encodeURIComponent(id)}/backlinks`),
   memoryEntityProposal: (body: { name: string; action: 'accept' | 'reject'; entity_type?: MemoryEntityType }) =>
     post<{ ok: boolean; id?: string }>('/api/memory/entities/proposals', body),
+  memoryEntityProposals: () =>
+    get<{ proposals: MemoryEntityProposal[]; enabled: boolean }>('/api/memory/entities/proposals'),
+  // The entity topology behind the graph canvas, and its one-file export. The export
+  // comes back as TEXT and is blobbed by the caller (the AuditPanel pattern) rather than
+  // linked: X-Session-Key rides the fetch, and a bare <a href> would not carry it.
+  memoryEntityGraph: () => get<MemoryEntityGraph>('/api/memory/graph/entities'),
+  /** One record's outbound entity links — the inspect tab's "why is this in my context?". */
+  memoryRecordLinks: (ref: string) =>
+    get<{ links: MemoryRecordLink[]; ref: string; enabled: boolean }>(
+      `/api/memory/record-links?ref=${encodeURIComponent(ref)}`),
+  memoryGraphExport: () =>
+    fetch('/api/memory/graph/export', { headers: { ...SK } }).then(async (r) => {
+      if (!r.ok) throw new ApiError(await errText(r), r.status)
+      return r.text()
+    }),
+  // The Slots editor. `memorySlotAppend` RESOLVES on the 409 rather than throwing:
+  // the trim proposal in that body IS the answer ("nothing was written, here is what you'd
+  // have to drop"), and a rejection would discard exactly what the editor must show. Same
+  // shape as `_installReq` above, for the same reason.
+  memorySlots: () => get<MemorySlotsResponse>('/api/memory/slots'),
+  memorySlotAppend: async (name: string, text: string): Promise<MemorySlotAppendResult> => {
+    const r = await fetch(`/api/memory/slots/${encodeURIComponent(name)}/lines`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json', ...SK }, body: JSON.stringify({ text }),
+    })
+    const data = await r.json().catch(() => null)
+    if (data && typeof data === 'object') return data as MemorySlotAppendResult
+    return { ok: false, error: `HTTP ${r.status}` }
+  },
+  // POST-with-body, not DELETE-with-body: a DELETE body is dropped by some proxies, and a
+  // tombstone is not a delete anyway (the line stays, marked, so it is never re-derived).
+  memorySlotRetireLine: (name: string, text: string) =>
+    post<{ ok: boolean }>(`/api/memory/slots/${encodeURIComponent(name)}/lines/retire`, { text }),
   memoryGraphRebuild: () => post<MemoryGraphRebuild>('/api/memory/graph/rebuild'),
   // Raw markdown memory files (preferences / projects / history) — GET+PUT {content}.
   memoryDoc: (which: 'preferences' | 'projects' | 'history') => get<{ content: string }>(`/api/memory/${which}`).then((d) => d.content),
@@ -3658,6 +3881,20 @@ export const api = {
   // would let a caller delete row A while naming item B.
   deleteKnowledgeAnnotation: (annotationId: string) =>
     del(`/api/knowledge/annotations/${encodeURIComponent(annotationId)}`),
+  // ── Dedup / merge ──
+  // 🔴 NO `.catch(() => [])` HERE, and this one is sharper than the usual case: an empty
+  // duplicates list is the NORMAL answer for almost every item, so a swallowed rejection
+  // renders as "no duplicates" — indistinguishable from the truth, permanently, on the one
+  // surface whose whole job is to tell you two copies exist. The rejection has to reach the
+  // caller so the panel can say the lookup failed instead of silently claiming it is clean.
+  knowledgeDuplicates: (id: string) =>
+    get<{ duplicates: KnowledgeDuplicate[] }>(`/api/knowledge/items/${encodeURIComponent(id)}/duplicates`).then((d) => d.duplicates),
+  // The SURVIVOR is the path id and the loser is in the body — the route's own shape, kept
+  // in the same order here so a caller cannot silently swap them. `confirm: true` is sent by
+  // this helper because the route requires it; the USER's confirmation is a separate, earlier
+  // gate (a named dialog at the call site), not this flag.
+  mergeKnowledgeItems: (keepId: string, mergeId: string) =>
+    post<KnowledgeMergeResult>(`/api/knowledge/items/${encodeURIComponent(keepId)}/merge`, { merge_id: mergeId, confirm: true }),
   // One curation op over many items. Per-item results, because a selection can go
   // stale between the click and the request — the UI reports "38 shelved, 2 not found"
   // rather than treating a partial success as a failure.
@@ -3769,8 +4006,7 @@ export const api = {
   sessionArchiveRead: (name: string) =>
     fetch(`/api/session/archive/${encodeURIComponent(name)}`, { headers: { ...SK } })
       .then(async (r) => { if (!r.ok) throw new ApiError(await errText(r), r.status); return r.text() }),
-  // import / export (portable archive)
-  portabilityExportUrl: () => '/api/portability/export',
+  // Whole-home export/import live on the durability surface — see `durabilityExport`.
   // One PROJECT as a manifest ZIP — narrower than the whole-home archive above, so a user can hand
   // a colleague a single project without shipping their memory database. Credentials never travel;
   // the response headers name the ones the far side must re-enter.
@@ -3779,15 +4015,6 @@ export const api = {
     const fd = new FormData(); fd.append('file', file)
     const qs = opts.preview ? '?preview=1' : ''
     return fetch(`/api/projects/import${qs}`, { method: 'POST', headers: { ...SK }, body: fd }).then(j<ProjectImportResult>)
-  },
-  // Both endpoints take a multipart upload of an export zip ('file' field).
-  portabilityPreview: (file: File) => {
-    const fd = new FormData(); fd.append('file', file)
-    return fetch('/api/portability/preview', { method: 'POST', headers: { ...SK }, body: fd }).then(j<PortabilityPreviewResult>)
-  },
-  portabilityImport: (file: File, mode: 'merge' | 'replace' = 'merge') => {
-    const fd = new FormData(); fd.append('file', file)
-    return fetch(`/api/portability/import?mode=${mode}`, { method: 'POST', headers: { ...SK }, body: fd }).then(j<PortabilityImportResult>)
   },
   // updates + changelog
   updateCheck: () => get<UpdateCheck>('/api/update/check'),

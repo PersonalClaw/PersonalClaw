@@ -600,6 +600,12 @@
   },
   {
     "default": true,
+    "path": "knowledge.auto_ingest_artifacts",
+    "sensitive": false,
+    "type": "bool"
+  },
+  {
+    "default": true,
     "path": "knowledge.conflict_model_pass",
     "sensitive": false,
     "type": "bool"
@@ -933,6 +939,12 @@
     "path": "memory.semantic_keys",
     "sensitive": false,
     "type": "list[str]"
+  },
+  {
+    "default": 1400,
+    "path": "memory.slot_size_cap",
+    "sensitive": false,
+    "type": "int"
   },
   {
     "default": "off",
@@ -1374,6 +1386,12 @@
     "path": "voice.exit_phrases",
     "sensitive": false,
     "type": "list[str]"
+  },
+  {
+    "default": "CommandOrControl+Shift+Space",
+    "path": "voice.push_to_talk_chord",
+    "sensitive": false,
+    "type": "str"
   },
   {
     "default": true,

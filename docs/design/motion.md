@@ -80,6 +80,10 @@ Under `prefers-reduced-motion: reduce`:
    You do not need to re-implement either. Do not disable a component's animation ad hoc.
 3. `useReducedMotion()` from framer-motion is the React-side read when you need to choose a
    *different shape* (an instant swap instead of a morph), not merely a shorter one.
+4. **Two helpers answer with an absence rather than a value**, because for them "less motion"
+   has no smaller version: `viewTransition()` runs its update with no transition at all, and
+   `regionStagger()` returns `null` so a surface renders its regions plain (§5a). A shorter
+   route crossfade is still a crossfade; a quicker cascade is still a cascade.
 
 **What must NOT collapse: direct manipulation.** Reduced motion removes decoration, never
 capability. A drag still follows the finger 1:1 — `dragElastic()` is deliberately *not* gated,
@@ -147,7 +151,54 @@ animate: () => ({ opacity: 1, transition: physics.smooth })
 animation is the single loudest "this UI was generated" tell. For a list or a grid, put
 `stagger()` on the parent and `listItemEnter` on the children so rows cascade instead of
 popping in together. Prefer orchestrating a surface's regions over animating every element in
-it.
+it — §5a is how.
+
+---
+
+## 5a. Orchestrating a surface's entrance
+
+A page's top-level bands cascade in on arrival instead of all landing in one frame. You do not
+write this per page: wrap the column you already have in `EntranceGroup` and mark each band
+`EntranceRegion`.
+
+```tsx
+import { EntranceGroup, EntranceRegion } from '../ui/motion'
+
+<EntranceGroup className="mx-auto flex flex-col gap-2xl">
+  <EntranceRegion><Launcher /></EntranceRegion>
+  <EntranceRegion className="min-w-0"><Section label="Tasks">…</Section></EntranceRegion>
+</EntranceGroup>
+```
+
+The choreography itself is `regionStagger()` in `motion.ts`, and it takes **no arguments** on
+purpose — one step for the whole app, so retuning the cascade is one number in one file and no
+surface can pick its own feel. The step is `expr()`-scaled: ~44ms per region at the default
+expressiveness, 20ms when refined. Under `prefers-reduced-motion` it returns `null`, and both
+components then render plain `<div>`s — no variants, no hidden initial state, no transition.
+There is no "fast cascade" tier, because the setting asks for *less* motion, not quicker.
+
+Three things to know before you adopt it on a surface:
+
+- **The entrance plays on MOUNT, and a re-render never replays it.** For a route surface that
+  means once per navigation (`App.tsx` keys the route wrapper on the route). A WebSocket push,
+  a `refresh()`, a filter change or an opening panel are re-renders and are free.
+- **Where you put the group is the whole game.** Put it *above* every data-dependent branch
+  when its regions are static (the dashboard, the inbox), or *on* the loaded column when the
+  regions **are** the data (Discover's areas). Never key a group or a region on data.
+  `useCachedData` is what makes the first placement safe — a same-key revalidation holds the
+  last value instead of dropping to `undefined`, so a refresh cannot flip the surface back
+  through its skeleton and remount the group underneath.
+- **A surface that re-parents its own blocks is not a candidate.** Settings' masonry re-packs
+  on every commit, so a staggered block there would remount and replay its entrance on any
+  resize.
+
+A region rendered with no group above it renders plain. That is deliberate: forgetting the
+group costs the entrance, never the content — the failure a region cannot be allowed to have
+is sitting at `opacity: 0` with no parent to hand it the `animate` label.
+
+Adopt it on surfaces with a real **band stack** (2+ top-level regions). Cascading a single
+region is motion for its own sake. `pages/surfaceEntranceAdoption.test.ts` names the surfaces
+that have adopted it, and the ones deliberately left out.
 
 ---
 

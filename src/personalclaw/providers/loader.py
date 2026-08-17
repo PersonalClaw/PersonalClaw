@@ -17,15 +17,20 @@ from typing import TYPE_CHECKING, Any, Callable
 
 from personalclaw.apps.manager import app_dir, list_apps
 from personalclaw.apps.manifest import AppManifest
+from personalclaw.apps.native_contract import (
+    NATIVE_DIR,
+    bundle_module_file,
+    load_bundle_module,
+)
 
 if TYPE_CHECKING:
     from personalclaw.providers.registry import RegisteredProvider
 
 logger = logging.getLogger(__name__)
 
-# Native apps ship inside the package at personalclaw/apps/native/.
-# (loader.py lives in personalclaw/providers/, so go up one to personalclaw/.)
-BUNDLED_DIR = Path(__file__).parent.parent / "apps" / "native"
+# Native apps ship inside the package at personalclaw/apps/native/. The directory is
+# owned by apps/native_contract.py (the lower layer); this is the loader's alias for it.
+BUNDLED_DIR = NATIVE_DIR
 
 
 def discover_bundled_extensions() -> list[AppManifest]:
@@ -77,62 +82,32 @@ def discover_installed_extensions() -> list[tuple[AppManifest, bool]]:
 def _load_ext_module(ext: "RegisteredProvider", module_path: str) -> Any:
     """Import an extension's implementation module.
 
-    A BUNDLED extension's ``module_path`` is a real dotted package path
-    (``personalclaw.search_providers.foo``) — import it normally. An INSTALLED
-    app's ``module_path`` is a bare top-level name relative to its own dir
-    (``provider``, ``main``); two apps commonly share such a name, so importing
-    it as-is would collide in ``sys.modules`` (the first app's module wins and
-    the second silently mis-loads). Load it from the app's own file under a
-    namespaced module name (``_pclaw_app_{name}__{module}``) so apps never
-    clash. Falls back to plain import for path-based bundled modules.
+    ONE rule for both tiers (APE-5): if ``module_path`` resolves to a file inside the
+    extension's own directory, load it from there under a namespaced module name
+    (``apps/native_contract.load_bundle_module``); otherwise ``module_path`` is a real
+    dotted package path (``personalclaw.tasks.native``) and is imported normally.
+
+    Namespacing is what makes the bundle-local form safe: two apps commonly ship the same
+    bare module name (``provider``, ``main``), and a plain ``import provider`` would let
+    the first app's module win while the second silently mis-loads. That protection used
+    to apply to INSTALLED apps only — a bundled app was routed to the plain-import branch
+    by tier, so the moment two bundles shipped ``provider.py`` one of them would have
+    loaded the other's code. The tier test is gone; the file test replaces it.
     """
     ext_dir = _resolve_ext_dir(ext)
-    is_bundled = ext_dir is not None and ext_dir == BUNDLED_DIR / ext.name
-    # Bundled extension → its module is a real package module; import normally.
-    if is_bundled or "." in module_path:
-        added = False
-        if ext_dir and str(ext_dir) not in sys.path:
-            sys.path.insert(0, str(ext_dir))
-            added = True
-        try:
-            return importlib.import_module(module_path)
-        finally:
-            if added:
-                sys.path.remove(str(ext_dir))
-    # Installed app → load the file directly under a namespaced module name so
-    # two apps that both ship e.g. provider.py can't collide in sys.modules.
-    if ext_dir is None:
-        return importlib.import_module(module_path)  # last resort
-
-    rel = module_path.replace(".", "/") + ".py"
-    file_path = ext_dir / rel
-    if not file_path.is_file():
-        # Fall back to sys.path import (e.g. package dir module) under namespacing.
-        added = str(ext_dir) not in sys.path
-        if added:
-            sys.path.insert(0, str(ext_dir))
-        try:
-            return importlib.import_module(module_path)
-        finally:
-            if added:
-                sys.path.remove(str(ext_dir))
-    unique_name = f"_pclaw_app_{ext.name.replace('-', '_')}__{module_path.replace('.', '_')}"
-    spec = importlib.util.spec_from_file_location(unique_name, file_path)
-    if spec is None or spec.loader is None:
-        raise ImportError(f"cannot load {module_path!r} from {file_path}")
-    module = importlib.util.module_from_spec(spec)
-    # Register under the unique name + put the app dir on sys.path during exec so
-    # the module's own sibling imports still resolve.
-    sys.modules[unique_name] = module
-    added = str(ext_dir) not in sys.path
-    if added:
+    if ext_dir is not None and bundle_module_file(ext_dir, module_path) is not None:
+        return load_bundle_module(ext_dir, ext.name, module_path)
+    # Not a file in the app's dir → a dotted package path, or a package DIRECTORY module
+    # reached through the app dir on sys.path.
+    added = False
+    if ext_dir and str(ext_dir) not in sys.path:
         sys.path.insert(0, str(ext_dir))
+        added = True
     try:
-        spec.loader.exec_module(module)
+        return importlib.import_module(module_path)
     finally:
-        if added:
+        if added and ext_dir and str(ext_dir) in sys.path:
             sys.path.remove(str(ext_dir))
-    return module
 
 
 def load_factory(ext: "RegisteredProvider") -> Callable[..., Any]:

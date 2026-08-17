@@ -100,6 +100,12 @@ class Kind(str, Enum):
     gap-healing template had no way to file one — ``enqueue`` SKIPS an unlisted kind and
     logs at debug — so the template wrote a TTL'd probe straight into the store instead,
     which is the self-citation anti-pattern the template's own doctrine warns about.
+
+    ``PROMPT`` and ``AGENT`` (AGENT-PACKS §4.3, AP-4) are the prompt-card importer's other two
+    typed outputs. A pasted card maps onto a ``PromptTemplate``, a ``WorkflowDef`` (already
+    ``TEMPLATE``) or an ``AgentDefinition``, and each has to reach its own store through this
+    gate — filing all three as ``TEMPLATE`` would label an agent "New template proposed" in
+    the inbox and hand the wrong installer a payload it cannot write.
     """
 
     SKILL = "skill"
@@ -112,6 +118,8 @@ class Kind(str, Enum):
     PROJECT_FILE = "project_file"
     PROJECT_SKILL = "project_skill"
     KNOWLEDGE_DRAFT = "knowledge_draft"
+    PROMPT = "prompt"
+    AGENT = "agent"
 
 
 class Status(str, Enum):
@@ -761,7 +769,15 @@ _KIND_LABELS = {
     Kind.PROJECT_FILE.value: "Project context update proposed",
     Kind.PROJECT_SKILL.value: "Project skill proposed",
     Kind.KNOWLEDGE_DRAFT.value: "Knowledge entry drafted for review",
+    Kind.PROMPT.value: "New prompt proposed",
+    Kind.AGENT.value: "New agent proposed",
 }
+
+# Totality, asserted at import rather than trusted: a new `Kind` with no label would surface
+# in the inbox as the generic "Proposal", which reads like a bug the user cannot explain.
+_unlabelled = {k.value for k in Kind} - set(_KIND_LABELS)
+if _unlabelled:  # pragma: no cover - import-time guard
+    raise RuntimeError(f"proposal kinds without an inbox label: {sorted(_unlabelled)}")
 
 
 def _surface_in_inbox(prop: Proposal) -> None:

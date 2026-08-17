@@ -82,6 +82,10 @@ def _installer_for(request: web.Request):
     * a promoted run/conversation (kind `skill`, E1.3) → `install_accepted_skill`, which writes the
       `auto/` skill through the existing auto-skill rail. This is the ONLY path that installs a
       promotion: the agent files the proposal, the human here writes it;
+    * a pasted prompt card (AGENT-PACKS §4.3 — tagged `prompt-card`) →
+      `install_accepted_prompt_card`, which writes the ONE typed entity the card mapped onto
+      (prompt / template / agent). The importer itself never writes a store, so this is the only
+      path a pasted card can reach one;
     * an ordinary `lesson_batch` from a correction already lives in the lesson store, so there is
       nothing further to install for it.
 
@@ -90,6 +94,7 @@ def _installer_for(request: web.Request):
     regardless.
     """
     from personalclaw.learning import project_context_review, self_model_observer, skill_promotion
+    from personalclaw.packs import prompt_cards
 
     try:
         from personalclaw.dashboard.handlers.memory import _get_service
@@ -101,7 +106,11 @@ def _installer_for(request: web.Request):
 
     def _install(prop) -> None:
         data = prop.to_dict()
-        if project_context_review.is_project_context_proposal(data):
+        # The prompt-card branch is FIRST because it claims by tag, and a card that mapped onto
+        # a template would otherwise fall through to a branch that cannot write it.
+        if prompt_cards.is_prompt_card_proposal(data):
+            prompt_cards.install_accepted_prompt_card(data)
+        elif project_context_review.is_project_context_proposal(data):
             project_context_review.install_accepted_project_context(data)
         elif skill_promotion.is_skill_promotion_proposal(data):
             skill_promotion.install_accepted_skill(data)

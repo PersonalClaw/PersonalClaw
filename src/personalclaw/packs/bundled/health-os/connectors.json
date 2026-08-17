@@ -1,0 +1,10 @@
+[
+  {
+    "name": "health-records",
+    "category": "health",
+    "transport": "stdio",
+    "command": "",
+    "description": "A health-records MCP server exposing read-only visit and lab history. Substitute your own if you already run one, or skip and keep the log local.",
+    "auth": {"required": true, "kind": "api_key", "env_hint": "HEALTH_API_KEY"}
+  }
+]

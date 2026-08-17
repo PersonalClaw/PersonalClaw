@@ -3,12 +3,13 @@
  *  registry (registerBuiltins.ts) lazy-loads these so the bundle stays flat as
  *  types are added. We WRAP the proven renderers (Markdown, the sandboxed widget
  *  iframe, the React+Babel frame, the file previews), never reinvent them. */
-import { memo, useEffect, useMemo, useState } from 'react'
+import { memo, useEffect, useMemo, useRef, useState } from 'react'
 import { Download, ShieldAlert } from 'lucide-react'
 import type { PreviewProps } from './contentTypes'
 import { Markdown } from '../Markdown'
 import { buildSrcdoc, readThemeVars } from '../widget/widgetSrcdoc'
 import { ReactWidgetFrame } from '../widget/ReactWidgetFrame'
+import { useWidgetWire } from '../widget/useWidgetActionBridge'
 import { sanitizeInlineHtml } from './sanitize'
 import { ImagePreview, PdfPreview, CsvPreview, JsonPreview } from '../../pages/files/browse/FilePreviews'
 import { api } from '../../lib/api'
@@ -49,12 +50,19 @@ function looksLikeMarkdown(content: string): boolean {
 }
 
 /** A sandboxed blob-iframe for script-bearing HTML (widget/html artifacts).
- *  Theme vars + mode are injected so the widget matches the app's look. */
+ *  Theme vars + mode are injected so the widget matches the app's look.
+ *
+ *  This is the artifact-library PREVIEW of an interactive widget, so it carries the
+ *  action wire too: the child document ships HOST_SCRIPT's `isTrusted` click gate,
+ *  and a `[data-action]` click here would otherwise be dropped on the floor. The
+ *  shell's launcher turns it into the first turn of a chat. */
 export const IframeHtmlPreview = memo(function IframeHtmlPreview({ content, mode, title }: PreviewProps) {
+  const frameRef = useRef<HTMLIFrameElement>(null)
   const srcdoc = useMemo(() => buildSrcdoc({ html: content, themeVars: readThemeVars(), mode }), [content, mode])
   const blobUrl = useMemo(() => URL.createObjectURL(new Blob([srcdoc], { type: 'text/html;charset=utf-8' })), [srcdoc])
   useEffect(() => () => URL.revokeObjectURL(blobUrl), [blobUrl])
-  return <iframe src={blobUrl} sandbox="allow-scripts" title={title} className="h-full w-full border-none bg-surface" />
+  useWidgetWire(frameRef, { forwardActions: true })
+  return <iframe ref={frameRef} src={blobUrl} sandbox="allow-scripts" title={title} className="h-full w-full border-none bg-surface" />
 })
 
 /** A plain (no theme injection) sandboxed iframe for raw HTML *files* — matches
@@ -135,9 +143,19 @@ export const ImageFilePreview = memo(function ImageFilePreview({ path, content }
   return <div className="h-full overflow-auto"><ImagePreview path={path} src={src} /></div>
 })
 
-/** PDF file — by path. */
-export const PdfFilePreview = memo(function PdfFilePreview({ path }: PreviewProps) {
-  return <PdfPreview path={path || ''} />
+/** PDF — a workspace file (by path) OR a kind:pdf artifact (content is the
+ *  /api/artifacts/<slug>/raw URL ref). One renderer, source-agnostic — the same shape
+ *  ImageFilePreview above already uses.
+ *
+ *  It resolved from `path` ALONE until now, and a generated pdf artifact has no path:
+ *  the registry deliberately routes kind:pdf here rather than registering a second pdf
+ *  type ("reuses this ALREADY-WORKING PdfFile renderer" — registerBuiltins), but the
+ *  renderer only ever worked for the file half, so a pdf the agent generated could not
+ *  be previewed at all. */
+export const PdfFilePreview = memo(function PdfFilePreview({ path, content }: PreviewProps) {
+  const src = content && /^(https?:|\/)/.test(content) ? content : undefined
+  if (!src && !path) return <PreviewUnavailable label="PDF" />
+  return <PdfPreview path={path} src={src} />
 })
 
 /** Generated video (kind:video). Plays from the artifact's raw URL.

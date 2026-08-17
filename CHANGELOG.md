@@ -10,9 +10,28 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Added
 
+- **Saved the same article twice? Knowledge will now tell you, and fold the two together.**
+- **Hold a thought, press a key, keep your hands where they are.**
+- **The design-system tool can list what it has, instead of making the assistant guess.**
+
+- **Your phone can find this machine on its own now, if you ask it to.**
+- **Two ready-made setups you can install in one go — Personal CFO and Health OS.**
+- **A pack can bring a team, and only the people you actually hired show up.**
+- **Paste a prompt card and turn it into something you can actually use.**
+- **Share a setup as one link.**
+- **Take your data out — all of it, or just the part you asked for.**
+- **You can now edit the memory registers the assistant reads every session, and see who your memories are about.**
+
+### Fixed
+
+- **A "replace everything" restore could run while the app was running.**
+
+- **Buttons inside a generated widget now work everywhere you can see the widget.**
+- **Home, the Inbox and Discover now arrive in sequence instead of all at once.**
 - **A guided tour of the app, and you can take it again whenever you like.**
 - **Empty pages now explain themselves and give you something to press.**
 - **The audit log can now answer "what did my agent actually do?" — and tell you which record was tampered with.**
+- **Artifacts are now findable from knowledge search.**
 - **First run now picks up where you left it, and you can walk out of it at any point.**
 - **Moving between pages now crossfades instead of cutting.**
 - **The two shipped personalities now arrive with their own motion and their own tone.**
@@ -82,6 +101,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Security
 
+- **An app can no longer change the version of a library PersonalClaw itself depends on.**
 - **Credentials can now live in your OS keychain, and Doctor tells you where they actually are.**
 - **Unattended automations now run read-only by default, and you're asked before one runs scripts in a project folder.**
 - **The built-in command denylist now repairs itself.**
@@ -102,6 +122,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Fixed
 
+- **Generated documents no longer show up in your library as broken images, and a generated PDF finally previews.**
 - **The Loops page no longer tells you that you have no loops when it simply could not load them.**
 - **A security-audit write that fails is no longer swallowed.**
 

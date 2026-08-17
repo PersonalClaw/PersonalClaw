@@ -184,6 +184,41 @@ def _pair(args: argparse.Namespace) -> None:
     )
 
 
+def _discover(args: argparse.Namespace) -> None:
+    """Look for PersonalClaw gateways advertising themselves on this network (CA-5).
+
+    The client half of COMPANION-APPS C3, and the reason the resolver is a shared function
+    rather than something each wrapper writes: a phone app, the desktop shell and this
+    command all need the same answer, in the same shape.
+
+    Finding nothing is a normal result and exits 0 — multicast is filtered on plenty of
+    networks, and the fallback (type the URL) is the path that always works. Exiting
+    non-zero would turn "your Wi-Fi drops multicast" into a script failure."""
+    from personalclaw.companion.discovery import SERVICE_TYPE, resolve
+
+    timeout = max(0.5, float(getattr(args, "timeout", 2.0) or 2.0))
+    found = resolve(timeout=timeout)
+    if getattr(args, "as_json", False):
+        print(json.dumps([i.to_dict() for i in found], indent=2))
+        return
+    if not found:
+        print(f"No gateways found advertising {SERVICE_TYPE} in {timeout:g}s.")
+        print(
+            "That is not necessarily a problem: discovery is off by default, is a no-op on a\n"
+            "loopback-only gateway, and many networks filter multicast. On the machine running\n"
+            "the gateway, turn on Settings → Companion apps → LAN discovery, then open the\n"
+            "dashboard by typing its LAN address."
+        )
+        return
+    print(f"Found {len(found)} gateway{'s' if len(found) != 1 else ''}:")
+    for inst in found:
+        print(f"\n  {inst.name or '(unnamed)'}")
+        print(f"    url:     {inst.base_url or '(no address advertised)'}")
+        if inst.requires_pairing:
+            print("    pairing: required — run `personalclaw auth enroll` on that machine")
+            print("             for a single-use code, then redeem it from this device.")
+
+
 def _automation(args: argparse.Namespace) -> None:
     """Dispatch `automation` subcommands (AUTOMATION-SUBSTRATE §7 step 2).
 

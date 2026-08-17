@@ -98,6 +98,12 @@ Behavior toggles live in Settings → Memory; tuning constants are backend-only.
 | `memory.migrated` | boolean | `false` | managed automatically | Whether memory has been migrated to the vector store (set by `personalclaw memory migrate` / the API). |
 | `memory.vault_mode` | `off` \| `mirror` \| `two_way` | `off` | Settings → Memory | The readable markdown vault (Obsidian-compatible: YAML frontmatter + `[[wikilinks]]` + graph view). `mirror` writes memory out and never reads it back — hand edits are overwritten. `two_way` also reads hand-edited pages back into memory on the next sync (your edit wins); a page the sync cannot parse confidently is left untouched and reported under Settings → Memory → Health. Back-reads the retired `memory.vault_enabled` bool: `true` loads as `mirror`, never `two_way`. |
 | `memory.vault_path` | string | `memory-vault` | Settings → Memory | Where the markdown vault is written. Relative paths resolve under `~/.personalclaw`; absolute paths are used as-is. Only the default path is covered by `personalclaw snapshot`. |
+| `memory.graph_enabled` | boolean | `true` | Settings → Memory | Link each memory to the people, projects and tools it mentions, so "what do I know about X?" follows links instead of relying on similarity search. Matching is exact-name and costs no tokens or LLM calls. Off = every graph surface falls back to today's search behavior; existing links are kept, so re-enabling needs no backfill. |
+| `memory.push_context` | boolean | `false` | Settings → Memory | When a message names something the entity graph knows, volunteer up to 3 linked memories for that turn — even ones sharing no words with what you typed. Opt-in: it puts context in front of the model you did not ask for. Settings → Memory → Health reports how often what it volunteered was actually used. Never injects knowledge items (chips only). |
+| `memory.push_min_confidence` | number (0-1) | `0.7` | Settings → Memory | How sure the entity match must be before memory is volunteered. Higher = declared aliases and exact names only; lower also admits looser matches (more offered, more of it irrelevant). |
+| `memory.graph_topology_in_context` | boolean | `false` | Settings → Memory | At the start of a new session, add a ≤400-char map of the neighbourhoods in your memory graph ("people around project X") so the assistant knows which areas exist before it searches. Off by default: it spends context on every new session and says nothing useful until the graph has distinct communities. |
+| `memory.holder_attribution` | boolean | `false` | Settings → Memory | Record WHOSE claim a memory is (you, the assistant, a named person, an outside source) and render it that way ("Alex believes…"). Second-hand claims are weight-capped lower, and a lower-authority claim can never retire something you said. Off = every memory is stored unattributed; already-attributed rows keep their holder, so flipping it back on needs no backfill. |
+| `memory.slot_size_cap` | integer (200-4000) | `1400` | Settings → Memory | Character budget for the ONE always-injected Slots block (persona, preferences, pending items, glossary, self notes, self model). A spend paid on every session, so it is clamped at the consumer — a value outside the range cannot widen the block by editing this file. The per-slot caps that decide which individual register is full are fixed in code. |
 
 ## Skills (`skills.*`)
 
@@ -166,6 +172,23 @@ Alert keywords, name-mention alerts, and retention live in the Inbox settings pa
 | `tools.projection_rules[].name` | string | `""` | Settings → Tool output | Short label for the rule. |
 | `tools.projection_rules[].match_regex` | string | `""` | Settings → Tool output | Regex matched against the start of a tool's output. |
 | `tools.projection_rules[].strategy` | enum: `log`, `diff`, `json`, `test`, `csv` | `log` | Settings → Tool output | The builtin projector to apply. |
+
+## Voice (`voice.*`)
+
+Behaviour of dictation and spoken replies. The MODEL for speech-to-text and
+text-to-speech is bound in Settings → Models; these are the provider-agnostic knobs on
+top of it. All of them are comfort settings rather than safety guards — turning one off
+makes the voice loop noisier, never less safe.
+
+| Key | Type | Default | Where to set | Description |
+|---|---|---|---|---|
+| `voice.push_to_talk_chord` | string | `CommandOrControl+Shift+Space` | Settings → Speech & Transcription | The global shortcut the **desktop app** binds for push-to-talk: press to start capturing the microphone, press again to stop and transcribe into the composer at your cursor. An Electron accelerator string; needs at least one modifier, since a bare key would be taken from every other app on the machine. The desktop shell binds it and refuses an unusable or already-taken chord with a reason. Ignored in a browser tab (no global shortcuts). See [the desktop guide](../guides/desktop.md). |
+| `voice.confirmation_phrases` | list of strings | `["do it", "go ahead", "send it", "execute"]` | Settings → Speech & Transcription | In hands-free mode a transcript accumulates and is only sent once one of these phrases ends what you just said, so a half-finished thought never becomes an executed instruction. Push-to-talk and typed input ignore this. An empty list falls back to these defaults. |
+| `voice.exit_phrases` | list of strings | `["cancel", "never mind", "forget it"]` | Settings → Speech & Transcription | Saying one of these in hands-free mode discards the accumulated transcript without sending it. |
+| `voice.duplex_mute_enabled` | boolean | `true` | Settings → Speech & Transcription | Suspend the microphone and discard queued audio while a spoken reply plays. This is what stops the assistant hearing itself. |
+| `voice.echo_filter_enabled` | boolean | `true` | Settings → Speech & Transcription | Drop a transcription sharing three consecutive words with what the assistant just spoke — the backstop for speaker bleed. Hands-free requests only; the dashboard shows the drop instead of looking deaf. |
+| `voice.clean_for_speech_enabled` | boolean | `true` | Settings → Speech & Transcription | Strip code blocks, reduce URLs to their domain and paths to their filename, and drop CLI flags before synthesis. The chat transcript always keeps the full text — only the audio is cleaned. |
+| `voice.voice_disclaimer_enabled` | boolean | `true` | Settings → Speech & Transcription | Append a one-line note to a dictated message telling the model the text came from speech recognition, so it self-corrects garbled homophones instead of confidently misreading them. |
 
 ## Dashboard (`dashboard.*`)
 

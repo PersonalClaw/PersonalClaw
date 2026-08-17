@@ -960,8 +960,8 @@ function AppCard({ item, index, busy, onInstall, onOpen, onAction }: {
               {item.version && <span data-type="label-s" className="shrink-0 text-on-surface-low">v{item.version}</span>}
               {item.installed && item.updateAvailable && (
                 <span data-type="label-s" title={item.latestVersion ? `Update to v${item.latestVersion} available` : 'Update available'}
-                  className="inline-flex shrink-0 items-center gap-1 rounded-pill px-1.5 py-0.5 text-primary"
-                  style={{ background: 'color-mix(in srgb, var(--color-primary) 14%, transparent)' }}>
+                  className="inline-flex shrink-0 items-center gap-1 rounded-pill px-1.5 py-0.5"
+                  style={accentChip}>
                   <RefreshCw size={11} /> Update
                 </span>
               )}
@@ -1309,8 +1309,8 @@ function StoreDetailPanel({ item, onInstalled }: { item: StoreItem; onInstalled:
           v{item.version || '—'}{item.author ? ` · by ${item.author}` : ''}
         </div>
         {providerLabel && (
-          <span className="mt-2 inline-flex items-center gap-1 rounded-pill px-1.5 py-0.5 text-primary" data-type="label-s"
-            style={{ background: 'color-mix(in srgb, var(--color-primary) 14%, transparent)' }}>
+          <span className="mt-2 inline-flex items-center gap-1 rounded-pill px-1.5 py-0.5" data-type="label-s"
+            style={accentChip}>
             <Plug size={11} />{providerLabel}
           </span>
         )}

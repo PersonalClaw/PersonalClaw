@@ -261,10 +261,16 @@ async def _apply_skill_promotion(args: dict[str, Any], ctx: "ApplyContext") -> d
             project_context_review,
         )
         from personalclaw.learning import skill_promotion as skill_promotion_mod
+        from personalclaw.packs import prompt_cards
 
         def installer(prop) -> None:  # noqa: F811 - deliberate local default
             data = prop.to_dict()
-            if project_context_review.is_project_context_proposal(data):
+            # Same dispatch order as `handlers.learning._installer_for`: approving a pasted
+            # prompt card from the inbox must write the same entity approving it from the
+            # Learning surface writes, or the two surfaces disagree about what Approve means.
+            if prompt_cards.is_prompt_card_proposal(data):
+                prompt_cards.install_accepted_prompt_card(data)
+            elif project_context_review.is_project_context_proposal(data):
                 project_context_review.install_accepted_project_context(data)
             elif skill_promotion_mod.is_skill_promotion_proposal(data):
                 skill_promotion_mod.install_accepted_skill(data)

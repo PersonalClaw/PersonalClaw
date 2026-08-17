@@ -11,7 +11,7 @@ system, crons, and the MCP bridge. Paths are relative to
 
 | Tier | Location | Notes |
 |---|---|---|
-| Native (26) | `apps/native/` in-package | seeded on first run, locked on (e.g. `native-agents`, `personalclaw-memory`, the action bundles) |
+| Native (26) | `apps/native/` in-package | seeded on first run, locked on (e.g. `native-agents`, `personalclaw-memory`, the action bundles); may own its provider code — see [the native capability contract](#the-native-capability-contract-appsnative_contractpy) |
 | First-party (36) | workspace `apps/` | Slack channel, model providers, speech, Minutes/Growth dashboards |
 | Third-party | user sources → `~/.personalclaw/apps/` | fixtures at `third-party-apps/` (`hello-search`, `demo-dashboard`) |
 
@@ -193,6 +193,66 @@ backend has no access to the gateway's SecurityEventLog).
   resolves bare `react` / `@personalclaw/app-sdk` imports so app UIs don't
   bundle their own React.
 
+## The native capability contract (`apps/native_contract.py`)
+
+A **bundled** app may own its own provider code, not just declare a capability core
+implements. Historically every bundled app was `app.json`-only: its
+`provider.implementation` named a core dotted path
+(`personalclaw.tasks.native:create_provider`), so growing that capability meant editing
+core — the one thing this platform exists to avoid.
+
+**How a bundled app owns a provider**
+
+1. Ship `provider.py` next to `app.json` in `apps/native/<name>/`.
+2. Point the manifest at the bundle-relative module:
+   `"implementation": "provider:create_provider"`. A module path with **no dot** is
+   bundle-relative; a dotted one is still a core/package path, so existing bundles are
+   untouched.
+3. Import core **only** through `personalclaw.sdk.*`.
+
+**Allowed imports = the published SDK, and nothing else.** This is deliberately the SAME
+rule installed apps live under, not a second, narrower "native SDK" allowlist: a bundled
+app is loaded by the same `providers/loader.py` seam, registered through the same typed
+handler, and shipped by the same release, so a separate list would be a second boundary to
+keep in step for no gain. Every `sdk/` submodule is therefore available. What is
+native-specific is a set of caveats, not import bans:
+
+| Caveat | Why |
+|---|---|
+| No per-app backend environment | a bundled module runs IN-PROCESS, so `sdk.util.shared_app_data_dir` is always `None` for it and the `PERSONALCLAW_APP_*` vars `backend_runtime` injects don't exist |
+| No own dependencies | the manifest `dependencies` block installs into an app venv, which an in-process module never gets — a bundled module may use only core's own dependencies |
+| Packaged assets by path are OK | a bundled app ships in the same distribution, so reading a packaged sibling (e.g. `static/dist/ui-docs.json`) by path is legitimate; **importing** a core module is not |
+| Blocking work goes off-loop | it shares the gateway's event loop; use `asyncio.to_thread` as core does |
+
+**Loading.** `providers/loader.py` resolves the module by ONE rule for both tiers: if the
+`implementation` module path resolves to a file inside the app's own directory, it is
+loaded from there under a namespaced `sys.modules` name
+(`_pclaw_app_<name>__<module>`, `native_contract.namespaced_module_name`); otherwise it is
+imported as a dotted package path. The namespacing is load-bearing — two apps commonly
+ship the same bare `provider.py`, and a plain `import provider` would let the first one
+win while the second silently mis-loaded. It is cached, so the availability probe and the
+factory never re-execute app code (a re-exec would mint a second class for one provider,
+breaking `isinstance` across two reads). A changed module needs a gateway restart.
+
+**Enforcement.** `native_contract.contract_violations` is the lint;
+`tests/test_native_capability_contract.py` runs it over every bundled module and carries
+the vacuity floor (at least one bundled app must actually ship a module) plus the
+"no core implementation" property: no core module may reference a bundle-owned module.
+That rail never skips, unlike its installed-app twin
+(`tests/test_apps_import_boundary.py`), which skips whenever the workspace `apps/` dir is
+absent.
+
+**Reference implementation:** `apps/native/personalclaw-ui-docs/` — the design-system docs
+tools (`ui_search` / `ui_get` / `ui_list`). Its provider left `tool_providers/ui_docs.py`
+entirely (no factory remains in `tool_providers/registry.py`), and `ui_list` was then added
+inside the bundle with no edit to any core module that implements, resolves or dispatches
+it. One residual core touch remains for a bundled app that adds an agent **tool**: a new
+tool name needs a `manifest_meta.TOOL_META` entry, because that map is the hand-maintained
+input to the agent manifest and `tests/test_api_manifest_drift.py` fails on a tool without
+one. That is catalogue data about the shipped distribution's agent surface, not provider
+implementation — but it does mean "no core edits" is exact for provider behaviour and not
+yet exact for tool *metadata*.
+
 ## Crons
 
 Manifest-declared crons are reconciled by `apps/app_crons.py` on every
@@ -214,8 +274,10 @@ removes exactly this app's servers. App-shipped stdio servers run with
 
 ## Extension registration
 
-`providers/loader.py` loads each enabled app, pins the app directory on
-`sys.path` for the process lifetime, and registers every contribution through
+`providers/loader.py` loads each enabled app, puts the app directory on
+`sys.path` only while its module executes (so a later bare import can't pick up an app's
+module by accident — the app's own module is registered under a namespaced
+`sys.modules` name instead), and registers every contribution through
 its typed `ToolTypeHandler` — model providers, transports, search providers,
 inbox sources, actions, prompts, skills. Provider REST surfaces live in
 `providers/routes.py` / `entity_routes.py` / `instance_routes.py`.

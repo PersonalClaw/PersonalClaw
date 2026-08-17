@@ -1,0 +1,16 @@
+name: health-checkup-nudge
+kind: user
+title: Checkup Nudge
+description: The nudge the checkup-cadence trigger renders when something is due.
+content: |
+  List the routine checkups that are due or overdue as of {{as_of}}, oldest first.
+
+  Show the arithmetic for each: last date, interval, days due. Say plainly if nothing is due.
+  Do not interpret any checkup medically and do not suggest an interval the user has not set.
+variables:
+  - name: as_of
+    description: The date to compute against (YYYY-MM-DD).
+    required: true
+tags:
+  - health
+source: user

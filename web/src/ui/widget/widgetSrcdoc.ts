@@ -54,10 +54,11 @@ function themeStyleBlock(vars: Record<string, string>, mode: 'dark' | 'light', t
     : ''
 }
 
-// Reports content height + forwards [data-action] clicks to the parent. The
-// message types are `widget-height` / `widget-action`.
-const HOST_SCRIPT = `<script>
-(function(){
+/** Reports content height + forwards `[data-action]` clicks to the parent, as
+ *  `widget-height` / `widget-action` (see useWidgetActionBridge.ts for the wire
+ *  contract). Exported as SOURCE so the human-gesture gate below can be executed —
+ *  and not merely grepped for — by widgetHostScript.test.ts. */
+export const HOST_SCRIPT_SOURCE = `(function(){
   function report(){
     var h = Math.max(document.body.scrollHeight, document.documentElement.scrollHeight);
     // Natural content width: the widest top-level element's rendered box. A
@@ -97,8 +98,9 @@ const HOST_SCRIPT = `<script>
     if (Object.keys(formData).length) payload.formData = formData;
     parent.postMessage({type:'widget-action', action:action, payload:payload}, '*');
   });
-})();
-<\/script>`
+})();`
+
+const HOST_SCRIPT = `<script>\n${HOST_SCRIPT_SOURCE}\n<\/script>`
 
 export interface BuildSrcdocOpts {
   html: string

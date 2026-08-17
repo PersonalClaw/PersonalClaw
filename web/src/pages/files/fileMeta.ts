@@ -183,8 +183,23 @@ export const ARTIFACT_KINDS: { key: ArtifactKind; label: string; icon: LucideIco
   { key: 'video', label: 'Video', icon: Film, tone: '#9d86f5' },
 ]
 
+/** What an artifact kind resolves to when ARTIFACT_KINDS does not know it.
+ *
+ *  Deliberately NOT `ARTIFACT_KINDS[0]`. A fallback that impersonates a REAL kind is
+ *  indistinguishable from a correct answer, and that is exactly how every generated
+ *  .docx/.xlsx/.pptx/.pdf/.csv and every generated video read "Widget" from v0.1.0 to
+ *  0.1.3 (#127): no error, no warning, no broken pixel — just a confident wrong label
+ *  on a real document, for four releases. The closed set itself is enforced at test
+ *  time, both directions against the backend's ALLOWED_KINDS
+ *  (`artifactKinds.test.ts`); this is what the RUNTIME says if that ever drifts again.
+ *  `key: ''` matches no registered kind, so an unknown kind cannot be mistaken for one
+ *  — including by the library's kind filter. */
+export const UNKNOWN_ARTIFACT_KIND: { key: ''; label: string; icon: LucideIcon; tone: string } = {
+  key: '', label: 'Unknown kind', icon: FileIcon, tone: 'var(--color-on-surface-low)',
+}
+
 export function artifactKindMeta(kind: string) {
-  return ARTIFACT_KINDS.find((k) => k.key === kind) ?? ARTIFACT_KINDS[0]
+  return ARTIFACT_KINDS.find((k) => k.key === kind) ?? UNKNOWN_ARTIFACT_KIND
 }
 
 // ── formatting ──

@@ -2,7 +2,7 @@
   "name": "personalclaw-ui-docs",
   "version": "1.0.0",
   "displayName": "UI Docs Tools",
-  "description": "Search and read the web/src/ui design-system kit as documentation-as-data — find the right component or design token to reach for instead of hand-rolling markup.",
+  "description": "Search, list and read the web/src/ui design-system kit as documentation-as-data — find the right component or design token to reach for instead of hand-rolling markup.",
   "icon": "LayoutTemplate",
   "author": "PersonalClaw",
   "tags": [
@@ -11,7 +11,7 @@
   ],
   "provider": {
     "type": "tool",
-    "implementation": "personalclaw.tool_providers.registry:create_ui_docs_provider",
+    "implementation": "provider:create_provider",
     "capabilities": [
       "ui_docs"
     ]

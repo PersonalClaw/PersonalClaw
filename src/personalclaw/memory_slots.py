@@ -55,7 +55,29 @@ DEFAULT_SLOT_CAP_CHARS = 600
 #: under their own cap would otherwise be a compliant 4kB block.
 SLOTS_BLOCK_MAX_CHARS = 1400
 
+#: Structural bounds on the configurable block budget (`memory.slot_size_cap`). The ceiling
+#: exists for the same reason `memory_service.HARD_CAP_RECORDS` does: an always-injected block
+#: whose size config alone can raise is an unbounded per-turn cost, so the knob tunes within a
+#: range it cannot leave by editing config.json. The floor keeps a typo from setting a budget
+#: smaller than the truncation marker, which would render a block that is only an ellipsis.
+SLOTS_BLOCK_MIN_CHARS = 200
+SLOTS_BLOCK_HARD_MAX_CHARS = 4000
+
 _TRUNCATION_MARKER = "\n… [slots truncated]"
+
+
+def resolve_block_limit(configured: object) -> int:
+    """The block budget to render with, clamped into the structural range.
+
+    Takes ``object`` because the caller reads it out of config, where a hand-edited value can
+    be anything: an unreadable one falls back to the default rather than raising, since a bad
+    number in config.json must not be able to stop a session from starting.
+    """
+    try:
+        value = int(configured)  # type: ignore[call-overload]
+    except (TypeError, ValueError):
+        return SLOTS_BLOCK_MAX_CHARS
+    return max(SLOTS_BLOCK_MIN_CHARS, min(SLOTS_BLOCK_HARD_MAX_CHARS, value))
 
 
 @dataclass(frozen=True)

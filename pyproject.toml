@@ -147,7 +147,13 @@ stt   = ["faster-whisper>=1.0"]    # substrate for apps/faster-whisper (in-proce
 tts   = ["huggingface-hub>=0.23", "piper-tts>=1.2"]  # substrate for apps/piper-tts: voice downloads (ONNX from rhasspy/piper-voices) + the piper synthesis runtime (provides the `piper` binary)
 eval  = ["jinja2>=3.0"]
 embeddings = ["sentence-transformers>=3.0", "faiss-cpu>=1.7"]  # substrate for apps/sentence-transformers (local embeddings). numpy is core (native-vector-memory); faiss stays here — excluded from the desktop bundle, degrades to SQLite-only.
-mcp   = ["mcp>=1.2"]               # external MCP servers in the native agent loop (stdio + SSE/HTTP)
+mcp   = ["mcp>=1.2,<2"]            # external MCP servers in the native agent loop (stdio + SSE/HTTP).
+                                   # Upper bound is load-bearing: mcp 2.0.0 renamed
+                                   # `mcp.client.streamable_http.streamablehttp_client`, which
+                                   # mcp_client.py imports, so an unbounded spec makes a FRESH
+                                   # install resolve 2.0.0 and break the streamable-HTTP transport.
+                                   # CI installs from the lockfile and cannot see that. Supporting
+                                   # 2.x is a migration, not a widened bound.
 js-render = ["playwright>=1.40"]   # web_fetch render=True path for client-rendered (JS) pages (a headless browser; run `playwright install chromium` after install)
 
 # OS keychain credential backend. Deliberately OPTIONAL and
@@ -251,6 +257,14 @@ personalclaw = [
     # directory and every paste-a-URL looks uncovered — a silent product regression, not a
     # crash. `test_connector_pack.py` asserts the shipped count is non-zero.
     "knowledge/sources/recipes/*.json",
+    # The bundled Domain OS packs — authored source trees the pack
+    # builder assembles into a `.pclaw` on demand. A wheel without these lines ships a Store
+    # with zero bundled packs and `build_bundled` raising "no bundled pack named …", so the
+    # lines are load-bearing. Recursive, because a pack carries skill dirs and runbooks at
+    # depths this glob has to reach.
+    "packs/bundled/**/*.md",
+    "packs/bundled/**/*.json",
+    "packs/bundled/**/*.yaml",
     "reference/*.md",
 ]
 

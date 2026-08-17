@@ -1,5 +1,5 @@
 import { Fragment, useEffect, useMemo, useState } from 'react'
-import { BookOpen, Plus, Search, Database, Sparkles, Network, Library, Trash2, Target, X, Pin, Star, Archive, Play, FileText, Loader2, CircleAlert, Boxes, WifiOff, Layers, Scale, Tag as TagIcon, Rss } from 'lucide-react'
+import { BookOpen, Plus, Search, Database, Sparkles, Network, Library, Trash2, Target, X, Pin, Star, Archive, Play, FileText, Loader2, CircleAlert, Boxes, WifiOff, Layers, Scale, Tag as TagIcon, Rss, ExternalLink } from 'lucide-react'
 import { TopBar } from '../../ui/TopBar'
 import { fvs } from '../../design/fontWeight'
 import { WorkbenchLayout } from '../../ui/WorkbenchLayout'
@@ -13,14 +13,14 @@ import { ListControls } from '../../ui/ListControls'
 import { HeaderActions, HeaderControl, HeaderSegmented } from '../../ui/HeaderActions'
 import { ContextMenu, type ContextMenuItem } from '../../ui/motion'
 import { api, type KnowledgeIntent, type IntentOutcome, type KnowledgeItem, type KnowledgeCollection, type KnowledgeBulkOp } from '../../lib/api'
-import { resolveType, relTime, fmtBytes, typeLabel } from './knowledgeMeta'
+import { resolveType, relTime, fmtBytes, typeLabel, isArtifactItem } from './knowledgeMeta'
 import { listKnowledge, knowledgeStats, getKnowledge } from './knowledgeStore'
 import { KnowledgeDetail, OutcomeFieldValue } from './KnowledgeDetail'
 import { KnowledgeGraph } from './KnowledgeGraph'
 import { useQueryParam, type RouteProps } from '../../app/useQueryState'
 import { useCachedData, invalidateCache } from '../../lib/useCachedData'
 import { rowSubject } from '../../lib/rowSubject'
-import { confirm, promptInput } from '../../ui/dialog'
+import { confirm, confirmDelete, promptInput } from '../../ui/dialog'
 import { PageTitle } from '../../ui/PageTitle'
 
 type View = 'library' | 'graph' | 'intents' | 'tags' | 'conflicts'
@@ -676,7 +676,22 @@ export function KnowledgeListPage({ onCreate, onOpenItem, onOpenSources, query, 
                             </div>
                             <div className="mt-0.5 flex flex-wrap items-center gap-x-m gap-y-0.5 text-on-surface-low text-[0.8125rem]">
                               <span style={{ color: tm.tone }}>{typeLabel(it)}</span>
-                              {it.provider && it.provider !== 'native' && <span className="rounded-pill bg-surface-high px-1.5 text-on-surface-var text-[0.75rem]">{it.provider}</span>}
+                              {/* A mirrored artifact's provenance is already the type label
+                                  ("Artifact", its own icon + tone), so the generic provider pill is
+                                  suppressed for it — "Artifact" beside a lowercase "artifacts" pill
+                                  is the same fact twice in two vocabularies. */}
+                              {it.provider && it.provider !== 'native' && !isArtifactItem(it) && <span className="rounded-pill bg-surface-high px-1.5 text-on-surface-var text-[0.75rem]">{it.provider}</span>}
+                              {/* The way BACK to the real thing. A mirror is a search surface, so a
+                                  hit that could only ever show extracted text would be a dead end —
+                                  the artifact itself has the versions, the preview and the editor.
+                                  An anchor (not the row's click) because the row peeks, and both
+                                  behaviours have to remain reachable. */}
+                              {isArtifactItem(it) && !!it.guid && (
+                                <a href={`#/artifacts/${encodeURIComponent(it.guid)}`} onClick={(e) => e.stopPropagation()}
+                                  className="inline-flex items-center gap-1 rounded-pill bg-surface-high px-1.5 text-[0.75rem] text-primary-emphasis transition-colors hover:bg-surface-container">
+                                  <ExternalLink size={10} aria-hidden /> Open artifact
+                                </a>
+                              )}
                               {it.file_size != null && it.file_size > 0 && <span>· {fmtBytes(it.file_size)}</span>}
                               {/* No `· ` prefix: this span is `truncate` (white-space:nowrap) inside a
                                   `flex-wrap` row, so its intrinsic width always exceeds the space left on
@@ -706,6 +721,29 @@ export function KnowledgeListPage({ onCreate, onOpenItem, onOpenSources, query, 
 /** Tier-3 intents: state a standing interest in plain language ("anything that helps
  *  my homelab"); the system decides per-item relevance and gathers typed-field
  *  outcomes. Click one to see everything it has gathered. */
+/** Ask before deleting an intent, and say what goes with it.
+ *
+ *  Both delete controls — the row's icon button and the detail panel's — fired straight into
+ *  `api.deleteKnowledgeIntent` on one click, with no confirmation anywhere. `confirmDelete` is this
+ *  app's dominant form for that (fourteen callers: schedules, artifacts, providers, memories, tasks,
+ *  triggers, workflow definitions…), and the file already applies the same discipline to shelves a few
+ *  hundred lines up.
+ *
+ *  The body is not boilerplate. Deleting a shelf keeps its items, so `removeCollection` says so; an
+ *  intent is the opposite — `delete_intent` cascades into `delete_intent_outcomes`, and an outcome is
+ *  stored BY VALUE precisely so it "survives source-item deletion". So this is the only copy of what
+ *  the intent gathered, and re-adding the intent does not bring it back. Whoever presses Delete on a
+ *  row reading "12 gathered" should know that before, not after.
+ *
+ *  Module scope because the two controls live in two components; one sentence, said once. */
+async function confirmIntentDelete(goal: string, gathered: number): Promise<boolean> {
+  return confirmDelete('intent', rowSubject([goal], 40), {
+    body: gathered > 0
+      ? `Everything it gathered goes with it — ${gathered} ${gathered === 1 ? 'match' : 'matches'}, kept by value, so re-adding the intent will not bring them back.`
+      : 'It has gathered nothing yet, so only the intent itself goes.',
+  })
+}
+
 function IntentsView({ selectedId, onSelect, reloadKey }: {
   selectedId: string | null
   onSelect: (intent: KnowledgeIntent | null) => void
@@ -733,7 +771,16 @@ function IntentsView({ selectedId, onSelect, reloadKey }: {
           <Target size={15} className="shrink-0 text-primary/80" />
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-1.5">
-              <span className="truncate text-on-surface text-[0.9375rem]">{it.goal || it.id}</span>
+              {/* 🪤 AN INTENT'S GOAL IS A SENTENCE THE USER WROTE, and `truncate` was eating most of
+                  it with no way back. Measured at 390px on four real intents: two truncate, and the
+                  longest showed **233px of the 651px it needs — 36% of what the user typed**. Nothing
+                  truncates at 1440px, which is why a desktop sweep sees nothing here.
+                  The asymmetry is the same one the tag row had: `ListRow`'s `label` already carries
+                  the FULL goal, so assistive tech was the only reader getting the whole sentence while
+                  a sighted phone user got a third of it. `title` on the truncating element is this
+                  app's idiom for that (19 elements carry it; SystemWidget, RoutingPanel and the tag
+                  row among them). */}
+              <span className="truncate text-on-surface text-[0.9375rem]" title={it.goal || it.id}>{it.goal || it.id}</span>
               {!it.enabled && <span className="rounded-pill bg-surface-high px-1.5 text-on-surface-low text-[0.75rem]">off</span>}
               {it.propose_skill && <span className="rounded-pill bg-surface-high px-1.5 text-primary-emphasis text-[0.75rem]">proposes skill</span>}
             </div>
@@ -748,7 +795,11 @@ function IntentsView({ selectedId, onSelect, reloadKey }: {
                 Named after its row the way `RowAction` does, through the shared cap so an intent whose
                 goal is a sentence cannot turn the name into a paragraph (cycle 142's rule). */}
             <Button size="sm" variant="ghost" ariaLabel={`Delete intent: ${rowSubject([it.goal || it.id], 40)}`}
-              onClick={() => api.deleteKnowledgeIntent(it.id).then(load)}><Trash2 size={14} /></Button>
+              onClick={async () => {
+                if (!(await confirmIntentDelete(it.goal || it.id, it.outcome_count ?? 0))) return
+                await api.deleteKnowledgeIntent(it.id)
+                load()
+              }}><Trash2 size={14} /></Button>
           </span>
         </ListRow>
       ))}
@@ -839,7 +890,11 @@ function IntentDetail({ intent, onChanged, onClose, onOpenItem }: {
           </Button>
         )}
         <span onClick={(e) => e.stopPropagation()}>
-          <Button size="sm" variant="ghost" onClick={() => api.deleteKnowledgeIntent(intent.id).then(() => { onChanged(); onClose() })}><Trash2 size={14} /> Delete</Button>
+          <Button size="sm" variant="ghost" onClick={async () => {
+            if (!(await confirmIntentDelete(intent.goal || intent.id, outcomes?.length ?? 0))) return
+            await api.deleteKnowledgeIntent(intent.id)
+            onChanged(); onClose()
+          }}><Trash2 size={14} /> Delete</Button>
         </span>
       </div>
       {note && <p className="text-on-surface-low text-[0.8125rem]">{note}</p>}

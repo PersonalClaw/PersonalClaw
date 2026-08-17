@@ -1,0 +1,12 @@
+{
+  "id": "pack-personal-cfo-spending-digest",
+  "name": "cfo-spending-digest",
+  "kind": "clock",
+  "enabled": false,
+  "created_by": "pack",
+  "spec": {"cron": "0 8 * * 1", "timezone": "UTC"},
+  "workflow": {"def": "cfo-monthly-review", "inputs": {"month": ""}},
+  "model_tier": "background",
+  "delivery": "inbox",
+  "overlap": "skip"
+}

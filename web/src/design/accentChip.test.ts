@@ -164,3 +164,62 @@ describe('the third spelling has a home', () => {
       .toMatch(/a rung chip inks coral through the container pair/)
   })
 })
+
+// ── The FOURTH spelling: class ink, style-object tint ──────────────────────────────────────────
+//
+// The two sweeps above are blind to it, and the gap is structural rather than an oversight:
+//
+//   the style-object sweep  requires the tint AND `color: var(--color-primary)` on ONE LINE
+//   the utility sweep       requires the `bg-primary/N` + `text-primary` CLASS pair
+//
+// A chip that puts the ink in a Tailwind class and the tint in a style attribute on the NEXT line
+// satisfies neither test while being exactly the defect both exist to prevent. Three sites shipped
+// that way and were found by `ux-audit` and axe agreeing on a live page, not by this file:
+//
+//   ConflictPanel's "higher-trust source"  measured 3.97:1 at 12px — axe [serious] color-contrast,
+//                                          LIGHT MODE ONLY (dark passes, as the header explains)
+//   AppsSection's "Update" badge           same shape, 14% tint under class ink…
+//   AppsSection's provider label           …fifteen lines from a sibling already using accentChip
+//
+// 🪤 SCOPED BY A WINDOW, NOT BY THE ELEMENT. Finding the end of a JSX tag with a regex is not
+// reliable — `>` appears inside attribute expressions — so this looks BACKWARDS a bounded distance
+// from the tint for a `className` carrying `text-primary`. The bound is the tradeoff being made: a
+// `text-primary` class more than 320 characters before a primary tint is not reported, and two
+// unrelated elements inside that window would be a false positive. It is deliberately the same
+// direction as the real spelling (class first, style second), which is how JSX attributes order.
+describe('no primary tint under CLASS-spelled primary ink survives', () => {
+  const TINT = /color-mix\(in srgb, var\(--color-primary\) \d+%/g
+  const INK_CLASS = /className="[^"]*\btext-primary\b[^"]*"/
+  const offenders: string[] = []
+  for (const abs of walk(SRC)) {
+    const text = readFileSync(abs, 'utf8')
+    for (const m of text.matchAll(TINT)) {
+      const window = text.slice(Math.max(0, m.index! - 320), m.index!)
+      if (INK_CLASS.test(window)) {
+        offenders.push(`${abs.slice(SRC.length + 1)}:${text.slice(0, m.index!).split('\n').length}`)
+      }
+    }
+  }
+
+  it('has none left', () => {
+    expect(
+      offenders,
+      `class-spelled accent ink over a primary tint (3.62:1 in light) at:\n  ${offenders.join('\n  ')}`,
+    ).toEqual([])
+  })
+
+  it('the matcher still recognises the shape it polices — not vacuously green', () => {
+    // Both halves proven against a synthetic sample, so a regex that stops matching anything cannot
+    // pass as "clean". The real files are swept above; this pins the detector itself.
+    const sample = [
+      '        <span className="shrink-0 rounded px-1.5 text-[0.75rem] text-primary"',
+      "          style={{ background: 'color-mix(in srgb, var(--color-primary) 14%, transparent)' }}>",
+    ].join('\n')
+    const hit = [...sample.matchAll(TINT)].some((m) => INK_CLASS.test(sample.slice(0, m.index!)))
+    expect(hit, 'the detector matches the spelling that shipped three times').toBe(true)
+    // And it does NOT fire when the ink is absent — a tint alone is legitimate (semantic tones pass).
+    const benign = sample.replace(' text-primary', ' text-on-surface-low')
+    const falsePositive = [...benign.matchAll(TINT)].some((m) => INK_CLASS.test(benign.slice(0, m.index!)))
+    expect(falsePositive, 'a primary tint under non-accent ink is left alone').toBe(false)
+  })
+})

@@ -30,7 +30,7 @@ import shutil
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from personalclaw.apps.manager import (
     APP_MANIFEST_FILENAME,
@@ -47,6 +47,9 @@ from personalclaw.atomic_write import atomic_write
 from personalclaw.sel import sel
 from personalclaw.signing import SignatureInfo, SignatureState, verify_bundle
 from personalclaw.supply_chain import ScanReport, TrustTier, Verdict, default_scanner
+
+if TYPE_CHECKING:
+    from packaging.requirements import Requirement
 
 logger = logging.getLogger(__name__)
 
@@ -218,9 +221,102 @@ def _run_hook(cmd: str, *, cwd: Path, timeout: int, env_name: str) -> None:
 _PIP_TIMEOUT = 600  # seconds — a heavy wheel (torch) can take minutes
 
 
+def _core_requirement_pins() -> dict[str, "Requirement"]:
+    """Canonical name → the requirement **core itself** declares, extras EXCLUDED.
+
+    Read from the installed ``personalclaw`` distribution's metadata rather than
+    ``pyproject.toml``, which a wheel does not ship.
+
+    Excluding extras is load-bearing, not a nicety: ``openai``, ``anthropic``,
+    ``boto3``, ``slack-sdk``, ``faster-whisper``, ``piper-tts``,
+    ``sentence-transformers``, ``faiss-cpu`` and ``huggingface-hub`` are all
+    ``extra ==`` entries, and 19 of the 20 first-party apps that declare
+    ``pythonDependencies`` pin exactly those. Treating an extra as core would
+    refuse almost every provider app in the Store.
+    """
+    from importlib.metadata import requires
+
+    from packaging.requirements import Requirement
+    from packaging.utils import canonicalize_name
+
+    pins: dict[str, Requirement] = {}
+    for spec in requires("personalclaw") or []:
+        req = Requirement(spec)
+        # An `extra == "..."` marker means the dependency is opt-in, not core.
+        if req.marker is not None and "extra ==" in str(req.marker):
+            continue
+        pins[canonicalize_name(req.name)] = req
+    return pins
+
+
+def _reject_core_dependency_conflicts(manifest: AppManifest, reqs: list[str]) -> None:
+    """Refuse an app whose declared deps would MOVE a core gateway dependency (EI-12 D3).
+
+    The deps land in the **shared** venv the gateway is running out of, so a pin
+    that pip must resolve by changing a core dependency changes the gateway's own
+    dependency set — under a live process that has already imported those modules.
+    The rule is exactly that property: for any app requirement naming a
+    core-declared dependency, the version **currently installed** must satisfy the
+    app's specifier, so pip has nothing to move. Anything else is refused before a
+    single byte is installed.
+
+    Fail-closed on purpose. A requirement that names a core dependency and cannot
+    be *proven* harmless is refused, not installed: an unparseable specifier (which
+    ``AppManifest.validate()`` does not vet) and a core name whose installed version
+    cannot be read both deny. Requirements that do not collide with a core name are
+    untouched — the guard's whole population is the collision set.
+    """
+    if not reqs:
+        return
+    try:
+        from packaging.requirements import InvalidRequirement, Requirement
+        from packaging.utils import canonicalize_name
+
+        core = _core_requirement_pins()
+    except Exception as exc:  # noqa: BLE001 — no evaluator ⇒ cannot clear a core pin
+        raise AppLifecycleError(
+            f"cannot verify app {manifest.name}'s python dependencies against core's "
+            f"({exc}); refusing rather than risk moving a gateway dependency"
+        ) from exc
+
+    from importlib.metadata import PackageNotFoundError
+    from importlib.metadata import version as _dist_version
+
+    for spec in reqs:
+        try:
+            req = Requirement(spec)
+        except InvalidRequirement as exc:
+            raise AppLifecycleError(
+                f"app {manifest.name} declares an unparseable python dependency " f"{spec!r}: {exc}"
+            ) from exc
+        pin = core.get(canonicalize_name(req.name))
+        if pin is None:
+            continue  # not a core-owned name — nothing of the gateway's to move
+        try:
+            have = _dist_version(req.name)
+        except PackageNotFoundError as exc:
+            raise AppLifecycleError(
+                f"app {manifest.name} pins {spec!r}, a dependency core itself declares "
+                f"({pin}), but its installed version cannot be read; refusing rather "
+                f"than let the install resolve a core dependency"
+            ) from exc
+        if not req.specifier.contains(have, prereleases=True):
+            raise AppLifecycleError(
+                f"app {manifest.name} pins {spec!r}, which conflicts with the "
+                f"{req.name} {have} this gateway runs (core declares {pin}). Installing "
+                f"it would change a core dependency under the running gateway, so the "
+                f"install is refused."
+            )
+
+
 def _install_python_deps(manifest: AppManifest) -> bool:
     """Pip-install an app's declared ``pythonDependencies`` into the shared core
     venv. Core ships lean; the app that needs a heavy lib brings it.
+
+    The venv is shared with the running gateway, so this is admission-gated:
+    :func:`_reject_core_dependency_conflicts` refuses a pin that would move a
+    dependency core itself declares before anything is installed. An app may bring
+    any library core does not own; it may not re-pin one core does.
 
     Returns True iff a package was actually installed (⇒ the gateway must RESTART
     to import it — the running process already imported its module set). If every
@@ -231,6 +327,10 @@ def _install_python_deps(manifest: AppManifest) -> bool:
     reqs = list(manifest.dependencies.pythonDependencies)
     if not reqs:
         return False
+
+    # Before anything is installed: refuse a pin that would move a CORE dependency
+    # out from under the running gateway (EI-12 D3).
+    _reject_core_dependency_conflicts(manifest, reqs)
 
     # Which requirements are already satisfied? Only then can we skip the restart.
     try:

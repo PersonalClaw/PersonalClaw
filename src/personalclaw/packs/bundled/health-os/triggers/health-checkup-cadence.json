@@ -1,0 +1,12 @@
+{
+  "id": "pack-health-os-checkup-cadence",
+  "name": "health-checkup-cadence",
+  "kind": "clock",
+  "enabled": false,
+  "created_by": "pack",
+  "spec": {"cron": "0 9 1 * *", "timezone": "UTC"},
+  "workflow": {"def": "health-weekly-journal", "inputs": {"week_of": ""}},
+  "model_tier": "background",
+  "delivery": "inbox",
+  "overlap": "skip"
+}

@@ -299,12 +299,18 @@ per-route contract.
 | `POST /api/stt/transcribe` | Transcribe audio (bound STT provider). |
 | `POST /api/voice/synthesize` | Synthesize speech (bound TTS provider). |
 
-## Portability
+## Portability & backups
 
 | Method + path | What it does |
 |---|---|
-| `GET /api/portability/export` | Export state as a portable archive. |
-| `POST /api/portability/preview` · `POST /api/portability/import` | Preview / apply an import. |
+| `POST /api/durability/export` | Export state as a portable archive. Body `{"domains": ["knowledge"]}` scopes it to one or more domains (`memory`, `knowledge`, `work`, `automation`, `platform`, `config`, `security`); omit it for everything. Credentials and rebuildable caches never travel. |
+| `POST /api/durability/import` | Apply an export archive (multipart `file`). **Omitting `mode` validates only and changes nothing**; `?mode=merge` applies copy-if-missing; `?mode=replace&confirm=true` overwrites. |
+| `GET /api/durability/archive` | List snapshots with size, retention verdict, per-domain counts and the last restore drill's result. |
+| `POST /api/durability/archive/{id}/restore` | Restore one snapshot. Omitting `mode` returns the plan; `mode=replace` also requires `confirm: true` and is refused while the gateway runs. |
+| `GET /api/durability/status` · `POST /api/durability/run` | Backup schedule state; run one job (`export`, `snapshot`, `drill`) now. |
+
+All four portability routes refuse an app-scoped token — exporting or overwriting the whole
+home is the owner's operation, never an installed app's.
 
 ---
 

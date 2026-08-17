@@ -46,6 +46,7 @@ import { MessageAssistant } from '../ui/chat/MessageAssistant'
 import { Spark } from '../ui/Spark'
 import { StreamingIndicator } from '../ui/chat/StreamingIndicator'
 import { Markdown } from '../ui/Markdown'
+import { useWidgetActionBridge, takePendingWidgetAction } from '../ui/widget/useWidgetActionBridge'
 import { InlineError } from '../ui/InlineError'
 import { ToolCard } from './chat/ToolCard'
 import { onToolResultFull } from './chat/toolResultBridge'
@@ -1269,15 +1270,18 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
     return () => window.removeEventListener('keydown', onKey)
   }, [])
 
-  // Widget action bridge: an interactive `<widget>` button posts widget-action,
-  // WidgetFrame re-dispatches `ne:widget-action`, and we send it as a chat turn.
+  // Widget action bridge: an interactive `<widget>` button posts widget-action, the
+  // frame validates + republishes it, and this conversation sends it as the next
+  // turn. Claiming the bridge here is what keeps a chat-born action in THIS session
+  // rather than falling through to the shell's launcher.
+  useWidgetActionBridge((text) => { void send(text) })
+
+  // A widget action raised from a NON-chat host (artifact-library preview, dashboard
+  // tile band) staged its `[UI]` text and navigated here through `ne:launch-chat`.
+  // Drain it once and send — the action's whole point is that it lands as a turn.
   useEffect(() => {
-    const onWidgetAction = (e: Event) => {
-      const text = (e as CustomEvent).detail?.text
-      if (typeof text === 'string' && text.trim()) send(text)
-    }
-    window.addEventListener('ne:widget-action', onWidgetAction as EventListener)
-    return () => window.removeEventListener('ne:widget-action', onWidgetAction as EventListener)
+    const pending = takePendingWidgetAction()
+    if (pending) void send(pending)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 

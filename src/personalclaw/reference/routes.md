@@ -176,6 +176,7 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `DELETE /api/chat/tags/{id}` — delete a tag; strip it from all sessions.
 - `PATCH /api/chat/tags/{id}` — rename / recolor / reorder.
 - `POST /api/chat/task-mode` — set the per-session TASK mode.
+- `GET /api/companion/discovery` — the live state of the LAN advertiser.
 - `GET /api/config-fs/stream` — SSE feed of out-of-band config-tree changes (#44).
 - `GET /api/config/default-agent` — read or set the default agent.
 - `PUT /api/config/default-agent` — read or set the default agent.
@@ -208,9 +209,11 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `POST /api/doctor/remediation/run` — run the engine now (confirm-gated). SEL-audited.
 - `POST /api/doctor/simulate/surfacing` — {text} — dry-run the skill scorer in
 - `GET /api/doctor/{capability}` — re-run one capability's probes (uncached).
-- `POST /api/durability/restore` — {snapshot, mode?, components?} — the CLI's restore, mirrored.
+- `GET /api/durability/archive` — the archive browser's list (§6).
+- `POST /api/durability/archive/{id}/restore` — {mode?, components?, confirm?} — §6.
+- `POST /api/durability/export` — {domains?} — the DSAR export (§6).
+- `POST /api/durability/import` — validate, then apply, an export zip (§6).
 - `POST /api/durability/run` — {job} — run one backup job now.
-- `GET /api/durability/snapshots` — the archive list with the retention plan.
 - `GET /api/durability/status` — schedule state + what's due.
 - `POST /api/feedback` — record one verdict.
 - `GET /api/feedback/producers` — per-producer accuracy.
@@ -395,6 +398,7 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `POST /api/memory/enable-embeddings` — build the FAISS vector store for the active native model.
 - `GET /api/memory/entities` — the entity set with inbound-link counts.
 - `POST /api/memory/entities` — declare an entity, then re-link the store.
+- `GET /api/memory/entities/proposals` — the accept queue (§7.1).
 - `POST /api/memory/entities/proposals` — accept or reject a proposed entity.
 - `GET /api/memory/entities/{entity_id}/backlinks` — what mentions this entity.
 - `GET /api/memory/episodic` — paginated list of episodic memories.
@@ -403,6 +407,8 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `GET /api/memory/events` — paginated audit trail.
 - `POST /api/memory/events/{event_id}/undo` — reverse a logged memory mutation.
 - `GET /api/memory/graph` — return all memory as nodes + edges for graph visualization.
+- `GET /api/memory/graph/entities` — the entity topology (§7.2).
+- `GET /api/memory/graph/export` — the entity graph as ONE self-contained HTML file (§7.2).
 - `POST /api/memory/graph/rebuild` — seed entities, then link every record.
 - `GET /api/memory/history` — recent daily summaries.
 - `PUT /api/memory/history` — recent daily summaries.
@@ -416,11 +422,15 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `PUT /api/memory/projects` — _(no summary)_
 - `POST /api/memory/promote` — promote repeated episodic patterns to semantic facts.
 - `GET /api/memory/recall` — deep on-demand recall for the agent.
+- `GET /api/memory/record-links` — one record's entity links (§7.1).
 - `GET /api/memory/semantic` — list all semantic memory entries.
 - `PUT /api/memory/semantic` — create/update a semantic entry.
 - `DELETE /api/memory/semantic/{key}` — tombstone a semantic entry.
 - `GET /api/memory/settings` — memory consolidation config.
 - `PUT /api/memory/settings` — memory consolidation config.
+- `GET /api/memory/slots` — every slot with its lines, budget and live size.
+- `POST /api/memory/slots/{name}/lines` — append one line.
+- `POST /api/memory/slots/{name}/lines/retire` — tombstone a line as the HUMAN.
 - `GET /api/memory/stats` — memory system statistics.
 - `GET /api/memory/vault` — the readable-vault status (mode, path, file count).
 - `POST /api/memory/vault/sync` — reconcile the vault against the store.
@@ -479,11 +489,14 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `GET /api/outbox` — list files in the outbox.
 - `POST /api/outbox/notify` — agent sent a file, notify the user.
 - `GET /api/outbox/{filename}` — download a file from the outbox.
-- `GET /api/packs/installed` — List installed packs with connector-resolution + setup state.
+- `GET /api/packs/bundled` — List the Domain OS packs shipped in this build (§4.1).
+- `POST /api/packs/bundled/{name}/install` — Build a shipped Domain OS pack and import it through the §3 pipeline.
+- `GET /api/packs/installed` — List installed packs with connector-resolution, roster + setup-binding state.
+- `POST /api/packs/one-link` — Import a one-link JSON document (§2.3/§4.4) through the same §3 pipeline.
+- `POST /api/packs/prompt-card` — Import a pasted prompt card (§4.3) — files a proposal, writes no entity.
+- `POST /api/packs/{name}/bindings` — Record one setup-interview answer (§3.4/§4.1) — the folder the pack will read.
 - `POST /api/packs/{name}/finish-setup` — Return a pack's re-runnable setup interview (the "Finish setup" chip).
-- `GET /api/portability/export` — download PersonalClaw state as zip.
-- `POST /api/portability/import` — upload and apply a PersonalClaw export zip.
-- `POST /api/portability/preview` — validate and preview a zip without applying.
+- `POST /api/packs/{name}/roster/deploy` — One-click team deploy: promote a pack's ``always`` roster tier (§4.2).
 - `GET /api/projects` — _(no summary)_
 - `POST /api/projects` — _(no summary)_
 - `POST /api/projects/import` — import a project archive (multipart `file`).

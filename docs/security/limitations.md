@@ -65,10 +65,42 @@ supply-chain scanner (quarantine → scan → consent → install, with `dangero
 terminal) is the control that vets what you install; the `network` flag is
 disclosure, not containment.
 
+## 3. App Python dependencies install into the venv the gateway runs from
+
+An app may declare `dependencies.pythonDependencies` in its manifest, and the
+installer pip-installs them into the **shared** virtualenv the gateway itself runs
+out of — there is no per-app site-packages. Core ships lean deliberately (heavy
+provider and ML libraries are not core dependencies), so this is how an app brings
+what it needs.
+
+**What is enforced:** an app may not re-pin a dependency core owns. Before anything
+is installed, `app_manager._reject_core_dependency_conflicts` refuses any declared
+requirement that names a core-declared dependency unless the version already
+installed satisfies it — so pip is never in a position to move a core dependency
+under the running gateway. The check is fail-closed: an unparseable requirement, or
+a core-owned name whose installed version cannot be read, denies rather than
+installs. Requirements for libraries core does not own are unaffected (that is 19 of
+the 20 first-party apps that declare dependencies; the provider SDKs like `openai`
+and `anthropic` are *extras*, not core dependencies).
+
+**What is not enforced:** the packages an app adds are still importable by
+everything in the process, and pip may still move a *transitive* dependency that
+core does not declare directly. Isolating app dependencies properly requires
+out-of-process providers — today an app's provider code is imported in-process, so
+there is no import boundary to scope a path to. That is a platform-seam change,
+recorded as such rather than approximated here.
+
+**What this means for you:** an installed app can add libraries to the gateway's
+environment, so install apps you trust — the supply-chain scanner (quarantine →
+scan → consent → install, with `dangerous` terminal) is the control that vets them.
+What an app cannot do is silently change the version of a library the gateway
+depends on.
+
 ## Why these are listed, not fixed
 
 Per the project's lifecycle discipline, a control *gap* discovered while writing
 documentation is recorded as a candidate for the security-hardening track — never
-patched inline in a docs change. Both items above have a named future direction
-(OS-level app isolation for #2; extending the hard rail to ACP protocol paths for
-#1). This page will shrink as those land.
+patched inline in a docs change. Every item above has a named future direction
+(extending the hard rail to ACP protocol paths for #1; OS-level app isolation for
+#2; out-of-process providers for the residual half of #3). This page will shrink as
+those land.

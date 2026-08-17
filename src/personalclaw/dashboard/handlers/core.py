@@ -498,6 +498,21 @@ def _bot_name_sanitizer(value: str) -> str:
     return _sanitize_bot_name(value)
 
 
+def _push_to_talk_chord_sanitizer(value: str) -> str:
+    """Normalize a push-to-talk accelerator at the WRITE boundary (DC-3 T3.1).
+
+    ``" Command + Shift + Space "`` and ``"Command+Shift+Space"`` are the same chord to
+    a user and different strings to `globalShortcut.register`. Collapsing the spacing
+    here means the value the shell is handed is byte-identical to the value stored and
+    to the value the Settings control redisplays — otherwise a chord round-trips as
+    "saved" while binding nothing.
+
+    Empty stays empty: `load()` turns that into the shipped default, which is the one
+    place that decision belongs.
+    """
+    return "+".join(part.strip() for part in value.split("+") if part.strip())
+
+
 def _scratchpad_path_sanitizer(value: str) -> str:
     """Canonicalize the watched-scratchpad path at the WRITE boundary.
 
@@ -574,6 +589,17 @@ _EDITABLE_CONFIG: dict[str, dict] = {
     "voice.duplex_mute_enabled": {"type": "bool"},
     "voice.clean_for_speech_enabled": {"type": "bool"},
     "voice.voice_disclaimer_enabled": {"type": "bool"},
+    # The desktop push-to-talk chord. An Electron accelerator string, so
+    # `max_len` and a whitespace normalise are all this boundary can usefully check:
+    # whether the chord is BINDABLE is a question only the shell can answer (another
+    # app may already own it), and it answers with a reason the Settings control
+    # renders. Normalising here keeps the stored value byte-identical to what the
+    # shell is asked to bind.
+    "voice.push_to_talk_chord": {
+        "type": "str",
+        "max_len": 64,
+        "sanitize": _push_to_talk_chord_sanitizer,
+    },
     "resilience.doctor_enabled": {"type": "bool"},
     "resilience.degraded_indicator": {"type": "bool"},
     "resilience.mid_turn_policy": {
@@ -650,6 +676,13 @@ _EDITABLE_CONFIG: dict[str, dict] = {
     # back on does not need a backfill.
     "memory.graph_topology_in_context": {"type": "bool"},
     "memory.holder_attribution": {"type": "bool"},
+    # The Slots block budget. Runtime-editable because
+    # it is read per session build, so a change takes effect on the next new session. The
+    # bounds mirror `memory_slots.SLOTS_BLOCK_MIN/HARD_MAX_CHARS`: the consumer clamps to the
+    # same range, so a value that got past this allowlist by another route still cannot widen
+    # the always-injected block. The per-slot caps are NOT here — which individual register is
+    # full is a per-class judgment fixed in code, not a number to tune from Settings.
+    "memory.slot_size_cap": {"type": "int", "min": 200, "max": 4000},
     "feedback.enabled": {"type": "bool"},
     "feedback.retire_threshold": {"type": "float", "min": 0.1, "max": 0.9},
     "feedback.min_n": {"type": "int", "min": 3, "max": 50},
@@ -812,6 +845,11 @@ _EDITABLE_CONFIG: dict[str, dict] = {
     "knowledge.consolidate_min_hours": {"type": "int", "min": 0, "max": 720},
     "knowledge.session_brief_max_tokens": {"type": "int", "min": 0, "max": 8000},
     "knowledge.conflict_model_pass": {"type": "bool"},
+    # The artifact→knowledge mirror's master switch. Live-editable deliberately — the
+    # listener reads it per artifact save, so turning it on backfills and turning it off stops
+    # new indexing without a restart. Nothing already indexed is removed by turning it off;
+    # that would delete search state on a settings toggle.
+    "knowledge.auto_ingest_artifacts": {"type": "bool"},
     # The owner-login knobs. Runtime-editable so turning login on
     # or off, or loosening a lockout you tripped, takes effect on the next request without
     # a restart. The PASSWORD is deliberately NOT here and never will be: a credential is
@@ -1144,6 +1182,18 @@ async def api_personalclaw_config_patch(request: web.Request) -> web.Response:
                         shutil.rmtree(d, ignore_errors=True)
         except Exception:
             logger.exception("Failed to apply orchestrator skill toggle")
+
+    # Live-apply LAN discovery: start or stop the mDNS advertiser to
+    # match the new value. Without this the toggle would be a control that needs a gateway
+    # restart to mean anything — and worse, the status route beside it would keep reporting
+    # the old reality while the switch read "on".
+    if path_key in ("companion.discovery_enabled", "companion.instance_name"):
+        try:
+            from personalclaw.companion import discovery as _discovery  # noqa: F811
+
+            _discovery.reconcile()
+        except Exception:
+            logger.exception("Failed to apply the LAN discovery setting")
 
     # Live-apply tool-output projection rules (TokenJuice OP6) so an edit takes effect
     # immediately (no restart) — mirrors the startup install into the projection engine.

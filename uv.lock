@@ -2409,7 +2409,7 @@ requires-dist = [
     { name = "isort", marker = "extra == 'dev'", specifier = ">=5" },
     { name = "jinja2", marker = "extra == 'eval'", specifier = ">=3.0" },
     { name = "keyring", marker = "extra == 'keychain'", specifier = ">=24" },
-    { name = "mcp", marker = "extra == 'mcp'", specifier = ">=1.2" },
+    { name = "mcp", marker = "extra == 'mcp'", specifier = ">=1.2,<2" },
     { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.5" },
     { name = "nh3", specifier = ">=0.2" },
     { name = "numpy", specifier = ">=1.21,<3" },

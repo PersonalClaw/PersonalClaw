@@ -252,12 +252,10 @@
       ]
     },
     "src/personalclaw/sdk/tool.py": {
-      "inert": 5,
+      "inert": 3,
       "surfaces": [
         "sdk_export:DEFAULT_TOOL_OUTPUT_CAP",
         "sdk_export:ProjectionRule",
-        "sdk_export:ToolDefinition",
-        "sdk_export:ToolResult",
         "sdk_export:project_and_retain"
       ]
     },
@@ -324,9 +322,9 @@
       "config": 0,
       "editable_config": 0,
       "enum": 10,
-      "sdk_export": 127,
+      "sdk_export": 125,
       "trigger_kind": 0
     },
-    "inert": 137
+    "inert": 135
   }
 }

@@ -168,9 +168,15 @@ def apply_retention(
     removed: list[str] = []
     freed = 0
     if not dry_run:
+        from personalclaw.durability.archive import sidecar_path
+
         for snapshot in prune:
             try:
                 snapshot.path.unlink()
+                # The manifest sidecar goes with its archive. An orphaned sidecar would
+                # accumulate forever and — worse — could be re-read as the manifest of a
+                # future snapshot that happened to reuse the name.
+                sidecar_path(snapshot.path).unlink(missing_ok=True)
                 removed.append(snapshot.name)
                 freed += snapshot.size
             except OSError:

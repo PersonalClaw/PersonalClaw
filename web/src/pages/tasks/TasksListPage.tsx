@@ -622,7 +622,13 @@ function TaskRow({ t, index, onOpen, onProject, selected, selecting, onToggleSel
       </button>
       <sm.icon size={20} className="shrink-0" style={{ color: sm.tone }} />
       <div className="flex-1 min-w-0">
-        <span className={`block truncate text-[0.9375rem] ${done ? 'text-on-surface-low line-through' : 'text-on-surface'}`} style={fvs(500)}>{t.title}</span>
+        {/* 🪤 THE TITLE IS THE ROW. Measured at 390px on ten real tasks: 254px of the 434px this one
+            needs — 1.7x — with no `title`, so the second half of what the user wrote was unreachable.
+            The row's accessible NAME already carries the whole title (cycle 598 put the status in it
+            too), so assistive tech was the only reader getting all of it. Same shape as tag names,
+            intent goals and conflict sources; a task title is simply the one that appears in four
+            places, so all three task-owned ones move together. */}
+        <span className={`block truncate text-[0.9375rem] ${done ? 'text-on-surface-low line-through' : 'text-on-surface'}`} style={fvs(500)} title={t.title}>{t.title}</span>
         <MetaLine t={t} onProject={onProject} />
       </div>
       {(t.labels?.length ?? 0) > 0 && <div className="hidden md:flex shrink-0 gap-1">{t.labels!.slice(0, 2).map((l) => <span key={l} className="rounded-pill bg-surface-high px-2 h-6 inline-flex items-center text-on-surface-var text-[0.75rem]">{l}</span>)}</div>}

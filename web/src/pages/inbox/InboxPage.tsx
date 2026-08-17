@@ -20,7 +20,7 @@ import { classMeta, confMeta, statusMeta, kindMeta, channelLabel, relPast, isOpe
 import { InboxDetail } from './InboxDetail'
 import { InboxSettingsPanel } from './InboxSettingsPanel'
 import { ProposalsLens } from './ProposalsLens'
-import { ContextMenu, type ContextMenuItem } from '../../ui/motion'
+import { ContextMenu, EntranceGroup, EntranceRegion, type ContextMenuItem } from '../../ui/motion'
 import { PageTitle } from '../../ui/PageTitle'
 
 // 'open' means unresolved — pending OR seen. It replaces the old 'pending' key, which
@@ -229,31 +229,41 @@ export function InboxPage({ query, setQuery, navigate }: Pick<RouteProps, 'query
         </>
       }
     >
-      {/* source health banner — the native agent→inbox source is ALWAYS active
-          (push), so the inbox is never "off"; poll providers are extra. */}
-      {status && (() => {
-        const pollActive = (status.sources ?? []).filter((s) => s.kind === 'poll' && s.active)
-        const hasPollProviders = (status.sources ?? []).some((s) => s.kind === 'poll')
-        return (
-          <div className="mx-auto w-full px-l" style={{ maxWidth: 'var(--content-width)' }}>
-            <div className="flex items-center gap-s rounded-md px-m py-2 text-[0.8125rem]" style={{ background: 'var(--color-surface-container)' }}>
-              <span className="relative flex size-2">
-                <span className="relative inline-flex size-2 rounded-pill" style={{ background: 'var(--color-ok)' }} />
-              </span>
-              <span className="text-on-surface-var">
-                Native source active — agents post here directly.
-                {pollActive.length > 0
-                  ? ` Also polling ${pollActive.map((s) => s.name).join(', ')}${health?.last_poll_at ? ` · last checked ${relPast(health.last_poll_at)}` : ''}.`
-                  : hasPollProviders ? ' Connect a message source (filesystem/Slack) to collect more.' : ''}
-              </span>
-            </div>
-          </div>
-        )
-      })()}
+      {/* The inbox body is one ENTRANCE GROUP (FLUID-MOTION §S3 T3.2): the source-health
+          banner lands, then the queue — context first, then the work, rather than the
+          two arriving in the same frame. This surface has exactly those two regions, and
+          the group sits above BOTH the `status` fetch and the items fetch, so the live
+          WebSocket pushes this page takes all day (`inbox_new_item`) re-render inside a
+          mounted group and never replay the entrance (see `ui/motion/Entrance`). */}
+      <EntranceGroup>
+        {/* source health banner — the native agent→inbox source is ALWAYS active
+            (push), so the inbox is never "off"; poll providers are extra. */}
+        {status && (() => {
+          const pollActive = (status.sources ?? []).filter((s) => s.kind === 'poll' && s.active)
+          const hasPollProviders = (status.sources ?? []).some((s) => s.kind === 'poll')
+          return (
+            <EntranceRegion className="mx-auto w-full px-l" style={{ maxWidth: 'var(--content-width)' }}>
+              <div className="flex items-center gap-s rounded-md px-m py-2 text-[0.8125rem]" style={{ background: 'var(--color-surface-container)' }}>
+                <span className="relative flex size-2">
+                  <span className="relative inline-flex size-2 rounded-pill" style={{ background: 'var(--color-ok)' }} />
+                </span>
+                <span className="text-on-surface-var">
+                  Native source active — agents post here directly.
+                  {pollActive.length > 0
+                    ? ` Also polling ${pollActive.map((s) => s.name).join(', ')}${health?.last_poll_at ? ` · last checked ${relPast(health.last_poll_at)}` : ''}.`
+                    : hasPollProviders ? ' Connect a message source (filesystem/Slack) to collect more.' : ''}
+                </span>
+              </div>
+            </EntranceRegion>
+          )
+        })()}
 
-      {/* `data-tour="inbox"` — the product tour's inbox stop points at the queue column
-          (ONBOARDING-UX T5.1). The wrapper, not the list, so an empty inbox still anchors. */}
-      <div data-tour="inbox" className="mx-auto px-l py-l" style={{ maxWidth: 'var(--content-width)' }}>
+        {/* `data-tour="inbox"` — the product tour's inbox stop points at the queue column
+            (ONBOARDING-UX T5.1). The wrapper, not the list, so an empty inbox still anchors.
+            The region wraps it rather than replacing it: the tour anchor and the centered
+            column stay one element, so neither the tour nor the layout learns about motion. */}
+        <EntranceRegion>
+        <div data-tour="inbox" className="mx-auto px-l py-l" style={{ maxWidth: 'var(--content-width)' }}>
         {/* Kind chips. Only rendered once MORE THAN ONE kind is present: on an inbox that
             only ever receives messages, a single "Messages" chip is a control with nothing
             to choose. Uses the canonical Segmented so it matches every other pick-one in
@@ -369,7 +379,9 @@ export function InboxPage({ query, setQuery, navigate }: Pick<RouteProps, 'query
             })}
           </div>
         )}
-      </div>
+        </div>
+        </EntranceRegion>
+      </EntranceGroup>
     </WorkbenchLayout>
   )
 }

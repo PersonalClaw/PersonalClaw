@@ -61,7 +61,8 @@ export function TasksWidget({ navigate }: RouteProps) {
           >
             <div className="flex items-center gap-s">
               <Circle size={13} className="shrink-0" style={{ color: PRIORITY_TONE[t.priority ?? 'low'] ?? 'var(--color-on-surface-low)' }} />
-              <span data-type="body-m" className="truncate text-on-surface">{t.title}</span>
+              {/* 266px of 434 at 390px — 1.6x. Same subject, same fix as the list row and the DAG node. */}
+              <span data-type="body-m" className="truncate text-on-surface" title={t.title}>{t.title}</span>
             </div>
           </WidgetRow>
         ))}

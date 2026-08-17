@@ -433,9 +433,16 @@ async def start_dashboard(
     # retention plan, and on-demand jobs. Restore is deliberately NOT here (see the
     # handler module docstring).
     app.router.add_get("/api/durability/status", handlers.api_durability_status)
-    app.router.add_get("/api/durability/snapshots", handlers.api_durability_snapshots)
     app.router.add_post("/api/durability/run", handlers.api_durability_run)
-    app.router.add_post("/api/durability/restore", handlers.api_durability_restore)
+    # The DSAR surface. These four RETIRED `/api/durability/snapshots`,
+    # `/api/durability/restore` and the whole `/api/portability/*` trio: one export
+    # endpoint, one import endpoint, one archive list, one restore.
+    app.router.add_post("/api/durability/export", handlers.api_durability_export)
+    app.router.add_post("/api/durability/import", handlers.api_durability_import)
+    app.router.add_get("/api/durability/archive", handlers.api_durability_archive)
+    app.router.add_post(
+        "/api/durability/archive/{id}/restore", handlers.api_durability_archive_restore
+    )
     # The Electron shell seam. The three POSTs are
     # loopback-only and credential-bearing (see handlers/desktop.py); the GETs are
     # the truth surface for Settings → Security and for apps holding a manifest
@@ -655,11 +662,25 @@ async def start_dashboard(
     app.router.add_get("/api/memory/entities", handlers.api_memory_entities)
     app.router.add_post("/api/memory/entities", handlers.api_memory_entity_create)
     app.router.add_post("/api/memory/entities/proposals", handlers.api_memory_entity_proposals)
+    app.router.add_get("/api/memory/entities/proposals", handlers.api_memory_entity_proposals_list)
     app.router.add_get(
         "/api/memory/entities/{entity_id}/backlinks", handlers.api_memory_entity_backlinks
     )
     app.router.add_post("/api/memory/graph/rebuild", handlers.api_memory_graph_rebuild)
     app.router.add_get("/api/memory/volunteer-stats", handlers.api_memory_volunteer_stats)
+    # The entity topology behind the graph canvas
+    # and its one-file export. Registered BEFORE the record-graph catch-alls above would
+    # matter: both live under /api/memory/graph, so the more specific paths are explicit.
+    app.router.add_get("/api/memory/graph/entities", handlers.api_memory_entity_graph)
+    app.router.add_get("/api/memory/record-links", handlers.api_memory_record_links)
+    app.router.add_get("/api/memory/graph/export", handlers.api_memory_graph_export)
+    # The Slots editor. GET lists every register (built-ins included, even
+    # unmaterialized); the writes ride MemoryService so the WAL/undo cover them.
+    app.router.add_get("/api/memory/slots", handlers.api_memory_slots)
+    app.router.add_post("/api/memory/slots/{name}/lines", handlers.api_memory_slot_append)
+    app.router.add_post(
+        "/api/memory/slots/{name}/lines/retire", handlers.api_memory_slot_line_retire
+    )
 
     # Crons, lessons, spawn, send-message, notifications
     # are registered via _register_mcp_routes() above.
@@ -718,6 +739,9 @@ async def start_dashboard(
     app.router.add_get("/api/config/personalclaw", handlers.api_personalclaw_config)
     app.router.add_put("/api/config/personalclaw", handlers.api_personalclaw_config)
     app.router.add_patch("/api/config/personalclaw", handlers.api_personalclaw_config_patch)
+    # Companion apps: whether the LAN advertiser is actually running,
+    # which is not the same question as whether the config flag is set.
+    app.router.add_get("/api/companion/discovery", handlers.api_companion_discovery)
     app.router.add_get("/api/incident", handlers.api_incident)
     app.router.add_post("/api/incident", handlers.api_incident)
     app.router.add_post("/api/incident/resume", handlers.api_incident_resume)
@@ -1005,9 +1029,6 @@ async def start_dashboard(
     app.router.add_post("/api/screenshot", handlers.api_screenshot)
 
     # Portability (export/import config+memory as zip)
-    app.router.add_get("/api/portability/export", handlers.api_portability_export)
-    app.router.add_post("/api/portability/import", handlers.api_portability_import)
-    app.router.add_post("/api/portability/preview", handlers.api_portability_preview)
 
     # Terminal (CLI panel)
     app.router.add_get("/api/ws/terminal/{session_id}", handlers.api_terminal_ws)
@@ -1480,6 +1501,23 @@ async def start_dashboard(
 
     app.on_cleanup.append(_app_backends_shutdown)
 
+    async def _discovery_shutdown(app_: web.Application) -> None:
+        """Send the mDNS goodbye and release the socket on gateway stop (COMPANION-APPS C3).
+
+        Without it, a restart leaves other devices caching this gateway's address for two
+        minutes pointing at a port nothing is listening on. Registered HERE rather than beside
+        the advertiser's start, because ``runner.setup()`` freezes ``on_cleanup`` before the
+        bind host — and therefore the start decision — is known. A no-op when nothing is
+        advertising, which is the default."""
+        try:
+            from personalclaw.companion import discovery
+
+            discovery.shutdown()
+        except Exception:
+            logger.debug("LAN discovery shutdown failed", exc_info=True)
+
+    app.on_cleanup.append(_discovery_shutdown)
+
     # Static files — React build under /assets, packaged static assets under /static
     if _DIST_DIR.is_dir():
         app.router.add_static(
@@ -1703,7 +1741,7 @@ async def start_dashboard(
     @web.middleware
     async def _dev_user_middleware(request: web.Request, handler: object) -> web.StreamResponse:
         # In AuthMode.NONE the token-auth middleware is skipped, but many handlers
-        # (terminal, loops, portability, core) authenticate by reading request["user"]
+        # (terminal, loops, durability, core) authenticate by reading request["user"]
         # which that middleware normally sets. Populate it so they don't 401.
         request["user"] = request.get("user") or "dev-local"
         # App identity must survive none-mode too: token_auth normally adopts the
@@ -1813,6 +1851,22 @@ async def start_dashboard(
         await runner.cleanup()
         raise
 
+    # Optional LAN discovery. STARTED here, after the site is up, because
+    # the bind host is an OUTCOME (env var, then local_only, then the AuthMode.NONE loopback
+    # invariant above) rather than a config value — the advertiser must be told where the
+    # gateway actually landed, not guess. Off unless companion.discovery_enabled; a
+    # loopback-only bind is a deliberate no-op with a log line naming the fix. The matching
+    # shutdown is registered in the app factory, since the app is frozen by runner.setup().
+    try:
+        from personalclaw.companion import discovery as _discovery
+
+        _discovery.set_gateway_bind(_bind_host, port)
+        _discovery.reconcile()
+    except Exception:
+        # Discovery is a convenience over a path that already works (type the URL). It may
+        # never be the reason a gateway fails to start.
+        logger.warning("LAN discovery failed to start", exc_info=True)
+
     # Fire background MCP probe at startup (non-blocking)
     asyncio.create_task(handlers._bg_mcp_probe())
 
@@ -1881,6 +1935,20 @@ async def start_dashboard(
         state._source_engine.start()
     except Exception:
         logger.warning("Source engine failed to start", exc_info=True)
+
+    # Artifacts as an indexed knowledge source. Separate
+    # try-block from the poll engine on purpose: the mirror is event-driven and enrolls no
+    # poll-capable provider, so a source-engine fault must not take the mirror down with it
+    # (and vice versa). Held on `state` so the change subscription is not garbage-collected.
+    try:
+        from personalclaw.knowledge import artifact_ingest
+
+        state._artifact_indexer = artifact_ingest.start(
+            state.knowledge_store,
+            enqueue=state.knowledge_ingest_queue().enqueue,
+        )
+    except Exception:
+        logger.warning("Artifact knowledge mirror failed to start", exc_info=True)
 
     # Start periodic flush loop for crash protection (saves dirty sessions every 5s)
     state.start_flush_loop()

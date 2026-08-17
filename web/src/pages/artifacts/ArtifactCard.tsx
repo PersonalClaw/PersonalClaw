@@ -1,4 +1,5 @@
 import { memo, useEffect, useMemo, useRef, useState } from 'react'
+import type { LucideIcon } from 'lucide-react'
 import { fvs } from '../../design/fontWeight'
 import { api, type Artifact } from '../../lib/api'
 import { artifactKindMeta, relTime } from '../files/fileMeta'
@@ -79,6 +80,28 @@ function Placeholder({ tone, label }: { tone: string; label: string }) {
   )
 }
 
+/** The preview for a binary artifact with no browser-renderable thumbnail — a Word
+ *  document, a spreadsheet, a deck, a pdf, a video: its KIND ICON, tinted with the
+ *  kind's own tone.
+ *
+ *  This is what the card showed a broken-image glyph for until now: an image element
+ *  was pointed at the /raw bytes of every `binary` kind, and a browser cannot decode
+ *  OOXML or a pdf as an image, so the grid rendered the failed-decode glyph — the least
+ *  informative pixel available — on top of a document that had generated perfectly.
+ *
+ *  `aria-hidden` + no text: the icon duplicates the kind label already in the card
+ *  footer, and the tile's accessible name is the artifact name (see `TileButton`). */
+function KindTile({ icon: Icon, tone }: { icon: LucideIcon; tone: string }) {
+  return (
+    <div className="flex h-full w-full items-center justify-center" aria-hidden>
+      <span className="grid size-14 place-items-center rounded-xl"
+        style={{ background: `color-mix(in srgb, ${tone} 12%, transparent)` }}>
+        <Icon size={26} style={{ color: tone }} />
+      </span>
+    </div>
+  )
+}
+
 /** The live iframe preview — srcdoc per kind, sandboxed + inert + scaled. */
 function LivePreview({ art, content, mode }: { art: Artifact; content: string; mode: 'dark' | 'light' }) {
   const srcdoc = useMemo(() => {
@@ -122,8 +145,14 @@ export const ArtifactCard = memo(function ArtifactCard({ art, onOpen }: {
 
   const ctype = useMemo(() => resolveContentType({ kind: art.kind }), [art.kind])
   const isIframeKind = previewsAsIframe(ctype)
-  const isImage = !!ctype.binary // image et al — content is a raw-URL ref, not text
-  const isExcerpt = !isIframeKind && !isImage // markdown/text/json → excerpt
+  // A binary artifact's `content` is a raw-URL ref, never bytes — so neither of these
+  // two fetches its body. They split on whether a BROWSER can draw those bytes as an
+  // image: only `image` can. This used to be one flag (`!!ctype.binary`), which pointed
+  // an image element at the /raw bytes of Word documents, spreadsheets, decks, pdfs and
+  // videos alike and rendered a broken-image glyph for every one of them.
+  const isThumbnail = ctype.id === 'image'
+  const isKindTile = !!ctype.binary && !isThumbnail
+  const isExcerpt = !isIframeKind && !isThumbnail && !isKindTile // markdown/text/json
 
   // Observe viewport proximity (one observer per card is fine at grid scale; the
   // 200-artifact perf proof measures this).
@@ -138,15 +167,17 @@ export const ArtifactCard = memo(function ArtifactCard({ art, onOpen }: {
   }, [])
 
   // Fetch content once near (list payloads are content-free by design — the card
-  // fetches its own body lazily; images skip this and use the raw URL directly).
+  // fetches its own body lazily). Binary kinds skip it entirely: their `content` is
+  // only a raw-URL ref, so a thumbnail goes straight to /raw and a kind tile needs
+  // nothing at all. Skipping it also keeps a stray ref string out of the excerpt path.
   useEffect(() => {
-    if (!near || isImage || content !== null) return
+    if (!near || isThumbnail || isKindTile || content !== null) return
     let alive = true
     api.artifact(art.slug)
       .then((a) => { if (alive) { setContent(a.content ?? ''); setDirty(!!a.live_dirty) } })
       .catch(() => { if (alive) setContent('') })
     return () => { alive = false }
-  }, [near, isImage, content, art.slug])
+  }, [near, isThumbnail, isKindTile, content, art.slug])
 
   // Acquire an LRU slot for iframe kinds once content is in; demote when evicted.
   useEffect(() => {
@@ -160,8 +191,12 @@ export const ArtifactCard = memo(function ArtifactCard({ art, onOpen }: {
   // Theme switch: srcdoc rebuilds via `mode` in LivePreview's memo — nothing to do here.
 
   const preview = (() => {
+    // The kind tile is FINAL and needs neither viewport proximity nor a fetch, so it
+    // renders ahead of the `near` gate: there is nothing better arriving later, and
+    // swapping a label pill for an icon on scroll would be motion with no meaning.
+    if (isKindTile) return <KindTile icon={km.icon} tone={km.tone} />
     if (!near) return <Placeholder tone={km.tone} label={km.label} />
-    if (isImage) {
+    if (isThumbnail) {
       return <img src={`/api/artifacts/${encodeURIComponent(art.slug)}/raw`} alt={art.name} loading="lazy" className="h-full w-full object-cover" />
     }
     if (content === null) return <Placeholder tone={km.tone} label={km.label} />

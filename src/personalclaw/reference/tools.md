@@ -1640,6 +1640,29 @@ Get the full documentation for one ui/ component (props with types + whether req
 }
 ```
 
+### `ui_list`
+
+List the whole ui/ design-system catalog by name — every component (with a one-line description) and/or every design token. Use this first when you don't yet know what the kit contains: ui_search needs a query, so listing is what tells you a primitive exists. Follow up with ui_get(name) for full props + best practices.
+
+**Response type:** `ui.list.catalog`
+
+**Parameters:**
+- `kind` (string, optional) — What to list: 'components' (default), 'tokens', or 'all' for both.
+
+**Example — See every component in the kit before building a page:**
+
+```json
+{}
+```
+
+**Example — List the design tokens instead of the components:**
+
+```json
+{
+  "kind": "tokens"
+}
+```
+
 ### `ui_search`
 
 Search the web/src/ui design-system kit (components + design tokens) by keyword. Returns brief hits — name, kind, one-line description — so you can find the right primitive to reach for instead of hand-rolling markup. Follow up with ui_get(name) for the full props + best-practices of any hit.
