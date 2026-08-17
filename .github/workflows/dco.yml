@@ -107,7 +107,7 @@ jobs:
       # is easy to miss; contributors need the remediation in the PR conversation.
       - name: Explain how to fix DCO
         if: failure() && steps.verify.outputs.unsigned != ''
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         with:
           script: |
             const marker = '<!-- dco-help -->';
