@@ -18,7 +18,7 @@ Each atom below executes start-to-finish in one go. If an atom lists dependencie
 | `AP-6` | ⬜ | Inbound skill-catalog importer (CatalogMarketplace via install_guarded chokepoint) | `AP-3` | packs/catalog_marketplace.py CatalogMarketplace(SkillsMarketplace) registers each configured catalog (packs.skill_catalogs) on get_default_skills_registry at COMMUNITY tier; fetch() pulls files via net.fetch under the CONNECTOR egress profile returning SkillDetail so install_guarded does quarantine/scan/commit/lock; installing a catalog skill produces a standard .pclaw-lock.json and passes verify_skill_integrity (zero chokepoint bypass); Skills store gains a source filter + per-source counts; a large index browses client-side without entering the agent budget until install. |
 | `AP-5` | ⬜ | Outbound multi-tool export (ExternalFormat + 3 renderers + byte-identical golden tests) | `AP-1` | packs/external_formats.py ExternalFormat(name,installKind,dest,render) contract + Claude Code agents / Cursor rules / SKILL.md renderers export a PersonalClaw agent into a ~/.claude/agents/<slug>.md that Claude Code actually loads; a per-format golden-file test proves byte-identical rendering across runs; §2.2 content redaction runs on rendered output; export lands in a user-chosen directory only after explicit dest confirmation. |
 | `AP-6` | ✅ | Inbound skill-catalog importer (CatalogMarketplace via install_guarded chokepoint) | `AP-3` | packs/catalog_marketplace.py CatalogMarketplace(SkillsMarketplace) registers each configured catalog (packs.skill_catalogs) on get_default_skills_registry at COMMUNITY tier; fetch() pulls files via net.fetch under the CONNECTOR egress profile returning SkillDetail so install_guarded does quarantine/scan/commit/lock; installing a catalog skill produces a standard .pclaw-lock.json and passes verify_skill_integrity (zero chokepoint bypass); Skills store gains a source filter + per-source counts; a large index browses client-side without entering the agent budget until install. |
-| `AP-7` | ⬜ | Project-fingerprint auto-surfacing + pack update flow + pack store FE + validation sweep | `AP-3`, `AP-4` | packs/fingerprint.py zero-LLM scanner over Project.workspace_dir matches declared fingerprints on project-create and on-demand only; a Terraform-shaped dir surfaces a propose-only pack card with confidence + the §3.1 inspect report; rejecting once is remembered per (project,pack) and never re-nags; packs.fingerprint_enabled=false stops scanning entirely; pack update overwrites only pack_owned components and skips computedHash-drifted user-edited copies with a visible drift note; pack store/detail FE ships and the export→wipe→import round-trip validation sweep on a second PERSONALCLAW_HOME passes. |
+| `AP-7` | ✅ | Project-fingerprint auto-surfacing + pack update flow + pack store FE + validation sweep | `AP-3`, `AP-4` | packs/fingerprint.py zero-LLM scanner over Project.workspace_dir matches declared fingerprints on project-create and on-demand only; a Terraform-shaped dir surfaces a propose-only pack card with confidence + the §3.1 inspect report; rejecting once is remembered per (project,pack) and never re-nags; packs.fingerprint_enabled=false stops scanning entirely; pack update overwrites only pack_owned components and skips computedHash-drifted user-edited copies with a visible drift note; pack store/detail FE ships and the export→wipe→import round-trip validation sweep on a second PERSONALCLAW_HOME passes. |
 
 ## Atom scopes
 
@@ -141,7 +141,36 @@ stays capped at `limit`. 15 tests in `tests/test_packs_catalog_marketplace.py`.
 
 ### `AP-7` — Project-fingerprint auto-surfacing + pack update flow + pack store FE + validation sweep
 
-**Status:** todo
+**Status:** done
+
+**DONE.** `packs/fingerprint.py` is the deterministic scanner (sorted walk → glob match → literal
+substring signals inside only the files a glob selected), and every negative property in the
+done_when is a mechanism rather than prose. **Zero-LLM** is asserted twice: an AST sweep proves the
+module imports no sampling/provider/model seam at all, and a scan with
+`guardrails.audit.record_attempt` wired to raise records zero attempts (the module-level
+`ModelCallGuard` audit sink every guarded call funnels through). **On-create/on-demand only** is a
+typed refusal — `scan_project(reason=...)` accepts exactly `SCAN_REASONS` and raises otherwise, so a
+timer would have to invent a reason name and fail — plus a call-site ratchet asserting the only two
+callers are `api_pack_proposals` and `_fingerprint_proposals`, scoped to the enclosing FUNCTION (a
+file-scoped assertion would have let a scan added to `api_projects_get` pass). **Propose-only:** a
+full scan with inspect reports leaves the home unchanged except its own SEL row, which is asserted
+positively so "no writes" can't be met by an inspect that stopped auditing.
+
+`packs/update.py` owns §1. Install now stamps a `{source, computedHash, path}` lock per component
+(`InstalledPack.component_locks`) plus the installed `pack_owned` patterns; an update re-derives one
+digest per component — one algorithm for a file and a directory alike, so a skill and a template
+cannot drift into two notions of "changed". Decisions are `overwrite` /
+`skip_not_pack_owned` / `skip_drift` / `skip_unverifiable`, and a skipped component KEEPS its
+original lock so a drifted copy still reads as drifted next time instead of being retroactively
+blessed. Ownership is decided against the patterns the **installed** pack declared, so a new version
+cannot widen its own ownership to acquire the right to clobber a file the user lives in.
+
+Three deliberate calls, all recorded as DEVIATIONs in the plan's execution log: the new bundled
+`infra-ops` pack carries the §7 Terraform fingerprint (a proposal a user cannot act on is not a
+proposal); `_build_plan(in_place=True)` turns OFF fresh-id remapping for updates only (on an update
+the colliding entity IS the pack's own previous copy, so remapping would report success while
+installing a parallel component); and the propose-only card ships on the pack-store surface
+(Settings → Packs), not the project hub.
 
 §7 Project-Fingerprint Auto-Surfacing (amendment d, second half); §1 pack_owned update flow; §9 fingerprint_rejections store; pack store/detail FE. Session 6. Success criteria 7, 8.
 

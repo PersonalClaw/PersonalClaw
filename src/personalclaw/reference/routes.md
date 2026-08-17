@@ -494,9 +494,12 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `GET /api/packs/installed` — List installed packs with connector-resolution, roster + setup-binding state.
 - `POST /api/packs/one-link` — Import a one-link JSON document (§2.3/§4.4) through the same §3 pipeline.
 - `POST /api/packs/prompt-card` — Import a pasted prompt card (§4.3) — files a proposal, writes no entity.
+- `GET /api/packs/proposals` — The propose-only fingerprint cards (§7) — an ON-DEMAND scan. Writes nothing.
+- `POST /api/packs/proposals/reject` — Remember that this project's user does not want this pack — the never-re-nag write (§7).
 - `POST /api/packs/{name}/bindings` — Record one setup-interview answer (§3.4/§4.1) — the folder the pack will read.
 - `POST /api/packs/{name}/finish-setup` — Return a pack's re-runnable setup interview (the "Finish setup" chip).
 - `POST /api/packs/{name}/roster/deploy` — One-click team deploy: promote a pack's ``always`` roster tier (§4.2).
+- `POST /api/packs/{name}/update` — The §1 ``pack_owned`` update flow. DRY-RUN unless ``confirm`` is true.
 - `GET /api/projects` — _(no summary)_
 - `POST /api/projects` — _(no summary)_
 - `POST /api/projects/import` — import a project archive (multipart `file`).
