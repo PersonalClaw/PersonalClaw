@@ -16,10 +16,14 @@ pre-existing single-file `sandbox.py`, unchanged since v0.1.0), no lima/docker t
 dependency-free, and the amendment's own words are that "an inaccurate security claim is a live
 defect": `docs/architecture/security.md` still lacks the what-the-sandbox-does-and-does-not-do
 section, and `personalclaw.dev`'s security page still says "Bounded capabilities" with no
-credential-hiding-vs-confinement qualification. Of the amendment's other rows, **D1** (app env
+credential-hiding-vs-confinement qualification. The amendment's other rows are DONE: **D1** (app env
 inheritance) and **D2** (the declaration-only `network` permission's advisory marking) landed
-2026-08-13; **D3** (the shared-venv pip install) is BLOCKED as an owner-scope decision and **VD** is
-still open — see the `## Execution log`.
+2026-08-13; **D3** and **VD** landed 2026-08-16, closing atom `EI-12`. D3 shipped **re-scoped** — an
+admission refusal (an app may not re-pin a dependency core owns) rather than the app-scoped isolation
+the row proposed, because a census found ZERO of 44 apps have both a backend and declared
+`pythonDependencies`, so the proposed mechanism had a zero-app population. Isolating the *in-process*
+providers, where the real shadowing risk lives, remains the owner-scope seam decision recorded BLOCKED
+on 2026-08-13. See the `## Execution log` DEVIATION.
 
 ---
 
@@ -643,3 +647,77 @@ D0 is documentation and should land immediately — an inaccurate security claim
   planted secret … is absent from an app backend's env" ✅, "every first-party app still boots" ✅, "the
   Store consent UI's network claim matches enforcement reality" ✅; the per-app dependency clause and the
   VD sweep remain open.
+- [2026-08-16][EI-12 D3] **DEVIATION — shipped as an admission refusal, not app-scoped isolation, and
+  the census is why.** D3's row says "install an app's `pythonDependencies` to an app-scoped target and
+  launch **its backend** against it". Censused all 44 first-party manifests through the real parse path
+  before designing: **20 declare `pythonDependencies`, 2 declare a backend, and the two sets are
+  disjoint** — `growth` and `minutes` (the only backend-having apps) declare zero deps, and all 20
+  dep-declaring apps are in-process providers with no backend. So the prescribed mechanism has a
+  **zero-app population**: a backend-scoped `PYTHONPATH` would have isolated nothing while the actual
+  shadowing path — pip resolving into the shared venv the gateway imports from — stayed open. Building it
+  would have satisfied the row and shipped an inert control. What shipped instead attacks the property
+  the atom asks for at the only chokepoint that exists without redefining the provider seam:
+  `app_manager._reject_core_dependency_conflicts` refuses, **before pip is spawned**, any declared
+  requirement whose canonical name is a **core-declared** dependency unless the currently-installed
+  version already satisfies it — so pip is never in a position to move a core dependency. That rule is
+  exactly "the install moves nothing of the gateway's", and it is deliberately stricter than "stay inside
+  core's declared range": a pin *above* the installed version still sits under core's ceiling but would
+  move numpy under a live process, so it is refused too. The out-of-process-provider isolation half
+  remains the owner-scope seam decision recorded BLOCKED on 2026-08-13; it was NOT re-litigated here.
+- [2026-08-16][EI-12 D3] **Fail-closed, with the blast radius measured rather than assumed.** Two
+  can't-prove-it cases deny instead of installing: an unparseable requirement specifier (and
+  `AppManifest.validate()` does **not** vet these, so garbage genuinely reaches the installer), and a
+  core-owned name whose installed version cannot be read (`pysqlite3-binary` is core-declared but
+  linux/x86_64-marked, so it is absent elsewhere). Blast radius of the whole guard is the *collision set*
+  only: extras are excluded **by `extra ==` marker**, not by a name list, and that exclusion is
+  load-bearing — `openai`, `anthropic`, `boto3`, `slack-sdk`, `faster-whisper`, `sentence-transformers`,
+  `piper-tts`, `huggingface-hub`, `faiss-cpu` are ALL extras in core's metadata, and 19 of the 20
+  dep-declaring apps pin exactly those. Falsified: deleting the marker filter flips core from 22 to 47
+  requirements, makes `openai` "core", and reds
+  `test_extras_are_not_core_so_provider_apps_stay_installable` with *"openai became a CORE dep — 
+  dep-declaring apps now refuse"*. The one real first-party collision is `diarization-onnx`'s
+  `numpy>=1.24` vs core's `numpy>=1.21,<3`; installed 1.26.4 satisfies it, so it is ALLOWED — that
+  allowed case is the rail's vacuity floor, proving the guard evaluates real input instead of matching
+  nothing.
+- [2026-08-16][EI-12 D3] **Falsified before trusting the test.** Removing the one guard call from
+  `_install_python_deps` reds the conflict test with *"AssertionError: pip was spawned despite a refused
+  pin: ['uv', 'pip', 'install', '--python', '…/.venv/bin/python', 'numpy>1.26.4']"* — i.e. the mutant's
+  own output is the record of the command the installer would otherwise run against the gateway's own
+  venv. D1's filter was independently re-falsified: replacing `build_child_env(site="app-backend")` with
+  `dict(os.environ)` reds three tests, headline *"assert 'ACME_CLOUD_API_KEY' not in {…}"*.
+- [2026-08-16][EI-12 VD] **The validation-as-a-user sweep — what is real vs test-only.** Isolated home,
+  port 10155, gateway booted from the worktree (`CORE FROM:` printed to confirm) with two secrets planted
+  in its OWN environment. **Real legs:** installed `minutes` via `POST /api/apps` (ok=true); read the
+  backend process env from OUTSIDE with `ps eww` — **zero** hits for either planted name or value, while
+  `ps eww` on the gateway PID prints both verbatim, and the same read shows the backend DOES carry
+  `PORT`/`PERSONALCLAW_APP_NAME`/`PERSONALCLAW_APP_DATA_DIR`/`HOME`/`PATH` (so the absence is a real
+  filter, not a failed read); the app WORKS — `/health` returns `{"ok": true}` and a list → create →
+  read-back round trip through the gateway proxy `/apps/minutes/api/meetings` returns the created
+  meeting; an app pinning `numpy<1.21` refused over real HTTP with the version-specific reason, `numpy`
+  reporting 1.26.4 before and after. **Test-only / code-level:** the D2 consent-UI advisory was verified
+  by reading the shipped component and the wire payload (`minutes` sends no `network` key, so the
+  always-rendered row reads "not declared" for an app that really does own an unconfined OS process) plus
+  D2's existing render tests — **not** driven in a browser this session.
+- [2026-08-16][EI-12 VD] **Enforcement reality re-measured BEFORE relying on D2's copy.** App backends
+  are wrapped only by `spawn_shim_argv(cmd, PROFILE_TOOL)` (the PHF-1 resource ceiling) and never by
+  `sandbox.wrap_argv`; `wrap_argv`'s own seatbelt profile is `(allow default)` plus file-read/write deny
+  rules with no `(deny network*)`, the Linux launcher unshares only `CLONE_NEWUSER|CLONE_NEWNS` with
+  `CLONE_NEWNET` nowhere in the tree, and the child-env allowlist deliberately passes
+  `HTTP_PROXY`/`HTTPS_PROXY` through so children CAN reach the network. So "PersonalClaw does not confine
+  an app's outbound traffic" is literally true and needed no copy change — D2's decision holds on
+  re-measurement.
+- [2026-08-16][EI-12] **DISCOVERY (recorded, not built).** The benign half of the drive is itself the
+  residual limitation: installing an app declaring `cowsay>=1.0` really did add `cowsay` to the shared
+  venv (via `uv`, invisible to `pip show` — removed afterwards). An app still cannot *move* a core
+  dependency, but it can *add* packages importable by the whole process, and pip may still move a
+  transitive dependency core does not declare directly. Documented as `docs/security/limitations.md` §3
+  rather than approximated; the fix is out-of-process providers.
+- [2026-08-16][EI-12] **A test-quality caveat worth not overclaiming.** Under the extras-filter mutation
+  the 20-app regression table still PASSED, because those packages happen to be installed at satisfying
+  versions in this venv. The real ratchet for the 19-of-20 population is
+  `test_extras_are_not_core_so_provider_apps_stay_installable`, not the app table.
+- [2026-08-16][EI-12] **`EI-12` flipped to done.** All five done-when clauses hold: planted secret absent
+  (test + live `ps eww`), consent-UI network claim matches re-measured enforcement, a conflicting core pin
+  cannot affect the gateway (test + live HTTP, numpy unchanged), every first-party app still boots (all 20
+  dep declarations pass the guard by test; 24 declare no deps; `minutes` booted healthy live), VD holds as
+  scoped above. D0 (the website/security.md docs row) is a SEPARATE row and remains open — untouched here.
