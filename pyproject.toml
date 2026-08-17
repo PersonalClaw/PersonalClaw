@@ -147,7 +147,7 @@ stt   = ["faster-whisper>=1.0"]    # substrate for apps/faster-whisper (in-proce
 tts   = ["huggingface-hub>=0.23", "piper-tts>=1.2"]  # substrate for apps/piper-tts: voice downloads (ONNX from rhasspy/piper-voices) + the piper synthesis runtime (provides the `piper` binary)
 eval  = ["jinja2>=3.0"]
 embeddings = ["sentence-transformers>=3.0", "faiss-cpu>=1.7"]  # substrate for apps/sentence-transformers (local embeddings). numpy is core (native-vector-memory); faiss stays here — excluded from the desktop bundle, degrades to SQLite-only.
-mcp   = ["mcp>=1.2,<2"]            # external MCP servers in the native agent loop (stdio + SSE/HTTP).
+mcp   = ["mcp>=1.2,<3"]            # external MCP servers in the native agent loop (stdio + SSE/HTTP).
                                    # Upper bound is load-bearing: mcp 2.0.0 renamed
                                    # `mcp.client.streamable_http.streamablehttp_client`, which
                                    # mcp_client.py imports, so an unbounded spec makes a FRESH
