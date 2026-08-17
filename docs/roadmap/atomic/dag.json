@@ -6310,7 +6310,7 @@
         {
           "id": "LV-6",
           "title": "S4 benchmark protocol doc",
-          "status": "todo",
+          "status": "done",
           "scope": "Session 4 T4.1 (docs/roadmap/research/learning-benchmark-protocol.md: task-set schema, paired skills-on/off design with fresh homes + fixed model/config/seed, metrics {completion, tool_calls, wall_ms}, exclusions, publish-regardless honesty rule)",
           "done_when": "protocol doc is reviewable before any runs and has owner sign-off (owner task 2); owner-curated ~10-task set frozen (owner task 1)",
           "deps": []
@@ -7705,8 +7705,8 @@
         "plan": "LV"
       },
       {
-        "id": "LV-6",
-        "title": "S4 benchmark protocol doc",
+        "id": "LV-7",
+        "title": "S4 benchmark implementation as an eval-substrate study + publish",
         "plan": "LV"
       },
       {
@@ -10158,9 +10158,9 @@
         "code": "LV",
         "plan": "LEARNING-VISIBILITY",
         "total_atoms": 7,
-        "done": 0,
+        "done": 1,
         "in_progress": 0,
-        "todo": 7,
+        "todo": 6,
         "blocked": 0
       },
       {
