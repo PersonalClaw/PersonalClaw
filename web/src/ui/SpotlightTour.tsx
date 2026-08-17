@@ -42,8 +42,10 @@ interface Box { top: number; left: number; width: number; height: number }
  *  It is a modal dialog and behaves like one, because the page underneath is dimmed:
  *  focus is trapped in the card and re-taken on every step (a navigating tour lands on
  *  surfaces that autofocus their own fields — Settings' search does — and without this
- *  the trap would be left holding nothing). Escape exits from any step, and so does a
- *  click anywhere outside the card: the whole overlay sits on ONE transparent shield, so
+ *  the trap would be left holding nothing). Escape exits from any step — but only while the
+ *  tour holds focus, so a layer opened ABOVE it (Cmd+K's palette is `z-[200]` against this
+ *  `z-[70]`) closes on the first press instead of the tour underneath. A click anywhere
+ *  outside the card exits too: the whole overlay sits on ONE transparent shield, so
  *  that click ends the tour instead of silently actioning a control the dim layer was
  *  covering. Nothing in the tour navigates or writes on its own — the host owns both.
  *
@@ -70,18 +72,34 @@ export function SpotlightTour({ steps, index, label, onIndex, onExit }: {
   const [anchorEl, setAnchorEl] = useState<HTMLElement | null>(null)
   const [box, setBox] = useState<Box | null>(null)
 
-  // Escape exits from any stop. Bound on `document` and consumed, which is this app's
-  // single-layer convention (ui/Popover documents it): the tour is the topmost layer, so
-  // one press must not also close a panel underneath it.
+  // Escape exits from any stop, consumed so one press closes one layer — this app's
+  // single-layer convention (ui/Popover documents it).
+  //
+  // 🔴 BUT ONLY WHEN THE TOUR HOLDS FOCUS, and that guard is the whole point. The original
+  // reasoning here was "the tour is the topmost layer", which is false: this overlay is
+  // `z-[70]` and `app/CommandPalette` is `z-[200]`, so Cmd+K opens a palette ABOVE the tour
+  // and takes focus — by design, because guidance never gates. The tour binds on `document`
+  // and the palette on `window`, and `document` fires FIRST in the bubble path, so consuming
+  // unconditionally swallowed the key before the focused layer ever saw it. Measured: with the
+  // palette open and focused, one Escape closed the TOUR and left the palette up and focused;
+  // a second closed the palette. Without the tour, that same press closes the palette.
+  //
+  // Deferring when focus sits in another layer restores the ordering with no layer registry:
+  // whoever has focus owns the key. Focus on `<body>` still counts as ours — the trap takes
+  // focus on mount and re-takes it on every stop, so an unfocused document means nothing else
+  // has claimed it, and the tour must stay dismissable.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== 'Escape') return
+      const active = document.activeElement
+      const ours = !active || active === document.body || !!trapRef.current?.contains(active)
+      if (!ours) return
       e.stopPropagation()
       onExit()
     }
     document.addEventListener('keydown', onKey)
     return () => document.removeEventListener('keydown', onKey)
-  }, [onExit])
+  }, [onExit, trapRef])
 
   // Resolve this stop's anchor. `find` re-runs on a bounded schedule because the host
   // may have just navigated: the surface is code-split, so the element does not exist
