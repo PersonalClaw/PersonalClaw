@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { ARTIFACT_KINDS, artifactKindMeta } from './fileMeta'
+import { ARTIFACT_KINDS, UNKNOWN_ARTIFACT_KIND, artifactKindMeta } from './fileMeta'
 
 /** The backend's ALLOWED_KINDS, read from the Python source rather than duplicated here.
  *
@@ -45,8 +45,22 @@ describe('artifact kinds', () => {
     }
   })
 
-  it('still falls back for a genuinely unknown kind', () => {
-    // The fallback is fine as a last resort — it just must not be reachable for real kinds.
-    expect(artifactKindMeta('not-a-real-kind').key).toBe(ARTIFACT_KINDS[0].key)
+  it('says "unknown" for a genuinely unknown kind instead of impersonating one', () => {
+    // The two rails above keep the closed set closed at TEST time. This is what the
+    // runtime does if it ever drifts anyway — and the point is that it must not answer
+    // with a REAL kind. Returning `ARTIFACT_KINDS[0]` is what made the original bug
+    // silent: a docx confidently labelled "Widget" is indistinguishable from a correct
+    // answer, so nothing anywhere reported a problem for four releases.
+    const meta = artifactKindMeta('not-a-real-kind')
+    expect(meta).toBe(UNKNOWN_ARTIFACT_KIND)
+    expect(meta.key, 'an unknown kind must match no registered kind').toBe('')
+    expect(ARTIFACT_KINDS.map((k) => k.key)).not.toContain(meta.key)
+    expect(meta.label).not.toBe(ARTIFACT_KINDS[0].label)
+  })
+
+  it('offers the unknown fallback nowhere a user can pick it', () => {
+    // The library toolbar's kind filter maps ARTIFACT_KINDS directly, so a fallback
+    // entry inside that table would become a selectable filter matching nothing.
+    expect(ARTIFACT_KINDS).not.toContain(UNKNOWN_ARTIFACT_KIND)
   })
 })

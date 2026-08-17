@@ -491,4 +491,70 @@ allowlist; and a Settings control. Off by default while fidelity is proving itse
 
 ## Execution log
 
-_(empty — no session has run yet)_
+**2026-08-16 — `DFE-1` DONE** (Session 0, T0.1–T0.3 + Design bullet S0).
+
+**DISCOVERY: T0.1 had already landed, and the plan's premise for it is stale.** §Reality
+check item 5 says `ARTIFACT_KINDS` and the `ArtifactKind` union "both omit
+docx/xlsx/pptx/pdf/csv/video". They have not since **#127** (2026-07-31,
+`fix(artifacts): label generated documents by their real kind, not "Widget"`), which
+registered all six, added `artifactKinds.test.ts` (both directions against the backend's
+`ALLOWED_KINDS`, so the closed set cannot drift silently again), and thereby made the
+kinds filterable — `ArtifactsSection` maps `ARTIFACT_KINDS` straight into the kind
+`Segmented`, so presence in the table *is* filterability. T0.2 and T0.3 were both still
+open exactly as described. No kind was added here; a `segmentedOverflow` ratchet pins
+`ARTIFACT_KINDS` at 16 entries, and adding one would have reded it.
+
+**DEVIATION (label wording).** done_when asks for the docx label to read
+`'Word document'`; it reads **`Word`**. Left as-is deliberately: the kind strip already
+renders 17 tabs at a measured 1152px (`segmentedOverflow.test.ts`), the neighbouring
+labels are all short (`PDF`, `CSV`, `Spreadsheet`, `Slides`, `Video`), and lengthening one
+buys nothing a user needs. The substantive clause — it names the real format and is never
+`Widget` — is asserted (`artifactSurface.test.tsx`) and was confirmed in the browser.
+
+**T0.2 — cards.** `ArtifactCard` had ONE flag (`isImage = !!ctype.binary`) doing two
+jobs: "content is a URL ref, skip the body fetch" and "draw it as a thumbnail". Every
+binary kind therefore got an image element pointed at its `/raw` bytes, and a browser
+cannot decode OOXML, a pdf or a video as an image — so docx/xlsx/pptx/pdf/video all
+rendered the failed-decode glyph. Split three ways (`isThumbnail` = the `image` type
+alone · `isKindTile` = every other binary · `isExcerpt` = text), and a new `KindTile`
+renders the kind's own icon and tone. **The narrowing is the trap**: `isThumbnail` alone
+would have sent office artifacts down the *excerpt* path, printing the literal string
+`/api/artifacts/<slug>/raw` as if it were the document's text — so the kind-tile branch
+also skips the fetch, and a rail asserts the fetch count.
+
+**T0.3 — pdf.** `PdfFilePreview` resolved from `path` alone and `PdfPreview` always ran
+that path through `api.fileRawUrl`, so a generated pdf — which has no path — asked the
+FILES endpoint for the empty path. Measured live: the old URL shape
+(`/api/file-raw?path=&resolve=1`) returns **400**. `PdfPreview` now takes `{path?, src?}`,
+the same contract `ImagePreview` already had for exactly this reason, and
+`PdfFilePreview` resolves artifact-ref-or-path. Both halves are asserted; the FILE half is
+the regression rail, since it was the only half that ever worked.
+
+**Closed-set decision (the "Widget" class, not just its instance).** `artifactKindMeta`
+fell back to `ARTIFACT_KINDS[0]` = `widget`, so an unmapped kind *impersonated a real
+one* — which is why the original defect was silent for four releases. It now returns a
+separate `UNKNOWN_ARTIFACT_KIND` (`key: ''`, label `Unknown kind`) that is deliberately
+not a table entry, so it can never appear as a filter option and can never be mistaken
+for a registered kind. The closed set stays enforced at test time; this only changes what
+the runtime *says* when it is wrong. Confirmed by mutation: deleting the `docx` row now
+fails with `expected 'Unknown kind' to match /word/i` instead of quietly reading
+"Widget".
+
+**V0 gate.** `make lint` clean (mypy 886 files) · full web suite **315 files / 3259
+tests** green (includes the `segmentedOverflow` and `consistencyAudit` ratchets) ·
+`typecheck` + `build` green · 9/9 `test_roadmap_dag_derived.py`. Three falsifications, each
+confirmed applied before running: dropping the `docx` row → 4 reds; restoring
+`isThumbnail = !!ctype.binary` → 5 reds on the icon rail while the image-thumbnail and
+excerpt rails stayed green (so the rail discriminates); dropping `path` from
+`PdfFilePreview` → only the pdf-FILE rail reds.
+
+**As-a-user (port 10177, isolated home).** Generated a real docx/xlsx/pptx/pdf plus a png
+and a markdown artifact. Seen with my own eyes: the docx card and viewer read
+**"Word · v1"** (never "Widget"); the toolbar carries Word/Spreadsheet/Slides/PDF/Video
+tabs and clicking **Word** filters to `?kind=docx` with one result; the office/pdf cards
+show tinted kind icons with **zero** image elements while the png still thumbnails from
+`/raw`; the markdown card still shows its excerpt. **Not seen as pixels:** the pdf's
+inline page render — this automation profile will not embed a pdf in an `<object>`, and a
+pdf FILE shows the identical browser fallback in the same session, so the limit is
+environmental. What *was* verified in-browser for both sources: the object's `data` is the
+correct URL and returns `200 application/pdf`.
