@@ -4,12 +4,15 @@
  *  types are added. We WRAP the proven renderers (Markdown, the sandboxed widget
  *  iframe, the React+Babel frame, the file previews), never reinvent them. */
 import { memo, useEffect, useMemo, useRef, useState } from 'react'
-import { Download, ShieldAlert } from 'lucide-react'
+import { Download, ShieldAlert, Sliders } from 'lucide-react'
 import type { PreviewProps } from './contentTypes'
 import { Markdown } from '../Markdown'
+import { SquareIconButton } from '../SquareIconButton'
 import { buildSrcdoc, readThemeVars } from '../widget/widgetSrcdoc'
 import { ReactWidgetFrame } from '../widget/ReactWidgetFrame'
 import { useWidgetWire } from '../widget/useWidgetActionBridge'
+import { useArtifactIteration } from '../widget/useArtifactIteration'
+import { ArtifactIterationRail } from '../widget/ArtifactIterationRail'
 import { sanitizeInlineHtml } from './sanitize'
 import { ImagePreview, PdfPreview, CsvPreview, JsonPreview } from '../../pages/files/browse/FilePreviews'
 import { api } from '../../lib/api'
@@ -56,13 +59,30 @@ function looksLikeMarkdown(content: string): boolean {
  *  action wire too: the child document ships HOST_SCRIPT's `isTrusted` click gate,
  *  and a `[data-action]` click here would otherwise be dropped on the floor. The
  *  shell's launcher turns it into the first turn of a chat. */
-export const IframeHtmlPreview = memo(function IframeHtmlPreview({ content, mode, title }: PreviewProps) {
+export const IframeHtmlPreview = memo(function IframeHtmlPreview({ content, mode, title, iterate }: PreviewProps) {
   const frameRef = useRef<HTMLIFrameElement>(null)
-  const srcdoc = useMemo(() => buildSrcdoc({ html: content, themeVars: readThemeVars(), mode }), [content, mode])
+  // The iteration child script ships ONLY when the host offers iteration, so every
+  // other caller's document stays byte-identical to what it was.
+  const editMode = !!iterate
+  const srcdoc = useMemo(() => buildSrcdoc({ html: content, themeVars: readThemeVars(), mode, editMode }), [content, mode, editMode])
   const blobUrl = useMemo(() => URL.createObjectURL(new Blob([srcdoc], { type: 'text/html;charset=utf-8' })), [srcdoc])
   useEffect(() => () => URL.revokeObjectURL(blobUrl), [blobUrl])
-  useWidgetWire(frameRef, { forwardActions: true })
-  return <iframe ref={frameRef} src={blobUrl} sandbox="allow-scripts" title={title} className="h-full w-full border-none bg-surface" />
+  const it = useArtifactIteration(frameRef, { source: content, target: iterate ?? {} })
+  useWidgetWire(frameRef, { forwardActions: true, ...it.wire })
+  const [railOpen, setRailOpen] = useState(false)
+  return (
+    <div className="flex h-full w-full">
+      <iframe ref={frameRef} src={blobUrl} sandbox="allow-scripts" title={title} className="h-full min-w-0 flex-1 border-none bg-surface" />
+      {editMode && (railOpen
+        ? <ArtifactIterationRail it={it} onClose={() => setRailOpen(false)} />
+        : (
+          <div className="shrink-0 p-s">
+            <SquareIconButton icon={Sliders} label="Iterate on this artifact — tweak parameters or mark elements"
+              onClick={() => setRailOpen(true)} iconSize={13} />
+          </div>
+        ))}
+    </div>
+  )
 })
 
 /** A plain (no theme injection) sandboxed iframe for raw HTML *files* — matches

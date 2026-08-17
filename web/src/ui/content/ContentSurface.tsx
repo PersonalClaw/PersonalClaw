@@ -8,6 +8,7 @@ import { useMode } from '../../app/theme'
 import { CommentLayer } from '../../pages/files/comments/CommentLayer'
 import type { CommentTarget } from './commentTarget'
 import { type ContentType, isEditable, isCommentable } from './contentTypes'
+import type { IterationTarget } from '../widget/useArtifactIteration'
 
 const MonacoEditor = lazy(() => import('@monaco-editor/react'))
 
@@ -79,6 +80,12 @@ interface ContentSurfaceProps {
   headerExtras?: ReactNode
   /** A banner rendered under the toolbar (e.g. concurrent-edit warning, save error). */
   banner?: ReactNode
+  /** Renderer-driven ITERATION on this document — EDITMODE tweak controls and
+   *  click-annotation corrections (AMBIENT-SURFACES §3+§4). Distinct from `onSave`:
+   *  `onSave` persists the DRAFT the editor holds, while iteration's persist takes a
+   *  whole next source the RENDERER produced from the live frame, and cuts a version.
+   *  Omit it and every renderer paints exactly what it painted before. */
+  iterate?: IterationTarget
 }
 
 /** The ONE type-aware render/edit surface. Resolves a `ContentType` to its
@@ -91,7 +98,7 @@ interface ContentSurfaceProps {
  *  forced single abstraction (Monaco and an iframe share nothing internally). */
 export const ContentSurface = forwardRef<ContentSurfaceHandle, ContentSurfaceProps>(function ContentSurface(
   { type, content, title, docId, path, readOnly, onSave, commentTarget, compact = false, initialView, draftStore, truncated, actions,
-    onDirtyChange, onDraftChange, confirmSave, language, headerLeft, headerExtras, banner }, ref,
+    onDirtyChange, onDraftChange, confirmSave, language, headerLeft, headerExtras, banner, iterate }, ref,
 ) {
   const { mode } = useMode()
   const previewScrollRef = useRef<HTMLDivElement | null>(null)
@@ -184,7 +191,7 @@ export const ContentSurface = forwardRef<ContentSurfaceHandle, ContentSurfacePro
   const PreviewEl = type.preview?.render
   function renderPreview() {
     if (!PreviewEl) return null
-    return createElement(PreviewEl, { content: draft, mode, title, path, streaming: false })
+    return createElement(PreviewEl, { content: draft, mode, title, path, streaming: false, iterate })
   }
 
   function renderEditor(split = false) {
