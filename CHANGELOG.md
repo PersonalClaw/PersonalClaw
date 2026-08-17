@@ -649,6 +649,19 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Security
 
+- **An app can no longer change the version of a library PersonalClaw itself depends on.** Apps are
+  allowed to bring their own Python packages, and they are installed into the same environment
+  PersonalClaw runs from — so until now an app could declare, say, an older `numpy` than the one
+  running underneath you, and installing it would quietly swap that library out from under a live
+  gateway. Now the install is refused before anything is downloaded, and the message names the
+  package, the version you are actually running, and the version the app asked for, so you can see
+  the exact disagreement. Nothing you already have installed is affected: an app may still bring any
+  library PersonalClaw does not itself depend on, which covers every one of the provider apps that
+  ship with it — the AI provider SDKs are optional extras, not part of the core set. If the check
+  cannot prove a request is safe (a version specifier it cannot read, or a package whose installed
+  version it cannot determine) it refuses rather than guessing. What is still true, and now written
+  down under Security limitations, is that an app can *add* packages to that shared environment, so
+  install apps you trust.
 - **Credentials can now live in your OS keychain, and Doctor tells you where they actually are.**
   Set `PERSONALCLAW_CREDENTIAL_BACKEND=keychain` and new secrets go to the macOS Keychain, Linux
   Secret Service or Windows Credential Locker (`pip install 'personalclaw[keychain]'`) instead of
