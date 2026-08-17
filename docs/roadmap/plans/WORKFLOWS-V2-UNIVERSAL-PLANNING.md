@@ -1086,3 +1086,58 @@ session. It lands there now.
   **PER-MEMBER — `CONFLICTING` DELETED.** Nothing a `ConfirmationRequest` carries expresses "requirements that contradict each other", and manufacturing one by scanning question text is a heuristic, not a signal. The one real contradiction this module detects — a template `autonomy_floor` above the risk ceiling (`offer_autonomy`, autonomy.py:404) — is resolved at PLAN time by letting the floor win and recording it in `capped_by`, so it never reaches a run to stop it and would be the wrong semantics for an interrupt. Both "only three" claims (module docstring + enum docstring) corrected to two rather than left describing a stop that cannot happen. Safe as a clean break: `Interrupt` was never serialized anywhere, having had no producer, so no on-disk value can exist.
   **RATCHETS — two, because this atom's whole subject is a declared-but-unproducible member.** `should_interrupt` is exhaustive over `ConfirmationType` with a RAISING tail (the dangerous default there is `return False`, so a new type falling through the old permissive tail would have been waved through an unattended run), and an AST read asserts every `Interrupt` member is NAMED in `should_interrupt` — the ratchet that would have caught this finding at birth. **Proven to fail:** temporarily adding `Interrupt.RATCHET_PROOF` reds `test_every_interrupt_member_is_produced` and `test_only_two_interrupts_exist` (2 failed); reverted by a targeted edit, never `git checkout --`. The raising tail is asserted directly by `test_an_unhandled_confirmation_type_raises_rather_than_proceeding`.
   **Baseline + gate.** `inert-surface-baseline.json` regenerated with `scripts/generate_inert_surface_baseline.py`: **148 → 146** total, enum 21 → 19, the whole `src/personalclaw/workflows/autonomy.py` block removed. `make lint` clean (black/isort/flake8 0, mypy clean on 804 files); 329 passed / 2 skipped across `-k "autonomy or confirmation or unattended or guardrail"`; 35 passed across the baseline/agent-reference/docs-lint/config-roundtrip ratchets. No `web/` change — nothing in the frontend reads the plan-preview autonomy payload.
+- **2026-08-17 — `WF2UNI-12` PARTIAL: clause 1 shipped, clause 2 BLOCKED on an unmet precondition (atom stays `todo`).**
+  **Premise correction first.** `plan_memory.py` was **not** already deleted — it was **renamed**.
+  `git log --diff-filter=A -- src/personalclaw/plan_format.py` and `--diff-filter=D -- src/personalclaw/plan_memory.py`
+  both return `cc44e24f` (`WF2LEA-4`, #938), which deleted only the *journal* half and kept the *format* half alive
+  as `plan_format.py`, still imported by `dashboard/chat_title.py`. The clause was unmet; the mechanism had survived
+  under a new name. (Corroborated by this repo's own
+  `WORKFLOWS-V2-LEARNING-FLYWHEEL.md:1243` — "`plan_memory.py` -> renamed to `plan_format.py` keeping only the
+  formatting helpers".) A filename grep is not a mechanism census.
+  **Clause 1 — MET, as a real clean break.** Deleted `src/personalclaw/plan_format.py` (169 lines, 8 public names)
+  and `tests/test_plan_format.py`. Its only src importer, `dashboard/chat_title.py`, lost
+  `_extract_and_redact_plan_metadata` and `_rephrase_plan_lite`, which had **zero call sites** — they existed only to
+  be re-exported from `dashboard/chat.py` behind `# noqa: F401`, so nothing was routed anywhere instead because there
+  was no caller to route. `looks_like_plan`, `validate_plan_format`, `ensure_go_all_option`, `strip_plan_markers` and
+  `PLAN_TEMPLATE` had no src consumer at all. `history.py` was already clean.
+  **Clause 2 — BLOCKED (E3/E6). The clause is conditioned on "as loops drain"; loops have not drained.** Measured
+  against a live isolated gateway on :10411, not inferred: `POST /api/loops/classify` returns **200** with the full
+  composer dict (`intake_rigor`, `roster`, `strategy_id`, `clarifying_questions`, `success_criteria`, `kind_config`,
+  ...), and `/plan-session` + `/plan/start` return **400 — registered and reached, not 404**. Routes come from
+  `register_unified_loop_routes` (`loop_routes.py:1032`, called at `dashboard/server.py:1138`); the frontend reaches
+  them via `App.tsx:124` -> `LoopsSection` -> `LoopPlanningView` (`LoopsSection.tsx:77`) plus `CodePlanningView`,
+  `CodePlanReview`, `PlanningArtifactDoc` and six `api.ts` methods. The nine modules named for deletion
+  (`loop/classify.py`, `loop/code_classify.py`, `loop/plan_walkthrough.py`, `loop/*_plan_briefs.py`) are what back
+  those routes. The designated replacement, `workflows/intent.py:classify(text) -> Intent`, is a deterministic
+  keyword classifier returning level/rigor: it **cannot** produce that dict, and
+  `git grep workflows.intent -- src/personalclaw/loop src/personalclaw/dashboard` returns **zero** consumers.
+  **Owner ruling: deleting them today removes a reachable user-facing feature with no replacement — that is a
+  regression, not a clean break.** The pre-1.0 clean-break doctrine permits deleting a *replaced* mechanism; it does
+  not license deleting an *unreplaced* one. Clause 2 waits on the loop-drain precondition it already names. No gate,
+  no shim, and no dual path was built — there is nothing to build until the replacement exists.
+  **Premise correction 2:** `gateway.py` is **not** affected. Its only `planning` import is
+  `personalclaw.planning.scratchpad` (:1723), which this atom keeps. The deletion-blocked importers are
+  `loop_routes.py`, `loop/store.py`, `loop/manager.py`, `loop/kinds/{__init__,goal,sdlc,design,research}.py` and
+  `agents/native/sdlc_tools.py:160`.
+  **Gate (re-run independently, not trusted from the report):** `make lint` EXIT=0, mypy clean on 901 source files,
+  **419 passed** across `test_context_management`, `test_dashboard_chat`, `test_agent_reference`, `test_portability`,
+  `test_durability_inventory`, `test_inert_surface_baseline`, `test_docs_lint_baseline`. No baseline moved (the
+  deletion removed no route, provider or declared surface). A **runtime import sweep** of the eight affected modules
+  passed 8/8 — the necessary rail here, because of the mypy finding below. `web/` untouched.
+- **2026-08-17 — DISCOVERY (`WF2UNI-12`): `make lint`'s mypy leg is blind to a stranded import of a deleted
+  first-party module.** With a deliberate `from personalclaw.plan_format import looks_like_plan` re-added to the live
+  `chat_title.py`, `mypy src/personalclaw harness` still reported `Success: no issues found in 901 source files`
+  while `python -c "import personalclaw.dashboard.chat_title"` raised `ModuleNotFoundError`. Cause:
+  `ignore_missing_imports = true` (`pyproject.toml:289`). **For any deletion atom, mypy is not the rail that catches a
+  stranded import — only a runtime import or pytest collection is.** Two further mutations reddened nothing and are
+  recorded as leads, not passes: `_parse_title`'s `title.upper() == "SKIP"` branch and its `redact_credentials` call
+  are both **uncovered**, and `test_fork_redacts_credentials_in_llm_generated_title` passes via the fork path, so its
+  name overstates what it pins. Pre-existing on `main`, outside this atom's fence.
+- **2026-08-17 — DISCOVERY (`WF2UNI-12`, row-1 residue NOT closed).** The same task row also names
+  `OrchestrationTracker`, still in `context_management.py` with `MAX_TASK_FAILURES`/`MAX_STAGE_ROUNDS`/
+  `MAX_STAGE_ESCALATIONS`. It is provably inert: `state.py:370` only ever assigns `_orch_tracker = None`, and
+  **`_auto_run = True` appears nowhere in `src` or `web`**, so `chat_handlers.py:259`'s stop-detection block and the
+  `auto_run_stopped` SEL emission at `:1045` can never fire. Blast radius if scheduled: 5 src files
+  (`context_management.py`, `dashboard/{chat,chat_handlers,chat_title,state}.py`) and 2 test files, ~31 references
+  each; `auto_run_stopped` has exactly one emission site and no registry or ratchet entry. Left because it reaches
+  into the live chat send path, which was outside this atom's file fence.
