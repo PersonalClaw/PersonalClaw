@@ -301,3 +301,84 @@ Sessions 1-2 are the keel; 3-6 each ship independently behind it.
 6. `ExternalFormat` renders a PersonalClaw agent into a working `~/.claude/agents/<slug>.md` that Claude Code actually loads, and the golden-file test proves byte-identical rendering across runs.
 7. Creating a project over a Terraform-shaped directory surfaces a propose-only pack card with confidence + inspect report; rejecting it once means it never reappears for that project; disabling `packs.fingerprint_enabled` stops scanning entirely.
 8. Updating an installed pack overwrites only `pack_owned` components; a user-edited pack skill (computedHash drift) is skipped with a visible drift note, never clobbered.
+
+---
+
+## Execution log
+
+### 2026-08-16 — `AP-4` DONE (pack kinds: Domain OS, roster, prompt-card, one-link)
+
+All four sub-scopes landed and every done_when clause is met. New: `packs/bundled/` (module +
+two authored pack source trees), `packs/roster.py`, `packs/prompt_cards.py`, `packs/onelink.py`,
+`tests/test_packs_kinds.py`. Touched: `packs/import_.py` (roster plan fields + lint fold-in +
+staging), `packs/installed.py` (bindings/roster on the ledger + `bind_answer`),
+`learning/proposals.py` (two `Kind` members + a label-totality guard),
+`dashboard/handlers/{packs,learning}.py`, `proposals_contract.py`, `pyproject.toml` package-data,
+`reference/routes.md` (regenerated).
+
+**DISCOVERY — §4.2's stated seam is wrong against code, and AP-2 already handled it.** §4.2 says
+"AgentDefinitions live in `config.json agents{}` (EntitySeamHandler source-of-truth)". In the code
+these are two DIFFERENT types: `AgentDefinition` (persona: prompt/voice/skills) lives in
+`agents/<slug>/agent.json` behind `LocalAgentMarketplace`, while `config.json agents{}` holds
+`AgentProfile`. They overlap — `AgentProfile` also carries `description`/`system_prompt`/`voice`/
+`model`/`skills`, and `config.loader.resolve_bindings` reads exactly those — so the plan's
+*intent* is reachable, just not through one store. AP-2 already committed pack agents to the
+AgentDefinition store; AP-4 builds on that rather than adding a second write.
+
+**DEVIATION 1 — the persona reaches `config.json agents{}` on DEPLOY, not on import.** The clause
+reads "roster pack imports rendering persona markdown into config `agents{}` … and only the
+`always` tier one-click-deploys". Writing every persona into `agents{}` at import would make every
+staged tier a live selectable agent, which contradicts the second half of the same sentence. So
+import lands all personas as `AgentDefinition`s (dormant) and `deploy_roster()` projects ONLY the
+`always` tier into `agents{}`. Driven: after deploy, `GET /api/agents` lists `cfo` and does not
+list `cfo-tax-analyst` (`phase-2`), whose persona is nonetheless on disk.
+
+**DEVIATION 2 — the round trip's "export" leg is `build_bundled`, not `build_pack`.** AP-1's
+`build_pack` walks four live stores (skill/template/prompt/agent); it has no trigger, connector,
+roster or setup-skill reader, and a bundled pack needs all four. Rather than invent a live-store
+trigger exporter (the trigger store is mid-migration between `crons.json` and `triggers.json` —
+exporting from either would be a one-sided reader), `build_bundled` assembles the archive from the
+authored source tree using AP-1's own hash derivation and AP-1's `_scan_component` content layer.
+The round trip is therefore build → **fresh home** → import, proven twice (both packs) with two
+distinct homes bound so nothing can pass on leaked state. The stronger live-instance sweep is
+AP-7's declared scope ("the export→wipe→import round-trip validation sweep on a second
+`PERSONALCLAW_HOME` passes"), and remains open there.
+
+**FIX — the lint refusal did not name the ref it refused on.** `import_pack` built its message as
+`f"{code}:{ref}"`, but for `unresolved_ref`/`unresolved_roster_slug` the *unresolved* ref lives in
+the finding's `detail`; `ref` names the component doing the referencing. So a pack with a broken
+runbook slug refused with `unresolved_roster_slug:runbook:annual-review` and never said
+`agent:health-phantom`. The message now includes each finding's detail. This was a pre-existing
+AP-2 shape, found only because AP-4's done_when demands the exact ref be named.
+
+**FIX — a trigger's workflow ref was not remapped on collision.** `_rewrite_refs` rewrote only a
+trigger's `action` payload (`kind:id` strings), but a `Trigger` row names its definition by BARE
+SLUG at `workflow.def`/`workflow.name` (the two keys `triggers.calendar` resolves). A trigger whose
+template collided on import would have kept the author's slug and fired nothing. Now remapped.
+
+**Setup bindings are a mechanism, not a prompt.** A pack declares `setup/bindings.json`
+(`{key, kind: folder|text, label, required}`); `installed.bind_answer` validates the answer
+against the declared kind (a `folder` must be an existing directory, stored resolved-absolute) and
+records it on the ledger, so `unbound` shrinks and "Finish setup" can name what is still missing
+instead of only existing. Nothing in AP-4 dereferences a bound folder for file access — the pack's
+own skills read it under normal tool approval.
+
+**Falsified (mutate → red → restore), three times.** (a) `comp.obj["enabled"] = True` in the
+trigger rewrite → `assert True is False` at `test_packs_kinds.py:115`. (b) the catalog-slug
+resolution check short-circuited to `if False:` → `assert not True / where True =
+LintReport(findings=[]).ok`. (c) `RosterEntry.deploys` → `return True` →
+`{'deployed': ['cfo', 'cfo-tax-analyst'], 'dormant': []}`. The package-data rail was also probed
+for vacuity with a stray `.txt` member (correctly failed).
+
+**Driven as a user** on a real gateway (isolated home, port 10122): listed `/api/packs/bundled`,
+installed Personal CFO with the connector skipped (marker `connector_missing:finance-statements`
+on the ledger), read `/api/packs/installed` (`unbound: ["finance_folder"]`), bound the folder
+through `POST /api/packs/personal-cfo/bindings` (a nonexistent path was refused with a readable
+message), deployed the roster (`deployed: ["cfo"], dormant: ["cfo-tax-analyst"]`) and confirmed
+`GET /api/agents` now offers `cfo` only, imported Health OS through `POST /api/packs/one-link`,
+and took a pasted prompt card from paste → fenced → proposal → `POST
+/api/learning/proposals/{id}/accept` → `prompts/weekly-commitments.yaml` on disk and listed by
+`GET /api/prompts`. The trigger file on disk read `enabled: false` throughout.
+
+**Not done here (unchanged scope):** no pack store / detail / export FE — AP-7 owns it. AP-4's
+routes are the reachable backend those cards will call.

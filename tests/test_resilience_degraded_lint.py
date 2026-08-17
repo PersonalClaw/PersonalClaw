@@ -69,6 +69,14 @@ _CALL_SITE_SURFACES = {
     # or a fabricated answer; a dead judge returns the slate judged=False with the
     # lowest-temperature survivor. Fail-open, never a raise.
     "sampling.py": "assistant_reasoning",
+    # AP-4 prompt-card importer (AGENT-PACKS §4.3). Background reasoning one-shot, and the
+    # ONLY call site here whose no-model floor is deliberately a LOUD REFUSAL rather than a
+    # built-in degradation: mapping a prose card onto a typed PromptTemplate/WorkflowDef/
+    # AgentDefinition has no deterministic fallback, and a heuristic one would fabricate an
+    # entity from a card nothing understood. With no model the import raises, the route answers
+    # `prompt_card_failed` with the provider's own reason, and NOTHING is written — the user
+    # still has their pasted text. Fail-closed is the honest floor for a typed converter.
+    "packs/prompt_cards.py": "assistant_reasoning",
 }
 
 _CALL_RE = re.compile(r"\bone_shot_completion\s*\(")

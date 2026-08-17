@@ -1,0 +1,4 @@
+[
+  {"key": "finance_folder", "kind": "folder", "label": "Folder holding your statements", "required": true},
+  {"key": "digest_day", "kind": "text", "label": "Weekday for the spending digest", "required": false}
+]

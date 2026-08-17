@@ -1,0 +1,20 @@
+[
+  {
+    "slug": "health-companion",
+    "name": "Health Companion",
+    "description": "Keeps the log and tracks what care is due.",
+    "label": "Health",
+    "icon": "heart",
+    "color": "rose",
+    "activation": "always"
+  },
+  {
+    "slug": "health-nutrition-coach",
+    "name": "Nutrition Reviewer",
+    "description": "Reviews a meal log for patterns, on request.",
+    "label": "Health",
+    "icon": "leaf",
+    "color": "lime",
+    "activation": "as-needed"
+  }
+]

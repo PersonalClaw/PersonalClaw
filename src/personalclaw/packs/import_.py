@@ -47,6 +47,7 @@ from typing import Any
 
 from personalclaw.config.loader import config_dir
 from personalclaw.packs import lint as pack_lint
+from personalclaw.packs import roster as pack_roster
 from personalclaw.packs.build import SCHEMA_VERSION
 from personalclaw.skills.marketplace import SkillDetail, SkillEntry, SkillsMarketplace
 
@@ -112,6 +113,15 @@ class ImportPlan:
     #: The per-connector resolution outcomes recorded by a commit (each a
     #: :meth:`ConnectorResolution.to_dict`). Empty on the dry-run plan.
     connector_resolutions: list[dict[str, Any]] = field(default_factory=list)
+    #: The pack's roster rows (§4.2) — each a :meth:`RosterEntry.to_dict`. Empty when the
+    #: pack ships no ``agents/catalog.json``. A commit stages these; only the ``always`` tier
+    #: is deployed, and only when a human asks (:func:`packs.roster.deploy_roster`).
+    roster: list[dict[str, Any]] = field(default_factory=list)
+    #: The pack's scenario runbooks (§4.2), each a :meth:`Runbook.to_dict`.
+    runbooks: list[dict[str, Any]] = field(default_factory=list)
+    #: The setup interview's declared bindings (§3.4/§4.1) — the questions the "Finish setup"
+    #: chip has to get answered, each ``{key, kind, label, required}``.
+    bindings: list[dict[str, Any]] = field(default_factory=list)
 
     @property
     def has_dangerous(self) -> bool:
@@ -154,6 +164,9 @@ class ImportPlan:
             "connectors": list(self.connectors),
             "setup_skill": self.setup_skill,
             "connector_resolutions": list(self.connector_resolutions),
+            "roster": list(self.roster),
+            "runbooks": list(self.runbooks),
+            "bindings": list(self.bindings),
         }
 
 
@@ -385,6 +398,16 @@ def _rewrite_refs(comp: _Comp, remap: dict[tuple[str, str], str]) -> None:
         # A trigger cannot arm automation on install (§3.1): it lands DISABLED, always.
         comp.obj["enabled"] = False
         _rewrite_ref_strings(comp.obj.get("action"), remap)
+        # A `Trigger` row points at its workflow definition by BARE SLUG under
+        # ``workflow.def``/``workflow.name`` (`triggers.calendar` resolves exactly those two
+        # keys), so the `kind:id` rewriter above cannot see it. Without this, a trigger whose
+        # template collided on import would still name the author's slug and fire nothing.
+        wf = comp.obj.get("workflow")
+        if isinstance(wf, dict):
+            for key in ("def", "name"):
+                slug = wf.get(key)
+                if isinstance(slug, str) and slug.strip():
+                    wf[key] = remap.get(("template", slug.strip()), slug)
 
 
 def _rewrite_template_nodes(node: Any, remap: dict[tuple[str, str], str]) -> None:
@@ -596,6 +619,16 @@ def _build_plan(
         comp.verdict = scan_report.verdict.value
         comp.findings = [f.to_dict() for f in scan_report.findings]
 
+    # ── roster (§4.2): catalog.json + runbooks are members that DESCRIBE components, so
+    # they are linted against the agent components actually carried. An unresolved slug is
+    # an ERROR, which the refusal gate below turns into a blocked import naming the ref. ──
+    roster_entries = pack_roster.parse_catalog(members.get(pack_roster.CATALOG_MEMBER))
+    runbooks = pack_roster.parse_runbooks(members)
+    roster_findings = pack_roster.lint_roster(
+        roster_entries, runbooks, {c.id for c in parsed if c.kind == "agent"}
+    )
+    pack_roster.remap_entries(roster_entries, remap)
+
     # ── referential-integrity + parse lint (dry-run) ──
     lint_report = pack_lint.lint_pack(
         parsed,
@@ -604,6 +637,7 @@ def _build_plan(
         local_resolver=lambda ref: _local_exists(home, *ref.split(":", 1)) if ":" in ref else False,
     )
     lint_report.findings.extend(lint_parse_errors)
+    lint_report.findings.extend(roster_findings)
 
     # ── integrity recompute (never trust the manifest's content_hash) ──
     claimed = str((manifest.get("provenance") or {}).get("content_hash", ""))
@@ -668,8 +702,52 @@ def _build_plan(
         staged_config_keys=_editable_config_keys(members.get("config_subset.json")),
         connectors=connectors,
         setup_skill=setup_id,
+        roster=[e.to_dict() for e in roster_entries],
+        runbooks=[b.to_dict() for b in runbooks],
+        bindings=_parse_bindings(members.get("setup/bindings.json")),
     )
     return plan, parsed
+
+
+#: A setup binding's declared kinds (§3.4). ``folder`` is validated as an existing directory
+#: on answer; ``text`` is stored verbatim. Closed — an unknown kind is dropped rather than
+#: stored unvalidated, because a binding nobody validates is a binding nobody can trust.
+_BINDING_KINDS = ("folder", "text")
+
+
+def _parse_bindings(raw: bytes | None) -> list[dict[str, Any]]:
+    """Parse ``setup/bindings.json`` — the questions the setup interview must get answered.
+
+    Each row is ``{key, kind, label, required}``. This is what makes "Finish setup" a state
+    rather than a suggestion: the ledger records which keys are still unbound, so the chip
+    can say what is missing instead of merely existing."""
+    if not raw:
+        return []
+    try:
+        data = json.loads(raw.decode("utf-8"))
+    except (ValueError, UnicodeDecodeError):
+        return []
+    if not isinstance(data, list):
+        return []
+    out: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for row in data:
+        if not isinstance(row, dict):
+            continue
+        key = str(row.get("key", "") or "").strip()
+        kind = str(row.get("kind", "") or "").strip()
+        if not key or key in seen or kind not in _BINDING_KINDS:
+            continue
+        seen.add(key)
+        out.append(
+            {
+                "key": key,
+                "kind": kind,
+                "label": str(row.get("label", "") or key),
+                "required": bool(row.get("required", True)),
+            }
+        )
+    return out
 
 
 def _parse_connectors(raw: bytes | None) -> list[dict[str, Any]]:
@@ -911,6 +989,30 @@ def _commit_skill(comp: _Comp, home: Path, marketplace_name: str, journal: _Jour
     return target / comp.target_id
 
 
+def _stage_roster(plan: ImportPlan, home: Path, journal: _Journal, stage: str) -> None:
+    """Stage the pack's roster (§4.2) — installed, not deployed.
+
+    The rows carry the FRESH ids the commit assigned, so a deploy months later resolves the
+    personas that actually landed. Nothing here makes an agent live: that is
+    :func:`packs.roster.deploy_roster`, and only for the ``always`` tier."""
+    if not plan.roster and not plan.runbooks:
+        return
+    entries = [pack_roster.RosterEntry.from_dict(r) for r in plan.roster]
+    books = [
+        pack_roster.Runbook(
+            slug=str(r.get("slug", "")),
+            name=str(r.get("name", "")),
+            description=str(r.get("description", "")),
+            roster=[str(s) for s in (r.get("roster") or [])],
+        )
+        for r in plan.runbooks
+    ]
+    path = pack_roster.roster_path(home, stage)
+    _mkdir_journaled(journal, path.parent)
+    journal.record_file(path)
+    _write_component_file(path, pack_roster.serialize_roster(entries, books))
+
+
 def _stage_config_subset(
     members: dict[str, bytes], home: Path, journal: _Journal, stage: str
 ) -> None:
@@ -1006,7 +1108,11 @@ def import_pack(
             _audit("pack_import", "refused", resources=plan.name, error=plan.integrity_detail)
             raise PackImportRefused("integrity", plan.integrity_detail, plan)
         if not plan.lint.ok:
-            detail = "; ".join(f"{f.code}:{f.ref}" for f in plan.lint.errors)
+            # The DETAIL is included, not just code+ref: for an unresolved reference the exact
+            # ref that failed to resolve lives only in the detail, and a refusal that named
+            # only the component reporting the problem leaves the author guessing which of its
+            # N references is broken (AP-4 §4.2 requires the exact ref be named).
+            detail = "; ".join(f"{f.code}:{f.ref}: {f.detail}" for f in plan.lint.errors)
             _audit("pack_import", "refused", resources=plan.name, error=f"lint: {detail}")
             raise PackImportRefused("lint", f"referential-integrity lint failed: {detail}", plan)
         if plan.has_dangerous:
@@ -1038,6 +1144,7 @@ def import_pack(
                 else:
                     _commit_file_component(comp, home, journal, stage)
             _stage_config_subset(members, home, journal, stage)
+            _stage_roster(plan, home, journal, stage)
         except Exception as exc:
             # A fault at ANY point unwinds every journaled write leaves-last — no partial pack.
             journal.rollback()
@@ -1105,6 +1212,8 @@ def _resolve_and_record(
             setup_skill=plan.setup_skill,
             setup_pending=bool(plan.setup_skill),
             installed_at=datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            bindings=[dict(b) for b in plan.bindings],
+            roster=[dict(r) for r in plan.roster],
         ),
         home,
     )

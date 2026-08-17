@@ -1,0 +1,10 @@
+[
+  {
+    "name": "finance-statements",
+    "category": "finance",
+    "transport": "stdio",
+    "command": "",
+    "description": "A finance MCP server that exposes read-only statement history. Substitute your own finance connector if you already run one.",
+    "auth": {"required": true, "kind": "api_key", "env_hint": "FINANCE_API_KEY"}
+  }
+]
