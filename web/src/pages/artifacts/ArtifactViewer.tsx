@@ -258,6 +258,12 @@ export function ArtifactViewer({ slug, onChanged, onDeleted, onOpenSourceFile, c
               path={art.source_path || undefined}
               readOnly={!editable}
               onSave={editable ? onSave : undefined}
+              // Renderer-driven iteration (AS-3): an EDITMODE tweak saves through the
+              // SAME snapshot path the Snapshot action uses, so the new version and
+              // its restore are inherited machinery rather than a second write path.
+              // A historical/frozen version keeps annotate (a correction is a request,
+              // not a mutation) but offers no persist.
+              iterate={{ slug: art.slug, persistVersion: editable ? snapshot : undefined }}
               commentTarget={commentTarget}
               actions={editable ? [{ icon: History, label: 'Snapshot', title: 'Save as a new version snapshot', primary: true, run: snapshot }] : undefined}
             />

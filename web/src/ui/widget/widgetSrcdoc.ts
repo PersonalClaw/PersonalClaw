@@ -102,6 +102,151 @@ export const HOST_SCRIPT_SOURCE = `(function(){
 
 const HOST_SCRIPT = `<script>\n${HOST_SCRIPT_SOURCE}\n<\/script>`
 
+/** The CHILD half of artifact iteration (AMBIENT-SURFACES §3 + §4): applies live
+ *  EDITMODE values to `:root`, reads them back on demand, and derives an anchor for
+ *  a click-annotated element. Injected only for a host that actually offers
+ *  iteration, so every other srcdoc is byte-identical to before.
+ *
+ *  Three rules this script must not lose:
+ *   · **Only the parent may drive it.** `e.source === window.parent` mirrors, inside
+ *     the frame, the provenance check the host performs on the way back. A sibling
+ *     frame cannot forge a `__edit_mode_*` message.
+ *   · **A key is a name, not an expression.** Keys are re-validated here even though
+ *     the parent validated them, because this is where they become CSS.
+ *   · **An annotation is a human gesture.** `e.isTrusted` gates it exactly as it
+ *     gates an action — a widget's own script must not be able to mint a correction
+ *     directive about itself. While annotating, the click is consumed in the CAPTURE
+ *     phase so the action forwarder below never also sees it.
+ *
+ *  Exported as SOURCE so those rules are executed by editModeChildScript.test.ts
+ *  rather than grepped for. */
+export const EDIT_MODE_SCRIPT_SOURCE = `(function(){
+  var KEY_RE = /^[a-zA-Z][a-zA-Z0-9-]*$/;
+  var UTIL_RE = /^(p|m|px|py|pt|pb|pl|pr|mx|my|mt|mb|ml|mr|w|h|min|max|text|bg|border|rounded|flex|grid|gap|items|justify|self|col|row|space|font|leading|tracking|shadow|opacity|z|top|left|right|bottom|inset|overflow|absolute|relative|fixed|sticky|block|inline|hidden|truncate|uppercase|lowercase|capitalize|cursor|transition|duration|ease|animate|ring|outline|divide|order|basis|grow|shrink|aspect|object|place|content|whitespace|break|list|underline|antialiased|sr|tabular)(-|$)/;
+  var annotating = false;
+
+  function keep(c){
+    // Utility-class noise makes a selector that matches forty elements. Drop
+    // variants (hover:), arbitrary values (w-[3px]), and the utility prefixes.
+    if (!c || c.indexOf(':') >= 0 || c.indexOf('[') >= 0 || c.indexOf('/') >= 0) return false;
+    return !UTIL_RE.test(c);
+  }
+  function classesOf(el){
+    var out = [];
+    var cl = el.classList ? el.classList : [];
+    for (var i = 0; i < cl.length && out.length < 2; i++) if (keep(cl[i])) out.push(cl[i]);
+    return out;
+  }
+  function attrSel(el){
+    var t = el.getAttribute && el.getAttribute('data-testid');
+    if (t) return '[data-testid="' + t.replace(/["\\\\]/g, '') + '"]';
+    if (el.id) return '[id="' + String(el.id).replace(/["\\\\]/g, '') + '"]';
+    return '';
+  }
+  function nthPath(el){
+    var parts = [];
+    var node = el;
+    while (node && node.nodeType === 1 && node !== document.body && parts.length < 6) {
+      var parent = node.parentNode;
+      var idx = 1;
+      if (parent) {
+        var kids = parent.children;
+        for (var i = 0; i < kids.length; i++) { if (kids[i] === node) break; idx++; }
+      }
+      parts.unshift(node.tagName.toLowerCase() + ':nth-child(' + idx + ')');
+      node = parent;
+    }
+    return (parts.length ? 'body > ' : 'body') + parts.join(' > ');
+  }
+  // Priority: data-testid -> id -> class chain -> nth-child. The class chain is
+  // only accepted when it actually identifies ONE element; otherwise a selector
+  // that "works" would point the agent at the wrong card.
+  function selectorFor(el){
+    var a = attrSel(el);
+    if (a) return a;
+    var cls = classesOf(el);
+    if (cls.length) {
+      var sel = el.tagName.toLowerCase() + '.' + cls.join('.');
+      try { if (document.querySelectorAll(sel).length === 1) return sel; } catch (x) {}
+    }
+    return nthPath(el);
+  }
+  function contextFor(el){
+    var p = el.parentElement;
+    if (!p || p === document.body) return 'body';
+    var a = attrSel(p);
+    var cls = classesOf(p);
+    return p.tagName.toLowerCase() + (a || (cls.length ? '.' + cls.join('.') : ''));
+  }
+
+  window.addEventListener('message', function(e){
+    if (e.source !== window.parent) return;
+    var d = e.data;
+    if (!d || typeof d !== 'object') return;
+    var t = d.type;
+    if (typeof t !== 'string' || t.indexOf('__edit_mode_') !== 0) return;
+    if (t === '__edit_mode_set_keys') {
+      var edits = d.edits;
+      // Array.isArray, not a .length duck-check: a STRING has a length, and
+      // iterating one would apply its characters as keys.
+      if (!Array.isArray(edits)) return;
+      for (var i = 0; i < edits.length; i++) {
+        var ed = edits[i];
+        if (!ed || typeof ed.key !== 'string' || typeof ed.value !== 'string') continue;
+        if (!KEY_RE.test(ed.key)) continue;
+        document.documentElement.style.setProperty('--' + ed.key, ed.value);
+      }
+      return;
+    }
+    if (t === '__edit_mode_read_keys') {
+      var keys = d.keys;
+      if (!Array.isArray(keys)) return;
+      var cs = getComputedStyle(document.documentElement);
+      var values = {};
+      for (var j = 0; j < keys.length; j++) {
+        var k = keys[j];
+        if (typeof k !== 'string' || !KEY_RE.test(k)) continue;
+        values[k] = String(cs.getPropertyValue('--' + k) || '').trim();
+      }
+      parent.postMessage({type:'widget-edit-values', values: values}, '*');
+      return;
+    }
+    if (t === '__edit_mode_annotate') {
+      annotating = !!d.on;
+      document.body.style.cursor = annotating ? 'crosshair' : '';
+      return;
+    }
+  });
+
+  // Ask the host for the artifact's declared values as soon as this document can
+  // receive them. The EDITMODE block is the DECLARATION — the renderer owns
+  // applying it, so an author writes each value once and a saved tweak survives a
+  // reload without the stylesheet having to be rewritten too. Seeding on a timer or
+  // at parent mount would race the blob load and silently drop the values.
+  parent.postMessage({type:'widget-edit-ready'}, '*');
+
+  document.addEventListener('click', function(e){
+    if (!annotating) return;
+    if (!e.isTrusted) return;
+    var el = e.target;
+    if (!el || el.nodeType !== 1) return;
+    // Consume it: while annotating, a click marks an element and does NOT also
+    // fire the widget's own [data-action] (this runs in the capture phase, so the
+    // action forwarder's document listener is never reached).
+    e.preventDefault();
+    e.stopPropagation();
+    parent.postMessage({
+      type: 'widget-annotation',
+      selector: selectorFor(el),
+      tag: el.tagName.toLowerCase(),
+      outerHTML: String(el.outerHTML || '').slice(0, 400),
+      parentContext: contextFor(el)
+    }, '*');
+  }, true);
+})();`
+
+const EDIT_MODE_SCRIPT = `<script>\n${EDIT_MODE_SCRIPT_SOURCE}\n<\/script>`
+
 export interface BuildSrcdocOpts {
   html: string
   themeVars: Record<string, string>
@@ -113,6 +258,10 @@ export interface BuildSrcdocOpts {
    *  widget renders directly against the app canvas. Default false (solid theme
    *  bg for standalone contexts: download, open-in-new-tab). */
   transparentBody?: boolean
+  /** Include the artifact-iteration script (EDITMODE live values + click
+   *  annotation). Opt-in per host: a download/open-in-tab document and any host
+   *  that offers no iteration UI gets the byte-identical document it got before. */
+  editMode?: boolean
 }
 
 /** Build the sandboxed iframe document for an agent-generated widget.
@@ -123,7 +272,7 @@ export interface BuildSrcdocOpts {
  *  dangerous-fn denylist + length cap); a strict CSP (connect-src 'none', img-src
  *  data: blob:) contains the content. DOMPurify intentionally NOT applied —
  *  widgets need <script> for Chart.js/D3; output is redacted upstream. */
-export function buildSrcdoc({ html, themeVars, mode, includeHost = true, transparentBody = false }: BuildSrcdocOpts): string {
+export function buildSrcdoc({ html, themeVars, mode, includeHost = true, transparentBody = false, editMode = false }: BuildSrcdocOpts): string {
   return `<!DOCTYPE html>
 <html>
 <head>
@@ -160,7 +309,7 @@ ${TAILWIND_CONFIG}
 </head>
 <body class="${mode}">
 ${html}
-${includeHost ? HOST_SCRIPT : ''}
+${[editMode ? EDIT_MODE_SCRIPT : '', includeHost ? HOST_SCRIPT : ''].filter(Boolean).join('\n')}
 </body>
 </html>`
 }

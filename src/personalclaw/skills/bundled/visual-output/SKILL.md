@@ -157,6 +157,84 @@ spawning a new artifact. This is how you build a "my open items" / "current stat
 dashboard that stays current. (If the widget isn't a saved artifact yet, save it first so
 it has a slug to refresh.)
 
+## Tunable parameters (EDITMODE) — let the user restyle without asking you
+
+A widget can declare its own **tunables**. The dashboard turns them into typed
+controls beside the render, and dragging one restyles the widget instantly — no
+turn, no request, no cost to you. This is how a user gets "a bit more rounded,
+slightly warmer accent" without spending a message on it.
+
+Declare them ONCE, as a marker-fenced JSON object inside the widget's own script:
+
+```html
+<widget title="Sales">
+  <style>
+    #card { background: var(--card); border-radius: var(--radius); border: 1px solid var(--accent) }
+  </style>
+  <div id="card">…</div>
+  <script>
+  /*EDITMODE-BEGIN*/{
+    "radius": {"label": "Corners", "type": "range", "value": "12px",
+               "min": 0, "max": 32, "step": 2, "unit": "px"},
+    "accent": {"label": "Accent",  "type": "color", "value": "#3b82f6"}
+  }/*EDITMODE-END*/
+  </script>
+</widget>
+```
+
+- **Each key is a `:root` CSS custom property, minus the `--`.** `"radius"` drives
+  `var(--radius)`. Reference every tunable through `var(--key)` in your CSS —
+  a value the stylesheet doesn't read is a control that appears to do nothing.
+- **The markers are exact**: `/*EDITMODE-BEGIN*/` … `/*EDITMODE-END*/`, one block per
+  widget, JSON object between them. Put it inside a `<script>` so it never renders.
+- **≤ 8 parameters.** More than eight means the widget should be using theme
+  variables rather than inventing its own, and a rail nobody can scan. Extras are
+  dropped, visibly.
+- **Four types**, each with the fields it needs:
+
+  | `type` | fields | control |
+  |---|---|---|
+  | `color` | `value` (`#rrggbb`) | swatch + native picker |
+  | `range` | `value`, `min`, `max`, `step?`, `unit?` | slider |
+  | `select` | `value`, `options` (≥2 CSS strings) | dropdown |
+  | `toggle` | `value`, `on`, `off` (CSS strings) | switch |
+
+- **Values are CSS strings** and are validated: no semicolons, braces, quotes, or
+  `url()`. A descriptor that fails validation loses its control; the widget still
+  renders.
+- **You author the block; the dashboard owns it afterwards.** When the user saves
+  their tweaks, the dashboard rewrites the `value` fields in place and cuts a new
+  artifact version. Everything outside the markers is untouched, and your other
+  fields survive. So when you REGENERATE a widget that already had tunables, keep
+  the same keys and carry the current values across — otherwise you throw away
+  choices the user already made.
+
+## Marked-up corrections you will receive
+
+On a rendered widget the user can switch on **Mark elements**, click the parts that
+are wrong, and write one short note per element. You receive ONE turn:
+
+````text
+[UI] correction: 2 elements marked — regenerate the artifact applying every change
+below, and change nothing else
+```corrections
+1. selector: [data-testid="cta"]
+   within: section[id="hero"]
+   element: <button data-testid="cta">Buy</button>
+   change: make this green
+2. selector: p.price
+   within: section[id="hero"]
+   element: <p class="price">$9</p>
+   change: bigger
+```
+````
+
+Treat it literally: apply every listed change, change nothing else, and if the
+widget is a saved artifact (the message ends with `refresh artifact "<slug>" in
+place`) write the result back to THAT slug with `artifact_update`. Giving elements
+a `data-testid` makes these anchors stable and unambiguous — worth doing on the
+handful of elements a user is likely to want changed.
+
 ## Sizing conventions
 
 - Buttons: `text-xs py-1.5 px-3.5 rounded-md`

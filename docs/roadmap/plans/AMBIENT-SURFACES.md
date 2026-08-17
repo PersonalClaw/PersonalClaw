@@ -446,3 +446,79 @@ scratch comparison was deleted.
   "sales-snapshot" in place` suffix, because that widget is saved); a widget rendered
   mid-conversation landed `[UI] drill: {"origin":"chat","formData":{"window":"q2"}}` in
   the SAME session, opening no new one. No console errors.
+
+### 2026-08-17 — `AS-3` artifact iteration (§3 EDITMODE + §4 annotate mode) — DONE
+
+Both cheap iteration paths landed on the channel AS-5 reserved. A tweak now costs one
+`postMessage`, and pointing at what is wrong costs one turn instead of a paragraph of
+prose per element.
+
+- **`web/src/ui/widget/editMode.ts`** owns the whole block contract: parse a
+  marker-fenced JSON object into `EditModeParam[]` (drop-invalid, never throw, ≤8) and
+  rewrite only the fenced bytes. Keys are `:root` custom properties sans `--`; every
+  authored value passes `sanitizeCssValue`, because a "tunable" that cannot be a CSS
+  value is a typo or an injection attempt. **The rewrite's byte-identity outside the
+  fence is asserted against a deliberately ugly fixture** (blank lines, trailing
+  spaces, a CR, a stray backslash) with a vacuity floor — the first version of that
+  fixture was all single newlines, and a mutation that normalized whitespace passed it.
+  The fixture, not the assertion, was the defect.
+- **The child half is `EDIT_MODE_SCRIPT_SOURCE`, injected only when a host offers
+  iteration.** `buildSrcdoc`'s output for every pre-existing option combination was
+  compared string-for-string against `HEAD`'s (16 combinations + the react builder +
+  `HOST_SCRIPT_SOURCE`) before the scratch comparison was deleted; a permanent test
+  asserts the on/off documents differ by exactly the inserted `<script>`.
+- **The child re-checks what the parent already checked**, and both are executed rather
+  than grepped (`editModeChildScript.test.ts`): `e.source === window.parent` before
+  anything is read, key names re-validated where they become CSS, and `e.isTrusted` on
+  an annotation click — a widget's own script cannot mint a correction about itself.
+  **MEASURED FINDING: a `.length` duck-check accepted a string.** `keys: 'accent'` was
+  iterated character by character and answered with five empty properties; `Array.isArray`
+  is now the gate. The test found it, not review.
+- **While annotating, a click is CONSUMED in the capture phase.** Without that, one
+  click on a `[data-action]` element would both mark it and send the agent a form
+  submission the user never made. Driven for real: clicking the fixture's
+  `data-action="refresh"` button while marking produced an anchor and no turn.
+- **Save reads the LIVE values back** (`__edit_mode_read_keys` → `widget-edit-values`)
+  and rewrites the block from the document's answer, not the rail's state. A frame that
+  does not answer within 2s makes Save **refuse** rather than persist a guess. Persist
+  routes through ArtifactViewer's existing `snapshot` path, so the new version and its
+  restore are inherited machinery, not a second write path.
+- **DISCOVERY (found by driving it, not by reading it): the block had to be SEEDED into
+  the frame, or the feature was cosmetic.** Nothing applied the declared values, so the
+  fixture rendered with no brand colour at all — and worse, a *saved* tweak would not
+  have survived a reload, because saving rewrites the block and never the stylesheet.
+  The child now posts `widget-edit-ready` on install and the host answers with one
+  batched apply. It has to be the child that asks: the document loads from a blob
+  asynchronously, so a seed posted at parent mount lands in an `about:blank` window and
+  is silently lost. This is the plan's own trap list ("the renderer owns persistence")
+  arriving as a real defect.
+- **DEVIATION — the design-loop dispatch target is the loop cockpit's artifact tab, not
+  the design canvas.** §4 offers "chat via the C32 path **or** a design loop's
+  `guidance.txt`"; both are wired (`LoopCockpitPage`'s `ArtifactTab` passes
+  `api.uLoopNudge`). What is NOT wired is annotate on the *design cockpit canvas*: that
+  renders `kind:react` through `ReactWidgetFrame`, which by AS-5's ruling carries no
+  `isTrusted` click gate, so adding capture there would let a react widget's own script
+  mint corrections. Refused rather than relaxed; the dispatch target is one optional
+  callback, so wiring a future HTML deliverable host is a prop, not a redesign.
+- **Zero network, measured as an absence at the sink, in both hosts.** In the real
+  browser with `window.fetch` counted: 18 control ticks on the artifact-library preview
+  and 8 on the pinned-tile band → **0 fetches**. In jsdom the same claim is asserted per
+  test, plus batching: six slider ticks inside one animation frame are ONE message
+  carrying the last value.
+- **Falsifications.** (1) `flush()` on every tick instead of coalescing →
+  `expected [ … ] to have a length of 1 but got 6`. (2) Save writing the rail's own
+  `values` instead of the read-back → `expected [] to have a length of 1 but got +0`
+  *and* the refusal test caught the guess being persisted. (3) normalizing whitespace in
+  the rewrite → `expected '<div id="card">hello\n…' to be '<div id="card">hello   \n…'`
+  (only after the fixture was strengthened; the first attempt was vacuous).
+- **Validated as a user** against an isolated home on port 10344. Artifact-library
+  preview: dragged colour/range/toggle → the card restyled live (crimson border, 20px
+  corners) with zero requests; Save cut **v2** whose fenced block carried all three live
+  values with one fence and byte-intact surroundings; a full reload re-rendered the saved
+  look and re-seeded the rail. Two real trusted clicks inside the sandboxed iframe
+  produced `[data-testid="total"]` and `body > section:nth-child(2) > button:nth-child(4)`
+  (testid priority, then the nth-child fallback), and "Send one correction" landed ONE
+  `[UI] correction: 2 elements marked …` turn carrying both anchors, both notes and the
+  C32 `(refresh artifact "sales-snapshot" in place)` suffix as a new chat's first turn.
+  Pinned-tile band (`WidgetFrame`): fold-out rail, live restyle, zero requests. No
+  console errors.
