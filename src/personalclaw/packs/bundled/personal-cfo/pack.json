@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "name": "personal-cfo",
+  "version": "1.0.0",
+  "displayName": "Personal CFO",
+  "description": "Close each month honestly: statement collection, a budget review that separates measurement from inference, a weekly spending digest, and a two-tier finance roster.",
+  "author": "PersonalClaw",
+  "license": "MIT",
+  "pclaw_requires": ">=0.1",
+  "components": [
+    {"kind": "skill", "id": "cfo-statement-fetch", "path": "skills/cfo-statement-fetch/SKILL.md", "depends_on": []},
+    {"kind": "skill", "id": "cfo-budget-review", "path": "skills/cfo-budget-review/SKILL.md", "depends_on": []},
+    {"kind": "agent", "id": "cfo", "path": "agents/cfo.md", "depends_on": ["skill:cfo-statement-fetch", "skill:cfo-budget-review"]},
+    {"kind": "agent", "id": "cfo-tax-analyst", "path": "agents/cfo-tax-analyst.md", "depends_on": ["skill:cfo-budget-review"]},
+    {"kind": "prompt", "id": "cfo-spending-digest", "path": "prompts/cfo-spending-digest.yaml", "depends_on": []},
+    {"kind": "template", "id": "cfo-monthly-review", "path": "templates/cfo-monthly-review.json", "depends_on": ["agent:cfo", "skill:cfo-statement-fetch", "skill:cfo-budget-review"]},
+    {"kind": "trigger", "id": "cfo-spending-digest", "path": "triggers/cfo-spending-digest.json", "depends_on": ["template:cfo-monthly-review", "prompt:cfo-spending-digest"]}
+  ],
+  "requirements": [
+    {"kind": "connector", "id": "finance-statements", "description": "A finance MCP server exposing read-only statement history. Configure it, substitute your own, or skip and read statements from the bound folder instead.", "required": false, "env_hint": "FINANCE_API_KEY"}
+  ],
+  "pack_owned": ["skills/cfo-*", "templates/cfo-*", "prompts/cfo-*", "agents/cfo*"]
+}

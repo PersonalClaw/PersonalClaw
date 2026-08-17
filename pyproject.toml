@@ -251,6 +251,14 @@ personalclaw = [
     # directory and every paste-a-URL looks uncovered — a silent product regression, not a
     # crash. `test_connector_pack.py` asserts the shipped count is non-zero.
     "knowledge/sources/recipes/*.json",
+    # The bundled Domain OS packs (AGENT-PACKS §4.1, AP-4) — authored source trees the pack
+    # builder assembles into a `.pclaw` on demand. A wheel without these lines ships a Store
+    # with zero bundled packs and `build_bundled` raising "no bundled pack named …", so the
+    # lines are load-bearing. Recursive, because a pack carries skill dirs and runbooks at
+    # depths this glob has to reach.
+    "packs/bundled/**/*.md",
+    "packs/bundled/**/*.json",
+    "packs/bundled/**/*.yaml",
     "reference/*.md",
 ]
 
