@@ -167,7 +167,13 @@ export function TagManager({ onChanged }: { onChanged?: () => void }) {
               style={{ marginLeft: depth * 20 }}>
               {depth > 0 && <ChevronRight size={12} className="shrink-0 text-on-surface-low" aria-hidden />}
               <TagIcon size={14} className="shrink-0 text-on-surface-low" aria-hidden />
-              <span className="min-w-0 flex-1 truncate text-on-surface text-[0.875rem]" style={fvs(500)}>
+              {/* 🪤 `truncate` HIDES DATA WITH NO WAY BACK. Measured at 390px: this taxonomy's longest
+                  tag needs 252px and gets 187, so `operational-runbooks-and-checklists` renders as
+                  `operational-runbooks-and-che…` and a sighted user has no route to the rest — the DOM
+                  text is complete, so assistive tech was the only reader getting the whole name. At
+                  1440px nothing truncates (1041px available), which is why a desktop-only sweep sees
+                  nothing here. `title` is what the six other truncating labels in this app use. */}
+              <span className="min-w-0 flex-1 truncate text-on-surface text-[0.875rem]" style={fvs(500)} title={tag.name}>
                 {tag.name}
               </span>
               <span className="shrink-0 text-on-surface-low text-[0.75rem]">
@@ -189,8 +195,15 @@ export function TagManager({ onChanged }: { onChanged?: () => void }) {
         )
       })}
       <p className="pt-1 text-on-surface-low text-[0.75rem]">
-        Right-click a tag to nest, merge, or delete it. An unused tag is kept — it stays
-        part of your taxonomy even when nothing carries it right now.
+        {/* This is the ONLY place the app tells anyone how to reach nest/merge/delete — six surfaces
+            wrap rows in `ContextMenu` and this is the one with a visible hint. It named the pointer
+            gesture alone, while `ui/motion/ContextMenu` has carried a keyboard route since the cycle
+            that recorded "THE MENU WAS POINTER-ONLY" above its handler. Verified on this surface: Tab
+            lands on a row's Rename button and Shift+F10 there opens the same menu, all items present.
+            So a keyboard user could already do this and had been told they could not. */}
+        Right-click a tag to nest, merge, or delete it, or Tab to one and press Shift+F10 for
+        the same menu. An unused tag is kept — it stays part of your taxonomy even when nothing
+        carries it right now.
       </p>
     </div>
   )
