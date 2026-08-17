@@ -135,9 +135,19 @@ export const ImageFilePreview = memo(function ImageFilePreview({ path, content }
   return <div className="h-full overflow-auto"><ImagePreview path={path} src={src} /></div>
 })
 
-/** PDF file — by path. */
-export const PdfFilePreview = memo(function PdfFilePreview({ path }: PreviewProps) {
-  return <PdfPreview path={path || ''} />
+/** PDF — a workspace file (by path) OR a kind:pdf artifact (content is the
+ *  /api/artifacts/<slug>/raw URL ref). One renderer, source-agnostic — the same shape
+ *  ImageFilePreview above already uses.
+ *
+ *  It resolved from `path` ALONE until now, and a generated pdf artifact has no path:
+ *  the registry deliberately routes kind:pdf here rather than registering a second pdf
+ *  type ("reuses this ALREADY-WORKING PdfFile renderer" — registerBuiltins), but the
+ *  renderer only ever worked for the file half, so a pdf the agent generated could not
+ *  be previewed at all. */
+export const PdfFilePreview = memo(function PdfFilePreview({ path, content }: PreviewProps) {
+  const src = content && /^(https?:|\/)/.test(content) ? content : undefined
+  if (!src && !path) return <PreviewUnavailable label="PDF" />
+  return <PdfPreview path={path} src={src} />
 })
 
 /** Generated video (kind:video). Plays from the artifact's raw URL.

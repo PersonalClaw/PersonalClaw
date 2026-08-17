@@ -32,8 +32,22 @@ export const ImagePreview = memo(function ImagePreview({ path, src }: { path?: s
 })
 
 /* ── PDF ── */
-export const PdfPreview = memo(function PdfPreview({ path }: { path: string }) {
-  const url = api.fileRawUrl(path, true)
+export const PdfPreview = memo(function PdfPreview({ path, src }: { path?: string; src?: string }) {
+  // Two sources, exactly like ImagePreview above: a workspace FILE (by path →
+  // /api/files raw) or a direct URL (a kind:pdf ARTIFACT, whose content is the
+  // /api/artifacts/<slug>/raw ref). Until this took `src`, it always ran the path
+  // through `fileRawUrl`, so a generated pdf artifact — which has no path at all —
+  // asked the FILES endpoint for the empty path and previewed nothing.
+  const url = src || (path ? api.fileRawUrl(path, true) : '')
+  // No source at all is a DIFFERENT failure from "your browser won't render pdfs", and
+  // the fallback below would have said the wrong one while offering a link to nowhere.
+  if (!url) {
+    return (
+      <div className="grid h-full place-items-center text-on-surface-low text-[0.8125rem]">
+        This PDF is no longer available.
+      </div>
+    )
+  }
   return (
     <object data={url} type="application/pdf" className="h-full w-full">
       <div className="flex h-full flex-col items-center justify-center gap-3 text-on-surface-low">

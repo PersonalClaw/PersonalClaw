@@ -1311,7 +1311,7 @@
         {
           "id": "DFE-1",
           "title": "Fix the artifact surface: register missing kinds, kind-icon cards, pdf artifact preview",
-          "status": "todo",
+          "status": "done",
           "scope": "Session 0 (T0.1\u2013T0.3) + Design bullet S0",
           "done_when": "A docx artifact reads 'Word document' not 'Widget' and is filterable in the library toolbar; office cards show a kind icon instead of a broken <img> while image cards still thumbnail (test); a generated pdf artifact previews inline and a pdf file still previews (both asserted). V0 gate holds.",
           "deps": []
@@ -7544,11 +7544,6 @@
         "plan": "DCU"
       },
       {
-        "id": "DFE-1",
-        "title": "Fix the artifact surface: register missing kinds, kind-icon cards, pdf artifact preview",
-        "plan": "DFE"
-      },
-      {
         "id": "DFE-2",
         "title": "Style-carrying document model + from_markup runs + docx writer emits new fields",
         "plan": "DFE"
@@ -9706,9 +9701,9 @@
         "code": "DFE",
         "plan": "DOCUMENT-FIDELITY-EDITOR",
         "total_atoms": 8,
-        "done": 0,
+        "done": 1,
         "in_progress": 0,
-        "todo": 8,
+        "todo": 7,
         "blocked": 0
       },
       {
