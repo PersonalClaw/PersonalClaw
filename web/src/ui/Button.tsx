@@ -5,7 +5,7 @@ import { cx } from './cx'
 import { spring, physics, expr, exprHeavy } from '../design/motion'
 import { fvs } from '../design/fontWeight'
 
-type Variant = 'primary' | 'tonal' | 'secondary' | 'ghost' | 'danger'
+type Variant = 'primary' | 'tonal' | 'secondary' | 'ghost' | 'danger' | 'ghost-accent'
 type Size = 'xs' | 'sm' | 'md' | 'lg'
 
 const variants: Record<Variant, string> = {
@@ -16,6 +16,26 @@ const variants: Record<Variant, string> = {
   secondary: 'bg-surface-high text-on-surface hover:bg-surface-highest',
   ghost: 'bg-transparent text-on-surface hover:bg-surface-high',
   danger: 'bg-danger text-on-danger hover:opacity-90',
+  // ghost-accent: a ghost button whose LABEL carries the accent — the "Try again" retry after a
+  // failed load, four sites of it. They each wrote `variant="ghost" className="text-primary"`, which
+  // is wrong twice over:
+  //
+  //   1. TWO COLOUR UTILITIES LAND ON ONE ELEMENT. `ghost` already sets `text-on-surface`, so which
+  //      one wins is decided by Tailwind's stylesheet ORDER, not by the order they are written. It
+  //      happens to be the accent today; nothing guarantees that.
+  //   2. THE ACCENT IT PICKED FAILS AA. Measured on `#/artifacts/…`, where the retry sits on
+  //      `--color-canvas`: **4.37:1** at 13px/450 against a 4.5 floor, axe agreeing [serious].
+  //
+  // `primary-emphasis` is the shade the design system already ships for accent text off
+  // `--color-surface`, and it clears the floor on every ground this button can land on — canvas 4.82
+  // worst across the 12 schemes (coral 6.0), surface-low 4.92, surface-high 4.70, surface 6.63.
+  // That last one matters because `hover:bg-surface-high` makes surface-high the HOVER ground.
+  //
+  // 🪤 Why this is shippable while `ui/Segmented`'s coral branch is still deferred: Segmented needs a
+  // tinted BACKGROUND with a hover shade the token set does not define, and inventing one is a
+  // redesign. Here the background stays transparent and only the ink moves, so there is nothing to
+  // invent.
+  'ghost-accent': 'bg-transparent text-primary-emphasis hover:bg-surface-high',
 }
 
 const sizes: Record<Size, string> = {

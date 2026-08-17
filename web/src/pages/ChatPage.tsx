@@ -2875,8 +2875,8 @@ function AttachmentPeekModal({ path, name, onOpenFile, onClose }: { path: string
   return (
     <Modal title={name} icon={<Paperclip size={18} className="text-primary" />} onClose={onClose}>
       <div className="flex flex-col gap-3">
-        <Button variant="ghost" size="sm" onClick={() => { onOpenFile(path); onClose() }}
-          className="self-start border border-outline-variant/50 text-primary">
+        <Button variant="ghost-accent" size="sm" onClick={() => { onOpenFile(path); onClose() }}
+          className="self-start border border-outline-variant/50">
           <ExternalLink size={14} /> Open original file
         </Button>
         <div>
@@ -2917,8 +2917,8 @@ function MentionChips({ paths, onRemove, onOpen }: { paths: string[]; onRemove: 
               {open ? <span className="break-all">{p}</span> : base(p)}
             </button>
             {open && (
-              <Button variant="ghost" size="xs" title="Open file" onClick={() => onOpen(p)}
-                className="shrink-0 h-6 px-1.5 text-[0.75rem] text-primary">Open</Button>
+              <Button variant="ghost-accent" size="xs" title="Open file" onClick={() => onOpen(p)}
+                className="shrink-0 h-6 px-1.5 text-[0.75rem]">Open</Button>
             )}
             <IconButton icon={X} label="Remove file" onClick={() => onRemove(p)} size={20} iconSize={13}
               className="shrink-0 hover:text-danger" />
