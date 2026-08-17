@@ -386,7 +386,8 @@
           "done_when": "the Knowledge UI surfaces near-duplicate candidates for an item and a merge action drives the existing GET /duplicates + POST /merge routes; two near-dupes merge from the UI, the survivor keeps both items' collection memberships + mentions, and the loser 404s; reduced-motion/theme/token-lint pass on the new UI",
           "deps": [
             "KL-5"
-          ]
+          ],
+          "pr": 1525
         },
         {
           "id": "KL-7",
@@ -5575,7 +5576,8 @@
           "status": "done",
           "scope": "Session 2 T2.2",
           "done_when": "a native bundle gains a real provider method via the documented native SDK subset without core edits; apps import-boundary test still green",
-          "deps": []
+          "deps": [],
+          "pr": 1525
         },
         {
           "id": "APE-6",
