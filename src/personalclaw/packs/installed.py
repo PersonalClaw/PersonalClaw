@@ -59,6 +59,18 @@ class InstalledPack:
     #: The staged roster's rows (§4.2), so the pack detail surface can show the whole team
     #: (and which tier each member is in) without re-reading the staging area.
     roster: list[dict[str, Any]] = field(default_factory=list)
+    #: The manifest's ``pack_owned`` path patterns as installed (§1). Recorded here rather than
+    #: re-read from an archive, because an UPDATE must decide overwrite-vs-skip against what
+    #: the INSTALLED pack claimed to own — a new archive could widen its own ownership and
+    #: quietly acquire the right to clobber a file the user has been editing.
+    pack_owned: list[str] = field(default_factory=list)
+    #: The per-component drift lock (§1, the LEARNING-FLYWHEEL ``{source, computedHash}``
+    #: convention): ``{"skill:cfo-report": {"source", "computedHash", "path"}}``, where
+    #: ``path`` is home-relative and ``computedHash`` is
+    #: :func:`packs.update.component_digest` over the bytes that landed. An update compares
+    #: the digest again: equal = still the pack's copy (safe to overwrite); different = the
+    #: user edited it (skip with a drift note); absent = unverifiable, so never clobbered.
+    component_locks: dict[str, dict[str, str]] = field(default_factory=dict)
 
     @property
     def unbound(self) -> list[str]:
@@ -118,6 +130,12 @@ def load_installed(home: Path | None = None) -> list[InstalledPack]:
                     if isinstance(rec.get("bound"), dict)
                 },
                 roster=[r for r in rec.get("roster", []) if isinstance(r, dict)],
+                pack_owned=[str(p) for p in rec.get("pack_owned", [])],
+                component_locks={
+                    str(ref): {str(k): str(v) for k, v in lock.items()}
+                    for ref, lock in (rec.get("component_locks") or {}).items()
+                    if isinstance(lock, dict)
+                },
             )
         )
     return out

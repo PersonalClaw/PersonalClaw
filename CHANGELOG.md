@@ -41,6 +41,18 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
   description, or every design token. Behind it, a bundled app can now carry its own provider code
   instead of pointing at something inside PersonalClaw, so capabilities like this one grow in the
   app that owns them.
+- **PersonalClaw can now notice what a project is and suggest a pack for it — and it only ever
+  suggests.** Point a project at a Terraform directory and **Settings → Packs** offers the new
+  **Infra Ops** pack, with the reason attached: which file patterns and which content signals
+  matched, out of how many the rule declared, the example files it found, and the full list of what
+  installing would put on your machine. Nothing is read by a model — it is file-shape matching, and
+  it runs only when you create a project or press **Suggest packs**, never on a timer. Say "not for
+  this project" once and it is remembered for that project forever. The whole thing is off if you
+  turn off **Project fingerprinting**. Same panel now has the **pack store** (install any pack that
+  ships with your build) and, for packs you already have, **Check for update** — which shows you
+  what it would replace *and what it would leave alone* before you apply it. A pack update never
+  overwrites a file you have edited: your version is kept and the skip is named on screen, with the
+  reason, so a respected edit never looks like a silent one.
 
 - **Your phone can find this machine on its own now, if you ask it to.** Getting a companion
   device onto your gateway used to start with reading an IP address off one screen and typing it

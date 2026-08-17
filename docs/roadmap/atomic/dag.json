@@ -3084,7 +3084,7 @@
         {
           "id": "AP-7",
           "title": "Project-fingerprint auto-surfacing + pack update flow + pack store FE + validation sweep",
-          "status": "todo",
+          "status": "done",
           "scope": "\u00a77 Project-Fingerprint Auto-Surfacing (amendment d, second half); \u00a71 pack_owned update flow; \u00a79 fingerprint_rejections store; pack store/detail FE. Session 6. Success criteria 7, 8.",
           "done_when": "packs/fingerprint.py zero-LLM scanner over Project.workspace_dir matches declared fingerprints on project-create and on-demand only; a Terraform-shaped dir surfaces a propose-only pack card with confidence + the \u00a73.1 inspect report; rejecting once is remembered per (project,pack) and never re-nags; packs.fingerprint_enabled=false stops scanning entirely; pack update overwrites only pack_owned components and skips computedHash-drifted user-edited copies with a visible drift note; pack store/detail FE ships and the export\u2192wipe\u2192import round-trip validation sweep on a second PERSONALCLAW_HOME passes.",
           "deps": [
@@ -7393,11 +7393,6 @@
         "plan": "AG"
       },
       {
-        "id": "AP-7",
-        "title": "Project-fingerprint auto-surfacing + pack update flow + pack store FE + validation sweep",
-        "plan": "AP"
-      },
-      {
         "id": "APE-1",
         "title": "Manifest: backgroundTasks + eventSubscriptions permissions (parse/serialize/consent)",
         "plan": "APE"
@@ -9820,9 +9815,9 @@
         "code": "AP",
         "plan": "AGENT-PACKS",
         "total_atoms": 7,
-        "done": 6,
+        "done": 7,
         "in_progress": 0,
-        "todo": 1,
+        "todo": 0,
         "blocked": 0
       },
       {

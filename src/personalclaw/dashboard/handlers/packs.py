@@ -25,8 +25,18 @@ AP-4 adds the four pack KINDS' entry points, each one thin over a core function:
 * ``POST /api/packs/one-link`` — import a one-link JSON document (§2.3/§4.4) through the same
   §3 pipeline.
 
-Kept deliberately thin: the pack store cards + export UI are AP-7's scope. Errors use the
-shared envelope (``{"error": {"code", "message"}}``) so a caller branches on a stable code.
+AP-7 adds the discovery + maintenance half:
+
+* ``GET /api/packs/proposals`` — the propose-only fingerprint cards (§7). An ON-DEMAND scan
+  ("Suggest packs"); it writes nothing, and it is one of only two callers of
+  :func:`packs.fingerprint.scan_project` (the other is project-create).
+* ``POST /api/packs/proposals/reject`` — remember a "no" per (project, pack), forever.
+* ``POST /api/packs/{name}/update`` — the §1 ``pack_owned`` update flow. DRY-RUN by default:
+  it returns which components would be overwritten and which are skipped, with the drift note
+  for each user-edited copy. ``confirm: true`` applies it.
+
+Kept deliberately thin: every route is a few lines over a core function. Errors use the shared
+envelope (``{"error": {"code", "message"}}``) so a caller branches on a stable code.
 """
 
 from __future__ import annotations
@@ -212,6 +222,87 @@ async def api_pack_one_link(request: web.Request) -> web.Response:
     return web.json_response({"ok": True, "plan": plan.to_dict()})
 
 
+async def api_pack_proposals(request: web.Request) -> web.Response:
+    """The propose-only fingerprint cards (§7) — an ON-DEMAND scan. Writes nothing.
+
+    ``?project_id=`` scans one project; omitted, it scans every project that binds a workspace.
+    Each card carries its confidence, the arithmetic behind it, and the §3.1 inspect report of
+    what the pack WOULD install. Already-installed packs and already-rejected (project, pack)
+    pairs never appear, so this can be polled by a user without becoming nagware.
+    """
+    from personalclaw.packs.fingerprint import SCAN_REASON_ON_DEMAND, scan_project
+    from personalclaw.tasks.hierarchy import HierarchyStore
+
+    wanted = str(request.query.get("project_id", "") or "").strip()
+    projects = [p for p in HierarchyStore().list_projects() if not wanted or p.id == wanted]
+    if wanted and not projects:
+        return _err("project_not_found", f"no project {wanted!r}", 404)
+    out: list[dict] = []
+    for project in projects:
+        try:
+            out.extend(p.to_dict() for p in scan_project(project, reason=SCAN_REASON_ON_DEMAND))
+        except Exception as exc:  # noqa: BLE001 - one unscannable workspace must not blank the rest
+            logger.warning("fingerprint scan failed for project %s: %s", project.id, exc)
+    return web.json_response({"proposals": out})
+
+
+async def api_pack_proposal_reject(request: web.Request) -> web.Response:
+    """Remember that this project's user does not want this pack — the never-re-nag write (§7)."""
+    from personalclaw.packs.fingerprint import reject_proposal
+
+    body = await _json_body(request)
+    if body is None:
+        return _err("invalid_json", "request body must be a JSON object", 400)
+    project_id = str(body.get("project_id", "") or "").strip()
+    pack = str(body.get("pack", "") or "").strip()
+    try:
+        reject_proposal(project_id, pack)
+    except ValueError as exc:
+        return _err("rejection_incomplete", str(exc), 400)
+    return web.json_response({"ok": True, "project_id": project_id, "pack": pack})
+
+
+async def api_pack_update(request: web.Request) -> web.Response:
+    """The §1 ``pack_owned`` update flow. DRY-RUN unless ``confirm`` is true.
+
+    A dry run is the default because the interesting output is the SKIP list: which of your
+    edited copies this update would leave alone. Applying without seeing that first is the
+    mistake the whole ``pack_owned`` rule exists to prevent.
+    """
+    import shutil
+    import tempfile
+    from pathlib import Path
+
+    from personalclaw.packs.bundled import BundledPackError, build_bundled, get_bundled
+    from personalclaw.packs.update import PackUpdateError, apply_update, plan_update
+
+    name = request.match_info.get("name", "")
+    body = await _json_body(request)
+    if body is None:
+        return _err("invalid_json", "request body must be a JSON object", 400)
+    if get_bundled(name) is None:
+        # v1 updates a pack from the version shipped in THIS build — the only archive the
+        # gateway can produce on its own. A URL/file source is the export UI's later scope.
+        return _err("pack_not_bundled", f"no bundled pack named {name!r} to update from", 404)
+    staging = Path(tempfile.mkdtemp(prefix="pclaw-update-"))
+    try:
+        archive = build_bundled(name, staging / f"{name}.pclaw")
+        from personalclaw.supply_chain import TrustTier
+
+        if bool(body.get("confirm", False)):
+            plan = apply_update(name, archive, tier=TrustTier.BUILTIN)
+        else:
+            plan = plan_update(name, archive, tier=TrustTier.BUILTIN)
+    except BundledPackError as exc:
+        return _err("pack_build_failed", str(exc), 500)
+    except PackUpdateError as exc:
+        message = str(exc)
+        return _err("pack_update_refused", message, 404 if "not installed" in message else 400)
+    finally:
+        shutil.rmtree(staging, ignore_errors=True)
+    return web.json_response({"ok": True, "update": plan.to_dict()})
+
+
 async def _json_body(request: web.Request) -> dict | None:
     """The request's JSON object, or None when there isn't one. An EMPTY body is ``{}`` —
     every route here has usable defaults, so requiring a body would be ceremony."""
@@ -236,9 +327,15 @@ def register_pack_routes(app: web.Application) -> None:
     """Mount the AP-3 ledger/finish-setup routes + the AP-4 pack-kind entry points."""
     app.router.add_get("/api/packs/installed", api_packs_installed)
     app.router.add_get("/api/packs/bundled", api_packs_bundled)
+    # Literal-segment routes before the ``{name}`` patterns: `proposals` would otherwise be a
+    # legal value for `{name}`, and relying on registration luck for that is how a route starts
+    # answering for the wrong thing.
+    app.router.add_get("/api/packs/proposals", api_pack_proposals)
+    app.router.add_post("/api/packs/proposals/reject", api_pack_proposal_reject)
     app.router.add_post("/api/packs/bundled/{name}/install", api_pack_bundled_install)
     app.router.add_post("/api/packs/prompt-card", api_pack_prompt_card)
     app.router.add_post("/api/packs/one-link", api_pack_one_link)
     app.router.add_post("/api/packs/{name}/finish-setup", api_pack_finish_setup)
     app.router.add_post("/api/packs/{name}/roster/deploy", api_pack_roster_deploy)
     app.router.add_post("/api/packs/{name}/bindings", api_pack_bindings)
+    app.router.add_post("/api/packs/{name}/update", api_pack_update)

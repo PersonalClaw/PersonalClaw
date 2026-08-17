@@ -306,6 +306,80 @@ Sessions 1-2 are the keel; 3-6 each ship independently behind it.
 
 ## Execution log
 
+### 2026-08-16 — `AP-7` DONE (fingerprint auto-surfacing, pack_owned update flow, pack store FE)
+
+Every done_when clause is met, each driven as a user against an isolated home on port 10255 as
+well as tested. New: `packs/fingerprint.py`, `packs/update.py`,
+`packs/bundled/infra-ops/` (6 authored files), `tests/test_packs_fingerprint.py` (35 tests),
+`web/src/pages/settings/packProposalCard.test.tsx` (19 tests). Touched:
+`packs/import_.py` (`pack_owned` on the plan, `in_place` planning, committed-path collection),
+`packs/installed.py` (`pack_owned` + `component_locks` on the ledger), `packs/__init__.py`,
+`dashboard/handlers/packs.py` (3 routes), `tasks/hierarchy_handlers.py` (the create-time scan),
+`web/src/lib/api.ts`, `web/src/pages/settings/PacksPanel.tsx`, `reference/routes.md` (regenerated).
+
+**The negatives are mechanisms, not prose.** Zero-LLM is proven twice — an AST sweep over
+`fingerprint.py`'s imports (no sampling/provider/model seam reachable at all) and a scan with
+`guardrails.audit.record_attempt` wired to raise (zero attempts recorded), with a vacuity floor
+asserting the scan actually produced a proposal. "On project-create and on-demand ONLY" is a typed
+refusal: `scan_project` takes a mandatory `reason` from `SCAN_REASONS` and raises on anything else,
+so a background loop would have to invent a reason name and fail loudly. Backing that, a call-site
+ratchet asserts exactly two callers, keyed on the enclosing FUNCTION — the first version keyed on
+the FILE, and falsification proved that version would have passed with a scan added to
+`api_projects_get`, since it lives in the same module as the create handler.
+
+**DEVIATION 1 — a third bundled pack, `infra-ops`.** §7's example is an `infra-ops` pack matching a
+Terraform dir, but neither shipped Domain OS pack has a code-workspace file shape, so the headline
+clause would have been test-only against a synthetic manifest. `infra-ops` (2 skills, 1 agent +
+catalog, 1 template) is authored as a real bundled pack carrying the Terraform/OpenTofu
+fingerprints. A proposal a user cannot act on is not a proposal. It ships no trigger and no
+connector, so it gets its own two-home round-trip test rather than joining AP-4's parametrized
+Domain OS sweep, whose assertions are about a DISABLED trigger and a connector prompt.
+
+**DEVIATION 2 — `_build_plan(in_place=True)`, for updates only.** Fresh-id collision remapping is
+correct on a first install (a collision means someone else owns the slug) and actively wrong on an
+update, where the colliding entity IS this pack's own previous copy: remapping would install
+`infra-plan-review-imported-1` beside the original and report success while the update never
+happened. `in_place` disables remapping and has exactly one caller, `packs.update.apply_update`.
+Verified as a user — after an update the skills dir holds two entries, not four.
+
+**DEVIATION 3 — the propose-only card ships on the pack store, not the project hub.** §7 says the
+proposal "renders in the pack store and project hub"; the atom's own scope line says "pack
+store/detail FE", and that is what shipped (Settings → Packs: proposal cards, a "Suggest packs"
+on-demand trigger, the bundled catalog with install, and the installed-pack detail row with its
+update preview). The create-time scan already returns `pack_proposals` on the `POST /api/projects`
+response, so a project-hub card is a consumer away; nothing reads it yet.
+
+**DISCOVERY — an update needs a lock the ledger never had.** §1 says "the skills-lock
+`computedHash` tells us which is which", but only skills get a lock: `_commit_file_component`
+wrote templates/prompts/agents/triggers with no provenance at all, so three of four component
+kinds had nothing an update could compare against. Install now stamps one
+`{source, computedHash, path}` lock per component from the bytes that actually landed, digested by
+a single algorithm for files and directories alike — a skill and a template must not drift into two
+notions of "changed". A component with no lock resolves to `skip_unverifiable`, never to overwrite:
+"I cannot tell whether you edited this" must not become "so I'll overwrite it". A skipped drifted
+component keeps its ORIGINAL lock, so it still reads as drifted on the next update instead of being
+retroactively blessed as the pack's own bytes.
+
+**DISCOVERY — confidence had to be given a definition.** §7's example rule carries
+`"confidence": 0.9` with no stated semantics. Reporting the declared number for a partial match
+would overstate weak evidence, so the score a user sees is `declared × coverage`, coverage being
+the mean of the matched-glob and matched-signal fractions. `_score` is pinned by test and the card
+renders the arithmetic beside the number ("2 of 2 file patterns and 2 of 2 content signals matched,
+against a declared ceiling of 90%"). A signals-only rule is dropped at parse — with no globs it has
+nothing to bound its reads and would match every project.
+
+**DEFECT FOUND AND FIXED DURING THE UI DRIVE — two components, one cache key.** `ProposalsSection`
+and `PackStoreSection` each held their own
+`useCachedData('settings:packs:installed')`. Installing from a proposal card refreshed only that
+component's copy, so "Installed packs" kept reading "No packs installed yet" and the store row kept
+offering Install until a full reload. A cached read is not shared state. The parent now owns that
+read and passes it plus one `onInstalled` invalidator down; re-driven in the browser, all three
+sections update together.
+
+**Pre-existing, NOT touched:** `docs/roadmap/atomic/AP.md`'s table carries duplicate `AP-5` and
+`AP-6` rows (one ⬜, one ✅ each) and shows `AP-1`/`AP-2`/`AP-3` as ⬜ despite being done. Both
+duplications are present on `origin/main`; only the `AP-7` row and section were edited here.
+
 ### 2026-08-16 — `AP-4` DONE (pack kinds: Domain OS, roster, prompt-card, one-link)
 
 All four sub-scopes landed and every done_when clause is met. New: `packs/bundled/` (module +

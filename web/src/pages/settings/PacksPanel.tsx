@@ -1,7 +1,7 @@
-import { useEffect, useState } from 'react'
-import { api, type InstalledPackRec } from '../../lib/api'
+import { useCallback, useEffect, useState } from 'react'
+import { api, type BundledPackRec, type InstalledPackRec, type PackProposalRec, type PackUpdateRec } from '../../lib/api'
 import { notify } from '../../app/appSdk'
-import { useCachedData } from '../../lib/useCachedData'
+import { invalidateCache, useCachedData } from '../../lib/useCachedData'
 import { PanelHeader, Section, Row, Field, SavedToast, ToggleRow } from './settingsUI'
 import { TextInput } from '../../ui/forms'
 import { Button } from '../../ui/Button'
@@ -26,12 +26,22 @@ export function PacksPanel() {
     api.personalclawConfig().then((c) => (c.packs ?? {}) as PacksCfg),
     { persist: true },
   )
-  const { data: installed } = useCachedData('settings:packs:installed', () =>
+  const { data: installed, refresh: refreshInstalled } = useCachedData('settings:packs:installed', () =>
     api.packsInstalled().catch(() => [] as InstalledPackRec[]),
     { persist: true },
   )
 
   useEffect(() => { if (data) setCfg(data) }, [data])
+
+  // ONE owner of the installed-ledger read, passed down to both surfaces that can install.
+  // Two components each holding their own `useCachedData('settings:packs:installed')` looked
+  // fine and wasn't: installing from a proposal card refreshed only that component's copy, so
+  // "Installed packs" kept saying "No packs installed yet" and the store row kept offering
+  // Install until a full reload. A cached read is not shared state.
+  const onInstalled = useCallback(() => {
+    invalidateCache('settings:packs:installed')
+    refreshInstalled()
+  }, [refreshInstalled])
 
   // Error BEFORE the skeleton, or it is unreachable: `data` is undefined for the loading, failed AND
   // empty cases. Same one-line shape `AgentDefaultsPanel` ships for the same endpoint.
@@ -67,10 +77,198 @@ export function PacksPanel() {
         </div>
       </Section>
 
-      <Section title="Installed packs" hint="Each imported pack, its skipped-connector markers, and a re-runnable setup interview when it ships one.">
+      <ProposalsSection onInstalled={onInstalled} />
+
+      <PackStoreSection installed={installed ?? []} onInstalled={onInstalled} />
+
+      <Section title="Installed packs" hint="Each imported pack, its skipped-connector markers, a re-runnable setup interview when it ships one, and an update that never overwrites a component you have edited.">
         <InstalledPacks packs={installed ?? []} />
       </Section>
     </div>
+  )
+}
+
+// ── §7 propose-only fingerprint cards ────────────────────────────────────────
+
+/** Suggested packs, per project, from the zero-LLM file-shape scanner.
+ *
+ *  Two properties are visible here on purpose. (1) Nothing installs itself: a card offers
+ *  "Install" and "Not for this project", and the second one is remembered forever. (2) The
+ *  confidence number arrives with its own derivation — an unexplained score is worse than
+ *  none, so the card shows which file patterns and signals matched out of how many declared.
+ *
+ *  The GET performs the scan, so this section is the on-demand half of §7's "on project-create
+ *  and on-demand only". It is loaded when the panel opens and re-run only when the user asks —
+ *  nothing here is on a timer. */
+export function ProposalsSection({ onInstalled }: { onInstalled: () => void }) {
+  const [proposals, setProposals] = useState<PackProposalRec[] | null>(null)
+  const [error, setError] = useState<string>('')
+  const [busy, setBusy] = useState(false)
+
+  const scan = useCallback(() => {
+    setBusy(true)
+    setError('')
+    api.packProposals()
+      .then(setProposals)
+      .catch((e) => setError(String((e as Error)?.message || e)))
+      .finally(() => setBusy(false))
+  }, [])
+
+  useEffect(() => { scan() }, [scan])
+
+  const reject = (p: PackProposalRec) => {
+    api.packRejectProposal(p.project_id, p.pack).then(() => {
+      // Drop it locally too: the backend will never return it again, and leaving the card on
+      // screen until a refetch would make a permanent decision look like it didn't take.
+      setProposals((cur) => (cur ?? []).filter((x) => !(x.project_id === p.project_id && x.pack === p.pack)))
+      notify(`${p.displayName} won't be suggested for this project again.`, 'info')
+    }).catch((e) => notify(`Couldn't record that: ${String((e as Error)?.message || e)}`, 'error'))
+  }
+
+  const install = (p: PackProposalRec) => {
+    setBusy(true)
+    api.packBundledInstall(p.pack).then(() => {
+      notify(`${p.displayName} installed. Its triggers are disabled and its roster is staged until you enable them.`, 'success')
+      // Both: the proposal list (an installed pack is never proposed again) AND the installed
+      // ledger the sections below read.
+      onInstalled()
+      scan()
+    }).catch((e) => notify(`Couldn't install ${p.displayName}: ${String((e as Error)?.message || e)}`, 'error'))
+      .finally(() => setBusy(false))
+  }
+
+  return (
+    <Section
+      title="Suggested for your projects"
+      hint="Matched by file shape only — no model reads your code. A suggestion never installs anything, and declining one is remembered for that project."
+      right={<Button variant="ghost" size="sm" disabled={busy} onClick={scan}>{busy ? 'Scanning…' : 'Suggest packs'}</Button>}
+    >
+      {error && (
+        <div className="rounded-lg bg-surface-container px-4 py-3 text-[0.8125rem] text-warn">Couldn't scan for suggestions: {error}</div>
+      )}
+      {!error && proposals !== null && proposals.length === 0 && (
+        <div className="rounded-lg bg-surface-container px-4 py-3 text-[0.8125rem] text-on-surface-low">
+          No pack matches any project's workspace. Bind a project to a codebase directory to get suggestions.
+        </div>
+      )}
+      {!error && proposals === null && (
+        <div className="rounded-lg bg-surface-container px-4 py-3 text-[0.8125rem] text-on-surface-low">Scanning your projects…</div>
+      )}
+      <div className="flex flex-col gap-2">
+        {(proposals ?? []).map((p) => (
+          <ProposalCard key={`${p.project_id}:${p.pack}`} proposal={p} busy={busy} onInstall={install} onReject={reject} />
+        ))}
+      </div>
+    </Section>
+  )
+}
+
+/** Exported for test: the confidence derivation and the propose-only affordances are only
+ *  observable by rendering a card against a stubbed proposal. */
+export function ProposalCard({ proposal, busy, onInstall, onReject }: {
+  proposal: PackProposalRec
+  busy: boolean
+  onInstall: (p: PackProposalRec) => void
+  onReject: (p: PackProposalRec) => void
+}) {
+  const top = proposal.matches[0]
+  const pct = Math.round(proposal.confidence * 100)
+  const would = proposal.inspect?.components ?? []
+  return (
+    <div className="rounded-lg bg-surface-container px-4 py-3">
+      <div className="flex flex-wrap items-baseline justify-between gap-m">
+        <div className="min-w-0">
+          <div className="text-on-surface text-[0.8125rem]">
+            {proposal.displayName} {proposal.version}
+            {/* The score, and immediately the reason for it. A bare percentage would be a
+                number the user has to trust; the line under it is the arithmetic. */}
+            <span className="ml-2 rounded-pill bg-surface-high px-2 py-0.5 text-[0.75rem] text-on-surface-var">{pct}% match</span>
+          </div>
+          {top && (
+            <div className="mt-0.5 text-on-surface-low text-[0.75rem]">
+              Looks like a {top.label.toLowerCase()} — {top.matched_globs.length} of {top.declared_globs.length} file patterns
+              {top.declared_signals.length > 0 && <> and {top.matched_signals.length} of {top.declared_signals.length} content signals</>}
+              {' '}matched, against a declared ceiling of {Math.round(top.declared_confidence * 100)}%.
+            </div>
+          )}
+        </div>
+        <div className="flex shrink-0 items-center gap-2">
+          <Button variant="primary" size="sm" disabled={busy} onClick={() => onInstall(proposal)}>Install</Button>
+          <Button variant="ghost" size="sm" onClick={() => onReject(proposal)}>Not for this project</Button>
+        </div>
+      </div>
+      <div className="mt-2 flex flex-col gap-1 border-t border-outline-variant/30 pt-2 text-[0.75rem]">
+        <div className="text-on-surface-low">{proposal.description}</div>
+        {/* Example matched paths. A score with no example path is unreviewable — this is how a
+            user confirms the scanner looked at their project and not at a vendored copy. */}
+        {top?.evidence.length ? (
+          <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
+            <span className="text-on-surface-low">Matched</span>
+            {top.evidence.map((e) => (
+              <span key={e} className="rounded-pill bg-surface-high px-2 py-0.5 font-mono text-on-surface-low">{e}</span>
+            ))}
+            <span className="text-on-surface-low">of {proposal.files_scanned} files scanned</span>
+          </div>
+        ) : null}
+        {/* The §3.1 inspect report: what installing WOULD put on this machine. Shown on the
+            card because "here's what it would install" is the whole difference between a
+            proposal and an ad. */}
+        {would.length > 0 && (
+          <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
+            <span className="text-on-surface-low">Would install</span>
+            {would.map((c) => (
+              <span key={`${c.kind}:${c.orig_id}`} className="rounded-pill bg-surface-high px-2 py-0.5 text-on-surface-low">{c.kind}:{c.target_id}</span>
+            ))}
+          </div>
+        )}
+        {proposal.inspect_error && (
+          <div className="text-warn">Couldn't preview what this would install: {proposal.inspect_error}</div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+// ── the pack store ───────────────────────────────────────────────────────────
+
+/** The packs shipped in this build. Installing one runs the full import pipeline — every
+ *  component scanned, triggers landing disabled, the roster staged until a human deploys it. */
+export function PackStoreSection({ installed, onInstalled }: {
+  installed: InstalledPackRec[]
+  onInstalled: () => void
+}) {
+  const [busy, setBusy] = useState('')
+  const { data: bundled, error, refresh } = useCachedData('settings:packs:bundled', () =>
+    api.packsBundled().catch(() => [] as BundledPackRec[]),
+    { persist: true },
+  )
+  // The installed set is the PARENT's read, passed down — not a second copy of the same query.
+  const have = new Set(installed.map((p) => p.name))
+
+  const install = (name: string, label: string) => {
+    setBusy(name)
+    api.packBundledInstall(name).then(() => {
+      notify(`${label} installed. Its triggers are disabled and its roster is staged until you enable them.`, 'success')
+      onInstalled()
+    }).catch((e) => notify(`Couldn't install ${label}: ${String((e as Error)?.message || e)}`, 'error'))
+      .finally(() => setBusy(''))
+  }
+
+  return (
+    <Section title="Pack store" hint="The packs shipped in this build. Installing one scans every component, lands its triggers disabled, and stages its roster until you deploy it.">
+      {error ? <LoadError what="the pack catalog" error={error} onRetry={refresh} /> : null}
+      <div className="flex flex-col gap-2">
+        {(bundled ?? []).map((p) => (
+          <div key={p.name} className="rounded-lg bg-surface-container px-4 py-3">
+            <Row label={`${p.displayName} ${p.version}`.trim()} hint={p.description}>
+              {have.has(p.name)
+                ? <span className="text-[0.75rem] text-on-surface-low">Installed</span>
+                : <Button variant="primary" size="sm" disabled={busy === p.name} onClick={() => install(p.name, p.displayName)}>Install</Button>}
+            </Row>
+          </div>
+        ))}
+      </div>
+    </Section>
   )
 }
 
@@ -121,6 +319,32 @@ function ConnectorLine({ c }: { c: InstalledPackRec['connectors'][number] }) {
  *  about them is measurable from layout. */
 export function PackRow({ pack }: { pack: InstalledPackRec }) {
   const [busy, setBusy] = useState(false)
+  const [update, setUpdate] = useState<PackUpdateRec | null>(null)
+  // Dry-run FIRST, always. The interesting output of an update is the skip list — which of
+  // your edited copies it would leave alone — and applying before seeing that is exactly the
+  // mistake the pack_owned rule exists to prevent.
+  const checkUpdate = () => {
+    setBusy(true)
+    api.packUpdate(pack.name, false).then((r) => {
+      setUpdate(r.update)
+      if (r.update.components.length === 0) notify(`${pack.name} has nothing to update.`, 'info')
+    }).catch((e) => notify(`Couldn't check for an update: ${String((e as Error)?.message || e)}`, 'error'))
+      .finally(() => setBusy(false))
+  }
+  const applyUpdate = () => {
+    setBusy(true)
+    api.packUpdate(pack.name, true).then((r) => {
+      setUpdate(r.update)
+      const kept = r.update.drift_notes.length
+      notify(
+        kept > 0
+          ? `${pack.name} updated. ${r.update.overwritten.length} replaced; ${kept} of your edited copies kept.`
+          : `${pack.name} updated — ${r.update.overwritten.length} component(s) replaced.`,
+        'success',
+      )
+    }).catch((e) => notify(`Couldn't update ${pack.name}: ${String((e as Error)?.message || e)}`, 'error'))
+      .finally(() => setBusy(false))
+  }
   const finishSetup = () => {
     setBusy(true)
     api.packFinishSetup(pack.name).then((r) => {
@@ -144,10 +368,16 @@ export function PackRow({ pack }: { pack: InstalledPackRec }) {
     <div className="rounded-lg bg-surface-container px-4 py-3">
       <Row label={`${pack.name} ${pack.version}`.trim()}
         hint={pack.connector_markers.length > 0 ? `Unavailable: ${pack.connector_markers.join(', ')}` : undefined}>
-        {pack.setup_pending && (
-          <Button variant="primary" size="sm" disabled={busy} onClick={finishSetup}>Finish setup</Button>
-        )}
+        <div className="flex items-center gap-2">
+          {pack.setup_pending && (
+            <Button variant="primary" size="sm" disabled={busy} onClick={finishSetup}>Finish setup</Button>
+          )}
+          <Button variant="ghost" size="sm" disabled={busy} onClick={checkUpdate}>
+            {busy ? 'Checking…' : 'Check for update'}
+          </Button>
+        </div>
       </Row>
+      {update && <UpdatePreview update={update} busy={busy} onApply={applyUpdate} />}
       {/* Every fact this block can show joins its gate. Gating on components/connectors alone
           would hide a pack that has only a setup id and an install date — the same
           activity-vs-existence mistake the MCP pool tile made. */}
@@ -175,6 +405,56 @@ export function PackRow({ pack }: { pack: InstalledPackRec }) {
           {installedOn && (
             <div className="text-on-surface-low text-[0.75rem]">Installed {installedOn}</div>
           )}
+        </div>
+      )}
+    </div>
+  )
+}
+
+/** The §1 update preview: what would be replaced, and — the load-bearing half — which of your
+ *  edited copies would be kept, with the reason for each.
+ *
+ *  Exported for test. A silent skip is indistinguishable from a clobber to anyone reading the
+ *  result, so the drift note is part of the contract rather than a nicety, and it renders
+ *  BEFORE the apply button so the decision is informed. */
+export function UpdatePreview({ update, busy, onApply }: {
+  update: PackUpdateRec
+  busy: boolean
+  onApply: () => void
+}) {
+  const kept = update.components.filter((c) => c.action === 'skip_drift' || c.action === 'skip_unverifiable')
+  const notOwned = update.components.filter((c) => c.action === 'skip_not_pack_owned')
+  return (
+    <div className="mt-2 flex flex-col gap-1 border-t border-outline-variant/30 pt-2 text-[0.75rem]">
+      <div className="flex flex-wrap items-baseline justify-between gap-m">
+        <span className="text-on-surface-var">
+          {update.applied ? 'Updated' : 'Update available'}: {update.from_version} → {update.to_version}
+          {' · '}{update.overwritten.length} to replace, {update.skipped.length} to keep
+        </span>
+        {!update.applied && update.overwritten.length > 0 && (
+          <Button variant="primary" size="sm" disabled={busy} onClick={onApply}>Apply update</Button>
+        )}
+      </div>
+      {/* Every kept copy, named, with the reason. This is the "visible drift note" the §1
+          contract requires — an update that skipped silently would look identical to one that
+          quietly overwrote the user's work. */}
+      {kept.map((c) => (
+        <div key={c.ref} className="flex items-baseline gap-m">
+          <span className="shrink-0 text-warn">{c.ref}</span>
+          <span className="min-w-0 flex-1 text-on-surface-low">{c.reason}</span>
+        </div>
+      ))}
+      {notOwned.length > 0 && (
+        <div className="text-on-surface-low">
+          Not owned by this pack, so untouched: {notOwned.map((c) => c.ref).join(', ')}
+        </div>
+      )}
+      {update.overwritten.length > 0 && (
+        <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
+          <span className="text-on-surface-low">{update.applied ? 'Replaced' : 'Would replace'}</span>
+          {update.overwritten.map((ref) => (
+            <span key={ref} className="rounded-pill bg-surface-high px-2 py-0.5 text-on-surface-low">{ref}</span>
+          ))}
         </div>
       )}
     </div>

@@ -122,6 +122,10 @@ class ImportPlan:
     #: The setup interview's declared bindings (§3.4/§4.1) — the questions the "Finish setup"
     #: chip has to get answered, each ``{key, kind, label, required}``.
     bindings: list[dict[str, Any]] = field(default_factory=list)
+    #: The manifest's ``pack_owned`` path patterns (§1) — which components a later UPDATE may
+    #: overwrite. Carried on the plan (not re-read from the archive) so :mod:`packs.update`
+    #: decides from the same parse the integrity check verified.
+    pack_owned: list[str] = field(default_factory=list)
 
     @property
     def has_dangerous(self) -> bool:
@@ -167,6 +171,7 @@ class ImportPlan:
             "roster": list(self.roster),
             "runbooks": list(self.runbooks),
             "bindings": list(self.bindings),
+            "pack_owned": list(self.pack_owned),
         }
 
 
@@ -553,9 +558,17 @@ def _build_plan(
     quarantine: Path,
     home: Path,
     tier: "Any",
+    in_place: bool = False,
 ) -> tuple[ImportPlan, list[_Comp]]:
     """Parse + plan a pack against ``home`` WITHOUT writing anything. Returns the plan and
-    the parsed components (in commit order) so :func:`import_pack` can reuse them."""
+    the parsed components (in commit order) so :func:`import_pack` can reuse them.
+
+    ``in_place`` turns OFF fresh-id collision remapping, and exists for exactly one caller:
+    :func:`packs.update.apply_update`. On a first install a collision means "someone else
+    already owns this slug", so the WORK-R15 ``<id>-imported-<N>`` slot is right. On an UPDATE
+    the colliding entity IS this pack's own previous copy, and remapping would install a second
+    parallel component beside it instead of replacing it — the update would silently never
+    happen while reporting success."""
     from personalclaw.supply_chain import SkillScanner
 
     raw_components = manifest.get("components") or []
@@ -595,7 +608,7 @@ def _build_plan(
     taken: set[tuple[str, str]] = set()
     remap: dict[tuple[str, str], str] = {}
     for comp in parsed:
-        fresh = _fresh_id(home, comp.kind, comp.id, taken)
+        fresh = comp.id if in_place else _fresh_id(home, comp.kind, comp.id, taken)
         comp.target_id = fresh
         taken.add((comp.kind, fresh))
         if fresh != comp.id:
@@ -705,6 +718,7 @@ def _build_plan(
         roster=[e.to_dict() for e in roster_entries],
         runbooks=[b.to_dict() for b in runbooks],
         bindings=_parse_bindings(members.get("setup/bindings.json")),
+        pack_owned=[str(p) for p in (manifest.get("pack_owned") or []) if str(p).strip()],
     )
     return plan, parsed
 
@@ -936,8 +950,12 @@ def _staged_dir(home: Path, stage: str) -> Path:
     return home / "packs" / "staged" / stage
 
 
-def _commit_file_component(comp: _Comp, home: Path, journal: _Journal, stage: str) -> None:
-    """Serialize + write a single-file component (all but skills), journaling the write."""
+def _commit_file_component(comp: _Comp, home: Path, journal: _Journal, stage: str) -> Path:
+    """Serialize + write a single-file component (all but skills), journaling the write.
+
+    Returns the written path so the caller can stamp the component's ledger lock (§1
+    ``pack_owned`` update flow) from the bytes that actually landed — deriving the lock from
+    anything other than the committed file would let the two disagree."""
     if comp.kind == "template":
         path = home / "workflows" / "defs" / comp.target_id / "workflow.json"
         text = json.dumps(comp.obj, indent=2, ensure_ascii=False)
@@ -965,6 +983,7 @@ def _commit_file_component(comp: _Comp, home: Path, journal: _Journal, stage: st
     _mkdir_journaled(journal, path.parent)
     journal.record_file(path)
     _write_component_file(path, text)
+    return path
 
 
 def _commit_skill(comp: _Comp, home: Path, marketplace_name: str, journal: _Journal) -> Path:
@@ -1136,13 +1155,17 @@ def import_pack(
         mp_name = f"pack-import:{plan.name}:{import_id}"
         skill_files = {c.target_id: (c.skill_files or []) for c in parsed if c.kind == "skill"}
         registry.register(mp_name, PackMarketplace(skill_files, tier_str))
+        committed: dict[str, Path] = {}
         try:
             for comp in parsed:  # already sorted leaves-first
                 if comp.kind == "skill":
                     skill_dir = _commit_skill(comp, home, mp_name, journal)
                     journal.record_skill(skill_dir)
+                    committed[f"{comp.kind}:{comp.id}"] = skill_dir
                 else:
-                    _commit_file_component(comp, home, journal, stage)
+                    committed[f"{comp.kind}:{comp.id}"] = _commit_file_component(
+                        comp, home, journal, stage
+                    )
             _stage_config_subset(members, home, journal, stage)
             _stage_roster(plan, home, journal, stage)
         except Exception as exc:
@@ -1162,7 +1185,7 @@ def import_pack(
         # a rolled-back import never writes a credential or a server. Connector resolution is
         # fail-soft: a configure/substitute that can't complete degrades to a skip marker, so
         # a bad credential can't undo an already-committed pack.
-        _resolve_and_record(plan, home, connector_choices)
+        _resolve_and_record(plan, home, connector_choices, committed)
 
         _audit(
             "pack_import",
@@ -1175,7 +1198,10 @@ def import_pack(
 
 
 def _resolve_and_record(
-    plan: ImportPlan, home: Path, connector_choices: dict[str, dict[str, Any]] | None
+    plan: ImportPlan,
+    home: Path,
+    connector_choices: dict[str, dict[str, Any]] | None,
+    committed: dict[str, Path] | None = None,
 ) -> None:
     """Resolve the pack's connector requirements and write the installed-pack ledger.
 
@@ -1188,6 +1214,7 @@ def _resolve_and_record(
     from datetime import datetime, timezone
 
     from personalclaw.packs import connectors as pack_connectors
+    from personalclaw.packs import update as pack_update
     from personalclaw.packs.installed import InstalledPack, record_install
 
     resolutions = pack_connectors.resolve_for_import(plan.connectors, connector_choices, home=home)
@@ -1214,6 +1241,8 @@ def _resolve_and_record(
             installed_at=datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
             bindings=[dict(b) for b in plan.bindings],
             roster=[dict(r) for r in plan.roster],
+            pack_owned=list(plan.pack_owned),
+            component_locks=pack_update.stamp_locks(plan, home, committed or {}),
         ),
         home,
     )

@@ -2737,6 +2737,63 @@ export interface InstalledPackRec {
   setup_skill: string
   setup_pending: boolean
   installed_at: string
+  // AP-7 §1: which paths the pack claims ongoing ownership of, and the per-component
+  // `{source, computedHash}` drift lock an update compares against.
+  pack_owned?: string[]
+  component_locks?: Record<string, { source: string; computedHash: string; path: string }>
+}
+
+// One Domain OS pack shipped in this build (AGENT-PACKS §4.1) — the pack store's catalog row.
+export interface BundledPackRec {
+  name: string
+  version: string
+  displayName: string
+  description: string
+}
+
+// One fingerprint rule's outcome, carrying the arithmetic behind its score (AP-7 §7). The
+// card renders `declared_confidence` alongside `confidence` because the number only means
+// something with its derivation next to it: confidence = declared × coverage, where coverage
+// is how much of the rule (globs, signals) actually matched.
+export interface FingerprintMatchRec {
+  label: string
+  confidence: number
+  declared_confidence: number
+  matched_globs: string[]
+  matched_signals: string[]
+  declared_globs: string[]
+  declared_signals: string[]
+  evidence: string[]
+}
+
+// A propose-only pack card (AP-7 §7). `inspect` is the §3.1 dry-run report — what the pack
+// WOULD install, computed with no writes. It is null when the scan was asked for without one
+// (project-create keeps its latency independent of pack count) or when the plan failed to
+// build, in which case `inspect_error` says why.
+export interface PackProposalRec {
+  project_id: string
+  pack: string
+  displayName: string
+  description: string
+  version: string
+  confidence: number
+  matches: FingerprintMatchRec[]
+  files_scanned: number
+  inspect: { name: string; version: string; blocked: boolean; needs_consent: boolean; components: Array<{ kind: string; orig_id: string; target_id: string; verdict: string }>; requirements: unknown[]; staged_triggers: string[] } | null
+  inspect_error: string
+}
+
+// One component's update decision (AP-7 §1). `action` is `overwrite` (the only one that
+// writes), `skip_not_pack_owned`, `skip_drift` (you edited it — kept), or `skip_unverifiable`.
+export interface PackUpdateRec {
+  pack: string
+  from_version: string
+  to_version: string
+  applied: boolean
+  components: Array<{ ref: string; action: string; reason: string; pack_path: string; home_path: string }>
+  drift_notes: string[]
+  overwritten: string[]
+  skipped: string[]
 }
 
 export const api = {
@@ -2806,6 +2863,21 @@ export const api = {
   // the interview runs in chat under normal tool approval — never server-side).
   packsInstalled: () => get<{ packs: InstalledPackRec[] }>('/api/packs/installed').then((d) => d.packs),
   packFinishSetup: (name: string) => post<{ pack: string; setup_skill: string; command: string; pending: boolean }>(`/api/packs/${encodeURIComponent(name)}/finish-setup`, {}),
+  // ── Pack store + fingerprint discovery (AGENT-PACKS §4.1/§7/§1, AP-7) ──
+  // `packsBundled` is the store catalog; installing one runs the full §3 import (scan,
+  // integrity, leaves-first commit with rollback) at BUILTIN trust.
+  packsBundled: () => get<{ packs: BundledPackRec[] }>('/api/packs/bundled').then((d) => d.packs),
+  packBundledInstall: (name: string) => post<{ ok: boolean; plan: Record<string, unknown> }>(`/api/packs/bundled/${encodeURIComponent(name)}/install`, {}),
+  // The propose-only fingerprint cards. This GET performs the ON-DEMAND scan ("Suggest
+  // packs") — one of only two callers of the scanner (the other is project-create); §7
+  // forbids a background loop, so nothing polls this on a timer.
+  packProposals: (projectId?: string) => get<{ proposals: PackProposalRec[] }>(`/api/packs/proposals${projectId ? `?project_id=${encodeURIComponent(projectId)}` : ''}`).then((d) => d.proposals),
+  // Remember a "no" per (project, pack) — forever. The proposal never reappears for that project.
+  packRejectProposal: (projectId: string, pack: string) => post<{ ok: boolean }>('/api/packs/proposals/reject', { project_id: projectId, pack }),
+  // The §1 pack_owned update flow. DRY-RUN by default: the interesting output is the SKIP
+  // list — which of your edited copies the update would leave alone — so the UI shows that
+  // before `confirm` applies anything.
+  packUpdate: (name: string, confirm = false) => post<{ ok: boolean; update: PackUpdateRec }>(`/api/packs/${encodeURIComponent(name)}/update`, { confirm }),
 
   // ── Owner login (REMOTE-USER-AUTH C3/C5) ──
   // The credential itself is never READ back — `authSession` reports only whether one is
