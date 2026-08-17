@@ -456,3 +456,107 @@ Sharpens, doesn't append: RunPin + scenario library extend **Session 1** (the st
   the FE tab) — later atoms. **Gates:** `make lint` clean (720 files);
   `tests/test_evals_matrix_runner.py` (21) + `test_evals_store.py` (10) + `test_eval_harness.py` (59
   — proves eval/runner.py unchanged) pass.
+
+---
+
+## Execution log — ES-4 (judge benchmark harness → tier-recommendation table) — §6 COMPLETE
+
+- **ES-4 DONE.** `evals/judge_bench.py` (+ the shipped `evals/benchmarks/judge/starter.json`)
+  generalizes `loop/instrument.probe_judge` from one strong/null pair on one model to a matrix over
+  **fixtures × judge tier × `judge_samples` 1/3/5 × position**, and publishes the
+  tier-recommendation table §6 asks for: agreement-with-known-verdict, strong-vs-null separation,
+  position-swap flip rate, cost and wall time per (rubric-class × tier × samples), each row carrying
+  the harness's own failure-mode notes.
+
+- **Nothing in the judge vocabulary was re-minted.** `judge_instruction` renders the prompt,
+  `parse_judge_json` → `validate_verdict` → `aggregate_samples` decide the cell, so a tier is
+  measured on the exact object a live judge gate hands it — including the PASS-needs-proof
+  precondition and the strict-majority rule. `judge_calibration.CANARY_MIN_SEPARATION` is imported
+  as the separation floor rather than restated (a second threshold would make one judge trustworthy
+  to the benchmark and blind to the canary), and agreement is
+  `judge_calibration.DivergenceRecord.direction`: a fixture's known verdict IS a human label, so a
+  judge disagreeing with it IS a divergence record, and the offline metric and the live one are now
+  one function. `expand_cells` moved from `runner.py` (private) to `matrix.py` (public) so BOTH
+  matrix consumers cross their axes with one rule; `pinning.compute_pin_for_subject` was extracted
+  so a non-scenario subject pins through the same three environment parts without touching the
+  append-only ledger header.
+
+- **The load-bearing property is that the axes are CONSUMED**, because a declared axis nothing reads
+  produces N identical runs wearing different labels — a fabricated comparison that looks real in
+  every artifact. `judge_samples` decides both the call count (recorded on the observation as
+  `calls`) and the aggregate verdict; `tier` decides the use case via the engine's own
+  `DEFAULT_MODEL_TIERS`, asserted equal to it so a drift there is a failing test rather than a
+  silently different measurement. Three falsifications confirmed the cover: ignoring the sample axis
+  reds `assert 1 == 3`; dropping the null's score in the separation computation reds
+  `assert 4.0 == 0.0`; returning a fixed use case reds `assert 'passed' == 'verifier_absent'`.
+
+- **MEASURED BUG, found by driving the harness rather than by reading it.** The separation metric
+  matched a null against *any* strong fixture in the same rubric class. With two pairs in one class
+  that compares `conv-null-restate` to `conv-strong-tests` — the wrong difference under the
+  right-looking name, and it HID a collapse (a 5.0-vs-1.0 pair masked a 2.0-vs-2.0 one). Fixed by
+  carrying the DECLARED `counterpart_id` on `Observation` and matching exactly, within one position
+  (a cross-slot comparison would fold positional bias into the separation number). Regression:
+  `test_separation_uses_the_DECLARED_counterpart_not_any_strong_in_the_class`. The same pass also
+  found the collapse note printed once per slot rather than once per pair, burying every other note.
+
+- **Unmeasured is never adequate — mechanized, not left to the reader.** A class with no strong/null
+  pair reports `separation: None` and is INADEQUATE; a class never position-swapped reports
+  `flip_rate: None` and is INADEQUATE; a cell whose judge produced no parseable object is
+  `VERIFIER_ABSENT` with protocol errors counted separately, never averaged in as a wrong answer;
+  and cost is `None` rather than `0.0` when nothing priced the call, so `recommend` returns
+  `cost_unknown` instead of ranking an unpriced model cheapest. One missed forbidden-success-mode
+  case disqualifies a tier on its own — a disqualifier is a fact, the same rule
+  `aggregate_samples` applies.
+
+- **DEVIATION (floors are constants, not config).** The three adequacy floors are module constants
+  with the `fanout_measure.INCONCLUSIVE_BAND_POINTS` justification: a floor an operator can lower is
+  not a floor, and the one move that makes an inadequate tier presentable is editing the number that
+  called it inadequate. `EvalsConfig.judge_agreement_floor` was deliberately NOT reused — its
+  documented consumer is ES-5's study verdict over position-swap agreement, a different metric on a
+  different subject. Consequence: **no config field was added**, so no `config-baseline.json` or
+  `docs/reference/configuration.md` churn.
+
+- **DEVIATION (no child process).** `run_matrix` spawns children to contain exactly one hazard:
+  `EvalRunner.run_scenario` mutating `PERSONALCLAW_WORKSPACE` in the calling process (§1.3). A judge
+  fixture is a block of text plus a rubric — nothing executes, no workspace is written, and
+  `EvalRunner` is never constructed — so this consumer runs in-process while reusing the shared
+  spec, expansion, aggregation and artifact sinks. Skipping the spawn is not skipping the rail.
+
+- **Two honest gaps.** (1) The shipped `starter` set is AUTHORED, not harvested from a real user's
+  history; a shipped seed cannot be. It carries all three families §6 names (real judged runs,
+  deliberately-bad null probes, forbidden-success-mode admissions) across two rubric classes, and
+  the growth path is real: a set of the same name under `~/.personalclaw/evals/benchmarks/judge/`
+  wins over the packaged one, the `prompt_pack` resolution rule reused deliberately so nothing has
+  to be backfilled into the home. (2) Mining past `judge_divergence` ledger events into fixtures is
+  NOT built here. `divergences_from_journal` already exists and queueing fixtures from
+  `judge_unreliable` verdicts is ES-5's own criterion, so a second miner now would be exactly the
+  duplicate this atom's design avoids.
+
+- **What is unexercised without a live provider:** whether a REAL model at a given tier clears the
+  floors. Every test stubs the judge at the one named `JudgeCaller` seam, so the arithmetic, the
+  axis consumption, the refusals and the artifacts are covered and the model's behaviour is not.
+  Cost is read from the guard's attempt audit (`guardrails.audit.read_recent`), which only produces
+  numbers on a real call; wall time is a clock and is always real. Determinism: the table is a pure
+  function of `observations.json` (asserted byte-identical across renders, including from a
+  round-tripped file), and the recorded nondeterminism budget is per-cell `sample_verdicts` — a row
+  whose samples disagreed says so in its notes.
+
+- **Surfaces:** `personalclaw judge-bench [--tiers --samples --budget --dry-run --list-sets]` — the
+  RUN, with a spend preflight because the full shipped matrix is 180 cells / 540 judge calls; a
+  READ-ONLY `GET /api/evals/judge-bench` (deliberately no POST: a click must not start hundreds of
+  judge calls, and §6's posture is that the harness recommends and the human rebinds); the
+  Judge-tiers panel on the Learning page, rendering `null` as "not measured" and never as `0.00`;
+  and a one-click **Bind as default** on the recommended use-case row of Settings → Models, which
+  sets the recommended ref as chain position 0.
+
+- **No CHANGELOG entry.** The user-visible surfaces are additive and read-only (a new contributor-run
+  CLI command, a new panel, a new GET), no persisted shape moved, and no behaviour changed for
+  anyone who never runs the benchmark — this is the "not class-B/S" case. `src/personalclaw/reference/`
+  was regenerated in the same commit because the new route joins the generated route index.
+
+- **Gates:** `make lint` clean (black/isort/flake8/mypy — 887 source files, no issues);
+  `tests/test_evals_judge_bench.py` (46) + `test_evals_routes.py` (6) + `test_evals_matrix_runner.py`
+  + `test_evals_pinning.py` + `test_evals_store.py` + `test_durability_inventory.py` +
+  `test_portability.py` + `test_agent_reference.py` all pass; `web` typecheck clean, full
+  `npm test` green (3214 tests) after adding the new `api.judgeBench` to three partial api mocks the
+  Models/Learning panels' existing suites hold; `npm run build` clean.

@@ -501,6 +501,11 @@ async def start_dashboard(
     from personalclaw.dashboard.handlers.learning import register_learning_routes
 
     register_learning_routes(app)
+    # EVALUATION-SUBSTRATE §6 — the judge tier-recommendation table. Read-only: the RUN is
+    # `personalclaw judge-bench` (540 judge calls on the full matrix), so no route starts one.
+    from personalclaw.dashboard.handlers.evals import register_evals_routes
+
+    register_evals_routes(app)
     # Investigate Anywhere (plan 60) — chat-with-context from any entity row
     from personalclaw.dashboard.handlers.investigate import register_investigate_routes
 
