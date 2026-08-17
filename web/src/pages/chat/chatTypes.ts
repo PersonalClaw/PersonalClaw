@@ -110,6 +110,14 @@ export interface ChatTurn {
   // kept in history" and the read-only disclosure can render them. Each snapshot's
   // `messages` begins with the edited turn's OLD content. Absent = never rewound.
   rewound?: { messages: { role: string; content: string; ts?: string }[]; ts?: string }[]
+  // Branch mechanic (CHAT-CRAFT CC-7): the index of this turn's LAST message in the
+  // BACKEND's visible user/assistant list — the coordinate `POST .../fork` and
+  // `edit-resend` speak (`at_message_index`, inclusive). It is NOT the turn's array
+  // position: hydrateTurns collapses native loop re-injections and merges consecutive
+  // assistant messages into one turn, so on any tool-using transcript the two diverge
+  // and drift further with every merge. Stamped by hydrateTurns; absent on turns built
+  // live from WS frames (see branchIndexOf, which derives those).
+  visibleIndex?: number
 }
 
 /** Convenience: a user turn from plain text. `optimized` records the optimized
@@ -229,12 +237,23 @@ function toolName(meta: HistMsg['meta'], content: string): string {
  *  reads `user, tool, user, tool, assistant` — we collapse those repeats (a user
  *  message equal to the last one with NO assistant text emitted since = a loop
  *  re-injection, not a genuine repeat question) so a multi-tool turn renders as
- *  one user bubble + one assistant turn carrying every tool card. */
+ *  one user bubble + one assistant turn carrying every tool card.
+ *
+ *  Because of those two collapses, a turn's ARRAY POSITION is not the backend's
+ *  message coordinate. Every user/assistant message consumes one slot in the
+ *  backend's visible list (`[m for m in messages if m["role"] in ("user","assistant")]`
+ *  — what `at_message_index` indexes) whether or not it produces a turn, so each turn
+ *  carries `visibleIndex`: the slot of the LAST message folded into it. Last, not
+ *  first, because `at_message_index` is INCLUSIVE — branching at an assistant turn
+ *  must carry the whole answer, not just its opening message. */
 export function hydrateTurns(messages: HistMsg[], running = false): ChatTurn[] {
   const turns: ChatTurn[] = []
   const toolIndex = new Map<string, ToolSegment>()  // tool_call_id → segment ref (merge results in place)
   let lastUserText = ''
   let assistantTextSinceUser = false  // distinguishes a re-injection from a real repeat
+  // Backend visible-list cursor. Advances for EVERY user/assistant message — including
+  // a collapsed re-injection that produces no turn — because the backend counts it.
+  let visible = -1
 
   const lastAssistant = (): ChatTurn => {
     const t = turns[turns.length - 1]
@@ -244,6 +263,7 @@ export function hydrateTurns(messages: HistMsg[], running = false): ChatTurn[] {
 
   for (const m of messages) {
     if (m.role === 'user') {
+      visible += 1
       const text = m.content.trim()
       if (text === lastUserText && !assistantTextSinceUser) continue  // loop re-injection
       // re-collapse expanded pastes → markers so chips render on reload.
@@ -259,10 +279,16 @@ export function hydrateTurns(messages: HistMsg[], running = false): ChatTurn[] {
       // Rewind tails retained on this user turn (CHAT-CRAFT S1) → drive the divider
       // chip + read-only disclosure. Tolerant: absent on pre-rewind sessions.
       if (Array.isArray(m.rewound) && m.rewound.length) ut.rewound = m.rewound
+      ut.visibleIndex = visible
       turns.push(ut)
       lastUserText = text; assistantTextSinceUser = false
     } else if (m.role === 'assistant') {
+      visible += 1
       const at = lastAssistant()
+      // LAST wins: consecutive assistant messages merge into this one turn, so the
+      // stamp walks forward to the final one — an inclusive branch then carries the
+      // complete answer rather than truncating it mid-turn.
+      at.visibleIndex = visible
       at.segments.push({ kind: 'text', text: m.content })
       // Episodic memory citations (§5.4) ride the assistant message's meta; carry them
       // onto the turn so the Markdown renderer can resolve `[Memory N]` tokens. Tolerant:

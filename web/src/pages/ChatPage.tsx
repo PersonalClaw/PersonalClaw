@@ -62,6 +62,7 @@ import { type PasteBlock, shouldCollapsePaste, nextSeq, makePasteId, markerFor, 
 import { Modal } from '../ui/Modal'
 import { confirm, promptInput } from '../ui/dialog'
 import { type ChatTurn, type Segment, type ToolSegment, type ApprovalSegment, type ActivitySegment, type SubagentCard, type HistMsg, type MemoryCitation, userTurn, assistantTurn, hydrateTurns, turnText, deriveActivity } from './chat/chatTypes'
+import { branchIndexOf, branchParentKey } from './chat/branchLineage'
 import { useIdentity, firstNameOf } from '../app/identity'
 import { usePlatform } from '../app/usePlatform'
 import { SnipOverlay } from '../ui/SnipOverlay'
@@ -635,6 +636,11 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
   // transient like micError.
   const [attachError, setAttachError] = useState<string | null>(null)
   const [memoryMode, setMemoryMode] = useState<MemoryMode>('persistent')
+  // Branch lineage (CC-7): when this session was branched off another, the parent's
+  // persisted history key + the parent's title, both read from session detail on every
+  // open. Sourced from the server (not from the navigation that created the branch) so
+  // the breadcrumb is still there after a reload. `title: ''` = the origin is gone.
+  const [branchedFrom, setBranchedFrom] = useState<{ key: string; title: string } | null>(null)
   // Investigate origin (plan 60): the entity this chat was opened to investigate.
   // Rendered as a header chip deep-linking back to the source surface.
   const [investigateOrigin, setInvestigateOrigin] = useState<import('../lib/api').InvestigateOrigin | null>(null)
@@ -762,6 +768,7 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
     coalescer.reset(); coalescing.current = false  // drop any in-flight reveal from the prior session
     setQueued([])  // queue is per-session; clear when the open session changes
     setSubagents([])  // subagent cards are per-session too
+    setBranchedFrom(null)  // lineage is per-session; the load below re-reads it
     if (!sessionId) { setTurns([]); setLoadingHistory(false); return }
     let alive = true
     // Only skeleton if we have nothing seeded from cache; a cache hit already
@@ -815,6 +822,12 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
       // which the backend refuses on a non-persistent session) reflect the real
       // posture of a reopened chat instead of the 'persistent' default.
       setMemoryMode((d.memory_mode || 'persistent') as MemoryMode)
+      // Branch lineage (CC-7) — restore the "Branched from" breadcrumb on every open,
+      // including a plain browser reload, because it comes from persisted state rather
+      // than from whatever navigation happened to land us here.
+      setBranchedFrom(d.forked_from
+        ? { key: branchParentKey(d.forked_from), title: d.forked_from_title || '' }
+        : null)
       // Investigate origin chip (plan 60) — present on sessions opened via
       // POST /api/investigate; survives the first turn (display fields kept).
       setInvestigateOrigin((d as { investigate?: import('../lib/api').InvestigateOrigin | null }).investigate ?? null)
@@ -1723,18 +1736,36 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
     }
   }
 
-  // index into the VISIBLE user/assistant list (what the backend's fork +
-  // edit-resend index expects), skipping non-message turns. Here every turn is
-  // user/assistant, so it's just the turn index.
+  // Branch this conversation at `turnIndex` (CC-7). Branch DUPLICATES a timeline —
+  // both stay live and equal — which is why it is one click with no confirmation:
+  // it creates a new session and cannot overwrite anything in this one. (Rewind,
+  // which replaces a timeline, does confirm.) A branch of a branch and repeated
+  // branches off the same message are properties of the endpoint; nothing here
+  // prevents either.
+  //
+  // The wire coordinate is the backend's VISIBLE user/assistant index, which is NOT
+  // `turnIndex`: hydrateTurns collapses loop re-injections and merges consecutive
+  // assistant messages, so on a tool-using transcript the turn position runs behind
+  // the message index and the fork silently landed EARLIER than the clicked message.
+  // branchIndexOf translates; see branchLineage.ts.
   function forkAt(turnIndex: number) {
     const s = sessionRef.current
     if (!s) return
-    api.forkSession(s, turnIndex)
-      .then((r) => { if (r?.key) navigate(`chat/${r.key}`) })
+    api.forkSession(s, branchIndexOf(turns, turnIndex))
+      .then((r) => {
+        if (!r?.key) return
+        // Confirm on the SHELL toaster, not this page's inline strip: navigating to the
+        // child unmounts this session, and a confirmation that dies with the surface
+        // that raised it never gets read.
+        notify('Session branched — you’re now in the new branch.', 'success')
+        navigate(`chat/${r.key}`)
+      })
       .catch((e: Error) => {
-        // Surface the failure instead of a silent no-op — the user clicked Fork
-        // and nothing happening looks broken.
-        setMicError(`Couldn’t fork this chat: ${e.message}`)
+        // Surface the failure instead of a silent no-op — the user clicked Branch
+        // and nothing happening looks broken. `e.message` is the endpoint's own
+        // wording, so the session-cap 429 arrives readable ("session cap reached
+        // (500)") rather than as a bare status.
+        setMicError(`Couldn’t branch this chat: ${e.message}`)
         window.setTimeout(() => setMicError(null), 6000)
       })
   }
@@ -2485,6 +2516,26 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
                   {sessionCost.priced ? `$${sessionCost.cost.toFixed(sessionCost.cost < 1 ? 4 : 2)}` : 'unpriced'}
                   {' · '}{fmtTokens(sessionCost.tokens)} tokens
                 </span>
+              )}
+              {/* "Branched from" breadcrumb (CC-7): this session's origin, read from the
+                  PERSISTED forked_from via session detail — so it is still here after a
+                  reload, and it names the parent's CURRENT title (renaming the parent
+                  updates the breadcrumb; it is a read, not a copy).
+                  When the origin has been deleted there is nothing to open, so it
+                  degrades to a plain label instead of a link into nothing. */}
+              {branchedFrom && (
+                branchedFrom.title ? (
+                  <Button size="xs" variant="secondary"
+                    onClick={() => navigate(`chat/${branchedFrom.key}`)}
+                    title={`Branched from "${branchedFrom.title}" — open the original`}>
+                    <GitBranch size={12} className="text-primary" /> Branched from {branchedFrom.title}
+                  </Button>
+                ) : (
+                  <span className="inline-flex shrink-0 items-center gap-1 rounded-pill bg-surface-high px-2 py-0.5 text-[0.75rem] text-on-surface-var"
+                    title="This chat was branched from a conversation that no longer exists">
+                    <GitBranch size={12} className="text-on-surface-low" /> Branched from a deleted chat
+                  </span>
+                )
               )}
               {/* Investigate origin (plan 60): the entity this chat was opened to
                   investigate; click deep-links back to the source surface. */}
