@@ -1,4 +1,4 @@
-import { FileText, StickyNote, BookMarked, Bookmark, Code2, Image, Music, Video, FileType2, FileSpreadsheet, Presentation, File } from 'lucide-react'
+import { FileText, StickyNote, BookMarked, Bookmark, Code2, Image, Music, Video, FileType2, FileSpreadsheet, Presentation, File, Shapes } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import type { KnowledgeItem, KnowledgeType } from '../../lib/api'
 
@@ -19,9 +19,24 @@ export const TYPES: TypeMeta[] = [
   { key: 'slides', label: 'Slides', icon: Presentation, tone: 'var(--color-warn)', group: 'document' },
 ]
 
+/** The mirrored-artifact type (PEP-7). Deliberately NOT a member of `TYPES`: that array is
+ *  the create picker's catalog, and an artifact is mirrored from the Artifacts library, never
+ *  authored here. It still needs a label/icon/tone because a search result CAN be one — and
+ *  without this entry `resolveType` fell through to `note`, so an artifact hit read "Note". */
+export const ARTIFACT_TYPE: TypeMeta = {
+  key: 'artifact', label: 'Artifact', icon: Shapes, tone: 'var(--color-secondary)', group: 'document',
+}
+
+/** Is this item a mirrored artifact rather than a knowledge item the user filed? */
+export function isArtifactItem(it: Pick<KnowledgeItem, 'type' | 'item_type'>): boolean {
+  return it.type === 'artifact' || (it.item_type || '').toLowerCase() === 'artifact'
+}
+
 /** Resolve an item's visual type. Prefer the vision `type`; else infer from the
  *  backend's free `item_type` string / mime_type / url, falling back to note. */
 export function resolveType(it: Pick<KnowledgeItem, 'type' | 'item_type' | 'mime_type' | 'url'>): TypeMeta {
+  // Checked before the `TYPES` lookups because it is deliberately absent from them.
+  if (isArtifactItem(it)) return ARTIFACT_TYPE
   const explicit = it.type && TYPES.find((t) => t.key === it.type)
   if (explicit) return explicit
   const raw = (it.item_type || '').toLowerCase()

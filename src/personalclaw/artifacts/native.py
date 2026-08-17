@@ -22,6 +22,7 @@ import threading
 from datetime import datetime, timezone
 from pathlib import Path
 
+from personalclaw.artifacts import changes
 from personalclaw.artifacts.models import (
     ALLOWED_EVENT_TYPES,
     BINARY_KINDS,
@@ -566,7 +567,8 @@ class NativeArtifactProvider(ArtifactProvider):
             self._snapshot_binary(art, 1, data)
             self._write_meta(art)
             art.content = self._raw_ref(final_slug)
-            return art
+        changes.emit(changes.UPSERT, art.slug)
+        return art
 
     def update_binary(
         self,
@@ -605,7 +607,8 @@ class NativeArtifactProvider(ArtifactProvider):
             art.updated_at = _now()
             self._write_meta(art)
             art.content = self._raw_ref(slug)
-            return art
+        changes.emit(changes.UPSERT, slug)
+        return art
 
     def revert(
         self,
@@ -665,7 +668,9 @@ class NativeArtifactProvider(ArtifactProvider):
             self._append_event(art, ev)
             art.updated_at = _now()
             self._write_meta(art)
-            return self.get(slug)
+            reverted = self.get(slug)
+        changes.emit(changes.UPSERT, slug)
+        return reverted
 
     def create(
         self,
@@ -730,7 +735,11 @@ class NativeArtifactProvider(ArtifactProvider):
                 self._try_write_source_path(source_path, content or "")
             self._write_meta(art)
             art.content = content
-            return art
+        # Mirroring (PRODUCT-EXPERIENCE-PARITY §6) observes the write from OUTSIDE the
+        # lock: a listener reads the artifact back, and holding the store lock across an
+        # index would serialize every concurrent save behind someone else's indexing.
+        changes.emit(changes.UPSERT, art.slug)
+        return art
 
     def update(
         self,
@@ -811,7 +820,14 @@ class NativeArtifactProvider(ArtifactProvider):
                 self._write_meta(art)
 
             # Return the live view (content + live_dirty) like get().
-            return self.get(slug)
+            updated = self.get(slug)
+        # Emitted only when something actually changed — a PATCH that set nothing must not
+        # re-index. The name is part of the mirror's title, so a metadata-only rename IS a
+        # change worth mirroring; the mirror's own content-hash gate decides whether that
+        # costs a re-embed.
+        if updated is not None and (snapshot or wrote_content or meta_changed):
+            changes.emit(changes.UPSERT, slug)
+        return updated
 
     def set_folder(self, slug: str, folder_id: str) -> Artifact | None:
         """File an artifact into a library folder — metadata only, no ``updated_at`` bump.
@@ -849,10 +865,14 @@ class NativeArtifactProvider(ArtifactProvider):
 
             try:
                 shutil.rmtree(d)
-                return True
             except OSError:
                 logger.warning("artifact delete failed: %s", d, exc_info=True)
                 return False
+        # Only a real removal notifies: emitting on a failed rmtree would drop a mirror for
+        # content that is still there, which is the one direction of this pair that loses
+        # something the user can still see.
+        changes.emit(changes.DELETE, slug)
+        return True
 
     def list_versions(self, slug: str) -> list[int]:  # type: ignore[valid-type]  # CI-1
         with self._lock:

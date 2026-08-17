@@ -2088,6 +2088,18 @@ class KnowledgeConfig:
             "changes minute to minute, so a tighter cadence pays repeatedly for the same answer.",
         ),
     )
+    auto_ingest_artifacts: bool = field(
+        default=True,
+        metadata=_meta(
+            "Index Artifacts For Search",
+            "Mirror text artifacts (markdown, HTML, text, JSON, CSV) into knowledge search so "
+            "something you wrote into an artifact is findable from the one place you look for "
+            "what you know. Artifacts stay in the Artifacts library — they are never listed as "
+            "knowledge items, only found by a search. Indexing is local: a mirrored artifact "
+            "never reaches a model. Off stops new artifacts being indexed and removes nothing "
+            "already indexed.",
+        ),
+    )
 
 
 @dataclass
@@ -4504,6 +4516,7 @@ class AppConfig:
                     knowledge_data.get("session_brief_max_tokens", 800) or 800
                 ),
                 conflict_model_pass=bool(knowledge_data.get("conflict_model_pass", True)),
+                auto_ingest_artifacts=bool(knowledge_data.get("auto_ingest_artifacts", True)),
             ),
             security=SecurityConfig(
                 denied_commands=[

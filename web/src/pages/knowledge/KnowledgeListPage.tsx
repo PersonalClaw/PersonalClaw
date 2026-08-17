@@ -1,5 +1,5 @@
 import { Fragment, useEffect, useMemo, useState } from 'react'
-import { BookOpen, Plus, Search, Database, Sparkles, Network, Library, Trash2, Target, X, Pin, Star, Archive, Play, FileText, Loader2, CircleAlert, Boxes, WifiOff, Layers, Scale, Tag as TagIcon, Rss } from 'lucide-react'
+import { BookOpen, Plus, Search, Database, Sparkles, Network, Library, Trash2, Target, X, Pin, Star, Archive, Play, FileText, Loader2, CircleAlert, Boxes, WifiOff, Layers, Scale, Tag as TagIcon, Rss, ExternalLink } from 'lucide-react'
 import { TopBar } from '../../ui/TopBar'
 import { fvs } from '../../design/fontWeight'
 import { WorkbenchLayout } from '../../ui/WorkbenchLayout'
@@ -13,7 +13,7 @@ import { ListControls } from '../../ui/ListControls'
 import { HeaderActions, HeaderControl, HeaderSegmented } from '../../ui/HeaderActions'
 import { ContextMenu, type ContextMenuItem } from '../../ui/motion'
 import { api, type KnowledgeIntent, type IntentOutcome, type KnowledgeItem, type KnowledgeCollection, type KnowledgeBulkOp } from '../../lib/api'
-import { resolveType, relTime, fmtBytes, typeLabel } from './knowledgeMeta'
+import { resolveType, relTime, fmtBytes, typeLabel, isArtifactItem } from './knowledgeMeta'
 import { listKnowledge, knowledgeStats, getKnowledge } from './knowledgeStore'
 import { KnowledgeDetail, OutcomeFieldValue } from './KnowledgeDetail'
 import { KnowledgeGraph } from './KnowledgeGraph'
@@ -676,7 +676,22 @@ export function KnowledgeListPage({ onCreate, onOpenItem, onOpenSources, query, 
                             </div>
                             <div className="mt-0.5 flex flex-wrap items-center gap-x-m gap-y-0.5 text-on-surface-low text-[0.8125rem]">
                               <span style={{ color: tm.tone }}>{typeLabel(it)}</span>
-                              {it.provider && it.provider !== 'native' && <span className="rounded-pill bg-surface-high px-1.5 text-on-surface-var text-[0.75rem]">{it.provider}</span>}
+                              {/* PEP-7: a mirrored artifact's provenance is already the type label
+                                  ("Artifact", its own icon + tone), so the generic provider pill is
+                                  suppressed for it — "Artifact" beside a lowercase "artifacts" pill
+                                  is the same fact twice in two vocabularies. */}
+                              {it.provider && it.provider !== 'native' && !isArtifactItem(it) && <span className="rounded-pill bg-surface-high px-1.5 text-on-surface-var text-[0.75rem]">{it.provider}</span>}
+                              {/* The way BACK to the real thing. A mirror is a search surface, so a
+                                  hit that could only ever show extracted text would be a dead end —
+                                  the artifact itself has the versions, the preview and the editor.
+                                  An anchor (not the row's click) because the row peeks, and both
+                                  behaviours have to remain reachable. */}
+                              {isArtifactItem(it) && !!it.guid && (
+                                <a href={`#/artifacts/${encodeURIComponent(it.guid)}`} onClick={(e) => e.stopPropagation()}
+                                  className="inline-flex items-center gap-1 rounded-pill bg-surface-high px-1.5 text-[0.75rem] text-primary-emphasis transition-colors hover:bg-surface-container">
+                                  <ExternalLink size={10} aria-hidden /> Open artifact
+                                </a>
+                              )}
                               {it.file_size != null && it.file_size > 0 && <span>· {fmtBytes(it.file_size)}</span>}
                               {/* No `· ` prefix: this span is `truncate` (white-space:nowrap) inside a
                                   `flex-wrap` row, so its intrinsic width always exceeds the space left on

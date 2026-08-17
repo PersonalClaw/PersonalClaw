@@ -1882,6 +1882,20 @@ async def start_dashboard(
     except Exception:
         logger.warning("Source engine failed to start", exc_info=True)
 
+    # Artifacts as an indexed knowledge source (PRODUCT-EXPERIENCE-PARITY §6). Separate
+    # try-block from the poll engine on purpose: the mirror is event-driven and enrolls no
+    # poll-capable provider, so a source-engine fault must not take the mirror down with it
+    # (and vice versa). Held on `state` so the change subscription is not garbage-collected.
+    try:
+        from personalclaw.knowledge import artifact_ingest
+
+        state._artifact_indexer = artifact_ingest.start(
+            state.knowledge_store,
+            enqueue=state.knowledge_ingest_queue().enqueue,
+        )
+    except Exception:
+        logger.warning("Artifact knowledge mirror failed to start", exc_info=True)
+
     # Start periodic flush loop for crash protection (saves dirty sessions every 5s)
     state.start_flush_loop()
 

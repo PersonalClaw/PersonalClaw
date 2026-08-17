@@ -48,6 +48,19 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
   Finally, "Export" downloads exactly what you are looking at as a `.jsonl` file, one event per
   line, safe to attach to a bug report and readable by anything that speaks JSON. Reading this log
   is yours alone: an installed app can never fetch it, even one that asks for it.
+- **Artifacts are now findable from knowledge search.** Anything written into a text artifact —
+  markdown, HTML, plain text, JSON, CSV — becomes searchable in Knowledge, so an answer you or the
+  agent wrote into an artifact last month turns up in the one place you look for what you know.
+  Artifacts stay in the Artifacts library and are **never listed as knowledge items**: they only
+  appear as search results, labelled "Artifact" with a link straight back to the real thing, so your
+  library's counts and lists do not double. Editing an artifact refreshes what search finds, renaming
+  it refreshes the title, and deleting it removes it from search entirely — no leftovers. Indexing is
+  **local**: a mirrored artifact never reaches a model, and any credential in an artifact's body is
+  stripped before it is indexed. If you already have artifacts, they are indexed once the first time
+  this runs and never re-indexed on later restarts. Widgets, React and SVG artifacts are left out on
+  purpose — their bodies are code, and indexing them would bury your notes under variable names. The
+  whole thing is one switch in **Settings → Sources → Artifacts** (on by default) and takes effect
+  without a restart.
 - **First run now picks up where you left it, and you can walk out of it at any point.** Reload
   the page halfway through setup and you come back to the step you were on rather than the
   beginning — the apps you installed stay installed, and a card you already ran still counts as
