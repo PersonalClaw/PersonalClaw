@@ -721,3 +721,103 @@ D0 is documentation and should land immediately — an inaccurate security claim
   cannot affect the gateway (test + live HTTP, numpy unchanged), every first-party app still boots (all 20
   dep declarations pass the guard by test; 24 declare no deps; `minutes` booted healthy live), VD holds as
   scoped above. D0 (the website/security.md docs row) is a SEPARATE row and remains open — untouched here.
+- [2026-08-17][EI-8] **PARTIAL — `EI-8` stays `todo`.** §6 landed whole; **§6.2 (localhost web preview,
+  the fourth done-when clause) is NOT built**, so the atom is not flipped. Shipped:
+  `src/personalclaw/turn_checkpoints.py` (the store), `dashboard/chat_file_rewind.py` (GET preview +
+  POST confirm), the pre-edit hook in `agents/native/builtin_tools.py`, phase 1 in `chat_runner._run_chat`,
+  the prune in `chat_handlers.api_chat_session_delete`, a `CheckpointsConfig` section wired through all
+  five round-trip points incl. a Settings → Chat control, and a `turn_checkpoints` inventory entry.
+  Two test files, 47 tests.
+- [2026-08-17][EI-8] **PREMISE CORRECTION — the row's named interception point does not exist.** The
+  atom (and §6) say the pre-edit backup lives "in `mcp_core`'s file tools". `mcp_core` has **no file
+  tools**: its 15 tool definitions are `skill_invoke`, `skill_search`, `get_context`, `skill_remember`,
+  `template_save_from_session`, `project_context_review`, `skill_promote`, `dashboard_tile_propose`,
+  `wait`, `hook_register`, `notify`, `notify_attachment`, `loop_nudge_stop`, `suggest_template`,
+  `refiner_evidence`, `propose_template_diff` — no `write_file`, no `edit_file`. The real handlers are
+  `_t_write_file`/`_t_edit_file` in `agents/native/builtin_tools.py` (`_CATEGORY_OF` maps both to
+  `filesystem`), and the hook went there. Better placement than the plan's, for a reason worth keeping:
+  it is synchronous with the write (no ordering race against an event stream) and it covers **every**
+  caller of the native file tools — chat, loops, subagents — not only the dashboard.
+- [2026-08-17][EI-8] **The adjacent seam that looked like this feature and is not.**
+  `chat_runner._capture_file_change` (:592) already snapshotted before/after on a `write_file`/`edit_file`
+  TOOL_CALL event. It is **display-only and cannot restore**: it truncates at `_MAX_FILE_SNAPSHOT`
+  (200_000 chars, appending `"\n… [truncated]"`), runs `redact_credentials` over the body, and keeps the
+  result in memory on the assistant message's `meta`. So a large or credential-bearing file's "before" is
+  already lossy by design. It was left exactly as it is — the checkpoint store is a second, byte-exact
+  path, not a widening of the chip.
+- [2026-08-17][EI-8] **The secrecy claim is asserted on the STORED BYTES, not on the exclusion list.**
+  `NEVER_CAPTURE_GLOBS` is a code-level tuple with **no config field**, and `_EDITABLE_CONFIG` exposes
+  only the three bounds — so no PATCH can widen what the store may hold. The test plants a real-shaped
+  canary in a workspace `.env`, drives the real `write_file` tool at it, then concatenates **every file
+  under the store** (blobs, manifests, `state.json`, journals) and asserts the canary's bytes are absent.
+  Falsified before being trusted: deleting the three dotenv globs reds it with
+  `assert b'AKIA7SDFJK23LKJ4POIU-sk_live_9f8e7d6c5b4a3928176054-EI8CANARY' not in b'API_TOKEN=AKIA7SDF…'`
+  — i.e. the body really did land in a blob. **`security.is_sensitive_path` alone would NOT have caught
+  it**: it is `$HOME`-anchored (`_SENSITIVE_HOME_DIRS` lists `.personalclaw/.env`, not `.env`), so a
+  workspace `.env` is invisible to it. Both checks run; the globs are the load-bearing one.
+- [2026-08-17][EI-8] **A skipped secret is REPORTED, not silently dropped.** The path (never the bytes) is
+  recorded as `skipped="secret"`, so the preview carries `action="not_captured"` plus the warning
+  "never captured (credential-shaped file) — it will NOT be restored". The alternative — omitting the row —
+  would make a rewind look complete while one file stayed mangled.
+- [2026-08-17][EI-8] **Two-phase RESTORE, because the unhappy path is the whole risk.** `apply_rewind`
+  stages every body as a sibling `<target>.pclaw-rewind` (same filesystem → the rename is atomic), writes
+  a plan journal, then commits with `os.replace`. A death mid-commit is therefore *recoverable, not
+  ambiguous*: the journal survives and `resume_incomplete_rewind` replays it idempotently (the journal
+  carries each body's expected sha, so an already-committed step is recognized rather than redone). Both
+  endpoints call it before reporting, so a half-restored tree cannot outlive the next interaction. Driven,
+  not asserted: failing `os.replace` on the SECOND of three files leaves exactly one file unrestored plus
+  a journal, and the resume returns all three byte-identical. A **staging** failure is different and
+  tested separately — it unwinds every temp and leaves the tree bit-for-bit unchanged
+  ("staging failed, no files were modified"). The rewind also checkpoints what it overwrites into a fresh
+  safety turn, so the rewind itself is rewindable (tested by rewinding back to the mangled state).
+- [2026-08-17][EI-8] **A harness artifact that faked the mid-commit finding, worth recording.** Patching
+  `os.replace` unscoped also breaks `atomic_write`, which is how the store lands its own manifests — so
+  the first attempt failed inside `begin_turn` and reported `ok=True` for the commit. The patch is now
+  scoped to renames whose `dst` is one of the three targets. Suspect the harness before the fix.
+- [2026-08-17][EI-8] **The cap is tested at the BOUNDARY and by eviction, not by reading the constant.**
+  Exactly 1MB under a 1MB cap keeps both turns (`_turn_numbers == [1, 2]`); one more byte evicts turn 1.
+  A body larger than the whole cap is refused and recorded `skipped="over_cap"` rather than blowing the
+  cap. Turn-cap eviction also GCs the orphaned blobs (`b"body 0" not in store`). Falsified: neutering
+  `_make_room` and `_enforce_turn_cap` reds five tests, incl. `assert 1048577 <= (1024 * 1024)`.
+- [2026-08-17][EI-8] **Live drive on an isolated home (`/private/tmp/ei8-home`, port 10299, never the
+  real home).** Phase 1 fired from a REAL user turn through the real gateway — `POST /api/chat` wrote
+  `checkpoints/chat-1-…/turn-000001/manifest.json` with `identity: ['.env','alpha.py','beta.txt',
+  'gamma.json']` and `files: []` (a manifest, no copies), and a second message advanced
+  `current_turn` to 2. Three files were then mangled through the real `write_file`/`edit_file` handlers.
+  `GET …/rewind?turn=1` returned exactly those three as `restore` with unified diffs, plus the `.env` as
+  `not_captured/secret`; `grep -rl` for the canary across the whole store found nothing. `POST` without
+  `confirm` returned **409 `confirmation_required` carrying the preview** and left every file mangled.
+  With `confirm: true`: all three came back byte-identical (sha256 matched the pre-mangle values),
+  `.env` stayed rotated, and SEL logged
+  `chat.session_rewind … resources=session=…,to_turn=1,restored=3,deleted=0`. All four config fields
+  round-tripped through the real `PATCH /api/config/personalclaw` into `config.json` and back;
+  `enabled=false` made a live capture return `disabled`. `DELETE /api/chat/sessions/{id}` emptied
+  `checkpoints/` — "prunes with the session", measured. The Settings → Chat "File checkpoints" section
+  rendered the values just PATCHed (11MB / 7 turns / 2MB), 1 switch + 3 number rows, zero page errors.
+- [2026-08-17][EI-8] **What is test-only, stated plainly.** No model provider is configured in an
+  isolated home, so the live turn errored with "no model provider resolves for use case 'chat'" *after*
+  `begin_turn` ran. The three file writes were therefore driven by calling the real tool handlers
+  directly rather than by a model choosing to call them. Every other leg — phase 1, the HTTP preview,
+  the confirm gate, the restore, the SEL record, the config round trip, the session-delete prune, the
+  Settings render — ran through the gateway a user talks to.
+- [2026-08-17][EI-8] **Storage disposition, and why the inventory entry is `derived`.** New entry
+  `turn_checkpoints` → `checkpoints/`, `derived=True`, listed in `test_portability`'s
+  `_SNAPSHOT_COVERAGE_GAPS`. It is the one gap there that is genuinely NOT rebuildable, and still a
+  deliberate omission: every manifest entry is an ABSOLUTE host path (meaningless in another home, and a
+  restore would drop one machine's workspace copies into another's), and it is a per-session safety net
+  capped at `checkpoints.max_mb` and pruned with the session, so travelling it would grow every snapshot
+  by the size of recent edits for no recoverable benefit. Credential material is excluded at CAPTURE
+  time, so this flag is not what keeps secrets out of an export.
+- [2026-08-17][EI-8] **`/rewind-to-turn` is deliberately NOT `/undo`, and the module is named for it.**
+  `chat_undo` says in its own docstring that side effects "are NOT reverted"; this is that other half,
+  and it does not touch the transcript (which is the record of what happened). Because
+  `chat_regenerate`'s `rewind: true` already means "rewind the transcript", the new module is
+  `chat_file_rewind.py`, not `chat_rewind.py` — `tests/test_chat_rewind.py` already tests the other one.
+- [2026-08-17][EI-8] **STOP POINT. `EI-8` remains `todo`; no `pr` field set; `dag.json` untouched.**
+  Unmet: §6.2 — port discovery on the sandbox handle, `preview_urls` on the run record, and the cockpit
+  "Open Preview" affordance. It is a genuinely separate seam (the run record + `SandboxSpec.expose_ports`
+  + a cockpit surface, none of which the checkpoint store touches) and `EI-2`'s docker provider owns the
+  mapped-port half, so it was not half-built to make a checkbox flip. The remaining §6 line item not
+  implemented: binary files over the threshold are recorded manifest-only by SIZE
+  (`checkpoints.max_file_mb`) rather than by binary-detection — the restore warning the plan asks for is
+  present either way.

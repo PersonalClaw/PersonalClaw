@@ -1585,6 +1585,22 @@ async def api_chat_session_delete(request: web.Request) -> web.Response:
             result_store.purge_session(_sid)
     except Exception:
         logger.warning("hard-delete: workspace purge failed for %s", name, exc_info=True)
+    # 2b) the turn-checkpoint tree (EXECUTION-ISOLATION §6) — pre-edit copies of the
+    #     user's workspace files. A hard delete that left these behind would keep bodies
+    #     of files the conversation that touched them no longer exists to explain, and the
+    #     store's cap is per session, so an undeleted tree is never reclaimed. Same
+    #     both-key-forms purge as the result store: the store is keyed by whatever
+    #     session key the tool handler saw.
+    try:
+        from personalclaw import turn_checkpoints
+
+        keys = {history_key, name}
+        if session is not None:
+            keys.add(session.key)
+        for _sid in keys:
+            turn_checkpoints.prune_session(_sid)
+    except Exception:
+        logger.warning("hard-delete: checkpoint purge failed for %s", name, exc_info=True)
     state._restricted_keys.discard(f"dashboard:{name}")
     # Kill the per-tab session to free resources.
     await state.sessions.remove(history_key)
