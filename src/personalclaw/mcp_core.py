@@ -156,6 +156,35 @@ def _list_tools() -> list[dict[str, Any]]:
             },
         },
         {
+            "name": "skill_resource",
+            "description": (
+                "Load ONE file a skill declared as a resource (a reference doc, a data "
+                "file, a helper script). skill_invoke lists a skill's resources as a "
+                "catalog of path + one-line description WITHOUT their contents; call "
+                "this to pull exactly the one you need. Only paths the skill declared "
+                "in its `resources:` frontmatter can be loaded — this is not a general "
+                "file read, and it never RUNS a script resource, it returns its text. "
+                "Args: skill (the skill name), path (a path from that skill's catalog)."
+            ),
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "skill": {
+                        "type": "string",
+                        "description": "The skill that declared the resource (e.g. 'tiny-url').",
+                    },
+                    "path": {
+                        "type": "string",
+                        "description": (
+                            "The declared resource path, exactly as the catalog lists it "
+                            "(e.g. 'reference/api-notes.md')."
+                        ),
+                    },
+                },
+                "required": ["skill", "path"],
+            },
+        },
+        {
             "name": "get_context",
             "description": (
                 "Call at the START of every task to load this project's routed context. "
@@ -824,6 +853,82 @@ def _current_session_thread_ts() -> str | None:
     return None
 
 
+def _render_resource_catalog(skill_name: str, loader: Any) -> str:
+    """The L0 resource catalog skill_invoke appends — one line per DECLARED resource.
+
+    Names and one-line descriptions only. Contents are never inlined here: that is
+    the whole point of the tier (a skill with a 200KB reference doc costs one line
+    of context until the agent asks for it). No resources → the empty string, so a
+    skill without any is byte-identical to before.
+    """
+    try:
+        resources = loader.resources_for(skill_name)
+    except Exception:  # a catalog is a nicety; never fail an invoke over it
+        logger.debug("resource catalog skipped for %s", skill_name, exc_info=True)
+        return ""
+    if not resources:
+        return ""
+    lines = [
+        "[Resources — DECLARED, not loaded. Load ONE with "
+        f'skill_resource(skill="{skill_name}", path="…"):]'
+    ]
+    for res in resources:
+        lines.append(f"- {res.path}" + (f" — {res.description}" if res.description else ""))
+    return "\n".join(lines) + "\n"
+
+
+def _load_skill_resource(args: dict[str, Any]) -> str:
+    """``skill_resource(skill, path)`` — read ONE declared resource of one skill.
+
+    All the refusal logic lives in ``SkillsLoader.read_resource`` (allowlist,
+    post-realpath containment, cap); this is the presentation half. The content is
+    third-party-authored text arriving from outside the user↔agent trust boundary,
+    so it is FENCED as data — a resource that says "ignore your instructions" is
+    quoted, not obeyed. The truncation notice sits OUTSIDE the fence so it reads as
+    harness text rather than as part of the resource.
+    """
+    from personalclaw.skills.loader import (
+        RESOURCE_MAX_BYTES,
+        SkillResourceRefused,
+        SkillsLoader,
+    )
+
+    skill_name = (args.get("skill") or "").strip()
+    rel_path = (args.get("path") or "").strip()
+    if not skill_name or not rel_path:
+        return "Error: both skill and path are required."
+    loader = SkillsLoader()
+    try:
+        read = loader.read_resource(skill_name, rel_path)
+    except SkillResourceRefused as exc:
+        return f"Error: {exc}"
+    # Usage-recorded like skill_invoke: loading a resource IS a use of the skill,
+    # so surfacing-ranking and the curator (§2.3) see it.
+    try:
+        from personalclaw.skills.usage import SkillUsageStore
+
+        SkillUsageStore().record_use(skill_name)
+    except Exception:
+        logger.debug("skill_resource usage record skipped", exc_info=True)
+
+    from personalclaw.security import fence_untrusted
+
+    body = fence_untrusted(
+        read.text,
+        source="skill-resource",
+        source_type="skill_resource",
+        source_id=f"{read.skill}/{read.path}",
+        transformation_path="read",
+    )
+    out = [f"[Skill resource: {read.skill}/{read.path} — read-only, not executed]", body]
+    if read.truncated:
+        out.append(
+            f"[Truncated: showing the first {RESOURCE_MAX_BYTES} of {read.size} bytes — "
+            "open the file directly for the rest.]"
+        )
+    return "\n".join(out)
+
+
 def _call_tool(name: str, raw_args: dict[str, Any]) -> str:
     from personalclaw.mcp_shared import call_tool_with_logging
 
@@ -857,7 +962,14 @@ def _call_tool_inner(name: str, args: dict[str, Any]) -> str:
         except Exception:
             logger.debug("skill_invoke usage record skipped", exc_info=True)
         stripped = loader.strip_frontmatter(content)
-        return f"[Skill: {skill_name}]\n{stripped}\n[End of skill]"
+        # WF2LEA-10: the body plus an L0 CATALOG of declared resources — paths and
+        # one-line descriptions only, never their contents. The agent pulls one with
+        # skill_resource when it decides it needs it.
+        catalog = _render_resource_catalog(skill_name, loader)
+        return f"[Skill: {skill_name}]\n{stripped}\n{catalog}[End of skill]"
+
+    if name == "skill_resource":
+        return _load_skill_resource(args)
 
     if name == "skill_remember":
         title = (args.get("title") or "").strip()

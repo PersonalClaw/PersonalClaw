@@ -250,6 +250,159 @@ def agent_skills_dir(agent: str) -> Path:
     return config_dir() / "agents" / _agent_slug(agent) / SKILLS_DIR_NAME
 
 
+# ── Resource tier (WF2LEA-10 / amendment E1.1) ───────────────────────────────
+#
+# A skill directory may carry files beside SKILL.md (``scripts/``, ``reference/``).
+# The optional ``resources:`` frontmatter block makes them ADDRESSABLE without a
+# directory walk, so an agent can pull one on demand instead of either ignoring
+# them or slurping the whole directory:
+#
+#     resources:
+#       - path: reference/api-notes.md
+#         description: field-by-field notes on the vendor payload
+#
+# This is the deepest tier UNDER the §2.4 slot allocator, not a second tiering
+# engine: nothing here scores, ranks, budgets or degrades anything. The catalog is
+# a flat list of what was DECLARED; who gets to see it and how much of a skill
+# reaches a prompt stays §2.4's decision.
+#
+# Security posture (the whole point of the tier):
+#   • the declared list is an ALLOWLIST, not a filter — an undeclared path is
+#     refused even when it plainly exists inside the skill dir;
+#   • containment is re-checked AFTER ``realpath``, so a declared path that is a
+#     symlink out of the skill dir is refused too;
+#   • the read is CAPPED with a visible notice (never a silent truncation);
+#   • a resource is READ, never executed — a ``scripts/*.sh`` resource comes back
+#     as text. Execution stays on the denylist-screened, sandbox-wrapped command
+#     path, which this tool deliberately does not touch.
+
+#: Cap on one resource read. Truncation is VISIBLE (see ``ResourceRead.truncated``)
+#: — same discipline as ``investigate.py``'s snapshot cap.
+RESOURCE_MAX_BYTES = 32_768
+
+#: Declared descriptions are clamped so the L0 catalog stays one line per resource
+#: (the amendment's mitigation for resource sprawl).
+RESOURCE_DESC_MAX_CHARS = 160
+
+
+@dataclass(frozen=True)
+class SkillResource:
+    """One resource a skill DECLARED in its frontmatter (never its contents)."""
+
+    path: str  # skill-dir-relative, POSIX-style, validated declarable
+    description: str = ""
+
+
+@dataclass(frozen=True)
+class ResourceRead:
+    """A single resource read: its text plus whether the cap bit."""
+
+    skill: str
+    path: str
+    text: str
+    size: int  # full on-disk size in bytes
+    truncated: bool
+
+
+class SkillResourceRefused(Exception):
+    """A resource load was refused. ``reason`` is a stable, testable code."""
+
+    def __init__(self, reason: str, message: str) -> None:
+        super().__init__(message)
+        self.reason = reason
+
+
+def _norm_declared_path(raw: str) -> str:
+    """Canonical form of a declared/requested resource path, or "" if unusable.
+
+    Returns "" for anything that must never reach the filesystem: absolute paths,
+    Windows drive/UNC spellings, backslashes, NUL bytes, or a ``..`` segment.
+    Rejecting (rather than sanitizing) is deliberate — a path that needed
+    stripping to become safe is not the path the author declared.
+    """
+    val = (raw or "").strip().strip("\"'").replace("\r", "").replace("\n", "")
+    if not val or "\x00" in val or "\\" in val:
+        return ""
+    if val.startswith("/") or val.startswith("~") or re.match(r"^[A-Za-z]:", val):
+        return ""
+    parts = [p for p in val.split("/") if p not in ("", ".")]
+    if not parts or any(p == ".." for p in parts):
+        return ""
+    return "/".join(parts)
+
+
+def parse_resources(content: str) -> list[SkillResource]:
+    """Parse the optional ``resources:`` frontmatter block from *content*.
+
+    The flat ``key: value`` frontmatter reader (:meth:`SkillsLoader._parse_frontmatter_text`)
+    cannot represent a list of mappings — it documents nested mappings as skipped —
+    so this is a small dedicated reader for exactly this one structured block
+    rather than a second general-purpose parser. Accepted spelling:
+
+        resources:
+          - path: reference/api-notes.md
+            description: one line
+          - path: scripts/check.sh
+          - reference/other.md
+
+    ``description`` is optional, and the bare-string spelling (last item) is
+    accepted as a path-only declaration — a skill that writes it should get the
+    resource, not silence. An item with no usable path is DROPPED: a malformed or
+    hostile declaration must never widen the allowlist. Like the rest of this
+    frontmatter reader, an inline ``# comment`` after a value is NOT stripped (it
+    would become part of the path); comment-only lines are skipped.
+    """
+    text = content.lstrip("﻿").lstrip().replace("\r\n", "\n")
+    if not text.startswith("---"):
+        return []
+    match = re.match(r"^---\n(.*?)\n---", text, re.DOTALL)
+    if not match:
+        return []
+
+    out: list[SkillResource] = []
+    cur: dict[str, str] | None = None
+    in_block = False
+
+    def _flush() -> None:
+        if cur is None:
+            return
+        rel = _norm_declared_path(cur.get("path", ""))
+        if rel:
+            desc = " ".join(cur.get("description", "").split())[:RESOURCE_DESC_MAX_CHARS]
+            out.append(SkillResource(path=rel, description=desc))
+
+    for raw in match.group(1).split("\n"):
+        item = raw.strip()
+        if not item or item.startswith("#"):
+            continue
+        if not in_block:
+            # Only a top-level `resources:` key opens the block.
+            if not raw[:1].isspace() and re.match(r"^resources\s*:\s*$", item):
+                in_block = True
+            continue
+        if item.startswith("- "):
+            _flush()
+            cur = {}
+            item = item[2:].strip()
+            if not item:
+                continue
+        elif not raw[:1].isspace():
+            # A new top-level key ends the block.
+            _flush()
+            cur, in_block = None, False
+            continue
+        if cur is None:
+            continue
+        key, _, value = item.partition(":")
+        if key.strip().lower() in ("path", "description") and _:
+            cur[key.strip().lower()] = value.strip().strip("\"'")
+        elif not cur.get("path"):
+            # Bare-string item (`- reference/a.md`) — the whole token is the path.
+            cur["path"] = item.strip().strip("\"'")
+    _flush()
+    return out
+
+
 class SkillsLoader:
     """Load skill markdown files from ~/.personalclaw/skills/.
 
@@ -393,21 +546,117 @@ class SkillsLoader:
         agent_dirs = [self._agent_dir] if self._agent_dir is not None else []
         return agent_dirs + [self._dir] + SKILL_DISCOVERY_PATHS
 
-    def load_skill(self, name: str) -> str | None:
-        """Load a single skill's content by name, searching this loader's dirs."""
+    def skill_file(self, name: str) -> Path | None:
+        """The ``SKILL.md`` this loader resolves *name* to, or None.
+
+        One resolution order for the body and its resources: a resource must come
+        from the SAME directory as the SKILL.md that declared it, or a lower-
+        precedence tier could lend files to a higher-precedence skill's allowlist.
+        """
         if not self._safe_name(name):
             return None
         for search_dir in self._search_dirs():
             skill_file = search_dir / name / "SKILL.md"
             if skill_file.exists():
-                content = skill_file.read_text(encoding="utf-8")
-                # WF2LEA-6: accepted refinements ride as a sidecar overlay merged HERE, at
-                # load time — the base file is never mutated (so its `.pclaw-lock.json` stays
-                # intact and revert is a one-file delete). No overlay → the body is unchanged.
-                from personalclaw.skills import overlays
-
-                return overlays.render_with_overlay(name, content)
+                return skill_file
         return None
+
+    def load_skill(self, name: str) -> str | None:
+        """Load a single skill's content by name, searching this loader's dirs."""
+        skill_file = self.skill_file(name)
+        if skill_file is None:
+            return None
+        content = skill_file.read_text(encoding="utf-8")
+        # WF2LEA-6: accepted refinements ride as a sidecar overlay merged HERE, at
+        # load time — the base file is never mutated (so its `.pclaw-lock.json` stays
+        # intact and revert is a one-file delete). No overlay → the body is unchanged.
+        from personalclaw.skills import overlays
+
+        return overlays.render_with_overlay(name, content)
+
+    # ── Resource tier (WF2LEA-10) ──
+
+    def resources_for(self, name: str) -> list[SkillResource]:
+        """The resources *name* DECLARED — the allowlist, and the L0 catalog's input.
+
+        Read from the on-disk ``SKILL.md`` and NOT from :meth:`load_skill`'s
+        overlay-rendered text: an accepted refinement is appended content, and it
+        must not be able to add a path to the allowlist. Never raises — an
+        unreadable or resource-less skill yields ``[]``.
+        """
+        skill_file = self.skill_file(name)
+        if skill_file is None:
+            return []
+        try:
+            raw = skill_file.read_text(encoding="utf-8-sig", errors="replace")
+        except OSError:
+            return []
+        return parse_resources(raw)
+
+    def read_resource(self, name: str, path: str) -> ResourceRead:
+        """Read ONE declared resource of skill *name*. Refuses anything else.
+
+        Order matters, and each step is load-bearing:
+
+        1. the skill resolves at all (``_safe_name`` also fences the skill name);
+        2. the requested path canonicalizes (absolute / ``..`` / backslash → out);
+        3. it is IN the declared allowlist — an existing-but-undeclared file is
+           refused, so the tool can never become an arbitrary file read;
+        4. containment is verified AFTER ``realpath``, which is the only check a
+           symlink pointing out of the skill dir cannot satisfy;
+        5. it is a regular file, read with a cap and a truncation flag.
+
+        Raises :class:`SkillResourceRefused` (with a stable ``reason``) rather than
+        returning a sentinel, so a refusal can never be mistaken for content.
+        """
+        skill_file = self.skill_file(name)
+        if skill_file is None:
+            raise SkillResourceRefused(
+                "unknown_skill", f"no skill named '{name}'. Check the skill index for exact names."
+            )
+        rel = _norm_declared_path(path)
+        if not rel:
+            raise SkillResourceRefused(
+                "bad_path",
+                f"'{path}' is not a usable resource path (must be relative to the "
+                "skill dir, with no '..' segment).",
+            )
+        declared = {r.path for r in self.resources_for(name)}
+        if rel not in declared:
+            listed = ", ".join(sorted(declared)) or "none"
+            raise SkillResourceRefused(
+                "undeclared",
+                f"'{rel}' is not declared in {name}'s `resources:` frontmatter "
+                f"(declared: {listed}). Only declared resources can be loaded.",
+            )
+        base = Path(os.path.realpath(skill_file.parent))
+        target = Path(os.path.realpath(base / rel))
+        if target != base and base not in target.parents:
+            raise SkillResourceRefused(
+                "escapes_skill_dir",
+                f"'{rel}' resolves outside {name}'s directory and was refused.",
+            )
+        if not target.is_file():
+            raise SkillResourceRefused(
+                "not_found", f"'{rel}' is declared by {name} but is not a readable file."
+            )
+        try:
+            size = target.stat().st_size
+            with target.open("rb") as fh:
+                data = fh.read(RESOURCE_MAX_BYTES)
+        except OSError as exc:
+            raise SkillResourceRefused(
+                "not_found", f"'{rel}' could not be read: {exc.strerror or exc}"
+            ) from exc
+        # READ, never execute — the bytes are decoded and handed back as text even
+        # when the resource is a script.
+        return ResourceRead(
+            skill=name,
+            path=rel,
+            text=data.decode("utf-8", errors="replace"),
+            size=size,
+            truncated=size > RESOURCE_MAX_BYTES,
+        )
 
     @property
     def _write_dir(self) -> Path:

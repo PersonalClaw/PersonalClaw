@@ -777,6 +777,17 @@ SKILL_INVOKE_SCHEMA = ToolSchema(
     ],
 )
 
+# WF2LEA-10: the resource tier's read tool. Length caps only — WHICH path is
+# loadable is decided by the skill's declared allowlist in
+# ``SkillsLoader.read_resource``, never by a shape check here.
+SKILL_RESOURCE_SCHEMA = ToolSchema(
+    tool_name="skill_resource",
+    fields=[
+        FieldSpec("skill", str, required=True, max_len=128),
+        FieldSpec("path", str, required=True, max_len=256),
+    ],
+)
+
 ARTIFACT_VERSIONS_SCHEMA = ToolSchema(
     tool_name="artifact_versions",
     fields=[FieldSpec("slug", str, required=True, max_len=80)],
@@ -1002,6 +1013,7 @@ MCP_CORE_SCHEMAS: dict[str, ToolSchema] = {
     "visualize": VISUALIZE_SCHEMA,
     "prompt_render": PROMPT_RENDER_SCHEMA,
     "skill_invoke": SKILL_INVOKE_SCHEMA,
+    "skill_resource": SKILL_RESOURCE_SCHEMA,
     "project_context_review": PROJECT_CONTEXT_REVIEW_SCHEMA,
     "dashboard_tile_propose": DASHBOARD_TILE_PROPOSE_SCHEMA,
 }
