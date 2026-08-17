@@ -149,6 +149,18 @@ Manage agent definitions.
 | `agent update NAME [--provider-agent] [--default-dir] [--memory-store]` | Update an agent. |
 | `agent delete NAME` | Delete an agent. |
 
+## `personalclaw app`
+
+Scaffold a third-party app.
+
+| Subcommand | What it does |
+|---|---|
+| `app new --list-types` | Print the provider types this build accepts, derived at runtime from the provider registry — plus the SDK contract each type's stub implements and how many providers of that type are registered. A type added upstream shows up here without a scaffold change. |
+| `app new NAME --type TYPE [--dir DIR] [--display-name] [--description] [--author] [--force]` | Generate an installable app: `app.json` (validated against core's own manifest parser, with the plan-32 `cli.*` seams and `loggerRoots`), a provider stub implementing that type's SDK ABC, a passing `test_provider.py`, `README.md`, and an MIT `LICENSE`. Declares no permissions — add only what the provider uses. |
+
+Names are kebab-case. `pytest <dir>` passes on the generated bundle as-generated, and
+installing it from that local path registers the provider.
+
 ## `personalclaw config`
 
 Get or set configuration values (see the [configuration reference](configuration.md)).
