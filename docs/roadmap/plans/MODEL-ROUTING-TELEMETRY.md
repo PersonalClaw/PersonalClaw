@@ -422,3 +422,83 @@ Folded into **Session 1** as its second half (Session 1 was already "telemetry r
   pricing; MRT-3/4/5 (usage read-model, heuristic router, learned policy) are Sessions 2-3. **Gates:**
   `npm run typecheck` clean; `npm test --workspace web` 753 pass (65 files, 11 new routingPanel + all
   design ratchets green); `npm run build` green.
+
+## Execution log — MRT-3 (usage/spend read model) — BLOCKED, owner scope decision needed
+
+- **MRT-3 NOT STARTED — BLOCKED (E1 premise mismatch + E6 scope). No code written; the atom stays
+  `todo` and `dag.json` is untouched.** The amendment's four clauses rest on three premises that are
+  false against the code, and the two surfaces it asks for already ship under
+  COST-AND-TOKEN-OBSERVABILITY over a *different* record. Building MRT-3 as written would put a
+  second spend fold, a second `/api/usage*` route and a second Usage surface beside the shipped ones,
+  reporting **different dollar totals for the same month** because the two records cover different
+  populations. Everything below is measured, not inferred.
+
+- **① The declared fold input structurally excludes interactive chat.** `model_calls.jsonl` is written
+  only by `ModelCallGuard`, and the guard is attached only for
+  `use_case in ("reasoning", "background", "loops", "orchestration")`
+  (`providers/provider_bridge.py:683`). The comment immediately above it (`:670-682`) states the
+  exclusion as a design decision: *"The interactive chat/code_tools stream stays OUT OF SCOPE …
+  both human-watched."* `wrap_model_call_guard` has exactly one production call site
+  (`provider_bridge.py:1145`). So a spend read model folded from this file omits the user's largest
+  line item, and of the atom's five purposes `interactive` would have exactly one producer
+  (`orchestration`) while a monthly recap's "~$X across N calls" would be a **wrong money number**.
+
+- **② `app` has no producer at all.** `personalclaw/sdk/` exposes no LLM-call helper (`model.py` is
+  provider-ABC re-exports; `one_shot_completion` is not re-exported anywhere under `sdk/`), and there
+  are zero `one_shot_completion` / `resolve_provider_for_use_case` callers under
+  `src/personalclaw/apps/`. An installed app cannot make a core-audited model call today, so an `app`
+  bucket would ship as an enum member nothing can ever write.
+
+- **③ The product is already built, over the better-populated record.** `usage_ledger.py` keeps a
+  per-TURN `usage/turns.jsonl` carrying real caller provenance in its `source` field
+  (`chat` | an app name | `loop` | `cron` | `channel` | `cli` | `subagent` | `background`) — five live
+  writers: `gateway.py:1932`, `gateway.py:2804`, `subagent.py:2231`, `cli_chat.py:56`,
+  `chat_runner.py:519` (whose `source=getattr(session, "_app", "") or "chat"` is where both the `app`
+  and `loop` labels come from). Over it already ship: `GET /api/usage/rollup` + `GET /api/usage/totals`
+  (`dashboard/handlers/usage.py:72-74`, registered `dashboard/server.py:470`) **with `group_by="day"`
+  already supported** — i.e. the daily-chart data path exists; a full Usage subpage at
+  `#/settings/usage` (`web/src/pages/settings/UsagePanel.tsx`, Today/7d/30d segmented, BigStat row,
+  by-model + by-source tables, cache savings, daily-cap line); and the atom's own run-cost string,
+  verbatim, at `web/src/pages/workflows/IntrospectPanel.tsx:261`
+  (`` `$${data.stats.cost_usd.toFixed(4)} this run` ``). MRT-3's `/api/usage?window=&group=` would sit
+  beside two `/api/usage/*` siblings answering the same question from a narrower population.
+
+- **④ A naive union double-counts loop spend, so "fold both" is not a free fix either.** A loop
+  worker's turns run through `_run_chat` (`gateway.py:2137`, with `_app == "loop"` at `:2120`) →
+  `_record_turn_usage` → a `source="loop"` turn row; the SAME session's inner model resolves under
+  `inner_axis="loops"` (`provider_bridge.py:379-388`) → guarded → attempt rows in
+  `model_calls.jsonl`. The two records therefore overlap on at least loops, and establishing
+  disjointness for the rest requires a per-writer audit of both files — a program, not an atom.
+
+- **⑤ `run_totals` cannot answer "~$X this run" for a finished run.** `SpendMeter._run_totals` is an
+  in-memory dict (`guardrails/budgets.py:91`) that `end_run` pops (`:156-159`). A completed run
+  reads `_ScopeTotal()` → `0.0`, so a run/loop detail wired to `run_totals` as the atom specifies
+  would render "~$0.00 this run" — the one thing a money surface must never do. Durable per-run cost
+  already exists elsewhere (`WorkflowRunStats.cost_usd`, surfaced by `IntrospectPanel`).
+
+- **⑥ There is no genuine local data to validate a fold against (residue, already fixed upstream).**
+  Measured read-only on this machine: `~/.personalclaw/model_calls.jsonl` holds 1231 rows and **100%
+  of them are this suite's own fixtures** — `provider="fake-<id>"`, `model="gpt-4o"`,
+  `use_case="unattended"`, a value that appears nowhere in `src/` but is set at
+  `tests/test_guardrails_budgets.py:471-473`. `routing_stats.json` holds 69 phantom
+  `fake-<N>:gpt-4o` refs under a bogus `unattended` axis, and `spend.json` holds **$370.89 across
+  2026-08-04..2026-08-11**. Cause: pre-CRE-8 test leakage; **CRE-8 (#1111, 2026-08-12) fixed it** with
+  the global `guarded_config_dir` autouse fixture + the real-home rail (`tests/conftest.py:100-137`,
+  `tests/real_home_guard.py`), and the rail reports the home unchanged on a current run. So this is
+  historical residue, not an active leak, and it does not bind a day budget (`day_totals` reads only
+  today's key). Two consequences: T-U1's "hand-computed fixture over 50 audit lines" must be
+  synthetic, and nobody should read this machine's fold as evidence of real routing behaviour. *(A
+  candidate per-file isolation fixture was written, measured against `conftest.py`, found redundant
+  with CRE-8's global one, and reverted — no dual path shipped.)*
+
+- **THE OWNER DECISION MRT-3 NEEDS: which record is THE spend read model, and how do the two
+  reconcile?** Three coherent answers, none of them "build the atom as written": **(a) retire MRT-3's
+  fold** and make the amendment's remaining value additive to CATO — a purpose/`source` grouping, a
+  daily/weekly chart `Section` inside the shipped `UsagePanel`, a loop-detail cost line (the one
+  genuinely missing surface — `LoopCockpitPage.tsx` shows no dollar figure anywhere), and
+  `usage_recap(month)` reading `usage_ledger.rollup`; **(b) widen the attempt audit** so
+  `model_calls.jsonl` covers interactive chat and carries run/app provenance, then fold it and retire
+  CATO's ledger — a class-B clean break across five writers; **(c) keep both and define the
+  partition** explicitly, with a disjointness test per writer. (a) is the smallest honest change and
+  keeps one answer to "what did this cost me"; (b) is the only path that makes the atom's literal
+  done_when true; (c) is the most expensive and the easiest to drift.
