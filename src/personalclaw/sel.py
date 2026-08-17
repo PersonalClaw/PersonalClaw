@@ -57,6 +57,21 @@ _VERIFY_WINDOW = 5000
 # window so a prune never erases the whole verifiable tail.
 _MAX_ENTRIES = 50000
 
+#: The fields the audit read surface may filter on. A CLOSED set: the handler refuses an
+#: unknown filter key instead of ignoring it, because a silently-dropped filter returns
+#: MORE than the operator asked for while looking like it worked — the fail-open shape an
+#: audit surface can least afford.
+AUDIT_FILTER_FIELDS = ("caller_identity", "operation", "outcome", "downstream_service")
+
+#: Structural fields :func:`redact_event` leaves byte-identical. Each is machine-generated
+#: and cannot carry a user/tool payload, so there is nothing in them to redact — while
+#: rewriting them would be actively harmful: mangling ``entry_hash``/``prev_hash`` makes an
+#: exported record unverifiable by anyone holding the key, which is the whole point of a
+#: tamper-evident log. (``_B64_CHUNK_RE`` in the redactor matches any 40+ char run of the
+#: base64 alphabet, and a 64-char hex digest qualifies; it only rewrites when the decoded
+#: bytes look like a credential, so today it spares them by luck. This makes it by rule.)
+_UNREDACTED_FIELDS = frozenset({"event_id", "timestamp", "event_type", "prev_hash", "entry_hash"})
+
 
 @dataclass
 class SecurityEvent:
@@ -78,6 +93,52 @@ class SecurityEvent:
     prev_hash: str = ""  # HMAC chain — hash of previous entry
     entry_hash: str = ""  # HMAC of this entry (computed on write)
     metadata: dict = field(default_factory=dict)
+
+
+def redact_event(record: dict) -> dict:
+    """Deep-redact one SEL record for any consumer OUTSIDE this process.
+
+    The log stores a truncated summary of real tool arguments, so a record can carry a
+    secret a user pasted into a command. Every path that hands a record to something
+    other than the on-disk log goes through here — the forward callback and the audit
+    read surface — so there is exactly ONE answer to "what does a SEL record look like
+    once it leaves". A second copy of this walk is how the export and the table would
+    end up disagreeing about which fields are safe.
+
+    Structural fields (:data:`_UNREDACTED_FIELDS`) pass through untouched; everything
+    else, at any nesting depth, goes through :func:`personalclaw.security.redact`. The
+    input is not mutated.
+    """
+    from personalclaw.security import redact
+
+    def _deep(obj: object) -> object:
+        if isinstance(obj, str):
+            return redact(obj)
+        if isinstance(obj, dict):
+            return {k: (v if k in _UNREDACTED_FIELDS else _deep(v)) for k, v in obj.items()}
+        if isinstance(obj, (list, tuple)):
+            return type(obj)(_deep(i) for i in obj)
+        return obj
+
+    return {k: (v if k in _UNREDACTED_FIELDS else _deep(v)) for k, v in record.items()}
+
+
+def _audit_matches(data: dict, filters: dict[str, str], since: str, until: str) -> bool:
+    """Whether one record satisfies every active filter (AND across fields).
+
+    Field filters are case-insensitive substring matches; the time bounds are
+    lexicographic over the ISO-8601 UTC timestamp, which is ordering-correct because
+    every writer formats it identically (``datetime.now(tz=utc).isoformat()``).
+    """
+    for field_name, needle in filters.items():
+        if needle.lower() not in str(data.get(field_name, "")).lower():
+            return False
+    ts = str(data.get("timestamp", ""))
+    if since and ts < since:
+        return False
+    if until and ts > until:
+        return False
+    return True
 
 
 class SecurityEventLog:
@@ -182,6 +243,21 @@ class SecurityEventLog:
         except Exception:
             return []
 
+    def _record_is_authentic(self, data: dict) -> bool:
+        """Whether one parsed record's stored HMAC matches its recomputed digest.
+
+        ONE definition of "is this record authentic", shared by :meth:`verify_integrity`
+        (the aggregate the banner shows) and :meth:`audit_page` (the per-row badge). Two
+        copies would let the summary and the row disagree about the same entry, and the
+        operator would have no way to tell which one lied.
+        """
+        stored = data.get("entry_hash", "")
+        payload = {k: v for k, v in data.items() if k != "entry_hash"}
+        expected = hmac.new(
+            self._hmac_key, json.dumps(payload, sort_keys=True).encode(), hashlib.sha256
+        ).hexdigest()
+        return bool(stored) and hmac.compare_digest(str(stored), expected)
+
     def _compute_hash(self, event: SecurityEvent) -> str:
         # Hash over all fields except entry_hash itself
         d = asdict(event)
@@ -201,18 +277,7 @@ class SecurityEventLog:
             callback = self._forward_callback
         if callback:
             try:
-                from personalclaw.security import redact
-
-                def _redact_deep(obj: object) -> object:
-                    if isinstance(obj, str):
-                        return redact(obj)
-                    if isinstance(obj, dict):
-                        return {k: _redact_deep(v) for k, v in obj.items()}
-                    if isinstance(obj, (list, tuple)):
-                        return type(obj)(_redact_deep(i) for i in obj)
-                    return obj
-
-                callback(_redact_deep(asdict(event)))  # type: ignore[arg-type]
+                callback(redact_event(asdict(event)))
             except Exception:
                 logger.warning("forward_callback failed", exc_info=True)
 
@@ -309,11 +374,7 @@ class SecurityEventLog:
         for line in lines:
             checked += 1
             try:
-                data = json.loads(line)
-                stored_hash = data.pop("entry_hash", "")
-                payload = json.dumps(data, sort_keys=True).encode()
-                expected = hmac.new(self._hmac_key, payload, hashlib.sha256).hexdigest()
-                if hmac.compare_digest(stored_hash, expected):
+                if self._record_is_authentic(json.loads(line)):
                     valid += 1
                 else:
                     logger.warning("SEL HMAC mismatch at entry %d", checked)
@@ -374,6 +435,81 @@ class SecurityEventLog:
             if len(result) >= limit:
                 break
         return result
+
+    def audit_page(
+        self,
+        *,
+        limit: int = 50,
+        cursor: str = "",
+        filters: dict[str, str] | None = None,
+        since: str = "",
+        until: str = "",
+        scan_cap: int = _MAX_ENTRIES,
+    ) -> dict:
+        """Return one filtered page of audit records, newest first, redacted.
+
+        **Why a cursor and not an offset.** The log is append-only and this surface reads
+        it newest-first, so an ``offset`` is unstable by construction: append *k* entries
+        between page 1 and page 2 and every element shifts *k* places toward the tail, so
+        page 2 re-serves *k* rows the operator already saw — and a concurrent ``prune()``
+        shifts the other way and SKIPS rows. Skipping rows in an audit trail is the
+        failure that matters: the surface would omit events while looking complete.
+
+        ``cursor`` is the ``event_id`` of the last row of the previous page. A page is the
+        next ``limit`` matching records strictly OLDER than that anchor (earlier in file
+        order). Appends land strictly newer than the anchor, so they cannot enter or
+        shift any page taken after it — pages 2..N are stable under concurrent writes,
+        while page 1 (no cursor) still shows the true live tail.
+
+        An anchor that is no longer in the scanned window (pruned, or rotated out)
+        returns ``cursor_found=False`` — the caller REFUSES rather than silently
+        restarting from the newest record, which would re-serve the whole log as if it
+        were new.
+
+        Reads stay O(tail): at most ``scan_cap`` trailing lines are ever touched.
+        Per-record ``integrity_ok`` is computed on the RAW line, before redaction —
+        redacting first would rewrite the payload the HMAC covers and report every
+        record as tampered.
+        """
+        lines = self._tail_lines(scan_cap)
+        active = {k: v for k, v in (filters or {}).items() if v}
+        page: list[dict] = []
+        next_cursor = ""
+        past_cursor = not cursor
+        scanned = 0
+        for line in reversed(lines):  # newest first
+            scanned += 1
+            try:
+                data = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if not isinstance(data, dict):
+                continue
+            if not past_cursor:
+                # Still walking back to the anchor; the anchor row itself is not re-served.
+                if data.get("event_id") == cursor:
+                    past_cursor = True
+                continue
+            if not _audit_matches(data, active, since, until):
+                continue
+            if len(page) >= limit:
+                # One match BEYOND the page proves a next page exists, so a cursor is
+                # only ever handed out when it leads somewhere.
+                next_cursor = str(page[-1].get("event_id", ""))
+                break
+            authentic = self._record_is_authentic(data)
+            row = redact_event(data)
+            row["integrity_ok"] = authentic
+            page.append(row)
+        return {
+            "events": page,
+            "next_cursor": next_cursor,
+            "scanned": scanned,
+            # The scan window filled up, so older records may exist beyond it. Reported
+            # rather than hidden: a bounded read that looks exhaustive is a lie.
+            "truncated": len(lines) >= scan_cap,
+            "cursor_found": past_cursor,
+        }
 
     def _prune_plan(self, keep_days: int, max_entries: int) -> tuple[list[str], int]:
         """Compute ``(kept_lines, removed_count)`` without writing anything. Shared by

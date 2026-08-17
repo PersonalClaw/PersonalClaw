@@ -533,12 +533,12 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `GET /api/search/active` — bound provider name per use-case.
 - `PUT /api/search/active/{use_case}` — bind a provider to a use-case.
 - `GET /api/search/providers` — registered providers + capabilities + availability.
+- `GET /api/security/audit` — a cursor-paginated page of filtered security events.
+- `GET /api/security/audit/verify` — HMAC-chain verification over the audit log.
 - `GET /api/security/denied-commands` — the bash denylist for the Security panel.
 - `GET /api/security/egress` — the operator's outbound-egress overrides for the
 - `GET /api/security/stats` — live security feature counts.
-- `GET /api/sel/events` — recent security events.
 - `POST /api/sel/rotate` — archive existing SEL log and start a fresh chain.
-- `GET /api/sel/verify` — verify HMAC chain integrity over the recent window.
 - `POST /api/send-message` — deliver a message to the messaging channel and/or dashboard.
 - `POST /api/session-keepalive` — refresh activity timestamp on the
 - `GET /api/session-tool-policy` — return managedToolPolicy for the
