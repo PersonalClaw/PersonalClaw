@@ -34,6 +34,7 @@ describe('the mirrored workflow-run events are registered', () => {
       'workflow_progress', 'workflow_task_materialized', 'workflow_confirmation_pending',
       'workflow_confirmation_resolved', 'workflow_task_verified', 'workflow_cascade_blocked',
       'workflow_steering_consumed',
+      'workflow_loop_converged',
     ] as const) {
       expect(RUN_LIFECYCLE).toContain(ev)
     }

@@ -44,6 +44,7 @@ from typing import Any
 from personalclaw import project_context
 from personalclaw.knowledge import session_brief
 from personalclaw.ledger import outcomes
+from personalclaw.loop import tick as convergence
 from personalclaw.loop.tick import Action as StepAction
 from personalclaw.workflows import (
     attention,
@@ -63,6 +64,7 @@ from personalclaw.workflows import (
     pool,
     revision,
     store,
+    supervisor_policy,
 )
 from personalclaw.workflows.admission import (
     AdmissionRequest,
@@ -92,7 +94,11 @@ from personalclaw.workflows.engine import (
 from personalclaw.workflows.human_input import drop_continuations
 from personalclaw.workflows.journal import CacheKey, Journal, inputs_hash, spec_region_hash
 from personalclaw.workflows.judge_contract import hints_from_dict as judge_hints_from_dict
-from personalclaw.workflows.loop_middleware import InterruptQueue
+from personalclaw.workflows.loop_middleware import (
+    InterruptQueue,
+    call_fingerprint,
+    classify_failure,
+)
 from personalclaw.workflows.models import (
     SUCCESS_STATES,
     TERMINAL_RUN_STATUSES,
@@ -124,6 +130,7 @@ from personalclaw.workflows.scope import diff as scope_diff
 from personalclaw.workflows.scope import enforces_scope, scope_mode
 from personalclaw.workflows.scope import snapshot as scope_snapshot
 from personalclaw.workflows.scope import watch_roots as scope_watch_roots
+from personalclaw.workflows.supervisor_policy import tick_config as convergence_config
 from personalclaw.workflows.tick import (
     Frontier,
     Limits,
@@ -227,6 +234,21 @@ class _InFlight:
     started: float
     last_progress: float
     cache_key: CacheKey
+
+
+#: How many convergence decisions per loop the run row keeps. Bounded, because an unbounded
+#: decision log on a run row is a slow leak that reads like an audit trail (PP-15).
+_CONVERGENCE_LOG_MAX = 50
+
+#: Breaker reasons that are a DECLARED BUDGET being reached, not a stall (PP-15).
+#:
+#: The distinction decides who answers the trip. A loop that thrashes is recoverable — that is
+#: what the escalation ladder is for, and failing it binary is the bug PP-15 fixes. A loop that
+#: reached the `max_iterations` or token cap ITS AUTHOR SET is not thrashing and has nothing
+#: cheaper to try: spending a fresh session and a model switch on a satisfied budget would
+#: re-run the work the cap existed to bound. So budgets keep going straight to the escalation
+#: artifact, exactly as before, and only thrash reaches the ladder.
+_BUDGET_TRIPS = frozenset({"max_iterations", "token_cap"})
 
 
 class RunController:
@@ -3137,6 +3159,237 @@ class RunController:
         # resurrect an instruction the ledger already records as consumed.
         self._save_run()
 
+    # ── convergence: ONE decision, `loop.tick.evaluate` (PP-15) ──────────────
+
+    def _supervisor_policy(self, node: Node) -> supervisor_policy.SupervisorPolicy:
+        """The loop's declared convergence policy, or the default posture.
+
+        This is the call that makes `SupervisorPolicy` load-bearing: the thresholds
+        `evaluate` reads come from the TEMPLATE's `supervisor:` block, not from constants
+        buried in the engine. A node that declares none gets the default policy, whose
+        values reproduce what the engine did before it was consulted.
+        """
+        return supervisor_policy.parse_supervisor_policy((node.config or {}).get("supervisor"))
+
+    def _convergence_ledger(self, parent_path: str) -> dict[str, Any]:
+        """This loop's persisted convergence position, on the run row.
+
+        `run.extra` and not the event ledger, deliberately. The position has to be PERSISTED —
+        an in-memory cursor is exactly what the deleted `check_middleware` kept, and it makes
+        the ladder a property of this PROCESS's uptime, so the same run answers differently
+        before and after a crash. But it must not be written as an `iteration` row either: that
+        kind means "the loop body ran once", and a decision *about* the body is not another
+        body run. Recording it there inflates every consumer's iteration count, including the
+        `max_iterations` cap a user set.
+        """
+        book = self.run.extra.setdefault("convergence", {})
+        if not isinstance(book, dict):
+            book = {}
+            self.run.extra["convergence"] = book
+        entry = book.setdefault(parent_path, {})
+        if not isinstance(entry, dict):
+            entry = {}
+            book[parent_path] = entry
+        return entry
+
+    def _convergence_state(
+        self, parent_path: str, node: Node, breaker: BreakerState, *, stall: str = ""
+    ) -> convergence.TickState:
+        """Assemble this loop's convergence snapshot. Pure over what it is handed.
+
+        Two sources, each the one that owns its half:
+
+        * **The failure evidence comes from the BREAKER.** `breaker.error_signatures` is the
+          record the trip detector already collected, so the stall tier fires on the trip
+          instead of waiting to re-observe the same thing N more times. Re-counting the
+          failures here would be a second detector — the redundancy the R-de-dup ruling
+          forbids — and it would also make the response arrive later than the detection.
+        * **The ladder position comes from persisted run state** (`_convergence_ledger`), so a
+          resumed run re-derives the same rung rather than restarting at the cheapest one.
+
+        A loop whose body has stopped failing has no signatures, so the stall tiers are vacuous
+        and `evaluate` falls through to the progress branches — the `reset_after_success`
+        behaviour, obtained structurally rather than by remembering to call it.
+        """
+        book = self._convergence_ledger(parent_path)
+        signatures = [s for s in breaker.error_signatures if s]
+        critique = self.run.extra.get("plan_critique")
+        return convergence.TickState(
+            step_index=0,
+            step_started_at=0.0,
+            # The workflows loop node's "call" is the failing NODE plus its failure signature:
+            # the same node failing the same way repeatedly IS the identical-call signal,
+            # expressed in what the breaker actually holds.
+            call_fingerprints=tuple(call_fingerprint(node.id, sig) for sig in signatures),
+            failure_classes=tuple(classify_failure(sig).value for sig in signatures),
+            nudges_issued=int(book.get("nudges", 0) or 0),
+            escalations_taken=int(book.get("escalations", 0) or 0),
+            attempts_at_rung=int(book.get("attempts", 0) or 0),
+            recoverable_waits=int(book.get("recoverable_waits", 0) or 0),
+            replans_taken=int(book.get("replans", 0) or 0),
+            plan_critique=critique.strip() if isinstance(critique, str) else "",
+            stall_confirmed=stall,
+        )
+
+    def _record_convergence(
+        self,
+        parent_path: str,
+        cfg: convergence.TickConfig,
+        state: convergence.TickState,
+        decision: convergence.Decision,
+    ) -> None:
+        """Persist the counter advance `tick.applied` derives, plus a bounded audit log.
+
+        `tick.applied` is the pure write half: it says what the counters BECOME, and this is the
+        one place that puts them on disk. Splitting it that way is what keeps the position
+        re-derivable — the decision never advances anything itself.
+        """
+        after = convergence.applied(cfg, state, decision)
+        book = self._convergence_ledger(parent_path)
+        book["nudges"] = after.nudges_issued
+        book["escalations"] = after.escalations_taken
+        book["attempts"] = after.attempts_at_rung
+        book["recoverable_waits"] = after.recoverable_waits
+        book["replans"] = after.replans_taken
+        # Bounded: an unbounded decision log on the run row is a slow leak that looks like an
+        # audit trail.
+        log = book.setdefault("log", [])
+        if isinstance(log, list):
+            log.append(decision.to_dict())
+            del log[:-_CONVERGENCE_LOG_MAX]
+        self._save_run()
+
+    def _replan_ops(
+        self, node: Node, decision: convergence.Decision, *, attempt: int
+    ) -> list[dict[str, Any]]:
+        """The REAL mutation batch a `REPLAN` queues.
+
+        Not a retry with the critique stapled to the prompt — that is what this replaces, and it
+        is indistinguishable from the failing attempt in the spec, in `spec_history` and to a
+        human reading either. An `insert` CHANGES the plan: the run's remaining steps now include
+        a step that re-derives them from the critique, the spec version bumps, and the change is
+        auditable. Placed immediately after the loop in the root sequence, so it is the next
+        thing the run does with the work the critique rejected.
+        """
+        root = self.spec.get("root") or {}
+        parent_id = ""
+        at: int | None = None
+        children = root.get("children")
+        if isinstance(children, list):
+            for i, child in enumerate(children):
+                if isinstance(child, dict) and child.get("id") == node.id:
+                    # The realistic shape: the loop is a step in a sequence, so the replan step
+                    # is the next step — literally "the remaining steps changed".
+                    parent_id, at = str(root.get("id") or ""), i + 1
+                    break
+        if at is None:
+            body = root.get("body") if root.get("id") == node.id else None
+            if isinstance(body, dict) and isinstance(body.get("children"), list):
+                # The loop IS the root: its remaining work is its own further iterations, so the
+                # replan step goes at the FRONT of the body and runs before the rejected work
+                # is repeated.
+                parent_id, at = str(body.get("id") or ""), 0
+            else:
+                # No structural target this batch could edit without inventing a container. A
+                # replan that cannot land is not a replan, and quietly applying it somewhere
+                # else would change a different part of the plan than the critique named.
+                return []
+        op: dict[str, Any] = {
+            "op": "insert",
+            "node": {
+                "kind": "infer",
+                "id": f"{node.id}__replan{attempt}",
+                "name": "re-derive remaining steps",
+                "config": {
+                    "prompt": (
+                        "The plan for the remaining work was judged unsound. Critique:\n"
+                        f"{decision.replan_directive}\n\n"
+                        "Re-derive the remaining steps to satisfy the critique. Do not repeat "
+                        "the rejected approach."
+                    )
+                },
+            },
+            "note": f"PP-15 replan {attempt}: {decision.reason}",
+            "index": at,
+        }
+        if parent_id:
+            op["parent_id"] = parent_id
+        return [op]
+
+    def _converge_loop(
+        self,
+        parent_path: str,
+        node: Node,
+        iteration: int,
+        *,
+        breaker_reason: str,
+        breaker_detail: str,
+    ) -> bool:
+        """Ask the ONE convergence core what to do about a tripped loop. `True` = the run stops.
+
+        Replaces the BINARY trip handling. The breaker still detects the stall — it remains the
+        sole trip authority, and nothing here re-counts what it counted — but "a stall was
+        detected" and "therefore a human must look at this" were the same line, which made every
+        middle rung of the declared ladder unreachable. Now the trip is the QUESTION and
+        `evaluate` gives the answer: wait, nudge, change strategy, replan, or surface.
+        """
+        policy = self._supervisor_policy(node)
+        cfg = convergence_config(policy)
+        breaker = self._breakers.setdefault(parent_path, BreakerState())
+        state = self._convergence_state(parent_path, node, breaker, stall=breaker_reason)
+        # `time.time()`, NOT `_now()`: the run clock is an ISO string and `evaluate` does
+        # arithmetic on `now` (the dwell branch). Passing the display clock here is a TypeError
+        # at the first tripped breaker — the one path a happy-path test never reaches.
+        decision = convergence.evaluate(cfg, state, time.time())
+        self._record_convergence(parent_path, cfg, state, decision)
+        self._publish(
+            "workflow_loop_converged",
+            {"instance_path": parent_path, "node_id": node.id, **decision.to_dict()},
+        )
+
+        if decision.action is convergence.Action.REPLAN:
+            ops = self._replan_ops(node, decision, attempt=state.replans_taken + 1)
+            result = (
+                self.submit_mutation(ops, actor="supervisor", confirm=True)
+                if ops
+                else {"ok": False, "issues": [{"code": "WF_REPLAN_NO_TARGET"}]}
+            )
+            if not result.get("queued"):
+                # A replan that could not be queued is not a replan. Surfacing beats looping on
+                # a plan the engine has just declared unsound.
+                self._surface_loop(parent_path, node, reason=decision.reason, detail=str(result))
+                return True
+            # Consumed, so the next tick does not re-decide REPLAN against the same critique and
+            # spend the whole budget re-deriving one plan.
+            self.run.extra.pop("plan_critique", None)
+            self._save_run()
+            return False
+
+        if decision.surfaced:
+            self._surface_loop(
+                parent_path,
+                node,
+                reason=decision.reason or breaker_reason,
+                detail=decision.detail or breaker_detail,
+            )
+            return True
+
+        if decision.nudge_text:
+            existing = self._steering_inject.get(parent_path)
+            self._steering_inject[parent_path] = (
+                f"{existing}\n\n{decision.nudge_text}" if existing else decision.nudge_text
+            )
+        return False
+
+    def _surface_loop(self, parent_path: str, node: Node, *, reason: str, detail: str) -> None:
+        """Hand a loop to a human. ESCALATED, deliberately NOT FAILED: "I gave up and a human
+        must decide" is a different fact from "this broke", and collapsing them loses what the
+        user needs to act on."""
+        loop_inst = self._instance(parent_path)
+        loop_inst.state = InstanceState.ESCALATED
+        loop_inst.completed_at = _now()
+        self._escalate(parent_path, node.id, reason=reason, detail=detail)
+
     def _advance_loop(self, item: ReadyNode) -> None:
         """Advance a loop's iteration counter when its body finished an iteration.
 
@@ -3166,11 +3419,14 @@ class RunController:
         # LLM-free: a loop thrashing on the same error is the most common autonomous-run
         # failure, and paying a model to notice it would be slower and less reliable.
         #
-        # This `check_breaker` is the SOLE trip authority (LOOPS-EVOLUTION R-de-dup). `loop_
-        # middleware.check_middleware` re-implements the same identical-call/no-progress trips;
-        # wiring its breaker half here would be a second, redundant path — a clean-break violation.
-        # Only `loop_middleware`'s non-redundant surface (`InterruptQueue`, used by
-        # `_consume_steering`) is adopted; its counter-based breaker is deliberately not called.
+        # This `check_breaker` is the SOLE trip DETECTOR (LOOPS-EVOLUTION R-de-dup): nothing
+        # below re-counts what it counted. What changed in PP-15 is what a trip MEANS. It used to
+        # mean "escalate to a human", which made the declared five-rung ladder unreachable — the
+        # engine failed binary after two consecutive errors. Now a trip is the question, and
+        # `loop.tick.evaluate` — the ONE convergence core, shared with the loop kinds and driven
+        # by this node's `SupervisorPolicy` — gives the answer: wait, nudge, take a rung, replan,
+        # or surface. `loop_middleware.check_middleware`, which used to hold a second copy of
+        # that reasoning over a mutable cursor, is deleted.
         inst = self._instance(item.path)
         breaker = self._breakers.setdefault(parent_path, BreakerState())
         breaker.record(
@@ -3180,12 +3436,6 @@ class RunController:
         )
         verdict = check_breaker(node, breaker)
         if verdict.tripped:
-            loop_inst = self._instance(parent_path)
-            # ESCALATED, deliberately NOT FAILED: "I gave up and a human must decide" is a
-            # different fact from "this broke", and collapsing them loses what the user
-            # needs to act on.
-            loop_inst.state = InstanceState.ESCALATED
-            loop_inst.completed_at = _now()
             self.journal.iteration(
                 parent_path,
                 node.id,
@@ -3194,8 +3444,18 @@ class RunController:
                 error_signature=breaker.error_signatures[-1] if breaker.error_signatures else "",
                 tokens=inst.tokens,
             )
-            self._escalate(parent_path, node.id, reason=verdict.reason, detail=verdict.detail)
-            return
+            if verdict.reason in _BUDGET_TRIPS:
+                # A satisfied budget is not a stall. Unchanged pre-PP-15 behaviour.
+                self._surface_loop(parent_path, node, reason=verdict.reason, detail=verdict.detail)
+                return
+            if self._converge_loop(
+                parent_path,
+                node,
+                iteration,
+                breaker_reason=verdict.reason,
+                breaker_detail=verdict.detail,
+            ):
+                return
 
         # Consume steering BEFORE the continue decision, so a mid-run instruction reaches the next
         # iteration's prompt (R14). Drained even when the loop is about to end — a dropped
@@ -3237,10 +3497,25 @@ class RunController:
         self._capture_iteration_context(parent_path, node, iteration, output)
         if keep_going:
             self._iterations[parent_path] = iteration + 1
-        else:
-            loop_inst = self._instance(parent_path)
-            loop_inst.state = InstanceState.DONE
-            loop_inst.completed_at = _now()
+            return
+
+        # The loop is out of iterations. If it is STILL thrashing it did not FINISH — it ran out
+        # of room while failing, and `DONE` would hand the user a complete run full of garbage.
+        #
+        # This restores the terminal outcome the binary handling gave for free. Under the old
+        # code a thrash escalated on its FIRST trip, so it could never reach its last iteration;
+        # now the ladder deliberately keeps it running, and a loop whose iteration budget is
+        # smaller than the ladder's attempt budget would otherwise walk off the end reporting
+        # success. Re-asking the SOLE detector is how the two endings are told apart without
+        # inventing a second piece of state: anything tripping here was tripping earlier too.
+        final = check_breaker(node, breaker)
+        if final.tripped and final.reason not in _BUDGET_TRIPS:
+            self._surface_loop(parent_path, node, reason=final.reason, detail=final.detail)
+            return
+
+        loop_inst = self._instance(parent_path)
+        loop_inst.state = InstanceState.DONE
+        loop_inst.completed_at = _now()
 
     def _iteration_complete(self, node: Node, parent_path: str, iteration: int) -> bool:
         """Has this loop iteration's WHOLE body reached a terminal state?
