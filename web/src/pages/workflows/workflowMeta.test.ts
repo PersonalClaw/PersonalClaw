@@ -161,6 +161,10 @@ describe('WORKFLOW_LIFECYCLE', () => {
       // LOOPS-EVOLUTION R14: emitted by RunController._consume_steering when a mid-run steer is
       // consumed at the iteration boundary.
       'workflow_steering_consumed',
+      // PP-15: emitted by RunController._converge_loop for every convergence decision a tripped
+      // loop gets — the rung, a replan, or a recoverable wait. Without it a run that quietly
+      // switched to a fresh session looks to the user like a run doing nothing.
+      'workflow_loop_converged',
     ]
     for (const ev of published) expect(WORKFLOW_LIFECYCLE).toContain(ev)
     // And no extras: a listener for an event nobody publishes is dead code that reads as

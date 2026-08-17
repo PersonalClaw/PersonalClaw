@@ -1161,7 +1161,17 @@ class TestResilienceIntegration:
         assert c.run.attention["kind"] == "escalation"
 
     async def test_the_breaker_stops_a_thrashing_loop_with_no_model_calls(self) -> None:
-        """A 20-iteration loop returning identical output must not run 20 times."""
+        """A 20-iteration loop returning identical output must not run 20 times, and must cost
+        no model calls to notice.
+
+        PP-15 relaxed the BOUND, not the property. The old bound (`<= 4`) encoded the binary
+        failure: the first trip went straight to a human, so every middle rung of the declared
+        escalation ladder was unreachable in production. The thrash now walks the ladder — a
+        nudge, then the engine rungs — before spending a human, so it takes more iterations and
+        still ends in the same place. What must remain true is that it STOPS SHORT OF ITS CAP,
+        by surfacing rather than by drifting into `n`: a ladder that merely delayed the cap
+        would be no improvement on the binary stop, and only that distinction tells them apart.
+        """
         spec = {
             "name": "thrash",
             "root": {
@@ -1175,8 +1185,13 @@ class TestResilienceIntegration:
         c = RunController(run, spec, services=EngineServices())
         assert await c.run_to_completion(timeout=30) == RunStatus.ESCALATED
         iterations = [p for p in c.instances if "@" in p]
-        assert len(iterations) <= 4, f"the thrash ran {len(iterations)} times"
+        assert len(iterations) < 20, f"the thrash ran to its cap ({len(iterations)} times)"
         assert c.instances["root"].state == InstanceState.ESCALATED
+        # It surfaced through the ladder, and the cheap tier was tried first.
+        entry = next(iter((c.run.extra.get("convergence") or {}).values()), {})
+        rungs = [d.get("rung") for d in entry.get("log") or []]
+        assert rungs and rungs[-1] == "surface", f"it did not surface through the ladder: {rungs}"
+        assert rungs[0] is None, f"the first trip cost a rung instead of a nudge: {rungs}"
 
     async def test_escalated_is_distinct_from_failed(self) -> None:
         """ "I gave up, a human must decide" is a different fact from "this broke"."""

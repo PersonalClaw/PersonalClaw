@@ -103,30 +103,40 @@ def test_the_census_scans_real_source_not_nothing():
     assert scanned >= 50, f"census only scanned {scanned} modules — it is not seeing src/"
 
 
-def test_DIRECTION_1_no_production_caller_exists_while_the_marker_claims_zero():
-    """RED if a production caller of ``SupervisorPolicy`` appears while the marker still says
-    zero — the marker would be lying. (Falsification probe 1 adds a fake caller under src/.)"""
+def test_DIRECTION_1_the_wired_policy_still_has_its_production_caller():
+    """RED if the last production caller of ``SupervisorPolicy`` disappears while the marker
+    claims the policy is wired — the module would have gone inert again without saying so.
+
+    PP-15 INVERTED this direction. It used to assert that NO caller existed while the marker
+    claimed zero; the marker now claims one, so the drift worth catching is the opposite one.
+    A deletion that strands `_supervisor_policy` would otherwise leave a `SupervisorPolicy`
+    nothing reads, declaring itself wired — the exact lie the convention exists to prevent."""
     hits, _scanned = _census()
-    assert not hits, (
-        "SupervisorPolicy has production caller(s) but the module still claims zero — "
-        f"either wire the marker (PP-15) or remove the caller: {hits}"
+    assert hits, (
+        "SupervisorPolicy claims a production caller but the census found none — either the "
+        "wiring was removed (restore it, or set HAS_ZERO_PRODUCTION_CALLERS back to True)"
     )
+    assert "controller.py" in " ".join(
+        hits
+    ), f"the wired caller is the run controller (PP-15); census found only {hits}"
 
 
-def test_DIRECTION_2_the_inert_module_declares_itself_inert():
-    """RED if the "zero callers / PP-15 wires this" marker is removed while callers are still
-    zero — an inert control that stopped declaring itself inert. (Falsification probe 2 strips
-    the marker.)"""
+def test_DIRECTION_2_the_wired_module_declares_itself_wired():
+    """RED if the module goes back to claiming it is inert while a caller exists — the original
+    lie, in the other direction. (Falsification probe: flip the constant back to ``True``.)"""
     src = Path(sp.__file__).read_text()
-    assert "zero production callers" in src, "the module dropped its zero-caller marker"
+    assert (
+        "zero production callers" not in src
+    ), "the module still claims zero production callers, but PP-15 wired one"
     assert "PP-15" in src, "the module no longer names its wiring owner"
     assert sp.WIRING_OWNER == "PP-15"
-    assert sp.HAS_ZERO_PRODUCTION_CALLERS is True
+    assert sp.HAS_ZERO_PRODUCTION_CALLERS is False
 
 
 def test_the_marker_and_reality_agree():
-    """The coupling invariant both probes derive from: the claim must equal the fact. Flipping
-    the constant OR adding a caller breaks this, so the marker can never silently drift."""
+    """The coupling invariant both probes derive from: the claim must equal the fact. Unchanged
+    by PP-15 — the two DIRECTION rails flipped which side of it they guard, but the invariant
+    itself is what makes either lie impossible, so it is stated once and never edited."""
     hits, _scanned = _census()
     assert sp.HAS_ZERO_PRODUCTION_CALLERS == (len(hits) == 0)
 
