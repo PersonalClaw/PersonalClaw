@@ -7332,7 +7332,8 @@
           "done_when": "`pool.frontier`/`pool.next` are DELETED and the Work board's ready projection is computed by the unified core with a `Lease` policy plus the pool's existing priority/blocking-count/overdue ordering expressed as a comparator. The lease decision functions survive (they are the policy's implementation); only the duplicate projection goes. Verified: the Work board renders an identical ready set before and after over a seeded fixture, leases still survive a gateway kill, and `dependency_failed` cascade plus burst coalescing still fire. Retiring a legacy path is never a pure deletion \u2014 the sweep names every caller before the delete lands.",
           "deps": [
             "PP-12"
-          ]
+          ],
+          "pr": 1560
         },
         {
           "id": "PP-14",
