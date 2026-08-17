@@ -176,9 +176,13 @@ function AutonomyLadderSection() {
                   )}
                 </div>
                 <div className="shrink-0 flex items-center gap-2">
+                  {/* "Promote to runs on its own" is what this read: a rung label is a PREDICATE
+                      ("drafts only", "runs on its own"), declared in terms of behaviour, so a noun
+                      slot mangles it. Give it a subject — the same form this file's own success
+                      toasts already use (`${t.key} now ${label}.`). */}
                   {t.eligible && t.next_rung && (
                     <Button size="xs" variant="secondary" disabled={busy === t.key} onClick={() => promote(t)}>
-                      Promote to {rungMeta(t.next_rung, ladder).label}
+                      Promote so it {rungMeta(t.next_rung, ladder).label}
                     </Button>
                   )}
                   {t.granted_at && (
