@@ -94,9 +94,31 @@ export function ToolsPage({ query, setQuery }: Pick<RouteProps, 'query' | 'setQu
     try { await api.probeMcp().catch(() => {}); load() } finally { setProbing(false) }
   }
 
+  // 🔑 THE FILE ALREADY NAMES THIS BUG. `removeServer` above unwraps the backend's message and reports
+  // it, with the comment "Surface the backend's message instead of silently 'refreshing' (the bug)". The
+  // four toggles below were doing exactly that bug: swallow, then `setTimeout(load)`.
+  //
+  // These switches are DATA-DRIVEN (`<Toggle on={!!g.server.enabled} />` reads the refetched list), not
+  // optimistic — so a failed write does not leave a lying control, it leaves NOTHING. The user clicks, the
+  // switch does not move, no message appears, and the only reasonable guess is to click again. An action
+  // that silently did not happen is its own defect, distinct from the optimistic-lie shape.
+  //
+  // One helper rather than four copies of removeServer's catch, and it returns the outcome so a caller
+  // can skip the refetch when the write never landed.
+  async function reportingWrite(what: string, run: () => Promise<unknown>): Promise<boolean> {
+    try { await run(); return true }
+    catch (e) {
+      let msg = e instanceof Error ? e.message : `Couldn't ${what}`
+      try { const p = JSON.parse(msg); msg = p.error || msg } catch { /* raw text */ }
+      notify(`Couldn't ${what}: ${msg}`, 'error')
+      return false
+    }
+  }
+
   async function toggleServer(s: McpServer) {
-    await api.toggleMcpServer(s.name, !s.enabled).catch(() => {})
-    setTimeout(load, 400)
+    const ok = await reportingWrite(`${s.enabled ? 'disable' : 'enable'} "${s.name}"`,
+      () => api.toggleMcpServer(s.name, !s.enabled))
+    if (ok) setTimeout(load, 400)
   }
 
   // Reconnect ONE server (re-probe just it) — recover a timed-out/errored provider
@@ -127,12 +149,11 @@ export function ToolsPage({ query, setQuery }: Pick<RouteProps, 'query' | 'setQu
   // tools write tool_prefs.json. Locked tools never reach here (switch disabled).
   async function toggleTool(g: Group, t: ToolItem) {
     const enabled = t.disabled === true  // flipping → if currently disabled, enable
-    if (g.kind === 'mcp' && g.server) {
-      await api.toggleMcpTool(g.server.name, t.name, enabled).catch(() => {})
-    } else {
-      await api.toggleTool(t.provider, t.name, enabled).catch(() => {})
-    }
-    setTimeout(load, 300)
+    const what = `${enabled ? 'enable' : 'disable'} "${t.name}"`
+    const ok = g.kind === 'mcp' && g.server
+      ? await reportingWrite(what, () => api.toggleMcpTool(g.server!.name, t.name, enabled))
+      : await reportingWrite(what, () => api.toggleTool(t.provider, t.name, enabled))
+    if (ok) setTimeout(load, 300)
   }
 
   // Whole-provider enable/disable. A native provider writes tool_prefs.json
@@ -140,8 +161,9 @@ export function ToolsPage({ query, setQuery }: Pick<RouteProps, 'query' | 'setQu
   // per kind — the runtime + all surfaces read it back.
   async function toggleProvider(g: Group) {
     if (g.kind === 'mcp' && g.server) { await toggleServer(g.server); return }
-    await api.toggleToolProvider(g.key, !!g.providerDisabled).catch(() => {})
-    setTimeout(load, 300)
+    const ok = await reportingWrite(`${g.providerDisabled ? 'enable' : 'disable'} "${g.key}"`,
+      () => api.toggleToolProvider(g.key, !!g.providerDisabled))
+    if (ok) setTimeout(load, 300)
   }
 
   const groups = useMemo<Group[] | null>(() => {
