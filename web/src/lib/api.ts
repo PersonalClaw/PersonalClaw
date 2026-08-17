@@ -1648,12 +1648,32 @@ export interface InboxSettings {
   retention_days: number
 }
 // One row of the security-event log (SEL) — the tamper-evident audit chain.
+// `integrity_ok` is the server's per-row HMAC recheck: false = THIS record was altered
+// on disk. Computed on the raw line before redaction, so it is a real verdict.
 export interface SelEvent {
   event_id: string; timestamp: string; event_type: string; caller_identity?: string
   agent?: string; source?: string; operation?: string; tool_kind?: string; outcome?: string
-  resources?: string; error?: string; prev_hash?: string
+  resources?: string; error?: string; prev_hash?: string; entry_hash?: string
+  downstream_service?: string; request_id?: string; integrity_ok?: boolean
 }
-export interface SelVerify { valid: boolean; count?: number; broken_at?: string; error?: string }
+// One page of /api/security/audit. `next_cursor` empty = no further page (the server
+// only hands out a cursor once it has seen a match beyond the page). `truncated` = the
+// bounded tail scan filled up, so older records may exist beyond the window.
+export interface AuditPage {
+  events: SelEvent[]; count: number; next_cursor: string; scanned: number; truncated: boolean
+}
+// Server-side filters for the audit read. Empty strings are omitted by the caller —
+// an unknown key is REFUSED by the endpoint, never ignored.
+export interface AuditFilters {
+  caller?: string; operation?: string; outcome?: string; downstream_service?: string
+  since?: string; until?: string
+}
+// `ok` = every checked record's HMAC verified. `windowed` = only the recent window was
+// checked (the default; `full` walks the whole chain).
+export interface SelVerify {
+  ok: boolean; checked: number; valid?: number; tampered?: number; windowed?: boolean
+  error?: string
+}
 // An archived chat session file (read-only browse). `key`=session key, `stamp`=
 // archive timestamp slug, `mtime`=epoch seconds.
 export interface SessionArchive { name: string; key: string; stamp: string; size: number; mtime: number }
@@ -3731,9 +3751,16 @@ export const api = {
   saveInboxSettings: (s: Partial<InboxSettings>) => put<{ settings: InboxSettings }>('/api/inbox/settings', s),
 
   // audit log (SEL) — tamper-evident security-event chain.
-  selEvents: (opts: { limit?: number; offset?: number } = {}) =>
-    get<{ events: SelEvent[] }>(`/api/sel/events?limit=${opts.limit ?? 100}&offset=${opts.offset ?? 0}`).then((d) => d.events),
-  selVerify: () => get<SelVerify>('/api/sel/verify'),
+  // Cursor-paginated, NOT offset-paginated: the log is append-only and read newest-first,
+  // so an offset would re-serve rows after a concurrent append and skip rows after a prune.
+  // Pass the previous page's `next_cursor` to continue.
+  auditEvents: (opts: { limit?: number; cursor?: string; filters?: AuditFilters } = {}) => {
+    const q = new URLSearchParams({ limit: String(opts.limit ?? 50) })
+    if (opts.cursor) q.set('cursor', opts.cursor)
+    for (const [k, v] of Object.entries(opts.filters ?? {})) if (v) q.set(k, v)
+    return get<AuditPage>(`/api/security/audit?${q}`)
+  },
+  auditVerify: (full = false) => get<SelVerify>(`/api/security/audit/verify${full ? '?full=1' : ''}`),
   selRotate: () => post<{ ok?: boolean }>('/api/sel/rotate'),
   // session archive (read-only browse)
   sessionArchives: () => get<{ archives: SessionArchive[] }>('/api/session/archive').then((d) => d.archives),

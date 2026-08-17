@@ -6313,7 +6313,8 @@
           "status": "done",
           "scope": "Session 4 T4.1 (docs/roadmap/research/learning-benchmark-protocol.md: task-set schema, paired skills-on/off design with fresh homes + fixed model/config/seed, metrics {completion, tool_calls, wall_ms}, exclusions, publish-regardless honesty rule)",
           "done_when": "protocol doc is reviewable before any runs and has owner sign-off (owner task 2); owner-curated ~10-task set frozen (owner task 1)",
-          "deps": []
+          "deps": [],
+          "pr": 1495
         },
         {
           "id": "LV-7",
@@ -6394,7 +6395,8 @@
           "status": "done",
           "scope": "Session 2 T2.2; Contracts C3 (EmptyState props); Design 'Empty states as on-ramps'",
           "done_when": "web/src/ui/EmptyState.tsx exists and is applied to Loops, Workflows, Knowledge, Memory, Skills, Tasks, Triggers with one seeded working action each; copy in PRODUCT.md voice; visual check across both themes",
-          "deps": []
+          "deps": [],
+          "pr": 1495
         },
         {
           "id": "OU-7",
@@ -6532,10 +6534,11 @@
         {
           "id": "SH-8",
           "title": "SEL audit surface: paginated /api/security/audit (caller/operation/outcome/downstream_service/time filters) + /api/security/audit/verify wrapping verify_integrity + 'What did my agent do' Settings page with credential-safe JSONL export",
-          "status": "todo",
+          "status": "done",
           "scope": "Session 4 \u2014 SEL surface + external review / T4.1, T4.2, V4; Design S4; Contracts C4",
           "done_when": "filters work; verify endpoint returns (checked, ok) with a tamper fixture showing ok=false; page renders real SEL events and shows a deliberately-broken chain link; export reuses redact and excludes secrets (fixture-verified); both themes/WCAG; export round-trips",
-          "deps": []
+          "deps": [],
+          "pr": 1495
         },
         {
           "id": "SH-9",
@@ -7882,11 +7885,6 @@
       {
         "id": "SH-7",
         "title": "Mode-independence matrix: baseline-matched command refused under default/auto/yolo/acceptEdits and trust simulators, deny-before-approval ordering regression-pinned, baseline-tamper corpus class added to S3 harness",
-        "plan": "SH"
-      },
-      {
-        "id": "SH-8",
-        "title": "SEL audit surface: paginated /api/security/audit (caller/operation/outcome/downstream_service/time filters) + /api/security/audit/verify wrapping verify_integrity + 'What did my agent do' Settings page with credential-safe JSONL export",
         "plan": "SH"
       },
       {
@@ -10162,18 +10160,18 @@
         "code": "OU",
         "plan": "ONBOARDING-UX",
         "total_atoms": 11,
-        "done": 8,
+        "done": 9,
         "in_progress": 0,
-        "todo": 3,
+        "todo": 2,
         "blocked": 0
       },
       {
         "code": "SH",
         "plan": "SECURITY-HARDENING",
         "total_atoms": 10,
-        "done": 5,
+        "done": 6,
         "in_progress": 0,
-        "todo": 4,
+        "todo": 3,
         "blocked": 1
       },
       {
