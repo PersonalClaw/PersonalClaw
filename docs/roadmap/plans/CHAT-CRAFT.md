@@ -14,9 +14,11 @@ find-in-conversation + quote toolbar, follow-up chips + smooth streaming; see `#
 Verified wired: `chat_followups.py` ← `chat_runner.py`, `FindBar`/`FollowupChips` imported into
 `ChatPage.tsx`, the `chat_rewound`/`queue_promoted` WS handlers live, and `followup_chips` +
 `stream_reveal` round-tripped with FE controls.
-**S4 (screen-snip + polish + T4.5 optimizer) NOT started** — no `SnipOverlay.tsx`, no
-`getDisplayMedia` anywhere in `web/src`. The 2026-07-29 amendment (Branch affordance F1.1/F1.2 + the
-chat entry to the planning walkthrough F1.3/F1.4) is **NOT started**.
+**S4a (screen-snip) DONE 2026-08-16** as atom `CC-4` — `ui/SnipOverlay.tsx` + the shared
+`ui/composer/displayCapture.ts` (the app's ONE `getDisplayMedia` call site, converged with MI-4's
+screen share). S4's polish/docs/validation wrap-up (`CC-6`) and T4.5 optimizer polish (`CC-5`) are
+still open. The 2026-07-29 amendment (Branch affordance F1.1/F1.2 + the chat entry to the planning
+walkthrough F1.3/F1.4) is **NOT started**.
 ⚠️ Note for whoever takes it: the ChatPage serialization this plan's order relied on was already
 broken — Agent-Routing and Artifacts-Evolution both landed ChatPage churn first, so re-read the recon
 before starting. Status corrected 2026-08-04 by code audit. Created 2026-07-26 (roadmap rev 12; owner
@@ -211,6 +213,106 @@ One task row, landing in **S4** (the polish session); **no count change**.
   regenerated for the new route. **S4 deferred** (Wave 3 — screen-snip + polish + T4.5
   optimizer). Class-B `rewound` field lands as a plain clean break under the pre-1.0
   banner (tolerant reads, no migration; CHANGELOG note + snapshot advice).
+
+- **2026-08-16 — CC-4 DONE (S4a screen-snip).** Branch `feature-cc4-screen-snip`, one
+  commit. Shipped: `ui/composer/displayCapture.ts` (the shared display-capture module),
+  `ui/SnipOverlay.tsx` + `.doc.ts` (the crop step), the composer entry renamed to
+  **"Capture screen area"** with provider routing, and the mac-path attachment fix below.
+
+  **MI-4 convergence decision: ONE acquisition, two products — extracted, not duplicated.**
+  MULTIMODAL-IO's MI-4 had already landed `useScreenShare` (a display stream held open for
+  a session, one budgeted frame per send, in memory for a single turn). CC-4 wants the
+  opposite shape: one frame, capture stopped immediately, cropped, uploaded as an ordinary
+  attachment. Different products, same acquisition — so `getDisplayMedia`, the offscreen
+  `<video>` frame source, the canvas draw and the track teardown moved into
+  `displayCapture.ts`, and `useScreenShare` now consumes them. There is exactly **one**
+  `getDisplayMedia` call site in `web/src`, pinned by a census test that also asserts its
+  own non-vacuity (a third atom cannot quietly add a second acquisition). A second
+  acquisition was considered and rejected: the two features differ in *lifetime policy*,
+  not in how a frame is obtained, and the teardown is the one part that must never fork.
+  `SHARE_MAX_EDGE` (1568) stays a share-only budget — a snip keeps native resolution,
+  because softening text before OCR reads it is the one thing this pipeline must not do.
+
+  **SnipOverlay premise: the atom's wording was stale; the component is NEW here.** The
+  `done_when` reads "mac keeps native screencapture -i with SnipOverlay as fallback" as
+  though `SnipOverlay` existed. It did not — Contract C5 *specifies* it (`SnipOverlay.tsx`)
+  and CC-4 is where it gets built. Recorded rather than assumed: nothing was missing, the
+  clause is forward-referencing.
+
+  **DISCOVERY → fixed in scope: the macOS native capture's attachment chip was a lie.**
+  `POST /api/screenshot` writes into `~/.personalclaw/screenshots/`, but
+  `chat_runner._inject_attachment_content` only extracted paths under `uploads/`. So the
+  native path produced a visible attachment chip whose content the model was never told
+  about — and its path is not in the prompt text either, so the agent could not even go
+  read it. With one composer entry now selecting between two providers, that made the same
+  button mean two different things, so the roots list gained `screenshots/` (and the
+  prefix test gained a separator, so a `uploads-old/` sibling can no longer masquerade as
+  an attachment root). `api_screenshot` also kicks off extraction at capture time, the same
+  head start an upload gets. Four tests cover it, one end-to-end through the real
+  extraction graph. **DEVIATION:** this is a Python change beyond the atom's FE scope,
+  taken because "one decision point, two providers" is false if the two providers produce
+  different outcomes behind one label.
+
+  **DISCOVERY (fixed, real-browser-only): the crop preview's dim/bright inversion.** The
+  selected region is drawn as a second copy of the frame clipped to the selection. With a
+  percentage `margin-top` offset it rendered *exactly as dark as the area outside it* —
+  because percentage margins resolve against the containing block's INLINE size, so a
+  90px-tall crop was displaced by 300% of its *width*. jsdom computes no layout, so no
+  component test could have seen it; it showed up in the first real screenshot. Fixed with
+  a `transform: translate()` (percentages there resolve against the element's own box) and
+  converted into a testable claim: `cropViewStyle()` is a pure function with a rail that
+  asserts the offset is a transform and never a margin.
+
+  **DEVIATION (small):** the frame is capped by deriving its width from a 58vh budget.
+  A 4K capture otherwise filled the sheet and pushed the size readout and the Attach
+  button out of view — a crop UI that hides its own confirm button is not one.
+
+  **Drove as a user** (isolated home `/private/tmp/cc4-home`, port 10077, real Chrome):
+  · macOS/native leg — the entry appears as "Capture screen area", clicking it really
+  shells out (`screencapture -i /private/tmp/cc4-home/screenshots/screenshot_*.png`
+  observed in the process table); cancelling it leaves no chip, no error line and does NOT
+  fall through to the browser picker. The OS crosshair itself could not be *completed* from
+  a browser-driven session (no way to drive an OS-level overlay), so the completed native
+  capture is covered by the pytest that runs the real extraction graph on a PNG in
+  `screenshots/`, not by a click. · browser leg — this machine is mac, so the platform
+  predicate was **temporarily overridden in source** (`usePlatform() && 'linux'`, rebuilt,
+  reverted before commit) and `getDisplayMedia` was stubbed to return a real
+  `canvas.captureStream()`. Everything downstream was the real code: overlay mounts with
+  focus inside the dialog, **the track was `ended` and `stream.active === false` before the
+  overlay was even touched** (`stop()` observed once per acquisition — a real-browser check,
+  not a jsdom one); Alt+ArrowLeft moved the readout 1280→1256; Escape closed it leaving no
+  chip and no error; a drag over the "crop me: ACORN-7742" line gave 760×90 px; Attach
+  produced `uploads/<32-hex>_screen-snip-*.png`, **760×90 on disk, mode 0600**, and an
+  ordinary removable attachment chip. Zero console errors.
+
+  **Honest limit on "OCR'd content".** `GET /api/attachment-extract` for the uploaded snip
+  returned the structural descriptor (`Image: … (760×90, PNG, 15 KB) — no extractable text
+  content.`), because OCR is a model-backed node (`ocr`/`vision`, use case
+  `image_modality`) and no vision model is bound in that dev home. The wiring is proven;
+  the OCR *text* is a property of the configured model, not of this atom. Noted so CC-6
+  does not re-litigate it. (Cosmetic, unfixed: `_structural_descriptor` prints the stored
+  filename with its random prefix rather than `display_name`.)
+
+  **Falsifications** (mutate the live line, run the covering test, restore): removing
+  `stopStream(acquired)` from `grabOneFrame`'s `finally` →
+  `expected [ +0, +0, +0 ] to deeply equal [ 1, 1, 1 ]`; deleting the darwin branch from
+  `chooseCaptureProvider` → `expected 'browser' to be 'native'`; dropping the overlay's
+  Escape handler → `expected "spy" to be called 1 times, but got 0 times`; dropping
+  `screenshots` from the injection roots → `assert 'NATIVE SNIP TEXT' in '…snip.png\n\nBROWSER
+  SNIP TEXT…'`.
+
+  **Gate:** `npm ci`, web typecheck clean, **304 files / 3148 tests green** (repo-wide
+  ratchets included — the `aria-modal` census in `dialogFocusContract.test.tsx` gained
+  `ui/SnipOverlay.tsx`, and `screenShareIndicator.test.tsx`'s track-stop rail was repointed
+  at the shared module rather than weakened), web build clean (92 ui-docs components),
+  `make lint` clean, 100 targeted pytest passed with the real-home rail reporting
+  `~/.personalclaw unchanged`. `docs/design/consistency-audit.json` restored after the web
+  runs dirtied it (pre-existing drift on `main`).
+
+  **Not done here, deliberately:** the DESKTOP-CAPABILITIES S2 bridge (this atom leaves the
+  documented seam at `grabOneFrame`, naming `window.pclawDesktop.capabilities` /
+  `screen_capture` / `probe()` / `request()` as the swap point — a comment, not a `TODO`,
+  and not an implementation); the a11y/SEL/mobile sweep and the docs guide, which are CC-6.
 
 ---
 

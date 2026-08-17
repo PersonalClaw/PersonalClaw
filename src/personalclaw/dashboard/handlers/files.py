@@ -887,6 +887,15 @@ async def api_screenshot(request: web.Request) -> web.Response:
         return web.json_response({"error": "screenshot timed out"}, status=504)
     if not dest.exists():
         return web.json_response({"path": ""})  # user cancelled
+    # Same head start an upload gets: begin extracting (OCR for a screenshot) while the
+    # user is still typing, so the turn does not wait on it. The runner awaits it per
+    # file before answering either way.
+    try:
+        from personalclaw.dashboard.attachment_extract import get_extractor
+
+        get_extractor().start(str(dest), "image/png")
+    except Exception:
+        logger.debug("screenshot extraction kickoff failed", exc_info=True)
     return web.json_response({"path": str(dest)})
 
 
