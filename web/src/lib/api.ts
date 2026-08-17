@@ -1800,7 +1800,11 @@ export interface NotificationRulePatch {
   conditions?: { keywords?: string[]; name_mention?: boolean }
 }
 export type MemoryVaultMode = 'off' | 'mirror' | 'two_way'
-export interface MemorySettings { history_idle_hours: number; history_max_days: number; migrated?: boolean; l1_manifest?: boolean; active_recall?: boolean; proactive_commitments?: boolean; vault_mode?: MemoryVaultMode; vault_path?: string; graph_enabled?: boolean; push_context?: boolean; push_min_confidence?: number }
+/** GET /api/memory/settings. Not every field is written the same way: the retention +
+ *  behaviour + vault fields ride the PUT on this same path, while `graph_topology_in_context`,
+ *  `holder_attribution` and `slot_size_cap` ride the `_EDITABLE_CONFIG` PATCH — one writer
+ *  each, never two. See `SettingsTab`'s `patch` vs `patchCfg`. */
+export interface MemorySettings { history_idle_hours: number; history_max_days: number; migrated?: boolean; l1_manifest?: boolean; active_recall?: boolean; proactive_commitments?: boolean; vault_mode?: MemoryVaultMode; vault_path?: string; graph_enabled?: boolean; push_context?: boolean; push_min_confidence?: number; graph_topology_in_context?: boolean; holder_attribution?: boolean; slot_size_cap?: number }
 
 /** Per-arm volunteered-vs-used precision for the push reflex
  *  (MEMORY-GRAPH-AND-VAULT §3). `used` = the record's recall count rose after it
@@ -1892,6 +1896,85 @@ export interface Lesson { rule: string; category: string; ts?: string }
 export interface MemoryGraphNode { id: string; label: string; group?: string; title?: string; ref?: string }
 export interface MemoryGraphEdge { from: string; to: string }
 export interface MemoryGraphData { nodes: MemoryGraphNode[]; edges: MemoryGraphEdge[] }
+// The ENTITY topology (MEMORY-GRAPH-AND-VAULT §7.2) — distinct from MemoryGraphData, which is
+// the record-level visualization. `community` is the Louvain partition the topology block also
+// describes, so colouring by it cannot disagree with what the model is told.
+export interface MemoryEntityNode {
+  id: string
+  name: string
+  entity_type: MemoryEntityType
+  aliases: string[]
+  community: number | null
+  inbound_count: number
+}
+/** An edge exists when at least one record links both entities; `records` is how many do.
+ *  `confidence` is that best-supporting record's weaker leg — see `MemoryGraphStore.entity_graph`. */
+export interface MemoryEntityEdge {
+  from: string
+  to: string
+  records: number
+  link_types: string[]
+  provenances: string[]
+  confidence: number
+}
+export interface MemoryEntityGraph {
+  nodes: MemoryEntityNode[]
+  edges: MemoryEntityEdge[]
+  enabled: boolean
+}
+/** A record's outbound entity link. `entity_name` is resolved server-side — a row holding
+ *  only `ent_9f2c` names nothing, and the name IS the evidence tag the inspect view shows. */
+export interface MemoryRecordLink extends MemoryLink { entity_name: string }
+/** A recurring unknown name awaiting an accept/reject decision (the notability gate). */
+export interface MemoryEntityProposal {
+  name: string
+  mention_count: number
+  first_seen_at: string
+  last_seen_at: string
+  refs?: string
+}
+// Memory slots (§6) — the bounded registers injected every session. A built-in with
+// `materialized: false` has no row yet (MGAV-8 keeps them lazy); the editor still lists it so
+// the first line can be written. `cap_chars` is fixed in code per slot; `block_limit` (the
+// whole block's budget) is the one configurable number.
+export interface MemorySlotLine {
+  text: string
+  added_at: string
+  tombstoned: boolean
+  tombstoned_by: string
+  reinforcements: number
+}
+export interface MemorySlot {
+  name: string
+  title: string
+  description: string
+  cap_chars: number
+  scope: string
+  builtin: boolean
+  materialized: boolean
+  live_chars: number
+  live_count: number
+  lines: MemorySlotLine[]
+}
+export interface MemorySlotsResponse { slots: MemorySlot[]; block_limit: number }
+/** An append's outcome. `ok: false` with a `proposal` is the cap rejection — nothing was
+ *  written, and `proposal.drop_candidates` is what would have to go for it to fit. */
+export interface MemorySlotAppendResult {
+  ok: boolean
+  lines?: MemorySlotLine[]
+  error?: string
+  proposal?: MemorySlotTrimProposal
+}
+/** What an over-cap append would cost — the 409 body, so the human picks what to drop. */
+export interface MemorySlotTrimProposal {
+  slot: string
+  cap_chars: number
+  current_chars: number
+  incoming_chars: number
+  over_by: number
+  drop_candidates: string[]
+  message: string
+}
 export interface SecurityStats { denied_commands: number; suspicious_patterns: number; tool_schemas: number; redaction_paths: number }
 /** The packaged baseline's identity, as served by /api/security/denied-commands.
  *  `verified` is whether the file on disk still matches the fingerprint captured at
@@ -2821,6 +2904,38 @@ export const api = {
     get<{ links: MemoryLink[] }>(`/api/memory/entities/${encodeURIComponent(id)}/backlinks`),
   memoryEntityProposal: (body: { name: string; action: 'accept' | 'reject'; entity_type?: MemoryEntityType }) =>
     post<{ ok: boolean; id?: string }>('/api/memory/entities/proposals', body),
+  memoryEntityProposals: () =>
+    get<{ proposals: MemoryEntityProposal[]; enabled: boolean }>('/api/memory/entities/proposals'),
+  // §7.2 — the entity topology behind the graph canvas, and its one-file export. The export
+  // comes back as TEXT and is blobbed by the caller (the AuditPanel pattern) rather than
+  // linked: X-Session-Key rides the fetch, and a bare <a href> would not carry it.
+  memoryEntityGraph: () => get<MemoryEntityGraph>('/api/memory/graph/entities'),
+  /** One record's outbound entity links — the inspect tab's "why is this in my context?". */
+  memoryRecordLinks: (ref: string) =>
+    get<{ links: MemoryRecordLink[]; ref: string; enabled: boolean }>(
+      `/api/memory/record-links?ref=${encodeURIComponent(ref)}`),
+  memoryGraphExport: () =>
+    fetch('/api/memory/graph/export', { headers: { ...SK } }).then(async (r) => {
+      if (!r.ok) throw new ApiError(await errText(r), r.status)
+      return r.text()
+    }),
+  // §6/§7.1 — the Slots editor. `memorySlotAppend` RESOLVES on the 409 rather than throwing:
+  // the trim proposal in that body IS the answer ("nothing was written, here is what you'd
+  // have to drop"), and a rejection would discard exactly what the editor must show. Same
+  // shape as `_installReq` above, for the same reason.
+  memorySlots: () => get<MemorySlotsResponse>('/api/memory/slots'),
+  memorySlotAppend: async (name: string, text: string): Promise<MemorySlotAppendResult> => {
+    const r = await fetch(`/api/memory/slots/${encodeURIComponent(name)}/lines`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json', ...SK }, body: JSON.stringify({ text }),
+    })
+    const data = await r.json().catch(() => null)
+    if (data && typeof data === 'object') return data as MemorySlotAppendResult
+    return { ok: false, error: `HTTP ${r.status}` }
+  },
+  // POST-with-body, not DELETE-with-body: a DELETE body is dropped by some proxies, and a
+  // tombstone is not a delete anyway (the line stays, marked, so it is never re-derived).
+  memorySlotRetireLine: (name: string, text: string) =>
+    post<{ ok: boolean }>(`/api/memory/slots/${encodeURIComponent(name)}/lines/retire`, { text }),
   memoryGraphRebuild: () => post<MemoryGraphRebuild>('/api/memory/graph/rebuild'),
   // Raw markdown memory files (preferences / projects / history) — GET+PUT {content}.
   memoryDoc: (which: 'preferences' | 'projects' | 'history') => get<{ content: string }>(`/api/memory/${which}`).then((d) => d.content),

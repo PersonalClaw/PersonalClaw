@@ -650,6 +650,13 @@ _EDITABLE_CONFIG: dict[str, dict] = {
     # back on does not need a backfill.
     "memory.graph_topology_in_context": {"type": "bool"},
     "memory.holder_attribution": {"type": "bool"},
+    # MEMORY-GRAPH-AND-VAULT §6 (MGAV-9) — the Slots block budget. Runtime-editable because
+    # it is read per session build, so a change takes effect on the next new session. The
+    # bounds mirror `memory_slots.SLOTS_BLOCK_MIN/HARD_MAX_CHARS`: the consumer clamps to the
+    # same range, so a value that got past this allowlist by another route still cannot widen
+    # the always-injected block. The per-slot caps are NOT here — which individual register is
+    # full is a per-class judgment fixed in code, not a number to tune from Settings.
+    "memory.slot_size_cap": {"type": "int", "min": 200, "max": 4000},
     "feedback.enabled": {"type": "bool"},
     "feedback.retire_threshold": {"type": "float", "min": 0.1, "max": 0.9},
     "feedback.min_n": {"type": "int", "min": 3, "max": 50},
