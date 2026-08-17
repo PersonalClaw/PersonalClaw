@@ -1463,7 +1463,20 @@ class KnowledgeStore:
             except Exception:
                 logger.debug("dup scoring failed for %s", cand.get("id"), exc_info=True)
                 continue
-            if not getattr(verdict, "is_duplicate", False):
+            # 🔴 `verdict.is_dup`, read DIRECTLY. This was
+            # `getattr(verdict, "is_duplicate", False)` — a field `DupVerdict` does not have, so
+            # the default won on every comparison and `find_duplicates` returned an empty list for
+            # EVERY input, however identical the two items were. Found by driving it: a pair with
+            # `filename_sim=1.0` and `cosine=0.9949` scored `is_dup=True` and still surfaced
+            # nothing. The three tests that existed were all negative or vacuous (no-embedding,
+            # unknown-item, and a never-return-the-embedding loop that iterated ZERO rows), so the
+            # inert half read as covered. The other consumer of this verdict
+            # (`pipeline/runner.py`) had it right all along.
+            #
+            # The `getattr` indirection is what made a typo silent, so it is gone rather than
+            # spelled correctly: an attribute access on a dataclass RAISES when the name is wrong,
+            # which is the behaviour a scorer's verdict field deserves. Same for `reason` below.
+            if not verdict.is_dup:
                 continue
             out.append(
                 {
@@ -1472,7 +1485,7 @@ class KnowledgeStore:
                     "item_type": cand.get("item_type") or "",
                     "created_at": cand.get("created_at") or "",
                     "word_count": cand.get("word_count") or 0,
-                    "reason": getattr(verdict, "reason", "") or "near-duplicate",
+                    "reason": verdict.reason or "near-duplicate",
                 }
             )
         return out

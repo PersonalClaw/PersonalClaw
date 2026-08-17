@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import { ArrowLeft, Network, Layers, Highlighter } from 'lucide-react'
+import { ArrowLeft, Network, Layers, Highlighter, Copy } from 'lucide-react'
 import { TopBar } from '../../ui/TopBar'
 import { PageTitle } from '../../ui/PageTitle'
 import { WorkbenchLayout } from '../../ui/WorkbenchLayout'
@@ -9,8 +9,9 @@ import { IconButton } from '../../ui/IconButton'
 import { Markdown } from '../../ui/Markdown'
 import { KnowledgeDetail } from './KnowledgeDetail'
 import { AnnotationList } from './ReadingView'
+import { DuplicateList } from './DuplicateList'
 import { resolveType, typeLabel } from './knowledgeMeta'
-import { api, type KnowledgeAnnotation, type KnowledgeItem, type ExtractedContent, ApiError } from '../../lib/api'
+import { api, type KnowledgeAnnotation, type KnowledgeDuplicate, type KnowledgeItem, type ExtractedContent, ApiError } from '../../lib/api'
 import { useQueryParam, type RouteProps } from '../../app/useQueryState'
 
 /** Accent ink for a `knowledgeMeta` tone painted as TEXT on the **canvas** — the ground
@@ -61,6 +62,12 @@ export function KnowledgeDetailPage({ id, onBack, onOpenItem, query, setQuery }:
   // panel lists the same rows, so one fetch feeds both and a delete in the panel re-paints
   // the prose. Two independent copies would let the two surfaces disagree.
   const [annotations, setAnnotations] = useState<KnowledgeAnnotation[]>([])
+  // Near-duplicate candidates (T3.2). The ERROR is kept beside the list on purpose: for almost
+  // every item the honest answer is an empty list, so a failed lookup that fell back to `[]`
+  // would render as "this item is clean" and there would be no way to tell the two apart. The
+  // panel therefore mounts the section when there are candidates OR the lookup failed.
+  const [duplicates, setDuplicates] = useState<KnowledgeDuplicate[]>([])
+  const [duplicatesErr, setDuplicatesErr] = useState<unknown>(null)
   const [reloadKey, setReloadKey] = useState(0)
   // The detail's title-wand + action cluster, lifted into THIS page's header bar so
   // there's a single header (no stacked page-header + in-body title row). The wand sits
@@ -102,8 +109,32 @@ export function KnowledgeDetailPage({ id, onBack, onOpenItem, query, setQuery }:
     reloadAnnotations()
   }, [reloadAnnotations])
 
+  // Duplicates get their own key so "Try again" after a failed lookup re-runs ONE request
+  // rather than re-reading the whole item and remounting the body.
+  const [duplicateKey, setDuplicateKey] = useState(0)
+  const reloadDuplicates = useCallback(() => setDuplicateKey((k) => k + 1), [])
+  useEffect(() => {
+    let alive = true
+    // 🔴 NO `.catch(() => [])`. The rejection is STORED, not substituted: see `duplicatesErr`.
+    api.knowledgeDuplicates(id)
+      .then((d) => { if (alive) { setDuplicates(d); setDuplicatesErr(null) } })
+      .catch((e) => { if (alive) { setDuplicates([]); setDuplicatesErr(e) } })
+    return () => { alive = false }
+  }, [id, duplicateKey])
+
+  // A merge rewrote BOTH sides: the survivor inherited the loser's collections/tags/mentions/
+  // highlights (so the item, its related list and its highlights are stale) and the loser no
+  // longer exists (so the candidate list is stale). Both keys move, or the panel keeps offering
+  // a merge into an item that is already gone.
+  const afterMerge = useCallback(() => {
+    setReloadKey((k) => k + 1)
+    setAnnotationKey((k) => k + 1)
+    reloadDuplicates()
+  }, [reloadDuplicates])
+
   const detailsCount =
-    pool.length + (item?.entities?.length ?? 0) + (item?.relations?.length ?? 0) + related.length + annotations.length
+    pool.length + (item?.entities?.length ?? 0) + (item?.relations?.length ?? 0) + related.length
+    + annotations.length + duplicates.length
   const tm = item ? resolveType(item) : null
 
   return (
@@ -157,7 +188,9 @@ export function KnowledgeDetailPage({ id, onBack, onOpenItem, query, setQuery }:
         showDetails && item ? (
           <SidePanel fillHeight storeKey="knowledge-extras-w" icon={<Layers size={18} className="text-primary" />} title="More details" onClose={() => setShowDetails(false)}>
             <KnowledgeExtras item={item} pool={pool} related={related} onOpenItem={onOpenItem}
-              annotations={annotations} onRemoveAnnotation={removeAnnotation} />
+              annotations={annotations} onRemoveAnnotation={removeAnnotation}
+              duplicates={duplicates} duplicatesError={duplicatesErr}
+              onRetryDuplicates={reloadDuplicates} onMerged={afterMerge} />
           </SidePanel>
         ) : undefined
       }
@@ -198,18 +231,26 @@ export function KnowledgeDetailPage({ id, onBack, onOpenItem, query, setQuery }:
 
 /** The per-item "more details" content: full content, the extracted-content pool,
  *  entities, relations, and related items — the dedicated page's side-panel body. */
-function KnowledgeExtras({ item, pool, related, onOpenItem, annotations, onRemoveAnnotation }: {
+function KnowledgeExtras({ item, pool, related, onOpenItem, annotations, onRemoveAnnotation,
+  duplicates, duplicatesError, onRetryDuplicates, onMerged }: {
   item: KnowledgeItem
   pool: ExtractedContent[]
   related: KnowledgeItem[]
   onOpenItem: (id: string) => void
   annotations: KnowledgeAnnotation[]
   onRemoveAnnotation: (id: string) => void
+  duplicates: KnowledgeDuplicate[]
+  duplicatesError: unknown
+  onRetryDuplicates: () => void
+  onMerged: () => void
 }) {
   const entities = item.entities ?? []
   const relations = item.relations ?? []
+  // A FAILED duplicates lookup is content: it has to keep the panel out of its "nothing here
+  // yet" state, or the one surface that knows the check broke is the one that renders instead.
+  const showDuplicates = duplicates.length > 0 || !!duplicatesError
   if (pool.length === 0 && entities.length === 0 && relations.length === 0 && related.length === 0
-    && annotations.length === 0 && !item.content) {
+    && annotations.length === 0 && !showDuplicates && !item.content) {
     return <p className="text-on-surface-low text-[0.8125rem]">No extracted content, entities, or related items yet.</p>
   }
   return (
@@ -219,6 +260,16 @@ function KnowledgeExtras({ item, pool, related, onOpenItem, annotations, onRemov
       {annotations.length > 0 && (
         <Section label={`Highlights · ${annotations.length}`} icon={Highlighter}>
           <AnnotationList annotations={annotations} onDelete={onRemoveAnnotation} />
+        </Section>
+      )}
+      {/* Duplicates sit SECOND — above the read-only sections — because this is the only
+          section here that asks the user to DO something, and library hygiene decays the longer
+          two copies of a document coexist. The count is omitted when the lookup failed: "· 0"
+          beside an error would assert exactly the thing the error says is unknown. */}
+      {showDuplicates && (
+        <Section label={`Possible duplicates${duplicates.length ? ` · ${duplicates.length}` : ''}`} icon={Copy}>
+          <DuplicateList item={item} duplicates={duplicates} error={duplicatesError}
+            onRetry={onRetryDuplicates} onOpenItem={onOpenItem} onMerged={onMerged} />
         </Section>
       )}
       {pool.length > 0 && (

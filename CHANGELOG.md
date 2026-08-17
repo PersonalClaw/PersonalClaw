@@ -10,6 +10,15 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Added
 
+- **Saved the same article twice? Knowledge will now tell you, and fold the two together.** Open a
+  knowledge item and the **More details** panel lists anything that looks like the same document
+  again, each with the reason it was matched and how long ago it arrived, so you can judge the claim
+  rather than take it on trust — and **Open** lets you read the other copy before you decide.
+  **Merge into this item** keeps the one you are looking at and moves everything off the other one:
+  its collections, tags, entity mentions and highlights all end up on the copy you kept, so merging
+  never quietly undoes curation you did on the wrong copy. It asks first, and the question names
+  which copy survives, which one gets deleted, and that it cannot be undone. If the check itself
+  fails, it says so and offers to retry, instead of shrugging and showing you a clean library.
 - **Your phone can find this machine on its own now, if you ask it to.** Getting a companion
   device onto your gateway used to start with reading an IP address off one screen and typing it
   into another. Turn on **Settings → Companion apps → LAN discovery** and the gateway announces
