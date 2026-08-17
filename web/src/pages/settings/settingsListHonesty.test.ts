@@ -54,6 +54,9 @@ const read = (f: string) => readFileSync(join(HERE, f), 'utf8')
 /** file → the fetcher call that must NOT swallow, and the announced failure it must render. */
 const SITES = [
   { file: 'MemoryPanel.tsx', fetch: 'api.memoryEvents({ limit: 100 })', announce: /<LoadError what="memory audit log"/ },
+  // MGAV-9: the Studio explorer is ONE list over six kinds, so a swallowed reader is a list
+  // quietly missing a kind — indistinguishable from an empty store.
+  { file: 'MemoryPanel.tsx', fetch: 'api.memorySemantic()', announce: /<LoadError what="memories"/ },
   { file: 'ModelBackends.tsx', fetch: 'api.modelProviders()', announce: /<InlineError icon className="mb-3">/ },
   { file: 'ProjectionRulesPanel.tsx', fetch: 'api.projectionRules()', announce: /<InlineError icon>/ },
 ]
@@ -146,10 +149,12 @@ describe('a settings list distinguishes a failed load from an empty one', () => 
     expect(swallowers).not.toContain('AuditPanel.tsx')
     expect(swallowers).not.toContain('ProjectionRulesPanel.tsx')
     // The remaining population, measured: **17 panels**, and two of them are here on purpose —
-    // `ModelBackends` keeps its models-decoration fallback (above), and `MemoryPanel`'s other SEVEN
-    // readers (stats, semantic, episodic, lessons, graph, settings, volunteer) still substitute. Those
-    // feed config forms and counters rather than a list body, which is a different family with a
-    // different right answer per site. A ceiling, not a target: it may only come down.
+    // `ModelBackends` keeps its models-decoration fallback (above), and `MemoryPanel`'s other THREE
+    // readers (stats, settings, volunteer) still substitute. Those feed config forms and counters
+    // rather than a list body, which is a different family with a different right answer per site.
+    // 🔻 MGAV-9 converted the four that DID feed a list body (semantic, episodic, lessons, graph)
+    // plus entities/slots/proposals, which is why the count of MemoryPanel's swallowers dropped
+    // from seven to three. A ceiling, not a target: it may only come down.
     expect(swallowers.length, 'if this moves, say which way and why in the PR').toBeLessThanOrEqual(17)
   })
 })

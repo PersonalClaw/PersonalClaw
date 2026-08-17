@@ -132,7 +132,7 @@ describe('the triage, pinned per site', () => {
     }
   })
 
-  it('the census is reproducible — 15 disabled Toggle sites, not vacuously zero', () => {
+  it('the census is reproducible — 16 disabled Toggle sites, not vacuously zero', () => {
     // If this count drops, a site was converted or deleted; if it climbs, a new one arrived
     // un-triaged. Either way it should be a deliberate line in a PR, not a silent drift.
     const walk = (d: string): string[] =>
@@ -143,7 +143,10 @@ describe('the triage, pinned per site', () => {
     const sites = walk(SRC).flatMap((abs) =>
       [...readFileSync(abs, 'utf8').matchAll(/<Toggle\b[\s\S]{0,400}?\/>/g)]
         .filter((m) => /(?<!aria-)disabled=/.test(m[0])))
-    expect(sites.length).toBe(15)
-    expect(sites.filter((m) => /disabledReason/.test(m[0])).length, 'four carry a reason; eleven stay native').toBe(4)
+    // 🔺 15 → 16 (MGAV-9): Memory → Settings gained the topology-orientation switch, which is
+    // a PRECONDITION switch (the map is built from entity-graph links), so it carries a reason
+    // naming what unlocks it rather than going dark unexplained. Reasoned sites 4 → 5.
+    expect(sites.length).toBe(16)
+    expect(sites.filter((m) => /disabledReason/.test(m[0])).length, 'five carry a reason; eleven stay native').toBe(5)
   })
 })

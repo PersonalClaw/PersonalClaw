@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   Database, BookOpen, ScrollText, Eye, Settings2, Search, Plus, Trash2,
   Loader2, RefreshCw, HeartPulse, GraduationCap, AlertTriangle, Share2, FileEdit, Save, UploadCloud, ArrowRightLeft, Moon,
-  Brain, History, CalendarDays, type LucideIcon,
+  Brain, History, CalendarDays, Users, Inbox, Check, X, Download, SlidersHorizontal, type LucideIcon,
 } from 'lucide-react'
 import { MemoryGraph } from './MemoryGraph'
 import {
@@ -11,13 +11,15 @@ import {
   type DailyDigest,
   type MemoryLint, type MemoryObservability, type Lesson, type MemoryStats,
   type MemoryEntitiesResponse, type MemoryEntity, type MemoryEntityType,
-  type MemoryGraphSummary, type MemoryLink,
+  type MemoryGraphSummary, type MemoryLink, type MemoryGraphData,
+  type MemoryEntityProposal, type MemorySlot, type MemorySlotTrimProposal,
 } from '../../lib/api'
 import { PanelHeader, Section, Field, Row, Toggle, SavedToast } from './settingsUI'
 import { confirm, confirmDelete } from '../../ui/dialog'
 import { Button } from '../../ui/Button'
 import { ListSkeleton, FormSkeleton, LoadError, EmptyState } from '../../ui/ListScaffold'
-import { TextInput, Select, ChipInput, NumberField } from '../../ui/forms'
+import { TextInput, Select, ChipInput, NumberField, FieldError } from '../../ui/forms'
+import { Segmented } from '../../ui/Segmented'
 import { SearchField } from '../../ui/SearchField'
 import { SquareIconButton } from '../../ui/SquareIconButton'
 import { InvestigateButton } from '../../ui/InvestigateButton'
@@ -172,17 +174,19 @@ function readValue(raw?: string): string {
 // Selecting in the list focuses the graph + opens the inspector; clicking a node
 // selects it in the list. One fetch of the graph is shared across all three panes.
 
-type StudioKind = 'fact' | 'episodic' | 'lesson' | 'doc'
+type StudioKind = 'fact' | 'episodic' | 'lesson' | 'doc' | 'entity' | 'slot'
 interface StudioItem {
   uid: string            // unique within the studio (kind-scoped)
   kind: StudioKind
   title: string          // the list's primary line (key / rule / first line / doc name)
   preview: string        // secondary line
-  ref: string | null     // the graph node ref (`sem:<key>`, `lesson:<rule[:80]>`), or null (episodic/doc = no single node)
+  ref: string | null     // the graph node ref (`sem:<key>`, `lesson:<rule[:80]>`, `entity:<id>`), or null (episodic/doc/slot = no single node)
   fact?: SemanticEntry
   episodic?: EpisodicEntry
   lesson?: Lesson
   doc?: { which: 'preferences' | 'projects' | 'history'; label: string }
+  entity?: MemoryEntity
+  slot?: MemorySlot
 }
 
 const STUDIO_KIND_META: Record<StudioKind, { label: string; icon: LucideIcon }> = {
@@ -190,6 +194,11 @@ const STUDIO_KIND_META: Record<StudioKind, { label: string; icon: LucideIcon }> 
   episodic: { label: 'Episodes', icon: BookOpen },
   lesson: { label: 'Lessons', icon: GraduationCap },
   doc: { label: 'Documents', icon: FileEdit },
+  // Entities and slots join the explorer rather than getting tabs of their own: they are
+  // things the store HOLDS, and the Studio is already the one place you look at those. A
+  // separate "Entities" tab would put a second browser beside this one over the same graph.
+  entity: { label: 'Entities', icon: Users },
+  slot: { label: 'Slots', icon: SlidersHorizontal },
 }
 const STUDIO_DOCS: { which: 'preferences' | 'projects' | 'history'; label: string }[] = [
   { which: 'preferences', label: 'Preferences' },
@@ -209,35 +218,116 @@ function MemoryStudio({ onChanged, initialSel }: { onChanged: () => void; initia
   // preselects that memory once on mount; user selection takes over after.
   const [selUid, setSelUid] = useState<string | null>(initialSel ?? null)
   const [hopDepth, setHopDepth] = useState(1)
-  const [addMode, setAddMode] = useState<'fact' | 'lesson' | null>(null)
+  const [addMode, setAddMode] = useState<'fact' | 'lesson' | 'entity' | 'proposals' | null>(null)
+  // Which graph the canvas draws (§7.2). Records is the historical view; Entities is the
+  // topology the Louvain pass partitions and the topology block describes.
+  const [graphMode, setGraphMode] = useState<'records' | 'entities'>('records')
+  const [edgeFilters, setEdgeFilters] = useState<{ linkType: string; provenance: string; minConfidence: number }>(
+    { linkType: '', provenance: '', minConfidence: 0 },
+  )
 
-  // ── data: facts + episodics + lessons + the graph (shared across panes) ──
-  const { data: facts, refresh: refreshFacts } = useCachedData('settings:memory-semantic', () => api.memorySemantic().catch(() => [] as SemanticEntry[]))
-  const { data: episodics, refresh: refreshEpi } = useCachedData('settings:memory-episodic:all', () => api.memoryEpisodic({ limit: 100 }).catch(() => [] as EpisodicEntry[]))
-  const { data: lessons, refresh: refreshLessons } = useCachedData('settings:lessons', () => api.lessons().catch(() => [] as Lesson[]), { persist: false })
-  const { data: graph, refresh: refreshGraph } = useCachedData('settings:memory-graph', () => api.memoryGraph().catch(() => ({ nodes: [], edges: [] })), { persist: false })
+  // ── data: facts + episodics + lessons + entities + slots + both graphs ──
+  // These feed a LIST BODY, so the rejections reach the hook rather than being substituted
+  // with `[]` — a failed read used to render "No memories yet" to someone whose memories
+  // merely failed to load. See `settingsListHonesty.test.ts`.
+  const { data: facts, error: factsErr, refresh: refreshFacts } = useCachedData(
+    'settings:memory-semantic', () => api.memorySemantic(),
+  )
+  const { data: episodics, error: epiErr, refresh: refreshEpi } = useCachedData(
+    'settings:memory-episodic:all', () => api.memoryEpisodic({ limit: 100 }),
+  )
+  const { data: lessons, error: lessonsErr, refresh: refreshLessons } = useCachedData(
+    'settings:lessons', () => api.lessons(), { persist: false },
+  )
+  const { data: graph, refresh: refreshGraph } = useCachedData(
+    'settings:memory-graph', () => api.memoryGraph(), { persist: false },
+  )
+  const { data: entityGraph, refresh: refreshEntityGraph } = useCachedData('settings:memory-entity-graph', () => api.memoryEntityGraph(), { persist: false })
+  const { data: entityData, error: entitiesErr, refresh: refreshEntities } = useCachedData(
+    'settings:memory-entities', () => api.memoryEntities(), { persist: false },
+  )
+  const { data: slotData, error: slotsErr, refresh: refreshSlots } = useCachedData(
+    'settings:memory-slots', () => api.memorySlots(), { persist: false },
+  )
+  const { data: proposalData, refresh: refreshProposals } = useCachedData('settings:memory-proposals', () => api.memoryEntityProposals(), { persist: false })
   const reloadAll = () => {
-    invalidateCache('settings:memory-semantic'); invalidateCache('settings:memory-episodic', true)
-    invalidateCache('settings:lessons'); invalidateCache('settings:memory-graph')
-    refreshFacts(); refreshEpi(); refreshLessons(); refreshGraph(); onChanged()
+    for (const k of ['settings:memory-semantic', 'settings:lessons', 'settings:memory-graph',
+      'settings:memory-entity-graph', 'settings:memory-entities', 'settings:memory-slots',
+      'settings:memory-proposals']) invalidateCache(k)
+    invalidateCache('settings:memory-episodic', true)
+    refreshFacts(); refreshEpi(); refreshLessons(); refreshGraph()
+    refreshEntityGraph(); refreshEntities(); refreshSlots(); refreshProposals(); onChanged()
   }
+  const reloadGraphSide = () => {
+    for (const k of ['settings:memory-entity-graph', 'settings:memory-entities', 'settings:memory-proposals']) invalidateCache(k)
+    refreshEntityGraph(); refreshEntities(); refreshProposals(); onChanged()
+  }
+  const reloadSlots = () => { invalidateCache('settings:memory-slots'); refreshSlots() }
+
+  const entities = entityData?.entities ?? []
+  const slots = slotData?.slots ?? []
+  const proposals = proposalData?.proposals ?? []
+  const graphEnabled = entityData ? entityData.enabled : true
 
   // ── unified item list ──
   const items: StudioItem[] = useMemo(() => {
     const out: StudioItem[] = []
     for (const d of STUDIO_DOCS) out.push({ uid: `doc:${d.which}`, kind: 'doc', title: d.label, preview: 'Editable markdown memory', ref: null, doc: d })
-    for (const f of facts ?? []) out.push({ uid: `fact:${f.key}`, kind: 'fact', title: f.key, preview: readValue(f.value_json), ref: `sem:${f.key}`, fact: f })
+    for (const s of slots) out.push({ uid: `slot:${s.name}`, kind: 'slot', title: s.title, preview: s.live_count ? `${s.live_count} line${s.live_count === 1 ? '' : 's'} · ${s.live_chars}/${s.cap_chars} chars` : 'empty register', ref: null, slot: s })
+    for (const e of entities) out.push({ uid: `entity:${e.id}`, kind: 'entity', title: e.name, preview: `${e.entity_type} · ${e.inbound_count} memor${e.inbound_count === 1 ? 'y' : 'ies'}`, ref: `entity:${e.id}`, entity: e })
+    // `slot.*` rows are excluded from Facts: a slot is stored AS a semantic row, so listing
+    // both gives one object two entries — a readable Slot with its budget, and a raw
+    // `{"lines":[…]}` blob whose only edit affordance would corrupt the register. The Slots
+    // kind owns that surface (and is the only one that can enforce the cap on a write).
+    for (const f of facts ?? []) {
+      if (f.key.startsWith('slot.')) continue
+      out.push({ uid: `fact:${f.key}`, kind: 'fact', title: f.key, preview: readValue(f.value_json), ref: `sem:${f.key}`, fact: f })
+    }
     for (const l of lessons ?? []) out.push({ uid: `lesson:${l.rule}`, kind: 'lesson', title: l.rule, preview: l.category || 'lesson', ref: lessonRef(l.rule), lesson: l })
     for (const e of episodics ?? []) out.push({ uid: `epi:${e.id}`, kind: 'episodic', title: e.text.slice(0, 80), preview: e.created_at ? fmtDate(e.created_at) : 'episodic', ref: null, episodic: e })
     return out
-  }, [facts, episodics, lessons])
+  }, [facts, episodics, lessons, entities, slots])
 
   const loading = facts === undefined || episodics === undefined || lessons === undefined
+  // One failed reader is enough: the explorer is ONE list over all six kinds, so a partial
+  // load is a list that is quietly missing a kind — which reads exactly like an empty one.
+  const loadError = factsErr ?? epiErr ?? lessonsErr ?? entitiesErr ?? slotsErr ?? null
   const counts = useMemo(() => {
-    const c: Record<string, number> = { all: items.length, fact: 0, episodic: 0, lesson: 0, doc: 0 }
+    const c: Record<string, number> = { all: items.length, fact: 0, episodic: 0, lesson: 0, doc: 0, entity: 0, slot: 0 }
     for (const it of items) c[it.kind]++
     return c
   }, [items])
+
+  // The entity topology, narrowed to the {label,group}/{from,to} shape the canvas renders.
+  // `group` carries the Louvain community, so colouring by group IS colouring by community —
+  // one clustering, not a second one the picture invents.
+  const entityCanvas: MemoryGraphData | null = useMemo(() => {
+    if (!entityGraph) return null
+    const kept = entityGraph.edges.filter((e) =>
+      e.confidence >= edgeFilters.minConfidence
+      && (!edgeFilters.linkType || e.link_types.includes(edgeFilters.linkType))
+      && (!edgeFilters.provenance || e.provenances.includes(edgeFilters.provenance)))
+    return {
+      nodes: entityGraph.nodes.map((n) => ({
+        id: n.id,
+        label: n.name,
+        group: n.community == null ? 'unclustered' : `neighbourhood ${n.community}`,
+        title: `${n.name} — ${n.entity_type}${n.aliases.length ? ` (also ${n.aliases.join(', ')})` : ''}`,
+        ref: `entity:${n.id}`,
+      })),
+      edges: kept.map((e) => ({ from: e.from, to: e.to })),
+    }
+  }, [entityGraph, edgeFilters])
+  const linkTypeOptions = useMemo(() => {
+    const seen = new Set<string>()
+    for (const e of entityGraph?.edges ?? []) for (const t of e.link_types) seen.add(t)
+    return [{ value: '', label: 'Any link type' }, ...[...seen].sort().map((t) => ({ value: t, label: t.replace(/_/g, ' ') }))]
+  }, [entityGraph])
+  const provenanceOptions = useMemo(() => {
+    const seen = new Set<string>()
+    for (const e of entityGraph?.edges ?? []) for (const p of e.provenances) seen.add(p)
+    return [{ value: '', label: 'Any provenance' }, ...[...seen].sort().map((p) => ({ value: p, label: p }))]
+  }, [entityGraph])
 
   const shown = useMemo(() => {
     const needle = q.trim().toLowerCase()
@@ -289,7 +379,7 @@ function MemoryStudio({ onChanged, initialSel }: { onChanged: () => void; initia
         <div className="flex flex-col gap-2 border-b border-outline-variant/30 p-2.5">
           <SearchField value={q} onChange={setQ} placeholder="Search memories" ariaLabel="Search memories" size="sm" />
           <div className="flex flex-wrap gap-1">
-            {(['all', 'fact', 'episodic', 'lesson', 'doc'] as const).map((k) => {
+            {(['all', 'fact', 'episodic', 'lesson', 'entity', 'slot', 'doc'] as const).map((k) => {
               const on = kindFilter === k
               const meta = k === 'all' ? null : STUDIO_KIND_META[k]
               return (
@@ -303,7 +393,11 @@ function MemoryStudio({ onChanged, initialSel }: { onChanged: () => void; initia
           </div>
         </div>
         <div className="min-h-0 flex-1 overflow-y-auto p-1.5">
-          {loading ? <ListSkeleton rows={8} /> : shown.length === 0 ? (
+          {/* The failure branch precedes both the loading and the empty one: `data ===
+              undefined` is true for all three, so a later test never runs. */}
+          {loadError ? (
+            <LoadError what="memories" error={loadError} onRetry={reloadAll} />
+          ) : loading ? <ListSkeleton rows={8} what="memories" /> : shown.length === 0 ? (
             // Through the shared primitive, not a bare centered <p>: the explorer is a
             // list PANEL, which is exactly what EmptyState is for, and the two facts get
             // different words. A narrowed-to-nothing explorer offers no add path (the
@@ -332,15 +426,69 @@ function MemoryStudio({ onChanged, initialSel }: { onChanged: () => void; initia
             )
           })}
         </div>
-        <div className="flex gap-1.5 border-t border-outline-variant/30 p-2">
-          <Button size="sm" variant="secondary" onClick={() => { setAddMode('fact'); setSelUid(null) }} className="flex-1"><Plus size={14} /> Fact</Button>
-          <Button size="sm" variant="secondary" onClick={() => { setAddMode('lesson'); setSelUid(null) }} className="flex-1"><GraduationCap size={14} /> Lesson</Button>
+        <div className="flex flex-col gap-1.5 border-t border-outline-variant/30 p-2">
+          <div className="flex gap-1.5">
+            <Button size="sm" variant="secondary" onClick={() => { setAddMode('fact'); setSelUid(null) }} className="flex-1"><Plus size={14} /> Fact</Button>
+            <Button size="sm" variant="secondary" onClick={() => { setAddMode('lesson'); setSelUid(null) }} className="flex-1"><GraduationCap size={14} /> Lesson</Button>
+            <Button size="sm" variant="secondary" onClick={() => { setAddMode('entity'); setSelUid(null) }} className="flex-1"
+              disabled={!graphEnabled} disabledReason="Turn on the entity graph in Settings first">
+              <Users size={14} /> Entity
+            </Button>
+          </div>
+          {proposals.length > 0 && (
+            // The accept queue's entry point. A count, not a bare label: the queue only
+            // deserves attention when it has something in it, and it hides when it does not.
+            <Button size="sm" variant="ghost" onClick={() => { setAddMode('proposals'); setSelUid(null) }} className="w-full !justify-start">
+              <Inbox size={14} /> {proposals.length} name{proposals.length === 1 ? '' : 's'} to decide on
+            </Button>
+          )}
         </div>
       </div>
 
       {/* ── GRAPH CANVAS ── */}
       <div className="relative min-w-0 flex-1 overflow-hidden rounded-xl border border-outline-variant/40 bg-surface-container/40">
-        <MemoryGraph data={graph ?? null} focusRef={focusRef} hopDepth={hopDepth} onSelectRef={selectByRef} boxHeight={paneH} />
+        {graphMode === 'records' ? (
+          <MemoryGraph data={graph ?? null} focusRef={focusRef} hopDepth={hopDepth} onSelectRef={selectByRef} boxHeight={paneH} nodeNoun="fact" />
+        ) : (
+          <MemoryGraph data={entityCanvas} focusRef={focusRef} hopDepth={hopDepth} onSelectRef={selectByRef} boxHeight={paneH} nodeNoun="entity" nodeNounPlural="entities"
+            emptyHint={graphEnabled
+              ? 'No entities yet — add one, or rebuild links in Health to seed them from what is already stored.'
+              : 'The entity graph is off. Turn it on in Settings to link memories to the people, projects and tools they name.'} />
+        )}
+        {/* Which graph + (in entity mode) what to keep. The filters live HERE, beside the
+            picture they change, rather than in a settings section that would make you look
+            away from the thing you are filtering.
+            Positioned ABOVE the canvas's own counter (bottom-3 left-3) and inset from the
+            zoom controls (bottom-3 right-3) — the canvas has four occupied corners already,
+            so this strip takes the band between them. ONE nowrap line that scrolls rather
+            than wrapping: the Selects are `w-full` by default, so a wrapping row stacked
+            them full-width and buried the counter. */}
+        <div className="absolute bottom-11 left-3 right-14 flex flex-nowrap items-center gap-1.5 overflow-x-auto pb-1">
+          <div className="shrink-0 rounded-pill bg-surface-high/90 backdrop-blur">
+            <Segmented size="sm" ariaLabel="Which graph to draw" value={graphMode}
+              onChange={(k) => setGraphMode(k as 'records' | 'entities')}
+              options={[{ key: 'records', label: 'Records' }, { key: 'entities', label: 'Entities' }]} />
+          </div>
+          {graphMode === 'entities' && (
+            <>
+              <div className="w-[7.5rem] shrink-0">
+                <Select value={edgeFilters.linkType} onChange={(v) => setEdgeFilters((f) => ({ ...f, linkType: v }))}
+                  options={linkTypeOptions} ariaLabel="Filter links by type" />
+              </div>
+              <div className="w-[7.5rem] shrink-0">
+                <Select value={edgeFilters.provenance} onChange={(v) => setEdgeFilters((f) => ({ ...f, provenance: v }))}
+                  options={provenanceOptions} ariaLabel="Filter links by provenance" />
+              </div>
+              <label className="flex shrink-0 items-center gap-1.5 rounded-pill bg-surface-high/90 px-2.5 py-1 text-on-surface-low text-[0.75rem] backdrop-blur">
+                min conf
+                <input type="range" min={0} max={1} step={0.05} value={edgeFilters.minConfidence}
+                  onChange={(e) => setEdgeFilters((f) => ({ ...f, minConfidence: Number(e.target.value) }))}
+                  aria-label="Minimum link confidence" className="w-16 accent-[var(--color-primary)]" />
+                <span className="tabular-nums">{edgeFilters.minConfidence.toFixed(2)}</span>
+              </label>
+            </>
+          )}
+        </div>
         {focusRef && (
           <div className="absolute right-3 top-3 flex items-center gap-2 rounded-pill bg-surface-high/90 px-2 py-1 text-[0.75rem] backdrop-blur">
             <span className="text-on-surface-low">Focus · hops</span>
@@ -357,17 +505,18 @@ function MemoryStudio({ onChanged, initialSel }: { onChanged: () => void; initia
       {/* ── INSPECTOR ── */}
       <div className="flex w-[21rem] shrink-0 flex-col overflow-hidden rounded-xl border border-outline-variant/40 bg-surface-container/40">
         {addMode ? (
-          <div className="flex flex-col gap-2 p-3">
+          <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto p-3">
             <div className="flex items-center justify-between">
-              <span className="text-on-surface text-[0.8125rem] font-medium">{addMode === 'fact' ? 'New fact' : 'New lesson'}</span>
+              <span className="text-on-surface text-[0.8125rem] font-medium">{ADD_MODE_TITLE[addMode]}</span>
               <button type="button" onClick={() => setAddMode(null)} className="text-on-surface-low text-[0.75rem] hover:text-on-surface">Cancel</button>
             </div>
-            {addMode === 'fact'
-              ? <AddSemanticForm onDone={(created) => { setAddMode(null); if (created) reloadAll() }} />
-              : <AddLessonForm onDone={(created) => { setAddMode(null); if (created) reloadAll() }} />}
+            {addMode === 'fact' && <AddSemanticForm onDone={(created) => { setAddMode(null); if (created) reloadAll() }} />}
+            {addMode === 'lesson' && <AddLessonForm onDone={(created) => { setAddMode(null); if (created) reloadAll() }} />}
+            {addMode === 'entity' && <AddEntityForm onDone={(created) => { setAddMode(null); if (created) reloadGraphSide() }} />}
+            {addMode === 'proposals' && <ProposalQueue proposals={proposals} onDecided={reloadGraphSide} />}
           </div>
         ) : selected ? (
-          <StudioInspector item={selected} onDelete={removeSelected} onSaved={reloadAll} />
+          <StudioInspector item={selected} onDelete={removeSelected} onSaved={reloadAll} onSlotChanged={reloadSlots} />
         ) : (
           <div className="grid flex-1 place-items-center p-6 text-center">
             <div className="text-on-surface-low">
@@ -382,10 +531,22 @@ function MemoryStudio({ onChanged, initialSel }: { onChanged: () => void; initia
   )
 }
 
+const ADD_MODE_TITLE: Record<'fact' | 'lesson' | 'entity' | 'proposals', string> = {
+  fact: 'New fact', lesson: 'New lesson', entity: 'New entity', proposals: 'Names to decide on',
+}
+
 /** The inspector pane — full fields + actions per kind. Fact/episodic/lesson show
- *  their record + a Delete; a Document opens the reused markdown editor inline. */
-function StudioInspector({ item, onDelete, onSaved }: { item: StudioItem; onDelete: () => void; onSaved: () => void }) {
+ *  their record, its entity backlinks + evidence tags, and a Delete; an Entity shows its
+ *  identity + what links to it (§7.2's side drawer); a Slot opens its editor; a Document
+ *  opens the reused markdown editor inline. */
+function StudioInspector({ item, onDelete, onSaved, onSlotChanged }: {
+  item: StudioItem; onDelete: () => void; onSaved: () => void; onSlotChanged: () => void
+}) {
   const Icon = STUDIO_KIND_META[item.kind].icon
+  // Slots and entities are not "delete"-able from here: a slot is a register (its LINES are
+  // retired individually, and the row itself is structural), and an entity's removal has to
+  // reason about the links pointing at it — which is the graph-maintenance path, not this one.
+  const deletable = item.kind === 'fact' || item.kind === 'episodic' || item.kind === 'lesson'
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <div className="flex items-center gap-2 border-b border-outline-variant/30 px-3 py-2.5">
@@ -400,7 +561,7 @@ function StudioInspector({ item, onDelete, onSaved }: { item: StudioItem; onDele
             id={item.kind === 'lesson' ? (item.lesson?.rule ?? '') : (item.fact?.key ?? item.episodic?.id ?? '')}
             backLink="#/settings/memory" size={28} />
         )}
-        {item.kind !== 'doc' && (
+        {deletable && (
           <SquareIconButton icon={Trash2} iconSize={13} tone="danger" label="Delete" onClick={onDelete} className="shrink-0" />
         )}
       </div>
@@ -443,10 +604,80 @@ function StudioInspector({ item, onDelete, onSaved }: { item: StudioItem; onDele
             <StudioMeta pairs={[['Category', item.lesson.category || '—'], ['Learned', item.lesson.ts ? fmtDate(item.lesson.ts) : '—']]} />
           </div>
         )}
+        {item.kind === 'entity' && item.entity && (
+          <div className="flex flex-col gap-3 text-[0.8125rem]">
+            <StudioMeta pairs={[
+              ['Type', item.entity.entity_type],
+              ['Also known as', item.entity.aliases.length ? item.entity.aliases.join(', ') : '—'],
+              ['Declared by', item.entity.source || '—'],
+              ['Linked memories', `${item.entity.inbound_count}`],
+              ['Last linked', item.entity.last_linked_at ? fmtDate(item.entity.last_linked_at) : '—'],
+            ]} />
+            <div>
+              <div className="mb-1 text-on-surface-low text-[0.75rem] uppercase tracking-wide">What links here</div>
+              <EntityBacklinks entity={item.entity} />
+            </div>
+          </div>
+        )}
+        {item.kind === 'slot' && item.slot && (
+          <SlotEditor slot={item.slot} onChanged={onSlotChanged} />
+        )}
         {item.kind === 'doc' && item.doc && (
           <StudioDocEditor which={item.doc.which} onSaved={onSaved} />
         )}
+        {/* Per-record entity links + evidence tags (§7.1). This is the citation deep-link
+            target: a `[Memory N]` chip lands on `?sel=<uid>`, which selects the record HERE,
+            so "why is this in my context?" is answered at the record rather than in a
+            separate report. Facts and episodes ONLY — those are the two `from_kind` values
+            anything writes. A lesson has no links at all, so rendering a permanently empty
+            "no entity links" panel for one would present a surface that can never fill. */}
+        {(item.kind === 'fact' || item.kind === 'episodic') && <RecordLinks item={item} />}
       </div>
+    </div>
+  )
+}
+
+/** A record's inbound entity links + the evidence tags recall would attach to it.
+ *
+ *  Both come from the same graph: `link_type`/`provenance`/`confidence` are the stored edge,
+ *  and the entity names ARE the evidence — "the graph surfaced this because it mentions Ana"
+ *  is the claim `graph_recall_evidence` exists to make falsifiable. Fails to a plain line
+ *  rather than an error band: a record with no links is the common case on a young store, and
+ *  a scary red box for "nothing links here" would be wrong. */
+function RecordLinks({ item }: { item: StudioItem }) {
+  const ref = item.kind === 'fact' ? `sem:${item.fact?.key ?? ''}` : `epi:${item.episodic?.id ?? ''}`
+  const { data, error } = useCachedData(
+    `settings:memory-record-links:${ref}`, () => api.memoryRecordLinks(ref), { persist: false },
+  )
+  if (error) {
+    return (
+      <p className="mt-3 border-t border-outline-variant/30 pt-3 text-on-surface-low text-[0.75rem]">
+        Couldn't load this memory's links.
+      </p>
+    )
+  }
+  if (!data) return <p className="mt-3 text-on-surface-low text-[0.75rem]">Loading links…</p>
+  if (data.links.length === 0) {
+    return (
+      <p className="mt-3 border-t border-outline-variant/30 pt-3 text-on-surface-low text-[0.75rem]">
+        No entity links — nothing in this memory named a person, project or tool the graph knows.
+      </p>
+    )
+  }
+  return (
+    <div className="mt-3 flex flex-col gap-1.5 border-t border-outline-variant/30 pt-3">
+      <div className="text-on-surface-low text-[0.75rem] uppercase tracking-wide">Entity links &amp; evidence</div>
+      {data.links.map((l) => (
+        <div key={l.id} className="rounded-lg bg-surface-high px-2.5 py-1.5 text-[0.75rem]">
+          <div className="flex flex-wrap items-center gap-1.5">
+            <span className="text-on-surface">{l.entity_name || l.to_entity || '—'}</span>
+            <span className="rounded-pill bg-surface-container px-1.5 py-0.5 uppercase tracking-wide text-on-surface-low">{l.link_type.replace(/_/g, ' ')}</span>
+            <span className="rounded-pill bg-surface-container px-1.5 py-0.5 text-on-surface-low">{l.provenance}</span>
+            <span className="text-on-surface-low tabular-nums">{l.confidence.toFixed(2)}</span>
+          </div>
+          {l.context && <div className="mt-0.5 text-on-surface-low">{l.context}</div>}
+        </div>
+      ))}
     </div>
   )
 }
@@ -885,9 +1116,16 @@ function VolunteerPrecisionSection() {
 }
 
 // ── Entity graph (MEMORY-GRAPH-AND-VAULT §1) ────────────────────────────────
-// Lives in Health because that's where "is my memory in good shape?" already
-// lives, and the graph's own signals (orphans, phantom entities, proposals) come
-// through the same lint report rendered above.
+// What stays in Health is the graph's MAINTENANCE: the size report, the idempotent
+// relink, and the one-file export — because "is my memory in good shape?" already
+// lives here and the graph's own signals (orphans, phantom entities, proposals) come
+// through the lint report rendered above.
+//
+// Browsing entities moved to the Studio (MGAV-9). It had grown a second entity list
+// here with its own backlink expander, over the same objects the Studio explorer now
+// lists — two browsers over one graph, which is the drift this panel keeps producing.
+// Adding an entity and deciding on a proposal moved with it, so every "look at / change
+// an entity" affordance is in one place and this section is only about the graph's health.
 
 const ENTITY_TYPE_OPTIONS: { value: MemoryEntityType; label: string }[] = [
   { value: 'person', label: 'Person' },
@@ -899,30 +1137,13 @@ const ENTITY_TYPE_OPTIONS: { value: MemoryEntityType; label: string }[] = [
 ]
 
 function EntityGraphSection({ onChanged }: { onChanged: () => void }) {
-  const { data, refresh } = useCachedData<MemoryEntitiesResponse | null>(
-    'settings:memory-entities', () => api.memoryEntities().catch(() => null), { persist: false },
+  const { data, error, refresh } = useCachedData<MemoryEntitiesResponse>(
+    'settings:memory-entities', () => api.memoryEntities(), { persist: false },
   )
-  const [name, setName] = useState('')
-  const [kind, setKind] = useState<MemoryEntityType>('person')
-  const [aliases, setAliases] = useState<string[]>([])
   const [busy, setBusy] = useState('')
   const [msg, setMsg] = useState('')
-  const [openEntity, setOpenEntity] = useState<MemoryEntity | null>(null)
 
   const reload = () => { invalidateCache('settings:memory-entities'); refresh(); onChanged() }
-
-  const add = async () => {
-    const clean = name.trim()
-    if (!clean) return
-    setBusy('add'); setMsg('')
-    try {
-      await api.memoryEntityCreate({ name: clean, entity_type: kind, aliases })
-      setName(''); setAliases([])
-      setMsg(`Added ${clean} — existing memories that mention it are now linked.`)
-      reload()
-    } catch (e) { setMsg(e instanceof Error ? e.message : 'Could not add that entity.') }
-    setBusy('')
-  }
 
   const rebuild = async () => {
     setBusy('rebuild'); setMsg('')
@@ -935,8 +1156,27 @@ function EntityGraphSection({ onChanged }: { onChanged: () => void }) {
     setBusy('')
   }
 
-  if (data === undefined) return <ListSkeleton rows={3} />
-  if (data && !data.enabled) {
+  /** Download the graph as one self-contained HTML file (§7.2). Fetched rather than linked
+   *  so the session header rides along; the file is script-free static SVG + the JSON, so it
+   *  keeps working with no server and can be archived or mailed as-is. */
+  const exportGraph = async () => {
+    setBusy('export'); setMsg('')
+    try {
+      const doc = await api.memoryGraphExport()
+      const url = URL.createObjectURL(new Blob([doc], { type: 'text/html' }))
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `memory-graph-${new Date().toISOString().slice(0, 10)}.html`
+      document.body.appendChild(a); a.click(); document.body.removeChild(a)
+      setTimeout(() => URL.revokeObjectURL(url), 60_000)
+      setMsg('Exported — one file, no server needed to open it.')
+    } catch (e) { setMsg(e instanceof Error ? e.message : 'Export failed.') }
+    setBusy('')
+  }
+
+  if (error) return <Section title="Entity graph"><LoadError what="entity graph" error={error} onRetry={reload} /></Section>
+  if (data === undefined) return <ListSkeleton rows={3} what="entity graph" />
+  if (!data.enabled) {
     return (
       <Section title="Entity graph" hint="Off — memory recall falls back to search alone.">
         <p className="text-on-surface-low text-[0.8125rem]">
@@ -946,74 +1186,27 @@ function EntityGraphSection({ onChanged }: { onChanged: () => void }) {
       </Section>
     )
   }
-  const entities = data?.entities ?? []
-  const summary = (data?.summary ?? {}) as MemoryGraphSummary
+  const summary = (data.summary ?? {}) as MemoryGraphSummary
 
   return (
     <Section
       title="Entity graph"
       hint="Memories linked to the people, projects and tools they name — so “what do I know about X?” follows links instead of hoping search finds everything. Matching is exact-name and costs nothing to run."
     >
-      <div className="flex items-center gap-2">
+      <div className="flex flex-wrap items-center gap-2">
         <Button size="sm" variant="ghost" onClick={rebuild} disabled={busy === 'rebuild'}>
           {busy === 'rebuild' ? <><Loader2 size={14} className="animate-spin" /> Linking…</> : <><Share2 size={14} /> Rebuild links</>}
         </Button>
-        <span className="text-on-surface-low text-[0.75rem]">
-          {summary.links ?? 0} link{(summary.links ?? 0) === 1 ? '' : 's'} · {summary.linked_records ?? 0} linked record{(summary.linked_records ?? 0) === 1 ? '' : 's'}
-        </span>
+        <Button size="sm" variant="ghost" onClick={exportGraph} disabled={busy === 'export'}>
+          {busy === 'export' ? <><Loader2 size={14} className="animate-spin" /> Rendering…</> : <><Download size={14} /> Export as HTML</>}
+        </Button>
       </div>
+      <p className="mt-2 text-on-surface-low text-[0.75rem]">
+        {summary.entities ?? 0} entit{(summary.entities ?? 0) === 1 ? 'y' : 'ies'} · {summary.links ?? 0} link{(summary.links ?? 0) === 1 ? '' : 's'} · {summary.linked_records ?? 0} linked record{(summary.linked_records ?? 0) === 1 ? '' : 's'}
+        {'. '}
+        Browse and edit them in <span className="text-on-surface-var">Studio</span> — filter to Entities.
+      </p>
       {msg && <p className="mt-2 text-ok text-[0.75rem]">{msg}</p>}
-
-      <div className="mt-3 flex flex-col gap-1.5">
-        {entities.length === 0 ? (
-          // No `action` here, deliberately: the "Rebuild links" button this empty state
-          // would point at is rendered three lines above and is visible at the same time.
-          // A second control with the same accessible name in the same region gives
-          // assistive tech two indistinguishable "Rebuild links" buttons, so the hint
-          // NAMES the adjacent control instead of cloning it.
-          <EmptyState icon={Share2} title="No entities yet"
-            hint="Entities are the people, projects and tools your memories mention — they let recall follow a name instead of guessing at keywords. Rebuild links to seed them from what's already stored." />
-        ) : entities.map((e) => (
-          <div key={e.id} className="rounded-lg bg-surface-container px-3 py-2">
-            <Button
-              variant="ghost"
-              size="xs"
-              shape="squircle"
-              onClick={() => setOpenEntity(openEntity?.id === e.id ? null : e)}
-              className="!h-auto w-full !justify-between !px-0 py-0.5 text-left"
-              title={`Show the memories linked to ${e.name}`}
-            >
-              <span className="min-w-0">
-                <span className="text-on-surface text-[0.8125rem]">{e.name}</span>
-                <span className="ml-2 rounded-pill bg-surface-high px-2 py-0.5 text-[0.6875rem] uppercase tracking-wide text-on-surface-low">{e.entity_type}</span>
-                {e.aliases.length > 0 && (
-                  <span className="ml-2 text-on-surface-low text-[0.75rem]">also {e.aliases.join(', ')}</span>
-                )}
-              </span>
-              <span className="shrink-0 text-on-surface-low text-[0.75rem] tabular-nums">
-                {e.inbound_count} memor{e.inbound_count === 1 ? 'y' : 'ies'}
-              </span>
-            </Button>
-            {openEntity?.id === e.id && <EntityBacklinks entity={e} />}
-          </div>
-        ))}
-      </div>
-
-      <div className="mt-4 border-t border-outline-variant/30 pt-3">
-        <Field label="Add an entity" hint="Aliases let a nickname or @handle resolve to the same person or project.">
-          <div className="flex flex-wrap items-center gap-2">
-            <TextInput value={name} onChange={setName} placeholder="Name" size="sm" ariaLabel="Entity name" />
-            <Select value={kind} onChange={(v) => setKind(v as MemoryEntityType)} options={ENTITY_TYPE_OPTIONS} />
-            <Button size="sm" onClick={add} disabled={!name.trim() || busy === 'add'}
-              disabledReason={!name.trim() ? 'Enter an entity name first' : undefined}>
-              {busy === 'add' ? <Loader2 size={14} className="animate-spin" /> : <Plus size={14} />} Add
-            </Button>
-          </div>
-          <div className="mt-2">
-            <ChipInput values={aliases} onChange={setAliases} placeholder="Alias, then Enter" max={10} ariaLabel="Add an alias" />
-          </div>
-        </Field>
-      </div>
     </Section>
   )
 }
@@ -1049,6 +1242,194 @@ function EntityBacklinks({ entity }: { entity: MemoryEntity }) {
           {l.context && <div className="mt-0.5 text-on-surface-low">{l.context}</div>}
         </div>
       ))}
+    </div>
+  )
+}
+
+/** The Slots editor (§6/§7.1) — the one place a human writes to an always-injected register.
+ *
+ *  Three MGAV-8 contracts are visible here rather than hidden: the per-slot budget is shown as
+ *  a live "n / cap" so an append is not a surprise; an over-cap append renders the server's
+ *  TRIM PROPOSAL (which of your own lines to drop) instead of truncating or failing silently;
+ *  and removing a line RETIRES it — the line stays tombstoned so no reflection pass can
+ *  re-derive something you deleted, which is why the button says Retire, not Delete. */
+function SlotEditor({ slot, onChanged }: { slot: MemorySlot; onChanged: () => void }) {
+  const [draft, setDraft] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [msg, setMsg] = useState('')
+  const [proposal, setProposal] = useState<MemorySlotTrimProposal | null>(null)
+  const live = slot.lines.filter((l) => !l.tombstoned)
+  const retired = slot.lines.filter((l) => l.tombstoned)
+  const full = slot.live_chars >= slot.cap_chars
+
+  const add = async () => {
+    const text = draft.trim()
+    if (!text) return
+    setBusy(true); setMsg(''); setProposal(null)
+    try {
+      const r = await api.memorySlotAppend(slot.name, text)
+      if (r.ok) { setDraft(''); setMsg('Added — it injects from the next session.'); onChanged() }
+      else if (r.proposal) setProposal(r.proposal)          // over cap: show the real choice
+      else setMsg(r.error || 'Could not add that line.')
+    } catch (e) { setMsg(e instanceof Error ? e.message : 'Could not add that line.') }
+    setBusy(false)
+  }
+  const retire = async (text: string) => {
+    if (!(await confirm({ title: 'Retire this line?', body: 'It stops injecting, and nothing will re-add it later.', confirmLabel: 'Retire' }))) return
+    setBusy(true); setMsg(''); setProposal(null)
+    try { await api.memorySlotRetireLine(slot.name, text); setMsg('Retired.'); onChanged() }
+    catch (e) { setMsg(e instanceof Error ? e.message : 'Could not retire that line.') }
+    setBusy(false)
+  }
+
+  return (
+    <div className="flex flex-col gap-3 text-[0.8125rem]">
+      <p className="text-on-surface-low text-[0.75rem]">{slot.description || 'A register injected every session.'}</p>
+      <StudioMeta pairs={[
+        ['Budget', `${slot.live_chars} / ${slot.cap_chars} characters`],
+        ['Scope', slot.scope === 'workspace' ? 'this workspace only' : 'every session'],
+        ['Status', slot.materialized ? 'written' : 'not written yet — nothing injects'],
+      ]} />
+
+      <div className="flex flex-col gap-1.5">
+        {live.length === 0 ? (
+          <p className="text-on-surface-low text-[0.75rem] italic">No lines yet — what you add here is read at the start of every session.</p>
+        ) : live.map((l) => (
+          <div key={l.text} className="flex items-start gap-2 rounded-lg bg-surface-high px-2.5 py-1.5">
+            <span className="min-w-0 flex-1 text-on-surface text-[0.75rem]">{l.text}</span>
+            {l.reinforcements > 1 && (
+              <span className="shrink-0 rounded-pill bg-surface-container px-1.5 py-0.5 text-on-surface-low text-[0.6875rem] tabular-nums"
+                title={`Re-observed ${l.reinforcements} times`}>×{l.reinforcements}</span>
+            )}
+            <SquareIconButton icon={X} iconSize={12} label={`Retire "${l.text.slice(0, 40)}"`} onClick={() => retire(l.text)} className="shrink-0" />
+          </div>
+        ))}
+      </div>
+
+      <div className="flex flex-col gap-1.5">
+        <TextInput value={draft} onChange={setDraft} onKeyDown={(e) => { if (e.key === 'Enter') add() }}
+          placeholder="One line, e.g. prefers concise answers" size="sm" ariaLabel={`New line for the ${slot.title} slot`} />
+        {/* `loading`, not a hand-rolled icon swap: it carries aria-busy for free, and these
+            buttons are new so there is no existing visual language to change. */}
+        <Button size="sm" onClick={add} loading={busy} disabled={!draft.trim() || full}
+          disabledReason={full ? 'This slot is full — retire a line to make room' : !draft.trim() ? 'Type a line first' : undefined}>
+          <Plus size={14} /> Add line
+        </Button>
+      </div>
+
+      {proposal && (
+        <div role="alert" className="rounded-lg border border-danger/40 bg-surface-high px-2.5 py-2 text-[0.75rem]">
+          <p className="text-on-surface">
+            Nothing was written — this slot is at {proposal.current_chars}/{proposal.cap_chars} characters
+            and that line adds {proposal.incoming_chars}, {proposal.over_by} over.
+          </p>
+          <p className="mt-1 text-on-surface-low">Retire one of these to make room:</p>
+          <ul className="mt-1 flex flex-col gap-0.5">
+            {proposal.drop_candidates.map((c) => (
+              <li key={c} className="flex items-center gap-2">
+                <span className="min-w-0 flex-1 truncate text-on-surface-var">{c}</span>
+                <TextLink onClick={() => retire(c)}>retire</TextLink>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+      {msg && <p className="text-ok text-[0.75rem]">{msg}</p>}
+      {retired.length > 0 && (
+        <details className="text-[0.75rem]">
+          <summary className="cursor-pointer text-on-surface-low">{retired.length} retired line{retired.length === 1 ? '' : 's'}</summary>
+          <ul className="mt-1 flex flex-col gap-0.5">
+            {retired.map((l) => (
+              <li key={l.text} className="text-on-surface-low line-through">{l.text}</li>
+            ))}
+          </ul>
+          <p className="mt-1 text-on-surface-low">
+            Kept on purpose: a retired line is remembered as retired, so a later reflection pass cannot re-add it.
+          </p>
+        </details>
+      )}
+    </div>
+  )
+}
+
+/** Declare an entity by hand, with aliases — the "no auto-created entities" gate's human half. */
+function AddEntityForm({ onDone }: { onDone: (created: boolean) => void }) {
+  const [name, setName] = useState('')
+  const [kind, setKind] = useState<MemoryEntityType>('person')
+  const [aliases, setAliases] = useState<string[]>([])
+  const [busy, setBusy] = useState(false)
+  const [msg, setMsg] = useState('')
+  const add = async () => {
+    const clean = name.trim()
+    if (!clean) return
+    setBusy(true); setMsg('')
+    try {
+      await api.memoryEntityCreate({ name: clean, entity_type: kind, aliases })
+      onDone(true)
+    } catch (e) { setMsg(e instanceof Error ? e.message : 'Could not add that entity.'); setBusy(false) }
+  }
+  return (
+    <div className="flex flex-col gap-2">
+      <p className="text-on-surface-low text-[0.75rem]">
+        Adding an entity links the memories that already mention it, not just future ones.
+      </p>
+      <TextInput value={name} onChange={setName} placeholder="Name" size="sm" ariaLabel="Entity name" />
+      <Select value={kind} onChange={(v) => setKind(v as MemoryEntityType)} options={ENTITY_TYPE_OPTIONS} ariaLabel="Entity type" />
+      <ChipInput values={aliases} onChange={setAliases} placeholder="Alias, then Enter" max={10} ariaLabel="Add an alias" />
+      <Button size="sm" onClick={add} loading={busy} disabled={!name.trim()}
+        disabledReason={!name.trim() ? 'Enter an entity name first' : undefined}>
+        <Plus size={14} /> Add entity
+      </Button>
+      {/* FieldError, not a bare tinted <p>: a failure with no role announces to nobody. */}
+      {msg && <FieldError>{msg}</FieldError>}
+    </div>
+  )
+}
+
+/** The proposed-entity accept queue (§7.1) — names that recurred enough to be worth a
+ *  decision, and never became entities on their own. Accept needs a TYPE, because an entity
+ *  with the wrong type links the wrong way; reject is one click and remembered. */
+function ProposalQueue({ proposals, onDecided }: { proposals: MemoryEntityProposal[]; onDecided: () => void }) {
+  const [types, setTypes] = useState<Record<string, MemoryEntityType>>({})
+  const [busy, setBusy] = useState('')
+  const [msg, setMsg] = useState('')
+  const decide = async (name: string, action: 'accept' | 'reject') => {
+    setBusy(name); setMsg('')
+    try {
+      await api.memoryEntityProposal({ name, action, entity_type: action === 'accept' ? (types[name] ?? 'person') : undefined })
+      setMsg(action === 'accept' ? `Added ${name} — memories mentioning it are now linked.` : `Won't ask about ${name} again.`)
+      onDecided()
+    } catch (e) { setMsg(e instanceof Error ? e.message : 'That decision did not save.') }
+    setBusy('')
+  }
+  if (proposals.length === 0) {
+    return <p className="text-on-surface-low text-[0.75rem]">Nothing to decide on right now.</p>
+  }
+  return (
+    <div className="flex flex-col gap-2">
+      <p className="text-on-surface-low text-[0.75rem]">
+        These names keep coming up but aren't entities yet. Nothing was created automatically —
+        a junk entity degrades recall for everything.
+      </p>
+      {proposals.map((p) => (
+        <div key={p.name} className="flex flex-col gap-1.5 rounded-lg bg-surface-high px-2.5 py-2">
+          <div className="flex items-baseline gap-2">
+            <span className="min-w-0 flex-1 truncate text-on-surface text-[0.8125rem]">{p.name}</span>
+            <span className="shrink-0 text-on-surface-low text-[0.75rem] tabular-nums">{p.mention_count}×</span>
+          </div>
+          <Select value={types[p.name] ?? 'person'} onChange={(v) => setTypes((t) => ({ ...t, [p.name]: v as MemoryEntityType }))}
+            options={ENTITY_TYPE_OPTIONS} ariaLabel={`What kind of thing is ${p.name}?`} />
+          <div className="flex gap-1.5">
+            <Button size="sm" onClick={() => decide(p.name, 'accept')} disabled={busy === p.name} className="flex-1">
+              {busy === p.name ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />} Accept
+            </Button>
+            <Button size="sm" variant="ghost" onClick={() => decide(p.name, 'reject')} disabled={busy === p.name} className="flex-1">
+              <X size={14} /> Not a thing
+            </Button>
+          </div>
+        </div>
+      ))}
+      {msg && <p className="text-ok text-[0.75rem]">{msg}</p>}
     </div>
   )
 }
@@ -1115,6 +1496,21 @@ function SettingsTab({ stats, onConsolidated }: { stats: MemoryStats | null | un
       .then(() => { setSaved(true); setTimeout(() => setSaved(false), 1600) })
       .catch((e) => notify(`Couldn't save your memory settings: ${String((e as Error)?.message || e)}`, 'error'))
   }
+  /** Write ONE `memory.*` field through the `_EDITABLE_CONFIG` PATCH allowlist (MGAV-9).
+   *
+   *  A revert on failure, not just a toast: this is where the config-form family gets it
+   *  wrong — leaving the control showing a value the server rejected means the panel is
+   *  lying about the state of the system until the next reload. */
+  const patchCfg = <K extends keyof MemorySettings>(field: K, value: MemorySettings[K]) => {
+    const previous = s?.[field]
+    setS((prev) => prev && { ...prev, [field]: value })
+    api.patchConfig(`memory.${String(field)}`, value)
+      .then(() => { setSaved(true); setTimeout(() => setSaved(false), 1600) })
+      .catch((e) => {
+        setS((prev) => prev && { ...prev, [field]: previous })
+        notify(`Couldn't save that setting: ${String((e as Error)?.message || e)}`, 'error')
+      })
+  }
   const consolidate = async () => {
     setConsolidating(true); setConsolidateMsg('')
     try {
@@ -1165,6 +1561,23 @@ function SettingsTab({ stats, onConsolidated }: { stats: MemoryStats | null | un
             <NumberField value={Number(s.push_min_confidence ?? 0.7)} min={0} max={1} step={0.05} onChange={(v) => patch({ push_min_confidence: v })} width="w-28" ariaLabel="Volunteer confidence" />
           </Row>
         )}
+        {/* These three ride `patchConfig` against the `_EDITABLE_CONFIG` allowlist rather
+            than the memory-settings PUT above. Not a second write path for one field —
+            each of them has NO other writer: the topology and attribution flags were
+            allowlisted by MGAV-5 and had no control at all until now, and the slots budget
+            is new. The fields the PUT already owns keep riding it (one writer per field). */}
+        <Row label="Topology orientation" hint="At the start of a new session, add a tiny map of the neighbourhoods in your memory graph (“people around project X”) so the assistant knows which areas exist before it searches. Off by default: it spends a little context every new session, and says nothing useful until the graph has distinct groups.">
+          <Toggle on={Boolean(s.graph_topology_in_context)} onChange={(v) => patchCfg('graph_topology_in_context', v)}
+            label="Topology orientation" disabled={s.graph_enabled === false}
+            disabledReason="Turn on the entity graph first — the map is built from its links" />
+        </Row>
+        <Row label="Attribute claims to who said them" hint="Record WHOSE claim a memory is (you, the assistant, a named person, an outside source) and render it that way (“Alex believes…”). Second-hand claims are capped lower, and a lower-authority claim can never retire something you said. Off = every memory is stored unattributed, exactly as before.">
+          <Toggle on={Boolean(s.holder_attribution)} onChange={(v) => patchCfg('holder_attribution', v)} label="Attribute claims to who said them" />
+        </Row>
+        <Row label="Slots budget (characters)" hint="How much of every session's context the always-injected Slots block may cost — persona, preferences, pending items and the rest. This is a spend you pay constantly, so it is bounded at 200-4000. The per-slot caps that decide which single register is full are fixed in code.">
+          <NumberField value={Number(s.slot_size_cap ?? 1400)} min={200} max={4000} step={100}
+            onChange={(v) => patchCfg('slot_size_cap', v)} width="w-28" ariaLabel="Slots budget (characters)" />
+        </Row>
         <div className="mt-2"><SavedToast show={saved} /></div>
       </Section>
 
@@ -1177,7 +1590,8 @@ function SettingsTab({ stats, onConsolidated }: { stats: MemoryStats | null | un
         </div>
       </Section>
 
-      <VaultSection settings={s} onMode={(v) => patch({ vault_mode: v })} saved={saved} />
+      <VaultSection settings={s} onMode={(v) => patch({ vault_mode: v })}
+        onPath={(v) => patch({ vault_path: v })} saved={saved} />
 
       <DailyDigestSection />
 
@@ -1254,15 +1668,28 @@ const VAULT_MODE_HINT: Record<MemoryVaultMode, string> = {
  *  it goes: off / mirror / two-way. "Sync now" refreshes it on demand and, in
  *  two-way, is also what reads hand edits back; it works even while the mode is off,
  *  as a one-shot export. */
-function VaultSection({ settings, onMode, saved }: {
-  settings: MemorySettings; onMode: (v: MemoryVaultMode) => void; saved: boolean
+function VaultSection({ settings, onMode, onPath, saved }: {
+  settings: MemorySettings; onMode: (v: MemoryVaultMode) => void; onPath: (v: string) => void; saved: boolean
 }) {
   const mode: MemoryVaultMode = settings.vault_mode ?? 'off'
   const [status, setStatus] = useState<MemoryVaultStatus | null>(null)
   const [syncing, setSyncing] = useState(false)
   const [msg, setMsg] = useState('')
+  // A draft + an explicit Save, NOT a write-per-keystroke or a write-on-blur: this value
+  // decides where files get written, and half a path committed because focus moved is a
+  // vault generated in the wrong place. Save is gated on dirty (the StudioDocEditor pattern).
+  const [pathDraft, setPathDraft] = useState(settings.vault_path ?? '')
+  useEffect(() => { setPathDraft(settings.vault_path ?? '') }, [settings.vault_path])
   const loadStatus = () => { api.memoryVaultStatus().then(setStatus).catch(() => setStatus(null)) }
   useEffect(loadStatus, [mode])
+  const pathDirty = pathDraft.trim() !== (settings.vault_path ?? '')
+  const commitPath = () => {
+    if (!pathDirty) return
+    onPath(pathDraft.trim())
+    // The status read reports the RESOLVED path (relative names land under the config dir),
+    // so re-reading it is how the user sees where the vault will actually be written.
+    setTimeout(loadStatus, 250)
+  }
 
   const sync = async () => {
     setSyncing(true); setMsg('')
@@ -1284,6 +1711,17 @@ function VaultSection({ settings, onMode, saved }: {
     <Section title="Memory vault (Obsidian)" hint="Project memory into a browsable markdown vault — YAML frontmatter + [[wikilinks]] + graph view — and optionally edit it back.">
       <Field label="Vault mode" hint={VAULT_MODE_HINT[mode]}>
         <Select value={mode} onChange={(v) => onMode(v as MemoryVaultMode)} options={VAULT_MODE_OPTIONS} />
+      </Field>
+      <Field label="Vault folder" hint="A plain name lands under ~/.personalclaw; an absolute path is used as-is (point it at an Obsidian vault to open memory there). Only the default location is covered by `personalclaw snapshot`.">
+        <div className="flex items-center gap-2">
+          <div className="flex-1">
+            <TextInput value={pathDraft} onChange={setPathDraft}
+              onKeyDown={(e) => { if (e.key === 'Enter') commitPath() }}
+              placeholder="memory-vault" size="sm" ariaLabel="Vault folder" />
+          </div>
+          <Button size="sm" variant="secondary" onClick={commitPath} disabled={!pathDirty}
+            disabledReason={!pathDirty ? 'The folder is unchanged' : undefined}>Save</Button>
+        </div>
       </Field>
       {status?.path && (
         <p className="mt-1 mb-2 font-mono text-on-surface-low text-[0.75rem] break-all">

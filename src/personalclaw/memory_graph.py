@@ -735,6 +735,95 @@ class MemoryGraph:
             **self.orphan_counts(),
         }
 
+    def entity_graph(self) -> dict:
+        """Entities as nodes + co-occurrence edges, with the metadata the FE filters on (§7.2).
+
+        Distinct from :meth:`summary` (counts) and from the dashboard's record-level
+        visualization: this is the ENTITY topology — who sits next to whom — which is the
+        graph the Louvain pass in ``memory_topology`` partitions. Nodes therefore carry
+        their ``community`` so the renderer can colour by it instead of inventing a second
+        clustering that would disagree with the topology block the model reads.
+
+        Two entities are adjacent when at least one record links to both, mirroring
+        ``memory_topology.cooccurrence_edges`` — the same adjacency, plus the per-edge
+        ``link_type``/``provenance``/``confidence`` the filters need, which that function
+        deliberately drops. An edge's confidence is ``max`` over its supporting records of
+        ``min(confidence of the two legs)``: the record's support is only as strong as its
+        weaker link, and the edge is as strong as its best-supporting record. Isolated
+        entities are KEPT as nodes — an entity nothing links to is the orphan signal the
+        lint reports, and dropping it from the picture would hide it.
+        """
+        entities = self.entities()
+        stats = {
+            row["entity_id"]: dict(row)
+            for row in self.db.execute("SELECT * FROM mem_link_stats").fetchall()
+        }
+        nodes = []
+        for entity in entities:
+            stat = stats.get(entity.id, {})
+            community = stat.get("community")
+            nodes.append(
+                {
+                    "id": entity.id,
+                    "name": entity.name,
+                    "entity_type": entity.entity_type,
+                    "aliases": list(entity.aliases),
+                    "community": int(community) if community is not None else None,
+                    "inbound_count": int(stat.get("inbound_count") or 0),
+                }
+            )
+        known = {entity.id for entity in entities}
+        rows = self.db.execute(
+            "SELECT from_kind, from_ref, to_entity, link_type, provenance, confidence "
+            "FROM mem_links WHERE to_entity IS NOT NULL AND to_entity != '' "
+            "ORDER BY from_kind, from_ref, to_entity"
+        ).fetchall()
+        # (kind, ref) → [(entity_id, link_type, provenance, confidence)] for that ONE record.
+        per_record: dict[tuple[str, str], list[tuple[str, str, str, float]]] = {}
+        for row in rows:
+            entity_id = row["to_entity"]
+            if entity_id not in known:  # a link to a deleted entity is not a topology edge
+                continue
+            leg = (
+                entity_id,
+                str(row["link_type"] or ""),
+                str(row["provenance"] or ""),
+                float(row["confidence"] if row["confidence"] is not None else 1.0),
+            )
+            per_record.setdefault((str(row["from_kind"]), str(row["from_ref"])), []).append(leg)
+        edges: dict[tuple[str, str], dict] = {}
+        for key in sorted(per_record):
+            legs = per_record[key]
+            for i, left in enumerate(legs):
+                for right in legs[i + 1 :]:
+                    if left[0] == right[0]:
+                        continue  # a record naming one entity twice is not an edge
+                    pair = (left[0], right[0]) if left[0] < right[0] else (right[0], left[0])
+                    edge = edges.setdefault(
+                        pair,
+                        {
+                            "from": pair[0],
+                            "to": pair[1],
+                            "records": 0,
+                            "link_types": set(),
+                            "provenances": set(),
+                            "confidence": 0.0,
+                        },
+                    )
+                    edge["records"] += 1
+                    edge["link_types"].update({left[1], right[1]} - {""})
+                    edge["provenances"].update({left[2], right[2]} - {""})
+                    edge["confidence"] = max(edge["confidence"], min(left[3], right[3]))
+        out_edges = [
+            {
+                **edge,
+                "link_types": sorted(edge["link_types"]),
+                "provenances": sorted(edge["provenances"]),
+            }
+            for _, edge in sorted(edges.items())
+        ]
+        return {"nodes": nodes, "edges": out_edges}
+
     # ── Volunteer log (§3) ────────────────────────────────────────────────────
 
     def log_volunteer(

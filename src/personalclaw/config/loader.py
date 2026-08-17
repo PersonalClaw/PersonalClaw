@@ -1412,6 +1412,22 @@ class MemoryConfig:
             "until the graph has enough links to form distinct groups.",
         ),
     )
+    slot_size_cap: int = field(
+        # MUST equal `memory_slots.SLOTS_BLOCK_MAX_CHARS`. Spelled as a literal because
+        # config.loader is imported by nearly everything and must not pull the memory
+        # subsystem in at import time; `test_memory_slots_config.py` asserts they agree, so
+        # the two cannot drift silently.
+        default=1400,
+        metadata=_meta(
+            "Slots Budget (characters)",
+            "How much of every session's context the always-injected Slots block may "
+            "cost. Slots are the registers read on every session regardless of what you "
+            "asked (persona, preferences, pending items…), so this is a spend you pay "
+            "constantly: raising it buys the assistant more standing context, lowering it "
+            "truncates the block. Clamped to 200-4000 — the per-slot caps that decide "
+            "which individual register is full are fixed in code, not here.",
+        ),
+    )
     holder_attribution: bool = field(
         default=False,
         metadata=_meta(
@@ -4216,6 +4232,12 @@ class AppConfig:
                 # for existing users on upgrade, which is the opposite of a safe default.
                 graph_topology_in_context=bool(memory_data.get("graph_topology_in_context", False)),
                 holder_attribution=bool(memory_data.get("holder_attribution", False)),
+                # MGAV-9 — the Slots block budget. Read plainly and NOT clamped here: the
+                # clamp lives in `memory_slots.resolve_block_limit`, at the one place the
+                # value is consumed, so a hand-edited config.json cannot widen the block by
+                # going around this loader (a CLI or a test that builds MemoryConfig
+                # directly reaches the same ceiling).
+                slot_size_cap=int(memory_data.get("slot_size_cap", 1400) or 1400),
             ),
             dashboard=DashboardConfig(
                 url=dashboard_data.get("url", ""),

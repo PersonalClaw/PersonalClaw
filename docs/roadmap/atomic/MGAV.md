@@ -302,3 +302,62 @@ caps are code constants here, which is why no `MemoryConfig` field or config rou
 
 **Done when:** studio tab gains Slots editor + entity browser + proposed-entity accept queue; inspect tab shows per-record backlinks + evidence tags (citation deep-link target); settings tab exposes vault mode/path, push toggle+min-confidence, slot caps, topology toggle via _EDITABLE_CONFIG PATCH; MemoryGraph.tsx renders entities colored by Louvain community with typed/provenance/min-confidence filtering + side drawer, plus GET /api/memory/graph/export self-contained HTML; all remaining MemoryConfig fields survive the four-point round trip (schema tests) and toggle live; end-to-end write→link→recall→volunteer→edit-vault→undo validation sweep passes with graph_enabled:false / foreign provider degrading cleanly
 
+
+**PARTIAL (2026-08-16).** Six of the seven `done_when` clauses landed; the atom stays `todo` on
+the seventh. **Shipped:** the Studio explorer gained `entity` + `slot` kinds (Slots editor with
+the live budget, the trim proposal on an over-cap append, and Retire-not-Delete; entity browser
+with aliases + backlinks) plus the proposed-entity accept queue — `api.memoryEntityProposal` had
+shipped with MGAV-1 and had **zero FE callers** because nothing could LIST the queue, so
+`GET /api/memory/entities/proposals` is the read half that makes the decision reachable.
+Per-record entity links + evidence tags landed in the Studio INSPECTOR (see the deviation below)
+via `GET /api/memory/record-links`, which gives `graph_recall_evidence`'s intent its first live
+consumer. `MemoryGraph.tsx` gained an entity mode over `GET /api/memory/graph/entities` —
+`MemoryGraphStore.entity_graph()` returns co-occurrence edges carrying the `link_type` /
+`provenance` / `confidence` that `memory_topology.cooccurrence_edges` drops, which is what the
+§7.2 filters need — coloured by the Louvain `community` already stored in `mem_link_stats`.
+`GET /api/memory/graph/export` renders one self-contained file. `memory.slot_size_cap` is the new
+config field (five-point verified by hand + `test_memory_slots_config.py`), and the settings tab
+now writes topology / holder-attribution / slot-budget through the `_EDITABLE_CONFIG` PATCH.
+
+**Unmet — why it stays `todo`:** the clause "end-to-end write→link→recall→**volunteer**→
+**edit-vault**→**undo** validation sweep". write→link→recall→graph→export→config round trips were
+driven on a live gateway (port 10199, isolated home), and `graph_enabled:false` degradation is
+pinned by `test_entity_graph_is_empty_not_broken_without_a_graph`. The volunteer leg needs a real
+chat turn against a bound model, and the edit-vault + undo legs exercise MGAV-3/MGAV-6 machinery
+this atom only surfaces; none was driven, so the sweep is not claimed.
+
+**DEVIATIONS (all deliberate, each with its reason in the code):**
+1. **"inspect tab shows per-record backlinks"** → they landed in the **Studio inspector**. The
+   plan's §7.1 predates the MEM-i3 consolidation that folded browse/graph/editors into the
+   Studio: the `inspect` tab is now a context-PREVIEW tool with no record selection, while the
+   Studio inspector is the per-record surface *and* already the `?sel=` citation deep-link target
+   the clause names. Records only (`sem:`/`epi:`) — nothing links a lesson, so a lesson panel
+   would be a surface that can never fill.
+2. **vault mode/path + push toggle/confidence are NOT added to `_EDITABLE_CONFIG`.** Each already
+   has exactly one writer: the tested `PUT /api/memory/settings` (whose enum validation
+   `tests/test_memory_settings_vault.py` pins). Allowlisting them too would mint a SECOND writer
+   per field, which is the dual path the doctrine forbids. The PATCH route carries the fields that
+   had **no** writer — `graph_topology_in_context` and `holder_attribution` were allowlisted by
+   MGAV-5 with no control at all, and `slot_size_cap` is new.
+3. **The export is script-free static SVG**, not the plan's interactive `graph.html`. This repo
+   already ruled on exports in `knowledge/reports.py` ("an export that beacons or executes is
+   worse than a missing export"); `memory_graph_export` imports that module's own
+   `assert_self_contained` rather than re-deriving a second forbidden-pattern list, and the JSON
+   rides an HTML comment (with `--` JSON-escaped) because the guard refuses any `<script`.
+4. **"side drawer"** → the Studio's existing inspector pane. A fifth floating pane over a 3-pane
+   explorer would be a second detail surface for the same object.
+5. **`slot_size_cap` defaults to 1400, not the plan's 2000.** 1400 is `SLOTS_BLOCK_MAX_CHARS`, so
+   the default is behaviour-preserving; shipping 2000 would silently raise every existing user's
+   per-turn context spend. The knob clamps to 200-4000 at the CONSUMER
+   (`memory_slots.resolve_block_limit`), mirroring `HARD_CAP_RECORDS`, so config.json cannot widen
+   the always-injected block. `slots_enabled` / `push_context_max_items` from the plan's config
+   map were NOT added: neither is named in this atom's `done_when`, and adding a field nothing
+   reads is the inert-control shape this plan keeps finding.
+
+**DISCOVERY — adjacent Louvain communities are near-indistinguishable.** The export now derives
+its node hue from the SAME formula as the canvas (`h = (h*31 + charCode) % 360` over the group
+string) so the exported artifact is the picture the user saw rather than a recoloured one. That
+consistency exposes a defect in the shared hue function: group strings `neighbourhood 0` and
+`neighbourhood 1` hash to hue 209 and 210 — visually identical. Fixing it means changing
+`MemoryGraph.groupColor`, which the Records mode and other group-coloured surfaces share, so it is
+left as an owner taste call rather than forked into a private palette here.

@@ -637,6 +637,122 @@ class MemoryService:
         vs = self._graph_store()
         return vs.graph.reject_proposal(name) if vs else False
 
+    def graph_proposals(self) -> list[dict]:
+        """The proposal queue — recurring unknown names awaiting a human decision (§1).
+
+        A READ for the accept queue. Until MGAV-9 the only way to see these was the lint
+        report's flag list, which could show a name but not offer the accept/reject the
+        POST route already implemented — a decision surface with no way to reach it.
+        """
+        vs = self._graph_store()
+        return vs.graph.proposals() if vs else []
+
+    def entity_graph(self) -> dict:
+        """The entity topology for the graph canvas (§7.2). Empty when no graph is wired."""
+        vs = self._graph_store()
+        return vs.graph.entity_graph() if vs else {"nodes": [], "edges": []}
+
+    def graph_record_links(self, ref: str) -> list[dict]:
+        """One record's outbound entity links, entity NAMES resolved (§7.1's inspect view).
+
+        The inverse of :meth:`graph_backlinks`: "what does this memory link to?" rather than
+        "what links to this entity?". Resolving the name here rather than in the handler is
+        what makes the link legible — a row holding only ``ent_9f2c`` tells a reader nothing,
+        and the name IS the evidence tag ("the graph surfaced this because it mentions Ana").
+
+        *ref* is the studio's composite handle (``sem:<key>`` / ``epi:<id>``) — the same shape
+        the graph nodes and the citation deep-links use, so one identifier travels the whole
+        path instead of three. The prefix map is CLOSED and matches the only two ``from_kind``
+        values anything writes (``vector_memory.set_semantic`` / ``write_episodic``): an
+        unrecognized prefix returns ``[]`` rather than guessing a kind and silently reporting
+        "no links" for a record that has them. Lessons are deliberately absent — nothing links
+        them, so offering a lesson link view would be a surface that can never fill.
+        """
+        vs = self._graph_store()
+        if vs is None or ":" not in ref:
+            return []
+        prefix, _, tail = ref.partition(":")
+        kind = {"sem": "semantic", "epi": "episodic"}.get(prefix, "")
+        if not kind or not tail:
+            return []
+        names = {e.id: e.name for e in vs.graph.entities()}
+        out: list[dict] = []
+        for link in vs.graph.links_from(kind, tail):
+            row = dict(link)
+            row["entity_name"] = names.get(str(row.get("to_entity") or ""), "")
+            out.append(row)
+        return out
+
+    # ── Memory slots (§6 — MGAV-8's registers, MGAV-9's editor) ───────────────
+    # The store is the only dependency `memory_slots` takes, so these are thin
+    # pass-throughs that add the ONE thing a UI needs and the primitive deliberately
+    # does not carry: the spec (title/cap/scope) beside the lines, so the editor can
+    # show "412 / 500" without re-deriving the budget it is not allowed to change.
+
+    def slots(self) -> list[dict]:
+        """Every built-in slot plus any ad-hoc ``slot.*`` row, with lines and budget.
+
+        Built-ins are listed even when not materialized (``materialized: false``,
+        ``lines: []``) — MGAV-8 keeps them lazy so a fresh install pays nothing, but an
+        editor that only listed written rows would give a new user no way to write the
+        first line into a slot the system will actually read.
+        """
+        from personalclaw import memory_slots
+
+        vs = self._vs
+        if vs is None:
+            return []
+        names = list(memory_slots.BLOCK_ORDER)
+        for row in vs.get_all_semantic():
+            name = memory_slots.name_from_key(str(row.get("key", "")))
+            if name and name not in names:
+                names.append(name)
+        out: list[dict] = []
+        for name in names:
+            spec = memory_slots.spec_for(name)
+            lines = memory_slots.load(vs, name)
+            live = memory_slots.live_lines(lines)
+            out.append(
+                {
+                    "name": name,
+                    "title": spec.title,
+                    "description": spec.description,
+                    "cap_chars": spec.cap_chars,
+                    "scope": spec.scope,
+                    "builtin": name in memory_slots.BUILTIN_SLOTS,
+                    "materialized": memory_slots.is_materialized(vs, name),
+                    "live_chars": memory_slots.live_chars(memory_slots.to_value(lines)),
+                    "live_count": len(live),
+                    "lines": [line.to_dict() for line in lines],
+                }
+            )
+        return out
+
+    def slot_append(self, name: str, text: str) -> list[dict]:
+        """Append one line to a slot as the USER. Raises ``SlotCapExceeded`` over cap.
+
+        ``source="user_explicit"`` is the point of the editor: a line the human typed must
+        outrank a reflection-derived one, and the trim proposal must reach the human rather
+        than being resolved on their behalf — which is why the exception propagates.
+        """
+        from personalclaw import memory_slots
+
+        vs = self._vs
+        if vs is None:
+            return []
+        return [
+            line.to_dict() for line in memory_slots.append(vs, name, text, source="user_explicit")
+        ]
+
+    def slot_tombstone(self, name: str, text: str) -> bool:
+        """Retire a slot line as the HUMAN — final, never re-derived (MGAV-8's guard)."""
+        from personalclaw import memory_slots
+
+        vs = self._vs
+        if vs is None:
+            return False
+        return memory_slots.tombstone(vs, name, text, actor="human", source="user_explicit")
+
     def resolve_entities(self, text: str) -> list[dict]:
         """Entities NAMED in ``text``, resolved deterministically through the alias index (§2.1).
 
