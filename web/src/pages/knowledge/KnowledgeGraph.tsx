@@ -133,7 +133,16 @@ export function KnowledgeGraph({ selectedId, onSelect, onRegenerate, regeneratin
           // Width 1 rather than 0.6 because a sub-pixel stroke lands as partial pixel coverage, so
           // it cannot reach the ratio its colour promises. 0.15 stays for the DIMMED case: that is
           // deliberate de-emphasis while the pointer is on another node, not the resting state.
-          return <line key={i} x1={a.x} y1={a.y} x2={b.x} y2={b.y} stroke={active ? 'var(--color-primary)' : 'var(--color-on-surface-low)'} strokeWidth={active ? 1.6 : 1} strokeOpacity={hover && !active ? 0.15 : 0.7} />
+          //
+          // 🔴 AND `strokeWidth` ALONE DID NOT ACHIEVE THAT — `vectorEffect` is what does. The
+          // viewBox is 1000×1000 under `xMidYMid meet`, so this graph is never drawn 1:1: the CTM
+          // scale measured **0.761 at 1440px and 0.358 at 390px**, which paints a declared `1` as
+          // 0.76px on a desktop and 0.36px on a phone. The width change reduced the shortfall and
+          // was described as removing it, which was wrong. `non-scaling-stroke` makes the declared
+          // width the PAINTED width at any viewport and any zoom level, so the ratio above is a
+          // real number rather than a nominal one — and the active widths (1.6 / 2.5) stop thinning
+          // with the viewport too.
+          return <line key={i} x1={a.x} y1={a.y} x2={b.x} y2={b.y} vectorEffect="non-scaling-stroke" stroke={active ? 'var(--color-primary)' : 'var(--color-on-surface-low)'} strokeWidth={active ? 1.6 : 1} strokeOpacity={hover && !active ? 0.15 : 0.7} />
         })}
         {graph.nodes.map((n) => {
           const p = pos.get(n.id); if (!p) return null
@@ -159,7 +168,7 @@ export function KnowledgeGraph({ selectedId, onSelect, onRegenerate, regeneratin
                   resting nodes with it would erase hover and selection. Both are NEUTRALS, which is
                   why two measurements settle all twelve schemes — `design/schemes.ts` re-tints the
                   accent identity only ("Neutral surfaces stay from tokens.css"). */}
-              <circle r={r} fill={selected ? 'var(--color-primary)' : 'color-mix(in srgb, var(--color-primary) 30%, var(--color-surface))'} stroke={active ? 'var(--color-primary)' : 'var(--color-on-surface-low)'} strokeWidth={active ? 2.5 : 1} />
+              <circle r={r} vectorEffect="non-scaling-stroke" fill={selected ? 'var(--color-primary)' : 'color-mix(in srgb, var(--color-primary) 30%, var(--color-surface))'} stroke={active ? 'var(--color-primary)' : 'var(--color-on-surface-low)'} strokeWidth={active ? 2.5 : 1} />
               {(active || deg > 2 || labelAll) && <text y={-r - 4} textAnchor="middle" className="fill-on-surface" style={{ fontSize: 10 }}>{n.name}</text>}
             </g>
           )
