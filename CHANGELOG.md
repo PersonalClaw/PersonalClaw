@@ -10,9 +10,16 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Added
 
+- **Nudge an artifact's look without spending a message on it.**
+- **Point at what is wrong instead of describing it.**
+- **A pinned dashboard tile can now keep its own numbers up to date, for free.**
+
 - **Saved the same article twice? Knowledge will now tell you, and fold the two together.**
 - **Hold a thought, press a key, keep your hands where they are.**
 - **The design-system tool can list what it has, instead of making the assistant guess.**
+- **PersonalClaw can now notice what a project is and suggest a pack for it — and it only ever suggests.**
+- **Branch a conversation from any message, and see where a branch came from.**
+- **A bad edit is no longer permanent.**
 
 - **Your phone can find this machine on its own now, if you ask it to.**
 - **Two ready-made setups you can install in one go — Personal CFO and Health OS.**
@@ -23,6 +30,8 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **You can now edit the memory registers the assistant reads every session, and see who your memories are about.**
 
 ### Fixed
+
+- **Forking a conversation could cut it earlier than the message you clicked.**
 
 - **A "replace everything" restore could run while the app was running.**
 

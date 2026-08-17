@@ -111,7 +111,17 @@ export function DiscoverPage({ navigate }: Pick<RouteProps, 'navigate'>) {
               <EntranceRegion key={group.area} className="min-w-0">
                 <section className="flex min-w-0 flex-col gap-m">
                   <div className="flex items-center gap-s">
-                    <h3 data-type="label-l" className="text-on-surface-var">{group.area}</h3>
+                    {/* `h2`, not `h3`: this is a section directly under the page's `PageTitle` h1, and
+                        the page has no h2 at all, so every one of these five area headings was an
+                        `h1 → h3` skip — WCAG 1.3.1, reported at both themes and at 390px. The rung is
+                        settled elsewhere in the app: `#/dashboard`, `#/knowledge`, `#/inbox` and
+                        `#/settings/sources` all put h2 directly under the h1. The 14 other `h3`s in
+                        the tree sit INSIDE panels beneath an h2, where h3 is correct — so this is the
+                        one that was drift.
+
+                        Purely structural: the type comes from `data-type="label-l"`, never from the
+                        tag, so nothing moves visually. */}
+                    <h2 data-type="label-l" className="text-on-surface-var">{group.area}</h2>
                     <span className="h-px flex-1 bg-outline-variant/40" />
                   </div>
                   <div className="flex flex-col gap-s">

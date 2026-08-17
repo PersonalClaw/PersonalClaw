@@ -8,7 +8,9 @@
  *    child → parent   `widget-height {height, width?}`
  *                     `widget-action {action, payload?}`
  *                     `widget-error  {message}`
- *    parent → child   the reserved `__edit_mode_*` namespace (annotate mode)
+ *                     `widget-edit-values  {values}`   (EDITMODE read-back)
+ *                     `widget-annotation   {selector, tag, outerHTML, parentContext}`
+ *    parent → child   the reserved `__edit_mode_*` namespace (artifact iteration)
  *
  *  Additive only: a new message needs a new `type`, never a re-meant field.
  *
@@ -26,6 +28,8 @@
  *  ONE `ne:launch-chat` path. Exactly one consumer runs per action. */
 import { useEffect, useRef, type RefObject } from 'react'
 import { launchChat } from '../../app/appSdk'
+import { EDIT_KEY_RE } from './editMode'
+import { readAnnotation, type WidgetAnnotation } from './annotate'
 
 /** The turn prefix an agent branches on. Stable — do not reword. */
 const UI_PREFIX = '[UI] '
@@ -48,6 +52,15 @@ export type WidgetWireMessage =
   | { type: 'widget-height'; height: number; width?: number }
   | { type: 'widget-action'; action: string; payload: unknown }
   | { type: 'widget-error'; message: string }
+  | { type: 'widget-edit-values'; values: Record<string, string> }
+  | { type: 'widget-edit-ready' }
+  | { type: 'widget-annotation'; annotation: WidgetAnnotation }
+
+/** Caps on the EDITMODE read-back. The child answers a request the parent made, so
+ *  the key set is already known — these bound a child that answers something else
+ *  entirely (a thousand keys, a megabyte value). */
+const MAX_EDIT_VALUES = 32
+const MAX_EDIT_VALUE_LEN = 200
 
 /** What the host learns about the widget an action came from. */
 export interface WidgetActionMeta {
@@ -81,6 +94,22 @@ export function readWidgetMessage(
     return { type, action: d.action, payload: d.payload }
   }
   if (type === 'widget-error') return { type, message: String(d.message || 'Render error') }
+  if (type === 'widget-edit-ready') return { type }
+  if (type === 'widget-edit-values') {
+    const raw = d.values
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null
+    const values: Record<string, string> = {}
+    for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
+      if (Object.keys(values).length >= MAX_EDIT_VALUES) break
+      if (!EDIT_KEY_RE.test(k) || typeof v !== 'string') continue
+      values[k] = v.slice(0, MAX_EDIT_VALUE_LEN)
+    }
+    return { type, values }
+  }
+  if (type === 'widget-annotation') {
+    const annotation = readAnnotation(d)
+    return annotation ? { type, annotation } : null
+  }
   return null
 }
 
@@ -104,6 +133,18 @@ function clipToBytes(s: string, max: number): string {
   return cut + TRUNCATION_MARKER
 }
 
+/** The shared tail every `[UI]` turn gets: the byte clip, then the C32 living-view
+ *  suffix. Factored out so a correction directive (annotate mode) inherits the SAME
+ *  clip and the SAME "refresh in place" rule a widget action has, instead of a
+ *  second dialect of both. */
+export function finishActionText(body: string, live?: { saved: boolean; slug: string }): string {
+  const base = clipToBytes(`${UI_PREFIX}${body}`, MAX_ACTION_TEXT_BYTES)
+  // Living view (C32): name the source artifact so the agent refreshes THIS view in
+  // place (artifact_update <slug>) instead of spawning a new one. Only meaningful
+  // once the widget is saved and therefore has a slug the agent can target.
+  return live?.saved && live.slug ? `${base} (refresh artifact "${live.slug}" in place)` : base
+}
+
 /** Compose the `[UI]` turn text for one widget action, or null if the payload
  *  cannot be serialized. */
 export function composeWidgetActionText(
@@ -111,22 +152,18 @@ export function composeWidgetActionText(
   payload: unknown,
   live?: { saved: boolean; slug: string }
 ): string | null {
-  let base: string
+  let body: string
   try {
-    base = payload && Object.keys(payload as object).length > 0
-      ? `${UI_PREFIX}${action}: ${JSON.stringify(payload)}`
-      : `${UI_PREFIX}${action}`
+    body = payload && Object.keys(payload as object).length > 0
+      ? `${action}: ${JSON.stringify(payload)}`
+      : action
   } catch {
     // postMessage's structured clone carries cycles that JSON.stringify cannot.
     // Refusing beats throwing: an unhandled throw in a window listener is a widget
     // crashing its host.
     return null
   }
-  base = clipToBytes(base, MAX_ACTION_TEXT_BYTES)
-  // Living view (C32): name the source artifact so the agent refreshes THIS view in
-  // place (artifact_update <slug>) instead of spawning a new one. Only meaningful
-  // once the widget is saved and therefore has a slug the agent can target.
-  return live?.saved && live.slug ? `${base} (refresh artifact "${live.slug}" in place)` : base
+  return finishActionText(body, live)
 }
 
 /** Republish a validated action onto the host bridge. */
@@ -144,6 +181,16 @@ export interface WidgetWireHandlers {
   onError?: (message: string) => void
   /** Read the widget's live saved-artifact identity at the moment of the action. */
   liveArtifact?: () => { saved: boolean; slug: string }
+  /** The child's answer to `__edit_mode_read_keys` — what the document ACTUALLY
+   *  holds, which is what Save writes (never what the rail believes it sent). */
+  onEditValues?: (values: Record<string, string>) => void
+  /** The child document has installed its iteration script and can receive edits.
+   *  The host answers by seeding the artifact's declared values — sending them any
+   *  earlier would race the blob load and be dropped. */
+  onEditReady?: () => void
+  /** One click-annotated element. Not action-gated: an annotation is not a turn on
+   *  its own, it accumulates in the rail until the user sends the correction. */
+  onAnnotation?: (annotation: WidgetAnnotation) => void
 }
 
 /** PRODUCER side: attach the validated child→parent wire to `frameRef`. */
@@ -162,6 +209,9 @@ export function useWidgetWire(
       const h = live.current
       if (msg.type === 'widget-height') { h.onHeight?.(msg.height, msg.width); return }
       if (msg.type === 'widget-error') { h.onError?.(msg.message); return }
+      if (msg.type === 'widget-edit-values') { h.onEditValues?.(msg.values); return }
+      if (msg.type === 'widget-edit-ready') { h.onEditReady?.(); return }
+      if (msg.type === 'widget-annotation') { h.onAnnotation?.(msg.annotation); return }
       if (!h.forwardActions) return
       const artifact = h.liveArtifact?.()
       const text = composeWidgetActionText(msg.action, msg.payload, artifact)

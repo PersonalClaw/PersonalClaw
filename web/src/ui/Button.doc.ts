@@ -7,10 +7,10 @@ const doc: UiDoc = {
   name: 'Button',
   keywords: ['button', 'cta', 'action', 'submit', 'primary', 'danger', 'loading', 'pill'],
   description:
-    'The one shared button for every clickable action. Five variants (primary / tonal / secondary / ghost / danger) across four sizes, pill-shaped by default with an optional squircle corner. Physical press/hover springs and a loading state that swaps the label for a centered spinner without changing width.',
+    'The one shared button for every clickable action. Six variants (primary / tonal / secondary / ghost / ghost-accent / danger) across four sizes, pill-shaped by default with an optional squircle corner. Physical press/hover springs and a loading state that swaps the label for a centered spinner without changing width.',
   props: [
     { name: 'children', description: 'The button label (and optional leading icon).' },
-    { name: 'variant', description: "Visual emphasis. 'primary' is the page's main action; 'tonal' is a primary-tinted chip CTA; 'secondary'/'ghost' are quieter; 'danger' is destructive." },
+    { name: 'variant', description: "Visual emphasis. 'primary' is the page's main action; 'tonal' is a primary-tinted chip CTA; 'secondary'/'ghost' are quieter; 'ghost-accent' is a ghost whose LABEL carries the accent, for the retry-after-failure affordance — it uses primary-emphasis, the shade that clears AA on every ground including the surface-high it hovers to; 'danger' is destructive." },
     { name: 'size', description: "Height/padding tier. 'xs' for dense in-panel chrome, 'sm'/'md' for most actions, 'lg' for hero CTAs." },
     { name: 'shape', description: "'pill' (default) or 'squircle' for the superellipse corner." },
     { name: 'loading', description: 'Cross-fades the label out for a centered spinner while preserving width — use for in-flight async actions.' },
@@ -28,6 +28,7 @@ const doc: UiDoc = {
     { guidance: true, description: 'Pass `disabledReason` whenever a submit is gated on unmet input — a bare `disabled` button leaves the tab order, so a keyboard user tabs past the action with no way to learn what is missing. Keep it CONDITIONAL on the missing input, or a button disabled by an in-flight save will announce "enter a name".' },
     { guidance: true, description: 'Reach for Button for any labelled action — never hand-roll a <button> with bespoke classes; the missing xs tier is why pages used to.' },
     { guidance: true, description: "Use variant='danger' for destructive actions and variant='primary' for exactly one main action per view." },
+    { guidance: false, description: "Do not push a colour through className — the variant already sets one, so two colour utilities land on the same element and which wins is decided by Tailwind's stylesheet order, not by the order you wrote them. Reach for variant='ghost-accent' instead of variant='ghost' className='text-primary', which measured 4.37:1 on the canvas." },
     { guidance: true, description: 'Set `loading` for async actions so the width stays stable and the user sees progress.' },
     { guidance: false, description: 'Do not hardcode colors or px in className — everything routes through design tokens (the token-lint ratchet fails the build otherwise).' },
     { guidance: false, description: 'Do not use Button for icon-only affordances — use IconButton (or SquareIconButton) instead.' },

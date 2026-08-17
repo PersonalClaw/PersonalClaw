@@ -62,13 +62,14 @@ import { type PasteBlock, shouldCollapsePaste, nextSeq, makePasteId, markerFor, 
 import { Modal } from '../ui/Modal'
 import { confirm, promptInput } from '../ui/dialog'
 import { type ChatTurn, type Segment, type ToolSegment, type ApprovalSegment, type ActivitySegment, type SubagentCard, type HistMsg, type MemoryCitation, userTurn, assistantTurn, hydrateTurns, turnText, deriveActivity } from './chat/chatTypes'
+import { branchIndexOf, branchParentKey } from './chat/branchLineage'
 import { useIdentity, firstNameOf } from '../app/identity'
 import { usePlatform } from '../app/usePlatform'
 import { SnipOverlay } from '../ui/SnipOverlay'
 import { chooseCaptureProvider, cropToPngFile, displayCaptureSupported, grabOneFrame, type SnipRect } from '../ui/composer/displayCapture'
 import { notify } from '../app/appSdk'
 import { spring, stagger, listItemEnter, expr } from '../design/motion'
-import { api, type ApprovalMode, type TaskMode, type ReasoningEffort, type ChatSessionSummary, type ChatHistoryMsg, type DiscoveredAgent, type MemoryMode, type NudgeLoop, type ChatFolder, type ChatTag, type RetagJob, type SessionTemplate } from '../lib/api'
+import { api, type ApprovalMode, type TaskMode, type ReasoningEffort, type ChatSessionSummary, type ChatHistoryMsg, type DiscoveredAgent, type MemoryMode, type NudgeLoop, type ChatFolder, type ChatTag, type RetagJob, type SessionTemplate, type RewindFileWire } from '../lib/api'
 import { useChatSocket, type WsMessage } from '../lib/useChatSocket'
 import { useStreamCoalescer } from './chat/useStreamCoalescer'
 import { FindBar } from './chat/FindBar'
@@ -423,6 +424,7 @@ const SLASH_HELP = [
   '- `/project` — scope this new chat to a project (before it starts)',
   '- `/tools` — open the Tools page',
   '- `/undo [N]` — roll back the last N conversation turns (default 1; side effects are not reverted)',
+  '- `/rewind-to-turn N` — restore the FILES this chat changed after turn N (preview first; add `--confirm` to apply). The conversation is not rewound.',
   '- `/compact` — compact the conversation to free up context',
   '',
   'Type `/` in the message box any time to see and filter the full list.',
@@ -635,6 +637,11 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
   // transient like micError.
   const [attachError, setAttachError] = useState<string | null>(null)
   const [memoryMode, setMemoryMode] = useState<MemoryMode>('persistent')
+  // Branch lineage: when this session was branched off another, the parent's
+  // persisted history key + the parent's title, both read from session detail on every
+  // open. Sourced from the server (not from the navigation that created the branch) so
+  // the breadcrumb is still there after a reload. `title: ''` = the origin is gone.
+  const [branchedFrom, setBranchedFrom] = useState<{ key: string; title: string } | null>(null)
   // Investigate origin: the entity this chat was opened to investigate.
   // Rendered as a header chip deep-linking back to the source surface.
   const [investigateOrigin, setInvestigateOrigin] = useState<import('../lib/api').InvestigateOrigin | null>(null)
@@ -762,6 +769,7 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
     coalescer.reset(); coalescing.current = false  // drop any in-flight reveal from the prior session
     setQueued([])  // queue is per-session; clear when the open session changes
     setSubagents([])  // subagent cards are per-session too
+    setBranchedFrom(null)  // lineage is per-session; the load below re-reads it
     if (!sessionId) { setTurns([]); setLoadingHistory(false); return }
     let alive = true
     // Only skeleton if we have nothing seeded from cache; a cache hit already
@@ -815,6 +823,12 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
       // which the backend refuses on a non-persistent session) reflect the real
       // posture of a reopened chat instead of the 'persistent' default.
       setMemoryMode((d.memory_mode || 'persistent') as MemoryMode)
+      // Branch lineage — restore the "Branched from" breadcrumb on every open,
+      // including a plain browser reload, because it comes from persisted state rather
+      // than from whatever navigation happened to land us here.
+      setBranchedFrom(d.forked_from
+        ? { key: branchParentKey(d.forked_from), title: d.forked_from_title || '' }
+        : null)
       // Investigate origin chip — present on sessions opened via
       // POST /api/investigate; survives the first turn (display fields kept).
       setInvestigateOrigin((d as { investigate?: import('../lib/api').InvestigateOrigin | null }).investigate ?? null)
@@ -1489,6 +1503,15 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
         void undoTurns(n)
         return
       }
+      // /rewind-to-turn N [--confirm] — restore FILES to their state at the end of turn N.
+      // Two steps on purpose: bare form previews (reads only), --confirm writes. A
+      // destructive filesystem action must be readable before it happens.
+      const rw = t.match(/^\/rewind-to-turn\s+(\d+)(\s+--confirm)?$/i)
+      if (rw) {
+        setInput('')
+        void rewindToTurn(parseInt(rw[1], 10), Boolean(rw[2]))
+        return
+      }
     }
     // GUI-affordance slash commands run instantly and never hit the model.
     if (!isStreaming && handleSlashCommand(t)) return
@@ -1639,6 +1662,45 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
       setTurns([...rehydrated, assistantTurn(r.notice)])
     } catch { /* leave the transcript as-is on failure */ }
   }
+  // /rewind-to-turn N — the FILESYSTEM counterpart of /undo.
+  // `confirm=false` renders the preview as an assistant notice and stops; `confirm=true`
+  // applies. Nothing on disk changes on the preview pass.
+  async function rewindToTurn(turn: number, confirm: boolean) {
+    const s = sessionRef.current
+    if (!s) return
+    const fmt = (f: RewindFileWire) =>
+      f.action === 'not_captured'
+        ? `- \`${f.path}\` — NOT captured (${f.reason}); it will not be restored`
+        : f.action === 'delete'
+          ? `- \`${f.path}\` — would be DELETED (it did not exist at turn ${turn})`
+          : f.action === 'unchanged'
+            ? `- \`${f.path}\` — already matches turn ${turn}; no change`
+            : `- \`${f.path}\` — restore ${f.current_size} → ${f.restored_size} bytes`
+    try {
+      if (!confirm) {
+        const p = await api.rewindPreview(s, turn)
+        const lines = [
+          `**Rewind to turn ${turn} — preview.** Nothing has been written yet.`,
+          ...(p.warnings || []).map((w) => `> ${w}`),
+          ...(p.files || []).map(fmt),
+          (p.files || []).length === 0 ? '_No recorded file changes after that turn._' : '',
+          `Run \`/rewind-to-turn ${turn} --confirm\` to apply. This restores files only — the conversation stays as the record of what happened.`,
+        ].filter(Boolean)
+        setTurns((prev) => [...prev, assistantTurn(lines.join('\n'))])
+        return
+      }
+      const r = await api.rewindToTurn(s, turn)
+      const lines = [
+        r.notice,
+        ...r.restored.map((p) => `- restored \`${p}\``),
+        ...r.deleted.map((p) => `- deleted \`${p}\``),
+        ...r.errors.map((e) => `- FAILED: ${e}`),
+      ]
+      setTurns((prev) => [...prev, assistantTurn(lines.join('\n'))])
+    } catch (e) {
+      setTurns((prev) => [...prev, assistantTurn(`Rewind failed: ${String(e)}`)])
+    }
+  }
   async function transcribe(blob: Blob, opts?: { duplex?: boolean }): Promise<string> {
     const r = await api.transcribeAudio(blob, { duplex: opts?.duplex, session: sessionRef.current || '' })
     // Surface failures: otherwise a denied/unconfigured STT just drops the
@@ -1723,18 +1785,36 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
     }
   }
 
-  // index into the VISIBLE user/assistant list (what the backend's fork +
-  // edit-resend index expects), skipping non-message turns. Here every turn is
-  // user/assistant, so it's just the turn index.
+  // Branch this conversation at `turnIndex`. Branch DUPLICATES a timeline —
+  // both stay live and equal — which is why it is one click with no confirmation:
+  // it creates a new session and cannot overwrite anything in this one. (Rewind,
+  // which replaces a timeline, does confirm.) A branch of a branch and repeated
+  // branches off the same message are properties of the endpoint; nothing here
+  // prevents either.
+  //
+  // The wire coordinate is the backend's VISIBLE user/assistant index, which is NOT
+  // `turnIndex`: hydrateTurns collapses loop re-injections and merges consecutive
+  // assistant messages, so on a tool-using transcript the turn position runs behind
+  // the message index and the fork silently landed EARLIER than the clicked message.
+  // branchIndexOf translates; see branchLineage.ts.
   function forkAt(turnIndex: number) {
     const s = sessionRef.current
     if (!s) return
-    api.forkSession(s, turnIndex)
-      .then((r) => { if (r?.key) navigate(`chat/${r.key}`) })
+    api.forkSession(s, branchIndexOf(turns, turnIndex))
+      .then((r) => {
+        if (!r?.key) return
+        // Confirm on the SHELL toaster, not this page's inline strip: navigating to the
+        // child unmounts this session, and a confirmation that dies with the surface
+        // that raised it never gets read.
+        notify('Session branched — you’re now in the new branch.', 'success')
+        navigate(`chat/${r.key}`)
+      })
       .catch((e: Error) => {
-        // Surface the failure instead of a silent no-op — the user clicked Fork
-        // and nothing happening looks broken.
-        setMicError(`Couldn’t fork this chat: ${e.message}`)
+        // Surface the failure instead of a silent no-op — the user clicked Branch
+        // and nothing happening looks broken. `e.message` is the endpoint's own
+        // wording, so the session-cap 429 arrives readable ("session cap reached
+        // (500)") rather than as a bare status.
+        setMicError(`Couldn’t branch this chat: ${e.message}`)
         window.setTimeout(() => setMicError(null), 6000)
       })
   }
@@ -2486,6 +2566,26 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
                   {' · '}{fmtTokens(sessionCost.tokens)} tokens
                 </span>
               )}
+              {/* "Branched from" breadcrumb: this session's origin, read from the
+                  PERSISTED forked_from via session detail — so it is still here after a
+                  reload, and it names the parent's CURRENT title (renaming the parent
+                  updates the breadcrumb; it is a read, not a copy).
+                  When the origin has been deleted there is nothing to open, so it
+                  degrades to a plain label instead of a link into nothing. */}
+              {branchedFrom && (
+                branchedFrom.title ? (
+                  <Button size="xs" variant="secondary"
+                    onClick={() => navigate(`chat/${branchedFrom.key}`)}
+                    title={`Branched from "${branchedFrom.title}" — open the original`}>
+                    <GitBranch size={12} className="text-primary" /> Branched from {branchedFrom.title}
+                  </Button>
+                ) : (
+                  <span className="inline-flex shrink-0 items-center gap-1 rounded-pill bg-surface-high px-2 py-0.5 text-[0.75rem] text-on-surface-var"
+                    title="This chat was branched from a conversation that no longer exists">
+                    <GitBranch size={12} className="text-on-surface-low" /> Branched from a deleted chat
+                  </span>
+                )
+              )}
               {/* Investigate origin: the entity this chat was opened to
                   investigate; click deep-links back to the source surface. */}
               {investigateOrigin?.title && (
@@ -2775,8 +2875,8 @@ function AttachmentPeekModal({ path, name, onOpenFile, onClose }: { path: string
   return (
     <Modal title={name} icon={<Paperclip size={18} className="text-primary" />} onClose={onClose}>
       <div className="flex flex-col gap-3">
-        <Button variant="ghost" size="sm" onClick={() => { onOpenFile(path); onClose() }}
-          className="self-start border border-outline-variant/50 text-primary">
+        <Button variant="ghost-accent" size="sm" onClick={() => { onOpenFile(path); onClose() }}
+          className="self-start border border-outline-variant/50">
           <ExternalLink size={14} /> Open original file
         </Button>
         <div>
@@ -2817,8 +2917,8 @@ function MentionChips({ paths, onRemove, onOpen }: { paths: string[]; onRemove: 
               {open ? <span className="break-all">{p}</span> : base(p)}
             </button>
             {open && (
-              <Button variant="ghost" size="xs" title="Open file" onClick={() => onOpen(p)}
-                className="shrink-0 h-6 px-1.5 text-[0.75rem] text-primary">Open</Button>
+              <Button variant="ghost-accent" size="xs" title="Open file" onClick={() => onOpen(p)}
+                className="shrink-0 h-6 px-1.5 text-[0.75rem]">Open</Button>
             )}
             <IconButton icon={X} label="Remove file" onClick={() => onRemove(p)} size={20} iconSize={13}
               className="shrink-0 hover:text-danger" />

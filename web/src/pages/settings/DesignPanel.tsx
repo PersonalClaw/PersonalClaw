@@ -4,6 +4,7 @@ import { Surface } from '../../ui/Surface'
 import { fvs } from '../../design/fontWeight'
 import { Button } from '../../ui/Button'
 import { Field, TextInput, FieldError } from '../../ui/forms'
+import { confirmDelete } from '../../ui/dialog'
 import { ColorControl, ScalarControl, SelectControl } from '../../ui/TokenControls'
 import { TOKENS, type ColorToken, type ScalarToken, type SelectToken } from '../../design/tokenRegistry'
 import { useAppearance } from '../../app/appearance'
@@ -20,6 +21,34 @@ import { useNavDisclosure } from '../../app/navDisclosure'
  *  A scheme encapsulates ONLY colors; backdrop/motion/layout live outside it. */
 export function DesignPanel() {
   const { activeScheme, allSchemes, applyScheme, saveCustomScheme, updateCustomScheme, deleteCustomScheme, themesLoading, resetAll } = useAppearance()
+
+  /** Ask before deleting a saved theme, and say what that costs.
+   *
+   *  🔴 IT WAS ONE CLICK ON A HOVER-REVEALED TRASH ICON. Driven on a real saved theme: the tile
+   *  vanished with no dialog and `GET /api/themes` returned `[]` — the handler does `target.unlink()`,
+   *  so the file is gone from disk with no soft-delete and nothing to restore from. A theme is
+   *  deliberately authored (a name, an emoji and a color for both modes), which is exactly the kind
+   *  of small-but-hand-made object `confirmDelete` already guards fourteen times over — a chat
+   *  starter, a memory, a lesson, a schedule.
+   *
+   *  The body is CONDITIONAL because overstating a loss teaches people to dismiss the dialog. Deleting
+   *  the theme you are currently using reverts the app to its default colors — measured, `--color-primary`
+   *  went `#4fd1c5` back to `#ff6b5b` — and that is worth a sentence. Deleting one you are not using
+   *  costs only the theme, so it says less.
+   *
+   *  🪤 AND THE COPY SPELLS IT `colors`, NOT `colours` — `exclusiveChoiceNamed`'s spelling rail went red
+   *  on the first draft of this string. It strips comments and scans only shipped copy, so the two
+   *  British spellings already in this file's comments are untouched; a user-visible one is not. */
+  async function removeScheme(s: { id: string; label: string }): Promise<void> {
+    const inUse = activeScheme === s.id
+    const ok = await confirmDelete('theme', s.label, {
+      body: inUse
+        ? 'You are using this theme, so the app goes back to its default colors. It cannot be undone.'
+        : 'It cannot be undone — a saved theme is a file, not a snapshot.',
+    })
+    if (!ok) return
+    await deleteCustomScheme(s.id).catch(() => {})
+  }
   const { mode, preference, setPreference } = useMode()
   const [editingColors, setEditingColors] = useState(false)
   const dark = mode === 'dark'
@@ -81,7 +110,7 @@ export function DesignPanel() {
           {allSchemes.map((s) => (
             <SchemeTile key={s.id} scheme={s} dark={dark} active={activeScheme === s.id} custom={isCustom(s.id)}
               onPick={() => applyScheme(s.id)}
-              onDelete={isCustom(s.id) ? () => deleteCustomScheme(s.id).catch(() => {}) : undefined} />
+              onDelete={isCustom(s.id) ? () => removeScheme(s) : undefined} />
           ))}
         </div>
         {themesLoading && <p className="mt-s text-on-surface-low text-[0.75rem]">Loading saved themes…</p>}

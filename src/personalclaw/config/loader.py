@@ -3695,6 +3695,55 @@ class SandboxConfig:
 
 
 @dataclass
+class CheckpointsConfig:
+    """Turn-bound file checkpointing bounds (EXECUTION-ISOLATION §6).
+
+    The caps on ``turn_checkpoints``' per-session store: how many turns of pre-edit
+    backups to keep, how many megabytes of file bodies, and how big a single body may be
+    before it is recorded manifest-only. Guard-class note: these are BOUNDS, not a safety
+    control — the secrecy floor (which files are never copied at all) is a code-level
+    tuple in ``turn_checkpoints.NEVER_CAPTURE_GLOBS`` with no config field, deliberately,
+    so no config edit can widen what the store is allowed to hold."""
+
+    enabled: bool = field(
+        default=True,
+        metadata=_meta(
+            "File Checkpoints",
+            "Back up a file's current bytes before an agent's first write to it in a turn, "
+            "so /rewind-to-turn can restore it. Filesystem-only: it never rewinds the "
+            "conversation. Off means a wrong edit is unrecoverable.",
+        ),
+    )
+    max_mb: int = field(
+        default=200,
+        metadata=_meta(
+            "Checkpoint Store Cap (MB)",
+            "Maximum megabytes of backed-up file bodies kept per session. When a new backup "
+            "would exceed this, the oldest turns are pruned until it fits. 0 disables the "
+            "byte cap (the turn cap still applies).",
+        ),
+    )
+    max_turns: int = field(
+        default=50,
+        metadata=_meta(
+            "Checkpoint Turns Kept",
+            "How many recent turns of backups to keep per session. Older turns are pruned, "
+            "which makes rewinding past them impossible — the preview says so.",
+        ),
+    )
+    max_file_mb: int = field(
+        default=8,
+        metadata=_meta(
+            "Checkpoint Max File (MB)",
+            "A single file larger than this is recorded in the turn manifest but its bytes "
+            "are not copied, so a rewind reports it as 'not captured' instead of restoring "
+            "it. Keeps one large binary write from consuming the whole store cap. 0 "
+            "disables the per-file limit.",
+        ),
+    )
+
+
+@dataclass
 class VoiceConfig:
     """Hands-free voice-loop knobs (MULTIMODAL-IO §4.5).
 
@@ -3782,6 +3831,10 @@ class AppConfig:
     sandbox: SandboxConfig = field(
         default_factory=SandboxConfig,
         metadata=_meta("Sandbox", "Resource ceilings for agent-influenced child processes."),
+    )
+    checkpoints: CheckpointsConfig = field(
+        default_factory=CheckpointsConfig,
+        metadata=_meta("File Checkpoints", "Bounds on turn-bound file checkpointing."),
     )
     session: SessionConfig = field(
         default_factory=SessionConfig,
@@ -4007,6 +4060,9 @@ class AppConfig:
         sandbox_data = data.get("sandbox", {})
         if not isinstance(sandbox_data, dict):
             sandbox_data = {}
+        checkpoints_data = data.get("checkpoints", {})
+        if not isinstance(checkpoints_data, dict):
+            checkpoints_data = {}
         legibility_data = data.get("legibility", {})
         if not isinstance(legibility_data, dict):
             legibility_data = {}
@@ -4709,6 +4765,12 @@ class AppConfig:
                     if str(n).strip()
                 ],
             ),
+            checkpoints=CheckpointsConfig(
+                enabled=bool(checkpoints_data.get("enabled", True)),
+                max_mb=max(0, _safe_int(checkpoints_data.get("max_mb", 200), 200)),
+                max_turns=max(1, _safe_int(checkpoints_data.get("max_turns", 50), 50)),
+                max_file_mb=max(0, _safe_int(checkpoints_data.get("max_file_mb", 8), 8)),
+            ),
             observe_max_messages=max(1, int(data.get("observe_max_messages", 200))),
             observe_ttl_hours=max(0.0, float(data.get("observe_ttl_hours", 168.0))),
         )
@@ -4856,6 +4918,7 @@ class AppConfig:
         d: dict = {
             "agent": asdict(self.agent),
             "sandbox": asdict(self.sandbox),
+            "checkpoints": asdict(self.checkpoints),
             "session": asdict(self.session),
             "memory": asdict(self.memory),
             "dashboard": asdict(self.dashboard),

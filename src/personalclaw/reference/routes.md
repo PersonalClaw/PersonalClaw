@@ -155,6 +155,8 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `POST /api/chat/sessions/{session}/reasoning-effort` — set reasoning effort.
 - `POST /api/chat/sessions/{session}/regenerate` — regenerate the last assistant reply.
 - `POST /api/chat/sessions/{session}/resume` — load a history session into a session.
+- `GET /api/chat/sessions/{session}/rewind` — what a rewind would do. Read-only.
+- `POST /api/chat/sessions/{session}/rewind` — restore files to the end of turn N.
 - `POST /api/chat/sessions/{session}/share` — a redacted, read-only artifact of a chat.
 - `POST /api/chat/sessions/{session}/side/close` — drop the buffer + destroy
 - `POST /api/chat/sessions/{session}/side/open` — open (or reset) the side buffer.
@@ -194,6 +196,9 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `GET /api/dashboard/views/{view_id}` — read, edit, or delete a view.
 - `PUT /api/dashboard/views/{view_id}` — read, edit, or delete a view.
 - `POST /api/dashboard/views/{view_id}/tiles` — {slug, size?} — pin an artifact tile.
+- `PUT /api/dashboard/views/{view_id}/tiles/binding` — {ref, mode, ttl_secs?, skeleton?, data?}
+- `GET /api/dashboard/views/{view_id}/tiles/refresh` — POST .../tiles/refresh {ref, force?} — run one chatless refresh (§2.3).
+- `POST /api/dashboard/views/{view_id}/tiles/refresh` — POST .../tiles/refresh {ref, force?} — run one chatless refresh (§2.3).
 - `POST /api/dashboard/views/{view_id}/tiles/resolve` — {ref, keep} — accept/dismiss/unpin.
 - `GET /api/design/tokens/default` — PersonalClaw's canonical
 - `GET /api/desktop/capabilities/{cap}` — one capability, gateway-mediated.
@@ -494,9 +499,12 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `GET /api/packs/installed` — List installed packs with connector-resolution, roster + setup-binding state.
 - `POST /api/packs/one-link` — Import a one-link JSON document (§2.3/§4.4) through the same §3 pipeline.
 - `POST /api/packs/prompt-card` — Import a pasted prompt card (§4.3) — files a proposal, writes no entity.
+- `GET /api/packs/proposals` — The propose-only fingerprint cards (§7) — an ON-DEMAND scan. Writes nothing.
+- `POST /api/packs/proposals/reject` — Remember that this project's user does not want this pack — the never-re-nag write (§7).
 - `POST /api/packs/{name}/bindings` — Record one setup-interview answer (§3.4/§4.1) — the folder the pack will read.
 - `POST /api/packs/{name}/finish-setup` — Return a pack's re-runnable setup interview (the "Finish setup" chip).
 - `POST /api/packs/{name}/roster/deploy` — One-click team deploy: promote a pack's ``always`` roster tier (§4.2).
+- `POST /api/packs/{name}/update` — The §1 ``pack_owned`` update flow. DRY-RUN unless ``confirm`` is true.
 - `GET /api/projects` — _(no summary)_
 - `POST /api/projects` — _(no summary)_
 - `POST /api/projects/import` — import a project archive (multipart `file`).

@@ -122,7 +122,16 @@ export function SidePanel({ title, icon, onClose, urlKey, storeKey = 'sidepanel-
           heading navigation — measured before this, the panel had 0 headings. Preflight resets h2 to
           margin:0 / font-weight:inherit, and `data-type="title-l"` sets size/line-height/wght, so the
           rendering is byte-for-byte the span's (verified: 20px/24px, wght 470, margins 0, unchanged). */}
-      <div className="flex items-center gap-s min-w-0">{icon}<h2 id={titleId} data-type="title-l" className="text-on-surface truncate">{title}</h2></div>
+      {/* 🔴 AND THIS ONE CLIPS ON A DESKTOP TOO, unlike the rest of its family. The panel is a
+          fixed-width column, so the title gets ~300px whatever the viewport: measured on two real task
+          titles, 299px of 574 and 297px of 505 at 1440px (1.9x), and 239/574 at 390px (2.4x). Every
+          other truncation this session was phone-only; this one costs every user, in all 24 surfaces
+          that mount a SidePanel.
+          `title` is conditional because the prop is a `ReactNode` — a JSX title cannot become a DOM
+          tooltip, and passing one would stringify to "[object Object]". Every call site today passes a
+          string (`open.title`, `open.name`, `selectedEntity`, …), so all of them gain it; a future JSX
+          title simply gets nothing rather than something wrong. */}
+      <div className="flex items-center gap-s min-w-0">{icon}<h2 id={titleId} data-type="title-l" className="text-on-surface truncate" title={typeof title === 'string' ? title : undefined}>{title}</h2></div>
       <div className="flex items-center gap-1 shrink-0">
         <IconButton icon={expanded ? Minimize2 : Maximize2}
           label={expanded ? 'Collapse to panel' : (onExpand ? 'Open full page' : 'Expand to full width')}

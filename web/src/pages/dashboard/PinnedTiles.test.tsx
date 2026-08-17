@@ -8,8 +8,9 @@ import type { DashboardView, DashboardTile } from '../../lib/api'
 // dashboard is byte-identical to today's fixed layout. The tile schema carries a ref +
 // size + order + added_by and NEVER a coordinate.
 
+// AS-2 added `refresh` — a DATA seam (where a tile's content comes from), never a spatial one.
 const tile = (ref: string, order = 0, added_by: 'user' | 'agent' = 'user'): DashboardTile =>
-  ({ ref, size: 'm', order, added_by })
+  ({ ref, size: 'm', order, added_by, refresh: { mode: 'manual', ttl_secs: 0, skeleton: '', data: [] } })
 
 const overview = (tiles: DashboardTile[]): DashboardView =>
   ({ id: 'overview', name: 'Overview', nav_pinned: true, preset: true, tiles })
@@ -43,11 +44,12 @@ describe('artifactTiles — the additive-over-fixed-layout contract', () => {
 })
 
 describe('the tile schema carries no coordinates (the retired grid stays retired)', () => {
-  it('a tile has exactly ref/size/order/added_by — no x/y/w/h', () => {
+  it('a tile has exactly ref/size/order/added_by/refresh — no x/y/w/h', () => {
     const t = tile('artifact:x')
-    expect(Object.keys(t).sort()).toEqual(['added_by', 'order', 'ref', 'size'])
+    expect(Object.keys(t).sort()).toEqual(['added_by', 'order', 'ref', 'refresh', 'size'])
     for (const banned of ['x', 'y', 'w', 'h', 'col', 'row', 'width', 'height']) {
       expect(banned in t).toBe(false)
+      expect(banned in t.refresh).toBe(false)
     }
   })
 })

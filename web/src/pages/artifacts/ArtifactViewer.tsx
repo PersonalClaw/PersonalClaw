@@ -176,7 +176,7 @@ export function ArtifactViewer({ slug, onChanged, onDeleted, onOpenSourceFile, c
           <FileWarning size={26} className="opacity-40" />
           <p className="text-[0.8125rem]">Couldn't open this artifact.</p>
           <p className="text-[0.75rem] text-on-surface-low/80">It may have been deleted. {loadError}</p>
-          <Button variant="ghost" size="xs" onClick={() => reload()} className="mt-1 text-primary"><RotateCcw size={13} /> Try again</Button>
+          <Button variant="ghost-accent" size="xs" onClick={() => reload()} className="mt-1"><RotateCcw size={13} /> Try again</Button>
         </div>
       </div>
     )
@@ -258,6 +258,12 @@ export function ArtifactViewer({ slug, onChanged, onDeleted, onOpenSourceFile, c
               path={art.source_path || undefined}
               readOnly={!editable}
               onSave={editable ? onSave : undefined}
+              // Renderer-driven iteration: an EDITMODE tweak saves through the
+              // SAME snapshot path the Snapshot action uses, so the new version and
+              // its restore are inherited machinery rather than a second write path.
+              // A historical/frozen version keeps annotate (a correction is a request,
+              // not a mutation) but offers no persist.
+              iterate={{ slug: art.slug, persistVersion: editable ? snapshot : undefined }}
               commentTarget={commentTarget}
               actions={editable ? [{ icon: History, label: 'Snapshot', title: 'Save as a new version snapshot', primary: true, run: snapshot }] : undefined}
             />

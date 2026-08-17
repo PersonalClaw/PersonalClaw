@@ -5,6 +5,7 @@ import asyncio
 import logging
 import time
 from pathlib import Path
+from typing import Any
 
 from aiohttp import web
 
@@ -133,7 +134,33 @@ async def api_projects_create(request: web.Request) -> web.Response:
         )
     except ValueError as e:
         return web.json_response({"error": str(e)}, status=400)
-    return web.json_response(_project_payload(store, project), status=201)
+    payload = _project_payload(store, project)
+    payload["pack_proposals"] = _fingerprint_proposals(project)
+    return web.json_response(payload, status=201)
+
+
+def _fingerprint_proposals(project: Any) -> list[dict[str, Any]]:
+    """The AGENT-PACKS §7 propose-only pack cards for a just-created project.
+
+    ONE of the two places a fingerprint scan may run (the other is the on-demand
+    ``GET /api/packs/proposals``); §7 forbids a background loop, and
+    :func:`packs.fingerprint.scan_project` enforces that by refusing any other ``reason``.
+
+    The scan writes nothing and is fail-soft: a project must be created even if pack discovery
+    breaks, so any failure logs and returns no proposals. ``with_inspect=False`` keeps creation
+    latency independent of how many packs matched — the card in the pack store fetches the full
+    §3.1 report from the on-demand route when the user actually looks at it.
+    """
+    from personalclaw.packs.fingerprint import SCAN_REASON_CREATE, scan_project
+
+    try:
+        return [
+            p.to_dict()
+            for p in scan_project(project, reason=SCAN_REASON_CREATE, with_inspect=False)
+        ]
+    except Exception:  # noqa: BLE001 - pack discovery must never fail project creation
+        logger.warning("fingerprint scan failed for a new project", exc_info=True)
+        return []
 
 
 async def api_projects_get(request: web.Request) -> web.Response:

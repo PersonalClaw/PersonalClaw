@@ -276,6 +276,31 @@ INVENTORY: tuple[StateEntry, ...] = (
         help="code-loop working checkouts",
         derived=True,  # git-owned clones, re-creatable from their remotes
     ),
+    # The turn-bound file checkpoint store — pre-edit copies of workspace files so
+    # /rewind-to-turn can restore them. Declared so `audit_home()` claims the path the moment
+    # a session records its first backup.
+    #
+    # `derived=True` for the same reason as `code` above, and NOT because it is rebuildable
+    # (it is not — the prior bytes exist nowhere else once the agent has overwritten them).
+    # It is machine-LOCAL by construction: every manifest entry is an ABSOLUTE host path, so
+    # the tree is meaningless in another home, and a restore that re-planted it would drop
+    # copies of one machine's workspace into another's. It is also a live-session safety net
+    # pruned with the session (`turn_checkpoints.prune_session`), so travelling it would ship
+    # up to `checkpoints.max_mb` per session of file bodies that the workspace itself still
+    # holds authoritatively.
+    #
+    # Credential material is excluded at CAPTURE time, not here:
+    # `turn_checkpoints.NEVER_CAPTURE_GLOBS` means a `.env` body never enters the tree, so
+    # this entry is not the thing keeping secrets out of an export.
+    StateEntry(
+        id="turn_checkpoints",
+        kind=KIND_TREE,
+        path="checkpoints",
+        domain=DOMAIN_WORK,
+        merge=MERGE_REPLACE_ONLY,
+        help="pre-edit file backups behind /rewind-to-turn (machine-local, session-scoped)",
+        derived=True,
+    ),
     # ── automation ──
     # 🔴 THE trigger store, and it was never declared here. `triggers/store.py` opens with
     # "`triggers.json` — the one trigger store … absorbing crons.json / hooks.json /
@@ -401,6 +426,29 @@ INVENTORY: tuple[StateEntry, ...] = (
         domain=DOMAIN_PLATFORM,
         merge=MERGE_LWW,
         help="per-entity user settings",
+    ),
+    # 🔴 `dashboard_views.json` shipped with AS-1 and was never declared, so `audit_home()`
+    # reports it the moment a user pins a tile — the exact drift this manifest exists to catch,
+    # found by declaring the store next to it.
+    StateEntry(
+        id="dashboard_views",
+        kind=KIND_JSON_FILE,
+        path="dashboard_views.json",
+        domain=DOMAIN_PLATFORM,
+        merge=MERGE_LWW,
+        help="composable-home views and their pinned artifact tiles",
+    ),
+    # A TREE, not a `jsonl_append`, even though its leaves are JSONL: on disk it is one
+    # DIRECTORY per tile (`dashboard_tiles/<view>__<slug>/events.jsonl`). Declaring the leaf kind
+    # is the shape `sessions` got wrong — the generic per-file tree copy is the right executor
+    # either way, and a line-dedup merge across a directory-per-tile store would be the wrong one.
+    StateEntry(
+        id="dashboard_tile_ledger",
+        kind=KIND_TREE,
+        path="dashboard_tiles",
+        domain=DOMAIN_PLATFORM,
+        merge=MERGE_APPEND_DEDUP,
+        help="per-tile chatless-refresh ledger (freshness, cost, per-source outcomes)",
     ),
     StateEntry(
         id="models",

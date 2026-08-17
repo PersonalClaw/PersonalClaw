@@ -2641,8 +2641,23 @@ export type ArtifactSource = 'chat' | 'cron' | 'subagent' | 'manual' | 'import'
 // `artifact:<slug>` (a pinned artifact tile). `added_by:agent` rows are PROPOSALS
 // that render with an accept/dismiss chip.
 export type TileSize = 's' | 'm' | 'l' | 'full'
-export interface DashboardTile { ref: string; size: TileSize; order: number; added_by: 'user' | 'agent' }
+// The layout/data split. `skeleton` is a SEPARATE artifact holding
+// the `{{...}}` body; the tile's own `ref` holds the rendered projection. `mode: 'ttl'` is the
+// pre-substrate cadence; `view` (a bound trigger) arrives.
+export interface TileDataNode { id: string; provider: string; config: Record<string, unknown> }
+export interface TileRefresh { mode: 'manual' | 'ttl'; ttl_secs: number; skeleton: string; data: TileDataNode[] }
+export interface DashboardTile { ref: string; size: TileSize; order: number; added_by: 'user' | 'agent'; refresh: TileRefresh }
 export interface DashboardView { id: string; name: string; icon?: string | null; nav_pinned: boolean; preset: boolean; tiles: DashboardTile[] }
+// One `tile_refreshed` ledger row. `tokens`/`cost_usd` are stated, not inferred: a
+// header that had to guess "free" from a missing field could not tell a zero-cost refresh
+// from an unrecorded one.
+export interface TileNodeOutcome { id: string; provider: string; ok: boolean; error: string; duration_ms: number }
+export interface TileRefreshRow {
+  kind?: string; event_id?: string; ts?: string; ok?: boolean
+  tokens?: number; cost_usd?: number; duration_ms?: number
+  nodes?: TileNodeOutcome[]; version?: number; rendered_bytes?: number; error?: string
+}
+export interface TileRefreshResult { refreshed: boolean; reason: string; ok: boolean; nodes: TileNodeOutcome[]; row: TileRefreshRow }
 
 export type ArtifactEventType = 'created' | 'edited' | 'iterated' | 'referenced' | 'reverted'
 export interface ArtifactEvent {
@@ -2737,6 +2752,98 @@ export interface InstalledPackRec {
   setup_skill: string
   setup_pending: boolean
   installed_at: string
+  // Which paths the pack claims ongoing ownership of, and the per-component
+  // `{source, computedHash}` drift lock an update compares against.
+  pack_owned?: string[]
+  component_locks?: Record<string, { source: string; computedHash: string; path: string }>
+}
+
+// One Domain OS pack shipped in this build — the pack store's catalog row.
+export interface BundledPackRec {
+  name: string
+  version: string
+  displayName: string
+  description: string
+}
+
+// One fingerprint rule's outcome, carrying the arithmetic behind its score. The
+// card renders `declared_confidence` alongside `confidence` because the number only means
+// something with its derivation next to it: confidence = declared × coverage, where coverage
+// is how much of the rule (globs, signals) actually matched.
+export interface FingerprintMatchRec {
+  label: string
+  confidence: number
+  declared_confidence: number
+  matched_globs: string[]
+  matched_signals: string[]
+  declared_globs: string[]
+  declared_signals: string[]
+  evidence: string[]
+}
+
+// A propose-only pack card. `inspect` is the dry-run report — what the pack
+// WOULD install, computed with no writes. It is null when the scan was asked for without one
+// (project-create keeps its latency independent of pack count) or when the plan failed to
+// build, in which case `inspect_error` says why.
+export interface PackProposalRec {
+  project_id: string
+  pack: string
+  displayName: string
+  description: string
+  version: string
+  confidence: number
+  matches: FingerprintMatchRec[]
+  files_scanned: number
+  inspect: { name: string; version: string; blocked: boolean; needs_consent: boolean; components: Array<{ kind: string; orig_id: string; target_id: string; verdict: string }>; requirements: unknown[]; staged_triggers: string[] } | null
+  inspect_error: string
+}
+
+// One component's update decision. `action` is `overwrite` (the only one that
+// writes), `skip_not_pack_owned`, `skip_drift` (you edited it — kept), or `skip_unverifiable`.
+export interface PackUpdateRec {
+  pack: string
+  from_version: string
+  to_version: string
+  applied: boolean
+  components: Array<{ ref: string; action: string; reason: string; pack_path: string; home_path: string }>
+  drift_notes: string[]
+  overwritten: string[]
+  skipped: string[]
+}
+
+// /rewind-to-turn. `action` is a closed set — "not_captured" is
+// the honest case: the file was deliberately never backed up (credential-shaped, or over
+// the per-file cap), so the rewind will NOT restore it and the UI must say so rather than
+// implying success.
+export interface RewindFileWire {
+  path: string
+  action: 'restore' | 'delete' | 'unchanged' | 'not_captured'
+  turn: number
+  reason: string
+  current_size: number
+  restored_size: number
+  current_sha256: string
+  restored_sha256: string
+  diff: string
+}
+export interface RewindPreviewWire {
+  session: string
+  turn: number
+  turns_affected: number[]
+  warnings: string[]
+  files: RewindFileWire[]
+  notice?: string
+}
+export interface RewindApplyWire {
+  ok: boolean
+  turn: number
+  restored: string[]
+  deleted: string[]
+  skipped: string[]
+  errors: string[]
+  safety_turn: number
+  notice: string
+  preview: RewindPreviewWire
 }
 
 export const api = {
@@ -2806,6 +2913,21 @@ export const api = {
   // the interview runs in chat under normal tool approval — never server-side).
   packsInstalled: () => get<{ packs: InstalledPackRec[] }>('/api/packs/installed').then((d) => d.packs),
   packFinishSetup: (name: string) => post<{ pack: string; setup_skill: string; command: string; pending: boolean }>(`/api/packs/${encodeURIComponent(name)}/finish-setup`, {}),
+  // ── Pack store + fingerprint discovery ──
+  // `packsBundled` is the store catalog; installing one runs the full §3 import (scan,
+  // integrity, leaves-first commit with rollback) at BUILTIN trust.
+  packsBundled: () => get<{ packs: BundledPackRec[] }>('/api/packs/bundled').then((d) => d.packs),
+  packBundledInstall: (name: string) => post<{ ok: boolean; plan: Record<string, unknown> }>(`/api/packs/bundled/${encodeURIComponent(name)}/install`, {}),
+  // The propose-only fingerprint cards. This GET performs the ON-DEMAND scan ("Suggest
+  // packs") — one of only two callers of the scanner (the other is project-create); §7
+  // forbids a background loop, so nothing polls this on a timer.
+  packProposals: (projectId?: string) => get<{ proposals: PackProposalRec[] }>(`/api/packs/proposals${projectId ? `?project_id=${encodeURIComponent(projectId)}` : ''}`).then((d) => d.proposals),
+  // Remember a "no" per (project, pack) — forever. The proposal never reappears for that project.
+  packRejectProposal: (projectId: string, pack: string) => post<{ ok: boolean }>('/api/packs/proposals/reject', { project_id: projectId, pack }),
+  // The pack_owned update flow. DRY-RUN by default: the interesting output is the SKIP
+  // list — which of your edited copies the update would leave alone — so the UI shows that
+  // before `confirm` applies anything.
+  packUpdate: (name: string, confirm = false) => post<{ ok: boolean; update: PackUpdateRec }>(`/api/packs/${encodeURIComponent(name)}/update`, { confirm }),
 
   // ── Owner login (REMOTE-USER-AUTH C3/C5) ──
   // The credential itself is never READ back — `authSession` reports only whether one is
@@ -3235,7 +3357,12 @@ export const api = {
   deleteTagColumn: (id: string) => del(`/api/chat/tag-columns/${encodeURIComponent(id)}`),
   reorderTagColumns: (ids: string[]) => put('/api/chat/tag-columns/order', { ids }),
   dropSessionToColumn: (session: string, columnId: string) => post(`/api/chat/sessions/${encodeURIComponent(session)}/drop`, { column_id: columnId }),
-  chatSessionDetail: (key: string) => get<{ key: string; title: string; messages: ChatHistoryMsg[]; running?: boolean; pending_approval?: boolean; agent?: string; model?: string; mode?: string; acp_provider?: string; acp_provider_agent?: string; reasoning_effort?: string; task_mode?: TaskMode; approval?: ApprovalMode; memory_mode?: string; queue?: { id: string; content: string }[]; side?: { open: boolean; messages: { role: string; content: string }[] } | null }>(`/api/chat/sessions/${encodeURIComponent(key)}`),
+  chatSessionDetail: (key: string) => get<{ key: string; title: string; messages: ChatHistoryMsg[]; running?: boolean; pending_approval?: boolean; agent?: string; model?: string; mode?: string; acp_provider?: string; acp_provider_agent?: string; reasoning_effort?: string; task_mode?: TaskMode; approval?: ApprovalMode; memory_mode?: string; queue?: { id: string; content: string }[]; side?: { open: boolean; messages: { role: string; content: string }[] } | null
+    /** Branch lineage: the parent's persisted HISTORY key (`dashboard:<key>`) when
+     *  this session was branched, plus the parent's title resolved at read time. Served
+     *  here — not carried in navigation state — so the breadcrumb survives a reload.
+     *  `forked_from_title: ''` with a non-empty `forked_from` = the origin is gone. */
+    forked_from?: string; forked_from_title?: string }>(`/api/chat/sessions/${encodeURIComponent(key)}`),
   deleteChatSession: (key: string) => del(`/api/chat/sessions/${encodeURIComponent(key)}`),
   // ── session lifecycle + bulk ──
   setSessionLifecycle: (session: string, body: { lifecycle?: 'active' | 'archived'; never_archive?: boolean }) =>
@@ -3317,6 +3444,13 @@ export const api = {
   // how many turns were removed + an honest notice that side effects were NOT reverted.
   undoChat: (session: string, n = 1) =>
     post<{ ok: boolean; turns_undone: number; notice: string }>(`/api/chat/sessions/${session}/undo`, { n }),
+  // /rewind-to-turn N — the FILESYSTEM counterpart of /undo:
+  // restores files the turns after N wrote, and never touches the transcript. GET is a
+  // read-only preview (what would change, with diffs); POST needs confirm:true.
+  rewindPreview: (session: string, turn: number) =>
+    get<RewindPreviewWire>(`/api/chat/sessions/${session}/rewind?turn=${turn}`),
+  rewindToTurn: (session: string, turn: number) =>
+    post<RewindApplyWire>(`/api/chat/sessions/${session}/rewind`, { turn, confirm: true }),
 
   // auto-nudge: a reactive same-session loop — when a turn completes and no user
   // input arrives within idle_secs, the service injects `message` into the SAME
@@ -4416,6 +4550,20 @@ export const api = {
     post<{ view: DashboardView }>(`/api/dashboard/views/${encodeURIComponent(viewId)}/tiles`, body).then((d) => d.view),
   resolveTile: (viewId: string, body: { ref: string; keep: boolean }) =>
     post<{ view: DashboardView }>(`/api/dashboard/views/${encodeURIComponent(viewId)}/tiles/resolve`, body).then((d) => d.view),
+
+  // ── chatless refresh ──
+  // `refreshTile` is TTL-GATED server-side unless `force` — a rendered dashboard may poll it
+  // without turning a cadence into a fetch-per-paint. `tileRefreshRow` reads the newest ledger
+  // row: the freshness stamp, the per-source chips and the cost the header shows all come from
+  // that ONE row, so the chip and the ledger cannot disagree.
+  bindTile: (viewId: string, body: { ref: string } & Partial<TileRefresh>) =>
+    put<{ tile: DashboardTile }>(`/api/dashboard/views/${encodeURIComponent(viewId)}/tiles/binding`, body).then((d) => d.tile),
+  refreshTile: (viewId: string, body: { ref: string; force?: boolean }) =>
+    post<TileRefreshResult>(`/api/dashboard/views/${encodeURIComponent(viewId)}/tiles/refresh`, body),
+  tileRefreshRow: (viewId: string, ref: string) =>
+    get<{ row: TileRefreshRow }>(`/api/dashboard/views/${encodeURIComponent(viewId)}/tiles/refresh?ref=${encodeURIComponent(ref)}`).then((d) => d.row),
+  tileLedgerHref: (viewId: string, ref: string) =>
+    `/api/dashboard/views/${encodeURIComponent(viewId)}/tiles/refresh?ref=${encodeURIComponent(ref)}`,
 
   // App Platform (A7) — install/manage apps that extend PClaw.
   // Normalize the app-category flag at the boundary: `native` is the single source

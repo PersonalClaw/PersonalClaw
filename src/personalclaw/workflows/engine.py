@@ -396,8 +396,29 @@ def _judge_gate_outcome(decision: JudgeVerdict, node: Node) -> tuple[InstanceSta
 async def dispatch_transform(node: Node, ctx: BindingContext) -> NodeResult:
     """Pure data reshaping — zero tokens. The `expr` binding IS the transform: there is
     no expression language beyond the closed pipe set, which is what keeps a spec from
-    becoming an eval surface."""
-    raw = (node.config or {}).get("expr")
+    becoming an eval surface.
+
+    `skeleton: "<artifact-slug>"` is the same transform over a body stored OUTSIDE the spec
+    (AMBIENT-SURFACES §2.1). A live dashboard's template is an artifact a model authored once;
+    interpolating it here — rather than pasting the whole HTML into `expr` — is what makes the
+    steady-state refresh a pure substitution the spec stays readable through. Zero tokens
+    either way: the render transform is the reason a refresh costs nothing.
+    """
+    cfg = node.config or {}
+    skeleton_slug = str(cfg.get("skeleton", "") or "").strip()
+    raw = cfg.get("expr")
+    if skeleton_slug:
+        from personalclaw.artifacts.registry import get_provider
+
+        provider = get_provider()
+        art = provider.get(skeleton_slug) if provider is not None else None
+        if art is None:
+            return _fail(
+                FailureClass.USER,
+                f"transform skeleton artifact {skeleton_slug!r} does not exist",
+                "create the skeleton artifact, or correct the slug on this node",
+            )
+        raw = art.content or ""
     try:
         value = resolve(raw, ctx)
     except BindingError as exc:

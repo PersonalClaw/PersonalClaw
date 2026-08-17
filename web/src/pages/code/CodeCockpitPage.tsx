@@ -2922,7 +2922,7 @@ function CommitView({ ws, hash, subject, onClose }: { ws: string; hash: string; 
           <Centered>
             <div className="flex flex-col items-center gap-2 px-4 text-center text-[0.8125rem]">
               <span style={{ color: 'var(--color-danger)' }}>Couldn't load this commit.</span>
-              <Button variant="ghost" size="xs" onClick={() => setAttempt((n) => n + 1)} className="text-primary"><RotateCcw size={13} /> Try again</Button>
+              <Button variant="ghost-accent" size="xs" onClick={() => setAttempt((n) => n + 1)}><RotateCcw size={13} /> Try again</Button>
             </div>
           </Centered>
         ) : notFound ? (
@@ -3015,7 +3015,7 @@ function BottomTerminal({ ws, hidden, onClose, runCmd }: { ws: string; hidden?: 
           <div className="flex h-full flex-col items-center justify-center gap-2 px-4 text-center text-[0.8125rem]">
             <span style={{ color: 'var(--color-danger)' }}>{err}</span>
             <div className="flex items-center gap-2">
-              <Button variant="ghost" size="xs" onClick={() => setAttempt((n) => n + 1)} className="text-primary"><RotateCcw size={13} /> Try again</Button>
+              <Button variant="ghost-accent" size="xs" onClick={() => setAttempt((n) => n + 1)}><RotateCcw size={13} /> Try again</Button>
               <Button variant="ghost" size="xs" onClick={onClose}>Close</Button>
             </div>
           </div>

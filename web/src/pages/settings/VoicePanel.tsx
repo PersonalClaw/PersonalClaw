@@ -336,9 +336,20 @@ function AvailChip({ available, okLabel, missLabel }: { available: boolean; okLa
 // wrapped lines, and at 1440px these sit on one.
 function ManageLink({ kind, go }: { kind: string; go?: (id: string) => void }) {
   if (!go) return null
+  // `ink="emphasis"` on both: this row is a bare `<div>` with no background, so the links inherit
+  // `--color-canvas`, where the base accent measures **4.37:1** at this `xs` size (12px) against a 4.5
+  // floor — light mode, unchanged at 390px. An app-wide census of every RENDERED accent link (55
+  // surfaces, populated home, backdrop read off each node) found 25 of them: 20 on `--color-surface`
+  // passing at 4.83, one already on the emphasis shade, and these four — the component mounts twice,
+  // for STT and TTS — as the only failures. The emphasis shade measures 6.0 in coral and passes in all
+  // 12 schemes. Dark was already fine at 6.85.
+  //
+  // 🪤 This comment lives ABOVE the `return`, not inside it: a `{/* … */}` as the first child of a
+  // `return (` is a SECOND child where one expression is allowed, and the parse error it throws is
+  // reported against an unrelated line. Third time this session.
   return (
     <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-3">
-      <TextLink onClick={() => go('models')} icon={ArrowRight} iconPosition="trailing" size="xs">
+      <TextLink onClick={() => go('models')} icon={ArrowRight} iconPosition="trailing" size="xs" ink="emphasis">
         Bind the {kind} model in Models
       </TextLink>
       {/* 🔑 ITS OWN SIBLING WAS THE ANSWER. This row already ships a `TextLink` two lines up — same job
@@ -346,7 +357,7 @@ function ManageLink({ kind, go }: { kind: string; go?: (id: string) => void }) {
           181.13×26.00 while this hand-rolled twin measured 224.73×**18.00**. So the fix is not a colour
           judgement, it is convergence onto what the row already renders: the primitive carries cycle
           115's `py-1 -my-1` hit box, so adopting it fixes SC 2.5.8 and deletes the drift in one move. */}
-      <TextLink onClick={() => go('providers')} icon={ArrowRight} iconPosition="trailing" size="xs">
+      <TextLink onClick={() => go('providers')} icon={ArrowRight} iconPosition="trailing" size="xs" ink="emphasis">
         Add or download models in Providers
       </TextLink>
     </div>

@@ -762,6 +762,8 @@ async def start_dashboard(
     # read-only (PUT/DELETE on a preset → 403).
     from personalclaw.dashboard.handlers.views import (
         api_dashboard_view_detail,
+        api_dashboard_view_tile_binding,
+        api_dashboard_view_tile_refresh,
         api_dashboard_view_tile_resolve,
         api_dashboard_view_tiles,
         api_dashboard_views,
@@ -774,6 +776,17 @@ async def start_dashboard(
     app.router.add_post("/api/dashboard/views", api_dashboard_views)
     app.router.add_post(
         "/api/dashboard/views/{view_id}/tiles/resolve", api_dashboard_view_tile_resolve
+    )
+    # Chatless refresh. Literal sub-routes, registered before the bare
+    # {view_id}/tiles POST for the same more-specific-wins reason as tiles/resolve.
+    app.router.add_put(
+        "/api/dashboard/views/{view_id}/tiles/binding", api_dashboard_view_tile_binding
+    )
+    app.router.add_post(
+        "/api/dashboard/views/{view_id}/tiles/refresh", api_dashboard_view_tile_refresh
+    )
+    app.router.add_get(
+        "/api/dashboard/views/{view_id}/tiles/refresh", api_dashboard_view_tile_refresh
     )
     app.router.add_post("/api/dashboard/views/{view_id}/tiles", api_dashboard_view_tiles)
     app.router.add_get("/api/dashboard/views/{view_id}", api_dashboard_view_detail)
@@ -846,6 +859,10 @@ async def start_dashboard(
         "/api/chat/sessions/{session}/fork-rewound", chat.api_chat_session_fork_rewound
     )
     app.router.add_post("/api/chat/sessions/{session}/undo", chat.api_chat_session_undo)
+    # /rewind-to-turn — the FILESYSTEM counterpart of /undo. GET
+    # previews (read-only, no writes); POST applies and requires confirm:true.
+    app.router.add_get("/api/chat/sessions/{session}/rewind", chat.api_chat_session_rewind_preview)
+    app.router.add_post("/api/chat/sessions/{session}/rewind", chat.api_chat_session_rewind)
     # Side chat (ephemeral, isolated Q&A against a frozen parent snapshot)
     app.router.add_post("/api/chat/sessions/{session}/side/open", chat.api_side_open)
     app.router.add_post("/api/chat/sessions/{session}/side/turn", chat.api_side_turn)

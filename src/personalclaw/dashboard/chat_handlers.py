@@ -759,6 +759,32 @@ async def api_chat_session_detail(request: web.Request) -> web.Response:
 
     prepared = _prepare_messages(messages, session.running)
 
+    # Branch lineage. `forked_from` is already persisted on the
+    # metadata line and restored on load, so the child's "Branched from" breadcrumb is
+    # a read of existing state — but only if the detail endpoint SERVES it. It is the
+    # request a reopened/reloaded chat makes, so serving it here is what makes the
+    # breadcrumb survive a refresh; holding the parent in navigation state instead
+    # would lose it on the first reload. Same reasoning as `memory_mode` below.
+    #
+    # `forked_from_title` names the parent for a human, resolved live-then-disk at read
+    # time (never a copy frozen at fork time — the parent can be renamed). "" means the
+    # origin no longer resolves at all, which the breadcrumb renders as unlinked text
+    # rather than a link into nothing.
+    forked_from = getattr(session, "forked_from", "") or ""
+    forked_from_title = ""
+    if forked_from:
+        parent_key = forked_from.removeprefix("dashboard:")
+        parent = state._sessions.get(parent_key)
+        if parent is not None:
+            forked_from_title = (parent.title if parent._titled else "") or parent_key
+        elif state.conversation_log:
+            try:
+                parent_meta = state.conversation_log.get_metadata(forked_from)
+            except Exception:
+                parent_meta = {}
+            if parent_meta:
+                forked_from_title = str(parent_meta.get("title") or "") or parent_key
+
     return web.json_response(
         {
             "key": session.key,
@@ -818,6 +844,9 @@ async def api_chat_session_detail(request: web.Request) -> web.Response:
             # fork temporary/incognito). The session-list endpoint already returns
             # this; the detail endpoint must too, or a reopened chat looks persistent.
             "memory_mode": getattr(session, "memory_mode", "persistent") or "persistent",
+            # Branch lineage — see the resolution block above the return.
+            "forked_from": forked_from,
+            "forked_from_title": forked_from_title,
             # True when the turn is parked on an unanswered tool approval. The chat
             # page's idle-reconciler uses this to recover a permission card whose
             # live `approval` WS frame was lost/early (the turn otherwise stalls
@@ -1556,6 +1585,22 @@ async def api_chat_session_delete(request: web.Request) -> web.Response:
             result_store.purge_session(_sid)
     except Exception:
         logger.warning("hard-delete: workspace purge failed for %s", name, exc_info=True)
+    # 2b) the turn-checkpoint tree — pre-edit copies of the
+    #     user's workspace files. A hard delete that left these behind would keep bodies
+    #     of files the conversation that touched them no longer exists to explain, and the
+    #     store's cap is per session, so an undeleted tree is never reclaimed. Same
+    #     both-key-forms purge as the result store: the store is keyed by whatever
+    #     session key the tool handler saw.
+    try:
+        from personalclaw import turn_checkpoints
+
+        keys = {history_key, name}
+        if session is not None:
+            keys.add(session.key)
+        for _sid in keys:
+            turn_checkpoints.prune_session(_sid)
+    except Exception:
+        logger.warning("hard-delete: checkpoint purge failed for %s", name, exc_info=True)
     state._restricted_keys.discard(f"dashboard:{name}")
     # Kill the per-tab session to free resources.
     await state.sessions.remove(history_key)

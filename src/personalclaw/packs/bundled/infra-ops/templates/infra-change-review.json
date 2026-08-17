@@ -1,0 +1,46 @@
+{
+  "name": "infra-change-review",
+  "description": "Review an infrastructure change: what the plan would do, then what has drifted from the declared state.",
+  "source": "pack",
+  "provenance": "user",
+  "version": 1,
+  "tags": ["infrastructure", "review"],
+  "inputs": {
+    "plan_output": {
+      "type": "string",
+      "required": false,
+      "default": "",
+      "help": "Path to a saved `terraform plan` output. Empty asks for one before reviewing."
+    }
+  },
+  "metadata": {
+    "risk": "low",
+    "capabilities": ["read"],
+    "keywords": ["terraform plan", "infrastructure review", "drift"],
+    "when_not_to_use": "never to apply a change — this reviews a plan and stops there"
+  },
+  "root": {
+    "kind": "sequence",
+    "id": "infra_review",
+    "children": [
+      {
+        "kind": "stage",
+        "id": "plan",
+        "config": {
+          "agent": "infra-reviewer",
+          "skills": ["infra-plan-review"],
+          "prompt": "Review the plan at {{inputs.plan_output}} (empty = ask for one). Report the create/update/replace/destroy counts first, then every address that would be destroyed or replaced with the attribute that forces it."
+        }
+      },
+      {
+        "kind": "stage",
+        "id": "drift",
+        "config": {
+          "agent": "infra-reviewer",
+          "skills": ["infra-drift-audit"],
+          "prompt": "Given {{nodes.plan.output}}, report what has drifted from the declared configuration: declared but absent, present but undeclared, and present with differing attributes. Name the attribute for every entry in the third list or leave the entry out."
+        }
+      }
+    ]
+  }
+}

@@ -189,6 +189,30 @@
     "type": "bool"
   },
   {
+    "default": true,
+    "path": "checkpoints.enabled",
+    "sensitive": false,
+    "type": "bool"
+  },
+  {
+    "default": 8,
+    "path": "checkpoints.max_file_mb",
+    "sensitive": false,
+    "type": "int"
+  },
+  {
+    "default": 200,
+    "path": "checkpoints.max_mb",
+    "sensitive": false,
+    "type": "int"
+  },
+  {
+    "default": 50,
+    "path": "checkpoints.max_turns",
+    "sensitive": false,
+    "type": "int"
+  },
+  {
     "default": false,
     "path": "companion.discovery_enabled",
     "sensitive": false,

@@ -9,6 +9,7 @@ import { TextArea, FieldError } from '../../ui/forms'
 import { useCachedData, invalidateCache } from '../../lib/useCachedData'
 import { api, type SkillItem, type SkillFile, type SkillIntegrity } from '../../lib/api'
 import { SOURCE_TONE } from './skillMeta'
+import { toneChipSkin } from '../../design/accent'
 
 /** Installed-skill inspector for the SidePanel: metadata + the skill's real file
  *  list, each openable to read its content (SKILL.md rendered as markdown,
@@ -36,7 +37,10 @@ export function SkillInspector({ skill, onDeleted, onSaved }: { skill: SkillItem
   return (
     <div className="flex flex-col gap-l">
       <div className="flex flex-wrap items-center gap-s">
-        <span className="rounded-pill px-m h-7 inline-flex items-center text-[0.8125rem]" style={{ background: `color-mix(in srgb, ${tone} 16%, transparent)`, color: tone }}>{skill.source}</span>
+        {/* Same registry, same defect, one strength up: 16% measures 3.52 for coral by the family's
+            own table. Its `always loaded` sibling keeps its raw warn tint deliberately — semantic
+            tones clear AA at 14-16% and have no `<tone>-container` to pair with. */}
+        <span className="rounded-pill px-m h-7 inline-flex items-center text-[0.8125rem]" style={toneChipSkin(tone, 16)}>{skill.source}</span>
         <span className="text-on-surface-low text-[0.8125rem]">{skill.type}</span>
         {skill.always && <span className="inline-flex items-center gap-1.5 rounded-pill px-m h-7 text-[0.8125rem]" style={{ background: 'color-mix(in srgb, var(--color-warn) 16%, transparent)', color: 'var(--color-warn)' }}><Zap size={13} /> always loaded</span>}
       </div>

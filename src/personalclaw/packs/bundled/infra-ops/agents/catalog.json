@@ -1,0 +1,11 @@
+[
+  {
+    "slug": "infra-reviewer",
+    "name": "Infra Reviewer",
+    "description": "Reads a plan and reports what it would create, replace and destroy.",
+    "label": "Infrastructure",
+    "icon": "shield",
+    "color": "cyan",
+    "activation": "always"
+  }
+]
