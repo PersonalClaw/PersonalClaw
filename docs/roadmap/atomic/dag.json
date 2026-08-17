@@ -3736,10 +3736,11 @@
         {
           "id": "CC-4",
           "title": "Screen-snip into chat: getDisplayMedia frame-grab + crop + mac path selection",
-          "status": "todo",
+          "status": "done",
           "scope": "Session 4 T4.1, T4.2; Design S4(a); Contract C5 (SnipOverlay.tsx)",
           "done_when": "on non-mac browsers a '+'-menu 'Capture screen area' does getDisplayMedia one-frame grab (tracks stopped immediately) -> crop overlay -> PNG blob -> existing api.uploadFiles pipeline -> attachment chip with OCR'd content on send; mac keeps native screencapture -i with SnipOverlay as fallback; a documented DESKTOP-CAPABILITIES S2 seam comment marks where the Electron bridge later replaces getDisplayMedia; feature-detect hides the entry where the API is absent (iOS Safari)",
-          "deps": []
+          "deps": [],
+          "pr": "feature-cc4-screen-snip (2026-08-16)"
         },
         {
           "id": "CC-5",
@@ -7463,13 +7464,13 @@
         "plan": "CA"
       },
       {
-        "id": "CC-4",
-        "title": "Screen-snip into chat: getDisplayMedia frame-grab + crop + mac path selection",
+        "id": "CC-5",
+        "title": "Optimizer polish: richer role-labeled context + explicit UNCHANGED contract",
         "plan": "CC"
       },
       {
-        "id": "CC-5",
-        "title": "Optimizer polish: richer role-labeled context + explicit UNCHANGED contract",
+        "id": "CC-6",
+        "title": "S4 wrap-up: a11y/SEL/mobile polish + docs + CHANGELOG + full validation gate",
         "plan": "CC"
       },
       {
@@ -9913,9 +9914,9 @@
         "code": "CC",
         "plan": "CHAT-CRAFT",
         "total_atoms": 8,
-        "done": 3,
+        "done": 4,
         "in_progress": 0,
-        "todo": 5,
+        "todo": 4,
         "blocked": 0
       },
       {

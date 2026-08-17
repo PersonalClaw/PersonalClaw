@@ -60,6 +60,21 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
   chip, your browser's stop button, or closing the tab) clears everything immediately. If you want
   to keep a frame, "+" → **Pin shared frame** saves it as an ordinary attachment — the only way one
   ever reaches your disk, and it is refused in a temporary or incognito chat.
+- **You can snip a region of your screen into a message, on any platform.** "+" → **Capture
+  screen area** now works everywhere, not just on a Mac. This is a different thing from **Share
+  screen** above: sharing shows the assistant a live screen for one turn and keeps nothing, while a
+  snip produces an ordinary PNG attachment you can see, remove and send — the same chip a
+  dragged-in file gets, read the same way. On macOS it still uses the system snipping tool, which is
+  the better crosshair; everywhere else your browser asks which screen or window to capture, exactly
+  **one frame** is taken, and the capture is **stopped before you crop** — so nothing keeps
+  watching your screen while you decide, and your browser's own indicator goes out immediately. Then
+  you crop it in the app: drag a region, or use the arrow keys (hold Alt to resize) with the whole
+  capture selected to begin with, so there is nothing here you can only do with a mouse. It tells you
+  the exact pixel size you are about to attach. Escape cancels and leaves nothing behind — no
+  attachment, no file on disk. Where a browser cannot capture a screen at all (iOS Safari) the menu
+  item is simply not there, rather than there and broken. One fix rides along: a capture taken with
+  the macOS tool is now actually **read** on send. Its chip has always been visible, but what was in
+  it never reached the assistant — it does now, the same as any other attachment.
 - **Optional sound cues, off until you turn them on.** Settings → Design → Personality has a new
   switch that gives you a brief tone when a turn finishes, when a tool approval needs you, and when
   something fails — nothing else. It ships **off**, and even switched on it stays quiet while the tab

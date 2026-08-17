@@ -12,6 +12,7 @@ import { join } from 'node:path'
 //
 //   ui/Modal.tsx                    aria-modal + useFocusTrap        ✓
 //   ui/dialog/DialogShell.tsx       aria-modal + useFocusTrap        ✓
+//   ui/SnipOverlay.tsx              aria-modal + useFocusTrap        ✓ (added by CHAT-CRAFT CC-4)
 //   ui/UpdateProgressOverlay.tsx    aria-modal, NO trap              ✗ fixed here
 //   ui/DegradedChip.tsx             role=dialog, no aria-modal       distinction (a popover)
 //   ui/NavRail.tsx                  role=dialog, no aria-modal       distinction (a drawer, `inert`)
@@ -91,6 +92,7 @@ describe('the rail: aria-modal implies a focus trap', () => {
     const modal = files.filter((f) => /aria-modal="true"/.test(f.src)).map((f) => f.rel).sort()
     expect(modal).toEqual([
       'ui/Modal.tsx',
+      'ui/SnipOverlay.tsx',
       'ui/UpdateProgressOverlay.tsx',
       'ui/dialog/DialogShell.tsx',
     ])

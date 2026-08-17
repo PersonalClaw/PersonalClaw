@@ -909,14 +909,21 @@ async def _inject_attachment_content(session: _ChatSession, message: str) -> str
             if isinstance(raw, list):
                 files = [str(p) for p in raw if isinstance(p, str) and p]
             break
-    # Only attachments (uploads dir) get extracted+inlined here; @-mentioned
-    # workspace files are left for the agent's own file tools to read on demand.
+    # Only attachments get extracted+inlined here; @-mentioned workspace files are left
+    # for the agent's own file tools to read on demand (their path is in the prompt text
+    # for it to find). Two dirs are attachment dirs, because a screen capture takes one
+    # of two routes to the same chip: the browser snip uploads a PNG like any other file
+    # (uploads/), while the macOS native `screencapture -i` writes to screenshots/ and
+    # threads the path straight in. Excluding the second made the native capture's chip a
+    # lie — the model was told nothing about a file the user could see attached.
     import os as _os
 
     from personalclaw.config.loader import config_dir
 
-    uploads = str((config_dir() / "uploads").resolve())
-    attached = [p for p in files if _os.path.realpath(p).startswith(uploads)]
+    roots = tuple(
+        str((config_dir() / name).resolve()) + _os.sep for name in ("uploads", "screenshots")
+    )
+    attached = [p for p in files if _os.path.realpath(p).startswith(roots)]
     if not attached:
         return message
 

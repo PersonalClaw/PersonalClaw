@@ -1,10 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { api } from '../../lib/api'
+import {
+  SHARE_MAX_EDGE,
+  acquireDisplayStream,
+  drawFrame,
+  frameSource,
+  stopStream,
+} from './displayCapture'
 
-/** Longest edge a staged frame is downscaled to before encoding. Matches the
- *  vision-model input budget the platform assumes elsewhere; a 4K screenshot sent
- *  at full size is mostly wasted tokens. */
-const MAX_EDGE = 1568
 const JPEG_QUALITY = 0.72
 
 type Delivery = 'native' | 'described' | 'none'
@@ -50,9 +53,9 @@ export function useScreenShare(session: string, onError?: (msg: string) => void)
   const [disabledReason, setDisabledReason] = useState('')
   const [sharing, setSharing] = useState(false)
   const streamRef = useRef<MediaStream | null>(null)
-  // An offscreen <video> is the portable way to read a frame out of a display
-  // stream: `ImageCapture.grabFrame` is neither in the TS DOM lib nor implemented in
-  // Safari, so it would have made screen sharing a Chrome-only feature.
+  // The acquisition, the offscreen <video> frame source and the track teardown are
+  // shared with the screen SNIP (`displayCapture.ts`) — one getDisplayMedia call site
+  // in the app, so there is one place a teardown could be got wrong.
   const videoRef = useRef<HTMLVideoElement | null>(null)
   const lastFrameRef = useRef('')
   const sessionRef = useRef(session)
@@ -73,7 +76,7 @@ export function useScreenShare(session: string, onError?: (msg: string) => void)
     streamRef.current = null
     lastFrameRef.current = ''
     if (videoRef.current) { videoRef.current.srcObject = null; videoRef.current = null }
-    if (stream) stream.getTracks().forEach((t) => t.stop())
+    stopStream(stream)
     setSharing(false)
     if (notifyServer && sessionRef.current) {
       // Drops the server-side slot immediately rather than leaving it for the next
@@ -87,40 +90,26 @@ export function useScreenShare(session: string, onError?: (msg: string) => void)
   useEffect(() => () => teardown(true), [teardown])
 
   const start = useCallback(async () => {
-    const md = navigator.mediaDevices as MediaDevices & {
-      getDisplayMedia?: (c: MediaStreamConstraints) => Promise<MediaStream>
-    }
-    if (typeof md?.getDisplayMedia !== 'function') {
-      onError?.('This browser cannot share a screen.')
-      return
-    }
-    let stream: MediaStream
-    try {
-      stream = await md.getDisplayMedia({ video: true, audio: false })
-    } catch (e) {
-      const name = (e as DOMException)?.name
+    const acquired = await acquireDisplayStream()
+    if (typeof acquired === 'string') {
       // A cancelled picker is not an error — the user changed their mind.
-      if (name !== 'AbortError' && name !== 'NotAllowedError') {
-        onError?.('Screen sharing could not start.')
-      }
+      if (acquired === 'unsupported') onError?.('This browser cannot share a screen.')
+      else if (acquired === 'failed') onError?.('Screen sharing could not start.')
       return
     }
+    const stream = acquired
     try {
       await api.screenShareSignal(sessionRef.current, 'start')
     } catch {
       // The server refused (the switch went off under us). Do not keep a capture
       // running that the backend will not accept a frame from.
-      stream.getTracks().forEach((t) => t.stop())
+      stopStream(stream)
       onError?.('Screen sharing is off. Turn it on in Settings → Chat.')
       refresh()
       return
     }
     streamRef.current = stream
-    const video = document.createElement('video')
-    video.muted = true
-    video.playsInline = true
-    video.srcObject = stream
-    try { await video.play() } catch { /* a paused element still yields frames once metadata lands */ }
+    const video = await frameSource(stream)
     videoRef.current = video
     setSharing(true)
     // The browser's own "Stop sharing" button ends the track without telling us any
@@ -142,16 +131,8 @@ export function useScreenShare(session: string, onError?: (msg: string) => void)
     if (!track || track.readyState !== 'live') return
     let dataUrl = ''
     try {
-      const w = video.videoWidth
-      const h = video.videoHeight
-      if (!w || !h) return
-      const scale = Math.min(1, MAX_EDGE / Math.max(w, h))
-      const canvas = document.createElement('canvas')
-      canvas.width = Math.max(1, Math.round(w * scale))
-      canvas.height = Math.max(1, Math.round(h * scale))
-      const ctx = canvas.getContext('2d')
-      if (!ctx) return
-      ctx.drawImage(video, 0, 0, canvas.width, canvas.height)
+      const canvas = drawFrame(video, SHARE_MAX_EDGE)
+      if (!canvas) return
       dataUrl = canvas.toDataURL('image/jpeg', JPEG_QUALITY)
     } catch {
       // A frame we could not grab is simply not sent. Failing the turn over it would

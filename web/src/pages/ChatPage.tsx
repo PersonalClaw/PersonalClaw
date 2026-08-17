@@ -62,7 +62,9 @@ import { Modal } from '../ui/Modal'
 import { confirm, promptInput } from '../ui/dialog'
 import { type ChatTurn, type Segment, type ToolSegment, type ApprovalSegment, type ActivitySegment, type SubagentCard, type HistMsg, type MemoryCitation, userTurn, assistantTurn, hydrateTurns, turnText, deriveActivity } from './chat/chatTypes'
 import { useIdentity, firstNameOf } from '../app/identity'
-import { useIsMac } from '../app/usePlatform'
+import { usePlatform } from '../app/usePlatform'
+import { SnipOverlay } from '../ui/SnipOverlay'
+import { chooseCaptureProvider, cropToPngFile, displayCaptureSupported, grabOneFrame, type SnipRect } from '../ui/composer/displayCapture'
 import { notify } from '../app/appSdk'
 import { spring, stagger, listItemEnter, expr } from '../design/motion'
 import { api, type ApprovalMode, type TaskMode, type ReasoningEffort, type ChatSessionSummary, type ChatHistoryMsg, type DiscoveredAgent, type MemoryMode, type NudgeLoop, type ChatFolder, type ChatTag, type RetagJob, type SessionTemplate } from '../lib/api'
@@ -597,7 +599,15 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
   // composer extras: prompt history (↑/↓), context-usage %, optimize-in-flight,
   // memory mode for the next NEW session, queued-while-streaming message.
   const [attachedPaths, setAttachedPaths] = useState<string[]>([])
-  const isMac = useIsMac()  // gates the macOS-only "Capture screenshot" composer action
+  // Which provider the "Capture screen area" entry uses — macOS keeps the native
+  // `screencapture -i` snip, everywhere else grabs a frame in the browser and crops it
+  // in-app. One decision point (chooseCaptureProvider), two providers.
+  const platform = usePlatform()
+  const displayCapture = displayCaptureSupported()
+  const captureProvider = chooseCaptureProvider(platform, displayCapture)
+  // A captured frame awaiting a crop. Non-null = SnipOverlay is up; the capture is
+  // ALREADY stopped by then, so nothing is watching the screen while the user crops.
+  const [snip, setSnip] = useState<{ url: string; width: number; height: number; source: HTMLCanvasElement } | null>(null)
   // Live upload progress for a large attach (chunked/resumable). name → pct; a
   // small file completes in one POST and never shows here.
   const [uploads, setUploads] = useState<{ name: string; pct: number }[]>([])
@@ -2137,17 +2147,58 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
     if (paths.length) setAttachedPaths((prev) => [...prev, ...paths.filter((p) => !prev.includes(p))])
   }
 
-  // macOS: interactive region capture → attach the resulting PNG to the next send.
-  // The screenshot lands in a server dir already readable by the send path, so we
-  // thread its path straight into attachedPaths (same pipeline as an upload result).
-  async function captureScreenshot() {
-    setAttachError(null)
+  // macOS: interactive region capture on the GATEWAY host (`screencapture -i`) →
+  // attach the resulting PNG to the next send. The screenshot lands in a server dir the
+  // send path already reads, so we thread its path straight into attachedPaths (same
+  // pipeline as an upload result). Returns '' when it handled the request (attached, or
+  // the user cancelled), else the reason it could not run.
+  async function captureNative(): Promise<string> {
     try {
       const r = await api.screenshot()
-      if (r.error) { setAttachError(r.error); return }
+      if (r.error) return r.error
       if (r.path) setAttachedPaths((prev) => (prev.includes(r.path) ? prev : [...prev, r.path]))
       // r.path === '' means the user cancelled the capture — no-op, no error.
-    } catch (e) { setAttachError((e as Error).message) }
+      return ''
+    } catch (e) { return (e as Error).message || 'Screen capture failed' }
+  }
+
+  // Everywhere else: one frame out of the browser's display capture (tracks stopped
+  // immediately), then crop it in-app. The PNG goes through the ORDINARY upload path,
+  // so it gets the same policy check, uploads dir, extraction-at-upload and chip as a
+  // dragged-in file — a snip is an attachment, not a special case.
+  async function captureInBrowser() {
+    const r = await grabOneFrame()
+    if ('error' in r) {
+      // A dismissed picker is a decision, not a failure — say nothing.
+      if (r.error === 'cancelled') return
+      setAttachError(r.error === 'unsupported'
+        ? 'This browser cannot capture the screen.'
+        : 'The screen capture did not produce a frame.')
+      return
+    }
+    setSnip({ url: r.frame.toDataURL('image/png'), width: r.frame.width, height: r.frame.height, source: r.frame })
+  }
+
+  async function captureScreenArea() {
+    setAttachError(null)
+    if (captureProvider === 'native') {
+      const err = await captureNative()
+      if (!err) return
+      // The native snip could not run on this host (no display server, binary refused).
+      // Re-run the SAME decision with the native path marked failed rather than writing
+      // a second fallback policy here; only dead-end with the error if nothing is left.
+      if (chooseCaptureProvider(platform, displayCapture, true) !== 'browser') { setAttachError(err); return }
+    }
+    await captureInBrowser()
+  }
+
+  async function attachSnip(rect: SnipRect) {
+    const src = snip
+    setSnip(null)
+    if (!src) return
+    const file = await cropToPngFile(src.source, rect)
+    if (!file) { setAttachError('The cropped capture could not be encoded.'); return }
+    await attach([file])
   }
 
   const stage = (
@@ -2272,6 +2323,13 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
             onRemove={(slug) => setMentionedArtifacts((prev) => prev.filter((a) => a.slug !== slug))}
             onClose={() => setArtifactPickerOpen(false)} />
         )}
+        {/* Crop step for a browser-captured frame. The capture is already stopped by
+            the time this renders, so cancelling leaves nothing behind — neither an
+            attachment nor a live track. */}
+        {snip && (
+          <SnipOverlay frame={snip.url} width={snip.width} height={snip.height}
+            onCancel={() => setSnip(null)} onConfirm={(rect) => { void attachSnip(rect) }} />
+        )}
         {knowledgePickerOpen && (
           <KnowledgeContextPicker
             attached={mentionedKnowledge}
@@ -2310,7 +2368,10 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
             <>
               <MenuRow icon={<BookText size={16} />} label="Add knowledge" hint="Search the library → attach to the prompt" onClick={() => { close(); setKnowledgePickerOpen(true) }} />
               <MenuRow icon={<Boxes size={16} />} label="Reference an artifact" hint="Ground the reply in an artifact's current version" onClick={() => { close(); setArtifactPickerOpen(true) }} />
-              {isMac && <MenuRow icon={<Camera size={16} />} label="Capture screenshot" hint="Snip a region → attach" onClick={() => { close(); void captureScreenshot() }} />}
+              {/* Feature-detected out entirely where neither provider exists (iOS
+                  Safari has no getDisplayMedia and no gateway binary to shell out to) —
+                  a control that can only fail is worse than no control. */}
+              {captureProvider !== 'none' && <MenuRow icon={<Camera size={16} />} label="Capture screen area" hint="Snip a region → attach" onClick={() => { close(); void captureScreenArea() }} />}
               {/* Pin the shared frame (§5.4) — the ONE deliberate promotion from
                   ephemeral to file. Offered only while sharing, because the frame it
                   pins is the one the browser still holds: nothing older can be pinned,

@@ -54,7 +54,13 @@ describe('useScreenShare — capture lifecycle rails', () => {
   })
 
   it('stops every track on teardown rather than only hiding the chip', () => {
-    expect(src).toMatch(/getTracks\(\)\.forEach\(\(t\) => t\.stop\(\)\)/)
+    // The teardown moved into the shared acquisition module (CHAT-CRAFT CC-4): screen
+    // SHARE and screen SNIP now go through ONE getDisplayMedia call site, so there is
+    // one place a track could be left running. The claim is unchanged — assert it where
+    // the code now lives, plus the fact that sharing routes through it.
+    const shared = readFileSync(join(process.cwd(), 'src/ui/composer/displayCapture.ts'), 'utf8')
+    expect(shared).toMatch(/getTracks\(\)\.forEach\(\(t\) => t\.stop\(\)\)/)
+    expect(src).toMatch(/stopStream\(stream\)/)
   })
 
   it('stops sharing when the component unmounts', () => {
