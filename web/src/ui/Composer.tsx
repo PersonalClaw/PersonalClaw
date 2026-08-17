@@ -9,6 +9,8 @@ import { resolveSendButton } from './composer/sendButtonState'
 import { useMicRecorder } from './composer/useMicRecorder'
 import type { ComposerProps } from './composer/types'
 import { useIsMobile } from '../app/useIsMobile'
+import { usePushToTalk, ensureMicGrant } from '../lib/pushToTalk'
+import { MicCaptureChip } from './MicCaptureChip'
 
 // MIN_MAX_H is the resize FLOOR (user can shrink to ~1 line); DEFAULT_REST_H is
 // the resting height a fresh composer opens at — ~3-4 lines tall (17px × 1.5
@@ -88,6 +90,20 @@ export function Composer({
     onSubmit: (text) => { onChange(text); onHandsFreeSubmit!(text) },
   } : undefined)
 
+  // Push-to-talk (DESKTOP-CAPABILITIES S3): the desktop shell's global chord drives the
+  // SAME recorder the mic button drives — one owner of the microphone, so a chord press
+  // and a button click cannot end up holding two tracks. `capturing` is read from the
+  // recorder's real state, which is what the shell's menu-bar indicator is drawn from.
+  // Inert in a browser tab (no bridge, no config read, no binding).
+  usePushToTalk({
+    capturing: mic.state === 'recording',
+    enabled: !!controls.mic && !!onTranscribe && !listening,
+    // The grant is checked BEFORE opening the stream so a denied microphone produces an
+    // actionable sentence rather than a bare getUserMedia rejection.
+    onStart: () => { void ensureMicGrant().then((err) => (err ? onMicError?.(err) : mic.toggle())) },
+    onStop: mic.toggle,
+  })
+
   // `restH` is the user-set resting height — the editor is at least this tall
   // even when empty (so the handle resizes it at rest), and auto-grows with
   // content up to MAX_MAX_H. Dragging the handle sets restH.
@@ -140,6 +156,10 @@ export function Composer({
           className={optimizing ? '[&_svg]:animate-spin' : undefined}
           onClick={optimizing || !canSend ? undefined : onOptimize} />
       )}
+      {/* The in-app half of the capture indicator. Rendered from the recorder's LIVE
+          state, so a denied microphone (no stream) shows nothing — and a capture that
+          ends any way at all takes the chip with it. */}
+      {mic.state === 'recording' && <MicCaptureChip onStop={mic.toggle} />}
       {controls.mic && onTranscribe && !listening && (
         <IconButton icon={mic.state === 'transcribing' ? Loader2 : Mic} label={micLabel}
           active={mic.state !== 'idle'} size={40}

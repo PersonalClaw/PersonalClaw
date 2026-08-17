@@ -1,4 +1,4 @@
-const { app, BaseWindow, BrowserWindow, WebContentsView, shell, dialog, Tray, Menu, nativeImage, nativeTheme, ipcMain, systemPreferences, Notification } = require("electron");
+const { app, BaseWindow, BrowserWindow, WebContentsView, shell, dialog, Tray, Menu, nativeImage, nativeTheme, ipcMain, systemPreferences, Notification, globalShortcut } = require("electron");
 const fs = require("fs");
 const os = require("os");
 const { spawn, execFileSync } = require("child_process");
@@ -7,6 +7,7 @@ const http = require("http");
 const { findPersonalclawBin } = require("./find-bin");
 const { attachContextMenu } = require("./context-menu");
 const { IPC_CHANNELS, makeCapabilities, registerCapabilityIpc } = require("./capabilities");
+const { makePushToTalk, registerPushToTalkIpc } = require("./pushToTalk");
 
 /**
  * Resolve the user's real login-shell PATH.
@@ -195,6 +196,47 @@ const capabilities = makeCapabilities({
     pushCapabilityState();
   },
 });
+
+/**
+ * Push-to-talk (DC-3 T3.1). The shell owns the chord; the RENDERER owns the
+ * microphone. `onCapturing` is therefore driven by the renderer's report of its live
+ * stream, never by "we forwarded a press" — see the module header for why that
+ * direction is the one that keeps the indicator honest.
+ */
+const pushToTalk = makePushToTalk({
+  globalShortcut,
+  send: (payload) => {
+    try {
+      mainWindow?.webContents?.send(IPC_CHANNELS.pushToTalk, payload);
+    } catch {
+      /* window may be gone mid-press */
+    }
+  },
+  onCapturing: (on) => setCaptureIndicator(on),
+});
+
+/**
+ * The always-on capturing indicator (DC-3 T3.1).
+ *
+ * It lives in the MENU BAR, not in the page, because the chord is global: press it
+ * while the window is hidden behind a full-screen editor and an in-app chip would be
+ * a capture indicator nobody can see. macOS draws its own orange mic dot too, and that
+ * one is the trustworthy signal precisely because the app cannot suppress it — this is
+ * an addition to it, saying WHICH app is listening, never a substitute for it.
+ *
+ * `title` (text beside the icon) rather than only a tooltip: a tooltip requires a
+ * hover to discover, and "you have to go looking for it" disqualifies an indicator
+ * whose whole job is to be noticed without being sought.
+ */
+function setCaptureIndicator(on) {
+  if (!tray) return;
+  try {
+    tray.setTitle(on ? "● Listening" : "");
+    tray.setToolTip(on ? "PersonalClaw is listening — press the shortcut again to stop" : "PersonalClaw");
+  } catch {
+    /* tray may be destroyed during shutdown */
+  }
+}
 
 /** Read the gateway's per-session local secret. Same-user filesystem access is the
  * claim being proved: "I am a process running as this user on this machine". */
@@ -691,6 +733,10 @@ if (!app.requestSingleInstanceLock()) {
     // loads so a renderer's first `pclawDesktop.capabilities.probe()` always has
     // a handler waiting.
     registerCapabilityIpc(ipcMain, capabilities);
+    // Push-to-talk's handlers, on their own channels. The chord itself is bound by
+    // the RENDERER (it is the process that reads `voice.push_to_talk_chord` from the
+    // gateway), so the shell never has to parse config to know what to listen for.
+    registerPushToTalkIpc(ipcMain, pushToTalk, IPC_CHANNELS);
 
     createTray();
     const win = createWindow();
@@ -718,6 +764,11 @@ if (!app.requestSingleInstanceLock()) {
 
 app.on("before-quit", () => {
   isQuitting = true;
+  // Release the chord and take the indicator down before the tray is torn out from
+  // under it — a quit that left "● Listening" as the last thing drawn would be the
+  // one moment the indicator is guaranteed to be lying.
+  pushToTalk.unbind();
+  pushToTalk.clearCapturing();
   unregisterFromGateway();
   stopGateway();
 });

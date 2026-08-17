@@ -20,6 +20,7 @@ from personalclaw.dashboard.handlers.core import _EDITABLE_CONFIG
 from personalclaw.voice.duplex import (
     DEFAULT_CONFIRMATION_PHRASES,
     DEFAULT_EXIT_PHRASES,
+    DEFAULT_PUSH_TO_TALK_CHORD,
     VOICE_DISCLAIMER,
 )
 
@@ -319,10 +320,14 @@ class TestVoiceConfigRoundTrip:
         "echo_filter_enabled",
         "duplex_mute_enabled",
         "clean_for_speech_enabled",
+        # DESKTOP-CAPABILITIES S3 — the desktop push-to-talk chord. A string among
+        # booleans, and the only field here a NON-gateway process consumes (the Electron
+        # shell binds it), which is why its round trip is worth the same ratchet.
+        "push_to_talk_chord",
         "voice_disclaimer_enabled",
     )
 
-    def test_six_fields_with_labels_and_help(self):
+    def test_every_field_has_a_label_and_help(self):
         fields = VoiceConfig.__dataclass_fields__
         assert tuple(fields) == self.FIELDS
         for name in self.FIELDS:
@@ -337,6 +342,7 @@ class TestVoiceConfigRoundTrip:
         assert cfg.echo_filter_enabled is True
         assert cfg.duplex_mute_enabled is True
         assert cfg.clean_for_speech_enabled is True
+        assert cfg.push_to_talk_chord == DEFAULT_PUSH_TO_TALK_CHORD
         assert cfg.voice_disclaimer_enabled is True
 
     def test_load_reads_every_field(self, voice_home):
@@ -347,6 +353,7 @@ class TestVoiceConfigRoundTrip:
             echo_filter_enabled=False,
             duplex_mute_enabled=False,
             clean_for_speech_enabled=False,
+            push_to_talk_chord="Alt+F13",
             voice_disclaimer_enabled=False,
         )
         cfg = AppConfig.load().voice
@@ -355,6 +362,7 @@ class TestVoiceConfigRoundTrip:
         assert cfg.echo_filter_enabled is False
         assert cfg.duplex_mute_enabled is False
         assert cfg.clean_for_speech_enabled is False
+        assert cfg.push_to_talk_chord == "Alt+F13"
         assert cfg.voice_disclaimer_enabled is False
 
     def test_load_falls_back_to_defaults_on_junk(self, voice_home):
@@ -373,8 +381,9 @@ class TestVoiceConfigRoundTrip:
         section = AppConfig.load().to_dict()["voice"]
         assert set(section) == set(self.FIELDS)
 
-    def test_patch_allowlist_covers_all_six(self):
+    def test_patch_allowlist_covers_every_field(self):
         for name in self.FIELDS:
             assert f"voice.{name}" in _EDITABLE_CONFIG, name
         assert _EDITABLE_CONFIG["voice.confirmation_phrases"]["type"] == "str_list"
         assert _EDITABLE_CONFIG["voice.echo_filter_enabled"]["type"] == "bool"
+        assert _EDITABLE_CONFIG["voice.push_to_talk_chord"]["type"] == "str"

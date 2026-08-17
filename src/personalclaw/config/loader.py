@@ -17,7 +17,11 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal
 
-from personalclaw.voice.duplex import DEFAULT_CONFIRMATION_PHRASES, DEFAULT_EXIT_PHRASES
+from personalclaw.voice.duplex import (
+    DEFAULT_CONFIRMATION_PHRASES,
+    DEFAULT_EXIT_PHRASES,
+    DEFAULT_PUSH_TO_TALK_CHORD,
+)
 
 try:
     import jsonschema
@@ -3745,6 +3749,19 @@ class VoiceConfig:
             "always keeps the full text — only the audio is cleaned.",
         ),
     )
+    push_to_talk_chord: str = field(
+        default=DEFAULT_PUSH_TO_TALK_CHORD,
+        metadata=_meta(
+            "Push-to-Talk Shortcut",
+            "The global shortcut the desktop app binds for push-to-talk: press to "
+            "start capturing the microphone, press again to stop and transcribe into "
+            "the composer. Needs at least one modifier — a bare key would be taken "
+            "from every other app on the machine. The desktop shell is what actually "
+            "binds it, so an unusable or already-taken chord is refused there with a "
+            "reason rather than failing silently. Ignored in a browser tab, which has "
+            "no global shortcuts.",
+        ),
+    )
     voice_disclaimer_enabled: bool = field(
         default=True,
         metadata=_meta(
@@ -4641,6 +4658,16 @@ class AppConfig:
                 ),
                 exit_phrases=(
                     _voice_phrases(voice_data.get("exit_phrases")) or list(DEFAULT_EXIT_PHRASES)
+                ),
+                # A blank or non-string chord falls back to the shipped default rather
+                # than storing "" — an empty accelerator binds nothing, which would make
+                # push-to-talk silently do nothing with no error anywhere. The GRAMMAR is
+                # not second-guessed here: the shell refuses an unbindable chord with a
+                # reason the Settings control shows, which is a better place to say so
+                # than a config load that has no user watching it.
+                push_to_talk_chord=(
+                    str(voice_data.get("push_to_talk_chord") or "").strip()
+                    or DEFAULT_PUSH_TO_TALK_CHORD
                 ),
                 echo_filter_enabled=bool(voice_data.get("echo_filter_enabled", True)),
                 duplex_mute_enabled=bool(voice_data.get("duplex_mute_enabled", True)),

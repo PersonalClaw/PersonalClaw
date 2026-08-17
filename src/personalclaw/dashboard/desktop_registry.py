@@ -55,6 +55,12 @@ CAPABILITIES: tuple[str, ...] = (
     "tray",
     "screen_capture",
     "login_item",
+    # DC-3 T3.3. Present in the vocabulary so "no, and here is why" is a state the
+    # panel and app-permission checks can READ. The shell always reports it
+    # ``unavailable`` with the Screen-Recording reason — capturing speaker output
+    # would mean requesting the right to record the screen, so PersonalClaw captures
+    # the microphone only (docs/guides/desktop.md says the same in prose).
+    "system_audio",
 )
 
 # The permission states a capability may report. ``unavailable`` means the host

@@ -9,6 +9,7 @@ Nothing in here performs I/O or touches a model — the endpoints in
 from personalclaw.voice.duplex import (
     DEFAULT_CONFIRMATION_PHRASES,
     DEFAULT_EXIT_PHRASES,
+    DEFAULT_PUSH_TO_TALK_CHORD,
     ECHO_MIN_RUN,
     TAIL_WINDOW_WORDS,
     VOICE_DISCLAIMER,
@@ -21,6 +22,7 @@ from personalclaw.voice.duplex import (
 __all__ = [
     "DEFAULT_CONFIRMATION_PHRASES",
     "DEFAULT_EXIT_PHRASES",
+    "DEFAULT_PUSH_TO_TALK_CHORD",
     "ECHO_MIN_RUN",
     "TAIL_WINDOW_WORDS",
     "VOICE_DISCLAIMER",

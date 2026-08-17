@@ -173,6 +173,23 @@ Alert keywords, name-mention alerts, and retention live in the Inbox settings pa
 | `tools.projection_rules[].match_regex` | string | `""` | Settings → Tool output | Regex matched against the start of a tool's output. |
 | `tools.projection_rules[].strategy` | enum: `log`, `diff`, `json`, `test`, `csv` | `log` | Settings → Tool output | The builtin projector to apply. |
 
+## Voice (`voice.*`)
+
+Behaviour of dictation and spoken replies. The MODEL for speech-to-text and
+text-to-speech is bound in Settings → Models; these are the provider-agnostic knobs on
+top of it. All of them are comfort settings rather than safety guards — turning one off
+makes the voice loop noisier, never less safe.
+
+| Key | Type | Default | Where to set | Description |
+|---|---|---|---|---|
+| `voice.push_to_talk_chord` | string | `CommandOrControl+Shift+Space` | Settings → Speech & Transcription | The global shortcut the **desktop app** binds for push-to-talk: press to start capturing the microphone, press again to stop and transcribe into the composer at your cursor. An Electron accelerator string; needs at least one modifier, since a bare key would be taken from every other app on the machine. The desktop shell binds it and refuses an unusable or already-taken chord with a reason. Ignored in a browser tab (no global shortcuts). See [the desktop guide](../guides/desktop.md). |
+| `voice.confirmation_phrases` | list of strings | `["do it", "go ahead", "send it", "execute"]` | Settings → Speech & Transcription | In hands-free mode a transcript accumulates and is only sent once one of these phrases ends what you just said, so a half-finished thought never becomes an executed instruction. Push-to-talk and typed input ignore this. An empty list falls back to these defaults. |
+| `voice.exit_phrases` | list of strings | `["cancel", "never mind", "forget it"]` | Settings → Speech & Transcription | Saying one of these in hands-free mode discards the accumulated transcript without sending it. |
+| `voice.duplex_mute_enabled` | boolean | `true` | Settings → Speech & Transcription | Suspend the microphone and discard queued audio while a spoken reply plays. This is what stops the assistant hearing itself. |
+| `voice.echo_filter_enabled` | boolean | `true` | Settings → Speech & Transcription | Drop a transcription sharing three consecutive words with what the assistant just spoke — the backstop for speaker bleed. Hands-free requests only; the dashboard shows the drop instead of looking deaf. |
+| `voice.clean_for_speech_enabled` | boolean | `true` | Settings → Speech & Transcription | Strip code blocks, reduce URLs to their domain and paths to their filename, and drop CLI flags before synthesis. The chat transcript always keeps the full text — only the audio is cleaned. |
+| `voice.voice_disclaimer_enabled` | boolean | `true` | Settings → Speech & Transcription | Append a one-line note to a dictated message telling the model the text came from speech recognition, so it self-corrects garbled homophones instead of confidently misreading them. |
+
 ## Dashboard (`dashboard.*`)
 
 | Key | Type | Default | Where to set | Description |

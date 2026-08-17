@@ -39,6 +39,7 @@ const CAPABILITIES = [
   "tray",
   "screen_capture",
   "login_item",
+  "system_audio",
 ];
 
 /** The permission states a capability may report (mirrors GRANT_STATES). */
@@ -54,6 +55,14 @@ const IPC_CHANNELS = {
   snapshot: `${IPC_PREFIX}snapshot`,
   /** main → renderer push when a capability changes */
   state: `${IPC_PREFIX}state`,
+  /** renderer → main: bind the push-to-talk chord (DC-3). Resolves the
+   * registration result, so an already-taken chord is an answer, not a silence. */
+  hotkeyBind: `${IPC_PREFIX}hotkey-bind`,
+  /** renderer → main: "the microphone is live" / "it is not". The renderer is the
+   * only process that opens the mic, so it is the only honest source for this. */
+  capturing: `${IPC_PREFIX}capturing`,
+  /** main → renderer push: the chord fired, or the shell is asking capture to stop. */
+  pushToTalk: `${IPC_PREFIX}push-to-talk`,
 };
 
 /**
@@ -90,6 +99,23 @@ const SPECS = {
     label: "Native notifications",
   },
   global_hotkey: { kind: "shell", platforms: ["darwin"], requestable: false, label: "Global hotkey" },
+  // DC-3 T3.3 — the honest system-audio answer. Capturing what the SPEAKERS play
+  // (as opposed to what the microphone hears) is not a permission we are missing:
+  // macOS exposes no audio-only tap, so the only route is the Screen Recording
+  // entitlement's audio side-channel, which means asking for the right to record
+  // the screen in order to record sound. We are not shipping that trade quietly,
+  // so this capability reports `unavailable` WITH THE REASON on every platform and
+  // there is no code path that captures system audio. `docs/guides/desktop.md`
+  // states the same thing in prose; a test asserts the two agree.
+  system_audio: {
+    kind: "unsupported",
+    platforms: [],
+    requestable: false,
+    unsupported:
+      "Capturing system audio needs the macOS Screen Recording entitlement (there " +
+      "is no audio-only tap), so PersonalClaw captures the microphone only.",
+    label: "System audio",
+  },
   tray: { kind: "shell", platforms: ["darwin"], requestable: false, label: "Menu-bar item" },
   login_item: { kind: "shell", platforms: ["darwin"], requestable: false, label: "Open at login" },
 };
@@ -126,6 +152,10 @@ function makeCapabilities(deps = {}) {
   function probe(cap) {
     const spec = SPECS[cap];
     if (!spec) return UNAVAILABLE("unknown capability");
+    // Checked BEFORE the platform test: "not implemented on darwin" would read as a
+    // porting gap that a later release closes, when the real answer is a deliberate
+    // refusal that no platform changes. The reason has to say which it is.
+    if (spec.kind === "unsupported") return UNAVAILABLE(spec.unsupported);
     if (!spec.platforms.includes(platform)) {
       return UNAVAILABLE(`not implemented on ${platform || "this platform"}`);
     }
