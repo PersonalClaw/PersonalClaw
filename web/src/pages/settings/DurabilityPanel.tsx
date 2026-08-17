@@ -1,12 +1,14 @@
 import { useEffect, useState } from 'react'
 import { epochSeconds } from '../../lib/epoch'
-import { HardDriveDownload, Loader2, ShieldCheck } from 'lucide-react'
-import { api, type DurabilitySnapshots, type DurabilityStatus } from '../../lib/api'
+import { HardDriveDownload, Loader2, ShieldAlert, ShieldCheck, ShieldQuestion } from 'lucide-react'
+import { api, type DurabilityArchive, type DurabilityArchives, type DurabilityStatus } from '../../lib/api'
 import { notify } from '../../app/appSdk'
 import { useCachedData } from '../../lib/useCachedData'
 import { PanelHeader, Section, Row, Toggle, SavedToast } from './settingsUI'
 import { NumberField } from '../../ui/forms'
 import { Button } from '../../ui/Button'
+import { fvs } from '../../design/fontWeight'
+import { confirm } from '../../ui/dialog'
 import { FormSkeleton, LoadError } from '../../ui/ListScaffold'
 
 /** Scheduled backups (DURABILITY-AND-SYNC §3).
@@ -17,11 +19,11 @@ import { FormSkeleton, LoadError } from '../../ui/ListScaffold'
  *  fields get their control (the config contract's fifth leg), and the existing
  *  status/snapshots endpoints finally have a reader.
  *
- *  Deliberately NOT here: restore. Replace-restore refuses to run while the gateway
- *  is up, so a useful restore endpoint needs staged-swap-on-next-boot machinery that
- *  doesn't exist yet — and a button that appears to restore and doesn't is a trap.
- *  Restore stays `personalclaw restore`, and the panel says so rather than leaving a
- *  user hunting for it. */
+ *  §6 (DAS-10) adds the ARCHIVE BROWSER below: each snapshot's per-domain counts read
+ *  from its own manifest, the last drill's verdict, a plan-first preview and a
+ *  merge-restore. `replace` restore is still command-line only — the server refuses one
+ *  while the gateway runs and this panel IS the gateway, so a replace button here would
+ *  always fail, and a control that reliably errors is worse than no control. */
 export function DurabilityPanel() {
   const [cfg, setCfg] = useState<Record<string, unknown> | null>(null)
 
@@ -32,7 +34,7 @@ export function DurabilityPanel() {
       // (a status strip and a snapshot list) rather than defining what its controls claim.
       api.personalclawConfig(),
       api.durabilityStatus().catch(() => null),
-      api.durabilitySnapshots().catch(() => null),
+      api.durabilityArchive().catch(() => null),
     ])
     return {
       durability: (plaw.durability ?? {}) as Record<string, unknown>,
@@ -55,6 +57,7 @@ export function DurabilityPanel() {
         hint="What gets backed up automatically, how long copies are kept, and whether a restore is ever actually rehearsed." />
       <ScheduleSection cfg={cfg} setCfg={setCfg} status={data.status} />
       <RetentionSection cfg={cfg} setCfg={setCfg} snaps={data.snaps} />
+      <ArchiveSection snaps={data.snaps} onChanged={refresh} />
     </div>
   )
 }
@@ -129,8 +132,9 @@ function ScheduleSection({ cfg, setCfg, status }: {
             disabled={!!running} onClick={() => run('drill', 'Restore drill')} />
         </div>
         <p className="pb-3 text-on-surface-low text-[0.75rem]">
-          Restoring a backup is a command-line action — <code>personalclaw restore</code> — because
-          it has to replace live state while the gateway is stopped.
+          To restore, use the archive list below. A full <em>replace</em> restore stays a
+          command-line action — <code>personalclaw restore --replace</code> — because it has to
+          overwrite live state while the gateway is stopped.
         </p>
       </div>
     </Section>
@@ -142,7 +146,7 @@ function ScheduleSection({ cfg, setCfg, status }: {
 function RetentionSection({ cfg, setCfg, snaps }: {
   cfg: Record<string, unknown>
   setCfg: (c: Record<string, unknown>) => void
-  snaps: DurabilitySnapshots | null
+  snaps: DurabilityArchives | null
 }) {
   const [saved, flash] = useSavedFlash()
   const patch = usePatch(cfg, setCfg, flash)
@@ -165,47 +169,168 @@ function RetentionSection({ cfg, setCfg, snaps }: {
           value={num(cfg.keep_monthly, 12)} min={0} max={120} suffix="months"
           onCommit={(n) => patch('keep_monthly', n)} />
 
-        {snaps && (
-          <div className="border-t border-outline-var py-3">
-            {snaps.snapshots.length === 0 ? (
-              <div className="text-on-surface-low text-[0.8125rem]">
-                No snapshots yet. One appears after the first nightly run, or as soon as you
-                run a snapshot above.
-              </div>
-            ) : (
-              <>
-                <div className="mb-2 text-on-surface-var text-[0.8125rem]">
-                  {snaps.snapshots.length} {snaps.snapshots.length === 1 ? 'snapshot' : 'snapshots'}
-                  {pruneCount > 0 && (
-                    <> · <span className="text-on-surface-low">
-                      {pruneCount} would be removed by the settings above on the next pass
-                    </span></>
-                  )}
-                </div>
-                <div className="flex flex-col gap-1">
-                  {snaps.snapshots.slice(0, 12).map((s) => (
-                    <div key={s.name} className="flex items-baseline justify-between gap-3 text-[0.75rem]">
-                      <span className={`min-w-0 flex-1 truncate ${s.retained ? 'text-on-surface-var' : 'text-on-surface-low line-through'}`}>
-                        {s.name}
-                      </span>
-                      <span className="shrink-0 text-on-surface-low">{formatSize(s.size)}</span>
-                    </div>
-                  ))}
-                </div>
-                {snaps.snapshots.length > 12 && (
-                  <div className="mt-1.5 text-on-surface-low text-[0.75rem]">
-                    …and {snaps.snapshots.length - 12} older
-                  </div>
-                )}
-                <div className="mt-2 text-on-surface-low text-[0.75rem]">
-                  Stored in <code>{snaps.directory}</code>
-                </div>
-              </>
-            )}
+        {pruneCount > 0 && (
+          <div className="border-t border-outline-var py-3 text-on-surface-low text-[0.8125rem]">
+            {pruneCount} of {snaps?.archives.length ?? 0} snapshots would be removed by the
+            settings above on the next pass. They are struck through in the archive below.
           </div>
         )}
       </div>
     </Section>
+  )
+}
+
+// ── The archive browser (DURABILITY-AND-SYNC §6, DAS-10) ─────────────────────
+
+/** The archive browser §6 asks for: date, size, per-domain counts read from each
+ *  archive's own manifest, the last drill's verdict on the archive it exercised, and a
+ *  restore that is plan-first.
+ *
+ *  Restore honesty: PREVIEW and MERGE work from here, REPLACE does not — the server
+ *  refuses a replace while the gateway is running, and this panel IS the gateway. So
+ *  replace is named as a command-line action rather than offered as a button that would
+ *  always fail. A control that reliably errors is worse than no control. */
+function ArchiveSection({ snaps, onChanged }: {
+  snaps: DurabilityArchives | null
+  onChanged: () => void
+}) {
+  const [busy, setBusy] = useState('')
+  const [plan, setPlan] = useState<{ id: string; text: string } | null>(null)
+
+  if (!snaps) {
+    return (
+      <Section title="Archive" hint="Every snapshot on disk, what is in it, and whether a restore from it has been verified.">
+        <div className="rounded-lg bg-surface-container px-4 py-3 text-on-surface-low text-[0.8125rem]">
+          The archive list could not be read. The backups above may still be running —
+          reload to try again.
+        </div>
+      </Section>
+    )
+  }
+
+  const preview = async (a: DurabilityArchive) => {
+    setBusy(a.id); setPlan(null)
+    try {
+      // No `mode` — the server returns the plan and changes nothing.
+      const r = await api.durabilityArchiveRestore(a.id)
+      setPlan({ id: a.id, text: JSON.stringify(r, null, 1) })
+    } catch (e) {
+      notify(`Couldn't read the restore plan: ${String((e as Error)?.message || e)}`, 'error')
+    }
+    setBusy('')
+  }
+
+  const mergeRestore = async (a: DurabilityArchive) => {
+    if (!(await confirm({
+      title: 'Merge this snapshot in?',
+      body: `Restore "${a.name}" in MERGE mode. Anything this instance already has is kept untouched; the snapshot only fills in what is missing.`,
+      confirmLabel: 'Merge-restore',
+    }))) return
+    setBusy(a.id)
+    try {
+      const r = await api.durabilityArchiveRestore(a.id, { mode: 'merge', confirm: true })
+      notify(r.ok === false ? `Restore refused: ${r.error?.message ?? 'unknown reason'}` : `Merged ${a.name}`, r.ok === false ? 'error' : 'success')
+      onChanged()
+    } catch (e) {
+      notify(`Restore failed: ${String((e as Error)?.message || e)}`, 'error')
+    }
+    setBusy('')
+  }
+
+  return (
+    <Section title="Archive" hint="Every snapshot on disk, what is in it, and whether a restore from it has been verified.">
+      <div className="rounded-lg bg-surface-container px-4 py-3">
+        <DrillLine drill={snaps.last_drill} />
+        {snaps.archives.length === 0 ? (
+          <div className="text-on-surface-low text-[0.8125rem]">
+            No snapshots yet. One appears after the first nightly run, or as soon as you run
+            a snapshot above.
+          </div>
+        ) : (
+          <ul className="flex list-none flex-col gap-3 p-0">
+            {snaps.archives.map((a) => (
+              <li key={a.id} className="border-outline-var border-t pt-3 first:border-t-0 first:pt-0">
+                <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+                  <span className={`min-w-0 flex-1 truncate text-[0.8125rem] ${a.retained ? 'text-on-surface' : 'text-on-surface-low line-through'}`} style={fvs(500)}>
+                    {a.name}
+                  </span>
+                  <span className="shrink-0 text-on-surface-low text-[0.75rem]">{formatSize(a.size)}</span>
+                  {a.validate && <ValidateBadge ok={a.validate.ok} detail={a.validate.detail} />}
+                </div>
+                <DomainCounts counts={a.domains} />
+                <div className="mt-2 flex flex-wrap items-center gap-2">
+                  <Button variant="secondary" size="sm" onClick={() => preview(a)} disabled={busy !== ''}>
+                    {busy === a.id ? <><Loader2 size={14} className="animate-spin" /> Working…</> : 'Preview restore'}
+                  </Button>
+                  <Button variant="secondary" size="sm" onClick={() => mergeRestore(a)} disabled={busy !== ''}>
+                    Merge-restore
+                  </Button>
+                </div>
+                {plan?.id === a.id && (
+                  <pre className="mt-2 max-h-64 overflow-auto rounded-md bg-surface px-3 py-2 text-on-surface-var text-[0.6875rem]">{plan.text}</pre>
+                )}
+              </li>
+            ))}
+          </ul>
+        )}
+        <p className="mt-3 text-on-surface-low text-[0.75rem]">
+          Stored in <code>{snaps.directory}</code>. A full <em>replace</em> restore is a
+          command-line action — <code>personalclaw restore --replace</code> — because it has
+          to overwrite live state while the gateway is stopped.
+        </p>
+      </div>
+    </Section>
+  )
+}
+
+/** The last drill's verdict. An unrecorded outcome renders as UNKNOWN, never as a pass —
+ *  a backup surface that shows green for "we don't know" is the worst possible lie. */
+function DrillLine({ drill }: { drill: DurabilityArchives['last_drill'] }) {
+  if (!drill.ran) {
+    return (
+      <div className="mb-3 flex items-start gap-2 text-on-surface-low text-[0.75rem]">
+        <ShieldQuestion size={13} className="mt-0.5 shrink-0" />
+        <span>No restore has been rehearsed yet. Run “Verify a restore” above to check that these snapshots can actually be restored.</span>
+      </div>
+    )
+  }
+  const Icon = drill.ok === true ? ShieldCheck : drill.ok === false ? ShieldAlert : ShieldQuestion
+  const tone = drill.ok === true ? 'text-success' : drill.ok === false ? 'text-error' : 'text-on-surface-low'
+  return (
+    <div className={`mb-3 flex items-start gap-2 text-[0.75rem] ${tone}`}>
+      <Icon size={13} className="mt-0.5 shrink-0" />
+      <span>
+        {drill.ok === true ? 'Last restore drill passed' : drill.ok === false ? 'Last restore drill FAILED' : 'Last restore drill ran; its result was not recorded'}
+        {drill.detail && <> — {drill.detail}</>}
+      </span>
+    </div>
+  )
+}
+
+function ValidateBadge({ ok, detail }: { ok: boolean | null; detail: string }) {
+  const label = ok === true ? 'verified' : ok === false ? 'failed verification' : 'result unknown'
+  const tone = ok === true ? 'text-success' : ok === false ? 'text-error' : 'text-on-surface-low'
+  return <span className={`shrink-0 text-[0.6875rem] ${tone}`} title={detail || label}>{label}</span>
+}
+
+/** `null` counts mean the archive recorded none (taken before MANIFEST v3). That reads
+ *  differently from an empty archive, so it says so rather than showing zeros. */
+function DomainCounts({ counts }: { counts: DurabilityArchive['domains'] }) {
+  if (counts === null) {
+    return <div className="mt-1 text-on-surface-low text-[0.75rem]">Contents not recorded in this snapshot.</div>
+  }
+  const rows = Object.entries(counts).filter(([, v]) => v.files > 0)
+  if (rows.length === 0) {
+    return <div className="mt-1 text-on-surface-low text-[0.75rem]">This snapshot recorded no contents.</div>
+  }
+  return (
+    <ul className="mt-1 flex list-none flex-wrap gap-x-4 gap-y-0.5 p-0 text-on-surface-low text-[0.75rem]">
+      {rows.map(([domain, v]) => (
+        <li key={domain}>
+          {domain}: {v.rows > 0 ? `${v.rows} rows` : `${v.files} files`}
+        </li>
+      ))}
+    </ul>
   )
 }
 

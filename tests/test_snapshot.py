@@ -176,7 +176,10 @@ class TestSnapshot:
         assert (snap / "skills/my-skill/SKILL.md").is_file()
         assert not (snap / "workspace/hygiene_data/week1.json").exists()
         m = json.loads((snap / "MANIFEST.json").read_text())
-        assert m["version"] == 2
+        # v3 since DAS-10 — the manifest gained the per-domain `domains` block the §6
+        # archive browser reads. `contents` is unchanged for existing readers.
+        assert m["version"] == 3
+        assert isinstance(m["domains"], dict)
 
     def test_db_content_survives(self, env):
         _, _, tarball, tmp_path = env

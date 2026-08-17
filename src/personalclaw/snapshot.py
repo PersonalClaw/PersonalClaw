@@ -588,7 +588,11 @@ def snapshot_main(
         ws_files = sum(1 for _ in (stage / "workspace").rglob("*") if _.is_file())
         sk_count = sum(1 for _ in (stage / "skills").iterdir() if _.is_dir())
         manifest = {
-            "version": 2,
+            # v3 adds `domains` — the per-domain counts §6's archive browser shows. The
+            # `contents` block is unchanged: `_print_manifest` and the settings panel
+            # read it, and a browser gaining a column is no reason to break a printer.
+            "version": 3,
+            "domains": _domain_counts(stage),
             "created_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
             "hostname": socket.gethostname(),
             "user": os.environ.get("USER", "unknown"),
@@ -619,6 +623,12 @@ def snapshot_main(
             tmp_tar.unlink(missing_ok=True)
             raise
 
+        # Manifest sidecar, so the archive browser can show this snapshot's per-domain
+        # counts without streaming-decompressing the whole tarball to find one member.
+        from personalclaw.durability.archive import write_sidecar
+
+        write_sidecar(outfile, manifest)
+
         has_hmac_key = (stage / "sel_hmac.key").exists()
 
     sz = outfile.stat().st_size
@@ -639,6 +649,8 @@ def snapshot_main(
     )
     for old in snaps[args.keep :]:
         old.unlink()
+        # Its manifest sidecar goes too — see `retention.apply_retention`.
+        old.with_name(old.name + ".manifest.json").unlink(missing_ok=True)
         print(f"🗑  Pruned: {old.name}")
 
     remaining = len(list(out.glob("personalclaw-snapshot-*.tar.gz")))
@@ -647,6 +659,102 @@ def snapshot_main(
 
 
 # ── Restore ───────────────────────────────────────────────────────────────────
+
+
+def _domain_counts(stage: Path) -> dict[str, dict[str, int]]:
+    """Per-domain ``{files, bytes, rows}`` over a staged snapshot tree (MANIFEST v3).
+
+    ``rows`` is the count §6 asks the archive browser to show, and it is a real row
+    count, not a file count: SQLite entries are summed across their tables and JSONL
+    streams by line. A tree entry has no rows, so it contributes ``files``/``bytes``
+    only — reporting 0 rows for a directory of documents would read as "empty".
+
+    Domains are attributed by :func:`portability.domain_of` (longest declared match), so
+    this and the export's ``domain_counts`` cannot disagree about which domain a nested
+    entry belongs to. One rule, two consumers.
+    """
+    from personalclaw.durability import inventory as inv
+    from personalclaw.portability import domain_of
+
+    out: dict[str, dict[str, int]] = {}
+
+    def _bucket(domain: str) -> dict[str, int]:
+        return out.setdefault(domain, {"files": 0, "bytes": 0, "rows": 0})
+
+    for path in sorted(stage.rglob("*")):
+        if not path.is_file() or path.is_symlink():
+            continue
+        rel = path.relative_to(stage).as_posix()
+        if rel == "MANIFEST.json":
+            continue
+        bucket = _bucket(domain_of(rel))
+        bucket["files"] += 1
+        try:
+            bucket["bytes"] += path.stat().st_size
+        except OSError:
+            pass
+
+    for entry in inv.backup_entries():
+        staged = stage / entry.path
+        if not staged.exists():
+            continue
+        bucket = _bucket(entry.domain)
+        if entry.kind == inv.KIND_SQLITE and staged.is_file():
+            bucket["rows"] += _sqlite_row_total(staged)
+        elif entry.kind == inv.KIND_JSONL_APPEND:
+            files = [staged] if staged.is_file() else sorted(staged.rglob("*.jsonl"))
+            for fpath in files:
+                try:
+                    bucket["rows"] += sum(
+                        1 for line in fpath.read_text(encoding="utf-8").splitlines() if line.strip()
+                    )
+                except (OSError, UnicodeDecodeError):
+                    continue
+        elif entry.kind == inv.KIND_JSON_ENTITY_DIR and staged.is_dir():
+            bucket["rows"] += sum(1 for _ in staged.rglob("*.json"))
+    return out
+
+
+def _sqlite_row_total(db: Path) -> int:
+    """Total rows across every ordinary table of a STAGED database copy.
+
+    Safe to run here because the staged file is the backup-API copy, never the live
+    store. An unreadable copy contributes 0 rather than failing the snapshot — a
+    manifest count is reporting, and reporting must not cost a backup.
+
+    🔴 ``immutable=1``, NOT just ``mode=ro``. Opening a WAL-mode database read-only makes
+    SQLite CREATE its ``-shm``/``-wal`` sidecars, and this runs against the STAGED tree
+    just before it is tarred — so counting rows put WAL sidecars into the archive that
+    `_tree_ignore_dbs` exists to keep out. Caught by
+    `test_wal_sidecars_never_ride_along`, not by reading the code. ``immutable=1`` is
+    correct here (and only here): the staged file came through the backup API, so it is
+    fully checkpointed and has no WAL to miss.
+    """
+    from personalclaw.sqlite_compat import sqlite3 as _sqlite3
+
+    total = 0
+    try:
+        conn = _sqlite3.connect(f"file:{db}?mode=ro&immutable=1", uri=True)
+    except Exception:  # noqa: BLE001
+        return 0
+    try:
+        names = [
+            str(row[0])
+            for row in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' " "AND name NOT LIKE 'sqlite_%'"
+            ).fetchall()
+        ]
+        for table in names:
+            try:
+                row = conn.execute(f'SELECT COUNT(*) FROM "{table}"').fetchone()
+            except Exception:  # noqa: BLE001 — an FTS shadow table can refuse a count
+                continue
+            total += int(row[0]) if row else 0
+    except Exception:  # noqa: BLE001
+        return total
+    finally:
+        conn.close()
+    return total
 
 
 def _print_manifest(snap: Path) -> None:

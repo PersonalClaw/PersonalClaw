@@ -1467,3 +1467,127 @@ half) is live and safe today; only cross-machine DELETE convergence waits on thi
   atoms (DAS-7+/DAS-9), not part of the Session-3 sync program this completes. **Gates:** `make lint`
   clean (713 files); `tests/test_durability_convergence_e2e.py` (3: task-on-A + knowledge-on-B
   converge over a real folder, delete propagates, registry is real on-disk bytes) pass.
+
+## Execution log — DAS-10 (§6 DSAR endpoints) — **PARTIAL**
+
+- [2026-08-16][DAS-10] **PARTIAL — the atom stays `todo`.** The §6 *endpoint* half landed complete;
+  the *sync-config + conflict-review FE* half did not. Unmet clauses named at the bottom.
+
+  **DONE.** (a) **`POST /api/durability/export {domains?}`** — full or per-domain
+  (memory/knowledge/work/automation/platform/config/security, projected from the inventory so a new
+  domain becomes exportable by declaration). (b) **`POST /api/durability/import`** — plan-first
+  (`mode` omitted validates and writes nothing), `merge`/`replace`, MANIFEST v3 with v1|v2
+  back-compat. (c) **`GET /api/durability/archive` + `POST /api/durability/archive/{id}/restore`** —
+  per-domain row counts read from each archive's own manifest, plus the last drill's verdict.
+  (d) Settings → **Backups gains the archive browser**; **Import/Export gains the three export
+  buttons** (everything / knowledge / memory), §6's "separate buttons, not one blob".
+
+  **CLEAN BREAK, not addition.** These four RETIRED `GET /api/durability/snapshots`,
+  `POST /api/durability/restore` and the whole `/api/portability/*` trio (`handlers/portability.py`
+  deleted; its multipart reader moved). Two export endpoints for one user story would have been two
+  answers to one question. `/preview` folded into import's plan-first mode rather than being dropped.
+
+- [2026-08-16][DAS-10] 🔴 **MEASURED: the export leaked a `derived=True` store.** §6's rule is
+  `secret ∪ derived` and only the `secret` half was enforced — `EXPORT_EXCLUDE` is a secret-projection
+  (S1) and nothing projected `derived`, while `create_export_zip`'s database list named
+  `memory_index.db` outright. Driven on a seeded home before writing any code: the zip contained
+  `memory_index.db` **and its rows**. Now both halves project from the inventory, and the four write
+  sites share ONE predicate (`_wanted`) — four independently-written filters is precisely how this
+  survived four sessions. Proof is on the ARTIFACT: a planted `sk-ant-`-shaped key, a credential-store
+  value and four derived payloads are asserted absent from the zip's **bytes**, not from an
+  exclusion list (a list-reading test passed throughout the defect).
+
+- [2026-08-16][DAS-10] 🔴 **DISCOVERY, driven not reasoned: the "refuses while the gateway runs"
+  guard on replace-restore was INERT on any non-default port.** A
+  `mode=replace&confirm=true` request to a gateway on `--port 10188` returned **200 and performed the
+  replace over the live home**, while serving that request. Cause: `snapshot._is_gateway_running()`
+  probes `DASHBOARD_PORT` — the *configured* port — so it probed a socket nobody was listening on and
+  answered "not running". The docstring (inherited from `api_durability_restore`, pre-existing since
+  S184) claimed the opposite. **Fixed at the HTTP path definitively:** the handler refuses `replace`
+  unconditionally, because serving the request IS proof the gateway is up — a socket probe is the
+  wrong instrument from inside the process. The `pre-restore-<ts>/` escape hatch held in that
+  unplanned incident and the displaced state was fully recoverable, which is the only reason this cost
+  nothing. **Still open (NOT fixed here, out of scope):** the CLI's `_is_gateway_running()` has the
+  same port bug, so `personalclaw restore --replace` can proceed while a non-default-port gateway
+  runs. Lower severity (local terminal, `--force` already exists) but real.
+
+- [2026-08-16][DAS-10] DEVIATION: **§6's "shard export as a zip" is NOT what shipped.** §6 and the
+  atom row both say the export is a *shard* zip with the §2 manifest inside. Measured why that cannot
+  yet carry what §6 promises: `shards._export_blobs` writes `KIND_TREE` payloads to a
+  content-addressed blob dir with **no path→hash index**, and **nothing anywhere rehydrates `blobs/`**
+  (`writeback.apply_rows` raises for `KIND_TREE`; zero other readers). So a shard zip of
+  `workspace/knowledge/files` — the user's documents, the entry §6 calls "the whole point" — would be
+  a bag of anonymous blobs, unrestorable by name. Adding a tree index is a §2 shard-FORMAT change
+  (DAS-2's contract, with byte-determinism tests on it), not this atom's. **What shipped instead:**
+  the file-tree zip (which restores losslessly, filenames intact) carrying §2's *integrity* shape in
+  MANIFEST v3 — `schema_version`, `machine_id`, and per-member `bytes`+`sha256`. That buys the real
+  value: `validate_import_zip` now DETECTS a corrupted or tampered archive before an import writes
+  anything (v1/v2 carried no hashes, so a truncated archive imported as far as it went). A v3 zip
+  reports `verified: true`; v1/v2 report `verified: false` rather than implying a check happened.
+  Owner call needed if the literal shard-zip form is still wanted — it needs the tree index first.
+
+- [2026-08-16][DAS-10] Two smaller findings, both caught by driving rather than reading.
+  (1) **Per-domain scoping needs LONGEST-declared-match, not ancestor-wins.**
+  `workspace/knowledge/files` (knowledge) is nested inside the `workspace` tree entry (platform); an
+  ancestor-wins rule produced an **empty knowledge export** while filing every user document under
+  platform — criterion 9's boundary, inverted. `portability.domain_of` is now the single rule, shared
+  with the snapshot manifest's counts so the two cannot disagree. (2) **Counting rows on a staged
+  database put WAL sidecars INTO the snapshot.** Opening a WAL-mode DB `mode=ro` makes SQLite create
+  its `-shm`/`-wal`, and the count runs against the staged tree just before it is tarred —
+  `test_wal_sidecars_never_ride_along` caught it. `immutable=1` is correct there and only there
+  (the staged copy came through the backup API, so it is fully checkpointed).
+
+- [2026-08-16][DAS-10] A guard that NAMES what it guards falsifies the ratchet watching it.
+  `test_the_snapshot_coverage_gap_list_can_only_shrink` decides snapshot coverage partly by grepping
+  `portability.py` for entry paths. My first fail-closed exclusion fallback hard-coded three derived
+  paths as literals, which made two genuinely-uncovered entries (`memory_faiss`, `memory_ids`) read as
+  **covered** — a false negative in a coverage ratchet. Fixed by removing every path literal:
+  `_excluded_entry_paths` now RAISES if the inventory is unavailable. That is also the right failure
+  mode on its own terms — every other inventory lookup in that module degrades to literals because
+  they decide what an export *includes* (a degraded answer costs completeness), while this one decides
+  what it must NOT include (a degraded answer costs a leak).
+
+- [2026-08-16][DAS-10] Import failure semantics, now STATED in code rather than incidental. Neither
+  mode is transactional (POSIX has no atomic multi-file swap), so the contract is *recoverability*:
+  `merge` is copy-if-missing on every path, so a partial merge is a strict SUBSET of a complete one
+  and re-running is idempotent — there is no hybrid to be left in; `replace` moves each live path into
+  `pre-restore-<ts>/` **before** writing the incoming one, and the summary reports that directory even
+  when the replace RAISED. Both are tested on the unhappy path (a `_do_replace` that runs and then
+  fails leaves `pre-restore-*/config.json` byte-identical). Also added, per the amendment's
+  belt-and-suspenders rule: a hand-built archive carrying `.env`/`credentials/`/a derived index has
+  those paths stripped from the STAGED tree before anything reads it, so no per-branch skip can be
+  forgotten — the shape the fourth hand-written list kept re-introducing.
+
+- [2026-08-16][DAS-10] Security-control decisions, taken restrictively because §6 is silent on them
+  (stated rather than assumed): all four routes **refuse an app-scoped token** (403 `owner_only`,
+  matching `apps.api_app_token`'s `request["app"]` precedent) — an export hands the caller everything
+  the system knows about the user, which is never an installed app's business; and **every writing
+  verb needs `confirm: true`** on top of an explicit `mode`, with `mode` omitted returning the plan.
+  The app-refusal test carries a vacuity floor (an owner request must still get its zip), without
+  which a route that 403'd *everyone* would pass every refusal test.
+
+  **Gates:** `make lint` clean (black/isort/flake8/mypy, 886 source files, 1721 formatted); `make
+  test` exit 0; targeted 379 pass (`test_portability_dsar` 31 + `test_durability_dsar_routes` 18 +
+  `test_durability_archive` 11 + portability/inventory/service/snapshot/security/agent-reference);
+  web `npm run typecheck` + `npm test` (314 files, 3243 tests) + `npm run build` green.
+  **Falsifications (3, each restored):** dropping the `derived` half of the exclusion set reds
+  `test_v3_manifest_carries_the_integrity_shape` — and, notably, NOT the byte-leak test, because the
+  db projection independently excludes derived; breaking BOTH enforcers reds
+  `AssertionError: derived database row leaked into the export`. Removing `1` from
+  `SUPPORTED_MANIFEST_VERSIONS` reds `AssertionError: Unsupported manifest version: 1` against a
+  hand-built v1 fixture (not a v3 with an edited version field). Making `_backup_and_copy` delete
+  instead of move reds `AssertionError: a failed replace must leave the displaced originals on disk`.
+  **Drove as a user** on an isolated `demo-home` at :10188: three exports inspected by hand (198
+  members full, 1 each for knowledge/memory), planted `sk-ant-` key and credential-store value both
+  absent, zero derived entries; snapshot + drill run, archive browser rendering real per-domain row
+  counts (`memory: 10 rows, security: 34 rows, work: 17 rows`) and the drill verdict; export → SECOND
+  fresh home → import restored **197 of 197 members, 0 missing**, memory.db 10 rows, knowledge.db
+  3 rows, and no `.env` arrived. Both panels screenshotted, no console errors.
+
+  **UNMET — why this stays `todo`:** (1) "sync config via the standard `/api/providers` routes" — no
+  FE built; `SyncTypeHandler` is registered (DAS-6) but nothing was driven through the provider
+  settings surface. (2) "the conflict review queue" — `durability/conflicts.py` has NO HTTP route and
+  no screen, so DAS-7's queue is still unreadable by a user; criterion 9's *second* half (memory and
+  knowledge conflicts on SEPARATE review surfaces) is therefore unmet — only its export half landed.
+  (3) Criterion 10 (a third-party `type:"sync"` app registers/configures/syncs with zero core changes)
+  was not verified end to end. Those three are one coherent follow-up scope and want their own atom.

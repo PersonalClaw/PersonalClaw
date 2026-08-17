@@ -2,7 +2,7 @@
 
 Aggregates the public handler API from the ``handlers/`` submodules (agents,
 schedule, files, hooks, mcp, memory, messaging, prompts, sessions,
-terminal, updates, usage, core, optimizer, portability) under the flat
+terminal, updates, usage, core, optimizer, durability) under the flat
 ``personalclaw.dashboard.handlers.X`` import path used by ``server.py``.
 
 System metrics (CPU, memory, network, disk) live in ``handlers_system.py``;
@@ -144,9 +144,11 @@ from personalclaw.dashboard.handlers.doctor import (  # noqa: E402, F401
 
 # ── Durability: scheduled backups + retention (handlers/durability.py) ──
 from personalclaw.dashboard.handlers.durability import (  # noqa: E402, F401
-    api_durability_restore,
+    api_durability_archive,
+    api_durability_archive_restore,
+    api_durability_export,
+    api_durability_import,
     api_durability_run,
-    api_durability_snapshots,
     api_durability_status,
 )
 
@@ -286,13 +288,6 @@ from personalclaw.dashboard.handlers.messaging import (  # noqa: E402, F401
 )
 from personalclaw.dashboard.handlers.optimizer import (  # noqa: E402, F401
     handle_optimize,
-)
-
-# ── Portability (export/import as zip) ──
-from personalclaw.dashboard.handlers.portability import (  # noqa: E402, F401
-    api_portability_export,
-    api_portability_import,
-    api_portability_preview,
 )
 from personalclaw.dashboard.handlers.prompts import (  # noqa: E402, F401
     MAX_PROMPT_BYTES,

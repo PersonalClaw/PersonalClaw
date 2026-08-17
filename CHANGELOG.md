@@ -54,6 +54,23 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
   zip, small enough to paste. Importing one goes through exactly the same checks a pack file
   does, and every piece inside carries its own fingerprint — change one byte anywhere and the
   whole import is refused before anything is written.
+- **Take your data out — all of it, or just the part you asked for.** Settings → Import/Export now
+  has three buttons instead of one: everything, just your knowledge (your documents, with their
+  filenames), or just what the assistant remembers about you. Credentials never travel, and neither
+  do rebuildable caches like search indexes — a stale index restored next to newer data is worse than
+  no index. Archives made from now on carry a checksum for every file inside them, so importing one
+  tells you whether it arrived intact *before* it writes anything; older archives still import, and
+  say plainly that there was nothing to verify them against. Settings → Backups gained an archive
+  browser: what is in each snapshot broken down by area, whether the monthly restore rehearsal passed
+  on it, and a preview-then-restore that shows you the plan first.
+
+### Fixed
+
+- **A "replace everything" restore could run while the app was running.** Over the web API it was
+  supposed to refuse and, on any port other than the default, it silently didn't — it checked whether
+  something was listening on the port it had been *configured* with rather than the one actually in
+  use. It now refuses outright, because the request being served is proof the app is up. Your previous
+  state was never lost either way: a replace moves what it displaces aside before writing.
 
 - **Buttons inside a generated widget now work everywhere you can see the widget.** A widget the
   agent builds can carry real controls, and clicking one used to only do something while you were
