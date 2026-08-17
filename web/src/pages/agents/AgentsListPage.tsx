@@ -197,7 +197,14 @@ function NativeRow({ agent, index, isDefault, onClick }: { agent: SavedAgent; in
       <span className="shrink-0 inline-flex size-10 items-center justify-center rounded-lg" style={{ background: 'color-mix(in srgb, var(--color-primary) 16%, transparent)' }}><Users size={19} className="text-primary" /></span>
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-s">
-          <span className="truncate text-on-surface text-[0.9375rem] font-mono" style={fvs(500)}>{agent.name}</span>
+          {/* `title` on both row variants' name AND description. Measured at 390px on a populated
+              home: the names clip at 207px of 225-261px (1.1-1.3x) and the descriptions at 270px of
+              378-587px (1.4-2.2x). The names are IDENTIFIERS — `personalclaw-code-planner` — where the
+              clipped tail is the part that tells two planners apart, and the app's settled recovery for
+              a truncating element is a `title` (19 sites). The descriptions sit in the 1.4-2.2x band the
+              shipped task-title fix already covers at 1.6-2.1x, so the same answer holds here; it is the
+              16.8x prose case that needs a layout decision instead, and that is filed, not guessed at. */}
+          <span className="truncate text-on-surface text-[0.9375rem] font-mono" style={fvs(500)} title={agent.name}>{agent.name}</span>
           {isDefault && <span className="shrink-0 inline-flex items-center gap-1 text-primary text-[0.75rem]"><Star size={11} fill="currentColor" /> default</span>}
           {isReservedAgent(agent) && <span className="shrink-0 inline-flex items-center gap-1 text-on-surface-low text-[0.75rem]"><Lock size={10} /> built-in</span>}
         </div>
@@ -210,7 +217,9 @@ function NativeRow({ agent, index, isDefault, onClick }: { agent: SavedAgent; in
               rendered `·` separators and exactly these 8 dangling; the sibling `DiscoveredRow` below
               never had a prefix, so the two row variants now agree when there is no model. Same shape
               `MetaLine` fixed on #/tasks — see the rail in ui/danglingSeparator.test.ts. */}
-          {agent.description && <span className="truncate">{agent.model ? '· ' : ''}{agent.description}</span>}
+          {/* The title is the description ALONE: the `·` is a separator this row adds when a model
+              rendered, so putting it in the tooltip would hand the user punctuation as content. */}
+          {agent.description && <span className="truncate" title={agent.description}>{agent.model ? '· ' : ''}{agent.description}</span>}
         </div>
       </div>
       <div className="hidden sm:flex shrink-0 items-center gap-m text-on-surface-low text-[0.75rem]">
@@ -235,8 +244,12 @@ function DiscoveredRow({ agent, index, tone, icon: Icon, onClick }: { agent: Dis
     <ListRow index={index} onClick={onClick} label={agent.name}>
       <span className="shrink-0 inline-flex size-10 items-center justify-center rounded-lg" style={{ background: `color-mix(in srgb, ${tone} 16%, transparent)` }}><Icon size={19} style={{ color: tone }} /></span>
       <div className="flex-1 min-w-0">
-        <span className="block truncate text-on-surface text-[0.9375rem]" style={fvs(500)}>{agent.name}</span>
-        {agent.description && <p className="mt-0.5 truncate text-on-surface-low text-[0.8125rem]">{agent.description}</p>}
+        {/* Same two fixes on the discovered variant. This file already insists the two row shapes
+            agree (see the dangling-separator note above), and the census flagged the NAMES here and the
+            DESCRIPTIONS in the row above — so fixing one variant would have left the surface half-done
+            in a way the census would still report. */}
+        <span className="block truncate text-on-surface text-[0.9375rem]" style={fvs(500)} title={agent.name}>{agent.name}</span>
+        {agent.description && <p className="mt-0.5 truncate text-on-surface-low text-[0.8125rem]" title={agent.description}>{agent.description}</p>}
       </div>
       <Lock size={13} className="shrink-0 text-on-surface-low" />
     </ListRow>
