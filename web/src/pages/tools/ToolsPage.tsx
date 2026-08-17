@@ -412,7 +412,14 @@ function GroupBlock({ g, onOpen, onToggleServer, onRemoveServer, onToggleTool, o
                   <Wrench size={16} className="text-primary shrink-0 mt-0.5" />
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-1.5">
-                      <span className="truncate font-mono text-on-surface text-[0.8125rem]">{t.name}</span>
+                      {/* `title` on a monospace IDENTIFIER. Measured at 390px on a populated home:
+                          `automation_delete_all` shows 162px of 164px and `template_save_from_session`
+                          184px of 203px — 1.01x and 1.1x, which sounds like nothing and is not. A tool
+                          name's DISTINGUISHING part is its tail (`automation_delete_all` vs
+                          `automation_delete_one`), and losing the last few characters of a snake_case
+                          identifier is losing the word that says what it does. Same reasoning as the
+                          agent-row fix; the app's settled recovery for a truncating element. */}
+                      <span className="truncate font-mono text-on-surface text-[0.8125rem]" title={t.name}>{t.name}</span>
                       {t.requires_approval && <ShieldAlert size={12} className="text-warn shrink-0" />}
                       <RiskBadge risk={t.risk_level} />
                       {off && <span className="rounded-pill bg-surface-high px-1.5 py-0.5 text-on-surface-low text-[0.75rem]">Disabled</span>}
@@ -517,10 +524,14 @@ function ImportSuggestions({ servers, onImported }: { servers: ImportableMcpServ
                 <Server size={15} className="shrink-0 text-on-surface-low" />
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2">
-                    <span className="truncate font-mono text-on-surface text-[0.8125rem]">{s.name}</span>
+                    <span className="truncate font-mono text-on-surface text-[0.8125rem]" title={s.name}>{s.name}</span>
                     <span className="rounded-pill bg-surface-high px-1.5 py-0.5 text-on-surface-low text-[0.75rem]">{s.backend}</span>
                   </div>
-                  <p className="mt-0.5 truncate font-mono text-on-surface-low text-[0.75rem]">{s.url || [s.command, ...(s.args ?? [])].join(' ')}</p>
+                  {/* The server line is a URL or a full command line — the most tail-heavy string on
+                      the surface, and the half that says WHICH server this is. It did not clip with this
+                      seed's data, but it truncates by the same rule and a `title` costs nothing; the
+                      alternative is a row whose name recovers and whose address does not. */}
+                  <p className="mt-0.5 truncate font-mono text-on-surface-low text-[0.75rem]" title={s.url || [s.command, ...(s.args ?? [])].join(' ')}>{s.url || [s.command, ...(s.args ?? [])].join(' ')}</p>
                 </div>
                 <Button variant="secondary" size="sm" onClick={() => importOne(s)} disabled={busy === s.name}>
                   {busy === s.name ? <Loader2 size={13} className="animate-spin" /> : <Download size={13} />} Import
