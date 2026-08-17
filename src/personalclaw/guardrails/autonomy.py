@@ -485,6 +485,21 @@ def _cooldown_until(grant: RungGrant | None) -> str:
     return max((d.cooldown_until for d in grant.demotions), default="")
 
 
+def cooldown_date(until: str) -> str:
+    """``cooldown_until`` as the DATE a user can read, or ``""`` if it does not parse.
+
+    The wire keeps the full ISO instant; a sentence shown to a person gets the date. Day
+    granularity is the honest granularity here — a cooldown is configured in whole days
+    (``rule.cooldown_days``), so naming a minute would imply a precision the rule does not
+    have. Returns ``""`` rather than guessing, because :func:`_in_cooldown` deliberately
+    treats an unparseable timestamp as STILL RUNNING: the cooldown is real in that case,
+    and only its end date is unknown, so the sentence has to be able to omit the date
+    without omitting the cooldown.
+    """
+    parsed = _parse_iso(until)
+    return parsed.date().isoformat() if parsed else ""
+
+
 def _in_cooldown(grant: RungGrant | None, now: datetime) -> bool:
     until = _cooldown_until(grant)
     if not until:
@@ -658,11 +673,22 @@ def promotion_eligibility(key: str) -> Eligibility:
 
     cooldown_until = _cooldown_until(grant)
     if _in_cooldown(grant, now):
+        # Every other branch of this sentence QUANTIFIES what is missing — "4 of 10 clean
+        # approvals so far", "Approvals span 2.5 of the 14 days required". This one held the
+        # concrete number (it is set on this very Eligibility) and did not say it, so the
+        # panel told a demoted user they were in cooldown and gave them no way to learn when
+        # it lifts. `explain_refused_grant` already names the date for the same fact, so the
+        # two server-composed explanations of one thing disagreed.
+        when = cooldown_date(cooldown_until)
         return Eligibility(
             key=key,
             current_rung=current,
             cooldown_until=cooldown_until,
-            reason="A recent demotion is still in cooldown.",
+            reason=(
+                f"A recent demotion is still in cooldown until {when}."
+                if when
+                else "A recent demotion is still in cooldown."
+            ),
         )
 
     base = granted_rung(key)

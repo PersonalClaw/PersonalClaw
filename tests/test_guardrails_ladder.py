@@ -422,6 +422,82 @@ def test_the_api_refuses_a_grant_DURING_a_demotion_cooldown(_isolated_home):
     assert au.granted_rung(APP_KEY) == au.RUNG_DRAFT_ONLY
 
 
+def test_the_record_a_DEMOTED_row_shows_says_when_the_cooldown_LIFTS(_isolated_home):
+    """The panel renders ``record`` verbatim, so whatever it omits, the user cannot learn.
+
+    Every other branch of that sentence quantifies what is missing ("4 of 10 clean approvals
+    so far", "Approvals span 2.5 of the 14 days required"). The cooldown branch held the
+    concrete date on the very same object and said only "A recent demotion is still in
+    cooldown" — so a demoted user saw the demotion, its cause, no promote button, and had no
+    way to tell whether they were blocked by the cooldown or by their track record, nor when
+    it lifts. Driven through the REAL endpoint, because ``record`` is what the row carries.
+    """
+    _install_app_action(floor=au.RUNG_DRAFT_ONLY, ceiling=au.RUNG_AUTO_WITH_UNDO)
+    au.demote(APP_KEY, "rejected once")
+
+    row = _row(_ladder(), APP_KEY)
+
+    assert row["cooldown_until"], "the wire must still carry the full instant"
+    when = row["cooldown_until"][:10]
+    assert "cooldown" in row["record"], "it must still say WHAT is blocking promotion"
+    assert when in row["record"], f"the record must name the end date: {row['record']!r}"
+    # And a date, not a machine instant: the panel prints this string as-is.
+    assert "T" not in row["record"] and "+00:00" not in row["record"], row["record"]
+
+
+def test_the_two_cooldown_EXPLANATIONS_agree_on_the_date_and_its_form(_isolated_home):
+    """One fact, two server-composed sentences — they must not disagree.
+
+    ``record`` answers "why is this row inert"; the grant refusal answers "why was your
+    click refused". Both are legitimate and stay separate (different questions, and the
+    refusal names the key because it travels alone as an API error). What they may not do is
+    state the same cooldown in two different forms — the refusal used to emit the raw ISO
+    instant while the record named no date at all.
+    """
+    _install_app_action(floor=au.RUNG_DRAFT_ONLY, ceiling=au.RUNG_AUTO_WITH_UNDO)
+    au.demote(APP_KEY, "rejected once")
+
+    record = _row(_ladder(), APP_KEY)["record"]
+    resp = asyncio.run(
+        api_h.api_autonomy_grant(
+            _post("/api/autonomy/grant", {"key": APP_KEY, "rung": au.RUNG_ONE_TAP})
+        )
+    )
+    refusal = _json_body(resp)["error"]
+
+    when = au.cooldown_date(_row(_ladder(), APP_KEY)["cooldown_until"])
+    assert when and "T" not in when
+    assert when in record and when in refusal, f"{record!r} vs {refusal!r}"
+    for sentence in (record, refusal):
+        assert "+00:00" not in sentence, f"a raw instant leaked into user copy: {sentence!r}"
+
+
+def test_an_UNPARSEABLE_cooldown_still_reports_the_cooldown_without_inventing_a_date(
+    _isolated_home,
+):
+    """``_in_cooldown`` deliberately treats a corrupt timestamp as STILL RUNNING, so this
+    branch is reachable by design. The cooldown is real; only its end is unknown. The
+    sentence must drop the date and keep the cooldown, never the other way round."""
+    _install_app_action(floor=au.RUNG_DRAFT_ONLY, ceiling=au.RUNG_AUTO_WITH_UNDO)
+    au.demote(APP_KEY, "rejected once")
+    path = au._store_path()
+    data = json.loads(path.read_text(encoding="utf-8"))
+    data[APP_KEY]["demotions"][0]["cooldown_until"] = "not-a-timestamp"
+    path.write_text(json.dumps(data), encoding="utf-8")
+
+    row = _row(_ladder(), APP_KEY)
+
+    assert row["eligible"] is False, "a corrupt cooldown must not read as permission"
+    assert "cooldown" in row["record"]
+    # 🪤 NOT `"not-a-timestamp" not in record` — a formatter that sliced the garbage would emit
+    # "not-a-time" and pass that. Assert the SEMANTIC property: the sentence must not claim an
+    # end date at all, however it were derived.
+    assert (
+        "until" not in row["record"]
+    ), f"it must not claim a date it does not have: {row['record']!r}"
+    assert "not-a-time" not in row["record"], "and it must not print the garbage either"
+
+
 def test_a_grant_for_an_unknown_type_is_refused_by_name(_isolated_home):
     resp = asyncio.run(
         api_h.api_autonomy_grant(
