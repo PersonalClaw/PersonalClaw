@@ -10,6 +10,13 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Added
 
+- **The design-system tool can list what it has, instead of making the assistant guess.** Asking
+  the assistant to build a page used to mean it searched the UI kit by keyword — and a search needs
+  a word you already know. `ui_list` just names everything: every component with its one-line
+  description, or every design token. Behind it, a bundled app can now carry its own provider code
+  instead of pointing at something inside PersonalClaw, so capabilities like this one grow in the
+  app that owns them.
+
 - **Your phone can find this machine on its own now, if you ask it to.** Getting a companion
   device onto your gateway used to start with reading an IP address off one screen and typing it
   into another. Turn on **Settings → Companion apps → LAN discovery** and the gateway announces

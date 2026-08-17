@@ -1,4 +1,11 @@
-"""UI-docs tool provider — ``ui_search`` / ``ui_get`` (Platform-Legibility §5).
+"""UI-docs tool provider — ``ui_search`` / ``ui_get`` / ``ui_list`` (Platform-Legibility §5).
+
+This is a BUNDLED app that owns its own provider code (the native capability contract,
+APE-5 — see ``apps/native_contract.py`` and ``docs/architecture/app-platform.md``). It
+imports core only through ``personalclaw.sdk.*``, exactly like an installed app, and its
+``app.json`` points ``provider.implementation`` at ``provider:create_provider`` — a
+bundle-relative module rather than a core dotted path. Growing this capability (the
+``ui_list`` tool below was added this way) touches nothing outside this directory.
 
 Exposes the ``web/src/ui`` design-system kit as documentation-as-data an
 app-building agent can query, so it reaches for a shipped primitive (Button,
@@ -9,13 +16,17 @@ each component's authored keywords/description/per-prop docs/best-practices/anat
 fused with prop ``type``/``required`` derived from the TypeScript source, plus the
 design-token registry. This provider only READS that artifact.
 
-Two tools, deliberately — not one per component:
+Three tools, deliberately — not one per component:
 * ``ui_search(query)`` — a keyword index over component names/keywords/descriptions
   and design-token names/labels; returns brief hits with a follow-up hint.
 * ``ui_get(name, section?)`` — the full doc for one component (or a design token /
   the token catalog), optionally narrowed to a section.
+* ``ui_list(kind?)`` — the whole catalog by name. ``ui_search`` requires a query, so
+  without this an agent has to GUESS a keyword to discover that a primitive exists at
+  all; the kit is small enough to enumerate, and the enumeration is the cheapest way to
+  stop a hand-rolled component.
 
-``list_tools`` is STATIC — the two definitions exist independent of whether
+``list_tools`` is STATIC — the definitions exist independent of whether
 ``ui-docs.json`` has been built — so the offline manifest/drift harness sees them.
 The JSON is read LAZILY in ``invoke`` (off the ``static/dist`` symlink, falling back
 to ``web/dist``); if it isn't built yet, the tools return a clear FIX pointing at the
@@ -29,7 +40,7 @@ import logging
 from pathlib import Path
 from typing import Any
 
-from personalclaw.tool_providers.base import (
+from personalclaw.sdk.tool import (
     RiskLevel,
     ToolDefinition,
     ToolProvider,
@@ -125,6 +136,32 @@ class UiDocsToolProvider(ToolProvider):
                 requires_approval=False,
                 risk_level=RiskLevel.SAFE,
             ),
+            ToolDefinition(
+                name="ui_list",
+                description=(
+                    "List the whole ui/ design-system catalog by name — every component "
+                    "(with a one-line description) and/or every design token. Use this "
+                    "first when you don't yet know what the kit contains: ui_search "
+                    "needs a query, so listing is what tells you a primitive exists. "
+                    "Follow up with ui_get(name) for full props + best practices."
+                ),
+                provider=self.name,
+                parameters={
+                    "type": "object",
+                    "properties": {
+                        "kind": {
+                            "type": "string",
+                            "enum": ["components", "tokens", "all"],
+                            "description": (
+                                "What to list: 'components' (default), 'tokens', or "
+                                "'all' for both."
+                            ),
+                        },
+                    },
+                },
+                requires_approval=False,
+                risk_level=RiskLevel.SAFE,
+            ),
         ]
 
     async def invoke(self, tool_name: str, arguments: dict[str, Any]) -> ToolResult:
@@ -149,23 +186,40 @@ class UiDocsToolProvider(ToolProvider):
                 return _ui_search(data, arguments)
             if tool_name == "ui_get":
                 return _ui_get(data, arguments)
+            if tool_name == "ui_list":
+                return _ui_list(data, arguments)
         except Exception as exc:  # noqa: BLE001 - surface any lookup error to the model
             logger.debug("ui-docs tool %s failed: %s", tool_name, exc, exc_info=True)
             return ToolResult(success=False, error=str(exc))
         return ToolResult(success=False, error=f"Unknown tool: {tool_name}")
 
 
-def create_ui_docs_provider(config: dict[str, Any] | None = None) -> ToolProvider:
-    """Manifest factory for the ``personalclaw-ui-docs`` tool surface."""
+def create_provider(config: dict[str, Any] | None = None) -> ToolProvider:
+    """Manifest factory for the ``personalclaw-ui-docs`` tool surface.
+
+    Named ``create_provider`` because ``app.json`` resolves it as
+    ``provider:create_provider`` — the same entry-point shape every installed app uses.
+    """
     return UiDocsToolProvider()
 
 
 # ── data loading ────────────────────────────────────────────────────────────
 
 
+# This bundle ships INSIDE the distribution (``<personalclaw>/apps/native/<name>/``), so
+# the packaged asset it reads is a fixed number of levels up from its own file:
+#   parents[0] this bundle · [1] native · [2] apps · [3] <personalclaw> · [4] src · [5] repo
+# Reading a packaged sibling by path is the one thing a bundled app may do that an
+# installed app cannot (it is in the same distribution); it is NOT an import, so the
+# SDK-only boundary is intact. ``test_native_capability_contract`` pins _dist_dir()
+# against the dir the dashboard actually serves, so a layout move reds the build here
+# instead of silently returning "not built" at runtime.
+_BUNDLE_DIR = Path(__file__).resolve().parent
+
+
 def _dist_dir() -> Path:
     """The served dist dir — ``<personalclaw>/static/dist`` (a symlink to web/dist)."""
-    return Path(__file__).resolve().parent.parent / "static" / "dist"
+    return _BUNDLE_DIR.parents[2] / "static" / "dist"
 
 
 def _ui_docs_path() -> Path | None:
@@ -173,12 +227,13 @@ def _ui_docs_path() -> Path | None:
     served = _dist_dir() / "ui-docs.json"
     if served.is_file():
         return served
-    # Fallback: the source tree's web/dist (repo root is two levels above the pkg).
-    repo_web = (
-        Path(__file__).resolve().parent.parent.parent.parent / "web" / "dist" / "ui-docs.json"
-    )
-    if repo_web.is_file():
-        return repo_web
+    # Fallback: the source tree's web/dist (only exists in a dev checkout, where the repo
+    # root is two levels above the package; an installed wheel simply has no such file).
+    parents = _BUNDLE_DIR.parents
+    if len(parents) > 4:
+        repo_web = parents[4] / "web" / "dist" / "ui-docs.json"
+        if repo_web.is_file():
+            return repo_web
     return None
 
 
@@ -297,6 +352,59 @@ def _brief(text: str) -> str:
     if len(text) <= _BRIEF_DESC_CHARS:
         return text
     return text[: _BRIEF_DESC_CHARS - 1].rstrip() + "…"
+
+
+# ── ui_list ───────────────────────────────────────────────────────────────
+#
+# The capability this bundle GAINED after it started owning its own provider code
+# (APE-5): a real provider method reachable through the ordinary tool dispatch path,
+# added with no edit to any core module that implements, resolves or dispatches it.
+
+
+def _ui_list(data: dict[str, Any], args: dict[str, Any]) -> ToolResult:
+    """Enumerate the kit. ``ui_search`` needs a query; discovery needs a list."""
+    kind = str(args.get("kind", "") or "components").strip().lower()
+    if kind not in {"components", "tokens", "all"}:
+        return ToolResult(
+            success=False,
+            error=f"ui_list: unknown kind {kind!r} — use 'components', 'tokens', or 'all'.",
+        )
+
+    components = data.get("components", [])
+    tokens = data.get("tokens", [])
+    out: list[str] = []
+
+    if kind in {"components", "all"}:
+        out.append(f"# Components ({len(components)})")
+        out.append("")
+        for comp in sorted(components, key=lambda c: str(c.get("name", ""))):
+            desc = _brief(comp.get("description", ""))
+            src = comp.get("source", "")
+            head = f"- {comp.get('name', '?')}" + (f"  (web/src/ui/{src})" if src else "")
+            out.append(head)
+            if desc:
+                out.append(f"    {desc}")
+        out.append("")
+
+    if kind in {"tokens", "all"}:
+        by_group: dict[str, list[dict[str, Any]]] = {}
+        for tok in tokens:
+            by_group.setdefault(str(tok.get("group", "")), []).append(tok)
+        out.append(f"# Design tokens ({len(tokens)})")
+        out.append("")
+        for group in sorted(by_group):
+            names = ", ".join(
+                str(t.get("varName", "")) for t in sorted(by_group[group], key=_token_var)
+            )
+            out.append(f"- {group}: {names}")
+        out.append("")
+
+    out.append("Call ui_get(name) for a component's props + best practices, or ui_get('--var').")
+    return ToolResult(success=True, output="\n".join(out))
+
+
+def _token_var(tok: dict[str, Any]) -> str:
+    return str(tok.get("varName", ""))
 
 
 # ── ui_get ────────────────────────────────────────────────────────────────
