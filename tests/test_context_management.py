@@ -244,6 +244,3 @@ def test_tracker_reset_clears_task_failures():
         t.record_round(1)
     t.reset_after_guidance()
     assert t.failure_count("task-a") == 0
-
-
-# ── looks_like_plan ─────────────────────────────────────────────────

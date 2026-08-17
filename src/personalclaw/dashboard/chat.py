@@ -111,11 +111,9 @@ from personalclaw.dashboard.chat_tags import (  # noqa: F401
 )
 from personalclaw.dashboard.chat_title import (  # noqa: F401
     _build_title_prompt,
-    _extract_and_redact_plan_metadata,
     _generate_title_via_provider,
     _maybe_auto_title,
     _persist_title,
-    _rephrase_plan_lite,
     _reset_auto_run_for_new_plan,
     api_chat_session_generate_title,
     api_chat_session_rename,

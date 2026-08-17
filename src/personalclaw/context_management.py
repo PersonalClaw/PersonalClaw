@@ -5,11 +5,12 @@ to prevent unbounded growth during multi-agent orchestration.
 
 All limits are centralized here so they can be tuned in one place.
 
-The plan-format parser that used to share this file now lives in
-:mod:`personalclaw.plan_format` — a separate subject that happened to sit in the
-same module. Its former companion, the plan-memory journal, was deleted when the
-Learning Flywheel's RUN_END cadence absorbed run outcomes into the Run Ledger and
-proposal pipeline (LEARNING-FLYWHEEL §3.3).
+The chat plan-mode text surface that used to share this file is gone. Its plan-memory
+journal half was deleted when the Learning Flywheel's RUN_END cadence absorbed run
+outcomes into the Run Ledger and proposal pipeline (LEARNING-FLYWHEEL §3.3); the
+remaining plan-format parser/rephraser half was deleted by UNIVERSAL-PLANNING, whose
+planner owns plan production end to end (see that plan's "Planning Surfaces Collapsed
+by This Plan"). What is left here is only the sub-agent context-budget half.
 """
 
 import logging
