@@ -72,4 +72,26 @@ contextBridge.exposeInMainWorld("pclawDesktop", {
       return () => ipcRenderer.removeListener(IPC_CHANNELS.state, handler);
     },
   },
+
+  /** Push-to-talk (DC-3). Three methods, and deliberately no `start()`: the shell
+   * cannot open the microphone, it can only tell the renderer that the chord fired.
+   * `setCapturing` runs the other way — the renderer reporting the live stream it
+   * owns, which is what lights the menu-bar indicator. */
+  pushToTalk: {
+    /** Bind the chord. Resolves {ok, chord, conflict, reason} — an already-taken
+     * chord comes back as `conflict: true` so Settings can say which it was. */
+    bind: (chord) => ipcRenderer.invoke(IPC_CHANNELS.hotkeyBind, String(chord ?? "")),
+
+    /** Report the microphone's real state to the shell (drives the indicator). */
+    setCapturing: (on) => ipcRenderer.invoke(IPC_CHANNELS.capturing, Boolean(on)),
+
+    /** Subscribe to chord presses and to the shell's stop requests. Returns an
+     * unsubscribe fn. */
+    on: (cb) => {
+      if (typeof cb !== "function") return () => {};
+      const handler = (_e, payload) => cb(payload);
+      ipcRenderer.on(IPC_CHANNELS.pushToTalk, handler);
+      return () => ipcRenderer.removeListener(IPC_CHANNELS.pushToTalk, handler);
+    },
+  },
 });

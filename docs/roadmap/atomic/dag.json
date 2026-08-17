@@ -5285,7 +5285,7 @@
       "plan": "DESKTOP-CAPABILITIES",
       "code": "DC",
       "status": "proposed",
-      "summary": "6 atoms, none started (plan is DESIGNED, no shipped work). DC-2 is the independently-startable capability-bridge seam-owner; DC-3/4/5 hang off it; DC-1 carries the mac signing/updater pipeline; DC-5 and DC-6 carry the two cross-plan gates (INBOX-NOTIF, PLATFORM-REACH).",
+      "summary": "6 atoms. DC-2 (capability bridge) and DC-3 (push-to-talk mic capture) are IMPLEMENTED; both stay `todo` for their on-device validation sessions (V2/V3) and their owner tasks, since Electron has never been launched during implementation. DC-2 is the independently-startable capability-bridge seam-owner; DC-3/4/5 hang off it; DC-1 carries the mac signing/updater pipeline; DC-5 and DC-6 carry the two cross-plan gates (INBOX-NOTIF, PLATFORM-REACH).",
       "atoms": [
         {
           "id": "DC-1",
@@ -5316,7 +5316,8 @@
           "done_when": "global-hotkey push-to-talk (bridge global_hotkey cap, chord configurable in Settings) captures only while held/toggled with an always-on capturing indicator; renderer getUserMedia (TCC via bridge grant) chunk-uploads to existing /api/stt/transcribe and a spoken sentence lands in the composer at cursor <=2s after release on faster-whisper local; system-audio probe returns unavailable with reason and docs/guides/desktop.md states mic-only; deny-mic path degrades with an actionable prompt and an already-registered-chord conflict surfaces cleanly. (Owner tasks 3/4: mic-privacy sanity pass + default chord.)",
           "deps": [
             "DC-2"
-          ]
+          ],
+          "status_note": "PARTIAL (2026-08-16) \u2014 T3.1/T3.2/T3.3 implemented and gated; stays `todo` for V3. The renderer half is driven end to end in tests (chord push -> grant -> capture -> chunked upload -> insert at cursor, and every track stopped on release). THREE LEGS ARE UNEXERCISED because they need a launched shell on a real Mac: (1) that macOS delivers the global chord at all (globalShortcut is stubbed; Electron was never launched), (2) the real TCC prompt, (3) a real microphone (jsdom has neither getUserMedia nor MediaRecorder, so both are fakes). Also outstanding: owner task 3 (mic-privacy sanity pass) and owner task 4 (approve the default chord). DEVIATION: the global chord TOGGLES rather than reading key-release -- Electron exposes no global key-up event, so \"held\" is unreachable without an accessibility-class input tap we deliberately do not request; the done_when allows \"held/toggled\" and a 2-minute capture ceiling bounds a forgotten toggle."
         },
         {
           "id": "DC-4",

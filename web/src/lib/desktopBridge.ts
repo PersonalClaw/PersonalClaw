@@ -21,8 +21,27 @@ export interface DesktopGrantResult {
   reason: string
 }
 
+/** The result of asking the shell to bind a global chord. `conflict` separates "another
+ *  app already owns that chord" from "that is not a valid chord" — they need different
+ *  sentences, and collapsing them is how a user retypes a perfectly good shortcut. */
+export interface ChordBindResult {
+  ok: boolean
+  chord: string
+  conflict: boolean
+  reason: string
+}
+
 export interface DesktopBridge {
   onStatus?: (cb: (msg: string) => void) => () => void
+  /** Push-to-talk (DC-3). Note what is NOT here: no `start()`. The shell cannot open
+   *  the microphone — it can only tell the renderer the chord fired. `setCapturing`
+   *  runs the other way: the renderer reporting the stream it owns, which is what
+   *  lights the menu-bar indicator. */
+  pushToTalk?: {
+    bind: (chord: string) => Promise<ChordBindResult>
+    setCapturing: (on: boolean) => Promise<boolean>
+    on: (cb: (push: { action: 'toggle' | 'stop'; reason?: string }) => void) => () => void
+  }
   capabilities: {
     names: () => string[]
     probe: (cap: string) => Promise<DesktopCapabilityWire>

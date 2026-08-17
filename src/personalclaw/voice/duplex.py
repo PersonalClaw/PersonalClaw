@@ -54,6 +54,13 @@ DEFAULT_EXIT_PHRASES: tuple[str, ...] = (
 # homophones instead of confidently misreading them. One line, no hedging.
 VOICE_DISCLAIMER = "(Transcribed from voice; transcription may be inaccurate.)"
 
+# The desktop shell's default push-to-talk chord (DC-3 T3.1). An Electron
+# accelerator string; the shell parses and binds it, and refuses a chord without a
+# modifier because a bare global key is taken from every other app on the machine.
+# Kept here beside the other voice defaults so the config dataclass, the docs and
+# the frontend all read one value.
+DEFAULT_PUSH_TO_TALK_CHORD = "CommandOrControl+Shift+Space"
+
 _WORD_RE = re.compile(r"[a-z0-9]+(?:'[a-z]+)?")
 
 _FENCE_RE = re.compile(r"```.*?```|~~~.*?~~~", re.DOTALL)
