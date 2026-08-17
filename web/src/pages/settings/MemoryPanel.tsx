@@ -357,17 +357,34 @@ function MemoryStudio({ onChanged, initialSel }: { onChanged: () => void; initia
     if (it) setSelUid(it.uid)
   }
 
+  // 🔑 A DESTRUCTIVE ACTION THE USER CONFIRMED MUST NOT FAIL SILENTLY. All three branches used to
+  // `.catch(() => {})` and then clear the selection and `reloadAll()`, so a failed delete looked like
+  // this: the dialog closed, the selection vanished, the list refetched — and the memory came back, with
+  // nothing said. The user had explicitly confirmed a deletion and got no account of why it did not
+  // happen.
+  //
+  // `saveFailureReported`'s rail states the sibling contract for optimistic WRITES and scopes itself out
+  // of "reads, deletes and confirm-flows", so this shape was unclaimed rather than settled. It is not the
+  // same failure: a lying control shows a value the server refused, whereas this is an action that
+  // silently did not occur — arguably worse, because the user was asked to confirm it.
+  //
+  // The reporting form is this file's own, used twice for its settings writes: `notify(…, 'error')` with
+  // the server's message. On failure the selection is KEPT, so the row is still there to retry from.
   const removeSelected = async () => {
     if (!selected) return
+    const fail = (what: string, e: unknown) => {
+      notify(`Couldn't delete this ${what}: ${String((e as Error)?.message || e)}`, 'error')
+      reloadAll()   // show the server's truth; keep the selection so the user can retry
+    }
     if (selected.kind === 'fact' && selected.fact) {
       if (!(await confirmDelete('memory', selected.fact.key))) return
-      await api.deleteSemantic(selected.fact.key).catch(() => {})
+      try { await api.deleteSemantic(selected.fact.key) } catch (e) { return fail('memory', e) }
     } else if (selected.kind === 'episodic' && selected.episodic) {
       if (!(await confirm({ title: 'Delete this episodic memory?', danger: true, confirmLabel: 'Delete' }))) return
-      await api.deleteEpisodic(selected.episodic.id).catch(() => {})
+      try { await api.deleteEpisodic(selected.episodic.id) } catch (e) { return fail('episodic memory', e) }
     } else if (selected.kind === 'lesson' && selected.lesson) {
       if (!(await confirmDelete('lesson'))) return
-      await api.deleteLesson(selected.lesson.rule).catch(() => {})
+      try { await api.deleteLesson(selected.lesson.rule) } catch (e) { return fail('lesson', e) }
     } else return
     setSelUid(null); reloadAll()
   }
