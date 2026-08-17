@@ -87,19 +87,37 @@ def run_sync_cycle(
     self_id: str,
     manifest_sha: str = "",
     now: str = "",
+    encrypt: str = "auto",
 ) -> SyncCycleReport:
     """Run one full pull→merge→export→push cycle against ``transport``.
 
     ``self_id`` is this machine's id (``shards.machine_id(home)``); ``manifest_sha`` is the sha of
     the export we're about to publish (the caller computes it after export, or passes "" — it is
-    a cheap change-probe field, not load-bearing). Never raises: any transport failure lands in
-    the report so the service loop survives.
+    a cheap change-probe field, not load-bearing). ``encrypt`` is the ``durability.sync_encrypt``
+    tri-state (``auto``/``on``/``off``) resolved against the transport's own default (§4.4).
+    Never raises: any transport failure lands in the report so the service loop survives.
     """
     report = SyncCycleReport()
     sync_root = Path(home) / "sync"
     cursor = Cursor(sync_root)
     outbox = Outbox(sync_root)
     conflict_queue = ConflictQueue(home)
+
+    # ── ENCRYPTION (§4.4) ───────────────────────────────────────────────────
+    # Resolved ONCE per cycle, before anything moves: the salt round-trip and the Argon2id
+    # stretch happen here rather than per object. A setup failure (no passphrase, no salt)
+    # is FAIL-CLOSED — the cycle is skipped entirely rather than falling back to plaintext,
+    # which would upload the user's whole state in the clear to storage they chose to encrypt.
+    codec = None
+    try:
+        from personalclaw.durability.crypto import SyncEncryptionError, codec_for
+
+        codec = codec_for(transport, setting=encrypt)
+    except SyncEncryptionError as exc:
+        logger.warning("sync cycle: encryption unavailable (%s)", exc)
+        report.ok = False
+        report.error = f"encryption: {exc}"
+        return report
 
     # ── PULL + MERGE ────────────────────────────────────────────────────────
     try:
@@ -113,6 +131,7 @@ def run_sync_cycle(
             db_merger=make_db_merger(home),
             queue=conflict_queue,
             now=now,
+            codec=codec,
         )
         report.rows_added = report.pulled.added
         report.rows_removed = report.pulled.removed
@@ -137,6 +156,7 @@ def run_sync_cycle(
                 manifest_sha=manifest_sha,
                 now=now,
                 reload_registry=lambda: read_registry(transport),
+                codec=codec,
             )
             report.seq_published = report.pushed.seq if report.pushed.registry_committed else 0
     except Exception as exc:  # noqa: BLE001

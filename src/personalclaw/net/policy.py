@@ -125,8 +125,48 @@ REGISTRY = EgressPolicy(
 # "only what is listed", and visible as a refusal rather than a silent widening.
 LISTED = EgressPolicy(name="listed", allow_only=True)
 
+# DURABILITY-AND-SYNC §4.3/§4.4 + Plug-in Map: the sync transport's egress posture. A sync
+# transport talks to EXACTLY ONE operator-configured object-store endpoint, forever — so the
+# base is `allow_only` with an EMPTY host list, which denies every host until
+# :func:`sync_egress_policy` pins the configured endpoint onto it. That ordering is the point:
+# the fail-closed reading of "host-pinned" is that an unpinned SYNC policy reaches nothing, so
+# a transport that forgets to pin cannot silently inherit STRICT's whole-public-internet reach.
+#
+# `max_bytes` is raised DELIBERATELY, not removed: a whole-database shard copy is much larger
+# than a 5 MB page fetch but is still bounded, so a hostile or misconfigured endpoint cannot
+# stream an unbounded body into memory. 200 MB is the same order as REGISTRY's 100 MB wheel cap
+# with headroom for a multi-hundred-MB memory/knowledge DB shard.
+#
+# `allow_private` stays False in the base, but MEASURED BEHAVIOUR (driven, not assumed): the
+# pinned endpoint is itself an `allow_hosts` entry, and the guard's documented `allow_hosts`
+# semantics waive the private-range block for a listed host. So a self-hosted endpoint on
+# loopback or a LAN — `http://127.0.0.1:9000`, `http://nas.local:9000` — IS reachable with no
+# further operator opt-in. That is deliberate and correct for this surface: §4.4's whole premise
+# is user-owned storage, a self-hosted MinIO/NAS is a first-class target, and the endpoint comes
+# from operator provider settings, never from anything an agent can influence.
+#
+# What that reachability does NOT get to include is the cloud metadata service, which is the one
+# private address where "fetch whatever the operator configured" turns into credential theft. A
+# `deny_hosts` entry is evaluated BEFORE the allow-list and before DNS resolution, so it survives
+# the pin; a legitimate MinIO host is unaffected.
+SYNC_DENY_HOSTS: tuple[str, ...] = (
+    "169.254.169.254",  # AWS/Azure/GCP/OpenStack IMDS
+    "metadata.google.internal",
+    "metadata.goog",
+    "100.100.100.200",  # Alibaba Cloud
+)
+SYNC = EgressPolicy(
+    name="sync",
+    allow_only=True,
+    allow_hosts=(),
+    deny_hosts=SYNC_DENY_HOSTS,
+    max_bytes=200_000_000,
+    timeout_s=120.0,
+)
+
 _PROFILES: dict[str, EgressPolicy] = {
-    p.name: p for p in (STRICT, CONNECTOR, SOURCE, WEBHOOK, LOOPBACK_INTERNAL, REGISTRY, LISTED)
+    p.name: p
+    for p in (STRICT, CONNECTOR, SOURCE, WEBHOOK, LOOPBACK_INTERNAL, REGISTRY, LISTED, SYNC)
 }
 
 
@@ -204,3 +244,59 @@ def egress_policy_for(base: EgressPolicy) -> EgressPolicy:
         deny_hosts=tuple(dict.fromkeys([*base.deny_hosts, *eg.deny_hosts])),
         allow_private=base.allow_private or bool(eg.allow_private),
     )
+
+
+class SyncEndpointRefused(ValueError):
+    """A sync endpoint that cannot be pinned — so no policy is derived and nothing egresses.
+
+    Raised instead of returning a wide-open policy: "I could not work out which host you
+    meant" must never resolve to "reach any host". The caller surfaces it as a setup error.
+    """
+
+
+def sync_egress_policy(endpoint: str) -> EgressPolicy:
+    """The SYNC policy pinned to one configured object-store ``endpoint`` (§4.3, Plug-in Map).
+
+    Derived, never hand-written: :data:`SYNC` supplies the raised caps and the exclusive
+    stance, :func:`egress_policy_for` layers the operator's ``security.egress`` posture
+    (``allow_private`` for a LAN MinIO, ``deny_hosts`` for a host the operator has banned),
+    and only then is the endpoint's host pinned as the sole reachable host.
+
+    The pin is applied AFTER the operator layering on purpose. `egress_policy_for` UNIONs the
+    operator's ``allow_hosts`` into whatever base it is given, which for an exclusive policy
+    would widen the transport's reach to every host the operator listed for other surfaces —
+    hosts that have no business being an S3 endpoint. A sync transport speaks to one endpoint,
+    so ``allow_hosts`` ends as exactly that endpoint. ``deny_hosts`` is UNIONed rather than
+    replaced, so both :data:`SYNC_DENY_HOSTS` and the operator's own denies survive — and a
+    deny outranks the pin, including when the operator bans their own configured endpoint.
+
+    Because the pinned host is its own allow-list entry, a private/loopback endpoint is
+    reachable without further opt-in (see :data:`SYNC`'s note — that is the intended posture
+    for user-owned storage, and the metadata service is denied separately).
+
+    Raises :class:`SyncEndpointRefused` when no host can be parsed out of ``endpoint``, or when
+    the endpoint names a denied host — refusing at derivation is more legible than handing back
+    a policy whose only permitted host is one the guard will reject on every request.
+    """
+    from urllib.parse import urlparse
+
+    raw = (endpoint or "").strip()
+    if not raw:
+        raise SyncEndpointRefused("no sync endpoint configured — nothing to pin egress to")
+    parsed = urlparse(raw if "://" in raw else f"https://{raw}")
+    host = (parsed.hostname or "").strip().lower()
+    if not host:
+        raise SyncEndpointRefused(f"cannot parse a host out of sync endpoint {raw!r}")
+    if parsed.scheme not in SYNC.allow_schemes:
+        raise SyncEndpointRefused(
+            f"sync endpoint scheme {parsed.scheme!r} is not one of {SYNC.allow_schemes}"
+        )
+    layered = egress_policy_for(SYNC)
+    denies = tuple(dict.fromkeys([*SYNC_DENY_HOSTS, *layered.deny_hosts]))
+    from personalclaw.net.guard import host_matches
+
+    if host_matches(host, denies):
+        raise SyncEndpointRefused(
+            f"sync endpoint host {host!r} is on the egress deny list and cannot be a sync target"
+        )
+    return layered.with_overrides(allow_only=True, allow_hosts=(host,), deny_hosts=denies)

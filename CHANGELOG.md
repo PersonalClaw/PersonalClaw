@@ -23,6 +23,26 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
   single message that names every element you marked, so the agent fixes all of them in one pass
   rather than guessing which "second heading" you meant. On a loop's output it goes to that loop as
   guidance; anywhere else it opens a chat and asks for the same artifact to be refreshed in place.
+- **Sync through storage you don't trust, and it still can't read your data.** Turn on
+  `durability.sync_encrypt` and everything PersonalClaw sends to a shared bucket or folder is
+  encrypted on this machine first — your tasks, memory and knowledge arrive as bytes the storage
+  provider cannot open. What stays readable is only the routing: which machine wrote which batch,
+  so a second machine can still work out what to fetch without holding your passphrase. Every
+  machine that knows the passphrase reads every other's data; anyone who doesn't gets nothing, and
+  a single altered byte is refused rather than quietly accepted. Backups → sync status now tells you
+  plainly whether your data *is* encrypted instead of echoing the setting back at you. The default
+  does the sensible thing per destination — on for cloud storage and shared folders, off for a
+  private git repo, where a readable history is the reason you chose it — and you can override it
+  either way. The passphrase lives in the credential store, never in a config file, so it stays out
+  of exports and out of the app's own history. Two honest caveats: if encryption is switched on and
+  no passphrase is stored, sync **stops** rather than sending your data in the clear; and a
+  forgotten passphrase means the remote copies are unreadable — the data on this machine is
+  untouched, so you start a fresh sync location rather than losing anything.
+- **Mistyping your sync passphrase is now a mistake you can take back.** Get it wrong and the
+  batches from your other machines are held, not thrown away: fix the passphrase and the very next
+  sync merges everything it was holding. Previously a single sync with the wrong passphrase would
+  have skipped those batches permanently, and correcting it afterwards would not have brought them
+  back.
 - **Saved the same article twice? Knowledge will now tell you, and fold the two together.** Open a
   knowledge item and the **More details** panel lists anything that looks like the same document
   again, each with the reason it was matched and how long ago it arrived, so you can judge the claim
