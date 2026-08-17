@@ -382,13 +382,26 @@ function GroupBlock({ g, onOpen, onToggleServer, onRemoveServer, onToggleTool, o
           <span className="ml-auto text-on-surface-low text-[0.75rem]" title="Required by platform features — can't be disabled">required</span>
         )}
       </div>
+      {/* 🔴 TWO COLUMNS WITH NO BREAKPOINT MADE THE TOOL NAME INVISIBLE ON A PHONE. The grid in the
+          else-branch below holds, per cell, a wrench, the name, an approval shield, a risk badge and
+          sometimes a "Disabled" pill — so at 390px a ~172px half-width cell leaves the name nothing.
+          Measured across 99 tools: visible width 0–83px, MEDIAN 65px, several at 0 or 1px;
+          `artifact_delete` painted at literally 0px while needing 117. At 768px and 1440px every name
+          renders in full (101/101px), so this is purely the phone column count.
+          🪤 A `title` WOULD HAVE BEEN THE WRONG FIX, which is why the truncation census classifies
+          before it edits: a tooltip needs a pointer and this defect exists only on touch. The name has
+          to be VISIBLE, not recoverable — hence one column below `sm:`, the idiom nine other grids here
+          already use (SecurityPanel, ArtifactGrid, ArtifactCompare, ScheduleForm, AgentForm,
+          AuditPanel, PresetEmptyState, DesignCockpitPage ×2).
+          🪤 This comment sits ABOVE the conditional on purpose: a `{…}` comment as the first child of a
+          ternary branch is a second child where one expression is allowed, and it does not compile. */}
       {g.kind === 'mcp' && g.tools.length === 0 ? (
         <div className="rounded-lg bg-surface-container px-m py-3 text-on-surface-low text-[0.8125rem] flex items-center gap-s">
           <Plug size={14} />
           {!g.server?.enabled ? 'Server disabled.' : health?.state === 'error' ? `Not responding — ${g.server?.error || 'no tools available'}.` : 'No tools exposed yet.'}
         </div>
       ) : (
-        <div className="grid grid-cols-2 gap-s">
+        <div className="grid grid-cols-1 gap-s sm:grid-cols-2">
           {g.tools.map((t) => {
             const { props } = schemaProps(t.parameters)
             const off = t.disabled === true
