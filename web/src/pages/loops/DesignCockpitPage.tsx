@@ -17,6 +17,7 @@ import { CockpitPromptBar } from './CockpitPromptBar'
 import type { RouteProps } from '../../app/useQueryState'
 import { promptInput } from '../../ui/dialog'
 import { accentChip } from '../../design/accent'
+import { notify } from '../../app/appSdk'
 
 export type Scheme = 'light' | 'dark'
 type Tab = 'tokens' | 'canvas' | 'palette' | 'contrast' | 'exports'
@@ -118,9 +119,13 @@ export function DesignCockpitPage({ id, onBack, onDeleted, onOpenProject, onBuil
     await api.uLoopNudge(id, t).catch(() => {})
     setNudgeText(''); setNudgeOpen(false)
   }
+  // 🔑 A failed delete used to call `onDeleted()` ANYWAY, so the cockpit closed and the user was
+  // navigated off a loop that still exists — the UI performing the post-success step is a stronger lie
+  // than staying silent. Report it and stay put; the button is still armed, so a retry is one click.
   async function del() {
     if (!confirmDelete) { setConfirmDelete(true); return }
-    await api.deleteULoop(id).catch(() => {})
+    try { await api.deleteULoop(id) }
+    catch (e) { notify(`Couldn't delete this loop: ${String((e as Error)?.message || e)}`, 'error'); return }
     onDeleted?.()
   }
   function copyLink() {

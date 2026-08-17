@@ -22,6 +22,7 @@ import { useCachedData, invalidateCache } from '../../lib/useCachedData'
 import { rowSubject } from '../../lib/rowSubject'
 import { confirm, confirmDelete, promptInput } from '../../ui/dialog'
 import { PageTitle } from '../../ui/PageTitle'
+import { notify } from '../../app/appSdk'
 
 type View = 'library' | 'graph' | 'intents' | 'tags' | 'conflicts'
 
@@ -279,7 +280,15 @@ export function KnowledgeListPage({ onCreate, onOpenItem, onOpenSources, query, 
       danger: true,
     })
     if (!ok) return
-    await api.deleteKnowledgeCollection(c.id).catch(() => {})
+    // The shelf used to vanish, then reappear on the refetch with nothing said. On failure keep the
+    // shelf selected (`setCollectionTok('')` is the success step) so the message names something the
+    // user can still see.
+    try { await api.deleteKnowledgeCollection(c.id) }
+    catch (e) {
+      notify(`Couldn't delete the shelf "${c.name}": ${String((e as Error)?.message || e)}`, 'error')
+      invalidateCache('knowledge:collections'); refreshCollections()
+      return
+    }
     invalidateCache('knowledge:collections')
     refreshCollections()
     setCollectionTok('')

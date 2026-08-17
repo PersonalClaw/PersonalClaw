@@ -27,6 +27,7 @@ import { rowSubject } from '../../lib/rowSubject'
 import { activePhaseIndex, phaseMinCycles, phaseForCycle, hasDistinctName } from './loopPhases'
 import { LOOP_STATUS } from './loopStatusMeta'
 import { PageTitle } from '../../ui/PageTitle'
+import { notify } from '../../app/appSdk'
 
 // Keyed by LoopStatus PLUS the synthetic 'ended_early' (a non-genuine 'complete'),
 // so the type is the broader string map. Shared with the dashboard Active Work
@@ -93,7 +94,9 @@ export function LoopsListPage({ onOpen, onCreate, query, setQuery }: { onOpen: (
     e?.stopPropagation()
     if (confirmDelete !== id) { setConfirmDelete(id); window.setTimeout(() => setConfirmDelete((c) => (c === id ? null : c)), 4000); return }
     setConfirmDelete(null)
-    await api.deleteULoop(id).catch(() => {})
+    // Swallowing this made the row vanish and then come back on the refetch, unexplained. Say why.
+    try { await api.deleteULoop(id) }
+    catch (e) { notify(`Couldn't delete this loop: ${String((e as Error)?.message || e)}`, 'error') }
     invalidateCache('loops'); refresh()
   }
 
