@@ -3756,7 +3756,7 @@
           "scope": "Amendment (2026-07-26) T4.5",
           "done_when": "optimize/optimizeAndSend assemble role-labeled (~10 turns, ~400 chars/turn, newest-last) context that survives the handler's [-2000:] cap; the bundled task-prompt_optimizer.md instructs the exact UNCHANGED token so an already-specific prompt returns changed:false with a short reply (fixture asserts it); a vague prompt referencing 'that file from earlier' optimizes using the labeled referent; the existing revert path is confirmed/tested (restores the exact pre-optimize draft, focus returns)",
           "deps": [],
-          "pr": "feature-cc5-optimizer-context (2026-08-17)"
+          "pr": 1548
         },
         {
           "id": "CC-6",
