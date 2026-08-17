@@ -404,7 +404,11 @@ def test_the_api_refuses_a_grant_ABOVE_the_declared_ceiling(_isolated_home):
     assert resp.status == 400
     body = _json_body(resp)
     assert body["ok"] is False
-    assert au.RUNG_ONE_TAP in body["error"] and "ceiling" in body["error"]
+    # Re-pointed, not relaxed: this pinned the raw rung KEY (`one_tap`) being in a message the
+    # USER reads. It now asserts the stronger property — the label is there and the key is not.
+    assert "ceiling" in body["error"]
+    assert rg.rung_label(au.RUNG_ONE_TAP) in body["error"], body["error"]
+    assert au.RUNG_ONE_TAP not in body["error"], body["error"]
     assert au.granted_rung(APP_KEY) == au.RUNG_DRAFT_ONLY
 
 

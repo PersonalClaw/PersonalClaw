@@ -97,6 +97,19 @@ RUNG_LABELS: dict[str, str] = {
     RUNG_AUTONOMOUS: "runs on its own",
 }
 
+
+def rung_label(rung: str) -> str:
+    """The rung in the words a USER reads, falling back to the key if it is unknown.
+
+    The one accessor for ``RUNG_LABELS``, because "autonomous" is what the code calls a rung and
+    "runs on its own" is what a person needs to know — and every sentence a user reads has to pick
+    the second. Three copies of ``RUNG_LABELS.get(x, x)` had grown up in as many modules; prose
+    composers call this instead. Machine-facing strings deliberately keep the key: an audit row, a
+    dedup key, a ``ValueError`` for a developer, and the echo of a rung a caller supplied.
+    """
+    return RUNG_LABELS.get(rung, rung)
+
+
 #: What each rung DOES at a dispatch seam, in one sentence — the table at the top of this
 #: module, in the words the ladder panel shows.
 RUNG_HINTS: dict[str, str] = {
@@ -289,9 +302,17 @@ def route_action_type(key: str, *, session_key: str = "") -> RungRoute:
     profile = profile_for_session(session_key)
     ceiling = rung_ceiling_for_profile(profile)
     effective = RUNGS[min(max(rung_rank(rung), 0), max(rung_rank(ceiling), 0))]
-    reason = f"{key} resolves {rung}"
+    # 🪤 This sentence is USER COPY: `announce_withheld` puts it in the body of the inbox row a
+    # held action raises ("The 'create_task' action on trigger t-1 did not run: …"), and the
+    # trigger's recorded outcome error carries it too. It used to read "action.create_task resolves
+    # draft_only" — the code's name for the rung, in a row a person reads. The label is a predicate,
+    # so `{key}` is already its subject.
+    reason = f"{key} {rung_label(rung)}"
     if effective != rung:
-        reason = f"{key} resolves {rung}, narrowed to {effective} by the {profile.name} profile"
+        reason = (
+            f"{key} {rung_label(rung)}, narrowed so it {rung_label(effective)} "
+            f"by the {profile.name} profile"
+        )
     return RungRoute(
         route=_ROUTE_BY_RUNG.get(effective, ROUTE_DRAFT),
         key=key,
