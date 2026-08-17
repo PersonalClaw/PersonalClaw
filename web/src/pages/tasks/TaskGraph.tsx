@@ -141,7 +141,9 @@ export function TaskGraph({ tasks, onOpen }: { tasks: TaskItem[]; onOpen: (id: s
               ringed: criticalSet.has(t.id),
               content: (
                 <div className="flex h-full flex-col justify-center">
-                  <div className={`truncate text-[0.8125rem] leading-tight ${done ? 'line-through opacity-60' : ''}`} style={withWeight({ color: 'var(--color-on-surface)' }, 500)}>{t.title}</div>
+                  {/* 182px of 386 at 390px — 2.1x, the worst of the four. A DAG node is the smallest slot a
+                      task title gets, so it clips first and hardest. */}
+                  <div className={`truncate text-[0.8125rem] leading-tight ${done ? 'line-through opacity-60' : ''}`} style={withWeight({ color: 'var(--color-on-surface)' }, 500)} title={t.title}>{t.title}</div>
                   <div className="mt-0.5 flex items-center gap-1.5 text-[0.75rem]" style={{ color: 'var(--color-on-surface-low)' }}>
                     <span style={{ color: sm.tone }}>{sm.label}</span>
                     {pm && <span style={{ color: pm.tone }}>· {pm.label}</span>}
