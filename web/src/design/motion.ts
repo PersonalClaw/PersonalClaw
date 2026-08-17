@@ -135,6 +135,36 @@ export const listItemEnter: Variants = {
   animate: () => ({ opacity: 1, y: 0, transition: physics.smooth }),
 }
 
+/** The step a SURFACE's regions cascade by, at maximum expressiveness. 50ms lands on
+ *  `stagger()`'s own 40ms default once `expr()` has scaled it for the bold-leaning
+ *  default (0.8) — so the app's region cascade IS the house step, arrived at through
+ *  the dial rather than hardcoded past it. */
+const REGION_STEP = 0.05
+/** The fraction of `REGION_STEP` kept at expressiveness 0 — refined is a TIGHTER
+ *  cascade (20ms), not a dead one. Zeroing it here would make the dial an on/off
+ *  switch and duplicate what `prefers-reduced-motion` already decides. */
+const REGION_STEP_FLOOR = 0.4
+
+/** The entrance choreography for a SURFACE's REGIONS — the top-level bands of a page
+ *  cascading in on arrival instead of all landing at once (plan FLUID-MOTION §S3 T3.2).
+ *  Pair with `listItemEnter` on each region; `ui/motion/Entrance` is the one consumer.
+ *
+ *  Returns `null` under `prefers-reduced-motion`, and `null` means NO ENTRANCE AT ALL —
+ *  not a shorter step. The setting asks for less motion, not quicker motion, so a
+ *  faster cascade would still be a cascade; the caller's contract is to render its
+ *  regions plain, with no hidden initial state and no transition. Read at CALL time
+ *  like every other gate in this file, so a mid-session OS change is honored.
+ *
+ *  Deliberately PARAMETERLESS. A `step` argument would let each surface pick its own
+ *  cascade and the app would drift back into per-page motion; one function with no
+ *  inputs is what makes "every surface cascades identically" checkable rather than
+ *  aspirational. It composes `stagger()` rather than computing delays of its own —
+ *  there is exactly one stagger in this app and this is a caller of it. */
+export function regionStagger(): Transition | null {
+  if (prefersReducedMotion()) return null
+  return stagger(expr(REGION_STEP, REGION_STEP_FLOOR))
+}
+
 // ─────────────────────────────────────────────────────────────────────────
 // Gesture physics (plan FLUID-MOTION §C1). Direct manipulation is not decoration:
 // reduced motion zeroes the transitions a gesture RESOLVES with, and never the

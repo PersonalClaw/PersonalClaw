@@ -297,3 +297,103 @@ one rule (a view transition may never gate a state change) with the wrong/right 
 **Not in this atom, by scope:** the shared-element *morph* half of §C3's "crossfades/morphs" is
 `FM-2`'s `Morph.tsx`; this atom ships the crossfade. `FM-7` still owns the 60fps budget proof and
 the zero-motion CI guard, and now inherits a wired route transition to measure.
+
+### 2026-08-17 — `FM-6` (S3: T3.2; contract §C3) — **DONE**
+
+Three surfaces now orchestrate their entrances, and they were chosen for having a real BAND STACK
+rather than one list in one column: **the dashboard home** (`pages/dashboard/DashboardPage.tsx`, 8
+regions — the launcher, the sub-`lg` Hero Pulse strip, the two prime grid rows and the four
+single-widget bands), **Discover** (`pages/discover/DiscoverPage.tsx`, the intro plus one region per
+server-authored area — 6 measured against `demo-home`), and **the inbox**
+(`pages/inbox/InboxPage.tsx`, 2 — the source-health banner, then the queue column: context first,
+then the work). The inbox has exactly two regions because that is its whole body; the other two are
+where the cascade actually reads.
+
+**One mechanism, and the surfaces do not own it.** `regionStagger()` in `motion.ts` is the single
+decision — `stagger(expr(0.05, 0.4))`, and **`null` under `prefers-reduced-motion`**. It is
+deliberately PARAMETERLESS: a `step` argument would let each page pick its own cascade and no test
+could notice the drift, so "every surface cascades identically" is checkable instead of
+aspirational (a rail asserts `regionStagger.length === 0`, and that `regionStagger` has exactly one
+consumer in the whole frontend). The consumer is one new pair in the existing motion family,
+`ui/motion/Entrance.tsx` — `EntranceGroup` (the orchestrator, replacing the column div a page
+already had, so the entrance costs no extra DOM) and `EntranceRegion` (one band, on
+`listItemEnter`, the same variant a list row uses). No second stagger, no second variant.
+
+**Reduced motion is an ABSENCE, and the branch is structural.** `regionStagger()` returning `null`
+makes both components render plain `<div>`s — no variants, no hidden initial state, no transition,
+nothing for a "fast cascade" tier to hide in. Measured in Chrome with the media query forced on:
+all three surfaces reported `data-entrance="none"`, zero inline `opacity`/`transform`, minimum
+computed opacity **1**, `getAnimations().length === 0`, and every heading and control still on
+screen (8/2/5 regions, 29/16/20 buttons). A region reads that decision from the group via context
+rather than re-asking, which is load-bearing rather than tidy: a region that answered for itself
+could end up variant-driven under a plain parent if the query flipped between the two renders, and a
+variant-driven region with nothing to propagate the `animate` label sits at `opacity: 0` **forever**.
+The context default is `false`, so forgetting the group costs the entrance, never the content.
+
+**The replay rule: an entrance plays on the MOUNT of its group, and nothing re-renders it.** For a
+route surface that is once per navigation (`App.tsx` keys the route wrapper on the route). A
+WebSocket push, a `refresh()`, a filter change or an opening panel are re-renders and are free. Two
+placement rules carry it, and they are what a call site can get wrong: put the group ABOVE every
+data-dependent branch when its regions are static (the dashboard, the inbox), or ON the loaded
+column when the regions ARE the data (Discover's areas); and never key a group or a region on data.
+`lib/useCachedData` is what makes the first sufficient — a same-key revalidation HOLDS the last
+value instead of dropping to `undefined`, so a refresh cannot flip a surface back through its
+skeleton and remount the group underneath. Both halves were driven, not argued: an inbox
+query-refinement left `minOpacity 0.999` with byte-identical region nodes, and a real Discover
+dismiss (POST + refetch, one area emptied and dropped) left `minOpacity 0.999`, the same group node
+and 5 of the surviving regions the same DOM nodes.
+
+**DEVIATION — settings home was rejected as the third surface, on a measured mechanism.**
+`SettingsHome`'s masonry re-packs on every commit and re-parents blocks between columns, so a
+staggered block would REMOUNT and replay its entrance on any resize or async card load. `TaskBoard`
+was rejected too (a `LayoutGroup` + `AnimatePresence` drag surface — an entrance would compete with
+the shared-layout animation a dragged card rides). Both reasons are recorded in
+`pages/surfaceEntranceAdoption.test.ts` so a later pass does not re-derive them. Also NOT wrapped:
+`PinnedTiles` — it renders `null` on an empty registry, and a region wrapper around nothing is still
+a flex item, so it would spend a `gap-2xl` of blank space on every install with no pinned tiles
+(and the tile band is AMBIENT-SURFACES' surface).
+
+**DISCOVERY — the first browser measurement was a harness artifact that read as a defect.** Sampling
+`element.style.opacity` showed every region jumping 0.00 → 1.00 with no intermediate values, i.e. a
+pop rather than a fade. framer-motion animates opacity through **WAAPI**, so the inline style holds
+its `initial` string for the whole animation and only the COMPUTED value moves; re-measured,
+`getComputedStyle` glides 0.008 → 0.16 → … → 0.93 with `translateY` 7.18px → 0.57px and
+`getAnimations().length === 1`. An earlier run was throttled too — the tab was backgrounded, so rAF
+ran at 30-130ms and the trace was unusable; `document.hasFocus()` is the cheap tell. Two
+measurements, two different reasons to believe a working entrance was broken.
+
+**Measured, in Chrome, on the real dashboard:** region cascade starts at 40 / 62 / 104 / 145 / 196 /
+238 / 281 / 329 ms — deltas 22, 42, 41, 51, 42, 43, 48 ms against the predicted `expr(0.05, 0.4)` =
+**44ms** at the default expressiveness 0.8. Inbox 40ms apart, Discover 41/45/46/38/51. The whole
+dashboard cascade spans 289ms and the last region settles at 748ms. **Content is not gated:** at the
+first commit (t=27ms, minimum region opacity 0) all eight section headings, 29 buttons and the
+composer were already in the document. At 390×844 every surface measured **0px** overflow on the
+document, `<main>`, and the group, with no region wider than its group — the `min-w-0` the four
+single-widget regions carry is what preserves that (the region is now the column's flex item, and a
+flex item defaults to `min-width: auto`).
+
+**Rails.** `design/motion.test.ts` grows 6 for `regionStagger()` (the null, the expr() linearity via
+a midpoint check, the 0.044 landing, the call-time read, the zero-arity); `ui/motion/Entrance.test.tsx`
+(6) — the group declares its branch, the variant demonstrably reaches the regions (they carry an
+inline `opacity: 0` at mount only because the group's label propagated, which is the same propagation
+`staggerChildren` rides), content and a control usable on the first commit, node identity stable
+across a re-render, and an orphan region renders plain; `ui/motion/Entrance.reducedMotion.test.tsx`
+(5) in its own file with the `matchMedia` stub at MODULE SCOPE, because framer caches its probe in a
+module singleton and a later stub is inert; `pages/discover/entranceReplay.test.tsx` (3) drives the
+real surface through a dismiss; `pages/surfaceEntranceAdoption.test.ts` (8) names the three adopters
+with a region floor each, forbids a second group or a hand-rolled `stagger(` on any of them, and
+pins `regionStagger`'s consumer set.
+
+**Falsification.** Deleting the reduced-motion branch reddened 4 assertions across two files
+(`expected { …(2) } to be null`, and `data-entrance` `"staggered"` where `"none"` was required).
+Gating a region's children on `onAnimationComplete` reddened both "never gates content" tests
+(`Unable to find an element with the text: first region`) — and the failure dump is also the proof
+the variant is live: `style="opacity: 0; transform: translateY(8px);"`. Keying Discover's group on
+`data.visible_count` reddened the replay rail with the flicker rendered literally in the diff — the
+regions' computed opacity back at `0` and `translateY(8px)` after the refetch.
+
+**Not in this atom, by scope:** `FM-7` owns the 60fps proof and the CI zero-motion guard, and now
+inherits an `expr()`-scaled entrance and a reduced-motion assertion on three surfaces to measure.
+The `ListRow`/`TipRow`/launcher-chip `delay: Math.min(index * 0.03, …)` idiom is a LIST-ITEM stagger
+and was left alone: it is pre-existing, it is not a region cascade, and converting it is an
+app-wide sweep, not this atom.
