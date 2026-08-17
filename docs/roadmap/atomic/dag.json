@@ -7321,7 +7321,8 @@
           "done_when": "`Lease(ttl)` reuses `pool.py`'s proven compare-and-swap decision functions rather than a second lease implementation (S57 measured `unlink`-based single-use failing 36 of 40 races, and a lease that loses a race is worse than no lease), and `Dwell`/`MetricGate` reuse `loop/tick.StepConfig`'s parsed thresholds. Both are additive: a spec declaring neither behaves exactly as before, proven by re-running `PP-11`'s golden frontier file. Verified by a fan-out that genuinely serializes on a leased resource across a gateway restart, and by a metric regression rolling a step back inside a workflow run.",
           "deps": [
             "PP-11"
-          ]
+          ],
+          "pr": 1556
         },
         {
           "id": "PP-13",
