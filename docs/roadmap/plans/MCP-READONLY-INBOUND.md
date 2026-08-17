@@ -397,3 +397,137 @@ Plan 24 (EXTERNAL-ACCESS) widens this `inbound/` package rather than re-designin
 
   **Gates:** `make lint` clean (mypy 554 files) · `make test` **9405 passed, 0 failed**.
   Tests: +16 revision/negotiation cases in `test_inbound_mcp.py` (98 in file).
+
+### 2026-08-17 — MRI-5 (V2 + VG): the validation ledger — **PARTIAL, and it found three defects**
+
+Driven with a **real MCP client**: the official Python SDK, `mcp 1.28.1`, over
+`mcp.client.streamable_http.streamablehttp_client` → `ClientSession`. Isolated dev home,
+loopback port 10424, never `~/.personalclaw`. **No handler was called directly** — every
+result below came off the wire. Where a probe used raw HTTP instead of the SDK it says so.
+
+**The headline: a stock MCP client could not connect at all.** Session 2's V2 note said "the
+protocol surface itself is proven" on the strength of a `curl` drive. It was not. `curl` sends
+whatever revision you type; a real client sends *its* default, and the SDK's is `2025-11-25`:
+
+```
+mcp.shared.exceptions.McpError: unsupported protocolVersion '2025-11-25';
+  this server speaks 2025-06-18, 2024-11-05
+```
+
+The handshake died there. The client's own supported list is
+`['2024-11-05','2025-03-26','2025-06-18','2025-11-25']` — it speaks our revision and would
+have agreed instantly. **`2025-03-26` is also a real published revision this surface rejects.**
+
+**DEVIATION — G1.3's `-32602` was wrong, and is replaced by a counter-offer.** The spec's
+lifecycle clause is a MUST in *both* directions: same version if supported, "otherwise the
+server MUST respond with another protocol version it supports", and the client SHOULD
+disconnect if it can't use the answer. G1.3 reasoned that a mismatch "has to be said out
+loud" — it does, and `protocolVersion` is the field that says it. The typed error was
+strictly worse: it converts "we disagree about a revision" into "you cannot connect".
+The reference implementation agrees (`mcp/server/session.py`: requested-if-supported else
+latest). What G1.3 got right is kept: a supported request is ECHOED, never overridden.
+
+**Clause-by-clause against the `done_when`:**
+
+| Clause | Verdict |
+|---|---|
+| real MCP client connects over loopback | ✅ `initialize` → `protocolVersion 2025-06-18`, `capabilities {tools}`, `serverInfo personalclaw/0.1.3` — **only after the fix**; ❌ before it |
+| exercises all six tools | ✅ all six, real rows, every one fenced |
+| trips the rate cap | ✅ real client cut off after 19 calls; raw HTTP: 20 admitted, #21 → `429` `Retry-After: 1` |
+| flips the kill switch mid-session | ✅ config flip mid-session → `McpError: Session terminated`, raw `404`; re-enable → `200` |
+| SEL + `inbound_audit.jsonl` trails match design | ⚠️ they match **after** fixing one rejection that reached neither |
+| remote refused without `allow_remote` + `public_url` | ⚠️ refused — but by the **dashboard CSRF middleware**, not by `peer_allowed`. See below |
+| validation ledger written | ✅ this entry |
+
+**All six tools, over the wire** (seeded through non-MCP paths first, so an empty answer
+could not be mistaken for a working tool — marker `pomegranate`):
+
+- `status {}` → `PersonalClaw 0.1.3 / tasks: available / memory: keyword search + entity
+  graph / knowledge items: 1`
+- `memory_recall {"query":"pomegranate","limit":5}` → `1 memory hit(s)` with the seeded episode
+- `knowledge_search {"query":"pomegranate","limit":5}` → `1 knowledge item(s)`
+- `sessions_search {"query":"pomegranate","limit":5}` → the transcript, and the planted
+  `sk-ant-api03-…` key came back as **`[REDACTED: credential]`** — §C3 redaction confirmed live
+- `tasks_list {"limit":10}` → `1 of 1 task(s)`
+- `task_get {"id":"t-43575a76"}` → full record
+
+Every result arrived inside `<untrusted_content source=inbound:mcp:<tool>>` with the
+data-not-instructions preamble.
+
+**Read-only: "no write tool exposed" vs "writes refused" — distinguished, because they look
+identical from a happy path.** What was observed is **refusal by ABSENCE**, and it is worth
+naming as such: there is no write-policy gate on this surface that inspects a request and
+denies it. `tools/call task_create|memory_write|config_set` → `-32601 unknown tool 'task_create'`;
+`logging/setLevel` — a genuine *mutating* MCP method — → `-32601 unknown method
+'logging/setLevel'`; `resources/list`, `prompts/list` → same. `tasks_list {"title":"injected"}`
+→ `-32602 unknown argument(s): title`. Raw HTTP `PUT`/`DELETE`/`PATCH /mcp` → `405`.
+**Vacuity floor:** on that same live session a `status` read still returned `200`, and on the
+same raw client `POST /mcp` still returned 6 tools — so the refusals were refusals, not a dead
+connection. Absence is the stronger property; the point is that nothing here would stop a
+future write tool added to `TOOLS`, so the guard is the table's hand-written shortness.
+
+**Defect 2 — `TaskStatus.OPEN` crossed the boundary.** `tasks_list` returned
+`- [TaskStatus.OPEN] t-43575a76: …` — a Python enum repr, handed to a model as though it were
+the status vocabulary — while `priority` in the same handler rendered `medium`. Fixed
+(`_enum_value`): now `- [open] …`, verified live.
+
+**Defect 3 — one rejection reached NEITHER trail.** The audit file after a full drive carried
+`unknown tool`, `rate limit`, `GET not supported` and `disabled: inbound.mcp.enabled is off`,
+each mirrored to SEL as `outcome=denied` (13 rows, hash-chained). An **argument** rejection
+recorded as a plain `200` with no reason, so it never reached SEL either — a caller probing
+argument shapes left no denied trail at all, against this module's own docstring ("every
+rejection is audited"). Fixed; verified live (`refused_reason: "invalid arguments"`, SEL 13→14).
+The reason stays generic on purpose — the message embeds caller-supplied argument names.
+
+**Defect 4 — `inbound.mcp.allow_remote` + `inbound.public_url` are INERT for a real MCP
+client. NOT fixed: this is an owner scope call (E4), and it belongs to EXTERNAL-ACCESS (24).**
+The first remote probe returned `403 CSRF check failed: request origin not allowed.` in **all
+six** states — including the one that should have been allowed. That failed vacuity floor is
+the finding: `csrf_middleware` (`dashboard/server.py:1680`) has **no path exemption**, so it
+refuses every non-safe method before the route runs. `/mcp` is exempt from the dashboard
+*token* check (`_BYPASS_EXACT`) but not from this one. `check_origin(require=True)` with no
+`Origin` header returns True **only for a loopback peer** — and an MCP client is not a browser,
+so it never sends `Origin`. Net effect: a remote MCP client is refused before `peer_allowed`
+ever executes, no matter how `allow_remote`/`public_url` are set. Adding one allowed `Origin`
+header — the only change between the two runs — moved every response from the CSRF text to the
+inbound surface's own, which is what proves the diagnosis.
+
+The security *outcome* is fine (remote fails closed, harder than designed). Two consequences
+to carry forward: the knob is a promise the gateway cannot keep, and G1.1's conformance note
+citing `peer_allowed` for the spec's DNS-rebinding guidance describes a branch that never runs
+for a remote caller. Widening a CSRF control is not a validation atom's call.
+
+**`peer_allowed` itself, once reachable, is correct** — exercised with a genuinely non-loopback
+peer at **zero network exposure** by binding the probe gateway to `fe80::1%lo0` (an IPv6
+link-local address that lives only on `lo0` yet is absent from the surface's loopback
+allowlist; `lsof` confirmed nothing on `0.0.0.0`). Raw HTTP, since httpx cannot express an IPv6
+scope id — sound here because `peer_allowed` runs at check 2, before any protocol reasoning:
+
+| State | Result | Audited reason |
+|---|---|---|
+| `allow_remote` off | `403 {"error":"forbidden"}` | `non-loopback peer and allow_remote is off` |
+| on, `public_url` unset | `403` | `allow_remote is on but inbound.public_url is unset` |
+| on, `Host` ≠ `public_url` | `403` | `Host '[fe80::1]:10426' does not match inbound.public_url` |
+| forged `Host`, `allow_remote` off | `403` | `non-loopback peer and allow_remote is off` |
+| **both satisfied (vacuity floor)** | **`200`, tools=6** | — |
+| allowed peer, wrong token | `401` | `bad or missing bearer token` |
+
+A forged `Host` alone buys nothing, and the peer and token gates are independent as designed.
+
+**NOT exercised, with reasons:** an IDE's own MCP config (the SDK client is the client this
+plan's `done_when` names as the alternative, and it is what ran); `2025-03-26` acceptance (the
+surface rejects it — recorded as a gap, not fixed, since widening `SUPPORTED_PROTOCOL_VERSIONS`
+is a wire-contract decision); a *genuinely* off-host peer (deliberately avoided — the
+`fe80::1%lo0` bind exercises the same branch without exposing a port).
+
+**Also observed, not a defect:** a `429` tears the SDK's session down entirely
+(`raise_for_status` in the streamable-http transport), so exceeding the burst costs an IDE its
+connection, not just one call. HTTP-level rate limiting is spec-permitted, and MRI-1's
+`done_when` specifies exactly this `429` + `Retry-After`, so the shape stays. Worth knowing
+before EXTERNAL-ACCESS raises the traffic. Audit rows also omit the peer, so the trail cannot
+say *which* client was limited.
+
+**Gates:** `make lint` clean · `tests/test_inbound_mcp.py` **101 passed** (+3: the SDK-default
+handshake, the enum boundary, the argument-refusal trail) · `test_agent_reference.py`,
+`test_docs_lint_baseline.py`, `test_inert_surface_baseline.py`, `tests/security/` green.
+All three fixes falsified by mutating the live line and observing the specific red.

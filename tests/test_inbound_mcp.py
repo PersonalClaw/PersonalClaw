@@ -489,6 +489,42 @@ class TestAudit:
         assert seen["caller"] == "inbound:mcp"
         assert "bad bearer" in seen["resources"]
 
+    @pytest.mark.asyncio
+    async def test_every_rejection_reaches_the_trail_including_bad_arguments(
+        self, monkeypatch, tmp_path
+    ):
+        """An argument refusal is a refusal, so it must record a reason like the others.
+
+        MRI-5 read the live audit file after a client drive: `unknown tool`, `rate limit`,
+        `GET not supported` and the kill switch were all there, but a rejected ARGUMENT
+        recorded as a plain 200 with no reason — so it never reached SEL either, and a
+        caller probing argument shapes left no denied trail. This module's docstring
+        promises "every rejection is audited".
+        """
+        _enable(monkeypatch)
+        token = auth.create_surface_token("mcp")
+        client = await _client(monkeypatch)
+        try:
+            resp = await _rpc(
+                client,
+                "tools/call",
+                token=token,
+                name="tasks_list",
+                arguments={"nosuchargument": 1},
+            )
+            body = await resp.json()
+            # Vacuity floor: the request really did reach argument validation.
+            assert body["error"]["code"] == -32602
+            assert "nosuchargument" in body["error"]["message"]
+
+            row = audit_mod.recent()[0]
+            assert row["tool"] == "tasks_list"
+            assert row.get("refused_reason"), "an argument refusal recorded as a plain 200"
+            # The reason must NOT echo the caller's argument names into the trail.
+            assert "nosuchargument" not in row["refused_reason"]
+        finally:
+            await client.close()
+
     def test_recent_is_newest_first_and_limited(self, tmp_path):
         for i in range(10):
             audit_mod.audit("mcp", route=f"POST /{i}", status=200)
@@ -709,6 +745,30 @@ class TestToolBehavior:
         assert "No tasks matched" in _body(_call("tasks_list", {}))
         assert "No task with id" in _body(_call("task_get", {"id": "nope"}))
 
+    def test_task_status_crosses_the_boundary_as_its_wire_value(self, tmp_path, monkeypatch):
+        """`TaskStatus.OPEN` is a Python repr, not a status a model can reason about.
+
+        MRI-5's real-client drive got `- [TaskStatus.OPEN] t-…` back from `tasks_list`,
+        while `priority` in the very same handler rendered as `medium`. Asserting on the
+        absence of the class name AND the presence of the value, because a formatter that
+        emitted neither would satisfy half of this on its own.
+        """
+        import asyncio
+
+        monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path))
+        from personalclaw.tasks import registry
+
+        task = asyncio.run(registry.create_task(title="boundary check"))
+
+        listed = _body(_call("tasks_list", {}))
+        assert "boundary check" in listed, "vacuity floor: the task must actually be found"
+        assert "TaskStatus." not in listed
+        assert "[open]" in listed
+
+        one = _body(_call("task_get", {"id": task.id}))
+        assert "TaskStatus." not in one
+        assert "status: open" in one
+
     def test_memory_recall_returns_stored_episodes(self, tmp_path, monkeypatch):
         monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path))
         from personalclaw.vector_memory import VectorMemoryStore
@@ -865,36 +925,39 @@ class TestProtocolNegotiation:
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize("asked", ["2099-01-01", "2024-01-01", "1.0", "", "nonsense"])
-    async def test_an_unsupported_revision_fails_legibly(self, monkeypatch, asked):
-        """NEWER or older, the answer is a typed error naming what we speak.
+    async def test_an_unsupported_revision_gets_a_counter_offer(self, monkeypatch, asked):
+        """NEWER or older, the answer is a COUNTER-OFFER of what we speak — not an error.
 
-        The old behavior returned a successful handshake with OUR string regardless — so a
-        client pinning an unknown revision believed it had agreed on something, then failed
-        later on a call whose shape it expected to differ. That is the bug being fixed.
+        The spec's lifecycle clause is a MUST: an unsupported request gets "another protocol
+        version it supports", and the client decides whether to continue. This surface used
+        to answer `-32602` instead, which aborts the handshake — so a stock MCP SDK client,
+        whose default revision is simply newer than ours, could not connect at all even
+        though it also speaks the revision we offer (found by MRI-5's real-client drive).
         """
         _enable(monkeypatch)
         token = auth.create_surface_token("mcp")
         client = await _client(monkeypatch)
         try:
             resp = await _rpc(client, "initialize", token=token, protocolVersion=asked)
-            assert resp.status == 200, "JSON-RPC errors ride a 200"
+            assert resp.status == 200
             body = await resp.json()
-            assert "result" not in body, "a disagreement must not look like a handshake"
-            assert body["error"]["code"] == -32602
-            # The message must name the supported set so the client can self-correct.
-            for v in mcp_http.SUPPORTED_PROTOCOL_VERSIONS:
-                assert v in body["error"]["message"]
+            assert "error" not in body, "an unsupported revision must not abort the handshake"
+            offered = body["result"]["protocolVersion"]
+            # SHOULD be the latest we support — and must not be the unsupported string
+            # itself, or this assertion would also pass for a server that echoed blindly.
+            assert offered == mcp_http.PROTOCOL_VERSION
+            assert offered != asked
+            assert offered in mcp_http.SUPPORTED_PROTOCOL_VERSIONS
         finally:
             await client.close()
 
     @pytest.mark.asyncio
-    async def test_a_non_string_version_is_rejected(self, monkeypatch):
-        """`{"protocolVersion": 20250618}` is a client bug and must not handshake.
+    async def test_a_non_string_version_gets_a_counter_offer_not_a_coercion(self, monkeypatch):
+        """`{"protocolVersion": 20250618}` is a client bug: counter-offered, never coerced.
 
-        Rejected because its string form ("20250618") is not a supported revision — not by a
-        dedicated type check. Worth a test either way: the observable contract is "this
-        doesn't silently succeed", and a future refactor that started coercing loosely (say,
-        by stripping dashes) would break it.
+        The observable contract is that a malformed value does not become a supported one —
+        a future refactor that started coercing loosely (say, by inserting dashes) would
+        agree on a revision the client never asked for, and would break this.
         """
         _enable(monkeypatch)
         token = auth.create_surface_token("mcp")
@@ -902,7 +965,33 @@ class TestProtocolNegotiation:
         try:
             resp = await _rpc(client, "initialize", token=token, protocolVersion=20250618)
             body = await resp.json()
-            assert "error" in body
+            assert body["result"]["protocolVersion"] == mcp_http.PROTOCOL_VERSION
+        finally:
+            await client.close()
+
+    @pytest.mark.asyncio
+    async def test_a_stock_sdk_clients_default_revision_still_handshakes(self, monkeypatch):
+        """The regression that MRI-5 caught: a newer client default must not be fatal.
+
+        Asserting against the installed SDK's own `LATEST_PROTOCOL_VERSION` rather than a
+        frozen string, because the defect was precisely that ours falls behind the
+        ecosystem's. Whichever side is newer, `initialize` must return a revision the client
+        can use, not an error.
+        """
+        from mcp.types import LATEST_PROTOCOL_VERSION
+
+        _enable(monkeypatch)
+        token = auth.create_surface_token("mcp")
+        client = await _client(monkeypatch)
+        try:
+            resp = await _rpc(
+                client, "initialize", token=token, protocolVersion=LATEST_PROTOCOL_VERSION
+            )
+            body = await resp.json()
+            assert (
+                "error" not in body
+            ), f"a client defaulting to {LATEST_PROTOCOL_VERSION} cannot connect at all"
+            assert body["result"]["protocolVersion"] in mcp_http.SUPPORTED_PROTOCOL_VERSIONS
         finally:
             await client.close()
 
