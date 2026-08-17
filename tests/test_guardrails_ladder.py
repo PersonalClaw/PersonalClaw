@@ -737,8 +737,12 @@ def test_the_authority_sentence_names_YOUR_grant_and_its_evidence(_isolated_home
         )
     )
     row = _row(_ladder(), APP_KEY)
-    assert "You promoted this" in row["authority"]
+    # Re-pointed, not relaxed: this used to pin the literal "You promoted this to <label> on
+    # <date>", which is the shape that read "You promoted this to runs on its own on 2026-08-17".
+    # The properties that matter are the same three, asserted individually.
+    assert "You promoted it" in row["authority"], row["authority"]
     assert "clean approvals" in row["authority"]
+    assert rg.RUNG_LABELS[au.RUNG_ONE_TAP] in row["authority"]
 
 
 def test_the_authority_sentence_says_when_an_incident_HOLDS_a_rung(_isolated_home):
@@ -755,6 +759,85 @@ def test_the_authority_sentence_says_when_an_incident_HOLDS_a_rung(_isolated_hom
         assert _ladder()["incident_active"] is True
     finally:
         resume()
+
+
+def test_EVERY_authority_sentence_gives_the_rung_label_a_subject(_isolated_home):
+    """A rung label is a PREDICATE, and every slot that interpolates one must read as one.
+
+    ``RUNG_LABELS`` is declared "in terms of BEHAVIOUR rather than of the ladder" — "drafts
+    only", "asks first", "runs with undo", "runs on its own". That is right for a chip, and right
+    after a subject. Dropped into a noun slot it mangles: every row of the Guardrails panel used
+    to read *"Runs at runs on its own because that is the rung it was declared with"*.
+
+    This sweeps all three provenance branches — declared, granted, incident-held — because the
+    defect was in one and the shape was in all three. The rule asserted is the one a reader can
+    check without knowing the wording: **the label never directly follows a preposition.**
+    """
+    from personalclaw.guardrails.incident import activate, resume
+
+    bad_prepositions = ("at ", "to ", "earned ", "granted ")
+
+    def offenders(sentence: str) -> list[str]:
+        out = []
+        for label in rg.RUNG_LABELS.values():
+            i = sentence.find(label)
+            while i > 0:
+                before = sentence[:i]
+                if any(before.endswith(p) for p in bad_prepositions):
+                    out.append(f"{before[-14:]!r} + {label!r}")
+                i = sentence.find(label, i + 1)
+        return out
+
+    seen: list[str] = []
+
+    # 1. declared floor
+    _install_app_action(floor=au.RUNG_AUTO_WITH_UNDO, ceiling=au.RUNG_AUTO_WITH_UNDO)
+    seen.append(_row(_ladder(), APP_KEY)["authority"])
+
+    # 2. your grant
+    _install_app_action(floor=au.RUNG_DRAFT_ONLY, ceiling=au.RUNG_AUTO_WITH_UNDO)
+    _seed_clean_record(APP_KEY)
+    asyncio.run(
+        api_h.api_autonomy_grant(
+            _post("/api/autonomy/grant", {"key": APP_KEY, "rung": au.RUNG_ONE_TAP})
+        )
+    )
+    seen.append(_row(_ladder(), APP_KEY)["authority"])
+
+    # 3. held by an incident
+    _install_app_action(floor=au.RUNG_AUTONOMOUS, ceiling=au.RUNG_AUTONOMOUS)
+    activate("testing")
+    try:
+        seen.append(_row(_ladder(), APP_KEY)["authority"])
+    finally:
+        resume()
+
+    # Vacuity floor: a sweep over sentences that contain no label proves nothing.
+    assert len(seen) == 3
+    for sentence in seen:
+        assert any(v in sentence for v in rg.RUNG_LABELS.values()), f"no label in {sentence!r}"
+        assert offenders(sentence) == [], f"{sentence!r} → {offenders(sentence)}"
+
+
+def test_the_PROPOSAL_title_quotes_the_label_instead_of_mangling_it(_isolated_home):
+    """The one slot with no room for a subject: an inbox row title.
+
+    It read "action.digest has earned runs on its own". A title cannot carry a clause, so the
+    predicate is quoted as the name of the rung instead.
+    """
+    _install_app_action(floor=au.RUNG_DRAFT_ONLY, ceiling=au.RUNG_AUTO_WITH_UNDO)
+    _seed_clean_record(APP_KEY)
+    assert ld.propose_promotions() == [APP_KEY]
+    # 🪤 The persisted field is `message` — the title and body joined with a blank line
+    # (`inbox.py`: "Title FIRST, then the body"). There is no `title` key on the row, so reading
+    # one returns "" and the sweep passes while seeing nothing.
+    rows = _inbox_rows(_isolated_home)
+    titles = [str(r.get("message", "")).split("\n")[0] for r in rows]
+    earned = [t for t in titles if "has earned" in t]
+    assert earned, titles
+    label = rg.RUNG_LABELS[au.RUNG_ONE_TAP]
+    assert f"\u201c{label}\u201d" in earned[0], earned[0]
+    assert f"earned {label}" not in earned[0], "the bare predicate must not follow 'earned'"
 
 
 def test_the_ladder_view_carries_the_whole_governed_inventory(_isolated_home):

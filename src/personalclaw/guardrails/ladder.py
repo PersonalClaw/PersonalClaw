@@ -460,17 +460,24 @@ def _authority_sentence(spec, resolved: str, granted: str, state, held: bool) ->
     def _label(rung: str) -> str:
         return RUNG_LABELS.get(rung, rung)
 
+    # 🪤 A RUNG LABEL IS A PREDICATE, NOT A NOUN. `RUNG_LABELS` is declared "in terms of
+    # BEHAVIOUR rather than of the ladder" — "drafts only", "asks first", "runs with undo",
+    # "runs on its own" — which is right for a chip, and right after a subject. Dropped into a
+    # noun slot it produces "Runs at runs on its own because that is the rung it was declared
+    # with", which is what every row of the panel used to read. So each slot below gives the
+    # label a SUBJECT, converging on the form the Guardrails panel already ships in its own
+    # toasts (`${key} now ${label}.`).
     if held:
         return (
-            f"Granted {_label(granted)}, held at {_label(resolved)} while the incident "
-            "kill switch is active."
+            f"Granted so it {_label(granted)}, but held so it {_label(resolved)} while "
+            "the incident kill switch is active."
         )
     if state is not None and state.granted_at and rung_rank(granted) > rung_rank(spec.floor):
         when = state.granted_at[:10]
         evidence = f" — {state.evidence_window}" if state.evidence_window else ""
-        return f"You promoted this to {_label(granted)} on {when}{evidence}."
+        return f"You promoted it on {when} so it {_label(granted)}{evidence}."
     return (
-        f"Runs at {_label(resolved)} because that is the rung it was declared with; "
+        f"This action {_label(resolved)} because that is the rung it was declared with; "
         "it has never been promoted."
     )
 
@@ -626,7 +633,10 @@ def _file_proposal(key: str, next_rung: str, record: str) -> bool:
             source="skills",
             kind="proposal",
             item_kind="proposal",
-            title=f"{key} has earned {RUNG_LABELS.get(next_rung, next_rung)}",
+            # The one slot that cannot take a subject: an inbox row title has no room for a
+            # clause. So the predicate is QUOTED as the name of the rung, rather than reading
+            # "action.digest has earned runs on its own".
+            title=f"{key} has earned \u201c{RUNG_LABELS.get(next_rung, next_rung)}\u201d",
             body=(
                 f"{record} You can promote it in Settings → Guardrails, or leave it where "
                 "it is. Nothing changes until you do."
