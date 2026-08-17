@@ -66,11 +66,18 @@ describe('every place a task is listed hands over its full title', () => {
     expect(LIST).toMatch(/<RowHitTarget label=\{`\$\{t\.title\} — \$\{sm\.label\}`\} \/>/)
   })
 
-  it('the shared SidePanel title is deliberately untouched — the vacuity floor for the scope note', () => {
-    // The header above says this was left alone on purpose. If it ever gains a title, that note is
-    // stale; if the element stops existing, the reasoning needs rewriting rather than silently passing.
+  it('the shared SidePanel title has since been fixed on its own terms', () => {
+    // 🔑 THIS ASSERTION FIRED, AND THAT WAS THE POINT. It originally read "…is deliberately untouched",
+    // to keep the scope note above honest: this PR fixed three of four sites and left the fourth,
+    // `ui/SidePanel`'s shared <h2>, for a change of its own. The next cycle made that change — and this
+    // rail went red, exactly as designed, rather than letting the note rot into a lie.
+    //
+    // So it is re-pointed rather than relaxed: the fourth site is now fixed, and it is fixed the way a
+    // SHARED element has to be — conditionally, because the prop is a `ReactNode` and a JSX title would
+    // stringify to "[object Object]". If that guard is ever removed, this notices.
     const panel = strip(read('ui/SidePanel.tsx'))
     expect(panel, 'the shared panel title still exists').toMatch(/data-type="title-l" className="text-on-surface truncate/)
-    expect(panel, 'and still has no title of its own').not.toMatch(/text-on-surface truncate[^>]*title=/)
+    expect(panel, 'and now carries a type-guarded title of its own')
+      .toMatch(/title=\{typeof title === 'string' \? title : undefined\}/)
   })
 })
