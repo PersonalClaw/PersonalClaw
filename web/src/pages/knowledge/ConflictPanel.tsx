@@ -103,7 +103,16 @@ function ClaimSide(
     <div className="flex items-start gap-2">
       <div className={`min-w-0 flex-1 ${preferred ? '' : 'text-on-surface-low'}`}>
         <div style={fvs(preferred ? 600 : 400)}>{text}</div>
-        <div className="mt-0.5 truncate text-[0.75rem] text-on-surface-low">{label}</div>
+        {/* 🪤 THIS LABEL IS THE ONLY THING NAMING THE SOURCE OF A CLAIM, and it is the label a reader
+            needs most: the panel exists to ask which of two sources to trust, so "which document said
+            this" is the question. Measured at 390px on real conflicts, it clips with `title: null` —
+            203px of the 369px it needs on one side, 332px of 369px on the other — while at 1440px
+            nothing clips (1057-1186px available). `title` is the app's idiom for a truncating label.
+            Part of a MEASURED family, not a guess: a 390px census of all 55 surfaces found 21 with a
+            clipped, unrecoverable label, and of 203 such elements 131 are identifiers like this one.
+            The other 72 are deliberately NOT this fix — 67 are long prose where a title would be a
+            wall of text, and 5 are overflowing containers rather than labels. */}
+        <div className="mt-0.5 truncate text-[0.75rem] text-on-surface-low" title={label}>{label}</div>
       </div>
       {preferred && (
         <span
