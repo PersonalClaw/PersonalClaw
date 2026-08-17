@@ -255,6 +255,38 @@ def test_withheld_then_granted_then_undone_through_the_REAL_endpoints(_isolated_
     assert ld.reversal_records()[0].reversed_at, "the record is marked, so no second undo"
 
 
+def test_the_HELD_row_names_the_action_ONCE_and_never_by_its_type_key(_isolated_home):
+    """The inbox row a withheld action raises, driven through the REAL fire path.
+
+    Its body is composed as "The <provider> action on trigger <id> did not run: <route.reason>."
+    — so the sentence has already named the action before the reason begins. While the reason
+    carried the action-TYPE key it said it twice, the second time as a code identifier the user has
+    never seen (`app:acme.acme-file-task`) and, for a core provider, as a *different* name for the
+    thing the sentence just called `'bash'` (`action.execute_code`).
+
+    The key is not lost: `refs["action_type"]` still carries it, which is what AG-8's card and the
+    ladder panel query by.
+    """
+    _install_app_action(floor=au.RUNG_DRAFT_ONLY, ceiling=au.RUNG_ONE_TAP)
+    outcome = _fire()
+
+    assert getattr(outcome, "ran", True) is False, "a draft_only action must be withheld"
+    rows = [r for r in _inbox_rows(_isolated_home) if (r.get("refs") or {}).get("action_type")]
+    assert len(rows) == 1, rows
+    row = rows[0]
+    message = str(row.get("message", ""))
+
+    assert "did not run" in message, message
+    assert "acme-file-task" in message, "the row must still say WHICH action was held"
+    assert APP_KEY not in message, f"the type key is a code identifier, not user copy: {message!r}"
+    assert "drafts only" in message, f"and the rung in user words: {message!r}"
+    # The machine-facing half is untouched: the row is still findable by type.
+    assert row["refs"]["action_type"] == APP_KEY
+    # And the seam's own outcome string is framed too, so "this action" has a referent there.
+    assert str(getattr(outcome, "reason", "")).startswith("held for your approval: ")
+    assert APP_KEY not in str(getattr(outcome, "reason", ""))
+
+
 def test_the_undo_record_is_what_the_notification_carries(_isolated_home):
     """The affordance is rendered from a persisted record id, not from a raw handle.
 

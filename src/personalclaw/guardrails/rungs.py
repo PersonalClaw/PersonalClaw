@@ -302,15 +302,23 @@ def route_action_type(key: str, *, session_key: str = "") -> RungRoute:
     profile = profile_for_session(session_key)
     ceiling = rung_ceiling_for_profile(profile)
     effective = RUNGS[min(max(rung_rank(rung), 0), max(rung_rank(ceiling), 0))]
-    # 🪤 This sentence is USER COPY: `announce_withheld` puts it in the body of the inbox row a
-    # held action raises ("The 'create_task' action on trigger t-1 did not run: …"), and the
-    # trigger's recorded outcome error carries it too. It used to read "action.create_task resolves
-    # draft_only" — the code's name for the rung, in a row a person reads. The label is a predicate,
-    # so `{key}` is already its subject.
-    reason = f"{key} {rung_label(rung)}"
+    # 🪤 THIS SENTENCE IS USER COPY, AND IT IS ALWAYS EMBEDDED. `announce_withheld` puts it in the
+    # body of the inbox row a held action raises, the seams put it in a hook/trigger error, and
+    # `triggers/executor` puts it in a run summary — six call sites, and every one of them has
+    # ALREADY named the action:
+    #
+    #     The 'acme-file-task' action on trigger t-acme did not run: {reason}.
+    #     held for your approval: {reason}
+    #
+    # So naming the action type here said it twice, the second time as a code identifier the user
+    # has never seen — `app:acme.acme-file-task`, or worse a DIFFERENT name for the thing the
+    # sentence just called `'bash'` (`action.execute_code`). The key stays where it belongs: on the
+    # row's `refs["action_type"]`, in the dedup key, and on `RungRoute.key` for any caller that
+    # wants it. "This action" is the subject `_authority_sentence` already uses for the same job.
+    reason = f"this action {rung_label(rung)}"
     if effective != rung:
         reason = (
-            f"{key} {rung_label(rung)}, narrowed so it {rung_label(effective)} "
+            f"this action {rung_label(rung)}, narrowed so it {rung_label(effective)} "
             f"by the {profile.name} profile"
         )
     return RungRoute(
