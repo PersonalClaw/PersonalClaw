@@ -55,6 +55,14 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
   does, and every piece inside carries its own fingerprint — change one byte anywhere and the
   whole import is refused before anything is written.
 
+- **Home, the Inbox and Discover now arrive in sequence instead of all at once.** Their sections
+  fade and rise in one after another, about 44ms apart, so a page reads as composed rather than as
+  eight widgets landing in the same frame. It costs you nothing: everything is on screen and
+  clickable from the first frame — the movement only decorates the arrival, it never holds content
+  back. How much cascade there is follows the Expressiveness slider in Settings › Design (calmer is
+  tighter, not dead), and if your system asks for reduced motion there is no cascade at all — not a
+  faster one. It also plays once, when you arrive at a page, so a refresh, a new inbox item or a
+  filter change never makes the page flicker through it again.
 - **A guided tour of the app, and you can take it again whenever you like.** The last screen of
   setup now offers a quick walk through the five places that matter: the sidebar, chat, the Inbox,
   where anything risky waits for your permission, and Settings. It happens on the real app — each

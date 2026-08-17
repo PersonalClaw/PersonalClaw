@@ -6038,7 +6038,7 @@
         {
           "id": "FM-6",
           "title": "Orchestrated staggered entrances for 2-3 key surfaces",
-          "status": "todo",
+          "status": "done",
           "scope": "Session 3 \u2014 orchestration (T3.2)",
           "done_when": "2-3 key surfaces stagger their regions in via stagger() (expr()-scaled); entrances feel composed not busy; collapse cleanly under prefers-reduced-motion",
           "deps": [
@@ -7669,11 +7669,6 @@
       {
         "id": "FM-3",
         "title": "LiquidShape.tsx fluid-blob shape morph (coral-tinted, expr()-scaled)",
-        "plan": "FM"
-      },
-      {
-        "id": "FM-6",
-        "title": "Orchestrated staggered entrances for 2-3 key surfaces",
         "plan": "FM"
       },
       {
@@ -10113,9 +10108,9 @@
         "code": "FM",
         "plan": "FLUID-MOTION",
         "total_atoms": 7,
-        "done": 2,
+        "done": 3,
         "in_progress": 0,
-        "todo": 5,
+        "todo": 4,
         "blocked": 0
       },
       {
