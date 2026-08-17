@@ -381,7 +381,7 @@
         {
           "id": "KL-6",
           "title": "S3 dedup/merge frontend: near-duplicate surfacing UI with merge action",
-          "status": "todo",
+          "status": "done",
           "scope": "Session 3 \u2014 T3.2 (frontend consumer; the half not yet shipped \u2014 status line: 'no frontend consumer yet')",
           "done_when": "the Knowledge UI surfaces near-duplicate candidates for an item and a merge action drives the existing GET /duplicates + POST /merge routes; two near-dupes merge from the UI, the survivor keeps both items' collection memberships + mentions, and the loser 404s; reduced-motion/theme/token-lint pass on the new UI",
           "deps": [
@@ -7675,11 +7675,6 @@
         "plan": "HC"
       },
       {
-        "id": "KL-6",
-        "title": "S3 dedup/merge frontend: near-duplicate surfacing UI with merge action",
-        "plan": "KL"
-      },
-      {
         "id": "KL-8",
         "title": "S3 library home: recently-added / continue-reading / favorites / collection counts",
         "plan": "KL"
@@ -9620,9 +9615,9 @@
         "code": "KL",
         "plan": "KNOWLEDGE-LIBRARY",
         "total_atoms": 12,
-        "done": 10,
+        "done": 11,
         "in_progress": 0,
-        "todo": 2,
+        "todo": 1,
         "blocked": 0
       },
       {

@@ -14,7 +14,13 @@ A merge DELETES one of two items, so the tests are mostly about what must NOT be
 
 from __future__ import annotations
 
+import asyncio
+import json
+from types import SimpleNamespace
+
 import pytest
+from aiohttp import web
+from aiohttp.test_utils import make_mocked_request
 
 
 @pytest.fixture()
@@ -239,13 +245,220 @@ def test_duplicates_of_an_unknown_item_is_empty(store):
     assert store.find_duplicates("nope") == []
 
 
-def test_duplicates_never_return_the_embedding(store):
-    """Megabytes of floats no caller needs, on a list endpoint."""
+def _embed(store, item_id, vec):
+    """Write a raw embedding, the only way to make a scorable pair without a provider."""
     import struct
 
-    a = _item(store, "Doc A")
-    vec = struct.pack("<3f", 1.0, 0.0, 0.0)
-    store.db.execute("UPDATE items SET embedding = ? WHERE id = ?", (vec, a))
+    store.db.execute(
+        "UPDATE items SET embedding = ? WHERE id = ?",
+        (struct.pack("<%df" % len(vec), *vec), item_id),
+    )
     store.db.commit()
-    for row in store.find_duplicates(a):
+
+
+def test_a_real_near_duplicate_pair_IS_surfaced(store):
+    """🔴 THE POSITIVE CASE, absent until KL-6 — and its absence hid a total outage.
+
+    Every duplicate-surfacing test here was NEGATIVE (no embedding / unknown item) or vacuous
+    (the embedding-leak loop below iterated zero rows), so `find_duplicates` reading a field
+    `DupVerdict` does not have — `getattr(verdict, "is_duplicate", False)` instead of
+    `verdict.is_dup` — read as covered while returning `[]` for every input in existence. A rail
+    that only ever asserts emptiness cannot tell a working scorer from a disconnected one.
+    """
+    a = _item(store, "Rust async book notes")
+    b = _item(store, "Rust async book notes")
+    # Same title ⇒ filename_sim 1.0; near-parallel unit vectors ⇒ cosine ≈ 0.995 (floor 0.90);
+    # no series-date token in either title ⇒ the date gate abstains. All three clauses agree.
+    _embed(store, a, [1.0, 0.0])
+    _embed(store, b, [0.995, 0.0999])
+
+    found = store.find_duplicates(a)
+    assert len(found) == 1, "the pair satisfies filename + cosine + date-gate"
+    assert found[0]["id"] == b
+    # The reason travels: it is what makes a destructive merge reviewable in the UI.
+    assert found[0]["reason"], "a candidate must carry the scorer's account of the match"
+
+
+def test_a_genuinely_different_item_is_not_surfaced(store):
+    """The other half of the floor: the scorer must still SAY NO, or the fix above would be
+    'always return every candidate' and the test above would not notice."""
+    a = _item(store, "Rust async book notes")
+    b = _item(store, "Sourdough starter log")
+    _embed(store, a, [1.0, 0.0])
+    _embed(store, b, [0.0, 1.0])
+    assert store.find_duplicates(a) == []
+
+
+def test_duplicates_never_return_the_embedding(store):
+    """Megabytes of floats no caller needs, on a list endpoint.
+
+    🪤 This loop used to run over ZERO rows — a single embedded item has no candidate, so it
+    asserted nothing while reading as a passing guard on the leak. The pair below makes it
+    iterate, and the length assertion is the vacuity floor that keeps it iterating.
+    """
+    a = _item(store, "Doc A")
+    b = _item(store, "Doc A")
+    _embed(store, a, [1.0, 0.0])
+    _embed(store, b, [0.995, 0.0999])
+
+    rows = store.find_duplicates(a)
+    assert len(rows) == 1, "with no candidate this test asserts nothing at all"
+    for row in rows:
         assert "embedding" not in row
+        assert b == row["id"]
+
+
+# ── The HTTP routes the UI drives (KL-6) ────────────────────────────────
+#
+# Everything above proves the STORE. The frontend cannot call the store — it calls
+# `GET /api/knowledge/items/{id}/duplicates` and `POST …/merge`, and until KL-6 there was no
+# consumer of either, so neither route had a test. These cover the layer the merge button
+# actually crosses:
+#
+#   * The survivor is the PATH id and the loser is the BODY id, in that direction. Swapping them
+#     deletes the document the user was looking at, and a store-level test cannot catch it
+#     because the store's own argument order would still be honoured.
+#   * `confirm: true` is REQUIRED and its refusal is total — a 400 that had already deleted the
+#     item would be worse than no gate at all.
+#   * The loser 404s afterwards, read back through the same route the UI navigates to.
+
+
+def _call(store, handler_name, method, path, *, match_info=None, body=None):
+    app = web.Application()
+    app["state"] = SimpleNamespace(knowledge_store=store)
+    req = make_mocked_request(method, path, app=app, match_info=match_info or {})
+    if body is not None:
+
+        async def _json():
+            return body
+
+        req.json = _json
+    from personalclaw.dashboard.handlers import knowledge as H
+
+    resp = asyncio.new_event_loop().run_until_complete(getattr(H, handler_name)(req))
+    return resp, json.loads(resp.body)
+
+
+def _merge_via_route(store, keep, loser, **body):
+    payload = {"merge_id": loser, "confirm": True}
+    payload.update(body)
+    return _call(
+        store,
+        "merge_items",
+        "POST",
+        f"/api/knowledge/items/{keep}/merge",
+        match_info={"id": keep},
+        body=payload,
+    )
+
+
+def test_the_route_merge_keeps_the_path_item_and_moves_both_sides_curation(store):
+    """The atom's substance: after a UI-shaped merge the survivor carries BOTH items' rows."""
+    keep, loser = _item(store, "Keep"), _item(store, "Loser")
+    kept_shelf = store.create_collection(name="Reading")
+    loser_shelf = store.create_collection(name="Archive")
+    store.add_to_collection(kept_shelf, keep)
+    store.add_to_collection(loser_shelf, loser)
+    kept_ent = store.add_entity(name="Sparrow", entity_type="project")
+    loser_ent = store.add_entity(name="Kestrel", entity_type="project")
+    store.add_mention(keep, kept_ent)
+    store.add_mention(loser, loser_ent)
+
+    resp, data = _merge_via_route(store, keep, loser)
+
+    assert resp.status == 200 and data["ok"] is True
+    assert (data["kept"], data["merged"]) == (keep, loser)
+    # Collection MEMBERSHIPS: both shelves, not just the survivor's own.
+    assert _collections_of(store, keep) == {kept_shelf, loser_shelf}
+    # MENTIONS: both entities.
+    assert _mention_entities(store, keep) == {kept_ent, loser_ent}
+    assert data["moved"]["collections"] == 1 and data["moved"]["mentions"] == 1
+
+
+def test_the_route_leaves_the_loser_404ing(store):
+    """Read back through the route the UI navigates to, not through the store."""
+    keep, loser = _item(store, "Keep"), _item(store, "Loser")
+    _merge_via_route(store, keep, loser)
+
+    resp, _ = _call(
+        store,
+        "get_item",
+        "GET",
+        f"/api/knowledge/items/{loser}",
+        match_info={"id": loser},
+    )
+    assert resp.status == 404
+    # …and the survivor is still readable, so a 404 above means "the loser" not "both".
+    resp, _ = _call(
+        store,
+        "get_item",
+        "GET",
+        f"/api/knowledge/items/{keep}",
+        match_info={"id": keep},
+    )
+    assert resp.status == 200
+
+
+def test_the_route_refuses_a_merge_without_confirm_and_deletes_nothing(store):
+    """A rejected merge must be a NO-OP, not a partially applied one."""
+    keep, loser = _item(store, "Keep"), _item(store, "Loser")
+    shelf = store.create_collection(name="Archive")
+    store.add_to_collection(shelf, loser)
+
+    resp, data = _call(
+        store,
+        "merge_items",
+        "POST",
+        f"/api/knowledge/items/{keep}/merge",
+        match_info={"id": keep},
+        body={"merge_id": loser},  # no confirm
+    )
+
+    assert resp.status == 400 and "confirm" in data["error"]
+    assert store.get_item(loser) is not None, "the loser must still exist"
+    assert _collections_of(store, keep) == set(), "nothing may have moved"
+
+
+def test_the_route_refuses_a_self_merge(store):
+    """The path id and the body id being equal would cascade-delete the survivor."""
+    keep = _item(store, "Keep")
+    resp, _ = _merge_via_route(store, keep, keep)
+    assert resp.status == 400
+    assert store.get_item(keep) is not None
+
+
+def test_the_duplicates_route_404s_for_an_unknown_item(store):
+    """Distinct from "no duplicates": the UI must not render a clean list for a missing item."""
+    resp, _ = _call(
+        store,
+        "get_item_duplicates",
+        "GET",
+        "/api/knowledge/items/nope/duplicates",
+        match_info={"id": "nope"},
+    )
+    assert resp.status == 404
+
+
+def test_the_duplicates_route_carries_a_real_candidate_to_the_frontend(store):
+    """The whole UI path in one assertion: a real pair, through the route, under the key the
+    frontend unwraps (`d.duplicates`).
+
+    Vacuity floor for the two tests above — asserting only `isinstance(…, list)` would have gone
+    green throughout the outage this atom found, because `[]` is a list.
+    """
+    a = _item(store, "Rust async book notes")
+    b = _item(store, "Rust async book notes")
+    _embed(store, a, [1.0, 0.0])
+    _embed(store, b, [0.995, 0.0999])
+
+    resp, data = _call(
+        store,
+        "get_item_duplicates",
+        "GET",
+        f"/api/knowledge/items/{a}/duplicates",
+        match_info={"id": a},
+    )
+    assert resp.status == 200
+    assert [r["id"] for r in data["duplicates"]] == [b]
+    assert data["duplicates"][0]["reason"]
+    assert "embedding" not in data["duplicates"][0]

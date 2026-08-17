@@ -11,9 +11,12 @@ The original design record is kept below — execution logs, measured findings a
 
 **Status:** IN PROGRESS — Session 1 (collections + item curation) shipped 2026-07-29; **Session 2
 COMPLETE** — T2.1 curation display/filters, T2.2 tags taxonomy, T2.3 bulk ops, all 2026-07-29.
-**Session 3 PARTIAL** — T3.2's backend landed 2026-07-30 (`find_duplicates`/`merge_items` + the
-duplicates/merge routes) but has **no frontend consumer yet**; T3.1 (reading view) and T3.3 (library
-home) are not started.
+**Session 3 PARTIAL** — T3.1 (reading view) landed 2026-08-16 as `KL-7`; **T3.2 is COMPLETE**
+2026-08-16 as `KL-6` (the near-dupe surfacing UI + merge action), which also found that the backend
+half landed 2026-07-30 had shipped **inert** — `find_duplicates` read a `DupVerdict` field that does
+not exist, so it returned `[]` for every input until `KL-6` fixed it (see the execution log; the
+earlier "no frontend consumer yet" note was correct but understated the state). T3.3 (library home,
+`KL-8`) is the only Session-3 task not started.
 The 2026-07-29 indexing amendment (H1.1-H1.5) is **COMPLETE** (2026-08-13): H1.1+H1.2 (`chunks`
 table + structural chunker + chunk embedding in ingest, retiring the `content[:1000]` top-up), H1.3
 (chunk-level vector arm with MAX roll-up to items), H1.4 (`sqlite-vec` in core + a `vec0` index over
@@ -773,3 +776,88 @@ Sequence these **independently of S1-S3** — they touch the store's indexing la
     `tests/test_knowledge_annotations.py` **23 passed** (new) · `test_api_manifest_drift.py`,
     `test_agent_reference.py`, `test_roadmap_dag_derived.py`, `test_knowledge_merge.py`,
     `test_knowledge_collections.py` **137 passed** together.
+
+- 2026-08-16 — **DONE (S3: T3.2 FRONTEND half — atom `KL-6`).** The near-duplicate surfacing UI +
+  merge action. Also the atom that discovered T3.2's *backend* surfacing half had shipped inert.
+  - **🔴 DISCOVERY — `find_duplicates` returned `[]` for EVERY input in existence.**
+    `store.py` tested `getattr(verdict, "is_duplicate", False)`; `DupVerdict`'s field is `is_dup`,
+    so the `getattr` default won on every comparison and no candidate could ever be surfaced. Found
+    by driving it, not by reading it: a hand-built pair scoring `filename_sim=1.0`,
+    `cosine=0.9949`, `is_dup=True` produced `{"duplicates": []}` on the wire. The other consumer of
+    the same verdict (`pipeline/runner.py:899`) had `verdict.is_dup` right all along, so the two
+    readers of one scorer had silently disagreed since T3.2 landed.
+    **Why three green tests hid a total outage:** all of them asserted EMPTINESS. Two were
+    legitimately negative (no embedding, unknown item) and the third —
+    `test_duplicates_never_return_the_embedding` — was **vacuous**: a single embedded item has no
+    candidate, so its `for row in …` loop ran over ZERO rows while reading as a passing guard on the
+    leak. A rail that only ever asserts an empty list cannot tell a working scorer from a
+    disconnected one. Fixed to a direct `verdict.is_dup` — the `getattr` indirection is precisely
+    what made the typo silent, and an attribute access on a dataclass RAISES on a wrong name — and
+    backed by a positive test, a not-a-duplicate counter-test (so the fix cannot degrade to "return
+    everything"), and a `len(rows) == 1` vacuity floor on the leak loop.
+    **Consequence for `KL-5`:** its `done_when` ("find_duplicates wraps the existing TIER-2
+    prefilter + scorer") was never actually met. This atom completes it.
+  - **The surface.** `Possible duplicates · N` in the item's **More details** panel
+    (`web/src/pages/knowledge/DuplicateList.tsx`), second in the panel — above the read-only
+    sections, because it is the only section there that asks the user to act, and two copies of a
+    document get more expensive to reconcile the longer they coexist — and counted into the
+    `More details · N` badge so it is reachable without opening the panel on spec. Each row carries
+    the scorer's own `reason` (a merge button with no stated grounds asks the user to destroy a
+    document on the app's unexplained word), the loser's word count and age, an **Open** and a
+    danger **Merge into this item**.
+  - **The confirmation.** `confirm({ danger: true })`, which `DialogShell` promotes to
+    `role="alertdialog"` with focus on Cancel. It names the four things needed before an
+    irreversible delete: which copy survives, what it inherits, which copy is deleted, and how to
+    get the opposite outcome.
+  - **DEVIATION — the two copies are named by POSITION, not by title.** The first draft read
+    *Merge "Rust async book notes" into "Rust async book notes"?*, naming neither item. That is not
+    an edge case: `find_duplicates` requires title similarity ≥ 0.85, so a candidate nearly always
+    shares the survivor's title and very often matches it exactly. Rewritten so the survivor is
+    "the item you have open" (unambiguous by construction) and the loser is identified by the
+    metadata that actually differs. Caught by driving a real pair; a title-based dialog passes every
+    render assertion and is useless in the common case.
+  - **Direction is one-way on purpose.** The survivor is always the item on screen (the route's own
+    asymmetry — survivor in the path, loser in the body). The reverse is reachable by opening the
+    other copy, and the dialog says so. Two destructive buttons per row, differing only in which of
+    two identically-titled documents dies, is how a merge UI destroys the copy the user meant to
+    keep.
+  - **An empty list and a failed lookup are different answers**, and this is the sharpest instance
+    of that family in the app: "no duplicates" is the CORRECT answer for almost every item, so a
+    swallowed rejection is indistinguishable from the truth, permanently, on the one surface whose
+    whole job is to say a second copy exists. `api.knowledgeDuplicates` carries no
+    `.catch(() => [])`, the page STORES the rejection rather than substituting `[]`, and the section
+    mounts when there are candidates **or** the lookup failed.
+  - **Primitive adoption shaped the row.** The candidate title is plain text with a separate
+    `Button` for Open: `Button` is `whitespace-nowrap` by contract, so a document title in a
+    resizable panel cannot live inside one, and hand-rolling the element trips the adoption ratchet
+    (which counts the literal tag TEXTUALLY — a `<button>` inside a code comment tripped it once
+    during this atom, so the comment now spells it out in prose).
+  - **Validated as a user** (isolated home, `:10233`, two notes authored through the app; the demo
+    seed's knowledge store is deliberately empty, and no embedding provider is configured in a dev
+    home, so the two embeddings were written directly — the only way to make a scorable pair).
+    Panel showed `Possible duplicates · 1` with the reason; the dialog named both copies; **the
+    merge landed and the panel repainted live** — tags `rust` → `async, rust`, `Entities · 1` →
+    `Entities · 2` (`Tokio` + the loser's `Pin API`), the duplicates section gone. On the wire:
+    survivor's collections `{Survivor shelf, Loser shelf}` (BOTH), mentions `{Tokio, Pin API}`
+    (BOTH), `GET` loser → **404**, `GET` survivor → 200, and the toast announced through the
+    Toaster's live region: *"Merged … in — 1 collection, 1 tag, 1 mention moved across"*. The
+    failure leg was driven too, by patching `fetch` to 500 on `/duplicates`: `role="alert"` reading
+    *"Couldn't check for duplicates: database is locked"*, "This item may still have duplicates", a
+    Retry, **no** merge control, and **no** "no duplicates" claim anywhere — and with a clean fetch
+    the section is absent entirely, so the empty case is silent and the failed case is loud.
+    Light theme checked; the new row/alert/danger-button read correctly and match their sibling
+    sections' surface.
+  - **Falsifications (3).** Dropping the confirmation gate (`if (!ok) return` → `void ok`) reds
+    *"expected 'mergeKnowledgeItems' to not be called at all, but actually been called 1 times"*.
+    Making the merge lose the loser's collection memberships (widening the pre-redirect `DELETE` to
+    all of the loser's rows) reds both the new route test and the pre-existing store test:
+    *"AssertionError: assert {'9fbe9d79-…'} == {'50c4f1f0-…'} / Extra items in the right set"*.
+    Swallowing the duplicates rejection reds *"the rejection is stored, not swallowed"*.
+  - **New route coverage.** `GET …/duplicates` and `POST …/merge` had **no** tests at all — every
+    existing test called the store directly, so the path/body direction (swapping them deletes the
+    document the user is reading) and the `confirm: true` gate were unproven at the layer the UI
+    crosses. Six route tests added, including that a refused merge is a total no-op.
+  - **Gate:** `make lint` rc 0 (black/isort/flake8/mypy, 895 files) · `web` typecheck clean ·
+    full `npm test --workspace web` **320 files / 3298 tests passed** (no design, token,
+    primitive-adoption or reduced-motion ratchet moved) · `npm run build --workspace web` rc 0 ·
+    `tests/test_knowledge_merge.py` **37 passed** (was 28) · `regen_dag_derived.py --check` current.

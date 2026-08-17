@@ -4,7 +4,7 @@
 **Code:** `KL`  
 **Source status:** in_progress
 
-Plan status is IN PROGRESS. Done: S1 collections primitive, all of S2 (read/favorite curation, tags taxonomy, bulk ops), and the S3 dedup/merge store+API backend. S3's reading view (T3.1) landed as `KL-7`: a `?read=1` reading mode on `KnowledgeDetailPage` at the shared editorial type scale, a scroll-progress ring, and text-anchored highlights persisted in a dedicated `annotations` table (the plan's open question resolved AGAINST reusing `mentions` — see `KL-7`'s DONE block). Not started: S3 dedup/merge FRONTEND (T3.2 has backend only, "no frontend consumer yet"), S3 library home (T3.3, wants AMBIENT-SURFACES coordination), and the tail of the H1.1-H1.5 indexing amendment. Indexing landed: H1.1+H1.2 (`KL-9`, chunks table + structural chunker + chunk embedding in ingest), H1.3 (`KL-10`, chunk-level vector arm with max roll-up to items + chunk-derived locators) and H1.4 (`KL-11`, a `sqlite-vec` `vec0` index over the chunk vectors inside the same `knowledge.db`, with a cached probe that fails soft to the exact scan and a Doctor capability line — measured 40.1 ms → 2.2 ms per vector-arm query at KL-10's own 1,800-row benchmark shape, at recall 1.0000 against the exact scan). Indexing landed in full: H1.5 (`KL-12`) added the resumable batched chunk backfill (`knowledge/chunk_backfill.py`) plus its boot hook, and the VH validation held — on `origin/main` a deep-answer question returned only the wrong (title-matching) document with no section citation and never retrieved the document holding the answer; after the backfill the right document ranks 1 and is cited to its mid-document section and exact line span. Vector-arm latency on a 300-item/2,100-chunk library: 5.45 ms with the ANN index vs 48.84 ms with it force-disabled, recall@20 1.0000. The H1.1-H1.5 indexing amendment is now COMPLETE. Remaining KL work is library UX only: `KL-6` (dedup/merge frontend) and `KL-8` (library home) — `KL-7` (reading view) is done. The indexing amendment was a distinct sub-scope from the library UX and sequenced on its own linear chain.
+Plan status is IN PROGRESS. Done: S1 collections primitive, all of S2 (read/favorite curation, tags taxonomy, bulk ops), and the S3 dedup/merge store+API backend. S3's reading view (T3.1) landed as `KL-7`: a `?read=1` reading mode on `KnowledgeDetailPage` at the shared editorial type scale, a scroll-progress ring, and text-anchored highlights persisted in a dedicated `annotations` table (the plan's open question resolved AGAINST reusing `mentions` — see `KL-7`'s DONE block). S3's dedup/merge FRONTEND landed as `KL-6` — and driving it found that T3.2's backend "surfacing half" had shipped INERT: `find_duplicates` read `getattr(verdict, "is_duplicate", False)` on a `DupVerdict` whose field is `is_dup`, so it returned `[]` for every input in existence; `KL-6` fixed that and added the positive test whose absence hid it. Not started: S3 library home (T3.3, wants AMBIENT-SURFACES coordination), and the tail of the H1.1-H1.5 indexing amendment. Indexing landed: H1.1+H1.2 (`KL-9`, chunks table + structural chunker + chunk embedding in ingest), H1.3 (`KL-10`, chunk-level vector arm with max roll-up to items + chunk-derived locators) and H1.4 (`KL-11`, a `sqlite-vec` `vec0` index over the chunk vectors inside the same `knowledge.db`, with a cached probe that fails soft to the exact scan and a Doctor capability line — measured 40.1 ms → 2.2 ms per vector-arm query at KL-10's own 1,800-row benchmark shape, at recall 1.0000 against the exact scan). Indexing landed in full: H1.5 (`KL-12`) added the resumable batched chunk backfill (`knowledge/chunk_backfill.py`) plus its boot hook, and the VH validation held — on `origin/main` a deep-answer question returned only the wrong (title-matching) document with no section citation and never retrieved the document holding the answer; after the backfill the right document ranks 1 and is cited to its mid-document section and exact line span. Vector-arm latency on a 300-item/2,100-chunk library: 5.45 ms with the ANN index vs 48.84 ms with it force-disabled, recall@20 1.0000. The H1.1-H1.5 indexing amendment is now COMPLETE. Remaining KL work is library UX only: `KL-8` (library home) — `KL-6` (dedup/merge frontend) and `KL-7` (reading view) are done. The indexing amendment was a distinct sub-scope from the library UX and sequenced on its own linear chain.
 
 Each atom below executes start-to-finish in one go. If an atom lists dependencies, they must be `done` before it starts — that is the whole point of the split: no atom should ever need pausing to go execute other work.
 
@@ -15,7 +15,7 @@ Each atom below executes start-to-finish in one go. If an atom lists dependencie
 | `KL-3` | ✅ | S2 tags taxonomy: authoritative tags + item_tags tables, JSON backfill, hierarchy UI | `KL-1` | tags moved into authoritative tags + item_tags (surrogate id, parent_id self-FK with ON DELETE SET NULL, computed counts), JSON tags column DROPPED; single-pass idempotent backfill guarded on column presence; FTS sources from items_fts_src view so rebuild preserves recall; cycle guard rejects self/multi-hop parenting; GET /api/knowledge/tag-tree + Tags view render the hierarchy with live counts; external list[str] tag contract unchanged |
 | `KL-4` | ✅ | S2 bulk operations: bulk_apply + /api/knowledge/bulk + multi-select bar | `KL-1` | bulk_apply + POST /api/knowledge/bulk with 7 reversible ops (collect/uncollect/read_state/favorite/archive/restore/pin), per-item best-effort reporting changed/unchanged/missing; 500-item cap; delete deliberately excluded; typed 400s for missing args and smart_collection_immutable; read_state/favorite stay non-touching through the bulk path; multi-select bar wired with a shared Checkbox primitive; HTTP-level test suite added |
 | `KL-5` | ✅ | S3 dedup/merge store + API backend (find_duplicates, merge_items, routes) | `KL-1`, `KL-3` | find_duplicates wraps the existing TIER-2 prefilter + dedup.resolve_duplicate scorer (no embedding → no candidates); merge_items runs as one transaction where the survivor inherits both items' collections, tags and entity mentions plus the stronger read-state/favorited signal; FTS handled via _delete_item_cascade; self-merge refused; GET /api/knowledge/items/{id}/duplicates + POST /api/knowledge/items/{id}/merge (survivor in path, loser in body, confirm:true required) |
-| `KL-6` | ⬜ | S3 dedup/merge frontend: near-duplicate surfacing UI with merge action | `KL-5` | the Knowledge UI surfaces near-duplicate candidates for an item and a merge action drives the existing GET /duplicates + POST /merge routes; two near-dupes merge from the UI, the survivor keeps both items' collection memberships + mentions, and the loser 404s; reduced-motion/theme/token-lint pass on the new UI |
+| `KL-6` | ✅ | S3 dedup/merge frontend: near-duplicate surfacing UI with merge action | `KL-5` | the Knowledge UI surfaces near-duplicate candidates for an item and a merge action drives the existing GET /duplicates + POST /merge routes; two near-dupes merge from the UI, the survivor keeps both items' collection memberships + mentions, and the loser 404s; reduced-motion/theme/token-lint pass on the new UI |
 | `KL-7` | ✅ | S3 reading view: editorial type scale, progress, in-reader highlight→note | `KL-1` | KnowledgeDetailPage gains a reading mode with the editorial-document house-style reading type scale and a progress indicator; an in-reader highlight persists as a mention/note linked to the item and reappears on the item; a long article reads well; reduced-motion/theme/token-lint pass |
 | `KL-8` | ⬜ | S3 library home: recently-added / continue-reading / favorites / collection counts | `KL-1`, `KL-2`, `KL-7`, `EXT:AMBIENT-SURFACES:tile-registry-for-composable-library-home` | a library home component renders live per-collection counts, recently-added, favorites, and a continue-reading section that resumes at the persisted reading position; built as a composable surface that consumes the AMBIENT-SURFACES tile registry if landed, standalone otherwise |
 | `KL-9` | ✅ | Indexing H1.1+H1.2: chunks table + structural chunker + chunk embedding in ingest (retire 1000-char top-up) | — | a chunks table (id,item_id,chunk_index,text,embedding,section,line_start,line_end) and knowledge/chunking.py exist; long markdown/PDF/pptx items chunk on real structural boundaries (headings/slides/sheets) with size fallback + overlap; structureless items chunk by size; chunk section/line_start/line_end are populated; the item row keeps its whole-item embedding; ingest embeds chunks and the compose_item_text 1000-char top-up is deleted (clean break, no dual path); a test retrieves content deep in a long document that fails before the change |
@@ -67,11 +67,49 @@ Session 3 — T3.2 (backend + API half); Contracts C2 find_duplicates/merge_item
 
 ### `KL-6` — S3 dedup/merge frontend: near-duplicate surfacing UI with merge action
 
-**Status:** todo
+**Status:** done
 
 Session 3 — T3.2 (frontend consumer; the half not yet shipped — status line: 'no frontend consumer yet')
 
 **Done when:** the Knowledge UI surfaces near-duplicate candidates for an item and a merge action drives the existing GET /duplicates + POST /merge routes; two near-dupes merge from the UI, the survivor keeps both items' collection memberships + mentions, and the loser 404s; reduced-motion/theme/token-lint pass on the new UI
+
+**DONE.** A `Possible duplicates · N` section in the item's **More details** panel
+(`DuplicateList.tsx`), placed second — above the read-only sections, because it is the only one
+there that asks the user to DO something — and counted into the `More details · N` badge. Each row
+carries the scorer's own `reason`, the loser's word count and age, an **Open** (inspect before you
+destroy) and a danger **Merge into this item**. The merge is gated by a `danger` `confirm()`, which
+`DialogShell` promotes to `role="alertdialog"` with focus on Cancel.
+
+**🔴 THE BACKEND SURFACING HALF WAS INERT, and this atom found it by driving it.**
+`store.find_duplicates` tested `getattr(verdict, "is_duplicate", False)` — a field `DupVerdict` does
+not have (it is `is_dup`) — so the `getattr` default won on every comparison and the route returned
+`[]` for **every input in existence**, however identical the two items. A hand-built pair scoring
+`filename_sim=1.0`, `cosine=0.9949`, `is_dup=True` surfaced nothing. The three tests that existed
+were all negative (no-embedding, unknown-item) or **vacuous** — the never-return-the-embedding loop
+iterated ZERO rows — so a total outage read as covered. Fixed to a direct `verdict.is_dup`
+(the `getattr` indirection is what made the typo silent; an attribute access RAISES), plus the
+positive test, a not-a-duplicate counter-test, and a length floor on the leak loop. `KL-5`'s
+`done_when` was therefore never actually met; this atom completes it.
+
+**DEVIATION — the confirmation names the two copies by POSITION, not by title.** The first draft
+read *Merge "X" into "X"?*, naming neither item: `find_duplicates` requires title similarity ≥ 0.85,
+so a candidate nearly always shares the survivor's title and very often matches it exactly. That is
+the defining case, not an edge case. So the survivor is "the item you have open" (unambiguous by
+construction) and the loser is identified by the metadata that differs (word count + age).
+
+**Direction is one-way on purpose.** The survivor is always the item on screen; the reverse is
+reachable by opening the other copy, and the dialog says so. Two destructive buttons per row
+differing only in which of two identically-titled documents dies is how a merge UI destroys the copy
+the user meant to keep.
+
+**An empty list and a failed lookup are different answers**, and this surface is the sharpest case in
+the app: "no duplicates" is the correct answer for almost every item, so a swallowed rejection is
+indistinguishable from the truth. `api.knowledgeDuplicates` carries no `.catch(() => [])`, the page
+STORES the rejection, and the section mounts when there are candidates **or** the lookup failed —
+rendering a `role="alert"` with the server's own message, "This item may still have duplicates", and
+a Retry, and no merge control. The title is plain text with a separate `Button` for Open: `Button` is
+`whitespace-nowrap` by contract so a truncating title cannot be one, and hand-rolling the element
+would trip the primitive-adoption ratchet.
 
 ### `KL-7` — S3 reading view: editorial type scale, progress, in-reader highlight→note
 
