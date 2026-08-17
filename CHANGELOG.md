@@ -28,6 +28,33 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
   switch did something — a service at `127.0.0.1` means a different thing on every device that
   hears about it, so advertising one would be a lie. There is a new guide,
   [Companion apps](docs/guides/companion-apps.md), including the parts that do not work yet.
+- **Two ready-made setups you can install in one go — Personal CFO and Health OS.** Each one
+  arrives as a whole working thing rather than a pile of parts: the skills, the agent, a
+  runnable template, a prompt, and one scheduled automation. Nothing about them starts running
+  on its own. The automation lands **switched off**, waiting in Automations until you turn it
+  on. The outside service each pack would like — a finance connector, a health-records
+  connector — asks you whether to set it up, swap in one of your own, or skip it; skipping is a
+  real answer, and anything that depended on it says plainly that it is unavailable instead of
+  failing later for no visible reason. And each pack ships a short "finish setup" interview you
+  run when you are ready, which asks where your statements or your journal live and remembers
+  the answer; until you have answered, the pack tells you exactly which question is still open.
+- **A pack can bring a team, and only the people you actually hired show up.** A pack's roster
+  lists each agent with a tier. Installing it puts every persona on your machine, but one click
+  deploys only the `always` tier — the rest stay parked, ready to bring in later, and nothing
+  quietly turns them on. If a pack's roster points at an agent it forgot to include, the install
+  stops before writing anything and names the exact missing reference, rather than installing a
+  team with a hole in it.
+- **Paste a prompt card and turn it into something you can actually use.** Those long "life OS"
+  prompts people share can now be pasted in and converted into a real prompt, a multi-step
+  template, or an agent — whichever it actually is. The pasted text is treated as data, never as
+  instructions, so a card that tries to talk to the assistant gets described rather than obeyed.
+  Nothing is saved until you look at the result and accept it; you see exactly what would be
+  written first, and rejecting it is remembered so it does not come back.
+- **Share a setup as one link.** A pack can be handed over as a single JSON file instead of a
+  zip, small enough to paste. Importing one goes through exactly the same checks a pack file
+  does, and every piece inside carries its own fingerprint — change one byte anywhere and the
+  whole import is refused before anything is written.
+
 - **A guided tour of the app, and you can take it again whenever you like.** The last screen of
   setup now offers a quick walk through the five places that matter: the sidebar, chat, the Inbox,
   where anything risky waits for your permission, and Settings. It happens on the real app — each

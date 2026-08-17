@@ -3047,7 +3047,7 @@
         {
           "id": "AP-4",
           "title": "Pack kinds: agent/roster packs, prompt-card importer, bundled Domain OS packs, one-link serialization",
-          "status": "todo",
+          "status": "done",
           "scope": "\u00a74.1 Domain OS packs; \u00a74.2 Agent/roster packs; \u00a74.3 Prompt-card importer; \u00a74.4 / \u00a72.3 One-link setup export. Session 4. Success criteria 1, 4. Soft: WORK-R16 roster slug refs, LEARNING-FLYWHEEL {source,computedHash} locks.",
           "done_when": "Personal CFO + Health OS bundled first-party packs export\u2192wipe\u2192import on a fresh PERSONALCLAW_HOME with skills locked, template runnable, digest trigger DISABLED, connector configure-or-substitute prompt, and setup interview binding a folder; roster pack imports rendering persona markdown into config agents{} with every runbook/catalog slug lint-resolved (a broken slug blocks import naming the exact unresolved ref) and only the always tier one-click-deploys; prompt-card importer fences pasted input, maps to typed PromptTemplate/WorkflowDef/AgentDefinition through the proposal review flow; one-link JSON serialization imports through the same \u00a73 pipeline.",
           "deps": [
@@ -7384,8 +7384,8 @@
         "plan": "AG"
       },
       {
-        "id": "AP-4",
-        "title": "Pack kinds: agent/roster packs, prompt-card importer, bundled Domain OS packs, one-link serialization",
+        "id": "AP-7",
+        "title": "Project-fingerprint auto-surfacing + pack update flow + pack store FE + validation sweep",
         "plan": "AP"
       },
       {
@@ -9831,9 +9831,9 @@
         "code": "AP",
         "plan": "AGENT-PACKS",
         "total_atoms": 7,
-        "done": 5,
+        "done": 6,
         "in_progress": 0,
-        "todo": 2,
+        "todo": 1,
         "blocked": 0
       },
       {

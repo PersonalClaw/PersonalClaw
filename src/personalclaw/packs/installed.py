@@ -49,9 +49,36 @@ class InstalledPack:
     setup_skill: str = ""
     setup_pending: bool = False
     installed_at: str = ""
+    #: The setup interview's declared questions (§4.1) — ``[{key, kind, label, required}]``.
+    #: Declared by the pack at ``setup/bindings.json``; recorded here so the chip can name
+    #: what is still missing rather than only that setup exists.
+    bindings: list[dict[str, Any]] = field(default_factory=list)
+    #: The answers the interview has bound so far, ``{key: value}``. Written only through
+    #: :func:`bind_answer`, which validates against the declared kind.
+    bound: dict[str, str] = field(default_factory=dict)
+    #: The staged roster's rows (§4.2), so the pack detail surface can show the whole team
+    #: (and which tier each member is in) without re-reading the staging area.
+    roster: list[dict[str, Any]] = field(default_factory=list)
+
+    @property
+    def unbound(self) -> list[str]:
+        """Required binding keys with no answer yet — what "Finish setup" still owes."""
+        return [
+            str(b.get("key"))
+            for b in self.bindings
+            if b.get("required", True) and not str(self.bound.get(str(b.get("key")), "")).strip()
+        ]
 
     def to_dict(self) -> dict[str, Any]:
+        """The PERSISTED shape — pure fields only, so no derived value is ever stored."""
         return asdict(self)
+
+    def to_view(self) -> dict[str, Any]:
+        """The API shape: the record plus ``unbound``, derived once here so two readers
+        cannot disagree about whether a pack's setup is actually finished."""
+        out = asdict(self)
+        out["unbound"] = self.unbound
+        return out
 
 
 def _ledger_path(home: Path | None = None) -> Path:
@@ -84,6 +111,13 @@ def load_installed(home: Path | None = None) -> list[InstalledPack]:
                 setup_skill=str(rec.get("setup_skill", "")),
                 setup_pending=bool(rec.get("setup_pending", False)),
                 installed_at=str(rec.get("installed_at", "")),
+                bindings=[b for b in rec.get("bindings", []) if isinstance(b, dict)],
+                bound={
+                    str(k): str(v)
+                    for k, v in (rec.get("bound") or {}).items()
+                    if isinstance(rec.get("bound"), dict)
+                },
+                roster=[r for r in rec.get("roster", []) if isinstance(r, dict)],
             )
         )
     return out
@@ -112,3 +146,39 @@ def record_install(pack: InstalledPack, home: Path | None = None) -> None:
     existing[pack.name] = rec
     path.parent.mkdir(parents=True, exist_ok=True)
     atomic_write(path, json.dumps(existing, indent=2, ensure_ascii=False) + "\n")
+
+
+class BindingError(Exception):
+    """A setup answer that the pack's own declaration does not accept."""
+
+
+def bind_answer(pack_name: str, key: str, value: str, home: Path | None = None) -> "InstalledPack":
+    """Record one setup-interview answer (§3.4/§4.1). Returns the updated record.
+
+    This is what makes "the interview binds a folder" a mechanism rather than a prompt: the
+    answer is validated against the binding the PACK declared and persisted in the ledger, so
+    the ``unbound`` list shrinks and the "Finish setup" chip can report real progress.
+
+    Fail closed on every disagreement — an unknown pack, an undeclared key, an empty value,
+    or (for ``kind: folder``) a path that is not an existing directory. A folder answer is
+    resolved and stored absolute so a later reader is not re-resolving it against whatever
+    cwd it happens to have.
+    """
+    packs = {p.name: p for p in load_installed(home)}
+    pack = packs.get(pack_name)
+    if pack is None:
+        raise BindingError(f"pack not installed: {pack_name}")
+    declared = next((b for b in pack.bindings if str(b.get("key")) == key), None)
+    if declared is None:
+        raise BindingError(f"pack {pack_name!r} declares no setup binding {key!r}")
+    answer = str(value).strip()
+    if not answer:
+        raise BindingError(f"binding {key!r} needs a value")
+    if str(declared.get("kind")) == "folder":
+        resolved = Path(answer).expanduser()
+        if not resolved.is_dir():
+            raise BindingError(f"binding {key!r} needs an existing directory (got {answer!r})")
+        answer = str(resolved.resolve())
+    pack.bound = {**pack.bound, key: answer}
+    record_install(pack, home)
+    return pack

@@ -13,7 +13,7 @@ Each atom below executes start-to-finish in one go. If an atom lists dependencie
 | `AP-1` | ⬜ | Pack format + export core (dependency-closure walker + two-layer redaction) | — | build_pack(seeds) writes a schema_version=1 .pclaw ZIP: the §2.1 edge table resolves declared references with unresolvable edges demoted to requirements rows; structural layer (shared packs/deny.py, extends portability.EXPORT_EXCLUDE) never opens .env/.local_secret/memory.db/knowledge.db/sessions; content layer (security.redact + guardrails scan wrapper) BLOCKS any credential-bearing component; export preview tree renders before writing; golden-pack fixture round-trip greps clean of planted canary secrets. |
 | `AP-2` | ⬜ | Import core: inspect-without-write, leaves-first commit, rollback, ref-integrity lint, scan | `AP-1` | import runs inspect (dry-run, no writes) then quarantine→integrity recompute→packs/lint.py ref-integrity lint→leaves-first commit with per-write journal at packs/.installing/<id>.json; a DANGEROUS-pattern skill is refused regardless of consent and WARNING needs explicit consent; fault-injected mid-import unwinds every journaled write to byte-identical pre-import state; skills commit through PackMarketplace→install_guarded producing .pclaw-lock.json; fresh-id rewriting on parsed objects (never raw bytes); triggers land disabled and config_subset staged; every step SEL-audited. |
 | `AP-3` | ⬜ | Requirements resolution + connector catalog (configure/substitute/skip) + setup-skill + PacksConfig | `AP-2` | connector_catalog.json store seeded; each connectors.json declaration resolves via configure (credential collected, server written through providers/mcp_instances)/substitute (same-category rewrite)/skip; skipped deps degrade with machine-readable connector_missing:<name>; setup/SKILL.md installs through the guarded path and surfaces as a re-runnable Finish-setup chip; new PacksConfig (skill_catalogs, fingerprint_enabled, connector_catalog_url) wired through dataclass _meta, load(), to_dict(), _EDITABLE_CONFIG+FE with test_config_roundtrip green. |
-| `AP-4` | ⬜ | Pack kinds: agent/roster packs, prompt-card importer, bundled Domain OS packs, one-link serialization | `AP-2`, `AP-3` | Personal CFO + Health OS bundled first-party packs export→wipe→import on a fresh PERSONALCLAW_HOME with skills locked, template runnable, digest trigger DISABLED, connector configure-or-substitute prompt, and setup interview binding a folder; roster pack imports rendering persona markdown into config agents{} with every runbook/catalog slug lint-resolved (a broken slug blocks import naming the exact unresolved ref) and only the always tier one-click-deploys; prompt-card importer fences pasted input, maps to typed PromptTemplate/WorkflowDef/AgentDefinition through the proposal review flow; one-link JSON serialization imports through the same §3 pipeline. |
+| `AP-4` | ✅ | Pack kinds: agent/roster packs, prompt-card importer, bundled Domain OS packs, one-link serialization | `AP-2`, `AP-3` | Personal CFO + Health OS bundled first-party packs export→wipe→import on a fresh PERSONALCLAW_HOME with skills locked, template runnable, digest trigger DISABLED, connector configure-or-substitute prompt, and setup interview binding a folder; roster pack imports rendering persona markdown into config agents{} with every runbook/catalog slug lint-resolved (a broken slug blocks import naming the exact unresolved ref) and only the always tier one-click-deploys; prompt-card importer fences pasted input, maps to typed PromptTemplate/WorkflowDef/AgentDefinition through the proposal review flow; one-link JSON serialization imports through the same §3 pipeline. |
 | `AP-5` | ✅ | Outbound multi-tool export (ExternalFormat + 3 renderers + byte-identical golden tests) | `AP-1` | packs/external_formats.py ExternalFormat(name,installKind,dest,render) contract + Claude Code agents / Cursor rules / SKILL.md renderers export a PersonalClaw agent into a ~/.claude/agents/<slug>.md that Claude Code actually loads; a per-format golden-file test proves byte-identical rendering across runs; §2.2 content redaction runs on rendered output; export lands in a user-chosen directory only after explicit dest confirmation. |
 | `AP-6` | ⬜ | Inbound skill-catalog importer (CatalogMarketplace via install_guarded chokepoint) | `AP-3` | packs/catalog_marketplace.py CatalogMarketplace(SkillsMarketplace) registers each configured catalog (packs.skill_catalogs) on get_default_skills_registry at COMMUNITY tier; fetch() pulls files via net.fetch under the CONNECTOR egress profile returning SkillDetail so install_guarded does quarantine/scan/commit/lock; installing a catalog skill produces a standard .pclaw-lock.json and passes verify_skill_integrity (zero chokepoint bypass); Skills store gains a source filter + per-source counts; a large index browses client-side without entering the agent budget until install. |
 | `AP-5` | ⬜ | Outbound multi-tool export (ExternalFormat + 3 renderers + byte-identical golden tests) | `AP-1` | packs/external_formats.py ExternalFormat(name,installKind,dest,render) contract + Claude Code agents / Cursor rules / SKILL.md renderers export a PersonalClaw agent into a ~/.claude/agents/<slug>.md that Claude Code actually loads; a per-format golden-file test proves byte-identical rendering across runs; §2.2 content redaction runs on rendered output; export lands in a user-chosen directory only after explicit dest confirmation. |
@@ -48,11 +48,47 @@ Each atom below executes start-to-finish in one go. If an atom lists dependencie
 
 ### `AP-4` — Pack kinds: agent/roster packs, prompt-card importer, bundled Domain OS packs, one-link serialization
 
-**Status:** todo
+**Status:** done
 
 §4.1 Domain OS packs; §4.2 Agent/roster packs; §4.3 Prompt-card importer; §4.4 / §2.3 One-link setup export. Session 4. Success criteria 1, 4. Soft: WORK-R16 roster slug refs, LEARNING-FLYWHEEL {source,computedHash} locks.
 
 **Done when:** Personal CFO + Health OS bundled first-party packs export→wipe→import on a fresh PERSONALCLAW_HOME with skills locked, template runnable, digest trigger DISABLED, connector configure-or-substitute prompt, and setup interview binding a folder; roster pack imports rendering persona markdown into config agents{} with every runbook/catalog slug lint-resolved (a broken slug blocks import naming the exact unresolved ref) and only the always tier one-click-deploys; prompt-card importer fences pasted input, maps to typed PromptTemplate/WorkflowDef/AgentDefinition through the proposal review flow; one-link JSON serialization imports through the same §3 pipeline.
+
+**DONE.** Four sub-scopes, four modules, all four clauses met and driven through a real gateway.
+
+`packs/bundled/` ships **Personal CFO** and **Health OS** as authored SOURCE trees (the
+`workflows/bundled` convention) with `build_bundled()` assembling a `.pclaw` on demand. The
+author declares `components` edges; the builder derives every `sha256` + `content_hash` using
+AP-1's own derivation and runs AP-1's `_scan_component` content layer over every member — so
+one derivation produces the archive an importer verifies, not two. It fails closed in BOTH
+directions: a declared component with no file, and a component-shaped file no manifest row
+claims (a silent drop would make integrity recompute disagree with the pack's own contents).
+
+`packs/roster.py` owns §4.2. `agents/catalog.json` + `agents/runbooks/*.json` are members that
+DESCRIBE components, so they lint against the agent components actually carried: an unresolved
+slug or an unrecognised activation tier is a lint ERROR, which AP-2's existing gate turns into a
+refusal before any write. The refusal message now carries each finding's **detail** (was
+`code:ref` only) because the exact unresolved ref lives only there — the done_when's "naming the
+exact unresolved ref" was not true of the message a user reads until this changed. The roster
+stages at `packs/staged/<pack>/roster.json` carrying FRESH committed ids; `deploy_roster()`
+promotes ONLY the `always` tier into `config.json agents{}` as an `AgentProfile` with the
+persona's prompt/voice/model/skills, which is the seam `resolve_bindings` reads.
+
+`packs/prompt_cards.py` owns §4.3: `fence_untrusted` (guarded by `security.is_fenced`, never a
+substring test) → `one_shot_completion(use_case="background", output_type=dict)` → exactly one of
+`PromptTemplate` / a `WorkflowDef` spec (`validate_spec(strict=True)`) / `AgentDefinition` →
+`learning.proposals.enqueue`. Two new `Kind` members (`PROMPT`, `AGENT`) with an import-time
+label-totality guard; the installer claims by TAG (`prompt-card`), not kind, because three other
+producers already file `template` proposals. `packs/onelink.py` owns §2.3/§4.4 as a
+serialization, not a second importer: `materialize()` re-hashes every resource and refuses the
+whole document on one mismatch, then hands the archive to `import_pack` unchanged.
+
+Two deliberate calls, both recorded as DEVIATIONs in the plan's execution log: (1) the round
+trip's "export" leg is `build_bundled` from the authored tree, because AP-1's `build_pack` reads
+only skill/template/prompt/agent stores and a live-store trigger/connector exporter is nobody's
+declared scope (AP-7 owns the full validation sweep); (2) the persona reaches `config.json
+agents{}` on DEPLOY, not on import — writing it at import would make every staged tier live,
+contradicting the same clause's "only the always tier one-click-deploys".
 
 ### `AP-5` — Outbound multi-tool export (ExternalFormat + 3 renderers + byte-identical golden tests)
 

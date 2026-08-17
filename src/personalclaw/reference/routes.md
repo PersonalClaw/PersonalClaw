@@ -480,8 +480,14 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `GET /api/outbox` — list files in the outbox.
 - `POST /api/outbox/notify` — agent sent a file, notify the user.
 - `GET /api/outbox/{filename}` — download a file from the outbox.
-- `GET /api/packs/installed` — List installed packs with connector-resolution + setup state.
+- `GET /api/packs/bundled` — List the Domain OS packs shipped in this build (§4.1).
+- `POST /api/packs/bundled/{name}/install` — Build a shipped Domain OS pack and import it through the §3 pipeline.
+- `GET /api/packs/installed` — List installed packs with connector-resolution, roster + setup-binding state.
+- `POST /api/packs/one-link` — Import a one-link JSON document (§2.3/§4.4) through the same §3 pipeline.
+- `POST /api/packs/prompt-card` — Import a pasted prompt card (§4.3) — files a proposal, writes no entity.
+- `POST /api/packs/{name}/bindings` — Record one setup-interview answer (§3.4/§4.1) — the folder the pack will read.
 - `POST /api/packs/{name}/finish-setup` — Return a pack's re-runnable setup interview (the "Finish setup" chip).
+- `POST /api/packs/{name}/roster/deploy` — One-click team deploy: promote a pack's ``always`` roster tier (§4.2).
 - `GET /api/portability/export` — download PersonalClaw state as zip.
 - `POST /api/portability/import` — upload and apply a PersonalClaw export zip.
 - `POST /api/portability/preview` — validate and preview a zip without applying.

@@ -1,0 +1,17 @@
+name: cfo-spending-digest
+kind: user
+title: Spending Digest
+description: The weekly spending digest the spending-digest trigger renders.
+content: |
+  Summarise spending since {{since}} in at most six lines.
+
+  Lead with the total and the change against the prior comparable period. Then name the two
+  largest single outflows. If any statement for the period is missing, say so first and stop
+  claiming a total.
+variables:
+  - name: since
+    description: The start of the digest window (YYYY-MM-DD).
+    required: true
+tags:
+  - finance
+source: user
