@@ -771,7 +771,16 @@ function IntentsView({ selectedId, onSelect, reloadKey }: {
           <Target size={15} className="shrink-0 text-primary/80" />
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-1.5">
-              <span className="truncate text-on-surface text-[0.9375rem]">{it.goal || it.id}</span>
+              {/* 🪤 AN INTENT'S GOAL IS A SENTENCE THE USER WROTE, and `truncate` was eating most of
+                  it with no way back. Measured at 390px on four real intents: two truncate, and the
+                  longest showed **233px of the 651px it needs — 36% of what the user typed**. Nothing
+                  truncates at 1440px, which is why a desktop sweep sees nothing here.
+                  The asymmetry is the same one the tag row had: `ListRow`'s `label` already carries
+                  the FULL goal, so assistive tech was the only reader getting the whole sentence while
+                  a sighted phone user got a third of it. `title` on the truncating element is this
+                  app's idiom for that (19 elements carry it; SystemWidget, RoutingPanel and the tag
+                  row among them). */}
+              <span className="truncate text-on-surface text-[0.9375rem]" title={it.goal || it.id}>{it.goal || it.id}</span>
               {!it.enabled && <span className="rounded-pill bg-surface-high px-1.5 text-on-surface-low text-[0.75rem]">off</span>}
               {it.propose_skill && <span className="rounded-pill bg-surface-high px-1.5 text-primary-emphasis text-[0.75rem]">proposes skill</span>}
             </div>
