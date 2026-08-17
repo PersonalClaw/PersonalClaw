@@ -83,7 +83,9 @@ describe('a config panel does not present fabricated values as saved state', () 
     expect(codeOf('pages/settings/ChatPanel.tsx')).toMatch(/api\.dashboardConfig\(\)\.catch\(\(\) => null\)/)
     const dur = codeOf('pages/settings/DurabilityPanel.tsx')
     expect(dur).toMatch(/api\.durabilityStatus\(\)\.catch\(\(\) => null\)/)
-    expect(dur).toMatch(/api\.durabilitySnapshots\(\)\.catch\(\(\) => null\)/)
+    // `durabilityArchive` since DAS-10 — it replaced `durabilitySnapshots` when the §6
+    // archive browser landed. Still a DECORATING read, so it keeps its fallback.
+    expect(dur).toMatch(/api\.durabilityArchive\(\)\.catch\(\(\) => null\)/)
   })
 
   it('the hub stops poisoning the legibility key it shares with that panel', () => {

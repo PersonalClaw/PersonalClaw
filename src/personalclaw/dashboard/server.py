@@ -433,9 +433,16 @@ async def start_dashboard(
     # retention plan, and on-demand jobs. Restore is deliberately NOT here (see the
     # handler module docstring).
     app.router.add_get("/api/durability/status", handlers.api_durability_status)
-    app.router.add_get("/api/durability/snapshots", handlers.api_durability_snapshots)
     app.router.add_post("/api/durability/run", handlers.api_durability_run)
-    app.router.add_post("/api/durability/restore", handlers.api_durability_restore)
+    # §6 (DAS-10) — the DSAR surface. These four RETIRED `/api/durability/snapshots`,
+    # `/api/durability/restore` and the whole `/api/portability/*` trio: one export
+    # endpoint, one import endpoint, one archive list, one restore.
+    app.router.add_post("/api/durability/export", handlers.api_durability_export)
+    app.router.add_post("/api/durability/import", handlers.api_durability_import)
+    app.router.add_get("/api/durability/archive", handlers.api_durability_archive)
+    app.router.add_post(
+        "/api/durability/archive/{id}/restore", handlers.api_durability_archive_restore
+    )
     # DESKTOP-CAPABILITIES DC-2 — the Electron shell seam. The three POSTs are
     # loopback-only and credential-bearing (see handlers/desktop.py); the GETs are
     # the truth surface for Settings → Security and for apps holding a manifest
@@ -1008,9 +1015,6 @@ async def start_dashboard(
     app.router.add_post("/api/screenshot", handlers.api_screenshot)
 
     # Portability (export/import config+memory as zip)
-    app.router.add_get("/api/portability/export", handlers.api_portability_export)
-    app.router.add_post("/api/portability/import", handlers.api_portability_import)
-    app.router.add_post("/api/portability/preview", handlers.api_portability_preview)
 
     # Terminal (CLI panel)
     app.router.add_get("/api/ws/terminal/{session_id}", handlers.api_terminal_ws)
@@ -1723,7 +1727,7 @@ async def start_dashboard(
     @web.middleware
     async def _dev_user_middleware(request: web.Request, handler: object) -> web.StreamResponse:
         # In AuthMode.NONE the token-auth middleware is skipped, but many handlers
-        # (terminal, loops, portability, core) authenticate by reading request["user"]
+        # (terminal, loops, durability, core) authenticate by reading request["user"]
         # which that middleware normally sets. Populate it so they don't 401.
         request["user"] = request.get("user") or "dev-local"
         # App identity must survive none-mode too: token_auth normally adopts the

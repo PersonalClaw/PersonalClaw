@@ -154,7 +154,9 @@ class TestExport:
     def test_export_creates_valid_zip(self, patched_config_dir):
         zip_bytes, manifest = create_export_zip()
         assert len(zip_bytes) > 0
-        assert manifest["version"] == 2
+        # v3 since DAS-10 — §2's integrity shape (schema_version/machine_id + per-member
+        # sha256) travels inside the archive. v1/v2 still IMPORT; see test_portability_dsar.
+        assert manifest["version"] == 3
         assert manifest["format"] == "zip"
         assert "created_at" in manifest
         assert "hostname" in manifest
@@ -286,7 +288,7 @@ class TestValidate:
             ok, error, manifest = validate_import_zip(Path(tmp.name))
             assert ok is True
             assert error == ""
-            assert manifest["version"] == 2
+            assert manifest["version"] == 3
         finally:
             os.unlink(tmp.name)
 

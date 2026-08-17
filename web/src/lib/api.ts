@@ -174,18 +174,37 @@ export interface DurabilityStatus {
   snapshot: DurabilityJob
   drill: DurabilityJob
 }
-export interface DurabilitySnapshot {
+/** Per-domain counts recorded INSIDE an archive's manifest (§6). `null` means the
+ *  archive recorded none (it predates MANIFEST v3) — which is NOT the same as an empty
+ *  archive, so it must render as "not recorded" rather than as zeros. */
+export type DurabilityDomainCounts = Record<string, { files: number; bytes: number; rows: number }>
+/** The last restore drill's verdict. `ok: null` = ran, but the outcome was not recorded
+ *  (a pre-DAS-10 stamp). Never render an unknown outcome as a pass. */
+export interface DurabilityDrill {
+  ran: boolean
+  ok: boolean | null
+  at: number
+  detail: string
+  archive: string
+  databases_checked?: number
+}
+export interface DurabilityArchive {
+  id: string
   name: string
   taken_at: string
   size: number
   /** False = the CURRENT retention tiers would prune this one on the next pass. */
   retained: boolean
+  domains: DurabilityDomainCounts | null
+  /** Present only on the archive the last drill actually exercised. */
+  validate: DurabilityDrill | null
 }
-export interface DurabilitySnapshots {
+export interface DurabilityArchives {
   directory: string
-  snapshots: DurabilitySnapshot[]
+  archives: DurabilityArchive[]
   would_prune: string[]
   tiers: { daily: number; weekly: number; monthly: number }
+  last_drill: DurabilityDrill
 }
 export interface DurabilityJobResult {
   job: string
@@ -1716,9 +1735,28 @@ export type SessionTemplateInput = Omit<SessionTemplate, 'id' | 'created_at'>
 export interface PortabilityManifest {
   version: number; format: string; created_at: string; hostname: string; user: string
   contents: Record<string, number>
+  /** v3 only (§6). `scope` is 'full' | 'partial'; `verified` says whether the archive's
+   *  per-member checksums were CHECKED — false for a v1/v2 archive, which carries none. */
+  scope?: 'full' | 'partial'
+  domains?: string[]
+  domain_counts?: DurabilityDomainCounts
+  excluded?: string[]
+  verified?: boolean
 }
-export interface PortabilityPreviewResult { ok: boolean; error?: string; manifest?: PortabilityManifest }
-export interface PortabilityImportResult { ok: boolean; error?: string; summary?: { mode: string; items: string[] }; manifest?: PortabilityManifest }
+/** `applied: false` is the validate-only answer to an import with no `mode`. */
+export interface DurabilityImportResult {
+  ok: boolean
+  applied?: boolean
+  error?: { code: string; message: string }
+  summary?: { mode: string; items: string[]; refused?: string[]; pre_restore?: string }
+  manifest?: PortabilityManifest
+}
+export interface DurabilityRestoreResult {
+  ok?: boolean
+  plan?: boolean
+  error?: { code: string; message: string }
+  [k: string]: unknown
+}
 // One project's archive. `refused` names what did not arrive (a partial import is the normal case
 // for an archive that travelled) and `secrets_expected` names the credentials the far side must
 // re-enter — the archive deliberately carries neither their values nor a way to recover them.
@@ -2723,9 +2761,33 @@ export const api = {
   degraded: () => get<DegradedReport>('/api/resilience/degraded'),
   // ── Scheduled backups (DURABILITY-AND-SYNC §3) ──
   durabilityStatus: () => get<DurabilityStatus>('/api/durability/status'),
-  durabilitySnapshots: () => get<DurabilitySnapshots>('/api/durability/snapshots'),
   durabilityRun: (job: 'export' | 'snapshot' | 'drill') =>
     post<DurabilityJobResult>('/api/durability/run', { job }),
+  // ── §6 DSAR surface (DURABILITY-AND-SYNC §6, DAS-10) ──
+  // These retired `/api/durability/snapshots` and the `/api/portability/*` trio: one
+  // export endpoint, one import endpoint, one archive list, one restore.
+  durabilityArchive: () => get<DurabilityArchives>('/api/durability/archive'),
+  /** POST because the domain selection is a body. `domains` omitted = the full export. */
+  durabilityExport: (domains?: string[]) =>
+    fetch('/api/durability/export', {
+      method: 'POST',
+      headers: { ...SK, 'Content-Type': 'application/json' },
+      body: JSON.stringify(domains && domains.length ? { domains } : {}),
+    }).then(async (r) => {
+      if (!r.ok) throw new ApiError(await errText(r), r.status)
+      return r.blob()
+    }),
+  /** `mode` omitted VALIDATES ONLY and applies nothing — the plan-first contract every
+   *  home-overwriting verb in this API uses. `replace` additionally needs confirm. */
+  durabilityImport: (file: File, mode?: 'merge' | 'replace') => {
+    const fd = new FormData(); fd.append('file', file)
+    const qs = mode ? `?mode=${mode}${mode === 'replace' ? '&confirm=true' : ''}` : ''
+    return fetch(`/api/durability/import${qs}`, { method: 'POST', headers: { ...SK }, body: fd })
+      .then(j<DurabilityImportResult>)
+  },
+  /** `mode` omitted returns the restore PLAN and changes nothing. */
+  durabilityArchiveRestore: (id: string, body: { mode?: 'merge' | 'replace'; components?: string[]; confirm?: boolean } = {}) =>
+    post<DurabilityRestoreResult>(`/api/durability/archive/${encodeURIComponent(id)}/restore`, body),
   // ── Confirm-gated fixes + surfacing simulator (PLATFORM-RESILIENCE §2/§3.1) ──
   doctorFixes: () => get<{ fixes: DoctorFix[] }>('/api/doctor/fixes'),
   doctorFixApply: (fixId: string) =>
@@ -3802,8 +3864,7 @@ export const api = {
   sessionArchiveRead: (name: string) =>
     fetch(`/api/session/archive/${encodeURIComponent(name)}`, { headers: { ...SK } })
       .then(async (r) => { if (!r.ok) throw new ApiError(await errText(r), r.status); return r.text() }),
-  // import / export (portable archive)
-  portabilityExportUrl: () => '/api/portability/export',
+  // Whole-home export/import live on the durability surface — see `durabilityExport`.
   // One PROJECT as a manifest ZIP — narrower than the whole-home archive above, so a user can hand
   // a colleague a single project without shipping their memory database. Credentials never travel;
   // the response headers name the ones the far side must re-enter.
@@ -3812,15 +3873,6 @@ export const api = {
     const fd = new FormData(); fd.append('file', file)
     const qs = opts.preview ? '?preview=1' : ''
     return fetch(`/api/projects/import${qs}`, { method: 'POST', headers: { ...SK }, body: fd }).then(j<ProjectImportResult>)
-  },
-  // Both endpoints take a multipart upload of an export zip ('file' field).
-  portabilityPreview: (file: File) => {
-    const fd = new FormData(); fd.append('file', file)
-    return fetch('/api/portability/preview', { method: 'POST', headers: { ...SK }, body: fd }).then(j<PortabilityPreviewResult>)
-  },
-  portabilityImport: (file: File, mode: 'merge' | 'replace' = 'merge') => {
-    const fd = new FormData(); fd.append('file', file)
-    return fetch(`/api/portability/import?mode=${mode}`, { method: 'POST', headers: { ...SK }, body: fd }).then(j<PortabilityImportResult>)
   },
   // updates + changelog
   updateCheck: () => get<UpdateCheck>('/api/update/check'),
