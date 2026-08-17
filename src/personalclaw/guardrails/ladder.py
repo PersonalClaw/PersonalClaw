@@ -455,10 +455,7 @@ def _authority_sentence(spec, resolved: str, granted: str, state, held: bool) ->
     promoted it and it is running at the rung it was declared with. Composed here so the
     chip, its tooltip and the ladder panel cannot describe the same authority differently.
     """
-    from personalclaw.guardrails.rungs import RUNG_LABELS
-
-    def _label(rung: str) -> str:
-        return RUNG_LABELS.get(rung, rung)
+    from personalclaw.guardrails.rungs import rung_label as _label
 
     # 🪤 A RUNG LABEL IS A PREDICATE, NOT A NOUN. `RUNG_LABELS` is declared "in terms of
     # BEHAVIOUR rather than of the ladder" — "drafts only", "asks first", "runs with undo",
@@ -558,6 +555,7 @@ def explain_refused_grant(key: str, rung: str) -> str:
     """
     from personalclaw.guardrails.autonomy import action_type as _spec
     from personalclaw.guardrails.autonomy import cooldown_date
+    from personalclaw.guardrails.rungs import rung_label
 
     spec = _spec(key)
     if spec is None:
@@ -565,7 +563,12 @@ def explain_refused_grant(key: str, rung: str) -> str:
     if rung_rank(rung) < 0:
         return f"{rung!r} is not a rung on the ladder."
     if rung_rank(rung) > rung_rank(spec.ceiling):
-        return f"{key} can never go above {spec.ceiling} — that is its declared ceiling."
+        # "above <rung>" needs a noun, so the predicate is quoted as the rung's NAME — the form
+        # this family already settled on for the inbox proposal title. It used to emit `one_tap`.
+        return (
+            f"{key} can never go above \u201c{rung_label(spec.ceiling)}\u201d "
+            "— that is its declared ceiling."
+        )
     state = rung_state(key)
     cooldown = max((d.cooldown_until for d in (state.demotions if state else ())), default="")
     if cooldown:
@@ -618,7 +621,7 @@ def propose_promotions() -> list[str]:
 
 def _file_proposal(key: str, next_rung: str, record: str) -> bool:
     """Raise the standing proposal row for one earned rung. Best-effort."""
-    from personalclaw.guardrails.rungs import RUNG_LABELS
+    from personalclaw.guardrails.rungs import rung_label
 
     try:
         from personalclaw.inbox import emit_attention_item
@@ -636,7 +639,7 @@ def _file_proposal(key: str, next_rung: str, record: str) -> bool:
             # The one slot that cannot take a subject: an inbox row title has no room for a
             # clause. So the predicate is QUOTED as the name of the rung, rather than reading
             # "action.digest has earned runs on its own".
-            title=f"{key} has earned \u201c{RUNG_LABELS.get(next_rung, next_rung)}\u201d",
+            title=f"{key} has earned \u201c{rung_label(next_rung)}\u201d",
             body=(
                 f"{record} You can promote it in Settings → Guardrails, or leave it where "
                 "it is. Nothing changes until you do."
