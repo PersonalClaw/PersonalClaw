@@ -909,6 +909,20 @@ TOOL_META: dict[str, dict[str, Any]] = {
             },
         ],
     },
+    "ui_list": {
+        "response_type": "ui.list.catalog",
+        "error_codes": [],
+        "examples": [
+            {
+                "summary": "See every component in the kit before building a page",
+                "args": {},
+            },
+            {
+                "summary": "List the design tokens instead of the components",
+                "args": {"kind": "tokens"},
+            },
+        ],
+    },
     "ui_get": {
         "response_type": "ui.get.doc",
         "error_codes": [],

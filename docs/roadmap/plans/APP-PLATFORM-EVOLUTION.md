@@ -192,3 +192,82 @@ Request `{to: "<app>", type: "<str>", payload: {...}}`; broker verifies the call
   declared no target…"*. `GET /api/apps` and `GET /api/apps/catalog` were both inspected on the wire
   first and carried `"appMessaging": ["consent-demo-quiet", "mail-*"]` verbatim, confirming the data
   had always been arriving and only the browser was discarding it.
+- [2026-08-16][APE-5] DONE. **A bundled app can now own its provider code.** All 27 bundles were
+  `app.json`-only: `provider.implementation` named a core dotted path
+  (`personalclaw.tasks.native:create_provider`), so growing a bundled capability meant editing core —
+  the one thing the app platform exists to avoid. `apps/native_contract.py` is the contract; a
+  bundle-relative `implementation` (no dot: `provider:create_provider`) resolves to a module in the
+  bundle's own dir. `providers/loader.py` now uses ONE resolution rule for both tiers — a file inside
+  the app's dir loads from there under a namespaced `sys.modules` name, anything else is a dotted
+  package import. **That fixed a latent collision:** the old branch chose namespacing by TIER
+  (installed apps only) and routed bundled apps through a plain `import provider` with the bundle dir
+  on `sys.path`, so the second bundle to ship `provider.py` would have silently received the first
+  one's factory. Two synthetic bundles now pin it. The namespaced load is also cached — `load_factory`
+  and `load_availability` both resolve the same module, and the extension-list API calls the
+  availability probe, so app code was being re-executed per read, minting a second class for one
+  provider (an `isinstance` across two reads would have started failing).
+- [2026-08-16][APE-5] **The "native SDK subset" is `personalclaw.sdk.*` — no narrower list.** The
+  atom's wording implies a native-only allowlist; on inspection that would be a SECOND boundary to
+  keep in step for no gain. A bundled app is loaded by the same loader seam, registered through the
+  same typed handler, and shipped by the same release as an installed one, and the two candidate
+  exclusions do not survive contact: `sdk.cli` IS reachable (`app_cli.py` runs `cli.setup`/`cli.doctor`
+  for *each installed + enabled* app, and a native app is installed+enabled), and `sdk.util` cannot be
+  excluded wholesale because only one of its symbols (`shared_app_data_dir`) is backend-env-bound. So
+  the documented contract is: `personalclaw.sdk.*` only, plus three native-specific CAVEATS —
+  in-process (no `PERSONALCLAW_APP_*` env, so `shared_app_data_dir` is always `None`), no own
+  dependencies (the `dependencies` block installs into an app venv a bundled module never gets), and
+  packaged assets by path are legitimate (same distribution) while imports are not.
+- [2026-08-16][APE-5] **DEVIATION: 1 exemplar, not "2-3".** A census of all 27 bundles measured why
+  the other 26 cannot convert today: `code_map` needs `codegraph.CodeGraphIndex` +
+  `config.loader.default_workspace_dir`; the 7 mcp-backed tool bundles wrap
+  `agents.native.tools.InProcessMcpToolProvider` over a core `mcp_*` module; the 8 action bundles are
+  registered a SECOND time by `action_providers/registry.py` as "intrinsic actions" bound to
+  `guardrails.rungs.CORE_ACTION_TYPES`; `filesystem-inbox` is core's own last-resort default
+  (`inbox_providers/__init__.py:48`); the four entity providers have 2-7 core importers each
+  (`tasks.native` ← `investigate.py` + `tasks/registry.py`, `memory_providers.registry` ← `context.py`
+  + `providers/registry.py`, …). Each conversion needs new SDK exports or an untangling that is its own
+  atom, so the contract landed with the one bundle it fits — `personalclaw-ui-docs`, whose only
+  non-stdlib import was `tool_providers.base` (exactly what `sdk.tool` re-exports) and whose only core
+  importer was its own factory. `tool_providers/ui_docs.py` moved into the bundle and
+  `create_ui_docs_provider` was deleted (clean break, no dual path); the rail makes each further
+  conversion mechanical rather than exploratory.
+- [2026-08-16][APE-5] **The gained method: `ui_list`.** `ui_search` REQUIRES a query and `ui_get`
+  needs a name, so nothing in the kit could be *enumerated* — an agent had to guess a keyword to
+  discover that a primitive existed at all. `ui_list(kind=components|tokens|all)` was added inside the
+  bundle with no edit to any core module that implements, resolves or dispatches it, and is driven
+  through the real path in the rail (registry → typed handler → live tool registry → `invoke`),
+  asserting CONTENT (alphabetical component names + descriptions, tokens-only mode, and a refused bad
+  `kind`), not just `success`.
+- [2026-08-16][APE-5] **DISCOVERY: the installed-app boundary rail is vacuous in this workspace.**
+  `tests/test_apps_import_boundary.py` resolves `parents[2]/apps` and `pytest.skip`s the entire module
+  when that dir is absent — true in a standalone core clone AND in this project's own workspace, whose
+  apps checkout is named `PersonalClawApps`. It skipped for this atom's run too (the atom's `done_when`
+  asks for it "still green", and green-by-skip is what it gives). The new
+  `tests/test_native_capability_contract.py` never skips (the bundled tree ships inside the package)
+  and carries an explicit vacuity floor: if no bundled app ships a module, the import lint is
+  measuring nothing and the rail fails.
+- [2026-08-16][APE-5] **DISCOVERY: one residual core touch remains for a new agent TOOL.** A bundled
+  app that adds a tool NAME still needs a `manifest_meta.TOOL_META` entry, because that map is the ONE
+  hand-maintained input to the agent manifest and `tests/test_api_manifest_drift.py` fails the suite on
+  a tool without one (it registers every native manifest straight from `BUNDLED_DIR`, so bundled tools
+  are audited while installed-app tools are not). Plus the generated `src/personalclaw/reference/*`.
+  That is catalogue data about the shipped distribution's agent surface, not provider implementation —
+  so "without core edits" is exact for provider BEHAVIOUR and not yet exact for tool METADATA.
+  Bundle-declared tool metadata is the follow-up; it was not improvised here because `TOOL_META` and
+  its drift test are a guarded contract of their own.
+- [2026-08-16][APE-5] **DISCOVERY: packaging already carries a bundled `.py`, but by accident.**
+  `pyproject.toml`'s `package-data` lists `apps/native/*/app.json` and no `.py` glob, so the obvious
+  reading is that a bundled `provider.py` would be dropped from the wheel. Measured instead by running
+  `setup.py build_py` with a probe file: the `.py` IS copied (setuptools discovers
+  `personalclaw.apps.native.<bundle>` as a namespace package and copies it as a MODULE, log line
+  "copying …/provider_probe.py", before the package-data phase), while a probe `.json` in the same dir
+  was NOT. So no `pyproject.toml` change was needed — which matters, since that file is owned by
+  another open PR. The mechanism is namespace-package discovery under `setuptools>=64`, not an explicit
+  declaration, so an explicit `apps/native/*/*.py` package-data line would make it intentional rather
+  than incidental. Left for whoever owns `pyproject.toml` next.
+- [2026-08-16][APE-5] **DISCOVERY: the exemplar retired two inert SDK exports.**
+  `inert-surface-baseline.json` shrank by 2 — `sdk_export:ToolDefinition` and `sdk_export:ToolResult`
+  on `sdk/tool.py` had never been imported by any app, and the bundled provider now imports them. Also
+  a small loss to note: `mypy src/personalclaw` no longer type-checks the moved file (it is outside the
+  discovered packages); it was run directly and is clean, and a bundled module is a normal candidate for
+  the same treatment installed apps get.

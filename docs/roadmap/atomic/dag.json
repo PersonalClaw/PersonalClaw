@@ -5572,7 +5572,7 @@
         {
           "id": "APE-5",
           "title": "Native capability contract: optional provider.py + native SDK subset + 2-3 exemplar bundles",
-          "status": "todo",
+          "status": "done",
           "scope": "Session 2 T2.2",
           "done_when": "a native bundle gains a real provider method via the documented native SDK subset without core edits; apps import-boundary test still green",
           "deps": []
@@ -7403,11 +7403,6 @@
       {
         "id": "APE-4",
         "title": "quality manifest block + Store card rendering + first-party CI verification",
-        "plan": "APE"
-      },
-      {
-        "id": "APE-5",
-        "title": "Native capability contract: optional provider.py + native SDK subset + 2-3 exemplar bundles",
         "plan": "APE"
       },
       {
@@ -10066,9 +10061,9 @@
         "code": "APE",
         "plan": "APP-PLATFORM-EVOLUTION",
         "total_atoms": 12,
-        "done": 5,
+        "done": 6,
         "in_progress": 0,
-        "todo": 7,
+        "todo": 6,
         "blocked": 0
       },
       {

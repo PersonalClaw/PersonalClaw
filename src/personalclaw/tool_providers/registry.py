@@ -125,13 +125,12 @@ def create_code_map_provider(config: dict[str, Any] | None = None) -> ToolProvid
     return CodeMapToolProvider()
 
 
-def create_ui_docs_provider(config: dict[str, Any] | None = None) -> ToolProvider:
-    """Extension factory for the ``personalclaw-ui-docs`` tool surface — serves the
-    ``web/src/ui`` design-system kit as ``ui_search`` / ``ui_get`` documentation-as-
-    data (Platform-Legibility §5). Not an MCP module — reads the built ui-docs.json."""
-    from personalclaw.tool_providers.ui_docs import UiDocsToolProvider
-
-    return UiDocsToolProvider()
+# NOTE: ``personalclaw-ui-docs`` has NO factory here on purpose. It is the first bundled
+# app to own its provider code under the native capability contract (APE-5): its manifest
+# resolves ``provider:create_provider`` inside
+# ``apps/native/personalclaw-ui-docs/provider.py``, which imports core only via
+# ``personalclaw.sdk.*``. Adding a factory back would re-create the core dependency the
+# contract removes — see ``apps/native_contract.py``.
 
 
 _providers: dict[str, ToolProvider] = {}
