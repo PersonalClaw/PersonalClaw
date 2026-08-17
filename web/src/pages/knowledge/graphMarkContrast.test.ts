@@ -119,4 +119,26 @@ describe('the entity graph marks meet non-text contrast', () => {
     expect(m, 'the resting edge width is readable from source').toBeTruthy()
     expect(Number(m![1])).toBeGreaterThanOrEqual(1)
   })
+
+  it('and that width is what actually PAINTS, at any viewport', () => {
+    // 🔴 The assertion above is necessary and was not sufficient. This graph's viewBox is 1000×1000
+    // under `xMidYMid meet`, so it is never drawn 1:1 — the CTM scale measured 0.761 at 1440px and
+    // 0.358 at 390px, painting a declared `1` as 0.76px and 0.36px. Width alone only shrank the
+    // shortfall; `non-scaling-stroke` removes it, which is what makes the ratios above real numbers.
+    //
+    // Asserted on BOTH marks, because a relation drawn at its declared width beside a node that
+    // still thins with the viewport is the same defect half-fixed.
+    const marks = [...SRC.matchAll(/vectorEffect="non-scaling-stroke"/g)]
+    expect(marks.length, 'one for the relation, one for the entity').toBe(2)
+    expect(SRC, 'the relation declares it').toMatch(/<line[^>]*vectorEffect="non-scaling-stroke"/)
+    expect(SRC, 'the entity declares it').toMatch(/<circle[^>]*vectorEffect="non-scaling-stroke"/)
+  })
+
+  it('the scale that makes it necessary is still what the code assumes', () => {
+    // The vacuity guard for the reasoning, not the fix: if the viewBox ever stops being a fixed
+    // world space, or `meet` becomes `slice`, the numbers in these comments need re-measuring rather
+    // than trusting. Both are read from source so a change has to come past this test.
+    expect(SRC, 'a fixed 1000×1000 world space').toMatch(/viewBox=\{`0 0 \$\{W\} \$\{H\}`\}/)
+    expect(SRC, 'scaled to fit, which is why the CTM is below 1').toMatch(/preserveAspectRatio="xMidYMid meet"/)
+  })
 })
