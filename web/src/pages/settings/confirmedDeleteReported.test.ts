@@ -133,9 +133,38 @@ describe('a confirmed delete reports its failure', () => {
     }
   })
 
-  it('the whole confirmed-delete family is now clean — the app-wide ratchet', () => {
-    // Replaces the per-slice worklist: sweep every page for a destructive call behind a confirm whose
-    // rejection is discarded. This is what stops the shape coming back somewhere new.
+  // ── THIRD SLICE: the ratchet filtered by VERB, matched a NAME, and knew only ONE confirm idiom ───
+  //
+  // 🪤 THREE DEFECTS IN THIS RAIL, all found by turning it on a call it should have caught:
+  //
+  //   1. `api\.(delete|purge|revoke)[A-Z]\w*` is a VERB filter. `AuditPanel.rotate` — a confirmed
+  //      rotation of the audit-log signing key — swallowed its rejection and was invisible purely
+  //      because it is spelled `selRotate`. **A rail that filters by verb misses every future verb**,
+  //      the sibling of the recorded "a rail that pins a whole prop string forbids every future prop".
+  //      The sweep now matches the SHAPE: any `api.*` behind a confirm.
+  //
+  //   2. The gate was `/(confirmDelete|await confirm\()/` over the preceding 900 chars, which matches
+  //      `const [confirmDelete, setConfirmDelete] = useState(false)` — a state DECLARATION. Widening to
+  //      every `api.*` exposed it: `DesignCockpitPage`'s `api.project` and `api.uLoopDesignTokens` are
+  //      plain reads in `loadLoop`/`loadTokens`, reported as confirmed-destructive because a boolean of
+  //      that name is declared ~700 chars above. Grep proximity is not proof. Both are pinned below.
+  //
+  //   3. 🔑 THE ONE THAT MATTERED: **the app has TWO confirm idioms and this sweep knew one.** A dialog
+  //      (`await confirm({…})`) and a two-step arm (`if (!confirmDelete) { setConfirmDelete(true);
+  //      return }` — the button relabels to "Confirm delete?" and the second click commits). Every
+  //      arm-gated destructive action was outside the ratchet entirely; the three in `loops/` were
+  //      covered only by the hand-written slice list above, and **two more were covered by nothing at
+  //      all** (`chat/SdlcProgressCard`, `knowledge/KnowledgeListPage`'s two intent deletes). None is
+  //      currently swallowing, so this adds no new defect — it closes the hole a new one would land in.
+  //
+  // The window is still 900 chars of proximity, not scope analysis — so the vacuity floor is
+  // load-bearing: if either predicate breaks, the sweep matches nothing and reads as a clean pass.
+
+  const DIALOG_CONFIRM = /(?:await confirm\(|(?<![\w.$])confirmDelete\()/
+  const ARMED_CONFIRM = /if \([^)\n]{0,70}confirm[A-Za-z]*[^)\n]{0,70}\)[^\n]{0,220}return/
+  const SWALLOWED = /\.catch\(\s*\(\s*\)\s*⇒\s*\{\s*\}\s*\)/
+
+  const allPages = (): string[] => {
     const walk = (dir: string, out: string[] = []): string[] => {
       for (const name of readdirSync(dir)) {
         const abs = join(dir, name)
@@ -144,31 +173,87 @@ describe('a confirmed delete reports its failure', () => {
       }
       return out
     }
-    const offenders: string[] = []
-    for (const abs of walk(PAGES)) {
-      const src = readFileSync(abs, 'utf8')
-      for (const m of src.matchAll(/api\.(delete|purge|revoke)[A-Z]\w*\(/g)) {
-        if (!/\.catch\(\(\)\s*=>\s*\{\s*\}\)/.test(src.slice(m.index!, m.index! + 160))) continue
+    return walk(PAGES)
+  }
+
+  type Gated = { rel: string; line: number; call: string; idiom: 'dialog' | 'arm'; swallowed: boolean }
+
+  // Every `api.*` call sitting behind either confirm idiom, app-wide. `=>` is neutralised first: the
+  // catch bodies are arrow functions, and a bounded scan that stops at `>` matches nothing.
+  const confirmGatedCalls = (): Gated[] => {
+    const out: Gated[] = []
+    for (const abs of allPages()) {
+      const src = readFileSync(abs, 'utf8').replace(/=>/g, '⇒')
+      for (const m of src.matchAll(/api\.(\w+)\(/g)) {
         const before = src.slice(Math.max(0, m.index! - 900), m.index!)
-        if (/(confirmDelete|await confirm\()/.test(before)) offenders.push(`${abs.replace(PAGES + '/', '')}: ${m[0]}`)
+        const dialog = DIALOG_CONFIRM.test(before)
+        if (!dialog && !ARMED_CONFIRM.test(before)) continue
+        out.push({
+          rel: abs.replace(PAGES + '/', ''),
+          line: src.slice(0, m.index).split('\n').length,
+          call: m[1],
+          idiom: dialog ? 'dialog' : 'arm',
+          swallowed: SWALLOWED.test(src.slice(m.index!, m.index! + 200)),
+        })
       }
     }
-    expect(offenders, 'a confirmed destructive action may not swallow its rejection').toEqual([])
+    return out
+  }
+
+  it('the sweep is not vacuous — the pages, BOTH idioms, and a spread of areas', () => {
+    expect(allPages().length, 'the page tree must be discoverable').toBeGreaterThan(150)
+    const gated = confirmGatedCalls()
+    expect(gated.filter((g) => g.idiom === 'dialog').length, 'the dialog predicate must match').toBeGreaterThan(20)
+    // Without this floor, defect 3 is silently reintroduced the moment the arm regex stops matching.
+    expect(gated.filter((g) => g.idiom === 'arm').length, 'the two-step-arm predicate must match too').toBeGreaterThan(3)
+    expect(new Set(gated.map((g) => g.rel.split('/')[0])).size, 'and reach across areas').toBeGreaterThan(3)
   })
 
-  it('no OTHER settings panel swallows a CONFIRMED delete — the ratchet', () => {
-    const files = readdirSync(join(PAGES, 'settings')).filter((f) => /\.tsx$/.test(f) && !/\.test\./.test(f))
-    expect(files.length, 'the settings panels must be discoverable').toBeGreaterThan(20)
-    const offenders: string[] = []
-    for (const f of files) {
-      const src = readFileSync(join(PAGES, 'settings', f), 'utf8')
-      for (const m of src.matchAll(/api\.(delete|purge|revoke)[A-Z]\w*\(/g)) {
-        const chain = src.slice(m.index!, m.index! + 160)
-        if (!/\.catch\(\(\)\s*=>\s*\{\s*\}\)/.test(chain)) continue
-        const before = src.slice(Math.max(0, m.index! - 900), m.index!)
-        if (/(confirmDelete|await confirm\()/.test(before)) offenders.push(`${f}: ${m[0]}`)
-      }
-    }
-    expect(offenders, 'a confirmed delete may not swallow its rejection').toEqual([])
+  it('NO confirmed action anywhere swallows its rejection — by shape, both idioms', () => {
+    const offenders = confirmGatedCalls()
+      .filter((g) => g.swallowed)
+      .map((g) => `${g.rel}:${g.line} (api.${g.call}, ${g.idiom})`)
+    expect(offenders, 'the user was stopped and asked to confirm — silence is indefensible').toEqual([])
   })
+
+  it('the confirmed key rotation the verb filter could not see now reports', () => {
+    // Also must not run the post-success steps: nothing rotated, so there is nothing to invalidate.
+    const src = readFileSync(join(PAGES, 'settings', 'AuditPanel.tsx'), 'utf8')
+    expect(src, 'the rotation must still be confirmed first').toMatch(/await confirm\(\{/)
+    expect(src, 'and the rejection captured, not discarded').toMatch(/try \{ await api\.selRotate\(\) \}/)
+    expect(src, 'reported with the server’s own message').toMatch(/notify\(`Couldn't rotate the signing key: \$\{msg\}`, 'error'\)/)
+    const at = src.indexOf('api.selRotate(')
+    expect(src.slice(at, at + 420), 'a failed rotation must not invalidate or reload').toMatch(/return {3}\/\/ nothing rotated/)
+    // And it is genuinely inside the sweep now, not merely fixed by hand.
+    expect(confirmGatedCalls().some((g) => g.rel === join('settings', 'AuditPanel.tsx') && g.call === 'selRotate'))
+      .toBe(true)
+  })
+
+  it('the two-step arm sites are inside the sweep — including the two no list covered', () => {
+    // Pins defect 3. These were reachable by no ratchet before: the app-wide sweep only knew the dialog
+    // idiom, and the slice list above names only the three in `loops/`.
+    const arm = confirmGatedCalls().filter((g) => g.idiom === 'arm')
+    for (const [rel, call] of [
+      [join('chat', 'SdlcProgressCard.tsx'), 'deleteULoop'],
+      [join('knowledge', 'KnowledgeListPage.tsx'), 'deleteKnowledgeIntent'],
+      [join('loops', 'LoopsListPage.tsx'), 'deleteULoop'],
+      [join('loops', 'DesignCockpitPage.tsx'), 'deleteULoop'],
+      [join('loops', 'LoopCockpitPage.tsx'), 'deleteULoop'],
+    ]) {
+      expect(arm.some((g) => g.rel === rel && g.call === call), `${rel}:${call} must be in scope`).toBe(true)
+    }
+  })
+
+  it('the gate does not fire on a read that merely sits near a confirm STATE variable', () => {
+    // Pins defect 2. `DesignCockpitPage` declares `const [confirmDelete, setConfirmDelete] = useState`
+    // and loads two reads below it; a name-proximity gate called both confirmed-destructive.
+    const flagged = confirmGatedCalls().filter(
+      (g) => g.rel === join('loops', 'DesignCockpitPage.tsx') && ['project', 'uLoopDesignTokens'].includes(g.call),
+    )
+    expect(flagged, 'these are reads in loadLoop/loadTokens, not confirmed deletes').toEqual([])
+  })
+
+  // The settings-only `delete|purge|revoke` sweep that used to sit here is GONE, not weakened: the
+  // app-wide shape sweep walks `settings/` too and matches every verb and both idioms, so it is a
+  // strict superset. `saveFailureReported`'s widened sweep covers those panels for UNconfirmed writes.
 })
