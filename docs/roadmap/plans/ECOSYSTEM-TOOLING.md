@@ -104,3 +104,32 @@ PR validation workflow: manifest fetch+parse (core `apps/manifest.py`), repo liv
 
 - **Registry trust-washing risk:** a listing must never read as an endorsement — card copy says "community-listed, scanned at install" explicitly; verdict display is the honest differentiator.
 - **Open:** scaffold rename/refactor helper (`app new --from <existing>`) — nice-to-have; DISCOVERY-file if demand appears.
+## Execution log
+
+- **2026-08-17 — DONE (`ET-1`): `personalclaw app new` scaffold with a registry-derived type table** (#1553).
+  `--list-types` prints 18 types read at runtime from `manifest._providers_section()` -> `PROVIDER_TYPES` +
+  the provider registry — the same derivation the agent manifest publishes, so an upstream capability type
+  appears without editing the generator. That is tested, not asserted:
+  `test_an_upstream_type_appears_without_editing_the_generator` injects `fake_capability` and requires it to
+  both list AND scaffold; hard-coding the list reds it, and `cli_app_new.py` contains zero type-list
+  literals. Thirteen types resolve a contract off `personalclaw.sdk.*`; five publish no SDK ABC (`agent`,
+  `duty_gate`, `notification`, `task`, `workflow`) and are labelled `- (duck-typed stub)` rather than
+  emitting a deep-core import that would break the app boundary. The per-type loop is 18/18 on all four
+  legs — generate -> `pytest <dir>` (7 tests each) -> local-source install -> provider registers with
+  `error == ""` — and `tests/test_app_scaffold.py` runs the **apps repo's own three CI jobs** read out of
+  its `ci.yml`, so scaffold drift reds. `duty_gate` genuinely failed the register leg first
+  (`must expose an async on_duty(now, ctx)`) and was fixed by carrying that requirement in a table read off
+  the handler's own refusal, not by excluding the type. Generated stubs assert `__abstractmethods__` empty,
+  so a scaffolded provider is instantiable rather than merely parseable. Gate: lint EXIT=0, mypy clean on
+  903 files, 137 passed + 1 pre-existing skip, `manifest_reference` no-diff. Five falsifications, none green.
+- **2026-08-17 — V1 + DISCOVERY (`ET-1`): the generated README's own install snippet did not work.**
+  Timed stranger walkthrough: **6 seconds** end to end, run twice. The first drive returned
+  `{"error": "Token required"}` twice because the template used `Authorization: Bearer $PERSONALCLAW_TOKEN`,
+  and the gateway accepts `Bearer` only for **app-scoped narrowing** tokens —
+  `dashboard/token_auth.py:977-986`; the owner token comes from `?token=` or the `pc_token_<port>` cookie
+  (verified in code during ship review, not taken on report). The template now uses `?token=` plus the
+  follow-up `enable` call, and the final run executed the snippet **verbatim from the generated README**.
+  A scaffold whose own README fails is worse than no scaffold, so this is recorded as the finding V1 exists
+  to produce.
+- **2026-08-17 — NOTE.** This plan had no `## Execution log` section before today (one of 7 of 70); the
+  section was created with `ET-1`'s entry rather than the entry being filed elsewhere.
