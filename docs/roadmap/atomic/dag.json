@@ -2084,7 +2084,7 @@
         {
           "id": "AS-2",
           "title": "Chatless refresh: layout/data split render transform + ttl refresh + freshness/error chips",
-          "status": "todo",
+          "status": "done",
           "scope": "\u00a72 Live Artifacts \u2014 Chatless Refresh (\u00a72.1 layout/data split, \u00a72.2 artifact-update action provider [INHERITED \u2014 landed WORKFLOWS-V2 Slice 9b, registered + hook-allowlisted; verify/consume], \u00a72.3 refresh execution + cost honesty, \u00a72.4 freshness + per-source error chips).",
           "done_when": "a pinned tile in ttl mode refreshes via a deterministic LLM-free render transform (WF2 node interpolating {{...}} bindings into the stored skeleton); a steady-state refresh makes zero LLM calls confirmed by a ledger-only row carrying near-zero token cost + duration; tile header renders relative freshness + one ok/error dot per data node with error-on-hover + a deep link to the ledger row; a failed refresh keeps last-good content painted and turns the chip red (never an empty panel). View-trigger binding is a later in-place ttl\u2192view upgrade (EXT:AUTOMATION-SUBSTRATE step 8) and is NOT required to complete this atom.",
           "deps": [
@@ -7416,11 +7416,6 @@
         "plan": "AR"
       },
       {
-        "id": "AS-2",
-        "title": "Chatless refresh: layout/data split render transform + ttl refresh + freshness/error chips",
-        "plan": "AS"
-      },
-      {
         "id": "AS-6",
         "title": "Genui action routing + app-contributed components + L0/L1/L2 surface overlay + safe mode",
         "plan": "AS"
@@ -9736,9 +9731,9 @@
         "code": "AS",
         "plan": "AMBIENT-SURFACES",
         "total_atoms": 9,
-        "done": 4,
+        "done": 5,
         "in_progress": 0,
-        "todo": 5,
+        "todo": 4,
         "blocked": 0
       },
       {

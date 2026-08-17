@@ -43,6 +43,9 @@ _SIZES = ("s", "m", "l", "full")
 #: Who added a tile. An ``agent`` row is a PROPOSAL (renders with an accept/dismiss
 #: chip); the agent never silently rearranges the user's home (§1.3 propose-don't-pin).
 _ADDED_BY = ("user", "agent")
+#: How a tile stays fresh. ``view`` (a bound AUTOMATION-SUBSTRATE trigger) is NOT here until
+#: its runtime is — see :class:`TileRefresh`.
+_REFRESH_MODES = ("manual", "ttl")
 
 #: The Overview preset id — the default home.
 PRESET_OVERVIEW_ID = "overview"
@@ -73,6 +76,54 @@ class ViewNotFoundError(Exception):
 
 
 @dataclass
+class TileDataNode:
+    """One data source feeding a live tile's skeleton (AMBIENT-SURFACES §2.1).
+
+    The plan's "bound data workflow (degenerate case: one action node)" — so a data node
+    IS an action-provider dispatch, and a tile's ``data`` list is the whole workflow. Its
+    ``id`` is the binding name: a node with ``id: "runs"`` fills ``{{nodes.runs.output}}``
+    in the skeleton.
+
+    ``provider`` is checked against a READ-ONLY allowlist at refresh time
+    (:data:`personalclaw.dashboard.tile_refresh.DATA_PROVIDERS`) — a TTL tile fires with no
+    human present, so `bash` behind a dashboard panel would be an unattended-execution
+    surface the user never consented to.
+    """
+
+    id: str
+    provider: str
+    config: dict = field(default_factory=dict)
+
+
+@dataclass
+class TileRefresh:
+    """How a tile stays fresh (§1.1 ``refresh``, §2.1 the layout/data split).
+
+    ``mode``:
+
+    * ``manual`` — only the tile's refresh button (the default; a pinned static artifact).
+    * ``ttl`` — re-render when ``ttl_secs`` have elapsed since the last refresh. The
+      pre-substrate cadence; ``0`` means "use ``AmbientConfig.default_refresh_ttl_secs``".
+
+    ``mode: "view"`` (a bound AUTOMATION-SUBSTRATE view trigger) is deliberately absent: it
+    is a later IN-PLACE ttl→view upgrade (EXT:AUTOMATION-SUBSTRATE step 8), and a declared
+    mode with no runtime is the failure shape this repo has been burned by. Adding it when
+    the substrate lands changes this literal and the dispatch in ``tile_refresh``, nothing else.
+
+    ``skeleton`` is the slug of the artifact holding the ``{{...}}`` body — a SEPARATE
+    artifact from the tile's own ``ref``. That split is the point: the skeleton is authored
+    once (by a chat turn or a workflow stage) and stays intact, while the tile's artifact
+    holds the RENDERED projection. Storing both in one artifact would mean the first refresh
+    overwrote the very skeleton the next refresh needs.
+    """
+
+    mode: str = "manual"
+    ttl_secs: int = 0
+    skeleton: str = ""
+    data: list[TileDataNode] = field(default_factory=list)
+
+
+@dataclass
 class DashboardTile:
     """One tile in a view: a content ref + a size hint + an order index.
 
@@ -84,6 +135,8 @@ class DashboardTile:
     size: str = "m"  # "s" | "m" | "l" | "full" — a flow-layout hint, never coordinates
     order: int = 0  # explicit ordering within the view
     added_by: str = "user"  # "user" | "agent" — agent rows are proposals
+    #: The data seam (§2.1). Still not spatial — a refresh binding, not a coordinate.
+    refresh: TileRefresh = field(default_factory=TileRefresh)
 
 
 @dataclass
@@ -133,6 +186,40 @@ def _write_disk(data: dict) -> None:
     atomic_write(views_path(), json.dumps(data, indent=2) + "\n")
 
 
+def _refresh_from_dict(d: object) -> TileRefresh:
+    """Parse a tile's refresh binding. FAIL-OPEN (the storage convention for a
+    user-facing availability surface): anything unreadable degrades to ``manual``, which
+    refreshes only when the user presses the button. The opposite default would have a
+    corrupt registry firing data fetches on a cadence nobody asked for."""
+    if not isinstance(d, dict):
+        return TileRefresh()
+    mode = str(d.get("mode", "manual"))
+    if mode not in _REFRESH_MODES:
+        mode = "manual"
+    try:
+        ttl = int(d.get("ttl_secs", 0) or 0)
+    except (TypeError, ValueError):
+        ttl = 0
+    nodes: list[TileDataNode] = []
+    for raw in d.get("data") or []:
+        if not isinstance(raw, dict):
+            continue
+        node_id = str(raw.get("id", "")).strip()
+        provider = str(raw.get("provider", "")).strip()
+        if not node_id or not provider:
+            continue
+        cfg = raw.get("config")
+        nodes.append(
+            TileDataNode(id=node_id, provider=provider, config=cfg if isinstance(cfg, dict) else {})
+        )
+    return TileRefresh(
+        mode=mode,
+        ttl_secs=max(0, ttl),
+        skeleton=str(d.get("skeleton", "") or "").strip(),
+        data=nodes,
+    )
+
+
 def _tile_from_dict(d: dict) -> DashboardTile:
     ref = str(d.get("ref", "")).strip()
     size = str(d.get("size", "m"))
@@ -146,6 +233,7 @@ def _tile_from_dict(d: dict) -> DashboardTile:
         size=size if size in _SIZES else "m",
         order=order,
         added_by=added_by if added_by in _ADDED_BY else "user",
+        refresh=_refresh_from_dict(d.get("refresh")),
     )
 
 
@@ -309,6 +397,37 @@ def add_tile(view_id: str, ref: str, size: str = "m", added_by: str = "user") ->
     tiles.append({"ref": ref, "size": size, "order": len(tiles), "added_by": added_by})
     _write_disk(data)
     return get_view(view_id)  # type: ignore[return-value]
+
+
+def set_tile_refresh(view_id: str, ref: str, patch: dict) -> DashboardTile:
+    """Bind (or unbind) a tile's refresh (§2.1). Returns the tile as stored.
+
+    Validation happens in :func:`_refresh_from_dict`, so an unrecognized mode lands as
+    ``manual`` rather than being rejected — the same fail-open the reader uses, applied at
+    the write so what the caller reads back is what a refresh will actually honor.
+    """
+    ref = ref.strip()
+    data = _read_disk()
+    tiles = data["overlay"].get(view_id)
+    if not isinstance(tiles, list):
+        raise ViewNotFoundError(view_id)
+    for t in tiles:
+        if isinstance(t, dict) and t.get("ref") == ref:
+            t["refresh"] = asdict(_refresh_from_dict(patch))
+            _write_disk(data)
+            return _tile_from_dict(t)
+    raise ViewNotFoundError(f"{view_id}:{ref}")
+
+
+def find_tile(view_id: str, ref: str) -> DashboardTile | None:
+    """The tile ``ref`` in ``view_id``, or None. The refresh path's lookup."""
+    view = get_view(view_id)
+    if view is None:
+        return None
+    for t in view.tiles:
+        if t.ref == ref.strip():
+            return t
+    return None
 
 
 def resolve_tile(view_id: str, ref: str, keep: bool) -> DashboardView:
