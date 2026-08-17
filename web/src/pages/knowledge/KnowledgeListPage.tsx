@@ -20,7 +20,7 @@ import { KnowledgeGraph } from './KnowledgeGraph'
 import { useQueryParam, type RouteProps } from '../../app/useQueryState'
 import { useCachedData, invalidateCache } from '../../lib/useCachedData'
 import { rowSubject } from '../../lib/rowSubject'
-import { confirm, promptInput } from '../../ui/dialog'
+import { confirm, confirmDelete, promptInput } from '../../ui/dialog'
 import { PageTitle } from '../../ui/PageTitle'
 
 type View = 'library' | 'graph' | 'intents' | 'tags' | 'conflicts'
@@ -721,6 +721,29 @@ export function KnowledgeListPage({ onCreate, onOpenItem, onOpenSources, query, 
 /** Tier-3 intents: state a standing interest in plain language ("anything that helps
  *  my homelab"); the system decides per-item relevance and gathers typed-field
  *  outcomes. Click one to see everything it has gathered. */
+/** Ask before deleting an intent, and say what goes with it.
+ *
+ *  Both delete controls — the row's icon button and the detail panel's — fired straight into
+ *  `api.deleteKnowledgeIntent` on one click, with no confirmation anywhere. `confirmDelete` is this
+ *  app's dominant form for that (fourteen callers: schedules, artifacts, providers, memories, tasks,
+ *  triggers, workflow definitions…), and the file already applies the same discipline to shelves a few
+ *  hundred lines up.
+ *
+ *  The body is not boilerplate. Deleting a shelf keeps its items, so `removeCollection` says so; an
+ *  intent is the opposite — `delete_intent` cascades into `delete_intent_outcomes`, and an outcome is
+ *  stored BY VALUE precisely so it "survives source-item deletion". So this is the only copy of what
+ *  the intent gathered, and re-adding the intent does not bring it back. Whoever presses Delete on a
+ *  row reading "12 gathered" should know that before, not after.
+ *
+ *  Module scope because the two controls live in two components; one sentence, said once. */
+async function confirmIntentDelete(goal: string, gathered: number): Promise<boolean> {
+  return confirmDelete('intent', rowSubject([goal], 40), {
+    body: gathered > 0
+      ? `Everything it gathered goes with it — ${gathered} ${gathered === 1 ? 'match' : 'matches'}, kept by value, so re-adding the intent will not bring them back.`
+      : 'It has gathered nothing yet, so only the intent itself goes.',
+  })
+}
+
 function IntentsView({ selectedId, onSelect, reloadKey }: {
   selectedId: string | null
   onSelect: (intent: KnowledgeIntent | null) => void
@@ -763,7 +786,11 @@ function IntentsView({ selectedId, onSelect, reloadKey }: {
                 Named after its row the way `RowAction` does, through the shared cap so an intent whose
                 goal is a sentence cannot turn the name into a paragraph (cycle 142's rule). */}
             <Button size="sm" variant="ghost" ariaLabel={`Delete intent: ${rowSubject([it.goal || it.id], 40)}`}
-              onClick={() => api.deleteKnowledgeIntent(it.id).then(load)}><Trash2 size={14} /></Button>
+              onClick={async () => {
+                if (!(await confirmIntentDelete(it.goal || it.id, it.outcome_count ?? 0))) return
+                await api.deleteKnowledgeIntent(it.id)
+                load()
+              }}><Trash2 size={14} /></Button>
           </span>
         </ListRow>
       ))}
@@ -854,7 +881,11 @@ function IntentDetail({ intent, onChanged, onClose, onOpenItem }: {
           </Button>
         )}
         <span onClick={(e) => e.stopPropagation()}>
-          <Button size="sm" variant="ghost" onClick={() => api.deleteKnowledgeIntent(intent.id).then(() => { onChanged(); onClose() })}><Trash2 size={14} /> Delete</Button>
+          <Button size="sm" variant="ghost" onClick={async () => {
+            if (!(await confirmIntentDelete(intent.goal || intent.id, outcomes?.length ?? 0))) return
+            await api.deleteKnowledgeIntent(intent.id)
+            onChanged(); onClose()
+          }}><Trash2 size={14} /> Delete</Button>
         </span>
       </div>
       {note && <p className="text-on-surface-low text-[0.8125rem]">{note}</p>}
