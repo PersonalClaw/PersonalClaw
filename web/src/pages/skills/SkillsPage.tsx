@@ -17,6 +17,7 @@ import { TextInput, TextArea, FieldError } from '../../ui/forms'
 import { useCachedData, invalidateCache } from '../../lib/useCachedData'
 import { api, type SkillItem, type SkillSearchResult, type SkillMarketplace } from '../../lib/api'
 import { SOURCE_TONE, sourceLabel, fmtInstalls } from './skillMeta'
+import { toneChipSkin } from '../../design/accent'
 import { SkillInspector } from './SkillInspector'
 import { MarketplaceDetail } from './MarketplaceDetail'
 import { SkillProposals } from './SkillProposals'
@@ -152,7 +153,13 @@ function Installed({ onBrowse, onProposals, query, setQuery }: { onBrowse: () =>
                       <p className="mt-0.5 truncate text-on-surface-low text-[0.8125rem]">{s.description}</p>
                     </div>
                     {s.source !== 'agent-local' && s.loaded_by_agents.length > 0 && <span className="shrink-0 text-on-surface-low text-[0.75rem]">{s.loaded_by_agents.length} agent{s.loaded_by_agents.length === 1 ? '' : 's'}</span>}
-                    <span className="shrink-0 rounded-pill px-2 h-6 inline-flex items-center text-[0.75rem]" style={{ background: `color-mix(in srgb, ${tone} 14%, transparent)`, color: tone }}>{sourceLabel(s.source, s.agent)}</span>
+                    {/* `toneChipSkin`, not the raw tint: `SOURCE_TONE` maps `bundled` and `native` to
+                        `--color-primary`, so this drew coral ink on a 14% coral tint — **3.97:1 in
+                        light** against a 4.5 floor, measured on 14 chips here with axe agreeing
+                        [serious]. Exactly the 14% row of the accent-chip family, whose helper returns
+                        the opaque container pair for coral (13.1:1 light / 10.43:1 dark) and leaves
+                        every other tone's tint alone. Dark was never affected — 5.9. */}
+                    <span className="shrink-0 rounded-pill px-2 h-6 inline-flex items-center text-[0.75rem]" style={toneChipSkin(tone)}>{sourceLabel(s.source, s.agent)}</span>
                   </ListRow>
                   </ContextMenu>
                 )

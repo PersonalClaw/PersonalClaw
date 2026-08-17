@@ -306,3 +306,68 @@ describe('toneChipSkin is the one rule the tone-registry chips share', () => {
     expect(read('ui/NotificationBell.tsx')).toMatch(/background: toneChipBg\(km\.tone\)/)
   })
 })
+
+// ── Cycle 616: THE SOURCE_TONE REGISTRY — the slice this rail's worklist asked for ────────────────
+//
+// The header above records 43 registry-tone sites as debt and names the drivable ones "for whoever
+// takes the next slice". This is one, and it was found the way the header predicted a registry site
+// would have to be found — by driving the surface, not by a regex, because `${tone}` puts no accent
+// token on the line.
+//
+// `#/skills` in LIGHT reported **9 blocking contrast findings** (one per bundled skill in view, 14
+// chips in the DOM), axe agreeing [serious color-contrast]:
+//
+//     3.97:1 (need 4.5) 12px/400 — span.shrink-0.rounded-pill.px-2 "bundled"
+//
+// `skillMeta.SOURCE_TONE` maps **`bundled` AND `native`** to `var(--color-primary)`, so the chip drew
+// coral ink on a 14% tint of itself — the exact 14% row of cycle 146's table and the exact number
+// `ui/RungChip` measured. Dark was never affected (5.9), the same asymmetry: a tint lifts a light
+// backdrop TOWARD a dark accent until ink and background converge.
+//
+// 🔑 TWO CALL SITES, ONE REGISTRY, so this is a complete per-registry slice rather than half a family:
+// the list chip at 14% and the inspector's header chip at 16%. Both route through `toneChipSkin`, which
+// returns the opaque container pair for coral and leaves every other tone's tint at the caller's own
+// strength — `local`/`installed`/`marketplace`/`skills.sh`/`agent-local` all resolve to info/ok/warn
+// and clear AA, so nothing else in the registry moves.
+//
+// 🪤 AND MY OWN ARITHMETIC WAS THE THING THAT WAS WRONG. A quick probe reported the chip at **4.83**,
+// i.e. passing, because the tint is serialised as `color(srgb 0.784 0.271 0.180 / 0.14)` and the
+// probe's `rgba?\(…\)` regex could not parse it — so it silently skipped the chip's own background and
+// measured coral on plain white. `ux-audit` handles that colour syntax, axe agreed with it, and the
+// number matches the family's recorded 14% value exactly. **When a hand-rolled measurement disagrees
+// with two independent tools, the probe is the defect.**
+
+describe('the skill source chip routes its registry tone through the helper', () => {
+  const LIST = read('pages/skills/SkillsPage.tsx')
+  const INSPECTOR = read('pages/skills/SkillInspector.tsx')
+
+  it('both call sites use toneChipSkin, at their own strengths', () => {
+    expect(LIST).toMatch(/style=\{toneChipSkin\(tone\)\}/)
+    expect(INSPECTOR).toMatch(/style=\{toneChipSkin\(tone, 16\)\}/)
+  })
+
+  it('neither hand-rolls the tint any more', () => {
+    const strip = (x: string) => x.replace(/\{\/\*[\s\S]*?\*\/\}/g, '').replace(/^\s*\/\/.*$/gm, '')
+    for (const [name, src] of [['SkillsPage', LIST], ['SkillInspector', INSPECTOR]] as const)
+      expect(strip(src), `${name} raw tone tint`)
+        .not.toMatch(/background: `color-mix\(in srgb, \$\{tone\} \d+%, transparent\)`, color: tone/)
+  })
+
+  it('the registry still reaches coral — the vacuity floor', () => {
+    // If `SOURCE_TONE` ever stops mapping a source to `--color-primary`, `toneChipSkin`'s coral branch
+    // stops firing here and this rail passes while measuring nothing. Then it must change deliberately.
+    const meta = read('pages/skills/skillMeta.ts')
+    const coral = [...meta.matchAll(/^\s*'?([\w.-]+)'?: 'var\(--color-primary\)'/gm)].map((m) => m[1])
+    expect(coral, 'sources whose tone is coral').toEqual(['bundled', 'native'])
+  })
+
+  it("the inspector's semantic sibling keeps its raw tint", () => {
+    // `always loaded` is warn at 16% and measures 4.54-4.71. Routing it through the coral container
+    // would be a redesign — the same call cycle 146 made when it left 47 semantic sites alone.
+    expect(INSPECTOR).toMatch(/background: 'color-mix\(in srgb, var\(--color-warn\) 16%, transparent\)', color: 'var\(--color-warn\)'/)
+  })
+
+  it('the call site carries the measurement, not just the token', () => {
+    expect(LIST).toMatch(/3\.97:1/)
+  })
+})
