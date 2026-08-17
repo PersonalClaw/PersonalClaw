@@ -12,6 +12,7 @@ from uuid import uuid4
 from aiohttp import web
 
 from personalclaw.dashboard.sse import stream_response
+from personalclaw.knowledge.artifact_ingest import ARTIFACT_ITEM_TYPE, ARTIFACT_SOURCE_PROVIDER
 from personalclaw.knowledge.embedder import create_embedder_from_config, floats_to_bytes
 from personalclaw.knowledge.llm_pool import LLMPool
 from personalclaw.knowledge.media import classify, guess_mime, make_image_thumbnail
@@ -176,6 +177,15 @@ async def list_items(request: web.Request) -> web.Response:
         return web.json_response({"items": items, "total": total, "page": page, "limit": limit})
     else:
         where, params = ["1=1"], []  # type: list[str], list[object]
+        # PEP-7: mirrored artifacts are INDEXED, not LISTED. They are found by the search
+        # branch above (which does not filter them) and excluded here, because an artifact
+        # already has its own library — listing it again would double every count and put two
+        # rows on screen for one thing. Skipped when the caller asks for that type explicitly:
+        # an explicit `?type=artifact` is a deliberate question, and a filter that silently
+        # returns nothing is worse than one that answers.
+        if item_type != ARTIFACT_ITEM_TYPE:
+            where.append("i.item_type != ?")
+            params.append(ARTIFACT_ITEM_TYPE)
         if item_type:
             where.append("i.item_type = ?")
             params.append(item_type)
@@ -2425,15 +2435,24 @@ def _remediation(source: dict) -> dict:
 
 
 def _serialize_source(source: dict, enrolled: set[str]) -> dict:
-    """A source row for the client: the stored row plus the two things it cannot derive.
+    """A source row for the client: the stored row plus the three things it cannot derive.
 
     ``enrolled`` answers "will anything actually poll this?" BEFORE the first poll — the
     engine records the not-enrolled case as a health error, but only once it has run, and a
     row that has never been polled would otherwise read as healthy.
+
+    ``event_driven`` is the honest answer for a source nothing polls BY DESIGN (PEP-7's
+    ``artifact://`` mirror, which is fed by an in-process change listener). Without it that
+    row reads "No provider · never polled · every 1h" — three true-of-a-poller statements
+    that are all wrong about this one, and the loudest of them is a danger chip telling the
+    user a working mechanism is broken. ``enrolled`` stays FALSE rather than being faked:
+    nothing IS enrolled to poll it, and lying there would hide a genuinely orphaned row of
+    some future kind.
     """
     return {
         **source,
         "enrolled": source.get("provider") in enrolled,
+        "event_driven": source.get("provider") == ARTIFACT_SOURCE_PROVIDER,
         "remediation": _remediation(source),
     }
 

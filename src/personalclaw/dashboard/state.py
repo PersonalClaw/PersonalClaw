@@ -858,6 +858,10 @@ class DashboardState:
         self._durability_svc: object | None = None
         # Watched-source poll engine (WATCHED-SOURCES §1.2); held to prevent GC.
         self._source_engine: object | None = None
+        # Artifact→knowledge mirror (PRODUCT-EXPERIENCE-PARITY §6). Held for the same reason
+        # AND one more: it owns the subscription in `artifacts.changes`, so dropping the
+        # reference would leave the listener registered against a collected indexer.
+        self._artifact_indexer: object | None = None
         self._engagement_store: "EngagementStore | None" = None  # lazily built (inbox ranking)
         # Update progress tracking (shared across all connected clients)
         self._update_progress: dict[str, str] | None = None  # {step, detail}

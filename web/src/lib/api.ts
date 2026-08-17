@@ -1415,12 +1415,19 @@ export interface EventFireResult {
 export type KnowledgeType =
   | 'note' | 'fleeting' | 'journal' | 'gist' | 'bookmark'
   | 'image' | 'audio' | 'video' | 'pdf' | 'document' | 'sheet' | 'slides'
+  // PEP-7's mirrored artifact. Not authorable and never listed — it reaches the UI only
+  // through a search result, which is why it is absent from `TYPES` (the create picker's
+  // catalog) and carried by `ARTIFACT_TYPE` instead.
+  | 'artifact'
 export interface KnowledgeEntity { id: string; name: string; entity_type?: string; description?: string }
 export interface KnowledgeRelation { id: string; source_name?: string; target_name?: string; relation_type?: string; weight?: number }
 export interface KnowledgeItem {
   id: string; title?: string; content?: string; summary?: string
   item_type?: string; tags?: string[]
   provider?: string; status?: string
+  /** A source item's origin identity. For PEP-7's mirrored artifacts `guid` IS the artifact
+   *  slug, which is what lets a search hit link back to the artifact itself. */
+  source_id?: string | null; guid?: string | null
   is_pinned?: boolean; is_archived?: boolean
   // library curation (KNOWLEDGE-LIBRARY S1). read_state is a three-value cycle, not a
   // boolean — "reading" is the state a reading list exists to represent.
@@ -1498,6 +1505,10 @@ export interface WatchedSource {
   last_escalations?: string[]
   /** Is a poll-capable provider registered for this row? False = nothing will poll it. */
   enrolled: boolean
+  /** Fed by an in-process change listener rather than a poll (PEP-7's artifact mirror).
+   *  True means `enrolled: false`, `poll_interval_secs` and `last_poll_at` describe a
+   *  mechanism this row does not use — the row must not be read as a broken poller. */
+  event_driven?: boolean
   remediation: SourceRemediation
 }
 /** One creatable source kind, derived from the registered providers. `previewable` is

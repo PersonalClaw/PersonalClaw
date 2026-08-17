@@ -812,6 +812,11 @@ _EDITABLE_CONFIG: dict[str, dict] = {
     "knowledge.consolidate_min_hours": {"type": "int", "min": 0, "max": 720},
     "knowledge.session_brief_max_tokens": {"type": "int", "min": 0, "max": 8000},
     "knowledge.conflict_model_pass": {"type": "bool"},
+    # PEP-7: the artifact→knowledge mirror's master switch. Live-editable deliberately — the
+    # listener reads it per artifact save, so turning it on backfills and turning it off stops
+    # new indexing without a restart. Nothing already indexed is removed by turning it off;
+    # that would delete search state on a settings toggle.
+    "knowledge.auto_ingest_artifacts": {"type": "bool"},
     # REMOTE-USER-AUTH C4 — the owner-login knobs. Runtime-editable so turning login on
     # or off, or loosening a lockout you tripped, takes effect on the next request without
     # a restart. The PASSWORD is deliberately NOT here and never will be: a credential is

@@ -557,3 +557,66 @@ Rows 1–3 are roughly two sessions and deliver the most visible "less daunting,
   `counts.all === 0`), which is worse than the empty case this atom fixes. Not changed here on purpose:
   gating on "no USER triggers" would render a row and an empty state at once. Wants an owner call on
   whether system-created triggers belong in the user-facing list.
+- [2026-08-16][PEP-7] DONE: SP6.1 + SP6.2 + SP6.3 + V6. `artifacts/changes.py` is the observer seam
+  (§6.1 choice 2): a two-word vocabulary — `upsert`/`delete` — emitted by `NativeArtifactProvider`
+  from OUTSIDE its lock, so one subscription covers every writer (HTTP, MCP, chat tools) and no save
+  serializes behind another's indexing. Artifacts deliberately do NOT emit the library's three-word
+  `created`/`modified`/`deleted` vocabulary: create-vs-modify needs to know whether the MIRROR exists,
+  which is knowledge-side state, and a wrong guess either duplicates a row or drops an edit.
+  `knowledge/artifact_ingest.py` joins the WatchedSource mechanism rather than paralleling it — ONE
+  `sources` row (`provider='artifacts'`, `kind='artifact'`, `spec.uri='artifact://'`), per-artifact
+  identity as the store's own `(source_id, guid=slug)` pair (so `find_source_item` makes "replace this
+  artifact's mirror, touch nothing else" a single-row lookup), and `ingest_queue.enqueue` as the ONLY
+  writer. `readers.html_to_prose` is `_read_html`'s conversion half lifted out, so an `html` artifact
+  and an uploaded `.html` reduce to the same prose; dispatch is by KIND because every text artifact is
+  stored as `current.html` whatever it is. **Gate:** `make lint` clean (black 1719, isort, flake8,
+  mypy 887 files) · `tests/test_artifact_knowledge_source.py` 31 passed · durability-inventory +
+  portability + config-roundtrip + config-baseline 129 passed · `npm run typecheck` + full
+  `npm test --workspace web` + `npm run build` green. `config-baseline.json` regenerated.
+- [2026-08-16][PEP-7] DEVIATION: **an artifact delete FORGETS the sighting; it does not archive.**
+  WS-5's rule for a watched directory is archive-never-delete, because that file may be back tomorrow
+  and the library row is the last remaining copy. An artifact mirror is the opposite kind of upstream:
+  we own it, and once it is deleted through the app nothing can revive it, so an archived mirror is a
+  permanently unrevivable orphan. New store primitive `forget_source_item(source_id, guid)` does the
+  item cascade AND the `source_seen` row in ONE transaction. The second half is not tidiness —
+  leaving the seen row makes `create_typed_item`'s novelty gate refuse an artifact re-created under
+  the same slug **forever and silently**, which `test_a_recreated_slug_indexes_again` now pins.
+  Removal also ignores the master switch on purpose: turning indexing off must not turn deletion off,
+  or a user who disables the mirror after deleting an artifact keeps a searchable copy of it.
+- [2026-08-16][PEP-7] DEVIATION: the mirror's source row is created with `enrichment='raw'`, which
+  §6 does not specify. The mirror is automatic and default-ON, so `full` would spend one model call
+  per artifact the first time a gateway starts on an existing home — a cost the user never asked for
+  and cannot attribute. `raw` routes every mirror through the LLM-free `FeedItemGraph`
+  (`pipeline/graphs.graph_for` overrides the type map for `raw`), and the Sources UI already reads
+  that field back as a "no AI" chip, so the guarantee is legible rather than implicit.
+- [2026-08-16][PEP-7] DEVIATION: §6.2's SP6.1 asks for a "4-point wired" config; it ships **5-point**
+  (dataclass + `_meta`, `load()`, `to_dict()`, the `_EDITABLE_CONFIG` PATCH allowlist, AND a
+  `ToggleRow` in Settings → Sources) plus `config-baseline.json`. A user-facing switch with no
+  control is a knob only a file edit can reach. `start()` also subscribes UNCONDITIONALLY and reads
+  the switch per event: subscribing only when it was on at boot would make turning it on a live
+  setting that quietly needs a restart.
+- [2026-08-16][PEP-7] DISCOVERY: the Sources row is written for a POLLER, and an event-driven source
+  rendered through it is actively wrong — measured "No provider · never polled · every 1h", where the
+  first is a **danger** chip asserting that a working mechanism is broken. `_serialize_source` now
+  ships `event_driven` and the row drops every poll-shaped verdict, states "indexed as artifacts
+  change · turn off in Settings → Sources", and **renders no pause toggle**: the row's `enabled`
+  column is not what the mirror reads, so that switch would have saved successfully and moved nothing.
+  `enrolled` stays honestly `false` — nothing IS enrolled to poll it, and faking it would hide a
+  genuinely orphaned row of some future kind. Second half of the same class: `resolveType` fell
+  through its mime/url cascade to `note`, so an artifact search hit rendered a StickyNote labelled
+  "Note". `ARTIFACT_TYPE` is its own meta kept OUT of `TYPES` (the create picker's catalog, which must
+  not offer a type the backend refuses to author), and the hit carries an "Open artifact" link —
+  a mirror is a search surface, so a hit that could only show extracted text would be a dead end.
+- [2026-08-16][PEP-7] DISCOVERY: §6.1 says items are "grouped per-artifact", plural. One item per
+  artifact is what shipped: `store.py`'s model is "one item = one logical document" and chunking is an
+  embedding-pipeline detail, so N items per artifact would be a second chunking layer above the one
+  that already exists. The grouping the plan wants — an artifact's mirror replaced on edit / removed
+  on delete without touching the rest — is exactly what `(source_id, guid)` already provides.
+- [2026-08-16][PEP-7] DISCOVERY: `INDEXABLE_KINDS` is a closed ALLOWLIST rather than §6.1's
+  "widget/svg excluded" denylist. A denylist silently indexes every artifact kind added later —
+  including a binary one, whose text body on disk is the raw-URL *reference*, so the library would
+  index the string `/api/artifacts/<slug>/raw`. `react`/`infographic` are excluded for the same reason
+  `widget` is: their bodies are program text, and indexing it makes every search for a variable name
+  outrank the user's own notes. Left out deliberately: `get_stats()['items']` still counts mirrors —
+  it is a store-wide `COUNT(*)` that already counts archived rows the list hides, so artifacts inherit
+  its existing meaning instead of introducing a new inconsistency.

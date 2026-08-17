@@ -1328,6 +1328,43 @@ class KnowledgeStore:
         self.db.commit()
         return True
 
+    def forget_source_item(self, source_id: str, guid: str) -> bool:
+        """Drop a source item AND its ``source_seen`` row, in one transaction.
+
+        The counterpart to :meth:`archive_source_item`, for the opposite kind of upstream.
+        A watched directory is not ours: its file may be back tomorrow, so the library row
+        is archived and the sighting remembered. An in-app MIRROR (the ``artifact://``
+        source, PRODUCT-EXPERIENCE-PARITY §6) is derived state whose upstream we DO own —
+        once the artifact is deleted through the app nothing can revive it, so an archived
+        row would be a permanently unrevivable orphan sitting in the store.
+
+        Both writes are required and neither is optional. Deleting only the item would
+        leave the ``(source_id, guid)`` seen row, and
+        :meth:`create_typed_item`'s novelty gate would then refuse to index an artifact
+        re-created under the same slug — forever, silently. Deleting only the seen row
+        would leave the mirror. One transaction is what makes "the sighting never happened"
+        atomic. Returns True when an item was actually removed.
+        """
+        if not (source_id and guid):
+            return False
+        row = self.db.execute(
+            "SELECT id FROM items WHERE source_id = ? AND guid = ?", (source_id, guid)
+        ).fetchone()
+        self.db.execute("BEGIN")
+        try:
+            if row:
+                self._delete_item_cascade(row["id"])
+            self.db.execute(
+                "DELETE FROM source_seen WHERE source_id = ? AND guid = ?", (source_id, guid)
+            )
+            self.db.execute("COMMIT")
+        except Exception:
+            self.db.execute("ROLLBACK")
+            raise
+        if row:
+            self._load_graph()
+        return bool(row)
+
     def get_item(self, item_id):
         row = self.db.execute("SELECT * FROM items WHERE id = ?", (item_id,)).fetchone()
         return self._serialize_item(row) if row else None
@@ -2349,8 +2386,22 @@ class KnowledgeStore:
         return {"nodes": nodes, "edges": edges}
 
     def get_stats(self) -> dict:
+        """Library rollups: how much the user HAS. Mirrors are excluded from ``items``.
+
+        Every consumer of this count means the user's own library — the Knowledge header's
+        "N items" chip beside the list, Discover's "has this person engaged with Knowledge?"
+        signal, and the status readout. A mirrored artifact (PEP-7) is none of those: it is
+        indexed for search and deliberately never listed, so counting it made the header read
+        "3 items" above an empty list on a home whose only content was three artifacts
+        (measured on a running gateway) and would have marked Knowledge "engaged" for someone
+        who never opened it.
+        """
+        from personalclaw.knowledge.artifact_ingest import ARTIFACT_ITEM_TYPE
+
         return {
-            "items": self.db.execute("SELECT COUNT(*) FROM items").fetchone()[0],
+            "items": self.db.execute(
+                "SELECT COUNT(*) FROM items WHERE item_type != ?", (ARTIFACT_ITEM_TYPE,)
+            ).fetchone()[0],
             "entities": self.db.execute("SELECT COUNT(*) FROM entities").fetchone()[0],
             "relations": self.db.execute("SELECT COUNT(*) FROM entity_relations").fetchone()[0],
         }

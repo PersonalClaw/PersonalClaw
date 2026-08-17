@@ -86,3 +86,21 @@ export function fmtInterval(secs: number): string {
  *  anything below its own network floor anyway, and a free-text seconds field invites a
  *  value that is abusive to someone else's server. */
 export const INTERVAL_CHOICES = [900, 3600, 21600, 86400]
+
+/** The facts under an EVENT-DRIVEN source's name (PEP-7's artifact mirror).
+ *
+ *  Its own line rather than a branch inside the poller's, because the two shapes diverge on
+ *  every fact: a poller states its cadence, its last run, what it collected and when it runs
+ *  next, and none of those exist here. Interleaving them behind a boolean is how a ` · ` ends
+ *  up separating nothing. It names WHERE the one switch is, because this row deliberately has
+ *  no pause control — the mirror is governed by `knowledge.auto_ingest_artifacts` — and a
+ *  state with no next step sends a user hunting for one.
+ *
+ *  No leading kind name, unlike the poller line. `kinds` is built from POLL-CAPABLE providers
+ *  only, so this row has no entry there and would fall back to the raw provider string:
+ *  measured on the running page as a lowercase "artifacts ·" directly under the row's own
+ *  "Artifacts" heading — the same word twice, in two casings, separating nothing.
+ */
+export function eventDrivenMetaLine(): string {
+  return 'Indexed as artifacts change · turn off in Settings → Sources'
+}

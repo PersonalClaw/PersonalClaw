@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { ArrowLeft, Plus, Rss, ShieldOff, Link2, MonitorPlay, AlertTriangle, type LucideIcon } from 'lucide-react'
+import { ArrowLeft, Plus, Rss, ShieldOff, Link2, MonitorPlay, AlertTriangle, Zap, type LucideIcon } from 'lucide-react'
 import { TopBar } from '../../ui/TopBar'
 import { HeaderActions, HeaderControl } from '../../ui/HeaderActions'
 import { IconButton } from '../../ui/IconButton'
@@ -13,7 +13,7 @@ import { useCachedData, invalidateCache } from '../../lib/useCachedData'
 import { notify } from '../../app/appSdk'
 import { relFuture, relPast } from '../schedule/scheduleMeta'
 import { fvs } from '../../design/fontWeight'
-import { RAW_ENRICHMENT, TONE_CLASS, fmtInterval, formIcon, healthMeta } from './sourceMeta'
+import { RAW_ENRICHMENT, TONE_CLASS, eventDrivenMetaLine, fmtInterval, formIcon, healthMeta } from './sourceMeta'
 
 /** The kinds catalog keyed by provider, so a row can name its own kind and pick its icon
  *  from the same `form` discriminator the create page switches on. */
@@ -140,7 +140,7 @@ export function SourceRow({ source, index, kinds, onChanged }: {
                 never been polled reports a health it has not earned. Measured by driving the
                 real thing: a source saved seconds ago read "Healthy · never polled" side by
                 side. The rollup only means something once a poll has written it. */}
-            {source.last_poll_at
+            {source.event_driven ? null : source.last_poll_at
               ? <Chip label={health.label} tone={health.tone} title={health.hint} />
               : <Chip label="Not polled yet" title="No poll has run, so there is no health to report yet." />}
             {/* §6.3's promise, read off the source's real enrichment field. `raw` means the
@@ -150,8 +150,14 @@ export function SourceRow({ source, index, kinds, onChanged }: {
               <Chip label="no AI" icon={ShieldOff}
                 title="Raw source: items are indexed and embedded locally, and never reach a model." />
             )}
-            {!source.enabled && <Chip label="Paused" title="This source is not being polled." />}
-            {!source.enrolled && (
+            {!source.enabled && !source.event_driven && <Chip label="Paused" title="This source is not being polled." />}
+            {/* An event-driven source is not a poller, so every poll-shaped verdict below is
+                about a mechanism it does not use. Suppressing them is not cosmetic: the
+                "No provider" chip is a DANGER chip saying a working mechanism is broken, and
+                "never polled" is true of something that will never be polled by design. */}
+            {source.event_driven ? (
+              <Chip label="Live" icon={Zap} title="Indexed as artifacts change — this source is not polled." />
+            ) : !source.enrolled && (
               <Chip label="No provider" tone="danger" icon={AlertTriangle}
                 title={`Nothing is registered to poll a ${source.provider} source, so this row will never collect anything.`} />
             )}
@@ -159,6 +165,13 @@ export function SourceRow({ source, index, kinds, onChanged }: {
           {/* Wraps rather than truncating: at 390px this line is longer than the row, and the
               facts at its END — how many arrived, when the next check runs — are the ones a
               truncation eats. Same call the item metadata row made on a phone. */}
+          {/* Two whole lines rather than one line with five interleaved ternaries: an
+              event-driven source shares only the kind's name with a poller, so threading a
+              boolean through cadence/last-poll/count/next-poll is how a ` · ` ends up
+              separating nothing. The poller line below is unchanged. */}
+          {source.event_driven ? (
+            <p className="mt-1 text-on-surface-low text-[0.75rem]">{eventDrivenMetaLine()}</p>
+          ) : (
           <p className="mt-1 text-on-surface-low text-[0.75rem]">
             {kind?.display_name ?? source.provider}
             {' · every '}{fmtInterval(source.poll_interval_secs)}
@@ -169,6 +182,7 @@ export function SourceRow({ source, index, kinds, onChanged }: {
                 check is stated instead, which is what tells you the fix will be tested. */}
             {source.enabled && source.next_poll_at ? ` · next ${relFuture(source.next_poll_at)}` : ''}
           </p>
+          )}
           {!!source.last_escalations?.length && (
             // The expensive tier, made visible. WS-3 records escalations on success too,
             // because an escalation nobody can see is indistinguishable from a cheap poll.
@@ -178,10 +192,17 @@ export function SourceRow({ source, index, kinds, onChanged }: {
         </div>
         {/* No `disabledReason`: the only reason this is ever unavailable is an in-flight
             save, which is transient — the native attribute is right there, and a reason
-            would keep a control focusable to explain something that resolves itself. */}
-        <Toggle on={source.enabled} size="sm" disabled={busy}
-          label={`${source.enabled ? 'Pause' : 'Resume'} ${source.name}`}
-          onChange={setEnabled} />
+            would keep a control focusable to explain something that resolves itself.
+            ABSENT for an event-driven source, deliberately: pausing that row's `enabled`
+            column would change nothing (the mirror reads its config field, not this flag),
+            and a switch that saves successfully while doing nothing is worse than no switch.
+            Its one real control is `knowledge.auto_ingest_artifacts`, which the meta line
+            above names. */}
+        {!source.event_driven && (
+          <Toggle on={source.enabled} size="sm" disabled={busy}
+            label={`${source.enabled ? 'Pause' : 'Resume'} ${source.name}`}
+            onChange={setEnabled} />
+        )}
       </div>
     </ListRow>
   )
