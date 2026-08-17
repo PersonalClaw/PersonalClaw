@@ -16,8 +16,13 @@ and a look-before-write :func:`preview_pack`. AP-2 (this atom) is the import inv
 :func:`inspect_pack` (dry-run, no writes) and :func:`import_pack` (leaves-first commit with
 a journaled rollback, referential-integrity lint, and scan-by-origin trust). AP-5
 (:mod:`packs.external_formats`) is the OUTBOUND direction — rendering an entity into another
-tool's own format, where the same content layer runs on the rendered bytes. The pack store
-UI is a later AP atom.
+tool's own format, where the same content layer runs on the rendered bytes.
+
+AP-7 closes the loop with DISCOVERY and MAINTENANCE: :mod:`packs.fingerprint` is the
+deterministic, zero-LLM scanner that PROPOSES a pack for a project whose workspace matches a
+declared file shape (never installs, remembers a rejection forever), and
+:mod:`packs.update` is the ``pack_owned`` update flow that overwrites only the pack's own
+undrifted components and leaves a user-edited copy alone with a visible drift note.
 """
 
 from personalclaw.packs.build import (
@@ -63,6 +68,20 @@ from personalclaw.packs.external_formats import (
     format_names,
     get_format,
 )
+from personalclaw.packs.fingerprint import (
+    SCAN_REASONS,
+    Fingerprint,
+    FingerprintMatch,
+    PackProposal,
+    declared_fingerprints,
+    fingerprinting_enabled,
+    is_rejected,
+    load_rejections,
+    match_workspace,
+    parse_fingerprints,
+    reject_proposal,
+    scan_project,
+)
 from personalclaw.packs.import_ import (
     ImportPlan,
     PackImportRefused,
@@ -104,16 +123,27 @@ from personalclaw.packs.roster import (
     parse_catalog,
     parse_runbooks,
 )
+from personalclaw.packs.update import (
+    ComponentUpdate,
+    PackUpdateError,
+    UpdatePlan,
+    apply_update,
+    component_digest,
+    is_pack_owned,
+    plan_update,
+)
 
 __all__ = [
     "ACTIVATION_ALWAYS",
     "EXTERNAL_FORMATS",
     "MISSING_PREFIX",
+    "SCAN_REASONS",
     "BindingError",
     "BlockedComponent",
     "BundledPack",
     "BundledPackError",
     "CatalogEntry",
+    "ComponentUpdate",
     "ConnectorResolution",
     "ConnectorResolutionError",
     "ExportBlocked",
@@ -121,6 +151,8 @@ __all__ = [
     "ExportResult",
     "ExportSkill",
     "ExternalFormat",
+    "Fingerprint",
+    "FingerprintMatch",
     "ImportPlan",
     "InstalledPack",
     "LintFinding",
@@ -130,12 +162,16 @@ __all__ = [
     "PackImportRefused",
     "PackMarketplace",
     "PackPreview",
+    "PackProposal",
+    "PackUpdateError",
     "PlannedComponent",
     "PromptCardError",
     "RenderedFile",
     "Requirement",
     "RosterEntry",
     "Runbook",
+    "UpdatePlan",
+    "apply_update",
     "bind_answer",
     "build_bundled",
     "build_entity",
@@ -143,11 +179,14 @@ __all__ = [
     "bundled_packs",
     "catalog_by_category",
     "catalog_lookup",
+    "component_digest",
     "convert_card",
+    "declared_fingerprints",
     "default_dest_dir",
     "deploy_roster",
     "export_entities",
     "export_preview",
+    "fingerprinting_enabled",
     "format_names",
     "get_bundled",
     "get_format",
@@ -157,21 +196,29 @@ __all__ = [
     "inspect_onelink",
     "inspect_pack",
     "install_accepted_prompt_card",
+    "is_pack_owned",
     "is_prompt_card_proposal",
+    "is_rejected",
     "lint_pack",
     "lint_roster",
     "load_catalog",
     "load_installed",
+    "load_rejections",
     "load_roster",
+    "match_workspace",
     "materialize",
     "missing_marker",
     "parse_catalog",
+    "parse_fingerprints",
     "parse_runbooks",
+    "plan_update",
     "preview_pack",
     "record_install",
+    "reject_proposal",
     "resolve_connector",
     "resolve_for_import",
     "resolve_requirements",
+    "scan_project",
     "seed_catalog",
     "to_onelink",
 ]
