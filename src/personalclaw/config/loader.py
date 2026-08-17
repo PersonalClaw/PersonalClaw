@@ -138,6 +138,21 @@ def _safe_int(value: object, default: int) -> int:
         return default
 
 
+def _safe_choice(value: object, allowed: tuple[str, ...], default: str) -> str:
+    """Coerce *value* to one of *allowed* (case/space-insensitive), else *default*.
+
+    The ``_safe_int`` sibling for closed string enums. An off-scale value resolving to the
+    shipped default rather than raising keeps one typo from making config.json unloadable —
+    and for a security knob the default must be the SAFE end of the scale, which is the
+    caller's choice of *default*, never the first listed value.
+    """
+    try:
+        candidate = str(value).strip().lower()
+    except Exception:  # noqa: BLE001 — an unstringable value is just an invalid one
+        return default
+    return candidate if candidate in allowed else default
+
+
 def _safe_float(value: object, default: float) -> float:
     """Convert *value* to float, returning *default* on failure (the ``_safe_int`` sibling).
 
@@ -3287,6 +3302,18 @@ class DurabilityConfig:
             "minutes) balances freshness against chattiness.",
         ),
     )
+    sync_encrypt: str = field(
+        default="auto",
+        metadata=_meta(
+            "Encrypt synced data",
+            "Encrypt everything before it leaves this machine, so a shared bucket or "
+            "folder holds unreadable data without your passphrase. 'auto' picks the "
+            "right default per transport — on for cloud storage and shared folders, "
+            "off for a private git repo, where a readable history is the whole point. "
+            "'on' and 'off' override that. Encryption needs a passphrase saved in the "
+            "credential store; without one, sync stops rather than sending plain data.",
+        ),
+    )
 
 
 @dataclass
@@ -4431,6 +4458,13 @@ class AppConfig:
                 sync_enabled=bool(durability_data.get("sync_enabled", False)),
                 sync_transport=str(durability_data.get("sync_transport", "") or ""),
                 sync_stale_after_secs=_safe_int(durability_data.get("sync_stale_after_secs"), 900),
+                # Encryption is fail-CLOSED in the same spirit: an unreadable or off-scale
+                # value falls back to "auto" (per-transport default, ON for third-party
+                # storage), never to "off". A typo must not silently disable a security
+                # control on a path that moves the whole home off-machine.
+                sync_encrypt=_safe_choice(
+                    durability_data.get("sync_encrypt", "auto"), ("auto", "on", "off"), "auto"
+                ),
             ),
             proactive=ProactiveConfig(
                 # Both switches are fail-closed: an unreadable value reads False, so a

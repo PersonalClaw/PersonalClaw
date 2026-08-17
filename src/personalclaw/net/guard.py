@@ -87,7 +87,7 @@ def classify_host(ip_str: str) -> IpVerdict:
     return IpVerdict(str(ip), True, "public")
 
 
-def _host_matches(host: str, patterns: tuple[str, ...]) -> bool:
+def host_matches(host: str, patterns: tuple[str, ...]) -> bool:
     """Anthropic-rule host match: a bare domain covers its subdomains.
 
     ``example.com`` matches ``example.com`` and ``api.example.com`` (but not
@@ -156,7 +156,7 @@ def evaluate(url: str, policy: EgressPolicy, *, resolver=_resolve) -> GuardDecis
         )
 
     # Operator deny always wins, before any resolution.
-    if _host_matches(host, policy.deny_hosts):
+    if host_matches(host, policy.deny_hosts):
         return GuardDecision(
             allow=False,
             url=url,
@@ -166,7 +166,7 @@ def evaluate(url: str, policy: EgressPolicy, *, resolver=_resolve) -> GuardDecis
         )
     # An operator allow-listed host bypasses the private-range block (the homelab
     # LAN-webhook opt-in) — but still resolves + pins so the connection is honest.
-    operator_allowed = _host_matches(host, policy.allow_hosts)
+    operator_allowed = host_matches(host, policy.allow_hosts)
 
     # EXCLUSIVE allow-list (a run's egress tier narrowed to "listed"/"registry"): only a
     # listed host is reachable at all. Checked BEFORE resolution so an off-list host is

@@ -99,7 +99,23 @@ one-sided fast-forward; only the end-to-end criterion-5 test caught it.
 
 ### `DAS-8` — rsync-sync + s3-sync transports + end-to-end encryption (Session 4)
 
-**Status:** todo
+**Status:** todo — **PARTIAL (2026-08-17).** The §4.4 encryption half and the §4.3 `SYNC` egress
+derivation landed complete and LIVE (`durability/crypto.py`; `net/policy.py`'s `SYNC` +
+`sync_egress_policy()`; wired through `push_engine`/`pull_engine`/`run_sync_cycle`/`run_sync_job`;
+`durability.sync_encrypt` tri-state round-tripped; `sdk/sync.py` + `sdk/net.py` re-exports).
+**Unmet:** the two transports are not shipped as first-party apps — those live in the sibling
+`PersonalClawApps` repo (`apps/catalog.py::_first_party_source` resolves `<workspace>/apps`, never
+a path inside core), the same cross-repo ordering `DAS-6d-iii` recorded for `dir-sync`/`git-sync`.
+SigV4 request signing is app work. Criterion 7 is met and adversarially verified on pushed bytes;
+criterion 8 is met over a real on-disk transport, but its literal "encrypted **S3** store" wording
+needs `s3-sync` to exist. Core's half is the contract-owner half, so both apps are buildable with
+zero further core changes. Two findings that a call-level test would have missed: treating every
+decrypt failure as §4.4's "permanent skip" **permanently lost every peer seq pulled during a single
+mistyped-passphrase cycle** (plaintext now advances the cursor, a failed tag holds), and a pinned
+private endpoint is reachable with no operator opt-in because the pin is its own allow-list entry
+(intended posture for user-owned storage; the cloud metadata services are denied separately). One
+owner decision is flagged in the plan's execution log: the encryption default for a transport §4.4
+does not name.
 
 §4.3 (rsync-sync, s3-sync); §4.4 Encryption for untrusted stores; Provider & Config Plug-in Map (SYNC EgressPolicy); Implementation Order Session 4
 

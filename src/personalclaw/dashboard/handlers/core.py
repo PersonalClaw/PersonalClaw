@@ -635,6 +635,11 @@ _EDITABLE_CONFIG: dict[str, dict] = {
     "durability.sync_enabled": {"type": "bool"},
     "durability.sync_transport": {"type": "str", "max_len": 64},
     "durability.sync_stale_after_secs": {"type": "int", "min": 30, "max": 86400},
+    # §4.4 — the encryption tri-state. `values` is closed, so an out-of-scale value is
+    # REFUSED at the boundary rather than silently landing as the safe default: a user who
+    # mistypes a security control should be told, not quietly overruled. (load() still
+    # falls back to "auto" for a hand-edited file, which this endpoint never produces.)
+    "durability.sync_encrypt": {"type": "str", "max_len": 8, "values": ("auto", "on", "off")},
     # EVALUATION-SUBSTRATE §10 — the runtime-editable evals subset. These are the
     # knobs a user reaches for from Settings; each is a plain scalar. Deliberately
     # EXCLUDED: `evals.bakeoff_capture_enabled` — a privacy-sensitive input-capture

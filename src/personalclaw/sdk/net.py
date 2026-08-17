@@ -9,13 +9,16 @@ Generic, provider-agnostic infrastructure a web-capable app/tool builds on.
 
 from personalclaw.net import (  # noqa: F401
     CONNECTOR,
+    SYNC,
     WEBHOOK,
     EgressBlocked,
     EgressPolicy,
     GuardDecision,
+    SyncEndpointRefused,
     egress_policy_for,
     evaluate,
     fetch,
+    sync_egress_policy,
 )
 from personalclaw.web.fetch import (  # noqa: F401
     record_seen_urls,
@@ -38,6 +41,13 @@ __all__ = [
     "egress_policy_for",
     "evaluate",
     "GuardDecision",
+    # DURABILITY-AND-SYNC §4.3 (DAS-8): the sync transport's egress posture. `SYNC` is
+    # host-pinned-by-absence (it reaches nothing until `sync_egress_policy` pins the
+    # configured endpoint onto it), so a transport cannot widen its own reach by forgetting
+    # a step — the failure mode of a base profile that defaults to "all public hosts".
+    "SYNC",
+    "sync_egress_policy",
+    "SyncEndpointRefused",
     "web_fetch",
     "web_extract",
     "record_seen_urls",

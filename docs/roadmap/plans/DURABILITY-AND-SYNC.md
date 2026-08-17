@@ -1591,3 +1591,151 @@ half) is live and safe today; only cross-machine DELETE convergence waits on thi
   knowledge conflicts on SEPARATE review surfaces) is therefore unmet — only its export half landed.
   (3) Criterion 10 (a third-party `type:"sync"` app registers/configures/syncs with zero core changes)
   was not verified end to end. Those three are one coherent follow-up scope and want their own atom.
+
+## Execution log — DAS-8 (§4.4 encryption + the SYNC egress profile) — **PARTIAL**
+
+- [2026-08-17][DAS-8] **PARTIAL — the atom stays `todo`.** The §4.4 *encryption* half and the
+  §4.3 *SYNC egress derivation* landed complete and LIVE; the two **transport apps did not**.
+  Unmet clauses named at the bottom.
+
+  **DONE.** (a) **`net/policy.py` gains the `SYNC` profile + `sync_egress_policy(endpoint)`** —
+  derived through `egress_policy_for()` exactly as the Plug-in Map requires. The base is
+  `allow_only=True` with an **empty** host list, so an *unpinned* SYNC policy reaches **nothing**:
+  a transport that forgets to pin cannot silently inherit STRICT's whole-public-internet reach,
+  which is what a base of `STRICT + raised caps` would have given it. `max_bytes` is **raised to
+  200 MB, not removed** (a whole-DB shard is big; an unbounded body is still a DoS). The pin is
+  applied **after** the operator layering, because `egress_policy_for` UNIONs the operator's
+  `allow_hosts` into any base — for an exclusive policy that would have made every host the
+  operator listed for *other* surfaces a valid S3 endpoint. (b) **`durability/crypto.py`** — the
+  AES-256-GCM codec at the transport boundary: Argon2id-stretch → HKDF-Expand per object,
+  12 random bytes of nonce per encryption, header + **object key** as AAD, first-write-wins salt
+  object, both-direction plaintext rejection, `sync_encrypt` tri-state with per-transport
+  defaults. (c) **Wired LIVE** into `push_engine.publish_export` / `pull_engine._pull_one_seq` /
+  `run_sync_cycle` / `service.run_sync_job` — not a module waiting for a caller. (d)
+  **`sdk/sync.py` + `sdk/net.py`** re-export the egress derivation and the routing-key/credential-
+  name constants a transport app needs; the encrypt/decrypt primitives are deliberately **NOT**
+  exported (a transport that could encrypt for itself is one that could forget to).
+
+- [2026-08-17][DAS-8] 🔴 **MEASURED DATA-LOSS DEFECT, found by driving it, now fixed.** The first
+  implementation treated every decrypt failure as §4.4's "permanent skip" and advanced the cursor.
+  Driven on a real folder remote: a machine that ran **one** cycle with a mistyped passphrase
+  permanently skipped **every** peer seq — cursor advanced past `LAPTOP seq 1`, 44 objects
+  discarded — and storing the *correct* passphrase afterwards did **not** re-pull them. The row
+  was gone for good. §4.4's permanent-skip clause is about **plaintext**, which can never become
+  readable; a failed GCM tag is "wrong key OR tampering" and the user can fix the first. `SkipReport`
+  now has two buckets: `keys` (plaintext / unsupported version → `payload-bad`, cursor **advances**,
+  no loop) and `unreadable` (failed tag → `prerequisite-absent`, cursor **holds**). Re-driven: the
+  typo cycle holds 3 seqs and advances 0, then the corrected cycle merges **268 rows** and recovers
+  the exact row. A hold costs a re-pull; the advance cost the user their data.
+
+- [2026-08-17][DAS-8] 🔴 **DISCOVERY: a pinned PRIVATE endpoint is reachable with no operator
+  opt-in** — my own module comment claimed the opposite until I drove it. `allow_hosts` waives the
+  private-range block for a listed host (documented `EgressPolicy` semantics), and the pinned
+  endpoint *is* the one listed host, so `http://127.0.0.1:9000` and `http://nas.local:9000` are
+  reachable while `allow_private` is still `False`. That is the right posture for §4.4 (user-owned
+  storage; a self-hosted MinIO/NAS is a first-class target; the endpoint comes from operator
+  provider settings, never from anything an agent influences) — so the *comment* was fixed, not the
+  behaviour, and a test now pins the posture so it is a decision on record instead of a surprise.
+  The one private address where "reach whatever the operator configured" becomes credential theft
+  IS closed: `SYNC_DENY_HOSTS` denies the cloud metadata services, a deny outranks the allow-list
+  and precedes DNS, and `sync_egress_policy` refuses outright when the endpoint names a denied host.
+
+- [2026-08-17][DAS-8] **DEVIATION (a strengthening, recorded not smuggled): Argon2id before HKDF.**
+  §4.4 says "per-shard key via HKDF from a user passphrase". HKDF is a *fast* KDF, so a passphrase
+  fed to it directly is an offline-brute-force gift to whoever holds the bucket — precisely the
+  adversary this feature exists for. The key schedule is therefore Argon2id (same RFC 9106 profile
+  `auth/credentials.py` uses, paid once per process) → HKDF-Expand per object with `info` = the
+  object key. Same inputs the plan names (passphrase + first-write-wins salt), same machine-agnostic
+  property, no new dependency (`cryptography` and `argon2-cffi` are both already core). Binding the
+  object key into the AAD is the second addition: an attacker with bucket write access cannot replay
+  machine A's `tasks` shard as machine B's, or an old seq's as a new one.
+
+- [2026-08-17][DAS-8] ⚠️ **OWNER DECISION WANTED — the one under-specified security default.**
+  §4.4 enumerates a CLOSED set of per-transport defaults (ON for `s3-sync`/`dir-sync`, OFF for
+  `git-sync`) and is silent on two cases. I shipped: **`rsync-sync` → ON** (the plan's two stated
+  criteria don't decide it — an ssh target *is* user-controlled, but an rsync'd shard tree was
+  never diffable — so the tie went to the secure default), and **an UNNAMED third-party transport
+  → OFF**. The second is the uncomfortable one and I want it reviewed. ON is safer in the abstract
+  but measurably worse here: it turns installing any third-party `type:"sync"` app into a hard sync
+  stop until a passphrase is stored, which breaks **criterion 10**'s "registers, configures, and
+  *syncs* with zero core changes" — this atom would have silently disabled a shipped capability.
+  OFF is non-regressive (nothing was encrypted before) and the safe posture is one PATCH away.
+  What keeps OFF honest rather than quiet: `encryption_enabled_for` logs the resolution once per
+  transport naming the transport and the verdict, and `status()["sync"]["encrypted"]` reports the
+  **resolved** boolean rather than echoing `"auto"`.
+
+- [2026-08-17][DAS-8] **Key custody, rotation, loss — stated because the plan is thin here.**
+  Passphrase: credential store only, under `PERSONALCLAW_SYNC_PASSPHRASE`; never `config.json`,
+  never `app.json`, never a provider-settings field, so it is in no API response, no config export
+  and no time-travel git history. Derived keys: in-memory for the life of a cycle, never persisted;
+  `SyncCodec.__repr__` withholds the key so a traceback cannot leak it. Loss: the local home stays
+  authoritative and untouched, so a forgotten passphrase costs the ability to read the *remote*
+  copies, not the user's data — recovery is a fresh sync root. **Rotation is NOT built**: it would
+  mean re-encrypting every historical object under a new salt, which is a plan-level decision, so
+  it is named here rather than improvised.
+
+- [2026-08-17][DAS-8] **Proofs are on artifacts, not on calls.** 105 tests. Ciphertext: the planted
+  row's bytes are asserted **absent** from the encrypted object (and no 8/16/24-byte prefix of it
+  survives); a wrong key, a wrong salt, a flipped byte at six offsets, a truncation, a version
+  downgrade and a **relocated** ciphertext each REFUSE rather than return garbage. Nonces: 500
+  shards → 500 distinct nonces, and identical bytes encrypted twice differ. Egress: the derived
+  policy is driven through the **real guard**, which refuses `evil.example.com`,
+  `s3.eu-central-1.amazonaws.com` and the metadata IP under a policy pinned to one endpoint.
+  Credentials: a canary passphrase is planted and asserted absent from the exception text, `repr`,
+  `str`, every skip reason, the ciphertext and every captured log record — as is the derived key's
+  hex. Criterion 7 is asserted on the **pushed bytes** with a planted `sk-ant-`-shaped token in
+  every declared secret path, parametrized over encryption ON and OFF. Criterion 8 runs end to end
+  over a real on-disk transport. **Falsifications (4, each restored from a file copy):** skipping
+  encryption for one shard → *"machines/A/seq-0001/tasks/entities.jsonl landed on the remote as
+  plaintext"* (and, before I also blinded the send-side re-check, the guard caught it first and the
+  vacuity floor fired — the re-check is not decorative); a fixed nonce → *"nonce reuse: only 1
+  distinct nonces over 500 objects"*; `allow_only=False` → *"https://evil.example.com/bucket/obj was
+  reachable under a host-pinned SYNC policy"*; reading the passphrase from config → *"assert '' ==
+  'CANARY-PASSP...ot-log-2f7a1c'"*.
+
+- [2026-08-17][DAS-8] **As-a-user validation (port 10377, `PERSONALCLAW_HOME=/private/tmp/das8-home`;
+  real home verified untouched — no `sync/`, no planted task).** `PATCH
+  /api/config/personalclaw {path: "durability.sync_encrypt"}` round-trips to `config.json` and
+  `GET /api/durability/status` reports `encrypt` + the **resolved** `encrypted`; `"maybe"` is
+  refused with *"invalid value, must be one of ('auto', 'on', 'off')"*. The full 5×3
+  transport×setting matrix was driven through HTTP and matches the shipped table, and the
+  third-party `auto`→OFF resolution appeared in `gateway.log` as designed. A real encrypted cycle
+  against a local folder sink published **168 shard objects, 168 ciphertext / 0 plaintext**; the
+  planted row (`alice@example.com`, `142000`, `payroll`, `salary review`) is absent from **every
+  byte** in the sink, while `registry.json`, the salt and the machine/seq key paths stay readable
+  with **no key**; no secret marker appears anywhere. A second home with the right passphrase
+  recovered the row verbatim, one with the wrong passphrase merged **0 rows**.
+  **No real remote was exercised** — there is no S3 bucket and no ssh host here. The S3-shaped wire
+  path was driven against a local HTTP stub: PUT/LIST/GET through `net.fetch` under the derived
+  policy (never hand-rolled aiohttp), byte-identical round trip, ciphertext at rest in the stub, and
+  the same policy refusing `127.0.0.2`, `s3.amazonaws.com` and the metadata IP.
+
+- [2026-08-17][DAS-8] **UNMET — why the atom stays `todo`.** (1) **`rsync-sync` and `s3-sync` are
+  not shipped as first-party apps.** First-party apps live in the **sibling `PersonalClawApps`
+  repo** (`apps/catalog.py::_first_party_source` resolves `<workspace>/apps`, never a path inside
+  core), exactly as `dir-sync` (Apps#21) and `git-sync` (Apps#22) did for DAS-6d — and this session
+  was scoped to the core worktree. The same cross-repo ordering DAS-6d-iii recorded applies: apps-CI
+  installs core from `git+main`, so an app built against `sync_egress_policy` / the codec cannot go
+  green until this lands. Core's half is deliberately the contract-owner half, so the two apps are
+  now buildable with **zero further core changes**: `sdk.sync` hands them the pinned policy, the
+  routing-key set and the credential name, and encryption is applied **above** them by the cycle.
+  (2) The done_when's "signed PUT/GET/LIST" — SigV4 request signing — is app work and is not here;
+  what core proves is the policy + `net.fetch` path those requests must travel. (3) **Criterion 8 is
+  met** over a real on-disk transport; its literal "encrypted **S3** sync store" wording is only
+  provable once `s3-sync` exists. Criterion 7 is met and adversarially verified. Follow-up atom:
+  the two transport apps in `PersonalClawApps`, which is a genuinely separable, dependency-complete
+  scope now that this merged.
+
+- [2026-08-17][DAS-8] **Gates:** `make lint` clean (black/isort/flake8 + mypy, 900 source files) ·
+  `scripts/gate_report.py` **all 3 gates pass** (config-baseline regenerated for `sync_encrypt`;
+  the inert-surface baseline needed **no** regeneration — the seven new `sdk_export` surfaces have
+  real consumers because `TestSdkSurface` drives each one by name through the facade, which is the
+  honest answer to that gate rather than a widened baseline) ·
+  `tests/test_durability_sync_crypto.py` (105) + `tests/security` + `test_apps_import_boundary` +
+  `test_durability_inventory` + `test_portability` + `test_config_roundtrip` +
+  `test_durability_sync_cycle` + `test_durability_convergence_e2e` + `test_sync_transport_contract` +
+  `test_net_egress` + `test_net_client` + `test_web_url_egress` + `test_provider_registry` +
+  `test_app_manifest` + `test_durability_service` + `test_agent_reference` green. `_host_matches`
+  was promoted to a public `guard.host_matches` (one rename, all call sites updated) rather than
+  reaching across modules into a private helper or writing a second copy of the Anthropic-rule
+  matcher.
