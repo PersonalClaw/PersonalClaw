@@ -184,8 +184,8 @@ function ProjectListPage({ onOpen, query, setQuery }: { onOpen: (id: string) => 
                     <div className="flex items-center gap-1.5">
                       {p.id === activeId && <Star size={12} className="shrink-0 text-primary" style={{ fill: 'var(--color-primary)' }} aria-label="Active project" />}
                       <span className="truncate text-on-surface text-[0.9375rem]">{p.name}</span>
-                      {p.is_builtin && <span className="shrink-0 rounded-pill bg-surface-high px-1.5 py-0.5 text-[0.75rem] text-on-surface-low">builtin</span>}
-                      {p.status === 'archived' && <span className="shrink-0 rounded-pill bg-surface-high px-1.5 py-0.5 text-[0.75rem] text-on-surface-low">archived</span>}
+                      {p.is_builtin && <span className="shrink-0 rounded-pill bg-surface-high px-1.5 py-0.5 text-[0.75rem] text-on-surface-low">Built-in</span>}
+                      {p.status === 'archived' && <span className="shrink-0 rounded-pill bg-surface-high px-1.5 py-0.5 text-[0.75rem] text-on-surface-low">Archived</span>}
                     </div>
                     <div className="truncate text-on-surface-low text-[0.75rem]">
                       {p.workspace_dir ? p.workspace_dir.split('/').slice(-2).join('/') : 'no workspace'}

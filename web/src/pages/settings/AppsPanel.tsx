@@ -64,7 +64,7 @@ function AppSettingsCard({ app, navigate }: { app: AppSummary; navigate?: (p: st
           <div className="flex items-center gap-2">
             <span className="truncate text-on-surface text-[0.9375rem]" style={fvs(600)}>{app.displayName}</span>
             <span className="text-on-surface-low text-[0.75rem] tabular-nums">v{app.version}</span>
-            {!app.enabled && <span className="rounded-pill bg-surface-high px-1.5 py-0.5 text-on-surface-low text-[0.75rem]">disabled</span>}
+            {!app.enabled && <span className="rounded-pill bg-surface-high px-1.5 py-0.5 text-on-surface-low text-[0.75rem]">Disabled</span>}
           </div>
           {app.description && <div className="truncate text-on-surface-low text-[0.75rem]">{app.description}</div>}
         </div>

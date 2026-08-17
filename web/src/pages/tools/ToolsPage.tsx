@@ -402,7 +402,7 @@ function GroupBlock({ g, onOpen, onToggleServer, onRemoveServer, onToggleTool, o
                       <span className="truncate font-mono text-on-surface text-[0.8125rem]">{t.name}</span>
                       {t.requires_approval && <ShieldAlert size={12} className="text-warn shrink-0" />}
                       <RiskBadge risk={t.risk_level} />
-                      {off && <span className="rounded-pill bg-surface-high px-1.5 py-0.5 text-on-surface-low text-[0.75rem]">disabled</span>}
+                      {off && <span className="rounded-pill bg-surface-high px-1.5 py-0.5 text-on-surface-low text-[0.75rem]">Disabled</span>}
                     </div>
                     <p className="mt-0.5 line-clamp-2 text-on-surface-low text-[0.75rem] leading-snug">{t.description}</p>
                     {props.length > 0 && <div className="mt-1 text-on-surface-low text-[0.75rem]">{props.length} param{props.length === 1 ? '' : 's'}</div>}
