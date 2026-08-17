@@ -106,6 +106,16 @@ TOOL_META: dict[str, dict[str, Any]] = {
             },
         ],
     },
+    "skill_resource": {
+        "response_type": "skill.resource.content",
+        "error_codes": [],
+        "examples": [
+            {
+                "summary": "Load one reference file a skill declared as a resource",
+                "args": {"skill": "pclaw-api", "path": "reference/api-notes.md"},
+            },
+        ],
+    },
     "skill_search": {
         "response_type": "skill.search.results",
         "error_codes": [],
