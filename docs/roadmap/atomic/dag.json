@@ -5017,7 +5017,7 @@
         {
           "id": "HC-2",
           "title": "Sparse + parallel + reuse worktree hydration with loop.worktree_sparse config",
-          "status": "todo",
+          "status": "done",
           "scope": "\u00a71.2 Sparse + shallow hydration; \u00a71.3 Doctrine unchanged",
           "done_when": "Scoped SDLC tasks create sparse worktrees hydrating only target paths; an out-of-scope write auto-widens (git sparse-checkout add) without failing; phase-READY worktree creation batches through a bounded (cpu_count, ceil 4) thread pool; a reuse pool resets surviving worktrees (checkout -B + clean -fd) between phases and tears down to remove+add on any reset failure; merge-back is diff-identical to full checkouts; loop.worktree_sparse (default true) round-trips through the four wiring points (dataclass _meta, load, to_dict, _EDITABLE_CONFIG+FE); existing worktree tests plus a fan-out timing assertion pass (SC 1, 2, 7).",
           "deps": [
@@ -7668,11 +7668,6 @@
         "plan": "FM"
       },
       {
-        "id": "HC-2",
-        "title": "Sparse + parallel + reuse worktree hydration with loop.worktree_sparse config",
-        "plan": "HC"
-      },
-      {
         "id": "KL-8",
         "title": "S3 library home: recently-added / continue-reading / favorites / collection counts",
         "plan": "KL"
@@ -10009,9 +10004,9 @@
         "code": "HC",
         "plan": "HARNESS-CRAFT",
         "total_atoms": 5,
-        "done": 2,
+        "done": 3,
         "in_progress": 0,
-        "todo": 2,
+        "todo": 1,
         "blocked": 1
       },
       {

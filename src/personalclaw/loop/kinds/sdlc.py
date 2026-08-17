@@ -20,6 +20,24 @@ from personalclaw.loop.loop import Loop, LoopStatus
 logger = logging.getLogger(__name__)
 
 
+def _task_scope_texts(task) -> list[str]:
+    """Every text on a task that might NAME a file it will touch — the input to
+    sparse-worktree scoping (HC-2).
+
+    Title, description and action-plan steps, because that is where the SDLC
+    decomposition puts paths when it names any. Tolerant of both action-plan shapes in
+    the wild (``list[str]`` as ``tasks_link`` writes them, ``list[dict]`` as
+    ``Task.action_plan`` declares them) — a scope source that raises would take the
+    whole fan-out down for a cosmetic reason."""
+    texts = [getattr(task, "title", "") or "", getattr(task, "description", "") or ""]
+    for step in getattr(task, "action_plan", None) or []:
+        if isinstance(step, str):
+            texts.append(step)
+        elif isinstance(step, dict):
+            texts.append(str(step.get("content", "") or ""))
+    return texts
+
+
 _POOL_CAP = 4  # max concurrent task-workers per loop
 _CONFLICT_REDO_CAP = 2  # auto-resolve a task's merge conflict at most this many times
 _STALL_FINDINGS = 5  # a stage grinding this many findings w/o clearing its gate is "stuck"
@@ -1354,10 +1372,21 @@ class CodeKind(LoopKindStrategy):
         ready = await tasks_link.ready_queued_tasks(loop, phase_key)
         if not ready or not worktree.ensure_base_commit(ws):
             return False
-        for t in ready[:slots]:
-            if ctx.svc.get_by_session(task_session_key(loop.id, t.id)) is not None:
-                continue
-            wt_path = worktree.add_worktree(ws, t.id, loop.tasks_project_id)
+        # Create this phase's worktrees as ONE batch (HC-2 §1.2). Creation was serial
+        # here, and HC-1 measured ~5.2 s per worktree on a 10K-file repo — a fan-out of
+        # 4 spent ~21 s before any worker started. The pool is bounded
+        # (min(cpu_count, 4)); each task's `scope` narrows its hydration to the paths
+        # its plan names, or is empty for a full checkout when no scope resolves (or
+        # when loops.worktree_sparse is off — scope_for_task is the config chokepoint).
+        batch = [
+            t
+            for t in ready[:slots]
+            if ctx.svc.get_by_session(task_session_key(loop.id, t.id)) is None
+        ]
+        specs = [(t.id, worktree.scope_for_task(ws, *_task_scope_texts(t))) for t in batch]
+        paths = worktree.add_worktrees(ws, specs, loop.tasks_project_id)
+        for t in batch:
+            wt_path = paths.get(t.id)
             if wt_path is None:
                 continue
             await spawn_task_worker(ctx.state, ctx.svc, loop, t, wt_path)
@@ -1387,7 +1416,14 @@ class CodeKind(LoopKindStrategy):
             redos = self._conflict_redos.get(redo_key, 0)
             if loop.autopilot and redos < _CONFLICT_REDO_CAP:
                 self._conflict_redos[redo_key] = redos + 1
-                worktree.remove_worktree(ws, tid, loop.tasks_project_id)
+                # REUSE the worktree instead of removing it (HC-2 §1.2): the task is
+                # about to re-run on the merged base, so all it needs is a clean tree on
+                # a fresh branch — and a reset keeps the hydration that remove+re-add
+                # would pay for again (HC-1 measured ~5.2 s of it per worktree on a
+                # 10K-file repo). Any reset failure tears down, which is the old
+                # behaviour exactly, so the fallback path is the one already proven.
+                if not worktree.reset_worktree(ws, tid, loop.tasks_project_id):
+                    worktree.remove_worktree(ws, tid, loop.tasks_project_id)
                 try:
                     from personalclaw.tasks import registry
 

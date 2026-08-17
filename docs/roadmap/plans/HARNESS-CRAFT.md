@@ -137,6 +137,113 @@ Session 1 is fully independent (Wave 2, or whenever fan-out slowness is observed
 
 ## Execution log
 
+- **[2026-08-16][S3] HC-2 DONE — sparse + pooled + reused worktree hydration.**
+  Built on HC-1's `loop/worktree.py` (the premise held: `add_worktree` is the one creator, and
+  `sdlc._schedule_parallel` its fan-out). Nothing named `sparse` existed anywhere under `src/`, so
+  all three levers are new; the shipped shape came out of driving real git first, and two of the
+  plan's own recipes turned out to be wrong.
+
+  **DEVIATION 1 — the plan's sparse recipe is the slow way round.** §1.2 says "create the worktree
+  with `git sparse-checkout set <paths>`". Measured, `worktree add` then `sparse-checkout set` pays
+  the ENTIRE hydration cost and then pays again to delete what it just wrote — strictly worse than
+  today. The saving only exists as `worktree add --no-checkout` → `sparse-checkout set` →
+  `checkout`, which never writes the out-of-scope files at all. All three steps sit inside HC-1's
+  timed window, since with sparse on the final `checkout` *is* the hydration. Cone mode (the
+  default) is deliberate: entries are directories and root-level files stay hydrated, so a scoped
+  worktree still has `pyproject`/`Makefile` — asserted, because a task that cannot build is not a
+  saving.
+
+  **DEVIATION 2 — the reuse recipe needs three commands, not two.** §1.2 specifies
+  `checkout -B <branch> <base>` + `clean -fd`. That pair provably leaves BOTH a modified tracked
+  file and a staged index in place (`checkout -B` carries local modifications across by design;
+  `clean` only touches untracked paths) — i.e. it hands the next run the previous run's work while
+  reporting success. `reset --hard` sits between them, and `clean` takes `-x` as well because
+  ignored files are the previous run's build output. Each gap has its own test.
+
+  **DEVIATION 3 — the reset is NOT on the acquire path.** The first cut reset any existing worktree
+  inside `add_worktree`, which would have deleted a live task's in-progress work: that early return
+  is also the RESUME path (a loop restarting mid-task). The reuse pool's real call site is
+  `_reap_merge_done`'s conflict auto-resolve, which already did `remove_worktree` + full re-add for
+  a task about to re-run on the merged base — exactly the "remove + re-add for the next phase" §1.2
+  replaces. It now resets and falls back to the old teardown on any failure. A test pins the resume
+  guard so the reset cannot be "optimized" back.
+
+  **The measured reason auto-widening is load-bearing.** In a cone-mode worktree an out-of-cone
+  write lands on disk, but `git add -A` then refuses it and stages NOTHING (exit 1), and
+  `merge_worktree` DISCARDS that exit code (it always has) — so the branch merges without the work
+  and the merge reports `ok=True`. Silent data loss with a green status everywhere. `widen_for_pending`
+  therefore runs inside `merge_worktree` before its `add -A`, and the tests assert the file is in the
+  RESULTING COMMIT, never that a widen command was issued. A dedicated test pins the defect by
+  disabling the widen and asserting `ok is True` with the file gone.
+
+  **Scope is a HINT, per §Risks — there is no task field to read.** §1.2 claims "SDLC decomposition
+  already produces per-task file scopes"; it does not. `Task` has no path/scope field (only
+  `title`/`description`/`action_plan`/`exit_criteria`), and adding one would be new state shape. So
+  scope is EXTRACTED from those texts (`scope_candidates`) and VALIDATED against the index
+  (`resolve_scope` → tracked directories, cached per workspace). A hallucinated path is dropped, a
+  too-wide result (>8 dirs) means "no scope", and any git failure means full hydration. Polarity is
+  deliberately not modelled — "do not touch web/src" still contributes `web/src`, documented in a
+  test, because over-inclusion only costs some saving while under-inclusion is recovered by widening;
+  neither can break a task. Driving the real path found one genuine extractor bug this way: a
+  sentence-final "…do not touch web/." yielded the token `web/.`, which resolved to `web` and
+  silently widened the scope. Fixed + regression-tested.
+
+  **Config: `loops.worktree_sparse` (default true), FIVE points not four.** Section is `loops.`, not
+  the plan's `loop.` — same deviation HC-4 recorded, as this repo has no `loop` section. Dataclass +
+  `_meta`, `AppConfig.load()`, `to_dict()` (automatic via `asdict`), `_EDITABLE_CONFIG` PATCH
+  allowlist, plus `config-baseline.json` (regenerated) and `docs/reference/configuration.md`, which
+  `test_config_roundtrip.py` does not cover. **No FE control** — nothing in `web/` reads
+  `config.loops` (its siblings `check_work_stages`/`judge_use_case`/`stagnation_window` have none
+  either), so a Loops settings panel is new scope; consistent with HC-4's ruling. The field is read
+  at ONE chokepoint (`scope_for_task`) so a caller cannot bypass it, and the tests drive the CONSUMER:
+  flipping it produces a full checkout end-to-end. That leg earned its keep — `sparse_enabled` fails
+  open to False, and the first cut called a `get_config()` that does not exist in this repo, which
+  looked exactly like the feature being switched off. A real-config-file round-trip test now catches
+  a wrong accessor.
+
+  **Pool.** `pool_size() = max(1, min(cpu_count, 4, n_items))`, matching the existing
+  `sdlc._POOL_CAP`. Asserted as a NUMBER on both sides of the ceiling (cpu_count 64 → 4; cpu_count 2
+  → 2, the vacuity floor), plus a spy on the real `ThreadPoolExecutor` construction, since on this
+  18-core box an unbounded pool would satisfy any "a pool exists" check. One spec skips the pool; one
+  raising worker cannot sink the batch.
+
+  **Tests.** 47 in `tests/test_loop_worktree_sparse.py`, all against real git under `tmp_path` with
+  `config_dir` redirected (real-home rail clean). Every sparse test first asserts an out-of-scope
+  path is ABSENT, else "sparse" is unfalsifiable. Two AST tests cover the call sites: that
+  `_schedule_parallel` uses `add_worktrees` + `scope_for_task` and no longer calls `add_worktree`
+  serially, and that `_reap_merge_done` resets with `remove_worktree` still reachable and GATED on
+  the reset failing. Merge-back diff-identity is a direct tree-hash comparison between a sparse and a
+  full worktree making the same edits. The fan-out timing assertion is deliberately RELATIVE
+  (batched ≤ 1.6× serial in-process) — HC-1 measured a 7.5 s spread across four samples on this
+  machine under load, so an absolute budget would be a flake generator.
+
+  **Gate.** `make lint` green (black, isort, flake8, mypy — 895 files). `pytest
+  tests/test_loop_worktree_sparse.py tests/test_loop_worktree.py tests/test_loop_worktree_timing.py
+  tests/test_config_roundtrip.py tests/test_config_baseline.py tests/test_durability_inventory.py`
+  → **124 passed**; adding `test_sdlc_tools.py test_inert_surface_baseline.py
+  test_docs_lint_baseline.py` → **55 passed**. `tools/regen_dag_derived.py --check` current.
+
+  **Falsifications (3).** Dropping the `sparse-checkout add` in `widen_for_pending` → `AssertionError:
+  the cone did not grow`, `merge_back_carries_an_out_of_scope_write` fails, and
+  `AssertionError: sparse merge-back diverged from full: [...]`. Unbounding the pool → `assert 16 == 4`
+  and `AssertionError: executor was not bounded: [6]`. Removing `clean -fdx` from the reset →
+  `AssertionError: assert not True` on both the leftover-file and ignored-build-output tests.
+
+  **As-a-user drive** (throwaway repo, 103 tracked files, isolated home): scope derived from real task
+  text = `['docs/reference', 'src/personalclaw/loop']` (`web` correctly excluded); fan-out of 4 through
+  `pool_size(4)=4`; **63 of 103 files hydrated**, out-of-scope absent, `pyproject.toml` present; an
+  out-of-scope write showed `git add -A` rc=1 (the loss) → widen → cone grew to include
+  `web/src/pages`; merge-back `ok=True` with the out-of-scope file in the base HEAD tree AND the
+  in-scope edit; reuse reset cleared a leftover file, restored a clobbered tracked file, emptied the
+  index, and PRESERVED the cone. One drive artifact worth recording: re-running with a persisted
+  `PERSONALCLAW_HOME` but a deleted repo made every leg fail, because the stale worktree dirs took the
+  `outcome=reused ms=0` early return — reset both the repo and the home when driving this.
+
+  **CHANGELOG: no entry.** Contributor-facing harness plumbing. The one user-visible surface is a
+  backend-only config default that changes no observable outcome: a scoped task's merged result is
+  byte-identical either way (asserted by tree hash), so there is nothing for a user to notice beyond
+  faster parallel phases.
+
 - **[2026-08-15][S2] HC-3 IMPLEMENTATION COMPLETE, ATOM BLOCKED on an owner live-run.**
   `src/personalclaw/sampling.py` ships the core: N temperature-varied `one_shot_completion`
   calls fanned out concurrently (in-flight counter peaks at N *and* a fan-out span assertion,

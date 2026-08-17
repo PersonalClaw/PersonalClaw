@@ -73,6 +73,7 @@ override the defaults, and the hard cap binds everything.
 | `loops.max_cycles_hard_cap` | integer | `100` | backend-only | Absolute ceiling on any loop's cycle budget, regardless of the per-loop limit. Safety brake against runaway cost. |
 | `loops.default_idle_secs` | integer | `120` | backend-only | Seconds between worker cycles when a loop doesn't specify its own idle timer. |
 | `loops.trust_ttl_secs` | integer | `86400` | backend-only | How long a loop worker keeps auto-approved tool trust before the supervisor expires it and requires re-authorization. |
+| `loops.worktree_sparse` | boolean | `true` | backend-only | When a parallel task's plan names the files it will touch, hydrate only those directories in its git worktree instead of the whole repo — most of a worktree's setup cost on a large codebase. A task that writes outside its stated scope widens its own worktree automatically, a task with no usable scope gets a full checkout, and the merged result is identical either way. Set `false` to always hydrate the full repo. |
 
 ## Memory (`memory.*`)
 
