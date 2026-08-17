@@ -695,10 +695,15 @@ def promotion_eligibility(key: str) -> Eligibility:
     next_index = rung_rank(base) + 1
     ceiling_index = max(rung_rank(spec.ceiling), 0)
     if next_index > ceiling_index or next_index >= len(RUNGS):
+        # 🪤 Read "Already at its ceiling (autonomous)." on twelve rows of the Guardrails panel.
+        # `autonomous` is the code's name for the rung; `RUNG_LABELS`' own docstring says so. The
+        # label is a predicate, so it gets a subject rather than a parenthesis.
+        from personalclaw.guardrails.rungs import rung_label
+
         return Eligibility(
             key=key,
             current_rung=current,
-            reason=f"Already at its ceiling ({spec.ceiling}).",
+            reason=f"Already at its ceiling: it {rung_label(spec.ceiling)}.",
         )
     next_rung = RUNGS[next_index]
     if next_rung == RUNG_AUTONOMOUS and spec.leaves_machine:
