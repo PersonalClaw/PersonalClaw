@@ -23,6 +23,16 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
   single message that names every element you marked, so the agent fixes all of them in one pass
   rather than guessing which "second heading" you meant. On a loop's output it goes to that loop as
   guidance; anywhere else it opens a chat and asks for the same artifact to be refreshed in place.
+- **A pinned dashboard tile can now keep its own numbers up to date, for free.** Bind a tile to a
+  skeleton (an artifact whose body carries `{{...}}` slots) plus the data sources that fill them,
+  give it a refresh interval, and the tile re-renders itself on that cadence — same layout, new
+  data, and **no model call**, because the refresh is pure substitution rather than an agent
+  rewriting your panel. The tile header tells you the truth about it: how long ago it last
+  refreshed, one dot per data source (hover for that source's own error), and a link to the exact
+  ledger row with the cost — which reads `0 tokens` and means it. If a source fails, the tile keeps
+  showing the last good content and turns its dot red instead of going blank. Tiles fire nothing
+  while incident mode is on, and a tile's sources are limited to read-only ones.
+
 - **Saved the same article twice? Knowledge will now tell you, and fold the two together.** Open a
   knowledge item and the **More details** panel lists anything that looks like the same document
   again, each with the reason it was matched and how long ago it arrived, so you can judge the claim

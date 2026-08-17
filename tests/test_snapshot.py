@@ -1581,6 +1581,11 @@ def test_every_declared_APPEND_DEDUP_entry_now_has_a_path(tmp_path: Path) -> Non
         "model_calls.jsonl",
         "crashes",
         "sessions",
+        # AS-2's per-tile refresh ledger. A DIRECTORY per tile on disk, so it joins `crashes`
+        # and `sessions` on the generic per-file tree pass: a line-dedup executor across a
+        # directory-per-tile store would be the wrong shape, and the tree copy already gives
+        # entity-level union.
+        "dashboard_tiles",
     }, "a new NON-DERIVED append_dedup entry appeared — give it an executor, not copy-if-missing"
 
     # Named explicitly rather than derived from the path: `cron-history`'s executor is
@@ -1608,6 +1613,8 @@ def test_every_declared_APPEND_DEDUP_entry_now_has_a_path(tmp_path: Path) -> Non
     # discrepancy stays visible.
     assert declared["crashes"].kind == "json_entity_dir"
     assert declared["sessions"].kind == "jsonl_append"
+    # Declared `tree` from the start — the shape `sessions` mis-declared as its leaf kind.
+    assert declared["dashboard_tiles"].kind == "tree"
 
 
 # ── 🔴 six declared sqlite stores had no ATTACH executor (S180) ──

@@ -283,6 +283,10 @@ per-route contract.
 | `GET/PUT/PATCH /api/config/personalclaw` | Read / replace / single-field-patch the core config. |
 | `GET/PUT /api/dashboard/config` | Dashboard-section config (UI preference writes). |
 | `GET/PUT /api/config/default-agent` | Default agent binding. |
+| `GET/POST /api/dashboard/views` · `GET/PUT/DELETE /api/dashboard/views/{id}` | The composable home's view registry. Locked presets refuse PUT/DELETE with 403. |
+| `POST /api/dashboard/views/{id}/tiles` · `.../tiles/resolve` | Pin an `artifact:<slug>` tile; accept, dismiss or unpin one. |
+| `PUT /api/dashboard/views/{id}/tiles/binding` | Bind a tile's chatless refresh (`mode`, `ttl_secs`, `skeleton`, `data`). |
+| `POST /api/dashboard/views/{id}/tiles/refresh` · `GET ...?ref=` | Run one refresh (TTL-gated unless `force`); read the tile's newest `tile_refreshed` ledger row. |
 
 ## Security & approvals
 

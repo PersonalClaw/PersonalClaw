@@ -96,6 +96,15 @@ DELAY_CLAMPED = "delay_clamped"
 #: reader reconciles ONE vocabulary; a parallel clock channel would be a second dialect.
 CLOCK_READ = "clock_read"
 
+#: AMBIENT-SURFACES §2.3 (AS-2): one chatless tile refresh. A ledger kind because the refresh
+#: is a LEDGER-WEIGHT fire — it deliberately spawns no run directory, so this row is the only
+#: record that it happened, what it cost (near-zero: a pure render transform), and which of its
+#: data sources answered. The tile header reads exactly this row for its freshness stamp and its
+#: per-source ok/error dots, which is why the per-node outcomes ride ON the row rather than in a
+#: parallel status file: a second channel would let "the tile says fresh" and "the ledger says the
+#: fetch failed" disagree, and the silent-stale panel is the complaint §2.4 exists to kill.
+TILE_REFRESHED = "tile_refreshed"
+
 #: LEARNING-FLYWHEEL §3.3 (LEARN-R18), generalized by PP-9: the pending→resolved outcome
 #: lifecycle, open to ANY producer. A producer journals `pending_outcome`
 #: {producer, subject, metric, metric_source, horizon, baseline} at BET time — before the
@@ -172,6 +181,7 @@ LEDGER_KINDS = frozenset(
         BUFFER_SEAL,
         DELAY_CLAMPED,
         CLOCK_READ,
+        TILE_REFRESHED,
         PENDING_OUTCOME,
         OUTCOME_RESOLVED,
         WORKSPACE_PROVISIONED,

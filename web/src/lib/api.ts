@@ -2641,8 +2641,23 @@ export type ArtifactSource = 'chat' | 'cron' | 'subagent' | 'manual' | 'import'
 // `artifact:<slug>` (a pinned artifact tile). `added_by:agent` rows are PROPOSALS
 // that render with an accept/dismiss chip.
 export type TileSize = 's' | 'm' | 'l' | 'full'
-export interface DashboardTile { ref: string; size: TileSize; order: number; added_by: 'user' | 'agent' }
+// AMBIENT-SURFACES §2.1 — the layout/data split. `skeleton` is a SEPARATE artifact holding
+// the `{{...}}` body; the tile's own `ref` holds the rendered projection. `mode: 'ttl'` is the
+// pre-substrate cadence; `view` (a bound trigger) arrives with AUTOMATION-SUBSTRATE step 8.
+export interface TileDataNode { id: string; provider: string; config: Record<string, unknown> }
+export interface TileRefresh { mode: 'manual' | 'ttl'; ttl_secs: number; skeleton: string; data: TileDataNode[] }
+export interface DashboardTile { ref: string; size: TileSize; order: number; added_by: 'user' | 'agent'; refresh: TileRefresh }
 export interface DashboardView { id: string; name: string; icon?: string | null; nav_pinned: boolean; preset: boolean; tiles: DashboardTile[] }
+// One `tile_refreshed` ledger row (§2.3). `tokens`/`cost_usd` are stated, not inferred: a
+// header that had to guess "free" from a missing field could not tell a zero-cost refresh
+// from an unrecorded one.
+export interface TileNodeOutcome { id: string; provider: string; ok: boolean; error: string; duration_ms: number }
+export interface TileRefreshRow {
+  kind?: string; event_id?: string; ts?: string; ok?: boolean
+  tokens?: number; cost_usd?: number; duration_ms?: number
+  nodes?: TileNodeOutcome[]; version?: number; rendered_bytes?: number; error?: string
+}
+export interface TileRefreshResult { refreshed: boolean; reason: string; ok: boolean; nodes: TileNodeOutcome[]; row: TileRefreshRow }
 
 export type ArtifactEventType = 'created' | 'edited' | 'iterated' | 'referenced' | 'reverted'
 export interface ArtifactEvent {
@@ -4535,6 +4550,20 @@ export const api = {
     post<{ view: DashboardView }>(`/api/dashboard/views/${encodeURIComponent(viewId)}/tiles`, body).then((d) => d.view),
   resolveTile: (viewId: string, body: { ref: string; keep: boolean }) =>
     post<{ view: DashboardView }>(`/api/dashboard/views/${encodeURIComponent(viewId)}/tiles/resolve`, body).then((d) => d.view),
+
+  // ── chatless refresh (AMBIENT-SURFACES §2) ──
+  // `refreshTile` is TTL-GATED server-side unless `force` — a rendered dashboard may poll it
+  // without turning a cadence into a fetch-per-paint. `tileRefreshRow` reads the newest ledger
+  // row: the freshness stamp, the per-source chips and the cost the header shows all come from
+  // that ONE row, so the chip and the ledger cannot disagree.
+  bindTile: (viewId: string, body: { ref: string } & Partial<TileRefresh>) =>
+    put<{ tile: DashboardTile }>(`/api/dashboard/views/${encodeURIComponent(viewId)}/tiles/binding`, body).then((d) => d.tile),
+  refreshTile: (viewId: string, body: { ref: string; force?: boolean }) =>
+    post<TileRefreshResult>(`/api/dashboard/views/${encodeURIComponent(viewId)}/tiles/refresh`, body),
+  tileRefreshRow: (viewId: string, ref: string) =>
+    get<{ row: TileRefreshRow }>(`/api/dashboard/views/${encodeURIComponent(viewId)}/tiles/refresh?ref=${encodeURIComponent(ref)}`).then((d) => d.row),
+  tileLedgerHref: (viewId: string, ref: string) =>
+    `/api/dashboard/views/${encodeURIComponent(viewId)}/tiles/refresh?ref=${encodeURIComponent(ref)}`,
 
   // App Platform (A7) — install/manage apps that extend PClaw.
   // Normalize the app-category flag at the boundary: `native` is the single source

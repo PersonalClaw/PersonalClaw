@@ -196,6 +196,9 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `GET /api/dashboard/views/{view_id}` — read, edit, or delete a view.
 - `PUT /api/dashboard/views/{view_id}` — read, edit, or delete a view.
 - `POST /api/dashboard/views/{view_id}/tiles` — {slug, size?} — pin an artifact tile.
+- `PUT /api/dashboard/views/{view_id}/tiles/binding` — {ref, mode, ttl_secs?, skeleton?, data?}
+- `GET /api/dashboard/views/{view_id}/tiles/refresh` — POST .../tiles/refresh {ref, force?} — run one chatless refresh (§2.3).
+- `POST /api/dashboard/views/{view_id}/tiles/refresh` — POST .../tiles/refresh {ref, force?} — run one chatless refresh (§2.3).
 - `POST /api/dashboard/views/{view_id}/tiles/resolve` — {ref, keep} — accept/dismiss/unpin.
 - `GET /api/design/tokens/default` — PersonalClaw's canonical
 - `GET /api/desktop/capabilities/{cap}` — one capability, gateway-mediated.

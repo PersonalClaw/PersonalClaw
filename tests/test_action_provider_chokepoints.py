@@ -52,6 +52,11 @@ EXECUTION_SITES: tuple[tuple[str, str], ...] = (
     # denylist seam; `test_the_denylist_seam_list_covers_every_unattended_execution_site`
     # therefore lists it beside that documented exemption.
     ("personalclaw.proposals_contract", "the inbox proposal apply path"),
+    # AS-2: a TTL dashboard tile re-runs its bound data nodes with nobody watching, so it is a
+    # real UNATTENDED execution site and joins the denylist seams below rather than claiming an
+    # exemption. Its providers are additionally narrowed to a read-only allowlist
+    # (`tile_refresh.DATA_PROVIDERS`) — a second fence, not a substitute for these gates.
+    ("personalclaw.dashboard.tile_refresh", "the chatless tile-refresh path"),
 )
 
 
@@ -87,6 +92,7 @@ DENYLIST_SEAMS: tuple[tuple[str, str], ...] = (
     ("personalclaw.hooks", "script hooks"),
     ("personalclaw.gateway", "clock / file / webhook / chained triggers"),
     ("personalclaw.event_triggers", "memory-event triggers"),
+    ("personalclaw.dashboard.tile_refresh", "TTL dashboard tiles"),
 )
 
 #: The one execution site NOT required to carry the denylist, and why: it runs a trigger because a

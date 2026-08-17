@@ -75,11 +75,17 @@ def test_preset_refuses_delete():
 
 
 def test_tile_has_no_coordinate_fields():
-    """A tile is a ref + size + order + added_by — the coordinate grid is retired."""
+    """A tile is a ref + size + order + added_by + its refresh binding (AS-2) — the coordinate
+    grid stays retired. `refresh` is a DATA seam, not a spatial one: it says where a tile's
+    content comes from, never where the tile sits."""
     names = {f.name for f in fields(store.DashboardTile)}
-    assert names == {"ref", "size", "order", "added_by"}
+    assert names == {"ref", "size", "order", "added_by", "refresh"}
     for banned in ("x", "y", "w", "h", "col", "row", "width", "height"):
         assert banned not in names
+    refresh_names = {f.name for f in fields(store.TileRefresh)}
+    assert refresh_names == {"mode", "ttl_secs", "skeleton", "data"}
+    for banned in ("x", "y", "w", "h", "col", "row", "width", "height"):
+        assert banned not in refresh_names
 
 
 def test_pin_posts_an_artifact_tile_to_a_view():

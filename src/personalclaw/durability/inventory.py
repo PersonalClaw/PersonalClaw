@@ -427,6 +427,29 @@ INVENTORY: tuple[StateEntry, ...] = (
         merge=MERGE_LWW,
         help="per-entity user settings",
     ),
+    # 🔴 `dashboard_views.json` shipped with AS-1 and was never declared, so `audit_home()`
+    # reports it the moment a user pins a tile — the exact drift this manifest exists to catch,
+    # found by declaring the store next to it.
+    StateEntry(
+        id="dashboard_views",
+        kind=KIND_JSON_FILE,
+        path="dashboard_views.json",
+        domain=DOMAIN_PLATFORM,
+        merge=MERGE_LWW,
+        help="composable-home views and their pinned artifact tiles",
+    ),
+    # A TREE, not a `jsonl_append`, even though its leaves are JSONL: on disk it is one
+    # DIRECTORY per tile (`dashboard_tiles/<view>__<slug>/events.jsonl`). Declaring the leaf kind
+    # is the shape `sessions` got wrong — the generic per-file tree copy is the right executor
+    # either way, and a line-dedup merge across a directory-per-tile store would be the wrong one.
+    StateEntry(
+        id="dashboard_tile_ledger",
+        kind=KIND_TREE,
+        path="dashboard_tiles",
+        domain=DOMAIN_PLATFORM,
+        merge=MERGE_APPEND_DEDUP,
+        help="per-tile chatless-refresh ledger (freshness, cost, per-source outcomes)",
+    ),
     StateEntry(
         id="models",
         kind=KIND_TREE,

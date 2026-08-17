@@ -324,8 +324,17 @@ def _validate_shape(
             )
 
     elif kind == NodeKind.TRANSFORM:
-        if not cfg.get("expr"):
-            _add(res, "WF_MISSING_EXPR", "transform needs an `expr` binding", path)
+        # Either form is a transform: an `expr` binding, or a `skeleton` artifact whose stored
+        # body IS the template (AMBIENT-SURFACES §2.1's render transform). Requiring `expr`
+        # unconditionally would make the skeleton form unauthorable — and inlining a whole
+        # dashboard body into a spec is exactly the layout/data split the skeleton exists to keep.
+        if not cfg.get("expr") and not cfg.get("skeleton"):
+            _add(
+                res,
+                "WF_MISSING_EXPR",
+                "transform needs an `expr` binding (or a `skeleton` artifact to render)",
+                path,
+            )
 
     elif kind == NodeKind.VISUALIZE:
         # The agency-free data→genui primitive (AMBIENT-SURFACES §5.3): its input is a
