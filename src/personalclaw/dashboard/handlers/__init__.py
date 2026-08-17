@@ -89,6 +89,11 @@ from personalclaw.dashboard.handlers.autonomy import (  # noqa: E402, F401
     api_autonomy_undo,
 )
 
+# ── Companion apps: LAN discovery status (handlers/companion.py) ──
+from personalclaw.dashboard.handlers.companion import (  # noqa: E402, F401
+    api_companion_discovery,
+)
+
 # ── Core (handlers/core.py) ──
 from personalclaw.dashboard.handlers.core import (  # noqa: E402, F401
     _DIST_DIR,

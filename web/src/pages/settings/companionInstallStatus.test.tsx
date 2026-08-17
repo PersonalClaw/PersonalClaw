@@ -28,10 +28,16 @@ const SRC = join(process.cwd(), 'src')
 const read = (rel: string) => readFileSync(join(SRC, rel), 'utf8')
 
 // The panel reads its config through `api.personalclawConfig()`; stub it so the row renders.
+// `companionDiscovery` (CA-5) is the live advertiser read the same panel makes — stubbed to the
+// default "off" answer, which is the state this file's install/offline rows are asserted against.
 vi.mock('../../lib/api', () => ({
   api: {
     personalclawConfig: () => Promise.resolve({ companion: { discovery_enabled: false, instance_name: '' } }),
     patchConfig: () => Promise.resolve({}),
+    companionDiscovery: () => Promise.resolve({
+      advertising: false, reason: 'disabled', detail: 'LAN discovery is off.',
+      service_type: '_personalclaw._tcp.local.', instance_name: '', port: 0, addresses: [], txt: {},
+    }),
   },
 }))
 

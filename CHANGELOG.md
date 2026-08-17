@@ -10,6 +10,24 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Added
 
+- **Your phone can find this machine on its own now, if you ask it to.** Getting a companion
+  device onto your gateway used to start with reading an IP address off one screen and typing it
+  into another. Turn on **Settings → Companion apps → LAN discovery** and the gateway announces
+  itself on your local network by name instead — the same mechanism that makes printers and
+  speakers show up — so `personalclaw discover` on the other device prints it and the URL to use.
+  It is **off until you turn it on**, because announcing a service on a network is a choice and
+  the answer is obviously different on your own Wi-Fi than in a café. Turning it off does not cost
+  you access, only typing: the address and the pairing code both work exactly as before, and
+  nothing about pairing depends on discovery being on. What gets announced is four things — the
+  name you chose, the port, "this will want you to pair", and a version number — and the panel
+  shows you that record verbatim, because the honest way to answer "what did I just publish about
+  myself" is to let you read it. There is no token in it, no session, and nothing you have said to
+  the assistant. Discovery only ever says *where* this machine is; what decides *whether* a device
+  gets in is still the token or the pairing code, unchanged. If your gateway is only listening on
+  itself, it announces nothing at all and the panel tells you why rather than pretending the
+  switch did something — a service at `127.0.0.1` means a different thing on every device that
+  hears about it, so advertising one would be a lie. There is a new guide,
+  [Companion apps](docs/guides/companion-apps.md), including the parts that do not work yet.
 - **A guided tour of the app, and you can take it again whenever you like.** The last screen of
   setup now offers a quick walk through the five places that matter: the sidebar, chat, the Inbox,
   where anything risky waits for your permission, and Settings. It happens on the real app — each

@@ -176,6 +176,7 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `DELETE /api/chat/tags/{id}` — delete a tag; strip it from all sessions.
 - `PATCH /api/chat/tags/{id}` — rename / recolor / reorder.
 - `POST /api/chat/task-mode` — set the per-session TASK mode.
+- `GET /api/companion/discovery` — the live state of the LAN advertiser.
 - `GET /api/config-fs/stream` — SSE feed of out-of-band config-tree changes (#44).
 - `GET /api/config/default-agent` — read or set the default agent.
 - `PUT /api/config/default-agent` — read or set the default agent.
