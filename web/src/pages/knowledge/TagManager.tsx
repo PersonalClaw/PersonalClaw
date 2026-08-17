@@ -121,8 +121,20 @@ export function TagManager({ onChanged }: { onChanged?: () => void }) {
 
   return (
     <div className="flex flex-col gap-1">
+      {/* 🔑 ALWAYS MOUNTED, EMPTY AT REST. Rename / nest / make-top-level / merge / delete give no
+          other confirmation — the row simply re-renders — so this line is the whole success surface
+          (WCAG 4.1.3). It used to be `{note && <div role="status">…}`, i.e. a region created at the
+          same moment its content appeared, which this app has already ruled unreliable in three
+          places: `settingsUI`'s `SavedToast` ("A live region created at the same moment its content
+          appears is not reliably observed"), `ResultAnnouncement`, and `AudioRecorder`, whose own
+          rail asserts the always-mounted shape. Measured here before the change: zero `role=status`
+          nodes in this panel at rest.
+          The visible half stays exactly as it was and is now `aria-hidden`, because the region above
+          already carries the sentence — SavedToast's second load-bearing detail, for the same reason:
+          leaving both in the tree announces the confirmation twice. */}
+      <span role="status" aria-live="polite" className="sr-only">{note}</span>
       {note && (
-        <div role="status" className="pb-1 text-on-surface-var text-[0.8125rem]">{note}</div>
+        <div aria-hidden="true" className="pb-1 text-on-surface-var text-[0.8125rem]">{note}</div>
       )}
       {ordered.map(({ tag, depth }) => {
         const others = tags.filter((x) => x.id !== tag.id)
