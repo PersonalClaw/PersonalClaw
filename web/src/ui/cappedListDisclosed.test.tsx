@@ -80,9 +80,26 @@ describe('MoreRow', () => {
     expect(screen.getByText('… 17 more')).toBeTruthy()
   })
 
+  it('names what is hidden when the caller says what it is', () => {
+    // Rendered, not counted in the source: the previous check for "one spelling" catches a DELETED
+    // interpolation only by accident (the regex stops matching), which is a weak reason for a test to
+    // go red. This asserts the sentence.
+    render(<MoreRow total={247} shown={200} noun="rows" />)
+    expect(screen.getByText('… 47 more rows')).toBeTruthy()
+  })
+
+  it('stays subject-less where the list above it already says what these are', () => {
+    const { container } = render(<MoreRow total={9} shown={6} />)
+    expect(container.textContent?.trim(), 'no dangling noun, no guessed one').toBe('… 3 more')
+  })
+
   it('is one wording, so eleven sites cannot drift again', () => {
     const src = readFileSync(join(SRC, 'ui/MoreRow.tsx'), 'utf8')
-    expect((src.match(/more</g) ?? []).length, 'exactly one place spells it').toBe(1)
+    // Matches the word as RENDERED — followed by the element's close or by the optional noun's
+    // interpolation. (It keyed on `more<` until the noun prop arrived, at which point the only
+    // spelling in the tree stopped matching and this failed on correct code: an assertion pinned to
+    // the incidental shape of the markup rather than to the sentence.)
+    expect((src.match(/\bmore(?:<|\{)/g) ?? []).length, 'exactly one place spells it').toBe(1)
   })
 })
 
@@ -142,6 +159,54 @@ describe('every list whose label states a total discloses its cap', () => {
     // onto a static row would remove a feature.
     const src = strip(readFileSync(join(SRC, 'pages/code/CodeCockpitPage.tsx'), 'utf8'))
     expect(src, 'still a button').toMatch(/title=\{`Show \$\{hidden\} more file\$\{[^}]*\}`\}>\+\{hidden\} more<\/button>/)
+  })
+
+  it('a truncated TABLE names what it dropped', () => {
+    // 🔑 THE THIRD GROUP, and the sharpest of the three. A truncated LIST visibly stops; a truncated
+    // TABLE looks complete — the frame closes, the header is intact, and nothing suggests the answer
+    // continues. Worse, `ToolOutput` caps COLUMNS: a dropped field leaves a table that simply never
+    // mentions six of your keys, and `overflow-x-auto` does not help because it scrolls only what was
+    // rendered. Its own docstring said the quiet part already — "Columns = union of keys (capped)".
+    const pins: Array<[string, RegExp]> = [
+      ['pages/chat/toolRenderers/primitives.tsx', /<MoreRow total=\{body\.length\} shown=\{200\} noun="rows"/],
+      ['pages/files/browse/FilePreviews.tsx', /<MoreRow total=\{body\.length\} shown=\{500\} noun="rows"/],
+      ['pages/tools/ToolOutput.tsx', /<MoreRow total=\{cols\.length\} shown=\{8\} noun="columns"/],
+    ]
+    for (const [rel, re] of pins) {
+      expect(strip(readFileSync(join(SRC, rel), 'utf8')), `${rel} must disclose its cap`).toMatch(re)
+    }
+  })
+
+  it('a residue under a table is NAMED, because "… 6 more" would read as rows', () => {
+    // The ambiguity is the whole reason the prop exists, so it is required exactly where a table is
+    // involved and left off everywhere else (beneath a stacked list the subject is what sits above).
+    for (const rel of ['pages/chat/toolRenderers/primitives.tsx', 'pages/files/browse/FilePreviews.tsx',
+      'pages/tools/ToolOutput.tsx']) {
+      const src = strip(readFileSync(join(SRC, rel), 'utf8'))
+      for (const tag of src.match(/<MoreRow[\s\S]{0,160}?\/>/g) ?? []) {
+        // FilePreviews also has a JSON-tree residue that is NOT under a table — it sits under an
+        // indented node list, where the subject is unambiguous.
+        const underTable = /noun=/.test(tag) || !/entries\.length/.test(tag)
+        if (!underTable) continue
+        expect(tag, `${rel}: a table residue needs its noun`).toMatch(/noun="(rows|columns)"/)
+      }
+    }
+  })
+
+  it('the row sits OUTSIDE the table — a div in a tbody is invalid markup', () => {
+    // Not a style point: the browser hoists it out and the residue lands somewhere unpredictable.
+    for (const rel of ['pages/chat/toolRenderers/primitives.tsx', 'pages/files/browse/FilePreviews.tsx',
+      'pages/tools/ToolOutput.tsx']) {
+      const src = strip(readFileSync(join(SRC, rel), 'utf8'))
+      expect(src, `${rel}: the residue must follow </table>`).toMatch(/<\/table>[\s\S]{0,320}?<MoreRow/)
+      // 🪤 CONTAINMENT, NOT PROXIMITY. The first draft asserted `<tbody>[\s\S]{0,600}?<MoreRow` did
+      // not match, which fails on CORRECT code the moment the table body is short — the row is 40
+      // characters past `</tbody>` and well inside 600. Same mistake as the "MoreRow within 24 lines"
+      // pairing in #1618: a window is not a scope. Take the actual span between the tags.
+      for (const body of src.match(/<tbody>[\s\S]*?<\/tbody>/g) ?? []) {
+        expect(body, `${rel}: a div inside tbody is invalid markup`).not.toContain('<MoreRow')
+      }
+    }
   })
 
   it('a dashboard widget preview says it is one', () => {

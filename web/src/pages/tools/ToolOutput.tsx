@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { MoreRow } from '../../ui/MoreRow'
 import { fvs } from '../../design/fontWeight'
 import { ChevronRight } from 'lucide-react'
 import { Markdown } from '../../ui/Markdown'
@@ -107,6 +108,12 @@ function JsonTable({ rows }: { rows: Record<string, unknown>[] }) {
           ))}
         </tbody>
       </table>
+      {/* 🔑 HIDDEN COLUMNS ARE THE WORST OF THIS FAMILY, and the docstring above already said the
+          quiet part — "Columns = union of keys (capped)". A dropped ROW at least leaves a table that
+          visibly stops; a dropped FIELD leaves a table that looks complete and simply never mentions
+          six of your keys. `overflow-x-auto` does not help: it scrolls the eight that were rendered.
+          Named explicitly, because "… 6 more" under a table would read as rows. */}
+      <MoreRow total={cols.length} shown={8} noun="columns" className="px-2 py-1" />
     </div>
   )
 }
