@@ -1,4 +1,5 @@
 import { memo, useEffect, useMemo, useState } from 'react'
+import { MoreRow } from '../../../ui/MoreRow'
 import { ChevronRight, ChevronDown } from 'lucide-react'
 import { api } from '../../../lib/api'
 import { extOf } from '../fileMeta'
@@ -190,7 +191,7 @@ function JsonNode({ value, depth, kName }: { value: unknown; depth: number; kNam
       {open && (
         <div style={{ paddingLeft: 16 }}>
           {entries.slice(0, 200).map(([k, v]) => <JsonNode key={k} value={v} depth={depth + 1} kName={isArr ? null : k} />)}
-          {entries.length > 200 && <div className="text-on-surface-low">… {entries.length - 200} more</div>}
+          <MoreRow total={entries.length} shown={200} />
           <div className="text-on-surface-low">{rb}</div>
         </div>
       )}
