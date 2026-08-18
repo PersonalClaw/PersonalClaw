@@ -620,3 +620,34 @@ Rows 1–3 are roughly two sessions and deliver the most visible "less daunting,
   outrank the user's own notes. Left out deliberately: `get_stats()['items']` still counts mirrors —
   it is a store-wide `COUNT(*)` that already counts archived rows the list hides, so artifacts inherit
   its existing meaning instead of introducing a new inconsistency.
+- [2026-08-18][PEP-10] DONE: always-on conventions viewer (`legibility/always_on.py`, three
+  `/api/legibility/always-on*` routes, an `AlwaysOnConventions` section inside `#/settings/legibility`)
+  plus the three domain-craft bundled skills the plan names — `web-verify`, `document-authoring`,
+  `research-campaign`. The viewer does NOT re-derive the always-on set: the global tier is parsed out of
+  `SkillsLoader.get_context(agent=…)` (the exact string a session receives) and the project tier comes
+  from `project_context.inlined_context_files` (the repo's own CONTENT-based answer to "what did the
+  project block actually inline") plus the same readers `_project_context_preamble` calls. No parallel
+  always-on store was added, per the 2026-08-05 DISCOVERY above.
+- [2026-08-18][PEP-10] DISCOVERY: `ContextBuilder.build_session_context` — the single composer every
+  session runs through (`context.build_message` calls it; gateway/context_engine/subagent all call
+  `build_message`) — is NOT a pure read. It routes the skill block through the budgeted ambient
+  allocator, which calls `_record_ambient_measurements` and persists a budget-utilization sample plus a
+  cadence-gated ablation sweep. So a GET viewer must not assemble a prompt: a read-only legibility
+  surface that mutated learning telemetry on every page open would be a defect. The runtime reads the
+  producers; `tests/test_legibility_always_on.py` closes the gap by asserting every viewer item is a
+  substring of a really-assembled `build_session_context()` output, with a vacuity floor.
+- [2026-08-18][PEP-10] DISCOVERY: ZERO bundled skills ship `always: true` — measured across all
+  fifteen bundled skills. The always-on skill tier is therefore EMPTY on a fresh home, which made the
+  divergence rail vacuous by default (empty viewer vs empty prompt passes forever). Every rail in the
+  new test file plants content and asserts it was non-trivial before comparing, and the viewer names
+  its own mechanism ("always: true in a skill's SKILL.md frontmatter") instead of rendering blank.
+- [2026-08-18][PEP-10] DISCOVERY: `project_context.write_overview` swallows its own `OSError` and
+  reports failure as a bare `False`; because the write is atomic the previous text survives intact. A
+  caller that ignored that `False` would render "Saved" over a silently discarded edit, so
+  `write_instruction` raises `InstructionWriteError` and the PUT answers 4xx/5xx with a reason — never
+  `ok: true`. The frontend keeps the draft on screen on failure, since it is the user's only copy.
+- [2026-08-18][PEP-10] DEVIATION: SP8.1 says the viewer goes in the Capabilities area; it shipped as a
+  section inside `#/settings/legibility` instead (owner-fenced to `web/src/pages/settings/`). It is
+  searchable from the Settings home tile via added "always-on conventions" search text. Named
+  `AlwaysOnConventions.tsx`, not `*Panel.tsx`, because `panelHeadingLevel.test.tsx` correctly treats
+  every `*Panel.tsx` as a sub-route page requiring a `<PanelHeader>` h1 — this is a section, not a page.

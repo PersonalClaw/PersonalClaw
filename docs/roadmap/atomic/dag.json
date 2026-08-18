@@ -7188,7 +7188,7 @@
         {
           "id": "PEP-10",
           "title": "Always-on conventions viewer + first domain-craft skills",
-          "status": "todo",
+          "status": "done",
           "scope": "Add an 'Always-on' viewer to the Capabilities area that lists, with provenance (global vs project), every always:true skill and project-instruction doc currently injected into sessions, with inline read/edit; reuse the skills/instruction security discipline (symlink-leaf rejection, atomic write preserving mode bits, trust-base containment). Do not introduce a parallel always-on 'steering' store - the always:true-skills + project-instructions layer is the single always-on mechanism; this adds only the missing legibility surface. Author the first domain-craft bundled skills: web-verify/preview, document-authoring, and research-campaign, each with the frontmatter contract and a worked example.",
           "done_when": "The viewer matches what a session actually receives (spot-checked against an assembled prompt) and editing a project instruction round-trips safely; the three new skills load and surface when relevant, validated in a real session.",
           "deps": []
@@ -7763,11 +7763,6 @@
       {
         "id": "PEP-9",
         "title": "React artifact build path",
-        "plan": "PEP"
-      },
-      {
-        "id": "PEP-10",
-        "title": "Always-on conventions viewer + first domain-craft skills",
         "plan": "PEP"
       },
       {
@@ -10157,9 +10152,9 @@
         "code": "PEP",
         "plan": "PRODUCT-EXPERIENCE-PARITY",
         "total_atoms": 11,
-        "done": 5,
+        "done": 6,
         "in_progress": 0,
-        "todo": 6,
+        "todo": 5,
         "blocked": 0
       },
       {

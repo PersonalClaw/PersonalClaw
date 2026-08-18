@@ -19,7 +19,7 @@ Each atom below executes start-to-finish in one go. If an atom lists dependencie
 | `PEP-7` | ✅ | Artifacts as an indexed knowledge source | — | Saving a markdown artifact makes it searchable in Knowledge without appearing in the Knowledge list; editing refreshes and deleting removes it from the index; enabling on a home with existing artifacts backfills exactly once and reboot doesn't re-run; a credential in an artifact is redacted before indexing; config round-trips. |
 | `PEP-8` | ✅ | Local static artifact deploy (webapp kind + serve route) | `PEP-6` | An html widget artifact renders at /artifacts/serve/<slug>/ and can be opened and interacted with in-app; a traversal attempt is refused; the served page cannot call /api (CSP fence validated explicitly); teardown removes the route. |
 | `PEP-9` | ⬜ | React artifact build path | `PEP-8`, `EXT:EXECUTION-ISOLATION:resource-limited-build-spawn` | A small React artifact builds and serves as static files through the deploy route and is interactable in-app; a build failure is legible, not a hang. |
-| `PEP-10` | ⬜ | Always-on conventions viewer + first domain-craft skills | — | The viewer matches what a session actually receives (spot-checked against an assembled prompt) and editing a project instruction round-trips safely; the three new skills load and surface when relevant, validated in a real session. |
+| `PEP-10` | ✅ | Always-on conventions viewer + first domain-craft skills | — | The viewer matches what a session actually receives (spot-checked against an assembled prompt) and editing a project instruction round-trips safely; the three new skills load and surface when relevant, validated in a real session. |
 | `PEP-11` | ⬜ | First-party product-app suite program | `EXT:ECOSYSTEM-TOOLING:exemplar-scaffold` | Each app ships as its own validated PR, is listed in the Store, and is recorded as a platform exemplar; the suite is delivered app-by-app in leverage order with reuse (docs ride document-handling, spec builder rides the workflow engine, meetings extends minutes) rather than rebuilt backends. |
 
 ## Atom scopes
@@ -257,7 +257,7 @@ Add a React build path for webapp artifacts: build once in a sandboxed, resource
 
 ### `PEP-10` — Always-on conventions viewer + first domain-craft skills
 
-**Status:** todo
+**Status:** done
 
 Add an 'Always-on' viewer to the Capabilities area that lists, with provenance (global vs project), every always:true skill and project-instruction doc currently injected into sessions, with inline read/edit; reuse the skills/instruction security discipline (symlink-leaf rejection, atomic write preserving mode bits, trust-base containment). Do not introduce a parallel always-on 'steering' store - the always:true-skills + project-instructions layer is the single always-on mechanism; this adds only the missing legibility surface. Author the first domain-craft bundled skills: web-verify/preview, document-authoring, and research-campaign, each with the frontmatter contract and a worked example.
 

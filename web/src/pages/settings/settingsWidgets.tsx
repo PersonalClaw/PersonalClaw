@@ -609,8 +609,10 @@ export const SETTINGS_WIDGETS: SettingsWidget[] = [
   },
   {
     id: 'legibility', group: 'System', label: 'Legibility', icon: Compass, size: 'md',
-    description: 'How PersonalClaw describes its capabilities — dashboard tips + project context files.',
-    useSearchText() { const { data: c } = useLegibility(); return `legibility discover tips tour features context adapters claude.md agents.md cursorrules ${c ? `tips ${!!c.discover_tips} context ${!!c.context_adapters}` : ''}` },
+    description: 'How PersonalClaw describes its capabilities — always-on conventions, dashboard tips, project context files.',
+    // "always-on conventions" is searchable here because the viewer lives INSIDE this subpage
+    // rather than as its own tile; a surface nobody can search for is one nobody finds.
+    useSearchText() { const { data: c } = useLegibility(); return `legibility always-on conventions always on rules injected every session project instructions overview provenance discover tips tour features context adapters claude.md agents.md cursorrules ${c ? `tips ${!!c.discover_tips} context ${!!c.context_adapters}` : ''}` },
     render(query, go) {
       const { data: c, error: legErr, refresh } = useLegibility()
       const save = (key: string, value: boolean) => mutate(

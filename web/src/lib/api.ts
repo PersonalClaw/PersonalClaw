@@ -1272,6 +1272,20 @@ export interface DiscoverTryIt { route: string; query: Record<string, string>; l
 export interface DiscoverTip { id: string; area: string; title: string; lesson: string; try_it: DiscoverTryIt }
 export interface DiscoverArea { area: string; tips: DiscoverTip[] }
 export interface DiscoverResponse { enabled: boolean; areas: DiscoverArea[]; visible_count: number; total: number }
+/** One always-on convention in effect right now (PEP-10). `preview` is credential-redacted;
+ *  `body` is only present on the single-doc editor read, where it is verbatim. */
+export interface AlwaysOnItem {
+  id: string; kind: 'always_skill' | 'project_instruction'; name: string
+  scope: 'global' | 'project'; source: string; path: string; chars: number
+  editable: boolean; read_only_reason: string; project_id: string; preview: string
+  body?: string
+}
+export interface AlwaysOnResponse {
+  items: AlwaysOnItem[]; project_id: string
+  counts: { total: number; always_skills: number; project_instructions: number }
+  /** How a user opts a skill INTO the always-on tier — so an empty tier can explain itself. */
+  always_skill_mechanism: string
+}
 export interface McpServer {
   name: string; command?: string; args?: string[]; status: string; tools: Array<string | { name: string; description?: string }>
   error?: string; source?: string; enabled?: boolean; presence?: Record<string, boolean>
@@ -3308,6 +3322,18 @@ export const api = {
   // point (deep link), never enable; dismissals persist server-side per tip. ──
   discover: () => get<DiscoverResponse>('/api/legibility/discover'),
   dismissDiscoverTip: (id: string) => post<{ ok: boolean; dismissed: string[] }>('/api/legibility/discover/dismiss', { id }),
+
+  // ── Always-on conventions viewer (PEP-10): what EVERY session receives, with
+  // provenance. The server slices these out of the session's own producer strings, so
+  // this list cannot drift from the assembled prompt. Bodies here are redacted previews;
+  // alwaysOnDoc fetches one verbatim for the editor. ──
+  alwaysOn: (projectId = '') =>
+    get<AlwaysOnResponse>(`/api/legibility/always-on${projectId ? `?project_id=${encodeURIComponent(projectId)}` : ''}`),
+  alwaysOnDoc: (id: string, projectId = '') =>
+    get<AlwaysOnItem>(`/api/legibility/always-on/doc?id=${encodeURIComponent(id)}${projectId ? `&project_id=${encodeURIComponent(projectId)}` : ''}`),
+  /** A refused or failed write REJECTS — the server never answers a discarded edit with ok:true. */
+  saveAlwaysOnDoc: (id: string, projectId: string, body: string) =>
+    put<{ ok: boolean; item: AlwaysOnItem }>('/api/legibility/always-on/doc', { id, project_id: projectId, body }),
 
   // ── Desktop integration (OS-gated; server runs the subprocess) ──
   /** Reveal a path in Finder (action 'reveal') or open with the default app ('open'). */
