@@ -456,6 +456,295 @@ that the plan's own rule applies: "anything structural waits for Phase 2 so fixe
 the full three-provider picture." They are filed above at their measured severity instead of
 being half-fixed.
 
+## Phase 1 results — codex verified matrix (atom `AAP-2`)
+
+**Swept:** 2026-08-17 · **Adapter:** `@agentclientprotocol/codex-acp` 1.1.4 ·
+**CLI:** `codex` 0.146.1.359 (stable) at `/Users/golani/.toolbox/bin/codex`, whose own
+`~/.codex/config.toml` sets `model_provider = "amazon-bedrock"`, `model = "openai.gpt-5.6-sol"`,
+`model_reasoning_effort = "xhigh"` · **Node** v24.18.0 · **Host:** this repo at AAP-1's tip
+(`bf0eb342`), isolated `PERSONALCLAW_HOME=/private/tmp/aap2-wt/.dev-home`, gateway on `:10431`,
+`PERSONALCLAW_AUTH_MODE=none`, `CODEX_ACP_BIN` pinned to the already-provisioned adapter with
+`PERSONALCLAW_ACP_NO_PROVISION=1` (so the sweep performs no `npm install` side effect).
+
+**Method.** Same shape as `AAP-1`: the `codex-agent` bundle was installed from the first-party
+apps dir into the isolated home (`POST /api/apps`), which registered the `acp:codex`
+ProviderEntry; dashboard chat sessions were bound to it
+(`POST /api/chat/sessions/{s}/acp-agent`) and driven through the audit §6 checklist over the
+same HTTP/SSE + WebSocket surfaces the dashboard uses — `POST /api/chat` for the turn (SSE),
+`/api/ws` for the activity, `tool_call`/`tool_result`, `approval` and telemetry frames the SSE
+stream does not carry, and the persisted `sessions/*.jsonl`, `security_events.jsonl`,
+`memory.db`, `learning.db` and `session_map.json` under the isolated home for the state half of
+every mutate → persist → consume cycle. Every mark names the command or artifact that produced
+it. **Note on isolation:** unlike the claude bundle there is no `PERSONALCLAW_CC_ISOLATE`
+equivalent for codex — `PersonalClawApps/codex-agent/provider.py` says so in its own docstring
+("Codex manages its own configuration and auth, so this bundle does **not** apply the
+`CLAUDE_CONFIG_DIR` isolation the Claude bundle needs"), so every codex ACP session on this
+machine runs against the operator's real `~/.codex`. That is measured below, not assumed.
+
+**Marks.** Same vocabulary as `AAP-1`: `CONFIRMED` — the runtime matches the audit's predicted
+verdict for that cell. `DIVERGED` — it does not; the observed verdict replaces the predicted
+one. `NOT-EXERCISED` — no runtime observation was obtained, with the reason stated; reading the
+code and reasoning that a cell *should* work is explicitly **not** a mark.
+
+### Observation ledger (codex)
+
+Ledger ids are `C…` so they never collide with `AAP-1`'s `O…`. `S1` = `chat-1-1787026836`
+(workspace_dir set to `…/.dev-home/scratch` **before** binding).
+
+| id | what was run | what was observed |
+|---|---|---|
+| `C1` | `POST /api/apps` with the first-party `codex-agent` dir, then `GET /api/agent-providers` | `acp:codex` registered, `ready: true`, `state: ready`, `detail: "initialize OK (caps: auth, loadSession, mcpCapabilities, promptCapabilities, providers, sessionCapabilities)"` — `loadSession` **is** advertised (as on claude); unlike claude there is no `_meta` capability |
+| `C2` | `GET /api/agent-providers/acp:codex/agents` | one agent (`id: acp:codex`, `name: "Codex"`, `provider_agent: ""`) → no persona axis; `models` = 5 live-discovered ids (`openai.gpt-5.6-sol`, `…-terra`, `…-luna`, `openai.gpt-5.5`, `openai.gpt-5.4`); **`supported_efforts` = `[]`** (claude advertised five); `permission_modes` = the same host-side list `default, acceptEdits, plan, dontAsk, bypassPermissions` |
+| `C3` | `POST …/{S1}/workspace-dir {"/private/tmp/aap2-wt/.dev-home/scratch"}` then `POST …/{S1}/acp-agent {provider:"acp:codex"}`, then `GET /api/chat/sessions` | both round-trip: `workspace_dir` = the scratch dir, `acp_provider: "acp:codex"` |
+| `C4` | S1 turn 1: "Run exactly one shell command: pwd … then list your available tool names verbatim, then YES/NO for knowledge_search, task_create, notify" | `pwd` → **`/Users/golani/.personalclaw/workspace`** — the escape reproduces on codex. Tool list: `exec_command, write_stdin, list_mcp_resources, list_mcp_resource_templates, read_mcp_resource, update_plan, request_user_input, apply_patch, view_image, get_goal, create_goal, update_goal, tool_search_tool, parallel`; `knowledge_search` **NO**, `task_create` **NO**, `notify` **NO**; no `personalclaw-core` MCP server. The turn's FIRST assistant chunk was the CLI's own notice — "Warning: Skill descriptions were shortened to fit the 2% skills context budget. Codex can still see every skill…" — i.e. the operator's real `~/.codex` skills/plugins loaded, and an adapter/CLI notice is rendered to the user as assistant prose |
+| `C5` | S1 turn 2: read `…/scratch/probe.txt`, create `…/scratch/written.txt`, `rm -f …/scratch/doomed.txt`; `/api/ws` captured and each card resolved with `POST …/approve {action:"approved"}` | the read auto-resolved with **no** card; the edit and the `rm` each raised one `approval` frame, both `risk: "destructive"`, both with **`tool: "unknown"`** and `tool_kind: ""`. `written.txt` was created (`HELLO`) and `doomed.txt` deleted only after approval. The sibling `tool_call` frames DO carry a real title and kind (`Read file '…'`/`read`, `Editing files`/`edit`, `rm -f …`/`execute`) and the edit's `input_preview` is a **unified diff** (`--- … +++ … @@ -0,0 +1 @@ +HELLO`), while `input` is `null` on all three; every `tool_result` carries `content_type: ""`, `raw_ref: ""`, `truncated: false`, `original_length: null`, `recovery_hints: []`. `Session created · default · auto · via acp:codex-acp` printed again on this second turn, and `Turn complete: 103 events, 3 tool calls, context 0%` with one `context_usage` frame `pct: 0.0` |
+
+| `C6` | S1 with `POST /api/chat/task-mode {mode:"ask"}` set before the turn, then "quote every context line containing 'Task mode' … then use apply_patch to create `ask-mode-probe.txt`" | the write was **blocked** — a `tool_call` (`kind: edit`) frame appeared, then **no `tool_result` at all** and the turn ended with the assistant message `*Conversation interrupted*`; the file was never created. SEL: `unknown | denied | {"reason": "task_mode:ask"}`. The model's step-1 answer quoted `## Task mode: Agent` (its 4th turn on a session whose first three ran in agent mode, so live-vs-replayed could not be separated here) |
+| `C7` | S2 = a FRESH session, provider bound, `task_mode=plan` set **before** its first turn, then "quote 'Task mode' lines … state your CLI's approval mode … use apply_patch to create `plan-mode-probe.txt`" | the CLI **called `apply_patch` anyway** (`tool_call`, `kind: edit`) — no `update_plan`, no plan artifact, no sign of a native plan mode. The host blocked it and the turn again ended `*Conversation interrupted*` before the model answered steps 1-2. File never created |
+| `C8` | S2: sent the literal message `/compact` | identical failure to claude: `Prompt error: {'code': -32601, 'message': '"Method not found": _vendor.dev/commands/execute'}`, no plain-prompt fallback, no compaction |
+| `C9` | S2: "use your `request_user_input` tool right now to ask me to choose RED or BLUE" | `request_user_input` **failed CLI-side**: "`request_user_input is unavailable in Default mode`". No host card, no `approval` frame, **no SEL row**, and the turn's telemetry counted `0 tool calls` |
+| `C10` | S1: six `cat /nonexistent-aap2-probe-N` commands, one tool call each, "do not stop early"; 30 s in, a second `POST /api/chat` was sent while the turn was running | all six ran and failed (`exit_code: 1` each) → **no warn, no block, no circuit abort, no steering injection**; `Turn complete: 28 events, 6 tool calls`. The mid-turn message returned `{"ok": true, "queued": true}` and produced a `queue_push` frame with a `queue_id`; after the turn a `queue_pop` + `chat_user_message` fired and it ran as its own turn (the reply was `QUEUED`). Note the six shell calls arrived titled `Read file '…'` with `kind: read` and auto-approved as `risk: safe` |
+| `C11` | S1: one compound command `cat …/probe.txt && rm -f …/canary.txt`, card policy = **reject** | the adapter titled it with the raw command, the host classified it `kind: execute` / `risk: destructive` and raised a card; rejecting it left `canary.txt` **intact** and the turn continued normally (`tool_result` with `exit_code: null`, `Turn complete`). So the read/safe auto-approve is not spoofable by hiding a mutation behind a read, and a *host rejection* is graceful |
+| `C12` | S3 bound with `{model: "openai.gpt-5.4", reasoning_effort: "low"}`, then "name your exact model id; state your reasoning effort; list every MCP server available to you" | the bind echoed both values and the activity line read `Session created · default · openai.gpt-5.4 · via acp:codex-acp`; `gateway.log` shows `ACP model: openai.gpt-5.4`. The CLI answered that its model id and effort are **"not exposed to me in this session"**, and listed **12 MCP servers — all the operator's own** (`builder-mcp`, `slack-mcp`, `aws-mcp`, `pippin-mcp`, `spec-studio-mcp`, `weblab-mcp`, `sage-plus-service-mcp`, `concur-mcp`, `apd-aura-mcp`, `aurora-helios-mcp`, `change-management-mcp`, `feebas-service-mcp`) — and nothing from PersonalClaw |
+| `C13` | S3 turn 2: a correction ("No - stop doing that. Always answer me in exactly one sentence from now on, never more.") | two `activity_event`s of kind `learned`: `Learned: never more` and `Learned: User correction to honor: …` — the identical poor extraction AAP-1 measured. In the same turn `gateway.log` logged `ACP model: auto (from agent config)` for the newly spawned process — the session's pinned `openai.gpt-5.4` was **not** re-applied on turn 2, while the activity line still printed `openai.gpt-5.4` |
+| `C14` | state under the isolated home after 10 turns: `ls session_pid_*.txt`, `session_map.json`, `sqlite3 memory.db`/`learning.db`, plus `ps` descendant counts | three `session_pid_<pid>.txt` files → one per session, **three different PIDs** (so no process sharing, and the subagent inject-back precondition holds). `session_map.json` holds a `sid` per session and **no `cwd`**. After turns carrying 6 and 3 tool calls: `memory_events` had **zero** rows; the only rows in `memory.db`/`learning.db` appeared after the **0-tool** correction turn (2 lesson rows + one `user.selfmodel.pending…` row whose payload is `{"pattern": "PersonalClaw + no-tools", "tools": [], "succeeded": true}`). Each live adapter carried **31 descendant processes** (the operator's MCP fleet — `gateway.log`: `Tracked 34 descendant PIDs`), 93 across three sessions |
+| `C15` | `POST …/{S1}/fork`, then `POST …/{S2}/regenerate` | the fork (`chat-4-…`) carries all 14 messages with `acp_provider: ""` — the branch loses the runtime. The regenerated assistant message carries `variants` (2) and `variant_idx: 1` |
+| `C16` | killed the gateway, restarted it with the same env, inspected every session, then sent one turn on S3 | **all three** sessions came back with `acp_provider: null`, `reasoning_effort: null`, `workspace_dir: null`, `mode: null` — while S3's `model` **survived** as `openai.gpt-5.4`. The turn on S3 resolved on the **native** axis and errored `no model provider resolves for use case 'chat'`; `Pool decision: key=dashboard:chat-3-… resume_sid=None model=None` — no `session/load` attempted despite `loadSession` being advertised (`C1`) |
+| `C17` | S1 re-bound, then: (a) a write card resolved with `{action:"trust"}`; (b) a second write with the poller disabled; (c) `task_mode=ask` set, then a third write | (a) `trust-a.txt` created; (b) **no card at all** — instead a second `tool_call` frame with `"auto": true` (and `tool: "unknown"`, `kind: ""`), and `trust-b.txt` created → session trust is live; (c) `trust-c.txt` was **never created** and SEL logged `unknown | denied | {"reason": "task_mode:ask"}` → **session trust does not bypass task mode** |
+| `C18` | S1: `sleep 45; echo DONE-AAP2` as one tool call, then `POST …/{S1}/stop` 40 s in; afterwards a turn asking the CLI to quote any context line containing "cancel"/"interrupted" | the stop returned `{"ok": true}` and emitted a `stop_event` (`state: stopping`), and one second later the turn ended with the error **`ACP prompt timed out`** rather than a cancellation notice. The follow-up turn could not resolve the preamble question: codex **declines to quote its context** ("I can't provide hidden context or instructions") |
+| `C19` | after the sweep: `find ~/.personalclaw ~/.codex -type f -mmin -120`, `sqlite3 -readonly ~/.codex/memories_1.sqlite`, then removal + re-verification by session id | `~/.personalclaw`: **zero** files written (the escaped cwd `~/.personalclaw/workspace` was entered but nothing was created there — every probe used absolute paths inside the isolated home). `~/.codex`: 7 conversation transcripts (`sessions/2026/08/17/rollout-…-<sid>.jsonl`) and 7 `shell_snapshots/<sid>.*.sh` keyed to this sweep's ACP session ids, plus codex's own sqlite WAL/otel/tmp churn. `memories_1.sqlite` was touched but is **empty** (`jobs: 0`, `stage1_outputs: 0`) — no memory was written. All 14 attributable files were deleted and re-verified: a `find ~/.codex -name "*<sid>*"` over all 16 sweep session ids now returns **0** |
+
+### 4a. Prompt-side context — codex column
+
+| Feature | audit said | mark | runtime verdict | evidence |
+|---|---|---|---|---|
+| Memory recall injection (turn-0 context) | WIRED | CONFIRMED | WIRED | `C4`, `C7`, `C12` — `Injected 10,403 / 15,569 / 11,169 chars of context (memory, lessons, history, episodic)` on each fresh session, and `C6` shows an injected framing line quoted back verbatim |
+| Knowledge context (@-mention + picker `meta.knowledge`) | WIRED | NOT-EXERCISED | — | no `meta` payload was sent; the specific injector was never driven |
+| Attachments/paste (extracted text prepended) | WIRED | NOT-EXERCISED | — | as above |
+| @prompt expansion (+ typed vars, snippets) | WIRED | NOT-EXERCISED | — | as above |
+| Skills index in context + `skill_invoke`/`skill_search` execution | PARTIAL | CONFIRMED | PARTIAL | `C4` — no `skill_invoke`/`skill_search` in the CLI's tool list, while SEL carries `skill_surface` / `surfaced` rows and `gateway.log` logs `Surfaced skills: task-and-project`: the index text goes in, the tools do not |
+| Session-live skill drafts (`skill_remember`) | PARTIAL | CONFIRMED | PARTIAL | `C4` — no `skill_remember` in the tool list |
+| Task-mode framing (Agent/Ask/Plan/Build suffix) | WIRED | CONFIRMED — presence only | the framing block IS injected; whether its value tracks the live mode was NOT separable | `C6` — the CLI quoted `## Task mode: Agent`, but on a session whose earlier turns ran in agent mode, so replayed history is an equally good explanation. `C7` (the fresh-session control) died on the tool denial before answering, and `C18` shows codex otherwise refuses to quote its context |
+| Agent profile system prompt / voice layer | PARTIAL | NOT-EXERCISED | — | no agent profile with a distinctive `system_prompt` was bound |
+| Project binding (context preamble + cwd) | WIRED | **DIVERGED** | the cwd half does not work | `C4` — `workspace_dir` was set to the scratch dir **before** binding and `pwd` inside the spawned CLI answered `/Users/golani/.personalclaw/workspace`; `gateway.log` shows `cwd=…/.dev-home/scratch pool_cwd=/Volumes/workplace/personalclaw-workspace`, so neither the session's dir nor the pool's reaches the process. The preamble half was not separately measured (`C18`) |
+| project_id → artifact stamping | ABSENT | CONFIRMED | ABSENT (stronger) | `C4` — `artifact_save` is not reachable at all, so there is nothing to stamp |
+| Persona injection (Lumon theme) | WIRED | NOT-EXERCISED | — | the persona toggle was never enabled |
+| Cancelled-turn preamble re-injection | WIRED | NOT-EXERCISED | — | attempted: `C18` cancelled a turn mid-tool, but codex declines to quote its context, so no verdict on the re-injection |
+| Compressed thread-history bootstrap (new process) | WIRED | CONFIRMED | WIRED | every turn spawns a NEW adapter process (`Session created` + a new PID each turn) and continuity held across 10 turns on S1; `C6` shows prior-turn text replayed into a later turn |
+
+### 4b. Approvals / permissions / safety — codex column
+
+| Feature | audit said | mark | runtime verdict | evidence |
+|---|---|---|---|---|
+| Interactive approval cards | WIRED | CONFIRMED | WIRED | `C5` (two cards in one turn, both resolvable), `C11` (a card rejected, the tool did not run) |
+| trust_reads (effective-safe auto-approve) | PARTIAL | CONFIRMED | PARTIAL | `C4`/`C5`/`C10` — `pwd`, a file read and six `cat` calls auto-resolved with `risk: safe`; the classification is title-driven (the adapter titles an `exec_command` "Read file '…'"), but `C11` shows a compound command that hides a mutation behind a read is still classified `execute`/`destructive` |
+| Trust (session) / YOLO (global) auto-approve | WIRED | CONFIRMED (session trust) | WIRED for session trust; YOLO not exercised | `C17` — after one `{action:"trust"}` the next write ran with no card, surfacing a `tool_call` frame with `"auto": true` |
+| Per-agent approval floor ("Always allow") | WIRED | NOT-EXERCISED | — | no agent profile with `approval_mode: auto` was bound |
+| Task-mode enforcement BEFORE approval (trust can't bypass) | PARTIAL | CONFIRMED | WIRED — and the bypass question is now closed | `C17` — with session trust ACTIVE, an ask-mode write was still denied (`reason: task_mode:ask`) and the file never appeared. Also `C6`, `C7`. Across the whole sweep no ACP tool executed without passing the host gate |
+| Plan mode → native backend plan | WIRED | **DIVERGED** | ABSENT — plan is enforced only by the host gate | `C7` — plan set BEFORE a fresh session's first turn; the CLI still called `apply_patch` and never called `update_plan`. This is the shape the audit predicted for kiro, not for codex |
+| Hard deny-list (`security.is_denied`) pre-execution | ABSENT | NOT-EXERCISED | — | no deny-listed command was driven on codex (the `rm` in `C5` reached a card rather than a pre-block, but `rm -f <file>` is not known to be on the list) |
+| PreToolUse hooks blocking execution | PARTIAL | NOT-EXERCISED | — | no hook was installed during the sweep |
+| PostToolUse / Stop / SessionStart / UserPromptSubmit / Error hooks | WIRED | NOT-EXERCISED | — | as above |
+| SEL audit of every executed tool + effective risk | WIRED | CONFIRMED | WIRED, with two blind spots | `C5`/`C10`/`C17` — hash-chained `tool_invocation` rows with `tool_kind` and `metadata.risk` for every executed tool plus `approved`/`denied` decisions. Blind spot 1: every permission/decision row is named **`unknown`** (`C5`, `C17`). Blind spot 2: a CLI-side refusal is invisible — `C9`'s `request_user_input` failure produced no row at all |
+| Unattended mode (strip interactive tools + fail-fast approvals, T5) | ABSENT | NOT-EXERCISED | — | same blocker as AAP-1: this isolated home has no model provider, so a loop fails on provider resolution (`C16`) before any ACP worker turn |
+| Dry-run replay (T9 observe mode) | ABSENT | NOT-EXERCISED | — | no dashboard entry point to drive as-a-user |
+| OS sandbox wrap of the agent process | WIRED | NOT-EXERCISED | — | sandbox mode left at its default; no confinement boundary probed |
+| Isolated CLI config hardening (`PERSONALCLAW_CC_ISOLATE`) | WIRED (opt-in) | **DIVERGED** | there is NO equivalent for codex — not opt-in, absent | `PersonalClawApps/codex-agent/provider.py` states the bundle deliberately applies no config isolation, and the measured consequences are `C12` (all 12 of the operator's MCP servers live in-session), `C4` (the operator's skills/plugins loaded — the CLI said so in its own warning), `C14` (31 descendant processes per session) and `C19` (7 conversation transcripts + 7 shell snapshots written into the operator's real `~/.codex`) |
+
+### 4c. Tools — codex column
+
+| Feature | audit said | mark | runtime verdict | evidence |
+|---|---|---|---|---|
+| Filesystem/shell tools (cwd-confined + extra_tool_roots) | PARTIAL | **DIVERGED** — worse | PARTIAL, and NOT cwd-confined | `C4` — the CLI's `exec_command`/`apply_patch` run in `~/.personalclaw/workspace` regardless of the session's `workspace_dir`, and reached arbitrary absolute paths under `/private/tmp` freely (`C5`, `C17`) |
+| Full native tool registry (knowledge/tasks/loops/inbox/memory/artifacts/workflows/subagents/web/schedule) | UNKNOWN | CONFIRMED (§5 gap 1 predicted "likely absent") | **ABSENT** | `C4` — the CLI's 14 tools are all its own; `knowledge_search` NO, `task_create` NO, `notify` NO, no `personalclaw-core` MCP server |
+| Tool disable prefs (PT3/UT4 per-tool + per-provider) | ABSENT | NOT-EXERCISED | — | no tool-disable pref was set |
+| Per-turn tool retrieval + progressive disclosure (`tool_search`/`tool_schema`) | ABSENT | CONFIRMED | ABSENT | `C4` — the CLI enumerated only its OWN tools, including its own `tool_search_tool`; no host-injected retrieval tools |
+| Failure breaker (warn@3/block@5/circuit@30) | ABSENT | CONFIRMED | ABSENT | `C10` — six consecutive failing tool calls in one turn, zero warn/block/circuit output |
+| Structural loop detection (no-progress/ping-pong) | ABSENT | CONFIRMED | ABSENT | `C10` — six identically-shaped failures, no steering injection or abort |
+| Typed tool-result meta (content_type/raw_ref/truncated/recovery_hints/ok) | ABSENT | CONFIRMED | ABSENT (empty, not fabricated) | `C5` — every `tool_result` carries `content_type: ""`, `raw_ref: ""`, `truncated: false`, `original_length: null`, `recovery_hints: []` |
+| Structured tool-input rendering (dict → schema-driven fields) | ABSENT | CONFIRMED | ABSENT — and for codex the structured payload IS on the wire | `C5` — `input: null` on every frame while `input_preview` holds flattened text; `gateway.log` at DEBUG shows the wire frame carrying `content: [{type: "diff", oldText: None, newText: "HELLO\n", path: "…", _meta: {kind: "add"}}]` |
+| File-change diff chips (write/edit before-after) | ABSENT | CONFIRMED | ABSENT — with the raw material fully structured, not merely inferable | same DEBUG frame as above: codex-acp sends a real diff object per edit, and zero `diff`/`file_change`/`old_string`/`new_string` keys reach the frontend |
+| AskUserQuestion card | UNKNOWN | CONFIRMED (audit: fires only if the CLI exposes an identically-named tool) | **ABSENT** | `C9` — codex *has* a `request_user_input` tool, and it fails CLI-side ("unavailable in Default mode"); no card, no SEL row, `0 tool calls` counted |
+| Subagents (`subagent_run` + completion inject-back) | UNKNOWN | CONFIRMED | **ABSENT** — precondition holds | `C4` — no `subagent_run` tool. `C14` — the `session_pid_<pid>.txt` file the inject-back depends on IS written for codex sessions |
+| MCP tools (external servers) | PARTIAL | CONFIRMED | PARTIAL — and the subset is the OPERATOR'S | `C12` — 12 servers, all from the operator's real `~/.codex/config.toml`; nothing from PersonalClaw's `mcp.json` |
+| Queue-steering mid-turn (#37) | ABSENT | CONFIRMED | ABSENT — the message queues instead | `C10` — a mid-turn send returned `{"queued": true}` and ran as its own turn afterwards; no steering injection into the live turn |
+
+### 4d. Learning / memory — codex column
+
+| Feature | audit said | mark | runtime verdict | evidence |
+|---|---|---|---|---|
+| Preference-facet capture (every turn) | WIRED | CONFIRMED | WIRED | `C13` — `activity_event` kind `learned`: "Learned: never more" (the same poor extraction as claude, from the same sentence shape) |
+| Correction→lesson review | WIRED | CONFIRMED | WIRED | `C13`, `C14` — "Learned: User correction to honor: …" plus a `per_turn|lesson` row in `learning.db staging` and two rows in `semantic_memory` (one superseding the facet) |
+| Procedural-outcome capture (M5d tool-outcome drain) | ABSENT | CONFIRMED | ABSENT | `C14` — after turns of 6 and 3 tool calls, `memory_events` was empty; the only rows appeared after the **0-tool** correction turn, and the self-model row that did land records `"tools": []` |
+| Skill-ladder review (4-tier, propose-only) | WIRED | NOT-EXERCISED | — | needs a model provider, which this isolated home lacks |
+| Memory consolidation on session end | WIRED | NOT-EXERCISED | — | same reason |
+| Incognito/restricted no-write guarantees | WIRED | NOT-EXERCISED | — | no incognito/restricted session was driven |
+
+### 4e. Session / conversation mechanics — codex column
+
+| Feature | audit said | mark | runtime verdict | evidence |
+|---|---|---|---|---|
+| Variants / regenerate (‹n/N› switcher) | WIRED | CONFIRMED | WIRED | `C15` — the regenerated assistant message carries `variants` (2) and `variant_idx: 1` |
+| Edit & resend, branch continuation (fork) | WIRED | CONFIRMED with a caveat | WIRED, but the branch loses the runtime | `C15` — the fork carries all 14 messages with `acp_provider: ""` |
+| Queued messages (merge/pop + live bubbles) | WIRED | CONFIRMED | WIRED end-to-end | `C10` — `queue_push` (with `queue_id`) during the turn, then `queue_pop` → `chat_user_message` → the queued message ran as its own turn. (This closes one of AAP-1's residuals) |
+| Empty-turn auto-retry | WIRED | NOT-EXERCISED | — | no empty turn occurred across 17 turns; not forceable as-a-user |
+| Auto-nudge re-arm (loops) | WIRED | NOT-EXERCISED | — | loop-only; blocked by the missing model provider |
+| Context-% accounting | PARTIAL (UNKNOWN which backends emit) | **DIVERGED** | the chip is EMITTED but always reports a fabricated `0%` | `C4`, `C5`, `C10` — a `context_usage` frame with `pct: 0.0` and `Turn complete: … context 0%` on **every** one of 17 turns, including turns carrying 15 KB of injected context |
+| Compaction | WIRED (CLI-owned `/compact`) | **DIVERGED** | ABSENT via the host | `C8` — `/compact` errors `-32601`; nothing compacts |
+| Slash commands (via `stream_command`) | WIRED (protocol `commands/execute`) | **DIVERGED** | ABSENT — no plain-prompt fallback | `C8` — byte-identical failure to claude's, from a different adapter and a different CLI: `_vendor.dev/commands/execute` is not a method either adapter implements, so this is a host-side defect, not one adapter's gap |
+| Session resume across gateway restarts (`session/load`) | PARTIAL (falls to `session/new` + compressed history) | **DIVERGED** — worse | ABSENT, and the runtime silently changes | `C1` (the adapter advertises `loadSession`), `C16` — after a restart **every** session's `acp_provider`/`mode`/`workspace_dir`/`reasoning_effort` is cleared while the pinned `model` survives, `resume_sid=None` (no `session/load`), and the next turn resolves on the native axis |
+| Warm pool / instant start | WIRED | CONFIRMED (pool present, cold on this run) | WIRED-but-cold | `gateway.log` — `pool_size=0 pool_qsize=0` on every `Pool decision`, and a fresh `Spawned codex-acp` per turn |
+| Concurrent sessions on one process (P9) | ABSENT (dialect False) | CONFIRMED | ABSENT | `C14` — three concurrently-bound codex sessions hold three DIFFERENT adapter PIDs |
+| Pipe-death auto-retry / re-queue | WIRED | NOT-EXERCISED | — | no adapter process was killed mid-turn |
+| Model override per session (composer picker) | WIRED | **DIVERGED** | applied on the session's FIRST turn only | `C12` — `ACP model: openai.gpt-5.4` on turn 1; `C13` — `ACP model: auto (from agent config)` on turn 2 of the same session, while the activity line kept printing `openai.gpt-5.4`. The CLI cannot self-report its model, so honoring was never verifiable from its side |
+| Reasoning effort per turn | WIRED | **DIVERGED** | the axis does not exist on codex, yet the host accepts a value | `C2` — discovery returns `supported_efforts: []`; `C12` — the bind still accepted, stored and echoed `reasoning_effort: "low"`, and the CLI reports its effort is "not exposed" |
+| Agent/persona selection | ABSENT (no persona axis) | CONFIRMED | ABSENT — and no dead UI | `C2` — exactly one agent with `provider_agent: ""` |
+| Discovered-agent ephemeral binding (chat picker → `POST …/acp-agent`) | WIRED | CONFIRMED | WIRED, and *ephemeral* is literal | `C3` (the bind round-trips), `C15`/`C16` (lost on a fork and on a restart) |
+| Turn telemetry (event/tool counts, tokens, cost estimate) | WIRED | CONFIRMED | WIRED (counts), context-% fabricated | `C5`, `C10` — `Turn complete: 103 events, 3 tool calls, context 0%` |
+
+### Mark counts (codex, the same 63 audit cells)
+
+| mark | count |
+|---|---|
+| CONFIRMED (runtime matched the audit's prediction) | 33 |
+| DIVERGED (runtime contradicted it) | 10 |
+| NOT-EXERCISED (no runtime observation obtained; reasons below) | 20 |
+
+All four of the audit's literal `UNKNOWN` cells are now definite for codex (full native registry → ABSENT,
+AskUserQuestion → ABSENT, subagents → ABSENT, context-% → emitted-but-fabricated), as are the two the
+plan called out for codex specifically (compaction → ABSENT, slash commands → ABSENT-and-erroring).
+
+### Residual not-exercised cells (codex, and why)
+
+1. **Needs a model provider in the isolated home** (4): unattended mode, auto-nudge re-arm,
+   skill-ladder review, memory consolidation. A loop/cron run fails on
+   `no model provider resolves for use case 'chat'|'background'` (`C16`) before any ACP worker
+   turn, so a wedge/no-wedge verdict would measure the wrong thing.
+2. **Needs a fixture that was not built** (10): knowledge @-mention, attachment/paste, @prompt
+   expansion, agent-profile system prompt, per-agent approval floor, PreToolUse hooks, the other
+   five hook kinds, tool-disable prefs, Lumon persona injection, incognito/restricted.
+3. **Needs timing/failure injection that did not land** (2): empty-turn auto-retry, pipe-death
+   auto-retry.
+4. **No as-a-user entry point** (2): dry-run replay, OS sandbox confinement probe.
+5. **Blocked by codex's refusal to disclose its own context** (1): cancelled-turn preamble
+   re-injection — the cancel was performed (`C18`) but the re-injection could not be read back.
+   This is why `G26` below is filed as a methodology gap.
+6. **No deny-listed command was driven** (1): the hard deny-list cell.
+
+### Gap inventory — severity-ranked (codex findings, continuing AAP-1's numbering)
+
+**Cross-provider confirmations first.** Eleven of AAP-1's sixteen findings reproduce on codex with
+a different adapter, a different CLI and a different vendor, which promotes them from
+"claude-code behavior" to **host-side defects**: `G1` (cwd/home escape — `C4`), `G3` (no
+`personalclaw-core` surface — `C4`), `G4` (slash commands error, no fallback — `C8`, byte-identical
+error text), `G5` (a restart silently changes the runtime — `C16`, and here it clears *all*
+sessions), `G6` (no host-side brake — `C10`), `G7` (no procedural capture — `C14`), `G8` (fabricated
+`0%` — every turn), `G13` (a fork loses the binding — `C15`), `G14` (the activity line names the
+adapter: `via acp:codex-acp` — `C4`), `G15` ("Session created" on every turn — `C5`), `G16` (the
+identical `Learned: never more` extraction — `C13`). `G2` does **not** reproduce in the same shape;
+it is worse, and is refiled as `G17`.
+
+**P0 — safety**
+
+- **`G17` codex has no config-isolation lever at all — `PERSONALCLAW_CC_ISOLATE` has no equivalent.**
+  Where the claude bundle ships an opt-in hardening flag that `AAP-5` can promote to a default, the
+  codex bundle applies none *by design* (`PersonalClawApps/codex-agent/provider.py` docstring:
+  "Codex manages its own configuration and auth, so this bundle does **not** apply the
+  `CLAUDE_CONFIG_DIR` isolation the Claude bundle needs"). Measured consequences of that default:
+  all **12** of the operator's own MCP servers are live inside every host-managed ACP session
+  (`C12`) — including write-capable internal ones — the operator's skills/plugins load (`C4`), each
+  session drags **31 descendant processes** (`C14`), and the CLI writes conversation transcripts of
+  host-driven turns into the operator's real `~/.codex/sessions/` plus per-session shell snapshots
+  (`C19`). So `AAP-5`'s "make the isolated config the default for host-managed sessions" has
+  **nothing to flip** on codex: the mechanism must be built (codex reads `CODEX_HOME`), and until it
+  is, every codex ACP session inherits an unbounded, operator-specific tool surface that the host
+  neither declares nor gates. Owner: agent app bundle + core seam, `AAP-5`.
+
+**P1 — capability-dead**
+
+- **`G18` The approval card cannot name the tool it is approving on codex.** Every `approval` frame
+  and every SEL decision row reads `tool: "unknown"` with `tool_kind: ""` (`C5`, `C17`), so the
+  card shows only a raw payload and the audit trail records `unknown | approved`. Root cause is
+  host-side and exact: `src/personalclaw/acp/translate.py:263` takes `title` from the
+  `session/request_permission` frame's `toolCall`, and codex-acp's permission payload is only
+  `{toolCallId, kind, status}` (`gateway.log` DEBUG: `Permission toolCall payload: {'toolCallId':
+  …, 'kind': 'edit', 'status': 'pending'}`) — the human title lives on the *preceding* `tool_call`
+  frame. The same function already correlates the *input* across those two frames via the
+  `tool_call_inputs` cache, so the title and the `kind` (which **is** present on codex's permission
+  payload) are one cache lookup away. This also **corrects AAP-1's `G10`**, which concluded the
+  `kind` "lives on the `tool_call` frame, not the permission frame" — true for claude, false for
+  codex. Not fixed here: `acp/translate.py` is shared by all three providers and sits outside this
+  atom's fence. Owner: core seam, `AAP-8`.
+- **`G19` A task-mode denial kills the whole codex turn; a host rejection does not.** When ask or
+  plan mode denies a tool, the codex turn produces **no `tool_result`**, ends with the assistant
+  message `*Conversation interrupted*`, and the model never receives a denial it could react to
+  (`C6`, `C7`, `C17`) — nor does the user get claude's explanatory "(Ask mode — only read-only
+  tools run…)" line. A *rejected approval card* on the same provider is graceful: the tool gets a
+  `tool_result`, the model apologises and the turn completes (`C11`). So the automatic policy path
+  is the destructive one, and on codex a plan-mode session cannot even answer a question if it
+  decides to touch a tool first. Owner: core seam, `AAP-6`/`AAP-9`.
+- **`G20` The per-session model pin silently stops applying after the first turn.** `ACP model:
+  openai.gpt-5.4` on turn 1, `ACP model: auto (from agent config)` on turn 2 of the same session
+  (`C12`, `C13`), while the activity line keeps printing the pinned id — the user is told a model
+  that is no longer in force, with no restart required to reach that state. Same family as `G5`'s
+  binding loss but reachable in normal use. Owner: core seam, `AAP-7`.
+
+**P2 — fidelity**
+
+- **`G21` The reasoning-effort axis is a no-op on codex and the host does not know it.** Discovery
+  returns `supported_efforts: []` (`C2`), yet a bind with `reasoning_effort: "low"` is accepted,
+  persisted and echoed back (`C12`). §2.6's "grey the pill on kiro" fix must key off
+  `supported_efforts` and therefore covers codex too — otherwise the composer offers a control the
+  provider cannot honor.
+- **`G22` The host discards a fully structured diff that codex already sends.** Each edit's
+  `session/update` carries `content: [{type: "diff", oldText, newText, path, _meta: {kind: "add"}}]`
+  (`gateway.log` DEBUG, `C6`), and the frontend receives `input: null`, a flattened text
+  `input_preview`, and zero diff keys. AAP-1's `G9` proposed inferring chips *by kind*; on codex no
+  inference is needed — the before/after text is on the wire. Owner `AAP-8`; this raises §2.5's
+  ceiling from "chip" to "real diff".
+- **`G23` CLI/adapter notices are rendered to the user as assistant prose and persisted as
+  messages.** Every fresh codex session's first assistant chunk is "Warning: Skill descriptions
+  were shortened to fit the 2% skills context budget…" (`C4`, `C7`), stored in
+  `sessions/*.jsonl` as an assistant message — so it also feeds compressed history and the
+  auto-title prompt. Owner: core seam, `AAP-8`.
+- **`G24` A stop during a tool execution surfaces as an error, not a cancellation.**
+  `POST …/{s}/stop` returned `{"ok": true}` and emitted `stop_event` `state: stopping`; one second
+  later the turn ended with `ACP prompt timed out` (`C18`) — the user asked to stop and was shown a
+  timeout failure. Adjacent to the cancel-legibility work already on this branch. Owner: core seam.
+- **`G25` `request_user_input` exists on codex but is CLI-refused, invisibly.** The tool is in the
+  advertised list and returns "`request_user_input is unavailable in Default mode`"; the host counts
+  `0 tool calls` and writes **no** SEL row (`C9`). Mirror of `G11` on a different mechanism, and the
+  reason the AskUserQuestion cell is ABSENT rather than merely unreachable. Belongs in the §2.7
+  parity doc as a per-provider residual.
+
+**P3 — cosmetic / legibility / methodology**
+
+- **`G26` Prompt-side context cells cannot be validated by self-report on codex.** It declines —
+  "I can't provide hidden context or instructions" (`C18`) — which is why the task-mode framing,
+  persona and cancelled-turn-preamble cells could not be closed the way AAP-1 closed them on
+  claude. Validating those cells for codex (and probably kiro) needs a host-side way to dump the
+  assembled prompt for one turn (a debug endpoint or a `--dump-context` flag), and Phase 1's
+  "zero UNKNOWN" bar depends on it. Owner: whoever runs `AAP-3`; file as a harness need, not a
+  product feature.
+
+**Negative results worth keeping** (so nobody re-chases them): the read/safe auto-approve is **not**
+spoofable by hiding a mutation behind a read — `cat X && rm Y` is classified `execute`/`destructive`
+and gated (`C11`); session **trust does not** bypass task mode (`C17`); the adapter's descendant
+tracking **does** reap the MCP fleet — after the gateway was killed, zero adapters and no orphaned
+young MCP processes remained, and the ~120 `builder-mcp` processes on this machine are the
+operator's own pre-existing baseline, not a leak from the sweep (`C14`, `C19`); and codex wrote
+**nothing** into the real `~/.personalclaw` despite running with its cwd inside it (`C19`).
+
+### Incidental bugs fixed in-session (codex)
+
+**None.** The two host-side defects this sweep localised precisely — `G18` (the permission frame's
+title/kind are discarded in `src/personalclaw/acp/translate.py:263`) and `G19` (a task-mode denial
+returns no `tool_result`) — live in `acp/translate.py` and the chat-runner gate path, which are
+shared by all three ACP providers and outside this atom's fence. Per the plan's own rule
+("anything structural waits for Phase 2 so fixes land against the full three-provider picture")
+they are filed at their measured severity with the exact line and wire evidence instead of being
+half-fixed here.
+
 ## Execution log
 
 - 2026-08-17 — `AAP-1` **PARTIAL**. Ran the audit §6 checklist against `acp:claude-code`
@@ -471,3 +760,27 @@ being half-fixed.
   rather than to build a new gate. **DISCOVERY:** three cells the audit marked WIRED are broken
   (slash commands, session resume, project cwd) and one marked PARTIAL prints a fabricated
   number (context-%).
+- 2026-08-17 — `AAP-2` **PARTIAL**. Ran the audit §6 checklist against `acp:codex` (adapter
+  `@agentclientprotocol/codex-acp` 1.1.4, `codex` 0.146.1.359 on an Amazon-Bedrock model provider)
+  on an isolated home, 17 turns across 4 sessions plus a fork, a regenerate, a mid-turn stop and a
+  gateway restart. The same 63 audit cells marked: **33 CONFIRMED, 10 DIVERGED, 20 NOT-EXERCISED**
+  (residual list above). All four of the audit's literal `UNKNOWN` cells plus the two it flagged for
+  codex specifically (compaction, slash commands) are now definite. Ten findings filed `G17`-`G26`:
+  one P0, three P1s, five P2s, one P3/methodology. Zero incidental fixes — both precisely localised
+  defects live in `acp/translate.py` and the shared gate path, outside this atom's fence.
+  **DISCOVERY:** eleven of AAP-1's sixteen findings reproduce on a different adapter, CLI and
+  vendor (`G1`, `G3`-`G8`, `G13`-`G16`), which promotes them from claude-code behavior to host-side
+  defects; `/compact` fails with the byte-identical `-32601 _vendor.dev/commands/execute` error, so
+  `G4` is a host bug, not an adapter gap. **DISCOVERY:** `G2` does not reproduce — it is worse.
+  codex has **no** `PERSONALCLAW_CC_ISOLATE` equivalent at all (the bundle disclaims isolation by
+  design), so every host-managed codex session runs with the operator's 12 MCP servers live, their
+  skills loaded, 31 descendant processes, and writes host-driven conversation transcripts into the
+  operator's real `~/.codex` — `AAP-5` has no lever to flip here and must build one (`G17`).
+  **DISCOVERY:** codex's `session/request_permission` payload carries the `kind` that AAP-1's `G10`
+  said only the `tool_call` frame has, and its `session/update` carries a fully structured diff
+  (`type: diff`, `oldText`, `newText`, `path`) — the host discards both, so the approval card cannot
+  even name the tool (`G18`) and the diff chip §2.5 wants is already on the wire (`G22`).
+  **DISCOVERY:** three cells AAP-1 could not close are now closed on codex — queued messages drain
+  end-to-end, session trust does **not** bypass task mode, and plan mode is **not** native on codex
+  (only the host gate stops it, the kiro shape the audit did not predict here). A task-mode denial
+  also kills the entire codex turn (`G19`), while a rejected approval card is graceful.
