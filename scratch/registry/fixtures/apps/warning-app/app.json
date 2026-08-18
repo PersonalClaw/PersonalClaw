@@ -1,0 +1,16 @@
+{
+  "name": "registry-fixture-warning",
+  "version": "1.0.0",
+  "displayName": "Registry Fixture (warning)",
+  "description": "A search provider whose setup script downloads a data file.",
+  "author": "PersonalClaw contributors",
+  "license": "MIT",
+  "permissions": {
+    "network": true,
+    "storage": true
+  },
+  "provider": {
+    "type": "search",
+    "implementation": "provider:create_provider"
+  }
+}

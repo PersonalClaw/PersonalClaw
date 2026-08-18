@@ -58,3 +58,15 @@ guide. The file carries its own insertion instructions in an HTML comment, then 
 markdown to paste below a marker line. Every command in it was executed verbatim from an empty
 directory against a freshly-homed gateway; the wall-clock number in the text is measured, not
 a target.
+
+## 3. `registry/` → `github.com/personalclaw/registry`
+
+The community-listing data tier (`ET-3`): `registry.json` + its generated schema, `validate_registry.py`,
+three GitHub workflows, `CONTRIBUTING.md` (listing policy) and `DELISTING.md`, plus fixture apps the tests
+build real one-commit git repos from. Publish steps are in an HTML comment at the top of
+`registry/README.md`, same as `app-template/`.
+
+**Two things to know before publishing.** The validator only accepts `https://` repo URLs; `file://` needs
+`--allow-file-repos`, which the offline tests pass and **no workflow does** — that is pinned by a test, so the
+test affordance is not a production hole. And the listing policy in `CONTRIBUTING.md` marks its own
+provenance: four rules come from the plan, the rest are proposed and want an owner ruling.

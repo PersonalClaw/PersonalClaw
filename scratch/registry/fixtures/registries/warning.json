@@ -1,0 +1,14 @@
+{
+  "$schema": "../../registry.schema.json",
+  "apps": [
+    {
+      "name": "registry-fixture-warning",
+      "repo": "{{REPO_BASE}}/warning-app",
+      "types": ["search"],
+      "permissions_declared": ["storage", "network"],
+      "license": "MIT",
+      "maintainer": "personalclaw",
+      "added": "2026-08-18"
+    }
+  ]
+}

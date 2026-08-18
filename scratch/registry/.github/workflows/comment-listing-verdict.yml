@@ -1,0 +1,61 @@
+# Posts validate-listings.yml's verdict onto the pull request.
+#
+# `workflow_run` runs from the BASE repository, so it has a writable token even when
+# the PR came from a fork. It never checks out the PR's code and never runs anything
+# from it — it only downloads the artifact the validation job produced. (Same shape as
+# PersonalClaw core's pr-feedback.yml.)
+name: comment-listing-verdict
+
+on:
+  workflow_run:
+    workflows: [validate-listings]
+    types: [completed]
+
+permissions:
+  contents: read
+
+jobs:
+  comment:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    if: github.event.workflow_run.event == 'pull_request'
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: registry-validation
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Post or update the verdict comment
+        uses: actions/github-script@v9
+        with:
+          script: |
+            const fs = require('fs');
+            const marker = '<!-- registry-listing-validation -->';
+            const number = Number(fs.readFileSync('pr-number.txt', 'utf8').trim());
+            if (!Number.isInteger(number) || number <= 0) {
+              core.setFailed('the validation artifact carried no usable PR number');
+              return;
+            }
+            const report = fs.readFileSync('registry-report.md', 'utf8');
+            const body = `${marker}\n${report}`;
+            const { owner, repo } = context.repo;
+            const existing = await github.paginate(
+              github.rest.issues.listComments,
+              { owner, repo, issue_number: number, per_page: 100 },
+            );
+            const mine = existing.find(
+              (c) => c.body && c.body.includes(marker) && c.user.type === 'Bot',
+            );
+            if (mine) {
+              await github.rest.issues.updateComment({
+                owner, repo, comment_id: mine.id, body,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner, repo, issue_number: number, body,
+              });
+            }

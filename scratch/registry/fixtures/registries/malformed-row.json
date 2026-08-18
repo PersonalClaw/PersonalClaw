@@ -1,0 +1,15 @@
+{
+  "$schema": "../../registry.schema.json",
+  "apps": [
+    {
+      "name": "Registry_Fixture_Clean",
+      "repo": "{{REPO_BASE}}/clean-app",
+      "types": ["telepathy"],
+      "permissions_declared": "network",
+      "license": "",
+      "maintainer": "personalclaw",
+      "added": "18 August 2026",
+      "notes": "a field the schema does not define"
+    }
+  ]
+}
