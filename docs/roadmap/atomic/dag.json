@@ -7354,7 +7354,7 @@
         {
           "id": "PP-15",
           "title": "Widen the convergence core and wire `SupervisorPolicy` into it",
-          "status": "todo",
+          "status": "done",
           "scope": "`loop/tick.evaluate` is already the right shape \u2014 pure, restartable, exhaustive branch order, every input derived from persisted state, with a documented purity contract (I/O the decision implies happens in the adapter and its RESULT is fed back as `state.metric` next tick). It is consumed by exactly ONE kind. Widening it to the full decision set makes it the single brain both engines call. Two members are missing from `Action`: `ESCALATE(rung)` \u2014 `loop_middleware`'s five rungs have no representation, so the loops engine fails binary after two consecutive errors \u2014 and `REPLAN`, whose absence is the sharper gap (see `WF2LOO-16`).",
           "done_when": "`Action` gains `ESCALATE(rung)` and `REPLAN`, `TickState` absorbs `loop_middleware.LoopState`'s counters (call fingerprints, fix fingerprints, failure classes, progress marks), and `evaluate` becomes the one convergence decision for both the `loop` node and the legacy loop kinds \u2014 driven by a `SupervisorPolicy` rather than by per-kind Python. Purity is preserved and re-proven: the same (cfg, state, now) yields the same `Decision`, and a restarted process re-derives it from persisted state alone. `REPLAN` queues a real mutation batch (`mutations.py`'s `insert`/`delete`/`move`/`run_from` applied at the controller's drain point) instead of the retry-with-a-hint it is today. Verified by the existing `evaluate` branch tests staying green plus new coverage for each added member, and by a run that re-derives its remaining steps from a judge critique.",
           "deps": [
@@ -7775,8 +7775,8 @@
         "plan": "PHF"
       },
       {
-        "id": "PP-15",
-        "title": "Widen the convergence core and wire `SupervisorPolicy` into it",
+        "id": "PP-16",
+        "title": "A Loop becomes a WorkflowRun (retire the second work-unit noun)",
         "plan": "PP"
       },
       {
@@ -10170,9 +10170,9 @@
         "code": "PP",
         "plan": "PLATFORM-PRIMITIVES",
         "total_atoms": 16,
-        "done": 14,
+        "done": 15,
         "in_progress": 0,
-        "todo": 2,
+        "todo": 1,
         "blocked": 0
       }
     ],
