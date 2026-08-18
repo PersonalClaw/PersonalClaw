@@ -57,7 +57,7 @@ an emptied class directory, an orphaned fixture, or a class that quietly stopped
 being exercised fails loudly instead of collecting zero tests and reading like a
 pass.
 
-## The five attack classes
+## The six attack classes
 
 | Class | The attack | The control that must refuse it |
 |---|---|---|
@@ -66,11 +66,37 @@ pass.
 | `verdict-evasion` | Whitespace and flag-order variants of `rm -rf /`; `base64 -d \| sh`; the read-credentials-then-egress pipeline spread over three lines; **trust-tier laundering** (the same malware declaring `builtin`); `force=True` against the non-overridable floor | `supply_chain.py::_scan_script` patterns, the proximity heuristic in the same function, and `supply_chain.py::SkillScanner._aggregate` — which must never downgrade `DANGEROUS` for any tier |
 | `invisible-char` | A bidi override in manifest prose and in a script; a zero-width space inside `rm` that takes the pattern rules out of play | `supply_chain.py::SkillScanner._scan_invisible` — bidi is `DANGEROUS`, zero-width is `WARNING`, and a community install must not proceed on the warning unconfirmed |
 | `degenerate-manifest` | A dangerous script padded past the scanner's per-file read cap; frontmatter missing, unclosed, or carrying a name outside the allowed charset; a payload with no `SKILL.md` at all | The oversized blob is skipped by `SkillScanner.scan` (by `supply_chain.py::_MAX_FILE_BYTES`, deliberately — the walk does not read unbounded files) and refused by the uncapped commit-side gate in `install_skill_files`; `marketplace.py::_validate_skill_md` rejects the degenerate manifests |
+| `baseline-tamper` | The packaged command denylist itself: a self-consistent rewrite of `baseline_denylist.json` (patterns *and* `sha256` both changed), a digest that disagrees with its patterns, an honest digest over zero patterns, an in-process `.clear()` of the live list, and the no-trusted-source-left state where the live list, the import-time snapshot and the file are all unverifiable at once | `security.py::_read_packaged_baseline` raises on a bad digest or an empty list; `baseline_denied_command_patterns()` heals the live list from the verified snapshot and, when nothing verifies, enforces the *union* rather than shrinking; `verify_baseline_denylist()` compares the file against the fingerprint captured at import and refuses to adopt a divergent one — every branch writing `baseline_denylist_reasserted` or `baseline_denylist_tamper_attempt` to the SEL |
 
 The oversize row is the one worth reading twice. Two controls disagree about the same
 bytes: the quarantine walk skips the blob, the commit-side scan refuses it. The
 corpus pins **both halves**, so removing the second one — the only control that
 actually stops it — reds immediately instead of leaving a size-gated bypass.
+
+`baseline-tamper` is the odd one out and deliberately so: the other five attack an
+incoming *artifact*, this one attacks the *denylist that judges it*. Added by **SH-7**
+alongside the mode-independence matrix in `tests/security/test_mode_independence.py`,
+which proves no approval mode — `default`, `auto`, `yolo`, `acceptEdits` — and no trust
+simulator can let a baseline-matched command run. That matrix is worthless if the
+baseline can be quietly shortened underneath it, so the two ship together.
+
+Every `baseline-tamper` case asserts the same **triple**, and all three legs matter:
+
+1. **Detected** — `verify_baseline_denylist()` reports `file_verified: false`, or the
+   real `_read_packaged_baseline()` raises.
+2. **Audited** — the SEL carries exactly one `baseline_denylist_tamper_attempt` (or
+   `baseline_denylist_reasserted` for the self-heal case) with the expected
+   `metadata.reason`. A tamper that raises but is never logged is invisible.
+3. **Still enforcing** — the commands the case names in `variants[]` are *still* refused
+   by `denied_command_reason()`, and a benign control is *still* allowed. Without the
+   benign half, a build that refused everything would pass leg 3.
+
+The class also drives the tamper through the **real** `_read_packaged_baseline` by
+rooting `security.resources` at a temp copy of the data file, rather than substituting a
+reader that re-implements the parse. The installed
+`src/personalclaw/baseline_denylist.json` is never written to — the copy lives under
+`tmp_path`, and `TestBaselineTamperClass::test_the_tamper_never_touches_the_installed_data_file`
+reds if a case ever leaks into the checkout.
 
 ## The scanned-bytes == installed-bytes invariant
 
@@ -118,12 +144,21 @@ file, run the class, watch it red, then restore.
 | Make `marketplace.py::_validate_skill_md` return no errors | `degenerate-manifest/missing-frontmatter` |
 | Make `marketplace.py::_stage_files` *skip* an unsafe path instead of raising | `archive/zip-slip-parent-escape` |
 | Have the commit write anything other than the scanned bytes | `integrity-race/refetch-swap` |
+| Rebind `security.py::_BASELINE_SHA256` to the tampered file's own digest | `baseline-tamper/self-consistent-file-rewrite` |
+| Make `security.py::_note_baseline_tamper` always return `False` | `baseline-tamper/snapshot-and-file-both-rebound` |
 
 The last two are chosen for a reason. The archive weakness is the plausible one — a
 gate that quietly drops the bad entry and installs the rest, which looks like
 robustness and is a bypass. And the integrity mutation is **not malicious**: it
 appends a comment. Byte equality catches a post-scan substitution even when the
 substituted bytes would pass the scan, which a verdict-only assertion never could.
+
+The two `baseline-tamper` rows split detection from audit on purpose. Rebinding the
+fingerprint is the exact bug the class exists to catch — a module that re-derives its
+fingerprint from the file it is verifying will happily adopt a self-consistent rewrite.
+Suppressing `_note_baseline_tamper` leaves detection *and* enforcement intact and only
+removes the audit trail; that is still a failure, so the rail must red on it rather than
+only on a shrink.
 
 ## Residual risks
 
