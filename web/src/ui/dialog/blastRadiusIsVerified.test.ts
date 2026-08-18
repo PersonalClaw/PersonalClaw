@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
+import { pyMethod } from '../../design/pySource'
 
 // ── A destructive dialog's body is a CLAIM about the backend ────────────────────────────────────
 //
@@ -252,5 +253,58 @@ describe('two more bodies: one corrected, one confirmed', () => {
     // disk-purge fallback because "Delete" used to 404 for a non-resident session, leaving its JSONL on
     // disk and letting the chat RESURRECT on reopen — the exact opposite of what this sentence promises.
     expect(del.slice(0, 6000)).toMatch(/letting it resurrect on reopen/)
+  })
+})
+
+describe('the project delete, and the two workflow bodies', () => {
+  it('says the LISTS go and the TASKS stay — which is the way round the code works', () => {
+    // 🪤 It said "task lists detached", which implies the lists survive unattached. They do not:
+    // `delete_project` unlinks each list file. What survives is the TASKS — separate files that become
+    // orphaned-by-list. The reassurance was pointed at the wrong noun.
+    const ui = web('pages/projects/ProjectsSection.tsx')
+    expect(ui).toContain('task lists are removed — the tasks themselves stay')
+    expect(ui, 'the misleading word must not come back').not.toContain('task lists detached')
+    const h = pyMethod(py('tasks/hierarchy.py'), '    def delete_project')
+    expect(h, 'list files are unlinked, not detached').toMatch(
+      /self\._list_path\(tl\.id\)\.unlink\(missing_ok=True\)/,
+    )
+    expect(h, 'and the tasks are explicitly NOT the provider\'s job here').toMatch(
+      /the task provider owns task deletion/,
+    )
+  })
+
+  it('the workspace-untouched half holds for the dialog that says it', () => {
+    // The rmtree DOES take the project's own `worktrees/` — but those exist only for bound loops/code
+    // work, and that case is refused without ?force and gets its own dialog. So this sentence is true
+    // wherever it is shown. Both halves pinned, because the guard is what makes the copy safe.
+    const h = pyMethod(py('tasks/hierarchy.py'), '    def delete_project')
+    expect(h, 'the project dir goes wholesale').toMatch(/shutil\.rmtree\(self\._project_dir\(project_id\)/)
+    const handler = py('tasks/hierarchy_handlers.py')
+    expect(handler, 'bound work is refused without force').toMatch(
+      /rmtree its worktrees out\s*\n?\s*#?\s*from under git/,
+    )
+    expect(web('pages/projects/ProjectsSection.tsx'), 'and the force path has its own warning')
+      .toMatch(/STOPS and REMOVES any bound loops/)
+  })
+
+  it('a workflow run really does keep its own spec copy', () => {
+    expect(web('pages/workflows/WorkflowsListPage.tsx')).toContain(
+      'Existing runs keep their own copy of the spec and are unaffected.',
+    )
+    expect(py('workflows/service.py'), 'the run persists its own spec at start')
+      .toMatch(/store\.write_spec\(run\.id, spec\)/)
+  })
+
+  it('cancel stops the run without deleting what finished', () => {
+    expect(web('pages/workflows/WorkflowRunDetail.tsx')).toContain('In-flight steps are stopped. Completed work is kept.')
+    const cancel = py('workflows/service.py').slice(
+      py('workflows/service.py').indexOf('def cancel_run('),
+      py('workflows/service.py').indexOf('async def delete_run('),
+    )
+    // The distinction the copy rests on: cancel requests a terminal status; DELETING a run is a separate,
+    // explicit call. If cancel ever started removing rows, "Completed work is kept" would be false.
+    expect(cancel, 'cancel does not delete').not.toMatch(/delete|rmtree|unlink/)
+    expect(py('workflows/service.py'), 'deletion is its own deliberate operation')
+      .toMatch(/async def delete_run\(/)
   })
 })

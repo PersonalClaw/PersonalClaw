@@ -81,7 +81,17 @@ function ProjectListPage({ onOpen, query, setQuery }: { onOpen: (id: string) => 
     setErr(null)
     if (!(await confirm({
       title: `Delete project "${proj.name}"?`,
-      body: 'Its context directory will be removed and its task lists detached. Workspace files on disk are left untouched.',
+      // 🪤 "task lists DETACHED" was the wrong word, and it pointed the wrong way — detached implies the
+      // lists survive unattached. `hierarchy.delete_project` unlinks each list file
+      // (`self._list_path(tl.id).unlink(...)`); what survives is the TASKS, which live in their own files
+      // and become orphaned-by-list ("tasks are re-homed by the caller / left orphaned-by-list — the task
+      // provider owns task deletion"). So the reassuring half is the tasks, not the lists.
+      //
+      // "Workspace files on disk are left untouched" holds for this dialog: the bound `workspace_dir` is
+      // an external path the delete never reads, and the project's own `worktrees/` — which the rmtree DOES
+      // take — only exist for bound loops/code work, which sends the user down the force path and its own
+      // dialog instead.
+      body: 'Its context directory and task lists are removed — the tasks themselves stay. Workspace files on disk are left untouched.',
       danger: true, confirmLabel: 'Delete',
     }))) return
     const run = async (force: boolean) => {
