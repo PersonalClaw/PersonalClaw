@@ -21,7 +21,7 @@ import { cx } from './cx'
  *  Modes (orthogonal): omit `onDismiss` for a non-dismissible strip; set
  *  `multiline` to top-align and wrap a multi-line message; set `animated` for the
  *  slide-in entrance used by transient banners. */
-export function InlineError({ children, onDismiss, icon = false, multiline = false, animated = false, className }: {
+export function InlineError({ children, onDismiss, icon = false, multiline = false, animated = false, className, onRetry }: {
   children: ReactNode
   /** Show a corner "×"; omit for a non-dismissible strip (e.g. chat turn errors). */
   onDismiss?: () => void
@@ -33,6 +33,10 @@ export function InlineError({ children, onDismiss, icon = false, multiline = fal
   animated?: boolean
   /** Per-site outer spacing, e.g. `mx-l mt-2`. */
   className?: string
+  /** Offer a "Retry" beside the message. For a FAILED READ inside a form field, where the field's
+   *  own control cannot be used until the read succeeds — `LoadError`'s centred empty-state
+   *  treatment is wrong at that scale, but the retry it offers is still the thing the user needs. */
+  onRetry?: () => void
 }) {
   const cls = cx('flex gap-2 rounded-lg px-3 py-2 text-[0.8125rem]', multiline ? 'items-start' : 'items-center', className)
   const style = { background: 'color-mix(in srgb, var(--color-danger) 10%, transparent)', color: 'var(--color-danger)' }
@@ -40,6 +44,12 @@ export function InlineError({ children, onDismiss, icon = false, multiline = fal
     <>
       {icon && <AlertTriangle size={14} className={cx('shrink-0', multiline && 'mt-0.5')} />}
       <span className={cx('min-w-0 flex-1', multiline && 'whitespace-pre-wrap break-words')}>{children}</span>
+      {onRetry && (
+        <button type="button" onClick={onRetry}
+          className="shrink-0 rounded-md px-1.5 py-0.5 underline decoration-dotted underline-offset-2 hover:opacity-70">
+          Retry
+        </button>
+      )}
       {onDismiss && <button type="button" onClick={onDismiss} aria-label="Dismiss" className="shrink-0 hover:opacity-70"><X size={14} /></button>}
     </>
   )
