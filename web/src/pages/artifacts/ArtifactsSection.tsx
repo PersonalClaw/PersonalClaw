@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { ArrowLeft, ChevronDown, FolderInput, MessagesSquare } from 'lucide-react'
 import { TopBar } from '../../ui/TopBar'
 import { HeaderActions } from '../../ui/HeaderActions'
-import { Loading } from '../../ui/ListScaffold'
+import { Loading, LoadError } from '../../ui/ListScaffold'
 import { SearchField } from '../../ui/SearchField'
 import { ResultAnnouncement } from '../../ui/ListControls'
 import { Segmented } from '../../ui/forms'
@@ -39,6 +39,9 @@ export function ArtifactsSection({ sub, navigate, query: routeQuery, setQuery }:
 
   const [artifacts, setArtifacts] = useState<Artifact[]>([])
   const [loading, setLoading] = useState(false)
+  /** The library read's rejection. Distinct from `artifacts.length === 0`, which a failure and an
+   *  empty library both produce — the whole defect this replaces. */
+  const [loadErr, setLoadErr] = useState<unknown>(null)
 
   // URL-backed toolbar state (replace — in-place refinements, not navigations).
   const [q, setQ] = useQueryParam(routeQuery, setQuery, 'q', '', { replace: true })
@@ -56,7 +59,11 @@ export function ArtifactsSection({ sub, navigate, query: routeQuery, setQuery }:
 
   const load = useCallback(async () => {
     setLoading(true)
-    try { setArtifacts(await api.artifacts()) } catch { setArtifacts([]) }
+    // `catch { setArtifacts([]) }` made a failed read indistinguishable from an empty library, and
+    // the grid then told a user with a full library to go ask the agent to save their first artifact.
+    // The rejection is kept instead; the list only renders once it is absent.
+    try { setArtifacts(await api.artifacts()); setLoadErr(null) }
+    catch (e) { setLoadErr(e) }
     finally { setLoading(false) }
   }, [])
   useEffect(() => { load() }, [load])
@@ -201,7 +208,9 @@ export function ArtifactsSection({ sub, navigate, query: routeQuery, setQuery }:
             <ResultAnnouncement count={filtered.length} noun="artifacts" active={!!(q.trim() || kind || src || col)} />
           </div>
           <div className="min-h-0 flex-1 overflow-y-auto">
-            {loading && artifacts.length === 0
+            {loadErr && artifacts.length === 0
+              ? <LoadError what="artifacts" error={loadErr} onRetry={load} />
+              : loading && artifacts.length === 0
               ? <Loading what="artifacts" />
               // `narrowed` lets the grid distinguish an empty library from a filtered-to-nothing
               // one — it only ever sees the post-filter list.

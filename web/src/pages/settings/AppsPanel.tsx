@@ -2,7 +2,7 @@ import { Check, ExternalLink, Loader2 } from 'lucide-react'
 import { api, type AppSummary } from '../../lib/api'
 import { useCachedData } from '../../lib/useCachedData'
 import { PanelHeader } from './settingsUI'
-import { Skeleton, LoadingStatus } from '../../ui/ListScaffold'
+import { Skeleton, LoadingStatus, LoadError } from '../../ui/ListScaffold'
 import { Button } from '../../ui/Button'
 import { TextLink } from '../../ui/TextLink'
 import { AppConfigFields, useAppConfig } from '../apps/appConfigForm'
@@ -75,7 +75,11 @@ function AppSettingsCard({ app, navigate }: { app: AppSummary; navigate?: (p: st
         )}
       </div>
 
-      {cfg.loading ? (
+      {cfg.error ? (
+        // Same defect as the Apps-page modal: the read's rejection was discarded, so this panel sat
+        // on its skeleton forever. `useAppConfig` exposes the error now, so the row can say so.
+        <LoadError what="app configuration" error={cfg.error} onRetry={cfg.reload} />
+      ) : cfg.loading ? (
         <div className="flex flex-col gap-2"><Skeleton className="h-9 w-full" /><Skeleton className="h-9 w-2/3" /></div>
       ) : (
         <div className="flex flex-col gap-m pl-11">

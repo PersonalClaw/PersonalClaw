@@ -3,7 +3,7 @@ import { fvs } from '../../design/fontWeight'
 import { Lightbulb, Loader2, Check, X, ChevronDown, ChevronRight, ShieldQuestion } from 'lucide-react'
 import { api, type SkillProposal, type SkillProposalDetail } from '../../lib/api'
 import { Button } from '../../ui/Button'
-import { ListSkeleton, EmptyState } from '../../ui/ListScaffold'
+import { ListSkeleton, EmptyState, LoadError } from '../../ui/ListScaffold'
 import { useCachedData, invalidateCache } from '../../lib/useCachedData'
 
 /** Skill-proposals inbox (skill-evolution-proposal-only).
@@ -12,11 +12,15 @@ import { useCachedData, invalidateCache } from '../../lib/useCachedData'
  *  reviews each proposal (its procedure + the fenced source trace that drove it)
  *  and accepts it into the live library or rejects it. Nothing here is running. */
 export function SkillProposals() {
-  const { data: proposals, refresh } = useCachedData<SkillProposal[]>(
-    'skill-proposals', () => api.skillProposals().catch(() => []),
+  // No `.catch(() => [])`. A swallowed rejection became an empty array, and "no skill proposals"
+  // is a claim about the synthesizer — a user waiting on a proposal would read a failed read as
+  // "it hasn't produced one yet" and stop looking.
+  const { data: proposals, error: loadErr, refresh } = useCachedData<SkillProposal[]>(
+    'skill-proposals', () => api.skillProposals(),
   )
   const reload = () => { invalidateCache('skill-proposals'); refresh() }
 
+  if (proposals === undefined && loadErr) return <LoadError what="skill proposals" error={loadErr} onRetry={reload} />
   if (!proposals) return <ListSkeleton rows={4} what="skill proposals" />
   if (proposals.length === 0) {
     return (

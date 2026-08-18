@@ -1236,12 +1236,45 @@ class TestConfigDirOverride:
 
         assert _project_dir_file() == tmp_path / "project_dir"
 
+    @staticmethod
+    def _make_checkout(root):
+        """Materialize the markers of a real PersonalClaw source checkout."""
+        (root / "src" / "personalclaw").mkdir(parents=True)
+        (root / "pyproject.toml").write_text('[project]\nname = "personalclaw"\n')
+        return root
+
+    def test_detect_project_dir_matches_published_repo_layout(self, tmp_path, monkeypatch):
+        """The published layout (repo root IS the package root) is detected.
+
+        PUBL-8 drive: the previous markers were top-level ``agents/`` + ``skills/``,
+        which the published repository has never had (they live at
+        ``src/personalclaw/{agents,skills}``). Nothing matched, so
+        PERSONALCLAW_PROJECT_DIR stayed unset and a git checkout was classified as
+        a ``pip`` install — routing "Update & Restart" into a PyPI wheel upgrade.
+        """
+        proj = self._make_checkout(tmp_path / "PersonalClaw")
+        sub = proj / "src" / "personalclaw"
+        monkeypatch.chdir(sub)  # detection walks UP from CWD
+
+        from personalclaw.cli import _detect_project_dir
+
+        assert _detect_project_dir() == str(proj)
+
+    def test_detect_project_dir_rejects_agents_skills_only_tree(self, tmp_path, monkeypatch):
+        """A bare agents/+skills/ tree is NOT a checkout — it carries no package."""
+        proj = tmp_path / "not_a_checkout"
+        (proj / "agents").mkdir(parents=True)
+        (proj / "skills").mkdir()
+        monkeypatch.chdir(proj)
+        monkeypatch.setattr("personalclaw.cli.config_dir", lambda: tmp_path / "cfg")
+
+        from personalclaw.cli import _detect_project_dir
+
+        assert _detect_project_dir() is None
+
     def test_detect_project_dir_reads_from_config_dir(self, tmp_path, monkeypatch):
         """_detect_project_dir reads saved path from config_dir()/project_dir."""
-        proj = tmp_path / "my_project"
-        proj.mkdir()
-        (proj / "agents").mkdir()
-        (proj / "skills").mkdir()
+        proj = self._make_checkout(tmp_path / "my_project")
 
         config_home = tmp_path / "custom_config"
         config_home.mkdir()

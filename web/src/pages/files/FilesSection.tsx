@@ -74,6 +74,9 @@ export function FilesSection({ sub, navigate, query: routeQuery, setQuery }: Rou
   const [results, setResults] = useState<ContentMatch[]>([])
   const [searchEngine, setSearchEngine] = useState<'rg' | 'python' | ''>('')
   const [searchBusy, setSearchBusy] = useState(false)
+  /** A failed content search used to render "No matches." — a claim about the user's files that a
+   *  rejected request cannot make. Kept so the panel can say the search itself failed. */
+  const [searchErr, setSearchErr] = useState<unknown>(null)
 
   // Inline create row + artifact-name modal.
   const [creating, setCreating] = useState<null | 'file' | 'dir'>(null)
@@ -113,7 +116,12 @@ export function FilesSection({ sub, navigate, query: routeQuery, setQuery }: Rou
   }, [roots, tab])
 
   const loadArtifacts = useCallback(async () => {
-    try { setArtifacts(await api.artifacts()) } catch { setArtifacts([]) }
+    // This list only feeds `artifactPaths`, the set that marks a file as already saved as an
+    // artifact. `catch { setArtifacts([]) }` therefore did not render an error — it made the tree
+    // ASSERT that no file is an artifact, which a failed read cannot know. Keeping the previous set
+    // is the honest degrade: a stale marker is a far smaller lie than a confidently absent one, and
+    // the badge is decoration on a surface whose primary job (browsing files) still works.
+    try { setArtifacts(await api.artifacts()) } catch { /* keep the last known set */ }
   }, [])
   useEffect(() => { loadArtifacts() }, [loadArtifacts])
 
@@ -128,12 +136,12 @@ export function FilesSection({ sub, navigate, query: routeQuery, setQuery }: Rou
 
   // Debounced content search under the active root.
   useEffect(() => {
-    if (!activeRoot || grep.trim().length < 2) { setResults([]); setSearchEngine(''); return }
+    if (!activeRoot || grep.trim().length < 2) { setResults([]); setSearchEngine(''); setSearchErr(null); return }
     setSearchBusy(true)
     const t = setTimeout(() => {
       api.fileContentSearch(activeRoot, grep.trim(), include.trim() || undefined)
-        .then((r) => { setResults(r.results); setSearchEngine(r.engine) })
-        .catch(() => { setResults([]); setSearchEngine('') })
+        .then((r) => { setResults(r.results); setSearchEngine(r.engine); setSearchErr(null) })
+        .catch((e) => { setResults([]); setSearchEngine(''); setSearchErr(e) })
         .finally(() => setSearchBusy(false))
     }, 250)
     return () => clearTimeout(t)
@@ -401,7 +409,7 @@ export function FilesSection({ sub, navigate, query: routeQuery, setQuery }: Rou
                   </div>
                 )}
                 {showResults
-                  ? <SearchResults results={results} busy={searchBusy} onOpen={(m) => openByPath(m.file)} />
+                  ? <SearchResults results={results} busy={searchBusy} error={searchErr} onOpen={(m) => openByPath(m.file)} />
                   : activeRoot
                     ? <FileTree key={`${activeRoot}:${nonce}`} dirs={dirs} rootPath={activeRoot} activePath={fileTabs.activePath || null}
                         gitStatuses={statuses} onOpenFile={fileTabs.open} artifactPaths={artifactPaths}
@@ -429,8 +437,17 @@ export function FilesSection({ sub, navigate, query: routeQuery, setQuery }: Rou
   )
 }
 
-function SearchResults({ results, busy, onOpen }: { results: ContentMatch[]; busy: boolean; onOpen: (m: ContentMatch) => void }) {
+function SearchResults({ results, busy, error, onOpen }: { results: ContentMatch[]; busy: boolean; error?: unknown; onOpen: (m: ContentMatch) => void }) {
   if (busy && results.length === 0) return <div className="flex items-center justify-center py-8"><Loader2 size={18} className="animate-spin text-on-surface-low" /></div>
+  // "No matches." is a statement about the files. A rejected search has not looked at them, so it
+  // says what actually happened instead — same distinction the list surfaces draw with `LoadError`.
+  if (error && results.length === 0) {
+    return (
+      <div role="alert" className="px-m py-s text-danger text-[0.8125rem]">
+        Search failed{(error as Error)?.message ? `: ${(error as Error).message}` : '.'}
+      </div>
+    )
+  }
   if (results.length === 0) return <div className="px-m py-s text-on-surface-low text-[0.8125rem]">No matches.</div>
   return (
     <div className="flex flex-col">

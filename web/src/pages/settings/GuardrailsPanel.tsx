@@ -144,7 +144,7 @@ function AutonomyLadderSection() {
   return (
     <Section title="Earned autonomy" hint="Every automated action starts at the rung it was declared with and can only climb when you say so. A single rejection, thumbs-down or undo drops it back immediately and starts a cooldown.">
       {!ladder && loadErr ? (
-        <LoadError what="the autonomy ladder" error={loadErr} onRetry={reload} />
+        <LoadError what="autonomy ladder" error={loadErr} onRetry={reload} />
       ) : !ladder ? (
         <div className="rounded-lg bg-surface-container px-4 py-3 text-on-surface-low text-[0.8125rem]">Loading…</div>
       ) : (
