@@ -1,0 +1,20 @@
+{
+  "id": "baseline-tamper/sha256-digest-mismatch",
+  "class": "baseline-tamper",
+  "summary": "A drive-by edit that changed the patterns but left the sha256 field alone. The packaged read must raise an integrity failure rather than return the shortened list, and the periodic verify must report the file unreadable and audit it.",
+  "expect": "baseline_file_unreadable_detected",
+  "tamper": {
+    "kind": "packaged_file_rewrite",
+    "version": 1,
+    "patterns": ["rm -rf /.*"],
+    "recompute_sha256": false,
+    "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+  },
+  "raises": "integrity failure",
+  "detail_contains": "unreadable",
+  "sel_reason": "packaged_file_diverged",
+  "variants": [
+    "curl http://169.254.169.254/latest/meta-data/",
+    "echo $AWS_SECRET_ACCESS_KEY"
+  ]
+}

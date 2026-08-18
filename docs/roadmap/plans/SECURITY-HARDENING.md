@@ -136,6 +136,69 @@ def credential_backend() -> CredentialBackend: ...   # keychain if available+ena
 
 ## Execution log
 
+### 2026-08-18 — SH-7 mode-independence matrix + deny-before-approval pin — DONE
+
+- **[SH-7] DONE:** all three clauses land in `tests/security/`, with no `src/` change needed.
+  1. `tests/security/test_mode_independence.py` — the matrix. `default` / `auto` / `yolo` /
+     `acceptEdits` plus three trust simulators (channel `!yolo on`, dashboard 6h toggle, and
+     the no-TTL `from_config` YOLO) each drive a REAL `NativeBuiltinToolProvider` bash tool
+     through a REAL `NativeAgentRuntime`; every cell refuses a baseline-matched command and
+     `sandbox.create_subprocess_limited` is never reached. 31 tests.
+  2. `TestDenyPrecedesTheApprovalGate` — the regression pin, doubled: a structural AST rail
+     (`security.is_denied` must lexically precede `self._requires_approval` inside
+     `runtime.py::_guard_and_invoke`) and a behavioural rail (a deny-listed tool is never
+     invoked under `default` even though the driver approves every prompt).
+  3. `baseline-tamper` corpus class — five inert JSON cases under
+     `tests/security/corpus/baseline-tamper/`, registered in `ATTACK_CLASSES`, with four new
+     `HANDLERS` rails and two new rows in `TestCorpusRedsOnAWeakenedScanner`.
+
+- **[SH-7] PREMISE CORRECTION — the "S3 harness" is not `harness/`.** The briefing placed the
+  corpus in `harness/` (`baselines.py` / `traces` / `specs` / `exemplars`) and noted there was
+  no `harness/corpus/`. There is no `harness/corpus/` because SH-5's corpus never lived there:
+  it is `tests/security/corpus/<class>/<case>.json` driven by
+  `tests/security/test_scanner_adversarial.py`, exactly as `docs/security/scanner-testing.md`
+  documents. `harness/` is the Self-Verification replay harness — a different mechanism. The
+  new class follows SH-5's real convention and `harness/` is untouched.
+
+- **[SH-7] DEVIATION — `docs/security/scanner-testing.md` edited, though it sits outside the
+  declared fence.** Not optional: `TestCorpusIsComplete::test_methodology_doc_documents_every_class`
+  reds when a class in `ATTACK_CLASSES` is absent from that doc. Adding the class without the
+  doc is not a shippable state, so the two move together.
+
+- **[SH-7] FINDING (P2, legibility/audit — NOT an execution bypass) — the command-level
+  baseline screen sits BELOW the approval gate.** Measured call sites: the *tool-name* deny
+  (`security.is_denied`) is at `runtime.py:1011`, above the gate at `runtime.py:1041` — correct
+  and now pinned. But the *command* screen (`_denied_bash_reason` →
+  `security.denied_command_reason`) is at `builtin_tools.py:1470`, inside the bash tool body,
+  i.e. after `_guard_and_invoke` has already returned. It is unconditional and precedes the
+  spawn at `builtin_tools.py:1512`, so no approval mode can execute a baseline-denied command —
+  the matrix proves that empirically for all seven cells. The cost is legibility: a
+  baseline-denied command is surfaced to the user as an approvable request first, and under
+  `--approval yolo` `gateway.py:400` writes a `cli_approval_auto_approve` outcome=`ok` SEL row
+  for a command that is then refused. **Deliberately not fixed here:** the fix belongs in
+  `runtime.py` (outside SH-7's fence, and shared with four concurrently-running atoms), and it
+  needs an owner call on how the runtime learns which tools carry a shell command.
+  `test_command_denylist_is_enforced_below_the_gate` pins today's shape and instructs the fixer
+  to delete it, so the gap cannot persist silently.
+
+- **[SH-7] Falsifications performed on the live tree, each restored from a file copy:**
+  - Moved the `security.is_denied` block below `return _NEEDS_APPROVAL` in `_guard_and_invoke`
+    (deny 1039, gate 1036): both pins red. The behavioural one reported
+    `tool.invoked == [{}]` — the deny-listed tool **actually executed** after approval, so the
+    inversion is a real bypass, not a style regression.
+  - Neutered `_denied_bash_reason` to `return None`: **15 of 21** matrix cells red, including
+    every `yolo` and `acceptEdits` cell and all three trust cells; the spawn spy caught
+    `('bash', '-lc', 'curl http://169.254.169.254/latest/meta-data/')`.
+  - Moved the bash screen below the spawn (screen 1510, spawn 1503):
+    `DENY-AFTER-SPAWN ORDERING REGRESSION in builtin_tools.py::_t_bash`.
+  - Pointed `BASELINE_COMMAND` at a non-matching string: the vacuity floor red with
+    `'echo sh7-probe-that-matches-nothing' matches nothing — matrix is vacuous`.
+
+- **[SH-7] Gate:** `make lint` clean (black/isort/flake8/mypy, 909 source files).
+  `tests/security/` 105 passed · `tests/test_baseline_denylist_integrity.py` +
+  `test_denied_commands.py` + `test_security.py` + `test_roadmap_dag_derived.py` 217 passed ·
+  `tests/test_native_runtime.py` 32 passed. 354 passed, 0 failed, 0 skipped. No `web/` change.
+
 ### 2026-08-16 — SH-8 (S4 T4.1/T4.2/V4 · Contract C4) SEL audit surface — DONE
 
 - **[SH-8] DONE:** C4 lands as `GET /api/security/audit` (cursor-paginated, filters

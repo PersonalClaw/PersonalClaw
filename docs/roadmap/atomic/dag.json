@@ -6551,7 +6551,7 @@
         {
           "id": "SH-7",
           "title": "Mode-independence matrix: baseline-matched command refused under default/auto/yolo/acceptEdits and trust simulators, deny-before-approval ordering regression-pinned, baseline-tamper corpus class added to S3 harness",
-          "status": "todo",
+          "status": "done",
           "scope": "Amendment (2026-07-26) T3.5",
           "done_when": "every approval-mode fixture refuses a baseline-matched command; reordering the deny check below the approval gate turns CI red; a baseline-tamper corpus class is added to the S3 harness",
           "deps": [
@@ -7832,11 +7832,6 @@
       {
         "id": "SH-4",
         "title": "Release pipeline signs first-party app bundles + core release artifacts; registry records signer identity per listing",
-        "plan": "SH"
-      },
-      {
-        "id": "SH-7",
-        "title": "Mode-independence matrix: baseline-matched command refused under default/auto/yolo/acceptEdits and trust simulators, deny-before-approval ordering regression-pinned, baseline-tamper corpus class added to S3 harness",
         "plan": "SH"
       },
       {
@@ -10116,9 +10111,9 @@
         "code": "SH",
         "plan": "SECURITY-HARDENING",
         "total_atoms": 10,
-        "done": 6,
+        "done": 7,
         "in_progress": 0,
-        "todo": 3,
+        "todo": 2,
         "blocked": 1
       },
       {
