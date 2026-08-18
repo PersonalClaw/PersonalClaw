@@ -434,6 +434,15 @@ async def tick(
     one store must not live in another.
     """
     from personalclaw.triggers import claims, screen
+    from personalclaw.triggers.routing import routed
+
+    # 🔴 PROVIDER ROWS JOIN THE ARM PATH HERE (TSE-5). `routed` merges every registered `trigger`
+    # provider's rows into the one `load()` that `armable` below reads, so an app-served row can be
+    # due. The matching half — the reschedule going BACK to the store that served the row, not
+    # into `triggers.json` — is in `TriggerStore.upsert` itself, so it covers the gateway's fire-
+    # outcome writers too and not only the `store.upsert` calls in this function. A no-op on a
+    # single-user install (nothing registered → `store` is returned unchanged).
+    store = routed(store)
 
     now = now or time.time()
     base_dir = base_dir if base_dir is not None else getattr(store, "base_dir", None)
@@ -842,6 +851,12 @@ def boot(store: Any, *, now: float = 0.0, persist: bool = True) -> dict[str, Any
     evidence that anything was missed, so the evidence has to be read first.
     """
     from personalclaw.triggers.missed import review_at_boot
+    from personalclaw.triggers.routing import routed
+
+    # Provider rows join the boot re-arm too (TSE-5), for the same reason `tick` needs them: boot
+    # writes `next_fire_at`, so a provider row that boot could not see would come up unarmed and
+    # only start firing after its first clock tick — a first-fire that silently depends on uptime.
+    store = routed(store)
 
     now = now or time.time()
     # Owner-authored rows only (§2.2 — TSE-4). Boot RE-ARMS (it writes `next_fire_at`), so a foreign

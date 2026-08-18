@@ -1901,7 +1901,7 @@
         {
           "id": "TSE-5",
           "title": "Proof-of-concept trigger-provider app: owner triggers autonomously fire workflow/automation/prompt/action; second-username inert fixtures",
-          "status": "todo",
+          "status": "done",
           "scope": "\u00a74 Proof-of-Concept Trigger-Provider App (Session 5, app); Implementation Effort row 5",
           "done_when": "an app installs manifest-only with zero core edits, registers as a `trigger` provider, and each owner-authored trigger autonomously fires each of a workflow, automation, prompt, and action under local policy; second-username (\"alice\") fixture rows prove visible-but-inert rendering and the structural cannot-arm filter (Success Criteria 5).",
           "deps": [
@@ -7827,11 +7827,6 @@
         "plan": "SV"
       },
       {
-        "id": "TSE-5",
-        "title": "Proof-of-concept trigger-provider app: owner triggers autonomously fire workflow/automation/prompt/action; second-username inert fixtures",
-        "plan": "TSE"
-      },
-      {
         "id": "WF2AUT-12",
         "title": "webhook kind fire endpoint + scoped token verification (E4-blocked)",
         "plan": "WF2AUT"
@@ -9684,9 +9679,9 @@
         "code": "TSE",
         "plan": "TEAM-SHARED-ENTITIES",
         "total_atoms": 5,
-        "done": 4,
+        "done": 5,
         "in_progress": 0,
-        "todo": 1,
+        "todo": 0,
         "blocked": 0
       },
       {
