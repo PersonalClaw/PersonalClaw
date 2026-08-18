@@ -289,3 +289,131 @@ async def test_none_mode_adopts_app_claim_and_enforces(tmp_path):
         assert (await c.get("/api/secrets")).status == 200
         # Garbage token → no identity adopted (fails closed to owner, not crash).
         assert (await c.get("/api/secrets", headers={"Authorization": "Bearer junk"})).status == 200
+
+
+# ── APE-1: backgroundTasks + eventSubscriptions — declared here, enforced by nothing ──
+#
+# These two follow the same to_dict/from_dict parity pattern as every permission above,
+# and differ from all of them in one honest respect: NOTHING ENFORCES THEM TODAY. No core
+# code hosts an app worker (APE-3 does) and no platform event is delivered to any app,
+# declared or not (APE-2's ``app_events.py`` registry does not exist). So this section
+# pins the round trip and the consent leg, and deliberately adds no ``can_use_*``
+# accessor: an accessor with no call site would be an enforcement point that enforces
+# nothing, and the atom that builds the runtime should add the check WHERE it gates.
+
+
+def test_background_and_event_grants_round_trip():
+    """Parity: a declaration survives ``to_dict`` → ``from_dict`` → ``to_dict``
+    unchanged, and the second round trip is a fixed point."""
+    p = Permissions(
+        backgroundTasks=True,
+        eventSubscriptions=["session.created", "task.completed"],
+    )
+    d = p.to_dict()
+    assert d["backgroundTasks"] is True
+    assert d["eventSubscriptions"] == ["session.created", "task.completed"]
+    back = Permissions.from_dict(d)
+    assert back.backgroundTasks is True
+    assert back.eventSubscriptions == ["session.created", "task.completed"]
+    assert back.to_dict() == d
+
+
+def test_undeclared_and_empty_background_grants_emit_no_key():
+    """The omission half, and it is not cosmetic: the consent surface distinguishes
+    "declared" from "did not declare" (EI-12 D2), so a spurious ``backgroundTasks: false``
+    would render as a grant the app never asked for."""
+    for data in ({}, {"backgroundTasks": False, "eventSubscriptions": []}):
+        d = Permissions.from_dict(data).to_dict()
+        assert "backgroundTasks" not in d
+        assert "eventSubscriptions" not in d
+        assert Permissions.from_dict(d).to_dict() == d  # still a fixed point
+
+
+def test_event_subscription_names_survive_verbatim():
+    """The names are APE-2's registry vocabulary, matched exactly and with no wildcard
+    (like ``desktop``, unlike ``appMessaging``) — so ``session.created`` must arrive with
+    its dot intact. Falsy entries drop, like every other list scope here."""
+    p = Permissions.from_dict({"eventSubscriptions": ["session.created", "", None, "a.b"]})
+    assert p.eventSubscriptions == ["session.created", "a.b"]
+    assert p.to_dict()["eventSubscriptions"] == ["session.created", "a.b"]
+
+
+def test_event_subscriptions_do_not_widen_the_ws_event_allowlist():
+    """The two vocabularies stay separate on purpose. ``events`` is the gateway's WS
+    event-type allowlist (``can_use_event``); ``eventSubscriptions`` is the platform
+    registry APE-2 will own. Declaring a platform subscription must not silently grant the
+    WS event type of the same name, or APE-2's filter would inherit a second, wider path
+    to the same data."""
+    c = _checker(eventSubscriptions=["session.created"])
+    assert not c.can_use_event("session.created")
+    # ...and the reverse: a WS grant is not a platform subscription.
+    assert _checker(events=["session.created"]).permissions.eventSubscriptions == []
+
+
+def test_declared_grants_reach_the_pre_install_consent_payload():
+    """APE-12's leg, for the new grants: the Store's PRE-install panel renders
+    ``CatalogEntry.permissions`` built by ``catalog._manifest_consent``, so a grant has to
+    survive THAT extraction, not just ``Permissions.to_dict()``."""
+    from personalclaw.apps.catalog import _manifest_consent
+    from personalclaw.apps.manifest import AppManifest
+
+    m = AppManifest.from_dict(
+        {
+            "name": "worker-app",
+            "version": "1.0.0",
+            "displayName": "Worker App",
+            "description": "x",
+            "permissions": {
+                "backgroundTasks": True,
+                "eventSubscriptions": ["session.created"],
+            },
+        }
+    )
+    perms, _crons = _manifest_consent(m)
+    assert perms["backgroundTasks"] is True
+    assert perms["eventSubscriptions"] == ["session.created"]
+
+
+@pytest.mark.asyncio
+async def test_declared_grants_reach_the_installed_app_consent_wire(tmp_path, monkeypatch):
+    """The other surface ``PermissionList`` serves is the installed-app panel, fed by
+    ``GET /api/apps``. A component test alone would pass through the APE-12 defect shape
+    (server emits it, endpoint drops it), so the HTTP payload is pinned too — including
+    the declining app, which must send NEITHER key."""
+    from personalclaw.apps import app_manager
+    from personalclaw.dashboard.handlers.apps import register_app_routes
+
+    monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path))
+    with (
+        patch("personalclaw.config.loader.config_dir", return_value=tmp_path),
+        patch.object(manager, "config_dir", return_value=tmp_path),
+    ):
+        for name, perms in (
+            ("worker-app", {"backgroundTasks": True, "eventSubscriptions": ["task.completed"]}),
+            ("quiet-app", None),
+        ):
+            d = tmp_path / "src" / name
+            d.mkdir(parents=True)
+            mani: dict = {
+                "name": name,
+                "version": "1.0.0",
+                "displayName": name,
+                "description": "x",
+            }
+            if perms is not None:
+                mani["permissions"] = perms
+            (d / "app.json").write_text(json.dumps(mani), encoding="utf-8")
+            res = app_manager.install(d)
+            assert res.ok, res.error
+
+        app = web.Application()
+        register_app_routes(app)
+        async with TestClient(TestServer(app)) as client:
+            r = await client.get("/api/apps")
+            assert r.status == 200, await r.text()
+            apps = {a["name"]: a for a in (await r.json())["apps"]}
+
+    assert apps["worker-app"]["permissions"]["backgroundTasks"] is True
+    assert apps["worker-app"]["permissions"]["eventSubscriptions"] == ["task.completed"]
+    assert "backgroundTasks" not in apps["quiet-app"]["permissions"]
+    assert "eventSubscriptions" not in apps["quiet-app"]["permissions"]

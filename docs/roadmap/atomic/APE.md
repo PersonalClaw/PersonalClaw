@@ -10,7 +10,7 @@ Each atom below executes start-to-finish in one go. If an atom lists dependencie
 
 | Atom | Status | Title | Depends on | Done when |
 |---|---|---|---|---|
-| `APE-1` | ⬜ | Manifest: backgroundTasks + eventSubscriptions permissions (parse/serialize/consent) | `EXT:PROVIDER-BOUNDARY-COMPLETION:manifest-field to_dict/from_dict-parity pattern` | round-trip (to_dict/from_dict) tests pass; install consent UI surfaces the two new grants; unknown-field preservation intact |
+| `APE-1` | ✅ | Manifest: backgroundTasks + eventSubscriptions permissions (parse/serialize/consent) | `EXT:PROVIDER-BOUNDARY-COMPLETION:manifest-field to_dict/from_dict-parity pattern` | round-trip (to_dict/from_dict) tests pass; install consent UI surfaces the two new grants; unknown-field preservation intact |
 | `APE-2` | ⬜ | Platform event registry (app_events.py) + emit sites + declared-subscription WS filter | `APE-1` | app_events.py registers session.created/knowledge.ingested/task.completed at their emit sites; a fixture app subscribed to task.completed receives it; an unsubscribed app never does; SEL clean |
 | `APE-3` | ⬜ | Background worker SDK (sdk/background.py) + backend_runtime supervised hosting | `APE-1`, `EXT:AUTONOMY-GUARDRAILS:ModelCallGuard budgets + kill-switch (plan Risks: E6 if shipped before this exists)` | fixture app worker runs, survives a crash (watchdog), stops on disable; budget breach pauses it + notifies; V1: uninstall leaves no orphan worker (PPID-reaping verified) |
 | `APE-4` | ⬜ | quality manifest block + Store card rendering + first-party CI verification | `EXT:DESIGN-SYSTEM-CONSISTENCY:token-lint + axe a11y verification` | a dishonest first-party quality declaration turns apps-repo CI red (tested=CI green, designSystem=token-lint pass, a11y=axe pass); Store cards render honest badges |
@@ -27,7 +27,7 @@ Each atom below executes start-to-finish in one go. If an atom lists dependencie
 
 ### `APE-1` — Manifest: backgroundTasks + eventSubscriptions permissions (parse/serialize/consent)
 
-**Status:** todo
+**Status:** done
 
 Session 1 T1.1; Contract C1 (manifest additions, additive §3.8)
 
