@@ -202,6 +202,59 @@ that have adopted it, and the ones deliberately left out.
 
 ---
 
+## 5b. The morph family — one vocabulary
+
+Four primitives in `ui/motion/` are the same gesture at different scales: something the user
+already sees **becomes** something else, rather than one thing crossfading out under another.
+
+| Primitive | The gesture | Base |
+|---|---|---|
+| `Morph` | a library card flies to the page it opens | `MORPH_FAMILY.flight` (190) |
+| `LiquidShape` | a silhouette changes composure in place | `MORPH_FAMILY.state` (200) |
+| `Bud` | a panel separates from the control that made it | `MORPH_FAMILY.spawn` (240) |
+| `Disintegrate` | a row dissolves out of a list | the family tween |
+
+They shipped one atom at a time, and each arrived with its own numbers. `ui/motion/vocabulary.ts`
+is now the only place any of them gets a timing value, and the primitives contain **no timing
+arithmetic at all**. Three rules make that a system rather than a shared file:
+
+1. **Travel picks the base; the knob picks the bonus.** Bases are ordered by how far the thing
+   travels — a cross-page flight is the softest, a bud off a button the tautest, because a
+   full-width flight on a taut spring reads as a snap and a bud on a soft one reads as lag on a
+   button press. The bonus expressiveness adds on top is **one number for the whole family**
+   (`stiffnessBonus`, keeping `floor` of itself at expressiveness 0).
+2. **Bold always means tauter** — which, under this app's fixed-damping `bouncy()` springs,
+   means both quicker *and* more overshoot. Before FM-4 `Morph` was `190 + expr(70, 0.4)` and
+   `Bud` was `260 - expr(70, 0.4)`: identical magnitude, identical floor, opposite sign, so
+   dialling the user's knob up made one primitive tauter and the other slacker.
+3. **One spring, one tween, one fade.** The spring is `physics.fluid` via `familySpring(base)`,
+   so the family inherits `bouncy()`'s bounciness scaling and its reduced-motion collapse for
+   free. `Disintegrate` is the only member that must not overshoot at all (a spring settling on
+   `filter` undershoots, and `blur()` rejects negatives), so `familyTween()` exists — on
+   `ease.emphasized`, the house curve, replacing a hardcoded Material standard curve. Anything
+   *fading* uses `familyFade()`, which is just `spring.effects`.
+
+**Adding a fifth member?** Give it a base in `MORPH_FAMILY` ordered by its travel, take its
+transition from `familySpring`/`familyTween`, self-gate `useReducedMotion()` in JS, and expose a
+`data-*` attribute naming the branch that ran (`data-morph`, `data-bud`, `data-liquid-shape`) so
+the off-switch is assertable from the DOM. `ui/motion/vocabulary.test.ts` enforces the first
+three from the source; `ui/motion/family.reducedMotion.test.tsx` enforces the last.
+
+**The two off-switches are not the same switch**, and this is the easiest thing in the whole
+file to get wrong:
+
+- `prefers-reduced-motion` means **instant**, and it is self-gated in JS by every member. The
+  global CSS rule only kills CSS transitions and the root `MotionConfig` only neutralizes framer
+  *transforms* — neither one stops a `borderRadius` animation, a projection node, or a
+  `duration: 0` transition from still projecting a frame. A member renders a plain element.
+- `expressiveness = 0` means **the floor, still moving**. `expr()` keeps `floor` of its input, so
+  a refined `Morph` is a calmer spring, not a still one. What *does* switch off at 0 is the heavy
+  tier: `exprHeavy()` goes false, and `LiquidShape` drops its idle breathe and `Disintegrate` its
+  scatter/blur entirely rather than shrinking them. The whole family splits at `exprHeavy()`'s
+  default threshold — passing your own would give the family two definitions of "bold".
+
+---
+
 ## 6. Route transitions
 
 Navigating between pages crossfades, and no page opts in. The hash router wraps the one
