@@ -447,3 +447,56 @@ describe('the conflict-resolve body, per choice', () => {
     )
   })
 })
+
+describe('the last three bodies, and what this sweep does NOT claim', () => {
+  it('the intent delete really takes what it gathered', () => {
+    const ui = web('pages/knowledge/KnowledgeListPage.tsx')
+    expect(ui).toContain('Everything it gathered goes with it')
+    expect(ui, 'and the no-outcomes branch says only the intent goes').toContain(
+      'It has gathered nothing yet, so only the intent itself goes.',
+    )
+    // The handler drops the outcomes BEFORE the intent, which is what makes the sentence true.
+    const h = py('dashboard/handlers/knowledge.py')
+    const del = h.slice(h.indexOf('async def delete_intent('), h.indexOf('async def list_intent_outcomes'))
+    expect(del, 'outcomes are deleted with it').toMatch(/delete_intent_outcomes\(intent_id\)/)
+  })
+
+  it('the theme delete really falls back to the default when the theme was active', () => {
+    const ui = web('pages/settings/DesignPanel.tsx')
+    expect(ui).toContain('You are using this theme, so the app goes back to its default colors.')
+    expect(ui, 'and the inactive branch says what a theme IS').toContain('a saved theme is a file, not a snapshot')
+    // The mechanism for the active branch — without this the app would point at a scheme that is gone.
+    const app = web('app/appearance.tsx')
+    expect(app, 'the active scheme reverts to the default').toMatch(
+      /p\.scheme === id\s*\n?\s*\? \{ \.\.\.p, scheme: DEFAULT_SCHEME/,
+    )
+    expect(app, 'and the theme itself is a deleted file').toMatch(/await api\.deleteTheme\(slug\)/)
+  })
+
+  it('records the two bodies this sweep deliberately did NOT decide', () => {
+    // 🪤 AN HONEST BOUNDARY, asserted so it is not mistaken for coverage. Both of these delete something
+    // real and carry only the helper's default ("This cannot be undone."), and in both cases I could not
+    // state a further consequence WITHOUT guessing:
+    //
+    //   MultiInstanceCard  deleting one provider instance unlinks its JSON and nothing else. Whether a
+    //                      use case pointed at its models loses that selection depends on how instance
+    //                      refs are named: `_prune_removed_providers` drops refs by PROVIDER NAME, so a
+    //                      surviving sibling instance keeps the name known and the ref lingers instead.
+    //                      Either outcome deserves copy — but which one it is needs tracing that ref
+    //                      format end to end, not a plausible sentence.
+    //   LocalModelManager  its sibling (Ollama) says "This frees disk on the Ollama host"; this one says
+    //                      nothing about disk. The delete delegates through `local_models.registry` to a
+    //                      runtime manager that lives outside core, so the disk claim is not core's to
+    //                      make until that manager is read.
+    //
+    // Asserting the CURRENT state means a later pass finds this note rather than re-deriving it, and a
+    // change to either body trips a test that points at the open question.
+    expect(web('pages/settings/MultiInstanceCard.tsx'), 'still the default body')
+      .toMatch(/confirmDelete\('instance', inst\.display_name \|\| inst\.id\)/)
+    expect(web('pages/settings/LocalModelManager.tsx'), 'still the default body')
+      .toMatch(/confirmDelete\('model', name\)/)
+    // And the reason the instance question is open, pinned to the code that makes it open.
+    expect(py('providers/use_cases.py'), 'pruning keys on the provider NAME, not the instance')
+      .toMatch(/str\(r\)\.split\(":", 1\)\[0\] in known/)
+  })
+})
