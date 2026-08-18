@@ -798,6 +798,18 @@ class AgentConfig:
             "Seconds to wait for cooperative cancel before hard-killing the session.",
         ),
     )
+    unattended_requires_verified_adapter: bool = field(
+        default=False,
+        metadata=_meta(
+            "Unattended Requires Verified Adapter",
+            "Refuse an UNATTENDED spawn (cron, scheduled run, loop worker) onto an "
+            "external agent runner whose ACP adapter has no verified provenance — an "
+            "`npx -y` fetch-at-launch, an adapter that changed since it was "
+            "provisioned, or a runner with no catalog row. Interactive chat is never "
+            "gated: a human is present to see what launched. Off by default; turn it "
+            "on to require that background work only ever runs a proven adapter.",
+        ),
+    )
 
     def __post_init__(self) -> None:
         # Clamp to [0.5, 60.0] to match ``AppConfig.load()`` behavior
@@ -4271,6 +4283,12 @@ class AppConfig:
                 bot_name=_sanitize_bot_name(agent_data.get("bot_name", "")),
                 soft_stop_budget_secs=max(
                     0.5, min(60.0, float(agent_data.get("soft_stop_budget_secs", 10.0)))
+                ),
+                # EXECUTION-ISOLATION §3.2 (EI-5). Read plainly, defaulting OFF: this
+                # gate REFUSES work, so a `_guard_flag`-style fail-ON read would start
+                # blocking every existing install's unattended ACP runs on upgrade.
+                unattended_requires_verified_adapter=bool(
+                    agent_data.get("unattended_requires_verified_adapter", False)
                 ),
             ),
             session=SessionConfig(

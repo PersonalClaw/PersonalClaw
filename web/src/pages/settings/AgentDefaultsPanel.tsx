@@ -1,14 +1,16 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { X, Plus } from 'lucide-react'
-import { api } from '../../lib/api'
+import { api, type RunnerRow } from '../../lib/api'
 import { notify } from '../../app/appSdk'
 import { useAgentCatalog, ensureBindableAgentName, type AgentOption } from '../../lib/agents'
 import { useCachedData } from '../../lib/useCachedData'
 import { PanelHeader, Section, Row, Field, SegPills, SavedToast, ToggleRow } from './settingsUI'
 import { Combobox } from '../../ui/Combobox'
-import { NumberField } from '../../ui/forms'
+import { FieldError, NumberField } from '../../ui/forms'
 import { SquareIconButton } from '../../ui/SquareIconButton'
+import { Button } from '../../ui/Button'
 import { FormSkeleton, LoadError } from '../../ui/ListScaffold'
+import { accentChip } from '../../design/accent'
 
 // The editable agent.* fields mirror the backend _EDITABLE_CONFIG allowlist
 // (types + ranges are the server's truth; we surface the same bounds).
@@ -90,6 +92,8 @@ export function AgentDefaultsPanel() {
         </div>
       </Section>
 
+      <RunnersSection />
+
       <Section title="Subagents" hint="Limits for helper agents the main agent spawns.">
         <div className="rounded-lg bg-surface-container px-4 py-1">
           <NumberRow label="Max concurrent subagents" hint="0 = auto-size from this host's CPU and memory." cfg={cfg} field="max_subagents" patch={patch} min={0} max={16} />
@@ -106,6 +110,8 @@ export function AgentDefaultsPanel() {
             hint="Enable agent delegation — loads the orchestrator skill with the agent roster." />
           <ToggleRow label="Concurrent ACP sessions" cfg={cfg} field="acp_concurrent_sessions" patch={patch}
             hint="Run multiple ACP chats on ONE backend process (multiplexing) instead of one process per session. Only takes effect for backends that support session interleaving." />
+          <ToggleRow label="Unattended runs need a verified adapter" cfg={cfg} field="unattended_requires_verified_adapter" patch={patch}
+            hint="Refuse an unattended spawn (cron, scheduled run, loop worker) onto a runner whose ACP adapter has no verified provenance — an npx fetch-at-launch, an adapter that changed since it was provisioned, or a runner with no catalog row. Interactive chat is never gated. See each runner's adapter state under Runners." />
           <EnumRow label="Log level" hint="Backend logger level (overridden by --verbose)." cfg={cfg} field="log_level" patch={patch}
             options={[{ key: 'DEBUG', label: 'Debug' }, { key: 'INFO', label: 'Info' }, { key: 'WARNING', label: 'Warning' }, { key: 'ERROR', label: 'Error' }]} />
           <NumberRow label="Soft-stop budget" cfg={cfg} field="soft_stop_budget_secs" patch={patch} min={0.5} max={60} step={0.5} suffix="s"
@@ -137,6 +143,115 @@ function DefaultAgentRow({ options, value, onChange }: { options: AgentOption[];
         </div>
       </Row>
     </div>
+  )
+}
+
+// ── runner catalog (EXECUTION-ISOLATION §3.1) ───────────────────────────────
+
+/** The runner catalog: one row per external agent CLI, with the health evidence
+ *  actually measured for it. Every value shown here is a reading or an explicit
+ *  "unknown" — an unprobed runner says so, an unparseable version says so, and a
+ *  failed probe carries the CLI's own error text verbatim rather than a house
+ *  paraphrase, because the verbatim text is what tells you WHICH thing is missing. */
+function RunnersSection() {
+  const [rows, setRows] = useState<RunnerRow[] | null>(null)
+  const [err, setErr] = useState<unknown>(null)
+  const [probing, setProbing] = useState(false)
+
+  const load = useCallback((probe: boolean) => {
+    if (probe) setProbing(true)
+    api.agentRunners(probe)
+      .then((r) => { setRows(r); setErr(null) })
+      .catch((e) => setErr(e))
+      .finally(() => setProbing(false))
+  }, [])
+
+  useEffect(() => { load(false) }, [load])
+
+  return (
+    <Section title="Runners"
+      hint="External agent CLIs this install can drive. Health is measured by asking each CLI for its own version — nothing else is spawned."
+      right={<Button size="xs" variant="secondary" loading={probing} onClick={() => load(true)}>Re-check runners</Button>}>
+      {!rows && err ? <LoadError what="runners" error={err} onRetry={() => load(false)} />
+        : !rows ? <FormSkeleton sections={1} rows={4} title={false} what="runners" />
+        : rows.length === 0 ? (
+          <p className="rounded-lg bg-surface-container px-4 py-3 text-on-surface-low text-[0.8125rem]">
+            No runners in the catalog. Drop a definition into <code className="font-mono">runners/&lt;id&gt;.json</code> under your PersonalClaw home to add one.
+          </p>
+        ) : (
+          <ul className="divide-y divide-outline-variant overflow-hidden rounded-lg bg-surface-container">
+            {rows.map((r) => <RunnerRowItem key={r.id} row={r} />)}
+          </ul>
+        )}
+    </Section>
+  )
+}
+
+function Chip({ children, tone = 'neutral' }: { children: React.ReactNode; tone?: 'neutral' | 'ok' | 'bad' }) {
+  // The healthy chip takes the SHARED accent-chip skin from design/accent.ts (the
+  // container pair) rather than an accent ink over an accent tint, which fails AA in
+  // light mode at every tint strength. The unhealthy chip keeps danger INK on the
+  // neutral chip ground: the semantic tones have no `<tone>-container` sibling, so
+  // inventing a red fill here would be a redesign, not a contrast fix.
+  const base = 'inline-flex items-center rounded-pill px-2.5 py-1 text-[0.75rem]'
+  if (tone === 'ok') return <span className={base} style={accentChip}>{children}</span>
+  const toneCx = tone === 'bad' ? 'text-danger' : 'text-on-surface'
+  return <span className={`${base} bg-surface-high ${toneCx}`}>{children}</span>
+}
+
+function RunnerRowItem({ row }: { row: RunnerRow }) {
+  const h = row.health
+  const caps = row.capabilities
+  return (
+    <li className="px-4 py-3">
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="text-on-surface text-[0.875rem]">{row.display_name}</span>
+        <span className="font-mono text-on-surface-low text-[0.75rem]">{row.runtime_id}</span>
+        {row.source === 'user' && <Chip>your definition</Chip>}
+        {h === null ? <Chip>never probed</Chip> : h.ok ? <Chip tone="ok">healthy</Chip> : <Chip tone="bad">unhealthy</Chip>}
+      </div>
+
+      {/* Health evidence. `version`/`latency_ms` can be null even on a healthy probe —
+          the CLI answered but its output carried no version we could parse — so each is
+          labelled unknown rather than shown as a zero or an em dash that reads like a
+          measurement. */}
+      {h !== null && (
+        <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-on-surface-low text-[0.75rem]">
+          <span>{h.version ? `v${h.version}` : 'version unknown'}</span>
+          <span>{h.latency_ms === null ? 'latency unknown' : `${h.latency_ms} ms`}</span>
+          <span>last {h.probe} probe {new Date(h.checked_at).toLocaleString()}</span>
+        </div>
+      )}
+      {/* FieldError, not a hand-rolled danger line: an unhealthy runner is a failure the
+          user did not ask for, so it has to announce (ui/fieldErrorAnnounced.test.tsx).
+          The extra classes keep the CLI's text verbatim — wrapped, not truncated. */}
+      {h !== null && !h.ok && h.error && (
+        <FieldError className="mt-1.5 whitespace-pre-wrap break-words font-mono">{h.error}</FieldError>
+      )}
+
+      {/* Capability chips come ONLY from a recorded handshake. No handshake yet means
+          the matrix is unknown — printing an assumed set would tell you this runner
+          supports things nobody has ever seen it do. */}
+      <div className="mt-2 flex flex-wrap items-center gap-1.5">
+        {caps === null ? (
+          <span className="text-on-surface-low text-[0.75rem]">Capabilities unknown — no handshake recorded yet.</span>
+        ) : (
+          <>
+            {caps.permission_modes.map((m) => <Chip key={`m-${m}`}>{m}</Chip>)}
+            {caps.efforts.map((e) => <Chip key={`e-${e}`}>effort: {e}</Chip>)}
+            {caps.models.length > 0 && <Chip>{caps.models.length} model{caps.models.length === 1 ? '' : 's'}</Chip>}
+            {caps.permission_modes.length === 0 && caps.efforts.length === 0 && caps.models.length === 0 && (
+              <span className="text-on-surface-low text-[0.75rem]">Handshake recorded no capabilities.</span>
+            )}
+          </>
+        )}
+      </div>
+
+      <div className="mt-2 flex flex-wrap items-center gap-2">
+        <Chip tone={row.adapter.verified ? 'ok' : 'bad'}>adapter {row.adapter.state}</Chip>
+        <span className="text-on-surface-low text-[0.75rem]">{row.adapter.detail}</span>
+      </div>
+    </li>
   )
 }
 

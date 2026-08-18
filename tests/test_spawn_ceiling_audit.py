@@ -165,6 +165,11 @@ _OPERATOR_EXEMPT: dict[str, str] = {
     "acp/transport.py::_kill_escaped_children::subprocess.check_output": (
         "host-fact: pgid membership scan for escaped children"
     ),
+    # Runner-catalog health probe (EI-5) — `<CLI> --version` and nothing else. The argv is
+    # assembled ONLY from catalog data (the shipped runner_catalog.json or an operator's own
+    # runners/<id>.json), never from a model or a turn, and it runs no agent code: it reads a
+    # host fact about a CLI the operator installed, exactly like the node/npm probes above.
+    "agents/runners.py::probe_runner::subprocess.run": "host-fact: runner --version probe",
     # App install — operator-initiated (Store install), scanned+vetted.
     "apps/app_manager.py::_run_hook::subprocess.run": "operator: app install setup hook",
     "apps/app_manager.py::_install_python_deps::subprocess.run": "operator: app dep install",
