@@ -342,6 +342,29 @@ class AcpAgentProvider(ModelProvider, AgentProvider):
         )
         dialect = get_dialect(options.get("dialect"))
         result = dialect.normalize_discovery(snapshot or {})
+        # Persist the capability matrix into the runner catalog (EXECUTION-ISOLATION
+        # §3.1(3), EI-5). This is the ONE place where a runner's models/modes/efforts
+        # arrive normalized off the wire, so it is the only honest source for the
+        # Settings → Agents capability chips: a runner with no recorded matrix renders
+        # as unknown rather than as an assumed-uniform set.
+        try:
+            from personalclaw.agents.runners import record_capabilities
+
+            record_capabilities(
+                runtime_id,
+                models=list(result.models),
+                modes=[str(a.get("id") or "") for a in result.agents if a.get("id")],
+                # supported_efforts rows are the backend's VERBATIM option dicts
+                # ({"value", "label", …}); the catalog stores the ids the composer
+                # applies, so read `value` rather than stringifying the whole dict.
+                efforts=[
+                    str(e.get("value") or "")
+                    for e in result.supported_efforts
+                    if isinstance(e, dict) and e.get("value")
+                ],
+            )
+        except Exception:  # noqa: BLE001 - catalog persistence never breaks discovery
+            logger.debug("runner capability persist failed for %s", runtime_id, exc_info=True)
         # Reasoning effort is a per-turn SETTING now, so a runtime exposes ONE
         # agent (default-dialect personas still map 1:1 to availableModes). The
         # backend's declared effort options ride along as supported_efforts for the

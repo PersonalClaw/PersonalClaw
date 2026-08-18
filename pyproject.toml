@@ -252,6 +252,11 @@ personalclaw = [
     # a hard error, so every review template would fail to load rather than degrade.
     "workflows/bundled/shared/*.md",
     "apps/native/*/app.json",
+    # The shipped BYO-runner catalog (EXECUTION-ISOLATION §3.1, EI-5). Settings → Agents
+    # renders one row per definition, so a wheel without this line ships an EMPTY runner
+    # catalog: no Claude Code / Codex / Gemini CLI / Kiro rows, no adapter verification to
+    # gate an unattended spawn on. `test_runner_catalog.py` asserts the shipped rows load.
+    "agents/runner_catalog.json",
     # The bundled source-recipe directory (WATCHED-SOURCES §7.2). These are the create flow's
     # "is this site already covered?" answers, so a wheel without this line ships an empty
     # directory and every paste-a-URL looks uncovered — a silent product regression, not a

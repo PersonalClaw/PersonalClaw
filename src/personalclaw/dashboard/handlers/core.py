@@ -712,6 +712,12 @@ _EDITABLE_CONFIG: dict[str, dict] = {
     "agents_routing.cooldown_hours": {"type": "float", "min": 0.0, "max": 720.0},
     "agent.orchestrator_skill": {"type": "bool"},
     "agent.acp_concurrent_sessions": {"type": "bool"},
+    # EXECUTION-ISOLATION §3.2 (EI-5) — require verified adapter provenance for an
+    # UNATTENDED spawn onto an external runner. Runtime-editable because it is a
+    # posture choice, not a floor: which provenance counts as verified is code
+    # (agents/runners.verify_adapter), so a PATCH here can only turn the requirement
+    # on or off, never widen what "verified" means.
+    "agent.unattended_requires_verified_adapter": {"type": "bool"},
     # PROMPT-CACHE-SUBSTRATE §C6 — the prompt-cache switch (default ON). Off collapses
     # the provider's declared cache mode to NONE, which is the byte-identical no-marker
     # path an undeclared provider already takes. It does NOT revert the §C2/§C3 wire

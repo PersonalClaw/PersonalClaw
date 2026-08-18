@@ -9,6 +9,7 @@ Routes:
     GET    /api/model-providers/{name}/models, /search; POST .../pull, .../models/delete
     GET    /api/agent-providers              — list agent runtimes (native + acp:<cli>)
     GET    /api/agent-providers/{id}/agents  — discovered agents for a runtime
+    GET    /api/agent-runners                — runner catalog rows + measured health
 """
 
 import asyncio
@@ -1065,3 +1066,30 @@ async def api_provider_test(request: web.Request) -> web.Response:
             "message": result.detail or "Connection test failed",
         }
     )
+
+
+# ── /api/agent-runners ────────────────────────────────────────────────────────
+
+
+async def api_agent_runners_list(request: web.Request) -> web.Response:
+    """GET /api/agent-runners — the BYO runner catalog with measured health evidence.
+
+    One row per cataloged runner (EXECUTION-ISOLATION §3.1): the definition, the last
+    MEASURED health evidence (``ok``/``version``/``latency_ms``/``error``/
+    ``checked_at``), the capability matrix persisted from a real ACP handshake, and the
+    adapter-provenance verdict the unattended-spawn gate reads.
+
+    A plain GET is a pure read of persisted evidence, so the Settings surface paints
+    instantly and never fabricates a value for a runner it has not probed —
+    ``health: null`` means "never probed", not "fine". ``?probe=1`` re-measures every
+    row first (one ``--version`` spawn per runner, nothing else), which is what the
+    surface's refresh action calls.
+    """
+    from personalclaw.agents import runners as runner_catalog
+
+    probe = request.query.get("probe") in ("1", "true", "yes")
+    loop = asyncio.get_running_loop()
+    # Probing spawns one subprocess per runner; run the whole sweep off the event loop
+    # so a slow CLI cannot stall every other request for its timeout budget.
+    rows = await loop.run_in_executor(None, lambda: runner_catalog.runner_rows(probe=probe))
+    return web.json_response({"runners": [row.to_dict() for row in rows]})

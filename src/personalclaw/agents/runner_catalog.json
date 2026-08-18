@@ -1,0 +1,58 @@
+{
+  "version": 1,
+  "runners": [
+    {
+      "id": "claude-code",
+      "display_name": "Claude Code",
+      "runtime_id": "acp:claude-code",
+      "env_var": "CLAUDE_CODE_EXECUTABLE",
+      "bin_names": ["claude"],
+      "version_args": ["--version"],
+      "dialect": "claude-code",
+      "adapter": {
+        "npm_pkg": "@agentclientprotocol/claude-agent-acp",
+        "env_var": "CLAUDE_CODE_ACP_BIN",
+        "bin_names": ["claude-agent-acp"],
+        "version": "",
+        "integrity": ""
+      }
+    },
+    {
+      "id": "codex",
+      "display_name": "Codex",
+      "runtime_id": "acp:codex",
+      "env_var": "CODEX_PATH",
+      "bin_names": ["codex"],
+      "version_args": ["--version"],
+      "dialect": "codex",
+      "adapter": {
+        "npm_pkg": "@agentclientprotocol/codex-acp",
+        "env_var": "CODEX_ACP_BIN",
+        "bin_names": ["codex-acp"],
+        "version": "",
+        "integrity": ""
+      }
+    },
+    {
+      "id": "gemini-cli",
+      "display_name": "Gemini CLI",
+      "runtime_id": "acp:gemini-cli",
+      "env_var": "GEMINI_CLI_EXECUTABLE",
+      "bin_names": ["gemini"],
+      "version_args": ["--version"],
+      "acp_args": ["--experimental-acp"],
+      "dialect": "",
+      "adapter": null
+    },
+    {
+      "id": "kiro",
+      "display_name": "Kiro",
+      "runtime_id": "acp:kiro",
+      "env_var": "KIRO_CLI_EXECUTABLE",
+      "bin_names": ["kiro-cli", "kiro"],
+      "version_args": ["--version"],
+      "dialect": "",
+      "adapter": null
+    }
+  ]
+}

@@ -983,6 +983,23 @@ class SessionManager:
             await sess.semaphore.acquire()
             return provider, was_new, False
 
+        # ── Unattended adapter-verification gate (EXECUTION-ISOLATION §3.2, EI-5) ──
+        # Past this line the call CREATES a runner — it claims a warm/pooled process,
+        # opens a session on a shared ACP connection, or cold-starts one. When the
+        # caller is UNATTENDED (cron / scheduled run / loop worker: subagent.py sets
+        # ``unattended``) and the resolved runtime is an external ACP runner, the
+        # ``agents.unattended_requires_verified_adapter`` flag requires that runner's
+        # adapter to have verified provenance — so background work can never launch an
+        # `npx -y` fetch-at-launch or an adapter that changed underneath its install.
+        # Placed HERE, above all three creation branches, because a gate on only one of
+        # them is a gate with two holes.
+        from personalclaw.agents.runners import guard_unattended_spawn, runtime_id_for_agent
+
+        _runtime_id = str(extra_factory_kwargs.get("provider_kind") or "")
+        if not _runtime_id.startswith("acp"):
+            _runtime_id = runtime_id_for_agent(agent)
+        guard_unattended_spawn(_runtime_id, unattended=bool(extra_factory_kwargs.get("unattended")))
+
         # Check session map for resume — only for long-lived sessions
         resume_sid: str | None = None
         is_stateless = key == BACKGROUND_KEY or any(key.startswith(p) for p in _STATELESS_PREFIXES)

@@ -2157,6 +2157,27 @@ export interface AgentRuntime {
   name: string; provider_id: string; type: string; extension: string | null
   ready: boolean; state: string; detail: string; login_command: string[] | null
 }
+// One BYO-runner catalog row (EXECUTION-ISOLATION §3.1). `health` is MEASURED
+// evidence or `null` for "never probed" — and inside it, `version`/`latency_ms` are
+// `null` when that particular value was not measured. The UI must render those as
+// unknown; substituting a 0 or a dash-that-looks-like-a-reading is a fabrication.
+// `error` is the probe's OWN text and is surfaced verbatim, never summarized.
+export interface RunnerHealth {
+  ok: boolean; probe: string; checked_at: string
+  version: string | null; latency_ms: number | null; error: string | null
+  resolved_command: string[]
+}
+export interface RunnerCapabilities {
+  source: string; recorded_at: string
+  models: string[]; permission_modes: string[]; efforts: string[]
+}
+export interface RunnerRow {
+  id: string; display_name: string; runtime_id: string; source: string
+  dialect: string; bin_names: string[]
+  health: RunnerHealth | null
+  capabilities: RunnerCapabilities | null
+  adapter: { npm_pkg: string; pinned: boolean; state: string; verified: boolean; detail: string }
+}
 // JSON-Schema (Draft-07 + x-meta) describing one provider's user-config fields.
 export interface ProviderSchemaProp {
   type?: string; default?: unknown; enum?: string[]; minimum?: number; maximum?: number
@@ -3176,6 +3197,10 @@ export const api = {
   // refresh=true forces a fresh readiness probe (post-sign-in / manual re-check),
   // bypassing the 5-minute readiness cache.
   agentRuntimes: (refresh = false) => get<{ agent_providers: AgentRuntime[] }>(`/api/agent-providers${refresh ? '?refresh=1' : ''}`).then((d) => d.agent_providers),
+  // BYO runner catalog rows. A plain read returns the last PERSISTED evidence (no
+  // spawns); probe=true re-measures every runner's `--version` handshake first, which
+  // is what the panel's "Re-check runners" action calls.
+  agentRunners: (probe = false) => get<{ runners: RunnerRow[] }>(`/api/agent-runners${probe ? '?probe=1' : ''}`).then((d) => d.runners),
   // generic multi-instance CRUD (any multiInstance=true provider — MCP/OpenAI tools, …).
   providerInstances: (name: string) => get<{ instances: ProviderInstance[] }>(`/api/providers/${encodeURIComponent(name)}/instances`).then((d) => d.instances),
   createProviderInstance: (name: string, body: { display_name: string; config: Record<string, unknown> }) =>
