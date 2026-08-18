@@ -495,3 +495,59 @@ Morph/LiquidShape/Disintegrate/Bud into one vocabulary and documenting it in `mo
 is not claimed settled** — every constant lives in one named `TUNING` block at the top of the file for
 the owner's taste pass (owner task 1), and the shape vocabulary is deliberately small (circle /
 squircle / blob) so that pass has few knobs to fight.
+
+### 2026-08-18 — `FM-2` (S2: T2.1; contract §C2 `Morph`) — **DONE**
+
+`web/src/ui/motion/Morph.tsx` ships the shared-element wrapper, exported from the `ui/motion` barrel.
+Two branches and nothing else: motion-allowed renders `motion.div layoutId={id}` on
+`morphTransition()`; reduced-motion renders a **plain `<div>` with no `layoutId` at all**, so the swap
+is instant rather than quick and the projection machinery never runs. `layoutId` only — **deliberately
+no `layout`** — because `layout` would additionally animate each end's own size changes, which on a
+grid means every filter, scroll and hover re-measures every card.
+
+**DEVIATION — surface.** T2.1 names knowledge card → reading view; the atom's dep allows alternates.
+Wired instead to the **artifacts library**: `ArtifactGrid`'s card ⇄ `ArtifactsSection`'s full-page
+`ArtifactViewer`, on `artifact-<slug>`. Reason, measured before choosing: a morph needs its two ends to
+swap in ONE commit in BOTH directions, and almost every list⇄detail in this app is a `SidePanel` peek
+where the row and the panel are co-mounted (knowledge, inbox, tasks, skills) — a shared id with both
+ends alive is a different and wrong animation. `#/knowledge` → `#/knowledge/item/<id>` does swap, but
+`KnowledgeListPage` is keyed on `navEpoch`, so Back remounts it and its rows arrive a fetch later —
+forward would morph and **Back would not**. `ArtifactsSection` renders `slug ? viewer : grid` and holds
+`artifacts` above the swap, so both directions are same-commit with data already in hand. Route
+transitions do not interfere: `FM-5`'s View Transition is gated on `route`, and this is a `sub` change.
+
+**Evidence (driven in Chrome against a seeded dev home, 6 artifacts, 1440x900).** Forward: the viewer
+appears at **296x201** — the card's own 294x200 — and grows to 1244x844 over ~330ms with a spring
+overshoot to scale 1.0085, settling to `transform: none`. Back: the card starts at the viewer's exact
+box (196,56,1244,844) and lands on **(212,229,294,200)**, its resting box, to the pixel. Reduced
+motion (`matchMedia` stubbed before first paint): all six cards report `data-morph="none"`, and across
+every sampled frame for 500ms in both directions the set of transforms is exactly `["none"]` and the
+set of `style` attributes exactly `[null]` — instant, not fast. The motion-allowed run of the same
+probe produced 68 distinct transform matrices, which is what makes that a measurement and not a
+tautology.
+
+**Layout thrash — measured, not asserted.** Over a trace covering one open + one Back: **CLS 0.00**,
+**zero** forced-reflow markers, 37 `Layout` events totalling **15.28ms** (max 8.14ms) and 224
+`UpdateLayoutTree` totalling 35.29ms across 14.25s — and inside the forward morph's window the 16
+`Layout` events sit in three bursts (commit, the viewer's content arriving, settle) against ~219
+committed frames, so the animation itself re-measures nothing. A/B on the same build with the morph
+off (reduced-motion branch) attributes **one** frame to the morph: forward max frame 34.7ms vs 10.7ms
+(1 frame over 16.7ms vs 0), that frame being the commit where the viewer mounts. Returning to the grid
+costs more than the morph does and costs it either way — morph-off's worst frame is *worse* (96.7ms vs
+60.1ms) because six lazy sandboxed iframe previews remount. Zero long tasks on either path.
+
+**KNOWN, MEASURED, NOT FIXED HERE — the forward flight starts 157px too high.** The opening morph
+matches the card's size and horizontal centre (359 vs 360) but its vertical centre is off by exactly
+**157px**, which is exactly the height of the toolbar row above the grid. Cause: React removes the
+toolbar in the same commit that mounts the viewer, so by the time Framer snapshots the *exiting* card
+it has already reflowed upward by the toolbar's height. The Back direction is exact because the
+exiting viewer has no sibling to lose. The clause holds — it visibly morphs both ways — but it reads
+as growing from above the card you clicked. The fix is structural (keep the exiting subtree in flow,
+e.g. an `AnimatePresence mode="popLayout"` around the page swap), which is `FM-4`'s coherence scope,
+not a constant to dial.
+
+**Not in this atom, by scope:** `FM-4` owns unifying Morph/LiquidShape/Disintegrate/Bud into one
+vocabulary (and the 157px snapshot fix above); `FM-7` owns the 60fps proof and the CI zero-motion
+guard, and now inherits a numeric baseline to measure against. **The feel is not claimed settled** —
+`MORPH = { stiffness, stiffnessBonus, floor }` is one named block at the top of the file for the
+owner's taste pass (owner task 1).
