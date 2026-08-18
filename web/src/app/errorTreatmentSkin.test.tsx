@@ -67,8 +67,16 @@ const EB_BEFORE =
  *  below (which is the property that matters: the action is untouched). */
 const IB_BEFORE = {
   role: 'alert',
-  class: 'flex items-center gap-3 px-4 py-2 text-[0.8125rem]',
-  style: 'background: var(--color-error-container); color: var(--color-on-error-container);',
+  // ⚠️ UPDATED BY PT-6, and only in the axis this file does NOT guard. The banner's right
+  // padding is now `--shell-corner-r` + a gap, because `ShellCornerRight` is pinned in the
+  // same `relative` box and was covering the Resume button at every width measured. That
+  // is the banner's OWN chrome, identical under every personality — which is the property
+  // the tests below assert. What this constant freezes is "a treatment does not touch the
+  // base chrome", and that still holds; it is not a licence to keep a stale literal.
+  class: 'flex items-center gap-3 pl-4 py-2 text-[0.8125rem]',
+  style:
+    'background: var(--color-error-container); color: var(--color-on-error-container); ' +
+    'padding-right: calc(var(--shell-corner-r, 140px) + var(--spacing-m, 12px));',
   iconClass: 'lucide lucide-triangle-alert shrink-0',
   text:
     'Incident mode is active — all unattended work (cron, hooks, triggers, subagents) is ' +

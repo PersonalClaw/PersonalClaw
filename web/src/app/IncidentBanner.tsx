@@ -42,10 +42,27 @@ export function IncidentBanner() {
 
   return (
     <div role="alert"
-      className={['flex items-center gap-3 px-4 py-2 text-[0.8125rem]', treatment?.surfaceClass]
+      className={['flex items-center gap-3 pl-4 py-2 text-[0.8125rem]', treatment?.surfaceClass]
         .filter(Boolean)
         .join(' ')}
-      style={{ background: 'var(--color-error-container)', color: 'var(--color-on-error-container)', ...paint }}>
+      // 🔴 THE RESUME BUTTON WAS UNCLICKABLE. This banner is the first child of the
+      // `relative` main area, and `ShellCornerRight` is pinned `absolute right-0 top-0
+      // z-30` in that same box — so the corner cluster (terminal • width • bell • theme •
+      // health) landed ON TOP of the banner's right end. Measured at 1440/1280/1024/390:
+      // `document.elementFromPoint` over the Resume button's own centre returned the
+      // degraded-status pill at EVERY width, so the one-click recovery from incident mode
+      // — the whole point of the banner — could not be clicked where anyone would aim.
+      //
+      // `--shell-corner-r` is the mechanism that already solves this (ShellCorners
+      // publishes its measured width; TopBar pads by it, SidePanel starts below it). The
+      // banner arrived later and never opted in. Same expression as TopBar's, fallback
+      // included, so a corner that has not measured yet still clears.
+      style={{
+        background: 'var(--color-error-container)',
+        color: 'var(--color-on-error-container)',
+        paddingRight: 'calc(var(--shell-corner-r, 140px) + var(--spacing-m, 12px))',
+        ...paint,
+      }}>
       <AlertTriangle size={16} className={['shrink-0', treatment?.iconClass].filter(Boolean).join(' ')} />
       <span className="min-w-0 flex-1 truncate">
         <strong>Incident mode is active</strong> — all unattended work (cron, hooks, triggers,
