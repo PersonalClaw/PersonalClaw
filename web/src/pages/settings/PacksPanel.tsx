@@ -256,7 +256,7 @@ export function PackStoreSection({ installed, onInstalled }: {
 
   return (
     <Section title="Pack store" hint="The packs shipped in this build. Installing one scans every component, lands its triggers disabled, and stages its roster until you deploy it.">
-      {error ? <LoadError what="the pack catalog" error={error} onRetry={refresh} /> : null}
+      {error ? <LoadError what="pack catalog" error={error} onRetry={refresh} /> : null}
       <div className="flex flex-col gap-2">
         {(bundled ?? []).map((p) => (
           <div key={p.name} className="rounded-lg bg-surface-container px-4 py-3">
