@@ -1907,7 +1907,7 @@
           "deps": [
             "TSE-4"
           ],
-          "pr": ""
+          "pr": 1699
         }
       ]
     },
@@ -5556,6 +5556,7 @@
           "id": "APE-2",
           "title": "Platform event registry (app_events.py) + emit sites + declared-subscription WS filter",
           "status": "done",
+          "pr": 1699,
           "scope": "Session 1 T1.2; Contract C4 (typed platform events registry)",
           "done_when": "app_events.py registers session.created/knowledge.ingested/task.completed at their emit sites; a fixture app subscribed to task.completed receives it; an unsubscribed app never does; SEL clean",
           "deps": [
@@ -7190,6 +7191,7 @@
           "id": "PEP-10",
           "title": "Always-on conventions viewer + first domain-craft skills",
           "status": "done",
+          "pr": 1699,
           "scope": "Add an 'Always-on' viewer to the Capabilities area that lists, with provenance (global vs project), every always:true skill and project-instruction doc currently injected into sessions, with inline read/edit; reuse the skills/instruction security discipline (symlink-leaf rejection, atomic write preserving mode bits, trust-base containment). Do not introduce a parallel always-on 'steering' store - the always:true-skills + project-instructions layer is the single always-on mechanism; this adds only the missing legibility surface. Author the first domain-craft bundled skills: web-verify/preview, document-authoring, and research-campaign, each with the frontmatter contract and a worked example.",
           "done_when": "The viewer matches what a session actually receives (spot-checked against an assembled prompt) and editing a project instruction round-trips safely; the three new skills load and surface when relevant, validated in a real session.",
           "deps": []
