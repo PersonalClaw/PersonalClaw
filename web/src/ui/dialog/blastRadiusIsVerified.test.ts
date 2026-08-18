@@ -308,3 +308,54 @@ describe('the project delete, and the two workflow bodies', () => {
       .toMatch(/async def delete_run\(/)
   })
 })
+
+describe('four more bodies, all already true — pinned so they stay that way', () => {
+  it('the tag delete really re-parents children instead of deleting the branch', () => {
+    // 🔑 THE FRAGILE ONE. This body promises "Its N nested tags become top-level rather than being
+    // deleted", and nothing in `delete_tag` re-parents anything — the promise rests entirely on
+    // `ON DELETE SET NULL` on the tags self-FK, which SQLite honours only with the pragma on. Same
+    // two-part dependency as the annotations cascade, so both parts are pinned: lose either and a
+    // parent delete silently destroys the branch beneath it while the dialog says it will not.
+    const ui = web('pages/knowledge/TagManager.tsx')
+    expect(ui).toContain('become top-level rather than being deleted')
+    const store = py('knowledge/store.py')
+    const ddl = store.slice(store.indexOf('CREATE TABLE IF NOT EXISTS tags'))
+    expect(ddl.slice(0, ddl.indexOf(');')), 'the self-FK sets null').toMatch(
+      /parent_id INTEGER REFERENCES tags\(id\) ON DELETE SET NULL/,
+    )
+    const connect = store.slice(store.indexOf('self.db = sqlite3.connect('))
+    expect(connect.slice(0, 400), 'and the connection enforces foreign keys').toMatch(/PRAGMA foreign_keys=ON/)
+    // And the untag half of the same sentence.
+    expect(ui).toMatch(/This removes the tag from \$\{t\.usage_count\} item/)
+    expect(pyMethod(store, '    def delete_tag'), 'the docstring states the same contract')
+      .toMatch(/Children are re-parented to root rather than deleted/)
+  })
+
+  it('the shelf delete leaves the items alone', () => {
+    expect(web('pages/knowledge/KnowledgeListPage.tsx')).toContain(
+      'The shelf goes away. The items on it stay in your library.',
+    )
+    const del = pyMethod(py('knowledge/store.py'), '    def delete_collection')
+    expect(del, 'membership rows and the collection row go').toMatch(/DELETE FROM collection_items/)
+    expect(del, 'and the items table is never touched').not.toMatch(/DELETE FROM items/)
+  })
+
+  it('the skill delete really removes the directory', () => {
+    expect(web('pages/skills/SkillInspector.tsx')).toContain('This removes it from disk. This cannot be undone.')
+    expect(pyMethod(py('skills/loader.py'), '    def delete_skill'), 'rmtree, not a registry flag')
+      .toMatch(/shutil\.rmtree\(skill_dir\)/)
+  })
+
+  it('the Ollama delete really reaches the host — across the app boundary', () => {
+    // 🪤 A CROSS-REPO CLAIM, and the reason it is worth pinning: nothing in core implements this. The
+    // handler calls `catalog.delete_model`, and the only implementation lives in the REMOVABLE
+    // `ollama-models` app bundle, which is exactly where provider logic is supposed to live. A grep of
+    // core alone says the promise is unimplemented; it is not.
+    expect(web('pages/settings/OllamaModelManager.tsx')).toContain(
+      "This frees disk on the Ollama host and can't be undone.",
+    )
+    const h = py('dashboard/handlers/providers.py')
+    expect(h, 'core delegates to the catalog').toMatch(/await catalog\.delete_model\(model\)/)
+    expect(h, 'and only for a provider whose catalog can do it').toMatch(/isinstance\(catalog, ModelManager\)/)
+  })
+})
