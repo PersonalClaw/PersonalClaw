@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { createRef } from 'react'
 import { render, within, fireEvent, waitFor, act } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { FindBar, findAnnouncement } from './FindBar'
 import { FollowupChips, followupAnnouncement } from './FollowupChips'
 import type { ChatTurn } from './chatTypes'
@@ -287,5 +288,74 @@ describe('followupAnnouncement — chips arrival is spoken, and dismissal clears
       <FollowupChips items={['draft the summary', 'run the tests']} onPick={() => {}} onSend={() => {}} />)
     expect(within(container).getByLabelText('Send: draft the summary')).toBeTruthy()
     expect(within(container).getByLabelText('Send: run the tests')).toBeTruthy()
+  })
+})
+
+// The chips half of the same done_when clause, driven the way the bar's half already is.
+// The block above proves the chips are NAMED and that four buttons exist by role — which
+// is a count, not a traversal: a role query finds an element `Tab` may never land on, and
+// says nothing about what activating it does. That distinction is load-bearing here for
+// one specific reason: the label half sends on `onDoubleClick`, and a double-click has no
+// keyboard equivalent at all. So the send glyph is the ONLY keyboard path to sending a
+// chip. If it ever lost its tab stop or its activation, sending a suggestion would
+// silently become mouse-only while every assertion above still passed.
+describe('FollowupChips keyboard traversal is DRIVEN, not declared', () => {
+  afterEach(() => { document.body.innerHTML = '' })
+
+  /** Whatever currently has focus, identified the way a screen reader would name it. */
+  const focused = () => {
+    const el = document.activeElement as HTMLElement | null
+    if (!el || el === document.body) return 'body'
+    return el.getAttribute('aria-label') ?? (el.textContent || el.tagName.toLowerCase())
+  }
+
+  it('Tab reaches both halves of every chip, in visual order', async () => {
+    const user = userEvent.setup()
+    render(<FollowupChips items={['draft the summary', 'run the tests']}
+      onPick={() => {}} onSend={() => {}} />)
+
+    const stops: string[] = []
+    for (let i = 0; i < 4; i++) { await user.tab(); stops.push(focused()) }
+    // Label then send glyph, chip by chip — asserted as an ORDER, because each element
+    // being focusable in isolation says nothing about the sequence a user walks.
+    expect(stops).toEqual([
+      'draft the summary', 'Send: draft the summary',
+      'run the tests', 'Send: run the tests',
+    ])
+    // Vacuity floor: if nothing were focusable, every entry above would read 'body' and
+    // a laxer assertion would still have "passed" four times over.
+    expect(stops).not.toContain('body')
+  })
+
+  it('Enter on a chip label fills the composer WITHOUT sending it', async () => {
+    const user = userEvent.setup()
+    const onPick = vi.fn()
+    const onSend = vi.fn()
+    render(<FollowupChips items={['draft the summary']} onPick={onPick} onSend={onSend} />)
+
+    await user.tab()
+    expect(focused()).toBe('draft the summary')
+    await user.keyboard('{Enter}')
+    expect(onPick).toHaveBeenCalledWith('draft the summary')
+    // Picking is an EDIT affordance ("click to edit · double-click to send"). If Enter
+    // also sent, a keyboard user could never edit a suggestion before dispatching it.
+    expect(onSend).not.toHaveBeenCalled()
+  })
+
+  it('Enter on the send glyph sends, so double-click is not the only way', async () => {
+    const user = userEvent.setup()
+    const onPick = vi.fn()
+    const onSend = vi.fn()
+    render(<FollowupChips items={['draft the summary', 'run the tests']}
+      onPick={onPick} onSend={onSend} />)
+
+    // Second chip's glyph: three tabs (label, glyph, label) then one more.
+    for (let i = 0; i < 4; i++) await user.tab()
+    expect(focused()).toBe('Send: run the tests')
+    await user.keyboard('{Enter}')
+    expect(onSend).toHaveBeenCalledWith('run the tests')
+    expect(onSend).toHaveBeenCalledTimes(1)
+    // The glyph sends outright; it is not a second route into the pick path.
+    expect(onPick).not.toHaveBeenCalled()
   })
 })

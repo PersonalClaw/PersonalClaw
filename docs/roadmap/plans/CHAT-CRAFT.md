@@ -586,6 +586,71 @@ One task row, landing in **S4** (the polish session); **no count change**.
   Real-home rail: `~/.personalclaw` untouched (validation ran against
   `.dev-home` on port 10471, `--seed demo-home`).
 
+- **2026-08-18 — CC-6 remainder: five of six clauses re-verified SHIPPED, one gap closed,
+  one PARTIAL carried forward.** Branch `feature-cc6-chat-wrapup-remainder`, one commit
+  (`dcd91e35`). The atom was still `todo` after the entry above landed via a squash batch, so
+  each done_when clause was re-measured against `main` rather than read off that entry. The
+  seven mechanics, re-enumerated from `:41`-`:47`: (1) true rewind, (2) queue interrupt-now,
+  (3) find-in-conversation, (4) quote-reply, (5) follow-up chips, (6) smooth streaming reveal,
+  (7) screen-snip.
+
+  **CONFIRMED SHIPPED (measured, not inferred):** *aria-live* — `FindBar.tsx:159` glyph is
+  `aria-hidden` beside the worded `role="status"` at `:163`, and the chips region is live in the
+  host at `ChatPage.tsx:2808` (`followupAnnouncement(streaming ? 0 : followups.length)`), not
+  merely exported. *SEL* — `tests/test_chat_craft_sel_audit.py` 15 passed; its client-only
+  assertions are structural with a real floor (`assert "api." not in body` over the
+  `quoteToComposer` body at `:396`-`:403`), so a forgotten emitter cannot read as a correct
+  zero. *Mobile docking* — `FindBar.tsx:140` switches on `useIsMobile()`, and that hook
+  (`web/src/app/useIsMobile.ts:12-18`) is `matchMedia`-reactive with a `change` listener, so
+  the docking is NOT mount-gated and survives rotation; chips wrap via `flex-wrap`
+  (`FollowupChips.tsx:41`). *Docs* — `docs/guides/chat-surface.md` carries seven numbered
+  sections plus the recording table, linked from `README.md:222`. *CHANGELOG* — the class-B
+  `rewound` note with `personalclaw snapshot` advice is at `CHANGELOG.md:1768`-`1770`. That
+  sits under `## [0.1.3]` rather than `## [Unreleased]`, which was checked and is **correct,
+  not drift**: CC-1 landed 2026-07-27 and 0.1.3 released 2026-07-30, so the field shipped in
+  that release.
+
+  **The one real gap — chips keyboard traversal was a CENSUS, not a traversal.** The clause
+  pairs "FindBar/chips", and the bar's half was genuinely driven (`userEvent.tab()` through
+  four stops, Escape from every stop, focus return). The chips' half was
+  `expect(getAllByRole('button')).toHaveLength(4)` — a role query finds elements `Tab` may
+  never land on and says nothing about what activating one does. The load-bearing fact it
+  could not see: the chip label sends on `onDoubleClick`, which has **no keyboard equivalent**,
+  so the send glyph is the ONLY keyboard route to sending a suggestion. Had it lost its tab
+  stop or its `onClick`, sending would have become mouse-only with every existing assertion
+  still green. Three driven cases added to `findBarA11y.test.tsx` (18 → 21): Tab reaches label
+  then glyph per chip asserted as an ORDER with a `not.toContain('body')` vacuity floor (an
+  unfocusable tree would otherwise record four "passes"), Enter on the label picks without
+  sending, Enter on the glyph sends exactly once without picking.
+
+  **PARTIAL carried forward, deliberately not reversed: "snip hidden on iOS Safari".**
+  `chooseCaptureProvider` (`web/src/ui/composer/displayCapture.ts:72`-`:79`) returns `'native'`
+  whenever `platform === 'darwin'` regardless of `supported`, and `platform` is the GATEWAY's,
+  so from iOS Safari pointed at a macOS gateway the entry is still offered. Re-examined rather
+  than rubber-stamped, and the prior call holds for a reason that entry did not state: the same
+  branch already routes **Chrome-on-Linux → macOS gateway** to the native path, so hiding it
+  for iOS Safari alone would make the platform rule inconsistent with a CC-4 decision that has
+  landed. It is honestly documented at `docs/guides/chat-surface.md:141`-`:151`, including that
+  the crosshair appears on the Mac. Hidden as specified on a non-darwin gateway. Reading the
+  clause literally, CC-6 is **DONE with one documented deviation**, not silently complete.
+
+  **Falsifications** (mutate the live source, `grep -n` to confirm it applied, observe the red,
+  restore from a `/tmp` file copy — never `git checkout`): glyph `onClick` → no-op →
+  `expected "spy" to be called with arguments: [ 'run the tests' ] … Number of calls: 0`; label
+  `onClick` also sends → `expected "spy" to not be called at all, but actually been called 1
+  times`; label/glyph order swapped → `expected [ 'Send: draft the summary', …(3) ] to deeply
+  equal [ 'draft the summary', …(3) ]` plus both focus assertions red, proving the ORDER (not
+  just presence) is what is asserted. Tree clean after restore; the 13 benign pre-existing
+  probe matches unchanged.
+
+  **Gate:** `make lint` exit 0 (black 1789 files unchanged, isort, flake8, mypy 919 files);
+  targeted pytest **61 passed** (`test_chat_craft_sel_audit`, `test_chat_rewind`,
+  `test_chat_followups`, `test_rewind_to_turn_api`, `test_docs_lint_baseline`,
+  `test_nav_resolve_links` — every path confirmed to exist first); web typecheck exit 0; full
+  web suite from the repo root **412 files / 4154 tests passed** (global design ratchets
+  included); web build exit 0. `docs/design/consistency-audit.json` regenerated by the web runs
+  and deliberately left uncommitted. No real-home writes — no gateway was started this session.
+
 ## Amendment (2026-07-29 — owner-approved: Branch, and the plan gate for ordinary chat)
 
 **Provenance.** A design gap analysis (2026-07-28/29). Two mechanics were approved for planning: a **Branch** mechanic (fork a session at any message with isolated inherited context) and a **plan-then-act gate**. Both turn out to be **much closer to done than the analysis suggested**, and one of them **directly contradicts an explicit non-goal in this plan's S1**. This amendment resolves that contradiction rather than silently overriding it.
