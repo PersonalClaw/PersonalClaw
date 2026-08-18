@@ -203,6 +203,88 @@ def test_attention_pairs_have_no_legacy_history():
         )
 
 
+def test_EVERY_EMITTER_IN_THE_TREE_IS_REGISTERED():
+    """The direction the round-trip test below cannot see.
+
+    🪤 That test iterates `_ATTENTION_FLAT` — the kinds that ARE registered — so it can only ever
+    check the compliant population. It cannot notice a kind that is absent from the map entirely,
+    which is exactly how `learning/proposal` and `planning/scratchpad`'s `planning/proposal` shipped
+    unregistered: `resolve_kind` fell open to system/generic on every emission, so they carried
+    GENERIC's severity and mode rather than their own, never appeared as a row in Settings →
+    Notifications (`rules_document()` iterates the registry), and the daily digest grouped
+    them under **"Skill proposal"**, because a pair with no wire string collapses onto the
+    bare `kind`.
+
+    So this sweeps the POPULATION: every literal `(source, kind)` an `emit_attention_item` call site
+    in the tree passes must resolve to a registered pair. Source-level, because that is where a new
+    emitter is added — a runtime sweep would only see the paths a test happens to exercise.
+    """
+    import ast
+    import pathlib
+
+    root = pathlib.Path(nk.__file__).parent
+    pairs: dict[tuple[str, str], str] = {}
+    for path in root.rglob("*.py"):
+        try:
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+        except SyntaxError:  # pragma: no cover - a generated file is not this test's subject
+            continue
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            fn = node.func
+            name = getattr(fn, "attr", None) or getattr(fn, "id", None)
+            if name != "emit_attention_item":
+                continue
+            kw = {k.arg: k.value for k in node.keywords if k.arg}
+            src, kind = kw.get("source"), kw.get("kind")
+            # Only LITERAL pairs can be checked statically; a computed one (an app's dynamic
+            # kind_suffix) is covered by its own registration path.
+            if isinstance(src, ast.Constant) and isinstance(kind, ast.Constant):
+                if isinstance(src.value, str) and isinstance(kind.value, str):
+                    pairs[(src.value, kind.value)] = f"{path.name}:{node.lineno}"
+
+    assert len(pairs) >= 6, f"the sweep found only {len(pairs)} literal emitters — parser drift?"
+    registered = {(k.source, k.kind) for k in nk.all_kinds()}
+    missing = sorted(
+        f"{s}/{k}  ({where})" for (s, k), where in pairs.items() if (s, k) not in registered
+    )
+    assert not missing, (
+        "these emitters are not in the registry, so they lose their own severity, mode and "
+        "settings row, and the digest groups them under whichever kind their bare wire string "
+        "collides with:\n  " + "\n  ".join(missing)
+    )
+
+
+def test_a_registered_pair_keeps_its_OWN_digest_heading():
+    """The user-visible half of the bug above, pinned end to end.
+
+    Registration alone was not enough: `kind_for_legacy_pair` falls back to the bare `kind`, so two
+    kinds both called "proposal" still emitted the same wire string, and the digest still
+    counted them as one group. Each needs a DISTINCT wire string; this asserts the outcome
+    rather than the mechanism.
+    """
+    from personalclaw.notification_rules import build_digest_body
+
+    entries = [
+        {"kind": nk.kind_for_legacy_pair("learning", "proposal"), "title": "Promote the heuristic"},
+        {
+            "kind": nk.kind_for_legacy_pair("planning", "proposal"),
+            "title": "Plan this jotted line?",
+        },
+        {"kind": nk.kind_for_legacy_pair("skills", "proposal"), "title": "Refine a skill"},
+    ]
+    body = build_digest_body(entries)
+    for heading in (
+        "**Learning proposal** — 1",
+        "**Planning proposal** — 1",
+        "**Skill proposal** — 1",
+    ):
+        assert heading in body, f"missing {heading!r} in:\n{body}"
+    # …and none of them is folded into another's count.
+    assert "— 3" not in body and "— 2" not in body, body
+
+
 def test_attention_pairs_round_trip_through_the_wire():
     """pair → wire → pair must be lossless, or the kind loses its own rule.
 

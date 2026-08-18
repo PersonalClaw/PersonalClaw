@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { rowSubject } from '../../lib/rowSubject'
 import { FieldError } from '../../ui/forms'
 import { unavailableWhen } from '../../ui/unavailable'
 import { fvs } from '../../design/fontWeight'
@@ -296,8 +297,12 @@ function Comments({ taskId, provider }: { taskId: string; provider?: string }) {
   }
 
   // A comment has no edit path, so removal is the only way to take back a wrong one.
-  async function remove(commentId: string) {
-    if (!(await confirmDelete('comment'))) return
+  // 🪤 `body` is threaded in because the comment IS in scope at the call site — `remove(c.id)` is
+  // called from inside `comments.map`, so the text was one argument away while the dialog asked about
+  // "this comment". A comment has no edit path, so the dialog is the only chance to check you are
+  // deleting the right one, and on a long thread "this comment" identifies nothing.
+  async function remove(commentId: string, body: string) {
+    if (!(await confirmDelete('comment', rowSubject([body], 40)))) return
     try { await api.deleteTaskComment(taskId, commentId, provider); await load() } catch { /* ignore */ }
   }
 
@@ -311,7 +316,7 @@ function Comments({ taskId, provider }: { taskId: string; provider?: string }) {
               <div className="flex items-center gap-s text-[0.75rem] text-on-surface-low mb-0.5">
                 <span className="text-on-surface-var">{c.author || 'you'}</span>
                 <span>{relTime(c.created_at)}</span>
-                <IconButton icon={Trash2} label="Delete comment" onClick={() => remove(c.id)} size={24} iconSize={13}
+                <IconButton icon={Trash2} label="Delete comment" onClick={() => remove(c.id, c.body)} size={24} iconSize={13}
                   className="ml-auto opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100 hover:text-danger" />
               </div>
               <p className="text-on-surface text-[0.8125rem] whitespace-pre-wrap">{c.body}</p>

@@ -274,7 +274,13 @@ def _managed_bin_dir() -> Path:
     return config_dir() / "acp-adapters"
 
 
-def provision_acp_adapter(npm_pkg: str, bin_names: list[str]) -> str | None:
+def provision_acp_adapter(
+    npm_pkg: str,
+    bin_names: list[str],
+    *,
+    pin_version: str = "",
+    expected_integrity: str = "",
+) -> str | None:
     """Install *npm_pkg* under a Node ≥20 interpreter into the managed prefix.
 
     Returns the resolved adapter binary path on success, else None. Idempotent:
@@ -291,6 +297,14 @@ def provision_acp_adapter(npm_pkg: str, bin_names: list[str]) -> str | None:
     installs as a side effect) and frozen/desktop builds (a locked environment
     where a runtime ``npm install`` is undesirable). When disabled, an already-
     provisioned adapter is still returned (idempotent read), but nothing installs.
+
+    ``pin_version`` / ``expected_integrity`` carry a catalog row's adapter pin
+    (EXECUTION-ISOLATION §3.1(4)). A pinned version is installed as
+    ``<pkg>@<version>`` rather than the floating latest, and the install's provenance
+    is recorded into the managed prefix's ``.pclaw-lock.json`` afterwards so
+    :func:`personalclaw.agents.runners.verify_adapter` can prove later that the
+    adapter on disk is still the one that was installed. A pin MISMATCH records
+    nothing — the adapter stays unverified rather than being blessed by the recording.
     """
     prefix = _managed_bin_dir()
     bin_dir = prefix / "node_modules" / ".bin"
@@ -332,8 +346,9 @@ def provision_acp_adapter(npm_pkg: str, bin_names: list[str]) -> str | None:
             "PATH": os.pathsep.join([str(Path(node).parent), os.environ.get("PATH", "")]),
         }
         logger.info("acp adapter %s: provisioning under %s into %s", npm_pkg, node, prefix)
+        spec = f"{npm_pkg}@{pin_version}" if pin_version else npm_pkg
         proc = subprocess.run(
-            [npm, "install", "--prefix", str(prefix), "--no-fund", "--no-audit", npm_pkg],
+            [npm, "install", "--prefix", str(prefix), "--no-fund", "--no-audit", spec],
             capture_output=True,
             text=True,
             timeout=180,
@@ -350,6 +365,24 @@ def provision_acp_adapter(npm_pkg: str, bin_names: list[str]) -> str | None:
     except Exception:
         logger.warning("acp adapter %s: provisioning errored", npm_pkg, exc_info=True)
         return None
+
+    # Record what npm actually installed BEFORE returning the path, so the very first
+    # resolve after provisioning can already verify the adapter's provenance. A pin
+    # mismatch refuses to record (and says so), leaving the adapter unverified.
+    try:
+        from personalclaw.agents.runners import AdapterPin, record_provenance
+
+        pin = (
+            AdapterPin(npm_pkg=npm_pkg, version=pin_version, integrity=expected_integrity)
+            if (pin_version and expected_integrity)
+            else None
+        )
+        if not record_provenance(npm_pkg, pin=pin):
+            logger.warning(
+                "acp adapter %s: provenance NOT recorded — it will read as unverified", npm_pkg
+            )
+    except Exception:
+        logger.warning("acp adapter %s: provenance recording errored", npm_pkg, exc_info=True)
 
     for name in bin_names:
         cand = bin_dir / name

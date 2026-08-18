@@ -321,7 +321,7 @@ class TestIncrementalExport:
         from personalclaw.durability.shards import default_shard_dir, dirty_entries
 
         self._seed_and_close()
-        home = Path(service._home())
+        home = Path(service.active_home())
         state_path = default_shard_dir(home) / "export_state.json"
         dirty_entries(home, state_path)
         assert dirty_entries(home, state_path) == []

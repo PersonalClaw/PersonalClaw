@@ -443,6 +443,14 @@ async def start_dashboard(
     app.router.add_post(
         "/api/durability/archive/{id}/restore", handlers.api_durability_archive_restore
     )
+    # The conflict review queue. `durability/conflicts.py` shipped the
+    # detector and the durable queue with no route at all, so a both-sides-edited
+    # divergence held the local row and was then invisible. Owner-only; the resolve
+    # writes a chosen row into the live store, so it is confirm-gated.
+    app.router.add_get("/api/durability/conflicts", handlers.api_durability_conflicts)
+    app.router.add_post(
+        "/api/durability/conflicts/{id}/resolve", handlers.api_durability_conflict_resolve
+    )
     # The Electron shell seam. The three POSTs are
     # loopback-only and credential-bearing (see handlers/desktop.py); the GETs are
     # the truth surface for Settings → Security and for apps holding a manifest
@@ -547,6 +555,7 @@ async def start_dashboard(
     from personalclaw.dashboard.handlers.providers import (
         api_agent_provider_agents,
         api_agent_providers_list,
+        api_agent_runners_list,
         api_provider_create,
         api_provider_delete,
         api_provider_model_delete,
@@ -564,6 +573,7 @@ async def start_dashboard(
     app.router.add_get("/api/model-provider-types", api_provider_types)
     app.router.add_get("/api/agent-providers", api_agent_providers_list)
     app.router.add_get("/api/agent-providers/{id}/agents", api_agent_provider_agents)
+    app.router.add_get("/api/agent-runners", api_agent_runners_list)
     app.router.add_post("/api/model-providers", api_provider_create)
     app.router.add_put("/api/model-providers/{name}", api_provider_update)
     app.router.add_delete("/api/model-providers/{name}", api_provider_delete)
