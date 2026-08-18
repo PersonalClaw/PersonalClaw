@@ -7107,7 +7107,7 @@
         {
           "id": "PEP-2",
           "title": "Cross-surface preset empty-state sweep",
-          "status": "todo",
+          "status": "done",
           "scope": "Reuse the PresetEmptyState primitive across the remaining list surfaces: Workflows and Tasks (preset source = the bundled workflow/task templates surfaced as cards, no new copy that drifts from the templates), plus lighter-touch example cards on the Knowledge and Agents/Tools/Skills empty states. Validate as a newcomer by walking every list surface's empty state and confirming each offers a guided on-ramp while the expert blank-create path still works unchanged.",
           "done_when": "No list surface presents a bare form with no on-ramp; each empty surface deep-links into its existing create flow; expert paths unchanged; validation recorded with screenshots.",
           "deps": [
@@ -7743,11 +7743,6 @@
         "id": "PCS-8",
         "title": "Branded-app cache posture declaration (PersonalClawApps, incl. Bedrock cachePoint)",
         "plan": "PCS"
-      },
-      {
-        "id": "PEP-2",
-        "title": "Cross-surface preset empty-state sweep",
-        "plan": "PEP"
       },
       {
         "id": "PEP-3",
@@ -10161,9 +10156,9 @@
         "code": "PEP",
         "plan": "PRODUCT-EXPERIENCE-PARITY",
         "total_atoms": 11,
-        "done": 5,
+        "done": 6,
         "in_progress": 0,
-        "todo": 6,
+        "todo": 5,
         "blocked": 0
       },
       {

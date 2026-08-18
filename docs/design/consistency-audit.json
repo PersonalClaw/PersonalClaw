@@ -1,8 +1,8 @@
 {
-  "generatedAt": "2026-08-18T13:33:36.831Z",
+  "generatedAt": "2026-08-18T19:11:21.759Z",
   "totals": {
     "driftHits": 8,
-    "filesScanned": 519,
+    "filesScanned": 520,
     "filesWithDrift": 7
   },
   "byCategory": {
@@ -14,11 +14,6 @@
   },
   "ranked": [
     {
-      "file": "pages/code/CodeCockpitPage.tsx",
-      "score": 46,
-      "detail": "21 raw-button, 4 raw-input"
-    },
-    {
       "file": "pages/ChatPage.tsx",
       "score": 39,
       "detail": "15 raw-button, 9 raw-input"
@@ -27,6 +22,11 @@
       "file": "pages/projects/ProjectsSection.tsx",
       "score": 37,
       "detail": "17 raw-button, 3 raw-input"
+    },
+    {
+      "file": "pages/code/CodeCockpitPage.tsx",
+      "score": 32,
+      "detail": "14 raw-button, 4 raw-input"
     },
     {
       "file": "pages/loops/LoopPlanReview.tsx",
@@ -361,7 +361,7 @@
       "raw-dialog": 0
     },
     "pages/code/CodeCockpitPage.tsx": {
-      "raw-button": 21,
+      "raw-button": 14,
       "raw-input": 4,
       "raw-dialog": 0
     },
