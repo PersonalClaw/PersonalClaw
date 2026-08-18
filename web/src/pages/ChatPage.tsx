@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { reportActionFailure, reportingWrite } from '../app/reportingWrite'
 import { unavailableWhen } from '../ui/unavailable'
 
 /** Hands-free voice knobs the composer needs (`voice.*`, MULTIMODAL-IO §4.5). */
@@ -435,22 +436,6 @@ const SLASH_HELP = [
  *  #/chat/new is a fresh NEW chat (reachable via "New chat" on the history page
  *  and the "History" button on the new-chat page); opening a session deep-links
  *  to #/chat/<sessionKey>. No left sidebar. */
-/** Report a write the user just triggered that did not land, with the server's own message.
- *
- * MODULE scope, and exactly ONE definition: the controls that need it live in components ~2000 lines
- * apart (the composer's stop/queue controls, the retag panel, the transcript's approval cards), and a
- * per-component copy is the drift this converges away from — an indented copy legally SHADOWS this
- * one, which TypeScript will not mention. `chat/stopFailureReported` counts the definitions.
- *
- * Named for the SHAPE rather than one concern, because two now share it: a cancel that silently did
- * not cancel (`chat/stopFailureReported`) and a permission decision that silently did not register
- * (`chat/approvalDecisionReported`). Each rail carries its own reasoning; this carries the sentence.
- * A sibling of `persistSelection` rather than a merge — that one composes "Couldn't apply X to this
- * session", which is the wrong sentence for either of these.
- */
-const reportActionFailure = (what: string) => (e: unknown) => {
-  notify(`Couldn't ${what}: ${String((e as Error)?.message || e)}`, 'error')
-}
 
 export function ChatPage({ sub, navigate, navEpoch = 0, query, setQuery }: { sub: string; navigate: (p: string, opts?: { replace?: boolean }) => void; navEpoch?: number; query?: Record<string, string>; setQuery?: RouteProps['setQuery'] }) {
   const seg = (sub || '').split('/')[0]
@@ -2213,7 +2198,11 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
     setRenaming(false)
     if (!s || !v || v === title) return
     setTitle(v)
-    await api.renameSession(s, v).catch(() => {})
+    // Optimistic, so a swallowed rejection left the header showing a name the server refused — it
+    // reverted on the next load with no explanation. Reported, not reverted: this family's remedy for
+    // an optimistic write is to TELL, and fighting the header while the user may still be editing is
+    // the move `chat/selectionPersistReported` already rejected.
+    await api.renameSession(s, v).catch(reportActionFailure('rename this chat'))
   }
   async function regenTitle() {
     const s = sessionRef.current
@@ -4012,7 +4001,12 @@ function ChatHistoryPage({ navigate, query, setQuery }: { navigate: (p: string) 
   // moving between two server-filtered lists).
   async function setLifecycle(key: string, lifecycle: 'active' | 'archived') {
     setSessions((prev) => prev && prev.map((x) => (x.key === key ? { ...x, lifecycle } : x)))
-    await api.setSessionLifecycle(key, { lifecycle }).catch(() => {})
+    // 🪤 THE REFETCH IS DELIBERATELY *NOT* GATED HERE, unlike every other data-driven write in this
+    // family. The optimistic move above already claimed the row changed list, so `load()` on a failure
+    // is what puts it BACK — the refetch is the repair, not a wasted round trip. Skipping it would
+    // leave the archived-looking row lying. Only the silence was the defect.
+    await api.setSessionLifecycle(key, { lifecycle }).catch(
+      reportActionFailure(`${lifecycle === 'archived' ? 'archive' : 'unarchive'} this chat`))
     load()
   }
   async function setNeverArchive(key: string, value: boolean) {
@@ -4022,7 +4016,9 @@ function ChatHistoryPage({ navigate, query, setQuery }: { navigate: (p: string) 
   async function createFolder() {
     const name = await promptInput({ title: 'New folder', label: 'Folder name', placeholder: 'e.g. Research', confirmLabel: 'Create' })
     if (!name) return
-    await api.createChatFolder(name).catch(() => {})
+    // Data-driven: the folder appears only via `load()`. A swallowed rejection meant the user typed a
+    // name into a dialog and nothing appeared, with the reload re-rendering the same list.
+    if (!(await reportingWrite(`create the folder "${name}"`, () => api.createChatFolder(name)))) return
     load()
   }
 

@@ -31,3 +31,20 @@ export async function reportingWrite(what: string, run: () => Promise<unknown>):
     return false
   }
 }
+
+/** The `.catch()` form of the same report, for a call whose RESULT the caller needs.
+ *
+ * `reportingWrite` returns a boolean, which is right when the answer is only "did it land?" — it lets
+ * the caller skip a refetch. But a call whose response carries data (a refreshed tile row) cannot go
+ * through it without discarding that data, and a caller that must not be gated at all (a launch that
+ * proceeds regardless) has nothing to do with a boolean. Those attach this instead:
+ *
+ *     api.refreshTile(...).then(useTheRow).catch(reportActionFailure('refresh this tile'))
+ *
+ * ONE module owns the sentence in both forms, so the two cannot drift into different wording. It moved
+ * here from `pages/ChatPage` when `dashboard/PinnedTiles` became its second adopter — the same reason
+ * `reportingWrite` itself moved out of `pages/tools/ToolsPage`.
+ */
+export const reportActionFailure = (what: string) => (e: unknown) => {
+  notify(`Couldn't ${what}: ${e instanceof Error ? e.message : String(e)}`, 'error')
+}

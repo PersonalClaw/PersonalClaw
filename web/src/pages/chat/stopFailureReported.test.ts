@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { readFileSync } from 'node:fs'
+import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 
 // ── A "stop" that silently did not stop ───────────────────────────────────────────────────────────
@@ -44,19 +44,40 @@ const scan = raw.replace(/=>/g, '⇒')
 const STOPS = ['stopChat', 'cancelFanout', 'cancelQueued', 'interruptChat', 'cancelRetag'] as const
 
 describe('a failed cancel tells the user the work did not stop', () => {
-  it('the reporter carries the server’s own message, at module scope, ONCE', () => {
-    expect(raw, 'a per-component copy is the drift this avoids').toMatch(
-      /^const reportActionFailure = \(what: string\) => \(e: unknown\) => \{$/m,
+  it('the reporter is the SHARED one, imported, and defined exactly ONCE in the tree', () => {
+    // Re-pointed twice now, never relaxed. It began as a closure here, moved to this file's module
+    // scope, and moved again to `app/reportingWrite` when `dashboard/PinnedTiles` became a second
+    // adopter of the callback form. The assertions follow it; the discipline does not change.
+    expect(raw, 'the shared sentence is imported').toMatch(
+      /import \{ reportActionFailure, reportingWrite \} from '\.\.\/app\/reportingWrite'/,
     )
-    expect(raw).toContain("notify(`Couldn't ${what}: ${String((e as Error)?.message || e)}`, 'error')")
+    const shared = readFileSync(join(process.cwd(), 'src/app/reportingWrite.ts'), 'utf8')
+    expect(shared).toMatch(/^export const reportActionFailure = \(what: string\) => \(e: unknown\) => \{$/m)
+    expect(shared).toContain("notify(`Couldn't ${what}: ${e instanceof Error ? e.message : String(e)}`, 'error')")
     // 🪤 UNIQUENESS, not just scope. The first version of this test asserted only that a
     // module-level definition EXISTS — and the PR that added it shipped a second, indented copy
     // inside `ChatPage` as well, which legally shadows the outer one. TypeScript is silent about
     // shadowing, the five in-component call sites bound to the closure, and this very assertion
     // passed because the module-level one it looked for was also there. Asserting existence is not
     // asserting singularity.
-    const defs = [...raw.matchAll(/(^|\s)const reportActionFailure = /g)]
-    expect(defs.length, 'exactly one definition — a shadowing copy is the drift itself').toBe(1)
+    // 🪤 UNIQUENESS, tree-wide now. Asserting a definition EXISTS is not asserting singularity: the PR
+    // that first moved this shipped a second, indented copy inside `ChatPage` which legally shadowed
+    // the outer one, and this very test passed because the module-level one it looked for was also
+    // there. Count across the app, so a re-copy into any page fails wherever it lands.
+    const walk = (dir: string, out: string[] = []): string[] => {
+      for (const name of readdirSync(dir)) {
+        const abs = join(dir, name)
+        if (statSync(abs).isDirectory()) walk(abs, out)
+        else if (/\.tsx?$/.test(name) && !name.includes('.test.')) out.push(abs)
+      }
+      return out
+    }
+    const defs = walk(join(process.cwd(), 'src')).filter((abs) =>
+      /(^|\s)(const|function)\s+reportActionFailure\b\s*[=(]/m.test(readFileSync(abs, 'utf8')),
+    )
+    expect(defs.map((d) => d.replace(process.cwd() + '/', '')), 'exactly one home').toEqual([
+      'src/app/reportingWrite.ts',
+    ])
   })
 
   it('every cancel/stop write routes through it', () => {
@@ -127,9 +148,11 @@ describe('a failed cancel tells the user the work did not stop', () => {
     // mutation that put the revert in the REPORTER's body sailed past it — the revert does not live
     // in a literal catch block, and `[^}]*` stops at the `}` inside `${what}` anyway. So assert the
     // property instead: the reporter's own body may notify and nothing else.
-    const at = raw.indexOf('const reportActionFailure =')
+    // The reporter now lives in `app/reportingWrite`; the property asserted is unchanged.
+    const shared = readFileSync(join(process.cwd(), 'src/app/reportingWrite.ts'), 'utf8')
+    const at = shared.indexOf('export const reportActionFailure =')
     expect(at, 'the reporter must exist').toBeGreaterThan(-1)
-    const body = raw.slice(at, raw.indexOf('\n}', at) + 2)
+    const body = shared.slice(at, shared.indexOf('\n}', at) + 2)
     expect(body, 'the reporter reports').toContain('notify(')
     for (const forbidden of ['markStreaming(', 'setQueued(', 'setSubagents(', 'setSelection(']) {
       expect(body, `the reporter must not also mutate state — found ${forbidden}`).not.toContain(
