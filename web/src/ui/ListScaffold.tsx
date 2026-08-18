@@ -49,7 +49,9 @@ export function ListScaffold({ title, right, children, bodyClassName }: {
  *       : …rows}
  */
 export function LoadError({ what, error, onRetry }: {
-  /** The thing that failed to load, lowercase, for "Couldn't load your <what>". */
+  /** The thing that failed to load, interpolated into "Couldn't load your <what>". A lowercase,
+   *  bare noun — no leading article ("the store catalog" → "Couldn't load your the store catalog").
+   *  Singular is fine now that the reassurance no longer reads "Your <what> ARE safe". */
   what: string
   /** The rejection from `useCachedData`; its `message` is shown when present. */
   error?: unknown
@@ -62,8 +64,12 @@ export function LoadError({ what, error, onRetry }: {
       <div>
         <h2 data-type="headline-s" className="text-on-surface">Couldn't load your {what}</h2>
         <p className="mt-1 max-w-[420px] text-on-surface-low text-[0.9375rem]">
+          {/* The fallback used to read "Your ${what} are safe", which is ungrammatical for the many
+              singular nouns callers pass ("Your project are safe"). Nothing on this component reads
+              the count, so the noun cannot be pluralized reliably — the reassurance is stated once,
+              noun-free, and it is just as true. The headline above already names what failed. */}
           {(error as Error)?.message
-            || `The server didn't respond. Your ${what} are safe — this is just a load error.`}
+            || "The server didn't respond — this is just a load error, and nothing was lost."}
         </p>
       </div>
       {onRetry && (
