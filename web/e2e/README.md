@@ -9,20 +9,27 @@ The **safety rail** for the Design-System Consistency plan (S2/S3): every consis
 - **`routes.ts`** — the single source of truth for the route list (mirror of `src/app/App.tsx` NAV). Add a route here and it's snapshotted + axe-scanned automatically.
 - **`helpers.ts`** — `seedTheme` (seeds `localStorage['mode']` + `prefers-color-scheme` before boot), `gotoRoute` (waits for fonts + settle), `expectRouteScreenshot`.
 
-## ⚠️ Auth prerequisite (baselines are dormant until seeded)
+## Auth: the harness starts its own onboarded gateway
 
-The built SPA gates its first render on an authenticated identity/config fetch — the gateway needs the owner `pc_token_<port>` cookie. A **fresh, unauthenticated** Playwright context renders a **blank shell for every route**, which is a *false* baseline. So before capturing real baselines you must seed a session:
+The built SPA gates its first render on an authenticated identity/config fetch. With **no gateway** it cannot resolve identity and renders the **onboarding screen** for every route: no `NavRail`, no page content, no ⌘K listener. axe finds nothing serious/critical there — byte-identical to a genuinely clean route. That is how 96 route scans reported a pass while visiting a surface no user ever sees, and why the only test that noticed (`command palette [opened]`) failed on its mounted-ness floor while naming the *palette*.
+
+So `playwright.config.ts` runs **two** web servers, and needs nothing configured by hand:
+
+1. **the gateway** — `PERSONALCLAW_HOME` (and `PERSONALCLAW_WORKSPACE`, which `PERSONALCLAW_HOME` does *not* confine) under the OS temp dir, wiped per run, never `~/.personalclaw`. `dashboard.user_name` is pre-seeded into `config.json` because `onboarded` is **derived** from a non-empty *server-side* name — that skips the onboarding hijack with no PUT, so no CSRF/origin dance. Readiness is the `PERSONALCLAW_READY:` line, whose token Playwright's `wait.stdout` capture group hands to `auth.setup.ts` as `PW_TOKEN`.
+2. **the preview server** — `PERSONALCLAW_PORT` points its `/api` proxy at that gateway.
+
+**Auth stays ON.** No `PERSONALCLAW_AUTH_MODE=none`: that flag swaps `csrf_middleware` for `_dev_user_middleware`, so an a11y/CSRF-adjacent finding made under it would not describe a real user. `auth.setup.ts` performs the gateway's real `/?token=` handshake through the preview origin (`vite.config.ts`'s token-proxy plugin relays the `Set-Cookie`), asserts the **shell** mounted, and writes the cookie jar every spec reuses.
+
+`e2e/.auth/` is gitignored (it holds a live token). To drive an **already-running** gateway instead:
 
 ```bash
-# 1. with the gateway running + an owner token available:
-PW_TOKEN=<owner token> npx playwright test e2e/auth.setup.ts   # writes e2e/.auth/state.json
-# 2. capture real baselines against the authenticated, mounted app:
-STORAGE_STATE=e2e/.auth/state.json PW_NO_SERVER=1 PW_BASE_URL=http://localhost:10000 npm run e2e:update
-# 3. verify zero-diff / AA-clean thereafter:
-STORAGE_STATE=e2e/.auth/state.json PW_NO_SERVER=1 PW_BASE_URL=http://localhost:10000 npm run e2e
+PW_TOKEN=<owner token> PW_NO_SERVER=1 PW_BASE_URL=http://localhost:10000 npm run e2e
 ```
 
-`e2e/.auth/` is gitignored (holds a token). CI (plan 33 rails) should mint a scoped test-owner token at gateway boot, pass it as `PW_TOKEN`, run `auth.setup.ts` in global-setup, then capture `-linux` baselines. **Until seeded, the harness is wired but produces no valid baselines** — do not commit blank captures.
+Two failure modes this closes, both of which read as success:
+
+- **The shell floor.** `helpers.assertShellMounted` (called from `gotoRoute`, so visual *and* a11y get it) fails the test when `nav[data-tour="rail"]` is absent. The rail renders only once the server reports a name, so it proves reachable + authenticated + onboarded in one assertion. `auth.setup.ts` asserts the same thing — its old `#root.innerHTML.length > 100` check *passed* on the onboarding screen, i.e. on precisely the state it existed to prevent.
+- **Skips that state their reason.** An opener returns `true` or `{ skip: <why> }`. "no list rows on this route", "no contenteditable composer", and "app shell not mounted" need different next actions from whoever reads the report; one hardcoded "no seeded data" message could not tell them apart.
 
 ## Commands (run from `web/`)
 
@@ -44,6 +51,7 @@ First-time setup on a fresh machine/CI: `npx playwright install chromium`.
 
 ## Notes
 
-- The harness builds + serves the app via `vite preview` (proxying the gateway at `PERSONALCLAW_PORT`, default 10000). With **no live gateway** (CI), data-backed routes render their empty/loading **shell** — a valid baseline, since we guard *chrome*, not data.
-- `PW_PORT` overrides the preview port (default 4318). `PW_NO_SERVER=1` skips the built-in server (use an already-running preview). `PW_BASE_URL` points at an external server.
+- The harness builds + serves the app via `vite preview`, proxying `/api` to the gateway it starts (`PERSONALCLAW_PORT`). Data-backed routes still render their **empty** state — the gateway's home is fresh — which is a valid baseline: we guard *chrome*, not data. What is **not** a valid baseline is the onboarding screen, which is what "no gateway" actually produced.
+- `PW_PORT` overrides the preview port (default 4318). `PW_GATEWAY_PORT` overrides the gateway port (default 10437 — deliberately not 10000, so the harness can never drive your real install). `PW_NO_SERVER=1` skips both built-in servers (use an already-running pair). `PW_BASE_URL` points at an external server; `STORAGE_STATE` at an existing cookie jar.
+- The gateway is launched with `../.venv/bin/personalclaw` when that exists, else `personalclaw` from `PATH`. With neither, the run fails loudly on the webServer — it does **not** fall back to a backendless SPA.
 - Screenshots disable animations; `seedTheme` runs before app boot so there's no theme-flash in the capture.
