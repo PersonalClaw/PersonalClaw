@@ -5555,7 +5555,7 @@
         {
           "id": "APE-2",
           "title": "Platform event registry (app_events.py) + emit sites + declared-subscription WS filter",
-          "status": "todo",
+          "status": "done",
           "scope": "Session 1 T1.2; Contract C4 (typed platform events registry)",
           "done_when": "app_events.py registers session.created/knowledge.ingested/task.completed at their emit sites; a fixture app subscribed to task.completed receives it; an unsubscribed app never does; SEL clean",
           "deps": [
@@ -7410,11 +7410,6 @@
         "id": "AG-9",
         "title": "Apps-repo guardrails follow-ons: native structured_output + channel send() live-writes (cross-repo)",
         "plan": "AG"
-      },
-      {
-        "id": "APE-2",
-        "title": "Platform event registry (app_events.py) + emit sites + declared-subscription WS filter",
-        "plan": "APE"
       },
       {
         "id": "APE-3",
@@ -10027,9 +10022,9 @@
         "code": "APE",
         "plan": "APP-PLATFORM-EVOLUTION",
         "total_atoms": 12,
-        "done": 7,
+        "done": 8,
         "in_progress": 0,
-        "todo": 5,
+        "todo": 4,
         "blocked": 0
       },
       {

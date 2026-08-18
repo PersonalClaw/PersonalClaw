@@ -10,6 +10,13 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Added
 
+- **Apps can subscribe to platform events they declare.** An app that declares
+  `permissions.eventSubscriptions` now receives `session.created`, `knowledge.ingested` and
+  `task.completed` through its existing message inbox — no new route, and the install consent screen lists the
+  events it will get. Delivery is **deny-by-default and exact-match**: an app that declares nothing receives
+  nothing, and `task.*` or `task.completed.extra` match no event. A subscription grants **timing, not content** —
+  payloads carry identifiers only, so subscribing never widens what an app can read.
+
 - **Pair a phone or tablet as its own device.** `POST /api/devices/pair/start` mints a short-lived,
   single-use code (shown as a QR by the Devices panel); `pair/complete` redeems it into an ordinary
   owner session — no new token type — and `GET/DELETE /api/devices` lists and revokes them. A revoked

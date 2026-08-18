@@ -1610,8 +1610,41 @@ class DashboardState:
         except Exception:
             pass
         self._sessions[name] = session
+        # APE-2: the `session.created` platform-event emit site — a new session row just
+        # became true here. Fanned out ONLY to apps that declared the subscription (deny by
+        # default); `emit` is total, so an app-side failure can never fail this creation.
+        #
+        # Guarded on "no persisted history", because this method is ALSO how a session is
+        # REHYDRATED: `chat_persistence.restore_recent_sessions` (bulk, at startup) and
+        # `_rehydrate_session_from_history` / the resume + post-to-an-old-session paths all
+        # reach the create branch for a session that already exists on disk. Announcing
+        # those would re-fire `session.created` for every restored session on every gateway
+        # restart, and an app would double-count sessions it already saw. Asked
+        # provider-agnostically (`resolve_history_key`) rather than by key shape, so a
+        # channel thread is recognised as persisted too. Fails OPEN: an unreadable log reads
+        # as "no history", which at worst re-announces, never swallows a real creation.
+        if not self._has_persisted_history(name):
+            from personalclaw.apps.app_events import SESSION_CREATED
+            from personalclaw.apps.app_events import emit as emit_platform_event
+
+            emit_platform_event(SESSION_CREATED, {"session": name})
         self.push_sessions_update()
         return session
+
+    def _has_persisted_history(self, name: str) -> bool:
+        """Whether ``name`` already has persisted conversation metadata — i.e. a session
+        materialized under this name is being REHYDRATED, not created.
+
+        Used by the ``session.created`` platform-event emit site (APE-2) to tell a real
+        creation from a restore, since both go through ``get_or_create_session``.
+        Best-effort by design: any failure answers "no history", so the worst outcome is a
+        re-announced session rather than a swallowed creation."""
+        try:
+            from personalclaw.dashboard.chat_utils import resolve_history_key
+
+            return bool(resolve_history_key(self.conversation_log, name))
+        except Exception:
+            return False
 
     def _broadcast_chat_message(self, session_name: str, msg: dict) -> None:
         """Push a chat message to all SSE clients via the global stream."""

@@ -21,6 +21,10 @@ sandbox). Enforcement status of each method:
   a per-run ownership check so an app only reads runs it spawned.
 * ``can_use_event`` — WS fan-out (state.broadcast_ws) filters an app connection's
   events to its declared set.
+* ``can_receive_platform_event`` — the platform event registry (``apps/app_events.emit``)
+  fans a core fact out ONLY to apps that named it exactly, and that dispatch is the only
+  path such an event reaches an app by, so this is the whole gate. A SEPARATE axis from
+  ``can_use_event`` above: a WS grant is not a platform subscription and vice versa.
 * ``can_use_mcp_tool`` — the direct tool-invoke endpoint (handlers/tools.py).
 * ``can_use_memory`` — app-permission middleware gates any ``/api/memory`` path.
 * ``can_use_cron``  — app-declared manifest crons are registered only when held
@@ -100,6 +104,23 @@ class PermissionChecker:
         (``POST /api/apps/message``) is the only app-to-app path, so this is the sole
         gate on the sender→target edge; an undeclared pair is refused there."""
         return _matches_any(target_app, self.permissions.appMessaging)
+
+    # -- platform event subscriptions (APE-2) ----------------------------
+    def can_receive_platform_event(self, event: str) -> bool:
+        """Whether the platform registry delivers ``event`` to this app.
+
+        A DIFFERENT axis from :meth:`can_use_event` and it must stay one: ``events`` is
+        the gateway's WS event-type allowlist, while ``eventSubscriptions`` is the closed
+        set of core-emitted platform facts owned by ``apps/app_events.py``. Declaring one
+        grants nothing about the other (``test_event_subscriptions_do_not_widen_the_ws_
+        event_allowlist``).
+
+        Deny-by-default and EXACT-match only — like :meth:`can_use_desktop` and unlike
+        ``api``/``events``: no prefix, no trailing ``*``. So a subscription to
+        ``task.completed`` never matches ``task.completed.extra`` or ``task.*``, and a
+        typo denies rather than widens. Enforced at DISPATCH (``app_events.emit``), which
+        is the only path a platform event reaches an app by."""
+        return bool(event) and event in self.permissions.eventSubscriptions
 
     # -- consented cross-app read-only storage (APE-10) ------------------
     def can_expose_shared_storage(self) -> bool:

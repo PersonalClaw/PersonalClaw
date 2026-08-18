@@ -124,6 +124,80 @@ Request `{to: "<app>", type: "<str>", payload: {...}}`; broker verifies the call
 | T3.2 | `storageRead`/`storageShared` manifest pair + consent surface + read-only env mount + `sdk/util.py::shared_app_data_dir` | `apps/manifest.py`, `apps/permissions.py`, `backend_runtime.py`, `sdk/util.py`, consent UI | fixture consumer reads the sharer's file; undeclared pair gets no mount; write attempt fails; consent lists the grant; boundary test green |
 
 ## Execution log
+- [2026-08-18][S1 · atom `APE-2`] **DONE** — `apps/app_events.py` registers the three platform events, each
+  **at the site the fact becomes true**: `session.created` at `dashboard/state.py:1619` (right after
+  `self._sessions[name] = session`), `knowledge.ingested` at `knowledge/pipeline/runner.py:349` (the same
+  terminal point the SSE `ingest_complete` fires from, so the app-facing fact and the UI-facing one cannot
+  disagree), `task.completed` at `tasks/native.py:403` (the same edge-triggered boundary
+  `pool.should_fire_completion` already gates the `TaskComplete` user hook on — one edge, two observers).
+  Each is proven by driving the PRODUCTION function (`get_or_create_session`, `ingest_item`, `update_task`),
+  not by calling `emit` and trusting a call site exists; deleting any one of the three reds its own test.
+  **Reused, not reinvented — there was no platform bus to extend.** Measured first: `state.broadcast_ws` is the
+  only fan-out in core and it is the WS/dashboard path gated by `can_use_event`; the three names appeared
+  nowhere in `src/` except APE-1's comment. So a registry was necessary — but the TRANSPORT was not. A
+  delivered event is appended to the app's existing broker-owned inbox (`apps/messaging._append_to_queue`,
+  `config_dir()/app_messages/<app>.json`) which the app already drains read-once over `GET /api/apps/message`.
+  That buys the depth cap, the atomic write and a live consumer for free, and adds no route.
+  **DEVIATION (deliberate) — the atom title says "WS filter"; delivery deliberately does NOT touch the WS
+  path.** Routing platform subscriptions through `state.broadcast_ws`/`_app_may_see_event` would have merged
+  `eventSubscriptions` into `permissions.events` — exactly what APE-1 closed. The filter instead sits at
+  dispatch, on its own accessor.
+  **The gate APE-1 deferred now exists where it gates:** `PermissionChecker.can_receive_platform_event`
+  (`apps/permissions.py:109`), consulted at `apps/app_events.py:211` — deny by default and **exact match only**
+  (like `desktop`, unlike `api`/`events`), so `task.completed` never matches `task.completed.extra` or `task.*`.
+  A disabled app is not a subscriber. `permissions.py`'s enforcement roll-call gained the bullet.
+  **FINDING — APE-1's axis-separation test only covers ONE direction.**
+  `test_event_subscriptions_do_not_widen_the_ws_event_allowlist` asserts a subscription does not grant the WS
+  type; it says nothing about the reverse. Falsified: making `can_receive_platform_event` also read
+  `permissions.events` left that test GREEN. The new
+  `test_the_two_event_vocabularies_stay_separate` asserts both directions and reds.
+  **DISCOVERY — `get_or_create_session` is ALSO the rehydration path, so a naive emit re-announced every
+  restored session on every restart.** `chat_persistence.restore_recent_sessions` (bulk, at startup),
+  `_rehydrate_session_from_history`, and the resume / post-to-an-old-session routes all reach its CREATE branch
+  for a session that already exists on disk — a subscribed app would have double-counted sessions it already
+  saw, once per gateway restart. Guarded on "has no persisted conversation metadata"
+  (`DashboardState._has_persisted_history`, asked provider-agnostically via `resolve_history_key`, so a channel
+  thread counts as persisted too) rather than on a `restored=True` kwarg: a flag would have to be threaded
+  correctly through all eight call sites and the post-to-an-old-session path would have been wrong on day one.
+  Fails OPEN (an unreadable log reads as "no history"), so the worst case is a re-announcement, never a
+  swallowed creation.
+  **DISCOVERY — `knowledge.ingested` was firing for FAILED runs, and its exits disagreed with each other.** The
+  runner has three earlier failure exits that return before the emit site, so a graph-build failure or a
+  mid-pipeline exception announced nothing while a run whose nodes all failed on the normal terminal path
+  announced `status: "failed"` under a name that says "ingested". Narrowed to `status in ("done", "partial")` —
+  `partial` is in the store and searchable, `failed`/`unreachable` ingested nothing — so now no failure
+  announces, from any exit. A `status` field is not a licence to fire the wrong event. Pinned with a real
+  failing node on the normal terminal path; the early exits would have passed the test under either design.
+  **Payloads carry identifiers, never prose — a security rule, not tidiness.** The registry pins each event's
+  payload keys and an undeclared key is dropped. If an event carried a task title or an item's text, a
+  subscribed app with no matching `permissions.api` grant would receive content it cannot otherwise read, and
+  the subscription would silently widen `can_use_api`. A subscription grants **timing, not content**.
+  Residual, disclosed rather than hidden: `session.created` carries the session NAME, because the name is its
+  address in this codebase — user-authored text, capped at 200 chars, and named verbatim at install consent.
+  **SEL decision (deliberate): ordinary fan-out and ordinary non-delivery write NOTHING.** An app never
+  *requests* a platform event — dispatch is host-initiated — so a non-delivery is not an access attempt, and one
+  row per (installed app × emitted event) would drown the real rows in the HMAC chain. Audited instead: an emit
+  naming an **unregistered** event (`outcome="rejected"`, a code defect that would otherwise vanish) and a
+  delivery that **failed for a subscriber** (`outcome="error"`, an app silently missing an event it earned).
+  Both bounded and rare; the "zero rows" assertion has a positive control in the same file, so it is not vacuous.
+  **Consent surface moved with the enforcement (the D2 defect, inverted).** APE-1 put `eventSubscriptions` in
+  the Store's *"Declared, not yet in effect"* block because nothing delivered. It is enforced now, so leaving it
+  there would understate a live capability and the user would weigh a real grant as disclosure-only.
+  `installConsent.tsx` moves it into the enforced bullets (naming every declared event) and drops the "or
+  deliver platform events yet" clause from the pending caption; `backgroundTasks` stays pending until `APE-3`
+  ships a host. `manifest.py`'s field comment no longer says "NOT ENFORCED TODAY" — the permission fields
+  themselves are untouched.
+  Falsified eight ways, each restored from a file copy: removing the dispatch check delivered `task.completed`
+  to all four installed apps (`['listener','nearmiss','quiet','wildcard']`); swapping exact match for
+  `_matches_any` leaked to the `task.*` subscriber; merging the two axes reds only the new test; deleting each
+  of the three emit-site calls reds only that site's test; removing the rehydration guard re-announced a
+  restored session; removing the ingested-status guard announced a failed run.
+  Gate: `make lint` 0 (mypy 912) · 320 targeted (incl. `test_inert_surface_baseline.py` — no counter rose;
+  the registry has three live emit sites and a live reader) · full `make test` 22196 passed / 30 skipped /
+  12 xfailed · web 400 files / 4048 tests · typecheck + build clean. Not live-driven in a browser: the delivery
+  evidence is the real drain route (`GET /api/apps/message`) against really-installed fixture apps, and the
+  consent claim rests on component tests plus the server wire rail.
+
 - [2026-08-18][S1 · atom `APE-1`] **DONE** — `permissions.backgroundTasks` (bool) and
   `permissions.eventSubscriptions` (list of exact platform-event names, **no wildcard**) parse, serialize and
   disclose. Round-trip is a fixed point for declared / absent / empty, and absent-or-empty emits **no key** —

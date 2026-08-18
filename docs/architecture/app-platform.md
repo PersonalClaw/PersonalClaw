@@ -49,6 +49,7 @@ The manifest's `permissions` block is enforced, with one documented exception
 |---|---|
 | `api` | prefix-allowlist middleware over gateway API paths — pathname only, query string stripped (server and SDK agree on this) |
 | `events` | WebSocket fan-out filter — an app's socket only receives event types it declared |
+| `eventSubscriptions` | which **platform** events (`apps/app_events.py`: `session.created`, `knowledge.ingested`, `task.completed`) are delivered to the app. A DIFFERENT axis from `events` above, deliberately: `events` is the WS type allowlist, these are core-emitted facts, and holding one grants nothing about the other. `app_events.emit` is the only delivery path and is the whole gate — deny by default and **exact name only** (no prefix, no `*`), so a typo denies rather than widens. Delivered into the app's broker-owned inbox (the `appMessaging` queue, sender `@platform`, which no app can be named), drained over `GET /api/apps/message`. Payloads carry identifiers only, never prose: a subscription grants timing, not content an app's `api` scope may not cover. |
 | `mcpTools` | which MCP tools the app may invoke |
 | `memory` | tiered scopes (app-scoped by default) |
 | `cron` | whether manifest crons register |
