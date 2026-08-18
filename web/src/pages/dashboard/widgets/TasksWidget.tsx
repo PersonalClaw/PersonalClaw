@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { MoreRow } from '../../../ui/MoreRow'
 import { AnimatePresence } from 'framer-motion'
 import { CheckCircle2, Circle, ListTodo, Plus } from 'lucide-react'
 import { api } from '../../../lib/api'
@@ -66,6 +67,10 @@ export function TasksWidget({ navigate }: RouteProps) {
             </div>
           </WidgetRow>
         ))}
+      {/* 🪤 A DASHBOARD WIDGET IS A PREVIEW, AND NOTHING SAID SO. Six of twenty open tasks rendered
+          with no count anywhere — its `Section` frame carries a bare label, and unlike the schedule
+          widget below it there is no disclosure for the rest. So a user reads six as all of them. */}
+      <MoreRow total={visible.length} shown={6} />
       </AnimatePresence>
       <button type="button" onClick={() => navigate('tasks/new')} className="mt-xs inline-flex items-center gap-xs self-start rounded-pill px-m py-xs text-on-surface-low transition-colors hover:bg-surface-high hover:text-on-surface" data-type="label-m">
         <Plus size={13} /> New task
