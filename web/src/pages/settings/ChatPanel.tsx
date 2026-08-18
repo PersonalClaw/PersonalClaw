@@ -205,6 +205,11 @@ function RoutingSection({ routing, setRouting }: { routing: Record<string, unkno
 // ── Sessions (dashboard config) ──────────────────────────────────────────────
 function SessionsSection({ cfg, setCfg }: { cfg: DashboardConfig; setCfg: (c: DashboardConfig) => void }) {
   const [saved, flash] = useSavedFlash()
+  // 🔴 `stream_reveal` is set here and consumed by ChatPage under its own `chat:stream-reveal` key,
+  // which nothing invalidated — and that key is `persist: true`, so Chat's first paint used the
+  // pre-change value and a hard reload rehydrated it and used it again. Unlike the rest of this
+  // panel that is not a displayed value: it decides how streamed text reveals, so a stale read means
+  // the chat keeps behaving the way you just told it to stop.
   const save = (patch: Partial<DashboardConfig>) => {
     setCfg({ ...cfg, ...patch })
     // A settings toggle updates locally FIRST, so a failed save leaves the switch showing a value the
@@ -212,7 +217,7 @@ function SessionsSection({ cfg, setCfg }: { cfg: DashboardConfig; setCfg: (c: Da
     // `aria-pressed` false to true and STAYED true, with no toast, no live-region text, and the "Saved"
     // confirmation simply never appearing. Reported the way the eight sibling panels already report it
     // (`AccountPanel`, `AmbientPanel`, `AgentDefaultsPanel`, ...).
-    api.saveDashboardConfig(patch).then(flash).catch((e) => {
+    api.saveDashboardConfig(patch).then(() => { invalidateCache('chat:stream-reveal'); flash() }).catch((e) => {
       notify(`Couldn't save this chat setting: ${String((e as Error)?.message || e)}`, 'error')
     })
   }
@@ -242,6 +247,11 @@ function SessionsSection({ cfg, setCfg }: { cfg: DashboardConfig; setCfg: (c: Da
 // ── Messages (dashboard config display prefs) ────────────────────────────────
 function MessagesSection({ cfg, setCfg }: { cfg: DashboardConfig; setCfg: (c: DashboardConfig) => void }) {
   const [saved, flash] = useSavedFlash()
+  // 🔴 `stream_reveal` is set here and consumed by ChatPage under its own `chat:stream-reveal` key,
+  // which nothing invalidated — and that key is `persist: true`, so Chat's first paint used the
+  // pre-change value and a hard reload rehydrated it and used it again. Unlike the rest of this
+  // panel that is not a displayed value: it decides how streamed text reveals, so a stale read means
+  // the chat keeps behaving the way you just told it to stop.
   const save = (patch: Partial<DashboardConfig>) => {
     setCfg({ ...cfg, ...patch })
     // A settings toggle updates locally FIRST, so a failed save leaves the switch showing a value the
@@ -249,7 +259,7 @@ function MessagesSection({ cfg, setCfg }: { cfg: DashboardConfig; setCfg: (c: Da
     // `aria-pressed` false to true and STAYED true, with no toast, no live-region text, and the "Saved"
     // confirmation simply never appearing. Reported the way the eight sibling panels already report it
     // (`AccountPanel`, `AmbientPanel`, `AgentDefaultsPanel`, ...).
-    api.saveDashboardConfig(patch).then(flash).catch((e) => {
+    api.saveDashboardConfig(patch).then(() => { invalidateCache('chat:stream-reveal'); flash() }).catch((e) => {
       notify(`Couldn't save this chat setting: ${String((e as Error)?.message || e)}`, 'error')
     })
   }
