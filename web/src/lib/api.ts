@@ -4772,7 +4772,10 @@ export const api = {
   saveAppConfig: (name: string, config: Record<string, unknown>) =>
     put<{ ok: boolean; config: Record<string, unknown> }>(`/api/apps/${encodeURIComponent(name)}/config`, config),
   // Store catalog: available-to-install apps (bundled-not-installed + git sources).
-  appCatalog: () => get<{ bundled: AppCatalogEntry[]; gitSources: string[]; localSources?: string[]; firstPartySources?: string[]; localApps?: AppCatalogEntry[]; remoteApps?: AppCatalogEntry[]; gitApps?: AppCatalogEntry[] }>('/api/apps/catalog'),
+  // `defaultGitSources` = the rows PersonalClaw shipped (labelled "Default"); `builtinGitSources`
+  // = the subset that cannot be removed (bundled into every read), so the UI hides a remove
+  // control that would silently do nothing. The seeded registry is in the first, not the second.
+  appCatalog: () => get<{ bundled: AppCatalogEntry[]; gitSources: string[]; defaultGitSources?: string[]; builtinGitSources?: string[]; localSources?: string[]; firstPartySources?: string[]; localApps?: AppCatalogEntry[]; remoteApps?: AppCatalogEntry[]; gitApps?: AppCatalogEntry[] }>('/api/apps/catalog'),
   appSources: () => get<{ sources: string[] }>('/api/apps/sources').then((d) => d.sources),
   addAppSource: (url: string) => post<{ ok: boolean; sources: string[] }>('/api/apps/sources', { url }),
   removeAppSource: (url: string) => del(`/api/apps/sources?url=${encodeURIComponent(url)}`),

@@ -1064,6 +1064,30 @@ class SourcesConfig:
 
 
 @dataclass
+class AppsConfig:
+    """App Store settings that are not per-app (ECOSYSTEM-TOOLING T2.2).
+
+    Today one knob: whether the curated app registry ships as a default git source. It is a
+    *seed* switch, not a live filter — on first start with it on, the registry URL is written
+    into ``apps/app-sources.json`` as an ordinary, removable row (see
+    :func:`personalclaw.apps.catalog.seed_default_git_sources`). Turning it off later does not
+    retract an already-seeded row (remove it in the Store, which persists); turning it on later
+    seeds on the next start. A source only ever contributes Store LISTINGS — the scanner-gated
+    install path is unchanged, so nothing from the registry runs without per-app consent.
+    """
+
+    registry_source_enabled: bool = field(
+        default=True,
+        metadata=_meta(
+            "Registry app source",
+            "Ship the curated app registry as a default source in the Store, so community "
+            "apps are discoverable out of the box. Seeded once as a removable source; off "
+            "means it is never added. Listing only — installing still runs the scanner.",
+        ),
+    )
+
+
+@dataclass
 class SkillCatalogConfig:
     """One external skill-catalog source (AGENT-PACKS §6, the ``packs.skill_catalogs`` list).
 
@@ -3989,6 +4013,10 @@ class AppConfig:
         default_factory=PacksConfig,
         metadata=_meta("Packs", "Pack import + skill-catalog + connector-catalog settings."),
     )
+    apps: AppsConfig = field(
+        default_factory=AppsConfig,
+        metadata=_meta("Apps", "App Store settings that are not per-app (default sources)."),
+    )
     hooks: dict = field(
         default_factory=dict,
         metadata=_meta("Hooks", "Script hook definitions keyed by hook ID."),
@@ -4120,6 +4148,9 @@ class AppConfig:
         packs_data = data.get("packs", {})
         if not isinstance(packs_data, dict):
             packs_data = {}
+        apps_data = data.get("apps", {})
+        if not isinstance(apps_data, dict):
+            apps_data = {}
         inbox_data = data.get("inbox", {})
         if not isinstance(inbox_data, dict):
             inbox_data = {}
@@ -4454,6 +4485,21 @@ class AppConfig:
                 # unreadable value must not silently disable it — missing/garbage ⇒ ON.
                 fingerprint_enabled=_guard_flag(packs_data.get("fingerprint_enabled")),
                 connector_catalog_url=str(packs_data.get("connector_catalog_url", "") or ""),
+            ),
+            apps=AppsConfig(
+                # No _guard_flag/_expose_flag here, and that is measured, not lazy: the
+                # schema type-gate earlier in load() has ALREADY replaced any non-bool at
+                # this path with the field's dataclass default (`_apply_field_default`, the
+                # "using default" warning), so by the time this line runs the value is a
+                # real bool or the key is absent. A polarity helper could only ever see a
+                # bool — a branch that cannot run is worse than no branch.
+                #
+                # The consequence, stated plainly because this flag's True is what adds a
+                # default NETWORK source: a corrupted value resolves to the SHIPPED default
+                # (registry on), not to off. That is the platform-wide config policy, not a
+                # decision of this field — and the resulting source is visible in the Store
+                # and removable there.
+                registry_source_enabled=bool(apps_data.get("registry_source_enabled", True)),
             ),
             hooks=data.get("hooks", {}),
             agents=agents,
@@ -4980,6 +5026,7 @@ class AppConfig:
             "local_models": asdict(self.local_models),
             "sources": asdict(self.sources),
             "packs": asdict(self.packs),
+            "apps": asdict(self.apps),
             "hooks": self.hooks,
             "agents": {name: asdict(agent_cfg) for name, agent_cfg in self.agents.items()},
             "default_agent": self.default_agent,

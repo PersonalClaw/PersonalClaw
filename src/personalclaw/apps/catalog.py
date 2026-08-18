@@ -90,6 +90,26 @@ def resolve_hero_url(app_dir: Path, hero_rel: str) -> str:
 # user-removable. This is a Store-listing default only — it never auto-installs.
 _DEFAULT_GIT_SOURCES: tuple[str, ...] = ("https://github.com/PersonalClaw/PersonalClawApps.git",)
 
+# The curated app REGISTRY (ECOSYSTEM-TOOLING T2.2) — a SEEDED default, deliberately NOT a
+# member of the tuple above. That distinction IS the mechanism: ``_DEFAULT_GIT_SOURCES`` is
+# folded into every read of :func:`list_git_sources`, so a bundled default cannot be removed
+# (the next read puts it back) — which is exactly why the docstring above says "not
+# user-removable". The registry has to be REMOVABLE, so instead of being folded in on read it
+# is written ONCE into ``app-sources.json`` as an ordinary row (:func:`seed_default_git_sources`,
+# run at gateway start) alongside a marker recording that the seed already happened. From then
+# on it is a normal user entry: the existing DELETE removes it, and the marker — which survives
+# the removal — is what stops the next start from seeding it again.
+#
+# Gated by ``apps.registry_source_enabled``: flag off means the seed never runs, so an operator
+# who does not want a shipped NETWORK source never acquires one. Listing-only either way — a
+# source contributes Store cards, and installing one still goes through the single scanner-gated
+# install path (nothing is fetched-and-run without explicit per-app consent).
+_REGISTRY_GIT_SOURCE = "https://github.com/PersonalClaw/registry.git"
+
+# Marker recorded in the sources file once the registry seed has run. Its ABSENCE means "never
+# seeded"; its PRESENCE is what makes a removal stick across restarts.
+_SEEDED_REGISTRY_KEY = "registry"
+
 
 def _first_party_source() -> Path | None:
     """The always-present, read-only FIRST-PARTY app source — DEV filesystem path.
@@ -524,21 +544,27 @@ def list_git_sources() -> list[str]:
 
 
 def _read_sources() -> dict[str, list[str]]:
-    """The typed user-sources store ``{"git": [...], "local": [...]}``.
+    """The typed user-sources store ``{"git": [...], "local": [...], "seeded": [...]}``.
 
     Back-reads the legacy flat ``{"sources": [urls]}`` shape (git-only) as ``git`` so
-    an existing sources file upgrades transparently on the next write."""
+    an existing sources file upgrades transparently on the next write.
+
+    ``seeded`` holds the markers of shipped sources already written into ``git`` once
+    (currently just ``"registry"``). It is NOT a source list — it is the record that lets
+    a seeded default stay removed: removing the row leaves the marker, so the next start
+    does not re-seed it."""
     p = _sources_path()
     if not p.is_file():
-        return {"git": [], "local": []}
+        return {"git": [], "local": [], "seeded": []}
     try:
         data = json.loads(p.read_text(encoding="utf-8"))
     except (json.JSONDecodeError, OSError):
         logger.warning("failed to read app sources list", exc_info=True)
-        return {"git": [], "local": []}
+        return {"git": [], "local": [], "seeded": []}
     git = [str(u) for u in data.get("git", data.get("sources", [])) if str(u).strip()]
     local = [str(u) for u in data.get("local", []) if str(u).strip()]
-    return {"git": git, "local": local}
+    seeded = [str(u) for u in data.get("seeded", []) if str(u).strip()]
+    return {"git": git, "local": local, "seeded": seeded}
 
 
 def _write_sources(sources: dict[str, list[str]]) -> None:
@@ -546,7 +572,17 @@ def _write_sources(sources: dict[str, list[str]]) -> None:
     p.parent.mkdir(parents=True, exist_ok=True)
     atomic_write(
         p,
-        json.dumps({"git": sources.get("git", []), "local": sources.get("local", [])}, indent=2)
+        json.dumps(
+            {
+                "git": sources.get("git", []),
+                "local": sources.get("local", []),
+                # Persisted by every write path, not just the seeder: add/remove read the
+                # whole dict and write it back, so dropping this key here would erase the
+                # marker on the next source edit and silently resurrect a removed default.
+                "seeded": sources.get("seeded", []),
+            },
+            indent=2,
+        )
         + "\n",
     )
 
@@ -584,6 +620,63 @@ def remove_git_source(url: str) -> list[str]:
     src["git"] = [x for x in src["git"] if _git_source_key(x) != key]
     _write_sources(src)
     return src["git"]
+
+
+def seed_default_git_sources() -> list[str]:
+    """Write the shipped registry git source into ``app-sources.json`` — once, ever.
+
+    Run at gateway start (``_app_sources_seed_startup``). Returns the URLs actually seeded:
+    empty on every start after the first, empty when the row is already configured, and
+    empty whenever ``apps.registry_source_enabled`` is off.
+
+    The marker is recorded ONLY when the flag is on, so flipping the flag on later still
+    seeds; and it is recorded even if the row was already present by another route, so the
+    seeder never fights a user who added the registry by hand.
+
+    Config-read failures are non-fatal and seed NOTHING: a shipped network source is
+    opt-out-able state, and the safe direction for an unreadable config is to add no source
+    the operator never saw."""
+    from personalclaw.config.loader import AppConfig
+
+    try:
+        enabled = bool(AppConfig.load().apps.registry_source_enabled)
+    except Exception:
+        logger.warning("could not read apps.registry_source_enabled; not seeding", exc_info=True)
+        return []
+    if not enabled:
+        return []
+    src = _read_sources()
+    if _SEEDED_REGISTRY_KEY in src["seeded"]:
+        return []
+    seeded: list[str] = []
+    known = {_git_source_key(x) for x in (*_DEFAULT_GIT_SOURCES, *src["git"])}
+    if _git_source_key(_REGISTRY_GIT_SOURCE) not in known:
+        src["git"].append(_REGISTRY_GIT_SOURCE)
+        seeded.append(_REGISTRY_GIT_SOURCE)
+    src["seeded"].append(_SEEDED_REGISTRY_KEY)
+    _write_sources(src)
+    return seeded
+
+
+def default_git_sources() -> list[str]:
+    """Which CURRENTLY-LISTED git sources PersonalClaw itself put there (as listed).
+
+    The bundled tuple plus the seeded registry. The Store labels these "Default" so a user
+    can tell a shipped source from one they typed. Matched by :func:`_git_source_key`, so a
+    default spelled with or without ``.git`` still reads as a default."""
+    keys = {_git_source_key(u) for u in (*_DEFAULT_GIT_SOURCES, _REGISTRY_GIT_SOURCE)}
+    return [u for u in list_git_sources() if _git_source_key(u) in keys]
+
+
+def builtin_git_sources() -> list[str]:
+    """The listed git sources that CANNOT be removed — the bundled tuple only.
+
+    Folded into every read of :func:`list_git_sources`, so ``remove_git_source`` on one is a
+    no-op by construction; the Store hides the remove control for these rather than offering
+    a button that silently does nothing. The seeded registry is deliberately absent: it is a
+    real row in the sources file and removing it persists (T2.2)."""
+    keys = {_git_source_key(u) for u in _DEFAULT_GIT_SOURCES}
+    return [u for u in list_git_sources() if _git_source_key(u) in keys]
 
 
 # ── Local-directory app sources (workspace-core-app-split §4) ───────────────
@@ -1019,6 +1112,12 @@ def available_catalog() -> dict[str, Any]:
     return {
         "bundled": [e.to_dict() for e in available_bundled()],
         "gitSources": list_git_sources(),
+        # Which gitSources PersonalClaw shipped (label "Default") and which of those are
+        # bundled-and-unremovable (hide the remove control — see builtin_git_sources). The
+        # seeded registry appears in the first list and NOT the second: it is a shipped
+        # default the user may remove for good.
+        "defaultGitSources": default_git_sources(),
+        "builtinGitSources": builtin_git_sources(),
         "localSources": list_local_sources(),
         # Which localSources are first-party defaults (read-only, not removable) so
         # the UI can label them + hide the remove control.

@@ -919,6 +919,11 @@ _EDITABLE_CONFIG: dict[str, dict] = {
     "packs.fingerprint_enabled": {"type": "bool"},
     "packs.connector_catalog_url": {"type": "str", "max_len": 512},
     "packs.skill_catalogs": {"type": "skill_catalogs"},
+    # Apps (ECOSYSTEM-TOOLING T2.2) — whether the curated registry ships as a default Store
+    # source. Editable because it is the operator's opt-out for a shipped NETWORK source; it
+    # only gates SEEDING, so a PATCH cannot retract a row already in app-sources.json (the
+    # Store's remove control does that, and that removal persists).
+    "apps.registry_source_enabled": {"type": "bool"},
 }
 
 
