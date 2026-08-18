@@ -54,8 +54,20 @@ const useModelsActive = () => useCachedData('settings:models-active', () => api.
 // Routing efficiency for the default (chat, short_chat) bucket — the card's headline
 // is how many models are on the Pareto frontier there; deep-links into the subpage,
 // which lets the user pick any bucket. null on read failure (distinct from []=no data).
-const useRoutingTelemetry = () => useCachedData('settings:routing-telemetry:chat:short_chat',
-  () => api.modelsTelemetry({ use_case: 'chat', query_class: 'short_chat' }).then((d) => d.rows).catch(() => null), { persist: false })
+// 🔴 THIS CARD COULD NEVER FILL. It asked for `use_case: 'chat'`, and chat is the one axis routing
+// telemetry is never recorded for: the fold lives in `ModelCallGuard._audit`, `provider_bridge` applies
+// that guard only when `_guard_use_case` is set, and that happens for exactly
+// ("reasoning", "background", "loops", "orchestration") — "The interactive chat/code_tools stream stays
+// OUT OF SCOPE … both human-watched", in the bridge's own words. So the Settings home showed a
+// permanently empty "Routing & Efficiency" card to every user, under copy promising the numbers would
+// "land here as models handle work".
+//
+// Reading it as an oversight rather than a choice: the cache key and params mirror `RoutingPanel`'s
+// DEFAULT tab, and this card's own description says "for each kind of request" — plural — while it
+// queried exactly one kind that has no data. So it now asks for the axis the panel itself maps to
+// (`reasoning` → `long_reasoning`), which is a measured one, and the empty copy says what is measured.
+const useRoutingTelemetry = () => useCachedData('settings:routing-telemetry:reasoning:long_reasoning',
+  () => api.modelsTelemetry({ use_case: 'reasoning', query_class: 'long_reasoning' }).then((d) => d.rows).catch(() => null), { persist: false })
 const useSearchEntity = () => useCachedData('settings:search', async () => {
   const [providers, active] = await Promise.all([
     api.searchProviders().catch(() => [] as SearchProviderInfo[]),
@@ -276,7 +288,7 @@ export const SETTINGS_WIDGETS: SettingsWidget[] = [
       return (
         <BentoCard icon={Route} title="Routing & Efficiency" query={query} onClick={() => go('routing')} loading={data === undefined}>
           {data === null || (data && data.length === 0)
-            ? <div className="text-on-surface-low text-[0.8125rem]">Per-model success, latency, and cost for each kind of request land here as models handle work — showing which is most efficient.</div>
+            ? <div className="text-on-surface-low text-[0.8125rem]">Per-model success, latency, and cost land here as unattended work runs — reasoning, background, loops and orchestration — showing which is most efficient.</div>
             : data && <><BigStat value={data.length} caption={data.length === 1 ? 'model measured' : 'models measured'} />
                 <div className="mt-1 inline-flex items-center gap-1 text-on-surface-low text-[0.8125rem]">
                   <Trophy size={11} className="text-ok" /> {frontier} on the frontier
