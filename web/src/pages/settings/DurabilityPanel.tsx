@@ -159,15 +159,15 @@ function RetentionSection({ cfg, setCfg, snaps }: {
         <NumberRow label="Daily snapshots" saved={saved}
           hint="How many days of nightly snapshots to keep before thinning to weeklies."
           value={num(cfg.keep_daily, 14)} min={0} max={365} suffix="days"
-          onCommit={(n) => patch('keep_daily', n)} />
+          onCommit={(n, l) => patch('keep_daily', n, undefined, l)} />
         <NumberRow label="Weekly snapshots" saved={saved}
           hint="How many weeks to keep one snapshot each."
           value={num(cfg.keep_weekly, 8)} min={0} max={260} suffix="weeks"
-          onCommit={(n) => patch('keep_weekly', n)} />
+          onCommit={(n, l) => patch('keep_weekly', n, undefined, l)} />
         <NumberRow label="Monthly snapshots" saved={saved}
           hint="How many months to keep one snapshot each."
           value={num(cfg.keep_monthly, 12)} min={0} max={120} suffix="months"
-          onCommit={(n) => patch('keep_monthly', n)} />
+          onCommit={(n, l) => patch('keep_monthly', n, undefined, l)} />
 
         {pruneCount > 0 && (
           <div className="border-t border-outline-var py-3 text-on-surface-low text-[0.8125rem]">
@@ -343,12 +343,12 @@ function usePatch(
   setCfg: (c: Record<string, unknown>) => void,
   flash: () => void,
 ) {
-  return (key: string, value: unknown) => {
+  return (key: string, value: unknown, _cb?: () => void, label?: string) => {
     const prev = cfg[key]
     setCfg({ ...cfg, [key]: value })
     api.patchConfig(`durability.${key}`, value).then(flash).catch((e) => {
       setCfg({ ...cfg, [key]: prev })
-      notify(`Couldn't save ${key}: ${String((e as Error)?.message || e)}`, 'error')
+      notify(`Couldn't save ${label ?? key}: ${String((e as Error)?.message || e)}`, 'error')
     })
   }
 }
@@ -365,13 +365,15 @@ function num(v: unknown, fallback: number): number {
 
 function NumberRow({ label, hint, value, min, max, suffix, onCommit, saved }: {
   label: string; hint?: string; value: number; min: number; max: number
-  suffix?: string; onCommit: (n: number) => void; saved: boolean
+  suffix?: string
+  /** `(value, label)` — see `ChatPanel`'s note: the label has to be SUPPLIED, not just accepted. */
+  onCommit: (n: number, label?: string) => void; saved: boolean
 }) {
   return (
     <Row label={label} hint={hint}>
       <div className="flex items-center gap-2">
         <SavedToast show={saved} />
-        <NumberField value={value} min={min} max={max} step={1} onChange={onCommit} ariaLabel={label} />
+        <NumberField value={value} min={min} max={max} step={1} onChange={(n) => onCommit(n, label)} ariaLabel={label} />
         {suffix && <span className="w-14 text-on-surface-low text-[0.75rem]">{suffix}</span>}
       </div>
     </Row>
