@@ -259,7 +259,7 @@ export function ModelsPanel() {
  *  reply carries a fresh pressure snapshot, so the bar moves as proof rather than the UI
  *  claiming the memory went. */
 function LoadedModelsSection() {
-  const { data, error: loadErr, refresh } = useCachedData('settings:models-loaded', () =>
+  const { data, error: loadErr, refresh } = useCachedData('models:loaded', () =>
     api.modelsLoaded(), { persist: false },
   )
   const [busy, setBusy] = useState('')
@@ -286,6 +286,11 @@ function LoadedModelsSection() {
     setBusy(provider)
     try {
       await api.unloadModelProvider(provider)
+      // `refresh()` refetches THIS surface's key. The dashboard's "on this machine" widget makes the
+      // byte-identical read and can also unload, so each left the other's cached copy describing memory
+      // that is no longer held — visible on its next mount until the revalidation lands. One shared key
+      // means there is only one answer to be wrong.
+      invalidateCache('models:loaded')
       refresh()
     } catch (e) {
       notify(`Couldn't unload ${provider}: ${String((e as Error)?.message || e)}`, 'error')

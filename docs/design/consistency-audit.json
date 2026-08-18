@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-08-18T19:11:21.759Z",
+  "generatedAt": "2026-08-18T20:46:09.586Z",
   "totals": {
     "driftHits": 8,
     "filesScanned": 520,
@@ -821,7 +821,7 @@
     },
     {
       "file": "ui/widget/WidgetFrame.tsx",
-      "line": 261,
+      "line": 278,
       "category": "spacing",
       "snippet": "style={{ height: expanded ? 'calc(100% - 36px)' : height }}"
     }
