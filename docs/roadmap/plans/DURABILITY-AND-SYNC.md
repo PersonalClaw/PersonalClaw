@@ -1814,3 +1814,82 @@ half) is live and safe today; only cross-machine DELETE convergence waits on thi
   was promoted to a public `guard.host_matches` (one rename, all call sites updated) rather than
   reaching across modules into a private helper or writing a second copy of the Anthropic-rule
   matcher.
+
+## Execution log — DAS-10c (§6 verification pass — no clause was open)
+
+- [2026-08-18][DAS-10c] **CENSUS: every DAS-10 clause is CONFIRMED-SHIPPED.** The atom was still
+  `todo`, so it was measured clause by clause against `main` @ `fc1a220d` rather than re-implemented.
+  `POST /api/durability/export` (`handlers/durability.py:178`), `POST /api/durability/import`
+  (`:249`), `GET /api/durability/archive` (`:120`), `POST /api/durability/archive/{id}/restore`
+  (`:382`), the conflict queue (`:559`, `:624`) — all six routed in `server.py:442-459` and all
+  re-exported in `handlers/__init__.py:146-154`, so none is registered-but-unrouted. `MANIFEST_VERSION
+  = 3` is **written**, not merely accepted (`portability.py:122`), with `SUPPORTED_MANIFEST_VERSIONS =
+  (1, 2, 3)` (`:126`). Archive rows carry per-domain counts and the last drill's verdict
+  (`handlers/durability.py:158-165`). The separate memory/knowledge export buttons are
+  `PortabilityPanel.tsx:27-44`, mounted at `SettingsPage.tsx:92`; the archive browser, `Sync` section
+  and conflict queue are `DurabilityPanel.tsx:214/319/436`, mounted at `SettingsPage.tsx:93`.
+  Criteria 9-10 are exercised by `test_portability_dsar.py` and
+  `test_durability_sync_app_criterion10.py`. **DAS-10 + DAS-10b closed this scope; nothing was
+  half-landed.** The value of this pass was the defect below, which the shipped suite could not see.
+
+- [2026-08-18][DAS-10c] 🔴 **DISCOVERY + FIX — a declared database left by TWO write sites, and the
+  wrong copy won.** `create_export_zip` has four write sites; the `workspace`/`skills`/`cron-history`
+  tree walk (`portability.py:505-523`) wrote **every** file it found, including the sqlite stores the
+  database projection above it had already written through `_backup_sqlite`. The inventory sweep
+  further down refuses raw database copies for exactly this reason (`:571`, "measured UNUSABLE — no
+  such table") — that rule was never applied to the older hand-written walk. Two of the inventory's
+  declared stores sit inside that tree (`workspace/knowledge/knowledge.db`,
+  `workspace/lexicon/lexicon.db`), so on any real home both were duplicated. **Measured** on a home
+  whose `workspace/lexicon/lexicon.db` held 500 rows behind a 53 KB uncheckpointed WAL: the zip held
+  the path twice (**6 entries against 5 declared members**, plus zipfile's `Duplicate name` warning),
+  shipped `lexicon.db-wal` **and** `lexicon.db-shm`, and — the real defect — when `_backup_sqlite`
+  raised, the projection logged "skipping unreadable database" while the walk shipped a raw 45 KB copy
+  anyway **and the manifest declared it**, so the artifact presented a member the export had decided
+  not to carry. The later entry wins on extraction, so the checkpointed copy was silently replaced.
+  Fixed with `_is_projected_db` consulted by the walk. Deliberately **narrower** than the inventory
+  sweep's blanket `.db` skip: `workspace/` is the user's own directory, so dropping an *undeclared*
+  sqlite file a user put there would trade one data defect for another — pinned by
+  `test_an_undeclared_database_in_the_users_workspace_still_travels`.
+
+- [2026-08-18][DAS-10c] **Why the shipped suite could not see it.** `test_portability_dsar.py`'s
+  `seeded_home` plants its databases at the TOP of the home, where only one write site can reach
+  them, and `_zip_of` returns a `sorted(set(...))`-shaped name list — a path written twice reads as
+  written once. Both were the reason a duplicate survived. The new fixture seeds a declared store
+  *inside* the `workspace` tree with a real WAL, and `_entries` preserves duplicates.
+
+- [2026-08-18][DAS-10c] 🔴 **The `secret ∪ derived` boundary has THREE independent layers, and the
+  count is not symmetric.** Established by mutation, not by reading: (a) emptying
+  `_is_excluded`'s `EXPORT_EXCLUDE` name check leaked nothing; (b) `return False` from the whole
+  `secret ∪ derived` chain check (`:186`) leaked nothing; (c) widening
+  `inventory.export_entries()` to `tuple(INVENTORY)` leaked nothing. Only (b) **and** (c) together
+  leaked, and even then **only the derived canaries** — `memory_index.db`,
+  `memory.faiss/index.bin`, `models/weights.bin`, `session_search.db` all entered the zip while the
+  three SECRET canaries stayed out, because `is_sensitive_path()` at each write site is a third guard
+  that covers secrets and does **not** cover derived state. So: secret exclusion survives any two
+  layers failing; derived exclusion rests on exactly two. Recorded because the asymmetry is invisible
+  in the code and a future refactor could remove the second derived layer believing a third exists.
+
+- [2026-08-18][DAS-10c] **Independent artifact proof (not a test's claim).** A real export was built
+  from a home seeded with four secret canaries plus a derived-index canary, and **every member's raw
+  bytes** were scanned: 9 zip entries / 8 declared members / 4 domains
+  (`config`, `platform`, `knowledge`, `memory`), 17 excluded entries named in the manifest, `files/`
+  originals present (`my-notes.md`, `receipt.pdf` — criterion 9's knowledge half), and zero canaries
+  anywhere. Export → import into a SECOND fresh home restored the user stores with `.env`,
+  `credentials/store.json` and `memory_index.db` all absent. Both runs pinned
+  `PERSONALCLAW_HOME` **and** `PERSONALCLAW_WORKSPACE`; the real `~/.personalclaw` was verified
+  untouched against a mid-session reference file (`find -newer`, with a vacuity check proving the
+  guard matches when it should — `-newermt '-45 minutes'` is vacuous on this box).
+
+- [2026-08-18][DAS-10c] **Falsifications** (mutate the live line, `py_compile` the mutant, quote the
+  red, restore from a file copy): (1) guard disabled → all three new rails red
+  (`written more than once: ['workspace/lexicon/lexicon.db']`, `sqlite sidecars travelled: [...-wal,
+  ...-shm]`, `a skipped database still travelled`) while the undeclared-database rail correctly stayed
+  green; (2) `SUPPORTED_MANIFEST_VERSIONS = (3,)` → `Unsupported manifest version: 1` and `: 2`, so
+  the v1|v2 back-compat path is genuinely gated; (3) the three-layer exclusion mutations above.
+
+- [2026-08-18][DAS-10c] **Gates:** `make lint` **exit 0** (black 1789 files, isort, flake8, mypy
+  "no issues found in 919 source files") · `test_portability_dsar` + `test_portability` +
+  `test_durability_dsar_routes` + `test_durability_sync_app_criterion10` + `test_durability_archive` +
+  `test_durability_conflict_review` + `test_durability_inventory` + `test_durability_shards` +
+  `test_config_roundtrip` = **215 passed**. No `web/` change, so the npm gate was not required.
+  No config field added, so the round-trip contract does not apply.
