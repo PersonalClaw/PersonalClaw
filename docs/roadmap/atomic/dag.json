@@ -5543,7 +5543,7 @@
         {
           "id": "APE-1",
           "title": "Manifest: backgroundTasks + eventSubscriptions permissions (parse/serialize/consent)",
-          "status": "todo",
+          "status": "done",
           "scope": "Session 1 T1.1; Contract C1 (manifest additions, additive \u00a73.8)",
           "done_when": "round-trip (to_dict/from_dict) tests pass; install consent UI surfaces the two new grants; unknown-field preservation intact",
           "deps": [
@@ -7406,8 +7406,13 @@
         "plan": "AG"
       },
       {
-        "id": "APE-1",
-        "title": "Manifest: backgroundTasks + eventSubscriptions permissions (parse/serialize/consent)",
+        "id": "APE-2",
+        "title": "Platform event registry (app_events.py) + emit sites + declared-subscription WS filter",
+        "plan": "APE"
+      },
+      {
+        "id": "APE-3",
+        "title": "Background worker SDK (sdk/background.py) + backend_runtime supervised hosting",
         "plan": "APE"
       },
       {
@@ -10016,9 +10021,9 @@
         "code": "APE",
         "plan": "APP-PLATFORM-EVOLUTION",
         "total_atoms": 12,
-        "done": 6,
+        "done": 7,
         "in_progress": 0,
-        "todo": 6,
+        "todo": 5,
         "blocked": 0
       },
       {
