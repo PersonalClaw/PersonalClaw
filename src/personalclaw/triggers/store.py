@@ -56,6 +56,7 @@ from pathlib import Path
 from typing import Any, Iterator
 
 from personalclaw.triggers.models import Issue, Trigger, parse_trigger
+from personalclaw.triggers.provider import TriggerStoreProvider
 
 logger = logging.getLogger(__name__)
 
@@ -108,8 +109,14 @@ class LoadedTrigger:
         }
 
 
-class TriggerStore:
+class TriggerStore(TriggerStoreProvider):
     """`triggers.json`, with the shipped cron store's durability discipline.
+
+    The NATIVE implementation of the trigger-store seam (TEAM-SHARED-ENTITIES §3 — TSE-4): it wraps
+    `triggers.json` with all three preserved conventions (fcntl lock, mtime change-notify, atomic
+    write). The base class is the abstraction a `trigger`-type provider app implements to serve rows
+    from somewhere else; this class is what serves them from the local file, and it is the only
+    implementation core ships.
 
     Deliberately NOT a subclass of or wrapper around `ScheduleService`: that class also owns
     the timer,

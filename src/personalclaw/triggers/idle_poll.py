@@ -77,6 +77,8 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
+from personalclaw.triggers.provider import armable
+
 logger = logging.getLogger(__name__)
 
 #: The `idle` spec's default quiet period, in seconds. The same 60s `NudgeLoop.idle_secs` defaults
@@ -163,10 +165,7 @@ def idle_triggers(store: Any) -> list[Any]:
     not `manual`), and checking `enabled` alone is how an autopaused trigger keeps firing.
     """
     rows = []
-    for row in store.load():
-        if not getattr(row, "ok", True):
-            continue
-        trigger = row.trigger
+    for trigger in armable(store):
         if trigger.kind != "idle":
             continue
         if not trigger.fires_automatically:

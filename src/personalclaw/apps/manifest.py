@@ -940,6 +940,12 @@ PROVIDER_TYPES = frozenset(
         # which `kind: event` triggers match with the existing `{source, pattern}` spec — no new
         # trigger kind. Its `TriggerSourceTypeHandler` lands in the same commit (the #47 rule).
         "trigger_source",
+        # TEAM-SHARED-ENTITIES §3 (TSE-4): an app-contributed STORE of trigger ROWS — a shared or
+        # team trigger backend. NOT `trigger_source` above: that supplies the STIMULUS (live
+        # observer, pushes events), this supplies the RULE (passive store, serves definitions).
+        # Rows only, never execution: the local TriggerService fires, and only rows whose `author`
+        # is the owner. Its `TriggerTypeHandler` lands in the same commit (the #47 rule).
+        "trigger",
     }
 )
 # NOTE: this set MUST equal the runtime type-handler registry

@@ -337,7 +337,26 @@ def _arm_if_needed(store: Any, trigger_id: str) -> None:
     store.upsert(row.trigger)
 
 
-def _serialize_store(trigger: Any, *, broken: list[str] | None = None) -> dict[str, Any]:
+def _attribution(trigger: Any, *, owner: str) -> dict[str, Any]:
+    """The two attribution keys every store-backed projection carries (TSE-4).
+
+    `read_only` is the FRONTEND's whole instruction for a foreign row (§2.2: "rendered read-only —
+    author chip, no enable/edit/delete"). Computed server-side from the same
+    `ownership.is_owner_authored` predicate the arm path uses, so the page can never offer a control
+    for a row the service would refuse to arm — a UI that derived it from a string comparison of its
+    own would be a second opinion about who owns a trigger, and the two would drift.
+    """
+    from personalclaw.triggers.ownership import is_owner_authored
+
+    return {
+        "author": str(getattr(trigger, "author", "") or ""),
+        "read_only": not is_owner_authored(trigger, owner=owner),
+    }
+
+
+def _serialize_store(
+    trigger: Any, *, broken: list[str] | None = None, owner: str = ""
+) -> dict[str, Any]:
     """A `TriggerStore` trigger in the shared list shape. Id is `store:<kind>:<slug>` so the
     mutation routes back to the store; `raw_id` is the store's own id."""
     return {
@@ -362,6 +381,7 @@ def _serialize_store(trigger: Any, *, broken: list[str] | None = None) -> dict[s
         "run_count": trigger.run_count,
         "last_error": _redact(trigger.last_error_summary or ""),
         "broken": list(broken or []),
+        **_attribution(trigger, owner=owner),
     }
 
 
@@ -391,18 +411,27 @@ def _schedule_rows(state: DashboardState) -> list[dict[str, Any]]:
     Names/results are redacted on the way out exactly as `_serialize_schedule` did: the projection
     is a data mapping and knows nothing about credential scrubbing.
     """
+    from personalclaw.triggers.ownership import owner_username
+    from personalclaw.triggers.provider import all_rows
+
     store = _trigger_store()
-    clock_rows = [row for row in store.load() if row.trigger.kind == "clock"]
+    # `all_rows`, not `store.load()`: a registered `trigger` provider's rows belong on this page too
+    # (TSE-4). Resolved ONCE for the whole list rather than per row — the owner is one config read
+    # and a per-row read would make a 40-automation page do 40 of them.
+    owner = owner_username()
+    clock_rows = [row for row in all_rows(store) if row.trigger.kind == "clock"]
     if clock_rows:
         return [
-            _schedule_row_for(state, row.trigger, issues=[i.message for i in row.errors])
+            _schedule_row_for(
+                state, row.trigger, issues=[i.message for i in row.errors], owner=owner
+            )
             for row in clock_rows
         ]
     return []
 
 
 def _schedule_row_for(
-    state: DashboardState, trigger: Any, *, issues: list[str] | None = None
+    state: DashboardState, trigger: Any, *, issues: list[str] | None = None, owner: str = ""
 ) -> dict[str, Any]:
     """ONE schedule row, projected and redacted (S101).
 
@@ -426,6 +455,7 @@ def _schedule_row_for(
         if projected.get(key):
             projected[key] = _redact(str(projected[key]))
     projected["broken"] = list(issues or [])
+    projected.update(_attribution(trigger, owner=owner))
     return projected
 
 
@@ -581,16 +611,27 @@ async def api_triggers(request: web.Request) -> web.Response:
         # created and fired but never listed — the present-and-inert gap S92/S93 opened. Broken
         # rows (S87 lenient parse) are shown, not hidden: a broken automation invisible on its own
         # page is undebuggable.
-        for row in _trigger_store().load():
+        from personalclaw.triggers.ownership import owner_username
+        from personalclaw.triggers.provider import all_rows
+
+        owner = owner_username()
+        for row in all_rows(_trigger_store()):
             if row.trigger.kind in _STORE_ONLY_KINDS:
                 triggers.append(
-                    _serialize_store(row.trigger, broken=[i.message for i in row.errors])
+                    _serialize_store(
+                        row.trigger, broken=[i.message for i in row.errors], owner=owner
+                    )
                 )
 
     from personalclaw.schedule import get_local_tz
+    from personalclaw.triggers.ownership import owner_username
 
     tz_name, _ = get_local_tz()
-    return web.json_response({"triggers": triggers, "server_tz": tz_name})
+    # `owner` mirrors the tasks seam's list response (§2.1): the page labels a foreign row with its
+    # author, and needs to know whose name is not worth showing.
+    return web.json_response(
+        {"triggers": triggers, "server_tz": tz_name, "owner": owner_username()}
+    )
 
 
 # ── create ──
