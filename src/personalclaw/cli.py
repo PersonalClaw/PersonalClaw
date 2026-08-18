@@ -48,7 +48,23 @@ BANNER = r"""
   Your personal AI agent
 """
 
-_PROJECT_MARKERS = ("agents", "skills")
+
+def _is_project_root(d: Path) -> bool:
+    """True when *d* is the package root of a PersonalClaw source checkout.
+
+    The markers are the two things every source layout has and no unrelated
+    directory does: the installable ``pyproject.toml`` and the ``src/personalclaw``
+    package. Both shipped layouts satisfy this — the standalone published
+    checkout (repo root IS the package root) and the monorepo layout
+    (``<repo>/PersonalClaw``), for which :func:`self_update.git_root` walks up to
+    the repo root and :func:`self_update.package_root` walks back down.
+
+    Getting this wrong is not a cosmetic miss: no match means
+    ``PERSONALCLAW_PROJECT_DIR`` stays unset, so ``detect_install_kind()`` sees no
+    git root and classifies a git checkout as a ``pip`` install — which routes
+    "Update & Restart" into a PyPI wheel upgrade over the user's own tree.
+    """
+    return (d / "pyproject.toml").is_file() and (d / "src" / "personalclaw").is_dir()
 
 
 def _project_dir_file() -> Path:
@@ -57,7 +73,7 @@ def _project_dir_file() -> Path:
 
 
 def _detect_project_dir() -> str | None:
-    """Find the project root containing agents/ and skills/.
+    """Find the package root of the surrounding PersonalClaw source checkout.
 
     Search order:
     1. Walk up from CWD
@@ -65,13 +81,13 @@ def _detect_project_dir() -> str | None:
     """
     cur = Path.cwd().resolve()
     for d in (cur, *cur.parents):
-        if all((d / m).is_dir() for m in _PROJECT_MARKERS):
+        if _is_project_root(d):
             return str(d)
     pdf = _project_dir_file()
     if pdf.is_file():
         saved = pdf.read_text(encoding="utf-8").strip()
         p = Path(saved)
-        if p.is_dir() and all((p / m).is_dir() for m in _PROJECT_MARKERS):
+        if p.is_dir() and _is_project_root(p):
             return saved
     return None
 
