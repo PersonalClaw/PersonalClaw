@@ -152,7 +152,14 @@ export function TasksListPage({ onCreate, view: viewProp, filter, openId, setVie
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [bulkBusy, setBulkBusy] = useState(false)
 
-  const load = () => { invalidateCache('tasks'); refresh() }
+  // 🔴 `invalidateCache('tasks')` drops exactly that key. `TaskCreatePage` reads the SAME unfiltered
+  // collection under `tasks-all` for its dependency picker, with `persist: true` — so a task created
+  // or deleted here left that picker's FIRST PAINT showing the old list, and because the copy is
+  // persisted, a hard reload replayed the same wrong list. (Measured, not assumed: the hook
+  // revalidates on every mount, so the wrong list is replaced when the refetch lands — the cost is a
+  // stale paint, not a durably wrong picker.) Prefix mode covers both keys, and any later reader of
+  // the same collection that follows the `tasks*` naming.
+  const load = () => { invalidateCache('tasks', true); refresh() }
   const toggleSelect = (id: string) => setSelected((prev) => {
     const next = new Set(prev); next.has(id) ? next.delete(id) : next.add(id); return next
   })
@@ -404,7 +411,7 @@ export function TasksListPage({ onCreate, view: viewProp, filter, openId, setVie
             {/* Error FIRST: `tasks === null` also satisfies the skeleton and the empty branch, so a
                 later test would be unreachable. Removing the swallow above is only half the fix —
                 without this branch a failed load would hang on the skeleton forever instead. */}
-            {tasks === null && loadErr ? <LoadError what="tasks" error={loadErr} onRetry={() => { invalidateCache('tasks'); refresh() }} />
+            {tasks === null && loadErr ? <LoadError what="tasks" error={loadErr} onRetry={() => { invalidateCache('tasks', true); refresh() }} />
               : filtered === null ? <ListSkeleton rows={6} what="tasks" /> : (tasks?.length ?? 0) === 0 ? (
               <EmptyState icon={ListChecksLike} title="No tasks" hint="Break a goal into tracked work. Create a task, or let an agent plan from a chat." action={{ label: 'New task', onClick: onCreate, icon: Plus }} />
             ) : scopedTasks.length === 0 ? (
@@ -432,7 +439,7 @@ export function TasksListPage({ onCreate, view: viewProp, filter, openId, setVie
                 onPick={(l) => setListFilter(listFilter?.id === l.id ? null : { id: l.id, name: l.name })}
                 onReset={resetList} />
             )}
-            {tasks === null && loadErr ? <LoadError what="tasks" error={loadErr} onRetry={() => { invalidateCache('tasks'); refresh() }} />
+            {tasks === null && loadErr ? <LoadError what="tasks" error={loadErr} onRetry={() => { invalidateCache('tasks', true); refresh() }} />
               : filtered === null ? <ListSkeleton rows={6} what="tasks" /> : (tasks?.length ?? 0) === 0 ? (
               <EmptyState icon={ListChecksLike} title="No tasks" hint="Break a goal into tracked work. Create a task, or let an agent plan from a chat." action={{ label: 'New task', onClick: onCreate, icon: Plus }} />
             ) : view === 'dag' ? (

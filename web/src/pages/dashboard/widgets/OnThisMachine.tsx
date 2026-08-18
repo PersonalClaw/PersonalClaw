@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { MoreRow } from '../../../ui/MoreRow'
 import { HardDrive } from 'lucide-react'
 import { api } from '../../../lib/api'
-import { useCachedData } from '../../../lib/useCachedData'
+import { useCachedData, invalidateCache } from '../../../lib/useCachedData'
 import {
   occupantDetail, pressureDetail, pressureTone, sortOccupants,
 } from '../../../lib/residency'
@@ -24,7 +24,11 @@ import { RowAction, SlotEmptyState, WidgetRow } from './kit'
  *  per-user layout persistence were retired, so this is a module that DashboardPage
  *  hard-imports into a `<Section>` band, matching PinnedArtifacts. */
 export function OnThisMachine() {
-  const { data, error, refresh } = useCachedData('dashboard:on-this-machine', () =>
+  // 🔑 The SAME key Settings' models panel reads. The doc above claims these two surfaces "cannot
+  // drift into disagreeing", and shared derivations do keep the *rendering* honest — but each surface
+  // cached the identical `api.modelsLoaded()` read under its own surface-named key, so an unload on
+  // either left the other's copy describing freed memory as resident. One key, one answer, one fetch.
+  const { data, error, refresh } = useCachedData('models:loaded', () =>
     api.modelsLoaded(), { persist: false },
   )
   const [busy, setBusy] = useState('')
@@ -52,6 +56,9 @@ export function OnThisMachine() {
     setBusy(provider)
     try {
       await api.unloadModelProvider(provider)
+      // Settings is not mounted right now, and the hook has no subscribers — but the shared key means
+      // its next mount has nothing stale to paint while it revalidates.
+      invalidateCache('models:loaded')
       refresh()
     } catch (e) {
       notify(`Couldn't unload ${subject}: ${String((e as Error)?.message || e)}`, 'error')
