@@ -92,7 +92,7 @@ CLI-auto-approved tools currently bypass the deny-list, task-mode gate, and bloc
 - **Owner: core seam (mode forwarding + gate) with per-dialect knobs in the bundles; residue is an upstream limitation, documented.**
 - **Mechanism:** make the host the permission authority wherever the protocol allows. For Zed dialects (claude-code, codex): stop leaving the CLI in its own default-allow mode — forward the *most-restrictive* native mode (`default`, never `acceptEdits`/`dontAsk`/`bypassPermissions` except the explicit unattended path in §2.3) and, where the adapter supports it, configure "always ask" so every tool emits `session/request_permission` and therefore hits the existing host gate (`chat_runner.py:1771-1795`) — deny-list, task-mode, blocking PreToolUse, trust/YOLO all then apply uniformly. The claude-code isolation path already strips `permissions.allow/ask` + `defaultMode` from the CLI config (`apps/claude-code-agent/provider.py:106-164`) — extend that from opt-in hardening to the bundled default for host-managed sessions.
 - **Honest boundary:** some CLI-internal reads/operations may never surface a permission request regardless of mode (Phase 1 step 2 measures exactly which, per provider). Those are **documented as a known constraint** in §2.7's parity doc — the host cannot pre-gate what the protocol never shows it. We do NOT build an ACP-side syscall-shim wrapper to intercept them; the OS sandbox wrap (`transport.py:316`) remains the outer boundary for those, and the SEL audit of EVENT_TOOL_CALL remains the detection layer.
-- **Acceptance:** with task-mode=Ask, a file write via any ACP provider produces a host approval card (or is blocked) — never a silent write; the deny-list rejects a denied command at the permission prompt with the standard denial message; PreToolUse blocking hooks fire pre-execution on every permission-surfaced tool. The residual not-gateable set per provider is enumerated in the parity doc, not discovered by users.
+- **Acceptance:** with task-mode=Ask, a file write via any ACP provider produces a host approval card (or is blocked) — never a silent write; the deny-list rejects a denied command at the permission prompt with the standard denial message; PreToolUse blocking hooks fire pre-execution on every permission-surfaced tool. The residual not-gateable set per provider is enumerated in the parity doc, not discovered by users. **Landed form (`AAP-5`):** the enumeration lives in `acp/permission_authority.NOT_GATEABLE` — a per-provider registry where each entry carries the reason and the observation that proved it, and every provider is listed even when its residual set measured EMPTY, so "no entry" can never read as "gated". §2.7's parity doc RENDERS that registry rather than re-deriving it, which keeps the prose from drifting out of sync with the gate.
 
 ### 2.3 Unattended + loop support — gaps 3 and 5 (loops work on ACP)
 
@@ -1204,3 +1204,51 @@ evidence instead.
   sweeps: `~/.aws/sso/cache/kiro-auth-token.json`'s `expiresAt` is **five weeks expired** beside a
   working refresh token, so that file is not an auth-freshness signal and reading it would mis-file
   working cells as `ENV`.
+
+- 2026-08-18 — `AAP-5` **PARTIAL** (§2.2, gap 2 — the safety hole). Made the HOST the permission
+  authority on the ACP path and, where it provably cannot be, made the *absence* of a gate legible.
+  Four mechanisms: (1) `acp/permission_authority.sanitize_mode` clamps every requested native mode
+  — called from `AcpClient.__init__` **and** `set_mode`, the chokepoint every path crosses
+  (factory kwarg, bundle entry option, per-session override, loop/planning worker) **and** from
+  `AcpSessionProvider.set_mode`, the pooled path's SECOND door (found by asking who else builds
+  the dialect request directly — it bypasses `AcpClient` entirely, so clamping only the wrapper
+  would have left the concurrent path open), so
+  `acceptEdits`/`dontAsk`/`bypassPermissions`/`yolo` and any *unrecognized* mode become `default`
+  with an SEL `mode_change:clamped_to_host_authority` row; empty now becomes `default` too, because
+  "whatever the CLI defaults to" WAS the hole. (2) the deny-list is evaluated against the REAL
+  command, not the display title — `command_probe` feeds the cached `tool_call` input to the hook
+  chain in the `"Running: "` form, DENY-only by contract so it can never widen. (3) the permission
+  frame now carries the adapter's declared `kind` — used for the card/SEL/residue, deliberately NOT
+  passed to `task_mode_denies` (a CLI that labels a mutation "read" must not turn that gate's
+  deny-by-default into an allow). (4) `NOT_GATEABLE` + `_report_ungated_tool_call`: a tool result for
+  a call the host was never asked about is audited (`ungated` / `ungated_declared`), flagged on the
+  tool row's meta, announced in the activity feed, and — when undeclared AND non-safe under
+  ask/plan — aborts the turn via `session/cancel`.
+  **Driven, not reasoned:** real `kiro-cli acp`, isolated home, `AAP5_REQUESTED_MODE=bypassPermissions`
+  → clamped live to `default`; the CLI's own `pwd` returned the cwd we passed, so `G1`'s escape did
+  not touch this drive. Turn A (pwd + write + rm): 3 tool calls, **3 gated**. Turn B (todo list +
+  write + read): 6 tool calls, **1 gated, 5 ungated**. Replaying those VERBATIM frames through the
+  real `_run_chat` gate with trust ON: under `task_mode=ask` the write and the `rm` are rejected with
+  the standard "Ask mode — only read-only tools run" message while read-only `pwd` still runs, and
+  under `task_mode=agent` the same write approves — the requirement and its inverse floor on real
+  frames, with the vacuity floor satisfied inside one turn (the gate fires on the write while five
+  other calls are ungateable).
+  **DISCOVERY:** `G27`'s residue is WIDER than recorded. kiro does not only skip `todo_list` — it
+  **self-approves its own file reads**: in one turn `Creating todo_probe.txt` raised a card while
+  `Reading todo_probe.txt:1-10` (`kind="read"`) did not. Both are now declared entries; the read
+  resolves to effective risk SAFE, so it is labelled and never turn-aborting. That asymmetry is the
+  reason the abort rule keys on *undeclared AND non-safe* rather than on "ungated": enforcing on
+  "ungated" alone would abort five of every six kiro turns.
+  **DEVIATION:** the residual set is enumerated in CODE (`NOT_GATEABLE`), not in §2.7's
+  `docs/agents/acp-parity.md` — that doc does not exist yet and belongs to a later atom; it should
+  render the registry. **DEVIATION:** `sanitize_mode`'s `unattended=True` escape exists but nothing
+  wires it — the bridge still pops `unattended` for ACP (§2.3 owns that), so loop/planning workers
+  now get `default` and execute because their session already carries `_trust`; the approval becomes
+  AUDITED instead of invisible, which is the intended direction, but §2.3 must thread `unattended`
+  before any un-trusted background ACP run can be non-wedging. **DEVIATION:** the apps-repo half of
+  the mechanism (flip `PERSONALCLAW_CC_ISOLATE` from opt-in to the bundled default in
+  `claude-code-agent/provider.py:_build_env`) is NOT landed — cross-repo, handed to the owner as an
+  exact diff. That lever exists ONLY in the apps bundle; core `src/` never mentions it.
+  **BOUNDARY:** claude-code and codex were not re-driven live (their adapters are not installed on
+  this machine), so their "residual set EMPTY" entries carry `AAP-1`/`AAP-2`'s measurement, not a
+  fresh one — and per `G27` an empty set is a measurement, never a guarantee.
