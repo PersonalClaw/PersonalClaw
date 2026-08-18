@@ -3,7 +3,7 @@ import { fvs } from '../../design/fontWeight'
 import { Inbox as InboxIcon, CheckCheck, RotateCcw, Circle, Reply, Settings as SettingsIcon, ScrollText, Loader2, ExternalLink, LayoutGrid } from 'lucide-react'
 import { TopBar } from '../../ui/TopBar'
 import { WorkbenchLayout } from '../../ui/WorkbenchLayout'
-import { EmptyState, ListRow, ListSkeleton } from '../../ui/ListScaffold'
+import { EmptyState, ListRow, ListSkeleton, LoadError } from '../../ui/ListScaffold'
 import { SidePanel } from '../../ui/SidePanel'
 import { ListControls } from '../../ui/ListControls'
 import { FilterMenu, type FilterSectionDef } from '../../ui/FilterMenu'
@@ -39,7 +39,13 @@ const FILTERS = [
  *  confidence and an optional drafted reply. Header shows source health; rows
  *  triage at a glance; the SidePanel is the full triage workspace. */
 export function InboxPage({ query, setQuery, navigate }: Pick<RouteProps, 'query' | 'setQuery' | 'navigate'>) {
-  const { data: items, refresh: refreshItems } = useCachedData<InboxItem[]>('inbox:items', () => api.inbox().catch(() => []), { persist: false })
+  // No `.catch(() => [])` on the items read. Swallowing the rejection handed the hook an EMPTY
+  // LIST, and an empty inbox is the state this surface is proudest of: measured against a 500,
+  // `#/inbox` said "Inbox zero — you're all caught up" and rendered PIXEL-IDENTICAL to a healthy
+  // empty queue. The most reassuring sentence in the app, produced by a failed request.
+  // `status` keeps its catch on purpose — it feeds the header's source-health readout, which has
+  // its own "unknown" rendering and must not take the whole list down with it.
+  const { data: items, error: itemsErr, refresh: refreshItems } = useCachedData<InboxItem[]>('inbox:items', () => api.inbox(), { persist: false })
   const { data: status, refresh: refreshStatus } = useCachedData<InboxStatus | null>('inbox:status', () => api.inboxStatus().catch(() => null), { persist: false })
   const [filter, setFilter] = useQueryParam(query, setQuery, 'filter', 'open', { replace: true })
   const [kind, setKind] = useQueryParam(query, setQuery, 'kind', '', { replace: true })
@@ -307,7 +313,9 @@ export function InboxPage({ query, setQuery, navigate }: Pick<RouteProps, 'query
             list could only be opened, one at a time. */}
         {filtered !== null && kind === 'proposal' ? (
           <ProposalsLens items={filtered} onChanged={reload} />
-        ) : filtered === null ? <ListSkeleton rows={6} what="items" /> : filtered.length === 0 ? (
+        ) : items === undefined && itemsErr ? (
+          <LoadError what="inbox items" error={itemsErr} onRetry={reload} />
+        ) : filtered === null ? <ListSkeleton rows={6} what="inbox items" /> : filtered.length === 0 ? (
           // 🪤 NARROWED FIRST, THEN THE BLANK SLATE. The title always distinguished the two
           // ('Nothing here' vs 'Inbox zero'), but the HINT tested `disabled` first — so a user with
           // items who searched for something that does not match was told "Enable a source to begin",

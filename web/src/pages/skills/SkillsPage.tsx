@@ -10,7 +10,7 @@ import { Segmented } from '../../ui/Segmented'
 import { useQueryParam, type RouteProps } from '../../app/useQueryState'
 import { useIsMobile } from '../../app/useIsMobile'
 import { Modal } from '../../ui/Modal'
-import { EmptyState, ListRow, ListSkeleton } from '../../ui/ListScaffold'
+import { EmptyState, ListRow, ListSkeleton, LoadError } from '../../ui/ListScaffold'
 import { ContextMenu, type ContextMenuItem } from '../../ui/motion'
 import { SidePanel } from '../../ui/SidePanel'
 import { TextInput, TextArea, FieldError } from '../../ui/forms'
@@ -81,7 +81,11 @@ function ModeToggle({ mode, onChange }: { mode: Mode; onChange: (m: Mode) => voi
 
 // ── Installed ───────────────────────────────────────────────────────────────
 function Installed({ onBrowse, onProposals, query, setQuery }: { onBrowse: () => void; onProposals: () => void } & Pick<RouteProps, 'query' | 'setQuery'>) {
-  const { data: items, refresh } = useCachedData<SkillItem[]>('skills', () => api.skills().catch(() => []), { persist: true })
+  // No `.catch(() => [])` on the installed read. Swallowing the rejection handed the hook an EMPTY
+  // LIST, so a user whose library is intact was told "No skills installed" under a coral CTA to go
+  // install some — measured against a 500 with native skills present on disk. The proposals read
+  // keeps its catch: it only feeds a count on a header button, and a missing badge is not a lie.
+  const { data: items, error: itemsErr, refresh } = useCachedData<SkillItem[]>('skills', () => api.skills(), { persist: true })
   const { data: proposals } = useCachedData('skill-proposals-count', () => api.skillProposals().catch(() => []))
   const proposalCount = proposals?.length ?? 0
   const [q, setQ] = useQueryParam(query, setQuery, 'q', '', { replace: true })
@@ -127,7 +131,9 @@ function Installed({ onBrowse, onProposals, query, setQuery }: { onBrowse: () =>
         )}
       >
         <div className="mx-auto px-l py-l" style={{ maxWidth: 'var(--content-width)' }}>
-          {filtered === null ? <ListSkeleton rows={6} what="skills" /> : filtered.length === 0 ? (
+          {items === undefined && itemsErr ? (
+            <LoadError what="installed skills" error={itemsErr} onRetry={load} />
+          ) : filtered === null ? <ListSkeleton rows={6} what="installed skills" /> : filtered.length === 0 ? (
             <EmptyState icon={Sparkles} title={q ? 'No matching skills' : 'No skills installed'} hint={q ? 'Try a different term.' : 'Skills extend what agents can do. Browse the marketplace to install some.'} action={!q ? { label: 'Browse skills', onClick: onBrowse, icon: Store } : undefined} />
           ) : (
             <div className="flex flex-col gap-s">

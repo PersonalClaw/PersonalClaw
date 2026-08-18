@@ -5,7 +5,7 @@ import { TopBar } from '../../ui/TopBar'
 import { fvs } from '../../design/fontWeight'
 import { WorkbenchLayout } from '../../ui/WorkbenchLayout'
 import { Button } from '../../ui/Button'
-import { EmptyState, ListRow, ListSkeleton } from '../../ui/ListScaffold'
+import { EmptyState, ListRow, ListSkeleton, LoadError } from '../../ui/ListScaffold'
 import { Checkbox, FieldError } from '../../ui/forms'
 import { TagManager } from './TagManager'
 import { ConflictPanel } from './ConflictPanel'
@@ -181,9 +181,14 @@ export function KnowledgeListPage({ onCreate, onOpenItem, onOpenSources, query, 
   const itemsKey = collectionTok
     ? `knowledge:collection-items:${collectionTok}`
     : `knowledge:items:${submitted}:${showArchived ? 'arch' : ''}`
-  const { data: itemsData, loading: itemsLoading, refresh: refreshItems } =
+  // No `.catch(() => [])` on the shelf branch. Swallowing the rejection handed the hook an EMPTY
+  // LIST, which this page cannot tell apart from a shelf that really has nothing in it — and the
+  // search branch, which never caught, had the opposite half of the same bug: its failure fell to
+  // `items === null` with `itemsLoading` false and rendered a BLANK region, no error text anywhere.
+  // One `error` read answers both: the library says the read failed, and offers a retry.
+  const { data: itemsData, error: itemsErr, loading: itemsLoading, refresh: refreshItems } =
     useCachedData(itemsKey, () => (collectionTok
-      ? api.knowledgeCollectionItems(collectionTok, 200).then((r) => r.items).catch(() => [])
+      ? api.knowledgeCollectionItems(collectionTok, 200).then((r) => r.items)
       : listKnowledge({ q: submitted || undefined, includeArchived: showArchived })))
   const { data: statsData, refresh: refreshStats } = useCachedData('knowledge:stats', () => knowledgeStats())
   const items = itemsData ?? null
@@ -495,7 +500,9 @@ export function KnowledgeListPage({ onCreate, onOpenItem, onOpenSources, query, 
           included; it was simply unreachable from one of them. */}
       {(view !== 'graph' || empty) && (
       <div className="mx-auto px-l py-l" style={{ maxWidth: 'var(--content-width)' }}>
-        {items === null ? (itemsLoading ? <ListSkeleton what="items" /> : null) : empty ? (
+        {itemsData === undefined && itemsErr ? (
+              <LoadError what={collectionTok ? 'shelf items' : 'knowledge items'} error={itemsErr} onRetry={load} />
+            ) : items === null ? (itemsLoading ? <ListSkeleton what={collectionTok ? 'shelf items' : 'knowledge items'} /> : null) : empty ? (
               <EmptyState icon={BookOpen} title="Knowledge base is empty" hint="Add notes, code gists, bookmarks, documents, images, audio, and video. Content is extracted, entities surfaced, and everything indexed for agents to retrieve." action={{ label: 'Add knowledge', onClick: onCreate, icon: Plus }} />
             ) : view === 'conflicts' ? (
               <ConflictPanel />

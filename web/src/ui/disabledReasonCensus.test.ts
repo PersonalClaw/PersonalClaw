@@ -99,7 +99,7 @@ const CLASSIFIED: Record<string, string> = {
   'pages/settings/InboxSettingsPanel.tsx:91': 'loading (sourcesOn === null)',
   'pages/settings/InboxSettingsPanel.tsx:95': 'loading (engagementOn === null)',
   // The reason is the button's own visible text — "(removed — insight kept)" — not an attribute.
-  'pages/knowledge/KnowledgeListPage.tsx:852': "the reason is the button's own label text",
+  'pages/knowledge/KnowledgeListPage.tsx:859': "the reason is the button's own label text",
   // Section-level explanation: the panel renders "Managed by project — read-only" with a lock icon, so
   // the surface states it once rather than repeating it on every checkbox.
   'pages/tasks/TaskDetail.tsx:197': 'read-only task; the panel states it once with a lock',
@@ -141,7 +141,7 @@ describe('the disabled-reason census', () => {
     // than none, because it silently excuses whatever moved into place.
     const at = (rel: string, line: number) => readFileSync(join(SRC, rel), 'utf8').split('\n')[line - 1] ?? ''
     expect(at('ui/Button.tsx', 161)).toMatch(/softOff/)
-    expect(at('pages/knowledge/KnowledgeListPage.tsx', 852)).toMatch(/disabled=\{!o\.item_id\}/)
+    expect(at('pages/knowledge/KnowledgeListPage.tsx', 859)).toMatch(/disabled=\{!o\.item_id\}/)
     expect(readFileSync(join(SRC, 'pages/knowledge/KnowledgeListPage.tsx'), 'utf8'),
       'and its label really does explain the state').toMatch(/\(removed — insight kept\)/)
     expect(at('pages/tasks/TaskDetail.tsx', 254)).toMatch(/disabled=\{!onOpenTask\}/)
