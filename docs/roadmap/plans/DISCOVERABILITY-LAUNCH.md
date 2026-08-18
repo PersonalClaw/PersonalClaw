@@ -181,3 +181,73 @@ and the Semantic/Episodic/Events/Embedded tiles all read 0.
 
 **Known limitation.** The fixture's timestamps are static (mid-August 2026), so relative-time
 labels drift as the fixture ages. Refresh them when the launch capture is taken.
+
+### 2026-08-17 — `DL-4` (T3.1) demo-home seed fixture — **DONE**
+
+Closes the half the 2026-08-16 entry left `BLOCKED`. The done_when is now met end to end:
+`--seed demo-home` boots and every surface it names is **served**, measured on a live gateway.
+
+**Correction to the premise this session started from.** `demo-home` was never missing a "seed
+registry" — `_resolve_fixture` (`seed.py:124`) lists directories under `tests_fixtures/`, so
+the fixture has been resolvable since it landed. `--seed demo-home` already booted; two
+surfaces were simply empty. Measured baseline before this change, live boot: projects 4,
+tasks 10, **knowledge 0, loops 0**.
+
+**What changed.** The 2026-08-16 entry's option **(a)** — ship the SQLite halves as package
+data — with the objection to it answered rather than accepted. Both `.db` files are generated
+by driving the **real writers** (`KnowledgeStore.create_typed_item`, `loop.store.create`) from
+`scripts/generate_demo_home_fixture.py`, so the schema is correct by construction rather than
+hand-transcribed, and a schema change is a re-run rather than a hand-patch. Added:
+
+- `workspace/knowledge/knowledge.db` — five docs (3 notes, 2 bookmarks) themed to the existing
+  `Reading Pipeline` / `Home Server` projects. Text/url only, no `file_path`, so no absolute
+  path from the generating machine is baked into the wheel. URLs use RFC 2606 `example.com`.
+- `loop/loops.db` + `loop/a17c3f92/status.json` — one `research` loop, 3-phase plan with exit
+  criteria per phase, scoped to `p-2d6f5c83` (`Reading Pipeline`), 6 cycles, `status=complete`.
+
+**Three landmines the measured shape forced, each now a rail in `tests/test_seed_demo_home.py`
+(19 tests, was 11):**
+
+1. **WAL.** Both stores open `PRAGMA journal_mode=WAL`, so the writes sit in a `-wal` sidecar.
+   Committing the bare `.db` without `wal_checkpoint(TRUNCATE)` ships a fixture that boots
+   **empty** — the exact failure this atom exists to prevent. The generator checkpoints; a test
+   asserts no sidecar ships and that neither `.db` embeds a generation-machine path.
+2. **The orphan reap is real.** `reap_orphan_dirs()` deletes any `loop/<8hex>/` dir with no
+   backing row at boot. A test calls it against the seeded home and asserts it reaps **0** —
+   proving the shipped dir is row-backed rather than about to be wiped.
+3. **`items_fts` is external-content FTS5 with no triggers**, so its index is only populated by
+   the real writer. A hand-built `knowledge.db` would list fine and return nothing for every
+   search — a demo whose search box looks broken. A test searches for a term the fixture
+   contains, so that failure mode cannot ship silently.
+
+Also: the seeded loop is pinned **terminal** (`complete`) by a test, because a seeded `running`
+or `planning` loop is re-armed at boot and would spend real model calls on the machine of
+whoever ran `--seed demo-home` just to look at a demo.
+
+**Measured from a live boot** (`PERSONALCLAW_HOME` on a throwaway tmp home, port 10441,
+`AUTH_MODE=none`): projects **4**, tasks **10**, knowledge **5** (`/api/knowledge/stats` agrees:
+`items=5`), memory graph **23 nodes**, `preferences` **901 chars**, loops **1**.
+`GET /api/loops/a17c3f92` parses fully (`kind=research`, 3 plan phases, `project_id` resolves to
+a fixture project, 6 cycles) and the loop dir survived the boot reap. `test_every_demo_surface_is_non_empty`
+carries a count floor per surface so an empty response cannot read as success.
+
+**Packaging.** `pyproject.toml` needed no change — the glob is already `tests_fixtures/**/*`
+(widened on 2026-08-16). Verified against a real wheel rather than assumed: **27 fixture files
+on disk, 27 in the wheel, none missing**, including the new depth-4
+`demo-home/loop/a17c3f92/status.json`.
+
+**Falsified.** (a) Renaming the fixture dir → `SeedError: unknown fixture: 'demo-home'.
+Available fixtures: demo-home-DISABLED, empty.` and the suite goes 2 failed / 15 errors, all
+naming the fixture — not a silent pass. (b) `DELETE FROM items` in the committed
+`knowledge.db` → 3 targeted reds, including
+`these demo surfaces are empty: ['knowledge'] (counts={... 'knowledge': 0 ...})`. Both restored
+from file copies.
+
+**Docs corrected, because both stated the opposite of reality after this change:**
+`docs/reference/cli.md`'s fixture table and `docs/screenshots/CAPTURE.md`'s prerequisite both
+said knowledge items and loops are *not* carried and told the capture operator to drive those
+two by hand. Semantic/episodic memory **records** remain genuinely absent — that store is
+SQLite-only with no text tier — and both docs now say only that.
+
+**Still open, unchanged:** the fixture's timestamps are static (mid-August 2026), so
+relative-time labels drift as it ages. Refresh them when the launch capture is taken.
