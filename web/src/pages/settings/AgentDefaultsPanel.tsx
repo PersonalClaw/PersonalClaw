@@ -273,7 +273,7 @@ function EnumRow({ label, hint, cfg, field, patch, options }: {
     <Row label={label} hint={hint}>
       <div className="flex items-center gap-2">
         <SavedToast show={saved} />
-        <SegPills value={value} onChange={(v) => patch(field, v, flash)} options={opts} />
+        <SegPills ariaLabel={label} value={value} onChange={(v) => patch(field, v, flash)} options={opts} />
       </div>
     </Row>
   )
