@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" role="img" aria-label="Claw Arcade">
+  <!-- The Claw Arcade identity's tab icon (see the sibling file for why /icons/). A
+       four-point sparkle: the same glyph the identity's `dotShape: 'sparkle'` dial puts
+       on the backdrop, so the tab and the canvas read as one cabinet. -->
+  <rect width="32" height="32" rx="7" fill="#160F04" />
+  <path d="M16 5.5c1.1 5.2 2.8 6.9 8 8-5.2 1.1-6.9 2.8-8 8-1.1-5.2-2.8-6.9-8-8 5.2-1.1 6.9-2.8 8-8z" fill="#FFB020" />
+  <circle cx="25.5" cy="24.5" r="2" fill="#FFB020" opacity="0.75" />
+</svg>

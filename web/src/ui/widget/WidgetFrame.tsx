@@ -159,9 +159,21 @@ export function WidgetFrame({ html, title = 'Widget', slug, messageTs, widgetInd
   const toggleSave = useCallback(async () => {
     if (savePending) return
     setSavePending(true)
+    // 🪤 THE SIBLING `pin` BELOW ALREADY STATES THE RULE — "roll back on failure (a swallowed error
+    // would look like a success)" — and this function was the counter-example: both branches
+    // `.catch(() => {})`d the write and then flipped `saved` regardless. A failed delete left the
+    // artifact on disk under a button that now offered to save it again; a failed create left the
+    // widget claiming it was saved. The flag now moves only after the write it describes returns.
     try {
-      if (saved) { await api.deleteArtifact(effSlug).catch(() => {}); setSaved(false) }
-      else { await api.createArtifact({ name: title, content: html, kind: 'widget', source: 'chat', slug: effSlug }).catch(() => {}); setSaved(true) }
+      if (saved) {
+        await api.deleteArtifact(effSlug)
+        setSaved(false)
+      } else {
+        await api.createArtifact({ name: title, content: html, kind: 'widget', source: 'chat', slug: effSlug })
+        setSaved(true)
+      }
+    } catch (e) {
+      notify(`Couldn't ${saved ? 'remove' : 'save'} this widget: ${String((e as Error)?.message || e)}`, 'error')
     } finally { setSavePending(false) }
   }, [saved, savePending, effSlug, title, html])
 

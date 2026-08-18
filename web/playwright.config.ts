@@ -13,13 +13,46 @@ import { defineConfig, devices } from '@playwright/test'
 // change in the plan's Execution log for owner review — never silently keep
 // or revert a real visual change.
 //
-// The dev/preview server: this harness drives the built SPA served by vite
-// preview (proxying the gateway at PERSONALCLAW_PORT, default 10000). In CI
-// with no live gateway, routes render their empty/loading shell — a valid
-// baseline for consistency (chrome, not data, is what we're guarding).
+// The servers: this harness drives the built SPA served by vite preview, which
+// proxies /api to a gateway the harness STARTS ITSELF — isolated, onboarded and
+// token-authenticated. Without a gateway the SPA cannot resolve identity, so it
+// renders the ONBOARDING screen for every route: no NavRail, no shell, no ⌘K
+// listener. axe then reports a clean tree for 96 surfaces it never actually
+// visited, and the one test that noticed (`command palette [opened]`) failed on
+// its mounted-ness floor while naming the palette instead of the missing backend.
 
 const PORT = Number(process.env.PW_PORT || 4318)
 const BASE_URL = process.env.PW_BASE_URL || `http://localhost:${PORT}`
+
+// The harness's OWN gateway — never the real one on 10000. Fixed (not auto) so
+// the preview proxy target is known before the gateway prints its READY line; if
+// something else squats it, the gateway fails to bind and auth.setup's
+// shell-mounted assertion fails loudly rather than scanning an empty app.
+const GATEWAY_PORT = Number(process.env.PW_GATEWAY_PORT || 10437)
+
+// Where auth.setup.ts writes the authenticated cookie jar. Gitignored (it holds
+// a live owner token for the throwaway gateway).
+const STORAGE_STATE = process.env.STORAGE_STATE || 'e2e/.auth/state.json'
+
+// An ISOLATED, ONBOARDED gateway, with AUTH LEFT ON.
+//  - PERSONALCLAW_HOME under the OS temp dir, wiped per run. Never ~/.personalclaw.
+//  - PERSONALCLAW_WORKSPACE too: PERSONALCLAW_HOME does NOT confine workspace_dir,
+//    which otherwise falls back to the real ~/workplace/personalclaw-workspace.
+//  - `dashboard.user_name` pre-seeded into config.json, because `onboarded` is
+//    DERIVED from a non-empty SERVER-side name (web/src/app/identity.tsx). Seeding
+//    the file skips the onboarding hijack without a PUT — so no CSRF/origin dance,
+//    and nothing here weakens a security control. "Keyur" matches the committed
+//    visual baselines' greeting.
+//  - NOT PERSONALCLAW_AUTH_MODE=none: that swaps csrf_middleware for
+//    _dev_user_middleware, so any a11y/CSRF-adjacent conclusion drawn under it
+//    would not describe a real user. The token flow below is the real one.
+const GATEWAY_COMMAND = [
+  'D="${TMPDIR:-/tmp}"; D="${D%/}/personalclaw-e2e-home"',
+  'rm -rf "$D"; mkdir -p "$D/workspace"',
+  `printf '%s' '{"dashboard":{"user_name":"Keyur"}}' > "$D/config.json"`,
+  'PC="../.venv/bin/personalclaw"; [ -x "$PC" ] || PC=personalclaw',
+  `PERSONALCLAW_HOME="$D" PERSONALCLAW_WORKSPACE="$D/workspace" exec "$PC" gateway --port ${GATEWAY_PORT} --no-open --json-ready`,
+].join('\n')
 
 export default defineConfig({
   testDir: './e2e',
@@ -40,27 +73,40 @@ export default defineConfig({
     trace: 'on-first-retry',
     // Deterministic viewport for stable screenshots.
     viewport: { width: 1280, height: 900 },
-    // Auth: point the harness at a TOKENLESS dev gateway — no storage state
-    // needed. The recipe (validated 2026-07-23; the earlier "blank shell"
-    // blocker was the v0.1.0 dual-React bug, not auth):
-    //   PERSONALCLAW_HOME="$PWD/../.dev-home-e2e" PERSONALCLAW_AUTH_MODE=none \
-    //     personalclaw gateway --seed empty --seed-replace --no-open --port 10400
-    //   curl -X PUT :10400/api/dashboard/config -d '{"user_name":"E2E"}'  # skip onboarding
-    //   PW_NO_SERVER=1 PW_BASE_URL=http://127.0.0.1:10400 npx playwright test e2e/visual.spec.ts
-    // For a token-auth gateway instead, seed a session via e2e/auth.setup.ts
-    // and pass STORAGE_STATE.
-    storageState: process.env.STORAGE_STATE || undefined,
+    // Auth: the `setup` project below mints this cookie jar against the gateway
+    // the harness starts. Point PW_BASE_URL/STORAGE_STATE at your own pair (plus
+    // PW_NO_SERVER=1) to drive an already-running gateway instead.
+    storageState: STORAGE_STATE,
   },
   projects: [
-    { name: 'chromium', use: { ...devices['Desktop Chrome'] } },
+    // Mints the authenticated session ONCE, then every spec reuses the jar. The
+    // setup project must start from an EMPTY jar — an inline state object, not
+    // `undefined`: a project `use` of `undefined` does not override the top-level
+    // path, so setup died trying to read the file it exists to create.
+    { name: 'setup', testMatch: /auth\.setup\.ts$/, use: { storageState: { cookies: [], origins: [] } } },
+    { name: 'chromium', use: { ...devices['Desktop Chrome'] }, dependencies: ['setup'] },
   ],
-  // Serve the built app for the run. Reuse an already-running server locally.
+  // Two servers: the isolated gateway, then the built SPA that proxies to it.
   webServer: process.env.PW_NO_SERVER
     ? undefined
-    : {
-        command: `npm run build && npm run preview -- --port ${PORT} --strictPort`,
-        url: BASE_URL,
-        timeout: 180_000,
-        reuseExistingServer: !process.env.CI,
-      },
+    : [
+        {
+          command: GATEWAY_COMMAND,
+          // Readiness is the READY line, NOT a port probe: the named capture
+          // group lands in process.env.PW_TOKEN (Playwright's documented
+          // behaviour), which is exactly the input e2e/auth.setup.ts already
+          // expects. Deliberately no `url`/`port` — either would let the run
+          // proceed on a bound-but-unauthenticated gateway with no token.
+          wait: { stdout: /PERSONALCLAW_READY:.*"token":\s*"(?<pw_token>[^"]+)"/ },
+          timeout: 180_000,
+        },
+        {
+          command: `npm run build && npm run preview -- --port ${PORT} --strictPort`,
+          url: BASE_URL,
+          timeout: 180_000,
+          reuseExistingServer: !process.env.CI,
+          // vite.config.ts reads PERSONALCLAW_PORT for its /api proxy target.
+          env: { PERSONALCLAW_PORT: String(GATEWAY_PORT) },
+        },
+      ],
 })

@@ -36,6 +36,9 @@ function useCaseLabel(uc: string): string {
  *  expand a popover listing each degraded surface, its floor, and its backlog. */
 export function DegradedChip() {
   const [surfaces, setSurfaces] = useState<DegradedSurface[] | null>(null)
+  /** True while the degraded read is failing. Paired with `surfaces === null` it means "we have
+   *  never been told", which must not render as "nothing is degraded". */
+  const [unread, setUnread] = useState(false)
   const [open, setOpen] = useState(false)
   const triggerRef = useRef<HTMLButtonElement | null>(null)
 
@@ -71,14 +74,32 @@ export function DegradedChip() {
   const isMobile = useIsMobile()
 
   useVisiblePoll(() => {
-    api.degraded().then((r) => setSurfaces(r.surfaces)).catch(() => {})
+    api.degraded().then((r) => { setSurfaces(r.surfaces); setUnread(false) })
+      // 🔴 `catch(() => {})` left `surfaces` null, and null renders NOTHING — the same absence as
+      // "every surface has a model". Measured with only `/api/resilience/degraded` at 500 and the rest
+      // of the gateway healthy: SEVEN degraded surfaces, no chip, and the sibling connectivity
+      // indicator in the same corner affirming "Gateway connected". The mitigation was not merely
+      // missing, it was replaced by reassurance.
+      //
+      // A LATER failure keeps the last good answer on purpose (this only assigns on success), so a
+      // transient blip mid-session does not flicker the chip. The gap was the COLD one: a first poll
+      // that fails has nothing to fall back on, and silence is the wrong default on this chip.
+      .catch(() => setUnread(true))
   }, 20000)
 
   const down = (surfaces ?? []).filter((s) => !s.available)
-  if (down.length === 0) return null
+  // Never answered AND the read is failing → say so; `SystemWidget` sets `disconnected` from exactly
+  // this signal, so the shell already has the vocabulary for "we asked and could not tell".
+  const unknown = surfaces === null && unread
+  if (down.length === 0 && !unknown) return null
 
   const worst = down[0]
-  const summary = down.length === 1 ? `${label(worst.surface)} degraded` : `${down.length} degraded`
+  const summary = unknown
+    ? 'Status unknown'
+    : down.length === 1 ? `${label(worst.surface)} degraded` : `${down.length} degraded`
+  const detail = unknown
+    ? 'Status unknown — the degraded-surfaces check could not be read, so this may be hiding a surface running without a model'
+    : `${summary} — ${down.length} surface(s) running without a model, click for detail`
   return (
     <div className="relative">
       <button ref={triggerRef} type="button" onClick={() => setOpen((o) => !o)}
@@ -98,7 +119,7 @@ export function DegradedChip() {
         // Icon-only has no visible text, so the name must come from aria-label — a title
         // alone is not an accessible name for AT in every engine.
         aria-label={isMobile ? summary : undefined}
-        title={`${summary} — ${down.length} surface(s) running without a model, click for detail`}>
+        title={detail}>
         <CloudOff size={13} className="shrink-0" />
         {!isMobile && <span>{summary}</span>}
       </button>
@@ -110,8 +131,17 @@ export function DegradedChip() {
             className="absolute right-0 z-50 mt-1.5 w-80 rounded-xl bg-surface-container p-3 shadow-lg"
             style={{ border: '1px solid var(--color-outline-variant)' }}>
             <div className="mb-2 flex items-center gap-1.5 text-on-surface text-[0.8125rem]" style={{ color: 'var(--color-warn)' }}>
-              <CloudOff size={14} /> Running without a model
+              <CloudOff size={14} /> {unknown ? 'Could not read the check' : 'Running without a model'}
             </div>
+            {/* An unknown state has no rows to list, so the popover says what it does not know rather
+                than opening empty. It deliberately does NOT claim a fault: the surfaces may all be
+                fine, and asserting a problem we have not measured is the same error in reverse. */}
+            {unknown && (
+              <div className="text-on-surface-low text-[0.8125rem]">
+                The degraded-surfaces check is not answering, so this chip cannot say whether any
+                surface is running without a model. It will clear itself when the check responds.
+              </div>
+            )}
             <div className="flex flex-col gap-2">
               {down.map((s) => (
                 <div key={s.surface} className="border-b border-outline-variant/30 pb-2 last:border-0 last:pb-0">

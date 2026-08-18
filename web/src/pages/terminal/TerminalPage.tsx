@@ -103,7 +103,17 @@ export function TerminalPage({ query, setQuery }: Pick<RouteProps, 'query' | 'se
   }, [])
 
   const closeSession = useCallback(async (id: string) => {
-    await api.deleteTerminal(id).catch(() => {})
+    // 🔴 `catch(() => {})` then dropping the tab regardless told the user they had closed a terminal
+    // while the PTY kept running server-side — a live process the UI no longer offers any way to
+    // reach, let alone stop. A close that did not happen must not remove the tab; this surface
+    // already owns an `error` state and renders it through InlineError, so the failure has a home.
+    try {
+      await api.deleteTerminal(id)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not close the terminal session.')
+      return
+    }
+    setError('')
     const next = tabs.filter((x) => x.id !== id)
     setTabs(next)
     setPanes(panesAfterClose(next.map((x) => x.id), id, { active, split }))

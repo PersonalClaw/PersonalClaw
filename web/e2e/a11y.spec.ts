@@ -66,8 +66,9 @@ for (const theme of THEMES) {
         // A recipe whose target is absent (no seeded rows, a renamed button) must NOT
         // report a clean surface — that is indistinguishable from "no violations" and is
         // precisely how this gate hid 10 blocking violations for months. `skip` is honest;
-        // a silent pass is not.
-        test.skip(!opened, `${opener.label}: nothing to open (no seeded data on this route)`)
+        // a silent pass is not. The recipe supplies its OWN reason, so the report says
+        // which of those it was.
+        test.skip(opened !== true, opened === true ? '' : `${opener.label}: ${opened.skip}`)
         await page.waitForTimeout(700)
         await assertMounted(page, before, opener.label)
 

@@ -121,7 +121,15 @@ export interface PersonalityBehavior {
   displayName?: string
   /** Wordmark text in the shell (the `Wordmark` label prop). */
   wordmarkLabel?: string
-  /** Favicon path — bundled assets under `web/public/` only, never a remote URL. */
+  /** Favicon path — bundled assets under `web/public/` only, never a remote URL.
+   *
+   *  MUST be a path the gateway actually serves, which is narrower than "a file in
+   *  `web/public/`": only `/claw.svg` and the `/icons/` directory have static routes
+   *  (`dashboard/server.py`), and every other dist-root path falls through to the SPA
+   *  catch-all. A wrong path therefore returns **200 with `text/html`** — index.html
+   *  served as an icon — so the tab silently loses its mark with nothing in the console
+   *  to say why. `personalityResidue.test.tsx` pins both halves (the file exists, and it
+   *  sits under a routed prefix). */
   faviconHref?: string
   /** Bundled prompt-snippet id (`persona-<id>`); the backend validates it against
    *  its own closed set, so a bad value here degrades to "no persona". */
@@ -180,7 +188,8 @@ export const PERSONALITIES: Personality[] = [
     behavior: {
       wordmarkLabel: 'PersonalClaw',
       documentTitle: 'PersonalClaw',
-      faviconHref: '/favicon.svg',
+      // The mark `index.html` declares, and the only dist-root SVG with a route.
+      faviconHref: '/claw.svg',
     },
   },
   {
@@ -196,7 +205,7 @@ export const PERSONALITIES: Personality[] = [
       displayName: 'TERM',
       wordmarkLabel: 'TERM://PC',
       documentTitle: 'TERM://PersonalClaw',
-      faviconHref: '/favicon.svg',
+      faviconHref: '/icons/personality-retro-terminal.svg',
       personaSnippet: 'persona-retro-terminal',
       uiDensity: 'cli',
       shellElement: 'terminal-scanlines',
@@ -221,7 +230,7 @@ export const PERSONALITIES: Personality[] = [
       displayName: 'CLAW-1',
       wordmarkLabel: 'CLAW ARCADE',
       documentTitle: 'CLAW ARCADE',
-      faviconHref: '/favicon.svg',
+      faviconHref: '/icons/personality-claw-arcade.svg',
       uiDensity: 'comfortable',
       errorTreatment: 'arcade-panel',
       // A finished turn is a credit accepted.

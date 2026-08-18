@@ -61,7 +61,7 @@ function fmtRate(kbs: number | undefined): string {
  *  live rates come from /api/system (P27 — already computed server-side, surfaced
  *  here) with a rolling CPU sparkline; an inline Update action + a YOLO indicator. */
 export function SystemHealth({ navigate }: RouteProps) {
-  const { status, system, doctor } = useDashboardLive()
+  const { status, system, doctor, doctorErr } = useDashboardLive()
   // Client-side rolling buffer of CPU% samples for the sparkline (the backend
   // computes the instantaneous rate; history is cheap to keep here).
   const cpuHist = useRef<number[]>([])
@@ -138,7 +138,19 @@ export function SystemHealth({ navigate }: RouteProps) {
       )}
       <div className="ml-auto flex items-center gap-s">
         {/* Doctor rollup — surfaces only when something needs attention; a healthy
-            system stays quiet (the strip is already dense). Links to the Doctor tab. */}
+            system stays quiet (the strip is already dense). Links to the Doctor tab.
+            🪤 QUIET MEANS HEALTHY ON THIS STRIP, which is exactly why a failed probe could not be
+            allowed to look the same: `doctor` was null both when nothing had been polled yet AND
+            when the probe itself failed, so an unreachable health check impersonated a clean bill
+            of health. `#/settings/doctor` has always said "Couldn't load the doctor report" out
+            loud; this is the same fact, one line long. Tone is `default`, not `danger` — we do not
+            know that anything is wrong, only that we could not look. */}
+        {!!doctorErr && !doctor && (
+          <RowAction tone="default" onClick={() => navigate('settings/doctor')}
+            title="The health probe could not be read — open Doctor to re-run it">
+            <Stethoscope size={14} /> Health unknown
+          </RowAction>
+        )}
         {doctor && !doctor.ok && (
           <RowAction tone="danger" onClick={() => navigate('settings/doctor')}
             title={doctor.core_ok ? `${capLabel(doctor.worst)} degraded — open Doctor` : 'Gateway core failing — open Doctor'}>

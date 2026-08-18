@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" role="img" aria-label="Retro Terminal">
+  <!-- The Retro Terminal identity's tab icon. Deliberately NOT the claw mark: the tab
+       icon is part of the identity the personality swaps in, and PersonalityProvider
+       restores the pristine one on the way out. Served from /icons/, the one dist-root
+       directory with a real static route (a missing file there 404s instead of falling
+       through to the SPA, which is what makes a wrong path visible). -->
+  <rect width="32" height="32" rx="7" fill="#07120C" />
+  <!-- prompt caret + cursor: what a terminal looks like at rest -->
+  <path d="M8 11l4.5 5L8 21" fill="none" stroke="#5BE58A" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" />
+  <rect x="15.5" y="19" width="8.5" height="2.5" rx="1.25" fill="#5BE58A" />
+</svg>

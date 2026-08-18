@@ -5,7 +5,7 @@ import { TopBar } from '../../ui/TopBar'
 import { WorkbenchLayout } from '../../ui/WorkbenchLayout'
 import { HeaderActions, HeaderControl } from '../../ui/HeaderActions'
 import { ListControls } from '../../ui/ListControls'
-import { EmptyState, ListSkeleton } from '../../ui/ListScaffold'
+import { EmptyState, ListSkeleton, LoadError } from '../../ui/ListScaffold'
 import { SidePanel } from '../../ui/SidePanel'
 import { Modal } from '../../ui/Modal'
 import { Button } from '../../ui/Button'
@@ -62,9 +62,15 @@ interface ToolsIndexData {
 }
 
 export function ToolsPage({ query, setQuery }: Pick<RouteProps, 'query' | 'setQuery'>) {
-  const { data, refresh } = useCachedData<ToolsIndexData>('tools:index', async () => {
+  const { data, error: loadErr, refresh } = useCachedData<ToolsIndexData>('tools:index', async () => {
     const [idx, servers, importable, poolStats, groups] = await Promise.all([
-      api.toolsIndex().catch(() => ({ tools: [], load_failures: [] as ToolLoadFailure[] })),
+      // 🔴 The four reads below are tolerated on purpose — a dead MCP server or an unreachable pool
+      // must not hide the built-in tools, and `load_failures` makes per-tool breakage first-class on
+      // this surface. The INDEX is different in kind: it IS the collection, so substituting `[]` for
+      // its rejection made a failed read render "No tools · Tools are the capabilities agents can
+      // invoke…" — the newcomer empty state, on an install whose tools are all present. Same
+      // asymmetry `fetchAgentGroups` draws between its native slice and its provider slices.
+      api.toolsIndex(),
       api.mcpServers().catch(() => [] as McpServer[]),
       api.importableMcp().catch(() => [] as ImportableMcpServer[]),
       api.mcpPoolStats().catch(() => ({ available: false } as McpPoolStats)),
@@ -269,7 +275,9 @@ export function ToolsPage({ query, setQuery }: Pick<RouteProps, 'query' | 'setQu
     >
       <>
         <div className="mx-auto px-l py-l" style={{ maxWidth: 'var(--content-width)' }}>
-          {groups === null ? <ListSkeleton rows={6} what="tools" /> : groups.length === 0 ? (
+          {tools === null && loadErr ? (
+            <LoadError what="tools" error={loadErr} onRetry={load} />
+          ) : groups === null ? <ListSkeleton rows={6} what="tools" /> : groups.length === 0 ? (
             // No group survived: nothing matched the filter, or (unfiltered) there are no
             // tools at all. `importable` must NOT gate this — importable servers are ones
             // you COULD add, never search results, so gating on them made the state

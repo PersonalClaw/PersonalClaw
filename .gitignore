@@ -52,6 +52,8 @@ web/package-lock.json
 desktop/package-lock.json
 web/test-results/
 web/playwright-report/
+# The e2e harness's authenticated cookie jar — holds a LIVE gateway token.
+web/e2e/.auth/
 
 # Static assets generated from frontend build (tracked as a symlink is fine;
 # a real directory here would be a stale copy — see docs on web build/serve)
