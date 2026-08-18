@@ -1,4 +1,4 @@
-import { useEffect, useId, useMemo, useRef, useState } from 'react'
+import { useEffect, useId, useMemo, useRef, useState, useCallback } from 'react'
 import { motion } from 'framer-motion'
 import { ChevronDown, Search, Check, X } from 'lucide-react'
 import { spring, physics } from '../design/motion'
@@ -47,6 +47,31 @@ export function Combobox({ options, value, onChange, placeholder = 'Select…', 
     return [...by.entries()]
   }, [filtered])
 
+  // 🪤 `groups` re-orders: it buckets `filtered` by group, so an options list whose groups interleave
+  // (A/g1, B/g2, C/g1) RENDERS as A, C, B while `filtered` still reads A, B, C. The highlight indexes
+  // the rendered order and Enter used to index `filtered`, so the two could point at different rows —
+  // latent today because every caller happens to ship contiguous groups, and untrue the moment one
+  // does not. `flat` is the rendered order, and everything below indexes it: the highlight, the
+  // `aria-activedescendant` this control now publishes, and the Enter that commits.
+  const flat = useMemo(() => groups.flatMap(([, opts]) => opts), [groups])
+
+  // Ids for the listbox relationship. `aria-activedescendant` needs a stable id per rendered row.
+  const listId = `combo-list-${useId()}`
+  const optId = useCallback((i: number) => `${listId}-opt-${i}`, [listId])
+
+  // 🔴 The arrow cursor moved without the list following it. Measured on `#/triggers/new` with 19
+  // options in a `max-h-64` scroller: the active row was OUT OF VIEW from index 12 on and `scrollTop`
+  // stayed 0, so arrowing past the first screenful moved an invisible highlight — for sighted keyboard
+  // users as much as for the `aria-activedescendant` this control now publishes, which must point at
+  // something on screen. `block: 'nearest'` is a no-op while the row is already visible, so it does not
+  // fight the surface's layout spring.
+  useEffect(() => {
+    if (!open) return
+    // Optional call: jsdom does not implement scrollIntoView, and every render test in this repo
+    // runs there — an unguarded call throws inside the effect and takes the whole mount down.
+    document.getElementById(optId(active))?.scrollIntoView?.({ block: 'nearest' })
+  }, [active, open, optId])
+
   // Outside-click still closes (covers clicks on non-focusable page chrome).
   useEffect(() => {
     if (!open) return
@@ -73,9 +98,9 @@ export function Combobox({ options, value, onChange, placeholder = 'Select…', 
   function pick(v: string) { onChange(v); setOpen(false) }
 
   function onKey(e: React.KeyboardEvent) {
-    if (e.key === 'ArrowDown') { e.preventDefault(); setActive((i) => Math.min(i + 1, filtered.length - 1)) }
+    if (e.key === 'ArrowDown') { e.preventDefault(); setActive((i) => Math.min(i + 1, flat.length - 1)) }
     else if (e.key === 'ArrowUp') { e.preventDefault(); setActive((i) => Math.max(i - 1, 0)) }
-    else if (e.key === 'Enter') { e.preventDefault(); if (filtered[active]) pick(filtered[active].value) }
+    else if (e.key === 'Enter') { e.preventDefault(); if (flat[active]) pick(flat[active].value) }
     else if (e.key === 'Escape') { setOpen(false) }
   }
 
@@ -105,20 +130,44 @@ export function Combobox({ options, value, onChange, placeholder = 'Select…', 
           <motion.div layout="position" initial={{ opacity: 0 }} animate={{ opacity: 1, transition: { delay: 0.04 } }}>
             <div className="relative p-2">
               <Search size={14} className="absolute left-4 top-1/2 -translate-y-1/2 text-on-surface-low pointer-events-none" />
+              {/* 🔴 Measured on `#/triggers/new` before this: the input had no role, no aria-expanded,
+                  no aria-controls and no aria-activedescendant, and the popup contained **0 listboxes
+                  and 0 options** — pressing ArrowDown moved the visual highlight and changed NOTHING
+                  in the accessibility tree. The keyboard model was already right (arrows + Enter, and
+                  the doc says so); what was missing was saying so. */}
               <input ref={inputRef} value={q} onChange={(e) => { setQ(e.target.value); setActive(0) }} onKeyDown={onKey}
+                role="combobox" aria-expanded aria-controls={listId} aria-autocomplete="list"
+                aria-activedescendant={flat[active] ? optId(active) : undefined}
                 placeholder="Search…" className="w-full h-8 rounded-md bg-surface pl-8 pr-2 text-on-surface text-[0.8125rem] placeholder:text-on-surface-low outline-none" />
             </div>
-            <div className="max-h-64 overflow-y-auto pb-1">
-              {filtered.length === 0 ? <div className="px-3 py-3 text-on-surface-low text-[0.8125rem]">{emptyText}</div> : groups.map(([group, opts]) => (
-                <div key={group}>
+            {/* `role="listbox"` only while it HOLDS options: a container that claims the role and
+                contains one line of prose is the exact lie `popupItemRoles` was written about. When the
+                filter matches nothing the message takes `role="status"`, so it is announced rather than
+                sitting silently inside an empty listbox. */}
+            <div id={listId} role={flat.length ? 'listbox' : undefined} tabIndex={-1}
+              className="max-h-64 overflow-y-auto pb-1">
+              {filtered.length === 0 ? <div role="status" className="px-3 py-3 text-on-surface-low text-[0.8125rem]">{emptyText}</div> : groups.map(([group, opts]) => (
+                <div key={group} role={group ? 'group' : undefined} aria-label={group || undefined}>
                   {group && <div className="px-3 pt-2 pb-1 text-on-surface-low text-[0.75rem] uppercase tracking-wide">{group}</div>}
                   {opts.map((o) => {
                     flatIdx++
                     const idx = flatIdx
                     const sel = o.value === value
                     const isActive = idx === active
+                    // 🪤 `onMouseMove`, NOT `onMouseEnter`. Once the list scrolls to follow the arrow
+                    // cursor, a stationary pointer resting over it has new rows move underneath — and
+                    // the browser fires mouseenter for each one, so hover kept yanking the keyboard
+                    // cursor back to wherever the pointer happened to sit. Measured: 12 ArrowDowns
+                    // advanced the cursor to index 3 with the pointer over the list and to 12 with it
+                    // parked off it. `mousemove` needs real pointer movement, so hover still highlights
+                    // and scrolling no longer counts as hovering.
+                    // `tabIndex={-1}` because the input owns focus and publishes the cursor via
+                    // aria-activedescendant. Measured before: Tab from the search field moved focus onto
+                    // a row INSIDE the open popup, so two navigation models — a visual arrow cursor and
+                    // real Tab focus — ran independently and disagreed. Mouse behaviour is untouched.
                     return (
-                      <button key={o.value} type="button" onMouseEnter={() => setActive(idx)} onClick={() => pick(o.value)}
+                      <button key={o.value} id={optId(idx)} role="option" aria-selected={sel} tabIndex={-1}
+                        type="button" onMouseMove={() => setActive(idx)} onClick={() => pick(o.value)}
                         className="relative flex w-full items-center gap-s px-3 py-1.5 text-left">
                         {/* liquid active-row highlight — a single shared element that
                             SLIDES between rows via layoutId (the Segmented pattern
@@ -145,6 +194,7 @@ export function Combobox({ options, value, onChange, placeholder = 'Select…', 
           //    doesn't stretch during the morph; it's the container-transform's
           //    "outgoing" content (fades quickly as the shape opens).
           <motion.button layout="position" type="button" onClick={() => setOpen(true)} data-type="title-m"
+            aria-haspopup="listbox" aria-expanded={open}
             className="flex w-full items-center gap-s h-10 px-m text-left outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary/50">
             <span className={`flex-1 truncate ${selected ? 'text-on-surface' : 'text-on-surface-low'}`}>{selected ? selected.label : placeholder}</span>
             <motion.span className="shrink-0 text-on-surface-low" animate={{ rotate: open ? 180 : 0 }} transition={physics.snappy}>
