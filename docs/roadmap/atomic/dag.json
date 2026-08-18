@@ -1183,7 +1183,7 @@
         {
           "id": "MRI-4",
           "title": "Guide: docs/guides/use-from-your-ide.md (token creation, client-config snippets, loopback caveat, kill switch)",
-          "status": "todo",
+          "status": "done",
           "scope": "Session 2 \u2014 T2.6",
           "done_when": "docs/guides/use-from-your-ide.md exists with token-creation steps, generic MCP-client JSON config snippets, the loopback caveat, and the kill switch; a reader can connect a real MCP client from the doc alone. Written after the client run so instructions are executed, not guessed.",
           "deps": [
@@ -9642,9 +9642,9 @@
         "code": "MRI",
         "plan": "MCP-READONLY-INBOUND",
         "total_atoms": 5,
-        "done": 3,
+        "done": 4,
         "in_progress": 0,
-        "todo": 2,
+        "todo": 1,
         "blocked": 0
       },
       {
