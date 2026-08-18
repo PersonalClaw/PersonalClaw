@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
+import { pyMethod } from '../../design/pySource'
 
 // ── The empty-state hints that promise an automatic future, pinned to the mechanism ─────────────
 //
@@ -27,21 +28,6 @@ const strip = (t: string) => t.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\
 const web = (rel: string) => strip(readFileSync(join(SRC, rel), 'utf8'))
 const py = (rel: string) => readFileSync(join(PY, rel), 'utf8')
 
-/** One Python method's body: from its `def` line to the next def at the SAME indentation.
- *
- *  🪤 THE HABIT THIS REPLACES. Seven times across these copy-vs-backend cycles I reached for
- *  `.slice(0, N)` as a stand-in for a scope, and it failed on CORRECT code every time the interesting
- *  line sat further down than my guess (here: the digest call is 235 lines into
- *  `_consolidate_locked`, well past 12 000 characters). A character budget is not a scope — anchor the
- *  END. */
-function pyMethod(src: string, header: string): string {
-  const start = src.indexOf(header)
-  if (start < 0) return ''
-  const indent = (header.match(/^\s*/) ?? [''])[0]
-  const rest = src.slice(start + header.length)
-  const next = rest.search(new RegExp(`\n${indent}(async )?def `))
-  return next < 0 ? rest : rest.slice(0, next)
-}
 
 describe('the nightly-snapshot promise', () => {
   it('is claimed, and the config default makes it true', () => {
