@@ -234,6 +234,220 @@ def test_init_does_not_overwrite_the_authored_memory(seeded_home: Path) -> None:
     assert store.read_preferences() == before
 
 
+# ── the SQLite-backed surfaces: knowledge + the one loop ───────────────────
+#
+# These two are the reason the fixture carries binary ``.db`` files at all.
+# ``--seed`` is a bare ``shutil.copytree`` with no hydration hook, and neither
+# store has any file-based ingest a boot would pick up:
+#
+#   * knowledge lives ONLY in ``workspace/knowledge/knowledge.db``, whose schema
+#     includes an FTS5 virtual table — markdown under ``workspace/knowledge/``
+#     would never be read;
+#   * a loop's row lives ONLY in ``loop/loops.db``, and the boot-time
+#     ``reap_orphan_dirs()`` sweep DELETES any ``loop/<8hex>/`` dir with no
+#     backing row, so a text-only loop fixture is wiped on first boot.
+#
+# ``scripts/generate_demo_home_fixture.py`` regenerates both by driving the real
+# writers. The tests below are what make a schema change that invalidates them
+# fail loudly instead of shipping a demo home that boots empty.
+
+
+def _knowledge_rows(home: Path) -> list:
+    """Read the items the way ``GET /api/knowledge/items`` does.
+
+    The handler runs SQL straight off ``store.db`` rather than through a list
+    helper, so this mirrors the real read path.
+    """
+    from personalclaw.knowledge.store import KnowledgeStore, knowledge_db_path
+
+    store = KnowledgeStore(str(knowledge_db_path(home)))
+    return store.db.execute(
+        "SELECT id, title, item_type, content, url, file_path FROM items ORDER BY title"
+    ).fetchall()
+
+
+def test_the_demo_knowledge_docs_load_through_the_production_store(seeded_home: Path) -> None:
+    """The seeded knowledge items come back from ``KnowledgeStore``, with prose.
+
+    ``KnowledgeStore`` refuses to open at all without FTS5, so merely getting rows
+    back here also proves the shipped ``.db`` opens on this interpreter.
+    """
+    rows = _knowledge_rows(seeded_home)
+
+    assert len(rows) == 5, (
+        f"expected the fixture's five knowledge docs, got {len(rows)} — regenerate "
+        "with scripts/generate_demo_home_fixture.py"
+    )
+    titles = [r["title"] for r in rows]
+    assert all(titles), "a seeded knowledge doc has no title"
+    # The demo's whole point is prose worth screenshotting.
+    for row in rows:
+        assert (
+            len(row["content"] or "") > 120
+        ), f"knowledge doc {row['title']!r} has no body worth showing in a capture"
+    assert {r["item_type"] for r in rows} == {
+        "note",
+        "bookmark",
+    }, "the demo should show more than one knowledge item type"
+
+
+def test_the_demo_knowledge_docs_are_findable_through_fts(seeded_home: Path) -> None:
+    """Search must work, not just listing.
+
+    ``items_fts`` is an **external-content FTS5 table with no triggers**, so its
+    index is only populated by the real writer. A hand-built or hand-patched
+    ``knowledge.db`` would list fine here and return nothing for every search —
+    a demo where the search box looks broken. This is that rail.
+    """
+    from personalclaw.knowledge.store import KnowledgeStore, knowledge_db_path
+
+    store = KnowledgeStore(str(knowledge_db_path(seeded_home)))
+    hits = store.search_items_fts("digest", limit=10)
+    assert hits, (
+        "FTS returned nothing for a term the fixture definitely contains — the "
+        "shipped knowledge.db has an unpopulated items_fts index"
+    )
+
+
+def test_no_seeded_knowledge_doc_carries_an_absolute_path(seeded_home: Path) -> None:
+    """A file-backed item stores an ABSOLUTE ``file_path``.
+
+    Baked into package data, that path points at whatever machine generated the
+    fixture, so the item 404s in a user's home. The demo items are text/url only;
+    this pins that.
+    """
+    for row in _knowledge_rows(seeded_home):
+        assert not row["file_path"], (
+            f"knowledge doc {row['title']!r} has file_path={row['file_path']!r} — a "
+            "baked-in absolute path will not resolve in a user's home"
+        )
+
+
+def test_the_demo_loop_loads_through_the_production_store(seeded_home: Path) -> None:
+    """Exactly one loop, fully parsed, scoped to a project that exists."""
+    from personalclaw.loop import store as loop_store
+    from personalclaw.tasks.hierarchy import HierarchyStore
+
+    loops = loop_store.list_all()
+    assert len(loops) == 1, f"expected the fixture's single loop, got {len(loops)}"
+    loop = loops[0]
+
+    assert loop.name and loop.task and loop.summary, "the demo loop reads as a blank row"
+    assert (
+        len(loop.plan) == 3
+    ), f"the demo loop should carry its authored 3-phase plan, got {len(loop.plan)}"
+    # A phase with no exit criteria renders as an empty checklist in the cockpit.
+    for phase in loop.plan:
+        assert phase.get("exit_criteria"), f"loop phase {phase.get('phase')!r} has no exit criteria"
+    assert loop.total_cycles > 0, "a completed loop with zero cycles reads as never run"
+
+    project_ids = {p.id for p in HierarchyStore().list_projects()}
+    assert loop.project_id in project_ids, (
+        f"the demo loop points at project {loop.project_id!r}, which is not in the "
+        "fixture — the Loops surface would show an orphan"
+    )
+
+
+def test_the_seeded_loop_is_terminal_so_boot_does_not_spend_model_calls(
+    seeded_home: Path,
+) -> None:
+    """A seeded ``running``/``planning`` loop is re-armed at gateway boot.
+
+    That would spend real model calls on the machine of whoever ran
+    ``--seed demo-home`` just to look at a demo. Only the two documented terminal
+    states are safe to ship.
+    """
+    from personalclaw.loop import store as loop_store
+    from personalclaw.loop.loop import LoopStatus
+
+    terminal = {LoopStatus.COMPLETE.value, LoopStatus.STOPPED.value}
+    for loop in loop_store.list_all():
+        assert loop.status in terminal, (
+            f"seeded loop {loop.id} ships in status {loop.status!r}; the gateway "
+            f"re-arms anything outside {sorted(terminal)} on boot"
+        )
+
+
+def test_the_seeded_loop_dir_survives_the_boot_time_orphan_reap(seeded_home: Path) -> None:
+    """``reap_orphan_dirs()`` runs once at boot and deletes any ``loop/<8hex>/``
+    directory with no backing DB row.
+
+    A text-only loop fixture is therefore silently wiped the first time the
+    gateway starts. This asserts the shipped dir is backed by a real row, which
+    is the whole reason ``loops.db`` is in the fixture.
+    """
+    from personalclaw.loop import store as loop_store
+
+    loop_id = loop_store.list_all()[0].id
+    loop_dir = seeded_home / "loop" / loop_id
+    assert loop_dir.is_dir(), "the fixture's loop dir did not survive seeding"
+
+    reaped = loop_store.reap_orphan_dirs()
+    assert reaped == 0, f"the boot-time reap deleted {reaped} seeded loop dir(s)"
+    assert loop_dir.is_dir(), (
+        "the seeded loop dir was reaped — its loops.db row is missing, so a real "
+        "boot would wipe it too"
+    )
+
+
+def test_the_committed_fixture_dbs_are_self_contained() -> None:
+    """Read off the repo tree, not a seeded home — this is about what SHIPS.
+
+    Both stores open with ``PRAGMA journal_mode=WAL``, so writes sit in a ``-wal``
+    sidecar until checkpointed. Committing the bare ``.db`` without a checkpoint
+    ships a fixture that boots EMPTY, and committing the sidecar ships a file that
+    is not state. Also pins that no generation-machine path leaked into the bytes.
+    """
+    dbs = sorted(_DEMO_DIR.rglob("*.db"))
+    assert len(dbs) == 2, f"expected knowledge.db + loops.db in the fixture, found {dbs}"
+
+    strays = sorted(
+        p.name for p in _DEMO_DIR.rglob("*") if p.name.endswith(("-wal", "-shm", ".db-journal"))
+    )
+    assert not strays, f"SQLite sidecars must not ship: {strays}"
+
+    for db in dbs:
+        blob = db.read_bytes()
+        for needle in (b"/Users/", b"/home/", b"/private/tmp", b"/var/folders"):
+            assert needle not in blob, (
+                f"{db.name} embeds the absolute path {needle.decode()!r} from the "
+                "machine that generated it — it will not resolve in a user's home"
+            )
+
+
+def test_every_demo_surface_is_non_empty(seeded_home: Path) -> None:
+    """The vacuity floor for the whole fixture.
+
+    ``done_when`` is "boots a demo-ready dashboard". Each surface above is
+    asserted on its own, but a future refactor that quietly empties one store
+    would leave the others green and still ship a half-blank demo. This pins a
+    count per surface in one place, so "demo-ready" cannot degrade silently.
+    """
+    from personalclaw.knowledge.store import KnowledgeStore, knowledge_db_path
+    from personalclaw.loop import store as loop_store
+    from personalclaw.tasks.hierarchy import HierarchyStore
+
+    hierarchy = HierarchyStore()
+    counts = {
+        "projects": len(hierarchy.list_projects()),
+        "task_lists": len(hierarchy.list_task_lists()),
+        "tasks": len(_load_tasks()),
+        "knowledge": KnowledgeStore(str(knowledge_db_path(seeded_home))).get_stats()["items"],
+        "loops": len(loop_store.list_all()),
+        "memory_files": len(list((seeded_home / "workspace" / "memory").rglob("*.md"))),
+    }
+    empty = sorted(name for name, n in counts.items() if not n)
+    assert not empty, f"these demo surfaces are empty: {empty} (counts={counts})"
+
+    # Floors, not just non-zero: one token row per surface is not a demo.
+    assert counts["projects"] >= 4, counts
+    assert counts["tasks"] >= 10, counts
+    assert counts["task_lists"] >= 3, counts
+    assert counts["knowledge"] >= 5, counts
+    assert counts["loops"] == 1, counts
+    assert counts["memory_files"] >= 4, counts
+
+
 # ── packaging: the wheel must carry the whole tree ──────────────────────────
 
 
