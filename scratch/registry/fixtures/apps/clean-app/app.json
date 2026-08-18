@@ -1,0 +1,15 @@
+{
+  "name": "registry-fixture-clean",
+  "version": "1.0.0",
+  "displayName": "Registry Fixture (clean)",
+  "description": "A minimal search provider used as the validator's passing fixture.",
+  "author": "PersonalClaw contributors",
+  "license": "MIT",
+  "permissions": {
+    "network": true
+  },
+  "provider": {
+    "type": "search",
+    "implementation": "provider:create_provider"
+  }
+}

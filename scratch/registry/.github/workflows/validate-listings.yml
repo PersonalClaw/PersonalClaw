@@ -1,0 +1,97 @@
+# Listing validation — runs on every PR that touches registry.json.
+#
+# THIS WORKFLOW HAS NO WRITE ACCESS, ON PURPOSE. Almost every listing PR arrives from
+# a fork, and a `pull_request` run from a fork is handed a READ-ONLY token whatever
+# `permissions:` asks for. So this job validates and writes its verdict to an
+# ARTIFACT, and the sibling `comment-listing-verdict.yml` (`workflow_run`, which runs
+# from the base repo and does have write access) posts it to the PR. That split is
+# copied from PersonalClaw core's ci.yml / pr-feedback.yml pair for the same reason.
+#
+# It also means the untrusted half of the pipeline — the half that fetches and reads
+# a stranger's repository — never holds a token that can write anything.
+name: validate-listings
+
+on:
+  pull_request:
+    paths:
+      - registry.json
+      - validate_registry.py
+      - requirements.txt
+
+concurrency:
+  group: validate-listings-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # The validator shells out to git to fetch third-party repos. Leaving the
+          # runner's token in this checkout's git config is exactly the credential we
+          # do not want anywhere near that.
+          persist-credentials: false
+          fetch-depth: 0
+
+      - uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+
+      - name: Install the validator's dependencies
+        run: |
+          uv venv --python 3.12
+          uv pip install -r requirements.txt
+
+      - name: Recover the base branch's registry.json
+        # Only rows this PR added or changed are re-fetched and re-scanned. A base
+        # branch without the file (first listing ever) reads as an empty registry.
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          git show "origin/${BASE_REF}:registry.json" > base-registry.json \
+            || printf '{"apps": []}\n' > base-registry.json
+
+      - name: Validate the changed listings
+        id: validate
+        run: |
+          set +e
+          uv run python validate_registry.py registry.json \
+            --base base-registry.json \
+            --report registry-report.json \
+            --markdown registry-report.md
+          code=$?
+          set -e
+          echo "exit_code=${code}" >> "$GITHUB_OUTPUT"
+          cat registry-report.md >> "$GITHUB_STEP_SUMMARY"
+          exit 0
+
+      - name: Record the verdict for the comment job
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          EXIT_CODE: ${{ steps.validate.outputs.exit_code }}
+        run: |
+          printf '%s\n' "${PR_NUMBER}" > pr-number.txt
+          printf '%s\n' "${EXIT_CODE}" > exit-code.txt
+
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: registry-validation
+          path: |
+            registry-report.md
+            registry-report.json
+            pr-number.txt
+            exit-code.txt
+          retention-days: 7
+
+      - name: Fail the check when a listing is blocked
+        # Last, so the artifact is always uploaded — a blocked PR is precisely the one
+        # whose reason the contributor needs to read.
+        run: exit "${{ steps.validate.outputs.exit_code }}"

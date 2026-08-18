@@ -6208,7 +6208,7 @@
         {
           "id": "ET-3",
           "title": "Registry data tier: `registry.json` schema + PR-validation workflow in the `personalclaw/registry` repo",
-          "status": "todo",
+          "status": "done",
           "scope": "Session 2 (T2.1); C2 \u2014 registry.json schema; Design \u2014 Registry; Owner tasks 1 & 2 (owner creates repo, approves delisting policy)",
           "done_when": "registry.json schema + validation script (manifest fetch/parse via core apps/manifest.py, repo liveness, license present, SkillScanner dry-run verdict capture) + PR CI running it prepared as registry-repo content with CONTRIBUTING-for-listings and delisting policy; a valid sample PR passes; a `dangerous`-verdict fixture blocks listing with the reason recorded; `warning` lists-with-display (never auto-blocks)",
           "deps": [
@@ -7631,8 +7631,18 @@
         "plan": "ET"
       },
       {
-        "id": "ET-3",
-        "title": "Registry data tier: `registry.json` schema + PR-validation workflow in the `personalclaw/registry` repo",
+        "id": "ET-4",
+        "title": "Default-source seeding: ship the registry URL as a removable default git source",
+        "plan": "ET"
+      },
+      {
+        "id": "ET-6",
+        "title": "Build the four scaffold-generated exemplar apps and list them in the registry",
+        "plan": "ET"
+      },
+      {
+        "id": "ET-8",
+        "title": "Registry surface on personalclaw.dev generated from `registry.json`",
         "plan": "ET"
       },
       {
@@ -10075,9 +10085,9 @@
         "code": "ET",
         "plan": "ECOSYSTEM-TOOLING",
         "total_atoms": 8,
-        "done": 1,
+        "done": 2,
         "in_progress": 0,
-        "todo": 7,
+        "todo": 6,
         "blocked": 0
       },
       {

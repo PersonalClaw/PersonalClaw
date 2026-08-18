@@ -1,0 +1,14 @@
+{
+  "$schema": "../../registry.schema.json",
+  "apps": [
+    {
+      "name": "registry-fixture-clean",
+      "repo": "{{REPO_BASE}}/clean-app",
+      "types": ["search"],
+      "permissions_declared": ["network"],
+      "license": "MIT",
+      "maintainer": "personalclaw",
+      "added": "2026-08-18"
+    }
+  ]
+}
