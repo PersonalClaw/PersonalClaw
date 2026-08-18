@@ -675,6 +675,7 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `GET /api/uploads/{id}` — which parts landed (drives client resume).
 - `POST /api/uploads/{id}/complete` — assemble + scan + hand off to the target.
 - `PUT /api/uploads/{id}/part` — stream one part to disk (idempotent).
+- `GET /api/usage` — the per-day spend fold.
 - `GET /api/usage/rollup` — aggregated ledger rows.
 - `GET /api/usage/totals` — the grand total over the window.
 - `DELETE /api/voice/bindings` — unbind one surface.
