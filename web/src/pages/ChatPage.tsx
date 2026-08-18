@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { ResultAnnouncement } from '../ui/ListControls'
 import { reportActionFailure, reportingWrite } from '../app/reportingWrite'
 import { unavailableWhen } from '../ui/unavailable'
 
@@ -3016,6 +3017,10 @@ function ArtifactContextPicker({ attached, onPick, onRemove, onClose }: {
         <SearchField value={q} onChange={setQ} autoFocus placeholder="Search your artifacts…"
           ariaLabel="Search your artifacts"
           trailingSlot={loading ? <Loader2 size={15} className="animate-spin text-on-surface-low" /> : undefined} />
+        {/* `shown` is capped at 40, and the count follows the CAP rather than the match total —
+            the announcement describes what is on screen, which is the only number a user can act
+            on. (That the cap itself is silent is a separate, visible-copy question.) */}
+        <ResultAnnouncement count={shown.length} noun="artifacts" active={!!n} />
         {attached.length > 0 && (
           <div className="flex flex-wrap gap-1.5">
             {attached.map((a) => (
@@ -3085,6 +3090,11 @@ function KnowledgeContextPicker({ attached, onPick, onRemove, onClose }: {
         <SearchField value={q} onChange={setQ} autoFocus placeholder="Search your knowledge library…"
           ariaLabel="Search your knowledge library"
           trailingSlot={loading ? <Loader2 size={15} className="animate-spin text-on-surface-low" /> : undefined} />
+        {/* Remote, and debounced 250ms: `active` waits for `loading` to clear so the count is the
+            one for the query the user has actually finished typing, and for `res` to exist so an
+            unrun search is not reported as "no matches". */}
+        <ResultAnnouncement count={res?.results.length ?? 0} noun="knowledge items"
+          active={!!q.trim() && !loading && res !== null} />
         {attached.length > 0 && (
           <div className="flex flex-col gap-1.5">
             <div className="flex items-center justify-between text-[0.75rem] text-on-surface-low">
@@ -4208,6 +4218,14 @@ function ChatHistoryPage({ navigate, query, setQuery }: { navigate: (p: string) 
             <div className="mb-m">
               <SearchField value={q} onChange={setQ} placeholder="Search chats — title or anything said"
                 ariaLabel="Search chats" autoFocus />
+              {/* 🪤 `origin !== 'all'` would be WRONG here: this surface OPENS on 'manual', so the
+                  comparison is true before the user has done anything and the list would announce its
+                  length at rest. Compared against its own default, like inbox's 'open' and loops'
+                  'active'. `showArchived` is deliberately absent — the active/archived split is
+                  enforced server-side, so it swaps WHICH list is fetched rather than narrowing this
+                  one. */}
+              <ResultAnnouncement count={filtered.length} noun="chats"
+                active={!!n || origin !== 'manual'} />
             </div>
             {/* Active / Archived. Archived chats keep their transcript AND stay
                 searchable — the copy says so, because an "archive" that people read as
