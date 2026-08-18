@@ -199,6 +199,16 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Fixed
 
+- **An export could carry the same database twice, and one copy was the unsafe one.** Databases
+  that live inside your workspace (the knowledge and lexicon stores) were written into a portable
+  export twice: once as a proper checkpointed backup, and again as a plain file copy taken while the
+  store was open. The plain copy landed second, so unzipping overwrote the good copy with it, and the
+  `-wal`/`-shm` working files travelled alongside. Worst case, when a database was too damaged to
+  back up safely, the export said it was skipping that store and then shipped the raw copy anyway,
+  listing it in the archive's manifest as if it had been verified. Each database now leaves through
+  the safe backup path or not at all, and an archive's manifest again matches what is inside it. A
+  database you put in your own workspace yourself still travels as before.
+
 - **Your ready-task list was in no particular order.** The list behind **Tasks → Ready** (and the
   same list an agent reads when it asks what to work on next) came back in whatever order the store
   happened to return — most-recently-updated first — so a task due today sat below one due next

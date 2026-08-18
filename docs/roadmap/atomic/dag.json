@@ -1294,7 +1294,7 @@
         {
           "id": "DAS-10",
           "title": "\u00a76 DSAR portability endpoints + remaining Durability FE (Session 5, \u00a76)",
-          "status": "todo",
+          "status": "done",
           "scope": "\u00a76 User-Facing Portability Endpoints (NEW-4.b); \u00a74.3 sync config via /api/providers routes; \u00a74.2 conflict review surface FE; Implementation Order Session 5 (endpoints + FE half)",
           "done_when": "POST /api/durability/export (full or per-domain shard zip, secret\u222aderived excluded, \u00a72 manifest inside), POST /api/durability/import {mode:merge|replace} extending validate_import_zip/apply_import_zip to the full inventory with MANIFEST v3 (v1|2 back-compat), GET /api/durability/archive + POST /api/durability/archive/{id}/restore with per-domain row counts and last-drill validate status; separate memory vs knowledge export buttons (knowledge includes files/ originals); Settings \u2192 Durability panel gains archive browser, sync config via standard /api/providers routes, and the conflict review queue; criteria 9-10 met (memory/knowledge separately exportable + separate conflict surfaces; a third-party type:\"sync\" app registers/configures/syncs with zero core changes)",
           "deps": [
@@ -7499,11 +7499,6 @@
         "plan": "DAS"
       },
       {
-        "id": "DAS-10",
-        "title": "\u00a76 DSAR portability endpoints + remaining Durability FE (Session 5, \u00a76)",
-        "plan": "DAS"
-      },
-      {
         "id": "DC-1",
         "title": "S1: Rebuild + signing + notarization + electron-updater + install-kind",
         "plan": "DC"
@@ -9627,9 +9622,9 @@
         "code": "DAS",
         "plan": "DURABILITY-AND-SYNC",
         "total_atoms": 10,
-        "done": 7,
+        "done": 8,
         "in_progress": 0,
-        "todo": 3,
+        "todo": 2,
         "blocked": 0
       },
       {

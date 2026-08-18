@@ -475,6 +475,40 @@ def create_export_zip(domains: Sequence[str] | None = None) -> tuple[bytes, dict
             # Fail closed on the derived index: an export without the vector index is
             # complete (it rebuilds); an export WITH a stale one is a restore hazard.
             db_names = ["learning.db", "memory.db"]
+
+        #: The databases THIS export routes through the sqlite backup API below. The
+        #: `workspace`/`skills`/`cron-history` walk consults it so a declared store can
+        #: never also leave as a raw filesystem copy — see `_is_projected_db`.
+        projected_dbs = frozenset(db_names)
+
+        def _is_projected_db(rel: str) -> bool:
+            """Whether ``rel`` is a declared database the backup API already owns, or one
+            of its ``-wal``/``-shm`` sidecars.
+
+            🔴 WHY (DAS-10). Two write sites could emit the same declared database: the
+            projection below (safe, WAL-checkpointed) and the `workspace` tree walk
+            (a raw `zf.write`). Measured on a home whose `workspace/lexicon/lexicon.db`
+            had a 53 KB uncheckpointed WAL: the zip carried the path TWICE (6 entries
+            against 5 declared members, plus a `Duplicate name` warning), shipped
+            `lexicon.db-wal` **and** `lexicon.db-shm`, and — worst — when
+            `_backup_sqlite` raised and the projection logged "skipping unreadable
+            database", the tree walk shipped a raw 45 KB copy anyway *and the manifest
+            declared it*. That inverts the projection's fail-closed intent: a store the
+            export decided not to carry travelled regardless, as a validated member.
+
+            The inventory sweep further down already refuses raw database copies for
+            exactly this reason. It skips **every** `.db` in a tree; this predicate is
+            deliberately narrower — only the databases the projection owns — because
+            `workspace/` is the user's own directory and silently dropping an *undeclared*
+            sqlite file a user put there would trade one data defect for another.
+            """
+            if rel in projected_dbs:
+                return True
+            return any(
+                rel.endswith(sidecar) and rel[: -len(sidecar)] in projected_dbs
+                for sidecar in _DB_SIDECARS
+            )
+
         for db_name in db_names:
             if not _wanted(db_name):
                 continue
@@ -518,6 +552,11 @@ def create_export_zip(domains: Sequence[str] | None = None) -> tuple[bytes, dict
                     if is_sensitive_path(str(fpath)):
                         continue
                     if dirname == "skills" and "auto" in rel.parts:
+                        continue
+                    # A declared database leaves through the backup API above or not at
+                    # all. Without this the same path was written twice and a skipped
+                    # store shipped anyway — see `_is_projected_db`.
+                    if _is_projected_db(rel.as_posix()):
                         continue
                     if fpath.is_file():
                         zf.write(str(fpath), f"{prefix}/{rel}")
