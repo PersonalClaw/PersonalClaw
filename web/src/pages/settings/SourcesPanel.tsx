@@ -45,24 +45,24 @@ export function SourcesPanel() {
 
   // Optimistic single-field PATCH; a rejected save rolls back and surfaces the error
   // (a swallowed 400 would look exactly like a successful save).
-  const patch = (key: string, value: unknown, onSaved?: () => void) => {
+  const patch = (key: string, value: unknown, onSaved?: () => void, label?: string) => {
     const prev = cfg[key]
     setCfg((c) => ({ ...c, [key]: value }))
     api.patchConfig(`sources.${key}`, value).then(() => onSaved?.()).catch((e) => {
       setCfg((c) => ({ ...c, [key]: prev }))
-      notify(`Couldn't save ${key}: ${String((e as Error)?.message || e)}`, 'error')
+      notify(`Couldn't save ${label ?? key}: ${String((e as Error)?.message || e)}`, 'error')
     })
   }
 
   // The same optimistic single-field PATCH against the sibling `knowledge.*` section. Its own
   // function rather than a prefix parameter on `patch`: the two sections have separate state,
   // so one setter reaching into both would roll a failed save back into the wrong object.
-  const patchKnowledge = (key: string, value: unknown, onSaved?: () => void) => {
+  const patchKnowledge = (key: string, value: unknown, onSaved?: () => void, label?: string) => {
     const prev = (knowledgeCfg ?? {})[key]
     setKnowledgeCfg((c) => ({ ...c, [key]: value }))
     api.patchConfig(`knowledge.${key}`, value).then(() => onSaved?.()).catch((e) => {
       setKnowledgeCfg((c) => ({ ...c, [key]: prev }))
-      notify(`Couldn't save ${key}: ${String((e as Error)?.message || e)}`, 'error')
+      notify(`Couldn't save ${label ?? key}: ${String((e as Error)?.message || e)}`, 'error')
     })
   }
 

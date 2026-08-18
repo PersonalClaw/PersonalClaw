@@ -176,12 +176,12 @@ function MidTurnSection({ resilience, setResilience }: {
 // ── Agent routing (personalclaw config: agents_routing.*) ────────────────────
 function RoutingSection({ routing, setRouting }: { routing: Record<string, unknown>; setRouting: (r: Record<string, unknown>) => void }) {
   const [saved, flash] = useSavedFlash()
-  const patch = (key: string, value: unknown) => {
+  const patch = (key: string, value: unknown, _cb?: () => void, label?: string) => {
     const prev = routing[key]
     setRouting({ ...routing, [key]: value })
     api.patchConfig(`agents_routing.${key}`, value).then(flash).catch(() => {
       setRouting({ ...routing, [key]: prev })
-      notify(`Couldn't save ${key}`, 'error')
+      notify(`Couldn't save ${label ?? key}`, 'error')
     })
   }
   const enabled = routing.enabled !== false
@@ -192,10 +192,10 @@ function RoutingSection({ routing, setRouting }: { routing: Record<string, unkno
           <div className="flex items-center gap-2"><SavedToast show={saved} /><Toggle on={enabled} onChange={(v) => patch('enabled', v)} label="Suggest specialists" /></div>
         </Row>
         {enabled && (
-          <NumberRow label="Confidence threshold" hint="Minimum match confidence before a routing chip appears. Higher = fewer, surer suggestions." value={Number(routing.min_confidence ?? 0.62)} min={0.3} max={0.95} step={0.01} onCommit={(n) => patch('min_confidence', n)} saved={saved} />
+          <NumberRow label="Confidence threshold" hint="Minimum match confidence before a routing chip appears. Higher = fewer, surer suggestions." value={Number(routing.min_confidence ?? 0.62)} min={0.3} max={0.95} step={0.01} onCommit={(n, l) => patch('min_confidence', n, undefined, l)} saved={saved} />
         )}
         {enabled && (
-          <NumberRow label="Dismiss cooldown" hint="After you dismiss a suggestion for an agent, suppress it for this long (three dismissals mute it until you re-enable)." value={Number(routing.cooldown_hours ?? 24)} min={0} max={720} step={1} suffix="h" onCommit={(n) => patch('cooldown_hours', n)} saved={saved} />
+          <NumberRow label="Dismiss cooldown" hint="After you dismiss a suggestion for an agent, suppress it for this long (three dismissals mute it until you re-enable)." value={Number(routing.cooldown_hours ?? 24)} min={0} max={720} step={1} suffix="h" onCommit={(n, l) => patch('cooldown_hours', n, undefined, l)} saved={saved} />
         )}
       </div>
     </Section>
@@ -312,12 +312,12 @@ function CheckpointsSection({ checkpoints, setCheckpoints }: {
   checkpoints: Record<string, unknown>; setCheckpoints: (c: Record<string, unknown>) => void
 }) {
   const [saved, flash] = useSavedFlash()
-  const patch = (key: string, value: unknown) => {
+  const patch = (key: string, value: unknown, _cb?: () => void, label?: string) => {
     const prev = checkpoints[key]
     setCheckpoints({ ...checkpoints, [key]: value })
     api.patchConfig(`checkpoints.${key}`, value).then(flash).catch((e) => {
       setCheckpoints({ ...checkpoints, [key]: prev })
-      notify(`Couldn't save ${key}: ${String((e as Error)?.message || e)}`, 'error')
+      notify(`Couldn't save ${label ?? key}: ${String((e as Error)?.message || e)}`, 'error')
     })
   }
   const on = checkpoints.enabled !== false
@@ -329,9 +329,9 @@ function CheckpointsSection({ checkpoints, setCheckpoints }: {
         </Row>
         {on && (
           <>
-            <NumberRow label="Store cap per chat" hint="Megabytes of saved file contents kept per chat. When a new backup would exceed this, the oldest turns are dropped — rewinding past them stops being possible. 0 = no byte cap." value={Number(checkpoints.max_mb ?? 200)} min={0} max={100000} step={10} suffix="MB" onCommit={(n) => patch('max_mb', n)} saved={saved} />
-            <NumberRow label="Turns kept" hint="How many recent turns you can rewind to. Older turns are dropped." value={Number(checkpoints.max_turns ?? 50)} min={1} max={1000} step={1} onCommit={(n) => patch('max_turns', n)} saved={saved} />
-            <NumberRow label="Largest file backed up" hint="A file bigger than this is noted but not copied, so a rewind reports it as not captured instead of restoring it. Keeps one big write from filling the whole store. 0 = no limit." value={Number(checkpoints.max_file_mb ?? 8)} min={0} max={10000} step={1} suffix="MB" onCommit={(n) => patch('max_file_mb', n)} saved={saved} />
+            <NumberRow label="Store cap per chat" hint="Megabytes of saved file contents kept per chat. When a new backup would exceed this, the oldest turns are dropped — rewinding past them stops being possible. 0 = no byte cap." value={Number(checkpoints.max_mb ?? 200)} min={0} max={100000} step={10} suffix="MB" onCommit={(n, l) => patch('max_mb', n, undefined, l)} saved={saved} />
+            <NumberRow label="Turns kept" hint="How many recent turns you can rewind to. Older turns are dropped." value={Number(checkpoints.max_turns ?? 50)} min={1} max={1000} step={1} onCommit={(n, l) => patch('max_turns', n, undefined, l)} saved={saved} />
+            <NumberRow label="Largest file backed up" hint="A file bigger than this is noted but not copied, so a rewind reports it as not captured instead of restoring it. Keeps one big write from filling the whole store. 0 = no limit." value={Number(checkpoints.max_file_mb ?? 8)} min={0} max={10000} step={1} suffix="MB" onCommit={(n, l) => patch('max_file_mb', n, undefined, l)} saved={saved} />
           </>
         )}
       </div>
@@ -345,21 +345,21 @@ function LifecycleSection({ session, setSession, agentOptions, discovered }: {
   agentOptions: import('../../lib/agents').AgentOption[]; discovered: Record<string, import('../../lib/api').DiscoveredAgent[]>
 }) {
   const [saved, flash] = useSavedFlash()
-  const patch = (key: string, value: unknown) => {
+  const patch = (key: string, value: unknown, _cb?: () => void, label?: string) => {
     const prev = session[key]
     setSession({ ...session, [key]: value })
     api.patchConfig(`session.${key}`, value).then(flash).catch((e) => {
       setSession({ ...session, [key]: prev })
-      notify(`Couldn't save ${key}: ${String((e as Error)?.message || e)}`, 'error')
+      notify(`Couldn't save ${label ?? key}: ${String((e as Error)?.message || e)}`, 'error')
     })
   }
   const poolSize = Number(session.pool_size ?? 0)
   return (
     <Section title="Context & lifecycle" hint="Keep long sessions productive and control how warm sessions are kept ready.">
       <div className="rounded-lg bg-surface-container px-4 py-1">
-        <NumberRow label="Auto-compact threshold" hint="Context-usage % that triggers compaction. Lower = more frequent." value={Number(session.autocompact_pct ?? 90)} min={5} max={90} step={1} suffix="%" onCommit={(n) => patch('autocompact_pct', n)} saved={saved} />
-        <NumberRow label="Idle timeout" hint="Auto-close an idle session after this long. 0 = never." value={Number(session.timeout_secs ?? 0)} min={0} max={86400} step={60} suffix="s" onCommit={(n) => patch('timeout_secs', n)} saved={saved} />
-        <AutoArchiveRow days={Number(session.auto_archive_days ?? 30)} onCommit={(n) => patch('auto_archive_days', n)} saved={saved} />
+        <NumberRow label="Auto-compact threshold" hint="Context-usage % that triggers compaction. Lower = more frequent." value={Number(session.autocompact_pct ?? 90)} min={5} max={90} step={1} suffix="%" onCommit={(n, l) => patch('autocompact_pct', n, undefined, l)} saved={saved} />
+        <NumberRow label="Idle timeout" hint="Auto-close an idle session after this long. 0 = never." value={Number(session.timeout_secs ?? 0)} min={0} max={86400} step={60} suffix="s" onCommit={(n, l) => patch('timeout_secs', n, undefined, l)} saved={saved} />
+        <AutoArchiveRow days={Number(session.auto_archive_days ?? 30)} onCommit={(n, l) => patch('auto_archive_days', n, undefined, l)} saved={saved} />
 
         <Row label="Warm pool size" hint="Pre-started sessions kept ready for an instant first turn. 0 = off.">
           <NumberField value={poolSize} min={0} max={10} step={1} onChange={(n) => patch('pool_size', n)} ariaLabel="Warm pool size" />
@@ -376,7 +376,7 @@ function LifecycleSection({ session, setSession, agentOptions, discovered }: {
                   onChange={async (v) => { const name = v ? await ensureBindableAgentName(v, discovered) : ''; patch('pool_agent', name) }} />
               </div>
             </Row>
-            <NumberRow label="Warm pool TTL" hint="Recycle a warm session after this long unused." value={Number(session.pool_ttl_secs ?? 1800)} min={0} max={7200} step={60} suffix="s" onCommit={(n) => patch('pool_ttl_secs', n)} saved={saved} />
+            <NumberRow label="Warm pool TTL" hint="Recycle a warm session after this long unused." value={Number(session.pool_ttl_secs ?? 1800)} min={0} max={7200} step={60} suffix="s" onCommit={(n, l) => patch('pool_ttl_secs', n, undefined, l)} saved={saved} />
           </>
         )}
       </div>
@@ -392,7 +392,9 @@ function LifecycleSection({ session, setSession, agentOptions, discovered }: {
  *  so the count is fetched from the existing dry-run preview — the same call the sweep
  *  makes, so the number shown IS the number that would move, not an estimate. */
 function AutoArchiveRow({ days, onCommit, saved }: {
-  days: number; onCommit: (n: number) => void; saved: boolean
+  days: number; /** `(value, label)` — this row has no `label` prop (its name lives in `ariaLabel`), so it supplies
+   *  the literal. Accepting the argument without supplying one is the gap this fixes. */
+  onCommit: (n: number, label?: string) => void; saved: boolean
 }) {
   const [pending, setPending] = useState<number | null>(null)
   const [preview, setPreview] = useState<{ count: number; enabled: boolean } | null>(null)
@@ -422,7 +424,7 @@ function AutoArchiveRow({ days, onCommit, saved }: {
         )}
         <NumberField
           value={shown} min={0} max={3650} step={1} ariaLabel="Auto-archive after (days)"
-          onChange={(n) => { setPending(n); onCommit(n) }}
+          onChange={(n) => { setPending(n); onCommit(n, 'Auto-archive after (days)') }}
         />
         <span className="text-[0.75rem] text-on-surface-variant">{shown > 0 ? 'days' : 'off'}</span>
       </div>
@@ -438,13 +440,16 @@ function useSavedFlash(): [boolean, () => void] {
 
 function NumberRow({ label, hint, value, min, max, step, suffix, onCommit, saved }: {
   label: string; hint?: string; value: number; min: number; max: number; step?: number; suffix?: string
-  onCommit: (n: number) => void; saved: boolean
+  /** 🪤 `(value, label)` — the label travels so a rejected save can name this control instead of its
+   *  config key. Declaring the parameter on the panel's `patch` is not enough: nothing was PASSING one
+   *  from here, so the toast fell through to `?? key` and still read "Couldn't save autocompact_pct". */
+  onCommit: (n: number, label?: string) => void; saved: boolean
 }) {
   return (
     <Row label={label} hint={hint}>
       <div className="flex items-center gap-2">
         <SavedToast show={saved} />
-        <NumberField value={value} min={min} max={max} step={step} onChange={onCommit} ariaLabel={label} />
+        <NumberField value={value} min={min} max={max} step={step} onChange={(n) => onCommit(n, label)} ariaLabel={label} />
         {suffix && <span className="w-6 text-on-surface-low text-[0.75rem]">{suffix}</span>}
       </div>
     </Row>
