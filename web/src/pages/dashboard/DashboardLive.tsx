@@ -43,6 +43,10 @@ export interface DashboardLiveData {
   /** The doctor health rollup (PLATFORM-RESILIENCE §1) — cached 30s server-side, so
    *  polled on SLOW_POLL. Powers the SystemHealth widget's one-line health signal. */
   doctor: DoctorReport | null
+  /** The probe's own failure. Distinct from `doctor: null`, which also means "not polled yet" —
+   *  and critically distinct from a healthy report, because a health surface that goes quiet is
+   *  read as "nothing wrong". Consumers must render "unknown", never silence. */
+  doctorErr: unknown
   /** Dismiss a Discover tip forever, then refetch the slice so it drops from the
    *  feed (propose-don't-write: this hides, never enables). */
   dismissDiscoverTip: (id: string) => void
@@ -79,6 +83,7 @@ export function DashboardLiveProvider({ children }: { children: ReactNode }) {
   const [system, setSystem] = useState<SystemInfo | null>(null)
   const [discover, setDiscover] = useState<DiscoverResponse | null>(null)
   const [doctor, setDoctor] = useState<DoctorReport | null>(null)
+  const [doctorErr, setDoctorErr] = useState<unknown>(null)
 
   // Individual slice loaders — each swallows errors (a dead endpoint must not
   // blank the whole dashboard) and no-ops if the component has unmounted.
@@ -109,7 +114,15 @@ export function DashboardLiveProvider({ children }: { children: ReactNode }) {
   const loadNotifications = useCallback(() => { api.notifications().then((d) => guard(setNotifications)(d.notifications ?? [])).catch(() => {}) }, [])
   const loadSystem = useCallback(() => { api.system().then(guard(setSystem)).catch(() => {}) }, [])
   const loadDiscover = useCallback(() => { api.discover().then(guard(setDiscover)).catch(() => {}) }, [])
-  const loadDoctor = useCallback(() => { api.doctor().then(guard(setDoctor)).catch(() => {}) }, [])
+  // 🔴 `catch(() => {})` left `doctor` null, and the SystemHealth strip surfaces its health row
+  // ONLY when `!doctor.ok` — its own comment says "a healthy system stays quiet". So a failed
+  // PROBE impersonated health on the dashboard's health surface. `#/settings/doctor` already says
+  // "Couldn't load the doctor report" out loud for exactly this reason; the summary surfaces now
+  // get the same fact to work with.
+  const loadDoctor = useCallback(() => {
+    api.doctor().then((d) => { guard(setDoctor)(d); guard(setDoctorErr)(null) })
+      .catch((e) => guard(setDoctorErr)(e))
+  }, [])
 
   // Dismiss persists server-side; on success refetch so the tip drops from the
   // feed (or the "explored everything" empty state shows).
@@ -168,7 +181,7 @@ export function DashboardLiveProvider({ children }: { children: ReactNode }) {
   const value: DashboardLiveData = {
     approvals, inbox, proposals, loops, tasks, schedule, scheduleDidIds, scheduleSuppressed,
     status, notifications, system,
-    discover, doctor, dismissDiscoverTip, refreshAll,
+    discover, doctor, doctorErr, dismissDiscoverTip, refreshAll,
   }
   return <DashboardLiveContext.Provider value={value}>{children}</DashboardLiveContext.Provider>
 }
