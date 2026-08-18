@@ -33,14 +33,16 @@ Verified against code + the two consuming plans — re-verify before editing; a 
   **no notion of connecting to a gateway it did not spawn** — no saved-endpoint list, no
   remote URL, no pairing. That "connect to a *different* gateway" capability is this plan's
   desktop contribution (additive; the spawn-local mode is unchanged and stays the default).
-- **MOBILE-COMPANION already designs device tokens + QR pairing** — its C1 adds a `device`
-  claim to `generate_token` and a `devices.json` registry; C4 is `POST /api/devices/pair/
-  start|complete` (single-use code, TTL 300s). **This plan unifies that pairing with
+- **MOBILE-COMPANION's device-token/QR design is FOLDED IN HERE (`CA-3`, 2026-08-17)** — it
+  used to add a `device` claim to `generate_token` plus an `entity_settings/devices.json`
+  registry (its C1) and to define `POST /api/devices/pair/start|complete` itself (its C4).
+  Both are now **references** to this plan: **this plan unifies that pairing with
   REMOTE-USER-AUTH's enrollment code so there is ONE pairing path** (a device session is a
-  `sessions.json` row, C1 of REMOTE-USER-AUTH, with `device` set), and MOBILE-COMPANION's C1/C4
-  reference this plan rather than defining a parallel mechanism. Recorded as a supersession
-  (this plan owns "device session + pairing"; MOBILE-COMPANION owns
-  the phone UI + push).
+  `sessions.json` row, C1 of REMOTE-USER-AUTH, with `device` set). The fold was not a plain
+  deletion: the two constraints that plan carried and this one did not — the 30-day TTL and
+  the `bind_ip` roaming-phone caveat — moved INTO C1 below, and its `caller="device:<name>"`
+  audit attribution moved into the SEL line. This plan owns "device session + pairing";
+  MOBILE-COMPANION owns the phone UI + push.
 - **REMOTE-USER-AUTH provides the auth foundation** — its C1 durable `sessions.json` (device
   rows survive restart — the reason companion sessions can be long-lived), C3 `/api/auth/
   enroll/*` (the remote, no-password device-enrollment path), and C4 `session_ttl`. This plan
@@ -51,7 +53,8 @@ Verified against code + the two consuming plans — re-verify before editing; a 
   configured `dashboard.url`/`public_url` origin and allows `PERSONALCLAW_CORS_ORIGINS`; a
   native client connecting to a remote gateway rides the REMOTE-USER-AUTH `public_url` boundary
   (its S4) — this plan adds **no new origin exemption**. WS `/api/ws` auth is the session
-  cookie/`?token=`; a native client presents its device session the same way.
+  cookie/`?token=`; a native client presents its device session **via the cookie** — see C1's
+  transport constraint, because the `?token=` path is the one that IP-binds.
 - **Auth-mode reality (do not fight it):** only `none` (loopback-forced) and `local_token` are
   reachable (`auth/modes.py:49`; `server.py:1446` wires `token_auth_middleware` directly). A
   companion connecting to a LAN gateway needs that gateway reachable beyond loopback — which
@@ -106,18 +109,43 @@ this contract).
 ```
 A **device session** is a REMOTE-USER-AUTH C1 `sessions.json` row with `device` set and
 `issuer: "enroll" | "pair"` — this plan does NOT define a new token type. Long-lived TTL from
-`auth.session_ttl`; revocable from the Devices surface (revoke = flip `revoked` on the row).
+`auth.session_ttl` — whose default IS `30d` (`config/loader.py:4677`), which is exactly the
+number MOBILE-COMPANION C1 asked for, so folding its TTL in costs nothing and adds no field.
+Revocable from the Devices surface (revoke = flip `revoked` on the row). The fields the Devices
+surface reads off the row: device name, `kind`, `issuer`, minted-at, last-seen-at (MOBILE-
+COMPANION's `devices.json` shape, minus the file — the row already holds all five).
+
+**Transport constraint (folded in from MOBILE-COMPANION C1's `bind_ip` finding — the one thing
+that plan carried and this one did not).** A device session MUST be carried as the session
+**cookie**, never through the `?token=` query-param exchange. Measured in `token_auth.py`, not
+assumed: the query-param path binds the token to the first client IP it sees (`bind_token_ip`,
+`:970`) and denies on mismatch (`check_token_ip`, `:957`), while cookie-borne requests skip the
+IP check entirely — "the cookie itself is the credential, and IP validation behind a proxy is
+unreliable" (`:954`). A roaming phone changes IP between cell and Wi-Fi, so a query-param
+device session would die on every network change; a cookie-borne one is untouched. **This
+resolves MOBILE-COMPANION's open design pivot with no `token_auth.py` change at all** — no
+`device` claim, no unbinding, no weakened invariant, so no E4. It is what `MC-2`'s "a
+roaming-IP phone keeps its device session valid per the plan-54 contract" refers to.
+Consequence for T1.1: `pair/complete` sets the session cookie on the response; a native shell
+(Capacitor/Electron WebView) holds it like any browser.
 
 ### C2 — Unified pairing (SUPERSEDES MOBILE-COMPANION C4; folds in REMOTE-USER-AUTH C3 enroll)
 | Route | Auth | Purpose |
 |---|---|---|
-| `POST /api/devices/pair/start` | session (LAN or logged-in) | → `{code, expires_in}`; single-use, TTL 300s, SEL `device_pair_started` |
+| `POST /api/devices/pair/start` | session (LAN or logged-in) | → `{pairing_url, code, expires_in}`; single-use, TTL 300s, SEL `device_pair_started` |
 | `POST /api/devices/pair/complete` | none (exempt) | `{code, device_name}` → durable device session (C1); SEL `device_paired`; reuse rejected |
 | `GET /api/devices` | session | list device sessions (name, kind, last_seen, issuer) |
 | `POST /api/devices/{id}/revoke` | session | revoke a device session; SEL `device_revoked` |
-QR pairing (dashboard shows a QR of `{pair_url, code}`) is a **rendering of these routes**, not
-a separate mechanism — MOBILE-COMPANION's QR screen scans it; the desktop connect dialog can
-paste the code. Error codes (Tier-S): `device_pair_code_invalid`, `device_pair_expired`.
+QR pairing (dashboard shows a QR of `{pairing_url, code}`) is a **rendering of these routes**,
+not a separate mechanism — MOBILE-COMPANION's QR screen scans it; the desktop connect dialog
+can paste the code. Two shapes folded in from MOBILE-COMPANION C4 so its screen has nothing
+left to invent: (a) `pairing_url` comes back from `pair/start` and is resolved **by the
+gateway**, never composed in the browser — the dashboard may be open on loopback while the
+scanning phone needs the LAN address, and a browser-composed URL would hand the phone
+`127.0.0.1` (this is the same origin surface as the CA-5 rough edge in the Execution log);
+(b) `device_name` on `pair/complete` is **optional** — omitted, the gateway derives a label
+from the User-Agent/hostname, which is what C4's `{code}`-only body assumed. Error codes
+(Tier-S): `device_pair_code_invalid`, `device_pair_expired`.
 
 ### C3 — Local-network discovery (`companion/discovery.py`, new, optional)
 mDNS/DNS-SD service `_personalclaw._tcp.local`, TXT `{name, port, requires_pairing: "1",
@@ -142,6 +170,10 @@ Devices panel. No secrets here (device sessions live in REMOTE-USER-AUTH's store
 - **Storage:** `companion` config section; device sessions are REMOTE-USER-AUTH rows (no new
   store); discovery holds no state.
 - **SEL (§2.3):** `device_pair_started`, `device_paired`, `device_revoked`, `discovery_enabled`.
+  Folded in from MOBILE-COMPANION C1: requests authenticated by a device session attribute to
+  `caller="device:<name>"` in `log_api_access`, so the audit trail names the phone rather than a
+  bare user id (that plan's `device_token_mint|revoke` operations are covered by the three
+  `device_*` events above — one vocabulary, not two).
 
 ## Task breakdown (executor-ready — run under the roadmap session discipline in [AGENTS.md](../../../AGENTS.md))
 
@@ -153,7 +185,7 @@ under the pre-1.0 banner. Sequenced strictly after REMOTE-USER-AUTH S1.
 | ID | Task | Files | Done when |
 |---|---|---|---|
 | T1.1 | Unified pairing routes (C2): `pair/start`, `pair/complete`, `GET /api/devices`, `revoke` — device sessions are REMOTE-USER-AUTH C1 rows with `device`/`issuer` set (no new token type); SEL on each | `dashboard/handlers/devices.py` (new), `server.py` wiring | pair start→complete yields a durable device session surviving a restart; reuse rejected; revoke kills it next request |
-| T1.2 | Settings → Devices panel: list device sessions (name, kind, last-seen, issuer) + revoke; "Pair a device" shows a QR of `{pair_url, code}` | `web/src/pages/settings/DevicesPanel.tsx` | a device pairs from the QR end-to-end; revoke observed live |
+| T1.2 | Settings → Devices panel: list device sessions (name, kind, minted, last-seen, issuer) + revoke; "Pair a device" shows a QR of `{pairing_url, code}`. This is the ONLY Devices list — MOBILE-COMPANION T2.4 links here rather than building a second one | `web/src/pages/settings/DevicesPanel.tsx` | a device pairs from the QR end-to-end; revoke observed live |
 | T1.3 | Reconcile MOBILE-COMPANION C1/C4: mark them consuming this contract (this plan owns "device session + pairing") | `docs/roadmap/plans/MOBILE-COMPANION.md` | the two plans reference one pairing mechanism; no duplicate device-token design remains |
 | V1 | Validation: pair a second browser as a "device" over the LAN, see it in Devices, revoke it, confirm lockout | — | recorded |
 
@@ -194,7 +226,7 @@ under the pre-1.0 banner. Sequenced strictly after REMOTE-USER-AUTH S1.
 
 ## Owner tasks (real world)
 
-1. **Confirm the supersession:** MOBILE-COMPANION's own device-token/QR design (C1/C4) is folded into this plan's unified pairing — approve that reconciliation (it removes duplication; the phone UI + push stay in MOBILE-COMPANION).
+1. **Confirm the supersession:** MOBILE-COMPANION's own device-token/QR design (C1/C4) is folded into this plan's unified pairing — approve that reconciliation (it removes duplication; the phone UI + push stay in MOBILE-COMPANION). **Executed by `CA-3` (2026-08-17); two folded shapes want a yes/no** — (a) `pair/start` now returns `pairing_url` (gateway-resolved) beside `{code, expires_in}`, and (b) `pair/complete`'s `device_name` is optional with a gateway-derived fallback. Both come from MOBILE-COMPANION C4 / `MC-8`; neither adds a route or a store. Reject either and only C2's response shape moves.
 2. **Decide discovery default** — ships **off** (advertising your gateway is opt-in); confirm.
 3. **Validation (V4):** connect the desktop app to both a LAN and a remote gateway, and pair a phone — on your own network + tunnel.
 4. Per-platform store/enrollment costs (Apple/Google) are owned by MOBILE-COMPANION/DESKTOP-CAPABILITIES, not incurred here.
@@ -244,6 +276,55 @@ No new session. S3 T3.1's client contract is WHERE the multi-entry registry + ac
   exists yet (it is a rendering of the pairing routes T1.1/T1.2 own). Degradability is asserted
   against the path that does exist (typed URL + `auth enroll`) and structurally, by proving
   `auth/enrollment.py` cannot import `companion`.
+- [2026-08-17][CA-3] DONE: S1 supersession reconciliation — MOBILE-COMPANION's C1/C4 device-token
+  + QR design is folded into this plan. Doc-only; **no code touched** (see the DISCOVERY below —
+  there was nothing to touch). This plan now states the mechanism once (C1 device session + C2
+  unified pairing); MOBILE-COMPANION §C1/§C4 **reference** it and their restated route shapes,
+  `device` claim and `devices.json` registry are deleted rather than archived. Where the two
+  designs disagreed, the constraint moved INTO the owner instead of being dropped:
+  · **TTL** — MOBILE-COMPANION's hardcoded "30d" vs this plan's `auth.session_ttl`: measured
+    identical, `auth.session_ttl` defaults to `"30d"` (`config/loader.py:4677`), so C1 now names
+    the default and the fold costs nothing.
+  · **Roaming IP** (the one constraint this plan did not carry) — folded into C1 as a transport
+    constraint. MOBILE-COMPANION left it an open "design pivot" (mint unbound, or
+    rebind-on-mismatch, E4 if it weakens an invariant); it is measured, so neither branch is
+    needed: IP binding applies **only** to the `?token=` exchange (`bind_token_ip`,
+    `token_auth.py:970`; `check_token_ip`, `:957`) and cookie-borne requests skip the check
+    outright (`:954`). A cookie-borne device session roams for free with **zero**
+    `token_auth.py` change. This is what `MC-2`'s "roaming-IP phone keeps its device session
+    valid per the plan-54 contract" was pointing at — that reference previously dangled, because
+    this plan's contract said nothing about IP binding.
+  · **Audit attribution** — MOBILE-COMPANION's `caller="device:<name>"` in `log_api_access` had
+    no counterpart here; folded into the SEL line. Its `device_token_mint|revoke` operation names
+    are dropped in favour of the existing `device_*` events (one vocabulary).
+  · **`minted` field** — MOBILE-COMPANION T2.4 listed it, T1.2 did not; added to T1.2 + C1.
+  Two shapes are owner-review flagged (Owner task 1) because they change C2's response, not just
+  prose: `pair/start` now returns a **gateway-resolved** `pairing_url` (the browser cannot
+  compose it — the dashboard may be on loopback while the scanning phone needs the LAN address,
+  the same origin surface as the CA-5 DISCOVERY below), and `pair/complete`'s `device_name` is
+  optional with a derived fallback (what C4's `{code}`-only body assumed). Also normalised the
+  spelling `pair_url` → `pairing_url`, matching MOBILE-COMPANION C4 and `MC-8`'s done_when (2 of
+  3 prior uses). One clarifying edit outside the two plans: REMOTE-USER-AUTH's S1 bullet said
+  "MOBILE-COMPANION device tokens", a stale attribution now that plan 54 owns them.
+- [2026-08-17][CA-3] Success Criterion 1 evidence — `grep -rniE 'device[ _-]?token'
+  docs/roadmap/plans/ src/ web/src` went **17 → 10** hits. All 10 survivors are the one
+  mechanism talking about itself: explicit negations ("there is no separate device-token type",
+  "instead of its own device-token/QR mechanism", "no parallel device-token code"), this plan's
+  own supersession/risk/owner rows, Criterion 1's own sentence, and REMOTE-USER-AUTH resolving
+  "device tokens are C1 rows with `device` set". Zero survivors specify a rival route, store,
+  claim, TTL or revocation path. The design's fingerprints are gone rather than reworded:
+  `device: str` (the claim) 1 → 0, `pair_url` 2 → 0; the 3 remaining `devices.json` /
+  `entity_settings/devices` hits are all in sentences saying it does not exist.
+- [2026-08-17][CA-3] DISCOVERY (no code change made, needs its own atom if acted on): the rival
+  design was **never built**, so the fold has no code consequence — `grep -rniE
+  'device[ _-]?token' src/ web/src` = 0 hits, no `devices.json` anywhere in `src/`, and
+  `generate_token` is still `(user_id, ttl_seconds=3600, *, app="")` with no `device` claim
+  (`token_auth.py:394`). Separately, and worth an atom of its own: `bind_token_ip`
+  (`token_auth.py:510`) has **no non-test caller other than the middleware itself** — the only
+  production call pair is `token_auth.py:957`/`:970` inside `token_auth_middleware`, so IP
+  binding is reachable only on the query-param exchange. That is exactly what makes C1's
+  cookie constraint free today, and exactly what would silently break if a future change bound
+  cookie sessions too. Not this atom's scope (this atom's done_when is about the plans).
 - [2026-08-16][CA-5] DISCOVERY (not fixed): redeeming a pairing code from a browser reached **by
   IP** is refused — `POST /api/auth/enroll/complete` with `Origin: http://<lan-ip>:<port>` → 403
   `CSRF check failed: request origin not allowed` (`build_allowed_origins` has the loopback names
