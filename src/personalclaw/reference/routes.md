@@ -341,6 +341,9 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `GET /api/learning/proposals/{id}` — one full record.
 - `POST /api/learning/proposals/{id}/accept` — install it.
 - `GET /api/learning/staging/week` — the week-at-a-glance capture panel.
+- `GET /api/legibility/always-on` — what every session receives, with provenance.
+- `GET /api/legibility/always-on/doc` — one body, verbatim, for the editor.
+- `PUT /api/legibility/always-on/doc` — replace an editable project instruction.
 - `GET /api/legibility/discover` — the curated Discover tips still worth showing.
 - `POST /api/legibility/discover/dismiss` — hide a Discover tip forever.
 - `DELETE /api/lessons` — remove lessons by substring.

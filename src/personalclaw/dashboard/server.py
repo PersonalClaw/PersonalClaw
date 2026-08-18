@@ -1114,12 +1114,20 @@ async def start_dashboard(
     # the parts of the system the user hasn't tried yet; dismissals persist and
     # engaged areas auto-hide. Never writes or enables anything on the user's behalf.
     from personalclaw.dashboard.handlers.legibility import (
+        api_always_on,
+        api_always_on_doc,
+        api_always_on_doc_write,
         api_discover,
         api_discover_dismiss,
     )
 
     app.router.add_get("/api/legibility/discover", api_discover)
     app.router.add_post("/api/legibility/discover/dismiss", api_discover_dismiss)
+    # Always-on conventions viewer (PEP-10): what every session receives, with provenance,
+    # sliced out of the session's own producers so the viewer cannot drift from the prompt.
+    app.router.add_get("/api/legibility/always-on", api_always_on)
+    app.router.add_get("/api/legibility/always-on/doc", api_always_on_doc)
+    app.router.add_put("/api/legibility/always-on/doc", api_always_on_doc_write)
 
     # Legibility — PClaw as a routed-context provider for external agents (§7).
     # GET /api/context backs the in-process get_context tool; the per-project
