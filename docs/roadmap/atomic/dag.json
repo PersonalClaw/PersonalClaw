@@ -3164,7 +3164,7 @@
     {
       "plan": "WORKFLOWS-V2-LEARNING-FLYWHEEL",
       "code": "WF2LEA",
-      "status": "in_progress",
+      "status": "done",
       "summary": "Mostly-shipped 11-session flywheel program: 2 done atoms catalogue the landed lifecycle machine + decision spokes (PRs #163-166, #227-236); 10 todo atoms cover inert-control wiring (criterion 9 accountability, cadence coverage), the two v2-coupled spokes (run-end capture, refiner agent), step 2 lesson reroute, self-model producer, polish tier, and amendment tasks E1.1-E1.4.",
       "atoms": [
         {
