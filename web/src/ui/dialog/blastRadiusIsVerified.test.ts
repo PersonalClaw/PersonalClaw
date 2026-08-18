@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
-import { pyMethod } from '../../design/pySource'
+import { pyBetween, pyMethod } from '../../design/pySource'
 
 // ── A destructive dialog's body is a CLAIM about the backend ────────────────────────────────────
 //
@@ -394,5 +394,56 @@ describe('the stop-project dialog, and the file delete', () => {
     const del = h.slice(h.indexOf('async def api_file_delete'))
     expect(del.slice(0, 2200), 'a directory is rmtree-d').toMatch(/shutil\.rmtree\(path\)/)
     expect(del.slice(0, 2200), 'and a root is refused').toMatch(/refusing to delete a root directory/)
+  })
+})
+
+describe('the conflict-resolve body, per choice', () => {
+  const ui = () => web('pages/settings/DurabilityPanel.tsx')
+
+  it('promises reversibility ONLY for the choice that earns it', () => {
+    // 🔴 It said "The version you don't pick stays in the shared store" for all three choices. Only
+    // `keep_local` discards the REMOTE row — the one the shared store actually holds. The other two
+    // discard THIS machine's row, which no store keeps.
+    expect(ui()).toMatch(/choice === 'keep_local'/)
+    expect(ui(), 'the reversible branch names the other side').toContain(
+      "The other machine's version stays in the shared store, so you can still decide differently from that side.",
+    )
+    expect(ui(), 'and the destructive branch says what is gone').toContain(
+      "That copy is not kept anywhere else — only a snapshot has it.",
+    )
+    expect(ui(), 'the unconditional promise must not come back').not.toContain(
+      "The version you don't pick stays in the shared store",
+    )
+  })
+
+  it('the backend pushes nothing, which is what makes the keep_local half true', () => {
+    const mod = py('durability/conflict_resolve.py')
+    expect(mod, 'resolving is a LOCAL write').toMatch(/Nothing is pushed from here/)
+    // …and the detector re-holds the id, so the other side really can still decide.
+    // 🪤 Bounded by the NEXT bullet, not by a character count — the span is longer than the 400 I first
+    // guessed, which is the same mistake `pySource`'s own docstring exists to prevent.
+    const keepLocal = pyBetween(mod, '``keep_local``', '``take_remote``')
+    expect(keepLocal, 'the keep_local bullet must be found').toMatch(/three shas are unchanged/)
+    expect(keepLocal, 'the divergence is detected and held again').toMatch(/HOLDS the\s+id again/)
+  })
+
+  it('take_remote and accept_proposal really do overwrite this machine\'s row', () => {
+    const mod = py('durability/conflict_resolve.py')
+    expect(pyBetween(mod, '``take_remote``', '``accept_proposal``'), 'take_remote converges onto the remote sha')
+      .toMatch(/local becomes the remote sha/)
+    const proposal = mod.slice(mod.indexOf('``accept_proposal``'))
+    expect(proposal.slice(0, proposal.indexOf('"' + '""')), 'accept_proposal writes a third sha')
+      .toMatch(/local becomes a THIRD sha/)
+    // The write is whole-entry substitution of the chosen row — nothing archives the old one.
+    expect(pyMethod(mod, 'def _write_chosen_row'), 'the old row is simply replaced')
+      .toMatch(/Substitute ``row`` for ``entity_id``/)
+  })
+
+  it('a resolved record is never silently re-applied — the other half of "decide again"', () => {
+    // The copy says you decide again from the OTHER SIDE, not by re-resolving here, and the backend
+    // enforces exactly that.
+    expect(py('durability/conflict_resolve.py')).toMatch(
+      /``already_resolved``\s*the record was reviewed already \(never re-applied silently\)/,
+    )
   })
 })
