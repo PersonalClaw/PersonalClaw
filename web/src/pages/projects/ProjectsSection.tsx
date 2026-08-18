@@ -1,4 +1,5 @@
 import { useEffect, useId, useState } from 'react'
+import { MoreRow } from '../../ui/MoreRow'
 import { useQueryParam, type RouteProps } from '../../app/useQueryState'
 import { AnimatePresence, motion } from 'framer-motion'
 import { ContextMenu, type ContextMenuItem } from '../../ui/motion'
@@ -284,6 +285,7 @@ function ProjectPeekBody({ id, project, onOpen }: { id: string; project: Project
                   <span className="min-w-0 flex-1 truncate text-on-surface text-[0.8125rem]">{tl.name}</span>
                 </div>
               ))}
+              <MoreRow total={taskLists.length} shown={6} />
             </div>
           </Section>
         )}
@@ -301,6 +303,7 @@ function ProjectPeekBody({ id, project, onOpen }: { id: string; project: Project
                       <span className="shrink-0 text-[0.75rem]" style={{ color: statusTone(w.status) }}>{w.status}</span>
                     </div>
                   ))}
+                  <MoreRow total={linked.loops.length + linked.code.length} shown={10} />
                 </div>
               </Section>
             )}
@@ -314,6 +317,7 @@ function ProjectPeekBody({ id, project, onOpen }: { id: string; project: Project
                       {c.running && <span className="shrink-0 text-primary text-[0.75rem]">running</span>}
                     </div>
                   ))}
+                  <MoreRow total={linked.chats.length} shown={8} />
                 </div>
               </Section>
             )}
@@ -327,6 +331,7 @@ function ProjectPeekBody({ id, project, onOpen }: { id: string; project: Project
                       <span className="shrink-0 text-on-surface-low text-[0.75rem]">{a.kind}</span>
                     </div>
                   ))}
+                  <MoreRow total={linked.artifacts.length} shown={8} />
                 </div>
               </Section>
             )}
