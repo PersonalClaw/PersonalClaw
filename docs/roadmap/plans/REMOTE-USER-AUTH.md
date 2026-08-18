@@ -92,7 +92,8 @@ no longer logs you out); each later session is opt-in.
   `config_dir()/auth/sessions.json` (0600) so a valid cookie keeps working across restarts.
   **No change to how tokens are obtained** — the `?token=` link, `personalclaw token`, and
   the desktop sidecar behave identically; they just stop dying on restart. This is the
-  foundation MOBILE-COMPANION device tokens + COMPANION-APPS pairing build on. Fail-closed:
+  foundation COMPANION-APPS' device sessions + unified pairing build on (MOBILE-COMPANION
+  consumes them through plan 54, which owns that mechanism — `CA-3`). Fail-closed:
   a corrupt `sessions.json` refuses those sessions (re-auth), it does **not** fall open;
   a corrupt/absent `signing_key` regenerates + logs (one round of forced re-login, same as
   today's every-restart behavior — no regression).

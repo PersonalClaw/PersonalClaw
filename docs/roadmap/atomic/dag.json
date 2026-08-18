@@ -4069,7 +4069,7 @@
         {
           "id": "CA-3",
           "title": "S1 supersession reconciliation: fold MOBILE-COMPANION C1/C4 into this pairing contract",
-          "status": "todo",
+          "status": "done",
           "scope": "Session 1 T1.3; edits docs/roadmap/plans/MOBILE-COMPANION.md (this plan owns device session + pairing)",
           "done_when": "the two plans reference one pairing mechanism; grep shows no second/parallel device-token design surviving (Success Criterion 1)",
           "deps": []
@@ -5841,7 +5841,7 @@
           "title": "S4 Capacitor shell wrapping the served companion route",
           "status": "todo",
           "scope": "Sessions 4-6 Wrapper tier \u2014 T4.1 Capacitor shell",
-          "done_when": "A Capacitor shell (new mobile/ dir; repo-location decision recorded) wraps the served companion URL with config for gateway URL + device token and native safe-areas, no forked UI; builds for iOS+Android and renders the live companion.",
+          "done_when": "A Capacitor shell (new mobile/ dir; repo-location decision recorded) wraps the served companion URL with config for gateway URL + device session and native safe-areas, no forked UI; builds for iOS+Android and renders the live companion.",
           "deps": [
             "MC-3",
             "MC-2"
@@ -7448,11 +7448,6 @@
       {
         "id": "CA-1",
         "title": "S1 backend: unified pairing routes (C2) + Devices registry over REMOTE-USER-AUTH session rows",
-        "plan": "CA"
-      },
-      {
-        "id": "CA-3",
-        "title": "S1 supersession reconciliation: fold MOBILE-COMPANION C1/C4 into this pairing contract",
         "plan": "CA"
       },
       {
@@ -9902,9 +9897,9 @@
         "code": "CA",
         "plan": "COMPANION-APPS",
         "total_atoms": 9,
-        "done": 2,
+        "done": 3,
         "in_progress": 0,
-        "todo": 7,
+        "todo": 6,
         "blocked": 0
       },
       {
