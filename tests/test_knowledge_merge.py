@@ -308,6 +308,149 @@ def test_duplicates_never_return_the_embedding(store):
         assert b == row["id"]
 
 
+def _dated(store, item_id, created_at):
+    """Pin `created_at` — the recency ORDER is the whole subject of the next test."""
+    store.db.execute("UPDATE items SET created_at = ? WHERE id = ?", (created_at, item_id))
+    store.db.commit()
+
+
+def test_a_duplicate_OLDER_than_the_result_limit_is_still_surfaced(store):
+    """🔴 THE SECOND SILENT-EMPTY PATH ON THIS SURFACE, and the reason the scan is no longer
+    bounded by recency.
+
+    `find_duplicates` used to delegate to `find_fuzzy_dup_candidates`, which is
+    `ORDER BY created_at DESC LIMIT ?` — a correct bound for the INGEST path, where the anchor is
+    the row being ingested and the cosine loop must stay cheap. Read on demand for the UI, that cap
+    spends the caller's `limit` on *how many items get scored at all*, newest first. So the ONE
+    shape this panel exists for — an old copy and a new copy of the same document, with the library
+    grown since — is exactly the shape it could not see: the old copy sits below the recency window
+    and is never compared. Measured before the fix, at this test's own corpus size: `[]`.
+
+    It fails the same way the `is_duplicate` typo did, which is why it survived that fix: on a
+    surface where "no duplicates" is the right answer for almost every item, a scan that never
+    looked and a scan that found nothing print the same empty list.
+    """
+    old = _item(store, "Rust async book notes")
+    _dated(store, old, "2020-01-01T00:00:00")
+    _embed(store, old, [1.0, 0.0])
+
+    # A library that has grown well past the default result limit since. Same type and embedded,
+    # so every one of these outranks `old` in the old recency-ordered candidate window.
+    filler = []
+    for i in range(30):
+        n = _item(store, f"Unrelated note {i}")
+        _dated(store, n, f"2026-01-{i + 1:02d}T00:00:00")
+        _embed(store, n, [0.0, 1.0])
+        filler.append(n)
+
+    new = _item(store, "Rust async book notes")
+    _dated(store, new, "2026-08-01T00:00:00")
+    _embed(store, new, [0.995, 0.0999])
+
+    # 🪤 VACUITY FLOOR — without this the test stops testing the window the moment the default
+    # limit rises above the corpus size, and would then pass for the wrong reason forever.
+    default_limit = 25
+    eligible = store.db.execute(
+        "SELECT COUNT(*) AS c FROM items WHERE item_type = 'note' AND embedding IS NOT NULL"
+    ).fetchone()["c"]
+    assert eligible > default_limit, (
+        f"{eligible} embedded candidates does not exceed the default limit of {default_limit} — "
+        "this corpus no longer reaches past the window it exists to test"
+    )
+    assert len(filler) == 30
+
+    found = store.find_duplicates(new)
+    assert [r["id"] for r in found] == [
+        old
+    ], "the older copy is the duplicate; a recency-capped scan reports no duplicates at all"
+
+
+def test_duplicates_are_ordered_STRONGEST_first_not_newest(store):
+    """ "Best match first" was a docstring's word, never code: the rows came back in the candidate
+    prefilter's `created_at DESC` order, so the weakest match could head a list the UI renders
+    top-down next to a delete button. The near-identical copy is dated OLDEST here precisely so
+    recency and strength disagree — under the old order this asserts backwards."""
+    anchor = _item(store, "Kubernetes operator guide")
+    _dated(store, anchor, "2026-03-01T00:00:00")
+    _embed(store, anchor, [1.0, 0.0, 0.0])
+
+    strong = _item(store, "Kubernetes operator guide")
+    _dated(store, strong, "2020-01-01T00:00:00")  # oldest
+    _embed(store, strong, [0.9999, 0.0141, 0.0])  # cosine ≈ 0.9999
+
+    weak = _item(store, "Kubernetes operator guide")
+    _dated(store, weak, "2026-02-01T00:00:00")  # newer than `strong`
+    _embed(store, weak, [0.91, 0.4146, 0.0])  # cosine ≈ 0.910, just over the 0.90 floor
+
+    found = store.find_duplicates(anchor)
+    assert len(found) == 2, "both must clear the gates or the ordering claim is untested"
+    assert [r["id"] for r in found] == [strong, weak]
+    assert found[0]["similarity"] > found[1]["similarity"]
+
+
+def test_each_candidate_carries_its_OWN_measured_similarity(store):
+    """The reason is what the UI shows to justify a delete, and it used to be one constant.
+
+    `DupVerdict.reason` on the positive branch is the literal "fuzzy dup
+    (filename+cosine+date-gate)" — identical for a 0.90 match and a 1.00 one, naming the rule
+    rather than the match. The verdict's two measured numbers were dropped on the floor. So the
+    UI's stated purpose for rendering it ("the scorer's own account … so the claim is reviewable")
+    was carried by text that reviews nothing. The floor here is DIFFERENCE: two candidates of
+    visibly different strength must not read identically.
+    """
+    anchor = _item(store, "Kubernetes operator guide")
+    _embed(store, anchor, [1.0, 0.0, 0.0])
+    strong = _item(store, "Kubernetes operator guide")
+    _embed(store, strong, [0.9999, 0.0141, 0.0])
+    weak = _item(store, "Kubernetes operator guide")
+    _embed(store, weak, [0.91, 0.4146, 0.0])
+
+    found = store.find_duplicates(anchor)
+    assert len(found) == 2
+    reasons = [r["reason"] for r in found]
+    assert len(set(reasons)) == 2, f"one constant for every row reviews nothing: {reasons}"
+    # Both share the anchor's title exactly — the defining case, so it is named, not scored 1.00.
+    assert all(r.startswith("Same title · content similarity ") for r in reasons), reasons
+    assert reasons[0] == "Same title · content similarity 0.99"
+    assert reasons[1] == "Same title · content similarity 0.91"
+    # TRUNCATED, never rounded: 0.9999 must not print as 1.00 next to a delete button.
+    assert found[0]["similarity"] > 0.999
+
+
+def test_limit_caps_RESULTS_and_keeps_the_strongest(store):
+    """`limit` is what the route clamps and the UI means: how many candidates to SHOW. It used to
+    be spent on how many to look at, which is why it could return zero of three."""
+    anchor = _item(store, "Kubernetes operator guide")
+    _embed(store, anchor, [1.0, 0.0, 0.0])
+    ranked = []
+    for vec in ([0.9999, 0.0141, 0.0], [0.99, 0.1411, 0.0], [0.95, 0.3122, 0.0]):
+        d = _item(store, "Kubernetes operator guide")
+        _embed(store, d, vec)
+        ranked.append(d)
+
+    assert len(store.find_duplicates(anchor)) == 3, "all three must qualify, or the cap is untested"
+    top2 = store.find_duplicates(anchor, limit=2)
+    assert [r["id"] for r in top2] == ranked[:2]
+
+
+def test_a_dissimilar_title_is_never_scored_however_close_the_vectors(store):
+    """The counter-test for the unbounded scan: reach grew, the RULE did not. The filename leg is
+    now the prefilter, so this also pins that phase 1 gates at the resolver's own threshold — a
+    prefilter that let everything through would turn every embedded item into a cosine comparison
+    and every close vector into a proposed deletion."""
+    anchor = _item(store, "Rust async book notes")
+    _embed(store, anchor, [1.0, 0.0])
+    twin = _item(store, "Sourdough starter log")  # identical vector, unrelated title
+    _embed(store, twin, [1.0, 0.0])
+
+    assert store.find_duplicates(anchor) == []
+    # Vacuity floor: the vectors really are identical, so only the title leg can be refusing.
+    from personalclaw.knowledge.dedup import cosine_similarity
+
+    assert cosine_similarity([1.0, 0.0], [1.0, 0.0]) == pytest.approx(1.0)
+    assert twin  # the candidate exists and is embedded; it is gated, not absent
+
+
 # ── The HTTP routes the UI drives (KL-6) ────────────────────────────────
 #
 # Everything above proves the STORE. The frontend cannot call the store — it calls

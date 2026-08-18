@@ -226,6 +226,16 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
   Finally, restoring a conversation no longer quietly swaps your pinned model: a provider app that
   serves a model family is now recognized as serving it instead of only the providers built into
   PersonalClaw.
+- **"Possible duplicates" only looked at your 25 newest items.** The panel that tells you a second
+  copy of a knowledge item exists compared it against a handful of the most recently added items of
+  the same kind — so the case it exists for, an old copy and a new copy of the same document with a
+  grown library in between, was the case it could not see. It said nothing, which looks exactly like
+  having no duplicates. It now checks every item in the library: titles are compared first (cheap),
+  and the expensive content comparison runs only on what a title match survives — on a
+  2,000-item library the whole check takes about 15 ms and finds the duplicate, where the old
+  25-item version took 6 ms and found nothing. Candidates are also listed strongest match first, and each one now says
+  how similar it actually is ("Same title · content similarity 0.99") instead of repeating one fixed
+  phrase for every match, weak or near-identical.
 
 - **Your ready-task list was in no particular order.** The list behind **Tasks → Ready** (and the
   same list an agent reads when it asks what to work on next) came back in whatever order the store

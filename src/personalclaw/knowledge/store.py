@@ -81,6 +81,30 @@ def _fts_tags(names: list[str]) -> str:
     return " ".join(names)
 
 
+def _sim2(value: float) -> str:
+    """A similarity as two decimals, TRUNCATED rather than rounded — 0.999 must not print as
+    "1.00" on a surface whose next control deletes a document. Rounding up to a flat 1.00 tells
+    the user the two copies are identical, which is a stronger claim than the scorer made."""
+    return f"{int(max(0.0, min(1.0, value)) * 100) / 100:.2f}"
+
+
+def _dup_reason(filename_sim: float, cosine: float) -> str:
+    """The per-candidate account of a near-duplicate match, as the UI renders it verbatim.
+
+    This is UI copy that happens to live in Python, so it is written for the person deciding
+    whether to delete one of two documents — not as the rule's internal name. It replaced
+    ``DupVerdict.reason``, which on the positive branch is a single constant
+    ("fuzzy dup (filename+cosine+date-gate)") shown identically for a 0.90 match and a 1.00 one.
+
+    The exact-title case is the DEFINING one, not an edge case: the filename leg gates at 0.85
+    Jaccard over date-stripped stems, so a surfaced candidate very often shares the anchor's
+    title outright. "Title similarity 1.00" is a strange way to say that, so it says "Same title"
+    and spends the words on the leg the user cannot see for themselves.
+    """
+    title = "Same title" if filename_sim >= 1.0 else f"Title similarity {_sim2(filename_sim)}"
+    return f"{title} · content similarity {_sim2(cosine)}"
+
+
 def normalize_url(url: str) -> str:
     """Canonicalize a URL for dedup: lowercase scheme+host, drop a default port and a
     bare trailing slash, sort query params and strip marketing/tracking ones, drop the
@@ -1428,67 +1452,145 @@ class KnowledgeStore:
         return out
 
     def find_duplicates(self, item_id: str, *, limit: int = 25) -> list[dict]:
-        """Near-duplicates of *item_id*, best match first — the surfacing half of T3.2.
+        """Near-duplicates of *item_id*, STRONGEST MATCH FIRST — the surfacing half of T3.2.
 
-        Wraps the existing TIER-2 prefilter + `dedup.resolve_duplicate` scorer rather than
+        Uses the same `dedup.resolve_duplicate` scorer as the ingest-time pipeline rather than
         inventing a second notion of "duplicate": the resolver already encodes the real rule
         (filename/title similarity AND cosine AND the same series-date token), and a second
         heuristic here would disagree with the ingest-time dedup in ways nobody could explain.
 
-        Returns lean dicts (`id`, `title`, `item_type`, `created_at`, `word_count`, `reason`)
-        — never the embedding, which is megabytes of floats no caller needs. Items without an
-        embedding are simply absent: an un-embedded item cannot be scored, and guessing from
-        titles alone is how a merge UI proposes destroying two unrelated documents.
-        """
-        from personalclaw.knowledge.dedup import resolve_duplicate
+        🔴 IT DOES **NOT** REUSE `find_fuzzy_dup_candidates`, AND THAT IS THE POINT OF THIS
+        METHOD'S SHAPE. That prefilter is `ORDER BY created_at DESC LIMIT ?` — a deliberate,
+        correct bound for the INGEST path, where the anchor is the row being ingested right now
+        and a bounded Python cosine loop matters. Read on demand for a UI, the same cap silently
+        answers a DIFFERENT question: it spends the caller's `limit` on *how many items are even
+        looked at*, newest first, so a duplicate that is not among the N newest same-type embedded
+        items is never scored at all. Measured on a 32-item library: an exact-title pair scoring
+        `is_dup=True`, `filename_sim=1.0`, `cosine=0.9950` returned `[]` at the shipped default
+        `limit=25` — and the route caps `limit` at 50, so past ~50 items the panel whose entire job
+        is to say "a second copy exists" said "no duplicates" permanently. That is the SECOND
+        silent-empty path on this one surface (the first was the `is_duplicate` typo below), and
+        both fail the same way: the honest answer and the broken answer are the same empty list.
 
+        So the scan is now bounded by the RULE instead of by recency, in two phases:
+
+        1. The filename leg over the WHOLE eligible corpus — cheap title/path columns only, no
+           `LIMIT`, no blob reads. `dedup.filename_similarity` at `dedup.FILENAME_SIM_MIN`, the
+           resolver's own metric at the resolver's own number.
+        2. Embeddings decoded and cosine scored ONLY for what survives phase 1. This is strictly
+           less blob work than before (which decoded up to 25 unconditionally) while being
+           unbounded in reach: to be missed now you would need the anchor's own title to be
+           <85% similar to the duplicate's, which is exactly the case the rule calls "not a dup".
+
+        `limit` therefore caps RESULTS — what the route and the UI have always meant by it.
+
+        Returns lean dicts (`id`, `title`, `item_type`, `created_at`, `word_count`, `reason`,
+        `similarity`, `title_similarity`) — never the embedding, which is megabytes of floats no
+        caller needs. Items without an embedding are simply absent: an un-embedded item cannot be
+        scored, and guessing from titles alone is how a merge UI proposes destroying two unrelated
+        documents.
+        """
+        from personalclaw.knowledge.dedup import (
+            FILENAME_SIM_MIN,
+            filename_similarity,
+            resolve_duplicate,
+        )
+        from personalclaw.knowledge.embedder import bytes_to_floats
+
+        _COLS = (
+            "id, title, file_path, summary, item_type, word_count, "
+            "LENGTH(content) AS content_len, processing_status, created_at, embedding"
+        )
         anchor_row = self.db.execute(
-            "SELECT id, title, file_path, summary, item_type, word_count, "
-            "processing_status, created_at, embedding FROM items WHERE id = ?",
-            (item_id,),
+            f"SELECT {_COLS} FROM items WHERE id = ?", (item_id,)
         ).fetchone()
         if anchor_row is None:
             return []
-        from personalclaw.knowledge.embedder import bytes_to_floats
-
         anchor = dict(anchor_row)
         anchor["embedding"] = bytes_to_floats(anchor.get("embedding") or b"")
         if not anchor["embedding"]:
             return []
+        anchor_name = anchor.get("title") or anchor.get("file_path") or ""
 
-        out: list[dict] = []
-        for cand in self.find_fuzzy_dup_candidates(item_id, limit=limit):
-            try:
-                verdict = resolve_duplicate(cand, anchor)
-            except Exception:
-                logger.debug("dup scoring failed for %s", cand.get("id"), exc_info=True)
-                continue
-            # 🔴 `verdict.is_dup`, read DIRECTLY. This was
-            # `getattr(verdict, "is_duplicate", False)` — a field `DupVerdict` does not have, so
-            # the default won on every comparison and `find_duplicates` returned an empty list for
-            # EVERY input, however identical the two items were. Found by driving it: a pair with
-            # `filename_sim=1.0` and `cosine=0.9949` scored `is_dup=True` and still surfaced
-            # nothing. The three tests that existed were all negative or vacuous (no-embedding,
-            # unknown-item, and a never-return-the-embedding loop that iterated ZERO rows), so the
-            # inert half read as covered. The other consumer of this verdict
-            # (`pipeline/runner.py`) had it right all along.
-            #
-            # The `getattr` indirection is what made a typo silent, so it is gone rather than
-            # spelled correctly: an attribute access on a dataclass RAISES when the name is wrong,
-            # which is the behaviour a scorer's verdict field deserves. Same for `reason` below.
-            if not verdict.is_dup:
-                continue
-            out.append(
-                {
-                    "id": cand["id"],
-                    "title": cand.get("title") or "",
-                    "item_type": cand.get("item_type") or "",
-                    "created_at": cand.get("created_at") or "",
-                    "word_count": cand.get("word_count") or 0,
-                    "reason": verdict.reason or "near-duplicate",
-                }
-            )
-        return out
+        # Phase 1 — the free leg, over everything. Same eligibility as the ingest prefilter
+        # (active, unarchived, same type, embedded, not the anchor) so the two paths agree on
+        # WHICH items are comparable; they differ only in how many they are willing to score.
+        gated = [
+            r["id"]
+            for r in self.db.execute(
+                "SELECT id, title, file_path FROM items "
+                "WHERE status = 'active' AND COALESCE(is_archived, 0) = 0 "
+                "AND item_type = ? AND embedding IS NOT NULL AND id != ?",
+                (anchor["item_type"], item_id),
+            ).fetchall()
+            if filename_similarity(r["title"] or r["file_path"] or "", anchor_name)
+            >= FILENAME_SIM_MIN
+        ]
+        if not gated:
+            return []
+
+        # Phase 2 — the paid leg, only for those. Chunked so a library with hundreds of
+        # near-identically-titled items cannot trip sqlite's variadic-parameter ceiling.
+        scored: list[tuple[float, float, dict]] = []
+        for start in range(0, len(gated), 400):
+            batch = gated[start : start + 400]
+            placeholders = ",".join("?" * len(batch))
+            for row in self.db.execute(
+                f"SELECT {_COLS} FROM items WHERE id IN ({placeholders})", batch
+            ).fetchall():
+                cand = dict(row)
+                cand["embedding"] = bytes_to_floats(cand.get("embedding") or b"")
+                try:
+                    verdict = resolve_duplicate(cand, anchor)
+                except Exception:
+                    logger.debug("dup scoring failed for %s", cand.get("id"), exc_info=True)
+                    continue
+                # 🔴 `verdict.is_dup`, read DIRECTLY. This was
+                # `getattr(verdict, "is_duplicate", False)` — a field `DupVerdict` does not have,
+                # so the default won on every comparison and `find_duplicates` returned an empty
+                # list for EVERY input, however identical the two items were. Found by driving it:
+                # a pair with `filename_sim=1.0` and `cosine=0.9949` scored `is_dup=True` and
+                # still surfaced nothing. The three tests that existed were all negative or vacuous
+                # (no-embedding, unknown-item, and a never-return-the-embedding loop that iterated
+                # ZERO rows), so the inert half read as covered. The other consumer of this verdict
+                # (`pipeline/runner.py`) had it right all along.
+                #
+                # The `getattr` indirection is what made a typo silent, so it is gone rather than
+                # spelled correctly: an attribute access on a dataclass RAISES when the name is
+                # wrong, which is the behaviour a scorer's verdict field deserves.
+                if not verdict.is_dup:
+                    continue
+                scored.append(
+                    (
+                        verdict.cosine,
+                        verdict.filename_sim,
+                        {
+                            "id": cand["id"],
+                            "title": cand.get("title") or "",
+                            "item_type": cand.get("item_type") or "",
+                            "created_at": cand.get("created_at") or "",
+                            "word_count": cand.get("word_count") or 0,
+                            # 🪤 THE REASON IS PER-CANDIDATE, NOT THE RULE'S NAME. It used to be
+                            # `verdict.reason`, which on the positive branch is the one constant
+                            # string "fuzzy dup (filename+cosine+date-gate)" for every row in
+                            # existence — so the UI's stated purpose for showing it ("the scorer's
+                            # own account of the match … so a destructive merge is reviewable")
+                            # was carried by text that reviews nothing and is identical whether
+                            # the match scored 0.90 or 1.00. The two numbers the verdict already
+                            # measured were dropped on the floor here. They now travel, both as
+                            # this sentence and as fields, and they are what the list is ordered
+                            # by — so "strongest first" is a claim the payload can be checked
+                            # against instead of a docstring's word.
+                            "reason": _dup_reason(verdict.filename_sim, verdict.cosine),
+                            "similarity": round(verdict.cosine, 4),
+                            "title_similarity": round(verdict.filename_sim, 4),
+                        },
+                    )
+                )
+        # Strongest first: cosine leads (the semantic leg is the one that separates a re-download
+        # from a rewrite), filename similarity breaks ties, then id for a stable total order.
+        scored.sort(key=lambda t: (-t[0], -t[1], t[2]["id"]))
+        return [d for _, _, d in scored[: max(1, int(limit))]]
 
     def merge_items(self, keep_id: str, merge_id: str) -> dict:
         """Fold *merge_id* into *keep_id*, then delete it. Returns what moved.
