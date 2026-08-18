@@ -1,10 +1,23 @@
-"""Usage-ledger read routes (COST-AND-TOKEN-OBSERVABILITY CATO-5).
+"""Usage read routes — the per-turn ledger (CATO-5) plus the per-day spend fold (MRT-3).
 
-Two GETs over the per-turn cost/token ledger (``usage_ledger``): a grouped rollup
-and the grand totals. Read-only — this plan is observation, never enforcement, so
-there is no write/mutate route here. Errors use the §2.2 ``{error:{code,message}}``
-envelope. The surfaces that render this (S2: turn readout, session header, Usage
-panel) are later atoms; this is the data they read.
+Three read-only GETs, deliberately in ONE module because they answer one user question ("what did
+this cost me?") at different grains, and a second usage handler module would split that answer:
+
+* ``/api/usage/rollup`` + ``/api/usage/totals`` (CATO-5) — the per-TURN ledger
+  (``usage_ledger``), filterable by session and an arbitrary ``[since, until)`` window. The
+  session/turn-grain forensic view.
+* ``/api/usage`` (MRT-3) — the per-DAY durable fold (``routing/usage.py``) over BOTH recorded
+  stores: the ledger's streamed turns AND ``model_calls.jsonl``'s guarded ``complete()`` attempts,
+  which the two routes above cannot see at all (the ledger has no row for them, so the entire
+  unattended axis was invisible spend). Grouped by model / provider / purpose under the single
+  ``interactive|background|loop|eval|app`` vocabulary.
+
+The overlap is intentional and bounded: the fold is the long-horizon record (both JSONLs are
+capped), the rollup is the recent per-session detail. Neither derives from the other, and only the
+fold claims to cover both axes.
+
+Read-only throughout — this is observation, never enforcement, so there is no write/mutate route
+here. Errors use the §2.2 ``{error:{code,message}}`` envelope.
 """
 
 from __future__ import annotations
@@ -14,6 +27,7 @@ import logging
 from aiohttp import web
 
 from personalclaw import usage_ledger as ul
+from personalclaw.routing import usage as usage_fold
 
 logger = logging.getLogger(__name__)
 
@@ -69,6 +83,38 @@ async def api_usage_totals(request: web.Request) -> web.Response:
     return web.json_response({"since": since, "until": until, "session": session, "totals": totals})
 
 
+async def api_usage(request: web.Request) -> web.Response:
+    """GET /api/usage?window=day|week|month&group=model|provider|purpose — the per-day spend fold.
+
+    Returns ``{rows, total, estimated_share, series, unmapped, …}``. Every call refreshes the fold
+    from the two source JSONLs first, so a deleted ``usage_stats.json`` self-heals here (the fold's
+    "reproducible after delete" contract) and a day that has aged out of the capped JSONL survives.
+
+    ``estimated_share`` is the dollar-weighted fraction of the figure that is a rate-table estimate
+    rather than a provider-reported charge; ``priced: false`` + ``unpriced_calls`` mark a total that
+    is a FLOOR because some model has no price row. The two are separate on purpose — an unpriced
+    model must never read as "$0 spent".
+    """
+    window = request.query.get("window", "day")
+    if window not in usage_fold.WINDOW_DAYS:
+        return _bad_request(f"window must be one of {list(usage_fold.WINDOW_DAYS)}, got {window!r}")
+    group = request.query.get("group", "model")
+    if group not in usage_fold.GROUPS:
+        return _bad_request(f"group must be one of {list(usage_fold.GROUPS)}, got {group!r}")
+    try:
+        from personalclaw.config.loader import config_dir
+
+        fold = usage_fold.refresh(config_dir())
+    except Exception:  # noqa: BLE001 — a read-only spend view must never 500 on a bad fold
+        logger.debug("usage fold refresh failed", exc_info=True)
+        return web.json_response(
+            {"error": {"code": "internal", "message": "could not read the usage fold"}},
+            status=500,
+        )
+    return web.json_response(usage_fold.query(fold, window=window, group=group))
+
+
 def register_usage_routes(app: web.Application) -> None:
+    app.router.add_get("/api/usage", api_usage)
     app.router.add_get("/api/usage/rollup", api_usage_rollup)
     app.router.add_get("/api/usage/totals", api_usage_totals)

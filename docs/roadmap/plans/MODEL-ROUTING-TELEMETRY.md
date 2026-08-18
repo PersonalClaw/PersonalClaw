@@ -502,3 +502,62 @@ Folded into **Session 1** as its second half (Session 1 was already "telemetry r
   partition** explicitly, with a disjointness test per writer. (a) is the smallest honest change and
   keeps one answer to "what did this cost me"; (b) is the only path that makes the atom's literal
   done_when true; (c) is the most expensive and the easiest to drift.
+
+## Execution log — MRT-3 (usage/spend read model) — BUILT, resolving the BLOCKED above
+
+- **The BLOCKED entry's scope question is answered by choosing its option (a), extended.** That
+  entry offered three ways out: (a) retire MRT-3's fold and make the amendment additive to CATO,
+  (b) widen the attempt audit and retire CATO's ledger, (c) keep both records and define the
+  partition. **(c) was attempted first and abandoned on measurement**: a cross-store union needs a
+  join key to deduplicate, and there is none — a turn row carries no `audit_id` and an attempt row
+  carries no session key — so the ④ loop overlap (a loop's inner inference is recorded in BOTH) is
+  not merely hard to reconcile, it is undetectable at fold time. A money total that can
+  double-count with no way to notice is worse than one that admits a gap. So the fold sums the
+  **ledger only** (the record that covers interactive chat, per ①) and **censuses** the attempt
+  audit into `fold["uncounted"]`, which the route and the UI both state out loud with its size.
+  Option (b) remains the only path to the atom's literal `done_when`; it is a class-B clean break
+  across five writers and is not this atom.
+
+- **Built.** `routing/usage.py` (fold + `audit_census` + `query` + `usage_recap`), `GET /api/usage`
+  added to the EXISTING `dashboard/handlers/usage.py` (one usage handler module, three GETs — a
+  sibling module would have split "what did this cost me" across two files), and a
+  "By day and purpose" `Section` inside the shipped `UsagePanel` (no new page shell, no second
+  Usage tab). `usage_stats.json` is per-day `date -> provider:model -> purpose`; the purpose
+  vocabulary is mapped from the ledger's `source`, with an unrecognized source correctly read as an
+  **app name** (`chat_runner` sets `source = session._app or "chat"`) and censused in
+  `app_sources` — so `app` has a real producer, correcting the BLOCKED entry's ② for the ledger axis.
+  Tests: `tests/test_routing_usage.py` (20), `tests/test_usage_routes.py` (+7, 13 total),
+  `web/src/pages/settings/usageFoldSection.test.tsx` (9).
+
+- **DEVIATION — the fixture is 50 LEDGER lines, not 50 audit lines.** The clause says "a
+  hand-computed fixture over 50 audit lines"; the audit is no longer the fold's input, so the
+  hand-computed fixture is 50 `usage/turns.jsonl` rows (expected cells written out by hand, with a
+  stubbed rate table so the expectation cannot drift with shipped price defaults) plus a separately
+  hand-computed 12-row audit census. `test_a_guarded_attempt_is_censused_never_summed` proves the
+  audit contributes to no money figure: the fold is byte-identical with and without the audit file.
+
+- **DEVIATION — `estimated_share` is 1.0 for every row today, and that is honest, not inert.**
+  `TurnUsage` has no "estimated" flag, so a rate-derived cost is indistinguishable from a
+  provider-reported one and the fold treats every turn dollar as an estimate (over-disclosing an
+  estimate is safe; claiming absent precision is not). The per-cell `estimated_dollars` is kept, so
+  the share drops below 1.0 the moment a writer marks a reported cost. Separately measured and
+  worth a follow-up: `guardrails/model_call.py` sets `estimated=True` unconditionally on every
+  attempt row while its own comment says "unless the provider reported a real cost_usd" — a
+  wired-but-constant flag, out of this atom's fence.
+
+- **NOT BUILT — the recap's DELIVERY.** `usage_recap(month)` renders and is pinned verbatim, but the
+  `digest`-mode notification through the rules engine and the system-cron registration are outside
+  this atom's file fence (they live at the cron registration site, not in `routing/usage.py`). The
+  renderer is a pure function of the fold, so wiring it later needs no rework here.
+
+- **NOT BUILT, deliberately — the run/loop-detail "~$X this run" line.** The BLOCKED entry's ⑤ is
+  correct and re-verified: `SpendMeter._run_totals` is in-memory and `end_run` pops it, so a
+  FINISHED run reads `_ScopeTotal()` → `0.0`. Wiring a run-detail money line to `run_totals` as the
+  atom specifies would render "~$0.00 this run" — the one thing a money surface must never do. The
+  durable equivalent already ships (`WorkflowRunStats.cost_usd`, rendered by
+  `IntrospectPanel.tsx:261` as the atom's own string, verbatim), so this clause is satisfied by
+  existing code rather than duplicated.
+
+- **Also corrected while here:** `UsagePanel`'s header claimed the ledger covered "every turn (chat,
+  subagents, loops, automations)". It does not cover guarded `complete()` calls, so the copy
+  overstated its own coverage; it now says what is excluded and points at the section that sizes it.
