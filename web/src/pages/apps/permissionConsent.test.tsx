@@ -192,17 +192,23 @@ describe('PermissionList — declared proposal kinds are disclosed as enforced',
   })
 })
 
-// ── APE-1: backgroundTasks + eventSubscriptions are disclosed WITHOUT claiming
-//    enforcement ─────────────────────────────────────────────────────────────────────
+// ── APE-1/APE-2: the two grants have SPLIT, and the panel has to say which is which ──
 //
-// A third case, and the reason this file exists. `appMessaging`/`desktop`/`proposals` are
-// enforced, so they belong in the bullets. `network` is unenforceable in principle, so it
-// gets an always-on advisory row. These two are enforced by NOTHING TODAY because the
-// runtimes are not built: no core code hosts an app worker (APE-3) and no platform event
-// is delivered to any app, declared or not (APE-2's registry). Two readings to kill:
+// This file exists for the third case: a grant that is declared at install and enforced by
+// nothing. `appMessaging`/`desktop`/`proposals` are enforced, so they belong in the
+// bullets. `network` is unenforceable in principle, so it gets an always-on advisory row.
+// Under APE-1 both `backgroundTasks` and `eventSubscriptions` were the third case.
 //
-//  1. Listing them among "Permissions the gateway enforces" — the D2 defect verbatim, and
-//     worse here, because there is not even a partial mechanism behind them.
+// APE-2 shipped the platform event registry, so `eventSubscriptions` is now ENFORCED —
+// `apps/app_events.emit` is the only path a platform event reaches an app by and it
+// consults `can_receive_platform_event` per app per event (deny by default, exact name).
+// It therefore MOVES into the enforced bullets. Leaving it in "Declared, not yet in
+// effect" would be the D2 defect inverted: understating a live capability, so the user
+// weighs a real grant as disclosure-only. `backgroundTasks` stays behind until APE-3 ships
+// a worker host. The two readings still to kill, now for `backgroundTasks` alone:
+//
+//  1. Listing it among "Permissions the gateway enforces" — the D2 defect verbatim, and
+//     worse here, because there is not even a partial mechanism behind it.
 //  2. Rendering nothing at all — the declaration is a STANDING grant that goes live with
 //     no second prompt once the host ships, so install is the user's only say.
 //
@@ -216,28 +222,32 @@ const PENDING_PAYLOAD: AppPermissionsWire = {
   eventSubscriptions: ['session.created', 'task.completed'],
 }
 
-describe('PermissionList — backgroundTasks/eventSubscriptions are declared, not enforced', () => {
-  it('keeps both OUT of the enforced bullets', () => {
+describe('PermissionList — eventSubscriptions is enforced, backgroundTasks is not', () => {
+  it('puts platform events IN the enforced bullets, naming every event', () => {
+    // A subscription the user cannot see is a grant they did not weigh, so each declared
+    // name is rendered verbatim rather than counted.
+    const rows = enforcedRows(render(<PermissionList perms={PENDING_PAYLOAD} />).container)
+    expect(rows.some((r) => /Receive platform events: session\.created, task\.completed/.test(r))).toBe(true)
+  })
+
+  it('keeps backgroundTasks OUT of the enforced bullets', () => {
     const { container } = render(<PermissionList perms={PENDING_PAYLOAD} />)
     const rows = enforcedRows(container)
     expect(rows.some((r) => /background worker/i.test(r))).toBe(false)
-    expect(rows.some((r) => /platform event/i.test(r))).toBe(false)
-    expect(rows.some((r) => /session\.created/.test(r))).toBe(false)
     // The vacuity floor: the enforced list still renders what IS enforced.
     expect(rows.some((r) => /Scheduled jobs/.test(r))).toBe(true)
   })
 
-  it('still discloses both, and says plainly that neither does anything yet', () => {
+  it('still discloses backgroundTasks, and says plainly that it does nothing yet', () => {
     const { container } = render(<PermissionList perms={PENDING_PAYLOAD} />)
     const text = container.textContent ?? ''
     expect(text).toMatch(/Declared, not yet in effect/)
     expect(text).toMatch(/Run a long-lived background worker/)
-    // Every declared event name is named — a subscription the user cannot see is a grant
-    // they did not weigh.
-    expect(text).toMatch(/Receive platform events: session\.created, task\.completed/)
     expect(text).toMatch(/grants the app nothing today/)
     // And that it becomes live later without a second prompt — the material fact.
     expect(text).toMatch(/without asking you again/)
+    // The caption must no longer claim platform events are undelivered: they are.
+    expect(text).not.toMatch(/deliver platform events yet/)
   })
 
   it('discloses each grant on its own, not only as a pair', () => {
@@ -245,8 +255,9 @@ describe('PermissionList — backgroundTasks/eventSubscriptions are declared, no
     expect(worker.container.textContent ?? '').toMatch(/Run a long-lived background worker/)
     expect(worker.container.textContent ?? '').not.toMatch(/Receive platform events/)
     const events = render(<PermissionList perms={{ eventSubscriptions: ['knowledge.ingested'] }} />)
-    expect(events.container.textContent ?? '').toMatch(/Receive platform events: knowledge\.ingested/)
-    expect(events.container.textContent ?? '').not.toMatch(/background worker/)
+    expect(enforcedRows(events.container).some((r) => /Receive platform events: knowledge\.ingested/.test(r))).toBe(true)
+    // …and an app that subscribes but declares no worker gets no pending block at all.
+    expect(events.container.textContent ?? '').not.toMatch(/Declared, not yet in effect/)
   })
 
   it('makes no claim at all for an app that declares neither', () => {
@@ -255,11 +266,13 @@ describe('PermissionList — backgroundTasks/eventSubscriptions are declared, no
     for (const perms of [{}, { cron: true }, { storage: true }]) {
       const { container } = render(<PermissionList perms={perms} />)
       expect(container.textContent ?? '').not.toMatch(/Declared, not yet in effect/)
+      expect(container.textContent ?? '').not.toMatch(/Receive platform events/)
     }
     // ...and an empty declaration is not mistaken for a declaration.
     const { container } = render(
       <PermissionList perms={{ backgroundTasks: false, eventSubscriptions: [] }} />,
     )
     expect(container.textContent ?? '').not.toMatch(/Declared, not yet in effect/)
+    expect(container.textContent ?? '').not.toMatch(/Receive platform events/)
   })
 })

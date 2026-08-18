@@ -393,6 +393,16 @@ class NativeTaskProvider(TaskProvider):
         # normal path for workflow-bound tasks, and a level-triggered fire would emit one hook per
         # rebuild.
         if edited is not None and getattr(edited, "_completed_edge", False):
+            # APE-2: the SAME completion edge is also the `task.completed` platform-event
+            # emit site — one edge, two observers (the user's `TaskComplete` hook below and
+            # apps that declared the subscription). Identifiers only: no title, so the
+            # event grants TIMING, not task content an app's `api` scope may not cover.
+            from personalclaw.apps.app_events import TASK_COMPLETED
+            from personalclaw.apps.app_events import emit as emit_platform_event
+
+            emit_platform_event(
+                TASK_COMPLETED, {"task_id": edited.id, "status": edited.status.value}
+            )
             await _fire_task_complete(edited)
         return edited
 

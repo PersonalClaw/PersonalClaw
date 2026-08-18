@@ -398,9 +398,11 @@ class Permissions:
     # gateway's own WS event-type allowlist gated by ``can_use_event``, while these are
     # core-emitted platform facts owned by the registry. Keeping them apart is what lets
     # APE-2's delivery filter be a closed set. Exact names only, no wildcard — like
-    # ``desktop`` and unlike ``appMessaging`` — so a typo denies rather than widens. NOT
-    # ENFORCED TODAY: no registry exists and no platform event is delivered to any app,
-    # declared or not. Same consent treatment as ``backgroundTasks`` above.
+    # ``desktop`` and unlike ``appMessaging`` — so a typo denies rather than widens.
+    # ENFORCED since APE-2: ``apps/app_events.emit`` is the only path a platform event
+    # reaches an app by, and it consults ``can_receive_platform_event`` per app per event
+    # (deny by default). So this one joins the permissions the gateway enforces at consent,
+    # unlike ``backgroundTasks`` above, whose host still does not exist.
     eventSubscriptions: list[str] = field(default_factory=list)  # noqa: N815
 
     def to_dict(self) -> dict[str, Any]:
