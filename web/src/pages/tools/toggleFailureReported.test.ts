@@ -33,11 +33,33 @@ const CODE = SRC.replace(/\{\/\*[\s\S]*?\*\/\}/g, '').replace(/\/\*[\s\S]*?\*\//
 const TOGGLE_WRITES = ['toggleMcpServer', 'toggleMcpTool', 'toggleTool', 'toggleToolProvider']
 
 describe('a tool toggle that fails tells the user', () => {
-  it('the reporter exists and follows removeServer’s own pattern', () => {
-    expect(CODE).toMatch(/async function reportingWrite\(what: string, run: \(\) => Promise<unknown>\): Promise<boolean>/)
-    expect(CODE, 'it unwraps a JSON error body like the sibling does')
-      .toMatch(/const p = JSON\.parse\(msg\); msg = p\.error \|\| msg/)
-    expect(CODE, 'and reports through the file’s existing toast').toMatch(/notify\(`Couldn't \$\{what\}: \$\{msg\}`, 'error'\)/)
+  it('the reporter is the SHARED one, and this file keeps no copy of it', () => {
+    // Re-pointed, not relaxed. The helper began here and moved to `app/reportingWrite` when
+    // `knowledge/KnowledgeListPage` became its second adopter — one implementation rather than two
+    // copies of nine lines. So the assertions move from "it is defined here" to "it is imported
+    // here, and no local definition shadows it".
+    expect(CODE, 'the shared contract is imported').toMatch(
+      /import \{ reportingWrite \} from '\.\.\/\.\.\/app\/reportingWrite'/,
+    )
+    const localDefs = [...CODE.matchAll(/(function|const)\s+reportingWrite\b\s*[=(]/g)]
+    expect(localDefs.length, 'a page-local copy would shadow the shared one silently').toBe(0)
+
+    // The contract itself, asserted where it now lives.
+    // 🪤 Strip comments first: this file's own doc comment NAMES `JSON.parse(msg)` to explain why it
+    // is absent, and the assertion below would match the explanation. Same trap as the design
+    // ratchets that counted markup inside comments.
+    const shared = readFileSync(join(process.cwd(), 'src/app/reportingWrite.ts'), 'utf8')
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .replace(/^\s*\/\/.*$/gm, '')
+    expect(shared).toMatch(
+      /export async function reportingWrite\(what: string, run: \(\) => Promise<unknown>\): Promise<boolean>/,
+    )
+    expect(shared, 'it reports through the app toast').toMatch(/notify\(`Couldn't \$\{what\}: /)
+    expect(shared, 'and returns the outcome so a caller can skip its refetch').toMatch(/return true/)
+    // 🪤 The JSON-unwrap this used to assert is GONE ON PURPOSE, not dropped: `lib/errText` is the
+    // app's single funnel for failure text and `api.ts` throws `ApiError(await errText(r))`, so
+    // `e.message` is already the backend's sentence. Re-parsing it could never fire.
+    expect(shared, 'no dead JSON unwrap').not.toMatch(/JSON\.parse\(msg\)/)
   })
 
   it('no toggle write swallows its rejection', () => {
