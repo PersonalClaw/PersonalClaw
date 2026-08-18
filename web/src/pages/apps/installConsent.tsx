@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { SCAN_FINDINGS_SHOWN, hiddenFindingsNote } from '../../lib/scanFindings'
 import {
   ShieldAlert, ShieldCheck, ShieldQuestion, BadgeCheck, AlertTriangle, Terminal, CalendarClock,
   Bot, Globe, Copy, Check, Loader2,
@@ -68,16 +69,25 @@ export function ScanReport({ scan }: { scan: NonNullable<AppInstallResult['scan'
   const Icon = v === 'clean' ? ShieldCheck : v === 'dangerous' ? ShieldAlert : AlertTriangle
   return (
     <div className="rounded-m border border-outline-variant bg-surface-high p-m">
-      <div className={`flex items-center gap-2 ${tone}`} data-type="body-m"><Icon size={16} /> Security scan: {v}</div>
+      <div className={`flex items-center gap-2 ${tone}`} data-type="body-m"><Icon size={16} /> Security scan: {v}
+        {scan.findings.length > 0 && ` · ${scan.findings.length} finding${scan.findings.length === 1 ? '' : 's'}`}
+      </div>
       {scan.signature && <SignatureRow signature={scan.signature} />}
       {scan.findings.length > 0 && (
         <ul className="mt-2 flex flex-col gap-1">
-          {scan.findings.slice(0, 8).map((f, i) => (
+          {scan.findings.slice(0, SCAN_FINDINGS_SHOWN).map((f, i) => (
             <li key={i} data-type="body-s" className="text-on-surface-low">
               <span className="text-on-surface">{f.rule}</span> ({f.severity})
               {f.path ? ` — ${f.path}` : ''}{f.evidence ? `: ${f.evidence}` : ''}
             </li>
           ))}
+          {/* The list stops at the cap; without this the eight shown read as all of them, on the
+              one screen whose entire job is an informed yes/no. */}
+          {hiddenFindingsNote(scan.findings.length) && (
+            <li data-type="body-s" className="text-on-surface-low italic">
+              {hiddenFindingsNote(scan.findings.length)}
+            </li>
+          )}
         </ul>
       )}
       {v === 'dangerous' && <div data-type="body-s" className="mt-2 text-danger">This app is blocked — dangerous content cannot be installed.</div>}
