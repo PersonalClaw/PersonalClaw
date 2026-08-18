@@ -11,7 +11,7 @@
     "postToolUse": [
       {
         "matcher": "bash",
-        "command": "{ echo \"$(date -u +%Y-%m-%dT%H:%M:%SZ) BASH:\"; cat; echo; } >> ~/.personalclaw/audit.log"
+        "command": "{ echo \"$(date -u +%Y-%m-%dT%H:%M:%SZ) BASH:\"; cat; echo; } >> {{PERSONALCLAW_AUDIT_LOG}}"
       }
     ]
   }

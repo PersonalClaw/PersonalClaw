@@ -236,4 +236,9 @@ async def test_open_session_provider_opens_and_wraps():
         _Conn(), runtime_id="acp:demo-cli", cwd="/tmp/ws", model="opus", agent_name="Helper"
     )
     assert p.session_id == "NEW"
-    assert opened["params"]["cwd"] == "/tmp/ws" and opened["params"]["mcpServers"] == []
+    assert opened["params"]["cwd"] == "/tmp/ws"
+    # AAP-4: the concurrent path carries ``personalclaw-core`` by default. This
+    # assertion used to demand ``mcpServers == []`` — it was encoding gap 1, the
+    # unwritten ``mcp_servers`` key that left the pooled path as tool-less as the
+    # one-session path. Full coverage: tests/test_acp_mcp_reachability.py.
+    assert [s["name"] for s in opened["params"]["mcpServers"]] == ["personalclaw-core"]
