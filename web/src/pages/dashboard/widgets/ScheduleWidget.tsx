@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { MoreRow } from '../../../ui/MoreRow'
 import { CalendarClock, ChevronDown, ChevronRight } from 'lucide-react'
 import { useDashboardLive } from '../DashboardLive'
 import { statusMeta, relPast, relFuture } from '../../schedule/scheduleMeta'
@@ -84,6 +85,12 @@ export function ScheduleWidget({ navigate }: RouteProps) {
         </p>
       )}
       {visible.slice(0, 6).map(row)}
+      {/* 🔑 THIS FILE ALREADY SETS THE STANDARD IT WAS MISSING. Its disclosure below reveals the rows
+          an archive fold hides, and its comment insists that count come from the SERVER's full-window
+          tally because "the label must not shrink to the fold" — while a second, silent truncation sat
+          right here, cutting the visible rows at six with nothing said. Same principle, applied to the
+          cap: `visible` is what the fold decided to show, so the residue is measured against it. */}
+      <MoreRow total={visible.length} shown={6} />
       {scheduleSuppressed > 0 && (
         <Button
           variant="ghost"

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
+import { MoreRow } from '../../../ui/MoreRow'
 import { AnimatePresence } from 'framer-motion'
 import { Package, PinOff } from 'lucide-react'
 import { api, type Artifact, type PinnedArtifact } from '../../../lib/api'
@@ -87,6 +88,9 @@ export function PinnedArtifacts({ navigate }: RouteProps) {
           )
         })}
       </AnimatePresence>
+      {/* Pins are deliberate — the user chose each one — so a pin that silently does not appear is
+          worse here than in a generated list. */}
+      <MoreRow total={resolved.length} shown={6} />
     </div>
   )
 }
