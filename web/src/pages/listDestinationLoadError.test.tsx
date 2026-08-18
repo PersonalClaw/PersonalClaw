@@ -257,9 +257,16 @@ describe('every useCachedData list destination adopts LoadError', () => {
     // Each holdout swallows through a DIFFERENT mechanism, so each needs its own judgement — not a
     // bulk find-and-replace. Named here so the list is a decision record rather than a blind spot.
     expect(holdouts).toEqual([
-      // Promise.all of five reads with per-read fallbacks; partial tolerance is the design here
-      // (`load_failures` is a first-class concept on this surface), so "did it fail" is not one bit.
-      'tools/ToolsPage.tsx',
+      // 🎓 GRADUATED (ux-676): `tools/ToolsPage.tsx` was excused here because it composes five reads
+      // under one `Promise.all` and "partial tolerance is the design". That reasoning was half right —
+      // it holds for the four PERIPHERAL reads (MCP servers, importable, pool stats, groups), which
+      // still carry their own fallbacks and are asserted to keep them. It did not hold for the INDEX,
+      // which IS the collection: its `.catch(() => ({tools: []}))` made a failed read render "No
+      // tools". Splitting the one entry into "the collection" and "its peripherals" is what let the
+      // page adopt LoadError without flattening the tolerance. See toolsIndexLoadError.test.ts.
+      //
+      // The lesson for the next holdout: an exemption written for a FILE can be wrong about one read
+      // inside it. Check whether the reason covers every read, or only most of them.
       // Renders the week grid from a prop, and its own reads go through useState + try/catch rather
       // than the hook's `error` — a different mechanism, so a different fix. Deliberately not bulked in.
       'triggers/WeekGridView.tsx',
