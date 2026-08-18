@@ -144,20 +144,32 @@ describe('the general check, so the fifth instance is caught by a test', () => {
     expect(reads, 'the sweep must actually have found the collection reads').toBeGreaterThan(40)
 
     // `uLoops` is the recorded DISTINCTION: two keys over disjoint subsets (see the test below).
-    const KNOWN_DISTINCTIONS = new Set(['uLoops'])
+    const KNOWN_DISTINCTIONS = new Set([
+      'uLoops',              // disjoint filtered subsets — see the test below
+      'system',              // `.platform` cannot change while the tab is open; no writer exists
+      'modelProviderTypes',  // a code-shipped registry; no writer exists
+    ])
 
-    // The sweep also returns five config/registry collections this cycle did NOT judge. They are
-    // listed rather than converged because each needs its own verdict, and guessing is how a real
-    // distinction gets flattened:
-    //   · system, modelProviderTypes — host telemetry and a static provider registry. No mutation
-    //     path can staleten them, so a split may well be harmless. Needs confirming, not assuming.
-    //   · appCatalog — installing an app plausibly stalens the other reader. Likely real.
-    //   · dashboardConfig, personalclawConfig — both have PATCH write paths, and the latter spans
-    //     13 keys. Real work, and too large to fold into this change.
+    // All five remaining config/registry collections were judged in a later pass. Two came off the
+    // list; three stay, each for a stated reason:
+    //
+    //   · system, modelProviderTypes — REMOVED (distinctions, confirmed by tracing writers). No
+    //     mutation path exists for either: `system:platform` reads a host's platform string, which
+    //     cannot change while the tab is open, and `modelProviderTypes` is a code-shipped registry of
+    //     provider TYPES. Nothing can staleten a reader, so the split costs nothing. They are named in
+    //     KNOWN_DISTINCTIONS below rather than left pending.
+    //   · appCatalog — real: onboarding installs apps, and `app-catalog` (persist:true) is a separate
+    //     key. Its own cycle.
+    //   · dashboardConfig, personalclawConfig — real, and NOT separable. `settings:chat` is a
+    //     COMPOSITE read (`Promise.all([api.dashboardConfig(), api.personalclawConfig()])`), so it
+    //     belongs to BOTH collections and can sit in neither one's namespace. Converging one
+    //     collection alone would leave the composite half-covered while looking handled, so these two
+    //     must move together in one cycle. The sharpest instance is fixed below in the meantime.
+    //
     // 🔑 This is a RATCHET, not an allowlist: an entry may only ever be removed. A collection that
     // starts splitting across namespaces is not on the list, so it fails here.
     const PENDING_JUDGMENT = new Set([
-      'system', 'modelProviderTypes', 'appCatalog', 'dashboardConfig', 'personalclawConfig',
+      'appCatalog', 'dashboardConfig', 'personalclawConfig',
     ])
     const split = [...byCall].filter(([c, ns]) => ns.size > 1 && !KNOWN_DISTINCTIONS.has(c))
       .map(([c]) => c)
@@ -180,5 +192,32 @@ describe('the general check, so the fifth instance is caught by a test', () => {
     const code = codeOf('pages/loops/LoopsListPage.tsx')
     expect(code, 'the non-code filter is what makes the two keys disjoint')
       .toMatch(/useCachedData<GoalLoop\[\]>\('loops'[\s\S]{0,160}?kind !== 'code'/)
+  })
+})
+
+describe('the sharpest instance in the un-separable pair, fixed ahead of it', () => {
+  it("saving a chat setting busts the key that decides how streamed text reveals", () => {
+    // `stream_reveal` is written on `#/settings/chat` and consumed by ChatPage under its own
+    // `chat:stream-reveal` key, which NOTHING invalidated. Unlike the rest of this family that is not
+    // a display value — it changes behaviour — and the key is `persist: true`, so the pre-change value
+    // survived a reload and was used again.
+    const code = codeOf('pages/settings/ChatPanel.tsx')
+    const writers = [...code.matchAll(/api\.saveDashboardConfig\(patch\)/g)]
+    expect(writers.length, 'both dashboard-config writers in this panel').toBe(2)
+    for (const w of writers) {
+      expect(code.slice(w.index!, w.index! + 420), 'each writer must reach the consumer')
+        .toMatch(/invalidateCache\('chat:stream-reveal'\)/)
+    }
+  })
+
+  it('`settings:chat` is a COMPOSITE, which is why the pair cannot be converged one at a time', () => {
+    // Pinned so a later pass does not move this key into one collection's namespace: it reads TWO
+    // collections, and naming it after either one makes the other's writers miss it.
+    const code = codeOf('pages/settings/ChatPanel.tsx')
+    const at = code.indexOf("useCachedData('settings:chat'")
+    expect(at, 'the composite read must still be here').toBeGreaterThan(-1)
+    const seg = code.slice(at, at + 600)
+    expect(seg).toMatch(/api\.dashboardConfig\(\)/)
+    expect(seg).toMatch(/api\.personalclawConfig\(\)/)
   })
 })
