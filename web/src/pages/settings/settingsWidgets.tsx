@@ -401,9 +401,21 @@ export const SETTINGS_WIDGETS: SettingsWidget[] = [
       const ttsBound = !!(data?.active?.['tts'] ?? [])[0]
       return (
         <BentoCard icon={AudioLines} title="Speech & Transcription" query={query} onClick={() => go('voice')} loading={data === undefined} rows={2}>
+          {/* 🔴 THE COMMENT ABOVE PROMISED A NUDGE THE MARKUP NEVER RENDERED. With no bound model these
+              two rows showed a DISABLED switch and nothing else — `Switch` takes no reason prop, so a
+              user (and a screen reader) got "Speech-to-text, dimmed" with no way to learn that a model
+              has to be bound first. A dead control is worse than no control, so where nothing is bound
+              the row says so instead; the card itself already navigates to Speech & Transcription, which
+              is the nudge that was described. */}
           {data && <KVList rows={[
-            { k: 'Speech-to-text', control: true, v: <Switch on={!!data.stt?.enabled} disabled={!sttBound} label="Speech-to-text" onToggle={(v) => toggle('stt', data.stt ?? {}, v)} /> },
-            { k: 'Text-to-speech', control: true, v: <Switch on={!!data.tts?.enabled} disabled={!ttsBound} label="Text-to-speech" onToggle={(v) => toggle('tts', data.tts ?? {}, v)} /> },
+            { k: 'Speech-to-text', control: true, vText: sttBound ? undefined : 'No model bound',
+              v: sttBound
+                ? <Switch on={!!data.stt?.enabled} label="Speech-to-text" onToggle={(v) => toggle('stt', data.stt ?? {}, v)} />
+                : <span className="text-on-surface-low">No model bound</span> },
+            { k: 'Text-to-speech', control: true, vText: ttsBound ? undefined : 'No model bound',
+              v: ttsBound
+                ? <Switch on={!!data.tts?.enabled} label="Text-to-speech" onToggle={(v) => toggle('tts', data.tts ?? {}, v)} />
+                : <span className="text-on-surface-low">No model bound</span> },
           ]} />}
         </BentoCard>
       )
