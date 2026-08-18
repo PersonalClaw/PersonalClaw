@@ -715,3 +715,135 @@ class TestReexecPreservesAuthMode:
             asyncio.run(U._graceful_reexec(state))  # no auth_mode
         # empty auth_mode → don't inject (inherit as-is), so the var stays unset
         assert "PERSONALCLAW_AUTH_MODE" not in captured["env"]
+
+
+class TestGitCheckReadsRemoteVersion:
+    """PUBL-8: the git-kind check must read the remote version through REAL git.
+
+    These drive ``_do_update_check`` against genuine repositories (no mocked
+    subprocesses) because the two defects the PUBL-8 drive found were both in the
+    git plumbing itself: the blob path did not exist in the published layout, and
+    the version literal it scraped had moved out of ``__init__.py``. A mocked
+    ``git show`` cannot see either.
+    """
+
+    @staticmethod
+    def _git(cwd, *args) -> None:
+        import subprocess
+
+        subprocess.run(
+            ["git", "-c", "user.email=t@example.com", "-c", "user.name=T", *args],
+            cwd=str(cwd),
+            check=True,
+            capture_output=True,
+        )
+
+    def _behind_clone(self, tmp_path, prefix: str):
+        """An upstream whose tip bumps the version, plus a clone one commit behind.
+
+        ``prefix`` selects the layout: ``""`` is the published standalone checkout
+        (repo root IS the package root), ``"PersonalClaw"`` the nested monorepo.
+        Returns the clone's PACKAGE root — what PERSONALCLAW_PROJECT_DIR holds.
+        """
+        origin = tmp_path / "origin"
+        origin.mkdir()
+        self._git(origin, "init", "-q", "-b", "main")
+        pkg = origin / prefix if prefix else origin
+        pkg.mkdir(parents=True, exist_ok=True)
+        (pkg / "pyproject.toml").write_text('[project]\nname = "personalclaw"\nversion = "0.1.3"\n')
+        self._git(origin, "add", "-A")
+        self._git(origin, "commit", "-qm", "v0.1.3")
+        (pkg / "pyproject.toml").write_text('[project]\nname = "personalclaw"\nversion = "0.1.4"\n')
+        self._git(origin, "add", "-A")
+        self._git(origin, "commit", "-qm", "v0.1.4")
+
+        work = tmp_path / "work"
+        self._git(tmp_path, "clone", "-q", str(origin), str(work))
+        self._git(work, "reset", "--hard", "-q", "HEAD~1")
+        return work / prefix if prefix else work
+
+    @pytest.mark.parametrize("prefix", ["", "PersonalClaw"])
+    def test_check_detects_remote_version_in_both_layouts(self, monkeypatch, tmp_path, prefix):
+        """One commit behind a version-bumping tip ⇒ latest/available reflect it."""
+        from personalclaw.dashboard.handlers import updates as U
+
+        proj = self._behind_clone(tmp_path, prefix)
+        monkeypatch.setenv("PERSONALCLAW_PROJECT_DIR", str(proj))
+        monkeypatch.setattr(U, "_local_version", "0.1.3")
+        saved = dict(U._update_info)
+        try:
+            asyncio.run(U._do_update_check())
+            assert U._update_info["latest"] == "0.1.4", U._update_info
+            assert U._update_info["available"] is True
+            assert U._update_info["checked"] is True
+        finally:
+            U._update_info.clear()
+            U._update_info.update(saved)
+
+    def test_check_reports_no_update_when_versions_match(self, monkeypatch, tmp_path):
+        """Vacuity guard: the same probe must NOT claim an update at parity."""
+        from personalclaw.dashboard.handlers import updates as U
+
+        proj = self._behind_clone(tmp_path, "")
+        monkeypatch.setenv("PERSONALCLAW_PROJECT_DIR", str(proj))
+        monkeypatch.setattr(U, "_local_version", "0.1.4")  # already at the remote version
+        saved = dict(U._update_info)
+        try:
+            asyncio.run(U._do_update_check())
+            assert U._update_info["available"] is False
+        finally:
+            U._update_info.clear()
+            U._update_info.update(saved)
+
+
+class TestCheckAgreesWithApplyUnderDevMode:
+    """PUBL-8: in commit-tracking mode, "behind" IS an available update.
+
+    The drive measured the disagreement: ``update_dev_mode`` on, ``commits_behind``
+    1, and the check still reported ``available: false`` while POST /api/update
+    happily pulled.
+    """
+
+    @staticmethod
+    def _run(monkeypatch, *, dev_mode: bool, behind, kind: str = "git") -> dict:
+        import types
+
+        from personalclaw.dashboard.handlers import updates as U
+
+        cfg = types.SimpleNamespace(
+            auto_update=True,
+            dashboard=types.SimpleNamespace(update_dev_mode=dev_mode),
+        )
+        monkeypatch.setattr(U.AppConfig, "load", staticmethod(lambda: cfg))
+        monkeypatch.setattr(U, "_do_update_check", AsyncMock())
+        monkeypatch.setattr(
+            U.self_update,
+            "build_update_status",
+            AsyncMock(
+                return_value={
+                    "kind": kind,
+                    "current": "0.1.3",
+                    "latest": "0.1.3",
+                    "update_available": False,
+                    "commits_behind": behind,
+                    "apply_method": "pipeline",
+                    "instructions": [],
+                }
+            ),
+        )
+        resp = asyncio.run(U.api_update_check(MagicMock()))
+        return json.loads(resp.body)
+
+    def test_dev_mode_behind_is_available(self, monkeypatch) -> None:
+        assert self._run(monkeypatch, dev_mode=True, behind=1)["available"] is True
+
+    def test_dev_mode_up_to_date_is_not_available(self, monkeypatch) -> None:
+        """Vacuity guard — the clause must not turn every dev-mode check green."""
+        assert self._run(monkeypatch, dev_mode=True, behind=0)["available"] is False
+
+    def test_tag_mode_behind_is_not_available(self, monkeypatch) -> None:
+        """Dev mode OFF rides release TAGS: commits behind is deliberately not news."""
+        assert self._run(monkeypatch, dev_mode=False, behind=1)["available"] is False
+
+    def test_non_git_kind_ignores_commits_behind(self, monkeypatch) -> None:
+        assert self._run(monkeypatch, dev_mode=True, behind=1, kind="pip")["available"] is False

@@ -43,7 +43,9 @@ async def api_update_check(request: web.Request) -> web.Response:
     update_available, commits_behind, apply_method, instructions}) merged with
     the legacy git changelog-diff fields (available/changes) for backward
     compatibility with the existing panel. The git kind still runs the
-    commits-behind probe; every kind gets the release-tag comparison.
+    commits-behind probe; every kind gets the release-tag comparison. In git
+    developer update mode a non-zero ``commits_behind`` also sets ``available``,
+    so the check agrees with what the apply would actually do.
     """
     await _do_update_check()
     cfg = AppConfig.load()
@@ -57,6 +59,16 @@ async def api_update_check(request: web.Request) -> web.Response:
     merged: dict[str, object] = {**_update_info, **status}
     if status.get("latest"):
         merged["available"] = bool(status.get("update_available"))
+    # Developer update mode tracks COMMITS, not release tags, so on a git checkout
+    # being behind the upstream IS an available update — which is precisely what
+    # POST /api/update applies in this mode. Without this clause the two surfaces
+    # contradict each other: the panel reports "up to date" while the apply would
+    # pull. The tag comparison above cannot express it (`main` carries commits with
+    # no newer tag, so `update_available` is False whenever a release is reachable).
+    if cfg.dashboard.update_dev_mode and status.get("kind") == "git":
+        _behind = status.get("commits_behind")
+        if isinstance(_behind, int) and _behind > 0:
+            merged["available"] = True
     merged["auto_update"] = cfg.auto_update
     merged["update_dev_mode"] = cfg.dashboard.update_dev_mode
     merged["version"] = _local_version
@@ -149,12 +161,19 @@ async def _do_update_check() -> None:
         remote_version = ""
         target_sha = remote_sha if local_sha != remote_sha else local_sha
         if local_sha and remote_sha:
-            # The package lives under PersonalClaw/src after the core/app workspace
-            # split (Slice 0); the git blob path is repo-root-relative.
+            # Read the version from the SINGLE SOURCE OF TRUTH at the target commit:
+            # pyproject.toml's [project].version. Two reasons this is not
+            # ``__init__.py``: (1) since version single-sourcing (plan 34 T1.2)
+            # ``__version__`` is computed (``_pkg_version("personalclaw")``), so there
+            # is no literal left to scrape; (2) the ``:./path`` pathspec is resolved
+            # relative to CWD, so one spelling covers both the standalone layout
+            # (repo root IS the package root) and the monorepo layout where the
+            # package is nested — a hardcoded repo-root-relative prefix is wrong for
+            # whichever layout it was not written for.
             show = await asyncio.create_subprocess_exec(
                 "git",
                 "show",
-                f"{target_sha}:PersonalClaw/src/personalclaw/__init__.py",
+                f"{target_sha}:./pyproject.toml",
                 cwd=proj,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.DEVNULL,
@@ -168,7 +187,9 @@ async def _do_update_check() -> None:
                     pass
                 await show.communicate()
                 return
-            m = re.search(r'__version__\s*=\s*"(.+?)"', show_out.decode(errors="replace"))
+            m = re.search(
+                r'^version\s*=\s*"(.+?)"', show_out.decode(errors="replace"), re.MULTILINE
+            )
             if m:
                 remote_version = m.group(1)
             available = (
