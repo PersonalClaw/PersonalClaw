@@ -4,7 +4,7 @@ import { Plus, Zap, Clock, Pencil, CalendarDays } from 'lucide-react'
 import { TopBar } from '../../ui/TopBar'
 import { WorkbenchLayout } from '../../ui/WorkbenchLayout'
 import { HeaderActions, HeaderControl } from '../../ui/HeaderActions'
-import { EmptyState, ListRow, ListSkeleton } from '../../ui/ListScaffold'
+import { EmptyState, ListRow, ListSkeleton, LoadError } from '../../ui/ListScaffold'
 import { PresetEmptyState } from '../../ui/PresetEmptyState'
 import { Button } from '../../ui/Button'
 import { TRIGGER_PRESETS } from './triggerPresets'
@@ -16,7 +16,7 @@ import { FilterMenu, type FilterSectionDef } from '../../ui/FilterMenu'
 import { ContextMenu, type ContextMenuItem } from '../../ui/motion'
 import { useQueryParam, useEditFlag, type RouteProps } from '../../app/useQueryState'
 import { useCachedData, invalidateCache } from '../../lib/useCachedData'
-import { api, type ScheduleJob, type HookItem, type ActionProvider, type Trigger as WireTrigger } from '../../lib/api'
+import { api, type ActionProvider } from '../../lib/api'
 import { ScheduleDetail } from '../schedule/ScheduleDetail'
 import { LifecycleDetail } from './LifecycleDetail'
 import { StoreTriggerDetail } from './StoreTriggerDetail'
@@ -70,16 +70,16 @@ export function TriggersListPage({ onCreate, query, setQuery }: {
   // Schedules carry live next-run/running state → persist:false (instant in-app
   // revisit, but never stale across a hard reload). Hooks + action providers are
   // lifecycle config that rarely changes → persist:true so they survive a reload.
-  const { data: schedules, refresh: refreshSchedules } = useCachedData('triggers:schedules', () => api.schedules().then((d) => d.jobs).catch(() => [] as ScheduleJob[]), { persist: false })
-  const { data: hooks, refresh: refreshHooks } = useCachedData('triggers:hooks', () => api.hooks().catch(() => [] as HookItem[]), { persist: true })
+  const { data: schedules, error: schedulesErr, refresh: refreshSchedules } = useCachedData('triggers:schedules', () => api.schedules().then((d) => d.jobs), { persist: false })
+  const { data: hooks, error: hooksErr, refresh: refreshHooks } = useCachedData('triggers:hooks', () => api.hooks(), { persist: true })
   // Store triggers (file/web_watch/idle/…) carry live enabled/health state → persist:false, like
   // schedules: instant in-app revisit but never stale across a hard reload.
-  const { data: stores, refresh: refreshStores } = useCachedData('triggers:store', () => api.storeTriggers().catch(() => [] as WireTrigger[]), { persist: false })
+  const { data: stores, error: storesErr, refresh: refreshStores } = useCachedData('triggers:store', () => api.storeTriggers(), { persist: false })
   // Data-event triggers (EIAT). `GET /api/triggers` serves FOUR kinds — schedule, lifecycle,
   // event, store — and this page fetched only three, so an event trigger created through the
   // create form (`trigger_type: 'event'`) existed, fired, and was never listed anywhere. It
   // carries live enabled/fire-count state → persist:false, like schedules and stores.
-  const { data: events } = useCachedData('triggers:events', () => api.eventTriggers().catch(() => [] as WireTrigger[]), { persist: false })
+  const { data: events, error: eventsErr } = useCachedData('triggers:events', () => api.eventTriggers(), { persist: false })
   const { data: providers = [] } = useCachedData('triggers:action-providers', () => api.actionProviders().catch(() => [] as ActionProvider[]), { persist: true })
   // How much each row's action may do UNATTENDED (AUTONOMY-GUARDRAILS §6.1). The ladder is
   // keyed on the action-provider name — the same identity the backend dispatch seams hold —
@@ -115,6 +115,16 @@ export function TriggersListPage({ onCreate, query, setQuery }: {
     const s = schedules?.length ?? 0, h = hooks?.length ?? 0, st = stores?.length ?? 0, e = events?.length ?? 0
     return { all: s + h + st + e, schedule: s, lifecycle: h, store: st, event: e }
   }, [schedules, hooks, stores, events])
+
+  // 🔴 A FAILED FETCH USED TO READ AS "No triggers". Each list source `.catch(() => [])`'d its
+  // rejection, so a gateway that was down rendered the newcomer empty state — the exact conflation
+  // `LoadError` exists to end (its docstring: "A failed fetch and a genuinely empty collection are
+  // different facts"). The catches are gone; a rejection now reaches the hook's `error`. This flag is
+  // true only when NOTHING has composed yet (so we are not hiding a good cached list) and a source
+  // actually failed — a partial success still renders, because a working schedule list should not be
+  // hidden because the event feed hiccuped.
+  const loadFailed = triggers === null &&
+    !!(schedulesErr || hooksErr || storesErr || eventsErr)
 
   return (
     <WorkbenchLayout
@@ -174,7 +184,10 @@ export function TriggersListPage({ onCreate, query, setQuery }: {
         <WeekGridView onOpenTrigger={(id) => setQuery({ open: id, edit: null, view: 'list' })} />
       ) : (
       <div className="mx-auto px-l py-l" style={{ maxWidth: 'var(--content-width)' }}>
-        {triggers === null ? <ListSkeleton rows={6} what="triggers" /> : triggers.length === 0 ? (
+        {loadFailed ? (
+          <LoadError what="triggers" error={schedulesErr || hooksErr || storesErr || eventsErr}
+            onRetry={() => { loadSchedules(); refreshHooks(); loadStores(); invalidateCache('triggers:events'); }} />
+        ) : triggers === null ? <ListSkeleton rows={6} what="triggers" /> : triggers.length === 0 ? (
               !q && filter === 'all' ? (
                 // GENUINELY EMPTY — the one moment a newcomer has no model of what a trigger is.
                 // A blank create form here opens on the full ontology (four trigger kinds, ~15
