@@ -14,5 +14,19 @@ export default defineConfig({
     globals: true,
     setupFiles: ['./src/test/setup.ts'],
     include: ['src/**/*.{test,spec}.{ts,tsx}'],
+    // Vitest's default 5 s is a WALL-CLOCK budget, and this suite runs ~400 files
+    // across 18 workers — so wall-clock per test inflates roughly 3x under
+    // contention. Measured on the `*LoadError.test.tsx` family, which polls the DOM
+    // through `waitFor` after a rejected fetch: **1012 ms running alone, 3371 ms in
+    // the full suite.** Against a 5 s budget that is a ~1.5x margin, and adding any
+    // two test files anywhere tipped it over — `main` was green at 396 files and red
+    // at 398, in four files that the change under test never touched.
+    //
+    // This raises the ceiling, not any assertion: a genuinely hung test still fails,
+    // it just fails later. The alternative — sprinkling per-test timeouts on whichever
+    // file tipped this week — leaves the same landmine for the next one, because the
+    // margin is a property of the SUITE, not of those tests.
+    testTimeout: 20_000,
+    hookTimeout: 20_000,
   },
 })
