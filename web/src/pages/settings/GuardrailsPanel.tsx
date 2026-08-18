@@ -37,9 +37,13 @@ export function GuardrailsPanel() {
   if (!data && loadErr) return <LoadError what="settings" error={loadErr} onRetry={refresh} />
   if (!data || !cfg) return <FormSkeleton sections={3} what="settings" />
 
-  const patchNum = (path: string, value: number) =>
+  // 🪤 This panel's rows use an `onSave` callback rather than `settingsUI`'s `patch` contract, so the
+  // label has to be threaded here separately — but the defect was identical: a rejected save said
+  // "Couldn't save budgets.max_dollars_per_day" about a control the UI calls "Max dollars / day". The
+  // label is on the very JSX element that fires this, one line above each call.
+  const patchNum = (path: string, value: number, label?: string) =>
     api.patchConfig(`guardrails.${path}`, value).catch((e) => {
-      notify(`Couldn't save ${path}: ${String((e as Error)?.message || e)}`, 'error')
+      notify(`Couldn't save ${label ?? path}: ${String((e as Error)?.message || e)}`, 'error')
     })
 
   return (
@@ -52,13 +56,13 @@ export function GuardrailsPanel() {
         <div className="rounded-lg bg-surface-container px-4 py-1">
           <NumberRow label="Max tokens / day" hint="Across every trigger. 0 = unlimited."
             value={cfg.budgets?.max_tokens_per_day ?? 0} min={0} step={1000}
-            onSave={(v) => { setCfg((c) => ({ ...c, budgets: { ...c?.budgets, max_tokens_per_day: v } })); return patchNum('budgets.max_tokens_per_day', v) }} />
+            onSave={(v) => { setCfg((c) => ({ ...c, budgets: { ...c?.budgets, max_tokens_per_day: v } })); return patchNum('budgets.max_tokens_per_day', v, 'Max tokens / day') }} />
           <NumberRow label="Max dollars / day" hint="Estimated from per-model pricing. 0 = unlimited."
             value={cfg.budgets?.max_dollars_per_day ?? 0} min={0} step={1} dollars
-            onSave={(v) => { setCfg((c) => ({ ...c, budgets: { ...c?.budgets, max_dollars_per_day: v } })); return patchNum('budgets.max_dollars_per_day', v) }} />
+            onSave={(v) => { setCfg((c) => ({ ...c, budgets: { ...c?.budgets, max_dollars_per_day: v } })); return patchNum('budgets.max_dollars_per_day', v, 'Max dollars / day') }} />
           <NumberRow label="Max tokens / run" hint="Per single unattended run (a goal-loop cycle, a cron fire). 0 = unlimited."
             value={cfg.budgets?.max_tokens_per_run ?? 0} min={0} step={1000}
-            onSave={(v) => { setCfg((c) => ({ ...c, budgets: { ...c?.budgets, max_tokens_per_run: v } })); return patchNum('budgets.max_tokens_per_run', v) }} />
+            onSave={(v) => { setCfg((c) => ({ ...c, budgets: { ...c?.budgets, max_tokens_per_run: v } })); return patchNum('budgets.max_tokens_per_run', v, 'Max tokens / run') }} />
         </div>
       </Section>
 
@@ -76,10 +80,10 @@ export function GuardrailsPanel() {
         <div className="rounded-lg bg-surface-container px-4 py-1">
           <NumberRow label="Failure threshold" hint="Consecutive failures before the breaker opens."
             value={cfg.breaker?.failure_threshold ?? 5} min={1} step={1}
-            onSave={(v) => { setCfg((c) => ({ ...c, breaker: { ...c?.breaker, failure_threshold: v } })); return patchNum('breaker.failure_threshold', v) }} />
+            onSave={(v) => { setCfg((c) => ({ ...c, breaker: { ...c?.breaker, failure_threshold: v } })); return patchNum('breaker.failure_threshold', v, 'Failure threshold') }} />
           <NumberRow label="Recovery seconds" hint="How long an open breaker waits before a half-open probe."
             value={cfg.breaker?.recovery_secs ?? 30} min={0} step={5}
-            onSave={(v) => { setCfg((c) => ({ ...c, breaker: { ...c?.breaker, recovery_secs: v } })); return patchNum('breaker.recovery_secs', v) }} />
+            onSave={(v) => { setCfg((c) => ({ ...c, breaker: { ...c?.breaker, recovery_secs: v } })); return patchNum('breaker.recovery_secs', v, 'Recovery seconds') }} />
         </div>
       </Section>
 

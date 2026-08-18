@@ -62,12 +62,12 @@ export function AgentDefaultsPanel() {
   // local optimistic patch helper — updates state, fires the single-field PATCH.
   // A rejected PATCH (e.g. allowlist drift) rolls the optimistic value back and
   // surfaces the server error — a swallowed 400 here looks exactly like a save.
-  const patch = (key: string, value: unknown, onSaved: () => void) => {
+  const patch = (key: string, value: unknown, onSaved: () => void, label?: string) => {
     const prev = cfg[key]
     setCfg((c) => ({ ...c, [key]: value }))
     api.patchConfig(`agent.${key}`, value).then(onSaved).catch((e) => {
       setCfg((c) => ({ ...c, [key]: prev }))
-      notify(`Couldn't save ${key}: ${String((e as Error)?.message || e)}`, 'error')
+      notify(`Couldn't save ${label ?? key}: ${String((e as Error)?.message || e)}`, 'error')
     })
   }
 
