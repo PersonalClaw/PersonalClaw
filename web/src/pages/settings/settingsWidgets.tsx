@@ -3,6 +3,7 @@ import {
   Inbox, Bell, Shield, ShieldAlert, ScrollText, Archive, FolderSync, DownloadCloud, CheckCircle2, Search, Blocks, Activity, Compass, Stethoscope, Scissors, ThumbsUp, HardDriveDownload, Coins, Route, Trophy,
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
+import { notify } from '../../app/appSdk'
 import {
   api, type SecurityStats, type MemoryStats, type AgentRuntime, type DashboardConfig,
   type SettingsProvider, type NotificationSettings, type UpdateCheck,
@@ -148,10 +149,21 @@ const useAgentDefaults = () => useCachedData('settings:agent-defaults', async ()
   return { cfg, defaultAgent: agents }
 }, { persist: true })
 
-/** Run an async mutation, then invalidate the widget's cache key(s) so its data
- *  re-reads the new value. Errors are swallowed (the control resets visually). */
+/** Run an async mutation, then invalidate the widget's cache key(s) so its data re-reads the new
+ *  value — so a REJECTED write reconciles: the control snaps back to the server's answer.
+ *
+ *  That reconcile was already right, and it was also the whole story, which is the defect this
+ *  replaces: the toggle flipped back on its own with nothing said, which reads as a glitchy UI
+ *  rather than as a write the server refused. Reconciling is not the same as reporting. The
+ *  server's own message carries the reason (it usually names the field), so no per-tile copy is
+ *  invented here — the same funnel every other failed action in the app uses. */
 async function mutate(fn: () => Promise<unknown>, ...invalidateKeys: string[]) {
-  try { await fn() } catch { /* leave the control to reflect the unchanged cache */ }
+  try {
+    await fn()
+  } catch (e) {
+    notify(`Couldn't save that change: ${String((e as Error)?.message || e)}`, 'error')
+  }
+  // Runs on both paths on purpose: after a failure the re-read is what makes the control honest.
   for (const k of invalidateKeys) invalidateCache(k)
 }
 

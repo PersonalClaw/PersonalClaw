@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { notify } from '../../app/appSdk'
 import { unavailableWhen } from '../../ui/unavailable'
 import { CheckCircle2, AlertTriangle, ArrowRight, Plus, Trash2, RefreshCw, Check, X, Wand2 } from 'lucide-react'
 import { api, type LexiconTerm, type LexiconCorrection } from '../../lib/api'
@@ -285,9 +286,24 @@ function UseCaseVoiceSection({
   const modelLabel = boundModel.includes(':') ? boundModel.split(':').slice(1).join(':') : boundModel
 
   const saveSettings = async (patch: Record<string, unknown>) => {
+    const prev = settings
     const next = { ...settings, ...patch }
     setSettings(next)
-    try { await api.saveUseCaseSettings(useCase, next); flash() } catch { /* keep optimistic */ }
+    try {
+      await api.saveUseCaseSettings(useCase, next)
+      flash()
+    } catch (e) {
+      // `keep optimistic` left the toggle showing a value the server had REFUSED — a claim that
+      // survived until the next reload, with no flash and no error to explain it.
+      //
+      // This section receives `settings`/`setSettings` as props and owns no read of its own, so it
+      // ROLLS BACK to the pre-patch value rather than reconciling by re-reading (the hub tiles'
+      // `mutate` does the latter because it holds the cache keys). Both forms are already in this
+      // codebase — `WidgetFrame.pin` rolls back, `PinnedArtifacts.unpin` reconciles — and the one
+      // that is wrong is keeping a value the server refused.
+      setSettings(prev)
+      notify(`Couldn't save this speech setting: ${String((e as Error)?.message || e)}`, 'error')
+    }
   }
 
   return (
