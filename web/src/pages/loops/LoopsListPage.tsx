@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { reportingWrite } from '../../app/reportingWrite'
 import { fvs } from '../../design/fontWeight'
 import { motion } from 'framer-motion'
 import { Plus, Pause, Play, Square, Trash2, ExternalLink, Filter, Repeat } from 'lucide-react'
@@ -84,7 +85,10 @@ export function LoopsListPage({ onOpen, onCreate, query, setQuery }: { onOpen: (
 
   async function act(e: React.MouseEvent | undefined, id: string, action: 'pause' | 'resume' | 'stop') {
     e?.stopPropagation()
-    await api.uLoopAction(id, action).catch(() => {})
+    // Data-driven: the row's status comes from `refresh()`, not a local flip. A swallowed rejection
+    // left the row exactly as it was with nothing said — and a silent "stop" is the shape whose
+    // failure a user ACTS on, because the next assumption is that the loop is no longer running.
+    if (!(await reportingWrite(`${action} this loop`, () => api.uLoopAction(id, action)))) return
     invalidateCache('loops'); refresh()
   }
 
