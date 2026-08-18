@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { rowSubject } from '../../lib/rowSubject'
 import {
   Database, BookOpen, ScrollText, Eye, Settings2, Search, Plus, Trash2,
   Loader2, RefreshCw, HeartPulse, GraduationCap, AlertTriangle, Share2, FileEdit, Save, UploadCloud, ArrowRightLeft, Moon,
@@ -382,12 +383,19 @@ function MemoryStudio({ onChanged, initialSel }: { onChanged: () => void; initia
     } else if (selected.kind === 'episodic' && selected.episodic) {
       // 🪤 This hand-rolled a dialog `confirmDelete` already produces, and lost its body doing so.
       // The two sibling deletes in this same function use the helper and therefore say "This cannot
-      // be undone"; this one said nothing at all. `confirmDelete('episodic memory')` yields the
-      // byte-identical title — "Delete this episodic memory?" — plus the sentence that was missing.
-      if (!(await confirmDelete('episodic memory'))) return
+      // be undone"; this one said nothing at all.
+      //
+      // It also names WHICH memory now. The first branch above has always passed `selected.fact.key`,
+      // so a fact delete asks about a specific memory while these two asked about "this" one — the
+      // handle was in scope (`selected.episodic.text`) and thrown away. Truncated through
+      // `rowSubject`, the app's own helper for a prose subject in a fixed budget, because an episodic
+      // memory is a sentence rather than a name.
+      if (!(await confirmDelete('episodic memory', rowSubject([selected.episodic.text], 40)))) return
       try { await api.deleteEpisodic(selected.episodic.id) } catch (e) { return fail('episodic memory', e) }
     } else if (selected.kind === 'lesson' && selected.lesson) {
-      if (!(await confirmDelete('lesson'))) return
+      // `selected.lesson.rule` IS the lesson — it is what `deleteLesson` takes as its identity — and
+      // the dialog asked about "this lesson" while holding it.
+      if (!(await confirmDelete('lesson', rowSubject([selected.lesson.rule], 40)))) return
       try { await api.deleteLesson(selected.lesson.rule) } catch (e) { return fail('lesson', e) }
     } else return
     setSelUid(null); reloadAll()
