@@ -7,7 +7,7 @@ import {
   api, type SecurityStats, type MemoryStats, type AgentRuntime, type DashboardConfig,
   type SettingsProvider, type NotificationSettings, type UpdateCheck,
   type PromptBindings, type SelVerify, type SavedAgent,
-  type SearchProviderInfo, type DoctorReport,
+  type SearchProviderInfo,
   type ToolsSavings,
 } from '../../lib/api'
 import { useCachedData, invalidateCache } from '../../lib/useCachedData'
@@ -127,8 +127,15 @@ const useVoice = () => useCachedData('settings:voice', async () => {
 // The tile can now fail, so it carries the failure line the other four tiles got in #1194.
 const useLegibility = () => useCachedData('settings:legibility', () =>
   api.personalclawConfig().then((c) => (c.legibility ?? {}) as Record<string, unknown>), { persist: true })
-const useDoctor = () => useCachedData('settings:doctor', () => api.doctor().catch(() => null as DoctorReport | null), { persist: false })
-const useIncident = () => useCachedData('settings:incident', () => api.incident().catch(() => null as { active: boolean; reason: string; started_at: string } | null), { persist: true })
+// The `.catch(() => null)` here resolved the fetcher, so `loading` (`d === undefined`) went false
+// and the card rendered `{d && …}` = NOTHING: a blank health card, which on a health surface reads
+// as "nothing to report". Let the rejection through and say we could not check.
+const useDoctor = () => useCachedData('settings:doctor', () => api.doctor(), { persist: false })
+// Same shape as the doctor tile above, on a SAFETY control: the swallowed rejection resolved to
+// `null`, so the card stopped "loading" and rendered nothing at all — no "Normal operation", no
+// incident pill. On the one card that says whether unattended work is suspended, blank is not an
+// answer. (`toolsSavings` below keeps its catch: a missing SAVINGS number is genuinely "no data".)
+const useIncident = () => useCachedData('settings:incident', () => api.incident(), { persist: true })
 // Same story: `#/settings/tool-output` reads the error now, and this tile shares its key.
 const useProjectionRules = () => useCachedData('settings:projection-rules', () => api.projectionRules(), { persist: true })
 const useToolsSavings = () => useCachedData('settings:tools-savings', () => api.toolsSavings().catch(() => null as ToolsSavings | null), { persist: true })
@@ -554,10 +561,12 @@ export const SETTINGS_WIDGETS: SettingsWidget[] = [
       return `doctor health probes diagnostics memory channels local models apps serving symlink breakers ${d ? (d.ok ? 'healthy ok' : `degraded ${failed}`) : ''}`
     },
     render(query, go) {
-      const { data: d } = useDoctor()
+      const { data: d, error: dErr } = useDoctor()
       return (
-        <BentoCard icon={Stethoscope} title="Doctor" query={query} onClick={() => go('doctor')} loading={d === undefined}>
-          {d && (d.ok
+        <BentoCard icon={Stethoscope} title="Doctor" query={query} onClick={() => go('doctor')} loading={d === undefined && !dErr}>
+          {!d && dErr
+            ? <StatusPill label="Couldn't check" tone="warn" />
+            : d && (d.ok
             ? <StatusPill label="All systems healthy" tone="ok" />
             : !d.core_ok
               ? <StatusPill label="Gateway core failing" tone="warn" />
@@ -572,10 +581,12 @@ export const SETTINGS_WIDGETS: SettingsWidget[] = [
     description: 'Autonomy safety floor — incident kill switch, spend budgets, and outbound scanning.',
     useSearchText() { const { data: i } = useIncident(); return `guardrails autonomy safety incident kill switch budgets spend scan denylist ${i ? (i.active ? 'incident active suspended' : 'normal') : ''}` },
     render(query, go) {
-      const { data: i } = useIncident()
+      const { data: i, error: iErr } = useIncident()
       return (
-        <BentoCard icon={ShieldAlert} title="Guardrails" query={query} onClick={() => go('guardrails')} loading={i === undefined}>
-          {i && (i.active
+        <BentoCard icon={ShieldAlert} title="Guardrails" query={query} onClick={() => go('guardrails')} loading={i === undefined && !iErr}>
+          {!i && iErr
+            ? <StatusPill label="Couldn't check" tone="warn" />
+            : i && (i.active
             ? <><StatusPill label="Incident mode — unattended work paused" tone="warn" />
                 {i.reason && <div className="mt-1.5 truncate text-on-surface-low text-[0.75rem]">{i.reason}</div>}</>
             : <><StatusPill label="Normal operation" tone="ok" />
