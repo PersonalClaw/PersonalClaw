@@ -1852,7 +1852,7 @@
     {
       "plan": "TEAM-SHARED-ENTITIES",
       "code": "TSE",
-      "status": "in_progress",
+      "status": "done",
       "summary": "5 atoms: TSE-1/2/3 done (owner identity+attribution, task multi-user tolerance, memory contributor provenance); TSE-4 (trigger-store provider seam, \u00a72.2+\u00a73) and TSE-5 (PoC trigger-provider app, \u00a74) remain \u2014 TSE-4 gated on AUTOMATION-SUBSTRATE (now satisfied) + TSE-1, TSE-5 on TSE-4.",
       "atoms": [
         {
