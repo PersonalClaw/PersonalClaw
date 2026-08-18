@@ -144,6 +144,56 @@ describe('every list whose label states a total discloses its cap', () => {
     expect(src, 'still a button').toMatch(/title=\{`Show \$\{hidden\} more file\$\{[^}]*\}`\}>\+\{hidden\} more<\/button>/)
   })
 
+  it('a dashboard widget preview says it is one', () => {
+    // 🔑 A SECOND GROUP, ON ITS OWN RULE. The census above only claims lists whose LABEL states a
+    // total; a dashboard widget states nothing — its `Section` frame carries a bare label, so six of
+    // twenty open tasks rendered with no count anywhere and read as all of them. These are the
+    // opposite failure from the one above (no promise rather than an unmet one) and needed a separate
+    // judgement, not an extension of the same sweep.
+    //
+    // 🪤 THE RULE IS NARROWER THAN "EVERY WIDGET": disclose a residue only when the hidden items are
+    // real, persistent things the user could otherwise reach — open tasks, their own pins, the models
+    // holding RAM on this machine, scheduled runs. All four have a destination that lists them.
+    const widgets = join(SRC, 'pages/dashboard/widgets')
+    const caps = cappedLists().filter((l) => l.rel.startsWith('pages/dashboard/widgets/'))
+    expect(caps.length, 'the widget caps must be found').toBeGreaterThanOrEqual(5)
+    const pins: Array<[string, RegExp]> = [
+      ['pages/dashboard/widgets/TasksWidget.tsx', /<MoreRow total=\{visible\.length\} shown=\{6\} \/>/],
+      ['pages/dashboard/widgets/ScheduleWidget.tsx', /<MoreRow total=\{visible\.length\} shown=\{6\} \/>/],
+      ['pages/dashboard/widgets/PinnedArtifacts.tsx', /<MoreRow total=\{resolved\.length\} shown=\{6\} \/>/],
+      ['pages/dashboard/widgets/OnThisMachine.tsx', /<MoreRow total=\{rows\.length\} shown=\{5\} \/>/],
+    ]
+    for (const [rel, re] of pins) {
+      expect(strip(readFileSync(join(SRC, rel), 'utf8')), `${rel} must disclose its cap`).toMatch(re)
+    }
+    expect(readdirSync(widgets).length, 'the widget directory must be readable').toBeGreaterThan(4)
+  })
+
+  it('the SCHEDULE widget applied a standard it already held', () => {
+    // Worth its own assertion because it is the strongest evidence the cap was a defect and not a
+    // choice: this file already discloses the rows its archive fold hides, and its comment insists the
+    // count come from the SERVER's full-window tally so "the label must not shrink to the fold" —
+    // while a silent six-row truncation sat beside it. Both must stay.
+    const src = strip(readFileSync(join(SRC, 'pages/dashboard/widgets/ScheduleWidget.tsx'), 'utf8'))
+    expect(src, 'the fold disclosure it already had').toMatch(/\$\{scheduleSuppressed\} suppressed by a gate/)
+    expect(src, 'and the cap disclosure it was missing').toMatch(/<MoreRow total=\{visible\.length\}/)
+    expect(src, 'the residue is measured against what the fold shows').not.toMatch(
+      /<MoreRow total=\{schedule\.length\}/,
+    )
+  })
+
+  it('a GENERATED feed is deliberately left silent', () => {
+    // 🪤 THE ONE WIDGET EXCLUDED, and the reason is the rule above rather than convenience.
+    // `Suggestions` renders strings a backend generates from recent activity: there is no suggestions
+    // page, nothing persists, and the list is regenerated — so "… 12 more" would name items the user
+    // cannot reach and would recast a curated prompt list as a truncated inventory. Pinned so a later
+    // pass does not "finish the set".
+    const src = strip(readFileSync(join(SRC, 'pages/dashboard/widgets/Suggestions.tsx'), 'utf8'))
+    expect(src, 'still capped').toMatch(/items\.slice\(0, 5\)/)
+    expect(src, 'and still silent, on purpose').not.toMatch(/MoreRow/)
+    expect(src, 'its own copy says it is a feed, which is why').toMatch(/they build from your activity/)
+  })
+
   it('a string SUMMARY keeps its own grammar', () => {
     // Pinned so the exclusion above is a judgement on record rather than a hole: this one already
     // tells the user what it omits, in the only form that reads correctly inline.
