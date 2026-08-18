@@ -18,7 +18,7 @@ Each atom below executes start-to-finish in one go. If an atom lists dependencie
 | `PUBL-6` | ✅ | Tag v0.1.0 and cut releases to PyPI, GHCR, and GitHub Releases | `PUBL-2`, `PUBL-3`, `EXT:CI-RELEASE-ENGINEERING:release pipeline`, `EXT:DISTRIBUTION:wheel bundles SPA / release artifacts` | v0.1.0 tagged on core (anchoring releases); v0.1.0-v0.1.3 published to PyPI (personalclaw core + personalclaw-client), GHCR images, and GitHub Releases with no force pushes to main |
 | `PUBL-7` | ⬜ | Fresh-clone getting-started walkthrough on a clean machine and fix remote friction | `PUBL-6` | fresh clone from GitHub (not local) on a clean machine/venv runs the getting-started guide verbatim to a working gateway; any remote-specific friction fixed (URL casing, submodule-free clone, raw-content doc links) |
 | `PUBL-8` | ⬜ | Verify the self-update pipeline end-to-end against the real remote | `PUBL-6`, `EXT:DISTRIBUTION:tag-tracking self-update (S4)` | gateway on a clone one commit behind detects the update and apply pulls/rebuilds/re-execs successfully against the published remote |
-| `PUBL-9` | ⬜ | Verify Store git-source install from the published apps repo URL | `PUBL-1` | installing an app via POST /api/apps/sources git path against the published PersonalClawApps repo URL succeeds (previously validated only with local paths) |
+| `PUBL-9` | ✅ | Verify Store git-source install from the published apps repo URL | `PUBL-1` | installing an app via POST /api/apps/sources git path against the published PersonalClawApps repo URL succeeds (previously validated only with local paths) |
 | `PUBL-10` | ⬜ | Publicize once the DISCOVERABILITY-LAUNCH gate is green | `PUBL-6`, `EXT:DISCOVERABILITY-LAUNCH:site live + real screenshots + install one-liner (S1-3 gate)` | public launch announced after DISCOVERABILITY-LAUNCH S1-3 gate is met — marketing site live, real screenshots, install one-liner working |
 
 ## Atom scopes
@@ -89,7 +89,7 @@ Session 2 §2
 
 ### `PUBL-9` — Verify Store git-source install from the published apps repo URL
 
-**Status:** todo
+**Status:** done
 
 Session 2 §3
 

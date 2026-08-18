@@ -5749,7 +5749,7 @@
         {
           "id": "PUBL-9",
           "title": "Verify Store git-source install from the published apps repo URL",
-          "status": "todo",
+          "status": "done",
           "scope": "Session 2 \u00a73",
           "done_when": "installing an app via POST /api/apps/sources git path against the published PersonalClawApps repo URL succeeds (previously validated only with local paths)",
           "deps": [
@@ -7811,11 +7811,6 @@
       {
         "id": "PUBL-8",
         "title": "Verify the self-update pipeline end-to-end against the real remote",
-        "plan": "PUBL"
-      },
-      {
-        "id": "PUBL-9",
-        "title": "Verify Store git-source install from the published apps repo URL",
         "plan": "PUBL"
       },
       {
@@ -10048,9 +10043,9 @@
         "code": "PUBL",
         "plan": "PUBLICATION",
         "total_atoms": 10,
-        "done": 6,
+        "done": 7,
         "in_progress": 0,
-        "todo": 4,
+        "todo": 3,
         "blocked": 0
       },
       {
