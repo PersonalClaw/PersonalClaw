@@ -263,14 +263,24 @@ async def open_acp_session_provider(
     session_files_dir: Path | None = None,
     model: str = "",
     agent_name: str = "",
+    session_key: str | None = "",
     mcp_servers: list | None = None,
 ) -> "AcpSessionProvider":
     """Open a new session on an already-live (spawned + ``initialize``-d) connection and
     wrap it in an :class:`AcpSessionProvider`. Multiple calls on the same connection =
     concurrent sessions on one process (the P9 win). The caller (pool) owns spawning the
-    connection + its lifetime."""
+    connection + its lifetime.
+
+    ``mcp_servers`` defaults to the ``personalclaw-core`` server (ACP-AGENT-PARITY §2.1
+    prong A) rather than to nothing: this parameter existed with no supplier, so the
+    concurrent path opened every session with an empty ``mcpServers`` exactly like the
+    one-session path did. Pass ``[]`` to open a session with no MCP servers at all.
+    """
+    from personalclaw.acp.mcp_servers import core_mcp_servers
+
+    servers = mcp_servers if mcp_servers is not None else core_mcp_servers(session_key=session_key)
     session = await connection.new_session(
-        {"cwd": str(cwd), "mcpServers": mcp_servers or []},
+        {"cwd": str(cwd), "mcpServers": servers},
         session_files_dir=session_files_dir,
     )
     return AcpSessionProvider(
