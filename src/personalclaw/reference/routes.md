@@ -21,6 +21,7 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `PUT /api/agent-metadata/{name}` — write agent routing metadata.
 - `GET /api/agent-providers` — the single list of agent runtimes + readiness.
 - `GET /api/agent-providers/{id}/agents` — list a runtime's discoverable agents.
+- `GET /api/agent-runners` — the BYO runner catalog with measured health evidence.
 - `GET /api/agent/config` — read or write the installed agent config.
 - `PUT /api/agent/config` — read or write the installed agent config.
 - `GET /api/agents` — list all PersonalClaw agent definitions.

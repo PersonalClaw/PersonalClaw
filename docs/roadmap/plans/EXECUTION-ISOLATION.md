@@ -821,3 +821,36 @@ D0 is documentation and should land immediately — an inaccurate security claim
   implemented: binary files over the threshold are recorded manifest-only by SIZE
   (`checkpoints.max_file_mb`) rather than by binary-detection — the restore warning the plan asks for is
   present either way.
+- [2026-08-18][EI-5] **DONE (partial on one leg, stated below).** Shipped: the runner data catalog
+  (`src/personalclaw/agents/runners.py` + the shipped `agents/runner_catalog.json`, package-data'd),
+  measured health evidence in the `agent-metadata/<id>.runner.json` sidecar, capability persistence
+  from `normalize_discovery`, adapter pin/provenance verification, `GET /api/agent-runners`, the
+  Settings → Agents runner rows, and `agents.unattended_requires_verified_adapter` through all five
+  round-trip points. Measured on this box: Claude Code v2.1.233/58 ms, Codex v0.146.1/60 ms, Kiro
+  v2.18.1/210 ms, Gemini CLI unhealthy (absent).
+- [2026-08-18][EI-5] **DEVIATION — the catalog is core DATA, not a fourth runner app.** §3.1(1) asks
+  for `apps/gemini-cli-agent` in the apps repo; the four rows have to exist in Settings whether or not
+  any runner app is installed, and this repo cannot ship a row into the sibling apps repo. So the
+  catalog is a shipped JSON data file plus a BYO overlay (`$PERSONALCLAW_HOME/runners/<id>.json`).
+  Registration is untouched — `acp_bundles/_register.py` remains the only way a runner becomes a
+  `ProviderEntry`. The boundary posture: core Python carries zero vendor branching; every vendor value
+  is a field read from replaceable data.
+- [2026-08-18][EI-5] **Gemini CLI's HEALTHY path is unproven on this machine.** `gemini` is not
+  installed here, so what is measured is its unhealthy path (verbatim: `'gemini' not found on PATH
+  (looked for: gemini); set GEMINI_CLI_EXECUTABLE to override`). Its declared `acp_args`
+  (`--experimental-acp`) come from the vendor's documented flag, not from a handshake run here.
+- [2026-08-18][EI-5] **Adapter pins ship EMPTY on purpose; provenance is trust-on-provision.** The
+  plan's §3.1(4) sha256 table would have required inventing digests, which would make `verify_adapter`
+  lie. Instead `provision_acp_adapter` records npm's own resolved version + SRI integrity into
+  `acp-adapters/.pclaw-lock.json` and every later read re-checks it, so an adapter swapped underneath
+  an install unverifies. A catalog-declared pin, when present, is checked BEFORE recording and a
+  mismatch records nothing.
+- [2026-08-18][EI-5] **The gate call site is `SessionManager.get_or_create`, not the provider bridge.**
+  The ACP pool-claim path never reaches the bridge factory, so a gate there would have had two holes
+  (claim + concurrent-open). The refusal is asserted by the provider factory NOT being called, with
+  three floors: flag off proceeds, interactive proceeds, and a verified adapter proceeds.
+- [2026-08-18][EI-5] **STOP POINT. `EI-5` left `todo`; `dag.json` untouched.** Not implemented from
+  §3.1: (5) idle-release / lease / transparent reconnect — that is EI-6's row, not this one. Health
+  evidence is written by the catalog's own `--version` probe and by discovery; wiring the connection
+  pool's warm attempt as a third writer was left out deliberately (a pool warm has no catalog id at
+  that seam, and inventing one would have been the second registration path §3.1 forbids).

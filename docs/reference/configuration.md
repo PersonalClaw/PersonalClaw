@@ -49,6 +49,7 @@ Not everything is in `config.json` by design. Stored elsewhere:
 | `agent.subagent_cwd_allowed_roots` | list of strings | `["~/workspace", "~/workplace"]` | Settings → Agent defaults | Directory roots under which a subagent's `cwd` override is permitted (`~` expands). Empty list disables cwd overrides. |
 | `agent.log_level` | enum: `DEBUG`, `INFO`, `WARNING`, `ERROR` | `WARNING` | Settings → Agent defaults | Persistent backend log level. Applied at startup; the `--verbose` CLI flag overrides it. |
 | `agent.soft_stop_budget_secs` | number (0.5–60) | `10.0` | Settings → Agent defaults | Seconds to wait for a cooperative cancel before hard-killing a session. |
+| `agent.unattended_requires_verified_adapter` | boolean | `false` | Settings → Agent defaults | Refuse an UNATTENDED spawn (cron, scheduled run, loop worker) onto an external agent runner whose ACP adapter has no verified provenance — an `npx -y` fetch-at-launch, an adapter that changed since it was provisioned, or a runner with no catalog row. Interactive chat is never gated. Fails closed: an unverifiable runner is refused. |
 
 The chat **model** is not a config field — bind models per use case in Settings →
 Models, or per agent on the Agents page.
