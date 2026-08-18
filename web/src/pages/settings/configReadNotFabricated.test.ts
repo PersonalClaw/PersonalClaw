@@ -117,7 +117,13 @@ describe('a config panel does not present fabricated values as saved state', () 
     // next pass starts from a count", and it recorded a tenth of it. 28 of the 31 could have vanished with
     // the rail still green. Measured by instrumenting every floor assertion in the suite (cycle 134).
     // It moves only deliberately: de-swallowing one of these is a real change, so lower it in that PR.
+    //
+    // 🔻 31 → 30, and this is that PR. Cycle ux-673 de-swallowed the `settings:doctor` and
+    // `settings:incident` tiles (a health card and a SAFETY card, both of which rendered a blank body
+    // on a failed read because the substituted `null` resolved the fetcher and cleared `loading`).
+    // Measured on both sides: the population was 32 before — the floor had drifted BELOW the real count
+    // again — and is 30 after. Lowered to the measured value, not to 30-because-two-left.
     expect(stillSubstituting, 'the decorating fallbacks in these five files, measured')
-      .toBeGreaterThanOrEqual(31)
+      .toBeGreaterThanOrEqual(30)
   })
 })

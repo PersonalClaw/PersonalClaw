@@ -47,7 +47,15 @@ const read = (rel: string) => readFileSync(join(SRC, rel), 'utf8')
 
 /** [file, the assertion's tail, the measured population it must sit at] */
 const TIGHTENED: [string, RegExp, number][] = [
-  ['pages/settings/configReadNotFabricated.test.ts', /toBeGreaterThanOrEqual\((\d+)\)/, 31],
+  // 🔻 31 → 30 (cycle ux-673). Read this before assuming the number was lowered to make a red go away:
+  // the taxonomy above calls this floor a type (a) MEASURED POPULATION whose rule is "sit at the
+  // measurement". The measurement moved because two of the counted substitutions were DELETED — the
+  // `settings:doctor` and `settings:incident` tiles stopped mapping a rejection to `null` — which is the
+  // outcome the inner rail exists to encourage, and its own comment says "de-swallowing one of these is a
+  // real change, so lower it in that PR". Measured on both sides in that PR: 32 before (the floor had
+  // drifted BELOW the real count again), 30 after. The scan still finds 30, so it did not stop guarding;
+  // the population is genuinely smaller. A floor moved for any other reason is the rot this rail is for.
+  ['pages/settings/configReadNotFabricated.test.ts', /toBeGreaterThanOrEqual\((\d+)\)/, 30],
   ['ui/requiredFieldMarked.test.tsx', /population must still be visible to this rail'\)\.toBeGreaterThanOrEqual\((\d+)\)/, 20],
   ['design/controlNameFloor.test.ts', /expected the inline rename\/edit inputs'\)\.toBeGreaterThanOrEqual\((\d+)\)/, 18],
   ['ui/escapeDismissContract.test.tsx', /scrim-bearing overlays'\)\.toBeGreaterThanOrEqual\((\d+)\)/, 10],
