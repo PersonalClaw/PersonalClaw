@@ -4,6 +4,23 @@ import { spring } from '../../design/motion'
 import { QuietButton } from '../../ui/QuietButton'
 import { IconButton } from '../../ui/IconButton'
 
+/** What the host's always-mounted live region says when chips arrive (CC-6).
+ *
+ *  The chips land 1-3s AFTER the reply finishes, from a WebSocket event — a purely
+ *  visual arrival. `role="group" aria-label` names them once a user reaches them, but
+ *  nothing told a screen-reader user they had appeared at all, so the only way to find
+ *  them was to re-walk the transcript on the off-chance. This is the sentence that gets
+ *  announced; the region itself lives in the host (ChatPage) and is mounted from first
+ *  render, because a live region that appears together with its content is not
+ *  reliably announced.
+ *
+ *  Empty string when there are none — including on dismissal, so the region CLEARS
+ *  rather than leaving a stale claim that suggestions are still there. */
+export function followupAnnouncement(count: number): string {
+  if (count <= 0) return ''
+  return `${count} follow-up suggestion${count === 1 ? '' : 's'} available`
+}
+
 /** Follow-up chips (CHAT-CRAFT S3) — 2-3 suggested next messages rendered under the
  *  last assistant turn's actions after a reply completes. Click fills the composer;
  *  the small send glyph (or double-click) sends immediately. The host dismisses them

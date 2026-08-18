@@ -75,7 +75,7 @@ import { api, type ApprovalMode, type TaskMode, type ReasoningEffort, type ChatS
 import { useChatSocket, type WsMessage } from '../lib/useChatSocket'
 import { useStreamCoalescer } from './chat/useStreamCoalescer'
 import { FindBar } from './chat/FindBar'
-import { FollowupChips } from './chat/FollowupChips'
+import { FollowupChips, followupAnnouncement } from './chat/FollowupChips'
 import { CheckWorkChip } from './chat/CheckWorkChip'
 import { applyCoalescedFlush, insertActivity } from './chat/coalesceReducers'
 import { useCachedData, invalidateCache } from '../lib/useCachedData'
@@ -2795,6 +2795,13 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
                   {/* visually-hidden polite live region — narrates streaming
                       lifecycle to screen readers (the glow/Thinking cue is visual-only). */}
                   <div aria-live="polite" className="sr-only">{srAnnounce}</div>
+                  {/* Second polite region, mounted from first render (CC-6): the follow-up
+                      chips arrive from a WS event AFTER "Response complete." — a visual-only
+                      change until now. Kept separate from srAnnounce so the streaming
+                      narration and the chips arrival do not overwrite one another. */}
+                  <div role="status" aria-live="polite" className="sr-only">
+                    {followupAnnouncement(streaming ? 0 : followups.length)}
+                  </div>
                 </div>
               </div>
               <div className="relative shrink-0 px-l pb-l">
