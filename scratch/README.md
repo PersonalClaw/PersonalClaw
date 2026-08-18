@@ -5,7 +5,9 @@ Nothing here is imported, installed or served by PersonalClaw. It is content tha
 before it is pushed. `scratch/` is outside `testpaths` and outside `make lint`'s targets, so it
 does not participate in the core build.
 
-ET-2 (`docs/roadmap/plans/ECOSYSTEM-TOOLING.md`, Session 1 T1.4) staged two things.
+ET-2 (`docs/roadmap/plans/ECOSYSTEM-TOOLING.md`, Session 1 T1.4) stages one thing: the template
+repo below. Its second item — the apps-guide quickstart — is no longer staged here, because it
+has landed in the repository it belongs to (see §2).
 
 ## 1. `app-template/` → `github.com/personalclaw/app-template`
 
@@ -51,13 +53,18 @@ Owner steps to publish:
 against a local tarball and a loopback HTTP server; the one thing no test can cover is whether
 the org repo answers, because it does not exist yet.
 
-## 2. `apps-guide-quickstart.md` → `PersonalClawApps/docs/app-creation-guide.md`
+## 2. The apps-guide quickstart — LANDED, nothing to publish
 
-A "minutes to first run" quickstart to insert at the top of the apps repo's app-creation
-guide. The file carries its own insertion instructions in an HTML comment, then the exact
-markdown to paste below a marker line. Every command in it was executed verbatim from an empty
-directory against a freshly-homed gateway; the wall-clock number in the text is measured, not
-a target.
+The "minutes to first run" quickstart is **in the apps repo**, at the top of
+`PersonalClawApps/docs/app-creation-guide.md`. It is not staged here any more: a staged copy of
+an already-delivered document has no consumer and only invites drift, so the apps repo is the
+single copy. Every command in it was executed verbatim from an empty directory against a
+freshly-homed gateway, and the wall-clock numbers in the text are measured, not targets.
+
+The apps repo has no docs test tier, so nothing in **this** repo can pin that text. The same
+auth-shape invariant it depends on (`?token=` query parameter, never a Bearer header) is pinned
+here on the template README by
+`tests/test_app_from_template.py::test_the_staged_readme_uses_the_query_token_not_a_bearer_header`.
 
 ## 3. `registry/` → `github.com/personalclaw/registry`
 
