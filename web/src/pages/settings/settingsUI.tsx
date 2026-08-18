@@ -111,8 +111,18 @@ export function Field({ label, hint, children }: { label: string; hint?: string;
 // `import { Toggle } from '../settingsUI'` call sites keep working (no dual impl).
 export { Toggle } from '../../ui/Toggle'
 
-export function SegPills<T extends string>({ value, onChange, options }: {
-  value: T; onChange: (v: T) => void; options: { key: T; label: string }[]
+/** 🔴 `ariaLabel` is REQUIRED, and it is the dimension this group sets ("Scan mode", "Widget
+ *  density") — not a value. Measured on the live DOM across four settings routes before it existed:
+ *  **34 groups, 126 options, 0 with the dimension in any name and 0 with a pressed state.** The
+ *  notification matrix alone renders 26 identical `[Never | Badge | Notify | Digest]` groups, so a
+ *  screen-reader user heard 26 indistinguishable sets of four bare buttons with no way to tell which
+ *  rule they belonged to or which mode was live (WCAG 4.1.2, level A).
+ *
+ *  This is the form `SegToggle`, `WidthPill`, `TokenControls` and `HeaderModePill` already ship —
+ *  `<dimension>: <value>` plus `aria-pressed` — and it is required for the same reason SegToggle's is:
+ *  typecheck stops an unnamed new call site before a rail has to. The VISIBLE label is untouched. */
+export function SegPills<T extends string>({ value, onChange, options, ariaLabel }: {
+  value: T; onChange: (v: T) => void; options: { key: T; label: string }[]; ariaLabel: string
 }) {
   // Per-instance layoutId so the sliding pill in one SegPills can't fly to another.
   const indicatorId = `segpills-${useId()}`
@@ -122,6 +132,7 @@ export function SegPills<T extends string>({ value, onChange, options }: {
         const on = o.key === value
         return (
           <button key={o.key} type="button" onClick={() => onChange(o.key)}
+            aria-label={`${ariaLabel}: ${o.label}`} aria-pressed={on}
             className="relative rounded-pill px-3 h-7 text-[0.8125rem] transition-colors"
             style={{ color: on ? 'var(--color-on-surface)' : 'var(--color-on-surface-low)' }}>
             {/* liquid active pill — slides between options via layoutId instead of
