@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
+import { notify } from '../../app/appSdk'
 import { fvs } from '../../design/fontWeight'
 import { createPortal } from 'react-dom'
 import { motion, AnimatePresence } from 'framer-motion'
@@ -54,7 +55,19 @@ export function TerminalDrawer({ open, onClose, onOpenFull }: {
   }, [])
 
   const closeSession = useCallback(async (id: string) => {
-    await api.deleteTerminal(id).catch(() => {})
+    // Same defect as TerminalPage's close: the tab disappeared whether or not the session did,
+    // orphaning a live PTY behind a UI that no longer lists it.
+    //
+    // 🪤 NOT this component's `error` state, which would have been an INERT fix: it renders only in
+    // the `tabs.length === 0` branch — unreachable here, because a failed close leaves the tab —
+    // and its copy is hardcoded "Couldn't open a session", the wrong noun for a close. `notify` is
+    // the channel the app already uses for a failed action on a surface that has no room for a line.
+    try {
+      await api.deleteTerminal(id)
+    } catch (e) {
+      notify(`Couldn't close the terminal session: ${String((e as Error)?.message || e)}`, 'error')
+      return
+    }
     setTabs((t) => {
       const next = t.filter((x) => x.id !== id)
       setActive((cur) => (cur === id ? (next.length ? next[next.length - 1].id : '') : cur))
