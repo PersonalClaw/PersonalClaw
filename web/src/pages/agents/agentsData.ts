@@ -22,18 +22,29 @@ export type AgentGroup = NativeGroup | DiscoveredGroup
 
 export interface AgentsData {
   groups: AgentGroup[]
+  /** The read's rejection, so a consumer can tell a failure from an empty catalog. */
+  error: unknown
+  /** True once the read has produced a value — `groups: []` alone cannot say that. */
+  loaded: boolean
   loading: boolean
   reload: () => void
 }
 
 /** Build the grouped agent catalog: native saved profiles + every ACP runtime's
- *  discovered agents. Degrades gracefully (a failed slice yields an empty group). */
+ *  discovered agents. A failed PROVIDER slice degrades to an empty group; a failed NATIVE
+ *  read rejects, because the list's empty state is a claim about exactly that read. */
 async function fetchAgentGroups(): Promise<AgentGroup[]> {
   const [nat, provs] = await Promise.allSettled([api.agents(), api.agentProviders()])
+  // 🔑 `allSettled` never rejects, so exposing the hook's `error` above would have been an INERT
+  // control — the fetcher always resolved, mapping a failed native read to `agents: []`. The NATIVE
+  // slice is the collection this page's empty state makes a claim about ("No native agents"), so its
+  // rejection has to reach the caller. The ACP provider slices stay tolerant on purpose: an unready
+  // or unreachable runtime is still rendered as its own group, which is this surface's whole point.
+  if (nat.status === 'rejected') throw nat.reason
   const out: AgentGroup[] = [{
     kind: 'native',
-    agents: nat.status === 'fulfilled' ? nat.value.agents : [],
-    defaultAgent: nat.status === 'fulfilled' ? nat.value.default_agent : '',
+    agents: nat.value.agents,
+    defaultAgent: nat.value.default_agent,
   }]
   if (provs.status === 'fulfilled') {
     const acp = provs.value.filter((p: AgentProvider) => p.type !== 'native')
@@ -50,6 +61,12 @@ async function fetchAgentGroups(): Promise<AgentGroup[]> {
  *  list paints instantly on revisit (persist:true — the catalog changes slowly)
  *  and revalidates in the background; `reload()` invalidates + re-pulls. */
 export function useAgentsData(): AgentsData {
-  const { data, loading, refresh } = useCachedData('agents:groups', fetchAgentGroups, { persist: true })
-  return { groups: data ?? [], loading, reload: () => { invalidateCache('agents:groups'); refresh() } }
+  // 🪤 `error` used to be DROPPED here, and `data ?? []` erased the difference between "not loaded"
+  // and "none" before any consumer could see it — so `#/agents` answered a failed read with its
+  // newcomer empty state ("No native agents · Create an agent to define its model…"). The adapter
+  // was the swallow: `useCachedData` had the error all along. Re-exposed, matching `useAutonomyLadder`,
+  // the one adapter in the tree that already did this.
+  const { data, error, loading, refresh } = useCachedData('agents:groups', fetchAgentGroups, { persist: true })
+  return { groups: data ?? [], error, loaded: data !== undefined, loading,
+    reload: () => { invalidateCache('agents:groups'); refresh() } }
 }
