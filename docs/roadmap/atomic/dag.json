@@ -3278,6 +3278,7 @@
           "id": "WF2LEA-10",
           "title": "Amendment E1.1 skill resource tier + E1.2 SKILL.md conformance check",
           "status": "done",
+          "pr": 1656,
           "scope": "Amendment (a) skill resource tier + (Owner task 1) format conformance; task rows E1.1, E1.2, VE",
           "done_when": "Optional resources: frontmatter; skill_invoke returns body + an L0 resource catalog (never contents); new skill_resource(skill, path) resolves ONLY declared paths, rejects traversal, size-capped truncate-notice, usage-recorded, reads-never-executes; a standard-conformant third-party SKILL.md imports unmodified through the existing scanner rail (DANGEROUS floor still non-overridable, tested); \u00a72.4 tiering NOT reimplemented in skills/",
           "deps": [
@@ -4277,6 +4278,7 @@
           "id": "EIAT-3",
           "title": "mail-inbox send_reply over SMTP, draft-by-default (S2)",
           "status": "done",
+          "pr": 1656,
           "scope": "Session 2 \u2014 T2.4; Contract C3 (Outbound). Guardrail 4 (draft-by-default outbound).",
           "done_when": "A reply is composed but NOT sent while draft-mode is on; enabling sending delivers and threads correctly via In-Reply-To; the provider honors the platform's live-writes/dry-run posture (supports_dry_run). Owner-gated on the draft-by-default confirmation (Owner task 4).",
           "deps": [
@@ -6182,6 +6184,7 @@
           "id": "ET-1",
           "title": "`personalclaw app new` scaffold: provider-registry-derived type table + per-type generators + conformance test",
           "status": "done",
+          "pr": 1656,
           "scope": "Session 1 (T1.1, T1.2, T1.3, V1); C1 \u2014 Scaffold (src/personalclaw/cli_app_new.py, wired via \u00a73.10 subparser)",
           "done_when": "`personalclaw app new --list-types` prints a type table derived at runtime from the provider registry (adding an upstream capability type appears without editing the generator); for EVERY type, generate\u2192`pytest <dir>` passes\u2192local-source install succeeds\u2192provider registers (scripted test loop); each type emits valid app.json (incl. plan-32 cli.*/loggerRoots), a minimal ABC-implementing provider stub, passing stub-based test_provider.py, README, MIT LICENSE; tests/test_app_scaffold.py generates each type into tmp and runs apps-repo checks so scaffold drift = red; V1 timed stranger-shaped `search`-app run recorded (<30 min target)",
           "deps": [
