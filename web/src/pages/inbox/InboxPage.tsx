@@ -88,7 +88,18 @@ export function InboxPage({ query, setQuery, navigate }: Pick<RouteProps, 'query
   // so the blast radius is on screen before the click lands.
   async function dismissAll() {
     const n = status?.pending_count ?? 0
-    if (!(await confirm({ title: `Dismiss all ${n} pending item${n === 1 ? '' : 's'}?`, body: 'Every pending item of every kind is dismissed at once. There is no undo.', danger: true, confirmLabel: 'Dismiss all' }))) return
+    // 🪤 "There is no undo" is TRUE — `/api/inbox/{id}/restore` 409s on anything that is not FILTERED, and
+    // no surface un-dismisses — but on its own it implied the items were GONE. They are not: this page's
+    // own `handled` filter includes `status === 'dismissed'`, so every one of them stays readable one tab
+    // away. Saying only the irreversible half of a fact is how a reversible-looking action reads as
+    // destruction (and the app's house style already pairs the two: "Completed work is kept",
+    // "Workspace files on disk are left untouched").
+    if (!(await confirm({
+      title: `Dismiss all ${n} pending item${n === 1 ? '' : 's'}?`,
+      body: 'Every pending item of every kind is dismissed at once. There is no undo — but they stay readable under Handled.',
+      danger: true,
+      confirmLabel: 'Dismiss all',
+    }))) return
     setBusy(true); try { await api.dismissAllInbox(); reload() } finally { setBusy(false) }
   }
   async function restart() { setBusy(true); try { await api.restartInbox(); setTimeout(reload, 800) } finally { setBusy(false) } }
