@@ -11,7 +11,7 @@ Each atom below executes start-to-finish in one go. If an atom lists dependencie
 | Atom | Status | Title | Depends on | Done when |
 |---|---|---|---|---|
 | `PEP-1` | ✅ | PresetEmptyState primitive + Triggers/Schedule preset on-ramp | — | On a fresh dev home the Triggers empty state shows preset cards; clicking e.g. 'Morning briefing' opens the create flow pre-filled to a working schedule trigger; the expert blank-create path still works unchanged; keyboard/focus a11y verified. |
-| `PEP-2` | ⬜ | Cross-surface preset empty-state sweep | `PEP-1` | No list surface presents a bare form with no on-ramp; each empty surface deep-links into its existing create flow; expert paths unchanged; validation recorded with screenshots. |
+| `PEP-2` | ✅ | Cross-surface preset empty-state sweep | `PEP-1` | No list surface presents a bare form with no on-ramp; each empty surface deep-links into its existing create flow; expert paths unchanged; validation recorded with screenshots. |
 | `PEP-3` | ⬜ | App Store persistent category/source rail + card polish | `EXT:APP-PLATFORM-EVOLUTION:quality-manifest-block` | Wide viewport shows the rail persistently and narrow falls back to the dropdown; selecting a category/source filters the grid and survives reload via the URL; cards render art-forward with and without hero art; rail is keyboard-navigable with aria-pressed category buttons. |
 | `PEP-4` | ✅ | Onboarding import engine (scanners + writers) | — | A fixture ~/.claude yields instruction+mcp+skills items with secrets counted-and-skipped and re-scan idempotent; importing the fixture creates the memories, MCP entries, and skills/imported/claude_code/*, and a conflicting item reports 'conflict' rather than silently overwriting. |
 | `PEP-5` | ⬜ | Onboarding import step UI | `PEP-4`, `EXT:ONBOARDING-UX:step-stack-primitive` | Fresh home with a fixture source shows the step; import completes without any secret appearing; re-entry shows already-imported items as 'existing'; skip path works; validation recorded. |
@@ -87,7 +87,7 @@ incoherent. It wants an owner call on whether system-created triggers belong in 
 
 ### `PEP-2` — Cross-surface preset empty-state sweep
 
-**Status:** todo
+**Status:** done
 
 Reuse the PresetEmptyState primitive across the remaining list surfaces: Workflows and Tasks (preset source = the bundled workflow/task templates surfaced as cards, no new copy that drifts from the templates), plus lighter-touch example cards on the Knowledge and Agents/Tools/Skills empty states. Validate as a newcomer by walking every list surface's empty state and confirming each offers a guided on-ramp while the expert blank-create path still works unchanged.
 

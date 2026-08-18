@@ -222,6 +222,7 @@ export function ArtifactsSection({ sub, navigate, query: routeQuery, setQuery }:
               // `narrowed` lets the grid distinguish an empty library from a filtered-to-nothing
               // one — it only ever sees the post-filter list.
               : <ArtifactGrid artifacts={filtered} onOpen={open}
+                  onBrowseFiles={() => navigate('files')}
                   narrowed={!!(q.trim() || kind || src || col)} />}
           </div>
         </div>

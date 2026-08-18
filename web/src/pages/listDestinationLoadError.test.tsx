@@ -215,8 +215,10 @@ describe("the what= values compose LoadError's sentence", () => {
         }
       }
     }
-    // Vacuity floor: five values across the four files (knowledge contributes two).
-    expect(checked, 'the rail must actually find the values').toBe(5)
+    // Vacuity floor: SIX values across the four files (knowledge contributes three — its
+    // intents list joined with PEP-2, which gave that read an error branch before growing the
+    // empty state a create CTA).
+    expect(checked, 'the rail must actually find the values').toBe(6)
   })
 })
 
