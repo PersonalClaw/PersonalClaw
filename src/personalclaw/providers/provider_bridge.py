@@ -600,10 +600,14 @@ def resolve_provider_for_use_case(
     _extra_tool_roots = kwargs.pop("extra_tool_roots", None)
     # Unattended run mode (scheduled run-prompt/run-workflow, Goal/Code loop cycle,
     # dry-run replay): strips interactive tools + fails the approval gate fast so a
-    # background turn can't wedge waiting for a human (T5). Pop unconditionally so
-    # it never leaks into the model-axis resolvers; meaningful only to the native
-    # builder. The "auto"/"yolo" approval policy is a separate, complementary lever
-    # (it auto-approves) — unattended is about never blocking, set independently.
+    # background turn can't wedge waiting for a human (T5). Popped here so it never
+    # leaks into the MODEL-axis resolvers (which don't expect it) and re-injected
+    # below for the ACP branch — ACP consumes it too as of §2.3 (it is what lets the
+    # acp_agent factory pair a Zed dialect's ``bypassPermissions`` with host-side
+    # fail-fast; before that it was popped and DISCARDED, so an unattended ACP loop
+    # got neither the mode nor the fail-fast). The "auto"/"yolo" approval policy is a
+    # separate, complementary lever (it auto-approves) — unattended is about never
+    # blocking, set independently.
     _unattended = bool(kwargs.pop("unattended", False))
     # Dry-run replay (T9): observe-mode — write-capable tools return a synthetic
     # observation instead of executing. Pop unconditionally (native-only).
@@ -633,6 +637,15 @@ def resolve_provider_for_use_case(
         if _provider_kind
         else _agent_provider_kind(agent)
     )
+    # §2.3 (gap 3): re-inject ``unattended`` for the ACP branch. Only the acp_agent
+    # factory sees these kwargs on that branch, and it is the one place that can
+    # honour the flag — it hands it to AcpClient, which is what lets sanitize_mode
+    # accept ``bypassPermissions`` for a genuinely unattended run while every
+    # interactive session stays clamped (AAP-5). Restricted to _kind == "acp" on
+    # purpose: a native turn already took the explicit-argument path above, and the
+    # MODEL-axis resolvers must never see this key.
+    if _kind == "acp" and _unattended:
+        kwargs["unattended"] = True
     if not _force_model_axis and use_case in ("chat", "code_tools") and _kind == "native":
         # reasoning_effort_override is meaningful to the native runtime as the
         # per-turn effort, but the native builder's downstream (model-axis resolver)

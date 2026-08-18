@@ -411,6 +411,7 @@ class AcpAgentProvider(ModelProvider, AgentProvider):
         dialect: str | None = None,
         mode: str = "",
         reasoning_effort: str = "",
+        unattended: bool = False,
     ) -> None:
         if not command:
             raise ValueError("AcpAgentProvider requires a non-empty command list")
@@ -438,6 +439,14 @@ class AcpAgentProvider(ModelProvider, AgentProvider):
         # Per-turn reasoning effort — one of the backend's declared effort options
         # (verbatim); applied via the dialect's set_effort_request. Empty = default.
         self._reasoning_effort: str = reasoning_effort or ""
+        # Unattended run (§2.3 gap 3): nobody is watching this session, so an
+        # approval prompt has no one to answer it. Two consequences, and BOTH are
+        # required for the pair to be safe: the client may forward an auto-approve
+        # mode (``bypassPermissions``) that an interactive session is clamped out of,
+        # AND the host fails a permission request fast instead of parking the turn on
+        # a human. Forwarding the mode WITHOUT the fail-fast would be AAP-5's hole
+        # re-opened; the fail-fast without the mode is the kiro half (no mode axis).
+        self._unattended: bool = bool(unattended)
         self._session_files_dir: Path | None = (
             Path(session_files_dir) if session_files_dir is not None else None
         )
@@ -465,6 +474,7 @@ class AcpAgentProvider(ModelProvider, AgentProvider):
             dialect=get_dialect(self._dialect_id),
             mode=self._mode,
             reasoning_effort=self._reasoning_effort,
+            unattended=self._unattended,
         )
 
     # ── Lifecycle ────────────────────────────────────────────────────
@@ -665,6 +675,16 @@ class AcpAgentProvider(ModelProvider, AgentProvider):
         claim). The default dialect issues ``session/set_mode``; Zed adapters no-op."""
         await self._client.set_agent(agent)
 
+    def set_unattended(self, unattended: bool) -> None:
+        """Declare this session unattended BEFORE :meth:`set_mode` (§2.3).
+
+        A pooled connection is warmed generic — attended by default — so a session
+        claimed for an unattended run must say so here or its ``bypassPermissions``
+        is clamped back to the host-authority mode on the next line. Ordering is
+        load-bearing: ``set_mode`` reads this flag."""
+        self._unattended = bool(unattended)
+        self._client._unattended = bool(unattended)
+
     async def set_mode(self, mode: str) -> None:
         """Switch the permission/operating mode on the running connection (post-
         pool-claim). Zed adapters issue ``set_config_option`` (configId=mode);
@@ -833,6 +853,14 @@ def _factory(
     # verbatim). Empty → adapter default; dialects without an effort axis ignore it.
     reasoning_effort = str(kwargs.get("reasoning_effort_override") or "").strip()
 
+    # Unattended run (§2.3 gap 3). The bridge USED to pop this and throw it away for
+    # ACP, so an unattended loop's ``bypassPermissions`` was clamped by AAP-5 and its
+    # permission prompts still parked on a human — the exact wedge T5 exists to
+    # prevent. It now arrives here. Absent/false → an ordinary interactive session,
+    # which stays clamped: this flag is the ONLY thing that widens the mode gate, so
+    # the safe value is the default.
+    unattended = bool(kwargs.get("unattended", False))
+
     capability_flags_value = options.get("capability_flags") or {}
     capability_flags: dict[str, bool] = (
         {str(k): bool(v) for k, v in capability_flags_value.items()}
@@ -892,6 +920,7 @@ def _factory(
         dialect=dialect,
         mode=mode,
         reasoning_effort=reasoning_effort,
+        unattended=unattended,
     )
 
 

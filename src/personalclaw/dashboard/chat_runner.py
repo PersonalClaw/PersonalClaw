@@ -55,6 +55,17 @@ from personalclaw.dashboard.state import (
     is_read_only_bash,
     resolve_effective_risk,
 )
+from personalclaw.guardrails.loop_breaker import (
+    BLOCK_THRESHOLD,
+    WARN_THRESHOLD,
+    LoopBreaker,
+    blocked_message,
+    circuit_message,
+    params_key,
+    result_digest,
+    structural_note,
+    warn_note,
+)
 from personalclaw.hooks import (
     HOOK_EVENT_AGENT_SPAWN,
     HOOK_EVENT_ERROR,
@@ -1547,6 +1558,20 @@ async def _run_chat(
     _gated_tool_calls: set[str] = set()  # tool_call_ids that reached the host gate
     # tool_call_id -> (title, declared kind, input) for calls not yet gated
     _ungated_candidates: dict[str, tuple[str, str, str]] = {}
+    # Loop-breaker bookkeeping for ACP turns (§2.3 gap 5). The native runtime counts
+    # its own tool failures inside its dispatch loop; an ACP CLI runs its tools out of
+    # process, so the host has to do the counting from the neutral event stream — the
+    # SAME observer, so the thresholds and the wording can't diverge (`G6` measured
+    # six consecutive ACP failures producing no warn, block or trip at all).
+    _acp_breaker = LoopBreaker()
+    # tool_call_id -> the breaker's (tool, params) key. Recorded at tool_call and
+    # REFINED at tool_call_update, because ACP adapters routinely send the first frame
+    # with empty rawInput and stream the real arguments in the update — keying off the
+    # first frame alone would bucket every call to one tool together and make the
+    # params-awareness a lie.
+    _acp_tool_keys: dict[str, str] = {}
+    # The circuit trips once per turn: the counter stays over threshold afterwards.
+    _acp_breaker_aborted = False
     needs_session_reset = False
     saw_compaction = False
     # Reset the per-turn file-change accumulator here — all dispatch paths
@@ -1762,6 +1787,32 @@ async def _run_chat(
         if _sess_acp_mode:
             acp_mode = _sess_acp_mode
 
+        # §2.3 (gap 3) — UNIFY unattended across every automation, not just loops.
+        # ``session._unattended`` is set by the loop manager alone, so a cron or
+        # scheduled run-prompt turn on an ACP provider was classified attended: it
+        # got no bypassPermissions and, worse, its permission prompts parked on a
+        # human who was asleep. ``is_unattended_session`` is the canonical
+        # by-construction classifier (cron:/subagent:/channel:/inbox:/side:/loop
+        # prefixes, the ``unattended:`` dispatch identity and the ``_bg`` key) and is
+        # already what picks the HEADLESS safety profile — so deriving from it here
+        # makes one definition of "nobody is watching" govern both the safety profile
+        # and the permission path, instead of two that can disagree.
+        #
+        # An INTERACTIVE session matches no prefix, so it stays attended and keeps
+        # AAP-5's clamp. That is the safety-critical direction of this change and it
+        # has its own regression test.
+        from personalclaw.guardrails.policy import is_unattended_session
+
+        _unattended_turn = bool(getattr(session, "_unattended", False)) or is_unattended_session(
+            session.key
+        )
+        if _unattended_turn and provider_kind.startswith("acp") and not acp_mode:
+            # No human can answer a prompt on this turn, so ask the dialect for the
+            # mode that stops it asking. Zed dialects honour it; kiro has no mode axis
+            # and ignores it (the documented asymmetry) — kiro gets the fail-fast half
+            # only, which is what actually prevents the wedge for it.
+            acp_mode = "bypassPermissions"
+
         # Plan task-mode → forward acp_mode=plan so an ACP backend that supports it
         # (claude) plans NATIVELY (cleaner output). Permission AUTHORITY stays
         # with the host gate for every rung — we never forward an auto-approve
@@ -1792,8 +1843,10 @@ async def _run_chat(
             extra_tool_roots=list(getattr(session, "_extra_tool_roots", []) or []) or None,
             # Unattended worker/scheduled turn: strip interactive tools + fail the
             # approval gate fast so a background run can't wedge waiting for a human
-            # (T5). Native-runtime-only; the bridge pops it for other runtimes.
-            unattended=bool(getattr(session, "_unattended", False)),
+            # (T5). Consumed by the native runtime AND — as of §2.3 — by the ACP
+            # branch of the bridge, which hands it to AcpClient so an unattended
+            # session may keep an auto-approve mode.
+            unattended=_unattended_turn,
             # The Project this session scopes under — the native runtime binds it per
             # turn so artifact_save stamps the artifact's project_id, tying artifacts
             # created here back to the Project (S5). "" for an unscoped session.
@@ -2392,6 +2445,15 @@ async def _run_chat(
                 # Falls back to None for non-dict (ACP str) input → UI uses the
                 # string preview, exactly as before.
                 _input_obj = _redact_tool_input_obj(event.tool_input)
+                # Loop-breaker identity for an ACP call (§2.3 gap 5). Keyed off the
+                # UNREDACTED title + input: the breaker only ever compares keys to
+                # each other, never renders them, and redaction is lossy enough
+                # (two different secrets both become "***") to merge genuinely
+                # distinct calls into one bucket.
+                if _acp_cli and event.tool_call_id:
+                    _acp_tool_keys[event.tool_call_id] = params_key(
+                        event.title, tool_input_to_str(event.tool_input)
+                    )
                 state.broadcast_ws(
                     "tool_call",
                     {
@@ -2512,6 +2574,16 @@ async def _run_chat(
                 # `detail` field and the stable tool NAME in `content` is kept,
                 # so cards stay scannable when many tools are in play.
                 if event.tool_call_id:
+                    # Refine the breaker key now that the real arguments arrived
+                    # (§2.3 gap 5) — see _acp_tool_keys. Only when the update
+                    # actually carries input, so an args-less refinement frame can't
+                    # erase a key the first frame got right.
+                    if _acp_cli and event.tool_input:
+                        _prior = _acp_tool_keys.get(event.tool_call_id, "")
+                        _name = _prior.split(":", 1)[0] if _prior else event.title
+                        _acp_tool_keys[event.tool_call_id] = params_key(
+                            _name, tool_input_to_str(event.tool_input)
+                        )
                     _u_input = redact_credentials(
                         redact_exfiltration_urls(tool_input_to_str(event.tool_input)[:4000])[0]
                     )[0]
@@ -2636,6 +2708,101 @@ async def _run_chat(
                         except Exception:
                             logger.warning(
                                 "ACP cancel after ungated tool call failed", exc_info=True
+                            )
+                # ── Loop breaker for the ACP turn (§2.3 gap 5) ──────────────────
+                # The native runtime counts failures inside its own dispatch loop and
+                # can refuse the NEXT identical call before it runs. Out here the CLI
+                # has already run the tool by the time we see the result, so the host
+                # does what it can from between the frames: warn, then say plainly
+                # that the call is failing the same way, then abort the turn at the
+                # circuit threshold. Same counter, same wording as native — see
+                # guardrails/loop_breaker; the only difference is the seam, and it is
+                # stated rather than papered over.
+                if _acp_cli:
+                    _bkey = _acp_tool_keys.pop(event.tool_call_id, "") or params_key(
+                        _tool_name or event.title, ""
+                    )
+                    _bname = _tool_name or event.title or "tool"
+                    # Record on EVERY result, pass or fail — a success has to clear
+                    # its key's streak or the counter only ever ratchets up, and a
+                    # tool that fails, recovers, fails, recovers would be "blocked"
+                    # for intermittency it is actually surviving. Native records
+                    # unconditionally for the same reason.
+                    _acp_failed = _tool_ok is False
+                    _streak = _acp_breaker.record(_bkey, _acp_failed)
+                    if _acp_failed:
+                        _notice = ""
+                        if _streak >= BLOCK_THRESHOLD:
+                            _notice = blocked_message(_bname, _streak)
+                        elif _streak >= WARN_THRESHOLD:
+                            _notice = warn_note(_bname, _streak).strip()
+                        if _notice:
+                            logger.warning("acp loop breaker (%s): %s", _acp_cli, _notice)
+                            session.append("tool", _notice, "msg msg-tool")
+                            state.broadcast_ws(
+                                "activity_event",
+                                {"session": session.key, "kind": "status", "text": _notice},
+                            )
+                        if _acp_breaker.circuit_tripped() and not _acp_breaker_aborted:
+                            # Once only. The counter stays tripped for the rest of the
+                            # stream, so without this guard every subsequent result
+                            # would re-announce the abort and re-cancel.
+                            _acp_breaker_aborted = True
+                            _abort_msg = circuit_message(_acp_breaker.total_failures)
+                            logger.warning("acp loop breaker (%s): %s", _acp_cli, _abort_msg)
+                            session.append("error", _abort_msg, "msg msg-err")
+                            state.broadcast_ws(
+                                "activity_event",
+                                {"session": session.key, "kind": "status", "text": _abort_msg},
+                            )
+                            try:
+                                sel().log_tool_invocation(
+                                    session_key=session_key,
+                                    agent=_agent_label(session),
+                                    source="dashboard",
+                                    tool_name=_bname,
+                                    tool_kind=event.tool_kind,
+                                    outcome="failed",
+                                    request_id=event.tool_call_id,
+                                    metadata={
+                                        "reason": "loop_breaker_circuit",
+                                        "provider": _acp_cli,
+                                        "total_failures": _acp_breaker.total_failures,
+                                        "aborted_turn": True,
+                                    },
+                                )
+                            except Exception:
+                                logger.warning(
+                                    "SEL audit failed for ACP breaker trip", exc_info=True
+                                )
+                            # Cancel the CLI's turn rather than breaking out of the
+                            # stream: the stream then ends with a cancelled stop
+                            # reason and every post-loop finalizer (telemetry, turn
+                            # close, persistence) runs exactly as it does for a
+                            # user-pressed Stop. Breaking here would abandon the
+                            # generator mid-turn and skip all of it.
+                            try:
+                                _cancel = getattr(client, "cancel_session", None)
+                                if _cancel is not None:
+                                    await _cancel()
+                            except Exception:
+                                logger.warning(
+                                    "ACP cancel after breaker trip failed", exc_info=True
+                                )
+                    else:
+                        # Structural (no-progress / ping-pong) detection over
+                        # SUCCESSFUL calls — nothing failed, so the failure path is
+                        # blind to it. Warn-only, same as native.
+                        _loop_reason = _acp_breaker.record_structural(
+                            f"{_bkey}\x1f{result_digest(_out)}"
+                        )
+                        if _loop_reason:
+                            _sn = structural_note(_loop_reason).strip()
+                            logger.info("acp loop breaker (%s): %s", _acp_cli, _sn)
+                            session.append("tool", _sn, "msg msg-tool")
+                            state.broadcast_ws(
+                                "activity_event",
+                                {"session": session.key, "kind": "status", "text": _sn},
                             )
                 try:
                     _redacted_out, _ = redact_credentials(_out[:2000])
@@ -3017,6 +3184,50 @@ async def _run_chat(
                         metadata={"reason": "batch_rejection"},
                     )
                     logger.warning("AUTO-REJECTED tool=%r (batch rejection)", event.title)
+                    continue
+                # §2.3 (gap 3) — UNATTENDED FAIL-FAST, the last gate before the wedge.
+                # Everything below this point waits on a human: it renders an approval
+                # card, mirrors it to the inbox after a grace period, and then blocks
+                # for up to two hours. On an unattended turn there is no human, so that
+                # is not a gate — it is a two-hour stall that ends in a rejection
+                # anyway. Deny NOW, with the reason, and let the turn continue: the CLI
+                # sees a normal denial and can adapt or stop, which is the T5 semantic
+                # ("never wedge waiting for a human") the native runtime already has.
+                #
+                # Deliberately placed LAST, after trust/YOLO and after every deny path.
+                # An unattended loop sets ``_trust``, so its tools were already
+                # auto-approved above and never reach here; what reaches here is a
+                # request nothing could resolve. This ordering means the fail-fast can
+                # only ever turn a two-hour park into an immediate denial — it can
+                # never turn a denial into an approval.
+                if _unattended_turn:
+                    await client.reject_tool(event.request_id)
+                    _ff_title, _ = redact_exfiltration_urls(event.title)
+                    _ff_title, _ = redact_credentials(_ff_title)
+                    session.append(
+                        "tool",
+                        f"{_ff_title} (auto-denied: unattended run, no one to approve)",
+                        "msg msg-tool",
+                        meta=({"tool_call_id": event.tool_call_id} if event.tool_call_id else None),
+                    )
+                    logger.warning(
+                        "unattended fail-fast: auto-denied %r on %s (no human to approve)",
+                        event.title,
+                        session.key,
+                    )
+                    sel().log_tool_invocation(
+                        session_key=session_key,
+                        agent=_agent_label(session),
+                        source="dashboard",
+                        tool_name=event.title,
+                        tool_kind=event.tool_kind,
+                        outcome="denied",
+                        request_id=event.request_id,
+                        metadata={
+                            "reason": "unattended_fail_fast",
+                            "risk": effective_risk,
+                        },
+                    )
                     continue
                 # Interactive approval — send to frontend, wait for decision
                 perm_meta = {
