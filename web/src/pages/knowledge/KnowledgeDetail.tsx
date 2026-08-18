@@ -168,7 +168,32 @@ export function KnowledgeDetail({ item, onChanged, onDeleted, onTagClick, onShow
     } catch (e) { setErr(e instanceof Error ? e.message : 'Save failed') } finally { setSaving(false) }
   }
   async function del() {
-    if (!(await confirm({ title: `Delete "${full.title || 'this item'}"?`, body: 'This removes it from the knowledge base.', danger: true, confirmLabel: 'Delete' }))) return
+    // 🔑 THE BODY USED TO SAY ONLY "This removes it from the knowledge base", which is the one thing a
+    // user already knows from pressing Delete. Verified against `knowledge/store.py` +
+    // `handlers/knowledge.py`, the delete also takes two things they would not expect:
+    //
+    //   • HIGHLIGHTS. `annotations` cascades on the item's FK (`ON DELETE CASCADE`, and the connection
+    //     really does open with `PRAGMA foreign_keys=ON`), so the only content on this surface the USER
+    //     wrote goes with it.
+    //   • THE STORED FILE. The handler unlinks `file_path`, the thumbnail, AND the derived media
+    //     artifacts (split audio, extracted frames) — but only inside the library's own files dir, so
+    //     the sentence says "in your library": an indexed file that lives elsewhere is left alone, and
+    //     this wording is true either way.
+    //
+    // Both clauses are conditional, so neither claims something this item does not have. Deliberately
+    // NOT claimed: that insights already gathered from it survive — `intent_outcomes` does keep them
+    // (its `item_id` is nulled rather than deleted), but the client cannot know whether any exist for
+    // this item, and an unconditional reassurance is noise on most deletes.
+    const highlights = annotations.length > 0
+      ? ` Its ${annotations.length} highlight${annotations.length === 1 ? '' : 's'} ${annotations.length === 1 ? 'goes' : 'go'} with it.`
+      : ''
+    const stored = item.file_path ? ' The file stored in your library is deleted too.' : ''
+    if (!(await confirm({
+      title: `Delete "${full.title || 'this item'}"?`,
+      body: `This removes it from the knowledge base.${highlights}${stored}`,
+      danger: true,
+      confirmLabel: 'Delete',
+    }))) return
     try { await deleteKnowledge(item.id); onDeleted() } catch { setErr('Delete failed') }
   }
   async function toggleFlag(flag: 'is_pinned' | 'is_archived') {

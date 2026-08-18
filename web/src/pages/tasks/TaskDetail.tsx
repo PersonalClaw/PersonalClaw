@@ -48,8 +48,34 @@ export function TaskDetail({ task, onSaved, onDeleted, editing: editingProp, onE
       onSaved(updated); setEditing(false)
     } catch (e) { setErr(e instanceof Error ? e.message : 'Save failed') } finally { setSaving(false) }
   }
+  // Reverse dependencies, hoisted: the "Blocks" section below renders them and the delete dialog
+  // states them, and two copies of one filter is how a count starts disagreeing with a list.
+  const dependents = allTasks.filter((t) => prereqIds(t).includes(task.id))
+
   async function del() {
-    if (!(await confirm({ title: 'Delete this task?', body: 'This cannot be undone.', danger: true, confirmLabel: 'Delete' }))) return
+    // 🔴 THIS DIALOG NAMED NOTHING AND WARNED ABOUT NOTHING REAL. "Delete this task?" plus "This
+    // cannot be undone." was the only destructive dialog in the app whose subject appears in neither
+    // its title nor its body — the seven other hand-rolled ones all interpolate theirs — and its body
+    // described irreversibility while omitting the effect a user cannot see.
+    //
+    // 🔑 THE EFFECT IS VERIFIED AGAINST THE BACKEND, not guessed: `tasks/native.py`'s `delete_task`
+    // drops every dependency edge pointing at this task and then re-runs
+    // `reconcile.reconcile_blocked_status` for each former dependent — so deleting a prerequisite
+    // silently unblocks whatever was waiting on it. `dependents` is the same set the Blocks section
+    // shows, so the sentence can only appear when it is true.
+    //
+    // Deliberately says NOTHING about this task's comments. They live in a separate
+    // `_comments_<id>.json` that `delete_task` does not unlink — filed as a backend defect rather than
+    // described here, because copy must not claim a cleanup that does not happen.
+    const unblocks = dependents.length > 0
+      ? ` ${dependents.length} task${dependents.length === 1 ? '' : 's'} waiting on it ${dependents.length === 1 ? 'becomes' : 'become'} unblocked.`
+      : ''
+    if (!(await confirm({
+      title: `Delete "${task.title}"?`,
+      body: `This cannot be undone.${unblocks}`,
+      danger: true,
+      confirmLabel: 'Delete',
+    }))) return
     try { await api.deleteTask(task.id, task.provider); onDeleted() } catch { setErr('Delete failed') }
   }
 
@@ -214,9 +240,9 @@ export function TaskDetail({ task, onSaved, onDeleted, editing: editingProp, onE
       })()}
 
       {(() => {
-        // Reverse dependencies: tasks that have THIS task as a BLOCKS prerequisite
-        // — i.e. what completing this task will unblock. Computed from the loaded set.
-        const dependents = allTasks.filter((t) => prereqIds(t).includes(task.id))
+        // Reverse dependencies: tasks that have THIS task as a BLOCKS prerequisite — i.e. what
+        // completing this task will unblock. Hoisted to component scope (see `del`), which states the
+        // same set when you delete the task instead of completing it.
         if (dependents.length === 0) return null
         return (
           <SectionLabel label={`Blocks · ${dependents.length}`}>
