@@ -1,5 +1,5 @@
 import { memo } from 'react'
-import { Box } from 'lucide-react'
+import { Box, FolderOpen } from 'lucide-react'
 import type { Artifact } from '../../lib/api'
 import { EmptyState } from '../../ui/ListScaffold'
 import { Morph } from '../../ui/motion'
@@ -8,9 +8,15 @@ import { ArtifactCard } from './ArtifactCard'
 /** The library grid (ARTIFACTS S2) — responsive card grid of live previews.
  *  Pure layout: filtering/sorting live in the toolbar (ArtifactsSection); the
  *  per-card lazy/LRU cost controls live in ArtifactCard. */
-export const ArtifactGrid = memo(function ArtifactGrid({ artifacts, onOpen, narrowed }: {
+export const ArtifactGrid = memo(function ArtifactGrid({ artifacts, onOpen, onBrowseFiles, narrowed }: {
   artifacts: Artifact[]
   onOpen: (a: Artifact) => void
+  /** The genuinely-empty state's on-ramp (PEP-2): go to Files, where "Save as artifact"
+   *  already lives. Artifacts have no create form of their own — an agent produces them, or
+   *  a user saves a file as one — so this deep-links the EXISTING flow rather than inventing
+   *  a second way to make one. REQUIRED, not optional: the hint already named the Files page
+   *  in prose, and a `?:` here is how a call site quietly ships the fact without the way in. */
+  onBrowseFiles: () => void
   /** True when a search or filter is active. The grid receives ALREADY-FILTERED artifacts, so
    *  without this it cannot tell "you have none" from "none match" — and told a user with a full
    *  library to go create their first artifact. Matches the `q ? 'No matching X' : 'No X'` shape
@@ -20,7 +26,8 @@ export const ArtifactGrid = memo(function ArtifactGrid({ artifacts, onOpen, narr
   if (!artifacts.length) {
     return narrowed
       ? <EmptyState icon={Box} title="No matching artifacts" hint="Try a different search, kind, or collection." />
-      : <EmptyState icon={Box} title="No artifacts" hint="Artifacts are named, versioned snapshots — widgets, docs, images, and files agents produce. Ask the agent to save one, or save a file as an artifact from the Files page." />
+      : <EmptyState icon={Box} title="No artifacts" hint="Artifacts are named, versioned snapshots — widgets, docs, images, and files agents produce. Ask the agent to save one, or save a file as an artifact from the Files page."
+          action={{ label: 'Browse files', onClick: onBrowseFiles, icon: FolderOpen }} />
   }
   return (
     <div className="grid grid-cols-1 gap-m p-l sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">

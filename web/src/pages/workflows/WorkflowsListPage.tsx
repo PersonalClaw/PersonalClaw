@@ -5,6 +5,8 @@ import { EmptyState, ListRow, Loading, LoadError } from '../../ui/ListScaffold'
 import { ListControls } from '../../ui/ListControls'
 import { HeaderActions, HeaderControl, HeaderSegmented } from '../../ui/HeaderActions'
 import { QuietButton } from '../../ui/QuietButton'
+import { Button } from '../../ui/Button'
+import { PresetEmptyState } from '../../ui/PresetEmptyState'
 import { api, type WorkflowDef, type WorkflowDefSummary, type WorkflowRunSummary, type WorkflowSurfacingFinding, type WorkflowSurfacingRow } from '../../lib/api'
 import { useQueryParam, type RouteProps } from '../../app/useQueryState'
 import { confirmDelete, promptForm, promptInput } from '../../ui/dialog'
@@ -12,6 +14,7 @@ import { notify } from '../../app/appSdk'
 import { fmtElapsed, isTerminal, runLook } from './workflowMeta'
 import { coerceInputs, inputFields, startsWithoutInput } from './templateStart'
 import { suggestTemplate } from './templateSuggest'
+import { workflowPresets } from './workflowPresets'
 import { cadenceLabel, findingsByDef, freshnessLook, modeLook, needsAttention, packChips } from './surfacingMeta'
 import { PageTitle } from '../../ui/PageTitle'
 
@@ -82,6 +85,11 @@ export function WorkflowsListPage({ navigate, query: routeQuery, setQuery }: Rou
   }, [runs, q])
 
   const byDef = useMemo(() => findingsByDef(findings), [findings])
+
+  // The Runs empty state's on-ramp cards (PEP-2). Derived from the LOADED definitions, not from
+  // a frozen list, so a card can never offer a template this install does not ship — and so the
+  // grid is empty on an install with no bundled templates, which the render branches on.
+  const presets = useMemo(() => workflowPresets(defs), [defs])
 
   const filteredDefs = useMemo(() => {
     const needle = q.trim().toLowerCase()
@@ -326,9 +334,27 @@ export function WorkflowsListPage({ navigate, query: routeQuery, setQuery }: Rou
         ) : filteredRuns.length === 0 ? (
           q ? (
             <EmptyState icon={Search} title="No matching runs" hint="Try a different search." />
+          ) : presets.length > 0 ? (
+            // GENUINELY EMPTY, and this is the tab a newcomer lands on — Runs is the default.
+            // The previous single CTA went to the Definitions LIST, so the first thing they met
+            // was twenty-odd machine names: a signpost to the ontology rather than a way in.
+            // The cards seed the SAME start flow (`start(name)` → the template's own input
+            // dialog); nothing about it changes, and the browse path is repeated in the footer.
+            <PresetEmptyState
+              title="No workflow runs yet"
+              hint="A run is one execution of a workflow — every step, its output, and where it stopped. Pick a starting point and the next screen asks for what it needs."
+              presets={presets}
+              onPick={(template) => { void start(template) }}
+              footer={
+                <Button variant="ghost" size="sm" onClick={() => setTab('defs')}>
+                  <Workflow size={15} /> Browse all definitions
+                </Button>
+              }
+            />
           ) : (
-            // The hint used to TELL the user where the Definitions tab was; the action takes
-            // them there, which is the difference between an empty state and a signpost.
+            // No bundled templates on this install, so there is nothing to offer as a card.
+            // The pre-PEP-2 state, kept verbatim: a preset grid with nothing in it would be
+            // worse than the fact plus the browse path.
             <EmptyState
               icon={Workflow}
               title="No workflow runs yet"

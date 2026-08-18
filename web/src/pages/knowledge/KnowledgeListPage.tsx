@@ -123,7 +123,7 @@ export function KnowledgeListPage({ onCreate, onOpenItem, onOpenSources, query, 
   // on a deep-link/refresh once the list resolves it).
   const [resolvedIntent, setResolvedIntent] = useState<KnowledgeIntent | null>(null)
   const selectedIntent: KnowledgeIntent | null = intentTok === '__new__'
-    ? { id: '', goal: '', enabled: true, enabled_for: [], propose_skill: false }
+    ? blankIntent()
     : (intentTok ? resolvedIntent : null)
   const setSelectedIntent = (it: KnowledgeIntent | null) => {
     setResolvedIntent(it && it.id ? it : null)
@@ -429,7 +429,7 @@ export function KnowledgeListPage({ onCreate, onOpenItem, onOpenSources, query, 
                 onClick={onOpenSources} />
               {view === 'intents'
                 ? <HeaderControl icon={Plus} label="New intent" variant="primary" priority="primary"
-                    onClick={() => setSelectedIntent({ id: '', goal: '', enabled: true, enabled_for: [], propose_skill: false })} />
+                    onClick={() => setSelectedIntent(blankIntent())} />
                 : <HeaderControl icon={Plus} label="Add knowledge" variant="primary" priority="primary"
                     onClick={onCreate} />}
             </HeaderActions>
@@ -778,13 +778,34 @@ async function confirmIntentDelete(goal: string, gathered: number): Promise<bool
   })
 }
 
+/** The blank intent a create flow opens on — ONE definition, shared by the header's
+ *  "New intent" control and the empty state's on-ramp (PEP-2).
+ *
+ *  Written as a function rather than a constant because the object is handed to
+ *  `setSelectedIntent` and then edited by `IntentEditor`; a shared frozen literal would
+ *  make two create attempts share one draft. The empty `id` is load-bearing — it is what
+ *  the panel branches on to render `IntentEditor` instead of `IntentDetail`. */
+function blankIntent(): KnowledgeIntent {
+  return { id: '', goal: '', enabled: true, enabled_for: [], propose_skill: false }
+}
+
 function IntentsView({ selectedId, onSelect, reloadKey }: {
   selectedId: string | null
   onSelect: (intent: KnowledgeIntent | null) => void
   reloadKey: number
 }) {
   const [intents, setIntents] = useState<KnowledgeIntent[] | null>(null)
-  const load = () => api.knowledgeIntents().then((r) => setIntents(r.intents)).catch(() => setIntents([]))
+  // 🔴 THE HONESTY PRECONDITION for the CTA below. This loader used to `.catch(() => setIntents([]))`,
+  // the harsher swallow: the rejection became the same empty array a fresh install produces, so a
+  // failed `GET /api/knowledge/intents` rendered "No intents yet" — and, once the empty state grew a
+  // create button, would have pitched "New intent" to a user whose intents merely could not be read.
+  // Capturing it is what lets the error branch run FIRST. (Per-site rather than an
+  // `ui/loadErrorState.test.tsx` ADOPTERS row: that rail's no-swallow check is FILE-scoped, and this
+  // 1000-line page carries several deliberate decoration-read fallbacks it would flag.)
+  const [intentsErr, setIntentsErr] = useState<unknown>(null)
+  const load = () => api.knowledgeIntents()
+    .then((r) => { setIntentsErr(null); setIntents(r.intents) })
+    .catch((e) => { setIntentsErr(e); setIntents([]) })
   useEffect(() => { load() }, [reloadKey])
   // Deep-link / refresh restore: when the URL names ?intent=<id> but the parent has
   // no resolved object yet, hand it the matching intent from the loaded list so the
@@ -795,11 +816,24 @@ function IntentsView({ selectedId, onSelect, reloadKey }: {
     if (match) onSelect(match)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedId, intents])
-  if (intents === null) return <ListSkeleton rows={3} />
+  // The failed read is answered FIRST and on its own, ahead of both the skeleton and the list: a
+  // rejection leaves `intents` as `[]`, which the empty branch below would otherwise render as
+  // "No intents yet" — now under a create CTA, which is the lie made actionable. The teaching
+  // paragraph is skipped too; there is nothing to teach about a list nobody could read.
+  if (intentsErr) return <LoadError what="intents" error={intentsErr} onRetry={load} />
+  if (intents === null) return <ListSkeleton rows={3} what="intents" />
   return (
     <div className="flex flex-col gap-s">
       <p className="text-on-surface-low text-[0.8125rem]">Tell PersonalClaw what to watch for in plain language. As you save items, it gathers what matches — with the specifics extracted as structured fields. Click an intent to see everything it found, or add one with “New intent”.</p>
-      {intents.length === 0 && <EmptyState icon={Target} title="No intents yet" hint='e.g. "anything that could improve my homelab", "ideas that help me learn agentic engineering", or "hints on how I should invest".' />}
+      {intents.length === 0 && (
+        // PEP-2: the empty state carries the SAME create seed the header's "New intent" control
+        // uses — `blankIntent()`, one definition of the blank shape, so the two cannot drift into
+        // two create paths. Before this the surface told the user the control's name in prose and
+        // left them to find it in the top bar.
+        <EmptyState icon={Target} title="No intents yet"
+          hint='e.g. "anything that could improve my homelab", "ideas that help me learn agentic engineering", or "hints on how I should invest".'
+          action={{ label: 'New intent', onClick: () => onSelect(blankIntent()), icon: Plus }} />
+      )}
       {intents.map((it) => (
         <ListRow key={it.id} index={0} accent={it.id === selectedId ? 'var(--color-primary)' : undefined} onClick={() => onSelect(it)} label={it.goal || it.id}>
           <Target size={15} className="shrink-0 text-primary/80" />

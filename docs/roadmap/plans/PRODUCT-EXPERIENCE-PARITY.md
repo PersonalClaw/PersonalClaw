@@ -620,3 +620,99 @@ Rows 1–3 are roughly two sessions and deliver the most visible "less daunting,
   outrank the user's own notes. Left out deliberately: `get_stats()['items']` still counts mirrors —
   it is a store-wide `COUNT(*)` that already counts archived rows the list hides, so artifacts inherit
   its existing meaning instead of introducing a new inconsistency.
+- [2026-08-18][PEP-2] DONE: §1's SP1.3 + SP1.4 + V1, executed as a CENSUS first. Extracted every
+  `<EmptyState>`/`<PresetEmptyState>` element under `web/src/pages/**` — **57 sites in 30 files** —
+  reduced each file to the branch a user meets when the collection is GENUINELY empty, and pinned the
+  result as a four-verdict table in `pages/emptyStateRollout.test.tsx` (`on-ramp` / `produced` /
+  `derived` / `degenerate`), whose vacuity floor derives the population FROM THE TREE so a new list
+  surface cannot ship without a verdict. **Three surfaces failed the clause** and were fixed:
+  `#/workflows` Runs (the DEFAULT tab, so a newcomer's first view of Workflows — its one CTA went to
+  the definitions LIST, twenty-odd machine names), `#/knowledge?view=intents` (named the "New intent"
+  control in prose and left the user to find it in the top bar), and `#/artifacts` (hint named the
+  Files page with no way to get there). Everything else already had one or legitimately has nothing to
+  create, with the reason recorded per row. **Gate:** `npm run typecheck` clean · full
+  `npm test --workspace web` **396 files / 4029 tests passed** · `npm run build` clean ·
+  `make lint` clean (black 1771 unchanged, isort, flake8, mypy 909 files).
+- [2026-08-18][PEP-2] DEVIATION: **Workflows' preset cards are built from the LOADED definitions, and
+  the surface §1.3 names ("Workflows … empty state") is not the one that was daunting.** The
+  Definitions tab is never empty (22 bundled templates ship), so its empty branch is unreachable and a
+  template-sourced grid there would be empty by construction. The RUNS tab is the default and IS empty
+  on a fresh home, so that is where the grid went. `pages/workflows/workflowPresets.ts` maps the five
+  `KIND_TO_TEMPLATE` kinds to cards, resolving the template through the SHARED `templateForKind` (never
+  a second table) and reading `summary` from `def.name` and `description` from `def.description` — two
+  of the card's three lines are the template's own data, which is how §1.3's "no new copy that drifts
+  from the templates" is honoured; only the kind LABEL is authored. A kind whose template is absent is
+  dropped, so `presets.length === 0` is reachable and the pre-PEP-2 `EmptyState` survives as that
+  branch. Showing the machine name as the accent line is deliberate: it teaches the vocabulary
+  `templateSuggest`'s doc says the picker hides.
+- [2026-08-18][PEP-2] DEVIATION: **Tasks got nothing, on purpose.** §1.3 pairs it with Workflows
+  ("reuse bundled templates as the preset source"), but there is no task-template catalog to source
+  from — `src/personalclaw/tasks/` ships models/handlers/registry and no templates — and authoring card
+  copy would be exactly the drift the same sentence forbids. `#/tasks` already satisfies the clause
+  ("No tasks" → New task → the existing `onCreate`). Recorded as a census row rather than left implicit.
+- [2026-08-18][PEP-2] DISCOVERY: **the honesty precondition bit again, on the surface being changed.**
+  `IntentsView`'s loader carried `.catch(() => setIntents([]))` — the harsher swallow — so a failed
+  `GET /api/knowledge/intents` rendered "No intents yet", and adding a create CTA would have turned a
+  silent lie into an actionable one ("make your first" to a user who has some). Fixed in the same
+  change: the rejection is captured and `<LoadError what="intents">` is an EARLY RETURN ahead of both
+  the skeleton and the list. Filed per-site rather than as an `ui/loadErrorState.test.tsx` ADOPTERS row
+  because that rail's no-swallow check is FILE-scoped and this 1000-line page carries several
+  deliberate decoration-read fallbacks it would flag — the same reason `settingsListHonesty.test.ts`
+  and `sessionLoadHonesty.test.ts` exist. Two coordinated rails moved with it:
+  `listDestinationLoadError`'s `what=` vacuity floor (5 → 6) and `loadingNounPairing` (the skeleton
+  needed the sibling noun, `what="intents"`).
+- [2026-08-18][PEP-2] DISCOVERY: `blankIntent()` found a THIRD copy of the blank-intent literal. The
+  header control and the new empty-state CTA were the two the atom set out to unify; the rail's
+  "the blank shape has one definition" assertion then failed at 2, exposing the `?intent=__new__`
+  deep-link restore (`KnowledgeListPage.tsx:126`) building the same object inline. All three now share
+  one definition.
+- [2026-08-18][PEP-2] DISCOVERY (not fixed — concurrent work): the **Automations/triggers** surfaces
+  were being changed in parallel and were treated as off-limits. Two findings for a follow-up:
+  (a) PEP-1's own log already records that a fresh home is NOT trigger-empty —
+  `reconcile_digest_cron` registers `system:notification-digest` at every boot, so a newcomer's first
+  `#/triggers` visit is ONE machine-named system row and NO empty state at all, because the preset grid
+  is gated on `counts.all === 0`. That is strictly worse than the case PEP-1 fixed and it makes the
+  flagship preset grid unreachable on a real fresh install. (b) `triggers/WeekGridView`'s "No fires this
+  week" has no on-ramp. Both are named in the census's off-limits set so the sweep is honestly short
+  rather than silently so.
+- [2026-08-18][PEP-2] DEVIATION: `ui/disabledReasonCensus.test.ts` is line-pinned to
+  `KnowledgeListPage.tsx`, so its one row shifted 859 → 893 with this edit. A baseline bump, not a
+  primitive change — the excused control is byte-identical and its `disabled={!o.item_id}` shape check
+  still passes.
+- [2026-08-18][PEP-2] V1 validation, driven in a real browser against an ISOLATED home
+  (`PYTHONPATH` pointed at the worktree — the venv's `personalclaw` is an editable install of the MAIN
+  repo, so the first pass silently measured main's SPA and reported 0 preset cards + the OLD single
+  CTA; that near-miss is why every probe below carries a route-specific mounted-ness floor on top of
+  the `nav[data-tour="rail"]` onboarding floor). Measured by DOM, not by Playwright's `text=` engine,
+  which matched an ANCESTOR and counted a HEADER button as the empty state's own — a fake finding in
+  both directions. **EMPTY:** `#/workflows` five cards, each accessible-named `<kind label> — <template
+  name>` (`Work on code — code-project`, …), footer "Browse all definitions", old single CTA gone, zero
+  alerts; `#/knowledge?view=intents` heading "No intents yet" + exactly ONE body "New intent" (4 header
+  duplicates are `HeaderActions`' responsive set); `#/artifacts` heading "No artifacts" + one body
+  "Browse files". **The on-ramp reaches the EXISTING flow:** clicking "Plan a project" opened the dialog
+  titled **"Run general-project"** carrying the template's own kickoff example and its declared inputs
+  (`Task *`, `Exit condition`) — that is `start(name)`'s `promptForm`, no new surface, no route change;
+  "Browse files" landed on `#/files`; the footer landed on `#/workflows?tab=defs` with definition rows.
+  **NON-EMPTY (expert path unchanged):** with one intent, "No intents yet" and its CTA are absent and
+  the row renders; with one artifact, "No artifacts" and "Browse files" are both absent; with one run,
+  zero preset cards, zero footer, zero empty headline, the run row present. The Workflows non-empty
+  case could NOT be produced from the backend — `POST /api/workflows/runs` refuses with
+  `preflight_failed: no model resolves for the 'orchestration' use case` on a credential-less home — so
+  it was driven against the real bundle with the runs LIST stubbed, and separately in jsdom with a
+  mounted-ness floor. Stated plainly rather than implied.
+- [2026-08-18][PEP-2] Falsification, each mutating the LIVE line and restoring from a file copy:
+  dropping the Artifacts `action` reds 2 (`Unable to find … name /Browse files/` + `Artifacts claims an
+  on-ramp but offers no action`); opening the emptiness gate (`filteredRuns.length === 0` → `>= 0`) reds
+  the NON-EMPTY test while the EMPTY one stays GREEN — the discrimination proof; hardcoding
+  `summary: def.name` reds 3 including `EMPTY: … Work on code — code-project`; removing the Knowledge
+  CTA reds the shared-seed count (1 ≠ 2); restoring the intents swallow reds the capture assertion;
+  deleting one census row reds `every empty-state file needs a PEP-2 verdict` with
+  `['pages/tools/ToolsPage.tsx']`. **One came back GREEN and the anchor was the fault:** neutralising
+  the non-empty test's mounted-ness floor under the mutated gate passed everything, because that
+  `await` is also the SYNC POINT — every `queryBy…` ran before the load resolved. Re-probed with a sync
+  point the mutated build satisfies and the card-absence assertions reddened as they should; the
+  finding is now a 🪤 comment on the floor so nobody deletes it as decoration.
+- [2026-08-18][PEP-2] Taste call left open: five kinds lay out 2+2+1 in `PresetEmptyState`'s shared
+  two-column grid (Triggers ships four, a clean 2×2), so the fifth card sits alone. Dropping a kind to
+  even the grid would mean a user whose intent is "design" sees no card, and widening the grid to three
+  columns is a change to a primitive Triggers depends on. Left as-is; wants an owner eye.

@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { render, screen } from '@testing-library/react'
 import { Box, Search, Users } from 'lucide-react'
 import { EmptyState } from '../ui/ListScaffold'
@@ -25,18 +25,23 @@ import { ArtifactGrid } from './artifacts/ArtifactGrid'
 
 describe('ArtifactGrid empty states', () => {
   it('offers the create path only when the library is genuinely empty', () => {
-    render(<ArtifactGrid artifacts={[]} onOpen={() => {}} />)
+    const onBrowseFiles = vi.fn()
+    render(<ArtifactGrid artifacts={[]} onOpen={() => {}} onBrowseFiles={onBrowseFiles} />)
     expect(screen.getByText('No artifacts')).toBeInTheDocument()
     // The hint is the one that teaches how artifacts come to exist.
     expect(screen.getByText(/Ask the agent to save one/)).toBeInTheDocument()
+    // PEP-2: and the hint's own advice is reachable, not just readable.
+    expect(screen.getByRole('button', { name: /Browse files/ })).toBeInTheDocument()
   })
 
   it('says "no matching" — and drops the create advice — when a filter is active', () => {
-    render(<ArtifactGrid artifacts={[]} onOpen={() => {}} narrowed />)
+    render(<ArtifactGrid artifacts={[]} onOpen={() => {}} onBrowseFiles={() => {}} narrowed />)
     expect(screen.getByText('No matching artifacts')).toBeInTheDocument()
     expect(screen.queryByText('No artifacts')).not.toBeInTheDocument()
     // Telling someone with a full library to create their first artifact was the whole bug.
     expect(screen.queryByText(/Ask the agent to save one/)).not.toBeInTheDocument()
+    // The PEP-2 on-ramp inherits that rule: no create advice on a filtered-to-nothing list.
+    expect(screen.queryByRole('button', { name: /Browse files/ })).not.toBeInTheDocument()
   })
 })
 
