@@ -47,16 +47,25 @@ def registered_stores() -> dict[str, Any]:
     return dict(_STORES)
 
 
-def provider_rows() -> list[Any]:
-    """Every row every registered provider store serves, as ``LoadedTrigger``-shaped rows.
+def provider_rows_by_store(*, skip: Any = ()) -> list[tuple[str, Any, list[Any]]]:
+    """``(name, store, rows)`` per registered provider — the read primitive.
 
-    Rows only — no ordering guarantee across providers and no de-duplication against
-    ``triggers.json``: an id collision between a local row and a provider's row is the provider's
-    bug to fix, and silently dropping one of the two would hide it. Each store is read
-    independently so one bad provider costs its own rows and nobody else's.
+    The ARM path needs to know WHICH store served each row, because that is the store its
+    reschedule has to be written back to (:mod:`personalclaw.triggers.routing`); the LISTING path
+    only needs the rows. Both read through here so the fail-open behaviour below is defined once.
+
+    ``skip`` is the set of provider names to leave out — the routing store's storm quarantine, kept
+    as a caller's decision so this module stays a registry rather than growing a policy.
+
+    A store that raises, returns a non-list, or hangs on its own socket contributes nothing for this
+    pass and is logged: a team backend's outage must cost its own rows and never stop the owner's
+    local automations.
     """
-    out: list[Any] = []
+    skipped = {str(n) for n in skip}
+    out: list[tuple[str, Any, list[Any]]] = []
     for name, store in list(_STORES.items()):
+        if name in skipped:
+            continue
         try:
             rows = store.load()
         except Exception:  # noqa: BLE001 - a provider outage must not stop local automations
@@ -65,5 +74,21 @@ def provider_rows() -> list[Any]:
         if not isinstance(rows, list):
             logger.warning("trigger provider %r returned a non-list from load(); skipping", name)
             continue
+        out.append((name, store, rows))
+    return out
+
+
+def provider_rows() -> list[Any]:
+    """Every row every registered provider store serves, as ``LoadedTrigger``-shaped rows.
+
+    The LISTING view of :func:`provider_rows_by_store`. Rows only — no ordering guarantee across
+    providers and no de-duplication against ``triggers.json``: an id collision between a local row
+    and a provider's row is the provider's bug to fix, and silently dropping one of the two here
+    would hide it from the page that could show it. (The ARM path does drop the colliding provider
+    row, because two rows under one id cannot both be rescheduled — see
+    :class:`personalclaw.triggers.routing.RoutingTriggerStore`.)
+    """
+    out: list[Any] = []
+    for _name, _store, rows in provider_rows_by_store():
         out.extend(rows)
     return out

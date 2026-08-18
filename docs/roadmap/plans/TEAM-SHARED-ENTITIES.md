@@ -418,3 +418,118 @@ rail reds; `"author"` dropped from `Trigger.to_dict` → the round-trip and old-
 
 **Remaining:** `TSE-5` (the proof-of-concept trigger-provider app), which additionally needs the
 write-back routing described above before an app-served row can autonomously fire.
+
+### 2026-08-18 — Session 5 / `TSE-5` (§3 + criterion 5: an app-served row autonomously fires) — DONE
+
+Write-back routing (`triggers/routing.py`) + the `shared-automations` app in the apps repo. TSE-4's
+gap is closed: a registered `trigger` provider's owner-authored rows now arm, fire, and reschedule
+into the store that served them.
+
+**"Zero core edits" is a claim about the APP, not about this session.** Criterion 5 says the app
+installs manifest-only with zero core edits; the routing it needs is core, and building it is what
+makes the clause satisfiable at all. What is true afterwards: installing `shared-automations`
+touches nothing in core — `app.json` declares `provider.type: "trigger"` + `provider:create_provider`,
+`TriggerTypeHandler` (TSE-4) registers it, and nothing else changes.
+
+**The routing lives at the STORE, not at the seven arm sites — measured, not preferred.** The obvious
+build is to wrap the store in `tick`/`boot` and route its writes. That is wrong, and driving it is
+what showed why: the arm path is not the only writer. `gateway._record_fire_outcome`,
+`_deliver_fire_outcome`'s failure-dedup and the autopause path each construct their OWN
+`TriggerStore(base_dir=config_dir())` and write the fired row back through it. A wrapper in `tick`
+would have left all three minting the duplicate id the wrapper existed to prevent — and since a local
+row WINS every later read, the team's row would have silently forked into a local copy that went on
+firing while the shared file stopped describing what runs. So `TriggerStore.upsert`/`delete` consult
+`routing.route_upsert`/`route_delete` themselves: one funnel, no second spelling of "persist a
+trigger", and the gateway's writers are covered without a gateway edit. `RoutingTriggerStore` is then
+only the READ merge (`tick`, `boot`), which is what lets a provider row reach `armable` at all.
+
+**Neither named failure mode is reachable, and both are asserted rather than argued.**
+*Duplicate identity:* every firing test asserts `triggers.json` is still EMPTY after the fire, and
+`RoutingTriggerStore.load` drops a provider row whose id the local store already holds (local wins;
+the collision is logged and still rendered by `all_rows`, because the page that could report it is the
+last place to hide it). *Fire storm:* every firing test asserts the SERVING store's `next_fire_at`
+advanced and that a second tick at the same clock fires nothing.
+
+**The storm guard is a runtime invariant, not only a test.** A store that accepts the write and keeps
+the old timestamp is the shape that costs a fire, so every routed write is re-read and its
+`next_fire_at` compared; a mismatch, a raise, or a row that cannot be read back **quarantines** that
+provider for the process — its rows leave the arm path (they still render) and the log says why. One
+extra fire, then silence with a reason. Measured with the guard removed: **5 of 5 ticks fired the same
+frozen row.** Worth recording precisely — the overlap CLAIM throttles it to one fire per claim window
+(1h) rather than one per 30s tick, so the storm is slower than the docstring implied but just as
+unbounded.
+
+**TWO DEFECTS FOUND BY THE TESTS, both in the guard itself.** (1) `serving_store` originally skipped
+quarantined providers. The quarantine trips on a tick's FIRST routed write (the reschedule), so the
+SECOND write of the same tick (`run_count`, `last_fired_at`) then found no serving store and fell
+through to `triggers.json` — **the storm guard was minting the duplicate identity**, and the rescued
+local copy kept firing on the schedule the provider had refused to keep. Fixed: quarantine withholds
+rows from the arm READ and never re-homes a write. (2) That same leak made a quarantined provider's
+row render twice. Both are now falsification targets (F4).
+
+**SCOPE, narrowed and stated.** `tick`, `boot` and the two `chain` lookups merge provider rows. The
+`file`/`idle`/`web_watch`/`view` poll loops do NOT: they write nothing themselves, and their fires are
+dispatched by the gateway, so handing them a routed row without routing that dispatch would be the
+duplicate-identity write one layer out. TSE-4's "rendered before armed" therefore narrows from *every
+provider row* to *provider rows of a polled kind*. The chain is safe to route because a
+`run_completed` row holds no schedule to advance and its outcome write goes through
+`TriggerStore.upsert`.
+
+**Criterion 5's four targets, each fired through a real `tick` and a real gate walk:** `run-workflow`
+(**workflow**), `invoke-agent` (**automation** — the unattended-agent rung), `run-prompt`
+(**prompt**), `create-task` (**action**), plus a `run_completed` row chained off the workflow one (an
+automation fired BY an automation, the other reading of "automation"). Each asserts the fire, the
+action provider and config on the fired row, the advanced schedule in the provider's store, an empty
+`triggers.json`, and a silent second tick. The four provider names are additionally resolved against
+the REAL action registry — a fire naming a provider nothing implements would satisfy every other
+assertion and still be a dead automation. Execution itself stays behind the executor's injected
+runner: no LLM turn and no workflow run is spawned by a test.
+
+**"alice" proves TWO separate things, in two tests, because they are two claims.** *Visible-but-inert
+RENDERING:* her provider-served row is in `all_rows`, `is_owner_authored` is False (the same predicate
+the arm path uses, never re-derived from `author` in the UI), and she is `enabled=True` — inert by
+ownership, not by a toggle somebody could flip back. *The STRUCTURAL cannot-arm filter:* the row is in
+`RoutingTriggerStore.load()` and absent from `armable`, so `due_ids` cannot return it; a full tick
+produces zero fires, zero reschedules, and — the sharp assertion — her `next_fire_at` is UNCHANGED and
+`store.upserts` is empty, so the arm path did not decline to fire it, it never touched it. `boot` does
+not re-arm it either. Both have a vacuity floor: the owner's row from the SAME provider fires in the
+same tick.
+
+**The app: `shared-automations`** (apps repo, `PersonalClawApps/shared-automations/`). Serves rows from
+one shared JSON file in core's own `triggers.json` envelope, so a team can share a copy of somebody's
+store unchanged. Atomic writes (temp file + `os.replace`); reads never raise (an unmounted folder
+costs its rows and nothing else); `changed_on_disk` from `(mtime_ns, size)` because two writes inside
+one mtime tick is what a synced folder does. `permissions: {storage: true}` only — no network. Ships
+`team-automations.example.json`: five rows unattributed (so it runs for whoever installs it) covering
+the four targets plus the chain, and two attributed to `alice`. 22 tests. The `expr` vs `cron` spec key
+was found by those tests, not by reading — four fixture rows were unparseable.
+
+**SDK contract extended (docs only).** `sdk/triggers.py` now states the three things an app author
+cannot discover from the ABC: `upsert` must really persist `next_fire_at` and `get` must show it or the
+store is quarantined; the runtime fields (`run_count`, `last_fired_at`, `state`, health) must
+round-trip or the owner's budget/spacing/autopause gates read a permanent zero; and a row whose id
+collides with a local one is not armed.
+
+**Falsifications** (each applied live, `ast.parse`-checked, restored from a file copy — and one anchor
+deliberately disambiguated: `target = _target(trigger_id, native)` appears identically in
+`route_upsert` and `route_delete`, so the mutation was anchored on the preceding unique line):
+`route_upsert`'s target forced to None → 13 red, including `['local','remote'] == ['local']` (the
+duplicate id in `triggers.json`) and "the schedule did not advance — this is the fire storm" on all
+four targets · the provider write skipped → 10 red, the same storm assertion · `_quarantine` made a
+no-op → the four guard tests red, and a direct 5-tick drive fired the frozen row 5/5 ·
+`armable`'s ownership half removed → the app-served alice row produces a real `DueFire(reason='due')`,
+`boot` re-arms it and the chain picks it up · `skip=_QUARANTINE` restored to `serving_store` → the two
+defects above reappear exactly (`['frozen','frozen']` and a re-fire) · `routed()` removed from `tick`
+→ 14 red, all four targets `[] == ['workflow'|'automation'|'prompt'|'action']`.
+
+**Gate:** `make lint` green (black 1785 files, isort, flake8, mypy 917 files) · `make test`
+**22299 passed, 30 skipped, 12 xfailed** · app leg `python -m pytest shared-automations -q` **22
+passed**. `web/` untouched. Tests: `tests/test_triggers_write_back.py` (32 cases) and the app's
+`test_provider.py` (22 cases); all 47 `test_trigger*.py` files plus
+`test_apps_import_boundary.py` green (1775 passed, 1 skipped).
+
+**Remaining in this plan:** nothing. Criteria 1-6 are all satisfied. Two named follow-ups, neither a
+blocker: provider-served rows of the `file`/`idle`/`web_watch`/`view` kinds still render without
+arming (routing their gateway dispatch is the work), and TSE-4's known gap — a locally-STORED row
+attributed to somebody else renders read-only while the mutation endpoints would still accept a write
+— is unchanged.

@@ -131,15 +131,19 @@ def armable(store: Any) -> list["Trigger"]:
     called with test doubles that implement ``load()`` and nothing else, and tightening the
     annotation here would type-error every one of them without making a single fire safer.
 
-    🔴 Reads the store it is GIVEN — deliberately not :func:`all_rows`. A provider's rows are listed
-    but not yet armed, because the arm path PERSISTS: ``service.tick`` writes ``next_fire_at``,
-    ``run_count`` and the health rollup back with ``store.upsert(...)``, and ``store`` here is the
-    native one. Arming a provider's row would therefore either copy it into ``triggers.json`` (two
-    rows, one id, diverging) or fail to persist its schedule at all — and a row whose
-    ``next_fire_at`` never advances is due again on the very next tick, which is a fire storm, not a
-    missed fire. Routing a write back to the store that served the row is the missing piece
-    (TSE-5's "owner triggers autonomously fire" needs it); until it exists this seam reads and
-    renders, and says so rather than pretending.
+    🔴 Reads the store it is GIVEN — deliberately not :func:`all_rows`, and that is what makes a
+    provider's row armable rather than what stops it. The arm path PERSISTS (``service.tick`` writes
+    ``next_fire_at``, ``run_count`` and the health rollup back through ``store.upsert``), so the row
+    source and the write destination MUST be the same object: read from one store and write to
+    another and you get either two rows under one id in two files, diverging, or a
+    ``next_fire_at`` that never advances — due again on the very next tick, a fire storm and not
+    a missed fire. So TSE-5 wired both ends: ``tick`` and ``boot`` substitute
+    :func:`personalclaw.triggers.routing.routed` for their store before calling this, which is how a
+    provider's row gets here at all, and :meth:`personalclaw.triggers.store.TriggerStore.upsert`
+    routes that row's write back to the provider that served it — at the store, not at the arm
+    sites, because the gateway's fire-outcome recorder writes a fired row back too. Handed a native
+    store — every poll loop, every chain lookup, every test double — this returns exactly the local
+    rows it always did.
     """
     return owner_authored(_ok_triggers(store.load()))
 
@@ -148,8 +152,11 @@ def all_rows(store: Any) -> list[Any]:
     """Every row from the native store PLUS every registered ``trigger`` provider's rows.
 
     The LISTING read: broken rows and foreign rows are both included, because a management surface
-    that hid either would leave the user unable to see what exists. Contrast :func:`armable`, which
-    is the ARM read — see its note on why a provider's row is rendered before it is armed.
+    that hid either would leave the user unable to see what exists — and unlike the arm path it does
+    NOT drop an id collision between the two stores, because the page that could show the user their
+    conflict is the last place to hide it. Contrast :func:`armable`, the ARM read, which is handed a
+    :func:`personalclaw.triggers.routing.routed` store so that whatever it returns can also be
+    written back where it came from.
     """
     from personalclaw.triggers.registry import provider_rows
 
