@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { ResultAnnouncement } from '../../ui/ListControls'
 import { Archive, Search, FileText, Loader2 } from 'lucide-react'
 import { api, type SessionArchive } from '../../lib/api'
 import { useCachedData } from '../../lib/useCachedData'
@@ -35,6 +36,9 @@ export function ArchivePanel() {
         <div className="mb-3">
           <TextInput value={q} onChange={setQ} placeholder="Filter by session key" ariaLabel="Filter archived sessions"
             size="md" surface="high" leadingIcon={<Search size={14} />} />
+          {/* `shown` is the array the rows map over, and `needle` is what the empty state below
+              already uses to tell "no archives yet" from "none match" — same two facts, announced. */}
+          <ResultAnnouncement count={shown.length} noun="archived sessions" active={!!needle} />
         </div>
       )}
 

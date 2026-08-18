@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { ResultAnnouncement } from '../../ui/ListControls'
 import { Pause, Play, Trash2, ArrowDownToLine } from 'lucide-react'
 import { Surface } from '../../ui/Surface'
 import { SearchField } from '../../ui/SearchField'
@@ -168,6 +169,11 @@ export function DiagnosticsPanel() {
         <div className="mb-s">
           <SearchField value={filter} onChange={setFilter} size="md" placeholder="Filter log lines…"
             ariaLabel="Filter log lines" />
+          {/* Two dimensions narrow this tail — the text filter AND the level buttons — so `active`
+              covers both, compared against `minLevel`'s own default of DEBUG (the least restrictive
+              level, i.e. "not filtering"). `visible` is the array the log body renders. */}
+          <ResultAnnouncement count={visible.length} noun="lines"
+            active={q !== '' || minLevel !== 'DEBUG'} />
         </div>
 
         <Surface tone="container" radius="lg" className="p-0 overflow-hidden">

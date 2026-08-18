@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { ResultAnnouncement } from '../../ui/ListControls'
 import { SearchX } from 'lucide-react'
 import { SearchField } from '../../ui/SearchField'
 import { SETTINGS_WIDGETS, type SettingsWidget } from './settingsWidgets'
@@ -54,6 +55,12 @@ export function SettingsHome({ go }: { go: (id: string) => void }) {
               <SearchField value={query} onChange={setQuery} autoFocus
                 placeholder="Search settings — name, description, or any value inside"
                 ariaLabel="Search settings" />
+              {/* 🔑 This page holds no filtered array — each widget owns the hook producing its own
+                  search text and reports whether it matched. So the count comes from that SAME
+                  `matches` map that decides what stays on screen (and that `anyMatch` reads), which is
+                  why it cannot disagree with the page: both are the one source. */}
+              <ResultAnnouncement count={Object.values(matches).filter(Boolean).length} noun="settings"
+                active={q !== ''} />
             </div>
           </div>
 
