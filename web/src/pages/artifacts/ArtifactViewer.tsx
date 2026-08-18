@@ -5,6 +5,8 @@ import {
   GitCompare, Lock,
 } from 'lucide-react'
 import { api, type Artifact, type ArtifactEvent } from '../../lib/api'
+import { useChatSocket, type WsMessage } from '../../lib/useChatSocket'
+import { isArtifactUpdateFor } from './artifactUpdateSignal'
 import { notify } from '../../app/appSdk'
 import { confirmDelete } from '../../ui/dialog'
 import { Button } from '../../ui/Button'
@@ -51,27 +53,64 @@ export function ArtifactViewer({ slug, onChanged, onDeleted, onOpenSourceFile, c
   // Without this, a 404 on the main fetch would reject the await and strand the viewer
   // on an infinite loading spinner.
   const [loadError, setLoadError] = useState('')
+  // The version rail and the timeline are SEPARATE fetches from the artifact itself,
+  // and both used to be `.catch(() => [])` — so an unreachable rail rendered as an
+  // artifact with no history, and an unreachable timeline as one with no events. A
+  // swallowed error that reads as an empty state is worse than either: it tells the
+  // user a fact about their data that isn't true. Each side-fetch now keeps its own
+  // failure so the panel can say which of the two happened.
+  const [versionsError, setVersionsError] = useState('')
+  const [eventsError, setEventsError] = useState('')
 
-  const reload = async (opts?: { keepVersion?: boolean }) => {
-    setLoading(true); setLoadError('')
+  // `quiet`: refresh in place without swapping the mounted body for the spinner.
+  // A live refresh (the AE-10 socket trigger below) must not tear the render surface
+  // down — that would flash empty, drop scroll position and discard an in-progress
+  // draft, which is the opposite of "updates without a reload".
+  const reload = async (opts?: { keepVersion?: boolean; quiet?: boolean }) => {
+    if (!opts?.quiet) setLoading(true)
+    setLoadError('')
     try {
       const [a, v, e] = await Promise.all([
         api.artifact(slug),
-        api.artifactVersions(slug).catch(() => ({ slug, versions: [] })),
-        api.artifactEvents(slug).catch(() => ({ slug, events: [] })),
+        api.artifactVersions(slug).then(
+          (r) => { setVersionsError(''); return r.versions },
+          (err) => { setVersionsError(String((err as Error)?.message || err)); return null },
+        ),
+        api.artifactEvents(slug).then(
+          (r) => { setEventsError(''); return r.events },
+          (err) => { setEventsError(String((err as Error)?.message || err)); return null },
+        ),
       ])
-      setArt(a); setVersions(v.versions); setEvents(e.events)
+      setArt(a); setVersions(v ?? []); setEvents(e ?? [])
       // keepVersion: the first load honors a ?v=N deep-link pin; every LATER
       // reload (save/snapshot/revert) returns to the current version as before.
       if (!opts?.keepVersion) setSelVersion(null)
-      setViewContent(a.content ?? '')
+      // Don't overwrite a pinned historical body with the current one — the pin
+      // effect below refetches it when `art` changes, and writing current content
+      // here would flash the wrong version in between.
+      if (!(opts?.keepVersion && selVersion !== null)) setViewContent(a.content ?? '')
     } catch (err) {
       setLoadError(String((err as Error)?.message || err))
     } finally {
-      setLoading(false)
+      if (!opts?.quiet) setLoading(false)
     }
   }
   useEffect(() => { setComparing(false); reload({ keepVersion: initialVersion != null }) }, [slug])  // eslint-disable-line react-hooks/exhaustive-deps
+
+  // AE-10 — the live-refresh trigger behind the split-view iterate panel. The panel
+  // is a `ChatEmbed` (a sandboxed iframe, a separate document with no bridge back
+  // here), so a version the agent writes from inside it would otherwise sit
+  // invisible behind a stale preview until the user reloaded the page. This filters
+  // the `tool_call` frame the chat runner ALREADY broadcasts — see
+  // `artifactUpdateSignal`; no WS event is added.
+  //
+  // `keepVersion` so a live write never yanks a pinned `?v=N` snapshot out from
+  // under whoever is reading it: the rail gains the new version, the pinned body
+  // stays put. `onChanged` keeps the library grid's card in step.
+  useChatSocket((m: WsMessage) => {
+    if (!isArtifactUpdateFor(m, slug)) return
+    reload({ keepVersion: true, quiet: true }).then(() => onChanged()).catch(() => {})
+  })
 
   // Pull-on-view (WF2AUT-6 / R10): opening an artifact is the render that drives any `view` trigger
   // bound to it. The surface id is `artifact.<slug>` — stable per artifact, and what an author binds
@@ -284,11 +323,30 @@ export function ArtifactViewer({ slug, onChanged, onDeleted, onOpenSourceFile, c
           <div className="grid max-h-[40vh] grid-cols-1 gap-l overflow-y-auto px-m pb-m sm:grid-cols-3">
             <div>
               <Label icon={History}>Versions</Label>
+              {/* An unreachable rail is NOT a rail with nothing in it. Offering the
+                  picker here would show a lone "Current" and read as a healthy
+                  single-version artifact, hiding the fetch that failed — so the
+                  failure gets its own state, named and retryable. */}
+              {versionsError ? (
+                <div className="mt-1.5 flex flex-col items-start gap-1">
+                  <span className="flex items-center gap-1.5 text-[0.75rem]" style={{ color: 'var(--color-error)' }}>
+                    <FileWarning size={12} /> Couldn't load version history.
+                  </span>
+                  <span className="text-on-surface-low text-[0.75rem]">{versionsError}</span>
+                  <QuietButton onClick={() => reload({ keepVersion: true })} title="Retry loading the version history">
+                    <RotateCcw size={13} /> Try again
+                  </QuietButton>
+                </div>
+              ) : versions.length === 0 ? (
+                <span className="mt-1.5 block text-on-surface-low text-[0.75rem]">No version history.</span>
+              ) : (
               <select value={selVersion ?? 'current'} onChange={(e) => setSelVersion(e.target.value === 'current' ? null : Number(e.target.value))}
+                aria-label="Version"
                 className="mt-1.5 h-8 w-full rounded-md bg-surface-high px-2 text-[0.8125rem] text-on-surface outline-none">
                 <option value="current">Current · v{art.version}</option>
                 {versions.slice().reverse().filter((v) => v !== art.version).map((v) => <option key={v} value={v}>v{v}</option>)}
               </select>
+              )}
               {/* Compare is offered only once there are two versions to compare —
                   a disabled control on a one-version artifact would just raise the
                   question of why it's disabled. */}
@@ -312,7 +370,14 @@ export function ArtifactViewer({ slug, onChanged, onDeleted, onOpenSourceFile, c
             <div>
               <Label icon={Clock}>Timeline</Label>
               <div className="mt-2 flex flex-col gap-2.5">
-                {events.length === 0 && <span className="text-on-surface-low text-[0.75rem]">No events.</span>}
+                {/* Same distinction as the rail: "we couldn't read the timeline" is a
+                    different fact from "nothing has happened to this artifact". */}
+                {eventsError && (
+                  <span className="flex items-center gap-1.5 text-[0.75rem]" style={{ color: 'var(--color-error)' }}>
+                    <FileWarning size={12} /> Couldn't load the timeline.
+                  </span>
+                )}
+                {!eventsError && events.length === 0 && <span className="text-on-surface-low text-[0.75rem]">No events.</span>}
                 {events.slice().reverse().map((e, i) => (
                   <div key={i} className="flex items-start gap-2 text-[0.75rem]">
                     <span className="mt-1 size-1.5 shrink-0 rounded-full" style={{ background: eventTone(e.type) }} />
