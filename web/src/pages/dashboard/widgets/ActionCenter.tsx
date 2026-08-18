@@ -6,6 +6,7 @@ import { rowSubject } from '../../../lib/rowSubject'
 import { useDashboardLive } from '../DashboardLive'
 import { SlotEmptyState, WidgetRow, RowAction } from './kit'
 import type { RouteProps } from '../../../app/useQueryState'
+import { invalidateCache } from '../../../lib/useCachedData'
 
 type Kind = 'approval' | 'inbox' | 'proposal'
 interface Entry { key: string; kind: Kind; title: string; sub: string; id: string; session?: string }
@@ -17,6 +18,10 @@ interface Entry { key: string; kind: Kind; title: string; sub: string; id: strin
  *  Acted rows optimistically leave the list; the live feed reconciles. Calm "all
  *  clear" state when the queue is empty. */
 export function ActionCenter({ navigate }: RouteProps) {
+  /** A proposal decided from the DASHBOARD still changes the Skills page's badge and list, which
+   *  read the same collection under `skill-proposals-count` and `skill-proposals`. Prefix mode
+   *  keeps every key on that collection in step. */
+  const bustProposals = () => invalidateCache('skill-proposals', true)
   const { approvals, inbox, proposals, refreshAll } = useDashboardLive()
   const [busy, setBusy] = useState<Set<string>>(new Set())
   // Optimistically hidden rows (acted on) until the feed catches up.
@@ -58,12 +63,12 @@ export function ActionCenter({ navigate }: RouteProps) {
 
   const primary = (e: Entry) => {
     if (e.kind === 'approval') withBusy(e.key, () => api.resolveApproval(e.id, 'approve'))
-    else if (e.kind === 'proposal') withBusy(e.key, () => api.acceptSkillProposal(e.id))
+    else if (e.kind === 'proposal') withBusy(e.key, () => api.acceptSkillProposal(e.id).then(bustProposals))
     else navigate('inbox')  // reply in the detail where the draft editor lives
   }
   const secondary = (e: Entry) => {
     if (e.kind === 'approval') withBusy(e.key, () => api.resolveApproval(e.id, 'reject'))
-    else if (e.kind === 'proposal') withBusy(e.key, () => api.rejectSkillProposal(e.id))
+    else if (e.kind === 'proposal') withBusy(e.key, () => api.rejectSkillProposal(e.id).then(bustProposals))
     else withBusy(e.key, () => api.updateInboxItem(e.id, { status: 'dismissed' }))
   }
 
