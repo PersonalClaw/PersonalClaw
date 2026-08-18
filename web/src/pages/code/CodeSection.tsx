@@ -219,6 +219,22 @@ function CodeListPage({ onCreate, onOpen }: { onCreate: () => void; onOpen: (id:
   // in an inline banner instead of the old silent .catch(){} so a failed action
   // (worker gone, bad dir, 5xx) tells the user why nothing changed.
   const [actionErr, setActionErr] = useState<string | null>(null)
+
+  // Hoisted out of the body's IIFE so the controls bar and the rows read the SAME list: the
+  // announcement's count is `shown.length`, not a second filter chain that could drift from it.
+  const needle = q.trim().toLowerCase()
+  const shown = (projects ?? [])
+    .filter((p) => matchesFilter(p, filter))
+    // Include the human status label in the haystack so a user can find a
+    // project by state ("failed", "running", "needs you", "ended early") —
+    // not just by name/stage/kind. effectiveStatus surfaces the synthetic
+    // 'ended_early' so that's searchable too.
+    .filter((p) => {
+      if (!needle) return true
+      const es = effectiveStatus(p)
+      return `${p.name} ${entryStage(p)} ${sdlcStageLabel(entryStage(p))} ${projectKind(p)} ${es} ${loopStatusLabel(es)}`.toLowerCase().includes(needle)
+    })
+    .slice().sort(byAttention)
   // Live-refresh while away (skips when the tab is hidden) so a running build's
   // status + stage progress update without a manual reload. Gated on a live project:
   // a list of only finished projects never changes, so pass null to disable polling
@@ -279,7 +295,11 @@ function CodeListPage({ onCreate, onOpen }: { onCreate: () => void; onOpen: (id:
         right={<HeaderActions><HeaderControl icon={Plus} label="New project" onClick={onCreate} variant="primary" priority="primary" /></HeaderActions>} />
       {/* Search + a lifecycle filter live on the page (pinned below the header). */}
       {!!projects?.length && (
-        <ListControls search={{ value: q, onChange: setQ, placeholder: 'Search projects', label: 'Search projects' }}>
+        // No loading guard here on purpose: this bar renders only inside `!!projects?.length`, so by
+        // the time the announcement exists the list has arrived and is non-empty. The sibling bars in
+        // `AppsSection` and `ToolsPage` DO need one, because they render during their skeleton.
+        <ListControls search={{ value: q, onChange: setQ, placeholder: 'Search projects', label: 'Search projects' }}
+          results={{ count: shown.length, noun: 'projects', active: !!needle || filter !== 'all' }}>
           <FilterMenu sections={[{
             title: 'Show', value: filter, defaultKey: 'all',
             onChange: (k) => setFilter(k as CodeFilter),
@@ -314,19 +334,6 @@ function CodeListPage({ onCreate, onOpen }: { onCreate: () => void; onOpen: (id:
               action={{ label: 'Start a project', onClick: onCreate, icon: Plus }}
             />
           ) : (() => {
-            const needle = q.trim().toLowerCase()
-            const shown = projects
-              .filter((p) => matchesFilter(p, filter))
-              // Include the human status label in the haystack so a user can find a
-              // project by state ("failed", "running", "needs you", "ended early") —
-              // not just by name/stage/kind. effectiveStatus surfaces the synthetic
-              // 'ended_early' so that's searchable too.
-              .filter((p) => {
-                if (!needle) return true
-                const es = effectiveStatus(p)
-                return `${p.name} ${entryStage(p)} ${sdlcStageLabel(entryStage(p))} ${projectKind(p)} ${es} ${loopStatusLabel(es)}`.toLowerCase().includes(needle)
-              })
-              .slice().sort(byAttention)
             if (shown.length === 0) return (
               <div className="py-16 text-center text-on-surface-low text-[0.8125rem]">
                 {needle ? `No projects match “${q.trim()}”.` : 'No projects in this view.'}

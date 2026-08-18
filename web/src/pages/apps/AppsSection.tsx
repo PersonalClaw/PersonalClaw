@@ -478,6 +478,13 @@ export function AppsSection({ query, setQuery, navigate }: Pick<RouteProps, 'que
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [storeUniverse, storeSort, storeType, storeEntity, storeTag])
 
+  // 🔑 ONE definition of "narrowed" per view, named once and used by BOTH the empty state and the
+  // announcement. Each was already written out — the library's inside its empty-state condition, the
+  // store's inline in `filtersActive` below — and a second copy is how the two start disagreeing
+  // about whether a filter is on.
+  const libNarrowed = !!n || libStatus !== 'all' || libType !== 'all' || libCap !== 'all' || libEntity !== 'all'
+  const storeNarrowed = !!n || storeType !== 'all' || storeEntity !== 'all' || storeTag !== 'all'
+
   // Controls show whenever there's a populated list to act on (or while loading).
   const showLibControls = !isStore && (apps === undefined || apps.length > 0)
   // The Store now lists the full known-app universe (installed + available), so the
@@ -514,11 +521,13 @@ export function AppsSection({ query, setQuery, navigate }: Pick<RouteProps, 'que
           </HeaderActions>}
         />}
         controls={showLibControls ? (
-          <ListControls search={{ value: search, onChange: setSearch, placeholder: 'Search installed apps', label: 'Search apps' }}>
+          <ListControls search={{ value: search, onChange: setSearch, placeholder: 'Search installed apps', label: 'Search apps' }}
+            results={{ count: (libResult ?? []).length, noun: 'apps', active: apps !== undefined && libNarrowed }}>
             <FilterMenu sections={libSections} label="Filter & sort" />
           </ListControls>
         ) : showStoreControls ? (
-          <ListControls search={{ value: search, onChange: setSearch, placeholder: 'Search the Store', label: 'Search Store' }}>
+          <ListControls search={{ value: search, onChange: setSearch, placeholder: 'Search the Store', label: 'Search Store' }}
+            results={{ count: storeResult.length, noun: 'apps', active: catalog !== undefined && storeNarrowed }}>
             <FilterMenu sections={storeSections} label="Filter & sort" />
           </ListControls>
         ) : undefined}
@@ -546,7 +555,7 @@ export function AppsSection({ query, setQuery, navigate }: Pick<RouteProps, 'que
             <StoreView catalog={catalog} catalogError={catalogErr} result={storeResult} totalKnown={storeUniverse.length}
               installedCount={(apps ?? []).filter((a) => !a.native).length}
               onInstalled={reload} reloadCatalog={reloadCatalog} onClearFilters={clearStoreFilters(setSearch, setStoreType, setStoreEntity, setStoreTag)}
-              filtersActive={!!n || storeType !== 'all' || storeEntity !== 'all' || storeTag !== 'all'}
+              filtersActive={storeNarrowed}
               onOpen={(name) => setOpenName(name)} onAction={appActions.dispatch}
               onOpenSources={() => setSourcesOpen(true)} />
           ) : apps === undefined && appsErr ? (
@@ -557,7 +566,7 @@ export function AppsSection({ query, setQuery, navigate }: Pick<RouteProps, 'que
               // Empty state, tab-aware: Native (should never be empty in practice —
               // native apps always ship), Library (no user-installed apps), each
               // honoring an active search/filter.
-              (!n && libStatus === 'all' && libType === 'all' && libCap === 'all' && libEntity === 'all') ? (
+              !libNarrowed ? (
                 isNative ? (
                   <EmptyState icon={Blocks} title="No native apps"
                     hint="Native tools ship with PersonalClaw and are always on." />
