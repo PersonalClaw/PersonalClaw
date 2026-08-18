@@ -18,6 +18,7 @@ runner — is driven entirely off this registry. Inference resolution stays in e
 use-case's own registry (stt/tts/…); this is purely the *management + availability* axis.
 """
 
+from personalclaw.local_models.budgets import ContextBudget, model_budget, output_budget
 from personalclaw.local_models.provider import LocalModel, LocalModelProvider
 from personalclaw.local_models.registry import (
     get_provider,
@@ -27,8 +28,11 @@ from personalclaw.local_models.registry import (
 )
 
 __all__ = [
+    "ContextBudget",
     "LocalModel",
     "LocalModelProvider",
+    "model_budget",
+    "output_budget",
     "register_provider",
     "unregister_provider",
     "get_provider",

@@ -341,6 +341,18 @@ async def one_shot_completion(
     temperature and drops it (``llm/anthropic.py``), and a provider that ignores the
     parameter simply returns its default — a temperature is a request, not a promise.
     ``None`` (the default) sends nothing, keeping every existing call site unchanged.
+
+    The per-call OUTPUT BUDGET (LMMV §2.2) is derived, never hardcoded: every resolution
+    path (pin / chain-advance / plain) asks
+    :func:`personalclaw.local_models.budgets.output_budget` for the model it is about to
+    run and rides the answer as a ``max_tokens`` build kwarg. A local model whose card
+    declares ``context_tokens``/``output_tokens`` therefore gets ITS window instead of the
+    hosted-model table's 200k default and the adapters' hardcoded 4096; a model the
+    catalog does not know falls back to that table and, only then, to 4096 — the same
+    number as before, now named once in ``local_models/budgets.py``. Because the bridge
+    merges build kwargs with ``setdefault``, an operator's configured ``max_tokens`` still
+    wins. No compaction logic is involved: this makes the number available, it does not
+    decide what to drop.
     """
     from personalclaw.providers.provider_bridge import resolve_provider_for_use_case
     from personalclaw.providers.use_cases import VALID_USE_CASES
@@ -361,6 +373,29 @@ async def one_shot_completion(
     # (pin / chain-advance / plain), so a fallback entry samples at the temperature the
     # caller asked for rather than silently reverting to the provider default.
     _bridge_kw: dict = {} if temperature is None else {"temperature": float(temperature)}
+
+    async def _budget_kw(model_ref: str) -> dict:
+        """Build kwargs carrying the per-model output budget DERIVED for ``model_ref``.
+
+        The number comes from the local-model catalog's ``context_tokens`` /
+        ``output_tokens`` (LMMV §2.2) via ``local_models.budgets``, which falls back to
+        the shared hosted-model window table and, only when that too is silent, to the
+        4096 the adapters used to hardcode. Riding it as a build kwarg means it reaches
+        the provider through the same seam ``temperature`` uses — and because the bridge
+        merges build kwargs with ``setdefault``, an operator's explicitly configured
+        ``max_tokens`` still wins over the derived one.
+
+        Fail-soft: an unresolvable budget must not be the thing that stops a completion,
+        so the call site degrades to "pass nothing" (the adapter default) rather than
+        raising.
+        """
+        try:
+            from personalclaw.local_models.budgets import output_budget
+
+            return {**_bridge_kw, "max_tokens": await output_budget(model_ref)}
+        except Exception:  # noqa: BLE001 — a budget miss degrades, it never blocks
+            logger.debug("one_shot_completion: budget derivation failed for %r", model_ref)
+            return dict(_bridge_kw)
 
     async def _run(provider) -> str:
         try:
@@ -393,7 +428,9 @@ async def one_shot_completion(
     # very family the isolation control excluded. Resolve the one model and run it.
     if model:
         return await _run(
-            resolve_provider_for_use_case(resolved_uc, model_override=model, **_bridge_kw)
+            resolve_provider_for_use_case(
+                resolved_uc, model_override=model, **(await _budget_kw(model))
+            )
         )
 
     # Call-failure chain advance (MODEL-USE-CASES-V2 T2.4): with a multi-entry
@@ -413,7 +450,7 @@ async def one_shot_completion(
         for i, ref in enumerate(_chain):
             try:
                 entry_provider = resolve_provider_for_use_case(
-                    resolved_uc, model_override=ref, **_bridge_kw
+                    resolved_uc, model_override=ref, **(await _budget_kw(ref))
                 )
             except Exception as exc:  # noqa: BLE001 — an unbuildable entry advances
                 last_exc = exc
@@ -440,8 +477,12 @@ async def one_shot_completion(
         ) from last_exc
 
     provider = None
+    # The single-entry / empty chain resolves the axis itself, so the budget is derived
+    # from the model that axis will actually run (``_chain`` already holds it when there
+    # is one) rather than from nothing — an unbound axis falls back to the window table.
+    _plain_ref = _chain[0] if _chain else ""
     try:
-        provider = resolve_provider_for_use_case(resolved_uc, **_bridge_kw)
+        provider = resolve_provider_for_use_case(resolved_uc, **(await _budget_kw(_plain_ref)))
     except Exception:
         logger.debug(
             "one_shot_completion: use-case bridge resolve failed for %r", resolved_uc, exc_info=True

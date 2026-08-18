@@ -317,6 +317,110 @@ Where each piece plugs into the pluggable-provider architecture (recon: provider
 
 ## Execution log
 
+- 2026-08-18 — **PARTIAL (LMMV-7 / Session 5b). The per-model context-budget helper +
+  all three hardening regressions are DONE; the full-matrix as-a-user sweep is
+  NOT EXERCISED (reason below).**
+
+  **§2.2 the budget helper, and where the hardcoded constants actually were.** New
+  `local_models/budgets.py` (`ContextBudget`, `catalog_window`, `model_budget`,
+  `output_budget`) derives a window/output/input budget from the card's `context_tokens` /
+  `output_tokens`, falling back to `model_windows.model_context_window` and then to one
+  named `DEFAULT_OUTPUT_TOKENS = 4096`. The constants it supersedes were **not** in
+  `one_shot_completion` — that path carried **no budget at all**, which is why a local
+  model silently inherited `model_windows.DEFAULT_CONTEXT_WINDOW = 200_000` (its id is not
+  in `model_tokens.json`, so the table's absent-model default answered) and the adapters'
+  own output cap (`llm/anthropic.py:367` `max_tokens: int = 4096`; the anthropic model
+  app's `options.pop("max_tokens", 4096)`). All three resolution branches of
+  `one_shot_completion` (pin / chain-advance / plain) now ask the helper for the model they
+  are about to run and ride the answer as a `max_tokens` build kwarg beside the existing
+  `temperature` one. Because the bridge merges build kwargs with `setdefault`, an
+  operator's configured `max_tokens` still wins — the derivation supplies a *default*, it
+  does not override a choice.
+
+  **DISCOVERY — the derivation had to be async or it would have shipped inert.**
+  `LocalModelProvider.list_models` is a coroutine. A synchronous helper would have received
+  a coroutine object, found no model in it, fallen through to the 200k table and returned a
+  plausible number for every input — the exact declared-but-inert shape, and one no
+  assertion on the helper's return value would have caught. `catalog_window` /
+  `model_budget` / `output_budget` are `async` and awaited at the call site.
+
+  **Anti-inertness is asserted at the CONSUMER, not on the helper.** A parametrized test
+  patches the bridge seam and asserts the `max_tokens` that *reaches the resolution call*
+  moves when the catalog moves: `(8192, 1024) → 1024`, `(4096, 0) → 2048`,
+  `(0, 0) → 4096`. Falsified by making the consumer return the old constant — 3 reds.
+
+  **`context_tokens = 0` is a normal card and has its own test, both directions.** A card
+  that declares nothing is the common case, so `0` means *unknown*, never a window of zero:
+  it falls back to the window table with `source="window-table"` and the named 4096 floor,
+  and the declared case is asserted to *differ* from it. A window of `1` still yields
+  strictly positive `output_tokens`/`input_tokens`; a declared output larger than the window
+  is clamped to half of it (a 4k model handed a 4096-token cap would leave no room for the
+  prompt). Nothing in the module divides by `context_tokens`.
+
+  **No compaction logic was rewritten** — the atom's explicit boundary, honored literally.
+  `workflows/compaction.py` is byte-identical: `prompt_char_budget`, `CHARS_PER_TOKEN`,
+  `COMPACT_AT_FRACTION` and the head/tail protection are untouched. This plan's own §2.2
+  wording is the reason ("it makes the number available"), so the helper hands over a number
+  and decides nothing about what to drop.
+
+  **Success Criterion 9 — the two-population invariant, with before/after counts.**
+  `tests/test_local_model_refresh_invariants.py` drives all four registries that expose
+  `refresh_providers()` (stt, tts, image_gen, video_gen). Each case asserts three things,
+  not a smoke check: the app-contributed provider is **the same object** afterwards, the
+  transient one is **gone** (the vacuity guard — a `refresh_providers` that had become a
+  no-op would otherwise pass), and the dict shrinks by exactly the transient population's
+  size. A fifth test pins the invariant structurally: every refreshing registry must keep a
+  named transient-population marker (`_remote_names` / `_scanner_names` /
+  `_auto_registered`), so an untargeted `_providers.clear()` cannot return quietly.
+
+  **Registry drift.** A duck-typed sidecar proxy whose internal `.name` (`faster_whisper`)
+  differs from its app name (`faster-whisper`) is driven through
+  `ModelTypeHandler.register` and asserted to (a) satisfy `is_local_model_provider` without
+  subclassing — and to be *refused* for a hosted-only capability set, so the second gate is
+  a real gate; (b) land in the local-model registry under the **APP** name, with
+  `get_provider("faster_whisper") is None`; (c) survive the stt registry's
+  `refresh_providers()` in **both** registries. Falsified by restoring the original
+  untargeted `_providers.clear()` in `stt/registry.refresh_providers` — 2 reds, including
+  the drift test.
+
+  **Success Criterion 10 — the deletion rail, structural not conventional.** A suite-level
+  autouse fixture (`conftest._forbid_real_model_roots`) wraps all seven `layouts.py`
+  cache-root entry points, including the single deletion sweep `delete_all_layouts`, and
+  refuses a real model root. Detection lives in `tests/real_model_root_guard.py` for the
+  same reason `real_home_guard` does — a rail that only ever runs where it should stay
+  silent is indistinguishable from one that never fires — and
+  `tests/test_local_model_root_guard.py` drives it both ways: every named real root and a
+  `~/`-spelled string are refused, a `tmp_path` root passes through to the real
+  implementation with real answers, the forbidden set is asserted non-empty and asserted to
+  contain the two roots the incident touched, and each guarded entry point is asserted to
+  actually be wrapped. **DEVIATION (small, deliberate):** the rail forbids the *named* real
+  roots (`~/.personalclaw`, `~/.cache/huggingface|torch|whisper|piper`, `~/.ollama`, the
+  macOS spellings) and the bare home, rather than all of `$HOME`. A developer's checkout
+  normally lives under `$HOME`, so a blanket home-rejection fires on an ordinary relative
+  path and gets switched off — which is how the convention that was already in force failed
+  the first time.
+
+  **NOT EXERCISED — the full download/delete/bind/RUN matrix across all 6 providers.**
+  Driven as far as it goes: the gateway was started on an isolated dev home (port 10531,
+  `PERSONALCLAW_AUTH_MODE=none`), `/api/models/available` and `/api/models/active` both
+  answered 200 with well-formed envelopes, and `available` returned `{"providers": []}` —
+  **no local-model provider exists to drive**, because every one of the six is an APP and
+  `git ls-files apps/` is 0 in this repo (the same constraint §2's catalog work recorded).
+  The RUN leg additionally needs real weights, and downloading them was out of bounds for
+  this session. What *was* driven live, out of pytest, in a real process: the budget
+  reaching the bridge for a 4k card (2048), a 32k card declaring 2048 (2048), an
+  undeclared card (4096) and a hosted ref (4096) — i.e. the consumer half of §2.2 is
+  validated as a user of the path even though the six-provider matrix is not. The matrix
+  sweep belongs with the per-app migration in PersonalClawApps.
+
+  Gate: `make lint` clean (black/isort/flake8/mypy, 906 files). 251 passed across
+  `test_local_model_budgets`, `test_local_model_refresh_invariants`,
+  `test_local_model_root_guard`, `test_local_model_catalog`, `test_local_model_layouts`,
+  `test_local_model_sidecar`, `test_local_model_discovery_async`, `test_llm_helpers`,
+  `test_config_roundtrip`, `test_config_baseline`, `test_agent_reference`,
+  `test_inert_surface_baseline`. No config field was added, so the five-point round-trip
+  contract does not apply. Zero writes under the real home during the session.
+
 - 2026-07-30 — **PARTIAL (§4.4 the shared layout probe + §4.2 cleanup candidates).
   DEVIATION: scoped to one slice of a large plan.**
 
