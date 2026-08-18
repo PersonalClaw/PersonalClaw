@@ -1116,6 +1116,116 @@ isolation and did not recur under the parallel run. Base worktree removed after 
 
 ---
 
+### 2026-08-18 — Atom AG-9 (apps-repo guardrails follow-ons) — PARTIAL: clause 2 DONE, clauses 1+3 BLOCKED
+
+AG-9's three `done_when` clauses were censused against BOTH repos' `main` before any code was
+written, because the apps repo's tip (`6979f70 feat(apps): AG-9 native structured_output and
+channel send refusal`) was already an AG-9 commit while the atom still read `todo`. Result: one
+clause was genuinely unmet and is now done; two are blocked on a core mechanism the plan's own
+Session-1 DEVIATION claims core already shipped, and which **does not exist**.
+
+| Clause (verbatim) | Verdict | Evidence |
+|---|---|---|
+| "an ollama-bound `output_type` call uses native json-schema format" | **BLOCKED** — apps half complete, core forward missing | apps repo `ollama-models/provider.py` (factory at lines 786-797, declaration 728, wire 470-471 / 565-566); core `llm_helpers.py:363` + `:371-382` |
+| "a channel app's `send()` returns a typed refusal under DISABLE_LIVE_WRITES" | **DONE** (was 1 of 4 apps; now 4 of 4) | apps repo `discord-channel/discord_runtime/transport.py` line 326, `slack-channel/slack_runtime/transport.py` line 160, `email-channel/email_runtime/transport.py` line 567 |
+| "core's `structured_output` dispatch hook is exercised natively" | **BLOCKED** — no such hook exists | see DISCOVERY below |
+
+**DONE — the channel `send()` honor point, at all FOUR channel apps** (apps repo commit; this repo
+carries only this log entry). Session 3's deferral was read as "a channel app", and the landed AG-9
+commit satisfied it for `telegram-channel` only. `provider.type == "channel"` matches **four** apps,
+and `discord-channel` / `slack-channel` / `email-channel` each still had a raw `async def send()`
+that consulted nothing — the wrapper was fixed and three raw siblings were missed. All three now
+return the same typed, falsy, non-raising `SendRefused` telegram does, checked AFTER each app's own
+token/configuration gate (an unconfigured transport reports a plain `False`: it could not have
+written anything, so claiming the guard suppressed a write would be a lie).
+
+The flag parse is mirrored per app rather than imported: core's `guardrails.writes.live_writes_disabled`
+is not an SDK export and an installed bundle has no sibling to import, so each app carries a
+`writes.py` whose `_EXPLICIT_FALSE` set and `guard_flag`/`live_writes_disabled` bodies are
+byte-identical to telegram's. Drift is held shut two ways — each bundle's suite cross-checks its
+parse against core's live symbol (test files are exempt from the import-boundary lint), and a new
+repo rail (`.github/scripts/check_live_writes_posture.py`, wired as the `live-writes-posture` CI
+job) AST-asserts that every `provider.type == "channel"` app calls `live_writes_disabled()` inside
+its `async def send` body (not in a docstring, not in `health()`) and spells the token set exactly
+as core does. The rail carries a vacuity floor: the four known channel apps must all be discovered,
+so an app disappearing or a glob that stops matching reds instead of shrinking to a clean pass.
+Falsified in all four directions — dropping the guard call reds it, drifting one token set reds it,
+flipping one manifest's `provider.type` trips the floor, and the guard-OFF path still really
+transmits.
+
+**DISCOVERY — the "capability-dispatch hook" Session 1's DEVIATION says core shipped does not
+exist.** That DEVIATION (this log, 2026-07-25) reads: "Core ships the complete substrate: the graded
+descriptor (default `NONE`), the capability-dispatch *hook*, and the **universal**
+parse-with-targeted-retry… Follow-on: an apps-repo change sets `BrandedProviderSpec.structured_output`
++ ollama `format` wiring; then core's dispatch hook lights up natively." The apps-repo half is now
+complete and verified. The core hook is not there. Measured, not read:
+
+- `one_shot_completion(output_type=…)` (`llm_helpers.py:289-400`) never reads a provider capability.
+  Its typed path (`:371-382`) is *only* parse → one targeted-retry → `OutputContractError`. Its
+  build-kwarg dict is `_bridge_kw = {} if temperature is None else {"temperature": …}` (`:363`), so
+  the requested shape never leaves core. A probe that stubs `resolve_provider_for_use_case` and
+  calls `one_shot_completion("hi", output_type=dict)` records the bridge receiving
+  `{'use_case': 'background', 'kwargs': {}}` — **zero** build kwargs.
+- Grep for `structured_output` across `src/personalclaw/**.py` finds exactly two readers of the
+  capability field, neither in a request path: `workflows/grounding.py:492` (sets a legibility flag
+  + a `model_notes` line on the grounding bundle) and `routing/policy.py:312`.
+- So `capabilities.py:65`'s `structured_output` field has **no live native caller in the model-call
+  path**, and the ollama app's `StructuredOutput.JSON_SCHEMA` declaration cannot change any request.
+
+**DISCOVERY — `routing/policy.py:_structured_providers()` is dead code that can never match**
+(pre-existing, NOT introduced or fixed here). It compares `str(getattr(cap, "value", cap)) ==
+"structured_output"` over `ProviderEntry.declared_capabilities` (`_structured_providers`, `:298-316`; the comparison at `:312`). That field is typed
+`frozenset[Capability]` (`llm/registry.py:87`) and `Capability` has no `structured_output` member
+(`capabilities.py:14-24` — chat, code_tools, summarization, planning, embedding, vision, streaming,
+tool_approval); `registry.register_entry` additionally validates the set is a subset of the type's
+`cap.capabilities` (`:170`), and `catalog.infer_capabilities` (`:264-368`) emits a fixed vocabulary
+that does not include it either. `StructuredOutput` is deliberately a separate GRADED field, not a
+member of the flag set (`capabilities.py:27-33` says so). So the §4.1 structured-output routing
+exception never fires, and the function fail-opens to an empty set on every call. This is the
+"live reader of an unwritten key" shape: it is green, silent, and has never done anything.
+
+**BLOCKED (E1 premise mismatch + E6 scope) — clauses 1 and 3 need a core mechanism, not a rail.**
+The atom is fenced to the apps repo plus this log. Closing clauses 1+3 means BUILDING the missing
+capability-dispatch hook in `llm_helpers.py`, which is a design decision, not a mechanical
+remainder: it must choose which grade forwards what (`JSON_SCHEMA` → a schema; `JSON_MODE` → an
+unschema'd JSON request), whether the universal parse-with-retry still runs as verification behind a
+native constraint, and what a non-`dict`/`list` `output_type` (a Pydantic class) forwards. It also
+must be capability-GATED: an unconditional forward would push an `output_type` key into a
+non-declaring provider's `extra_options`, and both core protocol clients pass unknown
+`extra_options` keys straight onto the wire (`llm/openai.py:218`, `llm/anthropic.py:501`) — which
+would put a bogus field in a live request for every provider that never opted in. Recorded here
+rather than improvised.
+
+What the next session does NOT have to re-derive — the apps side is proven ready, so this is a
+core-only change:
+
+- `ollama-models/_factory` (`provider.py:739`; the kwarg block at `:786-797`) already accepts `format` / `output_type` as
+  BUILD KWARGS on the same channel `model`/`embedding_model` ride, clears any standing entry option
+  so a per-call contract wins, and folds them into `extra_options`; the constructor normalizes them
+  once into `_output_format` (`:332`) and both request builders emit `body["format"]`
+  (`:470-471`, `:565-566`). Measured against the real registry factory: build kwargs `{}` →
+  `_output_format=None` (an ordinary turn is byte-identical); `{"output_type": dict}` →
+  `{'type': 'object'}`; `{"output_type": list}` → `{'type': 'array'}`; `{"format": {...}}` → passed
+  through verbatim; `OLLAMA_CAPABILITY.structured_output` → `StructuredOutput.JSON_SCHEMA`.
+- The seam to copy is the temperature one, which already works end to end:
+  `one_shot_completion(temperature=…)` → `_bridge_kw` → `registry.build` kwargs →
+  `extra_options["temperature"]` → the wire (`sampling.py:22-24`).
+- `sdk/provider_helpers.py` was deliberately NOT touched (two other changes are in flight against
+  it). Note the atom's scope line names `BrandedProviderSpec.structured_output`; the landed apps
+  commit reached the grade through `ProviderCapability.__dataclass_fields__[…].default` instead
+  (apps repo `ollama-models/provider.py` line 89), keeping the declaration inside the SDK boundary without a new
+  SDK field. Whether the branded spec should carry the field explicitly is still open.
+
+Gate (apps repo, run per bundle — a combined multi-directory run raises `import file mismatch`
+collection errors from duplicate `test_live_writes.py` basenames, which are not test failures):
+`telegram-channel` 144 passed · `discord-channel` 234 passed · `slack-channel` 508 passed, 1 xfailed
+· `email-channel` 342 passed · `ollama-models` 70 passed; all 43 test-bearing bundles green
+(`alibaba-models` ships no test file at all — pre-existing, and CI's `compgen -G` guard skips it
+too). The other apps CI jobs run locally clean: manifest-validate (45 manifests), boundary
+(sdk-only imports), live-writes-posture (4 channel apps), DCO. No core source file was changed by
+this atom, so no core gate applies beyond this document.
+---
+
 ## Status: all four sessions COMPLETE (2026-07-25)
 
 Session 1 (model-call chokepoint), Session 2 (budgets + scan + config), Session 3 (denylist
