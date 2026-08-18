@@ -26,6 +26,10 @@ import { join } from 'node:path'
 // exactly that reason: a per-component copy is the drift this converges away from, and TypeScript
 // caught the second scope when the first draft made it a closure.
 //
+// It is named `reportActionFailure` rather than for this concern, because a SECOND one now shares it
+// (a permission decision that silently did not register — `approvalDecisionReported`). The sentence
+// is the shared part; each rail keeps its own reasoning.
+//
 // 🪤 REVERTING THE OPTIMISTIC FLIP WAS CONSIDERED AND REJECTED, on the same reasoning as
 // `selectionPersistReported`: the family's remedy is to TELL. `markStreaming` is also driven by the
 // chat socket, so restoring it here would fight the stream rather than inform the user. Recorded so a
@@ -42,7 +46,7 @@ const STOPS = ['stopChat', 'cancelFanout', 'cancelQueued', 'interruptChat', 'can
 describe('a failed cancel tells the user the work did not stop', () => {
   it('the reporter carries the server’s own message, at module scope, ONCE', () => {
     expect(raw, 'a per-component copy is the drift this avoids').toMatch(
-      /^const reportStopFailure = \(what: string\) => \(e: unknown\) => \{$/m,
+      /^const reportActionFailure = \(what: string\) => \(e: unknown\) => \{$/m,
     )
     expect(raw).toContain("notify(`Couldn't ${what}: ${String((e as Error)?.message || e)}`, 'error')")
     // 🪤 UNIQUENESS, not just scope. The first version of this test asserted only that a
@@ -51,7 +55,7 @@ describe('a failed cancel tells the user the work did not stop', () => {
     // shadowing, the five in-component call sites bound to the closure, and this very assertion
     // passed because the module-level one it looked for was also there. Asserting existence is not
     // asserting singularity.
-    const defs = [...raw.matchAll(/(^|\s)const reportStopFailure = /g)]
+    const defs = [...raw.matchAll(/(^|\s)const reportActionFailure = /g)]
     expect(defs.length, 'exactly one definition — a shadowing copy is the drift itself').toBe(1)
   })
 
@@ -60,7 +64,7 @@ describe('a failed cancel tells the user the work did not stop', () => {
     for (const call of STOPS) {
       for (const m of scan.matchAll(new RegExp(`api\\.${call}\\(`, 'g'))) {
         const chain = scan.slice(m.index!, m.index! + 200)
-        if (!/\.catch\(reportStopFailure\('/.test(chain)) {
+        if (!/\.catch\(reportActionFailure\('/.test(chain)) {
           missing.push(`${call}:${scan.slice(0, m.index).split('\n').length}`)
         }
       }
@@ -98,7 +102,7 @@ describe('a failed cancel tells the user the work did not stop', () => {
       'interrupt this turn',
       'cancel the retag run',
     ]) {
-      expect(raw, `no report says ${what}`).toContain(`reportStopFailure('${what}')`)
+      expect(raw, `no report says ${what}`).toContain(`reportActionFailure('${what}')`)
     }
   })
 
@@ -123,7 +127,7 @@ describe('a failed cancel tells the user the work did not stop', () => {
     // mutation that put the revert in the REPORTER's body sailed past it — the revert does not live
     // in a literal catch block, and `[^}]*` stops at the `}` inside `${what}` anyway. So assert the
     // property instead: the reporter's own body may notify and nothing else.
-    const at = raw.indexOf('const reportStopFailure =')
+    const at = raw.indexOf('const reportActionFailure =')
     expect(at, 'the reporter must exist').toBeGreaterThan(-1)
     const body = raw.slice(at, raw.indexOf('\n}', at) + 2)
     expect(body, 'the reporter reports').toContain('notify(')

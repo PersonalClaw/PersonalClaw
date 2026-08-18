@@ -435,22 +435,20 @@ const SLASH_HELP = [
  *  #/chat/new is a fresh NEW chat (reachable via "New chat" on the history page
  *  and the "History" button on the new-chat page); opening a session deep-links
  *  to #/chat/<sessionKey>. No left sidebar. */
-/** Report a failed cancel/stop with the server's own message.
+/** Report a write the user just triggered that did not land, with the server's own message.
  *
- * 🪤 A STOP THAT SILENTLY DID NOT STOP is worse than a failed save. Every cancel on this page flips
- * local state FIRST — `markStreaming(false)`, the queue row filtered out, the subagent cards marked
- * "cancelled" — then discarded the rejection, so the UI claimed the work had ended while it carried
- * on. The user's NEXT action assumes it worked, which on the queue's "edit" path means the original
- * message sends anyway alongside their revision.
+ * MODULE scope, and exactly ONE definition: the controls that need it live in components ~2000 lines
+ * apart (the composer's stop/queue controls, the retag panel, the transcript's approval cards), and a
+ * per-component copy is the drift this converges away from — an indented copy legally SHADOWS this
+ * one, which TypeScript will not mention. `chat/stopFailureReported` counts the definitions.
  *
- * MODULE scope, not a closure: two separate components on this page cancel things (the composer's
- * stop/queue controls and the retag panel ~2000 lines apart), and a per-component copy is the drift
- * this converges away from. A sibling of `persistSelection` rather than a merge — that one composes
- * "Couldn't apply X to this session", the wrong sentence for a cancel, and folding them would
- * rewrite its eleven unrelated call sites. Per-concern reporters are this codebase's shape already
- * (`reportingWrite` in tools, `reportSettingFailure` in settings).
+ * Named for the SHAPE rather than one concern, because two now share it: a cancel that silently did
+ * not cancel (`chat/stopFailureReported`) and a permission decision that silently did not register
+ * (`chat/approvalDecisionReported`). Each rail carries its own reasoning; this carries the sentence.
+ * A sibling of `persistSelection` rather than a merge — that one composes "Couldn't apply X to this
+ * session", which is the wrong sentence for either of these.
  */
-const reportStopFailure = (what: string) => (e: unknown) => {
+const reportActionFailure = (what: string) => (e: unknown) => {
   notify(`Couldn't ${what}: ${String((e as Error)?.message || e)}`, 'error')
 }
 
@@ -1321,7 +1319,7 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
 
   const approve = useCallback((id: string, action: ApproveAction) => {
     const s = sessionRef.current
-    if (s) api.approve(s, action, id).catch(() => {})
+    if (!s) return
     // A card action that raises the session's standing posture must move the
     // Permission-mode pill to match — otherwise the pill keeps claiming "Normal —
     // ask before every tool" while the session silently auto-approves (a dishonest
@@ -1334,7 +1332,21 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
       : action === 'trust_reads' ? 'trust_reads'
       : action === 'yolo' ? 'yolo'
       : null
-    if (raised) setSelection((sel) => (sel.approval === raised ? sel : { ...sel, approval: raised }))
+    // 🪤 THE MIRROR IS GATED ON THE WRITE, AND THE FAILURE IS REPORTED. Both halves used to be
+    // wrong in the same direction. The request swallowed its rejection, and the mirror ran
+    // regardless — so a failed `yolo` left the pill claiming this chat auto-approves everything
+    // while the server was still asking before every tool. That is the EXACT INVERSE of the
+    // dishonest state the comment above sets out to prevent, and it is a claim about a security
+    // posture, not a cosmetic one. The pill is a mirror of a server flag, so it may only move once
+    // the server has the flag; a failed decision now says so instead of being absorbed.
+    //
+    // The card itself needs nothing here: it renders from `seg.resolved`, which the backend
+    // persists, so an unapproved tool call correctly stays unresolved and still asking.
+    api.approve(s, action, id)
+      .then(() => {
+        if (raised) setSelection((sel) => (sel.approval === raised ? sel : { ...sel, approval: raised }))
+      })
+      .catch(reportActionFailure('record your decision'))
   }, [])
 
   // Auto-scroll the transcript to the bottom as content streams in — but only if
@@ -1780,7 +1792,7 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
 
   async function stop() {
     markStreaming(false)
-    if (sessionRef.current) await api.stopChat(sessionRef.current).catch(reportStopFailure('stop this turn'))
+    if (sessionRef.current) await api.stopChat(sessionRef.current).catch(reportActionFailure('stop this turn'))
   }
 
   // ── message actions (stage 4) ──
@@ -2047,7 +2059,7 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
     const s = sessionRef.current
     if (!s) return
     setSubagents((prev) => prev.map((c) => (c.done ? c : { ...c, done: true, error: 'cancelled' })))
-    await api.cancelFanout(s).catch(reportStopFailure('cancel the subagents'))
+    await api.cancelFanout(s).catch(reportActionFailure('cancel the subagents'))
   }
 
   // ── side chat (stage 6) ──
@@ -2434,19 +2446,19 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
       {/* Queued messages (typed mid-stream) — the backend sends them one-by-one as
           each turn finishes; each can be cancelled while still pending. */}
       <QueueStack items={queued} canInterrupt={streaming}
-        onCancel={(id) => { setQueued((prev) => prev.filter((q) => q.id !== id)); const s = sessionRef.current; if (s) api.cancelQueued(s, id).catch(reportStopFailure('cancel that queued message')) }}
+        onCancel={(id) => { setQueued((prev) => prev.filter((q) => q.id !== id)); const s = sessionRef.current; if (s) api.cancelQueued(s, id).catch(reportActionFailure('cancel that queued message')) }}
         onEdit={(id, content) => {
           // Honest "edit": there's no queue-edit endpoint, so cancel the pending item
           // and drop its text back in the composer for the user to revise + resend
           // (avoids a fake in-place edit that would silently re-queue at the back).
-          setQueued((prev) => prev.filter((q) => q.id !== id)); const s = sessionRef.current; if (s) api.cancelQueued(s, id).catch(reportStopFailure('cancel that queued message'))
+          setQueued((prev) => prev.filter((q) => q.id !== id)); const s = sessionRef.current; if (s) api.cancelQueued(s, id).catch(reportActionFailure('cancel that queued message'))
           setInput((cur) => (cur.trim() ? cur : content))
         }}
         onInterrupt={(id) => {
           // Interrupt-now: soft-stop the running turn and run THIS queued message
           // next (the backend promotes it + the finally-block drain picks it up).
           // The queue_promoted WS echo reorders the strip on every client.
-          const s = sessionRef.current; if (s) api.interruptChat(s, id).catch(reportStopFailure('interrupt this turn'))
+          const s = sessionRef.current; if (s) api.interruptChat(s, id).catch(reportActionFailure('interrupt this turn'))
         }} />
       <div className="relative">
         {/* Saved-prompt palette + auto-nudge now live INSIDE the composer's "+"
@@ -3840,7 +3852,7 @@ function ChatHistoryPage({ navigate, query, setQuery }: { navigate: (p: string) 
     }
   })
   async function startRetag() {
-    if (retagRunning) { await api.cancelRetag().catch(reportStopFailure('cancel the retag run')); return }
+    if (retagRunning) { await api.cancelRetag().catch(reportActionFailure('cancel the retag run')); return }
     if (!(await confirm({
       title: 'Generate tags for all chats?',
       body: 'Every chat is re-read and tags generated: fitting tags added, stale ones corrected, obsolete ones removed. Incognito and temporary chats are never touched.',
