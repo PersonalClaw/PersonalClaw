@@ -1,15 +1,16 @@
 import { useEffect, useId } from 'react'
 import { animate, motion, useMotionValue, useReducedMotion, useTransform } from 'framer-motion'
-import { expr, exprHeavy, physics } from '../../design/motion'
+import { expr, exprHeavy } from '../../design/motion'
+import { MORPH_FAMILY, familySpring } from './vocabulary'
 
 /** A coral-tinted liquid blob that MORPHS between two shape states (FLUID-MOTION
  *  §S2 T2.2 / atom FM-3). Flip `active` and the silhouette flows from `from` to
  *  `to` — for loading→loaded, idle→busy, and ambient state transitions where a
  *  crossfade would read as a swap rather than a change of state.
  *
- *   • BOLD (exprHeavy): the morph on `physics.fluid` PLUS a slow idle breathe —
- *     the radius wanders continuously, so a settled blob still reads as liquid
- *     rather than as a static graphic.
+ *   • BOLD (exprHeavy): the morph on the family's spring (`MORPH_FAMILY.state`,
+ *     `vocabulary.ts`) PLUS a slow idle breathe — the radius wanders continuously,
+ *     so a settled blob still reads as liquid rather than as a static graphic.
  *   • REFINED (below the exprHeavy gate): the morph only. The breathe is DROPPED
  *     entirely — no perpetual animation driver at all — because the refined tier
  *     drops a heavy effect rather than shrinking it (per `exprHeavy`'s contract).
@@ -172,7 +173,11 @@ export function LiquidShape({
     // `<path>` branch below is what actually renders, but keeping the value in
     // sync means toggling reduced motion off mid-life resumes from the truth.)
     if (reduce) { t.set(active ? 1 : 0); return }
-    const controls = animate(t, active ? 1 : 0, physics.fluid)
+    // The family's spring, so the expressiveness knob changes this morph's TIMING the
+    // same direction it changes a `Morph`'s or a `Bud`'s (bolder = tauter), not only
+    // its amplitude. Before atom FM-4 this rode the bare preset and was the one family
+    // member the knob left temporally untouched.
+    const controls = animate(t, active ? 1 : 0, familySpring(MORPH_FAMILY.state))
     return () => controls.stop()
   }, [active, reduce, t])
 

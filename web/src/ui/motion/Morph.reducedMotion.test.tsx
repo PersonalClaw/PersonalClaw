@@ -14,7 +14,7 @@
  *      fly, just faster — the exact thing the plan's contract forbids. Caught by the branch: the
  *      reduced-motion end is a plain `<div>` with no `layoutId` to pair with, so there is
  *      nothing for Framer to project and no animation to shorten.
- *   2. `morphTransition()` is spread over: `{ ...physics.fluid, stiffness: N }` re-introduces a
+ *   2. `familySpring()` is spread over: `{ ...physics.fluid, stiffness: N }` re-introduces a
  *      spring from the leftover `stiffness` even after the preset collapsed to `instant` —
  *      the hazard `motion.ts` documents on `instant` itself. Caught by asserting the returned
  *      object has NO spring residue at all.
@@ -41,7 +41,8 @@ Object.defineProperty(window, 'matchMedia', {
   }) as unknown as MediaQueryList,
 })
 
-const { Morph, morphTransition } = await import('./Morph')
+const { Morph } = await import('./Morph')
+const { MORPH_FAMILY, familySpring } = await import('./vocabulary')
 const { instant } = await import('../../design/motion')
 
 const root = () => document.querySelector<HTMLElement>('[data-morph]')!
@@ -70,10 +71,10 @@ describe('under prefers-reduced-motion the card just IS the page', () => {
   })
 
   it('the transition has NO spring residue, even though the preset was spread', () => {
-    // morphTransition() spreads `physics.fluid` and overrides `stiffness` on the motion path.
+    // familySpring() spreads `physics.fluid` and overrides `stiffness` on the motion path.
     // Under reduced motion the preset is already `instant`, and a spread would let Framer
     // infer a spring right back from that leftover `stiffness`.
-    const t = morphTransition() as Record<string, unknown>
+    const t = familySpring(MORPH_FAMILY.flight) as Record<string, unknown>
     expect(t).toEqual(instant)
     expect(t.type).toBe('tween')
     expect(t.duration).toBe(0)

@@ -1,6 +1,7 @@
 import { type ReactNode, useEffect, useState } from 'react'
 import { motion, useReducedMotion } from 'framer-motion'
 import { expr, exprHeavy } from '../../design/motion'
+import { familyFade, familyTween } from './vocabulary'
 
 /** A theme-tinted destructive-delete effect (P18b). Wrap the thing being deleted;
  *  flip `active` true to play it, then `onDone` fires when it settles so the caller
@@ -12,7 +13,9 @@ import { expr, exprHeavy } from '../../design/motion'
  *     `expr()`) and blur — then collapses its height so the list closes the gap.
  *   • REFINED (below the exprHeavy gate): no scatter/blur — just the danger-tinted
  *     fade + height collapse (the refined tier DROPS the heavy effect, per the
- *     expressiveness contract, rather than shrinking it).
+ *     expressiveness contract, rather than shrinking it), over the family's
+ *     `refinedScale` share of the dissolve length — with nothing left to fragment,
+ *     lingering for the full beat would read as hesitation.
  *   • REDUCED-MOTION: instant — `onDone` on the next tick, no animation at all
  *     (the global CSS rule kills CSS transitions; JS/Motion must self-gate).
  *
@@ -76,13 +79,12 @@ export function Disintegrate({
       className={className}
       style={{ overflow: 'hidden', position: 'relative' }}
       animate={animateProps}
-      transition={{
-        // Everything rides a non-overshooting tween so nothing (least of all blur)
-        // can undershoot its target; the whole effect is a directed dissolve, not a
-        // springy wobble.
-        duration: active ? 0.34 * (heavy ? 1 : 0.7) : 0.18,
-        ease: [0.4, 0, 0.2, 1],
-      }}
+      // Everything rides a non-overshooting tween so nothing (least of all blur) can
+      // undershoot its target; the whole effect is a directed dissolve, not a springy
+      // wobble. This is the ONE member of the morph family that is not a spring, which
+      // is why the family vocabulary owns a tween as well (`familyTween`) — and why the
+      // reversal is the family's plain fade rather than a third length invented here.
+      transition={active ? familyTween(heavy) : familyFade()}
       onAnimationComplete={() => { if (active) onDone?.() }}
     >
       {children}
@@ -94,7 +96,7 @@ export function Disintegrate({
         className="pointer-events-none absolute inset-0"
         initial={{ opacity: 0 }}
         animate={{ opacity: active ? expr(0.5, 0.4) : 0 }}
-        transition={{ duration: 0.2 }}
+        transition={familyFade()}
         style={{
           background: 'linear-gradient(90deg, transparent, color-mix(in srgb, var(--color-negative) 55%, transparent))',
           // Bold tier gets a soft mask sweep so the wash reads as a directional
