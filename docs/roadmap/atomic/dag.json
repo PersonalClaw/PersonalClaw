@@ -1896,7 +1896,7 @@
             "TSE-1",
             "EXT:AUTOMATION-SUBSTRATE:triggers.json + one TriggerService (steps 1-3) \u2014 confirmed landed 2026-08-04 per Status line"
           ],
-          "pr": ""
+          "pr": 1687
         },
         {
           "id": "TSE-5",
@@ -6552,6 +6552,7 @@
           "id": "SH-7",
           "title": "Mode-independence matrix: baseline-matched command refused under default/auto/yolo/acceptEdits and trust simulators, deny-before-approval ordering regression-pinned, baseline-tamper corpus class added to S3 harness",
           "status": "done",
+          "pr": 1687,
           "scope": "Amendment (2026-07-26) T3.5",
           "done_when": "every approval-mode fixture refuses a baseline-matched command; reordering the deny check below the approval gate turns CI red; a baseline-tamper corpus class is added to the S3 harness",
           "deps": [
