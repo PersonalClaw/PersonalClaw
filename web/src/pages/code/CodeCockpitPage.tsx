@@ -648,7 +648,16 @@ export function CodeCockpitPage({ id, onBack, onDeleted, onNewTarget, onOpenProj
               is an active attention state (resume + stop both valid). */}
           {(active || ['paused', 'blocked', 'needs_input', 'stagnant'].includes(p.status)) &&
             <HeaderControl icon={Square} label="Stop" priority="primary" onClick={async () => {
-              if (await confirm({ title: 'Stop this run?', body: "Stopping ends the project for good — it can't be resumed afterward (you'd start a new one). Work already written to the workspace is kept. Pause instead if you just want to step in.", danger: true, confirmLabel: 'Stop' })) act('stop')
+              // 🔴 THE MISSING HALF WAS THE ONE A USER LOSES WORK TO. Stop is terminal, and its teardown
+              // runs `worktree.cleanup_all`, which for every task worktree does
+              // `git worktree remove --force` AND `git branch -D` — so uncommitted work in a running
+              // task's worktree is discarded, and its committed-but-unmerged work goes with the branch.
+              //
+              // "Work already written to the workspace is kept" is still TRUE, and now says how it got
+              // there: a FINISHED task is merged back (`worktree.merge_worktree`), so merged work is in
+              // the workspace and untouched. What the sentence hid is the in-flight case, which is
+              // exactly what a terminal action should warn about.
+              if (await confirm({ title: 'Stop this run?', body: "Stopping ends the project for good — it can't be resumed afterward (you'd start a new one). Work already merged into your workspace is kept, but a task still running loses its own worktree and branch. Pause instead if you just want to step in.", danger: true, confirmLabel: 'Stop' })) act('stop')
             }} />}
           {/* A shell only makes sense in a real codebase (gate on `ws`). */}
           {!!ws && <HeaderControl icon={TerminalSquare} label={showTerm ? 'Hide terminal' : 'Terminal'} onClick={() => setShowTerm(!showTerm)} active={showTerm} />}
