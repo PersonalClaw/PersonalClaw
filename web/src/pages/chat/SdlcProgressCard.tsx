@@ -4,15 +4,17 @@ import { motion } from 'framer-motion'
 import { Loader2, ArrowUpRight, CircleDot, CheckCircle2, Circle, AlertTriangle, HelpCircle, Clock, Search, Pause, Play, Square, Trash2 } from 'lucide-react'
 import { api, type Loop } from '../../lib/api'
 import { IconButton } from '../../ui/IconButton'
-import { loopStatusLabel, loopStatusTone, effectiveLoopStatus } from '../../lib/loopStatus'
+import { loopStatusLabel, loopStatusTone, effectiveLoopStatus, ACTIVE_LOOP_STATUSES } from '../../lib/loopStatus'
 import { loopKindMeta } from '../../lib/loopKind'
 import { foldRunSnapshot } from '../loops/runFold'
 import { RunProgress } from '../loops/RunProgress'
 import { messageEnter } from '../../design/motion'
 
-// Action-gating status sets (mirror LoopsListPage so every surface offers the same
-// controls for the same state). Keyed on the RAW backend status.
-const ACTIVE_ST = new Set(['running', 'paused', 'stagnant', 'needs_input', 'intake', 'planning', 'review', 'ready'])
+// Action-gating status sets, keyed on the RAW backend status. Stop is gated by the ONE
+// active set — which is literally the backend's `ACTION_SOURCE_STATES['stop']` — so this
+// card and the Loops list offer the same control for the same state without either one
+// hand-writing the set (the hand-written copy here offered Stop on the four pre-launch
+// statuses, where the action 409s, and withheld it from `blocked`).
 const DONE_ST = new Set(['complete', 'failed', 'stopped'])
 
 /** Live in-chat progress widget for a Code project / Goal Loop the agent created
@@ -205,7 +207,7 @@ export function SdlcProgressCard({ refObj, controllable = false, onDeleted }: {
             {busy && <Loader2 size={11} className="animate-spin text-on-surface-low" />}
             {entity.status === 'running' && <IconButton icon={Pause} label="Pause" size={28} onClick={(e) => act(e, 'pause')} />}
             {['paused', 'stagnant', 'needs_input'].includes(entity.status) && <IconButton icon={Play} label="Resume" size={28} onClick={(e) => act(e, 'resume')} />}
-            {ACTIVE_ST.has(entity.status) && <IconButton icon={Square} label="Stop" size={28} onClick={(e) => act(e, 'stop')} />}
+            {ACTIVE_LOOP_STATUSES.has(entity.status) && <IconButton icon={Square} label="Stop" size={28} onClick={(e) => act(e, 'stop')} />}
             {DONE_ST.has(entity.status) && <IconButton icon={Trash2} size={28}
               label={confirmDel ? 'Click again to delete' : 'Delete'} onClick={del}
               className={confirmDel ? 'text-danger' : undefined} />}

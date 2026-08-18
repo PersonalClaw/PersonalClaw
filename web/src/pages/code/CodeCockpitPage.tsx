@@ -22,6 +22,7 @@ import { useCachedData } from '../../lib/useCachedData'
 import { useChatSocket, type WsMessage } from '../../lib/useChatSocket'
 import { useVisiblePoll } from '../../lib/useVisiblePoll'
 import { cleanSay, toolDetail } from '../../lib/agentFeed'
+import { ACTIVE_LOOP_STATUSES } from '../../lib/loopStatus'
 import { useRunStream } from '../loops/useRunStream'
 import { belongsToLoop } from '../workflows/containerKey'
 import { foldReducer, emptyRunFlags, type RunFlags } from '../loops/runFold'
@@ -71,7 +72,7 @@ function loopToCodeProject(p: Loop): CodeProject {
 // `stagnant` is the state that most NEEDS a steer (the watchdog flags "stalled —
 // needs direction") — a code loop can reach it (the shared stagnation check), so it
 // must be steerable, not a dead end.
-const STEERABLE = new Set(['running', 'paused', 'blocked', 'needs_input', 'failed', 'stagnant'])
+const STEERABLE = new Set([...ACTIVE_LOOP_STATUSES, 'failed'])
 // Terminal, non-resumable statuses — mirrors project.py TERMINAL_STATUSES.
 const TERMINAL_STATUSES = new Set(['complete', 'stopped'])
 // Above this content length the worker-driven write/erase reveal animation is

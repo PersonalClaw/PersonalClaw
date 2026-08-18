@@ -36,6 +36,7 @@ import { belongsToLoop } from '../workflows/containerKey'
 import { useQueryFlag, type RouteProps } from '../../app/useQueryState'
 import { accentChip } from '../../design/accent'
 import { tabListKeys } from '../../lib/tabListKeys'
+import { loopStatusLabel, effectiveLoopStatus, ACTIVE_LOOP_STATUSES } from '../../lib/loopStatus'
 import { notify } from '../../app/appSdk'
 
 /** Decode the `?sel=` Details-rail drill-down ref. */
@@ -47,7 +48,6 @@ function parseSel(raw?: string): { kind: 'log' } | { kind: 'roi' } | { kind: 'cy
   return null
 }
 
-const ACTIVE = ['running', 'paused', 'stagnant', 'needs_input']
 
 // Friendly labels for the metadata pills — the API stores raw tokens
 // (open_ended, balanced, …) but the UI should never surface the underscore form.
@@ -332,7 +332,7 @@ export function LoopCockpitPage({ id, onBack, onDeleted, onOpenArtifact, onOpenT
   // 1s clock for live elapsed labels (only while a loop is active)
   useEffect(() => {
     setNow(Date.now() / 1000)
-    if (!c || !ACTIVE.includes(c.status)) return
+    if (!c || !ACTIVE_LOOP_STATUSES.has(c.status)) return
     const t = window.setInterval(() => setNow(Date.now() / 1000), 1000)
     return () => clearInterval(t)
   }, [c?.status])
@@ -378,7 +378,7 @@ export function LoopCockpitPage({ id, onBack, onDeleted, onOpenArtifact, onOpenT
     )
     return <div className="flex h-full items-center justify-center text-on-surface-low">Loading…</div>
   }
-  const active = ACTIVE.includes(c.status)
+  const active = ACTIVE_LOOP_STATUSES.has(c.status)
   const running = c.status === 'running'
   const findings = [...(c.findings ?? [])].sort((a, b) => b.cycle - a.cycle)
   // The judge's third-party verdict per cycle (open-ended loops only). A cycle can
@@ -492,7 +492,7 @@ export function LoopCockpitPage({ id, onBack, onDeleted, onOpenArtifact, onOpenT
       ) : (
         <span className="size-1.5 rounded-pill" style={{ background: c.status === 'failed' ? 'var(--color-danger)' : c.status === 'complete' ? 'var(--color-primary)' : 'var(--color-on-surface-low)' }} />
       )}
-      {running ? (statusText || 'Working') : statusLabel(c.status)}
+      {running ? (statusText || 'Working') : loopStatusLabel(effectiveLoopStatus(c.status, c.error_message))}
       {/* FEED liveness, distinct from the LOOP's status beside it. A running loop whose stream has
           dropped keeps saying "Working" while nothing arrives — indistinguishable from a loop that is
           simply thinking. Same dot-plus-WORD form `settings/DiagnosticsPanel` ships and
@@ -791,7 +791,7 @@ export function LoopCockpitPage({ id, onBack, onDeleted, onOpenArtifact, onOpenT
                            {running && <motion.span aria-hidden className="absolute inset-[-6px] rounded-pill" style={{ background: thinkingGlow() }} animate={{ opacity: [0.3, 0.7, 0.3] }} transition={{ duration: 3, repeat: Infinity }} />}
                            <span className={running ? '' : 'text-on-surface-low'}><Spark size={13} /></span>
                          </span>
-                         <span className="flex-1 truncate text-on-surface text-[0.8125rem]" style={fvs(500)}>Cycle {c.total_cycles + 1} · {running ? (statusText || 'working') : statusLabel(c.status).toLowerCase()}</span>
+                         <span className="flex-1 truncate text-on-surface text-[0.8125rem]" style={fvs(500)}>Cycle {c.total_cycles + 1} · {running ? (statusText || 'working') : loopStatusLabel(effectiveLoopStatus(c.status, c.error_message)).toLowerCase()}</span>
                          {running && <span className="shrink-0 text-on-surface-low text-[0.75rem] tabular-nums">{fmt(curCycleElapsed)}</span>}
                        </div>
                        {running && activity.length > 0 && <LiveSubsteps activity={activity} />}
@@ -874,10 +874,6 @@ export function LoopCockpitPage({ id, onBack, onDeleted, onOpenArtifact, onOpenT
       </AnimatePresence>
     </div>
   )
-}
-
-function statusLabel(s: string) {
-  return ({ complete: 'Completed', failed: 'Failed', stopped: 'Stopped', paused: 'Paused', stagnant: 'Stagnant', needs_input: 'Needs input', ready: 'Ready', draft: 'Draft' } as Record<string, string>)[s] ?? s
 }
 
 /** Outputs — the loop's outcomes in a tabbed shell (the general outcome channel).
