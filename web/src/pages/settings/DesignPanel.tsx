@@ -10,6 +10,8 @@ import { TOKENS, type ColorToken, type ScalarToken, type SelectToken } from '../
 import { useAppearance } from '../../app/appearance'
 import { useMode, type Preference } from '../../app/theme'
 import { PersonalityPicker } from './PersonalityPicker'
+import { usePersonality } from '../../app/personality'
+import { DEFAULT_PERSONALITY } from '../../design/personalities'
 import { COLOR_GROUPS, BACKDROP_GROUPS, TYPOGRAPHY_GROUPS, LAYOUT_GROUPS, type Scheme } from '../../design/schemes'
 import { PanelHeader, Row, Section, Toggle } from './settingsUI'
 import { useNavDisclosure } from '../../app/navDisclosure'
@@ -20,7 +22,18 @@ import { useNavDisclosure } from '../../app/navDisclosure'
  *   3. LAYOUT & SHAPE — content width + corner roundness.
  *  A scheme encapsulates ONLY colors; backdrop/motion/layout live outside it. */
 export function DesignPanel() {
-  const { activeScheme, allSchemes, applyScheme, saveCustomScheme, updateCustomScheme, deleteCustomScheme, themesLoading, resetAll } = useAppearance()
+  const { activeScheme, allSchemes, saveCustomScheme, updateCustomScheme, deleteCustomScheme, themesLoading, resetAll } = useAppearance()
+  // Scheme picks and "reset everything" go through the IDENTITY layer, not straight to
+  // the appearance store: a personality is a whole identity (title, favicon, wordmark,
+  // density, dials), so changing the palette out from under it — or resetting
+  // "everything" — must take the identity with it. `applyScheme` is deliberately NOT
+  // destructured here; `pickScheme` is the only way this panel changes a scheme, so the
+  // bypass cannot come back by accident. See `pickScheme` in `app/personality.tsx`.
+  const { personality, activate, pickScheme } = usePersonality()
+  const resetEverything = () => {
+    if (personality.id !== DEFAULT_PERSONALITY) activate(DEFAULT_PERSONALITY)
+    resetAll()
+  }
 
   /** Ask before deleting a saved theme, and say what that costs.
    *
@@ -109,7 +122,7 @@ export function DesignPanel() {
         <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-m">
           {allSchemes.map((s) => (
             <SchemeTile key={s.id} scheme={s} dark={dark} active={activeScheme === s.id} custom={isCustom(s.id)}
-              onPick={() => applyScheme(s.id)}
+              onPick={() => pickScheme(s.id)}
               onDelete={isCustom(s.id) ? () => removeScheme(s) : undefined} />
           ))}
         </div>
@@ -153,7 +166,7 @@ export function DesignPanel() {
       <NavigationSection />
 
       <div>
-        <Button variant="ghost" size="sm" onClick={resetAll}><RotateCcw size={15} /> Reset everything to defaults</Button>
+        <Button variant="ghost" size="sm" onClick={resetEverything}><RotateCcw size={15} /> Reset everything to defaults</Button>
       </div>
     </div>
   )
