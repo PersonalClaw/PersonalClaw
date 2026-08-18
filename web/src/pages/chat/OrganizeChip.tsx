@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { reportingWrite } from '../../app/reportingWrite'
 import { motion } from 'framer-motion'
 import { FolderTree, X } from 'lucide-react'
 import { spring } from '../../design/motion'
@@ -53,8 +54,18 @@ export function OrganizeChip({ sessionKey, refreshKey, onApplied }: {
     }
   }
 
+  // 🪤 A DISMISSAL THAT DID NOT STICK FAILS LATER, NOT NOW. The decline is what suppresses the
+  // proposal — `session_organize.record_decline` is documented "so it is never proposed again" — so a
+  // swallowed rejection meant the chip vanished, the user believed it was settled, and the SAME
+  // proposal returned on the next scan with no explanation. That is the nag the backend's own tests
+  // call "worse than no feature", and its cause is invisible at the moment it is created.
+  //
+  // The chip still clears. A dismissal is a request to get something out of the way, so refusing to
+  // hide it would fight the click; the report is what makes a later reappearance explicable. That is
+  // the opposite ruling from a MIRROR of server state (`chat/approvalDecisionReported`), and
+  // deliberately so — this control is not claiming a server fact, it is hiding a suggestion.
   const decline = () => {
-    api.organizeDecline(sessionKey, proposal).catch(() => {})
+    void reportingWrite('decline that suggestion', () => api.organizeDecline(sessionKey, proposal))
     setProposal(null)
   }
 
