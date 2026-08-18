@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { reportingWrite } from '../../app/reportingWrite'
 import { motion } from 'framer-motion'
 import { ListChecks, Palette, Link as LinkIcon, Paperclip, X, FolderGit2 } from 'lucide-react'
 import { DesignSystemPreview } from '../loops/DesignSystemPreview'
@@ -189,8 +190,15 @@ export function LoopComposer({ onCreated, onHistory, initialProjectId, initialKi
       // Upload design attachments into the loop's files dir so the design-pass planner
       // (cwd'd there) can read them. Best-effort: a failed upload shouldn't block launch
       // — the planner still has the URL + prompt + the input list in its brief.
-      if (kind === 'design' && designFiles.length && loop.files_dir) {
-        await api.fileUpload(loop.files_dir, designFiles).catch(() => {})
+      const filesDir = loop.files_dir
+      if (kind === 'design' && designFiles.length && filesDir) {
+        // 🪤 "Best-effort" was right about NOT BLOCKING and wrong about not telling. A failed upload
+        // launches the design pass without the reference images the user attached, so the planner
+        // works from the URL and prompt alone and produces a pass that ignored them — with no sign
+        // anything was lost. Reporting keeps the documented decision (launch proceeds) and removes
+        // the silence, which is the only part that was a defect.
+        await reportingWrite(`upload ${designFiles.length === 1 ? 'that file' : `those ${designFiles.length} files`}`,
+          () => api.fileUpload(filesDir, designFiles))
       }
       // Non-minimal rigor → the stepwise planning walkthrough; minimal → straight to
       // the cockpit (the host starts it). The kind drives which screens render.

@@ -73,13 +73,27 @@ describe('a tool toggle that fails tells the user', () => {
     expect(offenders, 'a silently dead toggle is the bug this file already named').toEqual([])
   })
 
-  it('all four go through the one reporter', () => {
-    let routed = 0
+  // Deliberate non-toggle consumers of the same reporter in this file. Each is named so an
+  // UNEXPECTED one still fails, which was this assertion's real point — the original form ("every
+  // routed call is a toggle") was only true while toggles were the helper's sole consumer here, and it
+  // went red the moment `reprobe` legitimately adopted it. Re-pointed, not relaxed.
+  const ALSO_ROUTED = ['probeMcp']
+
+  it('all four toggles go through the one reporter, and nothing unexpected does', () => {
+    let toggles = 0
     for (const m of CODE.matchAll(/reportingWrite\([\s\S]{0,140}?api\.(\w+)\(/g)) {
-      expect(TOGGLE_WRITES, `unexpected call routed: ${m[1]}`).toContain(m[1])
-      routed++
+      if ((TOGGLE_WRITES as readonly string[]).includes(m[1])) { toggles++; continue }
+      expect(ALSO_ROUTED, `unexpected call routed: ${m[1]}`).toContain(m[1])
     }
-    expect(routed, 'toggle writes routed through reportingWrite').toBe(4)
+    expect(toggles, 'every toggle write routed through reportingWrite').toBe(4)
+  })
+
+  it('the allowlist is not a dumping ground', () => {
+    // Its vacuity floor: each named exception must still exist and still be reported here.
+    for (const call of ALSO_ROUTED) {
+      expect(CODE, `${call} no longer exists — drop it from the allowlist`).toContain(`api.${call}(`)
+    }
+    expect(ALSO_ROUTED.length, 'a growing list means the rule needs rethinking').toBeLessThan(4)
   })
 
   it('a failed write SKIPS the refetch — the point of returning the outcome', () => {
