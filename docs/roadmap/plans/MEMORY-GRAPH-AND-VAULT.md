@@ -990,3 +990,90 @@ had, and the disabled-Toggle census moved 15→16 with the reason recorded in th
 **Not claimed:** the volunteer leg needs a real chat turn against a bound model (this dev home has
 none), and edit-vault + undo exercise `MGAV-3`/`MGAV-6` machinery this atom only surfaces. Those
 three legs of clause 7 remain, which is why `MGAV-9` stays `todo`.
+
+### 2026-08-18 — Session 6 (clause 7: the end-to-end sweep): DONE (`MGAV-9`)
+
+**Census first: six of the seven clauses were already on `main`** and were re-measured rather than
+re-implemented — the Studio's Slots editor / entity browser / proposal queue (`MemoryPanel.tsx:550`,
+`:657`, `:1427`), per-record links + evidence tags with the `?sel=` citation deep-link target
+(`Markdown.tsx:315` → `MemoryPanel.tsx:113`/`:221`), the seven settings controls, the Louvain
+colouring (`:316` maps `n.community` → the canvas `group`) with typed/provenance/min-confidence
+edge filtering (`:308`) and the entity side drawer, `GET /api/memory/graph/export`, and all 24
+`MemoryConfig` fields through `_meta`/`load()`/`to_dict()` + a write path. Only clause 7 was open.
+
+**The sweep now exists as a test, not just as a session's notes.** `tests/test_memory_mgav_sweep.py`
+walks write → link → recall → volunteer → edit-vault → undo in ORDER, each leg fed the previous
+leg's output, plus the two degradation cases. Its load-bearing choice is that **the volunteer leg
+is asserted at its CALL SITE**: `test_memory_push_reflex.py` covered `MemoryService.push_context`
+and `memory_push.resolve_candidates` thoroughly, but nothing covered
+`context_engine.push_context_block` on its positive path and nothing covered
+`DefaultContextEngine.assemble` prepending the block at all — so the reflex could have been
+unhooked from the turn with the whole memory suite green. Three tests now drive `assemble` and read
+`memory.push_context` out of a real `config.json`, which is also what proves the Settings toggle is
+a live switch rather than a boot-time capture.
+
+**Two fixture lies the assertions caught.** (1) The recall leg first asserted on
+`project.atlas.cadence`, which comes back on keyword overlap alone ("atlas" is in its key) — it
+would have passed with the graph off. The probe is now a second record whose key AND text share no
+word with the query and which reaches the entity through an ALIAS
+(`pref.facet.release.freeze` = "Sparrow freezes in December"), so only §2.1's third arm can surface
+it. (2) The store fixture carried this suite's usual `embed_fn = lambda t: [1.0, 0.0, 0.0]`, which
+scores every record at cosine 1.0 and makes the graph arm unobservable; the degradation test failed
+with the graph-only fact still in the block. The fixture now ships no embedder — the real
+no-API-key posture, where recall is keyword + graph, which is what §2.1 degrades between.
+
+**Falsified three ways.** (1) Dropping the `full_message = pushed + full_message` prepend in
+`assemble` → `AssertionError: volunteer: not in the assembled turn — any news on Atlas?` (four
+tests). (2) Removing `not self.graph_enabled` from `VectorMemoryStore._graph_boosts` → `the graph
+arm still ran`. (3) Replacing `undo_event`'s update branch so it un-deletes without restoring
+`old_value` → `undo: the prior value was not restored`.
+
+**Drove the whole sweep on a live gateway** (port 10241, isolated `PERSONALCLAW_HOME` +
+`PERSONALCLAW_WORKSPACE` under `/private/tmp`, SPA rebuilt in-tree and confirmed as the served
+`index-VIoGcbCe.js`): the five `_EDITABLE_CONFIG` PATCH controls each wrote and read back live, and
+`slot_size_cap: 99999` was refused with `must be between 200 and 4000` while config stayed intact ·
+entity declared → both facts written → typed backlinks (`same_project` for the project-scoped key,
+`mentions` for the alias mention) · `GET /api/memory/recall` returned the wording-disjoint record ·
+`vault_mode: two_way` + Sync now → editing `facts/project.atlas.cadence.md` in place →
+`absorbed: 1` and `source: vault_edit` · the Audit tab's `POST /api/memory/events/5/undo` →
+`undid update on project.atlas.cadence` with the prior value restored · consolidation's Louvain
+pass assigned all three entities to `community 0`, which the canvas legend renders as
+"neighbourhood 0" and the export as `fill="hsl(209 …)"` (2 script tags: 0, remote refs: 0) · and
+with `graph_enabled: false` every graph surface answered `enabled: false` with an empty payload, the
+export rendered a valid empty document, recall kept its keyword hit and dropped the graph-only one,
+and the vault kept syncing.
+
+**One rough edge fixed where the validation found it.** The entity drawer's backlink rows were
+inline spans, which broke two ways measured in the DOM: `same_project` wrapped mid-label ("SAME" /
+"PROJECT") with the pill following the break, and a long dotted key overflowed the drawer —
+`pref.facet.release.freeze` measured `right: 1412` against a `1403` container. They now use the
+same flex-wrap shape as the sibling `RecordLinks`, which had already solved the identical problem;
+after the fix the same probe measures `1273` and nothing overflows. Fixing the one-off rather than
+adding a third shape is the coherence half of it.
+
+**DISCOVERIES (recorded, not fixed — neither is this atom's surface):**
+1. **On an install with no bound model provider, `refresh_topology` never runs.**
+   `history._consolidate_locked` raises `ProviderResolutionError` at the LLM rollup for use case
+   `background`, before the maintenance tail that holds the daily digests, the volunteer-log prune,
+   `refresh_topology` and the learning curator. So `mem_link_stats.community` stays NULL and the
+   §7.2 canvas is permanently "unclustered" on such an install — a live reader of an unwritten key.
+   Louvain itself is fine: called directly against the same live DB it wrote 3 assignments. The fix
+   belongs in the cadence's ordering (§2.4), not in the colouring.
+2. **`chat_runner._run_chat` raises `UnboundLocalError: cannot access local variable
+   '_turn_tool_call_count'`** when the provider fails to resolve — a crash in the error path,
+   surfaced by driving a chat turn with no model bound.
+
+**Not claimed:** the volunteer leg was NOT driven through a browser chat turn. `POST /api/chat`
+fails at `no model provider resolves for use case 'chat'` before `assemble` runs, so no volunteer
+event can be logged in a model-less home; the leg is covered at its production seam by test
+instead. That is the only part of clause 7 that a bound provider would add, and it would add
+nothing about the memory path.
+
+**Gates:** `make lint` clean (black 1784 files · isort · flake8 · mypy "no issues found in 916
+source files") · targeted `pytest` (the new sweep + `test_memory_fe_surfaces` /
+`test_memory_push_reflex` / `test_memory_vault_two_way` / `test_memory_wal_undo` /
+`test_memory_entity_graph` / `test_memory_graph` / `test_memory_slots_config` /
+`test_memory_settings_vault` / `test_config_roundtrip` / `test_context_engine` /
+`test_memory_vault`) **332 passed** · `npm run typecheck --workspace web` clean · full
+`npm test --workspace web` **407 files / 4117 tests passed** (no design ratchet tripped) ·
+`npm run build --workspace web` green · zero console errors on the driven surfaces.

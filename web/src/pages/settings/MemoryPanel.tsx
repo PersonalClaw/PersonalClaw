@@ -1267,13 +1267,22 @@ function EntityBacklinks({ entity }: { entity: MemoryEntity }) {
     <div className="mt-2 flex flex-col gap-1 border-t border-outline-variant/30 pt-2">
       {links.map((l) => (
         <div key={l.id} className="text-[0.75rem]">
-          <span className="rounded bg-surface-high px-1.5 py-0.5 uppercase tracking-wide text-on-surface-low">{l.link_type.replace(/_/g, ' ')}</span>
-          {/* `from_kind` says WHICH memory store the ref lives in — semantic (a durable fact,
-              keyed by name) or episodic (an event, keyed by uuid). The row rendered the bare
-              `from_ref` alone, so a uuid and a fact key looked like the same kind of thing and
-              there was no way to tell which store to look in. */}
-          <span className="ml-2 text-on-surface-low">{l.from_kind}</span>
-          <span className="ml-1.5 font-mono text-on-surface-var">{l.from_ref}</span>
+          {/* Same wrapping shape as `RecordLinks` above, which solves the identical problem —
+              chips plus a ref on one line inside a narrow drawer. Inline spans got it wrong in
+              two measurable ways: `same_project` broke mid-label ("SAME" / "PROJECT") with the
+              pill following the break, and a long dotted key overflowed the drawer's right edge
+              (`pref.facet.release.freeze` measured 1412px against a 1403px container). Flex-wrap
+              keeps each chip atomic; `break-all` is what actually wraps a dotted key, since it
+              contains no spaces for `break-words` to use. */}
+          <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
+            <span className="whitespace-nowrap rounded bg-surface-high px-1.5 py-0.5 uppercase tracking-wide text-on-surface-low">{l.link_type.replace(/_/g, ' ')}</span>
+            {/* `from_kind` says WHICH memory store the ref lives in — semantic (a durable fact,
+                keyed by name) or episodic (an event, keyed by uuid). The row rendered the bare
+                `from_ref` alone, so a uuid and a fact key looked like the same kind of thing and
+                there was no way to tell which store to look in. */}
+            <span className="whitespace-nowrap text-on-surface-low">{l.from_kind}</span>
+            <span className="min-w-0 break-all font-mono text-on-surface-var">{l.from_ref}</span>
+          </div>
           {l.context && <div className="mt-0.5 text-on-surface-low">{l.context}</div>}
         </div>
       ))}
