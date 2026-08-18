@@ -3,10 +3,11 @@ import { motion } from 'framer-motion'
 import {
   MessageSquare, History, type LucideIcon,
   MessageSquarePlus, ListTodo, BookOpen, FolderKanban, FileCode2, TerminalSquare, Sparkles, Compass,
-  Package, HardDrive,
+  Package, HardDrive, Orbit,
 } from 'lucide-react'
 import { DashboardLiveProvider } from './DashboardLive'
 import { PinnedTiles } from './PinnedTiles'
+import { AgentWorld } from './world/AgentWorld'
 import { HeroPulse } from './widgets/HeroPulse'
 import { ActionCenter } from './widgets/ActionCenter'
 import { ActiveWork } from './widgets/ActiveWork'
@@ -118,6 +119,17 @@ export function DashboardPage(route: RouteProps) {
                 a long widget line push the column wider than the content width instead
                 of truncating. The grid rows above don't need it — a grid track already
                 establishes the constraint. */}
+
+            {/* Agent world (AMBIENT-SURFACES A2-3) — the ambient companion to Active
+                Work above: the same live picture as a scene you glance at rather than a
+                list you read. Sits BELOW the prime-signal bands on purpose (a world is
+                not a control surface) and takes its data from `useAgentActivity()` only,
+                so it never widens the dashboard's request set. */}
+            <EntranceRegion className="min-w-0">
+              <Section label="Agent world" icon={Orbit}>
+                <AgentWorld />
+              </Section>
+            </EntranceRegion>
 
             {/* Discover (§6) — a curated spotlight of the parts of PersonalClaw you
                 haven't tried yet, each a deep link. The full grouped list is the

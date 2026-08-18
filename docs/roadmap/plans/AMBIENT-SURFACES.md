@@ -590,3 +590,107 @@ prose per element.
   C32 `(refresh artifact "sales-snapshot" in place)` suffix as a new chat's first turn.
   Pinned-tile band (`WidgetFrame`): fold-out rail, live restyle, zero requests. No
   console errors.
+
+### 2026-08-18 — `AS-9` agent-worlds seam (Amendment round 2, `A2-3`) — DONE
+
+The seam, one world, and the forward hook. `web/src/lib/useAgentActivity.ts` folds the live
+picture; `web/src/pages/dashboard/world/` renders it ("Orbit", a new dashboard band);
+`docs/architecture/agent-activity-feed.md` is the contract, indexed from
+`docs/architecture/overview.md`.
+
+- **DEVIATION — the contract is FOUR public sources, not three.** §"Amendment (b)" names
+  `GET /api/loops` + chat session states + subagent states. `waiting_approval` is **not reachable
+  from those three**: a loop parked on a tool approval still reports `status: 'running'`, and the
+  session LIST shape (`ChatSessionSummary`) carries no `pending_approval` — only the per-session
+  detail shape (`ChatSession`) does. Shipping the declared three would have made
+  `waiting_approval` an enum member nothing ever writes. `GET /api/approvals` is public, already
+  polled by `DashboardLive`, and joins on `PendingApproval.session` ↔ `Loop.session_key` / session
+  `key`. An attributed approval deliberately **outranks** the entity's own status — "busy" painted
+  over "one click from continuing" is the exact failure an ambient surface exists to prevent.
+- **DEVIATION — canvas 2D, not WebGL.** The clause reads "WebGL/shader-grade **or** high-craft
+  canvas" and this takes the canvas half. A `'webgl'` render tier was drafted and **deleted**: a
+  shader pipeline cannot be exercised in jsdom (no GPU, `getContext('webgl')` is a stub), so it
+  would have shipped as a declared tier with an unverified runtime — a black rectangle for anyone
+  whose shader compile failed, and this repo's most familiar failure shape. `pickRenderTier` is
+  honestly two-valued (`'2d' | 'static'`) and `worldScene.test.ts` asserts a webgl-only browser
+  still degrades. The craft is bought with layered additive glow, per-node tone crossfade and eased
+  orbits, all of which the pure scene model makes assertable.
+- **The signals-only invariant is proved by POISON, not by inspection.**
+  `agentActivitySignals.test.tsx` delivers a `chat_status` envelope carrying deliberately
+  contradictory `status`, `state`, `title`, `running`, `progress` and a whole fake `entities` array,
+  then asserts the rendered scene came from the refetch — with a **positive control** that the
+  refetch demonstrably happened (fetch counter advanced AND the newly served value is on screen),
+  because "no bad field appeared" is vacuously true for a hook that did nothing. A structural guard
+  also asserts the signal handler never touches `m.data` at all, since a behavioural test only
+  covers the fields it thought to poison.
+- **"From the hook alone" is a source rail, not a hope.** `agentWorldRender.test.tsx` fails if the
+  world's modules name an `/api/` path, open any transport, import `lib/api`, or call a second data
+  hook — with a vacuity floor asserting the stripped source is non-trivially long first, because the
+  files' own prose discusses `/api/` and a naive scan would have been measuring its documentation.
+- **🔴 A REAL DEFECT, caught by writing the reduced-motion floor rather than the claim.** The audit
+  asserts "no animation frame is scheduled"; the paired floor asserts the world nonetheless PAINTS.
+  The floor failed at zero `arc` calls — every node was being skipped because `getComputedStyle`
+  returned '' for each tone token. In jsdom that was only a missing stylesheet, but the code path is
+  real: **a theme that fails to declare one token blanks the entire scene while `role="img"` still
+  promises one** — the silent-blank `pickRenderTier`'s static tier exists to prevent, arriving
+  through the back door. Unresolvable tokens now fall back to the canvas's own inherited ink (still
+  theme-derived, never a literal), and a test removes every token to hold that.
+- **🔴 A SECOND REAL DEFECT: the first paint of a busy machine claimed the opposite.** The caption
+  renders `sceneSummary()`, which says *"Nothing is running."* for an empty list — so for as long as
+  the four GETs took, a machine with six live loops asserted emptiness. An empty scene is a CLAIM and
+  may only be made once measured; the band now holds back until the first fold settles. `loading` is
+  distinct from `error`, which is distinct from a measured empty, and all three have tests.
+- **`stagnant` and `blocked` collapse to `needs_input`, deliberately.** ActiveWork already treats
+  both as "in flight or awaiting them"; a stalled run painted as calm `working` is the lie the
+  surface exists to kill. The whole 12-member `UnifiedLoopStatus` collapse is table-tested, plus a
+  guard that a NEW status added to the union without a row here would be caught rather than falling
+  through to `idle`.
+- **Vacuity floors throughout.** The fold rail asserts a NON-ZERO entity count (7, one per seeded
+  source row) before any "no bad entity appeared" assertion; the reduced-motion model rail asserts
+  the animated scene *does* pulse and orbit; the summary rail asserts a non-empty sentence.
+- **The app-worlds forward hook is a doc note, as specified** — a `### Coordination` section in
+  `APP-PLATFORM-EVOLUTION.md` (placed above its `## Execution log`, not inside it) pointing at the
+  architecture doc's full note. No provider type, no `_TypeHandler`, no ui-module loader: those stay
+  that plan's work, and the contract needs no change to accept them.
+- **🔴 THE DRIVE FOUND THE WORLD PAINTING NOTHING, AND A GREEN SUITE COULD NOT SEE IT.** Driven on
+  port 10321 against an isolated home seeded with five loops (2 running, 1 needs_input, 1 stagnant,
+  1 complete). The band mounted and the FOLD was correct — `<canvas role="img" aria-label="Agent
+  world. 2 waiting on you, 2 working, 1 idle.">` — but `canvas.width/height` were **`300x150`**, the
+  bare HTML default, against a CSS box of **`1210x288`**, and `getImageData` over the whole backing
+  store returned **`anyAlphaPx: 0`** (still 0 after 1.2 s). Not a reduced-motion artifact:
+  `matchMedia(...).matches === false`, in viewport, `display: block`, `opacity: 1`. A user saw the
+  fallback legend list over a **288 px empty rectangle** while `role="img"` promised a scene.
+  **Cause — the `loading` holdback stranded the tier probe.** The holdback added earlier in this same
+  atom (see the "first paint claimed the opposite" note above) returns `null` until the fold settles,
+  so the `<canvas>` is NOT in the DOM on the first render; the probe
+  `useEffect(() => setTier(pickRenderTier(canvasRef.current)), [])` ran once at mount against a ref
+  that was still `null`, `pickRenderTier(null)` answered `'static'`, and with empty deps it never
+  looked again. The paint effect's `tier !== '2d'` guard then early-returned forever — so the tier
+  gate blanked the world AND froze it (no rAF loop either). One honesty fix stranded another.
+  **Fix — make the ELEMENT the dependency.** A callback ref publishes the node into state the moment
+  it attaches and probes the tier FROM that node; the paint effect lists `canvasEl` in its deps, so
+  it cannot run before the element exists and cannot fail to run once it does. `tier` gained a `null`
+  "not probed yet" value, distinct from a probed `'static'`, so the DOM fallback no longer flashes
+  for one commit on a perfectly capable browser.
+  **Why the suite missed it:** every existing render test mounted with entities already present, so
+  the canvas existed at mount and a mount-time probe happened to find it. The new rail reproduces the
+  ORDER — render while `loading`, assert the canvas is absent, let the fold settle, then assert the
+  backing store was sized from the MEASURED box (explicitly `not.toBe(300)`/`not.toBe(150)`, the
+  fingerprint of a painter that never ran) and that per-node drawing happened. Against the pre-fix
+  file it reds with *"backing store left at the HTML default — the painter never ran: expected 300
+  not to be 300"*, *"the world fell back despite having a 2d context"* and *"the late canvas never
+  got an animation loop: expected +0 to be 1"*, while all 20 pre-existing tests stay green — so the
+  red is attributable to the late-canvas sequence and nothing else. A vacuity control settles to an
+  EMPTY feed and asserts nothing is drawn, so the floor can actually fail.
+- **VALIDATED AS A USER (re-driven after the fix), port 10321, isolated home.** `1210x288` backing
+  store, `anyAlphaPx: 15883`, fallback list correctly absent, five glowing nodes on their state rings
+  (blue `--color-info` needs-input inward, green `--color-ok` working, grey idle outward), caption
+  *"2 waiting on you, 2 working, 1 idle."*, heading between Suggestions and Discover. Live motion
+  confirmed by pixel checksum differing across 700 ms. **Reduced motion verified in the real browser
+  too** (media query stubbed before app boot): painted (`alphaPx: 14925`) and **byte-identical
+  checksum across 1800 ms** — a static layout, not a slow one. No console errors (the only console
+  line was a `willReadFrequently` warning caused by the probe's own `getImageData`).
+- **STILL UNVERIFIED (taste, not correctness).** Whether the scene reads as *craft* is a judgment no
+  probe made: with 1-2 entities per state ring the nodes cluster in one quadrant rather than
+  distributing around their orbits, and overlapping same-ring nodes bloom into each other. Node
+  distribution within a sparse ring is the obvious next taste call.

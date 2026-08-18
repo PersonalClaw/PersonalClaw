@@ -123,6 +123,31 @@ Request `{to: "<app>", type: "<str>", payload: {...}}`; broker verifies the call
 | T2.5 | Fix-with-AI: `InstallResult.log_excerpt` + Store button → prefilled fenced chat turn | `apps/app_manager.py`, Store error UI | a deliberately broken app's failed install offers the button; the opened chat contains the fenced log; fence verified |
 | T3.2 | `storageRead`/`storageShared` manifest pair + consent surface + read-only env mount + `sdk/util.py::shared_app_data_dir` | `apps/manifest.py`, `apps/permissions.py`, `backend_runtime.py`, `sdk/util.py`, consent UI | fixture consumer reads the sharer's file; undeclared pair gets no mount; write attempt fails; consent lists the grant; boundary test green |
 
+### Coordination — app-contributed agent worlds (inbound from AMBIENT-SURFACES `A2-3`)
+
+**Doc note, not a task row here yet.** `AMBIENT-SURFACES` `A2-3` shipped the *seam* for
+agent worlds — the `AgentActivityFeed` contract, the `useAgentActivity()` hook and one
+first-party world — and explicitly left the app-contributed half to this plan. The
+contract is stable and needs no change to accept a third-party world; what lands here is
+a UI-module kind plus the host plumbing.
+
+Full note, with the four things this plan has to add and why each one is a hazard if
+skipped: [`docs/architecture/agent-activity-feed.md`](../../architecture/agent-activity-feed.md)
+§"Coordination note — app-contributed worlds". The short version:
+
+- A **`world` UI-module kind** — render-only, declaring **no** `permissions.api` and no
+  `permissions.events`. Folding the data behind the contract is what makes a world the
+  cheapest app contribution a user can consent to; a world that fetched would undo that.
+- **The feed is passed IN, never fetched.** The host owns one `useAgentActivity()`
+  instance. Two mounted worlds must not become two sockets and eight polls.
+- **The host keeps the chrome** — `role="img"` name, the visible summary sentence, the
+  empty/unknown states, and the reduced-motion decision passed in as a flag. A world
+  must not be able to opt out of the accessibility or motion contract by omission.
+- An app contributing **entities into** the feed is a *different, larger* question (it
+  widens `AgentActivityKind`, which every existing world switches on) and should be its
+  own atom after the render-only kind ships. No new provider type is needed for the
+  read path.
+
 ## Execution log
 - [2026-08-18][S1 · atom `APE-2`] **DONE** — `apps/app_events.py` registers the three platform events, each
   **at the site the fact becomes true**: `session.created` at `dashboard/state.py:1619` (right after
