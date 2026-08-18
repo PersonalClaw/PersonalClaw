@@ -312,7 +312,7 @@
         {
           "id": "MGAV-9",
           "title": "FE surfaces: MemoryPanel tabs, MemoryGraph viz + HTML export, full config wiring + as-a-user validation",
-          "status": "todo",
+          "status": "done",
           "scope": "\u00a77.1 MemoryPanel extensions, \u00a77.2 graph visualization + export, Provider & Config Plug-in Map (FOUR-point wiring); Session 5 (FE + wiring)",
           "done_when": "studio tab gains Slots editor + entity browser + proposed-entity accept queue; inspect tab shows per-record backlinks + evidence tags (citation deep-link target); settings tab exposes vault mode/path, push toggle+min-confidence, slot caps, topology toggle via _EDITABLE_CONFIG PATCH; MemoryGraph.tsx renders entities colored by Louvain community with typed/provenance/min-confidence filtering + side drawer, plus GET /api/memory/graph/export self-contained HTML; all remaining MemoryConfig fields survive the four-point round trip (schema tests) and toggle live; end-to-end write\u2192link\u2192recall\u2192volunteer\u2192edit-vault\u2192undo validation sweep passes with graph_enabled:false / foreign provider degrading cleanly",
           "deps": [
@@ -7689,11 +7689,6 @@
         "plan": "MC"
       },
       {
-        "id": "MGAV-9",
-        "title": "FE surfaces: MemoryPanel tabs, MemoryGraph viz + HTML export, full config wiring + as-a-user validation",
-        "plan": "MGAV"
-      },
-      {
         "id": "MI-2",
         "title": "Cloning-capable TTS engine app beside piper + capability flags (supports_cloning/supports_voice_design) + typed refusal",
         "plan": "MI"
@@ -9555,9 +9550,9 @@
         "code": "MGAV",
         "plan": "MEMORY-GRAPH-AND-VAULT",
         "total_atoms": 9,
-        "done": 8,
+        "done": 9,
         "in_progress": 0,
-        "todo": 1,
+        "todo": 0,
         "blocked": 0
       },
       {
