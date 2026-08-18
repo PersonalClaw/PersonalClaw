@@ -2982,7 +2982,10 @@ function MentionChips({ paths, onRemove, onOpen }: { paths: string[]; onRemove: 
           <div key={p} className="flex items-center gap-1.5 rounded-lg border border-primary/40 bg-primary/10 px-2.5 py-1.5 text-[0.8125rem]"
             style={{ background: 'color-mix(in srgb, var(--color-primary) 10%, transparent)' }}>
             <FileText size={13} className="shrink-0 text-primary" />
-            <button type="button" onClick={() => setExpanded(open ? null : p)} title={open ? 'Collapse' : 'Show full path'}
+            {/* An accordion, so `aria-expanded` — the chip swaps a basename for the full path AND
+                reveals an Open button, both gated on the same flag. */}
+            <button type="button" aria-expanded={open} onClick={() => setExpanded(open ? null : p)}
+              title={open ? 'Collapse' : 'Show full path'}
               className="min-w-0 text-left font-mono text-on-surface">
               {open ? <span className="break-all">{p}</span> : base(p)}
             </button>
