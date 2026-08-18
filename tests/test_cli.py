@@ -40,10 +40,25 @@ class TestDoctor:
                 assert e.code == 1
 
 
+class _TtyStdin:
+    """A stdin that claims to be a terminal.
+
+    `cli_setup._ask` takes the non-interactive door when `sys.stdin.isatty()` is False
+    (PUBL-7: `setup` must not die with an EOFError traceback when it cannot prompt).
+    pytest's stdin is not a tty, so a test that patches `builtins.input` to drive a prompt
+    must also say it is on a terminal — otherwise the guard returns "" and the patched
+    answer is never consumed, which reads as the feature being broken.
+    """
+
+    def isatty(self) -> bool:
+        return True
+
+
 class TestSetupWorkspaceDir:
     """Tests for _setup_workspace_dir prompt default and label logic."""
 
     def test_uses_saved_path_as_default(self, tmp_path, monkeypatch):
+        monkeypatch.setattr("personalclaw.cli_setup.sys.stdin", _TtyStdin())
         ws_file = tmp_path / "workspace_dir"
         ws_file.write_text("/custom/workspace\n")
         custom_dir = tmp_path / "custom"
@@ -445,6 +460,7 @@ class TestSetupTimezone:
 
     def test_auto_detect_from_symlink(self, tmp_path, monkeypatch):
         """When /etc/localtime is a symlink, timezone is auto-detected."""
+        monkeypatch.setattr("personalclaw.cli_setup.sys.stdin", _TtyStdin())
         cfg_file = tmp_path / "config.json"
         cfg_file.write_text("{}")
         monkeypatch.setattr("personalclaw.cli_setup.config_path", lambda: cfg_file)
@@ -465,6 +481,7 @@ class TestSetupTimezone:
 
     def test_manual_entry(self, tmp_path, monkeypatch):
         """When no auto-detect, user types timezone manually."""
+        monkeypatch.setattr("personalclaw.cli_setup.sys.stdin", _TtyStdin())
         cfg_file = tmp_path / "config.json"
         cfg_file.write_text("{}")
         monkeypatch.setattr("personalclaw.cli_setup.config_path", lambda: cfg_file)
@@ -495,6 +512,7 @@ class TestSetupTimezone:
 
     def test_invalid_timezone_rejected(self, tmp_path, monkeypatch, capsys):
         """Invalid timezone is rejected, not saved."""
+        monkeypatch.setattr("personalclaw.cli_setup.sys.stdin", _TtyStdin())
         cfg_file = tmp_path / "config.json"
         cfg_file.write_text("{}")
         monkeypatch.setattr("personalclaw.cli_setup.config_path", lambda: cfg_file)

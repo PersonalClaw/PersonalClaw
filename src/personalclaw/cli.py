@@ -953,7 +953,22 @@ Examples:
         logging.getLogger(_lname).addHandler(_fh)
 
     if args.command == "chat":
-        asyncio.run(_chat(args.message, args.model))
+        # A fresh install has no chat model bound yet, and the getting-started
+        # guide's "first chat" step lands exactly there. The resolver already
+        # composes a WHAT/WHY/FIX message; print that and exit 1 instead of
+        # dumping an asyncio traceback that buries the fix under 30 stack frames.
+        # Two classes carry the signal (the bridge's and the LLM registry's) —
+        # catch both, as `session.py` does for the same reason.
+        from personalclaw.llm.registry import ProviderResolutionError as _LLMResolveErr
+        from personalclaw.providers.provider_bridge import (
+            ProviderResolutionError as _BridgeResolveErr,
+        )
+
+        try:
+            asyncio.run(_chat(args.message, args.model))
+        except (_BridgeResolveErr, _LLMResolveErr) as exc:
+            print(str(exc), file=sys.stderr)
+            raise SystemExit(1) from None
     elif args.command == "gateway":
         gw_kwargs = _resolve_gateway_args(args)
         asyncio.run(_gateway(**gw_kwargs))

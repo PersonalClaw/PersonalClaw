@@ -5737,7 +5737,7 @@
         {
           "id": "PUBL-7",
           "title": "Fresh-clone getting-started walkthrough on a clean machine and fix remote friction",
-          "status": "todo",
+          "status": "done",
           "scope": "Session 2 \u00a71",
           "done_when": "fresh clone from GitHub (not local) on a clean machine/venv runs the getting-started guide verbatim to a working gateway; any remote-specific friction fixed (URL casing, submodule-free clone, raw-content doc links)",
           "deps": [
@@ -7785,11 +7785,6 @@
         "id": "PT-6",
         "title": "S2: V2 end-to-end user validation + full CI gate across both personalities and all modes",
         "plan": "PT"
-      },
-      {
-        "id": "PUBL-7",
-        "title": "Fresh-clone getting-started walkthrough on a clean machine and fix remote friction",
-        "plan": "PUBL"
       },
       {
         "id": "PUBL-10",
@@ -10006,9 +10001,9 @@
         "code": "PUBL",
         "plan": "PUBLICATION",
         "total_atoms": 10,
-        "done": 8,
+        "done": 9,
         "in_progress": 0,
-        "todo": 2,
+        "todo": 1,
         "blocked": 0
       },
       {
