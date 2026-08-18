@@ -380,7 +380,11 @@ function MemoryStudio({ onChanged, initialSel }: { onChanged: () => void; initia
       if (!(await confirmDelete('memory', selected.fact.key))) return
       try { await api.deleteSemantic(selected.fact.key) } catch (e) { return fail('memory', e) }
     } else if (selected.kind === 'episodic' && selected.episodic) {
-      if (!(await confirm({ title: 'Delete this episodic memory?', danger: true, confirmLabel: 'Delete' }))) return
+      // 🪤 This hand-rolled a dialog `confirmDelete` already produces, and lost its body doing so.
+      // The two sibling deletes in this same function use the helper and therefore say "This cannot
+      // be undone"; this one said nothing at all. `confirmDelete('episodic memory')` yields the
+      // byte-identical title — "Delete this episodic memory?" — plus the sentence that was missing.
+      if (!(await confirmDelete('episodic memory'))) return
       try { await api.deleteEpisodic(selected.episodic.id) } catch (e) { return fail('episodic memory', e) }
     } else if (selected.kind === 'lesson' && selected.lesson) {
       if (!(await confirmDelete('lesson'))) return
