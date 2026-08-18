@@ -637,7 +637,7 @@ function ResultCount({ n, total, noun }: { n: number; total: number; noun: strin
  *  the Library); this presenter renders the already-filtered `result` cards plus
  *  the always-shown source sections. */
 function StoreView({ catalog, catalogError, result, totalKnown, installedCount, onInstalled, reloadCatalog, onClearFilters, filtersActive, onOpen, onAction, onOpenSources }: {
-  catalog: { bundled: AppCatalogEntry[]; gitSources: string[]; localSources?: string[]; firstPartySources?: string[]; localApps?: AppCatalogEntry[]; remoteApps?: AppCatalogEntry[]; gitApps?: AppCatalogEntry[] } | null | undefined
+  catalog: { bundled: AppCatalogEntry[]; gitSources: string[]; defaultGitSources?: string[]; builtinGitSources?: string[]; localSources?: string[]; firstPartySources?: string[]; localApps?: AppCatalogEntry[]; remoteApps?: AppCatalogEntry[]; gitApps?: AppCatalogEntry[] } | null | undefined
   /** The catalog fetch's rejection. A Store that cannot reach its catalog must say so rather than
    *  render as an empty shelf — "nothing to install" and "we could not ask" are different answers. */
   catalogError?: unknown
@@ -739,8 +739,11 @@ function StoreView({ catalog, catalogError, result, totalKnown, installedCount, 
 /** Right-sidebar panel for managing app sources (git URLs and local paths). Opened
  *  via the "Manage Sources" button in the Store header area, keeping the main page
  *  area free for the app card grid. */
-function SourcesPanel({ catalog, reloadCatalog, onInstalled }: {
-  catalog: { bundled: AppCatalogEntry[]; gitSources: string[]; localSources?: string[]; firstPartySources?: string[]; localApps?: AppCatalogEntry[]; remoteApps?: AppCatalogEntry[]; gitApps?: AppCatalogEntry[] } | null | undefined
+/** The Store's source list. Exported so the default/removable labelling of a shipped source
+ *  can be driven at the level a user meets it (`sourceLabels.test.tsx`) — a badge and a missing
+ *  remove control are exactly the kind of claim no backend test can make. */
+export function SourcesPanel({ catalog, reloadCatalog, onInstalled }: {
+  catalog: { bundled: AppCatalogEntry[]; gitSources: string[]; defaultGitSources?: string[]; builtinGitSources?: string[]; localSources?: string[]; firstPartySources?: string[]; localApps?: AppCatalogEntry[]; remoteApps?: AppCatalogEntry[]; gitApps?: AppCatalogEntry[] } | null | undefined
   reloadCatalog: () => void
   onInstalled: () => void
 }) {
@@ -788,6 +791,8 @@ function SourcesPanel({ catalog, reloadCatalog, onInstalled }: {
   const sources = catalog?.gitSources ?? []
   const localSources = catalog?.localSources ?? []
   const firstPartySources = new Set(catalog?.firstPartySources ?? [])
+  const defaultSources = new Set(catalog?.defaultGitSources ?? [])
+  const builtinSources = new Set(catalog?.builtinGitSources ?? [])
 
   return (
     <div className="flex flex-col gap-xl">
@@ -822,17 +827,30 @@ function SourcesPanel({ catalog, reloadCatalog, onInstalled }: {
           <div className="text-on-surface-low text-[0.8125rem]">No git sources configured. Add a git URL to discover apps from it.</div>
         ) : (
           <div className="flex flex-col gap-1">
-            {sources.map((url) => (
+            {sources.map((url) => {
+              // Two independent bits, both from the backend: shipped-by-us (label it, so a
+              // user can tell the curated registry from a URL they typed) and removable.
+              // A BUNDLED default is folded into every read server-side, so its DELETE is a
+              // no-op — showing that button would be a control that silently does nothing.
+              // The seeded registry default IS removable and its removal persists.
+              const isDefault = defaultSources.has(url)
+              const isBuiltin = builtinSources.has(url)
+              return (
               <div key={url} className="flex items-center gap-3 rounded-lg bg-surface-container px-l py-m">
                 <Download size={15} className="shrink-0 text-on-surface-low" />
                 <span className="min-w-0 flex-1 truncate text-on-surface text-[0.8125rem]">{url}</span>
+                {isDefault && (
+                  <span className="shrink-0 rounded-pill bg-surface-highest px-2 py-0.5 text-on-surface-low text-[0.75rem]">Default</span>
+                )}
                 <Button variant="ghost" size="sm" disabled={busy === url} onClick={() => installFrom(url, url)}>
                   {busy === url ? <Loader2 size={14} className="animate-spin" /> : <Download size={14} />} Install
                 </Button>
-                <SquareIconButton icon={Trash2} tone="danger" label="Remove source" className="shrink-0"
-                  onClick={async () => { await api.removeAppSource(url); reloadCatalog() }} />
+                {!isBuiltin && (
+                  <SquareIconButton icon={Trash2} tone="danger" label="Remove source" className="shrink-0"
+                    onClick={async () => { await api.removeAppSource(url); reloadCatalog() }} />
+                )}
               </div>
-            ))}
+            )})}
           </div>
         )}
         <p className="mt-2 text-on-surface-low text-[0.75rem]">

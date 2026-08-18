@@ -1,8 +1,10 @@
+import { useEffect, useState } from 'react'
 import { Check, ExternalLink, Loader2 } from 'lucide-react'
 import { api, type AppSummary } from '../../lib/api'
+import { notify } from '../../app/appSdk'
 import { useCachedData } from '../../lib/useCachedData'
-import { PanelHeader } from './settingsUI'
-import { Skeleton, LoadingStatus, LoadError } from '../../ui/ListScaffold'
+import { PanelHeader, Section, ToggleRow } from './settingsUI'
+import { Skeleton, LoadingStatus, LoadError, FormSkeleton } from '../../ui/ListScaffold'
 import { Button } from '../../ui/Button'
 import { TextLink } from '../../ui/TextLink'
 import { AppConfigFields, useAppConfig } from '../apps/appConfigForm'
@@ -23,21 +25,24 @@ export function AppsPanel({ navigate }: { navigate?: (p: string) => void }) {
     'apps', () => api.apps(), { persist: true },
   )
 
-  if (!apps) return <AppsSkeleton />
-
   // Provider apps are configured in Settings > Providers; this panel lists only
   // NON-provider apps that actually expose configurable settings — an app with
   // nothing to configure has no reason to appear here.
-  const configurable = apps.filter((a) => !a.isProvider && a.hasConfig)
+  const configurable = (apps ?? []).filter((a) => !a.isProvider && a.hasConfig)
 
   return (
     <div>
       <PanelHeader
         title="Apps"
-        hint="Settings contributed by installed apps, all in one place. Provider apps are configured under Settings › Providers; everything else lives here."
+        hint="Where apps come from, plus the settings installed apps contribute — all in one place. Provider apps are configured under Settings › Providers; everything else lives here."
       />
 
-      {configurable.length === 0 ? (
+      {/* Store sources is `apps.*` config, not per-app config, so it renders on its own read.
+          Nesting it under the installed-apps read would blank a config control whenever an
+          unrelated list was slow. */}
+      <StoreSourcesSection />
+
+      {!apps ? <AppCardsSkeleton /> : configurable.length === 0 ? (
         <div className="rounded-lg bg-surface-container px-l py-xl text-center text-on-surface-low text-[0.8125rem]">
           No installed apps expose configurable settings. Browse the <TextLink onClick={() => navigate?.('apps')}>Store</TextLink> to add some.
         </div>
@@ -45,6 +50,46 @@ export function AppsPanel({ navigate }: { navigate?: (p: string) => void }) {
         configurable.map((app) => <AppSettingsCard key={app.name} app={app} navigate={navigate} />)
       )}
     </div>
+  )
+}
+
+/** Store sources — the `apps.*` config section (one field today).
+ *
+ *  `registry_source_enabled` is a SEED switch: with it on, first start writes the curated
+ *  registry into the Store's git-source list as a removable row. Turning it off here stops a
+ *  future seed; it does not retract a source already seeded (remove that in the Store, where
+ *  the removal persists). Said plainly in the hint, because a toggle that reads like a live
+ *  on/off but only gates seeding is exactly the control users mis-trust. */
+function StoreSourcesSection() {
+  const [cfg, setCfg] = useState<Record<string, unknown> | null>(null)
+  const { data, error, refresh } = useCachedData('settings:apps-config', () =>
+    api.personalclawConfig().then((c) => (c.apps ?? {}) as Record<string, unknown>),
+    { persist: true },
+  )
+  useEffect(() => { if (data) setCfg(data) }, [data])
+
+  if (!data && error) return <LoadError what="app store settings" error={error} onRetry={refresh} />
+  if (!data || !cfg) return <FormSkeleton sections={1} rows={1} title={false} what="app store settings" />
+
+  // Optimistic single-field PATCH against the allowlisted path; a rejection rolls back and says so.
+  // The label is ToggleRow's fourth argument on purpose — the failure toast has to name the control
+  // the way the screen does, not by its config key.
+  const patch = (key: string, value: unknown, onSaved?: () => void, label?: string) => {
+    const prev = cfg[key]
+    setCfg((c) => ({ ...c, [key]: value }))
+    api.patchConfig(`apps.${key}`, value).then(() => onSaved?.()).catch((e) => {
+      setCfg((c) => ({ ...c, [key]: prev }))
+      notify(`Couldn't save ${label ?? key}: ${String((e as Error)?.message || e)}`, 'error')
+    })
+  }
+
+  return (
+    <Section title="Store sources" hint="Where the Store looks for installable apps. A source only ever contributes listings — installing still runs the security scanner, and nothing is installed without your consent.">
+      <div className="rounded-lg bg-surface-container px-4 py-1">
+        <ToggleRow label="Curated app registry" cfg={cfg} field="registry_source_enabled" patch={patch}
+          hint="Ship the community app registry as a default Store source, so registry apps are discoverable out of the box. Added once as a removable source — turning this off stops it being added again, but does not remove one already there (do that in the Store)." />
+      </div>
+    </Section>
   )
 }
 
@@ -97,10 +142,11 @@ function AppSettingsCard({ app, navigate }: { app: AppSummary; navigate?: (p: st
   )
 }
 
-function AppsSkeleton() {
+function AppCardsSkeleton() {
   return (
     <div role="status" aria-busy="true">
-      <PanelHeader title="Apps" hint="Settings contributed by installed apps, all in one place." />
+      {/* The panel header + Store sources now render above this while the app list loads, so the
+          skeleton covers only the cards it stands in for. */}
       {/* 🔴 One region, not three: this skeleton carried `aria-busy` on each section with NO role and
           NO name, so it was neither announced nor findable. */}
       <LoadingStatus what="app settings" />

@@ -489,3 +489,35 @@ class TestBotNamePatch:
     async def test_over_50_chars_rejected(self, tmp_config) -> None:
         async with TestClient(TestServer(_make_app())) as c:
             assert (await _patch(c, "agent.bot_name", "x" * 51)).status == 400
+
+
+# ── ET-4: apps.registry_source_enabled ───────────────────────────────────────
+
+
+class TestAppsRegistrySource:
+    """A real PATCH round-trip for the seeding flag: allowlisted → persisted → reloaded.
+
+    The `_EDITABLE_CONFIG` entry is the wiring point `test_config_roundtrip.py` cannot see
+    (it checks dataclass/load/to_dict only), and the toggle in Settings › Apps is useless
+    without it — so it gets driven end to end here rather than asserted structurally."""
+
+    @pytest.mark.asyncio
+    async def test_patch_persists_and_reloads(self, tmp_config) -> None:
+        from personalclaw.config.loader import AppConfig
+
+        assert AppConfig.load().apps.registry_source_enabled is True  # shipped default
+        async with TestClient(TestServer(_make_app())) as c:
+            resp = await _patch(c, "apps.registry_source_enabled", False)
+            assert resp.status == 200, await resp.text()
+        raw = json.loads(tmp_config.read_text(encoding="utf-8"))
+        assert raw["apps"]["registry_source_enabled"] is False
+        # …and the loader reads back what the PATCH wrote (not the default).
+        assert AppConfig.load().apps.registry_source_enabled is False
+
+    @pytest.mark.asyncio
+    async def test_patch_rejects_a_non_bool(self, tmp_config) -> None:
+        async with TestClient(TestServer(_make_app())) as c:
+            resp = await _patch(c, "apps.registry_source_enabled", "sure")
+            assert resp.status == 400
+        raw = json.loads(tmp_config.read_text(encoding="utf-8"))
+        assert "apps" not in raw or "registry_source_enabled" not in raw.get("apps", {})

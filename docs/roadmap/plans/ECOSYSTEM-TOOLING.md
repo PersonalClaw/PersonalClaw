@@ -236,3 +236,50 @@ PR validation workflow: manifest fetch+parse (core `apps/manifest.py`), repo liv
   `github.com/octocat/Hello-World` cloned and then blocked `manifest_missing` with verdict "not reached"
   (a `None` verdict is never read as clean), and a nonexistent repo blocked `repo_unreachable` without ever
   hanging on a credential prompt — which is the no-prompt git environment working.
+- **2026-08-18 — PARTIAL (`ET-4`, T2.2): the registry ships as a SEEDED, removable default git source.**
+  `apps.registry_source_enabled` (new `apps` config section) gates a one-time seed of
+  `https://github.com/PersonalClaw/registry.git` into `apps/app-sources.json` at gateway start
+  (`_app_sources_seed_startup` → `catalog.seed_default_git_sources()`). **Deliberately NOT added to
+  `_DEFAULT_GIT_SOURCES`:** that tuple is folded into every read of `list_git_sources()`, so a "removed"
+  member is back on the next read — the mechanism the done-clause "removing the source persists" rules out.
+  The seed instead writes one ordinary row plus a `"seeded": ["registry"]` marker; the marker OUTLIVES the
+  removal, which is what stops the next start re-seeding. Every source write path round-trips the marker
+  (dropping it from `_write_sources` resurrects a removed default — falsified live: proc A seed → remove →
+  proc B re-seeds). Drove a real gateway on an isolated home: fresh start seeds; `DELETE /api/apps/sources`
+  removes it; a genuinely new process on the same home lists only the bundled default. Flag off on a fresh
+  home creates **no** `app-sources.json` at all; `PATCH apps.registry_source_enabled=true` then a restart
+  seeds. Five wiring points: dataclass+`_meta` (`AppsConfig`), `load()`, `to_dict()`, `_EDITABLE_CONFIG`
+  (`apps.registry_source_enabled`), and a Settings › Apps toggle. `config-baseline.json` regenerated (the
+  `config-baseline` gate reds otherwise — one added path, nothing else).
+- **2026-08-18 — UNMET clause (`ET-4`): "a fresh dev home lists registry apps in the Store" — TWO
+  independent gaps, neither of them this atom's.** (1) `scratch/registry/registry.json` ships `{"apps": []}`
+  until `ET-6`. (2) **Measured, and cheaper to fix than it looks:** core enumerates a source's listings from
+  an index file named **`app-registry.json`** (`catalog._REGISTRY_FILENAME`), while `ET-3` publishes
+  **`registry.json`** — but the *shapes already agree* where it matters. `_parse_registry` accepts
+  `{"apps": [...]}` and `RegistryPointer.from_dict` needs `name` + `repo`, both of which are REQUIRED in
+  `registry.schema.json`. So the whole gap is the filename. Deliberately NOT closed here: widening the
+  accepted index name changes listing behaviour for *every* git and local source as a side effect of a
+  seeding atom, `T2.3` owns reading registry metadata into Store cards (and wants the richer
+  `maintainer`/`last_validated` fields, which `RegistryPointer` drops), and with the registry empty the new
+  path would ship unexercised. Recorded so `T2.3`/`ET-6` can take the cheap route knowingly.
+- **2026-08-18 — DISCOVERY (`ET-4`): a polarity helper on this flag would have been DEAD CODE.**
+  First cut read the flag with `_expose_flag` (fail-closed, "any flag whose True opens a network surface")
+  for present-but-garbage values. A test proved it unreachable: `load()`'s schema type-gate already replaces
+  a non-bool with the field's **dataclass default** (`_apply_field_default`, the "using default" warning)
+  before the field mapping runs, so the helper could only ever see a real bool. Consequence, stated in code
+  and pinned by a rail: a corrupted value resolves to the SHIPPED posture (registry **on**), not to off —
+  that is the platform-wide config policy, not a choice of this field.
+- **2026-08-18 — DEVIATION (`ET-4`): fixed a swallowed write in the sources UI, in scope.** The Store's git-
+  source rows rendered a Remove button on the BUNDLED default too, where the backend's DELETE is a no-op by
+  construction — click it and the row stays. The catalog envelope now reports `defaultGitSources` (rows
+  PersonalClaw shipped → "Default" label) and `builtinGitSources` (the unremovable subset → no remove
+  control), mirroring the `firstPartySources` pattern already used for local sources. `remove_git_source`
+  semantics are UNCHANGED (a bundled default is still a silent no-op there, and its existing test still
+  passes) — the fix is that the UI no longer offers the button.
+- **2026-08-18 — NOTE (`ET-4`): the scanner gate is unchanged, proven behaviourally.** No new install path:
+  seeding only edits the source LIST. A registry-listed app with dangerous content, installed via the exact
+  `pointer` the Store card hands over, is refused with `Verdict.DANGEROUS` even with `confirm=True`; replacing
+  the gate's `default_scanner.scan(...)` with a clean report makes that install succeed and reds the test.
+  Also NOTE: the seeded URL 404s until the owner creates `personalclaw/registry` (Owner task 1). Measured
+  cost of the dangling source on `GET /api/apps/catalog`: **0.61s then 0.52s** — git fails fast on a missing
+  public repo, no credential prompt, no hang.

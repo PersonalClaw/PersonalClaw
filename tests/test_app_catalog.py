@@ -6,8 +6,11 @@ they never appear as "available to install"; git/local source list add/remove.
 
 from __future__ import annotations
 
+import inspect
 import json
+import os
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -907,3 +910,249 @@ def test_catalog_entry_capabilities_empty_for_a_non_provider_app(tmp_path):
     entry = next(a for a in catalog.available_catalog()["localApps"] if a["name"] == "note-app")
     assert entry["isProvider"] is False
     assert entry["providerCapabilities"] == []
+
+
+# ── ET-4: the curated registry ships as a SEEDED, REMOVABLE default git source ──
+#
+# The mechanism under test and why it is not the bundled tuple: `_DEFAULT_GIT_SOURCES`
+# is folded into every read of `list_git_sources()`, so removing one of those cannot
+# persist. The registry is instead WRITTEN ONCE into app-sources.json plus a marker, so
+# the normal DELETE removes it and the marker keeps it removed on the next start.
+
+
+def _registry_fixture_repo(root: Path, *, app_name: str = "fixture-registry-app") -> str:
+    """A real local git repo publishing an ``app-registry.json`` index — the POSITIVE
+    CONTROL for "the seeded source is actually consulted".
+
+    The shipped registry (`scratch/registry/registry.json`) is EMPTY until ET-6, so a
+    test that asserted "zero listings from the registry" would pass with the source
+    skipped entirely. This fixture publishes one listing, so the assertion below can
+    only pass if the seeded source was fetched and parsed."""
+    repo = root / "registry-fixture-repo"
+    repo.mkdir()
+    (repo / "app-registry.json").write_text(
+        json.dumps(
+            {
+                "apps": [
+                    {
+                        "name": app_name,
+                        "repo": "https://example.invalid/fixture-app.git",
+                        "displayName": "Fixture Registry App",
+                        "description": "listed by the registry index, not cloned",
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    git = [
+        "git",
+        "-c",
+        "user.email=t@example.invalid",
+        "-c",
+        "user.name=t",
+        "-c",
+        "commit.gpgsign=false",
+    ]
+    subprocess.run(["git", "init", "-q", "-b", "main"], cwd=repo, check=True)
+    subprocess.run([*git, "add", "app-registry.json"], cwd=repo, check=True)
+    subprocess.run([*git, "commit", "-q", "-m", "index"], cwd=repo, check=True)
+    return str(repo)
+
+
+def test_registry_source_seeds_only_behind_the_config_flag(tmp_path, monkeypatch):
+    """The flag gates SEEDING: off ⇒ no source and NO marker (so a later on still seeds)."""
+    monkeypatch.setattr(catalog, "_DEFAULT_GIT_SOURCES", ())
+    url = catalog._REGISTRY_GIT_SOURCE
+    cfg_file = tmp_path / "config.json"
+
+    cfg_file.write_text(json.dumps({"apps": {"registry_source_enabled": False}}), encoding="utf-8")
+    assert catalog.seed_default_git_sources() == []
+    assert url not in catalog.list_git_sources()
+    # No marker either — the flag must be a real gate, not a one-shot that burns the seed.
+    assert not (tmp_path / "apps" / "app-sources.json").is_file()
+
+    cfg_file.write_text(json.dumps({"apps": {"registry_source_enabled": True}}), encoding="utf-8")
+    assert catalog.seed_default_git_sources() == [url]
+    assert url in catalog.list_git_sources()
+    raw = json.loads((tmp_path / "apps" / "app-sources.json").read_text(encoding="utf-8"))
+    assert url in raw["git"], "the registry must be a REAL row, not a fold-in default"
+    assert "registry" in raw["seeded"]
+
+    # A second start seeds nothing more and never duplicates the row.
+    assert catalog.seed_default_git_sources() == []
+    assert catalog.list_git_sources().count(url) == 1
+
+
+def test_registry_source_seeds_on_a_fresh_home_with_no_config_file(tmp_path, monkeypatch):
+    """A fresh install has no `apps` key at all — absence must take the shipped default (on).
+
+    The polarity matters: reading the flag with the fail-closed `_expose_flag` alone would
+    make a brand-new home seed NOTHING, which is the opposite of "ships as a default"."""
+    monkeypatch.setattr(catalog, "_DEFAULT_GIT_SOURCES", ())
+    assert not (tmp_path / "config.json").is_file()
+    assert catalog.seed_default_git_sources() == [catalog._REGISTRY_GIT_SOURCE]
+
+
+def test_unreadable_flag_value_resolves_to_the_shipped_default(tmp_path, monkeypatch):
+    """MEASURED platform behaviour, pinned so nobody re-derives it wrong.
+
+    A non-bool at this path never reaches the field mapping: `load()`'s schema type-gate
+    replaces it with the field's dataclass default first (`_apply_field_default`, logging
+    "using default"). So a corrupted value resolves to the SHIPPED posture — registry ON —
+    NOT to fail-closed-off. Worth a rail because the instinct on a flag that adds a network
+    source is to guard it with `_expose_flag`, and such a guard would be dead code here."""
+    monkeypatch.setattr(catalog, "_DEFAULT_GIT_SOURCES", ())
+    (tmp_path / "config.json").write_text(
+        json.dumps({"apps": {"registry_source_enabled": "perhaps"}}), encoding="utf-8"
+    )
+    from personalclaw.config.loader import AppConfig
+
+    assert AppConfig.load().apps.registry_source_enabled is True
+    assert catalog.seed_default_git_sources() == [catalog._REGISTRY_GIT_SOURCE]
+
+
+def test_removing_the_seeded_registry_source_survives_a_restart(tmp_path, monkeypatch):
+    """Remove it, then RESTART: it must stay gone.
+
+    "Restart" here is a genuinely fresh interpreter with fresh module state, reading the
+    same home — the in-memory list can't lie to us, and neither can a monkeypatched
+    module global. The subprocess sees the real `_REGISTRY_GIT_SOURCE`, so the URL it
+    would re-seed is the same one this test removed."""
+    url = catalog._REGISTRY_GIT_SOURCE
+    assert catalog.seed_default_git_sources() == [url]
+    assert url in catalog.list_git_sources()
+
+    catalog.remove_git_source(url)
+    assert url not in catalog.list_git_sources()
+    raw = json.loads((tmp_path / "apps" / "app-sources.json").read_text(encoding="utf-8"))
+    assert url not in raw["git"]
+    assert "registry" in raw["seeded"], "the marker must OUTLIVE the removal, or it comes back"
+
+    code = (
+        "import json;from personalclaw.apps import catalog;"
+        "print(json.dumps({'seeded': catalog.seed_default_git_sources(),"
+        "'listed': catalog.list_git_sources()}))"
+    )
+    env = {**os.environ, "PERSONALCLAW_HOME": str(tmp_path)}
+    env.pop("PERSONALCLAW_FIRST_PARTY_APPS_DIR", None)
+    proc = subprocess.run(
+        [sys.executable, "-c", code], capture_output=True, text=True, env=env, timeout=120
+    )
+    assert proc.returncode == 0, proc.stderr
+    out = json.loads(proc.stdout.strip().splitlines()[-1])
+    assert out["seeded"] == [], "a restart re-seeded a source the user removed"
+    assert url not in out["listed"]
+
+
+def test_seeded_registry_is_a_default_the_user_may_remove(tmp_path, monkeypatch):
+    """The two labelling bits the Store renders: "Default" yes, "unremovable" no."""
+    url = catalog._REGISTRY_GIT_SOURCE
+    catalog.seed_default_git_sources()
+    assert url in catalog.default_git_sources()
+    assert url not in catalog.builtin_git_sources()
+    # The bundled apps repo is the other side of the contract: a default that CANNOT go.
+    bundled = catalog._DEFAULT_GIT_SOURCES[0]
+    assert bundled in catalog.default_git_sources()
+    assert bundled in catalog.builtin_git_sources()
+
+
+def test_the_seeded_registry_source_is_actually_consulted(tmp_path, monkeypatch):
+    """The Store fetches the seeded source's index and lists what it publishes.
+
+    Fails if seeding never happened, if the row never reached `list_git_sources()`, or if
+    the catalog skipped the source — i.e. it is the falsifiable form of "a fresh home lists
+    registry apps in the Store", run against a fixture index because the real registry
+    ships empty until ET-6."""
+    monkeypatch.setattr(catalog, "_DEFAULT_GIT_SOURCES", ())
+    # Neutralize the first-party local default (a set env var wins exclusively; a
+    # nonexistent path disables it) so only the seeded source can contribute listings.
+    monkeypatch.setenv("PERSONALCLAW_FIRST_PARTY_APPS_DIR", str(tmp_path / "nope"))
+    catalog._registry_cache.clear()
+    catalog._git_scan_cache.clear()
+
+    repo = _registry_fixture_repo(tmp_path)
+    monkeypatch.setattr(catalog, "_REGISTRY_GIT_SOURCE", repo)
+    assert catalog.seed_default_git_sources() == [repo]
+
+    cat = catalog.available_catalog()
+    assert repo in cat["gitSources"]
+    assert repo in cat["defaultGitSources"]
+    assert repo not in cat["builtinGitSources"]
+    assert "fixture-registry-app" in [e["name"] for e in cat["remoteApps"]]
+
+
+def test_seed_marker_survives_unrelated_source_edits(tmp_path, monkeypatch):
+    """Every write path round-trips the marker. If `add_git_source` dropped it, the next
+    start would resurrect a removed default — the defect this whole marker exists to stop."""
+    monkeypatch.setattr(catalog, "_DEFAULT_GIT_SOURCES", ())
+    catalog.seed_default_git_sources()
+    catalog.remove_git_source(catalog._REGISTRY_GIT_SOURCE)
+    catalog.add_git_source("https://github.com/acme/unrelated.git")
+    catalog.add_local_source(str(tmp_path))
+    raw = json.loads((tmp_path / "apps" / "app-sources.json").read_text(encoding="utf-8"))
+    assert "registry" in raw["seeded"]
+    assert catalog.seed_default_git_sources() == []
+
+
+def test_a_registry_listed_app_still_hits_the_scanner_gate(tmp_path, monkeypatch):
+    """No new install path: an app the SEEDED REGISTRY lists installs through the one
+    scanner-gated chokepoint, and a dangerous verdict is terminal even with confirm=True.
+
+    Drives the whole route the user drives — seed the source, read the Store card, install
+    by the exact `pointer` the card hands over. A bypass added for registry-sourced apps
+    (an "official source, skip the scan" shortcut is the tempting one) reds this."""
+    from personalclaw.supply_chain import Verdict
+
+    monkeypatch.setattr(catalog, "_DEFAULT_GIT_SOURCES", ())
+    monkeypatch.setenv("PERSONALCLAW_FIRST_PARTY_APPS_DIR", str(tmp_path / "nope"))
+    catalog._registry_cache.clear()
+    catalog._git_scan_cache.clear()
+
+    # An app with content the scanner calls dangerous, published as the registry's listing.
+    app_src = tmp_path / "src" / "dangerous-app"
+    app_src.mkdir(parents=True)
+    (app_src / "app.json").write_text(
+        json.dumps(
+            {
+                "name": "dangerous-app",
+                "version": "1.0.0",
+                "displayName": "Dangerous App",
+                "description": "registry-listed, scanner-refused",
+            }
+        ),
+        encoding="utf-8",
+    )
+    (app_src / "scripts").mkdir()
+    (app_src / "scripts" / "evil.sh").write_text("rm -rf / --no-preserve-root\n", encoding="utf-8")
+
+    repo = tmp_path / "registry-fixture-repo"
+    repo.mkdir()
+    (repo / "app-registry.json").write_text(
+        json.dumps({"apps": [{"name": "dangerous-app", "repo": str(app_src)}]}), encoding="utf-8"
+    )
+    git = ["git", "-c", "user.email=t@example.invalid", "-c", "user.name=t"]
+    subprocess.run(["git", "init", "-q", "-b", "main"], cwd=repo, check=True)
+    subprocess.run([*git, "add", "app-registry.json"], cwd=repo, check=True)
+    subprocess.run([*git, "commit", "-q", "-m", "index"], cwd=repo, check=True)
+
+    monkeypatch.setattr(catalog, "_REGISTRY_GIT_SOURCE", str(repo))
+    assert catalog.seed_default_git_sources() == [str(repo)]
+
+    card = next(
+        e for e in catalog.available_catalog()["remoteApps"] if e["name"] == "dangerous-app"
+    )
+    res = app_manager.install(card["pointer"], confirm=True)
+    assert not res.ok
+    assert res.scan.verdict is Verdict.DANGEROUS
+    assert not manager.app_dir("dangerous-app").exists()  # nothing landed live
+
+
+def test_seeding_never_reaches_for_the_installer(tmp_path, monkeypatch):
+    """The seeder writes a source LIST and nothing else — it cannot fetch, resolve or
+    install. A companion to the behavioural gate test above: that one proves the gate
+    still refuses, this one proves the seed path never had a chance to skip it."""
+    seed_src = inspect.getsource(catalog.seed_default_git_sources)
+    body = seed_src.split('"""', 2)[-1]
+    for forbidden in ("install", "resolve", "clone", "requests", "urlopen"):
+        assert forbidden not in body, f"the seeder must not {forbidden} anything"
