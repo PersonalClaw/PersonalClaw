@@ -10,7 +10,7 @@ Each atom below executes start-to-finish in one go. If an atom lists dependencie
 
 | Atom | Status | Title | Depends on | Done when |
 |---|---|---|---|---|
-| `CA-1` | ⬜ | S1 backend: unified pairing routes (C2) + Devices registry over REMOTE-USER-AUTH session rows | `EXT:REMOTE-USER-AUTH:durable sessions.json store + enroll path (C1/C3) — already shipped 2026-07-30` | pair/start->complete yields a durable device session (a sessions.json row with device/issuer set, no new token type) that survives a gateway restart; code reuse rejected (device_pair_code_invalid/expired); revoke locks the device out on its next request across a restart; SEL event on each route |
+| `CA-1` | ✅ | S1 backend: unified pairing routes (C2) + Devices registry over REMOTE-USER-AUTH session rows | `EXT:REMOTE-USER-AUTH:durable sessions.json store + enroll path (C1/C3) — already shipped 2026-07-30` | pair/start->complete yields a durable device session (a sessions.json row with device/issuer set, no new token type) that survives a gateway restart; code reuse rejected (device_pair_code_invalid/expired); revoke locks the device out on its next request across a restart; SEL event on each route |
 | `CA-2` | ⬜ | S1 frontend: Settings → Devices panel (list, revoke, QR pairing) | `CA-1` | a second browser pairs as a device from the shown QR end-to-end over the LAN, appears in the Devices list (name, kind, last-seen, issuer), and revoking it is observed to lock it out live |
 | `CA-3` | ✅ | S1 supersession reconciliation: fold MOBILE-COMPANION C1/C4 into this pairing contract | — | the two plans reference one pairing mechanism; grep shows no second/parallel device-token design surviving (Success Criterion 1) |
 | `CA-4` | ✅ | S2 config: new `companion` section wired through all 5 config points | — | test_config_roundtrip green; PATCH toggles discovery_enabled and sets instance_name; both fields round-trip through load()/to_dict() |
@@ -24,7 +24,7 @@ Each atom below executes start-to-finish in one go. If an atom lists dependencie
 
 ### `CA-1` — S1 backend: unified pairing routes (C2) + Devices registry over REMOTE-USER-AUTH session rows
 
-**Status:** todo
+**Status:** done
 
 Session 1 T1.1; Contracts C2 (POST /api/devices/pair/start|complete, GET /api/devices, POST /api/devices/{id}/revoke), C1 device-session model; new dashboard/handlers/devices.py + server.py wiring; SEL device_pair_started/device_paired/device_revoked
 
