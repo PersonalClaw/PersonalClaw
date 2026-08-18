@@ -364,3 +364,59 @@ def _inject_artifact_content(state, session, message) -> str: ...
   cheapest correct trigger is a host-side `useChatSocket` filtered on `tool_call` where
   `tool === 'artifact_update'`; adding a new WS event would be shared-contract scope
   creep (a cross-plan seam this plan doesn't own). Recorded as the stop point.
+
+- 2026-08-18 — **DONE (S3, T3.2 / atom `AE-10`).** The split-view iterate panel, built on
+  exactly the trigger the 2026-07-29 stop point named: a host-side `useChatSocket` filtered
+  on the **existing** `tool_call` frame where `tool === 'artifact_update'`. **No WS event was
+  added and no Python changed at all** — the commit is 7 files, all under
+  `web/src/pages/artifacts/`. `test_transport_doctrine` (9 passed, including
+  `test_workflow_engine_sse_events_are_all_registered_in_the_frontend`) is the rail that
+  would have caught a new event.
+
+  **Shape.** `artifactUpdateSignal.ts` holds the predicate: `tool_call` + `artifact_update`
+  + the slug, read off the native provider's `input` dict and off the `update: True` frame's
+  `input_preview` (which carries the same dict), falling back to a boundaried match inside a
+  stringified ACP arg blob, and **failing open** on the initially-empty frame agents emit
+  before streaming args. `ArtifactIteratePanel.tsx` stages its session through
+  INVESTIGATE-ANYWHERE (`POST /api/investigate {kind:'artifact'}` — AE-7's resolver) and
+  renders it with `appSdk.ChatEmbed`; no third chat surface. `ArtifactsSection` composes the
+  two halves and puts the session key in `?iterate=<key>`, so an open iteration thread is
+  deep-linkable and survives close/reopen — the same "selection state IS the URL" rule the
+  rest of the surface follows. `ArtifactViewer` refreshes `quiet`ly (no `setLoading`) and
+  with `keepVersion`, so a live write never tears the render surface down and never yanks a
+  pinned `?v=N` snapshot out from under whoever is reading it.
+
+  **A swallowed error fixed on the way past.** The rail and the timeline were both
+  `.catch(() => [])`, so an unreachable version list rendered as *"this artifact has no
+  history"* — a false statement about the user's data, and the shape this repo keeps
+  shipping. Each side-fetch now keeps its own failure; "Couldn't load version history."
+  (retryable) and "No version history." are separately asserted.
+
+  **A DEFECT THE RENDER TESTS COULD NOT SEE, found by driving a real browser.** The aside
+  had no `flex-1`, so its height was its CONTENT height, `ChatEmbed`'s `height: 100%`
+  resolved against nothing, and an iframe with no resolved height falls back to its **150px
+  intrinsic default**: measured 479×**150**, a letterbox with a chat in it. After the fix,
+  479×**801.5** at 1440px and 704×378.5 stacked below `lg`. jsdom computes no layout, so
+  it is pinned as a source rail with the measurement in the comment.
+
+  **Drive (isolated dev home, port 10481, never the owner's `:10000`).** Seeded a 2-version
+  `html` artifact, opened the panel: the composer inside the embed came up pre-filled with
+  AE-7's slug-naming prompt in **Agent** mode, artifact left / chat right at 1440px. Then
+  the real loop: PATCH the store to a new version, deliver the `tool_call` frame to the
+  page's own `useChatSocket` handlers → rail `Current · v3 / v2 / v1` → `Current · v4 / v3 /
+  v2 / v1`, preview body repainted in place, `?iterate` and the chat iframe both untouched,
+  **zero console errors**. *(Incidental finding, left alone as out of scope: `useChatSocket`
+  opens ONE socket per consumer — 4 were live on this page — despite its docstring saying
+  "single multiplexed WebSocket".)*
+
+  **Falsified (5 mutations, each confirmed applied, each restored from a file copy).**
+  Removing the tool-name check → 2 red; inverting it → 10 red across both test files;
+  freezing the version list on a live refresh → the rail red with the exact stale-list
+  signature (`Current · v4 / v2 / v1`); swallowing the versions failure into `[]` → the
+  error-state tests red; dropping `quiet` → the "repainted in place" identity assertions red
+  in both files. The first pass of the rail assertion **reded nothing** under the frozen-list
+  mutation — after one update a stale list still reads correctly, because the current version
+  simply moves out of the list — so the test now drives a **second** iteration, which is what
+  separates them. Gate: web typecheck · **3745 vitest passed (370 files)** · build green ·
+  `test_transport_doctrine` 9 passed. No Python changed, so `make lint`/`make test` were not
+  in scope.

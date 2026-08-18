@@ -1836,7 +1836,7 @@
         {
           "id": "AE-10",
           "title": "Split-view iterate panel: ChatEmbed beside the detail view; preview refreshes when artifact_update lands a new version",
-          "status": "todo",
+          "status": "done",
           "scope": "Session 3 T3.2 (the plan's recorded stop point)",
           "done_when": "asking the agent to change the widget in the side panel produces a new version in the rail AND the preview updates without a reload (host-side useChatSocket filtered on the existing tool_call WS event where tool==='artifact_update'; no new WS event added)",
           "deps": [
@@ -7391,11 +7391,6 @@
         "plan": "AAP"
       },
       {
-        "id": "AE-10",
-        "title": "Split-view iterate panel: ChatEmbed beside the detail view; preview refreshes when artifact_update lands a new version",
-        "plan": "AE"
-      },
-      {
         "id": "AG-9",
         "title": "Apps-repo guardrails follow-ons: native structured_output + channel send() live-writes (cross-repo)",
         "plan": "AG"
@@ -9704,9 +9699,9 @@
         "code": "AE",
         "plan": "ARTIFACTS-EVOLUTION",
         "total_atoms": 10,
-        "done": 9,
+        "done": 10,
         "in_progress": 0,
-        "todo": 1,
+        "todo": 0,
         "blocked": 0
       },
       {

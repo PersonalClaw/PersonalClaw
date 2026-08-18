@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { ArrowLeft, ChevronDown, FolderInput } from 'lucide-react'
+import { ArrowLeft, ChevronDown, FolderInput, MessagesSquare } from 'lucide-react'
 import { TopBar } from '../../ui/TopBar'
 import { HeaderActions } from '../../ui/HeaderActions'
 import { Loading } from '../../ui/ListScaffold'
@@ -16,6 +16,7 @@ import { promptInput } from '../../ui/dialog'
 import { ARTIFACT_KINDS } from '../files/fileMeta'
 import { ArtifactGrid } from './ArtifactGrid'
 import { ArtifactViewer } from './ArtifactViewer'
+import { ArtifactIteratePanel, ITERATE_PENDING } from './ArtifactIteratePanel'
 import { DeployedAppsMenu } from './ArtifactDeploy'
 import { PageTitle } from '../../ui/PageTitle'
 
@@ -47,6 +48,11 @@ export function ArtifactsSection({ sub, navigate, query: routeQuery, setQuery }:
   const [sort, setSort] = useQueryParam(routeQuery, setQuery, 'sort', 'updated', { replace: true })
   // ?v=N pins the detail viewer to a historical version (deep-linkable snapshot).
   const [vParam, setVParam] = useQueryParam(routeQuery, setQuery, 'v', '', { replace: true })
+  // ?iterate=<session-key> opens the split-view iterate panel on that session
+  // (AE-10). `ITERATE_PENDING` means "open it, it still needs staging" — the panel
+  // rewrites the param once /api/investigate hands back the real key, which makes
+  // an open iteration thread deep-linkable and survives a close/reopen.
+  const [iterate, setIterate] = useQueryParam(routeQuery, setQuery, 'iterate', '', { replace: true })
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -82,7 +88,7 @@ export function ArtifactsSection({ sub, navigate, query: routeQuery, setQuery }:
   }, [artifacts, q, kind, src, col, sort])
 
   const open = (a: Artifact) => navigate(`artifacts/${a.slug}`)
-  const back = () => { setVParam(''); navigate('artifacts') }
+  const back = () => { setVParam(''); setIterate(''); navigate('artifacts') }
 
   // "Source file" on a file-backed artifact opens it in the Files page (its home).
   const openSourceFile = useCallback((path: string) => {
@@ -112,6 +118,11 @@ export function ArtifactsSection({ sub, navigate, query: routeQuery, setQuery }:
   // record, not a filing target — so the control is absent rather than
   // present-and-always-failing.
   const canFile = !!slug && !!active && !active.readonly
+  // Iterating means the agent WRITES this slug (AE-7 stages the session in `agent`
+  // mode), so a frozen record is not an iteration target — same reason it can't be
+  // filed. The panel is absent rather than present-and-always-refused.
+  const canIterate = canFile
+  const iterateOpen = canIterate && !!iterate
 
   return (
     <div className="flex h-full flex-col">
@@ -125,6 +136,10 @@ export function ArtifactsSection({ sub, navigate, query: routeQuery, setQuery }:
         </div>}
         right={canFile ? (
           <HeaderActions>
+            <QuietButton onClick={() => setIterate(iterate ? '' : ITERATE_PENDING)} ariaExpanded={iterateOpen}
+              title={iterateOpen ? 'Close the iterate panel' : 'Open a chat beside this artifact and change it by asking'}>
+              <MessagesSquare size={13} /> {iterateOpen ? 'Close iterate' : 'Iterate with agent'}
+            </QuietButton>
             <QuietButton onClick={assignCollection} title="Group this artifact under a library collection">
               <FolderInput size={13} /> {active.collection || 'Set collection'}
             </QuietButton>
@@ -133,8 +148,13 @@ export function ArtifactsSection({ sub, navigate, query: routeQuery, setQuery }:
       />
 
       {slug ? (
-        <div className="mx-auto flex min-h-0 w-full flex-1" style={{ maxWidth: 'var(--content-width)' }}>
-          <div className="min-w-0 flex-1">
+        // The split view (AE-10): artifact left, chat right — stacked below `lg`,
+        // where a 26rem side panel would leave the preview unreadable. The reading
+        // column's `--content-width` cap is released while the panel is open, or the
+        // two halves would share one column's worth of space.
+        <div className="mx-auto flex min-h-0 w-full flex-1 flex-col lg:flex-row"
+          style={{ maxWidth: iterateOpen ? undefined : 'var(--content-width)' }}>
+          <div className="flex min-h-0 min-w-0 flex-1 flex-col">
             <ArtifactViewer key={slug} slug={slug} onChanged={load}
               onDeleted={() => { back(); load() }} onOpenSourceFile={openSourceFile}
               initialVersion={initialVersion}
@@ -142,6 +162,12 @@ export function ArtifactsSection({ sub, navigate, query: routeQuery, setQuery }:
               defaultDetailsOpen={initialVersion != null}
               commentTarget={navigate ? newSessionTarget(navigate, { name: `Comments: ${active?.name ?? slug}` }) : undefined} />
           </div>
+          {iterateOpen && (
+            <div className="flex min-h-0 shrink-0 basis-1/2 flex-col lg:w-[26rem] lg:basis-auto xl:w-[30rem]">
+              <ArtifactIteratePanel key={slug} slug={slug} name={active?.name ?? slug}
+                session={iterate} onSession={setIterate} onClose={() => setIterate('')} />
+            </div>
+          )}
         </div>
       ) : (
         <div className="mx-auto flex min-h-0 w-full flex-1 flex-col" style={{ maxWidth: 'var(--content-width)' }}>
