@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react'
+import { reportingWrite } from '../../app/reportingWrite'
 import { fvs } from '../../design/fontWeight'
 import { Plus, Search, Star, Users, Lock, Cpu, Wrench, Sparkles, Zap, RefreshCw } from 'lucide-react'
 import { TopBar } from '../../ui/TopBar'
@@ -71,8 +72,11 @@ export function AgentsListPage({ onCreate, query, setQuery }: { onCreate: () => 
     return g?.agents.find((a) => a.id === open.id) ?? null
   }, [open, discovered])
 
+  // Data-driven: the "default" marker comes from `reload()`, not a local flip. A swallowed rejection
+  // left the old default in place with nothing said, and the reload re-rendered it — so the click read
+  // as "nothing happened, twice".
   async function setDefault(name: string) {
-    await api.setDefaultAgent(name).catch(() => {})
+    if (!(await reportingWrite(`make "${name}" the default agent`, () => api.setDefaultAgent(name)))) return
     reload()
   }
   const [syncing, setSyncing] = useState(false)

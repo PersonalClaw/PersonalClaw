@@ -92,7 +92,12 @@ export function ToolsPage({ query, setQuery }: Pick<RouteProps, 'query' | 'setQu
 
   async function reprobe() {
     setProbing(true)
-    try { await api.probeMcp().catch(() => {}); load() } finally { setProbing(false) }
+    // The 🔑 note below names this bug for `removeServer`: "Surface the backend's message instead of
+    // silently 'refreshing'". A swallowed reprobe did exactly that — the spinner ran, the list
+    // reloaded unchanged, and nothing said the probe had not happened.
+    try {
+      if (await reportingWrite('re-probe the MCP servers', () => api.probeMcp())) load()
+    } finally { setProbing(false) }
   }
 
   // 🔑 THE FILE ALREADY NAMES THIS BUG. `removeServer` above unwraps the backend's message and reports
