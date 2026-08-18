@@ -261,6 +261,16 @@ def build_permission_event(
     params = msg.params or {}
     tool_call = params.get("toolCall", {})
     title = tool_call.get("title", "unknown")
+    # The frame's own declared kind (read/edit/execute/delete/…). Carried so the
+    # approval card, the SEL row and the not-gateable residue check can NAME the
+    # tool even when the adapter sends no title (codex sends `kind` but no
+    # `title`, which is why the card said "unknown" — G18). Deliberately NOT fed
+    # to the task-mode gate: a CLI-declared "read" must not be able to turn that
+    # gate's deny-by-default into an allow (§2.2 fails closed).
+    kind = str(tool_call.get("kind") or "")
+    if kind:
+        kind, _ = redact_exfiltration_urls(kind)
+        kind, _ = redact_credentials(kind)
     options = dialect.parse_permission_options(params.get("options", []))
     if not options:
         options = dialect.default_permission_options()
@@ -294,6 +304,7 @@ def build_permission_event(
         kind=EVENT_PERMISSION_REQUEST,
         request_id=request_id,
         title=title,
+        tool_kind=kind,
         options=options,
         tool_input=tool_input,
         tool_call_id=tool_call_id,

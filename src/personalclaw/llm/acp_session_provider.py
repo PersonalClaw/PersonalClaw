@@ -193,6 +193,29 @@ class AcpSessionProvider(AgentProvider):
         self._model = model
 
     async def set_mode(self, mode: str) -> None:
+        # The POOLED path is a second door onto the same adapter, and it builds the
+        # dialect request itself instead of going through AcpClient — so it needs the
+        # host-authority clamp too (§2.2). Without it, a caller that hands the pool
+        # ``bypassPermissions`` would make the CLI its own permission authority on the
+        # very sessions AcpClient refuses to.
+        from personalclaw.acp.permission_authority import sanitize_mode
+
+        decision = sanitize_mode(mode)
+        if decision.downgraded:
+            logger.warning("ACP pooled permission mode clamped: %s", decision.reason)
+            try:
+                from personalclaw.sel import sel
+
+                sel().log_api_access(
+                    caller="acp:permission_authority",
+                    operation="mode_change:clamped_to_host_authority",
+                    outcome="downgraded",
+                    resources=f"pooled requested={decision.requested} "
+                    f"effective={decision.mode}",
+                )
+            except Exception:
+                logger.warning("SEL audit failed for pooled ACP mode clamp", exc_info=True)
+        mode = decision.mode
         if not mode:
             return
         req = self._conn._dialect.set_mode_request(session_id=self._session.session_id, mode=mode)
