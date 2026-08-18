@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { ArrowLeft, ChevronDown, FolderInput, MessagesSquare } from 'lucide-react'
+import { ArrowLeft, FolderInput, MessagesSquare } from 'lucide-react'
 import { TopBar } from '../../ui/TopBar'
 import { HeaderActions } from '../../ui/HeaderActions'
 import { Loading, LoadError } from '../../ui/ListScaffold'
@@ -7,7 +7,7 @@ import { SearchField } from '../../ui/SearchField'
 import { ResultAnnouncement } from '../../ui/ListControls'
 import { Segmented } from '../../ui/forms'
 import { QuietButton } from '../../ui/QuietButton'
-import { Popover, MenuRow } from '../../ui/Popover'
+import { FilterMenu, type FilterSectionDef } from '../../ui/FilterMenu'
 import { api, type Artifact } from '../../lib/api'
 import { useQueryParam, type RouteProps } from '../../app/useQueryState'
 import { newSessionTarget } from '../../ui/content/commentTarget'
@@ -75,6 +75,42 @@ export function ArtifactsSection({ sub, navigate, query: routeQuery, setQuery }:
     for (const a of artifacts) if (a.collection) s.add(a.collection)
     return [...s].sort()
   }, [artifacts])
+
+  // The canonical "Filter & sort" pill (`ui/FilterMenu`), which eight other list surfaces already
+  // render. This page used to line up its own source dropdown + collection dropdown + a sort
+  // Segmented across the toolbar — the exact arrangement that primitive's doc says it replaced — so
+  // artifacts was the last surface without the active-count badge or the inline Clear. The kind strip
+  // stays a Segmented: it is this surface's primary axis and carries a deliberate `collapse="scroll"`
+  // treatment, and the inbox already ships the same "primary strip + one pill" pairing.
+  const filterSections = useMemo<FilterSectionDef[]>(() => {
+    const bySource = new Map<string, number>()
+    const byCollection = new Map<string, number>()
+    for (const a of artifacts) {
+      if (a.source) bySource.set(a.source, (bySource.get(a.source) ?? 0) + 1)
+      if (a.collection) byCollection.set(a.collection, (byCollection.get(a.collection) ?? 0) + 1)
+    }
+    const list: FilterSectionDef[] = [{
+      title: 'Source', value: src, defaultKey: '', onChange: setSrc,
+      options: [
+        { key: '', label: 'Any source', count: artifacts.length },
+        ...SOURCES.map((k) => ({ key: k, label: k[0].toUpperCase() + k.slice(1), count: bySource.get(k) })),
+      ],
+    }]
+    // Collections are user-created, so the section only exists once one does — same conditional the
+    // old dropdown carried.
+    if (collections.length > 0) list.push({
+      title: 'Collection', value: col, defaultKey: '', onChange: setCol,
+      options: [
+        { key: '', label: 'All collections', count: artifacts.length },
+        ...collections.map((c) => ({ key: c, label: c, count: byCollection.get(c) })),
+      ],
+    })
+    list.push({
+      title: 'Sort by', value: sort, defaultKey: 'updated', onChange: setSort,
+      options: SORTS.map((o) => ({ key: o.key, label: o.label })),
+    })
+    return list
+  }, [artifacts, collections, src, col, sort, setSrc, setCol, setSort])
 
   // Client-side filter + sort over the (content-free) list.
   const filtered = useMemo(() => {
@@ -200,15 +236,10 @@ export function ArtifactsSection({ sub, navigate, query: routeQuery, setQuery }:
                 roving-tabindex arrow nav scrolls each tab into view as it takes focus. */}
             <Segmented ariaLabel="Artifact kind" value={kind} onChange={setKind} collapse="scroll"
               options={[{ key: '', label: 'All kinds' }, ...ARTIFACT_KINDS.map((k) => ({ key: k.key, label: k.label }))]} />
-            <FilterMenu label={src ? `via ${src}` : 'Any source'} value={src} onPick={setSrc}
-              options={[{ key: '', label: 'Any source' }, ...SOURCES.map((s) => ({ key: s, label: `via ${s}` }))]} />
-            {collections.length > 0 && (
-              <FilterMenu label={col || 'All collections'} value={col} onPick={setCol}
-                options={[{ key: '', label: 'All collections' }, ...collections.map((c) => ({ key: c, label: c }))]} />
-            )}
-            {/* The deployed-app listing (PEP-8) — absent when nothing is served. */}
-            <DeployedAppsMenu onOpen={(s) => navigate(`artifacts/${s}`)} onChanged={load} />
-            <div className="ml-auto"><Segmented ariaLabel="Sort artifacts" value={sort} onChange={setSort} options={SORTS.map((s) => ({ key: s.key, label: s.label }))} /></div>
+            <FilterMenu sections={filterSections} />
+            {/* The deployed-app listing (PEP-8) — absent when nothing is served. Not a filter, so it
+                stays its own control, and keeps the right edge the sort strip used to hold. */}
+            <div className="ml-auto"><DeployedAppsMenu onOpen={(s) => navigate(`artifacts/${s}`)} onChanged={load} /></div>
             {/* `narrowed` is this surface's own definition of "the user has filtered" — the grid
                 already uses it to tell an empty library from a filtered-to-nothing one, so the
                 announcement rides the same flag rather than inventing a second rule. */}
@@ -231,25 +262,3 @@ export function ArtifactsSection({ sub, navigate, query: routeQuery, setQuery }:
   )
 }
 
-/** A compact dropdown filter (source/collection) — QuietButton trigger + Popover menu. */
-function FilterMenu({ label, value, options, onPick }: {
-  label: string
-  value: string
-  options: { key: string; label: string }[]
-  onPick: (key: string) => void
-}) {
-  return (
-    <Popover placement="bottom" trigger={(_open, toggle) => (
-      <QuietButton onClick={toggle} title={label}>{label} <ChevronDown size={11} /></QuietButton>
-    )}>
-      {(close) => (
-        <>
-          {options.map((o) => (
-            <MenuRow key={o.key || '(all)'} label={o.label} selected={o.key === value}
-              onClick={() => { onPick(o.key); close() }} />
-          ))}
-        </>
-      )}
-    </Popover>
-  )
-}
