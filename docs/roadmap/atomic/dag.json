@@ -6014,7 +6014,7 @@
         {
           "id": "FM-2",
           "title": "Morph.tsx shared-element wrapper + wire one real card\u2192detail morph",
-          "status": "todo",
+          "status": "done",
           "scope": "Session 2 \u2014 Liquid morphing (T2.1); Contracts C2 (Morph)",
           "done_when": "a list card visibly morphs into its detail/expanded view and back via framer layout/layoutId; reduced-motion path yields instant swap; no layout thrash",
           "deps": [
@@ -7631,8 +7631,8 @@
         "plan": "ET"
       },
       {
-        "id": "FM-2",
-        "title": "Morph.tsx shared-element wrapper + wire one real card\u2192detail morph",
+        "id": "FM-4",
+        "title": "Coherence pass: unify Morph/LiquidShape/Disintegrate/Bud into one motion vocabulary",
         "plan": "FM"
       },
       {
@@ -10052,9 +10052,9 @@
         "code": "FM",
         "plan": "FLUID-MOTION",
         "total_atoms": 7,
-        "done": 4,
+        "done": 5,
         "in_progress": 0,
-        "todo": 3,
+        "todo": 2,
         "blocked": 0
       },
       {

@@ -14,6 +14,7 @@ import { newSessionTarget } from '../../ui/content/commentTarget'
 import { notify } from '../../app/appSdk'
 import { promptInput } from '../../ui/dialog'
 import { ARTIFACT_KINDS } from '../files/fileMeta'
+import { Morph } from '../../ui/motion'
 import { ArtifactGrid } from './ArtifactGrid'
 import { ArtifactViewer } from './ArtifactViewer'
 import { ArtifactIteratePanel, ITERATE_PENDING } from './ArtifactIteratePanel'
@@ -161,14 +162,20 @@ export function ArtifactsSection({ sub, navigate, query: routeQuery, setQuery }:
         // two halves would share one column's worth of space.
         <div className="mx-auto flex min-h-0 w-full flex-1 flex-col lg:flex-row"
           style={{ maxWidth: iterateOpen ? undefined : 'var(--content-width)' }}>
-          <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+          {/* The CLOSING half of the library's shared-element morph (FM-2) — the same
+              `artifact-<slug>` id the grid card carries, so the viewer flies out of that
+              card's box and folds back into it on Back. The id is on this stable
+              container, NOT on anything inside the viewer: the viewer mounts before its
+              fetch resolves, and a morph end that appears a tick late is silently no
+              morph at all. */}
+          <Morph id={`artifact-${slug}`} className="flex min-h-0 min-w-0 flex-1 flex-col">
             <ArtifactViewer key={slug} slug={slug} onChanged={load}
               onDeleted={() => { back(); load() }} onOpenSourceFile={openSourceFile}
               initialVersion={initialVersion}
               onVersionChange={(v) => setVParam(v === null ? '' : String(v))}
               defaultDetailsOpen={initialVersion != null}
               commentTarget={navigate ? newSessionTarget(navigate, { name: `Comments: ${active?.name ?? slug}` }) : undefined} />
-          </div>
+          </Morph>
           {iterateOpen && (
             <div className="flex min-h-0 shrink-0 basis-1/2 flex-col lg:w-[26rem] lg:basis-auto xl:w-[30rem]">
               <ArtifactIteratePanel key={slug} slug={slug} name={active?.name ?? slug}
