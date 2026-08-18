@@ -443,6 +443,14 @@ async def start_dashboard(
     app.router.add_post(
         "/api/durability/archive/{id}/restore", handlers.api_durability_archive_restore
     )
+    # §4.2 (DAS-10) — the conflict review queue. `durability/conflicts.py` shipped the
+    # detector and the durable queue with no route at all, so a both-sides-edited
+    # divergence held the local row and was then invisible. Owner-only; the resolve
+    # writes a chosen row into the live store, so it is confirm-gated.
+    app.router.add_get("/api/durability/conflicts", handlers.api_durability_conflicts)
+    app.router.add_post(
+        "/api/durability/conflicts/{id}/resolve", handlers.api_durability_conflict_resolve
+    )
     # DESKTOP-CAPABILITIES DC-2 — the Electron shell seam. The three POSTs are
     # loopback-only and credential-bearing (see handlers/desktop.py); the GETs are
     # the truth surface for Settings → Security and for apps holding a manifest

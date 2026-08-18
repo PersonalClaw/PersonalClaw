@@ -54,9 +54,13 @@ logger = logging.getLogger(__name__)
 #: The queue's path under the home (the sync root's third machine-local file).
 CONFLICTS_PATH = "sync/conflicts.jsonl"
 
-#: The only status this atom writes. Accept/dismiss transitions are the review surfaces'
-#: (DAS-10) — a record stays needs-review, and nothing is applied, until one lands.
+#: The status a detected conflict lands in. Nothing is applied while a record holds it.
 STATUS_NEEDS_REVIEW = "needs-review"
+
+#: The status a REVIEWED record lands in (DAS-10, :mod:`durability.conflict_resolve`). The
+#: record is kept — the queue is the audit trail of what needed a decision, and which
+#: version the user chose is exactly the part worth keeping.
+STATUS_RESOLVED = "resolved"
 
 # ── review surfaces (§4.2 item 3) ────────────────────────────────────────────
 SURFACE_MEMORY = "memory"
@@ -115,6 +119,10 @@ class ConflictRecord:
     proposed_at: str = ""
     #: Why there is no proposal, when a draft was attempted and failed (fail-open evidence).
     proposal_error: str = ""
+    #: Which version the user chose, once reviewed (DAS-10) — one of
+    #: :mod:`durability.conflict_resolve`'s ``CHOICE_*``. Empty while unreviewed.
+    resolution: str = ""
+    resolved_at: str = ""
 
     @property
     def id(self) -> str:
@@ -143,6 +151,8 @@ class ConflictRecord:
             "rationale": self.rationale,
             "proposed_at": self.proposed_at,
             "proposal_error": self.proposal_error,
+            "resolution": self.resolution,
+            "resolved_at": self.resolved_at,
         }
 
     @classmethod
@@ -166,6 +176,8 @@ class ConflictRecord:
             rationale=str(d.get("rationale", "")),
             proposed_at=str(d.get("proposed_at", "")),
             proposal_error=str(d.get("proposal_error", "")),
+            resolution=str(d.get("resolution", "")),
+            resolved_at=str(d.get("resolved_at", "")),
         )
 
 
@@ -286,6 +298,15 @@ class ConflictQueue:
         if entry_id:
             out = [r for r in out if r.entry_id == entry_id]
         return out
+
+    def get(self, record_id: str) -> ConflictRecord | None:
+        """The queued record with this id, or ``None``. The review surface's read (DAS-10):
+        a resolve acts on one record, and "not queued" has to be distinguishable from
+        "queued but already reviewed" rather than both collapsing into an empty list."""
+        for rec in self._read():
+            if rec.id == record_id:
+                return rec
+        return None
 
     def record(self, rec: ConflictRecord) -> bool:
         """Append ``rec`` unless its id is already queued. Returns True if it was added."""

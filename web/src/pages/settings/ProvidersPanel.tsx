@@ -1,7 +1,7 @@
 import { useState, useMemo } from 'react'
 import {
   Bot, Cpu, Hash, Inbox, Bell, Wrench, ListChecks, Webhook, Sparkles,
-  BookOpen, Database, FileText, Workflow, Search, type LucideIcon,
+  BookOpen, Database, FileText, Workflow, Search, RefreshCw, type LucideIcon,
 } from 'lucide-react'
 import { api, type SettingsProvider, type AgentRuntime, type ChannelRuntime } from '../../lib/api'
 import { useCachedData, invalidateCache } from '../../lib/useCachedData'
@@ -34,8 +34,13 @@ const ENTITY_META: Record<string, { label: string; icon: LucideIcon; hint: strin
   memory: { label: 'Memory providers', icon: Database, hint: 'Ordered fallbacks providing memory CRUD — the primary serves unless it is unavailable.' },
   prompt: { label: 'Prompt providers', icon: FileText, hint: 'Contribute prompts into the system.' },
   workflow: { label: 'Workflow providers', icon: Workflow, hint: 'Contribute workflows into the system.' },
+  // A `type: "sync"` app is a transport for Settings → Backups → Sync: its own settings
+  // (repo, folder, host) are configured on its card here, and WHICH transport syncs is
+  // chosen there. Named rather than left to the unknown-type fallback, which labelled a
+  // real entity "sync providers" with a wrench.
+  sync: { label: 'Sync transports', icon: RefreshCw, hint: 'Storage you own that more than one machine syncs through — a git repo, a synced folder, a bucket. Configure one here, then choose it under Backups → Sync.' },
 }
-const ENTITY_ORDER = ['agent', 'model', 'search', 'channel', 'inbox', 'notification', 'tool', 'task', 'action', 'skills', 'knowledge', 'memory', 'prompt', 'workflow']
+const ENTITY_ORDER = ['agent', 'model', 'search', 'channel', 'inbox', 'notification', 'tool', 'task', 'action', 'skills', 'knowledge', 'memory', 'prompt', 'workflow', 'sync']
 
 // Within Actions, sub-group cards by the entity each action acts on (manifest entity).
 const ACTION_ENTITY_LABELS: Record<string, string> = {
