@@ -424,19 +424,80 @@ describe('the hand-laid bars reach the same idiom', () => {
     }
   })
 
-  it('EVERY search control in the settings area announces — the area census', () => {
-    // 🔑 A pinned table says "these are right"; a census says "there are no others". The settings
-    // panels are the area this cycle swept end to end, so the claim is total here: every file under
-    // `pages/settings` that renders a search control also renders the announcement. **Zero
-    // exemptions** — if a panel needs one, that is a judgement to write down, not a silent gap.
+  it('EVERY search control in the TREE announces — or is exempt for a CHECKED reason', () => {
+    // 🔑 This census was scoped to `pages/settings` for one cycle, because that was the area swept
+    // end to end. It is now tree-wide: every file that renders a search control either announces its
+    // result count, routes through `ListControls` (ratcheted above), or appears below with a reason —
+    // and **every reason is verified here rather than taken on trust.** An exemption nobody checks is
+    // just a silent gap with a comment attached.
     const strip = (t: string) => t.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
-    const withControl = walk(join(SRC, 'pages/settings'))
+    const hasControl = (src: string) =>
+      /<SearchField\b/.test(src) || /<TextInput[^>]*ariaLabel="(?:Search|Filter)/.test(src)
+
+    /** file → [why it does not need a status region, a pattern proving that reason] */
+    const EXEMPT: Record<string, [string, RegExp]> = {
+      // A real listbox conveys its own size; a status region on top would double-speak.
+      'app/CommandPalette.tsx': ['role=listbox with options', /role="listbox"[\s\S]*role="option"/],
+      // Already announces — through its own VISIBLE match counter, which is a live region. A second
+      // idiom here would read the same number twice.
+      'pages/chat/FindBar.tsx': ['visible aria-live match counter', /aria-live="polite"/],
+      // Keyboard-navigated typeaheads. These want `role="listbox"`/`aria-activedescendant` like
+      // CommandPalette already has, NOT a status region — so they are DEFERRED to that pass, and this
+      // records the deferral instead of leaving them looking compliant.
+      'pages/chat/PromptPalette.tsx': ['arrow-key typeahead, awaiting listbox semantics', /onKeyDown=/],
+      'pages/code/CodeCockpitPage.tsx': ['arrow-key typeahead, awaiting listbox semantics', /onKeyDown=/],
+      'pages/code/WorkspacePicker.tsx': ['arrow-key typeahead, awaiting listbox semantics', /onKeyDown=/],
+      // The primitive itself.
+      'ui/ListControls.tsx': ['this IS the primitive', /export function ResultAnnouncement\b/],
+    }
+
+    const withControl = walk(SRC)
       .map((abs) => ({ rel: abs.replace(SRC + '/', ''), src: strip(readFileSync(abs, 'utf8')) }))
-      .filter(({ src }) => /<SearchField\b/.test(src) || /<TextInput[^>]*ariaLabel="(?:Search|Filter)/.test(src))
-    expect(withControl.length, 'the census must find the panels').toBeGreaterThanOrEqual(7)
-    const silent = withControl.filter(({ src }) => !src.includes('<ResultAnnouncement')).map((f) => f.rel)
-    expect(silent, 'a panel that narrows a list without announcing it tells a screen reader nothing')
+      .filter(({ src }) => hasControl(src))
+    expect(withControl.length, 'the census must find the search controls').toBeGreaterThanOrEqual(17)
+
+    const silent = withControl
+      .filter(({ rel, src }) =>
+        !src.includes('<ResultAnnouncement') && !src.includes('<ListControls') && !EXEMPT[rel])
+      .map((f) => f.rel)
+    expect(silent, 'a control that narrows a list without announcing it tells a screen reader nothing')
       .toEqual([])
+
+    // Each exemption has to still be TRUE of the file it excuses.
+    for (const [rel, [why, proof]] of Object.entries(EXEMPT)) {
+      const src = strip(readFileSync(join(SRC, rel), 'utf8'))
+      expect(src, `${rel} is exempt for "${why}" — which must still hold`).toMatch(proof)
+    }
+    // And an exemption for a file that no longer HAS a search control is dead weight.
+    for (const rel of Object.keys(EXEMPT)) {
+      expect(hasControl(strip(readFileSync(join(SRC, rel), 'utf8'))), `${rel}: stale exemption`).toBe(true)
+    }
+  })
+
+  it('ChatPage announces all three of its searches, each on its own terms', () => {
+    // 🪤 The chat list is the trap this rail already documents, met in the wild: `origin` OPENS on
+    // 'manual', so `origin !== 'all'` would be true before the user touches anything. And
+    // `showArchived` is deliberately NOT part of `active` — the active/archived split is enforced
+    // server-side, so it swaps WHICH list is fetched rather than narrowing this one.
+    const strip = (t: string) => t.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
+    const src = strip(readFileSync(join(SRC, 'pages/ChatPage.tsx'), 'utf8'))
+    expect((src.match(/<ResultAnnouncement\b/g) ?? []).length, 'chat list + two pickers').toBe(3)
+    expect(src, 'the chat list counts its own filtered array').toMatch(
+      /count=\{filtered\.length\} noun="chats"\s*\n?\s*active=\{!!n \|\| origin !== 'manual'\}/,
+    )
+    // 🪤 Scoped to the TAG, not the file. A file-wide `not.toMatch(/origin !== 'all'/)` failed on
+    // correct code: `matches` uses exactly that comparison as its SCOPE logic, where 'all' really
+    // does mean "no restriction". The rule belongs to the announcement's own expression.
+    const chatsTag = src.match(/<ResultAnnouncement[^>]*noun="chats"[\s\S]{0,160}?\/>/)?.[0] ?? ''
+    expect(chatsTag, 'the chats announcement must be found').toContain('noun="chats"')
+    expect(chatsTag, 'and not compare against a default this surface does not use')
+      .not.toMatch(/origin !== 'all'/)
+    expect(chatsTag, 'the archived toggle is not a narrowing of this list').not.toMatch(/showArchived/)
+    expect(src, 'the artifact picker counts what the cap actually renders')
+      .toMatch(/count=\{shown\.length\} noun="artifacts" active=\{!!n\}/)
+    expect(src, 'the knowledge picker waits for its debounced fetch').toMatch(
+      /count=\{res\?\.results\.length \?\? 0\} noun="knowledge items"\s*\n?\s*active=\{!!q\.trim\(\) && !loading && res !== null\}/,
+    )
   })
 
   it('MemoryPanel announces its two LISTS and not its context-preview input', () => {
