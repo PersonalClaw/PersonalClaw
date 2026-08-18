@@ -4054,6 +4054,7 @@
           "id": "CA-1",
           "title": "S1 backend: unified pairing routes (C2) + Devices registry over REMOTE-USER-AUTH session rows",
           "status": "done",
+          "pr": 1679,
           "scope": "Session 1 T1.1; Contracts C2 (POST /api/devices/pair/start|complete, GET /api/devices, POST /api/devices/{id}/revoke), C1 device-session model; new dashboard/handlers/devices.py + server.py wiring; SEL device_pair_started/device_paired/device_revoked",
           "done_when": "pair/start->complete yields a durable device session (a sessions.json row with device/issuer set, no new token type) that survives a gateway restart; code reuse rejected (device_pair_code_invalid/expired); revoke locks the device out on its next request across a restart; SEL event on each route",
           "deps": [
@@ -5544,6 +5545,7 @@
           "id": "APE-1",
           "title": "Manifest: backgroundTasks + eventSubscriptions permissions (parse/serialize/consent)",
           "status": "done",
+          "pr": 1679,
           "scope": "Session 1 T1.1; Contract C1 (manifest additions, additive \u00a73.8)",
           "done_when": "round-trip (to_dict/from_dict) tests pass; install consent UI surfaces the two new grants; unknown-field preservation intact",
           "deps": [
@@ -6015,6 +6017,7 @@
           "id": "FM-2",
           "title": "Morph.tsx shared-element wrapper + wire one real card\u2192detail morph",
           "status": "done",
+          "pr": 1679,
           "scope": "Session 2 \u2014 Liquid morphing (T2.1); Contracts C2 (Morph)",
           "done_when": "a list card visibly morphs into its detail/expanded view and back via framer layout/layoutId; reduced-motion path yields instant swap; no layout thrash",
           "deps": [
@@ -6209,6 +6212,7 @@
           "id": "ET-3",
           "title": "Registry data tier: `registry.json` schema + PR-validation workflow in the `personalclaw/registry` repo",
           "status": "done",
+          "pr": 1679,
           "scope": "Session 2 (T2.1); C2 \u2014 registry.json schema; Design \u2014 Registry; Owner tasks 1 & 2 (owner creates repo, approves delisting policy)",
           "done_when": "registry.json schema + validation script (manifest fetch/parse via core apps/manifest.py, repo liveness, license present, SkillScanner dry-run verdict capture) + PR CI running it prepared as registry-repo content with CONTRIBUTING-for-listings and delisting policy; a valid sample PR passes; a `dangerous`-verdict fixture blocks listing with the reason recorded; `warning` lists-with-display (never auto-blocks)",
           "deps": [
