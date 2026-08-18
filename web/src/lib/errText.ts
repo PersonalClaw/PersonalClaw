@@ -37,6 +37,20 @@ export async function errText(r: Response): Promise<string> {
       for (const key of ['error', 'detail'] as const) {
         const v = (parsed as Record<string, unknown>)[key]
         if (typeof v === 'string' && v.trim()) return v.trim()
+        // 🔴 THE ENVELOPE THE PLATFORM DECLARES WAS THE ONE SHAPE THIS DROPPED. `errors.py` states the
+        // wire contract — "INTEGRATION-ARCHITECTURE §2.2 owns the *wire* shape for API-route errors —
+        // `{"error": {"code": "<lowercase_snake>", "message": ...}}`" — and 115 sites return it. Because
+        // the object is not a string, every one of them fell through to `HTTP <status>`: a user saving a
+        // malformed workflow got "HTTP 400" while the backend had written "invalid JSON body", and a
+        // failed extraction read "HTTP 500" instead of "could not read the document".
+        //
+        // Only a non-empty string `message` is taken. A code-only object still becomes the status, which
+        // is the existing rule and the right one — `{"error": {"code": 7}}` read aloud is worse than
+        // "HTTP 502" — so this widens the funnel by exactly the sentence a human wrote, and nothing else.
+        if (v && typeof v === 'object' && !Array.isArray(v)) {
+          const msg = (v as Record<string, unknown>).message
+          if (typeof msg === 'string' && msg.trim()) return msg.trim()
+        }
       }
     }
   } catch { /* not JSON — the plain-text rules below decide */ }
