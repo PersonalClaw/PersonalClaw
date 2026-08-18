@@ -251,3 +251,80 @@ SQLite-only with no text tier — and both docs now say only that.
 
 **Still open, unchanged:** the fixture's timestamps are static (mid-August 2026), so
 relative-time labels drift as it ages. Refresh them when the launch capture is taken.
+
+### 2026-08-17 — `DL-9` (T5.1, V5) research-learnings republication — **PARTIAL**
+
+Landed in `personalclaw.dev` on `feature-dl9-learnings-republication` (not pushed). Nothing
+in this repository changed except this log: the sync needed no front-matter, no marker file
+and no edit of any learnings doc, so `docs/research/learnings/` is untouched.
+
+**14 of 15, and which one is not a topic.** The directory holds fifteen `.md` files.
+`README.md` is the corpus *index* — a topic table plus a cross-corpus findings summary — and
+its own fourteen links are exactly the fourteen topics, which is what makes the count
+unambiguous. The site withholds it and publishes its own section index instead, so there is
+exactly one index rather than two that disagree on the first edit. It is not dropped: the
+sync still **reads** it, because its "what it covers" column is curated one-line prose and
+makes a far better page description than anything extractable from a topic that opens
+straight into `## Principles` (two topics otherwise took a mid-document implementation
+fragment as their meta description). README is linked from the preface at the pinned commit.
+
+**Extended the existing sync; did not add a copier.** `scripts/sync-docs.mjs` already owned
+the pinned-commit corpus, the link rewriter and both `llms.txt` writers, and its own header
+comment named this work as the reason research was excluded. A tree entry may now declare
+`sourceDir` (core path ≠ site path — the corpus is two levels down, published one level up),
+`exclude`, `descriptionsFrom`, and `preface`. The link rewriter was generalised from "segment
+count 1 or 2" to "resolve, then look up which tree owns that directory", which is what makes
+a nested source dir work at all; it also now consults the *published* set, so a link into a
+synced directory pointing at a file the site withholds escapes to GitHub instead of becoming
+a plausible-looking in-site 404. **The four pre-existing trees' generated output is
+byte-identical** — verified by running `origin/main`'s script and `diff -r`, not by assuming.
+
+**Cross-link census.** 131 relative links across the fifteen files; 117 across the fourteen
+published topics (README holds the other 14). Every one is a bare sibling filename — zero
+contain a slash, zero carry a fragment, zero are reference-style, and zero point at a core
+doc the site does not publish, so **no link needed rewriting-to-GitHub or dropping** and the
+"what about links to unpublished core docs" decision was moot for this corpus rather than
+answered. Post-build, `validate-build.mjs` resolves all 117 against `dist` and prints the
+count it checked (`resolved 117 research cross-links across 14 republished topics`) — a
+sweep that reports zero broken links out of an unstated denominator is not evidence.
+
+**Falsified (five mutations, each restored from a file copy).** (a) `sourceDir` →
+a non-existent dir: `No markdown found for docs/research/learnings-gone`. (b) rewriter
+resolving the owner by site dir instead of source dir — the plausible refactor bug — trips
+the sync's floor: `docs/research/learnings produced 0 in-site cross-links`. That red also
+corrected the guard's own message, which had claimed only the 404 outcome when this mutation
+produces the other one (all links escaping to GitHub). (c) one topic removed from
+`known-docs.mjs`: four independent rails fired (route contract, missing page, cross-link
+floor at 95 < 100, sitemap). (d) the in-site slug mangled in the rewriter *only*, leaving
+page filenames correct: the sync reported success, the pages rendered normally, and the
+post-build sweep caught all **117** links as broken — the exact "renders fine, 404s" failure
+the atom's clause names. (e) the sweep's selector pointed at a class that does not exist:
+`checked only 0 in-site links (floor 100)`, so the sweep cannot pass vacuously.
+
+**UNMET — the atom's own gate.** "preface approved by owner" (owner task 7) cannot be
+satisfied by an implementation session. `src/prose/research-preface.md` is drafted plainly
+and factually and carries a stripped-before-publish comment naming the two owner calls:
+the second paragraph's claim about how PersonalClaw is built, and whether the section should
+be published at all before 1.0. Until that approval is recorded, `DL-9` is PARTIAL.
+
+**Discovered, pre-existing, NOT fixed (out of this atom's fence).** Starlight's `editLink`
+produces `github.com/PersonalClaw/PersonalClaw/edit/main/src/content/docs/docs/<tree>/<slug>.md`
+on **every** docs page — a path that does not exist in core, because the baseUrl is core's
+but the appended path is the generated collection's. All 33 docs pages carry a broken "Edit
+page" link today; it surfaced because the new sweep flags `.md` hrefs.
+
+**Gate (website, Node 22.12.0, `npm run test:prepush` → exit 0).** 30 visual baselines,
+marketing manifest, release parity, build + `validate:build`, preview build +
+`validate:preview`, `playwright test` 94 passed / 11 skipped (including new axe runs on
+`/docs/research` and `/docs/research/verification-and-judging` across desktop, mobile and
+reduced-motion, WCAG 2.0 A/AA + 2.1 AA + 2.2 AA), Lighthouse 100/100/100/100 on all five
+marketing routes. One red on the first run — `filtered app directory` visual baseline,
+`.app-directory` never reaching stability inside 7500ms — passed 3/3 when re-run serially
+and touches no file in this change; it is parallel-CPU contention, and it was re-run, not
+weakened. `npm audit` was **not required** (no `package.json`/`package-lock.json` change);
+run anyway it reports 5 pre-existing findings on `origin/main` — high `fast-uri`, `js-yaml`,
+`nanoid`, `undici`, moderate `postcss`. `search_arcc` was unavailable.
+
+**V5 holds.** Three topics spot-checked in `dist` (`memory-architectures`,
+`skills-and-prompt-craft`, `workflow-engine-design`): each renders its H1, carries in-site
+cross-links, and contains zero raw `.md` hrefs. The generated section index links all 14.
