@@ -119,7 +119,20 @@ export function NotificationsPage({ query, setQuery, navigate }: Pick<RouteProps
   // The worst member of the family: the user CONFIRMS a destructive action, it fails, the list comes
   // back unchanged, and silence reads as "cleared".
   async function clearAll() {
-    if (!(await confirm({ title: 'Clear all notifications?', danger: true, confirmLabel: 'Clear all' }))) return
+    // 🪤 A bare title on the app's most total destructive action. Every other danger dialog says what
+    // happens to what — "The shelf goes away. The items on it stay in your library." — and the sibling
+    // in `InboxPage` even names the count ("Dismiss all 4 pending items?"). This said neither.
+    //
+    // The count is `items`, not `filtered`, ON PURPOSE: `clear_notifications()` truncates the whole log
+    // ("Remove all notifications from memory and disk"), so it IGNORES the active filter. A user
+    // looking at 3 of 50 needs the dialog to say 50, or the filter reads as a limit on the action.
+    const total = items?.length ?? 0
+    if (!(await confirm({
+      title: `Clear all ${total} notification${total === 1 ? '' : 's'}?`,
+      body: 'The whole history is removed from disk, including any hidden by the current filter. This cannot be undone.',
+      danger: true,
+      confirmLabel: 'Clear all',
+    }))) return
     await api.clearNotifications().catch((e) => notify(`Couldn't clear notifications: ${String((e as Error)?.message || e)}`, 'error'))
     setOpenTs("")
     load()
