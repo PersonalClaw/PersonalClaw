@@ -353,6 +353,21 @@ describe('the hand-laid bars reach the same idiom', () => {
     ['pages/tasks/TasksListPage.tsx', 'tasks', /active=\{query\.trim\(\)\.length > 0\}/],
     ['pages/artifacts/ArtifactsSection.tsx', 'artifacts', /active=\{!!\(q\.trim\(\) \|\| kind \|\| src \|\| col\)\}/],
     ['pages/files/FilesSection.tsx', 'lines', /active=\{showResults\}/],
+    // The settings area's hand-laid bars. Each `active` is that panel's own narrowed flag, and each
+    // count comes from the array its own body renders.
+    ['pages/settings/ArchivePanel.tsx', 'archived sessions', /active=\{!!needle\}/],
+    // Two dimensions: the text filter AND the level buttons, whose default is the least
+    // restrictive level — comparing to anything else would announce at rest.
+    ['pages/settings/DiagnosticsPanel.tsx', 'lines', /active=\{q !== '' \|\| minLevel !== 'DEBUG'\}/],
+    ['pages/settings/MemoryPanel.tsx', 'memories', /active=\{!!q\.trim\(\) \|\| kindFilter !== 'all'\}/],
+    ['pages/settings/MemoryPanel.tsx', 'events', /active=\{q !== ''\}/],
+    ['pages/settings/ModelsPanel.tsx', 'models', /active=\{!!query\.trim\(\)\}/],
+    // Remote searches: `active` waits for the fetch, or it reports the previous query's count.
+    ['pages/settings/LocalModelManager.tsx', 'models',
+      /active=\{!!query\.trim\(\) && !searching && searchResults !== null\}/],
+    ['pages/settings/OllamaModelManager.tsx', 'models',
+      /active=\{!!q\.trim\(\) && !searching && results !== null\}/],
+    ['pages/settings/SettingsHome.tsx', 'settings', /active=\{q !== ''\}/],
   ]
 
   for (const [rel, noun, active] of DIRECT) {
@@ -361,16 +376,88 @@ describe('the hand-laid bars reach the same idiom', () => {
       expect(src, 'must import the shared piece from the canonical module').toMatch(
         /import \{ ResultAnnouncement \} from '(\.\.\/)+ui\/ListControls'/,
       )
-      const tag = src.match(/<ResultAnnouncement[\s\S]{0,200}?\/>/)?.[0] ?? ''
-      expect(tag, `${rel} must render it`).toMatch(/<ResultAnnouncement/)
-      expect(tag, `the noun must be "${noun}"`).toContain(`noun="${noun}"`)
+      // 🪤 ALL tags, not the first. `MemoryPanel` renders two (the Studio explorer and the audit
+      // log), and a `src.match()` that stops at the first would leave the second unasserted — the
+      // same first-match hole that let `SkillsPage`'s second bar ship silent.
+      const tags = [...src.matchAll(/<ResultAnnouncement[\s\S]{0,260}?\/>/g)].map((m) => m[0])
+      expect(tags.length, `${rel} must render it`).toBeGreaterThanOrEqual(1)
+      const tag = tags.find((t) => t.includes(`noun="${noun}"`)) ?? ''
+      expect(tag, `one of them must use the noun "${noun}"`).toContain(`noun="${noun}"`)
       expect(tag, 'active must be this surface\'s own definition of narrowed').toMatch(active)
-      expect(tag, 'active must never be hardcoded — it would announce at idle').not.toMatch(/active=\{true\}/)
+      for (const t of tags) {
+        expect(t, 'active must never be hardcoded — it would announce at idle').not.toMatch(/active=\{true\}/)
+      }
       // And no second copy of the region: the whole point of the extraction.
       expect(src, 'a hand-rolled region here would be the drift this change removes')
         .not.toMatch(/role="status" aria-live="polite" className="sr-only"/)
     })
   }
+
+  it('each count comes from the array its own body renders', () => {
+    // 🪤 CAUGHT BY MUTATION, and it is the whole defect class: rewriting `SettingsHome`'s count from
+    // its `matches` map to `SETTINGS_WIDGETS.length` — the UNFILTERED total — passed every other
+    // assertion here. The noun and `active` were still perfect; the number was simply a lie. Pinning
+    // `active` without pinning the count leaves the announcement free to describe a different list
+    // than the one on screen.
+    const strip = (t: string) => t.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
+    const COUNTS: Array<[string, RegExp]> = [
+      ['pages/settings/ArchivePanel.tsx', /count=\{shown\.length\}/],
+      ['pages/settings/DiagnosticsPanel.tsx', /count=\{visible\.length\}/],
+      ['pages/settings/ModelsPanel.tsx', /count=\{filtered\.length\}/],
+      ['pages/settings/LocalModelManager.tsx', /count=\{searchResults\?\.length \?\? 0\}/],
+      ['pages/settings/OllamaModelManager.tsx', /count=\{results\?\.length \?\? 0\}/],
+      // Not a filtered array at all: each widget reports whether it matched, and that same map
+      // decides what stays on screen (`anyMatch` reads it), so the two cannot disagree.
+      ['pages/settings/SettingsHome.tsx', /count=\{Object\.values\(matches\)\.filter\(Boolean\)\.length\}/],
+    ]
+    for (const [rel, re] of COUNTS) {
+      expect(strip(readFileSync(join(SRC, rel), 'utf8')), `${rel} must count its own rendered list`)
+        .toMatch(re)
+    }
+    // MemoryPanel's two both read a `shown` — one per tab, each its own memo.
+    const mem = strip(readFileSync(join(SRC, 'pages/settings/MemoryPanel.tsx'), 'utf8'))
+    expect((mem.match(/count=\{shown\.length\}/g) ?? []).length, 'both MemoryPanel lists').toBe(2)
+    // A count read off the PRE-filter collection is the shape being excluded, everywhere.
+    for (const [rel] of COUNTS) {
+      expect(strip(readFileSync(join(SRC, rel), 'utf8')), `${rel} must not count the unfiltered list`)
+        .not.toMatch(/count=\{(?:archives|entries|capable|SETTINGS_WIDGETS|items|events)\.length\}/)
+    }
+  })
+
+  it('EVERY search control in the settings area announces — the area census', () => {
+    // 🔑 A pinned table says "these are right"; a census says "there are no others". The settings
+    // panels are the area this cycle swept end to end, so the claim is total here: every file under
+    // `pages/settings` that renders a search control also renders the announcement. **Zero
+    // exemptions** — if a panel needs one, that is a judgement to write down, not a silent gap.
+    const strip = (t: string) => t.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
+    const withControl = walk(join(SRC, 'pages/settings'))
+      .map((abs) => ({ rel: abs.replace(SRC + '/', ''), src: strip(readFileSync(abs, 'utf8')) }))
+      .filter(({ src }) => /<SearchField\b/.test(src) || /<TextInput[^>]*ariaLabel="(?:Search|Filter)/.test(src))
+    expect(withControl.length, 'the census must find the panels').toBeGreaterThanOrEqual(7)
+    const silent = withControl.filter(({ src }) => !src.includes('<ResultAnnouncement')).map((f) => f.rel)
+    expect(silent, 'a panel that narrows a list without announcing it tells a screen reader nothing')
+      .toEqual([])
+  })
+
+  it('MemoryPanel announces its two LISTS and not its context-preview input', () => {
+    // 🪤 THE ONE JUDGEMENT IN THAT CENSUS, pinned so it is not "finished" later. MemoryPanel holds
+    // THREE search-shaped controls, and only two are filters: the Studio explorer and the audit log.
+    // The third is `InspectTab`'s — you type a query and press a button to see what context a
+    // retrieval WOULD return. Nothing is being narrowed, so a result count would describe nothing.
+    const strip = (t: string) => t.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
+    const src = strip(readFileSync(join(SRC, 'pages/settings/MemoryPanel.tsx'), 'utf8'))
+    const controls = (src.match(/<SearchField\b/g) ?? []).length
+      + (src.match(/<TextInput[^>]*ariaLabel="(?:Search|Filter)/g) ?? []).length
+    expect(controls, 'two SEARCH-shaped controls — the explorer and the audit log').toBe(2)
+    // Exact, not a floor: a third announcement here would be one describing nothing.
+    expect((src.match(/<ResultAnnouncement\b/g) ?? []).length, 'one per filter, no more').toBe(2)
+    // And the third field is why the census needs no exemption for this panel: it is named as a
+    // QUERY, not a filter, so the population never included it. Its text is submitted to produce a
+    // preview — nothing is narrowed, so a result count would describe nothing.
+    expect(src, 'the third field feeds a retrieval preview').toContain('api.memoryContextPreview(q)')
+    expect(src, 'and is named as a query, which is what keeps it out of the census')
+      .toContain('ariaLabel="Query to preview injected memory context"')
+  })
 
   it('ListControls itself routes through the extracted component', () => {
     // If it kept its own inline copy, the two would drift the moment either changed — which is

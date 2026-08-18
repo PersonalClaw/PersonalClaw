@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { ResultAnnouncement } from '../../ui/ListControls'
 import { unavailableWhen } from '../../ui/unavailable'
 import { Download, Trash2, RefreshCw, Loader2, Check, AlertCircle, Info, X } from 'lucide-react'
 import { api, type OllamaLocalModel, type OllamaSearchResult, type OllamaModelInfo } from '../../lib/api'
@@ -138,6 +139,10 @@ function BrowseLibrary({ provider }: { provider: string }) {
           <SearchField variant="inline" size="sm" inlineIconSize={13} value={q} onChange={setQ}
             onKeyDown={(e) => { if (e.key === 'Enter') search() }}
             placeholder="Search ollama.com/library (e.g. llama, qwen, embed)" ariaLabel="Search Ollama model library" />
+          {/* Submitted, not live — so the announcement is the only signal that a search RETURNED
+              something. Waits for the fetch for the same reason as the library search above. */}
+          <ResultAnnouncement count={results?.length ?? 0} noun="models"
+            active={!!q.trim() && !searching && results !== null} />
         </div>
         <button onClick={search}
           {...unavailableWhen(!q.trim(), 'Type a model name first', { busy: searching })}

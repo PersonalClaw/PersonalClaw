@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
+import { ResultAnnouncement } from '../../ui/ListControls'
 import {
   ChevronRight, Check, MessageSquare, Boxes, Mic, Volume2, Eye, ImagePlus,
   Ear, Music, ScanEye, Clapperboard, Users, Download, Code2, BrainCircuit,
@@ -621,9 +622,14 @@ function UseCaseRow({ useCase, activeModels, allModels, health, onChanged }: {
           ) : (
             <>
               {capable.length > 8 && (
-                <SearchField value={query} onChange={setQuery} size="md"
-                  placeholder={`Search ${capable.length} models — name or provider`}
-                  ariaLabel="Search models" />
+                <>
+                  <SearchField value={query} onChange={setQuery} size="md"
+                    placeholder={`Search ${capable.length} models — name or provider`}
+                    ariaLabel="Search models" />
+                  {/* `filtered` is `matched` re-ordered (active models floated to the top), so it is
+                      the array the body maps and the one the count must come from. */}
+                  <ResultAnnouncement count={filtered.length} noun="models" active={!!query.trim()} />
+                </>
               )}
               {filtered.length === 0 ? (
                 <div className="rounded-md border border-dashed border-outline-variant/50 px-3 py-3 text-on-surface-low text-[0.8125rem] italic">
