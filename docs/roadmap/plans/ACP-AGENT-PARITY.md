@@ -1252,3 +1252,49 @@ evidence instead.
   **BOUNDARY:** claude-code and codex were not re-driven live (their adapters are not installed on
   this machine), so their "residual set EMPTY" entries carry `AAP-1`/`AAP-2`'s measurement, not a
   fresh one — and per `G27` an empty set is a measurement, never a guarantee.
+- 2026-08-18 — `AAP-4` **PARTIAL** (§2.1 MCP reachability, gap 1). Both prongs implemented and
+  **both measured working on kiro-cli**, the only ACP CLI installed on this machine; claude-code and
+  codex are NOT-EXERCISED for the honest reason that their adapters are absent.
+  **Prong A (protocol) — `O18`'s open question is now ANSWERED for kiro: HONORED.** `client.py`'s
+  three `session/new`/`session/load` sites and the pooled opener now carry the `personalclaw-core`
+  spec (name + `personalclaw mcp-core` + an `env` array). Driven end to end, kiro spawned the server
+  from the protocol field alone (a `personalclaw mcp-core` process appeared for the session's life,
+  with no seeded config present) and invoked `@personalclaw-core/get_context` and
+  `@personalclaw-core/notify`; `notify` returned `Message sent.` and the notification landed in the
+  isolated home. So `G3`'s "no `personalclaw-core` surface at all" is closed for kiro **without any
+  user-config mutation** — the outcome §2.1 called "the clean fix".
+  **Session inject-back CONFIRMED via the env leg:** the SEL rows for the turn carry
+  `caller_identity = <the session key passed in the spec's env>`, i.e. `mcp_core._resolve_session_key`
+  read `PERSONALCLAW_SESSION_KEY` off the protocol-passed env. The `session_pid_<pid>.txt` leg was
+  NOT exercised here (the probe is not the gateway's session manager, which owns those files);
+  `O11` already measured that file as written on the real path.
+  **Prong B (seeding) — measured discoverable, and the plan's placement is worse than an
+  alternative.** `personalclaw` appears in kiro's `availableModes` (27 → 28 agents) once the
+  generated config is seeded. **DISCOVERY:** seeding `<cwd>/.kiro/agents/` — kiro's *workspace*
+  discovery root, which for an ACP session is the PersonalClaw workspace dir — is discovered just as
+  reliably as `~/.kiro/agents/` and mutates nothing of the user's real config. §2.1 prong B should
+  prefer the cwd root over the `~/.kiro/agents/` symlink it currently specifies.
+  **`G31` fixed at the generator.** The bundled bash-audit hook's literal `~/.personalclaw/audit.log`
+  now resolves against `config_dir()` at generation time (a `{{PERSONALCLAW_AUDIT_LOG}}` token
+  expanded in `agent.build_agent_config` / `_refresh_dynamic_fields`, fail-closed on any surviving
+  placeholder). Verified in the live generated file, and the operator's real
+  `~/.personalclaw/audit.log` was **never created** across the whole session — including the seeded
+  run where kiro genuinely loaded our agent config — with the real home's file count identical
+  before and after.
+  **BLOCKER on two acceptance clauses (premise mismatch, not a wiring gap):** §2.1's acceptance and
+  Success Criterion 2 name `knowledge_search` and `task_create`, but **neither tool exists in the
+  `personalclaw-core` surface**. `mcp-core` serves 68 tools (artifacts / workflows / memory /
+  subagents / skills / automation / notify), matching `:34`'s own description; `knowledge_search` and
+  `task_create` are **native-registry-only** (`agents/native/builtin_tools.py`). No amount of
+  reachability wiring can surface them — exporting those two tool groups from `mcp_core` is separate
+  scope. `notify` and `subagent_run` ARE in the surface (`notify` driven; `subagent_run` present in
+  the session's tool list but not invoked).
+  **DISCOVERY (inert control):** the bundled `postToolUse|bash` audit hook can never fire for our own
+  generated agent, because that config's `tools`/`allowedTools` is exactly `["@personalclaw-core"]` —
+  it has no bash tool to post-hook. The hook is correct and now correctly-pathed, and still dead for
+  the one agent it ships with.
+  **NOTE for the owner:** prong B's seeder has no production declarer. It is deliberately opt-in via
+  a new `agent_config_dir` parameter on `register_acp_cli_entry` (which directory a CLI reads is
+  vendor knowledge, so it stays in the bundle), and no bundle declares it because prong A is measured
+  to work on the only CLI we can drive. That is one line in `PersonalClawApps/kiro-cli-agent/
+  provider.py` whenever a CLI is measured to ignore the protocol field.

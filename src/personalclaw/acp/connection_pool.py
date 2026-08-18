@@ -260,6 +260,7 @@ class AcpConnectionPool:
                 session_files_dir=session_files_dir,
                 model=model,
                 agent_name=agent_name,
+                session_key=session_key,
                 mcp_servers=mcp_servers,
             )
         except Exception:

@@ -31,7 +31,7 @@ import logging
 import os
 import time
 from pathlib import Path
-from typing import TYPE_CHECKING, AsyncIterator
+from typing import TYPE_CHECKING, Any, AsyncIterator
 
 if TYPE_CHECKING:
     from collections import deque
@@ -171,6 +171,19 @@ class AcpClient:
         self._session_new_snapshot: dict[str, object] = {}
         self.last_prompt_stats = AcpPromptStats()
         self._last_stop_reason: str = ""
+
+    def _core_mcp_servers(self) -> list[dict[str, Any]]:
+        """The ``mcpServers`` array every ``session/new``/``session/load`` sends.
+
+        Prong A of ACP-AGENT-PARITY §2.1: without it a session sees only the CLI's
+        own tools and none of knowledge / tasks / inbox / artifacts / workflows /
+        subagents / notify. Rebuilt per call so a ``rekey()``-ed warm process
+        carries the CURRENT session key into the server's env, not the key the
+        process was first spawned with.
+        """
+        from personalclaw.acp.mcp_servers import core_mcp_servers
+
+        return core_mcp_servers(session_key=self._session_key)
 
     # ── transport-state proxies ────────────────────────────────────────────────
     # The process + PID/child-PID + stderr + activity clock physically live on the
@@ -442,7 +455,7 @@ class AcpClient:
                         {
                             "sessionId": resume_sid,
                             "cwd": str(self._work_dir),
-                            "mcpServers": [],
+                            "mcpServers": self._core_mcp_servers(),
                             "_meta": {"_vendor.dev/session_file": session_file},
                         },
                         session_id=resume_sid,
@@ -463,7 +476,7 @@ class AcpClient:
         # 3. Create a new session if load didn't succeed.
         if not self._session_id:
             self._session = await conn.new_session(
-                {"cwd": str(self._work_dir), "mcpServers": []},
+                {"cwd": str(self._work_dir), "mcpServers": self._core_mcp_servers()},
                 timeout=_INIT_TIMEOUT,
                 session_files_dir=self._session_files_dir,
             )
@@ -525,7 +538,7 @@ class AcpClient:
         # initialize() is one-per-process and already done, so re-open just the session.
         conn = self._connection
         self._session = await conn.new_session(
-            {"cwd": str(self._work_dir), "mcpServers": []},
+            {"cwd": str(self._work_dir), "mcpServers": self._core_mcp_servers()},
             timeout=_INIT_TIMEOUT,
             session_files_dir=self._session_files_dir,
         )
