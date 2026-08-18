@@ -5927,7 +5927,7 @@
           "scope": "Session 3 \u2014 Launch assets (T3.1)",
           "done_when": "src/personalclaw/tests_fixtures/demo-home/ exists following the empty-fixture layout with believable non-personal data (project, tasks, knowledge docs, memory entries, one loop); `personalclaw gateway --seed demo-home` boots a demo-ready dashboard",
           "deps": [],
-          "pr": null
+          "pr": 1602
         },
         {
           "id": "DL-5",
