@@ -2261,6 +2261,10 @@ export interface RunnerRow {
   id: string; display_name: string; runtime_id: string; source: string
   dialect: string; bin_names: string[]
   health: RunnerHealth | null
+  // Whether `health` is still current per `agent.runner_health_check_secs`. `null` is
+  // unknown (never probed, or a timestamp the backend could not parse) — distinct from
+  // `false`, which is a positive statement that the reading is fresh.
+  health_stale: boolean | null
   capabilities: RunnerCapabilities | null
   adapter: { npm_pkg: string; pinned: boolean; state: string; verified: boolean; detail: string }
 }

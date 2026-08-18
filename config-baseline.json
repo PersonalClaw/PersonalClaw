@@ -48,6 +48,12 @@
     "type": "str"
   },
   {
+    "default": 3600,
+    "path": "agent.runner_health_check_secs",
+    "sensitive": false,
+    "type": "int"
+  },
+  {
     "default": "auto",
     "path": "agent.sandbox",
     "sensitive": false,

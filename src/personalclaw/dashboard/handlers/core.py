@@ -718,6 +718,10 @@ _EDITABLE_CONFIG: dict[str, dict] = {
     # (agents/runners.verify_adapter), so a PATCH here can only turn the requirement
     # on or off, never widen what "verified" means.
     "agent.unattended_requires_verified_adapter": {"type": "bool"},
+    # EI-5 — how long a runner's measured health evidence counts as current. Bounded
+    # below at a minute (a shorter window would mark every row overdue between two
+    # clicks) and above at a day.
+    "agent.runner_health_check_secs": {"type": "int", "min": 60, "max": 86_400},
     # PROMPT-CACHE-SUBSTRATE §C6 — the prompt-cache switch (default ON). Off collapses
     # the provider's declared cache mode to NONE, which is the byte-identical no-marker
     # path an undeclared provider already takes. It does NOT revert the §C2/§C3 wire

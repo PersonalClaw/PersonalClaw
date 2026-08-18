@@ -994,20 +994,30 @@ class SessionManager:
 
         # ── Unattended adapter-verification gate (EXECUTION-ISOLATION §3.2, EI-5) ──
         # Past this line the call CREATES a runner — it claims a warm/pooled process,
-        # opens a session on a shared ACP connection, or cold-starts one. When the
-        # caller is UNATTENDED (cron / scheduled run / loop worker: subagent.py sets
-        # ``unattended``) and the resolved runtime is an external ACP runner, the
+        # opens a session on a shared ACP connection, or cold-starts one. When the spawn
+        # is UNATTENDED and the resolved runtime is an external ACP runner, the
         # ``agents.unattended_requires_verified_adapter`` flag requires that runner's
         # adapter to have verified provenance — so background work can never launch an
         # `npx -y` fetch-at-launch or an adapter that changed underneath its install.
         # Placed HERE, above all three creation branches, because a gate on only one of
         # them is a gate with two holes.
+        #
+        # Unattendedness is DERIVED from the session key via the guardrail layer's own
+        # classifier, not taken on trust from the caller. Only ``subagent.py`` passes
+        # ``unattended=True``; the cron parent session, the ``_bg`` heartbeat, loop-cycle
+        # workers, the inbox/side sweeps, channel deliveries and sessionless trigger
+        # dispatches all arrive here without it — nine unattended families that a
+        # kwarg-only gate silently let through. One vocabulary, no per-caller opt-in: the
+        # kwarg is still honoured (it names a spawn the key cannot describe), but it is
+        # no longer the only way to be seen as unattended.
         from personalclaw.agents.runners import guard_unattended_spawn, runtime_id_for_agent
+        from personalclaw.guardrails.policy import is_unattended_session
 
         _runtime_id = str(extra_factory_kwargs.get("provider_kind") or "")
         if not _runtime_id.startswith("acp"):
             _runtime_id = runtime_id_for_agent(agent)
-        guard_unattended_spawn(_runtime_id, unattended=bool(extra_factory_kwargs.get("unattended")))
+        _unattended = bool(extra_factory_kwargs.get("unattended")) or is_unattended_session(key)
+        guard_unattended_spawn(_runtime_id, unattended=_unattended)
 
         # Check session map for resume — only for long-lived sessions
         resume_sid: str | None = None
