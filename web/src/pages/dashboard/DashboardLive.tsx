@@ -1,4 +1,5 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from 'react'
+import { reportingWrite } from '../../app/reportingWrite'
 import { useChatSocket, type WsMessage } from '../../lib/useChatSocket'
 import { useVisiblePoll } from '../../lib/useVisiblePoll'
 import { api } from '../../lib/api'
@@ -112,8 +113,11 @@ export function DashboardLiveProvider({ children }: { children: ReactNode }) {
 
   // Dismiss persists server-side; on success refetch so the tip drops from the
   // feed (or the "explored everything" empty state shows).
-  const dismissDiscoverTip = useCallback((id: string) => {
-    api.dismissDiscoverTip(id).then(() => loadDiscover()).catch(() => {})
+  // The refetch was already gated on success — only the failure was silent, so the tip simply stayed
+  // put with nothing said and the click read as doing nothing at all.
+  const dismissDiscoverTip = useCallback(async (id: string) => {
+    if (!(await reportingWrite('dismiss that tip', () => api.dismissDiscoverTip(id)))) return
+    loadDiscover()
   }, [loadDiscover])
 
   const refreshAll = useCallback(() => {
