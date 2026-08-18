@@ -243,16 +243,19 @@ describe('the family is DERIVED, so the next pill group cannot be missed', () =>
    *  its own cycle rather than given the wrong one. Every entry was read before being listed — a false
    *  positive recorded as pending is a filed non-finding:
    *
-   *    pages/ChatPage.tsx             a DISCLOSURE (`open = expanded === p`) — wants `aria-expanded`
-   *    pages/prompts/SyntaxReference  the same disclosure shape, same marker
    *    pages/tasks/TasksListPage.tsx  the active task-list pill (`isActive = active === l.id`) — this
    *                                   one IS this rail's form and is simply not done yet
    *
-   *  `ui/Combobox.tsx` came OFF this list: it now declares listbox semantics (see
+   *  🔑 `ChatPage` and `SyntaxReference` came off this list WITHOUT being fixed here, because listing
+   *  them here was a mistake of the same kind this file's history is full of: they are DISCLOSURES
+   *  (`{open && …}`), and `ui/disclosureAnnounced.test.ts` is the ledger that owns that family. Keeping
+   *  a second copy of its members here is how a census ends up reading as complete while its verdicts
+   *  live in two files. They are now fixed and asserted THERE, under the accordion sweep that file
+   *  gained for exactly this shape.
+   *
+   *  `ui/Combobox.tsx` came off for the ordinary reason: it declares listbox semantics now (see
    *  `ui/comboboxListbox.test.tsx`). The list may only ever shrink. */
   const PENDING = new Set([
-    'pages/ChatPage.tsx',
-    'pages/prompts/SyntaxReference.tsx',
     'pages/tasks/TasksListPage.tsx',
   ])
 

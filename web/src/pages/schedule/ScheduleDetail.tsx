@@ -306,7 +306,8 @@ export function RunHistory({ triggerId, reloadKey = 0 }: { triggerId: string; re
           const expanded = openRun === id
           return (
             <div key={id} className="rounded-md bg-surface-container overflow-hidden">
-              <button type="button" onClick={() => setOpenRun(expanded ? null : id)} className="flex w-full items-center gap-s px-m py-2 text-left hover:bg-surface-high transition-colors">
+              <button type="button" aria-expanded={expanded} onClick={() => setOpenRun(expanded ? null : id)}
+                className="flex w-full items-center gap-s px-m py-2 text-left hover:bg-surface-high transition-colors">
                 <ChevronRight size={14} className={`shrink-0 text-on-surface-low transition-transform ${expanded ? 'rotate-90' : ''}`} />
                 <sm.icon size={14} style={{ color: sm.tone }} className="shrink-0" />
                 <span className="flex-1 truncate text-on-surface text-[0.8125rem]">{mdToPlain(r.summary || r.error) || sm.label}</span>
