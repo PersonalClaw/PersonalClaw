@@ -49,12 +49,17 @@ class AcpSessionProvider(AgentProvider):
         runtime_id: str,
         model: str = "",
         agent_name: str = "",
+        unattended: bool = False,
     ) -> None:
         self._conn = connection
         self._session = session
         self._runtime_id = runtime_id
         self._model = model
         self._agent_name = agent_name
+        # §2.3 gap 3 — same contract as AcpClient._unattended, on the POOLED door.
+        # Defaults False so a pooled session a caller forgot to classify keeps AAP-5's
+        # clamp; only an explicitly unattended session may keep an auto-approve mode.
+        self._unattended = bool(unattended)
 
     # ── identity ────────────────────────────────────────────────────────────────
     @property
@@ -200,7 +205,7 @@ class AcpSessionProvider(AgentProvider):
         # very sessions AcpClient refuses to.
         from personalclaw.acp.permission_authority import sanitize_mode
 
-        decision = sanitize_mode(mode)
+        decision = sanitize_mode(mode, unattended=self._unattended)
         if decision.downgraded:
             logger.warning("ACP pooled permission mode clamped: %s", decision.reason)
             try:
@@ -228,6 +233,15 @@ class AcpSessionProvider(AgentProvider):
             session_id=self._session.session_id, effort=effort
         )
         await self._send_dialect_request(req)
+
+    def set_unattended(self, unattended: bool) -> None:
+        """Declare this session unattended BEFORE :meth:`set_mode` (§2.3).
+
+        A pooled connection is warmed generic — attended by default — so a session
+        claimed for an unattended run must say so here or its ``bypassPermissions``
+        is clamped back to the host-authority mode on the next line. Ordering is
+        load-bearing: ``set_mode`` reads this flag."""
+        self._unattended = bool(unattended)
 
     def set_session_key(self, session_key: str, channel_id: str | None = None) -> None:
         return None  # the session key was bound at connection spawn (env)
@@ -264,6 +278,7 @@ async def open_acp_session_provider(
     model: str = "",
     agent_name: str = "",
     mcp_servers: list | None = None,
+    unattended: bool = False,
 ) -> "AcpSessionProvider":
     """Open a new session on an already-live (spawned + ``initialize``-d) connection and
     wrap it in an :class:`AcpSessionProvider`. Multiple calls on the same connection =
@@ -274,5 +289,10 @@ async def open_acp_session_provider(
         session_files_dir=session_files_dir,
     )
     return AcpSessionProvider(
-        connection, session, runtime_id=runtime_id, model=model, agent_name=agent_name
+        connection,
+        session,
+        runtime_id=runtime_id,
+        model=model,
+        agent_name=agent_name,
+        unattended=unattended,
     )

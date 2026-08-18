@@ -531,6 +531,12 @@ class SessionManager:
                     await provider.set_agent(_acp_agent)
                 if model:
                     await provider.set_model(model)
+                # §2.3: declare unattended BEFORE the mode. A warmed pool connection
+                # is attended by default, so without this the loop's
+                # bypassPermissions is clamped straight back to the host-authority
+                # mode by AAP-5's gate — the mode would silently stay "default".
+                if hasattr(provider, "set_unattended"):
+                    provider.set_unattended(bool(extra_factory_kwargs.get("unattended")))
                 _acp_mode = str(extra_factory_kwargs.get("acp_mode") or "")
                 if _acp_mode and hasattr(provider, "set_mode"):
                     await provider.set_mode(_acp_mode)
@@ -604,6 +610,9 @@ class SessionManager:
                     await provider.set_agent(agent)
                 if model:
                     await provider.set_model(model)
+                # §2.3: unattended before mode, exactly as on the claim path above.
+                if hasattr(provider, "set_unattended"):
+                    provider.set_unattended(bool(extra_factory_kwargs.get("unattended")))
                 _mode = str(extra_factory_kwargs.get("acp_mode") or "")
                 if _mode and hasattr(provider, "set_mode"):
                     await provider.set_mode(_mode)

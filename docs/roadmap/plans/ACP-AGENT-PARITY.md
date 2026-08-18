@@ -1252,3 +1252,55 @@ evidence instead.
   **BOUNDARY:** claude-code and codex were not re-driven live (their adapters are not installed on
   this machine), so their "residual set EMPTY" entries carry `AAP-1`/`AAP-2`'s measurement, not a
   fresh one — and per `G27` an empty set is a measurement, never a guarantee.
+- 2026-08-18 — `AAP-6` **PARTIAL** (§2.3, gaps 3 and 5). Written against `AAP-5` and shipped FLAT on
+  `main`: `AAP-5`'s PR reads `CLOSED` rather than merged, but all seven of its files are byte-identical
+  between its commit and `origin/main`, so the duplicate commit was dropped rather than stacked.
+  **Gap 3 — unattended threading.** `unattended` no longer dies at the bridge: it is still popped
+  (the MODEL-axis resolvers must never see it) and re-injected for `_kind == "acp"`, then threaded
+  `acp_agent._factory` → `AcpAgentProvider._unattended` → `AcpClient(unattended=)` →
+  `sanitize_mode(mode, unattended=…)`. The pooled/concurrent door gets the same axis via
+  `AcpSessionProvider(unattended=)` plus a `set_unattended()` the claim path calls **before**
+  `set_mode` (a warmed pool connection is attended by default, so without it the loop's
+  `bypassPermissions` was clamped straight back). Resolving the tension with `AAP-5` is the whole
+  atom: an unattended session may keep an auto-approve mode, an interactive one may not, and the
+  widening is audited (`mode_change:unattended_auto_approve`) rather than only the clamp.
+  **Unified beyond loops:** the unattended axis is now derived from
+  `guardrails.policy.is_unattended_session(session.key)` OR the loop manager's explicit
+  `session._unattended`, so cron/scheduled/subagent/channel/inbox/side runs get it too — §2.3 asked
+  for exactly that, and it makes ONE definition of "nobody is watching" govern both the HEADLESS
+  safety profile and the permission path. **Host-side fail-fast** sits as the LAST gate before
+  `chat_runner`'s interactive-approval park (after trust/YOLO and after every deny path), so it can
+  only ever convert a two-hour stall into an immediate audited denial — never a denial into an
+  approval.
+  **Gap 5 — the loop breaker.** `_FailureBreaker` + `_params_key` + `_result_digest` + the four
+  thresholds moved out of `agents/native/runtime.py` into `guardrails/loop_breaker.py` as
+  `LoopBreaker` (a clean-break extraction — no alias shim; the two test files importing the private
+  names were updated). The standard notices moved with it as builders, so "the standard breaker
+  message" is now ONE string both runtimes emit. `chat_runner` runs the same counter over the
+  neutral ACP stream: warn → block-notice → turn-abort via `cancel_session()` at the circuit.
+  **DISCOVERY — this is why `G6` measured nothing:** `translate.extract_tool_update_events` emitted a
+  byte-identical `EVENT_TOOL_RESULT` for `status: "completed"` and `status: "failed"`, so the host was
+  never told an ACP tool had failed at all. No amount of counting downstream could have worked. It
+  now carries `tool_meta={"ok": False}` on failure only (matching the native contract, so no
+  existing reader changes on a passing call) — which also lights up the tool card's existing failure
+  colour-coding for free.
+  **Live drive (kiro-cli only — claude-code and codex adapters are not installed here, same boundary as
+  `AAP-1`/`AAP-2`/`AAP-4`/`AAP-5`).** A `cron:`-keyed unattended session forwarded
+  `bypassPermissions`, kiro raised `session/request_permission` anyway (it has no mode axis — the
+  documented asymmetry, confirmed live), and the host auto-denied it: the turn ended
+  `stop_reason='refusal'` in seconds instead of parking. The same drive on an interactive key clamped
+  to `default` and rendered an approval card that waited for a human — the clamp and the fail-fast are
+  both live and both key off the session, not the content. The breaker's **structural (no-progress)
+  rung fired twice on real kiro turns**, injecting its notice into the transcript after the third
+  identical result.
+  **BOUNDARY / measured limitation:** the breaker's *failure* rungs (warn/block/circuit) were NOT
+  reached live, because kiro never emitted `status: "failed"` in any drive — a non-zero shell exit is
+  reported as a COMPLETED tool call carrying the exit status as content, and an unavailable tool never
+  becomes a tool call at all. For kiro's shell tool the failure rungs are therefore unreachable and
+  the structural rung is what catches a repetition loop; the failure path is proven only by driven
+  synthetic-stream tests (`tests/test_acp_unattended_and_loop_breaker.py`), plus the unit mapping of
+  `status: "failed"` → `ok: False`, which any protocol-conformant CLI will exercise. Whether
+  claude-code/codex report `status: "failed"` for a failing command is unmeasured here.
+  **BOUNDARY:** the ACP observer can warn and abort BETWEEN protocol frames; it cannot refuse a call
+  pre-execution the way the native runtime can. That asymmetry is stated in `loop_breaker`'s module
+  docstring and belongs in §2.7's parity doc when that atom lands.
