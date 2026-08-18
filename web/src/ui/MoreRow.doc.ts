@@ -8,6 +8,7 @@ const doc: UiDoc = {
   props: [
     { name: 'total', description: 'How many items exist — the number the surrounding label states.' },
     { name: 'shown', description: 'How many are rendered: the cap actually applied by the caller\'s `.slice(0, n)`. Must match it, or the residue is wrong.' },
+    { name: 'noun', description: 'Plural word for what is hidden, when "… 6 more" alone would not say. Beneath a stacked list the subject is obvious from what sits above it; beneath a TABLE it is not, because rows and columns are very different facts about the data being read.' },
     { name: 'className', description: 'Layout-only override for a caller whose list is a chip row rather than stacked rows (e.g. `px-1`).' },
   ],
   bestPractices: [

@@ -93,6 +93,8 @@ export const CsvPreview = memo(function CsvPreview({ content, name }: { content:
           ))}
         </tbody>
       </table>
+      {/* Same as the tool-result table: 500 rows in, the file just appears to end. */}
+      <MoreRow total={body.length} shown={500} noun="rows" className="px-3 py-1.5" />
       {body.length > 500 && <div className="border-t border-outline/25 py-2.5 text-center text-on-surface-low text-[0.75rem]">Showing 500 of {body.length} rows</div>}
     </div>
   )
