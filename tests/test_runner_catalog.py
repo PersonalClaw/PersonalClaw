@@ -239,6 +239,93 @@ async def test_verbatim_error_survives_to_the_api_response():
     assert row["health"]["latency_ms"] is None
 
 
+_FLIP_BIN = "pclaw-flip-runner"
+_FLIP_ENV = "PCLAW_FLIP_RUNNER_BIN"
+
+
+def _flip_runner() -> runners.RunnerDefinition:
+    return runners.RunnerDefinition(
+        id="flip-runner",
+        display_name="Flip Runner",
+        runtime_id="acp:flip-runner",
+        bin_names=(_FLIP_BIN,),
+        env_var=_FLIP_ENV,
+    )
+
+
+def test_removing_a_runner_from_path_flips_a_healthy_row_to_unhealthy(monkeypatch, tmp_path):
+    """The done-when clause, driven as a TRANSITION rather than two separate states.
+
+    Probing an absent binary and probing a present one are both already covered, but
+    neither proves the thing a user actually experiences: a row that WAS healthy, with a
+    recorded version and latency, has to flip — and it has to flip in the persisted
+    sidecar, because that file is what the Settings surface paints from on a plain
+    (non-probing) load. A ``last_check`` that merged instead of replacing would keep
+    serving ``v4.2.0`` next to the failure, which is a stale reading dressed as a
+    current one.
+
+    PATH is manipulated for real (``monkeypatch.setenv("PATH", ...)``) rather than by
+    toggling the env override, because the clause is about the binary leaving PATH and
+    the override is a different resolution step.
+    """
+    monkeypatch.delenv(_FLIP_ENV, raising=False)
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    empty_dir = tmp_path / "empty"
+    empty_dir.mkdir()
+    _write_exec(bin_dir / _FLIP_BIN, "#!/bin/sh\necho 'flip-runner 4.2.0'\n")
+
+    defn = _flip_runner()
+
+    # ── installed ──
+    monkeypatch.setenv("PATH", str(bin_dir))
+    healthy = runners.probe_runner(defn)
+    assert healthy.ok is True, f"positive control failed: {healthy.error}"
+    assert healthy.version == "4.2.0"
+    assert healthy.latency_ms is not None
+    persisted = json.loads(runners.sidecar_path("flip-runner").read_text(encoding="utf-8"))
+    assert persisted["last_check"]["ok"] is True
+    assert persisted["last_check"]["version"] == "4.2.0"
+
+    # ── removed from PATH ──
+    monkeypatch.setenv("PATH", str(empty_dir))
+    flipped = runners.probe_runner(defn)
+    assert flipped.ok is False
+    assert flipped.error == (
+        f"'{_FLIP_BIN}' not found on PATH (looked for: {_FLIP_BIN}); "
+        f"set {_FLIP_ENV} to override"
+    ), "the flipped row must carry the resolver's verbatim reason"
+    assert flipped.version is None, "the pre-removal version survived the flip"
+    assert flipped.latency_ms is None, "a latency was reported for a probe that never ran"
+
+    # What the surface reads on a plain load — the sidecar, not the return value.
+    reread = runners.load_evidence("flip-runner")
+    assert reread is not None
+    assert reread.ok is False
+    assert reread.version is None
+    assert reread.error == flipped.error
+
+
+def test_a_runner_that_stays_on_path_stays_healthy(monkeypatch, tmp_path):
+    """VACUITY FLOOR for the flip. A second probe with the binary still installed must
+    NOT flip — otherwise "flips unhealthy" would pass for a probe that fails on every
+    re-run for some unrelated reason (a cleared PATH breaking the resolver outright, a
+    sidecar write that loses ``ok``)."""
+    monkeypatch.delenv(_FLIP_ENV, raising=False)
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    _write_exec(bin_dir / _FLIP_BIN, "#!/bin/sh\necho 'flip-runner 4.2.0'\n")
+    monkeypatch.setenv("PATH", str(bin_dir))
+
+    defn = _flip_runner()
+    assert runners.probe_runner(defn).ok is True
+    again = runners.probe_runner(defn)
+    assert again.ok is True
+    assert again.version == "4.2.0"
+    reread = runners.load_evidence("flip-runner")
+    assert reread is not None and reread.ok is True
+
+
 # ── adapter pin + verify ──────────────────────────────────────────────────────
 
 
@@ -486,6 +573,70 @@ async def test_uncataloged_runtime_fails_closed(monkeypatch, tmp_path):
     assert calls == []
 
 
+# Every session-key family :func:`personalclaw.guardrails.policy.is_unattended_session`
+# classifies as unattended. The list is the classifier's own vocabulary — cron fires,
+# loop-cycle workers, the shared ``_bg`` background/heartbeat key, subagents, the inbox
+# and side sweeps, channel deliveries, and a sessionless ``unattended:`` dispatch.
+_UNATTENDED_KEYS = [
+    "cron:nightly-digest",
+    "loop-42",
+    "loop:goal-7",
+    "_bg",
+    "subagent:abc123",
+    "inbox:sweep",
+    "side:suggestions",
+    "channel:telegram:1",
+    "unattended:trigger:file-watch-3",
+]
+
+
+@pytest.mark.parametrize("session_key", _UNATTENDED_KEYS)
+@pytest.mark.asyncio
+async def test_gate_derives_unattendedness_from_the_session_key(monkeypatch, tmp_path, session_key):
+    """The gate must not depend on a caller REMEMBERING to say ``unattended=True``.
+
+    The flag's promise is "nothing unproven runs while nobody is watching", and the
+    help text names cron / scheduled runs / loop workers. But only ONE caller in the
+    tree passes the kwarg (``subagent.py``): the cron parent session, the ``_bg``
+    heartbeat, loop-cycle workers, the inbox/side sweeps, channel deliveries and
+    sessionless trigger dispatches all reach ``get_or_create`` without it. So the gate
+    resolves unattendedness from the session KEY through the same classifier the
+    guardrail layer already uses — one vocabulary, no per-caller opt-in.
+
+    Note NO ``unattended=`` kwarg below: that is the whole point of the test.
+    """
+    mgr, calls = _gate_fixture(monkeypatch, flag=True, verified=False, tmp_path=tmp_path)
+    with pytest.raises(runners.UnverifiedAdapterError) as exc:
+        await mgr.get_or_create(session_key, provider_kind="acp:fake-runner")
+    assert "not verified" in str(exc.value)
+    assert calls == [], f"{session_key} spawned an unverified runner despite the flag"
+
+
+@pytest.mark.parametrize("session_key", ["chat:abc", "project:demo:main", "web:panel"])
+@pytest.mark.asyncio
+async def test_attended_session_keys_are_still_never_gated(monkeypatch, tmp_path, session_key):
+    """VACUITY FLOOR for the key-derived gate.
+
+    Without this, "unattended keys are refused" could pass by refusing EVERY key —
+    which would break interactive chat, the one thing the flag promises not to touch.
+    """
+    mgr, calls = _gate_fixture(monkeypatch, flag=True, verified=False, tmp_path=tmp_path)
+    await mgr.get_or_create(session_key, provider_kind="acp:fake-runner")
+    assert len(calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_key_derived_gate_still_obeys_the_flag(monkeypatch, tmp_path):
+    """Second floor: an unattended KEY with the flag off proceeds.
+
+    A key-derived gate that fired regardless of the flag would be a behaviour change
+    for every install, not an opt-in control.
+    """
+    mgr, calls = _gate_fixture(monkeypatch, flag=False, verified=False, tmp_path=tmp_path)
+    await mgr.get_or_create("cron:nightly-digest", provider_kind="acp:fake-runner")
+    assert len(calls) == 1
+
+
 # ── config round-trip: the two points test_config_roundtrip does not cover ────
 
 
@@ -528,6 +679,112 @@ def test_frontend_exposes_the_toggle():
     ).read_text(encoding="utf-8")
     assert 'field="unattended_requires_verified_adapter"' in panel
     assert "RunnersSection" in panel
+
+
+# ── the second §3.2 field: agent.runner_health_check_secs, and its READER ──────
+#
+# A config field whose value nothing consults is a knob that lies. So the round-trip
+# assertions below are paired with the reader: the staleness verdict the row carries has
+# to MOVE when the field moves, and the surface has to render it.
+
+
+def test_health_check_interval_is_in_the_editable_patch_allowlist():
+    from personalclaw.dashboard.handlers.core import _EDITABLE_CONFIG
+
+    assert _EDITABLE_CONFIG.get("agent.runner_health_check_secs") == {
+        "type": "int",
+        "min": 60,
+        "max": 86_400,
+    }
+
+
+def test_health_check_interval_survives_a_file_round_trip(tmp_path, monkeypatch):
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("PERSONALCLAW_HOME", str(home))
+    (home / "config.json").write_text(
+        json.dumps({"agent": {"runner_health_check_secs": 900}}), encoding="utf-8"
+    )
+    cfg = AppConfig.load()
+    assert cfg.agent.runner_health_check_secs == 900
+    assert cfg.to_dict()["agent"]["runner_health_check_secs"] == 900
+
+
+def test_a_hand_edited_out_of_range_interval_is_clamped(tmp_path, monkeypatch):
+    """The loader clamps to the same window the PATCH allowlist enforces — otherwise
+    ``config.json`` could express a staleness window the dashboard refuses to save."""
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("PERSONALCLAW_HOME", str(home))
+    (home / "config.json").write_text(
+        json.dumps({"agent": {"runner_health_check_secs": 1}}), encoding="utf-8"
+    )
+    assert AppConfig.load().agent.runner_health_check_secs == 60
+
+
+def test_frontend_exposes_the_health_check_interval():
+    panel = (
+        Path(__file__).resolve().parents[1] / "web/src/pages/settings/AgentDefaultsPanel.tsx"
+    ).read_text(encoding="utf-8")
+    assert 'field="runner_health_check_secs"' in panel
+    assert "row.health_stale === true" in panel
+
+
+def test_the_interval_actually_decides_whether_a_row_reads_stale(monkeypatch, tmp_path):
+    """THE READER. One recorded measurement, two configured windows, two verdicts.
+
+    Both legs assert on the row dict the API hands the UI, so this covers the whole
+    chain — config field → ``health_check_interval_secs`` → ``evidence_is_stale`` →
+    ``RunnerRow.to_dict``. The fresh leg is the vacuity floor: without it a reader that
+    hard-returned ``True`` would pass the stale leg on its own.
+    """
+    _byo({"id": "aging-runner", "display_name": "Aging Runner", "bin_names": [_MISSING_BIN]})
+    from datetime import datetime, timedelta, timezone
+
+    recorded = datetime.now(timezone.utc) - timedelta(seconds=1800)
+    runners.record_evidence(
+        "aging-runner",
+        runners.HealthEvidence(
+            ok=True,
+            probe="version",
+            checked_at=recorded.isoformat(timespec="seconds"),
+            version="1.0.0",
+            latency_ms=12,
+        ),
+    )
+
+    def _row(interval: int) -> dict:
+        cfg = AppConfig.load()
+        cfg.agent.runner_health_check_secs = interval
+        monkeypatch.setattr(AppConfig, "load", classmethod(lambda _cls: cfg))
+        rows = runners.runner_rows(probe=False)
+        return next(r for r in rows if r.definition.id == "aging-runner").to_dict()
+
+    stale = _row(600)  # the reading is 30 min old; the window is 10 min
+    assert stale["health"]["ok"] is True, "the reading itself must be untouched"
+    assert stale["health_stale"] is True
+
+    fresh = _row(7200)  # same reading, 2h window
+    assert fresh["health_stale"] is False
+
+
+def test_a_never_probed_row_is_not_reported_stale():
+    """Unknown, not overdue. ``null`` and ``true`` are different facts: a row that was
+    never probed already says so, and putting an age on a measurement that does not
+    exist would invent one."""
+    _byo({"id": "untouched", "display_name": "Untouched", "bin_names": [_MISSING_BIN]})
+    row = next(r for r in runners.runner_rows(probe=False) if r.definition.id == "untouched")
+    d = row.to_dict()
+    assert d["health"] is None
+    assert d["health_stale"] is None
+    assert runners.evidence_is_stale(None) is None
+
+
+def test_an_unparseable_timestamp_is_unknown_not_fresh():
+    """A ``checked_at`` we cannot read means we do not know the age — reporting False
+    would be a positive claim of freshness drawn from nothing."""
+    bad = runners.HealthEvidence(ok=True, probe="version", checked_at="whenever")
+    assert runners.evidence_is_stale(bad) is None
 
 
 # ── probe posture ─────────────────────────────────────────────────────────────

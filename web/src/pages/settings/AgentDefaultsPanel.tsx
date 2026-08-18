@@ -111,11 +111,13 @@ export function AgentDefaultsPanel() {
           <ToggleRow label="Concurrent ACP sessions" cfg={cfg} field="acp_concurrent_sessions" patch={patch}
             hint="Run multiple ACP chats on ONE backend process (multiplexing) instead of one process per session. Only takes effect for backends that support session interleaving." />
           <ToggleRow label="Unattended runs need a verified adapter" cfg={cfg} field="unattended_requires_verified_adapter" patch={patch}
-            hint="Refuse an unattended spawn (cron, scheduled run, loop worker) onto a runner whose ACP adapter has no verified provenance — an npx fetch-at-launch, an adapter that changed since it was provisioned, or a runner with no catalog row. Interactive chat is never gated. See each runner's adapter state under Runners." />
+            hint="Refuse an unattended spawn — a cron fire, a loop-cycle worker, a subagent, the background session, an inbox or side sweep, a channel delivery, or a trigger dispatch — onto a runner whose ACP adapter has no verified provenance: an npx fetch-at-launch, an adapter that changed since it was provisioned, or a runner with no catalog row. Interactive chat is never gated. See each runner's adapter state under Runners." />
           <EnumRow label="Log level" hint="Backend logger level (overridden by --verbose)." cfg={cfg} field="log_level" patch={patch}
             options={[{ key: 'DEBUG', label: 'Debug' }, { key: 'INFO', label: 'Info' }, { key: 'WARNING', label: 'Warning' }, { key: 'ERROR', label: 'Error' }]} />
           <NumberRow label="Soft-stop budget" cfg={cfg} field="soft_stop_budget_secs" patch={patch} min={0.5} max={60} step={0.5} suffix="s"
             hint="Seconds to wait for a cooperative cancel before hard-killing a session." />
+          <NumberRow label="Runner health check interval" cfg={cfg} field="runner_health_check_secs" patch={patch} min={60} max={86400} step={60} suffix="s"
+            hint="How long a runner's measured health stays current. Past this, its row under Runners is marked check overdue rather than presenting an old reading as the present state. Nothing is probed automatically — use Re-check runners." />
         </div>
         {/* multi-agent space concurrency (max_spaces / max_space_agents) lives in
             Settings → Spaces, not here. */}
@@ -209,6 +211,10 @@ function RunnerRowItem({ row }: { row: RunnerRow }) {
         <span className="font-mono text-on-surface-low text-[0.75rem]">{row.runtime_id}</span>
         {row.source === 'user' && <Chip>your definition</Chip>}
         {h === null ? <Chip>never probed</Chip> : h.ok ? <Chip tone="ok">healthy</Chip> : <Chip tone="bad">unhealthy</Chip>}
+        {/* An overdue check is not a verdict on the runner — it says the reading you are
+            looking at is older than the health-check interval, so "healthy" describes
+            then, not now. Only shown for `true`: `null` means we do not know the age. */}
+        {row.health_stale === true && <Chip>check overdue</Chip>}
       </div>
 
       {/* Health evidence. `version`/`latency_ms` can be null even on a healthy probe —

@@ -854,3 +854,48 @@ D0 is documentation and should land immediately — an inaccurate security claim
   evidence is written by the catalog's own `--version` probe and by discovery; wiring the connection
   pool's warm attempt as a third writer was left out deliberately (a pool warm has no catalog id at
   that seam, and inventing one would have been the second registration path §3.1 forbids).
+- [2026-08-18][EI-5] **DISCOVERY + DONE — the unattended gate had nine holes: it read a kwarg, not the
+  session.** `guard_unattended_spawn` was wired at the right call site, but its `unattended` argument
+  came from `extra_factory_kwargs["unattended"]`, and a tree-wide sweep found exactly ONE writer of
+  that key (`subagent.py:1954`). Measured against `main`: with
+  `agents.unattended_requires_verified_adapter` ON and an unverified adapter, **9 of 9** unattended
+  session-key families spawned the runner anyway — `cron:`, `loop-`, `loop:`, `_bg`, `subagent:`,
+  `inbox:`, `side:`, `channel:` and the sessionless `unattended:` dispatch (red: `Failed: DID NOT
+  RAISE UnverifiedAdapterError`, nine parametrizations). The help text, `configuration.md` row and
+  Settings hint all named "cron, scheduled run, loop worker", so the control was documented as
+  covering paths it did not cover. Fixed by deriving unattendedness from the session key through
+  `guardrails.policy.is_unattended_session` — the classifier the guardrail layer already resolves
+  safety profiles with, so there is one vocabulary and no per-caller opt-in — while still honouring
+  the explicit kwarg. All three copy surfaces corrected to the enforced scope. Vacuity floors:
+  `chat:`/`project:`/`web:` keys still proceed (falsified by forcing `_unattended = True`, which reds
+  all four attended tests), and an unattended key with the flag OFF still proceeds.
+- [2026-08-18][EI-5] **DONE — the PATH-removal clause is now driven as a TRANSITION.** The suite
+  proved the absent-binary and present-binary states separately, which is not the done-when clause:
+  a row that WAS healthy has to flip, and it has to flip in the sidecar the surface paints from on a
+  plain load. Added a real `monkeypatch.setenv("PATH", ...)` drive (install → healthy `v4.2.0` with a
+  measured latency → remove → unhealthy with the resolver's verbatim text, `version`/`latency_ms`
+  back to unknown). Falsified by making `record_evidence` merge non-`None` fields instead of replacing
+  `last_check`: red `assert '4.2.0' is None` — the stale healthy version would have been served
+  alongside the failure. Vacuity floor: a second probe with the binary still installed must NOT flip.
+- [2026-08-18][EI-5] **DONE — §3.2's second field, `agent.runner_health_check_secs`, with a reader.**
+  It was absent from `loader.py` entirely, so §3.2's "four-point" wiring was one field of two. Now
+  wired through all five points (dataclass + `_meta`, `load()` explicit mapping clamped to the same
+  `[60, 86400]` window `_EDITABLE_CONFIG` enforces, `to_dict()` via `asdict`, the PATCH allowlist, and
+  a `NumberRow` in Settings → Agent defaults) — and deliberately NOT inert: `runner_rows` now carries
+  `health_stale`, and the row renders a **check overdue** chip beside (not instead of) the reading, so
+  an old "healthy" is never presented as the present state. `null` is preserved as unknown — a
+  never-probed runner and an unparseable timestamp are not "overdue". Falsified by hardcoding the
+  interval to 3600 (red `assert False is True`: same recorded reading, two windows, two verdicts) and,
+  on the frontend, by loosening the chip to `!== false` (red: an unknown-age row wore the chip).
+  `config-baseline.json` regenerated in the same change.
+- [2026-08-18][EI-5] **DEVIATION (unchanged, re-affirmed) — `agents.runner_idle_release_secs` is
+  EI-6's, not this atom's.** §3.2 lists it alongside the other two, but §3.1(5) idle-release is EI-6's
+  scope row and no connection-pool idle-release exists yet. Adding the field here would have shipped a
+  knob with no reader — the exact defect the health-check field above was written to avoid.
+- [2026-08-18][EI-5] **BLOCKED (scope, not doctrine) — `apps/gemini-cli-agent` cannot be created from
+  this repo.** The done-when clause "Settings → Agents shows … Gemini CLI …" is satisfied by the
+  shipped catalog row (`agents/runner_catalog.json`), which is why the data-catalog deviation above was
+  taken. But the scope line's "Gemini first-party app via `acp_bundles/_register.py`" needs a bundle in
+  `PersonalClawApps`, which has `claude-code-agent`, `codex-agent` and `kiro-cli-agent` and no Gemini
+  sibling. That is a one-app change in the other repo, outside this branch's fence. Owner call needed
+  on whether EI-5 closes on the catalog row alone or waits for the apps-repo bundle.

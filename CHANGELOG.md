@@ -192,6 +192,23 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Fixed
 
+- **"Unattended runs need a verified adapter" only covered one kind of unattended run.** The switch
+  promised to refuse background work onto an external agent CLI whose ACP adapter has no verified
+  provenance, and it did — for a subagent. A cron fire, a loop-cycle worker, the background session,
+  an inbox or side sweep, a channel delivery and a trigger dispatch all went through unchecked,
+  because each one had to volunteer that it was unattended and only one of them did. Whether a spawn
+  is unattended is now decided from the session itself, using the same rule the safety profiles
+  already use, so all of them are covered without opting in. Interactive chat is still never gated.
+  If you have this switch on and an unverified adapter, background runs that used to launch will now
+  be refused by name — that is the switch doing what it said.
+
+- **Settings → Agents could show you a stale runner reading as if it were current.** A runner row
+  printed "healthy, v2.1.4, 58 ms" with no indication of when that was measured, so a check from last
+  week looked exactly like one from a minute ago. Rows whose measurement is older than the new
+  **Runner health check interval** (Settings → Agent defaults, default one hour) now say **check
+  overdue** next to the reading instead of quietly presenting it as the present state. A runner that
+  was never probed still says so — it is not reported as overdue.
+
 - **Your ready-task list was in no particular order.** The list behind **Tasks → Ready** (and the
   same list an agent reads when it asks what to work on next) came back in whatever order the store
   happened to return — most-recently-updated first — so a task due today sat below one due next
