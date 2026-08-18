@@ -14,6 +14,7 @@ import { Field, TextArea, TextInput } from '../../ui/forms'
 import { SquareIconButton } from '../../ui/SquareIconButton'
 import { Toggle as SharedToggle } from '../../ui/Toggle'
 import { confirm } from '../../ui/dialog'
+import { reportingWrite } from '../../app/reportingWrite'
 import { notify } from '../../app/appSdk'
 import { useQueryParam, useQueryFlag, type RouteProps } from '../../app/useQueryState'
 import { useCachedData, invalidateCache } from '../../lib/useCachedData'
@@ -104,17 +105,8 @@ export function ToolsPage({ query, setQuery }: Pick<RouteProps, 'query' | 'setQu
   // that silently did not happen is its own defect, distinct from the optimistic-lie shape.
   //
   // One helper rather than four copies of removeServer's catch, and it returns the outcome so a caller
-  // can skip the refetch when the write never landed.
-  async function reportingWrite(what: string, run: () => Promise<unknown>): Promise<boolean> {
-    try { await run(); return true }
-    catch (e) {
-      let msg = e instanceof Error ? e.message : `Couldn't ${what}`
-      try { const p = JSON.parse(msg); msg = p.error || msg } catch { /* raw text */ }
-      notify(`Couldn't ${what}: ${msg}`, 'error')
-      return false
-    }
-  }
-
+  // can skip the refetch when the write never landed. It moved to `app/reportingWrite` when
+  // `knowledge/KnowledgeListPage` became its second adopter — one implementation, not two copies.
   async function toggleServer(s: McpServer) {
     const ok = await reportingWrite(`${s.enabled ? 'disable' : 'enable'} "${s.name}"`,
       () => api.toggleMcpServer(s.name, !s.enabled))
