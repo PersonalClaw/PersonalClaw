@@ -195,6 +195,65 @@ def test_a_source_that_is_not_signed_in_falls_all_the_way_to_the_anon_placeholde
     assert prov._client.api_key == "unused"  # noqa: SLF001
 
 
+def test_the_whole_five_hop_order_holds_as_one_descending_ladder(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The five per-hop tests above pin ADJACENT PAIRS, and that is measurably not enough.
+
+    Each one supplies only the two sources it compares, so a hop it leaves unset cannot
+    contradict it. Swapping hops 1 and 2 in ``_factory`` (letting ``options.api_key``
+    overwrite an explicit ``entry.credential``) keeps this whole module green: the hop-1 test
+    sets no ``options.api_key`` and the hop-2 test sets no ``entry.credential``, so neither
+    observes the swap. That was verified by mutation, not assumed.
+
+    So this test supplies ALL FIVE at once and knocks them out one at a time, asserting the
+    winner changes in exactly the documented sequence. Every rung keeps the lower sources
+    populated, which is what makes an adjacent swap anywhere in the chain visible here.
+    """
+    store = _store(tmp_path, {"oauth": {"accessToken": SECRET}})
+    _source(store)
+    spec = _spec(type="ladder", api_key_env="LADDER_ENV_KEY")
+    factory, _, _ = register_branded_app(spec)
+    monkeypatch.setenv("LADDER_ENV_KEY", "ENV-KEY")
+
+    class _Store:
+        def resolve(self, name: str) -> Credential:
+            return Credential(name=name, kind="api_key", secret="ENTRY-CRED", source="file")
+
+    def _winner(*, with_entry_cred: bool, with_opt_key: bool) -> str:
+        entry = ProviderEntry(
+            name="LADDER",
+            type=spec.type,
+            model="m",
+            credential="my-cred" if with_entry_cred else None,
+            options={"api_key": "OPT-KEY"} if with_opt_key else {},
+        )
+        return factory(entry=entry, credential_store=_Store())._client.api_key  # noqa: SLF001
+
+    # Rung 1: every one of the five is available → the explicit entry credential wins.
+    assert _winner(with_entry_cred=True, with_opt_key=True) == "ENTRY-CRED"
+    # Rung 2: drop ONLY the entry credential; the per-instance key, the signed-in
+    # subscription and the env key all remain → the per-instance key wins.
+    assert _winner(with_entry_cred=False, with_opt_key=True) == "OPT-KEY"
+    # Rung 3: drop the per-instance key too; source + env remain → the subscription wins.
+    assert _winner(with_entry_cred=False, with_opt_key=False) == SECRET
+    # Rung 4: sign the CLI out (the store this source declares disappears, exactly as it
+    # looks before `example login`); the env key remains → the env key wins.
+    store.unlink()
+    assert _winner(with_entry_cred=False, with_opt_key=False) == "ENV-KEY"
+    # Rung 5: remove the env key as well → the anon placeholder, and still no crash.
+    monkeypatch.delenv("LADDER_ENV_KEY")
+    assert _winner(with_entry_cred=False, with_opt_key=False) == "unused"
+
+
+def test_the_five_hop_ladder_has_five_DISTINCT_rungs(tmp_path: Path) -> None:
+    """Vacuity floor for the ladder above: it can only prove an ORDER if the five hops
+    yield five different secrets. If two rungs shared a value, a swap between them would
+    still read as a pass, which is the very failure mode the ladder exists to catch."""
+    rungs = ["ENTRY-CRED", "OPT-KEY", SECRET, "ENV-KEY", "unused"]
+    assert len(set(rungs)) == 5
+
+
 def test_a_spec_with_no_credential_source_never_consults_the_resolver(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

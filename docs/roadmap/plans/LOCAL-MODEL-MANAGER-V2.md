@@ -596,3 +596,53 @@ Where each piece plugs into the pluggable-provider architecture (recon: provider
   ratchet's "add the missing reader", not a blessed higher number) · `make test` full suite
   green. Eight falsifying mutations were run against the live line and every one reded a
   named test — none vacuous.
+
+- 2026-08-17 — **DISCOVERY (LMMV-6 / Session 5a follow-up). The five per-hop precedence
+  tests did not actually pin the credential ORDER: swapping hops 1 and 2 was invisible to
+  the entire suite. Closed with one ladder test. Atom still `todo` — the reference app
+  remains the only outstanding clause, unchanged.**
+
+  Re-verified the core half against the code first, because the premise handed to this
+  session said `credential_source` was absent from `BrandedProviderSpec`. That premise was
+  stale: commit `6a1e9058` is on `origin/main`, `credential_source` is at
+  `provider_helpers.py:88`, and all four core clauses of the `done_when` hold. No core
+  clause needed implementing.
+
+  **The measured gap.** The entry above claims "eight falsifying mutations … none vacuous",
+  but that set did not include an **adjacent swap of hops 1 and 2**. Each per-hop test
+  supplies only the two sources it compares — the hop-1 test sets no `options.api_key`, the
+  hop-2 test sets no `entry.credential` — so neither can observe the other's inversion.
+  Mutating `_factory`'s hop-2 guard from `if cred is None and _opt_key:` to `if _opt_key:`
+  (letting a per-instance key overwrite an explicit `entry.credential`, i.e. exactly the
+  "silently override a key the user chose" failure judgment call 2 exists to prevent) left
+  the module **46 passed, green**. A mutation that reds nothing is a lead, not a pass.
+
+  **The fix.** `test_the_whole_five_hop_order_holds_as_one_descending_ladder` supplies ALL
+  FIVE sources at once and knocks them out one rung at a time — entry credential → per-
+  instance key → signed-in subscription → env key → anon placeholder — asserting the winner
+  changes in exactly the documented sequence. Every rung keeps the lower sources populated,
+  which is what makes an adjacent swap anywhere in the chain visible. Paired with
+  `test_the_five_hop_ladder_has_five_DISTINCT_rungs` as its vacuity floor: the ladder can
+  only prove an order if the five rungs are five different secrets, since two rungs sharing
+  a value would let a swap between them read as a pass.
+
+  **Falsifications (mutate live line, confirm applied, observe red, restore from a file
+  copy — never `git checkout`).** (a) hops 1↔2 swapped → **only** the new ladder test reds,
+  `AssertionError: assert 'OPT-KEY' == 'ENTRY-CRED'` (1 failed, 47 passed) — the precise
+  mutation that was green before this change. (b) the terminal not-signed-in return replaced
+  with `raise RuntimeError` → 19 soft-fail tests red including
+  `test_load_availability_derives_a_probe_from_the_declared_credential_source`, proving the
+  typed `(False, reason)` contract is load-bearing and not incidental. (c) `_expired()`
+  forced to `return False` → `test_an_expired_sign_in_is_not_signed_in` and
+  `test_an_EXPIRED_store_is_not_refreshed_or_rewritten` red (`assert True is False`).
+
+  No credential store was written, and no real user store was read: the suite's fake stores
+  live under `tmp_path`, and the run's real-home rail reported `~/.personalclaw` unchanged.
+  No config field added, so no round-trip points move; no new provider TYPE, so the
+  generated reference docs are untouched (`test_agent_reference.py` green).
+
+  **Gates:** `make lint` clean (black 1756 files · isort · flake8 · mypy 903 source files) ·
+  `test_subscription_credentials.py` 48 passed (46 + 2) · that file with
+  `test_config_roundtrip.py` + `test_config_baseline.py` + `test_agent_reference.py` +
+  `test_action_provider_chokepoints.py` + `test_inert_surface_baseline.py` + `tests/security/`
+  **178 passed**. `inert-surface-baseline.json` needed no regeneration.
