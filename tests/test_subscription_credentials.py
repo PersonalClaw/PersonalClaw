@@ -724,3 +724,273 @@ def test_spec_credential_source_answers_for_a_named_instance_and_never_guesses()
         assert spec_credential_source("acme") == "acme-cli"
         assert spec_credential_source("acme-work") == "acme-cli"
         assert spec_credential_source("unknown") == ""
+
+
+# ── 5. One order, EVERY surface: the config-path factory (fix for the LMMV-6 finding) ──
+#
+# ``register_branded_app`` returns TWO ways to build a provider, and an app manifest's
+# ``implementation: "provider:create_provider"`` names the second one, so
+# ``ModelTypeHandler.create`` calls it per enabled instance. Only ``_factory`` had a
+# subscription hop, so a subscription app wired the documented way built a provider holding
+# the literal anon placeholder: an authenticated-LOOKING provider that 401s at first use with
+# a signed-in CLI sitting right there. Both paths now resolve hops 2-4 from one helper.
+
+
+def test_the_config_path_resolves_the_subscription_source(tmp_path: Path) -> None:
+    """The headline. ``create_provider`` with nothing configured must reach the signed-in CLI's
+    token, not fall through to the anon placeholder."""
+    _signed_in(tmp_path)
+    spec = _spec(type="cfgsub")
+    _, create_provider, _ = register_branded_app(spec)
+    prov = create_provider({})
+    assert prov._client.api_key == SECRET  # noqa: SLF001
+
+
+def test_the_config_path_keeps_the_SAME_precedence_as_the_registry_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The order, not just the hop: an explicit config key still outranks the subscription, a
+    signed-out source still falls THROUGH to the env, and the tail is still the placeholder."""
+    store = _store(tmp_path, {"oauth": {"accessToken": SECRET}})
+    _source(store)
+    spec = _spec(type="cfgladder", api_key_env="CFG_ENV_KEY")
+    _, create_provider, _ = register_branded_app(spec)
+    monkeypatch.setenv("CFG_ENV_KEY", "ENV-KEY")
+
+    assert create_provider({"api_key": "CFG-KEY"})._client.api_key == "CFG-KEY"  # noqa: SLF001
+    # camelCase spelling resolves identically — the entry path pops both, so does this one.
+    assert create_provider({"apiKey": "CFG-CAMEL"})._client.api_key == "CFG-CAMEL"  # noqa: SLF001
+    assert create_provider({})._client.api_key == SECRET  # noqa: SLF001
+    store.unlink()  # sign the CLI out
+    assert create_provider({})._client.api_key == "ENV-KEY"  # noqa: SLF001
+    monkeypatch.delenv("CFG_ENV_KEY")
+    assert create_provider({})._client.api_key == "unused"  # noqa: SLF001
+
+
+def test_both_build_paths_agree_on_every_credential_state(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The anti-drift rail, and the one that would have caught this defect.
+
+    Two hand-maintained credential ladders is the actual bug — one of them silently lacked a
+    hop. So assert the PROPERTY rather than re-listing the order: for the same world state,
+    the registry path and the config path resolve the same secret. A hop added to one and not
+    the other fails here even if every per-hop test above still passes.
+    """
+    store = _store(tmp_path, {"oauth": {"accessToken": SECRET}})
+    _source(store)
+    spec = _spec(type="bothpaths", api_key_env="BOTH_ENV_KEY")
+    factory, create_provider, _ = register_branded_app(spec)
+
+    def _pair(explicit: str) -> tuple[str, str]:
+        entry = ProviderEntry(
+            name="BP",
+            type=spec.type,
+            model="m",
+            options={"api_key": explicit} if explicit else {},
+        )
+        cfg = {"api_key": explicit} if explicit else {}
+        return (
+            factory(entry=entry)._client.api_key,  # noqa: SLF001
+            create_provider(cfg)._client.api_key,  # noqa: SLF001
+        )
+
+    seen: list[str] = []
+    for explicit in ("TYPED-KEY", ""):  # signed in, with and without an explicit key
+        entry_key, cfg_key = _pair(explicit)
+        assert entry_key == cfg_key
+        seen.append(entry_key)
+    monkeypatch.setenv("BOTH_ENV_KEY", "ENV-KEY")
+    store.unlink()  # signed out → both must fall through to the env
+    entry_key, cfg_key = _pair("")
+    assert entry_key == cfg_key
+    seen.append(entry_key)
+    monkeypatch.delenv("BOTH_ENV_KEY")
+    entry_key, cfg_key = _pair("")  # nothing at all → both reach the placeholder
+    assert entry_key == cfg_key
+    seen.append(entry_key)
+    # Vacuity floor: agreement is only evidence if the four states resolved to four DIFFERENT
+    # secrets. Two paths that both always returned "unused" would pass the asserts above.
+    assert seen == ["TYPED-KEY", SECRET, "ENV-KEY", "unused"]
+    assert len(set(seen)) == 4
+
+
+# ── 6. The connection probe can SEE a sign-in (fix for the dangling-sentence finding) ──
+
+
+def _catalog(spec: BrandedProviderSpec, **kwargs: object):
+    from personalclaw.sdk.provider_helpers import BrandedCatalog
+
+    return BrandedCatalog(spec, **kwargs)  # type: ignore[arg-type]
+
+
+def _run(coro):
+    import asyncio
+
+    return asyncio.new_event_loop().run_until_complete(coro)
+
+
+def test_test_connection_probes_with_the_subscription_token_when_signed_in(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A signed-in subscription app must be probed for real, with the CLI's token — not
+    reported as unconfigured because it declares no API-key env var."""
+    _signed_in(tmp_path)
+    spec = _spec(type="probesub")
+    register_branded_app(spec)
+    import personalclaw.llm.anthropic as anth
+
+    seen: list[str] = []
+
+    async def _record(self, *a: object, **k: object):
+        seen.append(self._client.api_key)  # noqa: SLF001
+        raise RuntimeError("not_found_error: model: probe")
+        yield  # pragma: no cover — unreachable, makes this an async generator
+
+    monkeypatch.setattr(anth.AnthropicProvider, "complete", _record)
+    res = _run(_catalog(spec).test_connection())
+    # A model-not-found still proves the credentials authenticated → connected.
+    assert res.ok is True
+    assert seen == [SECRET]  # the probe used the CLI's token, not "" and not the placeholder
+    assert SECRET not in (res.detail or "")
+
+
+def test_a_signed_out_subscription_app_is_told_to_sign_in_not_to_set_a_nameless_env_var(
+    tmp_path: Path,
+) -> None:
+    """The user-visible defect: ``api_key_env`` is empty by design for a subscription app, so
+    the old unconditional hint rendered literally as ``No API key configured (set it or )`` —
+    a dangling sentence that also gave a signed-in user the wrong instruction."""
+    _source(tmp_path / "absent.json")
+    spec = _spec(type="probesignedout")
+    register_branded_app(spec)
+    res = _run(_catalog(spec).test_connection())
+    detail = res.detail or ""
+    assert res.ok is False
+    assert "example login" in detail  # the app's own login hint, from the typed reason
+    assert "(set it or )" not in detail and not detail.rstrip().endswith("or )")
+    assert "set it or" not in detail
+
+
+def test_an_ordinary_key_based_app_keeps_its_env_var_hint(tmp_path: Path) -> None:
+    """Vacuity floor for the message change: the useful hint must survive for the apps that DO
+    declare an env var, or this 'fix' would have deleted a working instruction."""
+    spec = _spec(type="probekeyed", api_key_env="ACME_API_KEY", credential_source="")
+    register_branded_app(spec)
+    res = _run(_catalog(spec).test_connection())
+    assert res.ok is False
+    assert res.detail == "No API key configured (set it or ACME_API_KEY)"
+
+
+def test_list_models_also_discovers_with_the_subscription_token(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The catalog's other reader of the key. An openai-protocol subscription app must discover
+    models WITH the token, else the picker is empty for a signed-in user."""
+    _signed_in(tmp_path)
+    spec = _spec(type="listsub", protocol="openai")
+    register_branded_app(spec)
+    seen: list[str] = []
+
+    async def _fake_list(endpoint: str, api_key: str, *, default_base: str = "") -> list:
+        seen.append(api_key)
+        return []
+
+    monkeypatch.setattr(
+        "personalclaw.sdk.provider_helpers.openai_compatible_list_models", _fake_list
+    )
+    _run(_catalog(spec).list_models())
+    assert seen == [SECRET]
+
+
+def test_the_catalog_resolves_the_key_per_call_so_a_later_login_is_seen(
+    tmp_path: Path,
+) -> None:
+    """A catalog instance outlives a `login`: the answer must not be frozen at construction,
+    or the user signs in, retests, and is still told they are signed out."""
+    store = tmp_path / "late.json"
+    _source(store)
+    spec = _spec(type="latelogin")
+    register_branded_app(spec)
+    cat = _catalog(spec)
+    assert cat._resolved_key() == (
+        "",
+        "example-cli is not signed in on this machine — "  # noqa: SLF001
+        "sign in with `example login` first",
+    )
+    store.write_text(json.dumps({"oauth": {"accessToken": SECRET}}))
+    assert cat._resolved_key() == (SECRET, "")  # noqa: SLF001
+
+
+# ── 7. A branded app that serves a family is recognized as serving it ─────────────────
+#
+# ``_MODEL_FAMILY_PROVIDER_TYPES`` is a hand-maintained core row, so a subscription app
+# serving ``claude-*`` was judged unable to serve it and session-restore SILENTLY swapped the
+# user's persisted model for the active provider's. The table is now the floor, unioned with
+# the types whose app declares a model of that family.
+
+
+def _only_registered(mp: pytest.MonkeyPatch, **specs: BrandedProviderSpec) -> None:
+    """Make the registered-spec table exactly ``specs`` (process-global state otherwise leaks
+    a fake app into an unrelated test — the same reason ``_SOURCES`` is isolated)."""
+    from personalclaw.sdk import provider_helpers
+
+    mp.setattr(provider_helpers, "_REGISTERED_SPECS", dict(specs))
+
+
+def test_a_branded_app_declaring_claude_models_is_recognized_as_serving_them(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from personalclaw.llm.catalog import model_family_provider_types
+
+    floor = frozenset({"anthropic", "anthropic_compatible", "bedrock"})
+    # Vacuity floor: with no app registered the answer is EXACTLY the core row, so the
+    # assertions below measure the union and not a set that was already permissive.
+    with pytest.MonkeyPatch.context() as mp:
+        _only_registered(mp)
+        assert model_family_provider_types("claude-sonnet-4-5") == floor
+
+    _only_registered(
+        monkeypatch,
+        claude_subscription=_spec(type="claude_subscription", default_model="claude-sonnet-4-5"),
+        # …declared in the fallback catalog rather than as the default model: both count.
+        aggregator=BrandedProviderSpec(
+            type="aggregator",
+            fallback_models=({"id": "anthropic/claude-3-5-haiku"},),
+        ),
+        # …and a negative control: an app declaring only a llama model must NOT be admitted,
+        # or the union would be "every installed app", which restricts nothing.
+        llama_host=BrandedProviderSpec(type="llama_host", default_model="llama-3-70b"),
+    )
+    served = model_family_provider_types("claude-sonnet-4-5")
+    assert floor <= served  # the core row is still honored
+    assert "claude_subscription" in served and "aggregator" in served
+    assert "llama_host" not in served
+    # An unrecognized family stays unrestricted rather than collecting every app.
+    assert model_family_provider_types("llama-3-70b") == frozenset()
+
+
+def test_a_persisted_claude_model_survives_restore_under_a_subscription_provider(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The user-facing end of it: the persisted model must be kept, not silently swapped."""
+    from personalclaw.dashboard import chat_persistence
+
+    _only_registered(
+        monkeypatch,
+        claude_subscription=_spec(type="claude_subscription", default_model="claude-sonnet-4-5"),
+    )
+
+    def _active(provider_type: str) -> bool:
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(
+                chat_persistence,
+                "_load_providers_raw",
+                lambda: [{"type": provider_type, "model": "some-other-model"}],
+            )
+            return chat_persistence._model_matches_provider("claude-sonnet-4-5")  # noqa: SLF001
+
+    assert _active("claude_subscription") is True
+    # Negative control: the check still RESTRICTS. A rail that accepted every provider type
+    # would pass the assertion above while measuring nothing.
+    assert _active("llama_host") is False
