@@ -77,6 +77,83 @@ class TestTitleAndBody:
         assert attention.ask_title("deploy", "confirm", {}) == "deploy: confirm needs your input"
         assert attention.ask_title("deploy", "", None) == "deploy: a step needs your input"
 
+    def test_the_promptless_FALLBACK_IS_REACHABLE_from_a_real_gate(self) -> None:
+        """🪤 The test above proves the fallback WORKS. Nothing proved it ever RAN.
+
+        `_ask_payload` used to manufacture a prompt — `or "Approval needed"` — so `prompt` was
+        always truthy and this fallback was dead in production. Measured on the shipped templates:
+        **7 of the 19 gate/approval nodes author neither `prompt` nor `message`**, so `code-project`
+        alone raised three inbox rows all titled "Approval needed", identifying neither the run nor
+        the step. The same default also killed `needs_input._blocker_text`'s ladder and
+        `WorkflowAsk.tsx`'s own "This run needs your input." — three written fallbacks, one default.
+
+        So this asserts the CALL SITE, not the helper: the ask a real promptless gate produces must
+        leave `prompt` empty, and the title composed from it must name the run and the step.
+        """
+        from personalclaw.workflows.engine import _ask_payload
+
+        class _Node:
+            id = "init_gate"
+
+        ask = _ask_payload(_Node(), {})  # a bundled gate: no prompt, no message
+
+        assert ask["prompt"] == "", f"a prompt was manufactured again: {ask['prompt']!r}"
+        title = attention.ask_title("code-project", "init_gate", ask)
+        assert title == "code-project: init_gate needs your input", title
+        # The generic literal must not come back by any route.
+        assert "Approval needed" not in title
+
+    def test_an_AUTHORED_prompt_still_wins_over_the_fallback(self) -> None:
+        """The fix must not cost the question. A gate that authors a prompt — 12 of the 19 do —
+        keeps it as the headline, and `message` is still accepted as its alias."""
+        from personalclaw.workflows.engine import _ask_payload
+
+        class _Node:
+            id = "approve"
+
+        for cfg in ({"prompt": "Ship the release?"}, {"message": "Ship the release?"}):
+            ask = _ask_payload(_Node(), cfg)
+            assert ask["prompt"] == "Ship the release?", cfg
+            assert attention.ask_title("release-check", "approve", ask) == "Ship the release?"
+
+    def test_the_SHIPPED_TEMPLATES_still_contain_promptless_gates(self) -> None:
+        """The vacuity floor. If every bundled gate ever authored a prompt, the change above would
+        be unreachable and the two tests before it would prove nothing about the product."""
+        import glob
+        import json
+
+        def walk(node: object, out: list) -> None:
+            if isinstance(node, dict):
+                if "kind" in node:
+                    out.append(node)
+                for value in node.values():
+                    walk(value, out)
+            elif isinstance(node, list):
+                for value in node:
+                    walk(value, out)
+
+        files = sorted(glob.glob("src/personalclaw/packs/bundled/*/templates/*.json")) + sorted(
+            glob.glob("src/personalclaw/workflows/bundled/**/*.json", recursive=True)
+        )
+        assert len(files) > 10, f"the template corpus must be discoverable, found {len(files)}"
+        gates, promptless = 0, 0
+        for path in files:
+            try:
+                doc = json.load(open(path, encoding="utf-8"))
+            except Exception:  # noqa: BLE001 — a malformed fixture is not this test's subject
+                continue
+            nodes: list = []
+            walk(doc.get("root") or doc, nodes)
+            for node in nodes:
+                if str(node.get("kind")) not in ("gate", "approval"):
+                    continue
+                gates += 1
+                cfg = node.get("config") or {}
+                if not (cfg.get("prompt") or cfg.get("message")):
+                    promptless += 1
+        assert gates >= 10, f"only {gates} gates found — the walk is missing nodes"
+        assert promptless >= 1, "no promptless gate ships, so the fallback is unreachable again"
+
     def test_the_body_names_the_kind_of_answer_wanted(self) -> None:
         for kind, expected in (
             ("approval", "approval"),

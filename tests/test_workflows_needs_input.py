@@ -90,6 +90,31 @@ def test_an_APPROVAL_ask_wins_over_any_failure_class():
     )
 
 
+def test_the_promptless_HEADLINE_ladder_is_reachable_from_a_real_gate():
+    """`_blocker_text`'s fallback ladder — the failure cause, else "`<node>` is waiting" — was
+    unreachable in production for the same reason the inbox title's was: `_ask_payload` manufactured
+    `prompt = "Approval needed"`, so the first branch always won and the card's headline named
+    neither the step nor the cause. Asserted from the REAL ask, not a hand-built dict."""
+    from personalclaw.workflows.engine import _ask_payload
+    from personalclaw.workflows.needs_input import _blocker_text
+
+    class _Node:
+        id = "init_gate"
+
+    ask = _ask_payload(_Node(), {})
+    assert ask["prompt"] == "", f"a prompt was manufactured again: {ask['prompt']!r}"
+
+    # No failure recorded: the node is named, so the card says which step is waiting.
+    assert _blocker_text(ask, None, "init_gate") == "`init_gate` is waiting"
+    # A failure's plain cause outranks that, because it says WHY rather than merely where.
+    assert _blocker_text(ask, {"cause_plain": "the deploy key expired"}, "init_gate") == (
+        "the deploy key expired"
+    )
+    # And an authored prompt still outranks both.
+    authored = _ask_payload(_Node(), {"prompt": "Ship the release?"})
+    assert _blocker_text(authored, {"cause_plain": "x"}, "init_gate") == "Ship the release?"
+
+
 @pytest.mark.parametrize("ask_kind", [k.value for k in AskKind])
 def test_every_real_ASK_kind_classifies(ask_kind):
     assert isinstance(classify_block({"kind": ask_kind}, None), BlockKind)

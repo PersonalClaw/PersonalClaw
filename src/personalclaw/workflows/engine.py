@@ -1808,7 +1808,18 @@ def _ask_payload(node: Node, cfg: dict[str, Any]) -> dict[str, Any]:
     return Ask.from_dict(
         {
             "kind": cfg.get("ask_kind", "approval"),
-            "prompt": str(cfg.get("prompt", "") or cfg.get("message", "") or "Approval needed"),
+            # 🪤 NO `or "Approval needed"` HERE. Manufacturing a prompt made this field always
+            # truthy, which killed the identifying fallback in all THREE surfaces that render it:
+            #
+            #   attention.ask_title      → "{workflow}: {node_id} needs your input"   (inbox row)
+            #   needs_input._blocker_text → the failure cause, else "`{node_id}` is waiting"
+            #   WorkflowAsk.tsx          → "This run needs your input."               (gate panel)
+            #
+            # Each of those was already written and unreachable, and the literal that replaced them
+            # identifies nothing: 7 of the 19 gates in the bundled templates author no prompt or
+            # message, so `code-project` alone raised three inbox rows all titled "Approval needed".
+            # An absent prompt is a supported state of the contract (`Ask.prompt` defaults to "").
+            "prompt": str(cfg.get("prompt", "") or cfg.get("message", "") or ""),
             "fields": cfg.get("fields") or [],
             "choices": cfg.get("choices") or [],
             "node_id": node.id,
