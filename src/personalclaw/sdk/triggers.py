@@ -22,6 +22,18 @@ building against:
 * A read that raises is logged and skipped for that pass, so an outage in your backend costs your
   rows and never stops the owner's local automations. Prefer serving a cached answer to raising, and
   answer ``changed_on_disk()`` honestly so core knows when to re-read.
+* **``upsert`` must really persist ``next_fire_at``, and ``get`` must show it.** When core fires one
+  of your rows it writes the row's next schedule back to YOUR store — that is what makes an
+  app-served trigger fire once rather than every tick — and it then re-reads the row to check the
+  timestamp moved. A store that accepts the write and keeps the old value, or that cannot read the
+  row back, is **quarantined**: its rows stop being armed for the rest of the process (they still
+  render) and a warning is logged. So a deliberately read-only store is honest and safe — it simply
+  never arms — but a store that pretends to write is the one shape that costs the owner a fire.
+  ``run_count``, ``last_fired_at``, ``state`` and the health fields arrive through the same write;
+  round-trip them too, or the owner's budget, spacing and autopause gates read a permanent zero.
+* A row whose id also exists in the owner's local ``triggers.json`` is **not armed** — the local row
+  wins, because one identity cannot hold two schedules. Both stay visible on the Automations page so
+  the collision is reportable. Namespace your ids.
 """
 
 from personalclaw.triggers.models import Issue, Trigger, parse_trigger  # noqa: F401
