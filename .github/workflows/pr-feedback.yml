@@ -36,7 +36,7 @@ jobs:
     steps:
       - name: Download the lint feedback CI left behind
         id: dl
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         continue-on-error: true   # most CI failures are test/web, which upload nothing
         with:
           name: lint-feedback
@@ -46,7 +46,7 @@ jobs:
 
       - name: Post the remediation
         if: steps.dl.outcome == 'success'
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         with:
           script: |
             const fs = require('fs');
