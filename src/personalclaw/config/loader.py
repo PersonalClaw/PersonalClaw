@@ -802,12 +802,25 @@ class AgentConfig:
         default=False,
         metadata=_meta(
             "Unattended Requires Verified Adapter",
-            "Refuse an UNATTENDED spawn (cron, scheduled run, loop worker) onto an "
-            "external agent runner whose ACP adapter has no verified provenance — an "
+            "Refuse an UNATTENDED spawn — a cron fire, a loop-cycle worker, a "
+            "subagent, the background/heartbeat session, an inbox or side sweep, a "
+            "channel delivery, or a trigger dispatch — onto an "
+            "external agent runner whose ACP adapter has no verified provenance: an "
             "`npx -y` fetch-at-launch, an adapter that changed since it was "
             "provisioned, or a runner with no catalog row. Interactive chat is never "
             "gated: a human is present to see what launched. Off by default; turn it "
             "on to require that background work only ever runs a proven adapter.",
+        ),
+    )
+    runner_health_check_secs: int = field(
+        default=3600,
+        metadata=_meta(
+            "Runner Health Check Interval",
+            "How long a runner's measured health evidence stays current, in seconds. "
+            "Past this, Settings → Agents marks the row's check overdue instead of "
+            "presenting an old reading as the present state. Probing is never "
+            "automatic — this only decides when a stored measurement stops counting "
+            "as an answer.",
         ),
     )
 
@@ -4320,6 +4333,12 @@ class AppConfig:
                 # blocking every existing install's unattended ACP runs on upgrade.
                 unattended_requires_verified_adapter=bool(
                     agent_data.get("unattended_requires_verified_adapter", False)
+                ),
+                # Clamped to the same [60, 86400] window ``_EDITABLE_CONFIG`` enforces
+                # on the PATCH path, so a hand-edited config.json cannot express a
+                # staleness window the dashboard would refuse to save.
+                runner_health_check_secs=max(
+                    60, min(86_400, int(agent_data.get("runner_health_check_secs", 3600)))
                 ),
             ),
             session=SessionConfig(
