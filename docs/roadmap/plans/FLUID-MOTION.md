@@ -551,3 +551,117 @@ vocabulary (and the 157px snapshot fix above); `FM-7` owns the 60fps proof and t
 guard, and now inherits a numeric baseline to measure against. **The feel is not claimed settled** —
 `MORPH = { stiffness, stiffnessBonus, floor }` is one named block at the top of the file for the
 owner's taste pass (owner task 1).
+
+### 2026-08-18 — `FM-4` (S2: coherence pass; contract §C2) — **PARTIAL**, atom stays `todo`
+
+The unification and both reduced-motion/`expressiveness=0` proofs are done and driven. The atom is **not**
+flipped because its `done_when` names "**a liquid state transition** … stays clean", and `LiquidShape` still has
+**no product call site** — the clause is verified for the primitive (jsdom rails + the source rail +
+`familySpring` collapsing to `instant`) but is not observable in the product, so it cannot be driven.
+
+⚠️ **ADOPTION IS NOW UNOWNED.** `FM-3` deferred it to `FM-4` (line 488 above); `FM-4` declines it because
+adopting means choosing a product surface to decorate, which is a taste decision outside a coherence pass and
+outside the fence. It needs an owner call or its own atom — otherwise `LiquidShape` stays a primitive nobody
+reaches, which is the inert-surface shape this repo keeps finding.
+
+`web/src/ui/motion/vocabulary.ts` is the family's ONE timing vocabulary, and the four primitives now
+contain **no timing arithmetic at all**. `MORPH_FAMILY` holds five numbers (three bases + one
+stiffness bonus + one floor, plus the tween's `refinedScale`); `familySpring(base)`, `familyTween(heavy)`
+and `familyFade()` are the only transitions any member gets. `Morph.MORPH` and `morphTransition()` are
+DELETED into it (clean break — no alias kept), and the barrel exports the vocabulary instead.
+
+**What the coherence pass actually found — the family disagreed about what the user's knob means.**
+`Morph` was `190 + expr(70, 0.4)` and `Bud` was `260 - expr(70, 0.4)`: identical magnitude, identical
+floor, **opposite sign**. Under `bouncy()`'s fixed absolute damping (26 at the default bounciness 1)
+that is not a stylistic difference — dialling expressiveness UP made `Morph` tauter (ζ 0.88→0.82,
+quicker + more overshoot) and made `Bud` *slacker* (232→198 stiffness, ζ 0.853→0.923, slower + LESS
+overshoot). `Bud`'s own comment claimed "a touch more overshoot when expressiveness is bold", which
+was **false in the shipped code**. One sign convention now: bold = tauter, everywhere. Three further
+divergences closed: `Disintegrate` rode a raw `[0.4, 0, 0.2, 1]` (the literal Material standard curve
+`motion.ts` explicitly disowns: "PersonalClaw curves — smooth, NOT the literal Material M3 values")
+plus three unnamed durations (0.34 / ×0.7 / 0.18 / 0.2) → `ease.emphasized` + `duration.medium` +
+`spring.effects`; `LiquidShape` rode the bare `physics.fluid`, the one member the knob left temporally
+untouched → `familySpring(MORPH_FAMILY.state)`; and `Bud` was the one member that did NOT self-gate
+reduced motion, delegating to the root `MotionConfig reducedMotion="user"` — which neutralizes framer
+TRANSFORMS but keeps animating `borderRadius`, still installs the projection node `layout` asks for,
+and left no attribute to assert. `Bud` now self-gates and exposes `data-bud`, matching `data-morph` /
+`data-liquid-shape`.
+
+**Bases are ordered by TRAVEL, and the ordering is a rail:** `flight` 190 (a card crossing the page) <
+`state` 200 (a silhouette changing composure in place) < `spawn` 240 (a panel off a button). Feel
+deltas, stated because they are taste and not settled: `Bud` moves 232/198 (refined/bold) → 268/292,
+i.e. quicker at both ends and now monotone with the knob; `LiquidShape` 180 flat → 228/262;
+`Disintegrate`'s dissolve 0.34→0.30s bold, 0.238→0.21s refined, and its reversal 0.18s→`spring.effects`.
+
+**"Reads as one system" is asserted where it is decidable, not screenshotted.**
+`ui/motion/vocabulary.test.ts` (16 cases) proves both halves: a SOURCE rail — each member imports
+`./vocabulary`, may import only `expr`/`exprHeavy` (amplitude) from `design/motion` and never
+`physics`/`spring`/`ease`/`duration` (timing), writes no `stiffness:`, no raw `duration: <number>` and
+no raw `ease: [...]`, passes no custom `exprHeavy()` threshold, and self-gates `useReducedMotion()`;
+and a RESOLVED rail — all three springs carry `physics.fluid`'s damping+mass, the bonus is the same
+magnitude and same SIGN for every base, and the bases hold their travel order. It carries a vacuity
+floor (four files found, each >1000 chars, each with an `export function`) because every source
+assertion is a "does NOT contain".
+
+**The two off-switches, measured SEPARATELY (they are not the same switch).** Driven in Chrome at
+1920x900 against THIS worktree's bundle (verified by chunk hash `index-Bq_aC5i5.js`), seeded dev home
+at `/private/tmp/fm4-wt/.dev-home`, 6 artifacts.
+· **`prefers-reduced-motion`** (`matchMedia` stubbed via `initScript` before first paint; the stub is
+inert on a hash-only navigation — it needs a real document load): all 6 cards report
+`data-morph="none"`, and over **73 frames / 600ms** after clicking a card the set of computed
+transforms is exactly `["none"]` and the set of inline `style` attributes exactly `[null]` — instant,
+not fast. The `Bud` in the task form's "Add prerequisite" picker reports `data-bud="instant"`, a plain
+`DIV`, `style` attribute `null` across **61 frames / 500ms**, computed transform exactly `["none"]`.
+Positive controls throughout: the reading view rendered its content, the bud's box is 1692x131, its
+search input rendered and `autoFocus` landed inside it.
+· **`expressiveness = 0`** (set via `localStorage.appearance.scalars['--expressiveness']`, reduced
+motion OFF): the morph is **still animating** — `data-morph="shared"`, 55 distinct transform matrices
+over 182 frames, overshoot to scale 1.0022, settled at 758ms. At expressiveness 1 the same probe gives
+41 matrices, overshoot 1.0105, settled at **610ms**. So bold is 148ms quicker and overshoots ~5x more,
+and 0 is the FLOOR, not the off switch. `Bud` at the default 0.8: `data-bud="grown"`, scaleY 0.12 →
+overshoot 1.0254 (33 frames above 1) → settles 0.9994, `border-radius` pill→`--radius-md` — the
+overshoot its docblock always claimed and never had at bold.
+
+**Falsification — every load-bearing property broken on the live line, red observed, restored from a
+file copy (`git diff` over `ui/motion/` empty afterwards).** (1) `Bud`'s `if (reduce)` → `if (false)`:
+*"Expected the element to have attribute data-bud=\"instant\" / Received data-bud=\"grown\""*.
+(2) `floor: 0.4` → `0`: *"expected 190 to be greater than 190"* (and note the sibling `bold > refined`
+case still passes at floor 0 — which is why the floor needs its own assertion). (3a) `stiffness: 260`
+re-added to `Bud`: *"Bud.tsx sets its own stiffness: expected … not to match /stiffness:/"*. (3b) the
+raw Material curve restored in `Disintegrate`: *"Disintegrate.tsx hardcodes a duration: expected … not
+to match /duration:\s*[\d.]/"*. (4) `base + expr(...)` → `base - expr(...)`: three reds —
+*"expected -61.6 to be greater than 0"*, *"flight inverts the knob: expected 120 to be greater than
+162"*, *"expected 162 to be 218"*.
+
+**`FM-2`'s 157px defect — DIAGNOSED and ATTRIBUTED to the pixel, deliberately NOT fixed. Handed to a
+plan that owns the page swap.** Reproduced: at 1440x900 the forward flight's start box is
+`Δcy = -157` from the card's box with `Δcx = 0` and the size exact. **Positive control on the
+diagnosis:** at 1920x900 the toolbar wraps to 113px and the offset becomes exactly `-113` — the offset
+IS the toolbar's height, not a constant, and the snapshot's `y` is always the content area's top (72),
+i.e. the card measured as if the toolbar were absent. The suggested fix was tried: an
+`AnimatePresence mode="popLayout"` around `ArtifactsSection`'s `slug ? viewer : grid` swap, both
+branches `motion.div` with `exit={{opacity:0}}` on `familyFade()`. **It fixes the geometry exactly —
+measured `Δcy = 0, Δcx = 0`, the viewer starting at the card's box `1064,185,414,200` and growing from
+there — and it breaks the swap.** `AnimatePresence` keeps the exiting grid mounted, so the SAME
+`layoutId` is live at both ends at once, which is precisely the "both ends alive = a different and
+wrong animation" hazard `FM-2` recorded: the exiting grid never unmounted (7 `[data-morph]` nodes still
+in the DOM after settle, header actions rendered three times, and a frame where every box measured
+0x0). Trading a 157px start offset for a page that keeps its old content is strictly worse, so it was
+reverted from a file copy. **The fix is not a coherence-pass change**: every variant that keeps the
+toolbar's height in flow long enough for the snapshot either keeps the other `layoutId` end alive or
+animates the toolbar's collapse against the morph. It needs either a framer-level pre-mutation
+snapshot or a restructure where the toolbar is not a flow sibling of the grid — i.e. an owner scope
+decision about the page swap, not a constant to dial.
+
+**PARTIAL — the one clause not fully met.** The done_when's "a liquid state transition stays clean"
+was validated for the PRIMITIVE (jsdom rails + the source rail + `familySpring` collapsing to
+`instant`), **not driven in a browser**, because `LiquidShape` still has **no product call site** —
+`FM-3` deferred adoption to this atom, and adopting it means editing a product surface outside this
+atom's fence (`ui/motion/**`, `design/motion.ts`, `docs/design/motion.md`, the one morph-hosting page).
+No decorative motion was bolted onto a surface on executor taste, per `FM-3`'s own standing reason.
+**Adoption is still open and now belongs to whoever takes the next Fluid-Motion atom.**
+
+**Gate:** `npm ci` clean · `npm run typecheck --workspace web` clean · full `npm test --workspace web`
+· `npm run build --workspace web` clean · `make lint` clean. Docs: `docs/design/motion.md` §5b ("The
+morph family — one vocabulary") carries the three rules, the "adding a fifth member" contract, and the
+two-off-switches section.

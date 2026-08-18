@@ -30,7 +30,7 @@ import { render, screen } from '@testing-library/react'
 // Through the BARREL, not './Morph'. This import is the reachability rail: drop the export
 // from `ui/motion/index.ts` and every case in this file fails at render with an undefined
 // component (and typecheck fails first).
-import { Morph, morphTransition, MORPH } from './index'
+import { Morph, MORPH_FAMILY, familySpring } from './index'
 import { runtime } from '../../design/runtime'
 import { physics } from '../../design/motion'
 
@@ -75,23 +75,24 @@ describe('the morph transition', () => {
     // fluid == "large surfaces, layout shifts, morphs" (motion.ts), and every physics preset
     // routes through bouncy() — the single seam the bounciness slider enters. Asserting the
     // preset identity is how this rail inherits that, rather than restating damping numbers.
-    const t = morphTransition() as { type?: string; damping?: number; stiffness?: number }
+    const t = familySpring(MORPH_FAMILY.flight) as { type?: string; damping?: number; stiffness?: number }
     const fluid = physics.fluid as { damping?: number }
     expect(t.type).toBe('spring')
     expect(t.damping).toBe(fluid.damping)
   })
 
   it('scales its stiffness with expressiveness, bounded by the named constants', () => {
-    // Bold flies tauter, refined glides — and refined keeps `MORPH.floor` of the bonus rather
-    // than dropping to the bare base, so the refined tier is calm, not dead.
+    // Bold flies tauter, refined glides — and refined keeps `MORPH_FAMILY.floor` of the bonus
+    // rather than dropping to the bare base, so the refined tier is calm, not dead.
+    const stiffness = () => (familySpring(MORPH_FAMILY.flight) as { stiffness: number }).stiffness
     runtime.expressiveness = 1
-    const bold = (morphTransition() as { stiffness: number }).stiffness
+    const bold = stiffness()
     runtime.expressiveness = 0
-    const refined = (morphTransition() as { stiffness: number }).stiffness
+    const refined = stiffness()
 
-    expect(bold).toBe(MORPH.stiffness + MORPH.stiffnessBonus)
-    expect(refined).toBe(MORPH.stiffness + MORPH.stiffnessBonus * MORPH.floor)
-    expect(refined).toBeGreaterThan(MORPH.stiffness)
+    expect(bold).toBe(MORPH_FAMILY.flight + MORPH_FAMILY.stiffnessBonus)
+    expect(refined).toBe(MORPH_FAMILY.flight + MORPH_FAMILY.stiffnessBonus * MORPH_FAMILY.floor)
+    expect(refined).toBeGreaterThan(MORPH_FAMILY.flight)
     expect(bold).toBeGreaterThan(refined)
   })
 })
