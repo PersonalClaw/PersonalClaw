@@ -331,3 +331,97 @@ No new session. S3 T3.1's client contract is WHERE the multi-entry registry + ac
   and the bare hostname, no LAN address). Reads from that origin pass. Left to T1.1 /
   REMOTE-USER-AUTH because C2 requires the pairing path work "with no new origin exemption";
   recorded as a known rough edge in the guide.
+- [2026-08-18][CA-1] DONE: S1 backend — C2's four routes (`dashboard/handlers/devices.py`, new,
+  wired next to the auth routes in `server.py`) over a widened REMOTE-USER-AUTH session row. New
+  `auth/pairing.py` mints the code (8 chars, Crockford-ish, TTL 300s, ≤5 outstanding, SHA-256 at
+  rest, constant-time compare, fail-closed, single-use consumed BEFORE the mint). `pair/complete`
+  mints through the ordinary `generate_token` and then ANNOTATES the row it just wrote — **no new
+  token type**, no `device` claim, no `token_auth.generate_token` change. All four done_when
+  clauses were driven against a real gateway on an isolated `/private/tmp` home with **two real
+  process restarts** (pids 89345 → 90256 → 90909), not asserted in-process:
+  · the row is `{"exp":…, "issuer":"pair", "device":{id,name,kind,minted_at}}`, file mode 0600 —
+    written from a body carrying ONLY the code, so the derived-name path is what was exercised
+    (an iPhone User-Agent produced `name:"iPhone", kind:"mobile"`);
+  · the device's unchanged cookie returned 200 from the NEW process after restart #1;
+  · reuse → 401 `device_pair_code_invalid`; an aged record → 401 `device_pair_expired`;
+  · after revoke the device's next request was 403 `token superseded` — live, and again after
+    restart #2, while the OWNER's cookie survived that same restart (the positive control that
+    rules out "the restart broke everything").
+  Eight SEL events landed in `security_events.jsonl` across the drive, including every denial
+  (`device_paired/denied` for invalid and for expired; a separate drive also confirmed
+  `device_revoked/denied` for an unknown id); `caller_identity` is `owner` on the three
+  session-auth routes and the client IP on the exempt one, and neither the code nor any live
+  nonce appears anywhere in them. Real home untouched (110496 files before and after, 0
+  modified in the window; probe controls 1 and 0).
+- [2026-08-18][CA-1] DEVIATION: **revoke DELETES the row rather than flipping a `revoked` flag**
+  on it (C1 says "flip `revoked`"). Measured reason: nothing reads such a flag —
+  `TokenStateManager.is_nonce_valid` authorizes on *presence + expiry* of the nonce
+  (`token_auth.py:129`), so a `revoked: true` row would keep authenticating and the flag would
+  be an inert control that told the owner the device was locked out while it kept working. A
+  reader would have to be added inside `is_nonce_valid`, which is the middleware hot path.
+  Deleting the row revokes through the check that already exists. Cost of the deviation: no
+  tombstone, so a revoked device disappears from the list instead of showing as revoked — if
+  CA-2 wants a "Revoked" row, that is a `revoked` flag PLUS its reader, one atom, not a field.
+- [2026-08-18][CA-1] DEVIATION: **`last_seen` is NOT shipped**, though C1/C2 and T1.2 list it.
+  The only place a device is actually observed is where its request is authorized — the token
+  middleware — so an honest `last_seen` is a throttled write on the request path (a per-request
+  read-modify-write of `sessions.json` otherwise), which is a performance decision outside this
+  atom's fence, not a field to declare. Set once at pairing it would read as fresh forever, and
+  the owner would use it to decide a device is still in use. Shipped absent instead of wrong.
+  **CA-2's done_when names a last-seen column, so CA-2 is short one field until that writer
+  exists** — recipe: throttle on `record.last_seen`, write from `is_nonce_valid`'s success path.
+- [2026-08-18][CA-1] DEVIATION: the session row's **shape is a clean break** — a row went from a
+  bare `float` to `{"exp", "issuer", "device"}`, and an old-shape row is **discarded, not
+  upgraded** (`_parse_record` returns `None`, one place, logged once with a count). Not laziness
+  about a three-line branch: a row with no `issuer` is a live session the registry can neither
+  describe nor revoke, which is the audit gap the record exists to close, so admitting one ships
+  a device list that is silently incomplete. Cost is one `personalclaw token` re-mint, which is
+  the pre-S1 behavior and inside the pre-1.0 banner. `load_sessions()` keeps its
+  `{nonce: exp}` signature as the *projection* of the one shape, so `token_auth`'s two call
+  sites are untouched; `save_sessions` is gone, replaced by `save_session_records`.
+- [2026-08-18][CA-1] DEVIATION (fence): two small additions to `token_auth.py`, which CA-1's
+  fence did not include. Both are unavoidable rather than convenient —
+  `_BYPASS_EXACT.add("/api/devices/pair/complete")` (without it the route 401s forever, i.e.
+  ships inert), and a public `revoke_nonce(nonce)` wrapper, because the registry holds a device
+  id and never sees the device's token, so `revoke_token(token)` cannot serve it. The
+  alternative was reaching into `token_auth._state` from a handler. `generate_token` itself is
+  byte-identical.
+- [2026-08-18][CA-1] DISCOVERY (not fixed, blocks CA-2): the CA-5 rough edge above is **still
+  open and now applies to `pair/complete`**. `build_allowed_origins` carries the loopback names
+  and the bare hostname, never a LAN address, so a phone that scans the QR and posts from
+  `Origin: http://<lan-ip>:<port>` gets 403 before the code is ever read. C2 forbids a new
+  origin exemption, so this is not fixable inside CA-1 by adding one — it needs
+  `build_allowed_origins` to learn the bound LAN address (REMOTE-USER-AUTH's surface).
+  **CA-2's "pairs from the shown QR end-to-end over the LAN" cannot pass until it is done.**
+  Loopback and same-origin pairing work today, which is what CA-1's own done_when covers.
+- [2026-08-18][CA-1] DISCOVERY (not fixed, wants its own atom — this is the sharpest edge CA-1
+  found): **five further token mints silently unpair a device.** `MAX_CONCURRENT_NONCES = 5`
+  (`token_auth.py:239`) and `register_nonce` evicts the oldest nonce past the cap
+  (`:119`), and `generate_token` keeps the durable store in step by calling
+  `forget_session(evicted)` (`:417`). Measured, not reasoned: pair a device, mint five more
+  tokens, and `device_sessions()` goes 1 → 0 while the device's own token returns
+  `token superseded`. The device disappears from the Devices list with no revoke and no event
+  the owner would recognise — it looks exactly like the revoke path succeeding by itself. This
+  was harmless while every session died at restart; a durable device session makes it
+  user-visible. The fix is a policy call inside `register_nonce` (exempt rows with `device`
+  set from eviction, or size the cap to devices + browsers) and is outside CA-1's fence, since
+  it changes what eviction means for every session, not just paired ones.
+- [2026-08-18][CA-1] DISCOVERY (not fixed): a paired device holds an ORDINARY session, so it has
+  the owner's full authority — the drive confirmed a paired device can call `GET /api/devices`
+  and could revoke its siblings. That follows directly from C1's "no new token type" and is not
+  a bug in this atom, but it is the property a reader will assume away: pairing a phone is
+  handing it the whole dashboard, not a scoped client. Scoping needs a capability on the row
+  plus a middleware reader, i.e. its own atom (CA-7's remote-endpoint work is the natural home).
+- [2026-08-18][CA-1] DISCOVERY (not fixed): `issuer` has exactly two producers — `"pair"` (this
+  atom) and `"unknown"` (every ordinary mint). C1 specifies `"enroll" | "pair"`, but
+  `/api/auth/enroll/complete` still mints through the bare `generate_token`, so an enrolled
+  device lands as `unknown` and is invisible to the registry. Deliberately not fixed here:
+  adding an `ISSUER_ENROLL` constant with no writer is an enum member nobody writes. The fix is
+  one keyword argument at `handlers/auth.py:448`, plus deciding whether an enrolled device is a
+  device row at all (it has no name and no kind to show).
+- [2026-08-18][CA-1] Contract note: three C2 names were followed over the atom row's shorthand —
+  `pairing_url` (not `pair_url`; CA-3 normalised it), `device_name` on the request body (optional,
+  gateway-derived from the User-Agent when omitted), and the error code `device_pair_expired`
+  (not `device_pair_code_expired`). The asymmetry with `device_pair_code_invalid` is C2's; CA-2
+  maps these strings to copy, so it was matched rather than tidied. `minted_at` is the row's
+  mint timestamp (C1's "minted-at", T1.2's "minted").

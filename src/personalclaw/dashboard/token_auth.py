@@ -274,6 +274,10 @@ _BYPASS_EXACT.update({"/login", "/api/auth/login", "/api/auth/status"})
 # code has no session yet — that is the point. `enroll/start` is NOT exempt (you must already be
 # authenticated to mint a code), and completion is origin-checked and rate-limited like login.
 _BYPASS_EXACT.add("/api/auth/enroll/complete")
+# Device pairing COMPLETION, exempt for the same reason and with the same compensating guards
+# (origin check, per-IP lockout, single-use hashed short-TTL code). `pair/start` is NOT exempt:
+# minting a pairing code requires already being the owner. See handlers/devices.py.
+_BYPASS_EXACT.add("/api/devices/pair/complete")
 
 # Link click window — URL must be opened within this time.
 # 24 hours for local installs; the URL only works on loopback anyway.
@@ -623,6 +627,19 @@ def revoke_token(token: str) -> bool:
         resources=f"nonce={nonce[:8]}…",
     )
     return existed
+
+
+def revoke_nonce(nonce: str) -> bool:
+    """Drop ONE nonce from this process's live set. Returns whether it was there.
+
+    The IN-MEMORY half of a revoke, for callers that hold a nonce rather than a token — the
+    device registry, which never sees the device's token. The DURABLE half is
+    ``session_store.forget_session``, and a caller needs both: memory alone lets the session
+    return at the next restart, the file alone lets it keep working until then.
+    """
+    if not nonce:
+        return False
+    return _state.revoke_nonce(nonce)
 
 
 def parse_duration(s: str) -> int | None:

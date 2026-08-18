@@ -10,6 +10,16 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Added
 
+- **Pair a phone or tablet as its own device.** `POST /api/devices/pair/start` mints a short-lived,
+  single-use code (shown as a QR by the Devices panel); `pair/complete` redeems it into an ordinary
+  owner session — no new token type — and `GET/DELETE /api/devices` lists and revokes them. A revoked
+  device is locked out on its next request and stays locked across a gateway restart. Every route
+  writes a security-log entry, denials included.
+  **Breaking (pre-1.0):** `sessions.json` rows now carry an issuer and an optional device record
+  instead of a bare expiry. Rows in the old shape are **discarded on read**, because a row with no
+  issuer is a live session the device registry can neither describe nor revoke. The cost is one
+  `personalclaw token` re-mint. Run `personalclaw snapshot` before upgrading if you want a way back.
+
 - **Nudge an artifact's look without spending a message on it.** A generated card, chart or
   dashboard can now declare its own tunables, and the **Iterate** rail beside it turns them into
   real controls — a colour swatch, a slider, a switch. Drag one and the artifact restyles as you

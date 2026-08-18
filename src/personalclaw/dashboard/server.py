@@ -404,6 +404,13 @@ async def start_dashboard(
     app.router.add_post("/api/auth/enroll/start", _auth_h.api_auth_enroll_start)
     app.router.add_post("/api/auth/enroll/complete", _auth_h.api_auth_enroll_complete)
 
+    # Device pairing + the Devices registry (COMPANION-APPS C2). Registered next to the auth
+    # routes because they mint the same credential: a paired device holds an ordinary session,
+    # and `pair/complete` carries login's guards for the same reason it shares its exemption.
+    from personalclaw.dashboard.handlers.devices import register_device_routes
+
+    register_device_routes(app)
+
     # WebSocket (multiplexed real-time events)
     app.router.add_get("/api/ws", ws.api_ws)
 

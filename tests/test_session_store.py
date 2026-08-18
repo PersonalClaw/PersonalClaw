@@ -91,9 +91,13 @@ def test_sessions_round_trip(home):
     assert ss.load_sessions() == {"n1": exp}
 
 
+def _records(**by_nonce: float) -> dict[str, ss.SessionRecord]:
+    return {n: ss.SessionRecord(expiry=e) for n, e in by_nonce.items()}
+
+
 def test_expired_sessions_are_dropped_on_read(home):
     ss.remember_session("live", time.time() + 3600)
-    ss.save_sessions({"live": time.time() + 3600, "dead": time.time() - 1})
+    ss.save_session_records(_records(live=time.time() + 3600, dead=time.time() - 1))
     assert set(ss.load_sessions()) == {"live"}
 
 
@@ -134,7 +138,15 @@ def test_non_object_store_reads_as_empty(home, root):
 
 def test_non_numeric_expiry_is_skipped(home):
     ss.sessions_path().write_text(
-        json.dumps({"sessions": {"good": time.time() + 3600, "bad": "soon"}}), encoding="utf-8"
+        json.dumps(
+            {
+                "sessions": {
+                    "good": {"exp": time.time() + 3600, "issuer": ss.ISSUER_UNKNOWN},
+                    "bad": {"exp": "soon", "issuer": ss.ISSUER_UNKNOWN},
+                }
+            }
+        ),
+        encoding="utf-8",
     )
     assert set(ss.load_sessions()) == {"good"}
 
@@ -148,14 +160,18 @@ def test_the_store_is_owner_only(home):
 def test_the_store_is_capped(home):
     """An unbounded file is a slow disk leak if something mints in a loop."""
     now = time.time()
-    ss.save_sessions({f"n{i}": now + 3600 + i for i in range(ss.MAX_SESSIONS + 50)})
+    ss.save_session_records(
+        _records(**{f"n{i}": now + 3600 + i for i in range(ss.MAX_SESSIONS + 50)})
+    )
     assert len(ss.load_sessions()) == ss.MAX_SESSIONS
 
 
 def test_the_cap_keeps_the_longest_lived(home):
     """A session about to expire anyway is the cheapest one to lose."""
     now = time.time()
-    ss.save_sessions({f"n{i}": now + 100 + i for i in range(ss.MAX_SESSIONS + 10)})
+    ss.save_session_records(
+        _records(**{f"n{i}": now + 100 + i for i in range(ss.MAX_SESSIONS + 10)})
+    )
     kept = ss.load_sessions()
     assert f"n{ss.MAX_SESSIONS + 9}" in kept, "the longest-lived survived"
     assert "n0" not in kept, "the soonest-to-expire was dropped"
@@ -224,7 +240,7 @@ class TestSurvivesRestart:
     def test_an_expired_stored_session_is_refused(self, tmp_path, monkeypatch):
         ta = self._fresh_process(monkeypatch, tmp_path)
         token = ta.generate_token("user1", ttl_seconds=1)
-        ss.save_sessions({n: time.time() - 1 for n in ss.load_sessions()})
+        ss.save_session_records(_records(**{n: time.time() - 1 for n in ss.load_sessions()}))
         ta._state.clear_all()
         valid, _, reason = ta.validate_token(token)
         assert valid is False

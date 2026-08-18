@@ -207,6 +207,10 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `GET /api/desktop/state` — what the desktop shell can actually do, right now.
 - `POST /api/desktop/state` — the shell pushes a refreshed capability manifest.
 - `POST /api/desktop/unregister` — the shell is quitting; forget its capabilities.
+- `GET /api/devices` — every paired device with a live session.
+- `POST /api/devices/pair/complete` — redeem a code for a durable device session.
+- `POST /api/devices/pair/start` — mint a single-use pairing code + QR payload.
+- `POST /api/devices/{id}/revoke` — lock one device out.
 - `GET /api/doctor` — all probes, grouped by capability, cached 30s.
 - `GET /api/doctor/crash/{filename}` — the full JSON of one crash artifact.
 - `POST /api/doctor/fix/{fix_id}` — apply a confirm-gated fix.
