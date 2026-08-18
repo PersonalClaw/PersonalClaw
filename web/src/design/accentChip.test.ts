@@ -83,16 +83,20 @@ describe('no primary tint under primary ink survives', () => {
 //     the same alphas in dark:  5.84 / 5.67 / 5.52 / 5.43 / 4.94 / 4.50 — all pass
 //
 // So EVERY class-spelled coral chip at ≥10% fails AA in light, and only 5% (4.52) squeaks through.
-// Seven static chips were converged onto the container pair; two interactive controls are held back
-// below because they carry `hover:bg-primary/25` on the coral branch and a container fill has no
+// Seven static chips were converged onto the container pair; ONE interactive control is held back
+// below because it carries `hover:bg-primary/25` on the coral branch and a container fill has no
 // hover shade in the token set — picking one is a visual-language decision, not a contrast fix.
 
 const CLASS_TINT_ALLOWED = new Set([
-  // Interactive, with a hover ON the coral branch. `Button`'s `tonal` variant (14 callers) and the
-  // Code cockpit's autopilot toggle both go `bg-primary/15 → hover:bg-primary/25`, i.e. 3.92 → 3.39.
-  // Both need a hover treatment for a container fill before they can move; recorded, not swept.
+  // Interactive, with a hover ON the coral branch: `bg-primary/15 → hover:bg-primary/25`, i.e.
+  // 3.92 → 3.39. Needs a hover treatment for a container fill before it can move; recorded, not swept.
+  //
+  // 🔑 This list held TWO entries until DSC-12, and the comment above them had already done the
+  // hard part: it named `Button`'s `tonal` variant and the Code cockpit's autopilot toggle as the same
+  // control spelled twice, right down to the shared alpha pair. The toggle is now
+  // `<Button variant="tonal">` (caller 15), so the debt has ONE owner and one place to fix. Worth being
+  // exact about what that bought: the contrast did not improve, it stopped being duplicated.
   'ui/Button.tsx',
-  'pages/code/CodeCockpitPage.tsx',
 ])
 
 describe('no primary tint under primary ink survives — utility spelling', () => {
