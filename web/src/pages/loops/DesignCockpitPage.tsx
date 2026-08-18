@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { reportingWrite } from '../../app/reportingWrite'
 import { fvs, withWeight } from '../../design/fontWeight'
 import {
   ArrowLeft, Pause, Play, Square, MessageSquarePlus, MessageSquare, Trash2, Link2, Check,
@@ -110,13 +111,22 @@ export function DesignCockpitPage({ id, onBack, onDeleted, onOpenProject, onBuil
   // that can't persist. Mirrors CodeCockpit's `started` gate + PRELAUNCH_STATUSES.
   const specFrozen = !!status && !['intake', 'planning', 'review', 'ready'].includes(status)
 
+  // 🪤 EVERY ACTION ON THIS COCKPIT IS DATA-DRIVEN: nothing flips locally, the header re-renders from
+  // `loadLoop()`. So a swallowed rejection left NOTHING — the loop did not pause, no message appeared,
+  // and the refetch ran anyway, re-rendering the same status so the click read as "nothing happened,
+  // twice". `app/reportingWrite` returns the outcome precisely so the refetch can be skipped. This is
+  // the same contract the delete below already honours (see its 🔑 note).
   async function act(a: 'start' | 'pause' | 'resume' | 'stop') {
-    await api.uLoopAction(id, a).catch(() => {})
+    if (!(await reportingWrite(`${a} this loop`, () => api.uLoopAction(id, a)))) return
     loadLoop()
   }
+  // 🔑 A FAILED NUDGE USED TO DESTROY THE MESSAGE. `nudgeText` lives only in this component, so
+  // clearing it on failure threw away what the user typed AND did not deliver it — strictly worse than
+  // "nothing happened", because there is nothing left to retry with. The text and the open panel now
+  // survive a failure, so the retry is one click.
   async function sendNudge() {
     const t = nudgeText.trim(); if (!t) return
-    await api.uLoopNudge(id, t).catch(() => {})
+    if (!(await reportingWrite('send that nudge', () => api.uLoopNudge(id, t)))) return
     setNudgeText(''); setNudgeOpen(false)
   }
   // 🔑 A failed delete used to call `onDeleted()` ANYWAY, so the cockpit closed and the user was
@@ -152,7 +162,8 @@ export function DesignCockpitPage({ id, onBack, onDeleted, onOpenProject, onBuil
         [scale]: buildRamp(hex),
       } },
     }
-    await api.updateULoop(id, { kind_config: { ...kc, token_overrides: next } }).catch(() => {})
+    if (!(await reportingWrite(`apply the ${scale} colour`,
+      () => api.updateULoop(id, { kind_config: { ...kc, token_overrides: next } })))) return
     loadLoop(); loadTokens()
   }, [loop, id, loadLoop, loadTokens])
 
@@ -177,7 +188,8 @@ export function DesignCockpitPage({ id, onBack, onDeleted, onOpenProject, onBuil
         if (Object.keys(chain[i]).length === 0) delete chain[i - 1][segs[i - 1]]; else break
       }
     }
-    await api.updateULoop(id, { kind_config: { ...kc, token_overrides: ov } }).catch(() => {})
+    if (!(await reportingWrite(`set ${path}`,
+      () => api.updateULoop(id, { kind_config: { ...kc, token_overrides: ov } })))) return
     loadLoop(); loadTokens()
   }, [loop, id, loadLoop, loadTokens])
 
