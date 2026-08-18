@@ -5739,7 +5739,7 @@
         {
           "id": "PUBL-8",
           "title": "Verify the self-update pipeline end-to-end against the real remote",
-          "status": "todo",
+          "status": "done",
           "scope": "Session 2 \u00a72",
           "done_when": "gateway on a clone one commit behind detects the update and apply pulls/rebuilds/re-execs successfully against the published remote",
           "deps": [
@@ -7803,11 +7803,6 @@
       {
         "id": "PUBL-7",
         "title": "Fresh-clone getting-started walkthrough on a clean machine and fix remote friction",
-        "plan": "PUBL"
-      },
-      {
-        "id": "PUBL-8",
-        "title": "Verify the self-update pipeline end-to-end against the real remote",
         "plan": "PUBL"
       },
       {
@@ -10040,9 +10035,9 @@
         "code": "PUBL",
         "plan": "PUBLICATION",
         "total_atoms": 10,
-        "done": 7,
+        "done": 8,
         "in_progress": 0,
-        "todo": 3,
+        "todo": 2,
         "blocked": 0
       },
       {
