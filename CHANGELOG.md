@@ -192,6 +192,18 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Fixed
 
+- **A provider that rides a CLI subscription could look signed in and still fail.** For a model
+  provider whose vendor bills by subscription — no API key to paste, just an agent CLI you already
+  signed into — one of the two ways such an app gets built never looked for that sign-in, so the
+  provider came up holding a placeholder secret and every request failed as unauthorized with your
+  login sitting right there. Both paths now resolve the credential the same way, from the same code.
+  **Test connection** can see the sign-in too: a signed-in provider is genuinely probed, and a
+  signed-out one is told to sign in — where it used to print the truncated "No API key configured
+  (set it or )", naming an environment variable a subscription app deliberately does not have.
+  Finally, restoring a conversation no longer quietly swaps your pinned model: a provider app that
+  serves a model family is now recognized as serving it instead of only the providers built into
+  PersonalClaw.
+
 - **Your ready-task list was in no particular order.** The list behind **Tasks → Ready** (and the
   same list an agent reads when it asks what to work on next) came back in whatever order the store
   happened to return — most-recently-updated first — so a task due today sat below one due next
