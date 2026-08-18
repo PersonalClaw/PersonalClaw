@@ -168,12 +168,65 @@ export interface DurabilityJob {
   due_in_secs: number
   due: boolean
 }
+/** The sync leg of the schedule (§4). `transport` is the CONFIGURED transport's provider
+ *  name — empty means none is chosen, which is why "no conflicts" on this instance means
+ *  "sync never ran" rather than "sync is healthy". `encrypted` is the RESOLVED verdict for
+ *  that transport, not the `encrypt` tri-state, so the panel can answer "are my bytes
+ *  readable in that store?" instead of echoing "auto". */
+export interface DurabilitySyncStatus extends DurabilityJob {
+  enabled: boolean
+  transport: string
+  encrypt: 'auto' | 'on' | 'off' | string
+  encrypted: boolean
+}
 export interface DurabilityStatus {
   enabled: boolean
   export: DurabilityJob
   snapshot: DurabilityJob
   drill: DurabilityJob
+  sync: DurabilitySyncStatus
 }
+/** One both-sides-edited divergence awaiting a decision (§4.2). Both versions travel so the
+ *  reviewer can see what they are choosing between; `proposal` is the drafted merge, and
+ *  `null` with a `proposal_error` is a draft that was attempted and failed — not a merge
+ *  that is still coming. */
+export interface DurabilityConflict {
+  id: string
+  entry_id: string
+  entity_id: string
+  domain: string
+  surface: string
+  ancestor_sha: string
+  local_sha: string
+  remote_sha: string
+  local_row: Record<string, unknown>
+  remote_row: Record<string, unknown>
+  detected_at: string
+  status: string
+  proposal: Record<string, unknown> | null
+  rationale: string
+  proposed_at: string
+  proposal_error: string
+  resolution: string
+  resolved_at: string
+}
+export interface DurabilityConflicts {
+  conflicts: DurabilityConflict[]
+  truncated: boolean
+  counts: {
+    total: number
+    needs_review: number
+    /** Unresolved count per review surface — what §4.2 item 3's routing actually did. A
+     *  panel showing only its own surface still has to report what waits elsewhere. */
+    by_surface: Record<string, number>
+    selected: number
+  }
+  surfaces: { memory: string; knowledge: string; durability: string }
+  sync: { enabled: boolean; transport: string; configured: boolean }
+}
+/** Which version of a conflicted row to write. `accept_proposal` refuses when no merge was
+ *  drafted rather than falling back to another version. */
+export type DurabilityConflictChoice = 'keep_local' | 'take_remote' | 'accept_proposal'
 /** Per-domain counts recorded INSIDE an archive's manifest (§6). `null` means the
  *  archive recorded none (it predates MANIFEST v3) — which is NOT the same as an empty
  *  archive, so it must render as "not recorded" rather than as zeros. */
@@ -3006,6 +3059,22 @@ export const api = {
   /** `mode` omitted returns the restore PLAN and changes nothing. */
   durabilityArchiveRestore: (id: string, body: { mode?: 'merge' | 'replace'; components?: string[]; confirm?: boolean } = {}) =>
     post<DurabilityRestoreResult>(`/api/durability/archive/${encodeURIComponent(id)}/restore`, body),
+  // ── §4.2 the conflict review queue (DAS-10) ──
+  /** `surface` omitted returns every surface's records; the counts always cover all of them
+   *  so a filtered read can still say what waits elsewhere. */
+  durabilityConflicts: (surface?: string, status?: string) => {
+    const qs = new URLSearchParams()
+    if (surface) qs.set('surface', surface)
+    if (status) qs.set('status', status)
+    const q = qs.toString()
+    return get<DurabilityConflicts>(`/api/durability/conflicts${q ? `?${q}` : ''}`)
+  },
+  /** Writes the chosen version into the live store. `confirm: true` is required for every
+   *  choice — the server refuses without it, so this never sends it implicitly. */
+  resolveDurabilityConflict: (id: string, choice: DurabilityConflictChoice) =>
+    post<{ ok: boolean; choice: string; id: string; written: number; removed: number; conflict: DurabilityConflict }>(
+      `/api/durability/conflicts/${encodeURIComponent(id)}/resolve`, { choice, confirm: true },
+    ),
   // ── Confirm-gated fixes + surfacing simulator (PLATFORM-RESILIENCE §2/§3.1) ──
   doctorFixes: () => get<{ fixes: DoctorFix[] }>('/api/doctor/fixes'),
   doctorFixApply: (fixId: string) =>

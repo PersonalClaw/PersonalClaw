@@ -68,14 +68,19 @@ class JobResult:
         }
 
 
-def _home() -> Path:
+def active_home() -> Path:
+    """The home this process operates on — ``PERSONALCLAW_HOME`` first, else the config dir.
+
+    Public because the dashboard's conflict-review routes (DAS-10) must read the queue from
+    the SAME home the sync cycle writes it to; resolving it a second way in the handler is
+    how a review surface ends up reading an empty queue in an isolated dev home."""
     from personalclaw.config.loader import config_dir
 
     return Path(os.environ.get("PERSONALCLAW_HOME", config_dir()))
 
 
 def _state_path() -> Path:
-    return _home() / _STATE_FILE
+    return active_home() / _STATE_FILE
 
 
 def load_state() -> dict:
@@ -193,7 +198,7 @@ def run_incremental_export() -> JobResult:
                 export_shards,
             )
 
-            home = _home()
+            home = active_home()
             out_dir = default_shard_dir(home)
             state_path = out_dir / "export_state.json"
             # Only the entries whose content moved — that's what makes this hourly
@@ -403,7 +408,7 @@ def run_sync_job() -> JobResult:
             from personalclaw.durability.shards import machine_id
             from personalclaw.durability.sync_cycle import run_sync_cycle
 
-            home = _home()
+            home = active_home()
             report = run_sync_cycle(
                 transport,
                 home,

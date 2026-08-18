@@ -74,9 +74,13 @@ class ReconcileResult:
     new_ancestors: dict[str, str] = dataclass_field(default_factory=dict)
 
 
-def _read_local_rows(entry: inv.StateEntry, src: Path) -> list[dict]:
+def read_local_rows(entry: inv.StateEntry, src: Path) -> list[dict]:
     """The entry's current on-disk rows, read the same way the exporter extracts them, so
-    both sides of the merge speak the same row shape. A missing store is an empty list."""
+    both sides of the merge speak the same row shape. A missing store is an empty list.
+
+    Public because the conflict resolver reads the same rows for the same reason (DAS-10):
+    a resolution substitutes one row into this exact set, so reading it any other way would
+    let a review write reshape the store."""
     if entry.kind == inv.KIND_JSON_ENTITY_DIR:
         return _json_rows_from_entity_dir(src) if src.is_dir() else []
     if entry.kind == inv.KIND_JSON_FILE:
@@ -126,7 +130,7 @@ def reconcile_entry(
         return ReconcileResult(entry.id, handled=False, detail=f"non-row kind {entry.kind}")
     dest = Path(home) / entry.path
     try:
-        local = _read_local_rows(entry, dest)
+        local = read_local_rows(entry, dest)
         held, recorded = _record_conflicts(entry, local, remote_rows, ancestors, queue, now)
         effective_remote = (
             [r for r in remote_rows if conflicts_mod.row_id(r) not in held] if held else remote_rows

@@ -146,6 +146,8 @@ from personalclaw.dashboard.handlers.doctor import (  # noqa: E402, F401
 from personalclaw.dashboard.handlers.durability import (  # noqa: E402, F401
     api_durability_archive,
     api_durability_archive_restore,
+    api_durability_conflict_resolve,
+    api_durability_conflicts,
     api_durability_export,
     api_durability_import,
     api_durability_run,

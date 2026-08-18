@@ -216,6 +216,8 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `GET /api/doctor/{capability}` — re-run one capability's probes (uncached).
 - `GET /api/durability/archive` — the archive browser's list (§6).
 - `POST /api/durability/archive/{id}/restore` — {mode?, components?, confirm?} — §6.
+- `GET /api/durability/conflicts` — the review queue (§4.2).
+- `POST /api/durability/conflicts/{id}/resolve` — {choice, confirm} — apply one decision.
 - `POST /api/durability/export` — {domains?} — the DSAR export (§6).
 - `POST /api/durability/import` — validate, then apply, an export zip (§6).
 - `POST /api/durability/run` — {job} — run one backup job now.
