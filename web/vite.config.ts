@@ -3,6 +3,7 @@ import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 import { fileURLToPath } from 'node:url'
 import { dirname } from 'node:path'
+import type { IncomingMessage, ServerResponse } from 'node:http'
 
 const BACKEND = `http://127.0.0.1:${process.env.PERSONALCLAW_PORT || 10000}`
 const WEB_DIR = dirname(fileURLToPath(import.meta.url))
@@ -45,22 +46,37 @@ function serviceWorkerPlugin(): Plugin {
 // (pc_token_<port>) onto our origin, then redirect to clean /. After that the
 // cookie rides on all same-origin proxied /api + /api/ws calls.
 function tokenProxyPlugin(): Plugin {
+  const handshake = async (req: IncomingMessage, res: ServerResponse, next: () => void) => {
+    const url = new URL(req.url || '/', 'http://localhost')
+    const token = url.searchParams.get('token')
+    if (!token) return next()
+    try {
+      const r = await fetch(`${BACKEND}/?token=${encodeURIComponent(token)}`, { redirect: 'manual' })
+      // getSetCookie(), NOT get(): the gateway sends TWO Set-Cookie headers (the
+      // session cookie, then a `pc_token=""; Max-Age=0` that clears the legacy
+      // non-port-specific one). `get()` joins them with ", " into ONE header, so a
+      // browser reads a single cookie whose LAST Max-Age attribute is 0 — the
+      // session was set and expired in the same response, and every route rendered
+      // onboarding. curl showed a healthy Set-Cookie the whole time.
+      const cookies = r.headers.getSetCookie()
+      if (cookies.length) res.setHeader('set-cookie', cookies)
+    } catch { /* backend down — fall through */ }
+    res.statusCode = 302
+    res.setHeader('location', '/')
+    res.end()
+  }
   return {
     name: 'token-proxy',
     configureServer(server) {
-      server.middlewares.use(async (req, res, next) => {
-        const url = new URL(req.url || '/', 'http://localhost')
-        const token = url.searchParams.get('token')
-        if (!token) return next()
-        try {
-          const r = await fetch(`${BACKEND}/?token=${encodeURIComponent(token)}`, { redirect: 'manual' })
-          const setCookie = r.headers.get('set-cookie')
-          if (setCookie) res.setHeader('set-cookie', setCookie)
-        } catch { /* backend down — fall through */ }
-        res.statusCode = 302
-        res.setHeader('location', '/')
-        res.end()
-      })
+      server.middlewares.use(handshake)
+    },
+    // The PREVIEW server needs it too, and `configureServer` does NOT cover it.
+    // The e2e harness serves the BUILT app through `vite preview`, so without
+    // this the /?token= handshake e2e/auth.setup.ts performs silently returned
+    // index.html with no cookie — every route rendered the onboarding screen and
+    // axe scanned a surface no user ever sees.
+    configurePreviewServer(server) {
+      server.middlewares.use(handshake)
     },
   }
 }
