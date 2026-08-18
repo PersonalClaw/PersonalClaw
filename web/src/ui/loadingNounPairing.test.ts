@@ -250,15 +250,14 @@ describe('a skeleton borrows a noun its own surface already declares', () => {
   it('finds the population — 57 skeletons, 22 beside a LoadError, 4+ beside a results noun', () => {
     expect(all.length, 'skeleton call sites outside the primitive').toBeGreaterThanOrEqual(57)
     expect(errPaired.length, 'skeletons with a LoadError noun in reach').toBeGreaterThanOrEqual(22)
-    // 🔻 5 → 4 (OU-6). These are two buckets of ONE population — `resPaired` is defined as
-    // `!errNoun && resultsNoun` — so every surface that adopts `LoadError` moves a skeleton OUT
-    // of here and into `errPaired`. `#/loops` did exactly that: `LoadError what="loops"` now sits
-    // two lines above its `ListSkeleton what="loops"`, well inside the ±40-line reach, so the
-    // bucket went 5 → 4 while `errPaired` went 33 → 34 (measured: all=64, err=34, res=4).
-    // The floor is a VACUITY guard — "the scan still finds this shape at all" — not a target, and
-    // the shape it guards is the one the LoadError rollout is deliberately draining. Lowering it
-    // is the honest move; raising `errPaired` to match would re-pin a number that keeps climbing.
-    expect(resPaired.length, 'skeletons gated on the state a results noun counts').toBeGreaterThanOrEqual(4)
+    // 🔻 5 → 4 → 3. Two buckets of ONE population — `resPaired` is `!errNoun && resultsNoun` — so every
+    // surface that adopts `LoadError` moves a skeleton OUT of here into `errPaired`. `#/loops` did it
+    // (5→4); `#/triggers` did it next (4→3): `LoadError what="triggers"` now sits above the
+    // `ListSkeleton what="triggers"`, inside the ±40-line reach, so `resPaired` dropped and `errPaired`
+    // rose. The floor is a VACUITY guard — "the scan still finds this shape at all" — not a target, and
+    // the shape it guards is exactly what the LoadError rollout is draining. Lowering it is the honest
+    // move; raising `errPaired`'s floor to match would re-pin a number that keeps climbing.
+    expect(resPaired.length, 'skeletons gated on the state a results noun counts').toBeGreaterThanOrEqual(3)
   })
 
   it('every skeleton beside a LoadError passes that sibling noun', () => {
