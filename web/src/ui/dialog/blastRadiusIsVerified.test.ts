@@ -359,3 +359,40 @@ describe('four more bodies, all already true — pinned so they stay that way', 
     expect(h, 'and only for a provider whose catalog can do it').toMatch(/isinstance\(catalog, ModelManager\)/)
   })
 })
+
+describe('the stop-project dialog, and the file delete', () => {
+  it('warns that a running task loses its worktree — the half that costs work', () => {
+    // 🔴 Stop is TERMINAL and its teardown force-removes every task worktree. The old body reassured
+    // ("Work already written to the workspace is kept") without saying that in-flight work is discarded,
+    // which is the one thing a terminal action owes the user.
+    const ui = web('pages/code/CodeCockpitPage.tsx')
+    expect(ui).toContain('a task still running loses its own worktree and branch')
+    expect(ui, 'and it now says how kept work got there').toContain('already merged into your workspace is kept')
+    // The mechanism, both halves. `--force` discards uncommitted work; `-D` takes the branch even
+    // unmerged, so committed-but-unmerged work goes too.
+    const wt = pyMethod(py('loop/worktree.py'), 'def cleanup_all')
+    expect(wt, 'the worktree is force-removed').toMatch(/"worktree", "remove", "--force"/)
+    expect(wt, 'and its branch force-deleted').toMatch(/"branch", "-D", branch_name\(name\)/)
+    // …and the reason the "kept" half is true: a FINISHED task is merged back first.
+    expect(py('loop/kinds/sdlc.py'), 'a finished task merges into the workspace')
+      .toMatch(/worktree\.merge_worktree\(ws, tid/)
+  })
+
+  it('stop really is terminal, which is why the warning matters', () => {
+    const stop = pyMethod(py('loop/manager.py'), 'async def stop')
+    expect(stop, 'teardown then a terminal status').toMatch(/_teardown\(svc, loop_id\)[\s\S]{0,200}LoopStatus\.STOPPED/)
+    expect(pyMethod(py('loop/manager.py'), 'async def _teardown'), 'and teardown is what cleans worktrees')
+      .toMatch(/worktree\.cleanup_all\(loop\.workspace_dir/)
+  })
+
+  it('the folder delete really recurses', () => {
+    const ui = web('pages/files/FilesSection.tsx')
+    expect(ui).toContain('This deletes the folder and all its contents. This cannot be undone.')
+    // Conditional on `is_dir`, so a file does not get the folder sentence.
+    expect(ui).toMatch(/entry\.is_dir \? 'This deletes the folder and all its contents/)
+    const h = py('dashboard/handlers/files.py')
+    const del = h.slice(h.indexOf('async def api_file_delete'))
+    expect(del.slice(0, 2200), 'a directory is rmtree-d').toMatch(/shutil\.rmtree\(path\)/)
+    expect(del.slice(0, 2200), 'and a root is refused').toMatch(/refusing to delete a root directory/)
+  })
+})
