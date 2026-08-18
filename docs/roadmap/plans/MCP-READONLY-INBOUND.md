@@ -15,9 +15,13 @@ protocol-currency amendment (G1.1-G1.4, `2024-11-05` → `2025-06-18` with real 
 2026-07-30. `src/personalclaw/inbound/` is mounted from `dashboard/server.py` and `InboundConfig`
 round-trips; `inbound/tools.py` registers `memory_recall`, `knowledge_search`, `tasks_list`,
 `task_get`, `sessions_search` and `status`, each wrapped by `wrap_result` fencing.
-**REMAINING:** T2.6 (`docs/guides/use-from-your-ide.md` — the log defers it to the owner's client run)
-and V2's real-MCP-client validation. Status corrected 2026-08-04 by code audit (this line said
-Session 2 was not started). Deepened 2026-07-18 with code recon (initial PROPOSED 2026-07-18;
+V2's real-MCP-client validation ran 2026-08-17 (MRI-5, official SDK — **PARTIAL**: it found the
+defects listed in its log, and Defect 4 — `allow_remote`/`public_url` inert for an MCP client — is
+deliberately left as an owner scope call belonging to EXTERNAL-ACCESS). **T2.6
+(`docs/guides/use-from-your-ide.md`) shipped 2026-08-18 (MRI-4)**, written after re-executing every
+step against a live surface. **REMAINING:** no task row is outstanding; the one open item is
+Defect 4, which is not this plan's to close. Status corrected 2026-08-04 by code audit (this line
+said Session 2 was not started). Deepened 2026-07-18 with code recon (initial PROPOSED 2026-07-18;
 owner-approved extraction from EXTERNAL-ACCESS)
 
 ---
@@ -531,3 +535,84 @@ say *which* client was limited.
 handshake, the enum boundary, the argument-refusal trail) · `test_agent_reference.py`,
 `test_docs_lint_baseline.py`, `test_inert_surface_baseline.py`, `tests/security/` green.
 All three fixes falsified by mutating the live line and observing the specific red.
+
+- 2026-08-18 — **DONE (MRI-4 / T2.6): [`docs/guides/use-from-your-ide.md`](../../guides/use-from-your-ide.md)
+  written AFTER executing every step it publishes**, on an isolated dev home
+  (`PERSONALCLAW_HOME=<worktree>/.dev-home`, port 10521) with the official SDK (`mcp 1.28.1`).
+  Linked from `README.md`'s documentation index. Nothing was published that was not run; the
+  guide's own code block was extracted back out of the committed file and executed to prove it.
+
+  **The counter-offer fix is on `main`** (`inbound/mcp_http.py`, the `initialize` branch +
+  `SUPPORTED_PROTOCOL_VERSIONS`), so a reader with a current SDK connects with no pin: the client
+  asked for its default `2025-11-25` and the session came up on the counter-offered `2025-06-18`,
+  `serverInfo personalclaw 0.1.3`, all six tools listed, `status` returning fenced content. MRI-5's
+  "a stock client could not handshake at all" is therefore closed for anyone on `main`.
+
+  **Defect 4 independently REPRODUCED, and hardened in the doc from "caveat" to "hard limit".**
+  With the knobs fully ON — `inbound.mcp.allow_remote true`, `inbound.public_url
+  http://192.168.86.33:10521` matching the request `Host` exactly, a valid dedicated token, gateway
+  bound `*:10521` — a non-loopback peer still gets `403 CSRF check failed: request origin not
+  allowed.` while the identical loopback request gets `200`. The response *body* is what proves the
+  layer: `csrf_middleware` emits that text, `peer_allowed` emits `{"error": "forbidden"}`. So the
+  guide states plainly that off-machine access does not work and tells the reader not to spend an
+  evening on the two knobs, rather than presenting remote as a configuration choice.
+
+  **HARNESS TRAP worth carrying forward: do NOT measure this surface's CSRF behaviour under
+  `PERSONALCLAW_AUTH_MODE=none`.** That mode swaps `csrf_middleware` + `token_auth_middleware` out
+  for `_dev_user_middleware` (`dashboard/server.py`, the explicit `app.middlewares[:]` block), so the
+  middleware under test is *absent*. A first probe in none-mode returned `200` for a foreign
+  `Origin` and read as "no CSRF problem"; the same probe in default auth mode returned `403`. Any
+  future inbound validation must run in the reader's auth mode, not the convenient one.
+
+  **NEW measured finding — the enablement flag is live in ONE direction only, and the two `404`s
+  are distinguishable.** `mount()` registers `/mcp` at gateway startup only, and only if the flag
+  and token already pass; enablement is then re-checked per request. Measured: enabling under a
+  running gateway that started disabled yields a bare **`404: Not Found`** (plain text, aiohttp's
+  own — the route was never registered), and only a restart fixes it; disabling under a running
+  gateway that started enabled yields the surface's **JSON `{"error": "not found"}`** on the next
+  call with no restart; re-enabling from that state comes straight back, also with no restart. **My
+  own first draft got this wrong** — it said "to turn it back on: set the flag to `true` and
+  restart" and claimed the asymmetry was off-live/on-restart. Executing it falsified both
+  sentences; corrected before commit. The body difference is now the guide's primary
+  troubleshooting discriminator.
+
+  **Rate limit measured** (MRI-5 recorded the SDK teardown; here is the mechanism): the 21st rapid
+  call is the first refused — burst 20 — with `Retry-After: 1` and `{"error": "rate limited"}`. The
+  `429` is HTTP-level, so `raise_for_status` in the SDK's streamable-http transport raises
+  `httpx.HTTPStatusError` out of the transport's task group; it escapes the `async with` blocks
+  entirely, so a per-call `except` cannot catch it and the session is gone, not the one call.
+
+  **Also verified verbatim:** `personalclaw inbound token create mcp` (prints the bearer once,
+  `0600` file), `inbound token show mcp` (confirms without revealing), a second `create` without
+  `--rotate` refusing rather than clobbering, `--rotate` invalidating the old token to `401
+  {"error": "unauthorized"}` while the new one works with no restart, `GET /mcp` → `405` as the
+  mounted-and-healthy signal, and `task_create` → `-32601 unknown tool` (read-only by absence).
+  The two protocol claims were closed on the wire rather than read off the constant: a client
+  pinning `2024-11-05` gets `2024-11-05` echoed back (not overridden by our preference), and an
+  `initialize` response carries no session header at all. (Aside, not a defect: the amendment's
+  "`grep -rn "Mcp-Session-Id" src/` returns zero" now returns **1** — the sole hit is
+  `inbound/mcp_http.py`'s own comment saying no session id is issued. The regression test strips
+  comments, so it is the plan's phrasing that is loose, not the posture.)
+  `Authorization: Bearer` is confirmed as the correct form **for `/mcp`** — it is in
+  `token_auth.py`'s `_BYPASS_EXACT`, so the dashboard's `?token=`/`pc_token_<port>` cookie shape
+  does not apply here. The inverse was measured too, because it is the likelier reader error: a
+  Bearer header against an `/api/…` path (and a client mistakenly pointed at `/api/mcp` instead of
+  `/mcp`) both return **`403 {"error": "Token required"}`**, so the guide uses that string as the
+  "wrong path" tell rather than an auth-shape mistake. No real token appears in the guide
+  (placeholder only; scanned for the three session tokens and for any 40+ char token-shaped run).
+
+  **NOT exercised, with reasons:** a real IDE's own MCP config file — no editor was driven, so the
+  guide publishes the three values PersonalClaw requires (streamable-HTTP transport, URL,
+  `Authorization` header) as verified and explicitly hands the client-specific JSON key spelling
+  back to the reader's client docs; and a stdio→HTTP bridge, flagged in the guide as unexercised
+  rather than implied to work.
+
+  **Code fix this guide wants but did not make (fencing: docs only):** `personalclaw inbound token
+  create mcp` closes with "The surface is loopback-only until you set `inbound.public_url` +
+  `allow_remote`" — which is Defect 4's promise the gateway cannot keep, now printed at the exact
+  moment a reader is deciding what to do next. The guide contradicts it inline with a blockquote,
+  but the CLI string should either drop that line or say the two fields do not work for an MCP
+  client. Owner call, same class as Defect 4 (E4), and it belongs with whoever resolves the knob.
+
+  **Gates:** `tests/test_docs_lint_baseline.py` + `tests/test_agent_reference.py` green (docs-lint
+  ratchet did not rise) · `make lint` clean. Gateway on 10521 stopped; `~/.personalclaw` untouched.
