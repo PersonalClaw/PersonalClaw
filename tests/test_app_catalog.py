@@ -7,11 +7,13 @@ they never appear as "available to install"; git/local source list add/remove.
 from __future__ import annotations
 
 import json
+import subprocess
 from pathlib import Path
 
 import pytest
 
 from personalclaw.apps import app_manager, catalog, manager
+from personalclaw.apps import source as app_source
 from personalclaw.providers import loader
 
 
@@ -112,6 +114,224 @@ def test_git_sources_add_remove(tmp_path):
     assert catalog.list_git_sources().count("https://github.com/acme/cool-app.git") == 1
     catalog.remove_git_source("https://github.com/acme/cool-app.git")
     assert "https://github.com/acme/cool-app.git" not in catalog.list_git_sources()
+
+
+# ── git-source install from a multi-app repo (PUBL-9) ──
+#
+# The published apps repo (PersonalClawApps) publishes NO app-registry.json, so the
+# Store reaches it through the clone-then-subdir-scan fallback and installs one app at
+# a time via a ``url#app`` pointer. These tests build a real bare git repo of the same
+# shape and drive it over ``file://`` — the identical git code path, no network.
+
+
+def _git(*args: str, cwd: Path) -> None:
+    subprocess.run(
+        [
+            "git",
+            "-c",
+            "user.email=fixture@example.invalid",
+            "-c",
+            "user.name=Fixture",
+            "-c",
+            "commit.gpgsign=false",
+            *args,
+        ],
+        cwd=str(cwd),
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+
+def _app_manifest(name: str) -> str:
+    return json.dumps(
+        {
+            "name": name,
+            "version": "0.1.0",
+            "displayName": name.replace("-", " ").title(),
+            "description": f"{name} fixture app",
+        }
+    )
+
+
+def _bare_repo_with_apps(root: Path, names: list[str], *, root_app: str = "") -> str:
+    """A real bare git repo holding one app subdir per name → its ``file://`` URL.
+
+    ``root_app`` instead writes a single ``app.json`` at the repo root (the single-app
+    repo shape). ``root/work`` stays behind with the bare repo wired as ``origin`` so
+    :func:`_publish_app` can add a commit later."""
+    work = root / "work"
+    work.mkdir(parents=True)
+    _git("init", "--initial-branch=main", ".", cwd=work)
+    (work / "README.md").write_text("fixture apps repo\n", encoding="utf-8")
+    if root_app:
+        (work / "app.json").write_text(_app_manifest(root_app), encoding="utf-8")
+    for name in names:
+        d = work / name
+        d.mkdir()
+        (d / "app.json").write_text(_app_manifest(name), encoding="utf-8")
+    _git("add", "-A", cwd=work)
+    _git("commit", "-m", "fixture apps", cwd=work)
+    bare = root / "apps.git"
+    _git("clone", "--bare", str(work), str(bare), cwd=root)
+    _git("remote", "add", "origin", str(bare), cwd=work)
+    return f"file://{bare}"
+
+
+def _publish_app(root: Path, name: str) -> None:
+    """Add one more app to the fixture repo and push it to the bare clone."""
+    work = root / "work"
+    d = work / name
+    d.mkdir()
+    (d / "app.json").write_text(_app_manifest(name), encoding="utf-8")
+    _git("add", "-A", cwd=work)
+    _git("commit", "-m", f"add {name}", cwd=work)
+    _git("push", "origin", "HEAD:main", cwd=work)
+
+
+@pytest.fixture
+def offline_git_sources(monkeypatch):
+    """Drop the bundled default source and empty the module-global scan caches.
+
+    ``available_catalog()`` shallow-clones every configured git source and the shipped
+    default is the real published repo, so without this a test reaches github.com; the
+    caches are process-global, so without the clear they leak between tests."""
+    monkeypatch.setattr(catalog, "_DEFAULT_GIT_SOURCES", ())
+    catalog._git_scan_cache.clear()
+    catalog._registry_cache.clear()
+    yield
+    catalog._git_scan_cache.clear()
+    catalog._registry_cache.clear()
+
+
+def test_git_source_subdir_apps_surface_as_install_cards(tmp_path, offline_git_sources):
+    """A multi-app git repo with no registry index surfaces one install card per app."""
+    url = _bare_repo_with_apps(tmp_path / "repo", ["alpha-app", "beta-app"])
+    catalog.add_git_source(url)
+
+    cat = catalog.available_catalog()
+    git_apps = cat["gitApps"]
+    # Vacuity floor: a scan that discovers nothing must FAIL here, not pass forever on
+    # an empty list (a broken clone degrades to [] by design).
+    assert len(git_apps) == 2, git_apps
+    by_name = {e["name"]: e for e in git_apps}
+    assert set(by_name) == {"alpha-app", "beta-app"}
+    for name, entry in by_name.items():
+        assert entry["sourceKind"] == "git"
+        assert entry["source"] == url
+        # The install pointer install() has to accept for this card.
+        assert entry["pointer"] == f"{url}#{name}"
+    assert url in cat["gitSources"]
+
+
+def test_catalog_git_pointer_resolves_to_the_named_app(tmp_path, offline_git_sources):
+    """The pointer the catalog hands out IS an install source: it resolves to that
+    app's directory, not the repo root. This is the end of the Store install path."""
+    url = _bare_repo_with_apps(tmp_path / "repo", ["alpha-app", "beta-app"])
+    catalog.add_git_source(url)
+    cards = [e for e in catalog.available_catalog()["gitApps"] if e["name"] == "beta-app"]
+    assert cards, "fixture produced no beta-app card"
+
+    resolved = app_source.resolve(cards[0]["pointer"])
+    try:
+        manifest = json.loads((resolved.path / "app.json").read_text(encoding="utf-8"))
+        assert manifest["name"] == "beta-app"
+        # A remote clone is untrusted → the scanner's external tier, and the caller
+        # cleans up the whole clone, not just the app subdir.
+        assert resolved.origin == "external"
+        assert resolved.cleanup is True
+        assert resolved.cleanup_path != resolved.path
+    finally:
+        if resolved.cleanup:
+            app_source._rmtree(resolved.cleanup_path)
+
+
+def test_multi_app_git_url_without_a_suffix_names_the_apps(tmp_path):
+    """A multi-app repo URL pasted bare must say it holds many apps and how to pick
+    one. It used to fail deep in staging as "no app.json in source" — true of the repo
+    ROOT and useless to a user holding a repo full of apps."""
+    url = _bare_repo_with_apps(tmp_path / "repo", ["alpha-app", "beta-app"])
+
+    with pytest.raises(app_source.SourceError) as excinfo:
+        app_source.resolve(url)
+    msg = str(excinfo.value)
+    assert "2 apps" in msg
+    assert f"{url}#alpha-app" in msg  # the exact string the user should type
+    assert "beta-app" in msg
+    assert "app.json" not in msg  # not the old root-manifest message
+
+
+def test_single_app_git_repo_still_resolves_at_its_root(tmp_path):
+    """A repo with a root manifest is one app — the multi-app hint must not fire."""
+    url = _bare_repo_with_apps(tmp_path / "repo", [], root_app="solo-app")
+
+    resolved = app_source.resolve(url)
+    try:
+        manifest = json.loads((resolved.path / "app.json").read_text(encoding="utf-8"))
+        assert manifest["name"] == "solo-app"
+    finally:
+        if resolved.cleanup:
+            app_source._rmtree(resolved.cleanup_path)
+
+
+def test_git_repo_with_no_apps_resolves_and_leaves_the_manifest_error_to_install(tmp_path):
+    """A repo holding no apps at all keeps the plain "no app.json" failure — the
+    multi-app hint must not swallow the genuinely-appless case."""
+    url = _bare_repo_with_apps(tmp_path / "repo", [])
+
+    resolved = app_source.resolve(url)
+    try:
+        assert resolved.path.is_dir()
+        assert not (resolved.path / "app.json").exists()
+    finally:
+        if resolved.cleanup:
+            app_source._rmtree(resolved.cleanup_path)
+
+
+def test_git_scan_is_cached_within_its_ttl(tmp_path, offline_git_sources):
+    """The subdir scan caches per URL, so a second catalog read inside the TTL returns
+    the OLD answer without re-cloning. Pinned so a validation run can tell a cached
+    pass from a fresh one."""
+    repo = tmp_path / "repo"
+    url = _bare_repo_with_apps(repo, ["alpha-app"])
+
+    first = catalog._scan_git_source(url, now=1000.0)
+    assert {e.name for e in first} == {"alpha-app"}
+
+    _publish_app(repo, "beta-app")
+    cached = catalog._scan_git_source(url, now=1000.0 + catalog._GIT_SCAN_TTL_SECS - 1)
+    assert {e.name for e in cached} == {"alpha-app"}, "second scan inside the TTL re-cloned"
+
+    fresh = catalog._scan_git_source(url, now=1000.0 + catalog._GIT_SCAN_TTL_SECS + 1)
+    assert {e.name for e in fresh} == {"alpha-app", "beta-app"}
+
+
+def test_same_repo_with_and_without_dot_git_is_one_source(tmp_path):
+    """GitHub serves a repo at both spellings, so they must not become two sources —
+    two sources means two full clones per catalog refresh for one set of apps."""
+    catalog.add_git_source("https://github.com/acme/cool-app.git")
+    catalog.add_git_source("https://github.com/acme/cool-app")
+
+    assert [s for s in catalog.list_git_sources() if "cool-app" in s] == [
+        "https://github.com/acme/cool-app.git"
+    ]
+    # Either spelling removes it.
+    catalog.remove_git_source("https://github.com/acme/cool-app")
+    assert not [s for s in catalog.list_git_sources() if "cool-app" in s]
+
+
+def test_published_default_source_is_not_duplicated_by_a_user_add():
+    """Measured against the real gateway: POST /api/apps/sources with the published repo
+    URL typed WITHOUT '.git' appended a SECOND source for the same repo — a full extra
+    shallow clone per catalog refresh (3.4s measured) that surfaced zero extra apps."""
+    user_sources = catalog.add_git_source("https://github.com/PersonalClaw/PersonalClawApps")
+
+    assert [s for s in catalog.list_git_sources() if "PersonalClawApps" in s] == [
+        "https://github.com/PersonalClaw/PersonalClawApps.git"
+    ]
+    # Nor persisted as a user source: the stored list must not shadow a default, or
+    # retiring that default would silently hand the user a duplicate source.
+    assert user_sources == []
 
 
 # ── local-directory app sources (workspace-core-app-split §4) ──
