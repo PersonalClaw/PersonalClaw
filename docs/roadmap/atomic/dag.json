@@ -2159,7 +2159,7 @@
         {
           "id": "AS-9",
           "title": "Agent-worlds seam: AgentActivityFeed contract + useAgentActivity hook + first-party world",
-          "status": "todo",
+          "status": "done",
           "scope": "Amendment 2026-07-26 round 2 (b) Agent worlds, task A2-3 (platform contributes the seam, not the scene).",
           "done_when": "the AgentActivityFeed contract is documented and a useAgentActivity() hook folds GET /api/loops + chat session states + subagent states, refreshed by existing WS envelopes (chat_status/sessions/subagent*/update_progress) as signals only; one first-party modern (WebGL/high-craft canvas) world renders live states from the hook alone (no private endpoints) with smooth state interpolation and a passing prefers-reduced-motion static-layout audit; an APP-PLATFORM-EVOLUTION coordination note for app-contributed worlds is added as a doc note (not code).",
           "deps": [
@@ -7450,11 +7450,6 @@
         "plan": "AS"
       },
       {
-        "id": "AS-9",
-        "title": "Agent-worlds seam: AgentActivityFeed contract + useAgentActivity hook + first-party world",
-        "plan": "AS"
-      },
-      {
         "id": "BA-2",
         "title": "CDP browser integration + per-page safety-script injection + BROWSE egress policy + redirect re-eval",
         "plan": "BA"
@@ -9690,9 +9685,9 @@
         "code": "AS",
         "plan": "AMBIENT-SURFACES",
         "total_atoms": 9,
-        "done": 5,
+        "done": 6,
         "in_progress": 0,
-        "todo": 4,
+        "todo": 3,
         "blocked": 0
       },
       {

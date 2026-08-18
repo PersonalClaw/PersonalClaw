@@ -10,6 +10,21 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Added
 
+- **See everything your agents are doing at a glance.** The dashboard gains an **Agent world** — an
+  ambient scene where every running loop, live chat and background subagent is a body in orbit,
+  pulled toward the centre as it starts to want you: waiting on you nearest, then waiting for
+  approval, then working, with idle furthest out. Loops draw their cycle progress as an arc; a run
+  parked on a tool approval reads as *waiting*, not *busy*. State changes glide between orbits
+  instead of jumping. Under `prefers-reduced-motion` it is a still picture, not a slow one — nothing
+  orbits, nothing pulses, and the layout is identical. The scene always carries the same facts in
+  plain text ("1 waiting on you, 2 working"), so nobody has to see the animation, and it falls back
+  to a list where a browser blocks canvas. A failed read says the world is *unknown* rather than
+  showing a calm, empty sky.
+  For anyone building on it: the underlying `AgentActivityFeed` is a documented read contract
+  (`docs/architecture/agent-activity-feed.md`) that folds `/api/loops`, chat sessions, subagents and
+  approvals into one typed shape, refreshed by existing WebSocket envelopes **as signals only**. Apps
+  will be able to contribute their own worlds against it without asking for a single permission.
+
 - **Apps can subscribe to platform events they declare.** An app that declares
   `permissions.eventSubscriptions` now receives `session.created`, `knowledge.ingested` and
   `task.completed` through its existing message inbox — no new route, and the install consent screen lists the
