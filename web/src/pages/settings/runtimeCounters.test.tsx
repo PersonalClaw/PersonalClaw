@@ -94,6 +94,9 @@ describe('the rendered rows', () => {
       api: {
         usageTotals: () => Promise.resolve({ totals: null }),
         usageRollup: () => Promise.resolve({ rows: [] }),
+        // The MRT-3 spend fold. Rejecting is the honest stub for "this install has no fold yet":
+        // the panel catches it and renders nothing, which is what these row assertions assume.
+        usageFold: () => Promise.reject(new Error('no fold')),
         personalclawConfig: () => Promise.resolve(null),
         system: () => Promise.resolve({ stats: { ...stats, ...overrides } }),
       },

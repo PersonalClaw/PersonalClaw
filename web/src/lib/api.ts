@@ -2781,6 +2781,59 @@ export interface UsageAgg {
   cost_usd: number; turns: number; priced: boolean
 }
 
+/** One row of the per-day spend fold (MODEL-ROUTING-TELEMETRY MRT-3, `GET /api/usage`).
+ *
+ *  Same money as `UsageAgg` above — both read the per-turn ledger — but this is the DURABLE per-day
+ *  fold of it, grouped into the fixed `interactive|background|loop|eval|app` purpose vocabulary. It
+ *  outlives the ledger JSONL's own trim, which is why it exists beside the rollup rather than
+ *  instead of it.
+ *
+ *  Two disclosures, deliberately separate:
+ *  · `estimated_share` — fraction of `dollars_est` that is a rate-table estimate rather than a
+ *    provider-reported charge. 1.0 today for everything, so always render a "~".
+ *  · `priced` / `unpriced_calls` — a model with no price row contributes 0 dollars, so a row with
+ *    `priced: false` is a FLOOR. Never render it as "$0.00 spent". */
+export interface UsageFoldRow {
+  key: string
+  calls: number
+  tokens_in: number; tokens_out: number; tokens: number
+  dollars_est: number
+  estimated_dollars: number
+  estimated_share: number
+  unpriced_calls: number
+  local_calls: number
+  priced: boolean
+}
+
+/** `GET /api/usage` — grouped rows + the window total + the per-day series behind the chart.
+ *
+ *  · `uncounted` — guarded `complete()` spend (`model_calls.jsonl`) that is deliberately NOT in any
+ *    figure above. A loop's inner inference is recorded in both records and they share no id, so
+ *    summing them would double-count with no way to detect it. Render it as a stated exclusion; a
+ *    surface that omits it silently is claiming a completeness the data does not have.
+ *  · `app_sources` — which app names produced `app` turns (a census, not an error).
+ *  · `unmapped` — rows that could not be attributed to a day at all; counted, never dropped.
+ *  · `reachable_purposes` — the subset of the vocabulary a writer can produce today, so a UI can
+ *    skip a permanently-empty row (`eval` has no writer yet). */
+export interface UsageFold {
+  window: string
+  group: string
+  dates: string[]
+  rows: UsageFoldRow[]
+  total: UsageFoldRow
+  series: Array<{ date: string; calls: number; dollars_est: number; tokens: number }>
+  estimated_share: number
+  unmapped: Record<string, number>
+  app_sources: Record<string, number>
+  uncounted: {
+    calls: number
+    total_calls: number
+    total_dollars_est: number
+    by_use_case: Record<string, number>
+  }
+  reachable_purposes: string[]
+}
+
 /** One per-model efficiency row for a (use_case, query_class) bucket
  *  (MODEL-ROUTING-TELEMETRY, MRT-1d/1e). Observation only — the fold supplies
  *  n/success/feedback/cost, the audit tail supplies p50/p95 latency, and
@@ -2952,6 +3005,16 @@ export const api = {
   // partial (render "unpriced" / a partial marker — never a confidently-complete $).
   usageTotals: (opts?: { session?: string; since?: string; until?: string }) => get<{ session: string; totals: UsageAgg }>(`/api/usage/totals${_usageQuery(opts)}`),
   usageRollup: (opts?: { group_by?: 'model' | 'source' | 'agent' | 'provider' | 'day'; since?: string; until?: string; session?: string }) => get<{ group_by: string; rows: Array<UsageAgg & Record<string, string>> }>(`/api/usage/rollup${_usageQuery(opts)}`),
+  // The per-day spend fold (MRT-3) — the ONLY usage read that includes unattended
+  // (reasoning/loop/background) model calls; usageRollup/usageTotals above see the
+  // per-turn ledger only. Read-only, derived on request; a deleted fold self-heals.
+  usageFold: (opts?: { window?: 'day' | 'week' | 'month'; group?: 'model' | 'provider' | 'purpose' }) => {
+    const p = new URLSearchParams()
+    if (opts?.window) p.set('window', opts.window)
+    if (opts?.group) p.set('group', opts.group)
+    const q = p.toString()
+    return get<UsageFold>(`/api/usage${q ? `?${q}` : ''}`)
+  },
   // Per-model routing efficiency for one (use_case, query_class) bucket
   // (MODEL-ROUTING-TELEMETRY, MRT-1d). BOTH params are required (a missing either
   // is a 400); `rows` may be empty for a bucket with no telemetry yet. Read-only —
