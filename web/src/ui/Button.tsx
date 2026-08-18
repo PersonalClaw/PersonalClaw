@@ -12,7 +12,7 @@ const variants: Record<Variant, string> = {
   primary: 'bg-primary text-on-primary hover:bg-primary-emphasis',
   // tonal: the primary-tinted chip CTA (Material's tonal button) — the pattern
   // pages kept hand-rolling as `bg-primary/15 text-primary hover:bg-primary/25`.
-  tonal: 'bg-primary/15 text-primary hover:bg-primary/25',
+  tonal: 'bg-primary/15 text-on-primary-tint hover:bg-primary/25',
   secondary: 'bg-surface-high text-on-surface hover:bg-surface-highest',
   ghost: 'bg-transparent text-on-surface hover:bg-surface-high',
   danger: 'bg-danger text-on-danger hover:opacity-90',
