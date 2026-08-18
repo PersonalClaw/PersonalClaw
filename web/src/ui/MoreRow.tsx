@@ -13,17 +13,24 @@
  *  Renders nothing when nothing is hidden, so a caller can pass its numbers unconditionally rather
  *  than repeating the comparison at every site (a repeated `total > cap` is the same drift risk one
  *  level up). */
-export function MoreRow({ total, shown, className }: {
+export function MoreRow({ total, shown, noun, className }: {
   /** How many items exist — the number the surrounding label states. */
   total: number
   /** How many are rendered, i.e. the cap actually applied. */
   shown: number
+  /** What is hidden, when "… 6 more" alone would not say. Beneath a stacked list the subject is
+   *  obvious from what sits above it; beneath a TABLE it is not — "… 6 more" could mean rows or
+   *  columns, and those are very different facts about the data you are reading. Plural; the caller
+   *  owns the word because only it knows what its rows are. */
+  noun?: string
   /** Layout-only override for a caller whose list is a chip row rather than stacked rows. */
   className?: string
 }) {
   const hidden = total - shown
   if (hidden <= 0) return null
   return (
-    <div className={`text-on-surface-low text-[0.75rem] ${className ?? ''}`}>… {hidden} more</div>
+    <div className={`text-on-surface-low text-[0.75rem] ${className ?? ''}`}>
+      … {hidden} more{noun ? ` ${noun}` : ''}
+    </div>
   )
 }

@@ -6,6 +6,7 @@
  *   markdown), composing the existing Markdown (incl. its diff block) + ToolOutput
  *   JSON tree. Everything degrades to RawBlock.
  */
+import { MoreRow } from '../../../ui/MoreRow'
 import { type ReactNode } from 'react'
 import { Markdown } from '../../../ui/Markdown'
 import { ToolOutput } from '../../tools/ToolOutput'
@@ -149,6 +150,10 @@ function CsvTable({ text }: { text: string }) {
           <tr key={i} className="hover:bg-surface-high/40">{r.map((c, j) => <td key={j} className="border-b border-outline-variant/20 px-2 py-1 align-top">{c}</td>)}</tr>
         ))}</tbody>
       </table>
+      {/* 🪤 A TRUNCATED TABLE IS WORSE THAN A TRUNCATED LIST: the rows stop and the frame looks
+          complete, so a user reading a tool's CSV result has no way to tell the answer continues. The
+          row lives OUTSIDE the table because a div inside `<tbody>` is invalid markup. */}
+      <MoreRow total={body.length} shown={200} noun="rows" className="px-2 py-1" />
     </div>
   )
 }
