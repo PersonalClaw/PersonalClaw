@@ -5742,6 +5742,7 @@
           "id": "PUBL-8",
           "title": "Verify the self-update pipeline end-to-end against the real remote",
           "status": "done",
+          "pr": 1662,
           "scope": "Session 2 \u00a72",
           "done_when": "gateway on a clone one commit behind detects the update and apply pulls/rebuilds/re-execs successfully against the published remote",
           "deps": [
@@ -6025,6 +6026,7 @@
           "id": "FM-3",
           "title": "LiquidShape.tsx fluid-blob shape morph (coral-tinted, expr()-scaled)",
           "status": "done",
+          "pr": 1662,
           "scope": "Session 2 \u2014 Liquid morphing (T2.2); Contracts C2 (LiquidShape)",
           "done_when": "shape morphs smoothly between states (SVG-path vs canvas-metaball decided by measurement in T2.2), integrates visually with DotGlow/WavyProgress without clashing, and honors reduced-motion (instant) and expr() scaling",
           "deps": [
