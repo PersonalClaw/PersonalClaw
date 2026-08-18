@@ -24,10 +24,11 @@ pages are added — append new routes, don't renumber existing ones.
    app + key + binding, or seed a demo instance (below).
 2. **Seeded scenario data** (recommended) so screens show believable content rather than
    empty states. `personalclaw gateway --seed demo-home --seed-replace` populates an
-   isolated `$PERSONALCLAW_HOME` with two projects, ten tasks across every status, and
-   markdown memory, and skips onboarding. It does **not** carry knowledge items or a loop
-   — those stores are SQLite-only and a seed fixture is a plain file copy — so for the
-   Knowledge and loop-cockpit shots, drive those two by hand once on the seeded home.
+   isolated `$PERSONALCLAW_HOME` with two projects, ten tasks across every status,
+   markdown memory, five knowledge docs and one completed loop, and skips onboarding —
+   so the Knowledge and loop-cockpit shots need no hand-driving. Semantic/episodic
+   memory *records* are still absent (that store is SQLite-only with no text tier), so
+   drive the memory-records views by hand if a shot needs them.
 3. **Playwright**: `npm i -D playwright && npx playwright install chromium`.
 
 ## Run

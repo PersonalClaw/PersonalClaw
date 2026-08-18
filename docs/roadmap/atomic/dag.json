@@ -5923,10 +5923,11 @@
         {
           "id": "DL-4",
           "title": "T3.1: build the demo-home seed fixture (core)",
-          "status": "todo",
+          "status": "done",
           "scope": "Session 3 \u2014 Launch assets (T3.1)",
           "done_when": "src/personalclaw/tests_fixtures/demo-home/ exists following the empty-fixture layout with believable non-personal data (project, tasks, knowledge docs, memory entries, one loop); `personalclaw gateway --seed demo-home` boots a demo-ready dashboard",
-          "deps": []
+          "deps": [],
+          "pr": null
         },
         {
           "id": "DL-5",
@@ -7540,8 +7541,8 @@
         "plan": "DIST"
       },
       {
-        "id": "DL-4",
-        "title": "T3.1: build the demo-home seed fixture (core)",
+        "id": "DL-5",
+        "title": "T3.2 remainder + T2.4 residual: launch media assets (60-90s demo GIF + social-preview images)",
         "plan": "DL"
       },
       {
@@ -10072,9 +10073,9 @@
         "code": "DL",
         "plan": "DISCOVERABILITY-LAUNCH",
         "total_atoms": 9,
-        "done": 3,
+        "done": 4,
         "in_progress": 0,
-        "todo": 6,
+        "todo": 5,
         "blocked": 0
       },
       {
