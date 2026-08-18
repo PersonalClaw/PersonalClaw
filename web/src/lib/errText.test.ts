@@ -59,6 +59,46 @@ describe('errText', () => {
     expect(await errText(res('', 503))).toBe('HTTP 503')
   })
 
+  it("uses the platform envelope's message — the shape errors.py declares", async () => {
+    // 🔴 The regression this closes. `errors.py`: "INTEGRATION-ARCHITECTURE §2.2 owns the *wire* shape for
+    // API-route errors — `{"error": {"code": "<lowercase_snake>", "message": ...}}`", returned by 115
+    // sites. Because the object is not a string, every one of them used to fall through to the status.
+    expect(await errText(res('{"error": {"code": "invalid_request", "message": "invalid JSON body"}}')))
+      .toBe('invalid JSON body')
+    expect(await errText(res('{"error": {"code": "extract_failed", "message": "could not read the document"}}')))
+      .toBe('could not read the document')
+  })
+
+  it('takes the message and NOT the code — a code is not a sentence', async () => {
+    // The whole point of preferring `message`: `extract_failed` in a toast is machine-speak, and the
+    // registry's codes are a branching surface for clients, not copy.
+    const out = await errText(res('{"error": {"code": "not_extractable", "message": "no reader for \'x/y\'"}}'))
+    expect(out).toBe("no reader for 'x/y'")
+    expect(out, 'the code must not leak into the sentence').not.toMatch(/not_extractable/)
+  })
+
+  it('trims the envelope message too', async () => {
+    expect(await errText(res('{"error": {"code": "x", "message": "  spaced  "}}'))).toBe('spaced')
+  })
+
+  it('still refuses an envelope with no usable message', async () => {
+    // Unchanged and deliberate: a code-only object is not a sentence, so the status is the honest answer.
+    expect(await errText(res('{"error": {"code": "x"}}'))).toBe('HTTP 502')
+    expect(await errText(res('{"error": {"code": "x", "message": "   "}}'))).toBe('HTTP 502')
+    expect(await errText(res('{"error": {"code": "x", "message": 7}}'))).toBe('HTTP 502')
+  })
+
+  it('never prints a serialized object, even a nested one', async () => {
+    // The failure mode the old comment warned about: printing JSON at a user.
+    const out = await errText(res('{"error": {"code": "x", "message": {"deep": "no"}}}'))
+    expect(out).toBe('HTTP 502')
+    expect(out).not.toMatch(/[{}]/)
+  })
+
+  it('prefers a top-level string over an envelope, so the 239 bare sites are untouched', async () => {
+    expect(await errText(res('{"error": "the gateway sentence"}'))).toBe('the gateway sentence')
+  })
+
   it('does not render a non-string or blank message', async () => {
     // `{"error": {...}}` would otherwise reach the user as "[object Object]", and `{"error": " "}`
     // as a blank alert — an announcement with nothing in it.
@@ -94,5 +134,40 @@ describe('one owner', () => {
       expect(readFileSync(join(SRC, rel), 'utf8'), `${rel} must use the shared helper`)
         .toMatch(/import \{ errText \} from '\.\/errText'/)
     }
+  })
+})
+
+describe('the envelope this extracts is the one the backend declares', () => {
+  const PY = join(__dirname, '../../../src/personalclaw')
+  const py = (rel: string) => readFileSync(join(PY, rel), 'utf8')
+
+  it('errors.py states the wire shape verbatim', () => {
+    // 🔑 The justification for widening the funnel is a written contract, not a guess. If §2.2's shape
+    // ever changes, this fails and the extraction has to be re-derived rather than silently mismatching.
+    expect(py('errors.py')).toMatch(
+      /\{"error": \{"code": "<lowercase_snake>",\s*\n?\s*"message": \.\.\.\}\}/,
+    )
+    expect(py('errors.py'), 'and it is explicitly the HTTP-route shape').toMatch(
+      /wire\* shape for API-route errors/,
+    )
+  })
+
+  it('and enough routes really return it for this to matter', () => {
+    // Not speculative API: a census, so a future reader knows the extraction earns its place.
+    const walk = (d: string): string[] =>
+      readdirSync(d).flatMap((n) => {
+        const p = join(d, n)
+        if (statSync(p).isDirectory()) return walk(p)
+        return /\.py$/.test(n) ? [p] : []
+      })
+    const sites = walk(PY).reduce((n, f) => n + (readFileSync(f, 'utf8').match(/"error": \{"code"/g) ?? []).length, 0)
+    expect(sites, 'typed-envelope responses in the backend').toBeGreaterThanOrEqual(80)
+  })
+
+  it('a real handler pairs a code with a human sentence', () => {
+    // The concrete case from the PR: a malformed workflow body used to surface as "HTTP 400".
+    expect(py('workflows/handlers.py')).toMatch(
+      /\{"error": \{"code": "invalid_request", "message": "invalid JSON body"\}\}/,
+    )
   })
 })
