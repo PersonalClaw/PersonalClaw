@@ -4,8 +4,25 @@ import { ChevronUp, ChevronDown, X } from 'lucide-react'
 import { spring } from '../../design/motion'
 import { SearchField } from '../../ui/SearchField'
 import { IconButton } from '../../ui/IconButton'
+import { useIsMobile } from '../../app/useIsMobile'
 import { findInText, findMatches, type FindMatch } from './findMatches'
 import type { ChatTurn } from './chatTypes'
+
+/** What the sr-only region says for a given scan state — worded, not the bare `3/17`
+ *  the sighted counter shows. Exported so the announcement is asserted as a VALUE
+ *  rather than by scraping the rendered bar.
+ *
+ *  🪤 The noun trap from `ui/ListControls.tsx`'s `ResultAnnouncement`: that primitive
+ *  builds "No matching ${noun}", which with the honest noun here ("matches") reads
+ *  "No matching matches". Find also has a second axis `ResultAnnouncement` has no
+ *  concept of — WHICH match you are on — and cycling with ↑/↓ must re-announce even
+ *  though the total did not change. So this is a sibling wording, not a second
+ *  implementation of list filtering. */
+export function findAnnouncement(query: string, active: number, total: number): string {
+  if (!query.trim()) return ''
+  if (!total) return 'No matches'
+  return `Match ${active + 1} of ${total}`
+}
 
 /** Find-in-conversation (CHAT-CRAFT S2) — a compact bar docked under the chat
  *  header. Case-insensitive substring search over the hydrated turns; count
@@ -29,6 +46,22 @@ export function FindBar({ turns, scrollRef, turnNodes, onClose }: {
   const [active, setActive] = useState(0)
   const [debounced, setDebounced] = useState('')
   const inputRef = useRef<HTMLInputElement>(null)
+  const isMobile = useIsMobile()
+
+  // Focus return (CC-6). The bar autofocuses its input, so closing it used to drop
+  // focus on <body> — a keyboard user's next Tab restarted from the top of the page,
+  // which is how a transient surface makes the whole transcript feel unreachable.
+  // Remember whatever had focus when we mounted and hand it back on unmount.
+  const restoreRef = useRef<HTMLElement | null>(
+    typeof document === 'undefined' ? null : (document.activeElement as HTMLElement | null))
+  useEffect(() => {
+    const prev = restoreRef.current
+    return () => {
+      // Guard both ways: the element may have unmounted under us, and it may not be
+      // focusable any more (a disabled button) — .focus() is then a silent no-op.
+      if (prev && prev.isConnected && typeof prev.focus === 'function') prev.focus()
+    }
+  }, [])
 
   // Debounce the scan 150ms so typing in a long session stays smooth.
   useEffect(() => {
@@ -91,18 +124,46 @@ export function FindBar({ turns, scrollRef, turnNodes, onClose }: {
     <motion.div
       initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -8 }}
       transition={spring.spatialFast}
-      className="sticky top-2 z-30 ml-auto mr-l flex w-fit items-center gap-1 rounded-pill border border-outline-variant/60 bg-surface/95 pl-1 pr-2 h-10 shadow-md backdrop-blur-md"
-      role="search">
+      // Mobile (≤768px, `useIsMobile`) DOCKS the bar: it spans the transcript's gutter
+      // instead of sitting as a right-aligned `w-fit` pill.
+      //
+      // MEASURED, in Chrome, both layouts at both widths — the honest numbers, because
+      // the first version of this comment claimed a break at 390px that is not there:
+      //   390px (iPhone 12-15)  w-fit → bar 344px, fits (left 30, right 374), input 147px
+      //                         docked → bar 358px, input 161px          ← polish, +14px
+      //   320px (iPhone SE 1)   w-fit → bar 344px, OVERFLOWS (left 0, right 344 > 320)
+      //                         docked → bar 288px, fits (left 16), input 91px  ← the fix
+      // So `w-fit` has a ~344px intrinsic floor (field + counter + three 28px buttons)
+      // that cannot shrink; below roughly 360px the pill hangs off the edge and the left
+      // gutter is eaten. Docked, the row shrinks with the column instead.
+      className={`sticky top-2 z-30 flex items-center gap-1 rounded-pill border border-outline-variant/60 bg-surface/95 pl-1 pr-2 h-10 shadow-md backdrop-blur-md ${
+        isMobile ? 'mx-l w-auto' : 'ml-auto mr-l w-fit'}`}
+      role="search"
+      // Escape is bound on the CONTAINER, not only on the input (CC-6). Tabbing to
+      // Previous/Next/Close left Escape dead — the one key a user presses to get out of
+      // a transient bar did nothing from three of its four tab stops.
+      onKeyDown={(e) => { if (e.key === 'Escape') { e.preventDefault(); onClose() } }}>
       <SearchField variant="inline" value={query} onChange={setQuery} inputRef={inputRef} autoFocus
         placeholder="Find in conversation" ariaLabel="Find in conversation" inlineIconSize={14}
         onKeyDown={(e) => {
-          if (e.key === 'Escape') { e.preventDefault(); onClose() }
-          else if (e.key === 'Enter') { e.preventDefault(); go(e.shiftKey ? -1 : 1) }
+          // ↑/↓ cycle too (the S2 design text names them); without them the arrow keys
+          // moved the text caret and the bar looked stuck on match 1.
+          if (e.key === 'Enter') { e.preventDefault(); go(e.shiftKey ? -1 : 1) }
+          else if (e.key === 'ArrowDown') { e.preventDefault(); go(1) }
+          else if (e.key === 'ArrowUp') { e.preventDefault(); go(-1) }
         }} />
-      <span className="min-w-[3.2rem] select-none text-center text-on-surface-low text-[0.75rem] tabular-nums" aria-live="polite">
+      {/* Two regions, one truth. The visible `3/17` is aria-hidden so the terse glyph is
+          not what a screen reader reads out; the sr-only sibling carries the worded form
+          ("Match 3 of 17" / "No matches"). It is mounted from the first render with empty
+          content — a live region that appears WITH its text is not reliably announced. */}
+      <span aria-hidden="true"
+        className="min-w-[3.2rem] select-none text-center text-on-surface-low text-[0.75rem] tabular-nums">
         {debounced.trim() ? (matchTurns.length ? `${active + 1}/${matchTurns.length}` : '0/0') : ''}
       </span>
-      {/* The 0/0 counter beside these announces the count, but the BUTTONS said nothing — a keyboard
+      <div role="status" aria-live="polite" className="sr-only">
+        {findAnnouncement(debounced, active, matchTurns.length)}
+      </div>
+      {/* The counter beside these announces the count, but the BUTTONS said nothing — a keyboard
           user lands on them (this primitive keeps its tab stop) and hears only "Previous match". */}
       <IconButton icon={ChevronUp} label="Previous match" onClick={() => go(-1)} disabled={!matchTurns.length}
         disabledReason={debounced.trim() ? 'Nothing matches this search yet' : 'Type something to search for'}

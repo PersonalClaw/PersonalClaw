@@ -740,6 +740,25 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
   is only a file copy; create one of each by hand if a screenshot needs them.
 
 ### Changed
+- **Rewinding a conversation no longer throws the old ending away — and that history is now
+  stored inside your chats.** Editing a message from earlier in a conversation used to delete
+  everything after it. It still replays from that point, but the turns that came off are kept on
+  the message you edited: a divider at the rewind point tells you how many are held, you can
+  expand it to read them, and **restore** rebuilds "everything up to the edit, plus the old
+  ending" as a *new* session, leaving the chat you are in untouched. Five rewinds' worth are kept
+  per message; a sixth pushes out the oldest. **This adds a field to saved chat messages.** A chat
+  written before this update loads exactly as it did and simply has nothing held at any turn — but
+  a chat written *after* it, opened by an older PersonalClaw, will not show the retained endings,
+  and rewinding there goes back to discarding them. As with any 0.x state-shape change, run
+  `personalclaw snapshot` before updating if you want a restore point.
+- **Finding something in a long conversation now works properly with a keyboard and a screen
+  reader.** `Esc` closes the find bar from every one of its controls rather than only from the
+  text field, `↑`/`↓` cycle matches instead of moving the caret, and closing the bar puts your
+  focus back where it was instead of dropping you at the top of the page. A screen reader now
+  hears the position in words — "Match 3 of 17", or "No matches" — rather than the bare digits
+  on screen, and it is told when follow-up suggestions appear, which was a change you could
+  previously only see. On a phone-width screen the find bar now spans the column, so on a narrow
+  phone it no longer hangs off the edge of the screen.
 - **The Optimize button now knows who said what, and leaves an already-good prompt alone.** The
   recent conversation it sends along is labelled by speaker and ordered oldest-to-newest, and each
   turn gets twice the room it used to — so asking it to "add a test for that file from earlier"

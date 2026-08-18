@@ -493,6 +493,99 @@ One task row, landing in **S4** (the polish session); **no count change**.
   line removed and rebuilt → `document.activeElement` is `BODY` after revert on the live
   DOM.
 
+- **2026-08-18 — CC-6 DONE (S4 wrap-up — T4.3 + T4.4).** Branch `feature-cc6-chat-wrapup`,
+  one commit. The seven mechanics, enumerated from `:41`-`:47` before starting: (1) true
+  rewind, (2) queue interrupt-now, (3) find-in-conversation, (4) quote-reply, (5) follow-up
+  chips, (6) smooth streaming reveal, (7) screen-snip.
+
+  **a11y — `aria-live` EXISTED and said the wrong thing.** `FindBar`'s counter carried
+  `aria-live="polite"`, so any rail that greps the attribute passed — but its content was the
+  glyph `3/17`, read out as digits and a slash, and `0/0` for no result. The counter is now
+  `aria-hidden` beside a worded `role="status"` sibling mounted from first render
+  (`findAnnouncement()` → `Match 3 of 17` / `No matches`). Deliberately NOT `ListControls`'
+  `ResultAnnouncement`: its `No matching ${noun}` template renders "No matching **matches**"
+  with find's honest noun, and it has no concept of WHICH match you are on, which cycling
+  must re-announce. The chips had the same shape of gap — they arrive from a WS event 1-3s
+  after the reply, a purely visual change — so `followupAnnouncement()` fills a second
+  always-mounted region in `ChatPage` (separate from `srAnnounce` so streaming narration and
+  chips arrival cannot overwrite each other), cleared on dismissal so no stale claim survives.
+
+  **Keyboard traversal — two real gaps, driven not declared.** Escape was bound on the INPUT
+  only, so from Previous/Next/Close (three of the bar's four tab stops, each keeping its tab
+  stop by `IconButton` design) the one key that leaves a transient bar did nothing → moved to
+  the container. Closing dropped focus on `<body>` because the bar autofocuses its field and
+  nothing handed focus back → mount captures `document.activeElement` and restores it on
+  unmount (guarded on `isConnected`). Also `↑`/`↓` never cycled despite the S2 design text
+  naming them — they moved the caret and the bar looked stuck on match 1.
+
+  **PREMISE CORRECTION on mobile — the first justification was wrong, and the browser said
+  so.** The claim written first ("at 390px the pill has nowhere to shrink to and the search
+  field is squeezed out") is false. Measured in Chrome, both layouts at both widths:
+  390px `w-fit` → bar **344px, FITS** (left 30, right 374 < 390), input 147px; docked → 358px,
+  input 161px. So at iPhone-12-to-15 width the old bar was fine and docking is a 14px polish
+  gain. At **320px** (iPhone SE 1) `w-fit` → 344px and **OVERFLOWS** (`left 0, right 344 > 320`,
+  left gutter eaten); docked → 288px, fits, input 91px. The real finding is a **~344px
+  intrinsic floor** (field + counter + three 28px buttons) that cannot shrink, so the fix is
+  real below ~360px and cosmetic at 390px. All four places that carried the overstated claim
+  (component comment, test comment, guide, CHANGELOG) were corrected to the measured numbers.
+  Chips already wrapped (`flex-wrap`), so nothing was needed there.
+
+  **Snip on iOS Safari — PARTIAL, and an owner taste call.** The done_when says "snip hidden
+  on iOS Safari". `displayCaptureSupported()` correctly hides the BROWSER path where
+  `getDisplayMedia` is absent, but `chooseCaptureProvider(platform, supported)` returns
+  `'native'` whenever `platform === 'darwin'` **regardless of `supported`** — and `platform`
+  is the GATEWAY's, not the browser's. So from iOS Safari pointed at a macOS gateway the entry
+  is still offered and still works: `screencapture -i` runs on the Mac. That is the
+  remote-access model working, not a control that can only fail, so hiding it would delete a
+  working capability. Left as-is, documented precisely in the guide instead. Hidden as
+  specified on a non-darwin gateway.
+
+  **SEL audit — `tests/test_chat_craft_sel_audit.py` (15 tests), counted both directions.**
+  Four of the seven have a security-relevant server action, each exactly one event and each
+  non-zero: `chat.rewind` (1 per rewind; 2 rewinds → 2), `chat.fork_rewound` (1),
+  `dashboard_interrupt` (1, with `dashboard_stop` == 0 so the two verbs stay distinguishable),
+  `chat_followups` (1 per generation, `metadata.count == 2`). Snip rides the **existing**
+  `upload.file` (1, `resources: files:1`) and the whole log after a snip upload is exactly
+  `['upload.file']` — asserted against `chat.snip`/`snip`/`screen_capture`/`screenshot`/
+  `display_capture`, none minted. End-to-end, one of each = **exactly four events**. Refusal
+  paths log nothing (a 400 interrupt, a generation that parsed to no chips). Find, quote and
+  the reveal are client-only, so zero is the CORRECT count — asserted structurally (no
+  endpoint, no `api.`/`fetch(` in `findMatches.ts`/`FindBar.tsx`/`useStreamCoalescer.ts`/the
+  quote path) rather than as a bare zero, which reads identically to a forgotten emitter.
+
+  **Docs + CHANGELOG (T4.4).** New `docs/guides/chat-surface.md` — "Working inside a chat",
+  all seven with where-to-find-it, the capability condition on snip, and a closing table of
+  what each one records; linked from README's Documentation list. Class-B CHANGELOG entry
+  under `### Changed` for the `rewound` message field: leads with what a user notices, names
+  the clean break in both directions (old chats load unchanged; a new chat opened by an older
+  PersonalClaw will not show retained endings), carries the `personalclaw snapshot` advice.
+
+  **Falsifications** (mutate the live line, confirm it applied, observe the red, restore from
+  a file copy): `findAnnouncement` returning `''` → 7 tests red
+  (`expected '' to be 'Match 1 of 17'`); the rewind `log_api_access` duplicated → 3 red
+  (`expected exactly 1 chat.rewind event, got 2`; `assert 4 == 2`); container Escape removed →
+  `Escape from "Find in conversation" did not close the bar: expected "spy" to be called 1
+  times, but got 0 times`; focus-return removed → `expected <body><div></div>`; `ArrowDown`
+  dropped → `expected 'Match 1 of 2' to be 'Match 2 of 2'`; mobile docking disabled →
+  `expected 'sticky top-2 z-30 flex items-center g…' to contain 'w-auto'`.
+
+  **Also fixed, because it blocked the work:** jsdom ships no `matchMedia`, so rendering ANY
+  `useIsMobile` consumer throws on first render (the hook reads the query unguarded). Added
+  the stub to `web/src/test/setup.ts` beside the existing `ResizeObserver` one, matching
+  nothing so it renders the desktop/full-motion/dark branch — which is exactly what every
+  production reader already falls back to, so it changes no existing expectation. Installed
+  only when absent and left configurable, so tests with their own stub still win.
+
+  **Gate:** `make lint` clean (black 1759 files, isort, flake8, mypy 903 files);
+  **`make test` 21907 passed / 30 skipped / 12 xfailed, exit 0**; targeted pytest 57 passed
+  (SEL audit + `test_docs_lint_baseline` + rewind/interrupt/followups/upload); web typecheck
+  clean, **368 files / 3733 tests green** (repo-wide ratchets included — no ratchet loosened),
+  web build clean (95 ui-docs components). `docs/design/consistency-audit.json` restored after
+  the web runs dirtied it — its `driftHits` stayed at 8 and `filesWithDrift` at 7, only
+  `filesScanned` moved 512→513 for the new test file, so this change adds zero design drift.
+  Real-home rail: `~/.personalclaw` untouched (validation ran against
+  `.dev-home` on port 10471, `--seed demo-home`).
+
 ## Amendment (2026-07-29 — owner-approved: Branch, and the plan gate for ordinary chat)
 
 **Provenance.** A design gap analysis (2026-07-28/29). Two mechanics were approved for planning: a **Branch** mechanic (fork a session at any message with isolated inherited context) and a **plan-then-act gate**. Both turn out to be **much closer to done than the analysis suggested**, and one of them **directly contradicts an explicit non-goal in this plan's S1**. This amendment resolves that contradiction rather than silently overriding it.
