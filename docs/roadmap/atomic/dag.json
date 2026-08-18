@@ -5750,6 +5750,7 @@
           "id": "PUBL-9",
           "title": "Verify Store git-source install from the published apps repo URL",
           "status": "done",
+          "pr": 1643,
           "scope": "Session 2 \u00a73",
           "done_when": "installing an app via POST /api/apps/sources git path against the published PersonalClawApps repo URL succeeds (previously validated only with local paths)",
           "deps": [
