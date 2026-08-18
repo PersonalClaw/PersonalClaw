@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { ResultAnnouncement } from '../../ui/ListControls'
 import { FieldError } from '../../ui/forms'
 import { Loader2, Search, ChevronLeft, FileText, CornerDownLeft } from 'lucide-react'
 import { Modal } from '../../ui/Modal'
@@ -73,6 +74,14 @@ export function PromptPalette({ onInsert, onSend, onClose }: {
               }}
               trailingSlot={loadingDetail ? <Loader2 size={14} className="shrink-0 animate-spin text-on-surface-low" /> : null} />
           </div>
+          {/* 🪤 This was deferred as an "arrow-key typeahead awaiting listbox semantics" and that was
+              WRONG — read again, its Enter picks the FIRST match and there is no cursor at all, so its
+              rows are ordinary tab-focusable buttons. A `role="option"` on those would promise a
+              composite widget nobody implements; what it actually owed was the same result count every
+              other filtered list announces. `filtered === null` is the load, where a count would
+              describe nothing yet. */}
+          <ResultAnnouncement count={filtered?.length ?? 0} noun="prompts"
+            active={!!q.trim() && filtered !== null} />
           {err && <FieldError>{err}</FieldError>}
           <div className="min-h-0 flex-1 overflow-y-auto rounded-lg border border-outline-variant/40">
             {filtered === null ? (
