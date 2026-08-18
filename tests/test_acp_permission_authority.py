@@ -177,6 +177,10 @@ class TestPooledSessionProviderClampsToo:
         provider = AcpSessionProvider.__new__(AcpSessionProvider)
         provider._conn = MagicMock()
         provider._session = MagicMock(session_id="sess-1")
+        # __init__ is bypassed here, so state it explicitly: these are ATTENDED
+        # sessions. AAP-6 added the unattended axis that set_mode reads, and the
+        # clamp asserted below is precisely what an attended session must keep.
+        provider._unattended = False
         provider._conn._dialect.set_mode_request.side_effect = lambda **kw: kw
         provider._send_dialect_request = AsyncMock()
         return provider

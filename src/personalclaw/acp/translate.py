@@ -236,11 +236,22 @@ def extract_tool_update_events(
         output = (output or "")[:8000]
         output, _ = redact_exfiltration_urls(output)
         output, _ = redact_credentials(output)
+        # Carry the FAILURE bit (§2.3 gap 5). `completed` and `failed` used to
+        # produce a byte-identical event, so every consumer downstream — the tool
+        # card's colour coding and, decisively, the loop breaker — could not tell a
+        # failing ACP tool call from a succeeding one. `G6` measured the consequence:
+        # six consecutive failures in one ACP turn produced no warn, no block and no
+        # circuit trip, because the host was never told anything had failed. The key
+        # is `ok`, matching the native runtime's tool_meta contract: present and
+        # False ONLY on failure, absent on success, so no existing reader changes
+        # behaviour on a passing call.
+        _meta = {"ok": False} if update.get("status") == "failed" else {}
         events.append(
             AcpEvent(
                 kind=EVENT_TOOL_RESULT,
                 tool_call_id=tool_call_id,
                 tool_output=output,
+                tool_meta=_meta,
             )
         )
     return events

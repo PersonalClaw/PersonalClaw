@@ -20,10 +20,8 @@ firing is an injected callable so the package stays free of any
 
 from __future__ import annotations
 
-import json
 import logging
 import re
-from collections import deque
 from collections.abc import AsyncIterator, Awaitable, Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -35,6 +33,17 @@ from personalclaw.agents.native.tools import (
     tool_definitions_to_openai_schema,
 )
 from personalclaw.agents.provider import AgentProvider
+from personalclaw.guardrails.loop_breaker import (
+    BLOCK_THRESHOLD,
+    WARN_THRESHOLD,
+    LoopBreaker,
+    blocked_message,
+    circuit_message,
+    params_key,
+    result_digest,
+    structural_note,
+    warn_note,
+)
 from personalclaw.llm.events import (
     EVENT_COMPLETE,
     EVENT_PERMISSION_REQUEST,
@@ -90,157 +99,10 @@ _MAX_STEERS_PER_TURN = 4
 # so the generator path (_execute_tool) must run the gated branch.
 _NEEDS_APPROVAL: Any = object()
 
-# Graduated per-(tool, params) failure thresholds for one run (OpenFang loop-guard
-# shape). A tool failing the SAME way repeatedly burns an autonomous run's tokens
-# + time before any other guard fires; this caps it. Params-aware so a tool that
-# fails on input A but succeeds on input B isn't penalized for A's failures.
-_BREAKER_WARN = 3  # ≥ this many same failures → warn the model, still allow
-_BREAKER_BLOCK = 5  # ≥ this → refuse further identical calls this run
-_BREAKER_CIRCUIT = 30  # > this total failures in a run → abort the whole run
-
-# Structural loop detection (E3.1) — catches stuck-but-*successful* repetition the
-# failure breaker misses, over (tool, params, result_digest) triples. Warn-only for
-# the first release (§6 decision 3): looping is higher-variance than failure
-# counting, so we observe-and-report before graduating to block.
-_STRUCT_WINDOW = 16  # recent-call signatures kept for pattern matching
-_STRUCT_REPEAT = 3  # ≥ this many identical triples in a row → no-progress
-_STRUCT_PINGPONG_CYCLES = 3  # ≥ this many A↔B cycles (2× entries) → ping-pong
-
-
-def _params_key(tool_name: str, args: dict) -> str:
-    """Stable (tool, params) identity for breaker bucketing.
-
-    Same tool + same args = same bucket, so repeated *identical* failing calls
-    accumulate while genuinely different calls stay independent. Falls back to the
-    tool name alone if args aren't JSON-serializable.
-    """
-    try:
-        return f"{tool_name}:{json.dumps(args, sort_keys=True, default=str)}"
-    except (TypeError, ValueError):
-        return tool_name
-
-
-# Volatile substrings that make two otherwise-identical results look different —
-# timestamps, pids, durations, hex/uuid ids, memory addresses. Normalized out of
-# the result digest so a call producing the "same" result each time is recognized
-# as no-progress (result normalization). Order-independent.
-_VOLATILE_PATTERNS = [
-    re.compile(
-        r"\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?"
-    ),  # ISO ts
-    re.compile(r"\b\d{10,13}\b"),  # epoch (s / ms)
-    re.compile(r"0x[0-9a-fA-F]+"),  # hex / memory address
-    re.compile(
-        r"\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\b"
-    ),  # uuid
-    re.compile(r"\b(?:pid|PID)[=: ]\s*\d+"),  # pid=NNN
-    re.compile(r"\bin \d+(?:\.\d+)?\s*(?:ms|s|sec|seconds|m|min)\b"),  # "in 1.23s"
-    re.compile(r"\b\d+(?:\.\d+)?\s*(?:ms|µs|us)\b"),  # bare durations
-]
-
-
-def _result_digest(result_str: str) -> str:
-    """A normalized fingerprint of a tool result for structural loop detection.
-
-    Strips volatile fields (timestamps / pids / durations / ids / addresses) so two
-    runs of the *same* call that differ only in those don't look like progress, and
-    bounds length so a huge identical output is cheap to compare. NOT used for the
-    failure path — only the (tool, params, result_digest) structural triple.
-    """
-    s = result_str or ""
-    for pat in _VOLATILE_PATTERNS:
-        s = pat.sub("·", s)
-    s = " ".join(s.split())  # collapse whitespace
-    if len(s) > 512:
-        s = s[:256] + "…" + s[-256:]
-    return s
-
-
-class _FailureBreaker:
-    """Per-run progress tracker with graduated verdicts.
-
-    Two parallel paths over the same call stream:
-
-    * **failure path** — ``record(key, failed)`` counts consecutive *failures* per
-      ``(tool, params)`` key; ``count(key)`` drives the BLOCK/WARN rungs and
-      ``total_failures`` the run-wide circuit breaker. A success clears the key.
-    * **structural path** (E3.1) — ``record_structural(sig)`` tracks recent
-      ``(tool, params, result_digest)`` triples to catch stuck-but-*successful*
-      repetition: the same triple N× in a row (no-progress), or an A↔B↔A↔B
-      alternation (ping-pong). Returns a reason string on detection, else "".
-      Warn-only: the runtime injects an observation; it does not block (yet).
-    """
-
-    def __init__(self) -> None:
-        self._counts: dict[str, int] = {}
-        self.total_failures = 0
-        # Recent structural signatures (most-recent last), bounded to the window.
-        self._recent: deque[str] = deque(maxlen=_STRUCT_WINDOW)
-        # Reasons already reported this run, so we warn once per distinct loop and
-        # don't re-inject the same observation every subsequent identical call.
-        self._struct_reported: set[str] = set()
-
-    def reset(self) -> None:
-        self._counts.clear()
-        self.total_failures = 0
-        self._recent.clear()
-        self._struct_reported.clear()
-
-    def reset_structural(self) -> None:
-        """Re-arm structural detection (after a compaction) without touching the
-        failure counts — a loop that resumes identically post-compaction should be
-        caught fresh (post-compaction guard)."""
-        self._recent.clear()
-        self._struct_reported.clear()
-
-    def record(self, key: str, failed: bool) -> int:
-        if failed:
-            self.total_failures += 1
-            self._counts[key] = self._counts.get(key, 0) + 1
-        else:
-            self._counts.pop(key, None)  # a success clears this key's streak
-        return self._counts.get(key, 0)
-
-    def count(self, key: str) -> int:
-        return self._counts.get(key, 0)
-
-    def record_structural(self, sig: str) -> str:
-        """Record a ``(tool, params, result_digest)`` signature; return a reason
-        string when a structural loop is newly detected this run, else ``""``.
-
-        Detects (a) no-progress: the same signature ``_STRUCT_REPEAT`` times in a
-        row; (b) ping-pong: an A↔B alternation spanning ``_STRUCT_PINGPONG_CYCLES``
-        cycles. Each distinct loop is reported once (dedup via ``_struct_reported``)
-        so the warning fires on the turn the loop becomes evident, not every call.
-        """
-        self._recent.append(sig)
-        recent = list(self._recent)
-
-        # (a) no-progress: identical signature repeated at the tail.
-        tail = recent[-_STRUCT_REPEAT:]
-        if len(tail) == _STRUCT_REPEAT and len(set(tail)) == 1:
-            reason = f"no-progress:{sig}"
-            if reason not in self._struct_reported:
-                self._struct_reported.add(reason)
-                return (
-                    f"the same tool call produced the same result "
-                    f"{_STRUCT_REPEAT} times in a row"
-                )
-
-        # (b) ping-pong: A,B,A,B,… alternation at the tail spanning the cycle count.
-        span = _STRUCT_PINGPONG_CYCLES * 2
-        tailp = recent[-span:]
-        if len(tailp) == span:
-            a, b = tailp[0], tailp[1]
-            if a != b and all(tailp[i] == (a if i % 2 == 0 else b) for i in range(span)):
-                reason = f"ping-pong:{a}|{b}"
-                if reason not in self._struct_reported:
-                    self._struct_reported.add(reason)
-                    return (
-                        f"two tool calls are alternating without making progress "
-                        f"({_STRUCT_PINGPONG_CYCLES}× A↔B with no new state)"
-                    )
-        return ""
+# Graduated failure/loop thresholds + the standard notices live in the
+# runtime-agnostic observer imported above (ACP-AGENT-PARITY §2.3 gap 5): the ACP
+# host consumes the SAME counting over its neutral event stream, so a threshold or
+# a notice's wording is defined once and cannot drift between the two runtimes.
 
 
 class NativeAgentRuntime(AgentProvider):
@@ -359,7 +221,7 @@ class NativeAgentRuntime(AgentProvider):
         self._cancelled = False
         self._last_context_pct = 0.0
         # Per-run consecutive-failure breaker (reset each stream() turn).
-        self._breaker = _FailureBreaker()
+        self._breaker = LoopBreaker()
         # Compaction save fractions (anti-thrashing across the session).
         self._compaction_saves: list[float] = []
         # Queue-steering (#37): a callback the loop drains at each model boundary
@@ -1016,15 +878,13 @@ class NativeAgentRuntime(AgentProvider):
         )
 
         # Consecutive-failure breaker: refuse a call that has already failed the
-        # same way ≥ _BREAKER_BLOCK times this run, before wasting another invoke.
-        _bkey = _params_key(tool_name, args)
-        if self._breaker.count(_bkey) >= _BREAKER_BLOCK:
-            blocked_str = (
-                f"Error: tool `{tool_name}` was blocked — it has already failed "
-                f"{self._breaker.count(_bkey)} times this run with these same "
-                "arguments. Do NOT call it this way again; change your approach or "
-                "stop and explain what's blocking you."
-            )
+        # same way ≥ BLOCK_THRESHOLD times this run, before wasting another invoke.
+        # Pre-execution refusal is the NATIVE half of the breaker: this runtime owns
+        # dispatch. The ACP host consumes the same counter but can only steer/abort
+        # between protocol frames (§2.3's stated boundary).
+        _bkey = params_key(tool_name, args)
+        if self._breaker.count(_bkey) >= BLOCK_THRESHOLD:
+            blocked_str = blocked_message(tool_name, self._breaker.count(_bkey))
             yield AgentEvent(
                 kind=EVENT_TOOL_RESULT,
                 tool_call_id=call.tool_call_id,
@@ -1100,26 +960,19 @@ class NativeAgentRuntime(AgentProvider):
                 _outcome = "failed"
             self._tool_outcomes.append((tool_name, _outcome))
         streak = self._breaker.record(_bkey, failed)
-        if failed and streak >= _BREAKER_WARN:
-            result_str += (
-                f"\n[note: this is failure #{streak} of `{tool_name}` with these "
-                "arguments this run — stop repeating it and change approach.]"
-            )
+        if failed and streak >= WARN_THRESHOLD:
+            result_str += warn_note(tool_name, streak)
         elif not failed:
             # Structural loop detection (E3.1): a *successful* call going nowhere —
             # the same (tool, params, result) repeated, or A↔B ping-pong — never
             # trips the failure path (nothing failed). Warn-only: inject an
             # observation so the model breaks the loop itself; the failure breaker
             # still hard-blocks genuine error storms.
-            sig = f"{_bkey}\x1f{_result_digest(result_str)}"
+            sig = f"{_bkey}\x1f{result_digest(result_str)}"
             loop_reason = self._breaker.record_structural(sig)
             if loop_reason:
                 logger.info("native: structural loop detected (%s) — %s", tool_name, loop_reason)
-                result_str += (
-                    f"\n[note: {loop_reason}. You appear to be looping without "
-                    "making progress — stop repeating this and change approach, or "
-                    "stop and report what's blocking you.]"
-                )
+                result_str += structural_note(loop_reason)
 
         yield AgentEvent(
             kind=EVENT_TOOL_RESULT,
@@ -1133,11 +986,8 @@ class NativeAgentRuntime(AgentProvider):
 
         # Run-wide circuit breaker: a turn drowning in failures (across all tools)
         # is pathological — abort it rather than burn the whole budget.
-        if self._breaker.total_failures > _BREAKER_CIRCUIT:
-            logger.warning(
-                "native: circuit-breaking run after %d tool failures",
-                self._breaker.total_failures,
-            )
+        if self._breaker.circuit_tripped():
+            logger.warning("native: %s", circuit_message(self._breaker.total_failures))
             self._cancelled = True
 
     async def _guard_and_invoke(self, call: AgentEvent, tool_name: str, args: dict):
