@@ -4072,7 +4072,8 @@
           "status": "done",
           "scope": "Session 1 T1.3; edits docs/roadmap/plans/MOBILE-COMPANION.md (this plan owns device session + pairing)",
           "done_when": "the two plans reference one pairing mechanism; grep shows no second/parallel device-token design surviving (Success Criterion 1)",
-          "deps": []
+          "deps": [],
+          "pr": 1613
         },
         {
           "id": "CA-4",
