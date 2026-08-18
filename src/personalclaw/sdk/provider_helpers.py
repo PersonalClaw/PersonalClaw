@@ -154,6 +154,60 @@ def _resolve_credential(entry: ProviderEntry, kwargs: dict, *, label: str) -> Cr
     return cred
 
 
+def _resolve_spec_secret(
+    spec: BrandedProviderSpec, *, explicit_key: str = ""
+) -> tuple[Credential | None, str]:
+    """The ONE credential-resolution order a branded spec's secret follows, shared by every
+    surface that needs it (both factories and the catalog).
+
+    ``explicit_key`` is whatever the calling surface offers as an explicit, user-typed key:
+    ``entry.options["api_key"]`` on the registry path, ``config["api_key"]`` on the config
+    path. The order below it:
+
+      1. ``explicit_key`` — the per-instance key the Add-Provider flow persists. MUST win
+         over the env so a ZAI/Alibaba instance uses ITS key, not a global
+         ANTHROPIC_API_KEY/OPENAI_API_KEY meant for another provider (the "wrong key → 401"
+         bug), else
+      2. the spec's subscription ``credential_source`` — an already-signed-in agent CLI's own
+         store, read READ-ONLY. BELOW every explicit choice so it can never silently outrank
+         a credential the user set, and ABOVE the env so a subscription app works with
+         nothing configured at all, else
+      3. the spec's ``api_key_env``.
+
+    Independent hops, not an ``elif`` chain: a source that is merely not signed in must fall
+    THROUGH to ``api_key_env``, never short-circuit it.
+
+    Returns ``(credential, reason)``. ``credential`` is None when no secret was found at all,
+    and each caller decides what that means — a factory substitutes the anon placeholder so
+    the protocol client can still be constructed, while the catalog reports "not configured".
+    ``reason`` carries the resolver's displayable, secret-free explanation when the spec
+    declares a subscription source that is NOT usable ("" otherwise), so a caller can say
+    "sign in with `x login` first" instead of naming an env var the app doesn't have.
+
+    ``entry.credential`` (the explicit credential-store descriptor) outranks everything here
+    but is registry-only, so it is resolved by :func:`_resolve_credential` BEFORE this is
+    consulted: five hops on the registry path, four on the config path, identical tail.
+    """
+    if explicit_key:
+        return (Credential(name=spec.type, kind="api_key", secret=explicit_key, source="file"), "")
+    reason = ""
+    if spec.credential_source:
+        auth = resolve_subscription_credential(spec.credential_source)
+        if auth.logged_in and auth.secret:
+            # ``source="file"`` is factually where it came from (the CLI's own on-disk
+            # store); the credential-store Literal is deliberately not widened for this.
+            return (
+                Credential(name=spec.type, kind="oauth2", secret=auth.secret, source="file"),
+                "",
+            )
+        reason = auth.reason
+    if spec.api_key_env:
+        env_key = os.environ.get(spec.api_key_env, "")
+        if env_key:
+            return (Credential(name=spec.type, kind="api_key", secret=env_key, source="env"), "")
+    return (None, reason)
+
+
 def _build_provider(
     spec: BrandedProviderSpec,
     *,
@@ -197,10 +251,36 @@ class BrandedCatalog(ModelCatalog):
     ) -> None:
         self._spec = spec
         self._endpoint = endpoint or spec.default_base_url
-        self._api_key = api_key or (
-            os.environ.get(spec.api_key_env, "") if spec.api_key_env else ""
-        )
+        # Only the EXPLICIT key is stored; the env / subscription hops are resolved per call
+        # by `_resolved_key` (a catalog instance outlives a `claude login`, so freezing the
+        # answer here would keep reporting "not signed in" after the user signed in).
+        self._explicit_api_key = api_key
         self._default_model = default_model
+
+    def _resolved_key(self) -> tuple[str, str]:
+        """This catalog's effective key, plus the honest reason when there isn't one.
+
+        Same shared order as both factories (:func:`_resolve_spec_secret`), so a subscription
+        app the user is signed into gets probed with its CLI's token instead of being told to
+        set an API-key env var it deliberately doesn't have. Returns ``("", reason)`` when no
+        secret resolves; ``reason`` is the resolver's secret-free sentence, or ``""`` for an
+        ordinary key-based app that simply has no key set.
+        """
+        cred, reason = _resolve_spec_secret(self._spec, explicit_key=self._explicit_api_key)
+        return (str(cred.secret or "") if cred is not None else "", reason)
+
+    def _no_key_detail(self, reason: str) -> str:
+        """The 'no credential' line, never a dangling parenthetical.
+
+        A subscription app declares NO ``api_key_env`` by design, so the old unconditional
+        ``f"... (set it or {api_key_env})"`` rendered literally as ``(set it or )`` and told a
+        signed-out user to set a variable that does not exist. Prefer the resolver's typed
+        reason, mention an env var only when the app actually declares one.
+        """
+        env = self._spec.api_key_env
+        if reason:
+            return f"{reason} (or set {env})" if env else reason
+        return f"No API key configured (set it or {env})" if env else "No API key configured"
 
     def _fallback(self) -> list[ModelInfo]:
         rows = [
@@ -230,18 +310,18 @@ class BrandedCatalog(ModelCatalog):
     async def list_models(self) -> list[ModelInfo]:
         if self._spec.protocol == "anthropic":
             return self._fallback()  # no models endpoint on the Anthropic wire
+        api_key, _ = self._resolved_key()
         live = await openai_compatible_list_models(
             self._endpoint,
-            self._api_key,
+            api_key,
             default_base=self._spec.default_base_url,
         )
         return live if live else self._fallback()
 
     async def test_connection(self) -> ConnectionResult:
-        if not self._api_key:
-            return ConnectionResult(
-                ok=False, detail=f"No API key configured (set it or {self._spec.api_key_env})"
-            )
+        api_key, missing_reason = self._resolved_key()
+        if not api_key:
+            return ConnectionResult(ok=False, detail=self._no_key_detail(missing_reason))
         # Anthropic-wire providers expose NO models-list endpoint, so a models
         # count can't prove connectivity (a bring-your-own-endpoint app has an empty
         # fallback list → the old code wrongly reported "No models available" for a
@@ -250,16 +330,19 @@ class BrandedCatalog(ModelCatalog):
         # (success, or even a model-not-found/validation error) proves the key +
         # endpoint authenticated.
         if self._spec.protocol == "anthropic":
-            return await self._probe_completion()
+            return await self._probe_completion(api_key)
         models = await self.list_models()
         if not models:
             return ConnectionResult(ok=False, detail="No models available (check key/endpoint)")
         return ConnectionResult(ok=True, model_count=len(models))
 
-    async def _probe_completion(self) -> ConnectionResult:
+    async def _probe_completion(self, api_key: str) -> ConnectionResult:
         """Verify an Anthropic-wire key/endpoint with a minimal completion. Auth
         errors → not connected; a model/validation error still means the credentials
-        authenticated → connected."""
+        authenticated → connected.
+
+        Takes the already-resolved secret (a subscription token as readily as a pasted key)
+        so the probe validates exactly what :meth:`test_connection` found."""
         model = self._spec.default_model or "claude-3-5-haiku-latest"
         try:
             from personalclaw.llm.anthropic import AnthropicProvider
@@ -268,7 +351,7 @@ class BrandedCatalog(ModelCatalog):
             prov = AnthropicProvider(
                 model=model,
                 credential=Credential(
-                    name=self._spec.type, kind="api_key", secret=self._api_key, source="file"
+                    name=self._spec.type, kind="api_key", secret=api_key, source="file"
                 ),
                 base_url=self._endpoint or None,
                 max_tokens=1,
@@ -351,6 +434,33 @@ def spec_credential_source(provider: str) -> str:
     return str(spec.credential_source) if spec is not None and spec.credential_source else ""
 
 
+def spec_types_declaring_models(markers: tuple[str, ...]) -> frozenset[str]:
+    """Registered provider TYPES whose app declares at least one model id containing one of
+    ``markers`` (case-insensitive), looking at its ``default_model`` and ``fallback_models``.
+
+    The narrow reader behind ``llm/catalog.model_family_provider_types``: it answers "which
+    installed apps say they serve this model family?" so that map does not have to name every
+    app by hand. Marker semantics stay in ``catalog.py`` (all model-id classification lives
+    there); this side only knows what each spec DECLARED. Same precedent as :func:`spec_pricing`
+    and :func:`spec_credential_source` — one narrow question, :func:`registered_spec` stays
+    module-internal.
+
+    An app that declares no models (pure live discovery) contributes nothing, which is the
+    honest answer: nothing was declared.
+    """
+    wanted = tuple(m.lower() for m in markers if m)
+    if not wanted:
+        return frozenset()
+    out: set[str] = set()
+    for provider_type, spec in _REGISTERED_SPECS.items():
+        declared = [str(spec.default_model or "")] + [
+            str(row.get("id", "") or "") for row in spec.fallback_models
+        ]
+        if any(m in model_id.lower() for model_id in declared if model_id for m in wanted):
+            out.add(provider_type)
+    return frozenset(out)
+
+
 def register_branded_app(spec: BrandedProviderSpec) -> tuple[Callable, Callable, Callable]:
     """Wire a branded/generic protocol provider app into the default registry and
     return its ``(_factory, create_provider, create_catalog)`` trio.
@@ -374,35 +484,21 @@ def register_branded_app(spec: BrandedProviderSpec) -> tuple[Callable, Callable,
         _endpoint = options.pop("endpoint", None)
         base_url = str(_base or _endpoint or spec.default_base_url)
         # Credential resolution order for a config-registry entry:
-        #   1. an explicit credential-store descriptor (entry.credential), else
-        #   2. the per-instance api_key in entry.options (what the Add-Provider flow
-        #      persists — MUST win over the env so a ZAI/Alibaba instance uses ITS
-        #      key, not a global ANTHROPIC_API_KEY/OPENAI_API_KEY meant for another
-        #      provider — the "wrong key → 401" bug), else
-        #   3. the spec's subscription credential_source (an already-signed-in agent
-        #      CLI's own store, read-only) — BELOW both explicit choices above so it can
-        #      never silently outrank a credential the user set, and above the env so a
-        #      subscription app works with nothing configured at all, else
-        #   4. the spec's api_key_env, else 5. anon placeholder.
-        # Independent `if`s, not an elif chain: a source that is merely not signed in must
-        # fall THROUGH to api_key_env and then the placeholder, never short-circuit them.
+        #   1. an explicit credential-store descriptor (entry.credential — resolved above),
+        #      else 2. the per-instance api_key in entry.options, else 3. the spec's
+        #      subscription credential_source, else 4. the spec's api_key_env, else
+        #      5. the anon placeholder.
+        # Hops 2-4 live in `_resolve_spec_secret` so the config path below resolves the SAME
+        # order from the SAME code. Two hand-maintained ladders drift, and this one had:
+        # `create_provider` carried no subscription hop at all, so a subscription app wired
+        # the documented way (`implementation: "provider:create_provider"`) built a provider
+        # whose secret was the literal placeholder and 401'd at first use.
         # Pop BOTH key spellings unconditionally — a short-circuit `or` would leave the
         # second in options and leak it into extra_options → the SDK call kwargs.
         _snake_key = str(options.pop("api_key", "") or "")
         _camel_key = str(options.pop("apiKey", "") or "")
-        _opt_key = _snake_key or _camel_key
-        if cred is None and _opt_key:
-            cred = Credential(name=spec.type, kind="api_key", secret=_opt_key, source="file")
-        if cred is None and spec.credential_source:
-            _auth = resolve_subscription_credential(spec.credential_source)
-            if _auth.logged_in and _auth.secret:
-                # ``source="file"`` is factually where it came from (the CLI's own on-disk
-                # store); the credential-store Literal is deliberately not widened for this.
-                cred = Credential(name=spec.type, kind="oauth2", secret=_auth.secret, source="file")
-        if cred is None and spec.api_key_env:
-            _env_key = os.environ.get(spec.api_key_env, "")
-            if _env_key:
-                cred = Credential(name=spec.type, kind="api_key", secret=_env_key, source="env")
+        if cred is None:
+            cred, _ = _resolve_spec_secret(spec, explicit_key=_snake_key or _camel_key)
         # Drop remaining routing/label fields that are NOT model-call params so they
         # don't leak into extra_options → request_kwargs → the SDK's stream()/create()
         # ("unexpected keyword argument …"). Only genuine call params (temperature,
@@ -440,15 +536,14 @@ def register_branded_app(spec: BrandedProviderSpec) -> tuple[Callable, Callable,
 
     def create_provider(config: dict[str, Any] | None = None) -> ModelProvider:
         cfg = dict(config or {})
-        api_key = str(
-            cfg.get("api_key", "")
-            or (os.environ.get(spec.api_key_env, "") if spec.api_key_env else "")
+        # The SAME order as `_factory` above, from the SAME helper — this is the path an
+        # app manifest's `implementation: "provider:create_provider"` names, so a
+        # subscription app must resolve its CLI's token here too. Both key spellings are
+        # accepted for the same reason the entry path pops both.
+        cred, _ = _resolve_spec_secret(
+            spec, explicit_key=str(cfg.get("api_key", "") or cfg.get("apiKey", "") or "")
         )
-        cred = (
-            Credential(name=spec.type, kind="api_key", secret=api_key, source="file")
-            if api_key
-            else _anon_credential(spec)
-        )
+        cred = cred or _anon_credential(spec)
         base_url = str(cfg.get("endpoint") or cfg.get("base_url") or spec.default_base_url)
         model = str(cfg.get("model") or cfg.get("default_model") or spec.default_model)
         return _build_provider(spec, model=model, credential=cred, base_url=base_url)
@@ -510,4 +605,5 @@ __all__ = [
     # whole spec.
     "spec_pricing",
     "spec_credential_source",
+    "spec_types_declaring_models",
 ]

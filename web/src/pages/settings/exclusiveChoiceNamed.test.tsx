@@ -3,6 +3,7 @@ import { render, screen } from '@testing-library/react'
 import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { SegToggle } from './bento'
+import { SegPills } from './settingsUI'
 
 // ── An exclusive-choice pill group that says neither what it sets nor which one is on ──────
 //
@@ -31,6 +32,24 @@ import { SegToggle } from './bento'
 // and the composer pills do the same with a required `dimension` prop. `SegToggle` now takes a
 // REQUIRED `ariaLabel` for exactly that reason — typecheck stops an unnamed new call site
 // before this rail has to.
+//
+// ── AND THEN THIS RAIL MISSED THE BIGGEST MEMBER, because it enumerated a COMPONENT, not a FAMILY.
+//
+// `SegPills` (pages/settings/settingsUI.tsx) is the same idiom with 8 call sites across 6 settings
+// panels, and it had neither half. Re-measured on the live DOM at 1440×900 dark across
+// `#/settings/chat`, `/guardrails`, `/notifications`, `/agent`:
+//
+//   BEFORE   34 groups · 126 options · 0 with the dimension in any name · 0 with any pressed state
+//   AFTER    34 groups · 126 options · 0 unnamed · 0 stateless (exactly one pressed per group)
+//
+// 🔑 The notification rules matrix renders **26 of those groups at once**, every one of them
+// `[Never | Badge | Notify | Digest]`. A screen-reader user heard 26 indistinguishable sets of four
+// bare buttons — no rule name, no live mode. That is the single worst instance of this defect in the
+// app, and a rail scoped to `SegToggle` could never see it.
+//
+// So the last describe DERIVES the family: any component that maps an `options` list to buttons and
+// compares one of them to a `value` must mark its state programmatically. That is the check that
+// would have found `SegPills` on the day `SegToggle` was fixed.
 
 const SETTINGS = join(process.cwd(), 'src/pages/settings')
 const SRC = join(process.cwd(), 'src')
@@ -133,5 +152,146 @@ describe("the Design panel's hand-rolled mode pills agree with the primitive", (
 
   it('spells color the way the other 1600 sites do', () => {
     expect(src).not.toMatch(/colour/i)
+  })
+})
+
+describe('SegPills announces its dimension and its state', () => {
+  it('names each option <dimension>: <value>', () => {
+    render(<SegPills ariaLabel="Widget density" value="more" onChange={vi.fn()}
+      options={[{ key: 'more', label: 'More' }, { key: 'less', label: 'Less' }]} />)
+    expect(screen.getByRole('button', { name: 'Widget density: More' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Widget density: Less' })).toBeTruthy()
+  })
+
+  it('marks exactly the active option as pressed', () => {
+    render(<SegPills ariaLabel="Scan mode" value="redact" onChange={vi.fn()}
+      options={[{ key: 'warn', label: 'Warn' }, { key: 'redact', label: 'Redact' }, { key: 'block', label: 'Block' }]} />)
+    expect(screen.getByRole('button', { name: 'Scan mode: Redact' }).getAttribute('aria-pressed')).toBe('true')
+    expect(screen.getByRole('button', { name: 'Scan mode: Warn' }).getAttribute('aria-pressed')).toBe('false')
+    expect(screen.getByRole('button', { name: 'Scan mode: Block' }).getAttribute('aria-pressed')).toBe('false')
+  })
+
+  it('leaves the VISIBLE label alone — a naming fix, not a redesign', () => {
+    const { container } = render(<SegPills ariaLabel="Restore window" value="30" onChange={vi.fn()}
+      options={[{ key: '15', label: '15 min' }, { key: '30', label: '30 min' }]} />)
+    expect([...container.querySelectorAll('button')].map((b) => b.textContent)).toEqual(['15 min', '30 min'])
+  })
+})
+
+describe('every SegPills call site names its dimension', () => {
+  const sites = walk(SRC).flatMap((f) => tags(stripComments(readFileSync(f, 'utf8')), 'SegPills').map((t) => ({ f, t })))
+
+  it('finds the call sites (not vacuously green)', () => {
+    // Eight at the time of writing, across six panels. `ariaLabel` is required, so typecheck is the
+    // real gate; this floor only stops the assertion below from passing by matching nothing.
+    expect(sites.length, 'the matcher must find the SegPills call sites').toBeGreaterThanOrEqual(8)
+  })
+
+  it('has no unnamed call site', () => {
+    const mute = sites.filter((s) => !/\bariaLabel=/.test(s.t))
+    expect(mute.map((s) => s.f), 'SegPills without a dimension').toEqual([])
+  })
+
+  it("the 26-at-once matrix names the RULE, not just the dimension", () => {
+    // A shared dimension cannot disambiguate 26 sibling groups; the rule's own label has to be in
+    // the name or the fix is cosmetic on the one surface where it matters most.
+    const src = stripComments(readFileSync(join(SETTINGS, 'NotificationRulesMatrix.tsx'), 'utf8'))
+    expect(src).toMatch(/ariaLabel=\{`Delivery mode for \$\{r\.label\}`\}/)
+  })
+})
+
+describe('the family is DERIVED, so the next pill group cannot be missed', () => {
+  /** An exclusive-choice or current-item group: ANY `.map()` whose body compares its item to one piece
+   *  of state and renders a button. Two corrections to the first version of this sweep, both of which
+   *  hid real members:
+   *
+   *  🪤 IT WAS KEYED ON VARIABLE NAMES (`options|opts|MODES`). `MemoryPanel` maps `TOP_TABS` and an
+   *     inline `(['all','fact',…] as const)` literal, so its tab bar, its kind filter and its opened-row
+   *     marker were all invisible to it — three real members, in the panel with the most of them. A
+   *     matcher keyed on what a variable is CALLED is the same mistake as a census keyed on a component
+   *     name.
+   *  🪤 IT SCOPED THE STATE CHECK TO A 900-CHARACTER WINDOW, which reaches past the button into
+   *     neighbouring markup: one of `DiagnosticsPanel`'s two identical level pickers scored as marked
+   *     purely because an unrelated element after it carried an aria attribute. A character window is
+   *     not a scope — the state must be read from the button's OWN opening tag.
+   *
+   *  Literal comparisons (`=== true/false/null/0`) are data predicates, not selection, and are excluded:
+   *  `m.downloaded === false` and `t.disabled === true` are not one-of-N groups. */
+  function exclusiveGroups() {
+    const LITERAL = /^(?:true|false|null|undefined|\d+)$/
+    const STATE = /aria-pressed|aria-selected|aria-checked|aria-current|aria-expanded|role="(?:tab|radio|option|menuitemradio|treeitem)"/
+    const out: { rel: string; state: boolean; cmp: string }[] = []
+    for (const f of walk(SRC)) {
+      const src = stripComments(readFileSync(f, 'utf8'))
+      for (const m of src.matchAll(/\.map\(\s*\(?\s*(\w+)[^)]{0,40}\)?\s*=>\s*\{/g)) {
+        const body = src.slice(m.index!, m.index! + 1100)
+        const item = m[1]
+        const cmp = body.match(new RegExp(`const \\w+ = (?:${item}(?:\\.\\w+)? === (\\w+)|(\\w+) === ${item}(?:\\.\\w+)?)`))
+        if (!cmp) continue
+        if (LITERAL.test(cmp[1] ?? cmp[2] ?? '')) continue
+        // The state must live on a BUTTON's own opening tag inside this map body — `tags()` is
+        // brace-aware, so it stops at the real `>` and not at one inside an arrow function.
+        const buttons = [...tags(body, 'button'), ...tags(body, 'motion\\.button')]
+        if (buttons.length === 0) continue
+        out.push({ rel: f.slice(SRC.length + 1), state: buttons.some((t) => STATE.test(t)), cmp: cmp[0] })
+      }
+    }
+    return out
+  }
+
+  /** Verified members whose correct marker is NOT this rail's `aria-pressed` form, so each is left for
+   *  its own cycle rather than given the wrong one. Every entry was read before being listed — a false
+   *  positive recorded as pending is a filed non-finding:
+   *
+   *    pages/tasks/TasksListPage.tsx  the active task-list pill (`isActive = active === l.id`) — this
+   *                                   one IS this rail's form and is simply not done yet
+   *
+   *  🔑 `ChatPage` and `SyntaxReference` came off this list WITHOUT being fixed here, because listing
+   *  them here was a mistake of the same kind this file's history is full of: they are DISCLOSURES
+   *  (`{open && …}`), and `ui/disclosureAnnounced.test.ts` is the ledger that owns that family. Keeping
+   *  a second copy of its members here is how a census ends up reading as complete while its verdicts
+   *  live in two files. They are now fixed and asserted THERE, under the accordion sweep that file
+   *  gained for exactly this shape.
+   *
+   *  `ui/Combobox.tsx` came off for the ordinary reason: it declares listbox semantics now (see
+   *  `ui/comboboxListbox.test.tsx`). The list may only ever shrink. */
+  const PENDING = new Set([
+    'pages/tasks/TasksListPage.tsx',
+  ])
+
+  it('every exclusive-choice group marks its state, or is a named exception', () => {
+    const groups = exclusiveGroups()
+    // Vacuity floors: this matcher is doing the enumerating, so prove it resolved something, and that
+    // it still sees the members whose absence it was blind to before.
+    expect(groups.length, 'the sweep must find the groups').toBeGreaterThanOrEqual(14)
+    expect(groups.some((g) => g.rel === 'pages/settings/settingsUI.tsx'), 'SegPills must be in scope').toBe(true)
+    expect(groups.filter((g) => g.rel === 'pages/settings/MemoryPanel.tsx').length,
+      'the three the name-keyed sweep could not see').toBeGreaterThanOrEqual(3)
+    expect(groups.filter((g) => g.rel === 'pages/settings/DiagnosticsPanel.tsx').length,
+      'both level pickers, not one').toBeGreaterThanOrEqual(2)
+
+    const mute = groups.filter((g) => !g.state && !PENDING.has(g.rel)).map((g) => g.rel)
+    expect(mute, `these convey selection visually only:\n${mute.join('\n')}`).toEqual([])
+  })
+
+  it('the pending list is not stale — every entry is still unmarked', () => {
+    // A pending entry that has since been fixed must be pruned, or the list quietly becomes an
+    // allowlist for work already done.
+    const groups = exclusiveGroups()
+    const fixed = [...PENDING].filter((rel) => {
+      const mine = groups.filter((g) => g.rel === rel)
+      return mine.length > 0 && mine.every((g) => g.state)
+    })
+    expect(fixed, `these are marked now — prune them from PENDING:\n${fixed.join('\n')}`).toEqual([])
+  })
+
+  it("the settings panels that had no selection state now have it", () => {
+    const groups = exclusiveGroups()
+    for (const rel of ['pages/settings/MemoryPanel.tsx', 'pages/settings/DiagnosticsPanel.tsx']) {
+      const mine = groups.filter((g) => g.rel === rel)
+      expect(mine.length, `${rel} must still be in scope`).toBeGreaterThan(0)
+      const mute = mine.filter((g) => !g.state).map((g) => g.cmp)
+      expect(mute, `${rel} still conveys selection visually only:\n${mute.join('\n')}`).toEqual([])
+    }
   })
 })

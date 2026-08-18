@@ -222,7 +222,11 @@ function Launcher({ navigate }: RouteProps) {
   // for a single adopter would be speculative API. The authoritative surface (chat history)
   // announces the failure, which is where a user goes to look for their chats.
   const { data: sessions } = useCachedData<ChatSessionSummary[]>(
-    'dashboard:recent-sessions', () => api.chatSessions(), { persist: true },
+    // 🔴 Named `dashboard:recent-sessions` — after the SURFACE, not the collection — so no bust of
+    // the chat-session keys could ever reach it. Deleting or renaming a chat left this list showing
+    // the old row, and `persist: true` means that survived a hard reload. Same namespace as
+    // `chat:sessions` / `chat:sessions:archived` now, so one prefix bust covers every reader.
+    'chat:sessions:recent', () => api.chatSessions(), { persist: true },
   )
 
   const launch = () => {

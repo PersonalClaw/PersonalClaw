@@ -382,6 +382,28 @@ class Permissions:
     # ``api`` (the middleware's path gate), and this list decides WHICH kinds may be
     # raised. Neither half alone grants anything.
     proposals: list["ProposalKind"] = field(default_factory=list)
+    # This app may register a long-lived supervised worker (APE-3's
+    # ``sdk/background.py`` hosted by ``backend_runtime``) — richer than ``cron``, which
+    # is N discrete agent runs on a clock. NOT ENFORCED TODAY, and honestly so: nothing in
+    # core hosts an app worker yet, so the flag grants nothing and denies nothing. It is a
+    # DECLARATION that reaches install consent and goes live — with no second prompt —
+    # when APE-3 ships the host, which is precisely why it is disclosed at install time.
+    # The consent surface therefore lists it under "declared, not yet in effect", NOT
+    # among the permissions the gateway enforces: claiming an enforcement the gateway
+    # cannot perform is the EI-12 D2 defect (``PermissionList``, web/src/pages/apps).
+    backgroundTasks: bool = False  # noqa: N815
+    # Typed PLATFORM events this app subscribes to (the ``app_events.py``
+    # registry — ``session.created``, ``knowledge.ingested``, ``task.completed``). A
+    # DIFFERENT vocabulary from ``events`` above, deliberately: ``events`` is the
+    # gateway's own WS event-type allowlist gated by ``can_use_event``, while these are
+    # core-emitted platform facts owned by the registry. Keeping them apart is what lets
+    # The delivery filter be a closed set. Exact names only, no wildcard — like
+    # ``desktop`` and unlike ``appMessaging`` — so a typo denies rather than widens.
+    # ENFORCED: ``apps/app_events.emit`` is the only path a platform event
+    # reaches an app by, and it consults ``can_receive_platform_event`` per app per event
+    # (deny by default). So this one joins the permissions the gateway enforces at consent,
+    # unlike ``backgroundTasks`` above, whose host still does not exist.
+    eventSubscriptions: list[str] = field(default_factory=list)  # noqa: N815
 
     def to_dict(self) -> dict[str, Any]:
         d: dict[str, Any] = {}
@@ -411,6 +433,10 @@ class Permissions:
             d["desktop"] = self.desktop
         if self.proposals:
             d["proposals"] = [p.to_dict() for p in self.proposals]
+        if self.backgroundTasks:
+            d["backgroundTasks"] = True
+        if self.eventSubscriptions:
+            d["eventSubscriptions"] = self.eventSubscriptions
         return d
 
     @classmethod
@@ -430,6 +456,10 @@ class Permissions:
             desktop=[str(c) for c in data.get("desktop", []) if c],
             proposals=[
                 ProposalKind.from_dict(p) for p in data.get("proposals", []) if isinstance(p, dict)
+            ],
+            backgroundTasks=bool(data.get("backgroundTasks", False)),  # noqa: N815
+            eventSubscriptions=[  # noqa: N815
+                str(e) for e in data.get("eventSubscriptions", []) if e
             ],
         )
 
@@ -912,6 +942,12 @@ PROVIDER_TYPES = frozenset(
         # which `kind: event` triggers match with the existing `{source, pattern}` spec — no new
         # trigger kind. Its `TriggerSourceTypeHandler` lands in the same commit (the #47 rule).
         "trigger_source",
+        # An app-contributed STORE of trigger ROWS — a shared or
+        # team trigger backend. NOT `trigger_source` above: that supplies the STIMULUS (live
+        # observer, pushes events), this supplies the RULE (passive store, serves definitions).
+        # Rows only, never execution: the local TriggerService fires, and only rows whose `author`
+        # is the owner. Its `TriggerTypeHandler` lands in the same commit (the #47 rule).
+        "trigger",
     }
 )
 # NOTE: this set MUST equal the runtime type-handler registry

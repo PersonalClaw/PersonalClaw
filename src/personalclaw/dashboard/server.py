@@ -404,6 +404,13 @@ async def start_dashboard(
     app.router.add_post("/api/auth/enroll/start", _auth_h.api_auth_enroll_start)
     app.router.add_post("/api/auth/enroll/complete", _auth_h.api_auth_enroll_complete)
 
+    # Device pairing + the Devices registry. Registered next to the auth
+    # routes because they mint the same credential: a paired device holds an ordinary session,
+    # and `pair/complete` carries login's guards for the same reason it shares its exemption.
+    from personalclaw.dashboard.handlers.devices import register_device_routes
+
+    register_device_routes(app)
+
     # WebSocket (multiplexed real-time events)
     app.router.add_get("/api/ws", ws.api_ws)
 
@@ -1107,12 +1114,20 @@ async def start_dashboard(
     # the parts of the system the user hasn't tried yet; dismissals persist and
     # engaged areas auto-hide. Never writes or enables anything on the user's behalf.
     from personalclaw.dashboard.handlers.legibility import (
+        api_always_on,
+        api_always_on_doc,
+        api_always_on_doc_write,
         api_discover,
         api_discover_dismiss,
     )
 
     app.router.add_get("/api/legibility/discover", api_discover)
     app.router.add_post("/api/legibility/discover/dismiss", api_discover_dismiss)
+    # Always-on conventions viewer: what every session receives, with provenance,
+    # sliced out of the session's own producers so the viewer cannot drift from the prompt.
+    app.router.add_get("/api/legibility/always-on", api_always_on)
+    app.router.add_get("/api/legibility/always-on/doc", api_always_on_doc)
+    app.router.add_put("/api/legibility/always-on/doc", api_always_on_doc_write)
 
     # Legibility — PClaw as a routed-context provider for external agents.
     # GET /api/context backs the in-process get_context tool; the per-project
@@ -1348,6 +1363,26 @@ async def start_dashboard(
             logger.exception("Failed to register configured skill catalogs")
 
     app.on_startup.append(_skill_catalogs_startup)
+
+    async def _app_sources_seed_startup(app_: web.Application) -> None:
+        """Seed the shipped app-registry git source into ``app-sources.json`` — once, ever
+        (ECOSYSTEM-TOOLING T2.2).
+
+        This is the "first run" site: the seed writes one removable row and a marker, so
+        removing the source in the Store persists across every later start. Gated by
+        ``apps.registry_source_enabled``. Store LISTING only — it adds no install path, and
+        installing from it still goes through the scanner gate. Fail-soft: a sources-file
+        problem must never cost the gateway its boot."""
+        try:
+            from personalclaw.apps.catalog import seed_default_git_sources
+
+            seeded = await asyncio.to_thread(seed_default_git_sources)
+            if seeded:
+                logger.info("Seeded default app source(s): %s", ", ".join(seeded))
+        except Exception:
+            logger.exception("Failed to seed default app sources")
+
+    app.on_startup.append(_app_sources_seed_startup)
 
     async def _model_providers_startup(app_: web.Application) -> None:
         """Replay config.json providers[] into the model ProviderRegistry.

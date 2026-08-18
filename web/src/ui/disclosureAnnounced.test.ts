@@ -110,7 +110,17 @@ describe('a button that reveals content says that it does', () => {
     // `<button …</button>` within 400 chars, so ADDING `aria-expanded` pushed two buttons past the
     // window and the census fell from 12 to 10 — the fix shrank its own population. Anchor on the
     // TOGGLE (which is what defines the population) and look for the attribute around it.
+    // 🔴 THIS REGEX'S KEY EXCLUDED A WHOLE SHAPE, and the exclusion was silent — the same failure mode
+    // as the 400-character window above, one level up. It matches a BOOLEAN FLIP
+    // (`setX(!x)` / `setX(v => !v)`), so every ACCORDION — `setX(open ? null : id)`, one panel open at a
+    // time — sat outside the 48 entirely. Four exist; three announced nothing until they were fixed, and
+    // `NotificationRulesMatrix` had been doing it correctly all along. A second, independent sweep (the
+    // exclusive-choice one in pages/settings) missed them too, for its own different reason.
+    // **When a census defines membership by a WRITE pattern, enumerate the other ways the same
+    // interaction is written.**
     const TOGGLE = /onClick=\{\(\) => set\w+\(\(?\w*\)? ?=> ?!\w+\)|onClick=\{\(\) => set\w+\(!\w+\)/g
+    // One-open-at-a-time (`setX(open ? null : id)`) stores an id, so there is no `!` here to match on;
+    // that population is swept in the last describe of this file.
     const toggles = walk(PAGES).flatMap((abs) => {
       const src = readFileSync(abs, 'utf8')
       return [...src.matchAll(TOGGLE)].map((m) => src.slice(Math.max(0, m.index! - 200), m.index! + 260))
@@ -121,5 +131,66 @@ describe('a button that reveals content says that it does', () => {
     // A new toggle that announces nothing pushes this over and has to be classified before it lands.
     expect(silent.length, 'measured backlog — classify a new toggle, do not add to this number')
       .toBeLessThanOrEqual(34)
+  })
+})
+
+describe('the accordions the boolean-flip census could not see', () => {
+  // Membership here is the OTHER way this interaction gets written: `setX(open ? null : id)`, one panel
+  // open at a time. Four in the tree; three were silent. This is not a new family — it is the same
+  // family under a write pattern the original matcher's key excluded, which is why it lives in this file
+  // rather than growing a second ledger somewhere else.
+  const ACCORDION = /onClick=\{\(\) => set\w+\(\s*\w+ \? null : [\w.]+\s*\)/g
+
+  /** The file's other `walk` is scoped inside its own test, so this describe carries one. */
+  const walkPages = (d: string): string[] =>
+    readdirSync(d).flatMap((n) => {
+      const p = join(d, n)
+      if (statSync(p).isDirectory()) return walkPages(p)
+      return /\.tsx$/.test(n) && !/\.(test|doc)\.tsx$/.test(n) ? [p] : []
+    })
+
+  function accordions() {
+    const out: { rel: string; announced: boolean }[] = []
+    for (const abs of walkPages(PAGES)) {
+      const src = readFileSync(abs, 'utf8').replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
+      for (const m of src.matchAll(ACCORDION)) {
+        // Anchored on the toggle, not on tag boundaries — the lesson this file already carries.
+        const around = src.slice(Math.max(0, m.index! - 300), m.index! + 320)
+        out.push({ rel: abs.slice(PAGES.length + 1), announced: /aria-expanded/.test(around) })
+      }
+    }
+    return out
+  }
+
+  it('finds the population (not vacuously green)', () => {
+    const found = accordions()
+    expect(found.length, 'the accordion scan must find its population').toBeGreaterThanOrEqual(4)
+    // And it must still see the one that was correct before this cycle — the precedent, not an invention.
+    expect(found.map((a) => a.rel)).toContain('settings/NotificationRulesMatrix.tsx')
+  })
+
+  it('every one of them announces that it discloses', () => {
+    const silent = accordions().filter((a) => !a.announced).map((a) => a.rel)
+    expect(silent, `an accordion that reveals a panel and says nothing:\n${silent.join('\n')}`).toEqual([])
+  })
+
+  it('each fixed one still gates content on the same flag it announces', () => {
+    // The classification criterion this file insists on: `aria-expanded` is a promise that something is
+    // revealed. A mode toggle that reveals nothing must NOT take it (see the DiagnosticsPanel note).
+    // 🪤 Deliberately NOT an adjacency window (`aria-expanded=...[\s\S]{0,500}...{flag && (`): the
+    // distance between a toggle and the content it gates is arbitrary, and a window that happens to span
+    // it today silently stops asserting when a child is added. Two independent facts about the SAME flag
+    // name is the check that cannot rot.
+    const gated: [string, string][] = [
+      ['ChatPage.tsx', 'open'],
+      ['prompts/SyntaxReference.tsx', 'open'],
+      ['schedule/ScheduleDetail.tsx', 'expanded'],
+    ]
+    for (const [rel, flag] of gated) {
+      const src = read(rel)
+      expect(src, `${rel}: the toggle must announce ${flag}`).toMatch(new RegExp(`aria-expanded=\\{${flag}\\}`))
+      // `{flag && (` and `{flag && <X/>}` are both used in this tree — assert the gate, not its bracket.
+      expect(src, `${rel}: and ${flag} must be what reveals the content`).toMatch(new RegExp(`\\{${flag} && [(<]`))
+    }
   })
 })

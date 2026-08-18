@@ -18,6 +18,7 @@ import { resolveContentType } from '../../ui/content/contentTypes'
 import { ArtifactCompare } from './ArtifactCompare'
 import { ArtifactDeploy } from './ArtifactDeploy'
 import type { CommentTarget } from '../../ui/content/commentTarget'
+import { invalidateCache } from '../../lib/useCachedData'
 
 interface ViewerProps {
   slug: string
@@ -182,7 +183,15 @@ export function ArtifactViewer({ slug, onChanged, onDeleted, onOpenSourceFile, c
       ? 'The image bytes live only here. Any chat message that shows this image will display a "no longer available" placeholder after deletion. Download it first if you want to keep a copy. This cannot be undone.'
       : 'The underlying source file/widget is not touched — only the saved artifact and its version history are removed.'
     if (!(await confirmDelete('artifact', art.name, { body }))) return
-    try { await api.deleteArtifact(slug); onDeleted() }
+    try {
+      await api.deleteArtifact(slug)
+      // 🔴 `onDeleted()` refreshes THIS surface. The chat composer's attach picker reads the same
+      // collection under its own cache key, so a deleted artifact stayed on offer there — and
+      // attaching it fails. Prefix mode busts every key in the `artifacts:` namespace at once,
+      // which is why the picker's key was moved into it.
+      invalidateCache('artifacts:', true)
+      onDeleted()
+    }
     catch (e) { notify(`Could not delete artifact: ${(e as Error).message}`, 'error') }
   }
   // Download the currently-shown content (current or a historical version) with

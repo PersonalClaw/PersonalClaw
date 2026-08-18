@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { api, type ActionProvider, type PromptItem, type PromptVariable } from '../../lib/api'
 import { Combobox } from '../../ui/Combobox'
 import { Field, TextArea } from '../../ui/forms'
+import { InlineError } from '../../ui/InlineError'
 import { schemaProps, SchemaField, type WidgetMap } from '../tools/schema'
 import { actionIcon } from './triggerMeta'
 
@@ -9,13 +10,17 @@ import { actionIcon } from './triggerMeta'
  *  `$variables` (which depend on the chosen trigger) are shown as insertable
  *  chips beside each text field so the user can template the action with the
  *  trigger's event data. Mirrors the Tools "Try it" schema renderer. */
-export function ActionConfig({ providers, provider, config, onProvider, onConfig, vars }: {
+export function ActionConfig({ providers, provider, config, onProvider, onConfig, vars, loadError, onRetryProviders }: {
   providers: ActionProvider[]
   provider: string
   config: Record<string, unknown>
   onProvider: (name: string) => void
   onConfig: (cfg: Record<string, unknown>) => void
   vars: string[]
+  /** The providers read's rejection, when it left nothing to pick. Distinct from an install that
+   *  genuinely registers no action provider — the picker's "No action providers" cannot say which. */
+  loadError?: unknown
+  onRetryProviders?: () => void
 }) {
   const selected = providers.find((p) => p.name === provider)
   const options = useMemo(() => providers.map((p) => ({
@@ -51,7 +56,16 @@ export function ActionConfig({ providers, provider, config, onProvider, onConfig
   return (
     <div className="flex flex-col gap-l">
       <Field label="Action" hint="What runs when this trigger fires. Provided by a registered action provider.">
-        <Combobox options={options} value={provider} onChange={onProvider} placeholder="Pick an action…" emptyText="No action providers" />
+        {loadError ? (
+          // The form's one required choice. With the read failed there is nothing to pick and no
+          // point offering the picker — say what happened and offer the retry, because the Save
+          // button's reason can only ever name a requirement, never a broken request.
+          <InlineError icon onRetry={onRetryProviders}>
+            Couldn&rsquo;t load the action providers{(loadError as Error)?.message ? `: ${(loadError as Error).message}` : '.'}
+          </InlineError>
+        ) : (
+          <Combobox options={options} value={provider} onChange={onProvider} placeholder="Pick an action…" emptyText="No action providers" />
+        )}
       </Field>
 
       {selected && (

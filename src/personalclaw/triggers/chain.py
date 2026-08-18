@@ -41,6 +41,9 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from personalclaw.triggers.provider import armable
+from personalclaw.triggers.routing import routed
+
 logger = logging.getLogger(__name__)
 
 #: How many links a chain may have. A → B → C is a real workflow; deeper is almost always a mistake,
@@ -61,13 +64,16 @@ def chain_triggers(store: Any, *, source_id: str) -> list[Any]:
     workflow ref — the two keys `SPEC_KEYS` declares. A trigger with neither key matches nothing
     rather than everything: a chain that fired on every run in the system would be a fire storm
     authored by omission.
+
+    Reads a :func:`~personalclaw.triggers.routing.routed` store (TSE-5) so a shared/team ``trigger``
+    provider can contribute the "when the team brief finishes, notify me" half of a cascade. Safe
+    here, unlike the poll loops: a ``run_completed`` row holds no schedule to advance,
+    and the write its fire produces (the gateway's outcome recorder) is routed back to the serving
+    store by :meth:`personalclaw.triggers.store.TriggerStore.upsert`.
     """
     out: list[Any] = []
-    for row in store.load():
-        trigger = row.trigger
-        if not getattr(row, "ok", True) or trigger.kind != "run_completed":
-            continue
-        if not trigger.enabled:
+    for trigger in armable(routed(store)):
+        if trigger.kind != "run_completed" or not trigger.enabled:
             continue
         spec = trigger.spec if isinstance(trigger.spec, dict) else {}
         wanted = str(spec.get("source_trigger", "") or "").strip()
@@ -86,11 +92,8 @@ def chain_triggers_for_def(store: Any, *, source_def: str) -> list[Any]:
     if not source_def:
         return []
     out: list[Any] = []
-    for row in store.load():
-        trigger = row.trigger
-        if not getattr(row, "ok", True) or trigger.kind != "run_completed":
-            continue
-        if not trigger.enabled:
+    for trigger in armable(routed(store)):
+        if trigger.kind != "run_completed" or not trigger.enabled:
             continue
         spec = trigger.spec if isinstance(trigger.spec, dict) else {}
         if str(spec.get("source_def", "") or "").strip() == source_def:

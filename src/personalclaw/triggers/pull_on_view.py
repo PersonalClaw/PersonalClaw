@@ -44,6 +44,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from personalclaw.triggers.provider import armable
+
 logger = logging.getLogger(__name__)
 
 #: The default TTL when an author names a surface but no window. Ten minutes: long enough that
@@ -146,9 +148,8 @@ def bound_triggers(store: Any, *, surface: str) -> list[Any]:
     if not surface:
         return []
     out: list[Any] = []
-    for row in store.load():
-        trigger = row.trigger
-        if not getattr(row, "ok", True) or trigger.kind != "view" or not trigger.enabled:
+    for trigger in armable(store):
+        if trigger.kind != "view" or not trigger.enabled:
             continue
         spec = trigger.spec if isinstance(trigger.spec, dict) else {}
         if str(spec.get("surface_binding", "") or "").strip() == surface:

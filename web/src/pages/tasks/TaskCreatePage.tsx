@@ -5,7 +5,7 @@ import { IconButton } from '../../ui/IconButton'
 import { Button } from '../../ui/Button'
 import { PageTitle } from '../../ui/PageTitle'
 import { api, type TaskItem } from '../../lib/api'
-import { useCachedData } from '../../lib/useCachedData'
+import { useCachedData, invalidateCache } from '../../lib/useCachedData'
 import { TaskForm, emptyDraft, draftToPayload, type TaskDraft } from './TaskForm'
 
 /** Dedicated full-page create flow (not the sidebar, per the directive). The
@@ -31,6 +31,9 @@ export function TaskCreatePage({ onBack, onCreated }: { onBack: () => void; onCr
     setSaving(true); setErr('')
     try {
       const t = await api.createTask(draftToPayload(draft))
+      // This page's own picker reads a persisted `tasks-all`, so without this the next visit paints
+      // the pre-create list before its revalidation lands — and a hard reload paints it again.
+      invalidateCache('tasks', true)
       onCreated(t)
     } catch (e) { setErr(e instanceof Error ? e.message : 'Create failed') } finally { setSaving(false) }
   }

@@ -1,6 +1,6 @@
 import { useEffect, useMemo } from 'react'
 import { fvs } from '../../design/fontWeight'
-import { Plus, Zap, Clock, Pencil, CalendarDays } from 'lucide-react'
+import { Plus, Zap, Clock, Pencil, CalendarDays, Users } from 'lucide-react'
 import { TopBar } from '../../ui/TopBar'
 import { WorkbenchLayout } from '../../ui/WorkbenchLayout'
 import { HeaderActions, HeaderControl } from '../../ui/HeaderActions'
@@ -235,9 +235,14 @@ export function TriggersListPage({ onCreate, query, setQuery }: {
                   // a row (open the inspector, or open it straight into edit mode). Both
                   // route through the same `setQuery` the row's click uses — destructive
                   // + enable/disable live inside the opened detail panel, not here.
+                  // A FOREIGN row gets 'Open' and nothing else (TEAM-SHARED-ENTITIES §2.2 —
+                  // TSE-4). It is somebody else's automation: this harness will not arm or fire it,
+                  // so offering Edit would be offering to change a row whose owner's machine — not
+                  // this one — decides what it does. Open still works: the row is informational,
+                  // and informational means readable.
                   const menuItems: ContextMenuItem[] = [
                     { icon: <Zap size={15} />, label: 'Open', onSelect: () => setQuery({ open: t.id, edit: null }) },
-                    { icon: <Pencil size={15} />, label: 'Edit', onSelect: () => setQuery({ open: t.id, edit: '1' }) },
+                    ...(t.readOnly ? [] : [{ icon: <Pencil size={15} />, label: 'Edit', onSelect: () => setQuery({ open: t.id, edit: '1' }) }]),
                   ]
                   return (
                     <ContextMenu key={t.id} items={menuItems}>
@@ -251,6 +256,10 @@ export function TriggersListPage({ onCreate, query, setQuery }: {
                           {t.kind === 'lifecycle' && t.usedBy.length === 0 && <span className="shrink-0 text-on-surface-low text-[0.75rem]">· dormant</span>}
                           {t.kind === 'store' && t.broken && t.broken.length > 0 && <span className="shrink-0 text-danger text-[0.75rem]">· needs attention</span>}
                           {t.kind === 'store' && t.storeKind && <span className="shrink-0 text-on-surface-low text-[0.75rem]">· {t.storeKind}</span>}
+                          {/* The AUTHOR chip §2.2 asks for. Shown only for a foreign row — a chip
+                              on every row would be noise on the single-user install that is the
+                              norm, and the useful signal here is "this one is not mine". */}
+                          {t.readOnly && <span className="shrink-0 inline-flex items-center gap-1 rounded-pill bg-surface-high px-1.5 py-px text-on-surface-var text-[0.75rem]"><Users size={11} /> {t.author || 'shared'}</span>}
                         </div>
                         <div className="mt-0.5 flex flex-wrap items-center gap-x-m gap-y-0.5 text-on-surface-low text-[0.8125rem]">
                           <span className="inline-flex items-center gap-1" style={{ color: t.whenTone }}><t.whenIcon size={11} /> {t.whenLabel}</span>

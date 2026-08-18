@@ -62,6 +62,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Any
 
+from personalclaw.triggers import provider
 from personalclaw.triggers.models import (
     INERT_OUTCOMES,
     Outcome,
@@ -433,14 +434,27 @@ async def tick(
     one store must not live in another.
     """
     from personalclaw.triggers import claims, screen
+    from personalclaw.triggers.routing import routed
+
+    # 🔴 PROVIDER ROWS JOIN THE ARM PATH HERE. `routed` merges every registered `trigger`
+    # provider's rows into the one `load()` that `armable` below reads, so an app-served row can be
+    # due. The matching half — the reschedule going BACK to the store that served the row, not
+    # into `triggers.json` — is in `TriggerStore.upsert` itself, so it covers the gateway's fire-
+    # outcome writers too and not only the `store.upsert` calls in this function. A no-op on a
+    # single-user install (nothing registered → `store` is returned unchanged).
+    store = routed(store)
 
     now = now or time.time()
     base_dir = base_dir if base_dir is not None else getattr(store, "base_dir", None)
     result = TickResult()
 
     result.store_changed = bool(getattr(store, "changed_on_disk", lambda: False)())
-    rows = store.load()
-    triggers = [row.trigger for row in rows if getattr(row, "ok", True)]
+    # 🔴 THE OWNER FILTER, structurally. `armable` drops broken rows AND rows some
+    # other user authored, so a foreign row is never in `triggers` and never in `by_id`: `due_ids`
+    # cannot return its id, and the `by_id.get(trigger_id)` below could not resolve it if it did.
+    # A foreign row therefore cannot tick — it is absent from the candidate set, not declined by a
+    # gate downstream, which is the difference §2.2 spells out in parentheses.
+    triggers = provider.armable(store)
     by_id = {t.id: t for t in triggers}
 
     from personalclaw.triggers import firepath as fp
@@ -837,10 +851,18 @@ def boot(store: Any, *, now: float = 0.0, persist: bool = True) -> dict[str, Any
     evidence that anything was missed, so the evidence has to be read first.
     """
     from personalclaw.triggers.missed import review_at_boot
+    from personalclaw.triggers.routing import routed
+
+    # Provider rows join the boot re-arm too, for the same reason `tick` needs them: boot
+    # writes `next_fire_at`, so a provider row that boot could not see would come up unarmed and
+    # only start firing after its first clock tick — a first-fire that silently depends on uptime.
+    store = routed(store)
 
     now = now or time.time()
-    rows = store.load()
-    triggers = [row.trigger for row in rows if getattr(row, "ok", True)]
+    # Owner-authored rows only. Boot RE-ARMS (it writes `next_fire_at`), so a foreign
+    # row reaching this walk would be armed on the owner's clock — the exact thing the filter exists
+    # to prevent, and the reason it belongs here and not only in `tick`.
+    triggers = provider.armable(store)
 
     # Snapshot BEFORE `plan_boot` re-arms — see the docstring.
     review = review_at_boot([t.to_dict() for t in triggers], now=now)

@@ -32,6 +32,7 @@ from pathlib import Path
 from typing import Any
 
 from personalclaw.triggers.file_watch import WatchState, changed_files, fire_payload, should_fire
+from personalclaw.triggers.provider import armable
 
 logger = logging.getLogger(__name__)
 
@@ -87,16 +88,19 @@ def save_state(trigger_id: str, state: WatchState, *, base_dir: Path | str | Non
 
 
 def file_triggers(store: Any) -> list[Any]:
-    """Enabled, parseable `file` triggers from the store.
+    """Enabled, parseable, OWNER-AUTHORED `file` triggers from the store.
 
     Broken rows are skipped (they load DISABLED under S87's lenient parse), and a disabled row is
     not polled — pausing a watch must actually stop the filesystem work, or "paused" is a lie the
     user pays for on every poll.
+
+    Reads `provider.armable` rather than `store.load()` so a foreign row (§2.2 — TSE-4) is never
+    polled at all: this loop dispatches straight to the gateway's fire path, so filtering only in
+    `service.tick` would leave the `file` kind able to tick for somebody else.
     """
     out = []
-    for row in store.load():
-        trigger = row.trigger
-        if trigger.kind == "file" and trigger.enabled and getattr(row, "ok", True):
+    for trigger in armable(store):
+        if trigger.kind == "file" and trigger.enabled:
             out.append(trigger)
     return out
 

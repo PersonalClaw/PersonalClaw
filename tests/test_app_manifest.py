@@ -324,6 +324,45 @@ class TestCliAndLoggerRoots:
         assert m.cli.to_dict() == {}
         assert m.loggerRoots == []
 
+    # --- APE-1: the new permission grants do not disturb unknown-field preservation ---
+    def test_unknown_fields_preserved_alongside_new_permission_grants(self):
+        """The manifest deliberately carries fields it does not know (so an app built for
+        a newer core still round-trips through an older one). Adding
+        ``permissions.backgroundTasks``/``eventSubscriptions`` must not touch that: the
+        unknown top-level keys still land in ``extra`` and survive, and the two new grants
+        do NOT (they are typed now)."""
+        m = AppManifest.from_dict(
+            _valid_manifest(
+                permissions={
+                    "backgroundTasks": True,
+                    "eventSubscriptions": ["session.created"],
+                    "storage": True,
+                },
+                futureField={"nested": [1, 2]},
+                anotherUnknown="x",
+            )
+        )
+        assert m.extra == {"futureField": {"nested": [1, 2]}, "anotherUnknown": "x"}
+        assert "permissions" not in m.extra
+        serialized = m.to_dict()
+        assert serialized["futureField"] == {"nested": [1, 2]}
+        assert serialized["permissions"]["backgroundTasks"] is True
+        assert serialized["permissions"]["eventSubscriptions"] == ["session.created"]
+        m2 = AppManifest.from_dict(serialized)
+        assert m2.extra == m.extra
+        assert m2.to_dict() == serialized  # whole-manifest fixed point
+
+    def test_unrecognised_manifest_key_round_trips_with_the_new_grants_absent(self):
+        """The same guarantee for an app that declares NEITHER new grant — the case every
+        installed app is today. An unknown key survives, and no spurious permission key
+        appears beside it."""
+        m = AppManifest.from_dict(_valid_manifest(somethingCoreNeverHeardOf={"a": 1}))
+        serialized = m.to_dict()
+        assert serialized["somethingCoreNeverHeardOf"] == {"a": 1}
+        assert "backgroundTasks" not in serialized.get("permissions", {})
+        assert "eventSubscriptions" not in serialized.get("permissions", {})
+        assert AppManifest.from_dict(serialized).to_dict() == serialized
+
 
 # ---------------------------------------------------------------------------
 # Parsing edge cases

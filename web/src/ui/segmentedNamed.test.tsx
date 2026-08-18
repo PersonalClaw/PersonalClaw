@@ -34,7 +34,8 @@ const SRC = join(process.cwd(), 'src')
 /** Bare sites (no enclosing `Field`) with the name each one takes. */
 const EXPLICIT: Array<[string, string]> = [
   [join('pages', 'artifacts', 'ArtifactsSection.tsx'), 'Artifact kind'],
-  [join('pages', 'artifacts', 'ArtifactsSection.tsx'), 'Sort artifacts'],
+  // The "Sort artifacts" Segmented was removed, not renamed: artifacts' sort is now a section inside
+  // the canonical `ui/FilterMenu` pill, which names itself. The kind strip is still a bare Segmented.
   [join('pages', 'files', 'FilesSection.tsx'), 'File root'],
   [join('pages', 'inbox', 'InboxDetail.tsx'), 'Reclassify'],
   [join('pages', 'learning', 'LearningPage.tsx'), 'Proposal kind'],

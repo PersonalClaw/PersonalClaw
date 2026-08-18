@@ -13,6 +13,7 @@ import { TYPES, typeMeta, createKind, ACCEPTED_MIMES, GIST_LANGUAGES, fmtBytes }
 import { GistEditor } from './GistEditor'
 import { createKnowledge, updateKnowledge, uploadKnowledgeFile } from './knowledgeStore'
 import { AudioRecorder } from './AudioRecorder'
+import { notify } from '../../app/appSdk'
 
 /** Dedicated create PAGE (matches the create-page pattern used across the app):
  *  step 1 = a type-grid picker (all 12 knowledge formats); step 2 = a per-type
@@ -109,7 +110,13 @@ function CreateForm({ type, onBack, onClose, onCreated }: { type: KnowledgeType;
         if (title.trim() && title.trim() !== file.name) custom.title = title.trim()
         if (tags.length) custom.tags = tags
         if (res.item_id && !(res as { deduped?: boolean }).deduped && Object.keys(custom).length) {
-          await updateKnowledge(res.item_id, custom).catch(() => {})
+          // 🔴 This is the ONLY carrier for the title and tags the user typed — ingest takes bytes
+          // only. `catch(() => {})` meant a refused patch produced a fully successful-looking create
+          // that silently dropped both, and the page navigates away on success, so nothing ever
+          // contradicted it. The item really was created, so this reports rather than throws.
+          await updateKnowledge(res.item_id, custom).catch((e) => {
+            notify(`Saved the file, but couldn't apply the title and tags: ${String((e as Error)?.message || e)}`, 'error')
+          })
         }
       } else if (kind === 'bookmark') {
         // Bookmark → typed item carrying its URL; the node-graph scrapes the page.

@@ -69,7 +69,7 @@ export function GuardrailsPanel() {
       <Section title="Outbound scan" hint="How a prompt bound for a REMOTE model provider is handled when it contains secrets or PII. Local models always warn (their content never leaves your machine).">
         <div className="rounded-lg bg-surface-container px-4 py-3">
           <Field label="Scan mode" hint="warn = log & send · redact = substitute & send · block = refuse the call.">
-            <SegPills value={String(cfg.scan_mode ?? 'redact')}
+            <SegPills ariaLabel="Scan mode" value={String(cfg.scan_mode ?? 'redact')}
               onChange={(v) => { setCfg((c) => ({ ...c, scan_mode: v })); api.patchConfig('guardrails.scan_mode', v).catch((e) => notify(`Couldn't save scan mode: ${String((e as Error)?.message || e)}`, 'error')) }}
               options={[{ key: 'warn', label: 'Warn' }, { key: 'redact', label: 'Redact' }, { key: 'block', label: 'Block' }]} />
           </Field>

@@ -10,6 +10,10 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Added
 
+- **Apps can subscribe to platform events they declare.**
+
+- **Pair a phone or tablet as its own device.**
+
 - **Nudge an artifact's look without spending a message on it.**
 - **Point at what is wrong instead of describing it.**
 - **A pinned dashboard tile can now keep its own numbers up to date, for free.**
@@ -32,6 +36,11 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **You can now edit the memory registers the assistant reads every session, and see who your memories are about.**
 
 ### Fixed
+
+- **"Unattended runs need a verified adapter" only covered one kind of unattended run.**
+
+- **Settings → Agents could show you a stale runner reading as if it were current.**
+- **A provider that rides a CLI subscription could look signed in and still fail.**
 
 - **Your ready-task list was in no particular order.**
 

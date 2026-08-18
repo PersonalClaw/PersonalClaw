@@ -61,7 +61,7 @@ export function SyntaxReference({ onInsert }: { onInsert?: (snippet: string) => 
           const open = openCat === cat
           return (
             <div key={cat}>
-              <button type="button" onClick={() => setOpenCat(open ? null : cat)}
+              <button type="button" aria-expanded={open} onClick={() => setOpenCat(open ? null : cat)}
                 className="flex w-full items-center gap-1.5 rounded-md px-2 py-1 text-left hover:bg-surface-high transition-colors">
                 <ChevronRight size={13} className={`shrink-0 text-on-surface-low transition-transform ${open ? 'rotate-90' : ''}`} />
                 <span className="capitalize text-on-surface-var">{cat}</span>

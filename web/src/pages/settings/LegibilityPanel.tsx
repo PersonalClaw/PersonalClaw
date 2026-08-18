@@ -4,6 +4,7 @@ import { notify } from '../../app/appSdk'
 import { useCachedData } from '../../lib/useCachedData'
 import { PanelHeader, Section, ToggleRow } from './settingsUI'
 import { FormSkeleton, LoadError } from '../../ui/ListScaffold'
+import { AlwaysOnConventions } from './AlwaysOnConventions'
 
 // The editable legibility.* fields mirror the backend _EDITABLE_CONFIG allowlist
 // (config/loader.py LegibilityConfig). Both are runtime-editable booleans.
@@ -49,6 +50,12 @@ export function LegibilityPanel() {
   return (
     <div>
       <PanelHeader title="Legibility" hint="How PersonalClaw describes its own capabilities — to you on the dashboard, and to the external agents you point at your projects. Both are proposals: nothing here is ever enabled on your behalf." />
+
+      {/* What every session receives before you type. Read-only for the global tier and
+          editable for a project's overview — and NOT behind a config switch, because a
+          toggle that could hide the answer to "what rules is it following?" would make the
+          one legibility surface the least reliable thing on the page. */}
+      <AlwaysOnConventions />
 
       <Section title="Discover" hint="A curated tour of the parts of PersonalClaw you haven't tried yet, on the dashboard and the Discover hub.">
         <div className="rounded-lg bg-surface-container px-4 py-1">

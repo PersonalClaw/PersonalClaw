@@ -207,6 +207,10 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `GET /api/desktop/state` — what the desktop shell can actually do, right now.
 - `POST /api/desktop/state` — the shell pushes a refreshed capability manifest.
 - `POST /api/desktop/unregister` — the shell is quitting; forget its capabilities.
+- `GET /api/devices` — every paired device with a live session.
+- `POST /api/devices/pair/complete` — redeem a code for a durable device session.
+- `POST /api/devices/pair/start` — mint a single-use pairing code + QR payload.
+- `POST /api/devices/{id}/revoke` — lock one device out.
 - `GET /api/doctor` — all probes, grouped by capability, cached 30s.
 - `GET /api/doctor/crash/{filename}` — the full JSON of one crash artifact.
 - `POST /api/doctor/fix/{fix_id}` — apply a confirm-gated fix.
@@ -337,6 +341,9 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `GET /api/learning/proposals/{id}` — one full record.
 - `POST /api/learning/proposals/{id}/accept` — install it.
 - `GET /api/learning/staging/week` — the week-at-a-glance capture panel.
+- `GET /api/legibility/always-on` — what every session receives, with provenance.
+- `GET /api/legibility/always-on/doc` — one body, verbatim, for the editor.
+- `PUT /api/legibility/always-on/doc` — replace an editable project instruction.
 - `GET /api/legibility/discover` — the curated Discover tips still worth showing.
 - `POST /api/legibility/discover/dismiss` — hide a Discover tip forever.
 - `DELETE /api/lessons` — remove lessons by substring.
@@ -675,6 +682,7 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `GET /api/uploads/{id}` — which parts landed (drives client resume).
 - `POST /api/uploads/{id}/complete` — assemble + scan + hand off to the target.
 - `PUT /api/uploads/{id}/part` — stream one part to disk (idempotent).
+- `GET /api/usage` — the per-day spend fold.
 - `GET /api/usage/rollup` — aggregated ledger rows.
 - `GET /api/usage/totals` — the grand total over the window.
 - `DELETE /api/voice/bindings` — unbind one surface.

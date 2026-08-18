@@ -56,6 +56,7 @@ from pathlib import Path
 from typing import Any, Iterator
 
 from personalclaw.triggers.models import Issue, Trigger, parse_trigger
+from personalclaw.triggers.provider import TriggerStoreProvider
 
 logger = logging.getLogger(__name__)
 
@@ -108,8 +109,14 @@ class LoadedTrigger:
         }
 
 
-class TriggerStore:
+class TriggerStore(TriggerStoreProvider):
     """`triggers.json`, with the shipped cron store's durability discipline.
+
+    The NATIVE implementation of the trigger-store seam (TEAM-SHARED-ENTITIES §3 — TSE-4): it wraps
+    `triggers.json` with all three preserved conventions (fcntl lock, mtime change-notify, atomic
+    write). The base class is the abstraction a `trigger`-type provider app implements to serve rows
+    from somewhere else; this class is what serves them from the local file, and it is the only
+    implementation core ships.
 
     Deliberately NOT a subclass of or wrapper around `ScheduleService`: that class also owns
     the timer,
@@ -267,7 +274,23 @@ class TriggerStore:
         mutation
         built on this instance's cached view would silently delete a trigger created in chat thirty
         seconds ago. Read-modify-write inside one lock is the only shape that cannot lose a row.
+
+        🔴 A ROW A REGISTERED `trigger` PROVIDER SERVES IS WRITTEN BACK TO THAT PROVIDER, not here
+        (TSE-5). Writing it here instead would put one trigger id in two stores, and since a local
+        row WINS every later read, the team's row would silently fork into a local copy and the
+        shared file would stop describing what actually runs. The check belongs at this one funnel
+        rather than at the arm sites because the arm path is not the only writer: the gateway's
+        fire-outcome recorder, its failure-dedup path and its autopause path each build their own
+        `TriggerStore` and write a fired row back through it. `routing.route_upsert` returns None
+        on every single-user install (one dict emptiness check, no I/O) and for every id no
+        provider serves, which is why this
+        costs nothing when nothing is installed.
         """
+        from personalclaw.triggers import routing
+
+        elsewhere = routing.route_upsert(trigger, native=self)
+        if elsewhere is not None:
+            return elsewhere
         with self._file_lock():
             rows = self._read_rows()
             updated = [r for r in rows if str(r.get("id") or "") != trigger.id]
@@ -280,7 +303,16 @@ class TriggerStore:
 
         Also re-reads under the lock: deleting from a stale view would resurrect every row another
         process added since the last read.
+
+        Routed to the serving provider for a provider-served id, exactly as `upsert` is: a retire
+        (`delete_after_run`) that deleted a local row which never existed would leave the provider's
+        copy live and holding an elapsed schedule — the fire storm again, by another route.
         """
+        from personalclaw.triggers import routing
+
+        elsewhere = routing.route_delete(trigger_id, native=self)
+        if elsewhere is not None:
+            return elsewhere
         with self._file_lock():
             rows = self._read_rows()
             kept = [r for r in rows if str(r.get("id") or "") != trigger_id]

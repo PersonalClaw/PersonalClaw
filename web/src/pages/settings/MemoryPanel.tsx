@@ -31,6 +31,7 @@ import { useQueryParam, type RouteProps } from '../../app/useQueryState'
 import { fvs } from '../../design/fontWeight'
 import { accentChip } from '../../design/accent'
 import { notify } from '../../app/appSdk'
+import { tabListKeys } from '../../lib/tabListKeys'
 
 // Two-level tab model (MEM-i3): the exploration surfaces — every "look at what's
 // stored" view — nest under Browse; the top level keeps the distinct destinations
@@ -67,7 +68,11 @@ export function MemoryPanel({ query, setQuery }: Pick<RouteProps, 'query' | 'set
   const [tabRaw, setTabRaw] = useQueryParam(query, setQuery, 'tab', 'studio', { replace: true })
   const resolved = LEGACY_TAB_ALIAS[tabRaw as string] ?? tabRaw
   const tab = (ALL_TABS.includes(resolved as Tab) ? resolved : 'studio') as Tab
+  // Arrow/Home/End across the strip, from the one shared implementation (lib/tabListKeys) that
+  // four other strips already read — declaring role="tab" without it would promise a model this
+  // panel does not keep.
   const setTab = (t: Tab) => setTabRaw(t)
+  const onTabKey = tabListKeys((i) => setTab(TOP_TABS[i].id))
   const { data: stats, refresh: refreshStats } = useCachedData(
     'settings:memory-stats', () => api.memoryStats().catch(() => null), { persist: true },
   )
@@ -86,12 +91,21 @@ export function MemoryPanel({ query, setQuery }: Pick<RouteProps, 'query' | 'set
         </div>
       )}
 
-      {/* flat tab bar — Studio (explore) + the focused tools (no more tabs-under-tabs) */}
-      <div className="mb-l flex gap-0.5 border-b border-outline-variant/40">
+      {/* flat tab bar — Studio (explore) + the focused tools (no more tabs-under-tabs).
+          🔴 The active tab was distinguished ONLY by a 2px underline and the accent text colour, so
+          nothing said which view was showing. `ui/Segmented` — this app's canonical view switcher —
+          already declares tablist/tab/aria-selected for exactly this job; this strip is a different
+          VISUAL (an underline bar, not a pill) so it keeps its look and takes those semantics. */}
+      <div role="tablist" aria-label="Memory view" onKeyDown={onTabKey}
+        className="mb-l flex gap-0.5 border-b border-outline-variant/40">
         {TOP_TABS.map((t) => {
           const on = t.id === tab
           return (
-            <button key={t.id} type="button" onClick={() => setTab(t.id)}
+            // 🪤 `role="tab"` is a PROMISE of the tab keyboard model. Roving tabIndex — exactly one tab
+            // in the tab order — plus the shared arrow handler above, because announcing tabs without
+            // the model is worse than announcing nothing (the ux-689 lesson, one cycle later).
+            <button key={t.id} type="button" role="tab" aria-selected={on} tabIndex={on ? 0 : -1}
+              onClick={() => setTab(t.id)}
               className="-mb-px flex items-center gap-1.5 border-b-2 px-3 py-2 text-[0.8125rem] transition-colors"
               // 🔴 ACCENT TEXT ON THE CANVAS NEEDS THE EMPHASIS SHADE. Measured at 4.37:1 (need 4.5) by axe and
               //    ux-audit in light: `--color-primary` on `--color-canvas` (#c8452e on #f0f4f8). The scheme rail
@@ -412,12 +426,16 @@ function MemoryStudio({ onChanged, initialSel }: { onChanged: () => void; initia
               explorer list renders. */}
           <ResultAnnouncement count={shown.length} noun="memories"
             active={!!q.trim() || kindFilter !== 'all'} />
-          <div className="flex flex-wrap gap-1">
+          {/* 🔴 One-of-N, and the chosen chip was an `accentChip` background and nothing else. The
+              dimension goes on the GROUP, not into each chip's name: each chip's visible text ends in a
+              count ("fact 12"), and an `aria-label` would replace that text in the accessible name
+              instead of adding to it. */}
+          <div role="group" aria-label="Filter by kind" className="flex flex-wrap gap-1">
             {(['all', 'fact', 'episodic', 'lesson', 'entity', 'slot', 'doc'] as const).map((k) => {
               const on = kindFilter === k
               const meta = k === 'all' ? null : STUDIO_KIND_META[k]
               return (
-                <button key={k} type="button" onClick={() => setKindFilter(k)}
+                <button key={k} type="button" aria-pressed={on} onClick={() => setKindFilter(k)}
                   className="inline-flex items-center gap-1 rounded-pill px-2 h-6 text-[0.75rem] transition-colors"
                   style={on ? accentChip : { background: 'var(--color-surface-high)', color: 'var(--color-on-surface-low)' }}>
                   {meta && <meta.icon size={11} />}{k === 'all' ? 'All' : meta!.label}<span className="tabular-nums">{counts[k]}</span>
@@ -447,8 +465,11 @@ function MemoryStudio({ onChanged, initialSel }: { onChanged: () => void; initia
           ) : shown.map((it) => {
             const on = it.uid === selUid
             const Icon = STUDIO_KIND_META[it.kind].icon
+            // 🔴 The row whose detail is open was a 14% primary tint and a recoloured icon/title, with
+            // nothing programmatic. Master-detail, not a listbox choice, so `aria-current` is the marker
+            // — the same one `ui/NavRail` uses for the section you are on.
             return (
-              <button key={it.uid} type="button" onClick={() => setSelUid(it.uid)}
+              <button key={it.uid} type="button" aria-current={on ? 'true' : undefined} onClick={() => setSelUid(it.uid)}
                 className="flex w-full items-start gap-2 rounded-lg px-2 py-1.5 text-left transition-colors"
                 style={on ? { background: 'color-mix(in srgb, var(--color-primary) 14%, transparent)' } : undefined}>
                 <Icon size={13} className="mt-0.5 shrink-0" style={{ color: on ? 'var(--color-primary)' : 'var(--color-on-surface-low)' }} />
@@ -1267,13 +1288,22 @@ function EntityBacklinks({ entity }: { entity: MemoryEntity }) {
     <div className="mt-2 flex flex-col gap-1 border-t border-outline-variant/30 pt-2">
       {links.map((l) => (
         <div key={l.id} className="text-[0.75rem]">
-          <span className="rounded bg-surface-high px-1.5 py-0.5 uppercase tracking-wide text-on-surface-low">{l.link_type.replace(/_/g, ' ')}</span>
-          {/* `from_kind` says WHICH memory store the ref lives in — semantic (a durable fact,
-              keyed by name) or episodic (an event, keyed by uuid). The row rendered the bare
-              `from_ref` alone, so a uuid and a fact key looked like the same kind of thing and
-              there was no way to tell which store to look in. */}
-          <span className="ml-2 text-on-surface-low">{l.from_kind}</span>
-          <span className="ml-1.5 font-mono text-on-surface-var">{l.from_ref}</span>
+          {/* Same wrapping shape as `RecordLinks` above, which solves the identical problem —
+              chips plus a ref on one line inside a narrow drawer. Inline spans got it wrong in
+              two measurable ways: `same_project` broke mid-label ("SAME" / "PROJECT") with the
+              pill following the break, and a long dotted key overflowed the drawer's right edge
+              (`pref.facet.release.freeze` measured 1412px against a 1403px container). Flex-wrap
+              keeps each chip atomic; `break-all` is what actually wraps a dotted key, since it
+              contains no spaces for `break-words` to use. */}
+          <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
+            <span className="whitespace-nowrap rounded bg-surface-high px-1.5 py-0.5 uppercase tracking-wide text-on-surface-low">{l.link_type.replace(/_/g, ' ')}</span>
+            {/* `from_kind` says WHICH memory store the ref lives in — semantic (a durable fact,
+                keyed by name) or episodic (an event, keyed by uuid). The row rendered the bare
+                `from_ref` alone, so a uuid and a fact key looked like the same kind of thing and
+                there was no way to tell which store to look in. */}
+            <span className="whitespace-nowrap text-on-surface-low">{l.from_kind}</span>
+            <span className="min-w-0 break-all font-mono text-on-surface-var">{l.from_ref}</span>
+          </div>
           {l.context && <div className="mt-0.5 text-on-surface-low">{l.context}</div>}
         </div>
       ))}

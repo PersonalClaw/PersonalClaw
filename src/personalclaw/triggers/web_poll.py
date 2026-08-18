@@ -62,6 +62,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from personalclaw.triggers.provider import armable
+
 logger = logging.getLogger(__name__)
 
 #: How often the poll loop wakes to LOOK for due watches. Not how often a watch is fetched — that is
@@ -193,9 +195,8 @@ def save_state(trigger_id: str, state: WatchState, *, base_dir: Path | str | Non
 def web_watch_triggers(store: Any) -> list[Any]:
     """Every enabled `web_watch` trigger with a url. Broken rows are skipped, not repaired here."""
     out: list[Any] = []
-    for row in store.load():
-        trigger = row.trigger
-        if not getattr(row, "ok", True) or trigger.kind != "web_watch" or not trigger.enabled:
+    for trigger in armable(store):
+        if trigger.kind != "web_watch" or not trigger.enabled:
             continue
         spec = trigger.spec if isinstance(trigger.spec, dict) else {}
         if str(spec.get("url", "") or "").strip():

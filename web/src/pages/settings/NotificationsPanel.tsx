@@ -66,7 +66,7 @@ export function NotificationsPanel() {
           <Toggle on={s.mute_all} onChange={(v) => patch({ mute_all: v })} label="Mute all notifications" />
         </Row>
         <Field label="Minimum severity" hint="Only notify at or above this level.">
-          <SegPills value={s.min_severity} onChange={(v) => patch({ min_severity: v })} options={SEVERITIES} />
+          <SegPills ariaLabel="Minimum severity" value={s.min_severity} onChange={(v) => patch({ min_severity: v })} options={SEVERITIES} />
         </Field>
       </Section>
 

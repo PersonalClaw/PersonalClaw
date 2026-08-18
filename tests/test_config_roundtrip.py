@@ -157,6 +157,7 @@ _SECTIONS = [
     "companion",
     "local_models",
     "proactive",
+    "apps",
 ]
 
 # Values for fields the generic flip/append rules can't produce: enum members,
@@ -347,3 +348,19 @@ def test_load_fallbacks_match_dataclass_defaults(cfg_file):
                     f"but empty-config load gives {got!r}"
                 )
     assert not diffs, "load() fallback drift vs dataclass defaults:\n" + "\n".join(diffs)
+
+
+def test_every_apps_field_is_patchable_or_has_a_write_path():
+    """The wiring point this file CANNOT see: the PATCH allowlist.
+
+    The five points a config field must reach are dataclass+_meta, load(), to_dict(), a
+    write path, and (if user-facing) a control. The rails above cover the first three, so a
+    field with no `_EDITABLE_CONFIG` entry leaves this file fully green while the Settings
+    toggle 400s. `apps.*` is user-facing config with no dedicated PUT, so every field in the
+    section must be in the allowlist."""
+    from personalclaw.config.loader import AppsConfig
+    from personalclaw.dashboard.handlers.core import _EDITABLE_CONFIG
+
+    missing = [f.name for f in fields(AppsConfig) if f"apps.{f.name}" not in _EDITABLE_CONFIG]
+    assert not missing, f"apps config fields with no PATCH write path: {missing}"
+    assert _EDITABLE_CONFIG["apps.registry_source_enabled"]["type"] == "bool"

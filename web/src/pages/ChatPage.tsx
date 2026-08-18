@@ -2204,6 +2204,11 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
     // an optimistic write is to TELL, and fighting the header while the user may still be editing is
     // the move `chat/selectionPersistReported` already rejected.
     await api.renameSession(s, v).catch(reportActionFailure('rename this chat'))
+    // The header updated optimistically, but the session LIST is a different reader — three of them,
+    // in fact (the sidebar, the history page, and the dashboard's recent-sessions). Nothing here
+    // busted any of them, so a renamed chat kept its old title everywhere but the header it was
+    // renamed from, and on the dashboard that survived a reload (`persist: true`).
+    invalidateCache('chat:sessions', true)
   }
   async function regenTitle() {
     const s = sessionRef.current
@@ -2977,7 +2982,10 @@ function MentionChips({ paths, onRemove, onOpen }: { paths: string[]; onRemove: 
           <div key={p} className="flex items-center gap-1.5 rounded-lg border border-primary/40 bg-primary/10 px-2.5 py-1.5 text-[0.8125rem]"
             style={{ background: 'color-mix(in srgb, var(--color-primary) 10%, transparent)' }}>
             <FileText size={13} className="shrink-0 text-primary" />
-            <button type="button" onClick={() => setExpanded(open ? null : p)} title={open ? 'Collapse' : 'Show full path'}
+            {/* An accordion, so `aria-expanded` — the chip swaps a basename for the full path AND
+                reveals an Open button, both gated on the same flag. */}
+            <button type="button" aria-expanded={open} onClick={() => setExpanded(open ? null : p)}
+              title={open ? 'Collapse' : 'Show full path'}
               className="min-w-0 text-left font-mono text-on-surface">
               {open ? <span className="break-all">{p}</span> : base(p)}
             </button>
@@ -3013,7 +3021,7 @@ function ArtifactContextPicker({ attached, onPick, onRemove, onClose }: {
   // The swallow made a failed read indistinguishable from an empty library, and this picker's
   // empty state TEACHES ("Ask in chat for a widget…") — so a 500 told a user with artifacts to go
   // make their first one. Same shape as #1162's chat history, one surface down.
-  const { data, loading, error: artifactsError } = useCachedData('chat:artifact-picker', () => api.artifacts())
+  const { data, loading, error: artifactsError } = useCachedData('artifacts:chat-picker', () => api.artifacts())
   const all = data ?? []
   const attachedSlugs = new Set(attached.map((a) => a.slug))
   const n = q.trim().toLowerCase()
@@ -3824,10 +3832,12 @@ function ChatHistoryPage({ navigate, query, setQuery }: { navigate: (p: string) 
   }
 
   const load = useCallback(() => {
-    // Both keys: an archive/restore moves a session BETWEEN the two lists, so the
-    // one we're not looking at is stale too.
-    invalidateCache('chat:sessions')
-    invalidateCache('chat:sessions:archived')
+    // Every reader of this collection, in one call: an archive/restore moves a session BETWEEN the
+    // two lists so the one we are not looking at is stale too, and the dashboard's recent-sessions
+    // list reads the same collection under `chat:sessions:recent`. Prefix mode covers a reader added
+    // later, which is exactly how the dashboard's was missed. It does NOT touch `chat:suggestions`
+    // and friends — the prefix is the collection, not the namespace.
+    invalidateCache('chat:sessions', true)
     refreshSessions(); refreshFolders(); refreshTags()
   }, [refreshSessions, refreshFolders, refreshTags])
 

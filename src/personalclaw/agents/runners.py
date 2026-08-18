@@ -33,7 +33,12 @@ Three parts, deliberately separate:
    verified. :func:`guard_unattended_spawn` is the enforcement point: with
    ``agents.unattended_requires_verified_adapter`` on, an unattended spawn against
    anything but a verified adapter is refused (fail closed — an uncataloged runner is
-   unverifiable, so it is refused too).
+   unverifiable, so it is refused too). "Unattended" is not a caller's self-report:
+   :mod:`personalclaw.session` derives it from the session key through
+   :func:`personalclaw.guardrails.policy.is_unattended_session`, the same vocabulary the
+   guardrail layer resolves safety profiles with, so cron fires, loop-cycle workers, the
+   background/heartbeat key, inbox/side sweeps, channel deliveries and sessionless
+   trigger dispatches are all covered without each one opting in.
 
 Probe posture: the health probe runs ``<bin> --version`` (or the row's
 ``version_args``) and nothing else. It never opens a session, never passes a prompt,
@@ -72,7 +77,9 @@ __all__ = [
     "UnverifiedAdapterError",
     "adapter_lock_path",
     "catalog",
+    "evidence_is_stale",
     "guard_unattended_spawn",
+    "health_check_interval_secs",
     "load_evidence",
     "probe_runner",
     "record_capabilities",
@@ -344,6 +351,46 @@ def load_evidence(runner_id: str) -> HealthEvidence | None:
         error=(str(raw["error"]) if raw.get("error") else None),
         resolved_command=_as_tuple(raw.get("resolved_command")),
     )
+
+
+def health_check_interval_secs() -> int:
+    """``agents.runner_health_check_secs`` — how long evidence counts as current.
+
+    The floor matches the PATCH allowlist's, so a hand-edited config cannot express a
+    window the dashboard would refuse. An unreadable config falls back to the field's
+    own default rather than to "never stale": treating unknown as fresh would hide the
+    one case this value exists to name.
+    """
+    try:
+        from personalclaw.config.loader import AppConfig
+
+        return max(60, int(AppConfig.load().agent.runner_health_check_secs))
+    except Exception:
+        logger.debug("runner health-check interval unreadable; using the default", exc_info=True)
+        return 3600
+
+
+def evidence_is_stale(
+    evidence: HealthEvidence | None, *, interval_secs: int | None = None
+) -> bool | None:
+    """True when *evidence* is older than the configured check interval.
+
+    ``None`` — unknown — in the two cases where a boolean would be a claim we cannot
+    support: there is no evidence at all (a never-probed runner is not "overdue"; the
+    row already says it was never probed), or ``checked_at`` will not parse, in which
+    case we do not know the reading's age. A tz-naive timestamp is read as UTC, which
+    is what :func:`_now_iso` writes.
+    """
+    if evidence is None:
+        return None
+    try:
+        checked = datetime.fromisoformat(str(evidence.checked_at))
+    except (TypeError, ValueError):
+        return None
+    if checked.tzinfo is None:
+        checked = checked.replace(tzinfo=timezone.utc)
+    window = health_check_interval_secs() if interval_secs is None else max(60, int(interval_secs))
+    return (datetime.now(timezone.utc) - checked).total_seconds() > window
 
 
 def record_evidence(runner_id: str, evidence: HealthEvidence) -> Path:
@@ -735,6 +782,12 @@ def guard_unattended_spawn(runtime_id: str, *, unattended: bool) -> None:
     the reason. Fail closed: a runtime with no catalog row cannot be verified, so it
     is refused too — the flag's whole promise is that nothing unproven runs while
     nobody is watching.
+
+    ``unattended`` is resolved by the caller, and the ONE caller
+    (:meth:`personalclaw.session.SessionManager.get_or_create`) derives it from the
+    session key via :func:`personalclaw.guardrails.policy.is_unattended_session` rather
+    than trusting a kwarg — a kwarg-only gate covered exactly one of the nine
+    unattended session-key families.
     """
     if not unattended or not runtime_id:
         return
@@ -789,6 +842,10 @@ class RunnerRow:
             # Health is either measured evidence or explicitly absent. There is no
             # third "assume it's fine" shape: an unprobed runner reports null.
             "health": ev.to_dict() if ev is not None else None,
+            # Whether that reading is still current, per agents.runner_health_check_secs.
+            # `null` = unknown (never probed, or an unparseable timestamp) — a stale
+            # reading and an absent one are different facts and the surface says which.
+            "health_stale": evidence_is_stale(ev),
             "capabilities": self.capabilities,
             "adapter": {
                 "npm_pkg": self.definition.adapter.npm_pkg if self.definition.adapter else "",

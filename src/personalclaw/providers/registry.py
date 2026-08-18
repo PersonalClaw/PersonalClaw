@@ -662,6 +662,71 @@ class TriggerSourceTypeHandler(_TypeHandler):
             logger.warning("trigger source %r raised on stop", name, exc_info=True)
 
 
+class TriggerTypeHandler(_TypeHandler):
+    """Handler for ``provider.type == 'trigger'`` extensions (TEAM-SHARED-ENTITIES §3 — TSE-4).
+
+    An app-contributed STORE of trigger ROWS: a shared or team trigger backend whose rows appear on
+    the Automations page beside the local ones. Registered in the ``triggers.registry`` flat
+    registry, matching the ``trigger_sources`` / ``sync_transports`` / ``sandbox_providers`` shape
+    rather than inventing a fourth idiom.
+
+    **``trigger`` is NOT ``trigger_source``** — they are adjacent in ``PROVIDER_TYPES`` and a reader
+    will eventually try to merge them. ``trigger_source`` contributes the STIMULUS: a live observer
+    with ``start``/``stop`` that pushes typed events onto the bus, which the owner's own
+    ``kind: event`` rows match. This type contributes the RULE: a passive store of trigger
+    DEFINITIONS. Push vs pull, events vs rows, machinery-with-a-lifecycle vs persistence-with-a-
+    change-notification. One app may register as both, and a provider-served row may be bound to a
+    provider-emitted event — which is exactly what collapsing the two types would make unsayable.
+    See ``personalclaw.triggers.provider`` for the long form.
+
+    Lands in the SAME commit as its ``PROVIDER_TYPES`` entry (the #47 rule): a manifest type with no
+    runtime handler installs successfully and then does nothing, which is the failure
+    ``test_manifest_types_match_handlers`` exists to prevent.
+
+    **Rows only, never execution.** The provider is asked for rows and is never handed a fire, a
+    payload, a run or a credential — the local ``TriggerService`` does all firing, under every local
+    gate (capability allowlist, budget, quiet hours, kill switch, injection screen), and only for
+    rows whose ``author`` is the owner (``triggers.ownership``). So there is no ``_start``/``_stop``
+    here and nothing to park on deregistration: unlike a vanished trigger SOURCE — which is the
+    reason a fire happens at all, so its loss must be visible — a vanished trigger STORE simply
+    stops contributing rows, and rows that are gone from the page are self-explanatory.
+    """
+
+    def create(self, ext: RegisteredProvider) -> Any:
+        from personalclaw.providers.loader import load_factory
+        from personalclaw.providers.settings import ProviderSettings
+
+        config = ProviderSettings.load(ext.name)
+        factory = load_factory(ext)
+        return factory(config)
+
+    def register(self, ext: RegisteredProvider, instance: Any) -> None:
+        from personalclaw.triggers.registry import register_trigger_store
+
+        name = getattr(instance, "name", "") or ext.name
+        # Contract validated at REGISTER time, naming what is missing — the `DutyGateTypeHandler`
+        # precedent. `load` is the ONE method the read path calls, so a store without it would sit
+        # in the registry looking live while every list and every arm pass silently skipped it: the
+        # app would appear installed-and-working and contribute nothing.
+        if not callable(getattr(instance, "load", None)):
+            raise ValueError(
+                f"trigger provider {name!r} must expose load() returning rows with a "
+                "`.trigger` — see personalclaw.sdk.triggers.TriggerStoreProvider"
+            )
+        register_trigger_store(name, instance)
+
+    def deregister(self, ext: RegisteredProvider, instance: Any) -> None:
+        from personalclaw.triggers.registry import unregister_trigger_store
+
+        # Fallback computed without a getattr default so ``ext`` is not dereferenced when the
+        # instance already carries a name (ext may be absent in tests) — the
+        # `TriggerSourceTypeHandler` precedent.
+        name = getattr(instance, "name", None) or (getattr(ext, "name", "") if ext else "")
+        if not name:
+            return
+        unregister_trigger_store(name)
+
+
 class SandboxTypeHandler(_TypeHandler):
     """Handler for ``provider.type == 'sandbox'`` extensions (EXECUTION-ISOLATION EI-1).
 
@@ -1090,6 +1155,7 @@ def get_provider_registry() -> ProviderRegistry:
         _registry.register_type_handler("sync", SyncTypeHandler())
         _registry.register_type_handler("sandbox", SandboxTypeHandler())
         _registry.register_type_handler("trigger_source", TriggerSourceTypeHandler())
+        _registry.register_type_handler("trigger", TriggerTypeHandler())
         # NOTE: there is intentionally NO "space" provider type. Multi-agent
         # native feature (one engine + a switchable orchestration strategy), not
         # a pluggable provider family — so Spaces config lives under Settings >

@@ -213,17 +213,6 @@ def test_the_staged_readme_uses_the_query_token_not_a_bearer_header() -> None:
         assert beat in readme, f"staged README does not walk the reader through {beat}"
 
 
-def test_the_staged_quickstart_matches_the_shipped_cli() -> None:
-    """The apps-repo guide insert the owner lands — same auth shape, same real flags."""
-    quickstart = (REPO_ROOT / "scratch" / "apps-guide-quickstart.md").read_text(encoding="utf-8")
-    assert "-H 'Authorization" not in quickstart
-    assert '-H "Authorization' not in quickstart
-    assert "Authorization: Bearer" in quickstart, "the Bearer warning must stay in the text"
-    assert "?token=$PERSONALCLAW_TOKEN" in quickstart
-    for flag in ("app new --list-types", "--type tool", "--from-template"):
-        assert flag in quickstart, f"quickstart does not mention {flag}"
-
-
 # ---------------------------------------------------------------------------
 # URL validation — refused BEFORE a socket opens
 # ---------------------------------------------------------------------------

@@ -51,6 +51,7 @@ const unhealthyRow = {
     ok: false, probe: 'path', checked_at: '2026-08-17T10:00:00+00:00',
     version: null, latency_ms: null, error: VERBATIM, resolved_command: [],
   },
+  health_stale: false,
   capabilities: null,
   adapter: { npm_pkg: '', pinned: false, state: 'no_adapter', verified: true, detail: 'launches its own binary' },
 }
@@ -62,6 +63,7 @@ const healthyRow = {
     ok: true, probe: 'version', checked_at: '2026-08-17T10:00:00+00:00',
     version: '2.1.233', latency_ms: 58, error: null, resolved_command: ['/usr/bin/claude'],
   },
+  health_stale: false,
   capabilities: {
     source: 'initialize', recorded_at: '2026-08-17T10:00:00+00:00',
     models: ['m1', 'm2'], permission_modes: ['default', 'acceptEdits'], efforts: ['low', 'high'],
@@ -94,6 +96,26 @@ describe('the runner rows in Settings → Agent defaults', () => {
     expect(screen.getByText('58 ms')).toBeTruthy()
     expect(screen.getByText('acceptEdits')).toBeTruthy()
     expect(screen.getByText('2 models')).toBeTruthy()
+  })
+
+  it('marks an overdue check without contradicting the reading itself', async () => {
+    // The row still says "healthy" — that was the measurement — but it also says the
+    // measurement is older than agent.runner_health_check_secs, so the user is not
+    // reading a stale value as the present state.
+    agentRunners.mockResolvedValue([{ ...healthyRow, health_stale: true }])
+    render(<AgentDefaultsPanel />)
+    await waitFor(() => expect(screen.getByText('check overdue')).toBeTruthy())
+    expect(screen.getByText('healthy')).toBeTruthy()
+  })
+
+  it('does not mark a fresh or unknown-age check overdue', async () => {
+    // VACUITY FLOOR for the chip: `health_stale: false` is a positive statement of
+    // freshness and `null` is "we do not know the age" (never probed, unparseable
+    // timestamp). Neither may render the overdue chip, or every row wears it forever.
+    agentRunners.mockResolvedValue([healthyRow, { ...unhealthyRow, health_stale: null }])
+    render(<AgentDefaultsPanel />)
+    await waitFor(() => expect(screen.getByText('healthy')).toBeTruthy())
+    expect(screen.queryByText('check overdue')).toBeNull()
   })
 
   it('says capabilities are unknown when no handshake was ever recorded', async () => {

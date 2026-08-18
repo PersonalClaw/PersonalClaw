@@ -234,6 +234,12 @@ _TTS_MARKERS = ("tts-", "-tts", "piper", "elevenlabs", "polly", "kokoro")
 # ONE place rather than being sniffed inline across the codebase. A branded remote
 # (Groq/Together/…) speaks the openai_compatible protocol, so families served over
 # that protocol include ``openai_compatible``. Absent family → no restriction.
+#
+# This table is the FLOOR, not the whole answer: it can only name the provider types core
+# ships, so a branded/subscription provider APP that serves the family (a Claude-subscription
+# app registering its own type, say) would be judged unable to serve a ``claude-*`` model and
+# a persisted session model would be silently swapped out from under the user. The installed
+# apps are asked too — see :func:`model_family_provider_types`.
 _MODEL_FAMILY_PROVIDER_TYPES: tuple[tuple[tuple[str, ...], frozenset[str]], ...] = (
     (
         ("claude", "opus", "sonnet", "haiku"),
@@ -253,12 +259,39 @@ def model_family_provider_types(model_id: str) -> frozenset[str]:
 
     Data-driven from :data:`_MODEL_FAMILY_PROVIDER_TYPES` — no vendor name is
     hard-coded at call sites. Used by session-restore to decide whether a persisted
-    model is compatible with the active provider without brand-sniffing inline."""
+    model is compatible with the active provider without brand-sniffing inline.
+
+    The core table is UNIONED with the installed provider apps that declare a model of this
+    family themselves (``spec.default_model`` / ``spec.fallback_models``), so a branded or
+    subscription app is recognized without being added here by hand — the hand-maintained row
+    is exactly what missed the first subscription app. The union only ever ADDS types, so no
+    existing type's verdict changes: every caller treats membership as permission, and an
+    unrecognized family already means "no restriction"."""
     mid = (model_id or "").lower()
     for markers, types in _MODEL_FAMILY_PROVIDER_TYPES:
         if any(m in mid for m in markers):
-            return types
+            return types | _app_declared_types(markers)
     return frozenset()
+
+
+def _app_declared_types(markers: tuple[str, ...]) -> frozenset[str]:
+    """Installed provider-app TYPES that declare a model matching ``markers``.
+
+    Imported lazily, in the established order (same two lines as ``routing/rates.py``'s app
+    pricing lookup): ``sdk.model`` and ``sdk.provider_helpers`` are a circular pair that
+    resolves only when ``sdk.model`` goes first, and the spec registry is populated at app
+    IMPORT time, so the answer is only meaningful at call time anyway. An install with no
+    branded app registered returns an empty set and the core table stands alone — which is
+    also what a failed lookup must do, since a family check runs on session restore and may
+    never be the thing that breaks it."""
+    try:
+        import personalclaw.sdk.model  # noqa: F401 — package import order (sdk.model first)
+        from personalclaw.sdk.provider_helpers import spec_types_declaring_models
+
+        return spec_types_declaring_models(markers)
+    except Exception:  # noqa: BLE001 — a family lookup must never break a restore
+        logger.debug("app model-family lookup failed", exc_info=True)
+        return frozenset()
 
 
 def infer_capabilities(model_id: str, families: list[str] | None = None) -> list[str]:

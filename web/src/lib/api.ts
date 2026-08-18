@@ -392,6 +392,16 @@ export interface AppPermissionsWire {
   // never propose a callback into ANOTHER app. Absent = it may raise no proposal at all,
   // which the consent UI states rather than implies.
   proposals?: AppProposalKindWire[]
+  // The two grants that are NOT enforced yet, and must not be shown as if they
+  // were. `backgroundTasks` = the app may run a long-lived supervised worker (APE-3
+  // hosts it); `eventSubscriptions` = typed platform events it subscribes to (APE-2's
+  // registry owns the names — exact matches, no wildcard). Neither runtime exists today,
+  // so nothing hosts a worker and no platform event is delivered to any app, declared or
+  // not. They are disclosed because the declaration is a STANDING grant: it goes live
+  // with no second prompt once that support ships. `PermissionList` puts them under
+  // "declared, not yet in effect", never among the enforced bullets.
+  backgroundTasks?: boolean
+  eventSubscriptions?: string[]
 }
 /** One declared proposal kind. `kind_suffix` is namespaced under the app at
  *  registration (`app:<name>` / `proposal:<suffix>`); `label` is what the user sees. */
@@ -680,6 +690,9 @@ export type ScheduleKind = 'every' | 'cron' | 'at'
 export type ScheduleExecMode = 'agent' | 'script' | 'command'
 export interface ScheduleJob {
   id: string; name: string; message: string; enabled: boolean
+  // attribution — see the same pair on `Trigger`. A schedule row is served by the same
+  // store, so it carries the same verdict.
+  author?: string; read_only?: boolean
   schedule: string                          // human-rendered cadence string
   cron_expr?: string | null                 // when kind=cron
   every_secs?: number | null                // when kind=every
@@ -1259,6 +1272,20 @@ export interface DiscoverTryIt { route: string; query: Record<string, string>; l
 export interface DiscoverTip { id: string; area: string; title: string; lesson: string; try_it: DiscoverTryIt }
 export interface DiscoverArea { area: string; tips: DiscoverTip[] }
 export interface DiscoverResponse { enabled: boolean; areas: DiscoverArea[]; visible_count: number; total: number }
+/** One always-on convention in effect right now. `preview` is credential-redacted;
+ *  `body` is only present on the single-doc editor read, where it is verbatim. */
+export interface AlwaysOnItem {
+  id: string; kind: 'always_skill' | 'project_instruction'; name: string
+  scope: 'global' | 'project'; source: string; path: string; chars: number
+  editable: boolean; read_only_reason: string; project_id: string; preview: string
+  body?: string
+}
+export interface AlwaysOnResponse {
+  items: AlwaysOnItem[]; project_id: string
+  counts: { total: number; always_skills: number; project_instructions: number }
+  /** How a user opts a skill INTO the always-on tier — so an empty tier can explain itself. */
+  always_skill_mechanism: string
+}
 export interface McpServer {
   name: string; command?: string; args?: string[]; status: string; tools: Array<string | { name: string; description?: string }>
   error?: string; source?: string; enabled?: boolean; presence?: Record<string, boolean>
@@ -1312,6 +1339,12 @@ export interface Trigger {
   // `last_error` (declared with the schedule fields below — one shared interface) carries the
   // failure the lifecycle acted on; the store panel had no reader for it.
   health?: string; state?: string; broken?: string[]
+  // attribution. `author` is who WROTE the row; `read_only` is
+  // the server's verdict that this machine's owner did not, so the harness will never arm or fire
+  // it. Both are computed server-side from the same `ownership.is_owner_authored` predicate the arm
+  // path uses — the page must not re-derive it from `author`, or the UI and the scheduler end up
+  // with two opinions about who owns a trigger.
+  author?: string; read_only?: boolean
   // schedule fields (kind=schedule)
   message?: string; schedule?: string; cron_expr?: string | null; every_secs?: number | null
   agent?: string | null; model?: string | null; channel?: string | null; approval_mode?: string | null
@@ -2228,6 +2261,10 @@ export interface RunnerRow {
   id: string; display_name: string; runtime_id: string; source: string
   dialect: string; bin_names: string[]
   health: RunnerHealth | null
+  // Whether `health` is still current per `agent.runner_health_check_secs`. `null` is
+  // unknown (never probed, or a timestamp the backend could not parse) — distinct from
+  // `false`, which is a positive statement that the reading is fresh.
+  health_stale: boolean | null
   capabilities: RunnerCapabilities | null
   adapter: { npm_pkg: string; pinned: boolean; state: string; verified: boolean; detail: string }
 }
@@ -2771,6 +2808,59 @@ export interface UsageAgg {
   cost_usd: number; turns: number; priced: boolean
 }
 
+/** One row of the per-day spend fold (`GET /api/usage`).
+ *
+ *  Same money as `UsageAgg` above — both read the per-turn ledger — but this is the DURABLE per-day
+ *  fold of it, grouped into the fixed `interactive|background|loop|eval|app` purpose vocabulary. It
+ *  outlives the ledger JSONL's own trim, which is why it exists beside the rollup rather than
+ *  instead of it.
+ *
+ *  Two disclosures, deliberately separate:
+ *  · `estimated_share` — fraction of `dollars_est` that is a rate-table estimate rather than a
+ *    provider-reported charge. 1.0 today for everything, so always render a "~".
+ *  · `priced` / `unpriced_calls` — a model with no price row contributes 0 dollars, so a row with
+ *    `priced: false` is a FLOOR. Never render it as "$0.00 spent". */
+export interface UsageFoldRow {
+  key: string
+  calls: number
+  tokens_in: number; tokens_out: number; tokens: number
+  dollars_est: number
+  estimated_dollars: number
+  estimated_share: number
+  unpriced_calls: number
+  local_calls: number
+  priced: boolean
+}
+
+/** `GET /api/usage` — grouped rows + the window total + the per-day series behind the chart.
+ *
+ *  · `uncounted` — guarded `complete()` spend (`model_calls.jsonl`) that is deliberately NOT in any
+ *    figure above. A loop's inner inference is recorded in both records and they share no id, so
+ *    summing them would double-count with no way to detect it. Render it as a stated exclusion; a
+ *    surface that omits it silently is claiming a completeness the data does not have.
+ *  · `app_sources` — which app names produced `app` turns (a census, not an error).
+ *  · `unmapped` — rows that could not be attributed to a day at all; counted, never dropped.
+ *  · `reachable_purposes` — the subset of the vocabulary a writer can produce today, so a UI can
+ *    skip a permanently-empty row (`eval` has no writer yet). */
+export interface UsageFold {
+  window: string
+  group: string
+  dates: string[]
+  rows: UsageFoldRow[]
+  total: UsageFoldRow
+  series: Array<{ date: string; calls: number; dollars_est: number; tokens: number }>
+  estimated_share: number
+  unmapped: Record<string, number>
+  app_sources: Record<string, number>
+  uncounted: {
+    calls: number
+    total_calls: number
+    total_dollars_est: number
+    by_use_case: Record<string, number>
+  }
+  reachable_purposes: string[]
+}
+
 /** One per-model efficiency row for a (use_case, query_class) bucket
  *  (MRT-1d/1e). Observation only — the fold supplies
  *  n/success/feedback/cost, the audit tail supplies p50/p95 latency, and
@@ -2942,6 +3032,16 @@ export const api = {
   // partial (render "unpriced" / a partial marker — never a confidently-complete $).
   usageTotals: (opts?: { session?: string; since?: string; until?: string }) => get<{ session: string; totals: UsageAgg }>(`/api/usage/totals${_usageQuery(opts)}`),
   usageRollup: (opts?: { group_by?: 'model' | 'source' | 'agent' | 'provider' | 'day'; since?: string; until?: string; session?: string }) => get<{ group_by: string; rows: Array<UsageAgg & Record<string, string>> }>(`/api/usage/rollup${_usageQuery(opts)}`),
+  // The per-day spend fold — the ONLY usage read that includes unattended
+  // (reasoning/loop/background) model calls; usageRollup/usageTotals above see the
+  // per-turn ledger only. Read-only, derived on request; a deleted fold self-heals.
+  usageFold: (opts?: { window?: 'day' | 'week' | 'month'; group?: 'model' | 'provider' | 'purpose' }) => {
+    const p = new URLSearchParams()
+    if (opts?.window) p.set('window', opts.window)
+    if (opts?.group) p.set('group', opts.group)
+    const q = p.toString()
+    return get<UsageFold>(`/api/usage${q ? `?${q}` : ''}`)
+  },
   // Per-model routing efficiency for one (use_case, query_class) bucket
   // (MRT-1d). BOTH params are required (a missing either
   // is a 400); `rows` may be empty for a bucket with no telemetry yet. Read-only —
@@ -3226,6 +3326,18 @@ export const api = {
   // point (deep link), never enable; dismissals persist server-side per tip. ──
   discover: () => get<DiscoverResponse>('/api/legibility/discover'),
   dismissDiscoverTip: (id: string) => post<{ ok: boolean; dismissed: string[] }>('/api/legibility/discover/dismiss', { id }),
+
+  // ── Always-on conventions viewer: what EVERY session receives, with
+  // provenance. The server slices these out of the session's own producer strings, so
+  // this list cannot drift from the assembled prompt. Bodies here are redacted previews;
+  // alwaysOnDoc fetches one verbatim for the editor. ──
+  alwaysOn: (projectId = '') =>
+    get<AlwaysOnResponse>(`/api/legibility/always-on${projectId ? `?project_id=${encodeURIComponent(projectId)}` : ''}`),
+  alwaysOnDoc: (id: string, projectId = '') =>
+    get<AlwaysOnItem>(`/api/legibility/always-on/doc?id=${encodeURIComponent(id)}${projectId ? `&project_id=${encodeURIComponent(projectId)}` : ''}`),
+  /** A refused or failed write REJECTS — the server never answers a discarded edit with ok:true. */
+  saveAlwaysOnDoc: (id: string, projectId: string, body: string) =>
+    put<{ ok: boolean; item: AlwaysOnItem }>('/api/legibility/always-on/doc', { id, project_id: projectId, body }),
 
   // ── Desktop integration (OS-gated; server runs the subprocess) ──
   /** Reveal a path in Finder (action 'reveal') or open with the default app ('open'). */
@@ -3671,7 +3783,9 @@ export const api = {
   // below speak the schedule wire shape the shared Schedule* components already
   // use; the api layer namespaces the id (schedule:<id>) and routes to /api/triggers.
   triggers: (type?: 'schedule' | 'lifecycle' | 'event') =>
-    get<{ triggers: Trigger[]; server_tz: string }>(`/api/triggers${type ? `?type=${type}` : ''}`),
+    get<{ triggers: Trigger[]; server_tz: string; owner?: string }>(
+      `/api/triggers${type ? `?type=${type}` : ''}`,
+    ),
   // The week-grid projection (AUTO-A3). `start` is a local ISO datetime; the backend computes every
   // occurrence from the recurrence each trigger already carries — read-only, no store changes.
   triggersWeek: (start?: string, days = 7) => {
@@ -4688,7 +4802,10 @@ export const api = {
   saveAppConfig: (name: string, config: Record<string, unknown>) =>
     put<{ ok: boolean; config: Record<string, unknown> }>(`/api/apps/${encodeURIComponent(name)}/config`, config),
   // Store catalog: available-to-install apps (bundled-not-installed + git sources).
-  appCatalog: () => get<{ bundled: AppCatalogEntry[]; gitSources: string[]; localSources?: string[]; firstPartySources?: string[]; localApps?: AppCatalogEntry[]; remoteApps?: AppCatalogEntry[]; gitApps?: AppCatalogEntry[] }>('/api/apps/catalog'),
+  // `defaultGitSources` = the rows PersonalClaw shipped (labelled "Default"); `builtinGitSources`
+  // = the subset that cannot be removed (bundled into every read), so the UI hides a remove
+  // control that would silently do nothing. The seeded registry is in the first, not the second.
+  appCatalog: () => get<{ bundled: AppCatalogEntry[]; gitSources: string[]; defaultGitSources?: string[]; builtinGitSources?: string[]; localSources?: string[]; firstPartySources?: string[]; localApps?: AppCatalogEntry[]; remoteApps?: AppCatalogEntry[]; gitApps?: AppCatalogEntry[] }>('/api/apps/catalog'),
   appSources: () => get<{ sources: string[] }>('/api/apps/sources').then((d) => d.sources),
   addAppSource: (url: string) => post<{ ok: boolean; sources: string[] }>('/api/apps/sources', { url }),
   removeAppSource: (url: string) => del(`/api/apps/sources?url=${encodeURIComponent(url)}`),
