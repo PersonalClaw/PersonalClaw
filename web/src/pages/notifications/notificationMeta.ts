@@ -36,6 +36,10 @@ const KINDS: Record<string, KindMeta> = {
   needs_input: { label: 'Loop needs your input', icon: HelpCircle, tone: 'var(--color-warn)' },
   progress: { label: 'Loop progress', icon: Activity, tone: 'var(--color-info)' },
   proposal: { label: 'Skill proposal', icon: Lightbulb, tone: 'var(--color-primary)' },
+  // Their own rows, because the backend now emits distinct wire strings for them. Without an
+  // entry each would fall to `kindMeta`'s default and display the raw wire value.
+  learning_proposal: { label: 'Learning proposal', icon: Lightbulb, tone: 'var(--color-primary)' },
+  planning_proposal: { label: 'Planning proposal', icon: Lightbulb, tone: 'var(--color-primary)' },
   digest: { label: 'Daily digest', icon: Newspaper, tone: 'var(--color-on-surface-low)' },
   // apps/update — bare kind `update` (persisted history) + the `app_update` wire string
   // emit_attention_item actually hands state.notify(). Both map to the registry's label.

@@ -239,6 +239,31 @@ _KINDS: tuple[NotificationKind, ...] = (
         attention=True,
         verifiable=True,
     ),
+    # 🪤 REGISTERED LATE, AND THE COST WAS VISIBLE. `learning/proposals.py` and
+    # `planning/scratchpad.py` both emit `kind="proposal"` and neither was registered, so
+    # `resolve_kind` fell open to system/generic on every emission: they carried GENERIC's
+    # severity and mode instead of their own, never appeared as a row in Settings →
+    # Notifications (`rules_document()` iterates the registry), and — because a pair with no
+    # wire string collapses onto the bare kind — the daily digest grouped them UNDER "Skill
+    # proposal", counting a jotted-line plan and a learning proposal as skill proposals.
+    NotificationKind(
+        "learning",
+        "proposal",
+        "Learning proposal",
+        "immediate",
+        SEV_INFO,
+        attention=True,
+        verifiable=True,
+    ),
+    NotificationKind(
+        "planning",
+        "proposal",
+        "Planning proposal",
+        "immediate",
+        SEV_INFO,
+        attention=True,
+        verifiable=True,
+    ),
     NotificationKind(
         "system",
         "agent_request",
@@ -300,6 +325,12 @@ _LEGACY_FLAT: dict[str, tuple[str, str]] = {
 _ATTENTION_FLAT: dict[str, tuple[str, str]] = {
     "needs_input": ("loop", "needs_input"),
     "proposal": ("skills", "proposal"),
+    # Distinct strings, because the wire value is what the digest groups by and what the SPA's
+    # display map keys on. Registering alone would not have been enough: `kind_for_legacy_pair`
+    # falls back to the bare `kind`, so both would still have emitted "proposal" and still been
+    # grouped as skill proposals.
+    "learning_proposal": ("learning", "proposal"),
+    "planning_proposal": ("planning", "proposal"),
     "agent_request": ("system", "agent_request"),
     "digest": ("system", "digest"),
     "app_update": ("apps", "update"),
