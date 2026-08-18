@@ -108,10 +108,16 @@ export function DiagnosticsPanel() {
         <Surface tone="container" radius="lg" className="px-l py-m">
           <div className="flex items-center gap-s">
             <div className="inline-flex rounded-pill bg-surface-container p-1">
+              {/* 🔴 Both level pickers on this panel marked the chosen level with a background fill and
+                  nothing else — and they are the app's recorded one-of-N idiom, so they take its form:
+                  `<dimension>: <value>` plus `aria-pressed`. The two dimensions are genuinely different
+                  (what the BACKEND logs vs the floor this VIEW shows), which is exactly why each needs to
+                  say which one it is. */}
               {LEVELS.map((l) => {
                 const on = level === l
                 return (
-                  <button key={l} onClick={() => changeLevel(l)} disabled={levelBusy}
+                  <button key={l} aria-label={`Backend log level: ${l}`} aria-pressed={on}
+                    onClick={() => changeLevel(l)} disabled={levelBusy}
                     className="rounded-pill px-m h-8 text-[0.8125rem] transition-colors disabled:opacity-60"
                     style={on ? { background: 'var(--color-surface-highest)', color: 'var(--color-on-surface)' } : { color: 'var(--color-on-surface-low)' }}>
                     {l}
@@ -140,7 +146,8 @@ export function DiagnosticsPanel() {
               {LEVELS.map((l) => {
                 const on = minLevel === l
                 return (
-                  <button key={l} onClick={() => setMinLevel(l)} title={`Show ${l} and above`}
+                  <button key={l} aria-label={`Show ${l} and above`} aria-pressed={on}
+                    onClick={() => setMinLevel(l)} title={`Show ${l} and above`}
                     className="rounded-pill px-2.5 h-7 text-[0.75rem] transition-colors"
                     style={on ? { background: 'var(--color-surface-highest)', color: 'var(--color-on-surface)' } : { color: 'var(--color-on-surface-low)' }}>
                     {l}

@@ -201,45 +201,94 @@ describe('every SegPills call site names its dimension', () => {
 })
 
 describe('the family is DERIVED, so the next pill group cannot be missed', () => {
-  /** An exclusive-choice group: a component that maps an options list to buttons and compares one
-   *  option to a single `value`. That shape — not a component name — is what this rail is about. */
+  /** An exclusive-choice or current-item group: ANY `.map()` whose body compares its item to one piece
+   *  of state and renders a button. Two corrections to the first version of this sweep, both of which
+   *  hid real members:
+   *
+   *  🪤 IT WAS KEYED ON VARIABLE NAMES (`options|opts|MODES`). `MemoryPanel` maps `TOP_TABS` and an
+   *     inline `(['all','fact',…] as const)` literal, so its tab bar, its kind filter and its opened-row
+   *     marker were all invisible to it — three real members, in the panel with the most of them. A
+   *     matcher keyed on what a variable is CALLED is the same mistake as a census keyed on a component
+   *     name.
+   *  🪤 IT SCOPED THE STATE CHECK TO A 900-CHARACTER WINDOW, which reaches past the button into
+   *     neighbouring markup: one of `DiagnosticsPanel`'s two identical level pickers scored as marked
+   *     purely because an unrelated element after it carried an aria attribute. A character window is
+   *     not a scope — the state must be read from the button's OWN opening tag.
+   *
+   *  Literal comparisons (`=== true/false/null/0`) are data predicates, not selection, and are excluded:
+   *  `m.downloaded === false` and `t.disabled === true` are not one-of-N groups. */
   function exclusiveGroups() {
-    const out: { rel: string; state: boolean }[] = []
+    const LITERAL = /^(?:true|false|null|undefined|\d+)$/
+    const STATE = /aria-pressed|aria-selected|aria-checked|aria-current|aria-expanded|role="(?:tab|radio|option|menuitemradio|treeitem)"/
+    const out: { rel: string; state: boolean; cmp: string }[] = []
     for (const f of walk(SRC)) {
       const src = stripComments(readFileSync(f, 'utf8'))
-      for (const m of src.matchAll(/(?:options|opts|OPTIONS|MODES)\s*\.map\(\s*\(?\s*(\w+)/g)) {
-        const block = src.slice(m.index!, m.index! + 900)
-        if (!/<(?:motion\.)?button/.test(block)) continue
-        if (!new RegExp(`${m[1]}\\.key === value|=== value|value === ${m[1]}`).test(block)) continue
-        out.push({
-          rel: f.slice(SRC.length + 1),
-          state: /aria-pressed|aria-selected|aria-checked|role="(?:tab|radio|option)"/.test(block),
-        })
+      for (const m of src.matchAll(/\.map\(\s*\(?\s*(\w+)[^)]{0,40}\)?\s*=>\s*\{/g)) {
+        const body = src.slice(m.index!, m.index! + 1100)
+        const item = m[1]
+        const cmp = body.match(new RegExp(`const \\w+ = (?:${item}(?:\\.\\w+)? === (\\w+)|(\\w+) === ${item}(?:\\.\\w+)?)`))
+        if (!cmp) continue
+        if (LITERAL.test(cmp[1] ?? cmp[2] ?? '')) continue
+        // The state must live on a BUTTON's own opening tag inside this map body — `tags()` is
+        // brace-aware, so it stops at the real `>` and not at one inside an arrow function.
+        const buttons = [...tags(body, 'button'), ...tags(body, 'motion\\.button')]
+        if (buttons.length === 0) continue
+        out.push({ rel: f.slice(SRC.length + 1), state: buttons.some((t) => STATE.test(t)), cmp: cmp[0] })
       }
     }
     return out
   }
 
-  /** `ui/Combobox.tsx` marks its selected row with a `<Check>` GLYPH only (`const sel = o.value ===
-   *  value` feeds an icon and nothing else), so it is a real member of this family — but its correct
-   *  fix is listbox semantics (`role="option"` + `aria-selected`), which carries a keyboard contract
-   *  this rail's `aria-pressed` form does not. `ui/popupItemRoles.test.tsx` swept six popup
-   *  containers and never named it. Left for its own cycle rather than given the wrong role. */
-  const PENDING = new Set(['ui/Combobox.tsx'])
+  /** Verified members whose correct marker is NOT this rail's `aria-pressed` form, so each is left for
+   *  its own cycle rather than given the wrong one. Every entry was read before being listed — a false
+   *  positive recorded as pending is a filed non-finding:
+   *
+   *    pages/ChatPage.tsx             a DISCLOSURE (`open = expanded === p`) — wants `aria-expanded`
+   *    pages/prompts/SyntaxReference  the same disclosure shape, same marker
+   *    pages/tasks/TasksListPage.tsx  the active task-list pill (`isActive = active === l.id`) — this
+   *                                   one IS this rail's form and is simply not done yet
+   *
+   *  `ui/Combobox.tsx` came OFF this list: it now declares listbox semantics (see
+   *  `ui/comboboxListbox.test.tsx`). The list may only ever shrink. */
+  const PENDING = new Set([
+    'pages/ChatPage.tsx',
+    'pages/prompts/SyntaxReference.tsx',
+    'pages/tasks/TasksListPage.tsx',
+  ])
 
   it('every exclusive-choice group marks its state, or is a named exception', () => {
     const groups = exclusiveGroups()
-    // Vacuity floors: this matcher is doing the enumerating, so prove it resolved something.
-    expect(groups.length, 'the sweep must find the pill groups').toBeGreaterThanOrEqual(5)
+    // Vacuity floors: this matcher is doing the enumerating, so prove it resolved something, and that
+    // it still sees the members whose absence it was blind to before.
+    expect(groups.length, 'the sweep must find the groups').toBeGreaterThanOrEqual(14)
     expect(groups.some((g) => g.rel === 'pages/settings/settingsUI.tsx'), 'SegPills must be in scope').toBe(true)
+    expect(groups.filter((g) => g.rel === 'pages/settings/MemoryPanel.tsx').length,
+      'the three the name-keyed sweep could not see').toBeGreaterThanOrEqual(3)
+    expect(groups.filter((g) => g.rel === 'pages/settings/DiagnosticsPanel.tsx').length,
+      'both level pickers, not one').toBeGreaterThanOrEqual(2)
 
     const mute = groups.filter((g) => !g.state && !PENDING.has(g.rel)).map((g) => g.rel)
     expect(mute, `these convey selection visually only:\n${mute.join('\n')}`).toEqual([])
   })
 
-  it('the pending exception is still real — it may only ever be removed', () => {
-    const combo = readFileSync(join(SRC, 'ui/Combobox.tsx'), 'utf8')
-    expect(combo, 'if Combobox gains a programmatic state, delete it from PENDING')
-      .toMatch(/const sel = o\.value === value/)
+  it('the pending list is not stale — every entry is still unmarked', () => {
+    // A pending entry that has since been fixed must be pruned, or the list quietly becomes an
+    // allowlist for work already done.
+    const groups = exclusiveGroups()
+    const fixed = [...PENDING].filter((rel) => {
+      const mine = groups.filter((g) => g.rel === rel)
+      return mine.length > 0 && mine.every((g) => g.state)
+    })
+    expect(fixed, `these are marked now — prune them from PENDING:\n${fixed.join('\n')}`).toEqual([])
+  })
+
+  it("the settings panels that had no selection state now have it", () => {
+    const groups = exclusiveGroups()
+    for (const rel of ['pages/settings/MemoryPanel.tsx', 'pages/settings/DiagnosticsPanel.tsx']) {
+      const mine = groups.filter((g) => g.rel === rel)
+      expect(mine.length, `${rel} must still be in scope`).toBeGreaterThan(0)
+      const mute = mine.filter((g) => !g.state).map((g) => g.cmp)
+      expect(mute, `${rel} still conveys selection visually only:\n${mute.join('\n')}`).toEqual([])
+    }
   })
 })
