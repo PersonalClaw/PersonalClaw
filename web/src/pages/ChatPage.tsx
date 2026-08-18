@@ -435,6 +435,25 @@ const SLASH_HELP = [
  *  #/chat/new is a fresh NEW chat (reachable via "New chat" on the history page
  *  and the "History" button on the new-chat page); opening a session deep-links
  *  to #/chat/<sessionKey>. No left sidebar. */
+/** Report a failed cancel/stop with the server's own message.
+ *
+ * 🪤 A STOP THAT SILENTLY DID NOT STOP is worse than a failed save. Every cancel on this page flips
+ * local state FIRST — `markStreaming(false)`, the queue row filtered out, the subagent cards marked
+ * "cancelled" — then discarded the rejection, so the UI claimed the work had ended while it carried
+ * on. The user's NEXT action assumes it worked, which on the queue's "edit" path means the original
+ * message sends anyway alongside their revision.
+ *
+ * MODULE scope, not a closure: two separate components on this page cancel things (the composer's
+ * stop/queue controls and the retag panel ~2000 lines apart), and a per-component copy is the drift
+ * this converges away from. A sibling of `persistSelection` rather than a merge — that one composes
+ * "Couldn't apply X to this session", the wrong sentence for a cancel, and folding them would
+ * rewrite its eleven unrelated call sites. Per-concern reporters are this codebase's shape already
+ * (`reportingWrite` in tools, `reportSettingFailure` in settings).
+ */
+const reportStopFailure = (what: string) => (e: unknown) => {
+  notify(`Couldn't ${what}: ${String((e as Error)?.message || e)}`, 'error')
+}
+
 export function ChatPage({ sub, navigate, navEpoch = 0, query, setQuery }: { sub: string; navigate: (p: string, opts?: { replace?: boolean }) => void; navEpoch?: number; query?: Record<string, string>; setQuery?: RouteProps['setQuery'] }) {
   const seg = (sub || '').split('/')[0]
   // A ?project=<id> on the bare/new route opens a fresh chat PRE-BOUND to that project
@@ -1761,7 +1780,7 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
 
   async function stop() {
     markStreaming(false)
-    if (sessionRef.current) await api.stopChat(sessionRef.current).catch(() => {})
+    if (sessionRef.current) await api.stopChat(sessionRef.current).catch(reportStopFailure('stop this turn'))
   }
 
   // ── message actions (stage 4) ──
@@ -2028,7 +2047,7 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
     const s = sessionRef.current
     if (!s) return
     setSubagents((prev) => prev.map((c) => (c.done ? c : { ...c, done: true, error: 'cancelled' })))
-    await api.cancelFanout(s).catch(() => {})
+    await api.cancelFanout(s).catch(reportStopFailure('cancel the subagents'))
   }
 
   // ── side chat (stage 6) ──
@@ -2415,19 +2434,19 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
       {/* Queued messages (typed mid-stream) — the backend sends them one-by-one as
           each turn finishes; each can be cancelled while still pending. */}
       <QueueStack items={queued} canInterrupt={streaming}
-        onCancel={(id) => { setQueued((prev) => prev.filter((q) => q.id !== id)); const s = sessionRef.current; if (s) api.cancelQueued(s, id).catch(() => {}) }}
+        onCancel={(id) => { setQueued((prev) => prev.filter((q) => q.id !== id)); const s = sessionRef.current; if (s) api.cancelQueued(s, id).catch(reportStopFailure('cancel that queued message')) }}
         onEdit={(id, content) => {
           // Honest "edit": there's no queue-edit endpoint, so cancel the pending item
           // and drop its text back in the composer for the user to revise + resend
           // (avoids a fake in-place edit that would silently re-queue at the back).
-          setQueued((prev) => prev.filter((q) => q.id !== id)); const s = sessionRef.current; if (s) api.cancelQueued(s, id).catch(() => {})
+          setQueued((prev) => prev.filter((q) => q.id !== id)); const s = sessionRef.current; if (s) api.cancelQueued(s, id).catch(reportStopFailure('cancel that queued message'))
           setInput((cur) => (cur.trim() ? cur : content))
         }}
         onInterrupt={(id) => {
           // Interrupt-now: soft-stop the running turn and run THIS queued message
           // next (the backend promotes it + the finally-block drain picks it up).
           // The queue_promoted WS echo reorders the strip on every client.
-          const s = sessionRef.current; if (s) api.interruptChat(s, id).catch(() => {})
+          const s = sessionRef.current; if (s) api.interruptChat(s, id).catch(reportStopFailure('interrupt this turn'))
         }} />
       <div className="relative">
         {/* Saved-prompt palette + auto-nudge now live INSIDE the composer's "+"
@@ -3821,7 +3840,7 @@ function ChatHistoryPage({ navigate, query, setQuery }: { navigate: (p: string) 
     }
   })
   async function startRetag() {
-    if (retagRunning) { await api.cancelRetag().catch(() => {}); return }
+    if (retagRunning) { await api.cancelRetag().catch(reportStopFailure('cancel the retag run')); return }
     if (!(await confirm({
       title: 'Generate tags for all chats?',
       body: 'Every chat is re-read and tags generated: fitting tags added, stale ones corrected, obsolete ones removed. Incognito and temporary chats are never touched.',
