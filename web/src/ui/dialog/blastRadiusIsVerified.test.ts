@@ -214,3 +214,43 @@ describe('no destructive dialog names its subject NOWHERE', () => {
     })
   })
 })
+
+describe('two more bodies: one corrected, one confirmed', () => {
+  it('the bulk dismiss says what survives, and this page is what keeps them', () => {
+    // 🪤 The irreversibility half was already true (restore 409s on anything not FILTERED, and nothing
+    // un-dismisses). What was missing is that dismissal is not deletion: this page's own `handled` filter
+    // includes dismissed items, so they stay readable one tab away. Both halves are now asserted TOGETHER,
+    // because the copy is only honest as a pair.
+    const ui = web('pages/inbox/InboxPage.tsx')
+    expect(ui, 'the whole sentence').toContain(
+      'There is no undo — but they stay readable under Handled.',
+    )
+    expect(ui, "and the filter that makes the second half true").toMatch(
+      /filter === 'handled' \? \(it\.status === 'handled' \|\| it\.status === 'sent' \|\| it\.status === 'dismissed'\)/,
+    )
+  })
+
+  it('the no-undo half is still true — restore refuses a dismissed item', () => {
+    const h = py('dashboard/handlers_inbox.py')
+    const restore = h.slice(h.indexOf('async def api_inbox_restore'))
+    expect(restore.slice(0, 1400), 'only a FILTERED item can be restored').toMatch(
+      /if item\.status != ItemStatus\.FILTERED\.value:[\s\S]{0,120}status=409/,
+    )
+    // If an un-dismiss path ever appears, the copy owes the user that instead — this fails first.
+    expect(web('pages/inbox/InboxDetail.tsx'), 'the only Restore control is for the filtered case')
+      .toMatch(/A second-opinion check flagged this claim/)
+  })
+
+  it('the chat delete really does take the history it promises', () => {
+    expect(web('pages/ChatPage.tsx')).toContain('and its history will be permanently removed.')
+    const h = py('dashboard/chat_handlers.py')
+    const del = h.slice(h.indexOf('async def api_chat_session_delete'))
+    expect(del.slice(0, 6000), 'the on-disk artifacts are purged').toMatch(
+      /conversation_log\.delete_session\(history_key\)/,
+    )
+    // 🪤 And the reason the claim is worth pinning rather than assuming: the handler had to grow a
+    // disk-purge fallback because "Delete" used to 404 for a non-resident session, leaving its JSONL on
+    // disk and letting the chat RESURRECT on reopen — the exact opposite of what this sentence promises.
+    expect(del.slice(0, 6000)).toMatch(/letting it resurrect on reopen/)
+  })
+})
