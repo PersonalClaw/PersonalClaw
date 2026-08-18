@@ -7109,6 +7109,7 @@
           "id": "PEP-2",
           "title": "Cross-surface preset empty-state sweep",
           "status": "done",
+          "pr": 1692,
           "scope": "Reuse the PresetEmptyState primitive across the remaining list surfaces: Workflows and Tasks (preset source = the bundled workflow/task templates surfaced as cards, no new copy that drifts from the templates), plus lighter-touch example cards on the Knowledge and Agents/Tools/Skills empty states. Validate as a newcomer by walking every list surface's empty state and confirming each offers a guided on-ramp while the expert blank-create path still works unchanged.",
           "done_when": "No list surface presents a bare form with no on-ramp; each empty surface deep-links into its existing create flow; expert paths unchanged; validation recorded with screenshots.",
           "deps": [
