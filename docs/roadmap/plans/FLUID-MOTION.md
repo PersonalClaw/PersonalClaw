@@ -397,3 +397,101 @@ inherits an `expr()`-scaled entrance and a reduced-motion assertion on three sur
 The `ListRow`/`TipRow`/launcher-chip `delay: Math.min(index * 0.03, …)` idiom is a LIST-ITEM stagger
 and was left alone: it is pre-existing, it is not a region cascade, and converting it is an
 app-wide sweep, not this atom.
+
+### 2026-08-18 — `FM-3` (S2: T2.2; contract §C2 `LiquidShape`) — **DONE**
+
+`web/src/ui/motion/LiquidShape.tsx` ships the fluid-blob morph, exported from the `ui/motion` barrel.
+Three tiers, mirroring `Disintegrate`: BOLD (`exprHeavy`) morphs on `physics.fluid` and runs a slow
+idle breathe; REFINED drops the breathe **entirely** — no driver, not a slower one, per `exprHeavy`'s
+contract; REDUCED-MOTION renders a plain `<path>` with no motion value and no spring at all. Coral
+comes from `var(--color-primary)`, and every amplitude rides `expr()` — `intensity` is documented as
+a plain 0..1 base that the primitive scales itself, so a call site cannot forget the knob (and must
+not pass `expr(1)`, which would scale twice).
+
+**THE OPEN QUESTION IS CLOSED BY MEASUREMENT: SVG path, not canvas metaball.** §Risks asked for this
+to be decided in T2.2 "by measuring … no premature choice". Three implementations of the same
+silhouette (one blob, 160x160 CSS px, 16 control points) were driven in real headed Chromium for 240
+measured frames each after 30 warm-up frames — an SVG path whose `d` is recomputed per frame, an
+honest per-pixel canvas-2D metaball (density field thresholded into `ImageData`), and the cheap
+canvas blur+contrast merge. Per-frame JS work, median:
+
+| shapes | SVG path | canvas metaball | canvas blur+contrast |
+|---|---|---|---|
+| 1 | 0.1 ms | 0.2 ms | 0.1 ms |
+| 4 | 0.1 ms | 1.1 ms | 0.1 ms |
+| 16 | 0.1 ms | 1.9 ms | 0.1 ms |
+| 64 | 0.6 ms | 7.6 ms | 0.3 ms |
+| 1 · 20x CPU throttle | 0.0 ms | 1.0 ms | 0.0 ms |
+| 4 · 20x CPU throttle | 0.0 ms | **10.9 ms** | 0.1 ms |
+| 16 · 20x CPU throttle | 2.3 ms | **39.9 ms** (239 of 240 frames over 20 ms) | 0.1 ms |
+
+**The plan's premise was falsified.** "Canvas scales better for many shapes" is true for point/particle
+fields — which is what `DotGlow` actually is — but a metaball is a DENSITY FIELD, so its cost is
+per-pixel over its own area and it is the variant that fails first. It is 12.7x the SVG path at 64
+shapes unthrottled, and on a 20x-throttled CPU it already misses 60fps at **four** shapes and
+collapses completely at sixteen. It never wins at any count, so there is no crossover to trade off.
+At the count this primitive is actually used at (one, a few) both fit the budget on a fast machine —
+which means the tie-break was never going to be performance, and the weak-machine floor is what
+separates them.
+
+**Two findings about the measurement itself, recorded because they nearly produced a fake result.**
+(1) The first pass was NON-DISCRIMINATING: on a 120Hz display every variant sat at an 8.3 ms rAF
+interval, vsync-limited, so the frame metric could not tell the implementations apart at all. The
+numbers above come from adding CPU throttling and a long-frame count. (2) A JS-work probe is BLIND to
+raster: the blur+contrast variant is the cheapest in JS at every count and was nonetheless **the only
+variant to miss frames unthrottled** (rAF p95 16.7 ms, worst 17.4 ms at 64 shapes) because its price
+is paid in the compositor. Anyone re-deciding this must measure frame intervals, not just JS.
+
+**On deleted scope, said out loud:** the chosen implementation is pure Motion + SVG geometry, so it
+touches neither WebGL nor the gooey filter that `Disintegrate.tsx:19` records as deleted. The
+blur+contrast variant IS that deleted family, and it was measured rather than assumed — it loses on
+frame intervals as well as on lineage, so nothing was re-added quietly.
+
+**A DEFECT FOUND IN THE BROWSER, not in tests.** The first browser pass filled the blob at a single
+opacity and it read as a poster-weight coral slab beside `WavyProgress`'s hairline coral stroke and
+`DotGlow`'s soft luminous field — a weight clash, which is exactly the done-when clause about
+integrating without clashing. Fixed by grading the fill core→edge through a `radialGradient` whose two
+stops are the SAME theme var at two opacities (no second color, no hex). The gradient id comes from
+`useId()`, sanitized for a `url(#…)` fragment, and a rail asserts each instance points at its OWN id —
+a mismatch there renders an invisible blob that would be green on every other assertion.
+
+**Falsification found a false-green in my own rail.** The `expr()` test originally asserted only that
+the bold and refined blobs were different strings. Replacing the `expr()` call with a raw constant
+left it GREEN, because the two renders still differed via the `exprHeavy` breathe (on at 1, off at 0) —
+it was measuring the tier gate while claiming to measure the amplitude. It now measures the amplitude
+directly, as the distance between `blob` and `circle` at the same setting (the breathe is
+shape-independent, so it cancels), and asserts that distance is strictly monotonic in the knob and
+lands at expr()'s 0.35 floor when refined. The mutation now reds with
+`expected 8.31 to be greater than 8.31`. **Note the token lint does NOT guard this**: it policies raw
+hex and raw px inside inline `style={{}}`, and this component has no inline-style px at all — its
+geometry is viewBox units, the same category `WavyProgress` is exempted for. The rail is the only
+guard on `expr()` here.
+
+**Rails** (15 tests): `LiquidShape.test.tsx` (12) — barrel reachability by identity, a vacuity floor on
+the geometry, per-shape distinctness, the expr()/intensity amplitude, the tier attribute, the
+decoration contract, gradient-id wiring; `LiquidShape.reducedMotion.test.tsx` (3) — `matchMedia`
+stubbed at module scope before any render (framer-motion caches the probe in a module singleton), the
+instant branch with a positive control, a synchronous state change with no `waitFor`, and a no-drift
+assertion that catches a breathe driver surviving reduced motion.
+
+**Validated in a real browser**, both themes, via a temporary harness (deleted, not committed) that
+rendered five `LiquidShape`s beside a live `DotGlow` and two `WavyProgress` bars under the app's real
+providers and tokens. Coral resolved per theme — `rgb(255,107,91)` dark, `rgb(200,69,46)` light. Bold
+tier: silhouette drifts (breathe live). Refined tier (expressiveness 0.4): no drift in either theme —
+the heavy effect is genuinely dropped. Reduced motion: all five on `instant/reduced`, no drift, and
+the geometry changed within one frame of flipping `active`. Every pass carried a positive control
+(five mounted shapes, real path length, a resolved non-`var()` fill, a painted DotGlow canvas). One
+`pageerror` seen initially was **my driver's own** — `addInitScript` touching
+`document.documentElement` before the document existed — and disappeared once guarded; zero component
+errors.
+
+**ADOPTION IS DEFERRED TO `FM-4`, deliberately.** This atom ships the primitive with no product call
+site, which is why the barrel export is the only thing keeping it reachable and why a rail asserts it
+by identity. No decorative motion was bolted onto a product surface on executor taste.
+
+**Not in this atom, by scope:** `FM-7` owns the 60fps budget proof and the CI zero-motion guard — the
+numbers above are an implementation-choice measurement, NOT that proof. `FM-4` owns unifying
+Morph/LiquidShape/Disintegrate/Bud into one vocabulary and documenting it in `motion.md`. **The feel
+is not claimed settled** — every constant lives in one named `TUNING` block at the top of the file for
+the owner's taste pass (owner task 1), and the shape vocabulary is deliberately small (circle /
+squircle / blob) so that pass has few knobs to fight.

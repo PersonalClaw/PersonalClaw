@@ -6021,7 +6021,7 @@
         {
           "id": "FM-3",
           "title": "LiquidShape.tsx fluid-blob shape morph (coral-tinted, expr()-scaled)",
-          "status": "todo",
+          "status": "done",
           "scope": "Session 2 \u2014 Liquid morphing (T2.2); Contracts C2 (LiquidShape)",
           "done_when": "shape morphs smoothly between states (SVG-path vs canvas-metaball decided by measurement in T2.2), integrates visually with DotGlow/WavyProgress without clashing, and honors reduced-motion (instant) and expr() scaling",
           "deps": [
@@ -7637,11 +7637,6 @@
       {
         "id": "FM-2",
         "title": "Morph.tsx shared-element wrapper + wire one real card\u2192detail morph",
-        "plan": "FM"
-      },
-      {
-        "id": "FM-3",
-        "title": "LiquidShape.tsx fluid-blob shape morph (coral-tinted, expr()-scaled)",
         "plan": "FM"
       },
       {
@@ -10071,9 +10066,9 @@
         "code": "FM",
         "plan": "FLUID-MOTION",
         "total_atoms": 7,
-        "done": 3,
+        "done": 4,
         "in_progress": 0,
-        "todo": 4,
+        "todo": 3,
         "blocked": 0
       },
       {
