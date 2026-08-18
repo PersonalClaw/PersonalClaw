@@ -18,7 +18,12 @@ export function SkillProposals() {
   const { data: proposals, error: loadErr, refresh } = useCachedData<SkillProposal[]>(
     'skill-proposals', () => api.skillProposals(),
   )
-  const reload = () => { invalidateCache('skill-proposals'); refresh() }
+  // 🔴 ONE COLLECTION, TWO KEYS. `SkillsPage` reads the same proposals under
+  // `skill-proposals-count` to render its "Proposals (N)" badge, so busting only this key left
+  // the sibling number describing a collection that had already changed. `invalidateCache`'s
+  // prefix mode already existed and no caller used it; both keys share the `skill-proposals`
+  // prefix, so one call keeps them in step — including any future key on the same collection.
+  const reload = () => { invalidateCache('skill-proposals', true); refresh() }
 
   if (proposals === undefined && loadErr) return <LoadError what="skill proposals" error={loadErr} onRetry={reload} />
   if (!proposals) return <ListSkeleton rows={4} what="skill proposals" />

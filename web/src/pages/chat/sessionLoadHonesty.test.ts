@@ -24,7 +24,7 @@ import { join } from 'node:path'
 // 🔑 THE RAIL IS SCOPED TO THE RESOURCE, NOT THE FILE. `loadErrorState.test.tsx` bars an adopter
 // file from swallowing in ANY fetcher, which is right for a list page whose whole job is one
 // resource. `ChatPage.tsx` also reads six unrelated decorations through the same hook
-// (`chat:suggestions`, `chat:starters`, `chat:stream-reveal`, `chat:artifact-picker`,
+// (`chat:suggestions`, `chat:starters`, `chat:stream-reveal`, `artifacts:chat-picker`,
 // `chat:folders`, `chat:tags`); a chip row that quietly fails to appear makes no false claim, and
 // forcing six unrelated UI decisions into this change would be scope, not rigour. So this rail
 // pins the SESSION readers — the ones that speak for whether your chats exist.

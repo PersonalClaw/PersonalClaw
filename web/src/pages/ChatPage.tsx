@@ -3013,7 +3013,7 @@ function ArtifactContextPicker({ attached, onPick, onRemove, onClose }: {
   // The swallow made a failed read indistinguishable from an empty library, and this picker's
   // empty state TEACHES ("Ask in chat for a widget…") — so a 500 told a user with artifacts to go
   // make their first one. Same shape as #1162's chat history, one surface down.
-  const { data, loading, error: artifactsError } = useCachedData('chat:artifact-picker', () => api.artifacts())
+  const { data, loading, error: artifactsError } = useCachedData('artifacts:chat-picker', () => api.artifacts())
   const all = data ?? []
   const attachedSlugs = new Set(attached.map((a) => a.slug))
   const n = q.trim().toLowerCase()

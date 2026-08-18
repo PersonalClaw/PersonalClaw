@@ -13,6 +13,7 @@ import { ArtifactIterationRail } from './ArtifactIterationRail'
 import { BlueprintSkeleton } from './BlueprintSkeleton'
 import { SquareIconButton } from '../SquareIconButton'
 import { spring } from '../../design/motion'
+import { invalidateCache } from '../../lib/useCachedData'
 
 const MIN_HEIGHT = 80
 // The iframe body's own padding (16px each side) — added to the reported
@@ -172,6 +173,10 @@ export function WidgetFrame({ html, title = 'Widget', slug, messageTs, widgetInd
         await api.createArtifact({ name: title, content: html, kind: 'widget', source: 'chat', slug: effSlug })
         setSaved(true)
       }
+      // Both directions change the artifact collection, and the composer's attach picker — a sibling
+      // on THIS surface — caches it. Without this, saving a widget from a chat turn left the picker
+      // unable to offer it, and deleting one left it offering something gone.
+      invalidateCache('artifacts:', true)
     } catch (e) {
       notify(`Couldn't ${saved ? 'remove' : 'save'} this widget: ${String((e as Error)?.message || e)}`, 'error')
     } finally { setSavePending(false) }
