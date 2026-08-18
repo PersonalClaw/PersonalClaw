@@ -682,9 +682,9 @@ function StoreView({ catalog, catalogError, result, totalKnown, installedCount, 
   }
 
   if (catalog === undefined && catalogError) {
-    return <LoadError what="the Store catalog" error={catalogError} onRetry={reloadCatalog} />
+    return <LoadError what="Store catalog" error={catalogError} onRetry={reloadCatalog} />
   }
-  if (catalog === undefined) return <ListSkeleton rows={3} what="the Store catalog" />
+  if (catalog === undefined) return <ListSkeleton rows={3} what="Store catalog" />
 
   return (
     <div className="flex flex-col gap-2xl">

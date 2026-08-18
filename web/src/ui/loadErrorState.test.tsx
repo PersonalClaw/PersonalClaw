@@ -58,8 +58,18 @@ describe('LoadError announces and offers recovery', () => {
   })
 
   it('falls back to a reassuring line when the error has no message', () => {
+    // The reassurance is now noun-free: it used to read "Your ${what} are safe", ungrammatical for
+    // the many SINGULAR nouns callers pass ("Your project are safe"). The headline still names the
+    // thing; the body no longer has to. See loadErrorSentence.test.ts for the tree-wide contract.
     render(<LoadError what="projects" error={{}} />)
-    expect(screen.getByText(/Your projects are safe/)).toBeTruthy()
+    expect(screen.getByText(/this is just a load error, and nothing was lost/)).toBeTruthy()
+  })
+
+  it('the fallback reads grammatically for a SINGULAR noun too', () => {
+    // The regression that motivated the rewrite: "project" (singular) must not produce "are safe".
+    render(<LoadError what="project" error={{}} />)
+    expect(screen.getByText(/Couldn't load your project/)).toBeTruthy()
+    expect(screen.queryByText(/are safe/), 'the old plural-only copy is gone').toBeNull()
   })
 
   it('offers a retry that re-runs the fetch', () => {
