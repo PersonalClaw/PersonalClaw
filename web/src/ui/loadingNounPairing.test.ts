@@ -247,17 +247,20 @@ describe('a skeleton borrows a noun its own surface already declares', () => {
   const errPaired = all.filter((s) => s.errNoun)
   const resPaired = all.filter((s) => !s.errNoun && s.resultsNoun)
 
-  it('finds the population — 57 skeletons, 22 beside a LoadError, 4+ beside a results noun', () => {
+  it('finds the population — 57+ skeletons, 22+ beside a LoadError, the results bucket now drained', () => {
     expect(all.length, 'skeleton call sites outside the primitive').toBeGreaterThanOrEqual(57)
     expect(errPaired.length, 'skeletons with a LoadError noun in reach').toBeGreaterThanOrEqual(22)
-    // 🔻 5 → 4 → 3. Two buckets of ONE population — `resPaired` is `!errNoun && resultsNoun` — so every
-    // surface that adopts `LoadError` moves a skeleton OUT of here into `errPaired`. `#/loops` did it
-    // (5→4); `#/triggers` did it next (4→3): `LoadError what="triggers"` now sits above the
-    // `ListSkeleton what="triggers"`, inside the ±40-line reach, so `resPaired` dropped and `errPaired`
-    // rose. The floor is a VACUITY guard — "the scan still finds this shape at all" — not a target, and
-    // the shape it guards is exactly what the LoadError rollout is draining. Lowering it is the honest
-    // move; raising `errPaired`'s floor to match would re-pin a number that keeps climbing.
-    expect(resPaired.length, 'skeletons gated on the state a results noun counts').toBeGreaterThanOrEqual(3)
+    // 🔻 5 → 4 → 3 → 0. THE BUCKET HAS FULLY DRAINED, which is the rollout finishing rather than a hole
+    // opening. Two buckets of ONE population — `resPaired` is `!errNoun && resultsNoun` — so every
+    // surface that adopts `LoadError` moves a skeleton OUT of here into `errPaired`: `#/loops` did it
+    // (5→4), `#/triggers` next (4→3), and `#/inbox` + `#/skills` + `#/knowledge` were the last three.
+    // A floor on a bucket that is empty BY CONSTRUCTION can only be 0, and `>= 0` asserts nothing, so
+    // the vacuity guard moves to the UNION — which is what it was always guarding: every skeleton the
+    // scan finds has a sibling noun to borrow. Set to 25 = the two old floors' sum (22 + 3), so the
+    // aggregate guarantee is unchanged; `errPaired`'s own floor stays at 22 rather than being re-pinned
+    // to a number that keeps climbing.
+    expect(errPaired.length + resPaired.length, 'skeletons with a sibling noun in reach')
+      .toBeGreaterThanOrEqual(25)
   })
 
   it('every skeleton beside a LoadError passes that sibling noun', () => {
@@ -267,6 +270,9 @@ describe('a skeleton borrows a noun its own surface already declares', () => {
   })
 
   it('every skeleton gated on counted rows passes the results noun', () => {
+    // Empty by construction today (see the drain above) — kept as the standing rule for the next
+    // surface that declares a results noun WITHOUT a LoadError beside it, which is a shape the
+    // codebase can still produce.
     const wrong = resPaired.filter((s) => !carries(s.tag, s.resultsNoun!))
       .map((s) => `${s.rel}:${s.line} should say what for ${s.resultsNoun} — ${s.tag}`)
     expect(wrong, `these count the rows by name but load them anonymously:\n${wrong.join('\n')}`).toEqual([])
