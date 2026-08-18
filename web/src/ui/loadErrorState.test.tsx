@@ -223,6 +223,28 @@ describe('the migrated surfaces read the error', () => {
     // have pinned the page on its skeleton forever, because `loops === undefined` also satisfies
     // the skeleton branch, so the error branch is tested FIRST on that same condition.
     'pages/loops/LoopsListPage.tsx',
+    // `#/code/:id` (the Code Cockpit) joined with DSC-12, which is the atom that named this file's
+    // CodeSection↔CodeCockpitPage pair as "load-error twins" — the same failure, one surface using the
+    // primitive and its own detail page hand-rolling it. The page-level twin was a 360px column with a
+    // WARN-toned `AlertTriangle`, a `title-m` "Couldn't load this project", and a `secondary` Try again:
+    // the right information in the wrong tone (a failed load is danger, not a caution) at the wrong type
+    // scale, and — because it hand-rolled the block instead of reaching for `LoadError` — with **no
+    // `role="alert"`**, so the one adopter class this rail exists for was silent on the page a user lands
+    // on from every project row.
+    //
+    // Its loader is hand-rolled (`useState` + `.catch`), not `useCachedData`, and it CAPTURES: the catch
+    // routes 404/400 to a permanent `'missing'` state and everything else into `loadErr`, which is now the
+    // rejection itself rather than a pre-flattened string, so the server's own message reaches the
+    // primitive. Two things worth knowing before trusting this row:
+    //   ⚠️ The capture matcher below is FILE-SCOPED, and this file also contains an unrelated
+    //      `.catch((e) => { if (alive) setErr(…) })` (the terminal-session error, ~:2990) that satisfies it
+    //      on its own. The real capture is `setLoadErr` in `load()`; the rail cannot tell the two apart.
+    //   ⚠️ The `cachedCalls` key scan only matches SINGLE-QUOTED keys, so this file's one `useCachedData`
+    //      — `` `code:project:${id}` ``, a template literal — is invisible to both swallow checks. That
+    //      call DOES `.catch(() => null)`, deliberately: it is an instant-paint seed (`persist:false`) that
+    //      only ever *sets* `project` when it has data, so a failed seed cannot mask `loadErr`. Left as-is
+    //      rather than widening the key regex, which would flag a correct swallow as a defect.
+    'pages/code/CodeCockpitPage.tsx',
   ]
 
   for (const rel of ADOPTERS) {
@@ -260,7 +282,15 @@ describe('the migrated surfaces read the error', () => {
       // first two because the first adopters used them — the same accident this file has now corrected
       // four times. The vocabulary is what widens; the property being checked does not.
       // `<Loading />` gained a `what` prop in cycle 144 (it is a live region now), so match the TAG.
-      const loadAt = Math.min(...[/<ListSkeleton\b/, /<Loading\b/, /<FormSkeleton\b/].map((re) => {
+      //
+      // FIFTH widening (DSC-12): a bare `<Loader2 className="animate-spin">` inside `<Centered>` counts
+      // too. `#/code/:id`'s page gate is one, and there is NO spinner primitive to send it to — `Loading`
+      // is a bare "Loading…" TEXT line whose own doc calls itself "THE LESSER IDIOM AND STAYS SO", so
+      // swapping a centred spinner for it would be a redesign of the first paint to satisfy a regex,
+      // which is the exact inversion this rail's own comment warns against. Verified non-weakening: all
+      // ten prior adopters that use `<Loader2` at all use it AFTER their `<LoadError>` (projects 146/449,
+      // code 326/367, apps 563/830), so the min does not move for any of them.
+      const loadAt = Math.min(...[/<ListSkeleton\b/, /<Loading\b/, /<FormSkeleton\b/, /<Loader2\b/].map((re) => {
         const i = src.search(re)
         return i === -1 ? Number.POSITIVE_INFINITY : i
       }))

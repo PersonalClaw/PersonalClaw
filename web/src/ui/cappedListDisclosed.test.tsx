@@ -154,11 +154,18 @@ describe('every list whose label states a total discloses its cap', () => {
   })
 
   it('an EXPANDING control is not a residue line — left alone deliberately', () => {
-    // `CodeCockpitPage` renders `+{hidden} more` as a BUTTON that reveals the rest. That is a
+    // `CodeCockpitPage` renders `+{hidden} more` as a CONTROL that reveals the rest. That is a
     // disclosure the user can act on, not a statement that something is missing, so converging it
     // onto a static row would remove a feature.
+    //
+    // 🪛 THE PROPERTY IS INTERACTIVITY, NOT THE ELEMENT SPELLING. This assertion demanded a
+    // literal `</button>` until DSC-12 moved the control onto `TextLink` — the primitive whose own doc
+    // names "Show more" as its canonical standalone use, and which renders a `<button type="button">`
+    // underneath. So the thing this rail protects never changed; only the tag it is written with did.
+    // Read the title's sentence and the wired `onClick` together, which is the disclosure itself.
     const src = strip(readFileSync(join(SRC, 'pages/code/CodeCockpitPage.tsx'), 'utf8'))
-    expect(src, 'still a button').toMatch(/title=\{`Show \$\{hidden\} more file\$\{[^}]*\}`\}>\+\{hidden\} more<\/button>/)
+    expect(src, 'still an interactive disclosure').toMatch(/title=\{`Show \$\{hidden\} more file\$\{[^}]*\}`\}>\+\{hidden\} more<\/TextLink>/)
+    expect(src, 'and it still expands the list').toMatch(/onClick=\{\(\) => setExpanded\(true\)\}/)
   })
 
   it('a truncated TABLE names what it dropped', () => {
