@@ -441,12 +441,19 @@ describe('the hand-laid bars reach the same idiom', () => {
       // Already announces — through its own VISIBLE match counter, which is a live region. A second
       // idiom here would read the same number twice.
       'pages/chat/FindBar.tsx': ['visible aria-live match counter', /aria-live="polite"/],
-      // Keyboard-navigated typeaheads. These want `role="listbox"`/`aria-activedescendant` like
-      // CommandPalette already has, NOT a status region — so they are DEFERRED to that pass, and this
-      // records the deferral instead of leaving them looking compliant.
-      'pages/chat/PromptPalette.tsx': ['arrow-key typeahead, awaiting listbox semantics', /onKeyDown=/],
-      'pages/code/CodeCockpitPage.tsx': ['arrow-key typeahead, awaiting listbox semantics', /onKeyDown=/],
-      'pages/code/WorkspacePicker.tsx': ['arrow-key typeahead, awaiting listbox semantics', /onKeyDown=/],
+      // 🪤 THIS ENTRY USED TO LIST THREE FILES AS "arrow-key typeahead, awaiting listbox semantics",
+      // AND THAT REASON WAS WRONG FOR TWO OF THEM. The proof pattern was `onKeyDown=`, which any file
+      // with any key handler satisfies — so the exemption stayed green while describing something
+      // untrue. Read properly: `PromptPalette` and `WorkspacePicker` have NO cursor (their Enter picks
+      // the first match), so their rows are ordinary tab-focusable buttons and what they owed was the
+      // status region every other filtered list has. They now announce, and they are gone from here.
+      //
+      // An exemption's PROOF has to be specific enough to fail when the reason stops holding. `hi` +
+      // arrow handling is that proof for the one file where the claim was true.
+      'pages/code/CodeCockpitPage.tsx': [
+        'a real combobox: focus stays in the field and aria-activedescendant moves',
+        /aria-activedescendant|ariaActiveDescendant/,
+      ],
       // The primitive itself.
       'ui/ListControls.tsx': ['this IS the primitive', /export function ResultAnnouncement\b/],
     }

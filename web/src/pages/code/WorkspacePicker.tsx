@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
+import { ResultAnnouncement } from '../../ui/ListControls'
 import { Folder, FolderPlus, CornerLeftUp, Loader2, Check, GitBranch } from 'lucide-react'
 import { Modal } from '../../ui/Modal'
 import { SearchField } from '../../ui/SearchField'
@@ -147,6 +148,9 @@ export function WorkspacePicker({ mode, allowCreate, onPick, onClose }: {
                 if (e.key === 'Enter' && shownDirs.length > 0) { e.preventDefault(); void browse(shownDirs[0].path) }
                 else if (e.key === 'Escape' && filter) { e.preventDefault(); setFilter('') }
               }} />
+            {/* Same correction as PromptPalette: no cursor, so no listbox — just the count, which is
+                the one thing typing here changed silently. */}
+            <ResultAnnouncement count={shownDirs.length} noun="folders" active={!!filter.trim()} />
           </div>
         )}
 
