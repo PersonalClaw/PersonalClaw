@@ -101,15 +101,18 @@ describe('a Popover inside a clipping container must portal', () => {
     expect(consumers.length, 'FilterMenu consumers that moved with this change').toBeGreaterThanOrEqual(9)
   })
 
-  it('the non-portal call sites are exactly the four we know about', () => {
-    // 🪤 NOT a clean bill of health. Three of these were never opened by the sweep — `#/artifacts`
-    // and `#/projects` have no rows in the dev home, and `#/inbox`'s row menu is the right-click
-    // ContextMenu, not this Popover — so they are UNVERIFIED, not verified-good. The fourth
-    // (HeaderOverflow's `…`) only renders when the header is tight enough to overflow.
-    // This list exists so a FIFTH non-portal Popover has to be argued for in review.
+  it('the non-portal call sites are exactly the three we know about', () => {
+    // 🪤 NOT a clean bill of health. Two of these were never opened by the sweep — `#/projects` has no
+    // rows in the dev home, and `#/inbox`'s row menu is the right-click ContextMenu, not this Popover
+    // — so they are UNVERIFIED, not verified-good. The third (HeaderOverflow's `…`) only renders when
+    // the header is tight enough to overflow.
+    // This list exists so a FOURTH non-portal Popover has to be argued for in review.
+    //
+    // 🔑 `#/artifacts` LEFT this list by having its hand-rolled Popover deleted: its toolbar now
+    // renders `ui/FilterMenu`, which portals (asserted above). The list got shorter because a call
+    // site went away, not because a threshold moved.
     const nonPortal = sites.filter((x) => !x.portal).map((x) => x.rel).sort()
     expect(nonPortal).toEqual([
-      'pages/artifacts/ArtifactsSection.tsx',
       'pages/inbox/InboxPage.tsx',
       'pages/projects/ProjectsSection.tsx',
       'ui/HeaderActions.tsx',
