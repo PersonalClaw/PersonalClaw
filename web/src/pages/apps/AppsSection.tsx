@@ -1380,7 +1380,11 @@ function ConfigModal({ name, onClose }: { name: string; onClose: () => void }) {
   return (
     <Modal title={`Configure ${name}`} icon={<Settings2 size={18} />} onClose={onClose}>
       <div className="flex flex-col gap-m p-l" style={{ minWidth: 440 }}>
-        {cfg.loading ? <div data-type="body-s" className="text-on-surface-low">Loading…</div>
+        {cfg.error ? (
+          // A failed read used to leave "Loading…" on screen forever, with Save still live over an
+          // empty form. Say what happened and offer the retry the hook now exposes.
+          <LoadError what="app configuration" error={cfg.error} onRetry={cfg.reload} />
+        ) : cfg.loading ? <div data-type="body-s" className="text-on-surface-low">Loading…</div>
           : !cfg.hasSchema ? (
             <div data-type="body-s" className="text-on-surface-low">This app declares no configurable options.</div>
           ) : (
@@ -1389,7 +1393,11 @@ function ConfigModal({ name, onClose }: { name: string; onClose: () => void }) {
         {cfg.err && <div data-type="body-s" className="text-negative">{cfg.err}</div>}
         <div className="flex justify-end gap-2">
           <Button variant="ghost" onClick={onClose}>Cancel</Button>
-          <Button variant="primary" disabled={cfg.busy} onClick={() => cfg.save(onClose)}>Save</Button>
+          {/* Save stays out of reach until the config it would REPLACE has actually loaded — the
+              footer sits outside the branch above, so this button was clickable during the load. */}
+          <Button variant="primary" disabled={cfg.busy || cfg.loading || !!cfg.error}
+            disabledReason={cfg.error ? 'The configuration failed to load' : cfg.loading ? 'Still loading the configuration' : undefined}
+            onClick={() => cfg.save(onClose)}>Save</Button>
         </div>
       </div>
     </Modal>

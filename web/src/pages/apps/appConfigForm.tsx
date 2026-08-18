@@ -139,13 +139,16 @@ export function AppConfigFields({ appName, props, cur, set, secretSet = [] }: {
 
 /** Load + edit + persist an app's config against its schema. Returns the schema
  *  props, the effective values (saved over defaults), an editor, and a save fn.
- *  `data === undefined` while loading; `hasSchema` is false for a schema-less app. */
+ *  `loading` is true only while the read is in flight; `error` is the read's rejection (the hook
+ *  used to DISCARD it, which made `loading` true forever on a failed read); `hasSchema` is false
+ *  for a schema-less app. */
 export function useAppConfig(name: string) {
-  const { data } = useCachedData(`app-config:${name}`, () => api.appConfig(name), { persist: false })
+  const { data, error: loadErr, refresh } = useCachedData(`app-config:${name}`, () => api.appConfig(name), { persist: false })
   const [values, setValues] = useState<Record<string, unknown> | null>(null)
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState<string | null>(null)
   const [savedAt, setSavedAt] = useState(0)
+  const reload = () => { invalidateCache(`app-config:${name}`); refresh() }
 
   const schema = (data?.schema ?? {}) as AppConfigSchema
   const props = schema.properties ?? {}
@@ -166,6 +169,18 @@ export function useAppConfig(name: string) {
   const dirty = values !== null
 
   async function save(onDone?: () => void) {
+    // 🔴 REFUSE A WRITE FROM A FORM THAT NEVER LOADED. `cur` falls back to `{}` before `data`
+    // arrives, and the backend's `write_config` REPLACES the file (`atomic_write(json.dumps(values))`,
+    // no merge) — so this save would erase the app's stored config, secrets included: the
+    // keep-the-stored-secret branch only fires for keys PRESENT in the payload, and an unloaded form
+    // sends none. Reachable without any failure, because the modal's Save sits outside its loading
+    // branch. The guard is HERE rather than at the two call sites so every consumer inherits it.
+    if (data === undefined) {
+      setErr(loadErr
+        ? "Couldn't load this app's configuration, so there is nothing to save yet. Retry the load first."
+        : 'Still loading this app’s configuration — nothing to save yet.')
+      return
+    }
     setBusy(true); setErr(null)
     try {
       await api.saveAppConfig(name, cur)
@@ -177,5 +192,8 @@ export function useAppConfig(name: string) {
     finally { setBusy(false) }
   }
 
-  return { loading: data === undefined, props, hasSchema, cur, set, save, busy, err, dirty, savedAt, secretSet }
+  // `loading` is the read still being IN FLIGHT — not merely "no data". A failed read has no data
+  // either, and conflating the two is what showed "Loading…" forever with no way out.
+  return { loading: data === undefined && !loadErr, error: loadErr, reload,
+    props, hasSchema, cur, set, save, busy, err, dirty, savedAt, secretSet }
 }

@@ -6,7 +6,7 @@ import { TopBar } from '../../ui/TopBar'
 import { WorkbenchLayout } from '../../ui/WorkbenchLayout'
 import { HeaderActions, HeaderControl } from '../../ui/HeaderActions'
 import { ListControls } from '../../ui/ListControls'
-import { EmptyState, ListRow, ListSkeleton } from '../../ui/ListScaffold'
+import { EmptyState, ListRow, ListSkeleton, LoadError } from '../../ui/ListScaffold'
 import { ContextMenu, type ContextMenuItem } from '../../ui/motion'
 import { SidePanel } from '../../ui/SidePanel'
 import { useAgentsData, type NativeGroup, type DiscoveredGroup } from './agentsData'
@@ -45,7 +45,7 @@ function parseOpen(raw: string): Open | null {
  *  PClaw profiles) + each ACP runtime's discovered agents (read-only). Fixes the
  *  legacy pain point where only native definitions showed. */
 export function AgentsListPage({ onCreate, query, setQuery }: { onCreate: () => void } & Pick<RouteProps, 'query' | 'setQuery'>) {
-  const { groups, loading, reload } = useAgentsData()
+  const { groups, error, loaded, loading, reload } = useAgentsData()
   const [q, setQ] = useQueryParam(query, setQuery, 'q', '', { replace: true })
   // `open` is a composite ref encoded into one query param:
   //   native:<name>  |  acp:<providerId>:<id>
@@ -133,7 +133,12 @@ export function AgentsListPage({ onCreate, query, setQuery }: { onCreate: () => 
       }
     >
       <div className="mx-auto px-l py-l flex flex-col gap-2xl" style={{ maxWidth: 'var(--content-width)' }}>
-        {loading && groups.length === 0 ? <ListSkeleton rows={6} /> : (
+        {!loaded && error ? (
+          // A failed native read used to render "No native agents · Create an agent…" — the newcomer
+          // empty state over a network failure. `loaded` (not `groups.length`) is the honest test:
+          // an empty catalog and an unread one both produce zero groups.
+          <LoadError what="agents" error={error} onRetry={reload} />
+        ) : loading && groups.length === 0 ? <ListSkeleton rows={6} what="agents" /> : (
               <>
                 {/* Native */}
                 {native && (

@@ -227,7 +227,12 @@ const FROM_EMPTY_STATE: [string, string][] = [
 
 /** Sites with a "No …" in reach that is NOT their gate's. Asserted to stay bare, with the reason. */
 const EXCLUDED: [string, string][] = [
-  ['pages/agents/AgentsListPage.tsx', '"No matching agents" is an inner GroupSection\'s SEARCH empty state'],
+  // 🎓 GRADUATED, not deleted: `pages/agents/AgentsListPage.tsx` used to be excluded because the only
+  // "No …" in reach was an inner GroupSection's SEARCH empty state — a look-alike, not its gate. It now
+  // declares a `LoadError what="agents"` directly above the skeleton (and counts `noun: 'agents'`), so
+  // its noun comes from a SANCTIONED sibling instead of a guess. That moves it into `errPaired`, where
+  // the pairing test asserts the two agree — strictly stronger than "stay bare". An exclusion is a
+  // statement about the evidence available, so it expires when the evidence changes.
   ['pages/knowledge/KnowledgeListPage.tsx', '"No items reference this entity" is a sentence, and EntityDetail\'s own gate'],
 ]
 
