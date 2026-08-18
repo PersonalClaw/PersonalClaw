@@ -256,22 +256,28 @@ export function PermissionList({ perms }: { perms: AppSummary['permissions'] }) 
       `Can ask you to approve: ${proposalKinds.map((p) => p.label || p.kind_suffix).join(', ')}`,
     )
   }
-  // APE-1. `backgroundTasks` and `eventSubscriptions` are a THIRD case, distinct from both
-  // the enforced bullets and D2's `network` advisory. They are enforced by nothing today
-  // because the runtimes do not exist: no core code hosts an app worker (APE-3) and no
-  // platform event is delivered to any app, declared or not (APE-2's registry). So they
-  // may not join the enforced bullets — that is the D2 defect. Nor are they the network
-  // case, whose row must render even when undeclared because absence would read as
-  // "blocked": here absence really does mean the app gets nothing, and so does presence,
-  // so an always-on row would only imply the platform has a worker host it lacks.
-  //
-  // They ARE disclosed when declared, because the declaration is a STANDING grant: it
-  // goes live with no second consent prompt the moment that support ships. Telling the
-  // user at install is the only moment they get to weigh it.
+  // APE-2. `eventSubscriptions` is an ENFORCED grant as of APE-2 and belongs in the
+  // bullets: `apps/app_events.emit` is the only path a platform event reaches an app by,
+  // and it consults `can_receive_platform_event` per app per event (deny by default, exact
+  // name). It was in the pending block under APE-1, when no registry existed; leaving it
+  // there now would understate a real capability — the D2 defect inverted, and just as
+  // wrong, because the user would weigh a live grant as disclosure-only.
   const declaredEvents = perms.eventSubscriptions ?? []
+  if (declaredEvents.length) {
+    rows.push(`Receive platform events: ${declaredEvents.join(', ')}`)
+  }
+  // APE-1. `backgroundTasks` remains a THIRD case, distinct from both the enforced bullets
+  // and D2's `network` advisory: it is enforced by nothing today because no core code hosts
+  // an app worker (APE-3). So it may not join the enforced bullets — that is the D2 defect.
+  // Nor is it the network case, whose row must render even when undeclared because absence
+  // would read as "blocked": here absence really does mean the app gets nothing, and so
+  // does presence, so an always-on row would only imply a worker host the platform lacks.
+  //
+  // It IS disclosed when declared, because the declaration is a STANDING grant: it goes
+  // live with no second consent prompt the moment that support ships. Telling the user at
+  // install is the only moment they get to weigh it.
   const pending: string[] = []
   if (perms.backgroundTasks) pending.push('Run a long-lived background worker')
-  if (declaredEvents.length) pending.push(`Receive platform events: ${declaredEvents.join(', ')}`)
   return (
     <div>
       <div data-type="label-m" className="mb-1 text-on-surface">Permissions the gateway enforces</div>
@@ -297,7 +303,9 @@ export function PermissionList({ perms }: { perms: AppSummary['permissions'] }) 
       )}
       {/* APE-1. Rendered only when declared, and never as a bullet: `enforcedRows` in
           permissionConsent.test.tsx reads every <li> in this component as "the enforced
-          list", and these two are enforced by nothing. Divs keep that reading true. */}
+          list", and what is left here is enforced by nothing. Divs keep that reading
+          true. (APE-2 moved `eventSubscriptions` OUT of this block and into the bullets,
+          where it now belongs; `backgroundTasks` stays until APE-3 ships its host.) */}
       {pending.length > 0 && (
         <div className="mt-2 rounded-m border border-outline-variant bg-surface-high p-m">
           <div data-type="label-m" className="mb-1 text-on-surface">Declared, not yet in effect</div>
@@ -307,9 +315,9 @@ export function PermissionList({ perms }: { perms: AppSummary['permissions'] }) 
             ))}
           </div>
           <div data-type="body-s" className="mt-1 text-on-surface-low">
-            PersonalClaw does not run app workers or deliver platform events yet, so this
-            grants the app nothing today — it is disclosure, not capability. It takes
-            effect without asking you again once that support ships.
+            PersonalClaw does not run app workers yet, so this grants the app nothing today
+            — it is disclosure, not capability. It takes effect without asking you again
+            once that support ships.
           </div>
         </div>
       )}

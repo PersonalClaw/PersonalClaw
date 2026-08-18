@@ -339,6 +339,21 @@ async def ingest_item(
         skipped=result.skipped,
         failed=result.failed,
     )
+    # APE-2: the `knowledge.ingested` platform-event emit site — deliberately the SAME
+    # terminal point the SSE `ingest_complete` above fires from, so the app-facing fact and
+    # the UI-facing one can never disagree. Identifiers only (item id + terminal status):
+    # an app fetches the content through its own granted `api` scope, if it has one.
+    from personalclaw.apps.app_events import KNOWLEDGE_INGESTED
+    from personalclaw.apps.app_events import emit as emit_platform_event
+
+    # …and only when the item actually GOT ingested: `done` (clean) or `partial` (it is in
+    # the store and searchable; some optional steps were skipped). A `failed`/`unreachable`
+    # run ingested nothing, and announcing it under a name that says "ingested" would make a
+    # subscriber's obvious reading wrong — the `status` field is not a licence to fire the
+    # wrong event. It also makes this consistent with the failure paths ABOVE, which return
+    # before reaching here: no failure announces, from any exit.
+    if status in ("done", "partial"):
+        emit_platform_event(KNOWLEDGE_INGESTED, {"item_id": item_id, "status": status})
     return status
 
 
