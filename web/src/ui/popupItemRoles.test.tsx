@@ -26,6 +26,16 @@ import { MenuRow } from './Popover'
 // `<button>`. Fixing the row fixes both; the OTHER 28 call sites sit in role-less popovers where
 // a bare button is correct, and they are deliberately untouched.
 //
+// ── 2026-08-18: a SEVENTH container, and the census could not have found it ─────────────────────
+// `ui/Combobox.tsx` — the searchable autocomplete behind 8 call sites (settings, schedule, triggers).
+// Measured at `#/triggers/new` with 19 options: the input had no `role=combobox`, no `aria-expanded`,
+// no `aria-controls`, no `aria-activedescendant`; the list held **0 listboxes and 0 options**; and
+// ArrowDown changed NOTHING in the accessibility tree. It also put every row in the tab order (19 stops
+// before "Cancel") and stopped scrolling the cursor into view past index 12.
+// It escaped the sweep below because that sweep finds containers by the role they already declare, and
+// this one declared none. The shape sweep added at the end of that describe is the fix for the METHOD.
+// Behaviour tests: `ui/comboboxListbox.test.tsx`.
+//
 // 🪤 A MEASUREMENT TRAP THIS CYCLE WALKED INTO FIRST. Reading `[role="tab"]` at 390px "found"
 // four unreachable tabs at x=-34..472 — all of them inside `Segmented`'s `aria-hidden`,
 // `invisible`, `-z-10` MEASUREMENT PROBE. The carried claim that `#/tasks` clipped its tabs at
@@ -103,6 +113,32 @@ describe('every popup container in the tree contains its item type', () => {
   it('has no container that declares a role without the matching items', () => {
     const lying = containers.filter((c) => !c.satisfied).map((c) => `${c.file} (role=${c.role})`)
     expect(lying, 'a menu with no menuitems / a listbox with no options announces an empty container').toEqual([])
+  })
+
+  // 🔴 THE SWEEP ABOVE CANNOT SEE AN OMISSION. It enumerates containers by finding the role they
+  // ALREADY declare, so a popup that declares nothing at all is not a container to audit — which is
+  // exactly how `ui/Combobox.tsx` sat outside this file's census while its list held **0 [role=option]**
+  // and its input published no cursor. A rail that checks declarations only ever finds a LIE, never a
+  // silence.
+  //
+  // So: also sweep by SHAPE. A component that runs an arrow-key cursor over a mapped list of buttons
+  // IS a popup container, whatever it says about itself, and it has to declare a container role.
+  it('a component with an arrow-key cursor over a list declares a container role', () => {
+    const cursored = walk(SRC).flatMap((f) => {
+      const src = readFileSync(f, 'utf8').replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
+      const hasCursor = /key === 'ArrowDown'|key === 'ArrowUp'|useMenuCursor\(|menuCursorKeydown\(/.test(src)
+      const rendersRows = /(?:options|filtered|opts|items|rows)\s*\.map\(/.test(src) && /<(?:motion\.)?button/.test(src)
+      if (!hasCursor || !rendersRows) return []
+      return [{ file: f.slice(SRC.length + 1), declares: /role="(?:listbox|menu|combobox|grid|tree)"/.test(src) }]
+    })
+
+    // Vacuity floors: this matcher does the enumerating, so prove it resolved the known members.
+    expect(cursored.length, 'the shape sweep must find the cursored lists').toBeGreaterThanOrEqual(4)
+    expect(cursored.map((c) => c.file), 'the one this check was written for').toContain('ui/Combobox.tsx')
+
+    const silent = cursored.filter((c) => !c.declares).map((c) => c.file)
+    expect(silent, `these drive a cursor over rows and tell assistive tech nothing:\n${silent.join('\n')}`)
+      .toEqual([])
   })
 
   it("Segmented's trigger advertises the popup, like ProjectPicker's does", () => {
