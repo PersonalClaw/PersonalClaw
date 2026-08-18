@@ -2204,6 +2204,11 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
     // an optimistic write is to TELL, and fighting the header while the user may still be editing is
     // the move `chat/selectionPersistReported` already rejected.
     await api.renameSession(s, v).catch(reportActionFailure('rename this chat'))
+    // The header updated optimistically, but the session LIST is a different reader — three of them,
+    // in fact (the sidebar, the history page, and the dashboard's recent-sessions). Nothing here
+    // busted any of them, so a renamed chat kept its old title everywhere but the header it was
+    // renamed from, and on the dashboard that survived a reload (`persist: true`).
+    invalidateCache('chat:sessions', true)
   }
   async function regenTitle() {
     const s = sessionRef.current
@@ -3824,10 +3829,12 @@ function ChatHistoryPage({ navigate, query, setQuery }: { navigate: (p: string) 
   }
 
   const load = useCallback(() => {
-    // Both keys: an archive/restore moves a session BETWEEN the two lists, so the
-    // one we're not looking at is stale too.
-    invalidateCache('chat:sessions')
-    invalidateCache('chat:sessions:archived')
+    // Every reader of this collection, in one call: an archive/restore moves a session BETWEEN the
+    // two lists so the one we are not looking at is stale too, and the dashboard's recent-sessions
+    // list reads the same collection under `chat:sessions:recent`. Prefix mode covers a reader added
+    // later, which is exactly how the dashboard's was missed. It does NOT touch `chat:suggestions`
+    // and friends — the prefix is the collection, not the namespace.
+    invalidateCache('chat:sessions', true)
     refreshSessions(); refreshFolders(); refreshTags()
   }, [refreshSessions, refreshFolders, refreshTags])
 

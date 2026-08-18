@@ -195,7 +195,7 @@ describe('the migrated surfaces read the error', () => {
     // 0 editable controls, 22 shimmering skeleton nodes, no error, no retry. Adding it here also puts the
     // key-poisoning check below over `'settings:inbox'`.
     'pages/settings/InboxSettingsPanel.tsx',
-    // `#/chat` joins late and deliberately. #1162 gave the two `chat:sessions` readers an error
+    // `#/chat` joins late and deliberately. #1162 gave the `chat:sessions` readers an error
     // branch but left SIX other reads swallowing, so this file could not satisfy the
     // no-swallow-anywhere bar and got a resource-scoped rail instead
     // (`pages/chat/sessionLoadHonesty.test.ts`). Those six are now gone:
