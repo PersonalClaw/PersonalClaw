@@ -152,6 +152,67 @@ PR validation workflow: manifest fetch+parse (core `apps/manifest.py`), repo liv
   `test_containment_refuses_even_if_the_name_check_is_bypassed` bypasses the first layer so the
   second is proven live on its own. With BOTH layers disabled, `../../PWNED.txt` really escapes
   two directories out of the target — measured, not assumed.
+- **2026-08-18 — ET-2 remainder DONE: the quickstart reached its destination repo.** The
+  2026-08-17 entry above claimed ET-2 DONE, but the done-when's own words are "**apps-repo**
+  `docs/app-creation-guide` gains a 'minutes to first run' quickstart at the top", and it did
+  not: the text sat in `scratch/apps-guide-quickstart.md` in **this** repo with insertion
+  instructions attached. Prepared is not delivered. Measured before writing anything:
+  `git grep -ni "quickstart\|minutes to first run" -- docs README.md` in PersonalClawApps
+  returned **zero hits**. It is now `## Quickstart: minutes to first run` in
+  `PersonalClawApps/docs/app-creation-guide.md`, between the `my-app/` tree and
+  `## The manifest`.
+- **DEVIATION — the staged copy and its rail are deleted, not kept in sync.**
+  `scratch/apps-guide-quickstart.md` and
+  `test_app_from_template.py::test_the_staged_quickstart_matches_the_shipped_cli` are gone. Once
+  the text lives in the apps repo, a second copy here has no consumer and two copies drift —
+  and the rail would have guarded the stale one. Core cannot test another repo's docs (the apps
+  repo has no docs test tier: 118 test files, all per-app `test_provider`-shaped). No unique
+  coverage was lost: the auth-shape invariant is still pinned here by
+  `test_the_staged_readme_uses_the_query_token_not_a_bearer_header` on the template README.
+  `scratch/README.md` §2 now records the landing so the owner is not told to publish delivered
+  work.
+- **DISCOVERY — running the text verbatim found two defects the previous session's run did
+  not.** Commands were extracted mechanically out of the committed markdown
+  (`awk` over the fenced `bash` blocks) and `source`d under `set -e`, so the transcript is the
+  doc's own text, not a paraphrase. (1) **Step 4 swallowed its own failure.**
+  `personalclaw token` resolves the port from `--port` -> `PERSONALCLAW_PORT` ->
+  `dashboard.url`, **never from the running process** (`cli_server.resolve_client_port`), and it
+  prints its error on **stdout**. So with the gateway on another port the doc's
+  `TOKEN_URL="$(personalclaw token | head -1)"` stored `❌ Could not reach gateway on port
+  19999: ...` into **both** `PERSONALCLAW_URL` and `PERSONALCLAW_TOKEN`, and step 5 died as
+  `curl: (3) bad range in URL position 60` — a curl parser error naming neither the port nor the
+  gateway. The `head -1` was also dead weight (`personalclaw token` prints exactly one line) and
+  was the thing discarding the non-zero exit. Fixed: `head -1` dropped, and the text now names
+  the resolution order and that exact downstream symptom. (2) **The "2.4 s" was a warm number
+  sold as a first run.** Four measurements on this machine: **7.16 s** against a freshly-homed
+  gateway and 5.99 s cold, then 2.16 s / 2.74 s warm. The section is titled "minutes to first
+  run", so it now reads **6.0-7.2 s first run, 2.2-2.7 s on repeats** — still seconds, which is
+  the actual claim.
+- **VERIFIED — every other clause of the quickstart holds as written.** Final run: exit 0 from
+  an empty directory against a fresh home, `POST /api/apps` -> `"ok": true`, `/enable` ->
+  `{"ok": true, "enabled": true}`, `GET /api/apps/my-tool` -> `installed.enabled == True` and
+  `manifest.provider.type == "tool"`, the generated `test_provider.py` 7 passed, and
+  `personalclaw doctor` printing a `my-tool` section whose line
+  (`✅ My Tool  provider stub installed — no checks declared yet`) comes from the generated
+  `app_cli.py`. Step 1 printed **19** types, not the 18 in ET-1's entry above — the quickstart
+  states no count on purpose ("derived from the running build's provider registry"), so the
+  drift cannot reach it.
+- **MEASURED — `--from-template` fetches, proven at the entry point a user types; the org repo
+  is still the only gap.** `personalclaw app new --from-template --template-archive <tgz> --dir
+  <tmp>` laid down the 8 template files with the wrapper directory stripped, and the fetched
+  copy's own tests pass unmodified (7 passed) — clone-to-installed is real. Against the shipped
+  default URL the command still answers `error: template fetch returned HTTP 404 (expected
+  200)` and writes **nothing** (target directory: 0 entries), because
+  `github.com/personalclaw/app-template` does not exist yet. **OWNER DEPENDENCY: Owner task 1
+  (push `scratch/app-template/` to the org repo) is the one clause no session can close.**
+  Nothing in core changes when it lands.
+- **FALSIFICATION — my own tarball, not the code, broke root-stripping first.** The initial
+  local-archive drive extracted **19** files into `out/app-template/app-template/...` instead of
+  8 flattened. Cause was macOS `tar` writing AppleDouble `._*` members: `_strip_root` sees roots
+  `{"._app-template", "app-template"}`, `len(roots) != 1`, so it strips nothing. Rebuilt with
+  `COPYFILE_DISABLE=1 tar --no-xattrs` (0 `._` members) and the same command produced 8 files,
+  stripped. The harness was wrong, not `_strip_root` — a GitHub codeload tarball has one root.
+
 ## Execution log
 
 - **2026-08-17 — DONE (`ET-1`): `personalclaw app new` scaffold with a registry-derived type table** (#1553).
