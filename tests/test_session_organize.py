@@ -308,6 +308,95 @@ def test_dedup_key_is_tag_order_independent():
     assert so.dedup_key_for(a) == so.dedup_key_for(b)
 
 
+def test_the_row_NAMES_the_chat_it_is_asking_about(home):
+    """The row asked about a chat and identified it by nothing but its key.
+
+        s-3bd6196a: folder “Research” — the title matches this folder/tag
+
+    So it CITED a title it never showed, and the one thing on screen a user could use to find
+    the conversation was an opaque key. Driven through the real builder and the real emit, and
+    asserted on the persisted row, because `body` is what the inbox list renders.
+    """
+    from personalclaw.inbox import InboxStore
+
+    session = FakeSession(key="s-3bd6196a", title="Research on FTS5 indexes")
+    proposal = so.deterministic_proposal(session, FOLDERS, TAGS)
+    assert proposal is not None and proposal.source == "title"
+    so.surface_proposal(None, proposal)
+
+    store = InboxStore()
+    store.load()
+    rows = [i for i in store.items.values() if i.refs.get("session_organize")]
+    assert len(rows) == 1
+    body = rows[0].message
+
+    assert "Research on FTS5 indexes" in body, f"the row must name the chat: {body!r}"
+    assert "s-3bd6196a" not in body, f"the key is not a name a user can use: {body!r}"
+    # The reason it cites is now visible in the same sentence.
+    assert "the title matches" in body, body
+    # And the machine half is untouched: accept/decline resolve the chat from refs.
+    assert rows[0].refs["session"] == "s-3bd6196a"
+
+
+def test_EVERY_signal_carries_the_title_not_just_the_one_that_matches_on_it(home):
+    """`_from_title` reads the title to match on it, so it would be easy to carry it there
+    only. A workspace- or channel-sourced proposal is about a chat just as much, and its row
+    has the same job. All three deterministic signals plus the LLM path are swept."""
+    cases = [
+        (FakeSession(key="s-a", title="Research on FTS5 indexes"), "title"),
+        (
+            FakeSession(key="s-b", title="zzz nothing matches", workspace_dir="/Users/x/Research"),
+            "workspace",
+        ),
+        (FakeSession(key="s-c", title="qqq nothing matches", channel="slack"), "channel"),
+    ]
+    seen = set()
+    for session, expected_source in cases:
+        p = so.deterministic_proposal(session, FOLDERS, TAGS)
+        assert p is not None, f"no proposal for the {expected_source} signal"
+        assert p.source == expected_source, f"{p.source} != {expected_source}"
+        assert p.session_title == session.title, f"{expected_source} dropped the title"
+        seen.add(p.source)
+    assert seen == {"title", "workspace", "channel"}, seen
+
+
+def test_an_UNTITLED_chat_falls_back_to_the_key_rather_than_naming_nothing(home):
+    """The one case where the key is the only handle there is. A blank subject would be worse
+    than an opaque one — the row would ask about a chat it did not identify at all."""
+    from personalclaw.inbox import InboxStore
+
+    proposal = so.OrganizeProposal(
+        session_key="s-untitled", folder_id="f-res", folder_name="Research"
+    )
+    assert proposal.session_title == ""
+    so.surface_proposal(None, proposal)
+
+    store = InboxStore()
+    store.load()
+    rows = [i for i in store.items.values() if i.refs.get("session_organize")]
+    assert len(rows) == 1
+    assert "s-untitled" in rows[0].message, rows[0].message
+
+
+def test_the_subject_is_never_EMPTY_and_the_two_handles_are_distinguishable(home):
+    """The vacuity floor. If a title could equal its key, or the subject could render blank,
+    every assertion above would pass while proving nothing."""
+    titled = so.OrganizeProposal(
+        session_key="s-1", session_title="A real chat title", folder_name="Research", folder_id="f"
+    )
+    untitled = so.OrganizeProposal(session_key="s-1", folder_name="Research", folder_id="f")
+    assert titled.session_title and titled.session_title != titled.session_key
+    for p in (titled, untitled):
+        so.surface_proposal(None, p)
+    from personalclaw.inbox import InboxStore
+
+    store = InboxStore()
+    store.load()
+    for row in [i for i in store.items.values() if i.refs.get("session_organize")]:
+        first = row.message.split(":")[0]
+        assert first.strip(), f"the row opened with an empty subject: {row.message!r}"
+
+
 def test_surfacing_twice_raises_one_inbox_row(home):
     """The inbox dedup tier: an open row is returned untouched, not stacked."""
     from personalclaw.inbox import InboxStore, ItemKind

@@ -133,6 +133,12 @@ class OrganizeProposal:
     tag_names: list[str] = field(default_factory=list)
     source: str = ""
     reason: str = ""
+    #: The chat's title, carried so the inbox row can NAME the chat it is asking about.
+    #: Every builder already reads `session` (one of them matches on this very title), and
+    #: `surface_proposal` receives only the proposal — so without this the row could identify
+    #: the chat by nothing but its key. Empty for a genuinely untitled chat, which is the one
+    #: case where the key is the only handle there is.
+    session_title: str = ""
 
     @property
     def is_empty(self) -> bool:
@@ -281,6 +287,7 @@ def _from_title(session: Any, folders: list[dict], tags: list[dict]) -> Organize
     tag_names = [str(t.get("name") or "") for t in tag_hits[:MAX_TAGS] if t.get("name")]
     return OrganizeProposal(
         session_key=str(getattr(session, "key", "")),
+        session_title=str(getattr(session, "title", "") or ""),
         folder_id=str(folder.get("id") or ""),
         folder_name=str(folder.get("name") or ""),
         tag_names=tag_names,
@@ -308,6 +315,7 @@ def _from_workspace(session: Any, folders: list[dict]) -> OrganizeProposal | Non
     folder = hits[0]
     return OrganizeProposal(
         session_key=str(getattr(session, "key", "")),
+        session_title=str(getattr(session, "title", "") or ""),
         folder_id=str(folder.get("id") or ""),
         folder_name=str(folder.get("name") or ""),
         source="workspace",
@@ -334,6 +342,7 @@ def _from_channel(session: Any, tags: list[dict]) -> OrganizeProposal | None:
         return None
     return OrganizeProposal(
         session_key=str(getattr(session, "key", "")),
+        session_title=str(getattr(session, "title", "") or ""),
         tag_names=[str(hits[0].get("name") or "")],
         source="channel",
         reason=f"this chat came from {channel}",
@@ -432,6 +441,7 @@ def parse_llm_reply(
                 tag_names.append(name)
     proposal = OrganizeProposal(
         session_key=str(getattr(session, "key", "")),
+        session_title=str(getattr(session, "title", "") or ""),
         folder_id=str(folder.get("id") or ""),
         folder_name=str(folder.get("name") or ""),
         tag_names=tag_names,
@@ -505,13 +515,19 @@ def surface_proposal(state: Any, proposal: OrganizeProposal) -> str:
         body_parts.append(f"folder “{proposal.folder_name}”")
     if proposal.tag_names:
         body_parts.append("tags " + ", ".join(f"“{t}”" for t in proposal.tag_names))
+    # 🪤 This row led with the SESSION KEY — "s-3bd6196a: folder “Work” … — the title matches
+    # this folder/tag". So it cited a title it never showed, and identified the chat by an
+    # identifier the user has no way to connect to a conversation. The title is what a chat is
+    # called everywhere else in the product, and the key stays in `refs["session"]`, which is what
+    # the accept/decline endpoints and the dedup key use.
+    subject = f"“{proposal.session_title}”" if proposal.session_title else proposal.session_key
     return emit_attention_item(
         state,
         source="skills",
         kind="proposal",
         item_kind=ItemKind.PROPOSAL.value,
         title="Organize an untagged chat",
-        body=f"{proposal.session_key}: {' + '.join(body_parts)} — {proposal.reason}",
+        body=f"{subject}: {' + '.join(body_parts)} — {proposal.reason}",
         refs={
             "session": proposal.session_key,
             "session_organize": dedup_key_for(proposal),
