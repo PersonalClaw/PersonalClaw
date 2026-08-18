@@ -4,7 +4,7 @@ import { ArrowLeft, Check, Zap, Settings2, AlertTriangle } from 'lucide-react'
 import { TopBar } from '../../ui/TopBar'
 import { IconButton } from '../../ui/IconButton'
 import { Button } from '../../ui/Button'
-import { api, type ActionProvider, type EventPattern } from '../../lib/api'
+import { api, type EventPattern } from '../../lib/api'
 import { useCachedData } from '../../lib/useCachedData'
 import { qget, useQueryParam, type RouteProps } from '../../app/useQueryState'
 import { Field, TextInput, Segmented } from '../../ui/forms'
@@ -39,7 +39,12 @@ export function TriggerCreatePage({ onBack, onCreated, query, setQuery }: {
   const setKind = (k: TriggerKind) => setKindRaw(k)
   // Shared with TriggersListPage under the same key, so the action-provider
   // dropdown is instant on reopen. persist:true — providers rarely change.
-  const { data: providers = [] } = useCachedData('triggers:action-providers', () => api.actionProviders().catch(() => [] as ActionProvider[]), { persist: true })
+  // 🔴 `.catch(() => [])` made a failed read look like an install with no action providers, and the
+  // Action picker then said "No action providers" while Save sat disabled telling the user to "Pick
+  // a provider" — a closed loop with no exit and nothing anywhere naming a failed request. Driven
+  // with `/api/action-providers` at 500: picker empty, reason "Pick a provider", zero alerts.
+  const { data: providers = [], error: providersErr, refresh: reloadProviders } =
+    useCachedData('triggers:action-providers', () => api.actionProviders(), { persist: true })
   const [saving, setSaving] = useState(false)
   const [err, setErr] = useState('')
   // A failed create used to render its message at the BOTTOM OF THE SCROLLING BODY while the Create
@@ -268,7 +273,9 @@ export function TriggerCreatePage({ onBack, onCreated, query, setQuery }: {
 
           {/* ── SECTION 2 · ACTION (identical for any trigger; only $variables differ) ── */}
           <SectionHeader icon={Settings2} title="Action" subtitle="What runs when it fires" />
-          <ActionConfig providers={providers} provider={provider} config={config} onProvider={pickProvider} onConfig={setConfig} vars={actionVars} />
+          <ActionConfig providers={providers} provider={provider} config={config} onProvider={pickProvider}
+            onConfig={setConfig} vars={actionVars}
+            loadError={providers.length === 0 ? providersErr : null} onRetryProviders={reloadProviders} />
           {/* Draft-by-default reminder (EIAT-5): a send-capable action delivers OUT to a channel. */}
           {sendCapable && (
             <div role="note" className="flex items-start gap-2 rounded-lg px-3 py-2 text-[0.8125rem]" style={{ background: 'color-mix(in srgb, var(--color-info) 10%, transparent)', color: 'var(--color-info)' }}>
@@ -291,9 +298,12 @@ export function TriggerCreatePage({ onBack, onCreated, query, setQuery }: {
           <Button onClick={create} disabled={saving || !canSave}
             disabledReason={saving ? undefined
               : !name.trim() ? 'Name the trigger first'
-                : !provider ? 'Pick a provider'
-                  : !requiredConfigMet ? 'Complete the required settings'
-                    : 'Set the event to match'}><Check size={16} /> {saving ? 'Creating…' : 'Create trigger'}</Button>
+                // The providers read comes FIRST among the provider-shaped reasons: telling someone to
+                // pick from a list that failed to load asks for something they cannot do.
+                : providersErr && providers.length === 0 ? "Couldn't load the action providers — retry above"
+                  : !provider ? 'Pick a provider'
+                    : !requiredConfigMet ? 'Complete the required settings'
+                      : 'Set the event to match'}><Check size={16} /> {saving ? 'Creating…' : 'Create trigger'}</Button>
         </div>
       </div>
     </div>
