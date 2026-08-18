@@ -1592,6 +1592,81 @@ half) is live and safe today; only cross-machine DELETE convergence waits on thi
   (3) Criterion 10 (a third-party `type:"sync"` app registers/configures/syncs with zero core changes)
   was not verified end to end. Those three are one coherent follow-up scope and want their own atom.
 
+## Execution log — DAS-10b (§4.2 conflict review queue + §4.3 sync config FE) — closes DAS-10
+
+- [2026-08-17][DAS-10b] **DONE — the three clauses DAS-10 recorded as UNMET.** (1) **The conflict
+  review queue got a route and a screen.** `durability/conflicts.py` was 321 lines with zero HTTP
+  reachability: `GET /api/durability/conflicts` (records + counts + whether a transport is even
+  configured) and `POST /api/durability/conflicts/{id}/resolve {choice, confirm}` now exist, wired in
+  `server.py`, with a `Conflicts to review` section in Settings → Backups. (2) **Sync configuration**
+  — a `Sync` section for the four `durability.sync_*` fields (enable, transport chooser over the
+  installed `type: "sync"` providers, staleness window, encryption) plus `sync` in `ProvidersPanel`'s
+  `ENTITY_META`, which previously rendered a real entity through the unknown-type fallback ("sync
+  providers", wrench icon). Each transport's OWN settings stay on its provider card — the standard
+  `/api/providers/{name}/schema` + `/config` routes — because that is the seam criterion 10 names.
+  (3) **Criterion 10 verified end to end**, not argued: `test_durability_sync_app_criterion10.py`
+  writes a third-party `acme-box-sync` app (an `app.json` + a `provider.py` importing core only via
+  `sdk.sync`) into a temp home, registers + enables it through the real provider registry, drives its
+  schema/config through the generic `/api/providers` routes, then runs `service.run_sync_job()` and
+  asserts shards landed in the folder the app owns, carry this machine's task row, and contain none of
+  the four secret markers. A final test greps `src/personalclaw` for the app name to keep "zero core
+  changes" a measured property.
+
+- [2026-08-17][DAS-10b] 🔴 **WRITER CENSUS, and the correction it forced.** The brief expected
+  `detect_conflicts`/`ConflictQueue` to have no production writer. They do:
+  `service.run_sync_job` → `sync_cycle.run_sync_cycle` (:104 builds the queue) → `pull_engine` →
+  `reconcile.reconcile_entry` (:199 detects, records, holds) and `service.py:419` drafts proposals
+  after a cycle with conflicts. So the queue is **genuinely fed** — its precondition is a configured
+  transport, which is exactly what clause (1) above had no UI for. The two halves were one gap.
+
+- [2026-08-17][DAS-10b] 🔴 **MEASURED: criterion 9's "separate review surfaces" cannot be exercised
+  today, and that is a fact about the inventory, not about this atom.** `detect_conflicts` fires only
+  for `merge ∈ {union_by_id, lww}` on a kind `reconcile` handles, and **no memory- or
+  knowledge-domain entry is both**: the memory/knowledge/lexicon/learning stores are `sqlite`
+  (ATTACH-OR-IGNORE has no conflict concept), `memory_ids` is `replace_only`, and
+  `knowledge_files`/`learning_proposals` are `tree` kinds reconcile declines. So building a memory
+  screen and a knowledge screen would be enforcing a control over a population of zero. Instead the
+  routing is kept correct and made OBSERVABLE: the list returns `counts.by_surface` for every
+  surface, the panel says "N memory conflicts are waiting on their own review surface" rather than
+  implying none exist, and `test_no_memory_or_knowledge_entry_can_currently_conflict` fails the day
+  an entry changes — at which point the two screens become real, declared work.
+
+- [2026-08-17][DAS-10b] **Failure semantics for the resolve, stated rather than implied:
+  RECOVERABLE, not transactional** — matching the §6 half's choice. Order: the store write first (a
+  WHOLE-ENTRY rewrite through `writeback.apply_rows` with the reviewed row substituted by id), then
+  the queue flip to `resolved`. A failed write leaves the record `needs-review` and the store
+  untouched; a landed write whose queue update fails ALSO reports a refusal, and re-resolving writes
+  identical bytes, so the recoverable direction is "ask again", never "half-applied and reported
+  done". The whole-entry rewrite is load-bearing, not an optimisation: `apply_rows` writes the SET it
+  is handed, so a single-row apply would truncate a `jsonl_append` stream to one event —
+  `test_resolving_one_row_does_not_truncate_the_store` pins it. Refusals are typed
+  (`unknown_choice`/`not_found`/`already_resolved`/`unknown_entry`/`unsupported_kind`/`no_version`/
+  `write_failed`), and `accept_proposal` REFUSES when the LLM draft failed rather than falling back
+  to a version the user did not ask for. Both routes are `owner_only` (403 on an app token) and the
+  resolve requires `confirm: true` for **every** choice including `keep_local` — same "one signal to
+  look, two to write" contract as §6.
+
+- [2026-08-17][DAS-10b] **Gates:** `make lint` clean (black/isort/flake8 + mypy, 904 source files,
+  1759 formatted); targeted pytest 285 pass (`test_durability_conflict_review` 16 new +
+  `test_durability_conflicts` + `reconcile` + `writeback` + `service` + `sync_service` +
+  `dsar_routes` + `inventory` + `agent_reference` + `portability` + `portability_dsar` +
+  `inert_surface_baseline`), `tests/security` 66 pass, criterion-10 file + `sync_transport_contract`
+  11 pass; web `npm run typecheck` + full `npm test` (366 files, 3711 tests) + `npm run build` green.
+  Reference docs regenerated for the two new routes. **Falsifications (4, each restored from a file
+  copy):** forcing the list handler to return `[]` reds
+  `AssertionError: assert '79246c3c351c83b0' in []`; emptying the panel's `pending` list reds six FE
+  tests with `Unable to find an element with the text: task-42`; swallowing the queue rejection into
+  an empty answer reds `Unable to find an element with the text: /could not be read/i`; neutering the
+  confirm gate reds `assert 200 == 409` here AND `assert 404 == 409` in the §6 half's restore test.
+  **Drove as a user** on an isolated `.dev-home` at :10461 (real-home file count in the last two
+  hours afterwards: **0**): a conflict seeded through the real detector listed over HTTP through the
+  registered route; unconfirmed resolve → 409 `confirm_required` with the store byte-unchanged;
+  `accept_proposal` on an undrafted record → 409 `no_version`; confirmed `take_remote` → 200, the
+  peer's title written, **the sibling task file untouched**; a repeat → 409 `already_resolved`. The
+  browser could not be driven (the devtools profile was held by a parallel session), so the panel
+  itself is covered by 12 RTL tests against the real component plus a check that the built bundle
+  carries the new copy.
+
 ## Execution log — DAS-8 (§4.4 encryption + the SYNC egress profile) — **PARTIAL**
 
 - [2026-08-17][DAS-8] **PARTIAL — the atom stays `todo`.** The §4.4 *encryption* half and the

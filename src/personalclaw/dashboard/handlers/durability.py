@@ -540,3 +540,171 @@ async def api_durability_archive_restore(request: web.Request) -> web.Response:
         candidate.name,
     )
     return web.json_response(result, status=200 if result.get("ok", True) else 409)
+
+
+# ── the conflict review queue (§4.2 item 2/3, DAS-10) ────────────────────────
+#
+# `durability/conflicts.py` shipped the detector and the durable queue with no route and no
+# screen, so a both-sides-edited divergence was recorded, held the local row, and then had no
+# way to be seen or decided. These two routes are that surface's back end.
+#
+# Owner-only and confirm-gated for the same reasons as the §6 four: the payload is the user's
+# own rows on both machines, and a resolve WRITES one of them into the live store.
+
+#: Cap on rows returned in one page. A conflict is rare by construction (§4.2), but a record
+#: carries two whole rows plus a proposal, so an unbounded list could be megabytes.
+_CONFLICT_LIMIT = 50
+
+
+async def api_durability_conflicts(request: web.Request) -> web.Response:
+    """GET /api/durability/conflicts?surface=&status=&limit= — the review queue (§4.2).
+
+    Returns the records themselves plus the COUNTS the surface needs to be honest:
+
+    * ``counts.by_surface`` — how the §4.2 item-3 routing actually landed. The Durability
+      panel reviews its own surface; memory- and knowledge-domain conflicts route to theirs,
+      and a panel that showed only its own slice with no count for the others would read as
+      "no conflicts" while two waited elsewhere.
+    * ``sync`` — whether a transport is even configured. Zero conflicts on an unconfigured
+      instance means "sync has never run", not "sync is healthy", and those must not render
+      identically.
+    """
+    denied = _reject_app(request)
+    if denied is not None:
+        return denied
+    from personalclaw.durability import conflicts as conflicts_mod
+    from personalclaw.durability import service
+
+    surface = str(request.query.get("surface", "") or "").strip()
+    status = str(request.query.get("status", "") or "").strip()
+    try:
+        limit = max(1, min(_CONFLICT_LIMIT, int(request.query.get("limit", _CONFLICT_LIMIT))))
+    except (TypeError, ValueError):
+        limit = _CONFLICT_LIMIT
+
+    def _collect() -> dict:
+        home = Path(service.active_home())
+        queue = conflicts_mod.ConflictQueue(home)
+        everything = queue.items()
+        by_surface: dict[str, int] = {}
+        for rec in everything:
+            if rec.status == conflicts_mod.STATUS_NEEDS_REVIEW:
+                by_surface[rec.surface] = by_surface.get(rec.surface, 0) + 1
+        selected = queue.items(surface=surface, status=status)
+        # The PUBLIC status projection, not the config object: it already resolves the
+        # encryption tri-state and is the one shape the panel's sync section reads.
+        sync = dict(service.status().get("sync") or {})
+        return {
+            "conflicts": [rec.to_dict() for rec in selected[-limit:]],
+            "truncated": len(selected) > limit,
+            "counts": {
+                "total": len(everything),
+                "needs_review": sum(
+                    1 for r in everything if r.status == conflicts_mod.STATUS_NEEDS_REVIEW
+                ),
+                "by_surface": by_surface,
+                "selected": len(selected),
+            },
+            "surfaces": {
+                "memory": conflicts_mod.SURFACE_MEMORY,
+                "knowledge": conflicts_mod.SURFACE_KNOWLEDGE,
+                "durability": conflicts_mod.SURFACE_DURABILITY,
+            },
+            "sync": {
+                "enabled": bool(sync.get("enabled", False)),
+                "transport": str(sync.get("transport", "") or ""),
+                "configured": bool(sync.get("transport", "")),
+            },
+        }
+
+    payload = await asyncio.get_event_loop().run_in_executor(None, _collect)
+    return web.json_response(payload)
+
+
+async def api_durability_conflict_resolve(request: web.Request) -> web.Response:
+    """POST /api/durability/conflicts/{id}/resolve {choice, confirm} — apply one decision.
+
+    ``confirm: true`` is required for EVERY choice, including ``keep_local``: each one closes
+    a held divergence, and two of the three overwrite a row the other machine also edited.
+    One signal for "look" (the GET above), two for "write" — the same contract the §6
+    import/restore verbs use.
+
+    Refusals are typed (:func:`durability.conflict_resolve.resolve_conflict` owns the codes)
+    and carry HTTP status by class: 400 for a malformed ask, 404 for an unknown record, 409
+    for a state that makes the ask impossible, 500 only when the write itself failed.
+    """
+    denied = _reject_app(request)
+    if denied is not None:
+        return denied
+    from datetime import datetime, timezone
+
+    from personalclaw.durability import conflict_resolve as resolver
+    from personalclaw.durability import service
+
+    body: dict = {}
+    if request.can_read_body:
+        try:
+            body = await request.json()
+        except (json.JSONDecodeError, ValueError):
+            return web.json_response(
+                {"error": {"code": "bad_body", "message": "body must be JSON"}}, status=400
+            )
+    if not isinstance(body, dict):
+        return web.json_response(
+            {"error": {"code": "bad_body", "message": "body must be a JSON object"}}, status=400
+        )
+
+    record_id = str(request.match_info.get("id", "") or "").strip()
+    if not record_id:
+        return web.json_response(
+            {"error": {"code": "conflict_required", "message": "conflict id is required"}},
+            status=400,
+        )
+    choice = str(body.get("choice", "") or "").strip()
+    if body.get("confirm") is not True:
+        _audit_api(request, "durability_conflict_resolve", "denied", f"{record_id}:unconfirmed")
+        return web.json_response(
+            {
+                "ok": False,
+                "error": {
+                    "code": "confirm_required",
+                    "message": (
+                        "resolving a conflict writes the chosen version into this home; "
+                        "resend with confirm: true"
+                    ),
+                },
+            },
+            status=409,
+        )
+
+    now = datetime.now(timezone.utc).isoformat()
+    outcome = await asyncio.get_event_loop().run_in_executor(
+        None,
+        lambda: resolver.resolve_conflict(Path(service.active_home()), record_id, choice, now=now),
+    )
+    if not outcome.ok:
+        status = {
+            "unknown_choice": 400,
+            "not_found": 404,
+            "already_resolved": 409,
+            "unknown_entry": 409,
+            "unsupported_kind": 409,
+            "no_version": 409,
+            "write_failed": 500,
+        }.get(outcome.code, 400)
+        _audit_api(request, "durability_conflict_resolve", "denied", f"{record_id}:{outcome.code}")
+        return web.json_response(
+            {"ok": False, "error": {"code": outcome.code, "message": outcome.message}},
+            status=status,
+        )
+    _audit_api(request, "durability_conflict_resolve", "allowed", f"{record_id}:{choice}")
+    return web.json_response(
+        {
+            "ok": True,
+            "choice": outcome.choice,
+            "id": outcome.record_id,
+            "written": outcome.written,
+            "removed": outcome.removed,
+            "conflict": outcome.record,
+        }
+    )
