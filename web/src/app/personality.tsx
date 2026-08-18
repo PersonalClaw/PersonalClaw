@@ -36,6 +36,25 @@ interface Ctx {
   all: Personality[]
   /** Switch identity. Passing the default id restores the original chrome. */
   activate: (id: string) => void
+  /** Apply a colour scheme the user picked DIRECTLY, rather than through an identity.
+   *
+   *  Any scheme that is not the active identity's own `baseScheme` is the user saying
+   *  "give me a standard look", so the identity is deactivated first and only then is
+   *  the picked scheme applied (it lands last, so its colours win). Without this the
+   *  palette changed and every other piece of the identity stayed: the tab title, the
+   *  favicon, the wordmark, `data-personality`, the density and the dials all survived
+   *  a scheme pick — and survived a RELOAD too, because the identity is persisted. That
+   *  is precisely the residue this provider's full-restore contract exists to prevent,
+   *  leaking through the one control that never went through `activate`.
+   *
+   *  Picking the identity's OWN base scheme is not an exit (it is already active), so it
+   *  passes straight through — otherwise clicking the tile that is already lit would
+   *  silently drop the identity.
+   *
+   *  Deliberately does NOT touch `agent.bot_name`. That is server state the picker only
+   *  ever writes with explicit consent, and a colour tile carries no consent surface, so
+   *  clearing it here would be an unasked-for write to the user's configuration. */
+  pickScheme: (schemeId: string) => void
   /** The wordmark label to render (falls back to the product name). */
   wordmarkLabel: string
 }
@@ -127,14 +146,23 @@ export function PersonalityProvider({ children }: { children: ReactNode }) {
     [applyScheme, setSelect, setScalar, resetToken],
   )
 
+  const pickScheme = useCallback(
+    (schemeId: string) => {
+      if (schemeId !== personality.baseScheme) activate(DEFAULT_PERSONALITY)
+      applyScheme(schemeId)
+    },
+    [personality, activate, applyScheme],
+  )
+
   const value = useMemo<Ctx>(
     () => ({
       personality,
       all: PERSONALITIES,
       activate,
+      pickScheme,
       wordmarkLabel: personality.behavior.wordmarkLabel ?? 'PersonalClaw',
     }),
-    [personality, activate],
+    [personality, activate, pickScheme],
   )
 
   return <PersonalityCtx.Provider value={value}>{children}</PersonalityCtx.Provider>
@@ -193,6 +221,7 @@ export function usePersonality(): Ctx {
     personality: resolvePersonality(DEFAULT_PERSONALITY),
     all: PERSONALITIES,
     activate: () => {},
+    pickScheme: () => {},
     wordmarkLabel: 'PersonalClaw',
   }
 }
