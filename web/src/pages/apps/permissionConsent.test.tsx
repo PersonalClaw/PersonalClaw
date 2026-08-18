@@ -191,3 +191,75 @@ describe('PermissionList — declared proposal kinds are disclosed as enforced',
     expect(container.textContent ?? '').not.toMatch(/Can ask you to approve/)
   })
 })
+
+// ── APE-1: backgroundTasks + eventSubscriptions are disclosed WITHOUT claiming
+//    enforcement ─────────────────────────────────────────────────────────────────────
+//
+// A third case, and the reason this file exists. `appMessaging`/`desktop`/`proposals` are
+// enforced, so they belong in the bullets. `network` is unenforceable in principle, so it
+// gets an always-on advisory row. These two are enforced by NOTHING TODAY because the
+// runtimes are not built: no core code hosts an app worker (APE-3) and no platform event
+// is delivered to any app, declared or not (APE-2's registry). Two readings to kill:
+//
+//  1. Listing them among "Permissions the gateway enforces" — the D2 defect verbatim, and
+//     worse here, because there is not even a partial mechanism behind them.
+//  2. Rendering nothing at all — the declaration is a STANDING grant that goes live with
+//     no second prompt once the host ships, so install is the user's only say.
+//
+// Annotated `AppPermissionsWire`, NOT cast: a wire type missing the field must fail
+// `tsc --noEmit` here. The key set is pinned server-side by
+// `tests/test_app_permissions.py::test_consent_wire_declares_exactly_the_permissions_the_
+// server_emits`; this is the rendering half.
+const PENDING_PAYLOAD: AppPermissionsWire = {
+  cron: true,
+  backgroundTasks: true,
+  eventSubscriptions: ['session.created', 'task.completed'],
+}
+
+describe('PermissionList — backgroundTasks/eventSubscriptions are declared, not enforced', () => {
+  it('keeps both OUT of the enforced bullets', () => {
+    const { container } = render(<PermissionList perms={PENDING_PAYLOAD} />)
+    const rows = enforcedRows(container)
+    expect(rows.some((r) => /background worker/i.test(r))).toBe(false)
+    expect(rows.some((r) => /platform event/i.test(r))).toBe(false)
+    expect(rows.some((r) => /session\.created/.test(r))).toBe(false)
+    // The vacuity floor: the enforced list still renders what IS enforced.
+    expect(rows.some((r) => /Scheduled jobs/.test(r))).toBe(true)
+  })
+
+  it('still discloses both, and says plainly that neither does anything yet', () => {
+    const { container } = render(<PermissionList perms={PENDING_PAYLOAD} />)
+    const text = container.textContent ?? ''
+    expect(text).toMatch(/Declared, not yet in effect/)
+    expect(text).toMatch(/Run a long-lived background worker/)
+    // Every declared event name is named — a subscription the user cannot see is a grant
+    // they did not weigh.
+    expect(text).toMatch(/Receive platform events: session\.created, task\.completed/)
+    expect(text).toMatch(/grants the app nothing today/)
+    // And that it becomes live later without a second prompt — the material fact.
+    expect(text).toMatch(/without asking you again/)
+  })
+
+  it('discloses each grant on its own, not only as a pair', () => {
+    const worker = render(<PermissionList perms={{ backgroundTasks: true }} />)
+    expect(worker.container.textContent ?? '').toMatch(/Run a long-lived background worker/)
+    expect(worker.container.textContent ?? '').not.toMatch(/Receive platform events/)
+    const events = render(<PermissionList perms={{ eventSubscriptions: ['knowledge.ingested'] }} />)
+    expect(events.container.textContent ?? '').toMatch(/Receive platform events: knowledge\.ingested/)
+    expect(events.container.textContent ?? '').not.toMatch(/background worker/)
+  })
+
+  it('makes no claim at all for an app that declares neither', () => {
+    // Unlike `network`, silence here is TRUE: the app gets no worker and no event either
+    // way, so an always-on row would imply a worker host the platform does not have.
+    for (const perms of [{}, { cron: true }, { storage: true }]) {
+      const { container } = render(<PermissionList perms={perms} />)
+      expect(container.textContent ?? '').not.toMatch(/Declared, not yet in effect/)
+    }
+    // ...and an empty declaration is not mistaken for a declaration.
+    const { container } = render(
+      <PermissionList perms={{ backgroundTasks: false, eventSubscriptions: [] }} />,
+    )
+    expect(container.textContent ?? '').not.toMatch(/Declared, not yet in effect/)
+  })
+})

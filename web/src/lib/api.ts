@@ -392,6 +392,16 @@ export interface AppPermissionsWire {
   // never propose a callback into ANOTHER app. Absent = it may raise no proposal at all,
   // which the consent UI states rather than implies.
   proposals?: AppProposalKindWire[]
+  // APE-1: the two grants that are NOT enforced yet, and must not be shown as if they
+  // were. `backgroundTasks` = the app may run a long-lived supervised worker (APE-3
+  // hosts it); `eventSubscriptions` = typed platform events it subscribes to (APE-2's
+  // registry owns the names — exact matches, no wildcard). Neither runtime exists today,
+  // so nothing hosts a worker and no platform event is delivered to any app, declared or
+  // not. They are disclosed because the declaration is a STANDING grant: it goes live
+  // with no second prompt once that support ships. `PermissionList` puts them under
+  // "declared, not yet in effect", never among the enforced bullets.
+  backgroundTasks?: boolean
+  eventSubscriptions?: string[]
 }
 /** INU-7. One declared proposal kind. `kind_suffix` is namespaced under the app at
  *  registration (`app:<name>` / `proposal:<suffix>`); `label` is what the user sees. */

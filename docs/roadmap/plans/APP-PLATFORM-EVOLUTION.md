@@ -124,6 +124,30 @@ Request `{to: "<app>", type: "<str>", payload: {...}}`; broker verifies the call
 | T3.2 | `storageRead`/`storageShared` manifest pair + consent surface + read-only env mount + `sdk/util.py::shared_app_data_dir` | `apps/manifest.py`, `apps/permissions.py`, `backend_runtime.py`, `sdk/util.py`, consent UI | fixture consumer reads the sharer's file; undeclared pair gets no mount; write attempt fails; consent lists the grant; boundary test green |
 
 ## Execution log
+- [2026-08-18][S1 · atom `APE-1`] **DONE** — `permissions.backgroundTasks` (bool) and
+  `permissions.eventSubscriptions` (list of exact platform-event names, **no wildcard**) parse, serialize and
+  disclose. Round-trip is a fixed point for declared / absent / empty, and absent-or-empty emits **no key** —
+  a spurious `backgroundTasks: false` would render as a grant the app never made. Verified on the server legs
+  too (`catalog._manifest_consent` and a real `GET /api/apps`), not just the dataclass, because the wire has
+  dropped a server-emitted field before.
+  **DISCOVERY — nothing enforces either grant today, and the copy says so.** No core code hosts an app worker
+  (that is `APE-3`) and nothing delivers a platform event (`APE-2`), so the consent surface gets a third,
+  declared-only block reading *"Declared, not yet in effect … this grants the app nothing today — it is
+  disclosure, not capability. It takes effect without asking you again once that support ships."* Disclosed
+  because the declaration is a standing grant that goes live with **no second consent prompt**; kept OUT of the
+  enforced bullets, pinned by a rail that reds if either is pushed into them.
+  **DEVIATION (deliberate):** no `can_use_*` accessor was added. Every existing checker in `apps/permissions.py`
+  has a live call site; an accessor with none is an enforcement point that enforces nothing, so `APE-2`/`APE-3`
+  should add the check where it gates. `permissions.py` is untouched despite T1.1's file list naming it.
+  **Contract pinned:** `eventSubscriptions` is NOT `events` — declaring `session.created` does not widen the
+  gateway's WS allowlist (`test_event_subscriptions_do_not_widen_the_ws_event_allowlist`), or `APE-2` would
+  inherit a second, wider path to the same data.
+  **Coherence note for `APE-3`:** there are now three adjacent "run something unattended" grants — `cron`,
+  `agent`, `backgroundTasks`. Do not mint a fourth.
+  Gate: `make lint` 0 (mypy 909) · 88 targeted · full `make test` 22079 passed · web 391 files / 3980 tests ·
+  typecheck + build clean. Not live-driven in a browser: the consent claim rests on component tests, the HTTP
+  payload leg and the two-sided wire rail.
+
 
 - [2026-08-13][APE-12] DONE. **A comment claimed a consent surface that did not exist.**
   `apps/manifest.py:313` said of `permissions.appMessaging`: *"This is the install-consent surface
