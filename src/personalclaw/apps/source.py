@@ -21,9 +21,12 @@ import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
+from personalclaw.apps.manager import APP_MANIFEST_FILENAME
+
 logger = logging.getLogger(__name__)
 
 _CLONE_TIMEOUT = 120  # seconds — bounded git clone
+_MULTI_APP_PREVIEW = 5  # apps named in the multi-app hint before it says "and N more"
 
 
 class SourceError(Exception):
@@ -48,14 +51,41 @@ def _looks_like_git_url(source: str) -> bool:
     return s.startswith(("http://", "https://", "git://", "ssh://", "git@")) or s.endswith(".git")
 
 
+def _subdir_app_names(root: Path) -> list[str]:
+    """The immediate subdirectories of a clone that hold an ``app.json`` — i.e. the
+    installable apps of a multi-app repository (the published apps repo's shape)."""
+    out: list[str] = []
+    for child in sorted(root.iterdir()):
+        if not child.is_dir() or child.name.startswith("."):
+            continue
+        if (child / APP_MANIFEST_FILENAME).is_file():
+            out.append(child.name)
+    return out
+
+
+def _multi_app_hint(url: str, apps: list[str]) -> str:
+    """The install error for a multi-app repo pasted WITHOUT a ``#app`` suffix.
+
+    Renders verbatim in the Store, so it names the count, the exact source string the
+    user has to type instead, and a bounded preview rather than a 45-name dump."""
+    preview = ", ".join(apps[:_MULTI_APP_PREVIEW])
+    if len(apps) > _MULTI_APP_PREVIEW:
+        preview += f", and {len(apps) - _MULTI_APP_PREVIEW} more"
+    return (
+        f"{url} holds {len(apps)} apps, not one — install a single app by appending "
+        f"#app to the URL, e.g. {url}#{apps[0]}. Available: {preview}."
+    )
+
+
 def resolve(source: str) -> ResolvedSource:
     """Resolve an install source string to a local directory.
 
     A local directory path resolves in place (no cleanup). A git URL is
     shallow-cloned into a temp dir (caller cleans up). Supports the
     ``url#subdirectory`` format for installing a specific app from a
-    multi-app git repo. Raises :class:`SourceError` on a missing path or
-    a failed clone."""
+    multi-app git repo — a multi-app repo given WITHOUT that suffix raises
+    with the ``#app`` form and the app names it found. Raises
+    :class:`SourceError` on a missing path or a failed clone."""
     s = str(source).strip()
     if not s:
         raise SourceError("empty install source")
@@ -80,6 +110,14 @@ def resolve(source: str) -> ResolvedSource:
                 cleanup=True,
                 _cleanup_root=resolved.path,
             )
+        elif not (resolved.path / APP_MANIFEST_FILENAME).is_file():
+            # A multi-app repo (no root manifest, apps in subdirs) pasted as a bare URL.
+            # Without this the install dies deep in staging as "no app.json in source",
+            # which is true of the ROOT and useless to a user holding a 45-app repo.
+            apps = _subdir_app_names(resolved.path)
+            if apps:
+                _rmtree(resolved.path)
+                raise SourceError(_multi_app_hint(base, apps))
         return resolved
 
     path = Path(s).expanduser()

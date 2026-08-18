@@ -109,3 +109,64 @@ lowercase `ghcr.io/personalclaw` (Docker requirement) — both correctly map to 
 - **App-owned CLI setup contributions** (documented S08 judgment): move channel-app
   setup flows from the core CLI passthrough into app-owned CLI contributions — now owned
   by PROVIDER-BOUNDARY-COMPLETION S2.
+
+## Execution log
+
+### 2026-08-18 — `PUBL-9` DONE (Store git-source install from the published apps repo)
+
+Drove the real endpoints against `https://github.com/PersonalClaw/PersonalClawApps` on an
+isolated home (`.dev-home`, auth ON — token in `?token=`, never `AUTH_MODE=none`).
+
+**Numbers.** The published repo has NO `app-registry.json`, so it reaches the Store through
+the clone-then-subdir-scan fallback: cold `GET /api/apps/catalog` = **4.3s → 45 `gitApps`**,
+all `sourceKind: "git"`, each with `pointer: "<url>#<app>"`. `POST /api/apps` with a catalog
+pointer installed `wikipedia-search` 0.1.0 (**HTTP 201**, scan `clean`/`community`,
+`origin: external`) — present under `$PERSONALCLAW_HOME/apps/` and in `GET /api/apps`. A
+second install (`duckduckgo-search`) confirmed the path after the fixes. Third catalog call
+(both sources cached) = **0.14s**, so the TTL cache is real and a repeat measurement can fake
+a pass — `_GIT_SCAN_TTL_SECS` is 300s.
+
+**Two defects found and fixed.**
+
+1. *Multi-app repo URL is illegible.* `POST /api/apps` with the repo URL as a user would
+   paste it (no `#app`) failed with `no app.json in source` — true of the repo ROOT and
+   useless to someone holding 45 apps. `source.resolve` now detects the multi-app shape at
+   the clone and returns: `… holds 45 apps, not one — install a single app by appending #app
+   to the URL, e.g. …#alibaba-models. Available: …, and 40 more.` (HTTP 400). Verified live.
+2. *The `.git` suffix forks one repo into two sources.* `POST /api/apps/sources` with
+   `…/PersonalClawApps` (no `.git`) appended a SECOND source beside the shipped `.git`
+   default: two indistinguishable rows, and a redundant full shallow clone per catalog
+   refresh — **measured 3.42s for zero extra apps** (all 45 entries stayed attributed to the
+   default; name-dedup hid the effect). Git sources now de-dup on a normalized key across
+   defaults + user entries, on add, list and remove. The raw string is still what gets
+   cloned, since the suffix is load-bearing for a bare `file://` remote. A duplicate written
+   before the fix collapses on read — no migration needed.
+
+**Regression.** `_scan_git_source` had **zero** functional coverage (its only mention was a
+spawn-ceiling allowlist row). Added 8 offline tests that build a real bare git repo of the
+published shape and drive it over `file://` — the same git code path, no network, no skips.
+Includes a vacuity floor (an exact `len(git_apps) == 2`, so a scan finding nothing FAILS
+rather than passing forever on `[]`) and a TTL-cache test.
+
+**DISCOVERY — a silent source is unreportable.** `POST /api/apps/sources` returns
+`{"ok": true}` for a URL that cannot be cloned (verified with a typo'd repo), and
+`available_catalog()` has no error channel at all — `_scan_git_source` swallows the clone
+failure and caches `[]` for 5 minutes. A user who mistypes the repo URL gets a permanently
+empty source row and no explanation. Fixing it needs a new catalog field plus a frontend
+surface, so it is out of this atom's scope. **Owner decision needed.**
+
+**DISCOVERY — the unit suite clones the published repo over the network.** `available_catalog()`
+issues 3 git subprocesses against the real remote (a treeless registry probe, a `git show`,
+and the depth-1 scan clone); nothing in `tests/conftest.py` neutralizes `_DEFAULT_GIT_SOURCES`
+or clears `_git_scan_cache`/`_registry_cache`. Every test calling `available_catalog()` reaches
+github.com, and OFFLINE it degrades to zero apps silently rather than failing — so the
+dependency cannot be noticed. The new tests opt out via a local fixture; a suite-wide
+conftest guard is deliberately NOT taken here (it would break
+`test_default_first_party_git_source_present`, which asserts the default IS present).
+**Owner decision needed.**
+
+**Gate.** `make lint` clean (black 1769 files, isort, flake8, mypy 908 files); targeted
+`pytest` 57 passed (`test_app_catalog` + `test_inbox_app_sources` + `test_app_install_fix_prompt`
++ `test_spawn_ceiling_audit`); full `make test` green. Real home `~/.personalclaw` unchanged:
+110496 files before and after, 0 files newer than the drive cutoff (probe positive control 1,
+negative control 0).
