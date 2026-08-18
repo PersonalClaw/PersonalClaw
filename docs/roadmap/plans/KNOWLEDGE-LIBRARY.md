@@ -861,3 +861,94 @@ Sequence these **independently of S1-S3** — they touch the store's indexing la
     full `npm test --workspace web` **320 files / 3298 tests passed** (no design, token,
     primitive-adoption or reduced-motion ratchet moved) · `npm run build --workspace web` rc 0 ·
     `tests/test_knowledge_merge.py` **37 passed** (was 28) · `regen_dag_derived.py --check` current.
+
+- 2026-08-18 — **DONE (S3: T3.2 remainder — atom `KL-6`'s unmet clauses).** The frontend and the
+  routes landed above; what had not was the clause they rest on — *"the Knowledge UI **surfaces**
+  near-duplicate candidates for an item"*. Census of `KL-6`'s `done_when` against `origin/main`
+  @ `fc1a220d`, clause by clause: merge action drives `GET /duplicates` + `POST /merge` —
+  **shipped**. Two near-dupes merge from the UI, survivor keeps collections + mentions, loser 404s —
+  **shipped** (`tests/test_knowledge_merge.py::test_the_route_leaves_the_loser_404ing`, `…_keeps_the_path_item_and_moves_both_sides_curation`).
+  Reduced-motion / theme / token-lint — **shipped**. Swallowed merge failure and failed-fetch-as-empty-state,
+  the two shapes worth suspecting here — **both clean** (`DuplicateList.tsx:45-59,121-125`,
+  `KnowledgeDetailPage.tsx:119-124,252`). Surfacing — **three defects, all fixed here.**
+  - **🔴 THE SECOND SILENT-EMPTY PATH ON THIS SURFACE.** `store.find_duplicates` delegated to
+    `find_fuzzy_dup_candidates`, which is `ORDER BY created_at DESC LIMIT ?` — the right bound for
+    the INGEST path (the anchor is the row being ingested; the cosine loop must stay cheap) and the
+    wrong one read on demand, because it spends the caller's `limit` on *how many items are scored
+    at all*, newest first. **Measured on a 32-item library:** an exact-title pair scoring
+    `is_dup=True`, `filename_sim=1.0000`, `cosine=0.9950` returned **`[]`** at the shipped default
+    `limit=25`. The route caps `limit` at 50, so past ~50 same-type embedded items the panel whose
+    entire job is to say "a second copy exists" said *"no duplicates"* permanently — and the shape it
+    hid is precisely the one it exists for: an old copy, a new copy, and a library grown in between.
+    It failed the same way the `is_duplicate` typo did, which is why it survived that fix: on a
+    surface where empty is the right answer for almost every item, a scan that never looked and a
+    scan that found nothing print the same list.
+    **Now bounded by the RULE, not by recency**, in two phases: the free filename leg over the WHOLE
+    eligible corpus (title/path columns only, no `LIMIT`, no blob reads) via the new public
+    `dedup.filename_similarity` at the resolver's own `dedup.FILENAME_SIM_MIN`; then embeddings
+    decoded and cosine scored ONLY for what survives. Strictly less BLOB work than before (which
+    decoded up to 25 embeddings unconditionally; this decodes only title-gated survivors — 1 in the
+    benchmark below), traded for a full-table pass over two text columns. **Measured on a 2,001-item
+    / 384-dim library:** new path **15.8 ms, finds the duplicate**; the old recency bound **5.9 ms,
+    finds nothing** (the same corpus, the cap restored on the live line). So this is not free — it is
+    ~10 ms to answer the question at all, and the honest framing is that the old number bought its
+    speed by not looking. `limit` now caps RESULTS — what the route and the UI always meant. `find_fuzzy_dup_candidates` is untouched, so the ingest path is
+    byte-identical; the two share eligibility (active, unarchived, same type, embedded) and differ
+    only in how many they are willing to score.
+  - **"Best match first" was a docstring's word, never code.** Both the store method and the route
+    said it; rows came back in the prefilter's `created_at DESC` order, so the weakest match could
+    head a list the UI renders top-down beside a delete button. Now sorted by cosine, then filename
+    similarity, then id for a stable total order.
+  - **The reason the UI shows to justify a delete was one constant.** `DuplicateList.tsx:149-151`
+    renders `reason` because "without it a merge button asks the user to destroy a document on the
+    app's unexplained word" — but `DupVerdict.reason` on the positive branch is the single literal
+    `"fuzzy dup (filename+cosine+date-gate)"`, identical for a 0.90 match and a 1.00 one, naming the
+    RULE rather than the MATCH, while the verdict's two measured numbers were dropped on the floor in
+    `find_duplicates`. Telling: the frontend test's own mock (`duplicateMerge.test.tsx:40`) reads
+    `'title 0.97 + cosine 0.99, same series date'` — the fixture was more informative than the wire.
+    Rows now carry `similarity` + `title_similarity` and a per-candidate sentence composed in
+    `store._dup_reason` (server-composed copy is a UI surface, so it is written for the person about
+    to delete a document): *"Same title · content similarity 0.99"*. The exact-title case is named
+    rather than scored `1.00`, because the filename leg gates at 0.85 so a surfaced candidate usually
+    shares the anchor's title outright. Similarities **truncate**, never round — `0.999` must not
+    print as `1.00` next to a delete button, which is a stronger claim than the scorer made.
+  - **DEVIATION — no frontend diff, deliberately.** The numbers reach the user through the `reason`
+    sentence the UI already renders verbatim. Adding `similarity`/`title_similarity` to the
+    `KnowledgeDuplicate` interface with no reader would be a declared-but-unread field; the fields
+    exist on the wire for a future consumer and the type gains them when one appears.
+  - **Threshold boundary rails (the flagged "no test at its boundary").** Every pre-existing gate
+    test sat far from the line (1.0 vs 0.0 cosine, disjoint vs identical titles), so both `<`
+    comparisons and both constants were unpinned — a flip to `<=` or a nudge to 0.91 re-scopes which
+    pairs a destructive UI proposes, with nothing going red. Added: the constants pinned to
+    `(0.85, 0.90)`; the cosine floor exercised AT the threshold, one thousandth below, one above; the
+    filename floor at `17/20 = 0.85` exactly, `16/20 = 0.80` below, `18/20 = 0.90` above; and that
+    `filename_similarity` is the same metric the resolver gates on (the prefilter and the scorer
+    disagreeing would drop confirmable pairs silently, as an empty list).
+  - **Vacuity floors, because a dedup rail over a corpus with no near-duplicates passes forever.**
+    The window test asserts its corpus really exceeds the default limit (else it stops testing the
+    window the moment the limit rises); the ordering and reason tests assert BOTH candidates cleared
+    the gates; the boundary parametrizes assert the fixture LANDED on the boundary and that the other
+    leg is out of the way. That last floor earned itself immediately: the first filename-boundary
+    fixture put distinct tokens on both sides, making the union `2n − shared` — `17/23 = 0.739`, not
+    `0.85` — and the assertion caught it (`AssertionError: the fixture missed the boundary it
+    targets / assert 0.7391304347826086 == 0.85 ± 1.0e-09`) instead of quietly testing an interior
+    point.
+  - **Falsifications (5), each mutated on the live line, `py_compile`d, run, then restored from a
+    file copy.** (1) Recency cap restored (`ORDER BY created_at DESC LIMIT 25` back on the phase-1
+    scan) → *"AssertionError: the older copy is the duplicate; a recency-capped scan reports no
+    duplicates at all / assert [] == ['aff09a39-…']"*. (2) Sort inverted to weakest-first → the
+    ordering test AND the result-cap test red (*"assert ['c22a4cbe…'] == ['6d071464…']"*). (3)
+    `_dup_reason` reverted to `verdict.reason` → *"one constant for every row reviews nothing:
+    ['fuzzy dup (filename+cosine+date-gate)', 'fuzzy dup (filename+cosine+date-gate)'] / assert
+    1 == 2"*. (4) Filename floor made exclusive (`<` → `<=`) → the at-threshold case red (*"assert
+    False is True"*). (5) `FUZZY_COSINE_MIN` nudged to 0.91 → *"assert (0.85, 0.91) == (0.85, 0.9)"*.
+    Tree verified clean afterwards (`git status --porcelain` empty; 13 benign pre-existing
+    probe-word matches, zero `MUTANT` residue).
+  - **Gate:** `make lint` rc 0 (black 1789 files, isort, flake8, mypy **919 source files, no
+    issues**) · `pytest tests/test_knowledge_dedup.py tests/test_knowledge_merge.py
+    tests/test_knowledge_pipeline.py tests/test_knowledge_annotations.py` **144 passed**
+    (`test_knowledge_merge.py` 42, was 37; `test_knowledge_dedup.py` 21, was 12) · `web` typecheck
+    clean · full `npm test --workspace web` **412 files / 4154 tests passed** (no design, token,
+    primitive-adoption or reduced-motion ratchet moved) · `npm run build --workspace web` rc 0.
+    `duplicateMerge.test.tsx` — the known intermittent — **passed first try, 17 tests in 927 ms, in
+    the union run**; not touched by this change, so no concurrency probe was needed.
