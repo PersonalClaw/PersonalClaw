@@ -82,6 +82,19 @@ export function PromptPalette({ onInsert, onSend, onClose }: {
               describe nothing yet. */}
           <ResultAnnouncement count={filtered?.length ?? 0} noun="prompts"
             active={!!q.trim() && filtered !== null} />
+          {/* 🪤 ENTER PICKS THE FIRST MATCH AND NOTHING SAID SO. The handler above has always done it
+              ("the common search → Enter flow"), but the list gave no sign which row that was, so the
+              only way to learn what the key does was to press it and watch something open. The glyph
+              row is `CommandPalette`'s footer idiom, which states its keys the same way — and it names
+              the FIELD's behaviour ("the first match") rather than marking a row, because a highlight
+              on row 0 would promise a cursor these rows do not have (no arrows; Tab reaches them as
+              ordinary buttons, and then Enter picks the focused one instead). */}
+          {!!filtered?.length && (
+            <div className="flex items-center gap-3 px-1 text-on-surface-low text-[0.75rem]">
+              <span className="inline-flex items-center gap-1"><CornerDownLeft size={11} /> picks the first match</span>
+              {!!q.trim() && <span className="inline-flex items-center gap-1">esc clears the search</span>}
+            </div>
+          )}
           {err && <FieldError>{err}</FieldError>}
           <div className="min-h-0 flex-1 overflow-y-auto rounded-lg border border-outline-variant/40">
             {filtered === null ? (
