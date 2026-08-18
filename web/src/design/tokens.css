@@ -60,6 +60,15 @@
      single value could never satisfy both. */
   --color-on-danger: #3f1008;
 
+  /* Ink for a label ON A TRANSLUCENT primary TINT (Button's `tonal` variant, 22 sites).
+     `text-primary` on `bg-primary/15` measured 4.46:1 in LIGHT — a 0.04 miss of the 4.5 AA floor,
+     because the tint pulls the ground toward the same hue as the ink. Deliberately the SAME value as
+     `--color-primary` here: dark measures ~6.9:1 already, and changing the default theme's label
+     colour to fix a light-mode miss would be collateral. Light overrides it one step deeper. Same
+     shape as `--color-on-danger` above — a dedicated ink for one ground, reusing palette values
+     rather than inventing a shade. */
+  --color-on-primary-tint: #ff6b5b;
+
   /* ── brand gradient stops (coral-weighted spectrum) ── */
   --grad-1: #c85a48;
   --grad-2: #ff6b5b;
@@ -179,6 +188,10 @@
   --color-primary-container: #ffe0d6;
   --color-on-primary-container: #3f1008;
   --color-primary-emphasis: #a33922;
+  /* One step deeper than this theme's `--color-primary` (#c8452e), and the same value
+     `--color-primary-emphasis` already carries, so the tonal chip's label clears AA on a
+     primary-tinted ground without a new shade entering the palette. */
+  --color-on-primary-tint: #a33922;
   /* semantic status hues, AA-dark for light surfaces (see tokenRegistry.ts) */
   --color-ok: #076e37;
   --color-warn: #954c19;
