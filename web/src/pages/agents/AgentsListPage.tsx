@@ -64,6 +64,15 @@ export function AgentsListPage({ onCreate, query, setQuery }: { onCreate: () => 
 
   const n = q.trim().toLowerCase()
   const match = (s: string) => !n || s.toLowerCase().includes(n)
+  const agentMatch = (a: { name: string; description?: string | null }) => match(`${a.name} ${a.description ?? ''}`)
+  // One filtered set, shared by the rows and the announcement. It used to be recomputed inline
+  // three times, and a count derived from a FOURTH copy is exactly how an announcement starts
+  // disagreeing with the list it describes.
+  const shownNative = native?.agents.filter(agentMatch) ?? []
+  // Only READY providers render their rows (an unavailable runtime shows its reason instead), so
+  // their agents are not on screen and must not be counted.
+  const shownCount = shownNative.length
+    + discovered.filter((g) => g.ready).reduce((t, g) => t + g.agents.filter(agentMatch).length, 0)
 
   const openNative = open?.kind === 'native' ? native?.agents.find((a) => a.name === open.name) ?? null : null
   const openDiscovered = useMemo(() => {
@@ -105,7 +114,8 @@ export function AgentsListPage({ onCreate, query, setQuery }: { onCreate: () => 
           </HeaderActions>}
         />
       }
-      controls={<ListControls search={{ value: q, onChange: setQ, placeholder: 'Search agents', label: 'Search agents' }} />}
+      controls={<ListControls search={{ value: q, onChange: setQ, placeholder: 'Search agents', label: 'Search agents' }}
+        results={{ count: shownCount, noun: 'agents', active: !!n && !(loading && groups.length === 0) }} />}
       panel={
         <>
           {openNative && native && (
@@ -128,7 +138,7 @@ export function AgentsListPage({ onCreate, query, setQuery }: { onCreate: () => 
                 {/* Native */}
                 {native && (
                   <GroupSection title="Native" icon={Users} tone="var(--color-primary)" subtitle="Your PersonalClaw agent definitions — fully editable." count={native.agents.length}>
-                    {native.agents.filter((a) => match(`${a.name} ${a.description ?? ''}`)).length === 0 ? (
+                    {shownNative.length === 0 ? (
                       // The group is filtered by `match(q)` first, so without the `n` branch a
                       // mistyped search reported "No native agents" — and offered to create one —
                       // to a user whose list is full. Same shape the other list pages use.
@@ -137,7 +147,7 @@ export function AgentsListPage({ onCreate, query, setQuery }: { onCreate: () => 
                         : <EmptyState icon={Users} title="No native agents" hint="Create an agent to define its model, system prompt, skills, tools, triggers, and workflows." action={{ label: 'New agent', onClick: onCreate, icon: Plus }} />
                     ) : (
                       <div className="flex flex-col gap-s">
-                        {native.agents.filter((a) => match(`${a.name} ${a.description ?? ''}`)).map((a, i) => (
+                        {shownNative.map((a, i) => (
                           <NativeRow key={a.name} agent={a} index={i} isDefault={native.defaultAgent === a.name} onClick={() => setOpen({ kind: 'native', name: a.name })} />
                         ))}
                       </div>
@@ -148,7 +158,7 @@ export function AgentsListPage({ onCreate, query, setQuery }: { onCreate: () => 
                 {/* Discovered per ACP provider */}
                 {discovered.map((g) => {
                   const pm = providerMeta(g.providerId)
-                  const items = g.agents.filter((a) => match(`${a.name} ${a.description ?? ''}`))
+                  const items = g.agents.filter(agentMatch)
                   return (
                     <GroupSection key={g.providerId} title={pm.label} icon={pm.icon} tone={pm.tone} count={g.agents.length}
                       subtitle={g.ready ? 'Provided by the runtime — read-only.' : `Unavailable — ${g.detail || 'runtime not ready'}`} ready={g.ready}>

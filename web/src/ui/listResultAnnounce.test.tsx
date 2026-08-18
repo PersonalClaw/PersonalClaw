@@ -62,10 +62,47 @@ import { ListControls } from './ListControls'
  *  about which state the list is in — and the line-scoped matcher rejected it. The property is
  *  "derived from the query or from a filter compared against THIS surface's own default"; where that
  *  expression is written is not the property. */
-function activeExpr(src: string, line: string): string {
-  const raw = line.match(/active:\s*([^,}]+)/)?.[1]?.trim() ?? ''
-  if (!/^[A-Za-z_$][\w$]*$/.test(raw)) return raw
-  return src.match(new RegExp(`const ${raw}\\s*=\\s*([^\n]+)`))?.[1] ?? raw
+/** The `active` expression at a call site, with every local `const` it names inlined.
+ *
+ *  🪤 IT USED TO RESOLVE ONLY A BARE IDENTIFIER, and a compound expression hid the interesting half:
+ *  `active: groups !== null && filtered` returned as-is, so the default-literal check below never saw
+ *  the `risk !== 'all'` INSIDE `filtered`. Caught by mutation — rewriting `ToolsPage` to compare
+ *  `risk !== 'safe'` (a value it never defaults to) left this file green. Expanding recursively is
+ *  what makes the check reach the surfaces whose "narrowed" flag is named rather than inline. */
+function activeExpr(src: string, line: string, depth = 3): string {
+  let expr = line.match(/active:\s*([^,}]+)/)?.[1]?.trim() ?? ''
+  // 🪤 STRING LITERALS ARE MASKED FIRST. `AppsSection` happens to define `const all = …`, and the
+  // scan's identifier match found the `all` INSIDE `libStatus !== 'all'` — rewriting the comparison's
+  // own literal into `'(apps ?? [])'`. Caught by mutation: the check then failed on a correct file,
+  // for a reason that had nothing to do with the surface.
+  const strings: string[] = []
+  const mask = (t: string) => t.replace(/'[^']*'/g, (m) => { strings.push(m); return `@@${strings.length - 1}@@` })
+  const unmask = (t: string) => t.replace(/@@(\d+)@@/g, (_, i) => strings[Number(i)])
+  expr = mask(expr)
+  for (let i = 0; i < depth; i++) {
+    let grew = false
+    for (const id of new Set(expr.match(/[A-Za-z_$][\w$]*/g) ?? [])) {
+      if (/^(undefined|null|true|false)$/.test(id)) continue
+      // 🪤 ANCHORED TO COMPONENT SCOPE (exactly two spaces of indent). `ToolsPage` declares
+      // `filtered` TWICE — `const filtered = list.filter(match)` six levels deep inside its `useMemo`,
+      // and the narrowed flag `const filtered = !!q.trim() || risk !== 'all'` at component scope. A
+      // file-wide regex resolved the FIRST, so the `risk` comparison the check exists to read was
+      // invisible. Caught by mutation: `risk !== 'safe'` left this file green. The first `const X =`
+      // in a file is not necessarily the one in scope at the call site.
+      const rhs = mask(src.match(new RegExp(`^  const ${id}\\s*=\\s*(.+)$`, 'm'))?.[1] ?? '') || undefined
+      // Only inline a COMPLETE single-line expression. 🪤 Without this the scan spliced in the first
+      // line of a `useMemo<Group[] | null>(() => {` body and compared a literal against `(apps ?? [])`
+      // — garbage that fails loudly, but for the wrong reason. A hook call or an unbalanced line is
+      // not a boolean this check can reason about, so it is left as an opaque name.
+      const balanced = rhs !== undefined
+        && [...rhs].filter((c) => '([{'.includes(c)).length === [...rhs].filter((c) => ')]}'.includes(c)).length
+      if (!rhs || !balanced || rhs.includes(id) || /use[A-Z]\w*\(|=>/.test(rhs)) continue
+      expr = expr.replace(new RegExp(`\\b${id}\\b`, 'g'), `(${rhs})`)
+      grew = true
+    }
+    if (!grew) break
+  }
+  return unmask(expr)
 }
 
 const opts = { value: '', onChange: () => {}, options: [] }
@@ -151,10 +188,18 @@ describe('a filtered list announces its result count', () => {
 })
 
 // ── The call-site half ────────────────────────────────────────────────────────────────
-// The primitive existing is not the fix — a surface has to pass `results`. This pins the four
-// migrated ones and deliberately does NOT assert the other nine: each needs its own filtered
-// array and noun, and guessing which local variable holds the post-filter rows is how a sweep
-// announces the wrong number.
+// The primitive existing is not the fix — a surface has to pass `results`.
+//
+// 🔑 THIS USED TO PIN A HAND-WRITTEN LIST OF "MIGRATED" SURFACES, and said so: it "deliberately does
+// NOT assert the other nine: each needs its own filtered array and noun, and guessing which local
+// variable holds the post-filter rows is how a sweep announces the wrong number." That was an honest
+// deferral, and it is now done — the remaining six call sites were wired by hand, each from the array
+// its own body renders. So the census becomes the POPULATION: every `<ListControls>` in the tree.
+//
+// The difference matters. A list of adopters goes green while a sixteenth consumer arrives silent —
+// which is exactly what happened. Measured before this change: **16 call sites, 9 passing `results`,
+// and one of them was `SkillsPage`'s SECOND bar**, invisible to a scan that read only the first
+// `results={{` line per file.
 
 const SRC = join(process.cwd(), 'src')
 const walk = (d: string): string[] =>
@@ -164,49 +209,144 @@ const walk = (d: string): string[] =>
     return /\.tsx$/.test(n) && !/\.(test|doc)\.tsx$/.test(n) ? [p] : []
   })
 
-describe('the migrated list surfaces pass a result count', () => {
-  const ADOPTERS = [
-    'pages/projects/ProjectsSection.tsx',
-    'pages/knowledge/KnowledgeListPage.tsx',
-    'pages/skills/SkillsPage.tsx',
-    'pages/prompts/PromptsListPage.tsx',
-    // cycle 58 — the tail, each with its own post-filter array and noun
-    'pages/triggers/TriggersListPage.tsx',
-    'pages/workflows/WorkflowsListPage.tsx',
-    'pages/notifications/NotificationsPage.tsx',
-    'pages/loops/LoopsListPage.tsx',
-    'pages/inbox/InboxPage.tsx',
-  ]
+/** Source with comments stripped. `WorkbenchLayout`'s docstring says "Pass a `<ListControls …>`",
+ *  which a raw scan counts as a seventeenth consumer that can never pass a prop. */
+function code(abs: string): string {
+  return readFileSync(abs, 'utf8').replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
+}
 
-  for (const rel of ADOPTERS) {
-    it(`${rel} passes results to ListControls`, () => {
-      const src = readFileSync(join(SRC, rel), 'utf8')
-      expect(src, 'must pass a results prop').toMatch(/results=\{\{/)
-      // `active` must be DERIVED from the query/filter, never hardcoded `true` — otherwise the
-      // list announces its length on every mount. Search-driven surfaces derive it from the
-      // query (`!!q.trim()`); filter-only ones compare against their own default value.
-      const line = src.split('\n').find((l) => l.includes('results={{'))!
-      expect(line, 'active must be derived, not hardcoded').not.toMatch(/active:\s*true/)
-      expect(activeExpr(src, line), 'active must reference the query or the filter').toMatch(/(!!|\w+\s*!==)/)
-    })
-  }
-
-  it('never compares `active` to a filter default it does not use', () => {
-    // 🪤 `filter !== 'all'` is WRONG on a surface whose filter DEFAULTS to something else:
-    // inbox opens on 'open' and loops on 'active', so the comparison was true on mount and
-    // the list announced its length before the user did anything (measured: inbox said
-    // "39 items" at idle). `active` must compare against that surface's OWN default.
-    const defaults: Record<string, string> = {
-      'pages/inbox/InboxPage.tsx': 'open',
-      'pages/loops/LoopsListPage.tsx': 'active',
+/** The opening tag of every `<ListControls …>` in a file — balanced, so a `{{…}}` prop value with a
+ *  `>` inside an arrow function does not end it early. */
+function controlsTags(src: string): string[] {
+  const out: string[] = []
+  for (const m of src.matchAll(/<ListControls\b/g)) {
+    let depth = 0
+    for (let j = m.index!; j < src.length; j++) {
+      const c = src[j]
+      if (c === '{') depth++
+      else if (c === '}') depth--
+      else if (c === '>' && depth === 0) { out.push(src.slice(m.index!, j + 1)); break }
     }
-    for (const [rel, dflt] of Object.entries(defaults)) {
-      const src = readFileSync(join(SRC, rel), 'utf8')
-      const line = src.split('\n').find((l) => l.includes('results={{'))!
-      expect(activeExpr(src, line), `${rel} defaults its filter to '${dflt}'`).toContain(`!== '${dflt}'`)
+  }
+  return out
+}
+
+function consumers(): Array<{ rel: string; tag: string }> {
+  return walk(SRC).flatMap((abs) =>
+    controlsTags(code(abs)).map((tag) => ({ rel: abs.replace(SRC + '/', ''), tag })),
+  )
+}
+
+describe('EVERY list bar passes a result count — the ratchet', () => {
+  it('the census finds the population', () => {
+    const all = consumers()
+    expect(all.length, 'the scan must find the bars').toBeGreaterThanOrEqual(15)
+    // Counted, not spot-checked: a sweep that iterates its own matches never visits the one that
+    // stopped matching.
+    const silent = all.filter((c) => !/results=\{\{/.test(c.tag)).map((c) => c.rel)
+    expect(silent, 'a bar that narrows a list without announcing it tells a screen reader nothing')
+      .toEqual([])
+  })
+
+  it('`active` is derived on every one of them, never hardcoded', () => {
+    for (const { rel, tag } of consumers()) {
+      const line = tag.split('\n').find((l) => l.includes('results={{')) ?? tag
+      expect(line, `${rel}: active must not be hardcoded — it would announce at idle`)
+        .not.toMatch(/active:\s*true/)
+      const expr = activeExpr(code(join(SRC, rel)), line)
+      expect(expr, `${rel}: active must reference the query or a filter`).toMatch(/(!!|\w+\s*!==)/)
     }
   })
 
+  it('never compares `active` to a filter default it does not use', () => {
+    // 🪤 `filter !== 'all'` is WRONG on a surface whose filter DEFAULTS to something else: inbox opens
+    // on 'open' and loops on 'active', so the comparison was true on mount and the list announced its
+    // length before the user did anything (measured: inbox said "39 items" at idle).
+    //
+    // This used to be a two-entry map of the surfaces known to have bitten. It now RESOLVES each
+    // surface's actual default from its own `useState`/`useQueryParam` call, so a seventeenth surface
+    // with a non-'all' default is caught by the same rule instead of being added to a list afterwards.
+    let checked = 0
+    for (const { rel, tag } of consumers()) {
+      const src = code(join(SRC, rel))
+      const line = tag.split('\n').find((l) => l.includes('results={{')) ?? tag
+      for (const cmp of activeExpr(src, line).matchAll(/(\w+)\s*!==\s*'([^']+)'/g)) {
+        const [, name, literal] = cmp
+        const dflt =
+          src.match(new RegExp(`const \\[${name},[^\\]]*\\] = useState(?:<[^>]*>)?\\('([^']*)'\\)`))?.[1]
+          ?? src.match(new RegExp(`const \\[${name},[^\\]]*\\] = useQueryParam\\([^,]+,[^,]+,\\s*'[^']*',\\s*'([^']*)'`))?.[1]
+        if (dflt === undefined) continue          // not a locally-defaulted piece of state
+        checked++
+        expect(literal, `${rel}: '${name}' defaults to '${dflt}', so comparing to '${literal}' is ` +
+          'true (or false) at rest').toBe(dflt)
+      }
+    }
+    // Vacuity floor: a regex that resolves no defaults would pass this test while checking nothing.
+    // 12 comparisons resolve today across the 15 bars. Held as a floor rather than an equality so a
+    // new surface does not have to touch this line, but low enough to fail loudly if the resolution
+    // regexes stop matching — a version of this check that resolved NOTHING passed while reading
+    // nothing, twice, during this cycle.
+    expect(checked, 'the scan must actually resolve some defaults').toBeGreaterThanOrEqual(12)
+  })
+
+  it('the count comes from the list the body renders, not a second filter chain', () => {
+    // 🪤 The failure this shape invites is an announcement that disagrees with the screen. Each of
+    // these is pinned to the ONE array its own body maps over, so re-deriving the count elsewhere
+    // (a fourth inline `.filter(...)`, a `.length` on the pre-filter list) trips here.
+    const pins: Array<[string, RegExp]> = [
+      ['pages/agents/AgentsListPage.tsx', /count: shownCount\b/],
+      ['pages/code/CodeSection.tsx', /count: shown\.length\b/],
+      ['pages/tools/ToolsPage.tsx', /count: shownTools\b/],
+      ['pages/skills/SkillsPage.tsx', /count: results\?\.length \?\? 0/],
+      ['pages/apps/AppsSection.tsx', /count: \(libResult \?\? \[\]\)\.length/],
+      ['pages/apps/AppsSection.tsx', /count: storeResult\.length/],
+    ]
+    for (const [rel, re] of pins) {
+      expect(code(join(SRC, rel)), `${rel} must count its own rendered list`).toMatch(re)
+    }
+    // And the rows must read that same array — `AgentsListPage` filtered its native list inline
+    // twice more, which is a third and fourth copy for a count to drift from.
+    const agents = code(join(SRC, 'pages/agents/AgentsListPage.tsx'))
+    expect(agents, 'the native rows read the hoisted array').toMatch(/\{shownNative\.map\(/)
+    expect(agents, 'and nothing re-filters it inline').not.toMatch(/native\.agents\.filter\(/)
+  })
+
+  it('a bar that renders during its own skeleton waits before announcing', () => {
+    // 🪤 An announcement is only true once the data is in. Three of these bars mount while their
+    // list is still loading, so `active` has to wait — otherwise a filter restored from the URL
+    // announces "No matching apps" about a list that has not arrived. The other bars render only
+    // after the list is non-empty, where such a guard would be an INERT condition, so they must not
+    // carry one.
+    const guarded: Array<[string, RegExp]> = [
+      ['pages/apps/AppsSection.tsx', /active: apps !== undefined && libNarrowed/],
+      ['pages/apps/AppsSection.tsx', /active: catalog !== undefined && storeNarrowed/],
+      ['pages/tools/ToolsPage.tsx', /active: groups !== null && filtered/],
+      ['pages/agents/AgentsListPage.tsx', /active: !!n && !\(loading && groups\.length === 0\)/],
+      // Remote search: waits for the fetch to settle, not for a local array to fill.
+      ['pages/skills/SkillsPage.tsx', /active: !!q\.trim\(\) && !loading && results !== null/],
+    ]
+    for (const [rel, re] of guarded) expect(code(join(SRC, rel)), `${rel}`).toMatch(re)
+    const codeSection = code(join(SRC, 'pages/code/CodeSection.tsx'))
+    expect(codeSection, 'this bar renders inside `!!projects?.length`, so it needs no guard')
+      .toMatch(/active: !!needle \|\| filter !== 'all'/)
+  })
+
+  it('one definition of "narrowed" per view, shared with the empty state', () => {
+    // The library empty state and the library announcement have to agree about whether a filter is
+    // on; two copies of a five-term boolean do not stay equal. Same for the Store, whose expression
+    // was already duplicated into `filtersActive`.
+    const apps = code(join(SRC, 'pages/apps/AppsSection.tsx'))
+    expect(apps).toMatch(/const libNarrowed = /)
+    expect(apps).toMatch(/const storeNarrowed = /)
+    expect(apps, 'the empty state reads the shared flag').toMatch(/!libNarrowed \? \(/)
+    expect(apps, 'and so does the Clear-filters affordance').toMatch(/filtersActive=\{storeNarrowed\}/)
+    expect(apps, 'no second copy of the store expression').not.toMatch(
+      /!!n \|\| storeType !== 'all' \|\| storeEntity !== 'all' \|\| storeTag !== 'all'[\s\S]{0,40}filtersActive/,
+    )
+  })
+})
+
+describe('the hand-laid bars reach the same idiom', () => {
   // ── The hand-laid bars: same idiom, reached through the extracted component ──────────
   const DIRECT: [string, string, RegExp][] = [
     // file, noun, the `active` expression that must be the surface's OWN definition of narrowed
