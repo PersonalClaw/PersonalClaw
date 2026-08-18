@@ -228,6 +228,12 @@ export interface Trigger {
   runCount: number | null
   usedBy: string[]           // lifecycle only
   storeKind?: string         // store only: file | web_watch | idle | …
+  /** Who wrote the row, and whether this machine's owner did not (TEAM-SHARED-ENTITIES §2.2 —
+   *  TSE-4). `readOnly` is the SERVER's verdict, passed through rather than re-derived from
+   *  `author`: the backend computes it with the same predicate that decides what the scheduler
+   *  arms, so a row the page lets you toggle is always a row the service would actually fire. */
+  author?: string
+  readOnly?: boolean
   broken?: string[]          // store only: parse errors (S87 lenient load) — shown, not hidden
   schedule?: ScheduleJob
   hook?: HookItem
@@ -273,6 +279,7 @@ export function scheduleToTrigger(j: ScheduleJob): Trigger {
     lastStatus: j.last_run_status || (j.last_run_ts ? j.last_status : null) || null,
     runCount: null, usedBy: [],
     schedule: j,
+    author: j.author, readOnly: j.read_only === true,
   }
 }
 /** Humanize an event name for a list label without needing the fetched catalog
@@ -309,6 +316,7 @@ export function storeToTrigger(t: WireTrigger): Trigger {
     lastRunTs: null, lastStatus: t.health || null, state: t.state || null,
     runCount: t.run_count ?? null, usedBy: [],
     storeKind: t.store_kind, broken: t.broken ?? [], store: t,
+    author: t.author, readOnly: t.read_only === true,
   }
 }
 

@@ -690,6 +690,9 @@ export type ScheduleKind = 'every' | 'cron' | 'at'
 export type ScheduleExecMode = 'agent' | 'script' | 'command'
 export interface ScheduleJob {
   id: string; name: string; message: string; enabled: boolean
+  // attribution (TSE-4) — see the same pair on `Trigger`. A schedule row is served by the same
+  // store, so it carries the same verdict.
+  author?: string; read_only?: boolean
   schedule: string                          // human-rendered cadence string
   cron_expr?: string | null                 // when kind=cron
   every_secs?: number | null                // when kind=every
@@ -1322,6 +1325,12 @@ export interface Trigger {
   // `last_error` (declared with the schedule fields below — one shared interface) carries the
   // failure the lifecycle acted on; the store panel had no reader for it until S169.
   health?: string; state?: string; broken?: string[]
+  // attribution (TEAM-SHARED-ENTITIES §2.2 — TSE-4). `author` is who WROTE the row; `read_only` is
+  // the server's verdict that this machine's owner did not, so the harness will never arm or fire
+  // it. Both are computed server-side from the same `ownership.is_owner_authored` predicate the arm
+  // path uses — the page must not re-derive it from `author`, or the UI and the scheduler end up
+  // with two opinions about who owns a trigger.
+  author?: string; read_only?: boolean
   // schedule fields (kind=schedule)
   message?: string; schedule?: string; cron_expr?: string | null; every_secs?: number | null
   agent?: string | null; model?: string | null; channel?: string | null; approval_mode?: string | null
@@ -3744,7 +3753,9 @@ export const api = {
   // below speak the schedule wire shape the shared Schedule* components already
   // use; the api layer namespaces the id (schedule:<id>) and routes to /api/triggers.
   triggers: (type?: 'schedule' | 'lifecycle' | 'event') =>
-    get<{ triggers: Trigger[]; server_tz: string }>(`/api/triggers${type ? `?type=${type}` : ''}`),
+    get<{ triggers: Trigger[]; server_tz: string; owner?: string }>(
+      `/api/triggers${type ? `?type=${type}` : ''}`,
+    ),
   // The week-grid projection (AUTO-A3). `start` is a local ISO datetime; the backend computes every
   // occurrence from the recurrence each trigger already carries — read-only, no store changes.
   triggersWeek: (start?: string, days = 7) => {

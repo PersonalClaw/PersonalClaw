@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { FieldError } from '../../ui/forms'
-import { Trash2, Play, FlaskConical, Loader2, AlertTriangle } from 'lucide-react'
+import { Trash2, Play, FlaskConical, Loader2, AlertTriangle, Users } from 'lucide-react'
 import { Button } from '../../ui/Button'
 import { Toggle } from '../../ui/Toggle'
 import { confirmDelete } from '../../ui/dialog'
@@ -30,6 +30,10 @@ export function StoreTriggerDetail({ trigger, onChanged, onDeleted }: {
   const [histKey, setHistKey] = useState(0)
   const [err, setErr] = useState('')
 
+  // The SERVER's verdict, not a comparison this panel makes (TSE-4): `read_only` is computed with
+  // the same `ownership.is_owner_authored` the arm path uses, so the controls this hides are exactly
+  // the ones the backend would refuse to honour.
+  const readOnly = trigger.read_only === true
   const broken = trigger.broken ?? []
   const paths = Array.isArray(trigger.spec?.paths) ? (trigger.spec!.paths as string[]) : []
 
@@ -137,8 +141,23 @@ export function StoreTriggerDetail({ trigger, onChanged, onDeleted }: {
             </div>
           )}
         </div>
-        <Toggle on={trigger.enabled} onChange={toggle} disabled={busy} label="Enabled" />
+        {/* A FOREIGN row shows STATE, not a control (TEAM-SHARED-ENTITIES §2.2 — TSE-4): its
+            author's harness decides whether it is enabled, and this one will never arm or fire it,
+            so a toggle here would report a change it cannot make. A `disabled` Toggle was the
+            other option and is worse — it says "you may not", where the truth is "this is not
+            yours to set". */}
+        {readOnly
+          ? <span className="shrink-0 text-on-surface-var text-[0.8125rem]">{trigger.enabled ? 'Enabled' : 'Disabled'}</span>
+          : <Toggle on={trigger.enabled} onChange={toggle} disabled={busy} label="Enabled" />}
       </div>
+
+      {readOnly && (
+        <div className="rounded-lg bg-surface-container px-3 py-2 text-on-surface-var text-[0.8125rem]">
+          <span className="inline-flex items-center gap-1.5 text-on-surface"><Users size={13} /> {trigger.author || 'Someone else'}</span>
+          {' '}wrote this automation. It is shown for reference: this harness never runs it, and it
+          cannot be edited or deleted here.
+        </div>
+      )}
 
       <Section label="When it runs">
         <div className="text-on-surface text-[0.875rem]">{storeKindLabel(trigger.store_kind)}</div>
@@ -170,18 +189,23 @@ export function StoreTriggerDetail({ trigger, onChanged, onDeleted }: {
       {err && <FieldError>{err}</FieldError>}
       {runFlash && !err && <div className="text-on-surface-low text-[0.8125rem]">{runFlash}</div>}
 
-      <div className="flex flex-wrap items-center gap-2 pt-1">
-        <Button variant="secondary" size="sm" onClick={() => run(false)} disabled={busy}>
-          {busy ? <Loader2 size={14} className="animate-spin" /> : <Play size={14} />} Run now
-        </Button>
-        <Button variant="ghost" size="sm" onClick={() => run(true)} disabled={busy}>
-          <FlaskConical size={14} /> Dry run
-        </Button>
-        <div className="flex-1" />
-        <Button variant="ghost" size="sm" onClick={remove} disabled={busy} className="text-danger">
-          <Trash2 size={14} /> Delete
-        </Button>
-      </div>
+      {/* No action row at all for a foreign automation — Run now, Dry run and Delete are all
+          writes to somebody else's row. Rendering them disabled would still assert they are
+          things that could apply to it. */}
+      {!readOnly && (
+        <div className="flex flex-wrap items-center gap-2 pt-1">
+          <Button variant="secondary" size="sm" onClick={() => run(false)} disabled={busy}>
+            {busy ? <Loader2 size={14} className="animate-spin" /> : <Play size={14} />} Run now
+          </Button>
+          <Button variant="ghost" size="sm" onClick={() => run(true)} disabled={busy}>
+            <FlaskConical size={14} /> Dry run
+          </Button>
+          <div className="flex-1" />
+          <Button variant="ghost" size="sm" onClick={remove} disabled={busy} className="text-danger">
+            <Trash2 size={14} /> Delete
+          </Button>
+        </div>
+      )}
     </div>
   )
 }

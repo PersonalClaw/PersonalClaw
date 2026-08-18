@@ -62,6 +62,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Any
 
+from personalclaw.triggers import provider
 from personalclaw.triggers.models import (
     INERT_OUTCOMES,
     Outcome,
@@ -439,8 +440,12 @@ async def tick(
     result = TickResult()
 
     result.store_changed = bool(getattr(store, "changed_on_disk", lambda: False)())
-    rows = store.load()
-    triggers = [row.trigger for row in rows if getattr(row, "ok", True)]
+    # 🔴 THE OWNER FILTER, structurally (§2.2 — TSE-4). `armable` drops broken rows AND rows some
+    # other user authored, so a foreign row is never in `triggers` and never in `by_id`: `due_ids`
+    # cannot return its id, and the `by_id.get(trigger_id)` below could not resolve it if it did.
+    # A foreign row therefore cannot tick — it is absent from the candidate set, not declined by a
+    # gate downstream, which is the difference §2.2 spells out in parentheses.
+    triggers = provider.armable(store)
     by_id = {t.id: t for t in triggers}
 
     from personalclaw.triggers import firepath as fp
@@ -839,8 +844,10 @@ def boot(store: Any, *, now: float = 0.0, persist: bool = True) -> dict[str, Any
     from personalclaw.triggers.missed import review_at_boot
 
     now = now or time.time()
-    rows = store.load()
-    triggers = [row.trigger for row in rows if getattr(row, "ok", True)]
+    # Owner-authored rows only (§2.2 — TSE-4). Boot RE-ARMS (it writes `next_fire_at`), so a foreign
+    # row reaching this walk would be armed on the owner's clock — the exact thing the filter exists
+    # to prevent, and the reason it belongs here and not only in `tick`.
+    triggers = provider.armable(store)
 
     # Snapshot BEFORE `plan_boot` re-arms — see the docstring.
     review = review_at_boot([t.to_dict() for t in triggers], now=now)
