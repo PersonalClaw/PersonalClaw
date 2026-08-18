@@ -500,3 +500,68 @@ describe('the last three bodies, and what this sweep does NOT claim', () => {
       .toMatch(/str\(r\)\.split\(":", 1\)\[0\] in known/)
   })
 })
+
+describe('three more bodies, checked against their handlers', () => {
+  it('the provider delete states the selections it drops, and the handler drops them', () => {
+    const ui = web('pages/settings/ModelBackends.tsx')
+    expect(ui, 'the clause exists').toContain('Any use case set to one of its models loses that selection.')
+    expect(ui, 'and the body composes it').toMatch(
+      /body: `Models it provides will no longer be available\.\$\{selections\}\$\{key\}`/,
+    )
+    const h = py('dashboard/handlers/providers.py')
+    const del = h.slice(h.indexOf('async def api_provider_delete'), h.indexOf('async def api_provider_test'))
+    expect(del, 'the handler drops the active-model refs').toMatch(/_drop_provider_active_models\(name\)/)
+    // …and drops them for EVERY use case, which is why the copy does not name one.
+    const dropper = h.slice(h.indexOf('def _drop_provider_active_models'))
+    expect(dropper.slice(0, 700), 'across every use case').toMatch(/for use_case, refs in list\(active\.items\(\)\)/)
+  })
+
+  it('the credential clause is conditional AND true — the handler never touches the store', () => {
+    const ui = web('pages/settings/ModelBackends.tsx')
+    expect(ui, 'gated on a credential actually being stored').toMatch(
+      /provider\.credential_status === 'ok' \? ' Its saved credential stays in the store\.'/,
+    )
+    const h = py('dashboard/handlers/providers.py')
+    const del = h.slice(h.indexOf('async def api_provider_delete'), h.indexOf('async def api_provider_test'))
+    // 🪤 THE CLAIM IS AN ABSENCE, so it is pinned as one: if the handler ever starts deleting the
+    // credential, this fails and the sentence has to be re-written rather than left reassuring people
+    // about a key that is gone.
+    expect(del, 'no credential deletion in the delete path').not.toMatch(
+      /credential|keyring|secret|delete_key|remove_credential/i,
+    )
+  })
+
+  it('the schedule delete really removes the run history it promises', () => {
+    expect(web('pages/schedule/ScheduleDetail.tsx')).toContain('Its run history is removed too.')
+    const h = py('dashboard/handlers/triggers.py')
+    const del = h.slice(h.indexOf('if request.method == "DELETE":'))
+    expect(del.slice(0, 3000), 'the second half of the delete').toMatch(
+      /await _runs_store\(\)\.delete_for_job\(raw\)/,
+    )
+  })
+
+  it('the MCP remove needs no extra clause — checked, and a hypothesis killed', () => {
+    // 🪤 I EXPECTED A CROSS-APP BLAST RADIUS HERE AND WAS WRONG. The DELETE branch writes two stores,
+    // `_PERSONALCLAW_MCP_JSON` and `_GLOBAL_MCP_JSON` — and "global" reads like a shared file, next to a
+    // `_CC_GLOBAL_JSON = ~/.claude.json` in the same module. But `_canonical_mcp_json()` resolves to
+    // `config_dir() / "mcp.json"`, i.e. PersonalClaw's own home, and the delete never touches the
+    // claude-code file. So "Its tools will no longer be available." is complete, and this test exists to
+    // keep it complete: if the delete ever reaches the CC config, the copy owes the user that fact.
+    const h = py('dashboard/handlers/mcp.py')
+    expect(h, 'the canonical store is PersonalClaw-scoped').toMatch(
+      /def _canonical_mcp_json[\s\S]{0,200}?return config_dir\(\) \/ "mcp\.json"/,
+    )
+    // 🪤 SLICED TO THE WHOLE BRANCH, NOT A FIXED WINDOW. The first version took
+    // `.slice(0, 1500)` from the DELETE branch, and the store loop sits ~27 lines in — just past 1500
+    // characters — so adding `_CC_GLOBAL_JSON` to the real loop PASSED. (My first guess at why was
+    // wrong too: I assumed an earlier handler's branch had been matched, but there is exactly one in
+    // this module. The window was simply too short.) A character budget is not a scope; bound the slice
+    // by the code that ENDS the region.
+    const fn = h.slice(h.indexOf('async def api_mcp_server_detail'))
+    const del = fn.slice(fn.indexOf('if request.method == "DELETE":'), fn.indexOf('# PUT — register or update'))
+    expect(del, 'the delete branch must be found').toMatch(/for store in \(/)
+    expect(del, 'and it does not write the claude-code config').not.toMatch(/_CC_GLOBAL_JSON/)
+    expect(web('pages/tools/ToolsPage.tsx'), 'so the body stays as it is')
+      .toContain('Its tools will no longer be available.')
+  })
+})
