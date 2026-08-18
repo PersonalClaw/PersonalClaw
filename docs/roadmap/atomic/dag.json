@@ -1125,7 +1125,7 @@
         {
           "id": "DSC-12",
           "title": "Deferred tail (owner/design): ErrorState primitive + harness-gated CodeCockpitPage-class raw-button redesign",
-          "status": "todo",
+          "status": "done",
           "scope": "Status line deferred items; patterns.md open '[ ] Error state'; Execution log cy17/cy18 (single-adopter ErrorState; harness-gated redesign lane 1)",
           "done_when": "ErrorState primitive extracted only once a second faithful adopter exists (fold the CodeSection\u2194CodeCockpitPage load-error twins), and the CodeCockpitPage-class bespoke raw-buttons migrated where that is a deliberate pixel/semantics redesign \u2014 both owner/design decisions taken as follow-on plans (not manufactured sub-5-copy clusters).",
           "deps": [
@@ -7560,11 +7560,6 @@
         "plan": "DSC"
       },
       {
-        "id": "DSC-12",
-        "title": "Deferred tail (owner/design): ErrorState primitive + harness-gated CodeCockpitPage-class raw-button redesign",
-        "plan": "DSC"
-      },
-      {
         "id": "EA-1",
         "title": "Shared inbound access seam \u2014 widen plan-41 substrate to 5 surfaces + per-client identity",
         "plan": "EA"
@@ -9630,9 +9625,9 @@
         "code": "DSC",
         "plan": "DESIGN-SYSTEM-CONSISTENCY",
         "total_atoms": 12,
-        "done": 10,
+        "done": 11,
         "in_progress": 0,
-        "todo": 2,
+        "todo": 1,
         "blocked": 0
       },
       {
