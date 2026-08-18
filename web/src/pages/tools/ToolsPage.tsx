@@ -227,6 +227,10 @@ export function ToolsPage({ query, setQuery }: Pick<RouteProps, 'query' | 'setQu
   // View is "filtered" when a search needle or a risk filter is narrowing it —
   // suppresses the browse-only affordances (load failures, import suggestions).
   const filtered = !!q.trim() || risk !== 'all'
+  // Announce the count of TOOLS, not of the groups holding them: "3 tools" is the fact a user
+  // asked for, and the same `groups` the body renders — so the number can never disagree with
+  // what is on screen.
+  const shownTools = (groups ?? []).reduce((n, g) => n + g.tools.length, 0)
 
   return (
     <WorkbenchLayout
@@ -245,6 +249,7 @@ export function ToolsPage({ query, setQuery }: Pick<RouteProps, 'query' | 'setQu
       controls={(tools === null || tools.length > 0)
         ? <ListControls
             search={{ value: q, onChange: setQ, placeholder: 'Search tools', label: 'Search tools' }}
+            results={{ count: shownTools, noun: 'tools', active: groups !== null && filtered }}
             filter={{
               value: risk, onChange: setRisk, ariaLabel: 'Filter by risk level',
               options: [

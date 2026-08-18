@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { Folder, FolderPlus, CornerLeftUp, Loader2, Check, GitBranch } from 'lucide-react'
+import { ResultAnnouncement } from '../../ui/ListControls'
+import { Check, CornerDownLeft, CornerLeftUp, Folder, FolderPlus, GitBranch, Loader2 } from 'lucide-react'
 import { Modal } from '../../ui/Modal'
 import { SearchField } from '../../ui/SearchField'
 import { Button } from '../../ui/Button'
@@ -147,6 +148,17 @@ export function WorkspacePicker({ mode, allowCreate, onPick, onClose }: {
                 if (e.key === 'Enter' && shownDirs.length > 0) { e.preventDefault(); void browse(shownDirs[0].path) }
                 else if (e.key === 'Escape' && filter) { e.preventDefault(); setFilter('') }
               }} />
+            {/* Same correction as PromptPalette: no cursor, so no listbox — just the count, which is
+                the one thing typing here changed silently. */}
+            <ResultAnnouncement count={shownDirs.length} noun="folders" active={!!filter.trim()} />
+            {/* Same unstated behaviour as PromptPalette: Enter navigates INTO the first matching
+                folder, which is a bigger surprise than picking a row — it changes what the whole panel
+                is showing. */}
+            {shownDirs.length > 0 && (
+              <span className="inline-flex shrink-0 items-center gap-1 pl-1 text-on-surface-low text-[0.75rem]">
+                <CornerDownLeft size={11} /> opens the first folder
+              </span>
+            )}
           </div>
         )}
 

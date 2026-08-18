@@ -494,14 +494,31 @@ def _sources_path() -> Path:
     return config_dir() / "apps" / _SOURCES_FILENAME
 
 
+def _git_source_key(url: str) -> str:
+    """The identity of a git source for de-duplication.
+
+    One repository typed two ways is ONE source: GitHub serves the published apps repo
+    at both ``…/PersonalClawApps`` and ``…/PersonalClawApps.git``, so comparing raw
+    strings lets a user "add" a repo that already ships as a default and pay a second
+    full shallow clone per catalog refresh for zero extra apps.
+
+    A comparison key ONLY — the original string is what gets cloned, because the suffix
+    is load-bearing for some remotes (a bare repo at ``file:///…/apps.git`` does not
+    exist without it). Case is preserved: some hosts serve case-sensitive paths."""
+    return url.strip().rstrip("/").removesuffix(".git")
+
+
 def list_git_sources() -> list[str]:
-    """The configured git source URLs (defaults + user-added), de-duped in order."""
+    """The configured git source URLs (defaults + user-added), de-duped in order.
+
+    De-duped by :func:`_git_source_key`, so a default and a user entry naming the same
+    repo collapse to the default (listed first)."""
     seen: set[str] = set()
     out: list[str] = []
     for url in (*_DEFAULT_GIT_SOURCES, *_read_user_sources()):
         u = url.strip()
-        if u and u not in seen:
-            seen.add(u)
+        if u and (key := _git_source_key(u)) not in seen:
+            seen.add(key)
             out.append(u)
     return out
 
@@ -540,22 +557,31 @@ def _read_user_sources() -> list[str]:
 
 
 def add_git_source(url: str) -> list[str]:
-    """Add a user git source URL; returns the updated USER git list (excludes defaults)."""
+    """Add a user git source URL; returns the updated USER git list (excludes defaults).
+
+    Idempotent by :func:`_git_source_key`: re-adding a repo already configured — as a
+    user entry OR as a bundled default, with or without a ``.git`` suffix — is a no-op,
+    so the Store never lists one repository twice or clones it twice per refresh."""
     u = url.strip()
     if not u:
         raise ValueError("empty source URL")
     src = _read_sources()
-    if u not in src["git"]:
+    key = _git_source_key(u)
+    known = {_git_source_key(x) for x in (*_DEFAULT_GIT_SOURCES, *src["git"])}
+    if key not in known:
         src["git"].append(u)
         _write_sources(src)
     return src["git"]
 
 
 def remove_git_source(url: str) -> list[str]:
-    """Remove a user git source URL (a bundled default can't be removed)."""
-    u = url.strip()
+    """Remove a user git source URL (a bundled default can't be removed).
+
+    Matched by :func:`_git_source_key`, so the URL that removes a source is any spelling
+    of the one that added it."""
+    key = _git_source_key(url)
     src = _read_sources()
-    src["git"] = [x for x in src["git"] if x != u]
+    src["git"] = [x for x in src["git"] if _git_source_key(x) != key]
     _write_sources(src)
     return src["git"]
 

@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { MoreRow } from '../../../ui/MoreRow'
 import { HardDrive } from 'lucide-react'
 import { api } from '../../../lib/api'
 import { useCachedData } from '../../../lib/useCachedData'
@@ -98,6 +99,9 @@ export function OnThisMachine() {
           )
         })
       )}
+      {/* Loaded models hold RAM. "Five loaded" and "nine loaded" are different facts about this
+          machine, and the widget was showing the same five either way. */}
+      <MoreRow total={rows.length} shown={5} />
     </div>
   )
 }

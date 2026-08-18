@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useId, useRef, useState } from 'react'
 import { fvs, withWeight } from '../../design/fontWeight'
 import { createPortal } from 'react-dom'
 import { motion, AnimatePresence } from 'framer-motion'
@@ -13,6 +13,8 @@ import { HeaderActions, HeaderControl } from '../../ui/HeaderActions'
 import { Button } from '../../ui/Button'
 import { TextLink } from '../../ui/TextLink'
 import { IconButton } from '../../ui/IconButton'
+import { LoadError } from '../../ui/ListScaffold'
+import { FieldError } from '../../ui/forms'
 import { Centered } from '../../ui/Centered'
 import { confirm } from '../../ui/dialog'
 import { api, type CodeProject, type CodeStage, type CodeFinding, type FsEntry, type TaskItem, type Loop } from '../../lib/api'
@@ -190,7 +192,7 @@ export function CodeCockpitPage({ id, onBack, onDeleted, onNewTarget, onOpenProj
   // Tracks an initial-load failure (transient 5xx/network on the FIRST fetch, before
   // any snapshot). Without it a failed first load left `project` null forever — an
   // eternal spinner with no recovery, since SSE only updates an already-loaded view.
-  const [loadErr, setLoadErr] = useState<string | null>(null)
+  const [loadErr, setLoadErr] = useState<Error | null>(null)
   const load = useCallback(() => {
     api.uLoop(id).then((proj) => { setProject(loopToCodeProject(proj)); setLoadErr(null) }).catch((e) => {
       // 404 (gone/deleted) OR 400 (malformed id — a truncated/garbled link, which the
@@ -201,7 +203,7 @@ export function CodeCockpitPage({ id, onBack, onDeleted, onNewTarget, onOpenProj
       // poll / SSE event recover.
       const status = (e as { status?: number })?.status
       if (status === 404 || status === 400) setProject('missing')
-      else setLoadErr((e as Error).message || 'Could not load this project')
+      else setLoadErr(new Error((e as Error).message || 'Could not load this project'))
     })
   }, [id])
   useEffect(() => { load() }, [load])
@@ -468,14 +470,7 @@ export function CodeCockpitPage({ id, onBack, onDeleted, onNewTarget, onOpenProj
   if (project === null) {
     return <Shell title="Project" onBack={onBack}><Centered>
       {loadErr ? (
-        <div className="flex max-w-[360px] flex-col items-center gap-3 px-6 text-center">
-          <AlertTriangle size={28} style={{ color: 'var(--color-warn)' }} />
-          <div>
-            <p data-type="title-m" className="text-on-surface">Couldn't load this project</p>
-            <p className="mt-1 text-on-surface-low text-[0.8125rem]">{loadErr} — retrying…</p>
-          </div>
-          <Button variant="secondary" onClick={() => load()}><RotateCcw size={15} /> Try again</Button>
-        </div>
+        <LoadError what="project" error={loadErr} onRetry={load} />
       ) : (
         <Loader2 size={22} className="animate-spin text-on-surface-low" />
       )}
@@ -648,7 +643,16 @@ export function CodeCockpitPage({ id, onBack, onDeleted, onNewTarget, onOpenProj
               is an active attention state (resume + stop both valid). */}
           {(active || ['paused', 'blocked', 'needs_input', 'stagnant'].includes(p.status)) &&
             <HeaderControl icon={Square} label="Stop" priority="primary" onClick={async () => {
-              if (await confirm({ title: 'Stop this run?', body: "Stopping ends the project for good — it can't be resumed afterward (you'd start a new one). Work already written to the workspace is kept. Pause instead if you just want to step in.", danger: true, confirmLabel: 'Stop' })) act('stop')
+              // 🔴 THE MISSING HALF WAS THE ONE A USER LOSES WORK TO. Stop is terminal, and its teardown
+              // runs `worktree.cleanup_all`, which for every task worktree does
+              // `git worktree remove --force` AND `git branch -D` — so uncommitted work in a running
+              // task's worktree is discarded, and its committed-but-unmerged work goes with the branch.
+              //
+              // "Work already written to the workspace is kept" is still TRUE, and now says how it got
+              // there: a FINISHED task is merged back (`worktree.merge_worktree`), so merged work is in
+              // the workspace and untouched. What the sentence hid is the in-flight case, which is
+              // exactly what a terminal action should warn about.
+              if (await confirm({ title: 'Stop this run?', body: "Stopping ends the project for good — it can't be resumed afterward (you'd start a new one). Work already merged into your workspace is kept, but a task still running loses its own worktree and branch. Pause instead if you just want to step in.", danger: true, confirmLabel: 'Stop' })) act('stop')
             }} />}
           {/* A shell only makes sense in a real codebase (gate on `ws`). */}
           {!!ws && <HeaderControl icon={TerminalSquare} label={showTerm ? 'Hide terminal' : 'Terminal'} onClick={() => setShowTerm(!showTerm)} active={showTerm} />}
@@ -1090,6 +1094,12 @@ function FileFinder({ ws }: { ws: string }) {
   // Keyboard-highlighted result for ↑/↓ navigation (quick-open expectation). Reset to
   // the top hit on each new result set.
   const [hi, setHi] = useState(0)
+  // 🔴 THIS WAS A KEYBOARD WIDGET THAT ANNOUNCED NOTHING. Arrow keys moved a purely VISUAL highlight
+  // over the results: no listbox, no options, no `aria-activedescendant`, and nothing said the popover
+  // had opened — the same defect `CommandPalette` carried before cycle 181, in the same shape. The
+  // pattern is the app's own (APG combobox): focus stays in the field and a virtual cursor moves, so
+  // the ids below are what assistive tech follows instead of focus.
+  const qoId = useId()
   // `searching` gates the dropdown's empty state so a slow query doesn't flash a
   // premature "No files match" over the PRIOR results before the new ones land.
   const [searching, setSearching] = useState(false)
@@ -1143,10 +1153,16 @@ function FileFinder({ ws }: { ws: string }) {
             else if (e.key === 'Escape') { e.preventDefault(); setQ(''); setResults([]); setOpen(false) }
           }}
           placeholder="Find file by name…  ⌘P" spellCheck={false} autoCapitalize="off" autoCorrect="off"
-          ariaLabel="Find file by name" />
+          ariaLabel="Find file by name"
+          ariaHasPopup="listbox" ariaControls={`${qoId}-list`}
+          ariaExpanded={open && q.trim().length >= 2}
+          ariaActiveDescendant={open && results.length ? `${qoId}-opt-${Math.min(hi, results.length - 1)}` : undefined} />
       </div>
       {open && q.trim().length >= 2 && (
-        <div className="absolute inset-x-2 z-20 mt-1 max-h-[40vh] overflow-y-auto rounded-md border border-outline-variant/50 bg-surface-container shadow-lg">
+        // A listbox is an ARIA input field, so unlike a menu it MUST be named — the exact axe
+        // "serious" finding `ProjectPicker` produced when it declared one namelessly.
+        <div role="listbox" aria-label="Matching files" id={`${qoId}-list`}
+          className="absolute inset-x-2 z-20 mt-1 max-h-[40vh] overflow-y-auto rounded-md border border-outline-variant/50 bg-surface-container shadow-lg">
           {results.length === 0 ? (
             // While a query is in flight, show "Searching…" rather than a premature
             // "No files match" (which would flash over the prior results until the new
@@ -1166,7 +1182,9 @@ function FileFinder({ ws }: { ws: string }) {
             const mi = wsBase ? r.path.lastIndexOf(marker) : -1
             const rel = mi >= 0 ? r.path.slice(mi + marker.length) : (r.path.startsWith(ws) ? r.path.slice(ws.replace(/\/$/, '').length + 1) : r.name)
             return (
-              <button key={r.path} type="button" onClick={() => openFile(r)} onMouseEnter={() => setHi(i)}
+              <button key={r.path} type="button" role="option" aria-selected={i === hi}
+                id={`${qoId}-opt-${i}`}
+                onClick={() => openFile(r)} onMouseEnter={() => setHi(i)}
                 ref={(el) => { if (i === hi && open) el?.scrollIntoView({ block: 'nearest' }) }}
                 className={`flex w-full items-center gap-1.5 px-2.5 py-1.5 text-left text-[0.75rem] ${i === hi ? 'bg-surface-high' : 'hover:bg-surface-high'}`}>
                 <FileCode size={11} className="shrink-0 text-on-surface-low" />
@@ -1509,11 +1527,11 @@ function StageTasks({ project, onTasksChanged, loading, tasksByList, onSelect, a
           <div className="flex items-center gap-1.5">
             {/* Autopilot drives the phased plan itself; one-by-one hands queueing to
                 the user. Toggle is live (any non-terminal state). */}
-            <button type="button" disabled={busy} onClick={toggleAutopilot} aria-pressed={autopilot} aria-label="Autopilot"
-              title={autopilot ? 'Autopilot on — the system queues + drives the phased tasks. Click for one-by-one.' : 'One-by-one — you queue tasks yourself. Click to let the system drive.'}
-              className={`inline-flex items-center gap-1 rounded-md px-2 py-1 text-[0.75rem] transition-colors disabled:opacity-50 ${autopilot ? 'bg-primary/15 text-primary hover:bg-primary/25' : 'text-on-surface-low hover:bg-surface-high'}`}>
+            <Button variant={autopilot ? 'tonal' : 'ghost'} size="xs" disabled={busy}
+              onClick={toggleAutopilot} ariaPressed={autopilot} ariaLabel="Autopilot"
+              title={autopilot ? 'Autopilot on — the system queues + drives the phased tasks. Click for one-by-one.' : 'One-by-one — you queue tasks yourself. Click to let the system drive.'}>
               {autopilot ? <Rocket size={11} /> : <Hand size={11} />} {autopilot ? 'Autopilot' : 'One-by-one'}
-            </button>
+            </Button>
             {/* Manual Queue all only matters in one-by-one mode (autopilot auto-queues). */}
             {!autopilot && queueable.length > 0 && (
               <Button variant="tonal" size="xs" disabled={busy} onClick={() => queue(queueable.map((t) => t.id))}
@@ -1896,9 +1914,9 @@ function TaskDetailView({ project, task, doneIds, stageOpen, knownIds, findings,
               return (
                 <>
                   {hidden > 0 && (
-                    <button type="button" onClick={() => setShowAllFindings(true)}
-                      className="self-start rounded px-1.5 py-0.5 text-[0.75rem] text-on-surface-low/80 hover:text-primary"
-                      title={`Show ${hidden} earlier cycle${hidden === 1 ? '' : 's'}`}>↑ {hidden} earlier cycle{hidden === 1 ? '' : 's'}</button>
+                    <TextLink size="xs" ink="emphasis" className="self-start"
+                      onClick={() => setShowAllFindings(true)}
+                      title={`Show ${hidden} earlier cycle${hidden === 1 ? '' : 's'}`}>↑ {hidden} earlier cycle{hidden === 1 ? '' : 's'}</TextLink>
                   )}
                   {shown.map((f) => <FindingCard key={f.cycle ?? `${f.summary}`} finding={f} ws={ws} />)}
                 </>
@@ -2769,10 +2787,10 @@ function CenterEditor({ ws, showTerm, onCloseTerm, running, runCmd }: { ws: stri
         <div className="flex shrink-0 items-center gap-0.5 border-b border-outline-variant/40 bg-surface-low/40 px-1">
           {/* LEFT: re-open chip(s) for collapsed left panel(s) (e.g. Files). */}
           {collapsedLeft.map(([key, v]) => (
-            <button key={key} type="button" onClick={() => reopenPanel(key)} title={`Show ${v.label}`} aria-label={`Show ${v.label}`}
-              className="mr-0.5 inline-flex shrink-0 items-center gap-1 rounded-md px-2 py-1.5 text-[0.8125rem] text-on-surface-low hover:bg-surface-high hover:text-on-surface">
+            <Button key={key} variant="ghost" size="xs" onClick={() => reopenPanel(key)}
+              title={`Show ${v.label}`} ariaLabel={`Show ${v.label}`} className="mr-0.5 shrink-0">
               <PanelLeftOpen size={14} /> {v.label}
-            </button>
+            </Button>
           ))}
           <div className="flex min-w-0 flex-1 items-center gap-0.5 overflow-x-auto">
           {tabs.map((t) => (
@@ -2792,17 +2810,19 @@ function CenterEditor({ ws, showTerm, onCloseTerm, running, runCmd }: { ws: stri
                   <X size={12} className="hidden group-hover:block" />
                 </button>
               ) : (
-                <button type="button" onClick={() => requestClose(t.path, t.name)} aria-label={`Close ${t.name}`} className="shrink-0 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100"><X size={12} /></button>
+                <IconButton icon={X} label={`Close ${t.name}`} onClick={() => requestClose(t.path, t.name)}
+                  size={18} iconSize={12}
+                  className="shrink-0 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100" />
               )}
             </div>
           ))}
           </div>
           {/* RIGHT: re-open chip(s) for collapsed right panel(s) (e.g. Tasks). */}
           {collapsedRight.map(([key, v]) => (
-            <button key={key} type="button" onClick={() => reopenPanel(key)} title={`Show ${v.label}`} aria-label={`Show ${v.label}`}
-              className="ml-0.5 inline-flex shrink-0 items-center gap-1 rounded-md px-2 py-1.5 text-[0.8125rem] text-on-surface-low hover:bg-surface-high hover:text-on-surface">
+            <Button key={key} variant="ghost" size="xs" onClick={() => reopenPanel(key)}
+              title={`Show ${v.label}`} ariaLabel={`Show ${v.label}`} className="ml-0.5 shrink-0">
               <PanelRightOpen size={14} /> {v.label}
-            </button>
+            </Button>
           ))}
         </div>
       )}
@@ -2853,10 +2873,10 @@ function CenterEditor({ ws, showTerm, onCloseTerm, running, runCmd }: { ws: stri
                   while a worker is actually RUNNING; on a terminal/idle project there's
                   nothing to follow, so the button would be a dead no-op. */}
               {running && (
-                <button type="button" onClick={() => window.dispatchEvent(new CustomEvent('ne:code-follow-worker'))}
-                  className="mt-1 inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-[0.75rem] text-on-surface-low hover:bg-surface-high hover:text-on-surface">
+                <Button variant="ghost" size="xs" className="mt-1"
+                  onClick={() => window.dispatchEvent(new CustomEvent('ne:code-follow-worker'))}>
                   <Activity size={12} /> Follow the worker
-                </button>
+                </Button>
               )}
             </div>
           </Centered>
@@ -2921,7 +2941,7 @@ function CommitView({ ws, hash, subject, onClose }: { ws: string; hash: string; 
         ) : failed ? (
           <Centered>
             <div className="flex flex-col items-center gap-2 px-4 text-center text-[0.8125rem]">
-              <span style={{ color: 'var(--color-danger)' }}>Couldn't load this commit.</span>
+              <FieldError>Couldn't load this commit.</FieldError>
               <Button variant="ghost-accent" size="xs" onClick={() => setAttempt((n) => n + 1)}><RotateCcw size={13} /> Try again</Button>
             </div>
           </Centered>
@@ -3372,9 +3392,8 @@ function FilesTouched({ files, ws, max = 8 }: { files?: string[]; ws: string; ma
         )
       })}
       {hidden > 0 && (
-        <button type="button" onClick={() => setExpanded(true)}
-          className="rounded px-1.5 py-0.5 text-[0.75rem] text-on-surface-low/80 hover:text-primary"
-          title={`Show ${hidden} more file${hidden === 1 ? '' : 's'}`}>+{hidden} more</button>
+        <TextLink size="xs" ink="emphasis" onClick={() => setExpanded(true)}
+          title={`Show ${hidden} more file${hidden === 1 ? '' : 's'}`}>+{hidden} more</TextLink>
       )}
     </div>
   )

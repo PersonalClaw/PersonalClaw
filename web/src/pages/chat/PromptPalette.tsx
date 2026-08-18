@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { ResultAnnouncement } from '../../ui/ListControls'
 import { FieldError } from '../../ui/forms'
 import { Loader2, Search, ChevronLeft, FileText, CornerDownLeft } from 'lucide-react'
 import { Modal } from '../../ui/Modal'
@@ -73,6 +74,27 @@ export function PromptPalette({ onInsert, onSend, onClose }: {
               }}
               trailingSlot={loadingDetail ? <Loader2 size={14} className="shrink-0 animate-spin text-on-surface-low" /> : null} />
           </div>
+          {/* 🪤 This was deferred as an "arrow-key typeahead awaiting listbox semantics" and that was
+              WRONG — read again, its Enter picks the FIRST match and there is no cursor at all, so its
+              rows are ordinary tab-focusable buttons. A `role="option"` on those would promise a
+              composite widget nobody implements; what it actually owed was the same result count every
+              other filtered list announces. `filtered === null` is the load, where a count would
+              describe nothing yet. */}
+          <ResultAnnouncement count={filtered?.length ?? 0} noun="prompts"
+            active={!!q.trim() && filtered !== null} />
+          {/* 🪤 ENTER PICKS THE FIRST MATCH AND NOTHING SAID SO. The handler above has always done it
+              ("the common search → Enter flow"), but the list gave no sign which row that was, so the
+              only way to learn what the key does was to press it and watch something open. The glyph
+              row is `CommandPalette`'s footer idiom, which states its keys the same way — and it names
+              the FIELD's behaviour ("the first match") rather than marking a row, because a highlight
+              on row 0 would promise a cursor these rows do not have (no arrows; Tab reaches them as
+              ordinary buttons, and then Enter picks the focused one instead). */}
+          {!!filtered?.length && (
+            <div className="flex items-center gap-3 px-1 text-on-surface-low text-[0.75rem]">
+              <span className="inline-flex items-center gap-1"><CornerDownLeft size={11} /> picks the first match</span>
+              {!!q.trim() && <span className="inline-flex items-center gap-1">esc clears the search</span>}
+            </div>
+          )}
           {err && <FieldError>{err}</FieldError>}
           <div className="min-h-0 flex-1 overflow-y-auto rounded-lg border border-outline-variant/40">
             {filtered === null ? (

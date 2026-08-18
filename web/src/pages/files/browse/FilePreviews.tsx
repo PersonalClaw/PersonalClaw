@@ -1,4 +1,5 @@
 import { memo, useEffect, useMemo, useState } from 'react'
+import { MoreRow } from '../../../ui/MoreRow'
 import { ChevronRight, ChevronDown } from 'lucide-react'
 import { api } from '../../../lib/api'
 import { extOf } from '../fileMeta'
@@ -92,6 +93,8 @@ export const CsvPreview = memo(function CsvPreview({ content, name }: { content:
           ))}
         </tbody>
       </table>
+      {/* Same as the tool-result table: 500 rows in, the file just appears to end. */}
+      <MoreRow total={body.length} shown={500} noun="rows" className="px-3 py-1.5" />
       {body.length > 500 && <div className="border-t border-outline/25 py-2.5 text-center text-on-surface-low text-[0.75rem]">Showing 500 of {body.length} rows</div>}
     </div>
   )
@@ -190,7 +193,7 @@ function JsonNode({ value, depth, kName }: { value: unknown; depth: number; kNam
       {open && (
         <div style={{ paddingLeft: 16 }}>
           {entries.slice(0, 200).map(([k, v]) => <JsonNode key={k} value={v} depth={depth + 1} kName={isArr ? null : k} />)}
-          {entries.length > 200 && <div className="text-on-surface-low">… {entries.length - 200} more</div>}
+          <MoreRow total={entries.length} shown={200} />
           <div className="text-on-surface-low">{rb}</div>
         </div>
       )}

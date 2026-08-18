@@ -104,6 +104,11 @@ interface SearchFieldProps {
   ariaHasPopup?: 'listbox'
   ariaControls?: string
   ariaActiveDescendant?: string
+  /** Whether the controlled listbox is currently showing. Required by the APG combobox pattern for a
+   *  popup that appears and disappears — `CommandPalette`'s list is always present while the palette
+   *  is mounted, so it has no use for this, but a quick-open popover that opens on typing and closes
+   *  on Escape leaves a screen reader unable to tell the list is even there without it. */
+  ariaExpanded?: boolean
   placeholder?: string
   /** Accessible name. Falls back to the placeholder when omitted — a search field
    *  outside a labeled Field must still name itself. */
@@ -150,7 +155,7 @@ export function SearchField({
   value, onChange, placeholder, ariaLabel, autoFocus, name, onKeyDown, trailingSlot, clearable = true,
   variant = 'overlay', size = 'lg', surface = 'high',
   inlineIconSize = 14, clearOnEscape, inputRef, spellCheck, autoCapitalize, autoCorrect, onFocus,
-  ariaHasPopup, ariaControls, ariaActiveDescendant,
+  ariaHasPopup, ariaControls, ariaActiveDescendant, ariaExpanded,
 }: SearchFieldProps) {
   const autoName = useId()
   const fieldName = name ?? `search-${autoName}`
@@ -172,6 +177,7 @@ export function SearchField({
     onKeyDown: handleKeyDown, onFocus, type: 'search' as const, name: fieldName, id: fieldName,
     'aria-label': label, placeholder, autoFocus, spellCheck, autoCapitalize, autoCorrect,
     'aria-haspopup': ariaHasPopup, 'aria-controls': ariaControls, 'aria-activedescendant': ariaActiveDescendant,
+    'aria-expanded': ariaExpanded,
   }
   const clearLabel = `Clear ${label.toLowerCase()}`
 

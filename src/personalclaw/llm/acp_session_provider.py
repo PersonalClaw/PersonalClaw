@@ -49,12 +49,17 @@ class AcpSessionProvider(AgentProvider):
         runtime_id: str,
         model: str = "",
         agent_name: str = "",
+        unattended: bool = False,
     ) -> None:
         self._conn = connection
         self._session = session
         self._runtime_id = runtime_id
         self._model = model
         self._agent_name = agent_name
+        # §2.3 gap 3 — same contract as AcpClient._unattended, on the POOLED door.
+        # Defaults False so a pooled session a caller forgot to classify keeps AAP-5's
+        # clamp; only an explicitly unattended session may keep an auto-approve mode.
+        self._unattended = bool(unattended)
 
     # ── identity ────────────────────────────────────────────────────────────────
     @property
@@ -193,6 +198,29 @@ class AcpSessionProvider(AgentProvider):
         self._model = model
 
     async def set_mode(self, mode: str) -> None:
+        # The POOLED path is a second door onto the same adapter, and it builds the
+        # dialect request itself instead of going through AcpClient — so it needs the
+        # host-authority clamp too. Without it, a caller that hands the pool
+        # ``bypassPermissions`` would make the CLI its own permission authority on the
+        # very sessions AcpClient refuses to.
+        from personalclaw.acp.permission_authority import sanitize_mode
+
+        decision = sanitize_mode(mode, unattended=self._unattended)
+        if decision.downgraded:
+            logger.warning("ACP pooled permission mode clamped: %s", decision.reason)
+            try:
+                from personalclaw.sel import sel
+
+                sel().log_api_access(
+                    caller="acp:permission_authority",
+                    operation="mode_change:clamped_to_host_authority",
+                    outcome="downgraded",
+                    resources=f"pooled requested={decision.requested} "
+                    f"effective={decision.mode}",
+                )
+            except Exception:
+                logger.warning("SEL audit failed for pooled ACP mode clamp", exc_info=True)
+        mode = decision.mode
         if not mode:
             return
         req = self._conn._dialect.set_mode_request(session_id=self._session.session_id, mode=mode)
@@ -205,6 +233,15 @@ class AcpSessionProvider(AgentProvider):
             session_id=self._session.session_id, effort=effort
         )
         await self._send_dialect_request(req)
+
+    def set_unattended(self, unattended: bool) -> None:
+        """Declare this session unattended BEFORE :meth:`set_mode` (§2.3).
+
+        A pooled connection is warmed generic — attended by default — so a session
+        claimed for an unattended run must say so here or its ``bypassPermissions``
+        is clamped back to the host-authority mode on the next line. Ordering is
+        load-bearing: ``set_mode`` reads this flag."""
+        self._unattended = bool(unattended)
 
     def set_session_key(self, session_key: str, channel_id: str | None = None) -> None:
         return None  # the session key was bound at connection spawn (env)
@@ -240,16 +277,32 @@ async def open_acp_session_provider(
     session_files_dir: Path | None = None,
     model: str = "",
     agent_name: str = "",
+    session_key: str | None = "",
     mcp_servers: list | None = None,
+    unattended: bool = False,
 ) -> "AcpSessionProvider":
     """Open a new session on an already-live (spawned + ``initialize``-d) connection and
     wrap it in an :class:`AcpSessionProvider`. Multiple calls on the same connection =
     concurrent sessions on one process (the P9 win). The caller (pool) owns spawning the
-    connection + its lifetime."""
+    connection + its lifetime.
+
+    ``mcp_servers`` defaults to the ``personalclaw-core`` server (ACP-AGENT-PARITY §2.1
+    prong A) rather than to nothing: this parameter existed with no supplier, so the
+    concurrent path opened every session with an empty ``mcpServers`` exactly like the
+    one-session path did. Pass ``[]`` to open a session with no MCP servers at all.
+    """
+    from personalclaw.acp.mcp_servers import core_mcp_servers
+
+    servers = mcp_servers if mcp_servers is not None else core_mcp_servers(session_key=session_key)
     session = await connection.new_session(
-        {"cwd": str(cwd), "mcpServers": mcp_servers or []},
+        {"cwd": str(cwd), "mcpServers": servers},
         session_files_dir=session_files_dir,
     )
     return AcpSessionProvider(
-        connection, session, runtime_id=runtime_id, model=model, agent_name=agent_name
+        connection,
+        session,
+        runtime_id=runtime_id,
+        model=model,
+        agent_name=agent_name,
+        unattended=unattended,
     )

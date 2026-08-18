@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { SCAN_FINDINGS_SHOWN, hiddenFindingsNote } from '../../lib/scanFindings'
 import { FieldError } from '../../ui/forms'
 import { withWeight } from '../../design/fontWeight'
 import { Download, Check, Loader2, FileText, FileDigit, ShieldAlert, ShieldX } from 'lucide-react'
@@ -74,12 +75,19 @@ export function MarketplaceDetail({ result, installed, onInstalled }: {
           </p>
           {blocked.scan?.findings?.length ? (
             <div className="flex flex-col gap-1 mt-0.5">
-              {blocked.scan.findings.slice(0, 8).map((f, i) => (
+              {blocked.scan.findings.slice(0, SCAN_FINDINGS_SHOWN).map((f, i) => (
                 <div key={i} className="flex items-start gap-2 text-[0.75rem] text-on-surface-low font-mono">
                   <span className="shrink-0 rounded px-1.5 uppercase" style={{ background: `color-mix(in srgb, var(--color-${f.severity === 'dangerous' ? 'danger' : 'warning'}) 18%, transparent)`, color: `var(--color-${f.severity === 'dangerous' ? 'danger' : 'warning'})` }}>{f.severity}</span>
                   <span className="min-w-0"><span className="text-on-surface-var">{f.rule}</span> {f.path && <span className="text-on-surface-low">in {f.path}</span>}</span>
                 </div>
               ))}
+              {/* This surface already states the true total above ("flagged N warning(s)"), so what
+                  was missing is that the LIST is not all of it. */}
+              {hiddenFindingsNote(blocked.scan.findings.length) && (
+                <div className="text-[0.75rem] text-on-surface-low italic">
+                  {hiddenFindingsNote(blocked.scan.findings.length)}
+                </div>
+              )}
             </div>
           ) : null}
           {blocked.needsConsent && (

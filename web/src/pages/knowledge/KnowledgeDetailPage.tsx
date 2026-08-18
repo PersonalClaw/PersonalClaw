@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
+import { MoreRow } from '../../ui/MoreRow'
 import { ArrowLeft, Network, Layers, Highlighter, Copy } from 'lucide-react'
 import { TopBar } from '../../ui/TopBar'
 import { PageTitle } from '../../ui/PageTitle'
@@ -294,6 +295,7 @@ function KnowledgeExtras({ item, pool, related, onOpenItem, annotations, onRemov
             {entities.slice(0, 60).map((e) => (
               <span key={e.id} className="inline-flex items-center gap-1 rounded-pill bg-surface-container px-2 h-6 text-on-surface-var text-[0.75rem]" title={e.entity_type}>{e.name}{e.entity_type && <span className="text-on-surface-low">· {e.entity_type}</span>}</span>
             ))}
+            <MoreRow total={entities.length} shown={60} className="px-1" />
           </div>
         </Section>
       )}
@@ -303,6 +305,7 @@ function KnowledgeExtras({ item, pool, related, onOpenItem, annotations, onRemov
             {relations.slice(0, 30).map((r) => (
               <div key={r.id} className="text-on-surface-var text-[0.8125rem]"><span className="text-on-surface">{r.source_name}</span> <span className="text-on-surface-low">{r.relation_type}</span> <span className="text-on-surface">{r.target_name}</span></div>
             ))}
+            <MoreRow total={relations.length} shown={30} />
           </div>
         </Section>
       )}
@@ -316,6 +319,7 @@ function KnowledgeExtras({ item, pool, related, onOpenItem, annotations, onRemov
                 {typeof r.shared_entities === 'number' && <span className="ml-auto shrink-0 text-on-surface-low text-[0.75rem]">{r.shared_entities} shared</span>}
               </button>
             ))}
+            <MoreRow total={related.length} shown={15} />
           </div>
         </Section>
       )}

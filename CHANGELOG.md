@@ -98,6 +98,8 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **A second starter home, for looking around before you commit anything.**
 
 ### Changed
+- **Rewinding a conversation no longer throws the old ending away — and that history is now stored inside your chats.**
+- **Finding something in a long conversation now works properly with a keyboard and a screen reader.**
 - **The Optimize button now knows who said what, and leaves an already-good prompt alone.**
 - **The assistant now needs to see a habit work three times, not twice, before it offers to make it a standing principle.**
 - **A step that reads another step's output no longer needs a hand-written ordering — and steps in different branches of a workflow can now feed each other.**

@@ -219,10 +219,12 @@ run on every push to `main`.
 ## Documentation
 
 - [Getting started](docs/guides/getting-started.md) — install → first chat.
+- [Working inside a chat](docs/guides/chat-surface.md) — the seven things the chat surface does beyond a send button: rewind to any earlier message, let a queued message cut in, find and quote, follow-up suggestions, the streaming reveal, and putting part of your screen into the conversation.
 - [Remote access](docs/guides/remote-access.md) — reaching your dashboard from outside your home network (tunnel + password + 2FA), and what it does *not* protect you from.
 - [Companion apps](docs/guides/companion-apps.md) — a phone or a second machine on your own network: pairing, the optional LAN discovery (off by default), and exactly what it announces.
 - [Build a channel app](docs/guides/build-a-channel-app.md) — bringing a new chat app or mailbox to PersonalClaw: the transport/delivery obligations, trust and pairing, and the conformance kit.
 - [The desktop app](docs/guides/desktop.md) — the native capabilities a browser tab cannot offer: global push-to-talk (what it captures, when, and how you can always tell), and why system audio is microphone-only.
+- [Use it from your editor](docs/guides/use-from-your-ide.md) — exposing six read-only MCP tools to your editor's assistant: minting the surface token, the client config, why it is same-machine-only, and the kill switch.
 - [Architecture overview](docs/architecture/overview.md) — the system map (with diagrams).
 - [Configuration reference](docs/reference/configuration.md) · [CLI](docs/reference/cli.md) · [API](docs/reference/api-overview.md)
 - [Roadmap](docs/roadmap/roadmap.md) — 52 plans across 6 pillars, with a shared execution protocol.

@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { ResultAnnouncement } from '../../ui/ListControls'
 import { rowSubject } from '../../lib/rowSubject'
 import {
   Database, BookOpen, ScrollText, Eye, Settings2, Search, Plus, Trash2,
@@ -407,6 +408,10 @@ function MemoryStudio({ onChanged, initialSel }: { onChanged: () => void; initia
       <div className="flex w-[19rem] shrink-0 flex-col rounded-xl border border-outline-variant/40 bg-surface-container/40">
         <div className="flex flex-col gap-2 border-b border-outline-variant/30 p-2.5">
           <SearchField value={q} onChange={setQ} placeholder="Search memories" ariaLabel="Search memories" size="sm" />
+          {/* Two dimensions again — the query and the kind chips below — and `shown` is the memo the
+              explorer list renders. */}
+          <ResultAnnouncement count={shown.length} noun="memories"
+            active={!!q.trim() || kindFilter !== 'all'} />
           <div className="flex flex-wrap gap-1">
             {(['all', 'fact', 'episodic', 'lesson', 'entity', 'slot', 'doc'] as const).map((k) => {
               const on = kindFilter === k
@@ -843,6 +848,7 @@ function AuditTab() {
         <div className="flex-1">
           <TextInput value={filter} onChange={setFilter} placeholder="Filter by type or key" ariaLabel="Filter memory audit log"
             size="md" surface="high" leadingIcon={<Search size={14} />} />
+          <ResultAnnouncement count={shown.length} noun="events" active={q !== ''} />
         </div>
         <Button variant="secondary" size="sm" ariaLabel="Reload the audit log" onClick={reload}><RefreshCw size={14} /></Button>
       </div>

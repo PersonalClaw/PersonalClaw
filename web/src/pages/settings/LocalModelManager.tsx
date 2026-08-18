@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { ResultAnnouncement } from '../../ui/ListControls'
 import { Download, Trash2, Check, HardDrive, AlertTriangle, X, Lock } from 'lucide-react'
 import { api, type AvailableModel } from '../../lib/api'
 import { SearchField } from '../../ui/SearchField'
@@ -147,6 +148,11 @@ export function LocalModelManager({
           <SearchField value={query} onChange={setQuery} size="sm"
             placeholder="Search the library to install a model…"
             ariaLabel="Search the model library" />
+          {/* The results come from a fetch, so `active` waits for it: announcing while `searching`
+              would report the PREVIOUS query's count, and announcing on a null result would say
+              "No matching models" about a search that has not run. */}
+          <ResultAnnouncement count={searchResults?.length ?? 0} noun="models"
+            active={!!query.trim() && !searching && searchResults !== null} />
         </div>
       )}
 

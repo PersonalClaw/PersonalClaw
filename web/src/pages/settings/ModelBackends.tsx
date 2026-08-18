@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { MoreRow } from '../../ui/MoreRow'
 import {
   Plus, Cpu, Wifi, Pencil, Trash2, X, Eye, EyeOff, Loader2,
   CheckCircle2, AlertTriangle, ChevronRight, RotateCcw,
@@ -177,7 +178,7 @@ function InstanceCard({ provider, models, onChanged }: { provider: ModelProvider
                 <div className="mb-1.5 text-on-surface-low text-[0.75rem] uppercase tracking-wide">Available models ({models.length})</div>
                 <div className="flex flex-wrap gap-1">
                   {models.slice(0, 24).map((m) => <span key={m.id} className="rounded-md bg-surface-high px-1.5 py-0.5 text-on-surface text-[0.75rem] font-mono">{m.name}</span>)}
-                  {models.length > 24 && <span className="px-1 text-on-surface-low text-[0.75rem]">+{models.length - 24} more</span>}
+                  <MoreRow total={models.length} shown={24} className="px-1" />
                 </div>
               </>
             )}

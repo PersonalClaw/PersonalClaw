@@ -6,6 +6,7 @@ import logging
 import time
 from pathlib import Path
 
+from personalclaw.acp import permission_authority as acp_permission_authority
 from personalclaw.acp.errors import AcpError, AcpProcessDied
 from personalclaw.acp.types import (
     EVENT_AGENT_SWITCHED,
@@ -53,6 +54,17 @@ from personalclaw.dashboard.state import (
     _ChatSession,
     is_read_only_bash,
     resolve_effective_risk,
+)
+from personalclaw.guardrails.loop_breaker import (
+    BLOCK_THRESHOLD,
+    WARN_THRESHOLD,
+    LoopBreaker,
+    blocked_message,
+    circuit_message,
+    params_key,
+    result_digest,
+    structural_note,
+    warn_note,
 )
 from personalclaw.hooks import (
     HOOK_EVENT_AGENT_SPAWN,
@@ -1311,6 +1323,104 @@ def _inject_investigate_context(
     return f"{header}{fenced}\n\n---\n\n{message}"
 
 
+def _report_ungated_tool_call(
+    state: DashboardState,
+    session: _ChatSession,
+    *,
+    session_key: str,
+    acp_cli: str,
+    title: str,
+    tool_kind: str,
+    tool_input: str,
+    request_id: str,
+) -> str:
+    """Surface an ACP tool call the host was never asked about; return an abort reason.
+
+    §2.2's honest half (`G27`). An ACP CLI chooses which of its tools request
+    permission, so the host's gate is opt-in *by the CLI*. When a tool result lands
+    for a call that never reached the gate, the tool already ran — there is nothing
+    left to block. What is still available, and what the finding actually asked for,
+    is a positive mechanism:
+
+    * a **declared** entry in the per-provider not-gateable registry means this hole
+      is written down with the observation that proved it — surfaced, not silent, but
+      not treated as a new incident;
+    * an **undeclared** ungated call is the dangerous case. It is surfaced in the
+      transcript (not just the activity feed), audited as ``ungated``, and — when it
+      is a mutation under a read-only posture — aborts the turn, so the model cannot
+      chain further ungated mutations behind a gate that was never consulted.
+
+    Returns the abort reason, or ``""`` to continue the turn.
+    """
+    entry = acp_permission_authority.not_gateable_entry(acp_cli, title)
+    risk = resolve_effective_risk("", title, tool_kind, tool_input)
+    task_mode = getattr(session, "_task_mode", "agent")
+    _title, _ = redact_exfiltration_urls(title or "?")
+    _title, _ = redact_credentials(_title)
+    abort = ""
+    if entry is None and risk != "safe" and task_mode in ("ask", "plan"):
+        abort = (
+            f"{_title} ran without a host approval request under {task_mode} mode "
+            f"({acp_cli} never asked) — turn stopped"
+        )
+    # Mark the already-appended tool row so the absence of a card is inspectable
+    # after the fact, not only live in the activity feed.
+    for m in reversed(session.messages):
+        if m.get("role") == "tool" and m.get("meta", {}).get("tool_call_id") == request_id:
+            _meta = m.setdefault("meta", {})
+            _meta["ungated"] = True
+            _meta["ungated_declared"] = entry is not None
+            break
+    state.broadcast_ws(
+        "activity_event",
+        {
+            "session": session.key,
+            "kind": "permission",
+            "text": (
+                f"Not gated by host: {_title} — documented {acp_cli} limitation"
+                if entry is not None
+                else f"Ran without host approval: {_title} ({acp_cli} never asked)"
+            ),
+        },
+    )
+    if entry is None:
+        session.append(
+            "tool",
+            f"{_title} (ungated: {acp_cli} executed it without asking the host)",
+            "msg msg-tool",
+        )
+    try:
+        sel().log_tool_invocation(
+            session_key=session_key,
+            agent=_agent_label(session),
+            source="dashboard",
+            tool_name=title,
+            tool_kind=tool_kind,
+            outcome="ungated_declared" if entry is not None else "ungated",
+            request_id=request_id,
+            metadata={
+                "risk": risk,
+                "provider": acp_cli,
+                "task_mode": task_mode,
+                "reason": (
+                    entry.reason
+                    if entry is not None
+                    else "no session/request_permission for this tool_call"
+                ),
+                **({"aborted_turn": True} if abort else {}),
+            },
+        )
+    except Exception:
+        logger.warning("SEL audit failed for ungated ACP tool call", exc_info=True)
+    if abort:
+        session.append("tool", abort, "msg msg-tool")
+        state.broadcast_ws(
+            "activity_event",
+            {"session": session.key, "kind": "permission", "text": abort},
+        )
+    return abort
+
+
 async def _run_chat(
     state: DashboardState,
     session: _ChatSession,
@@ -1438,6 +1548,30 @@ async def _run_chat(
     chunk_seq = 0
     in_tool_group = False
     _pending_tools: dict[str, str] = {}  # tool_call_id -> tool_name
+    # Host-authority bookkeeping for ACP turns. An ACP CLI decides for
+    # ITSELF which tools ask the client for permission; anything it never asks about
+    # runs before the host has a decision point, so the deny-list, the task-mode gate
+    # and blocking PreToolUse hooks — all of which hang off session/request_permission
+    # — never run for it. We cannot pre-block what the protocol never shows us, so we
+    # do the two things we can: notice, and never let the card's ABSENCE read as
+    # "nothing dangerous happened".
+    _gated_tool_calls: set[str] = set()  # tool_call_ids that reached the host gate
+    # tool_call_id -> (title, declared kind, input) for calls not yet gated
+    _ungated_candidates: dict[str, tuple[str, str, str]] = {}
+    # Loop-breaker bookkeeping for ACP turns (§2.3 gap 5). The native runtime counts
+    # its own tool failures inside its dispatch loop; an ACP CLI runs its tools out of
+    # process, so the host has to do the counting from the neutral event stream — the
+    # SAME observer, so the thresholds and the wording can't diverge (`G6` measured
+    # six consecutive ACP failures producing no warn, block or trip at all).
+    _acp_breaker = LoopBreaker()
+    # tool_call_id -> the breaker's (tool, params) key. Recorded at tool_call and
+    # REFINED at tool_call_update, because ACP adapters routinely send the first frame
+    # with empty rawInput and stream the real arguments in the update — keying off the
+    # first frame alone would bucket every call to one tool together and make the
+    # params-awareness a lie.
+    _acp_tool_keys: dict[str, str] = {}
+    # The circuit trips once per turn: the counter stays over threshold afterwards.
+    _acp_breaker_aborted = False
     needs_session_reset = False
     saw_compaction = False
     # Reset the per-turn file-change accumulator here — all dispatch paths
@@ -1653,6 +1787,32 @@ async def _run_chat(
         if _sess_acp_mode:
             acp_mode = _sess_acp_mode
 
+        # §2.3 (gap 3) — UNIFY unattended across every automation, not just loops.
+        # ``session._unattended`` is set by the loop manager alone, so a cron or
+        # scheduled run-prompt turn on an ACP provider was classified attended: it
+        # got no bypassPermissions and, worse, its permission prompts parked on a
+        # human who was asleep. ``is_unattended_session`` is the canonical
+        # by-construction classifier (cron:/subagent:/channel:/inbox:/side:/loop
+        # prefixes, the ``unattended:`` dispatch identity and the ``_bg`` key) and is
+        # already what picks the HEADLESS safety profile — so deriving from it here
+        # makes one definition of "nobody is watching" govern both the safety profile
+        # and the permission path, instead of two that can disagree.
+        #
+        # An INTERACTIVE session matches no prefix, so it stays attended and keeps
+        # The clamp. That is the safety-critical direction of this change and it
+        # has its own regression test.
+        from personalclaw.guardrails.policy import is_unattended_session
+
+        _unattended_turn = bool(getattr(session, "_unattended", False)) or is_unattended_session(
+            session.key
+        )
+        if _unattended_turn and provider_kind.startswith("acp") and not acp_mode:
+            # No human can answer a prompt on this turn, so ask the dialect for the
+            # mode that stops it asking. Zed dialects honour it; kiro has no mode axis
+            # and ignores it (the documented asymmetry) — kiro gets the fail-fast half
+            # only, which is what actually prevents the wedge for it.
+            acp_mode = "bypassPermissions"
+
         # Plan task-mode → forward acp_mode=plan so an ACP backend that supports it
         # (claude) plans NATIVELY (cleaner output). Permission AUTHORITY stays
         # with the host gate for every rung — we never forward an auto-approve
@@ -1683,8 +1843,10 @@ async def _run_chat(
             extra_tool_roots=list(getattr(session, "_extra_tool_roots", []) or []) or None,
             # Unattended worker/scheduled turn: strip interactive tools + fail the
             # approval gate fast so a background run can't wedge waiting for a human
-            # (T5). Native-runtime-only; the bridge pops it for other runtimes.
-            unattended=bool(getattr(session, "_unattended", False)),
+            # (T5). Consumed by the native runtime AND — as — by the ACP
+            # branch of the bridge, which hands it to AcpClient so an unattended
+            # session may keep an auto-approve mode.
+            unattended=_unattended_turn,
             # The Project this session scopes under — the native runtime binds it per
             # turn so artifact_save stamps the artifact's project_id, tying artifacts
             # created here back to the Project. "" for an unscoped session.
@@ -2182,6 +2344,14 @@ async def _run_chat(
         _turn_cache_tokens = 0
         _turn_cost_usd = 0.0
         _turn_priced = False
+        # Which ACP CLI (if any) is serving this turn — the key the per-provider
+        # not-gateable registry is enumerated under. "" for the native runtime, whose
+        # tools are gated in-loop before approval (a YOLO auto-approve there never
+        # reaches this gate by design, so the ungated check must NOT judge it).
+        _acp_cli = ""
+        _prov_id = str(getattr(client, "provider_id", "") or "")
+        if _prov_id.startswith("acp:"):
+            _acp_cli = _prov_id[4:]
         async for event in event_stream:
             # Heartbeat every 5s during long operations
             if time.time() - last_heartbeat > 5:
@@ -2275,6 +2445,15 @@ async def _run_chat(
                 # Falls back to None for non-dict (ACP str) input → UI uses the
                 # string preview, exactly as before.
                 _input_obj = _redact_tool_input_obj(event.tool_input)
+                # Loop-breaker identity for an ACP call (§2.3 gap 5). Keyed off the
+                # UNREDACTED title + input: the breaker only ever compares keys to
+                # each other, never renders them, and redaction is lossy enough
+                # (two different secrets both become "***") to merge genuinely
+                # distinct calls into one bucket.
+                if _acp_cli and event.tool_call_id:
+                    _acp_tool_keys[event.tool_call_id] = params_key(
+                        event.title, tool_input_to_str(event.tool_input)
+                    )
                 state.broadcast_ws(
                     "tool_call",
                     {
@@ -2339,6 +2518,19 @@ async def _run_chat(
                     _raw = _raw[9:]
                 if event.tool_call_id:
                     _pending_tools[event.tool_call_id] = _raw
+                # Provisionally an UNGATED call: an ACP tool_call frame
+                # arrives before any session/request_permission for the same id, so we
+                # register it here and clear it the moment the host gate sees that id.
+                # Whatever is still registered when the result lands ran without the
+                # host ever being asked. Scoped to ACP: the native runtime gates
+                # in-loop BEFORE approval, so its auto-approved tools legitimately
+                # never reach the chat_runner gate.
+                if _acp_cli and event.tool_call_id and event.tool_call_id not in _gated_tool_calls:
+                    _ungated_candidates[event.tool_call_id] = (
+                        event.title or "",
+                        event.tool_kind or "",
+                        tool_input_to_str(event.tool_input)[:2000],
+                    )
                 await fire_tool_hooks(
                     state._hook_store, event.title, tool_input_to_str(event.tool_input)
                 )
@@ -2382,6 +2574,16 @@ async def _run_chat(
                 # `detail` field and the stable tool NAME in `content` is kept,
                 # so cards stay scannable when many tools are in play.
                 if event.tool_call_id:
+                    # Refine the breaker key now that the real arguments arrived
+                    # (§2.3 gap 5) — see _acp_tool_keys. Only when the update
+                    # actually carries input, so an args-less refinement frame can't
+                    # erase a key the first frame got right.
+                    if _acp_cli and event.tool_input:
+                        _prior = _acp_tool_keys.get(event.tool_call_id, "")
+                        _name = _prior.split(":", 1)[0] if _prior else event.title
+                        _acp_tool_keys[event.tool_call_id] = params_key(
+                            _name, tool_input_to_str(event.tool_input)
+                        )
                     _u_input = redact_credentials(
                         redact_exfiltration_urls(tool_input_to_str(event.tool_input)[:4000])[0]
                     )[0]
@@ -2480,6 +2682,128 @@ async def _run_chat(
                             break
                 # Fire PostToolUse hooks
                 _tool_name = _pending_tools.pop(event.tool_call_id, "")
+                # Host-authority residue check. A result for a call the
+                # host was never asked about means the CLI self-approved it. We cannot
+                # pre-block what the protocol never showed us — so we make the ABSENCE
+                # of a card legible instead of letting it read as "nothing dangerous
+                # happened", and we abort the turn when the ungated tool is BOTH
+                # undeclared and mutating under a read-only posture.
+                if _acp_cli and event.tool_call_id in _ungated_candidates:
+                    _ung_title, _ung_kind, _ung_input = _ungated_candidates.pop(event.tool_call_id)
+                    _abort = _report_ungated_tool_call(
+                        state,
+                        session,
+                        session_key=session_key,
+                        acp_cli=_acp_cli,
+                        title=_ung_title or _tool_name,
+                        tool_kind=_ung_kind,
+                        tool_input=_ung_input,
+                        request_id=event.tool_call_id,
+                    )
+                    if _abort:
+                        try:
+                            _cancel = getattr(client, "cancel_session", None)
+                            if _cancel is not None:
+                                await _cancel()
+                        except Exception:
+                            logger.warning(
+                                "ACP cancel after ungated tool call failed", exc_info=True
+                            )
+                # ── Loop breaker for the ACP turn (§2.3 gap 5) ──────────────────
+                # The native runtime counts failures inside its own dispatch loop and
+                # can refuse the NEXT identical call before it runs. Out here the CLI
+                # has already run the tool by the time we see the result, so the host
+                # does what it can from between the frames: warn, then say plainly
+                # that the call is failing the same way, then abort the turn at the
+                # circuit threshold. Same counter, same wording as native — see
+                # guardrails/loop_breaker; the only difference is the seam, and it is
+                # stated rather than papered over.
+                if _acp_cli:
+                    _bkey = _acp_tool_keys.pop(event.tool_call_id, "") or params_key(
+                        _tool_name or event.title, ""
+                    )
+                    _bname = _tool_name or event.title or "tool"
+                    # Record on EVERY result, pass or fail — a success has to clear
+                    # its key's streak or the counter only ever ratchets up, and a
+                    # tool that fails, recovers, fails, recovers would be "blocked"
+                    # for intermittency it is actually surviving. Native records
+                    # unconditionally for the same reason.
+                    _acp_failed = _tool_ok is False
+                    _streak = _acp_breaker.record(_bkey, _acp_failed)
+                    if _acp_failed:
+                        _notice = ""
+                        if _streak >= BLOCK_THRESHOLD:
+                            _notice = blocked_message(_bname, _streak)
+                        elif _streak >= WARN_THRESHOLD:
+                            _notice = warn_note(_bname, _streak).strip()
+                        if _notice:
+                            logger.warning("acp loop breaker (%s): %s", _acp_cli, _notice)
+                            session.append("tool", _notice, "msg msg-tool")
+                            state.broadcast_ws(
+                                "activity_event",
+                                {"session": session.key, "kind": "status", "text": _notice},
+                            )
+                        if _acp_breaker.circuit_tripped() and not _acp_breaker_aborted:
+                            # Once only. The counter stays tripped for the rest of the
+                            # stream, so without this guard every subsequent result
+                            # would re-announce the abort and re-cancel.
+                            _acp_breaker_aborted = True
+                            _abort_msg = circuit_message(_acp_breaker.total_failures)
+                            logger.warning("acp loop breaker (%s): %s", _acp_cli, _abort_msg)
+                            session.append("error", _abort_msg, "msg msg-err")
+                            state.broadcast_ws(
+                                "activity_event",
+                                {"session": session.key, "kind": "status", "text": _abort_msg},
+                            )
+                            try:
+                                sel().log_tool_invocation(
+                                    session_key=session_key,
+                                    agent=_agent_label(session),
+                                    source="dashboard",
+                                    tool_name=_bname,
+                                    tool_kind=event.tool_kind,
+                                    outcome="failed",
+                                    request_id=event.tool_call_id,
+                                    metadata={
+                                        "reason": "loop_breaker_circuit",
+                                        "provider": _acp_cli,
+                                        "total_failures": _acp_breaker.total_failures,
+                                        "aborted_turn": True,
+                                    },
+                                )
+                            except Exception:
+                                logger.warning(
+                                    "SEL audit failed for ACP breaker trip", exc_info=True
+                                )
+                            # Cancel the CLI's turn rather than breaking out of the
+                            # stream: the stream then ends with a cancelled stop
+                            # reason and every post-loop finalizer (telemetry, turn
+                            # close, persistence) runs exactly as it does for a
+                            # user-pressed Stop. Breaking here would abandon the
+                            # generator mid-turn and skip all of it.
+                            try:
+                                _cancel = getattr(client, "cancel_session", None)
+                                if _cancel is not None:
+                                    await _cancel()
+                            except Exception:
+                                logger.warning(
+                                    "ACP cancel after breaker trip failed", exc_info=True
+                                )
+                    else:
+                        # Structural (no-progress / ping-pong) detection over
+                        # SUCCESSFUL calls — nothing failed, so the failure path is
+                        # blind to it. Warn-only, same as native.
+                        _loop_reason = _acp_breaker.record_structural(
+                            f"{_bkey}\x1f{result_digest(_out)}"
+                        )
+                        if _loop_reason:
+                            _sn = structural_note(_loop_reason).strip()
+                            logger.info("acp loop breaker (%s): %s", _acp_cli, _sn)
+                            session.append("tool", _sn, "msg msg-tool")
+                            state.broadcast_ws(
+                                "activity_event",
+                                {"session": session.key, "kind": "status", "text": _sn},
+                            )
                 try:
                     _redacted_out, _ = redact_credentials(_out[:2000])
                     _redacted_out, _ = redact_exfiltration_urls(_redacted_out)
@@ -2491,6 +2815,11 @@ async def _run_chat(
                 except Exception:
                     logger.debug("PostToolUse hook error", exc_info=True)
             elif event.kind == EVENT_PERMISSION_REQUEST:
+                # This call DID reach the host gate — it is not part of the ungated
+                # residue no matter which way the gate decides below.
+                if event.tool_call_id:
+                    _gated_tool_calls.add(event.tool_call_id)
+                    _ungated_candidates.pop(event.tool_call_id, None)
                 # Permission breaks tool grouping
                 in_tool_group = False
                 # Flush accumulated text as a finalized segment before the
@@ -2506,7 +2835,12 @@ async def _run_chat(
                 # only reach here when they request approval. plan/ask/build all flow
                 # through the shared gate (plan now allows read-only inspection).
                 _task_mode = getattr(session, "_task_mode", "agent")
-                _tm_deny = task_mode_denies(session, event.title, event.tool_kind, event.tool_input)
+                # tool_kind is deliberately passed EMPTY here even though the frame now
+                # carries the adapter's declared kind: task_mode_denies is
+                # deny-by-default, and a CLI that labels a mutation "read" would
+                # otherwise turn its own denial into an allow. The declared kind is used
+                # for legibility (card/SEL/residue) — never to widen this gate.
+                _tm_deny = task_mode_denies(session, event.title, "", event.tool_input)
                 if _tm_deny:
                     await client.reject_tool(event.request_id)
                     _title, _ = redact_exfiltration_urls(event.title)
@@ -2524,6 +2858,40 @@ async def _run_chat(
                     )
                     continue
                 _pre_tool_hooks_fired = False
+                # Deny-list on the REAL command, not the display title. An ACP
+                # permission frame's title is a truncated human string ("unknown" when
+                # the adapter sends none — G18), so evaluating the deny patterns on the
+                # title alone silently misses `git push --force` while the card still
+                # offers it for approval. The command lives in the cached tool_call
+                # input; probe it in the "Running: " form the hook chain normalizes.
+                # DENY-only by construction (command_probe's contract): an auto-approve
+                # pattern matching the command form must not widen anything.
+                if state.context_builder:
+                    _cmd_probe = acp_permission_authority.command_probe(
+                        event.title, _extract_bash_command(event.tool_input or "")
+                    )
+                    if _cmd_probe:
+                        _cmd_verdict = state.context_builder.hooks.on_tool_call(_cmd_probe)
+                        if _cmd_verdict.action == TOOL_DENY:
+                            await client.reject_tool(event.request_id)
+                            _cmd_reason = getattr(_cmd_verdict, "reason", "") or "security policy"
+                            session.append(
+                                "tool",
+                                f"{event.title} (blocked: {_cmd_reason})",
+                                "msg msg-tool",
+                            )
+                            sel().log_tool_invocation(
+                                session_key=session_key,
+                                agent=_agent_label(session),
+                                source="dashboard",
+                                tool_name=event.title,
+                                tool_kind=event.tool_kind,
+                                outcome="denied",
+                                request_id=event.request_id,
+                                error="denylist_command",
+                                metadata={"reason": _cmd_reason},
+                            )
+                            continue
                 if state.context_builder:
                     tool_result = state.context_builder.hooks.on_tool_call(event.title)
                     if tool_result.action == TOOL_DENY:
@@ -2816,6 +3184,50 @@ async def _run_chat(
                         metadata={"reason": "batch_rejection"},
                     )
                     logger.warning("AUTO-REJECTED tool=%r (batch rejection)", event.title)
+                    continue
+                # §2.3 (gap 3) — UNATTENDED FAIL-FAST, the last gate before the wedge.
+                # Everything below this point waits on a human: it renders an approval
+                # card, mirrors it to the inbox after a grace period, and then blocks
+                # for up to two hours. On an unattended turn there is no human, so that
+                # is not a gate — it is a two-hour stall that ends in a rejection
+                # anyway. Deny NOW, with the reason, and let the turn continue: the CLI
+                # sees a normal denial and can adapt or stop, which is the T5 semantic
+                # ("never wedge waiting for a human") the native runtime already has.
+                #
+                # Deliberately placed LAST, after trust/YOLO and after every deny path.
+                # An unattended loop sets ``_trust``, so its tools were already
+                # auto-approved above and never reach here; what reaches here is a
+                # request nothing could resolve. This ordering means the fail-fast can
+                # only ever turn a two-hour park into an immediate denial — it can
+                # never turn a denial into an approval.
+                if _unattended_turn:
+                    await client.reject_tool(event.request_id)
+                    _ff_title, _ = redact_exfiltration_urls(event.title)
+                    _ff_title, _ = redact_credentials(_ff_title)
+                    session.append(
+                        "tool",
+                        f"{_ff_title} (auto-denied: unattended run, no one to approve)",
+                        "msg msg-tool",
+                        meta=({"tool_call_id": event.tool_call_id} if event.tool_call_id else None),
+                    )
+                    logger.warning(
+                        "unattended fail-fast: auto-denied %r on %s (no human to approve)",
+                        event.title,
+                        session.key,
+                    )
+                    sel().log_tool_invocation(
+                        session_key=session_key,
+                        agent=_agent_label(session),
+                        source="dashboard",
+                        tool_name=event.title,
+                        tool_kind=event.tool_kind,
+                        outcome="denied",
+                        request_id=event.request_id,
+                        metadata={
+                            "reason": "unattended_fail_fast",
+                            "risk": effective_risk,
+                        },
+                    )
                     continue
                 # Interactive approval — send to frontend, wait for decision
                 perm_meta = {

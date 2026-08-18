@@ -236,11 +236,22 @@ def extract_tool_update_events(
         output = (output or "")[:8000]
         output, _ = redact_exfiltration_urls(output)
         output, _ = redact_credentials(output)
+        # Carry the FAILURE bit (§2.3 gap 5). `completed` and `failed` used to
+        # produce a byte-identical event, so every consumer downstream — the tool
+        # card's colour coding and, decisively, the loop breaker — could not tell a
+        # failing ACP tool call from a succeeding one. `G6` measured the consequence:
+        # six consecutive failures in one ACP turn produced no warn, no block and no
+        # circuit trip, because the host was never told anything had failed. The key
+        # is `ok`, matching the native runtime's tool_meta contract: present and
+        # False ONLY on failure, absent on success, so no existing reader changes
+        # behaviour on a passing call.
+        _meta = {"ok": False} if update.get("status") == "failed" else {}
         events.append(
             AcpEvent(
                 kind=EVENT_TOOL_RESULT,
                 tool_call_id=tool_call_id,
                 tool_output=output,
+                tool_meta=_meta,
             )
         )
     return events
@@ -261,6 +272,16 @@ def build_permission_event(
     params = msg.params or {}
     tool_call = params.get("toolCall", {})
     title = tool_call.get("title", "unknown")
+    # The frame's own declared kind (read/edit/execute/delete/…). Carried so the
+    # approval card, the SEL row and the not-gateable residue check can NAME the
+    # tool even when the adapter sends no title (codex sends `kind` but no
+    # `title`, which is why the card said "unknown" — G18). Deliberately NOT fed
+    # to the task-mode gate: a CLI-declared "read" must not be able to turn that
+    # gate's deny-by-default into an allow (§2.2 fails closed).
+    kind = str(tool_call.get("kind") or "")
+    if kind:
+        kind, _ = redact_exfiltration_urls(kind)
+        kind, _ = redact_credentials(kind)
     options = dialect.parse_permission_options(params.get("options", []))
     if not options:
         options = dialect.default_permission_options()
@@ -294,6 +315,7 @@ def build_permission_event(
         kind=EVENT_PERMISSION_REQUEST,
         request_id=request_id,
         title=title,
+        tool_kind=kind,
         options=options,
         tool_input=tool_input,
         tool_call_id=tool_call_id,

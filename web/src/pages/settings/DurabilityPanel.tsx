@@ -492,7 +492,25 @@ function ConflictsSection({ read, onChanged }: {
   const resolve = async (c: DurabilityConflict, choice: DurabilityConflictChoice) => {
     if (!(await confirm({
       title: 'Write this version?',
-      body: `${CHOICE_LABELS[choice]} version of ${c.entity_id} will be written into ${c.entry_id} on this machine. The version you don't pick stays in the shared store, so this is reversible by resolving again from the other side.`,
+      // 🔴 THE REASSURANCE WAS UNCONDITIONAL AND ONLY ONE CHOICE IN THREE EARNS IT — on a dialog whose
+      // own comment already notes "two of the three choices overwrite a row the other machine also
+      // edited". Traced through `conflict_resolve`, which pushes nothing ("Nothing is pushed from here"),
+      // so what the shared store keeps depends entirely on WHICH version you discarded:
+      //
+      //   keep_local       discards the REMOTE row, which the shared store still holds → genuinely
+      //                    reversible, and the detector "HOLDS the id again" next cycle so the other
+      //                    side can still decide differently.
+      //   take_remote      discards THIS machine's row and overwrites it locally. The shared store holds
+      //                    the remote version, not the local one — so the discarded version is in no
+      //                    store at all, only in a snapshot.
+      //   accept_proposal  writes a THIRD row; the remote survives in the shared store, this machine's
+      //                    original does not.
+      //
+      // So the sentence now names what it is actually discarding. Overstating reversibility on a
+      // both-sides-edited row is the one direction that costs a user the edit they meant to keep.
+      body: choice === 'keep_local'
+        ? `${CHOICE_LABELS[choice]} version of ${c.entity_id} will be written into ${c.entry_id} on this machine. The other machine's version stays in the shared store, so you can still decide differently from that side.`
+        : `${CHOICE_LABELS[choice]} version of ${c.entity_id} will be written into ${c.entry_id} on this machine, replacing this machine's copy. That copy is not kept anywhere else — only a snapshot has it.`,
       confirmLabel: 'Write it',
       // Danger tone, so the shell raises it as an alertdialog: two of the three choices
       // overwrite a row the other machine also edited.

@@ -107,6 +107,37 @@ describe('SearchField', () => {
   // glyph once there's a value; this field owns its clear affordance, so the native one
   // is suppressed in BOTH variants (else it double-renders beside the spring-pop clear-X
   // and gives clearable={false} palettes a clear button they declined).
+  // ── the combobox attributes, which are only worth anything if they REACH the input ─────────
+  it('forwards the popup trio, and aria-expanded with it', () => {
+    // A prop that is accepted and dropped is the worst shape: the call site reads as fixed while
+    // assistive tech gets nothing. So this asserts the DOM, not the signature.
+    const { getByRole } = render(
+      <SearchField variant="inline" value="x" onChange={() => {}} ariaLabel="Find file by name"
+        ariaHasPopup="listbox" ariaControls="qo-list" ariaActiveDescendant="qo-opt-2" ariaExpanded />,
+    )
+    const input = getByRole('searchbox')
+    expect(input.getAttribute('aria-haspopup')).toBe('listbox')
+    expect(input.getAttribute('aria-controls')).toBe('qo-list')
+    expect(input.getAttribute('aria-activedescendant')).toBe('qo-opt-2')
+    expect(input.getAttribute('aria-expanded'), 'the attribute added for a popup that toggles').toBe('true')
+  })
+
+  it('says expanded=false rather than omitting it while a popup exists but is closed', () => {
+    // "Absent" and "false" are different answers: a searchbox that CAN open a list should say it is
+    // currently closed, not go silent about having one.
+    const { getByRole } = render(
+      <SearchField variant="inline" value="x" onChange={() => {}} ariaLabel="Find file by name"
+        ariaHasPopup="listbox" ariaControls="qo-list" ariaExpanded={false} />,
+    )
+    expect(getByRole('searchbox').getAttribute('aria-expanded')).toBe('false')
+  })
+
+  it('omits it entirely for a field with no popup at all', () => {
+    const { getByRole } = render(<SearchField value="" onChange={() => {}} placeholder="Search" />)
+    expect(getByRole('searchbox').hasAttribute('aria-expanded'),
+      'a plain search box must not claim to control anything').toBe(false)
+  })
+
   it('suppresses the native webkit search-cancel glyph in both variants', () => {
     const { getByRole, rerender } = render(<SearchField value="" onChange={() => {}} placeholder="Search" />)
     expect(getByRole('searchbox').className).toContain('[&::-webkit-search-cancel-button]:hidden')

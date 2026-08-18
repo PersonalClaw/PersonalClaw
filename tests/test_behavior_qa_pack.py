@@ -200,24 +200,24 @@ class TestWorkerNeverCertifiesOwnWork:
 
 class TestFailureRecoveryBehavior:
     def test_repeated_failure_is_bounded(self):
-        from personalclaw.agents.native.runtime import (
-            _BREAKER_BLOCK,
-            _FailureBreaker,
-            _params_key,
+        from personalclaw.guardrails.loop_breaker import (
+            BLOCK_THRESHOLD,
+            LoopBreaker,
+            params_key,
         )
 
-        b = _FailureBreaker()
-        key = _params_key("flaky", {"x": 1})
+        b = LoopBreaker()
+        key = params_key("flaky", {"x": 1})
         # Same failing call N times → the count reaches the block threshold.
-        for _ in range(_BREAKER_BLOCK):
+        for _ in range(BLOCK_THRESHOLD):
             b.record(key, True)
-        assert b.count(key) >= _BREAKER_BLOCK  # caller refuses further invokes
+        assert b.count(key) >= BLOCK_THRESHOLD  # caller refuses further invokes
 
     def test_success_clears_failure_streak(self):
-        from personalclaw.agents.native.runtime import _FailureBreaker, _params_key
+        from personalclaw.guardrails.loop_breaker import LoopBreaker, params_key
 
-        b = _FailureBreaker()
-        key = _params_key("flaky", {"x": 1})
+        b = LoopBreaker()
+        key = params_key("flaky", {"x": 1})
         b.record(key, True)
         b.record(key, True)
         b.record(key, False)  # recovered

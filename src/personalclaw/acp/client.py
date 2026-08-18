@@ -31,7 +31,7 @@ import logging
 import os
 import time
 from pathlib import Path
-from typing import TYPE_CHECKING, AsyncIterator
+from typing import TYPE_CHECKING, Any, AsyncIterator
 
 if TYPE_CHECKING:
     from collections import deque
@@ -124,6 +124,7 @@ class AcpClient:
         dialect: "ACPDialect | None" = None,
         mode: str | None = None,
         reasoning_effort: str | None = None,
+        unattended: bool = False,
     ):
         from personalclaw.acp.dialect import DefaultDialect
 
@@ -131,7 +132,21 @@ class AcpClient:
         self._work_dir = Path(work_dir) if work_dir else Path.home() / ".personalclaw" / "workspace"
         self._model = model or DEFAULT_MODEL
         self._agent = agent
-        self._mode: str = mode or ""
+        # Unattended run (§2.3 gap 3): set BEFORE the mode clamp below, which reads it.
+        # This is the single input that widens the mode gate, so it defaults False —
+        # an interactive session, or any caller that forgets to say otherwise, keeps
+        # The clamp. It is paired with host-side fail-fast in chat_runner: the two
+        # ship together on purpose, because forwarding ``bypassPermissions`` to a CLI
+        # whose prompts could still park on a human is the wedge, not a fix for it.
+        self._unattended: bool = bool(unattended)
+        # The host is the permission authority: never hand the CLI a mode
+        # that lets it self-approve, and assert the restrictive mode positively
+        # instead of inheriting "whatever the CLI defaults to". Clamped HERE — the
+        # one chokepoint every mode path crosses (factory kwarg, bundle entry
+        # option, per-session override, loop/planning worker) — so no caller can
+        # forget it. An unattended session is the explicit exception and is the
+        # ONLY way through.
+        self._mode: str = self._authority_mode(mode)
         self._reasoning_effort: str = reasoning_effort or ""
         self._sandbox_mode = sandbox_mode
         self._sandbox = sandbox or "none"
@@ -165,6 +180,19 @@ class AcpClient:
         self._session_new_snapshot: dict[str, object] = {}
         self.last_prompt_stats = AcpPromptStats()
         self._last_stop_reason: str = ""
+
+    def _core_mcp_servers(self) -> list[dict[str, Any]]:
+        """The ``mcpServers`` array every ``session/new``/``session/load`` sends.
+
+        Prong A of ACP-AGENT-PARITY §2.1: without it a session sees only the CLI's
+        own tools and none of knowledge / tasks / inbox / artifacts / workflows /
+        subagents / notify. Rebuilt per call so a ``rekey()``-ed warm process
+        carries the CURRENT session key into the server's env, not the key the
+        process was first spawned with.
+        """
+        from personalclaw.acp.mcp_servers import core_mcp_servers
+
+        return core_mcp_servers(session_key=self._session_key)
 
     # ── transport-state proxies ────────────────────────────────────────────────
     # The process + PID/child-PID + stderr + activity clock physically live on the
@@ -298,9 +326,63 @@ class AcpClient:
         await self._send_dialect_request(req)
         self._agent = agent
 
+    def _authority_mode(self, mode: str | None) -> str:
+        """Clamp a requested native mode so the HOST stays the permission authority.
+
+        §2.2: an ``acceptEdits``/``dontAsk``/``bypassPermissions`` session makes the
+        CLI its own authority, and everything it self-approves bypasses the
+        deny-list, the task-mode gate and blocking PreToolUse hooks — they all hang
+        off ``session/request_permission``. A downgrade is AUDITED, never silent, so
+        a caller that thought it had an auto-approve session can see why it did not.
+
+        §2.3: an UNATTENDED session is the one declared exception — it may keep an
+        auto-approve mode, because the host pairs it with fail-fast permission
+        handling so the run resolves deterministically instead of wedging. The grant
+        is audited too (not just the clamp), so an auditor can see WHICH sessions ran
+        with the CLI self-approving and why they were allowed to.
+        """
+        from personalclaw.acp.permission_authority import sanitize_mode
+
+        decision = sanitize_mode(mode, unattended=self._unattended)
+        if decision.reason and not decision.downgraded and decision.requested:
+            # A widened (not clamped) decision: only the unattended path produces one.
+            logger.info("ACP permission mode allowed unattended: %s", decision.reason)
+            try:
+                from personalclaw.sel import sel
+
+                sel().log_api_access(
+                    caller="acp:permission_authority",
+                    operation="mode_change:unattended_auto_approve",
+                    outcome="allowed",
+                    resources=(
+                        f"session={getattr(self, '_session_key', None) or '-'} "
+                        f"mode={decision.mode}"
+                    ),
+                )
+            except Exception:
+                logger.warning("SEL audit failed for unattended ACP mode", exc_info=True)
+        if decision.downgraded:
+            logger.warning("ACP permission mode clamped: %s", decision.reason)
+            try:
+                from personalclaw.sel import sel
+
+                sel().log_api_access(
+                    caller="acp:permission_authority",
+                    operation="mode_change:clamped_to_host_authority",
+                    outcome="downgraded",
+                    resources=(
+                        f"session={getattr(self, '_session_key', None) or '-'} "
+                        f"requested={decision.requested} effective={decision.mode}"
+                    ),
+                )
+            except Exception:
+                logger.warning("SEL audit failed for ACP mode clamp", exc_info=True)
+        return decision.mode
+
     async def set_mode(self, mode: str) -> None:
         """Switch the permission/operating mode on a running session. MUST be issued
         after :meth:`set_model` (adapters clamp modes to the active model)."""
+        mode = self._authority_mode(mode)
         if not mode or mode == self._mode:
             return
         if not self._session_id:
@@ -405,7 +487,7 @@ class AcpClient:
                         {
                             "sessionId": resume_sid,
                             "cwd": str(self._work_dir),
-                            "mcpServers": [],
+                            "mcpServers": self._core_mcp_servers(),
                             "_meta": {"_vendor.dev/session_file": session_file},
                         },
                         session_id=resume_sid,
@@ -426,7 +508,7 @@ class AcpClient:
         # 3. Create a new session if load didn't succeed.
         if not self._session_id:
             self._session = await conn.new_session(
-                {"cwd": str(self._work_dir), "mcpServers": []},
+                {"cwd": str(self._work_dir), "mcpServers": self._core_mcp_servers()},
                 timeout=_INIT_TIMEOUT,
                 session_files_dir=self._session_files_dir,
             )
@@ -488,7 +570,7 @@ class AcpClient:
         # initialize() is one-per-process and already done, so re-open just the session.
         conn = self._connection
         self._session = await conn.new_session(
-            {"cwd": str(self._work_dir), "mcpServers": []},
+            {"cwd": str(self._work_dir), "mcpServers": self._core_mcp_servers()},
             timeout=_INIT_TIMEOUT,
             session_files_dir=self._session_files_dir,
         )

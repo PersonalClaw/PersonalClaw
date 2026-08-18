@@ -1,4 +1,5 @@
 import { useEffect, useId, useState } from 'react'
+import { MoreRow } from '../../ui/MoreRow'
 import { useQueryParam, type RouteProps } from '../../app/useQueryState'
 import { AnimatePresence, motion } from 'framer-motion'
 import { ContextMenu, type ContextMenuItem } from '../../ui/motion'
@@ -80,7 +81,17 @@ function ProjectListPage({ onOpen, query, setQuery }: { onOpen: (id: string) => 
     setErr(null)
     if (!(await confirm({
       title: `Delete project "${proj.name}"?`,
-      body: 'Its context directory will be removed and its task lists detached. Workspace files on disk are left untouched.',
+      // 🪤 "task lists DETACHED" was the wrong word, and it pointed the wrong way — detached implies the
+      // lists survive unattached. `hierarchy.delete_project` unlinks each list file
+      // (`self._list_path(tl.id).unlink(...)`); what survives is the TASKS, which live in their own files
+      // and become orphaned-by-list ("tasks are re-homed by the caller / left orphaned-by-list — the task
+      // provider owns task deletion"). So the reassuring half is the tasks, not the lists.
+      //
+      // "Workspace files on disk are left untouched" holds for this dialog: the bound `workspace_dir` is
+      // an external path the delete never reads, and the project's own `worktrees/` — which the rmtree DOES
+      // take — only exist for bound loops/code work, which sends the user down the force path and its own
+      // dialog instead.
+      body: 'Its context directory and task lists are removed — the tasks themselves stay. Workspace files on disk are left untouched.',
       danger: true, confirmLabel: 'Delete',
     }))) return
     const run = async (force: boolean) => {
@@ -284,6 +295,7 @@ function ProjectPeekBody({ id, project, onOpen }: { id: string; project: Project
                   <span className="min-w-0 flex-1 truncate text-on-surface text-[0.8125rem]">{tl.name}</span>
                 </div>
               ))}
+              <MoreRow total={taskLists.length} shown={6} />
             </div>
           </Section>
         )}
@@ -301,6 +313,7 @@ function ProjectPeekBody({ id, project, onOpen }: { id: string; project: Project
                       <span className="shrink-0 text-[0.75rem]" style={{ color: statusTone(w.status) }}>{w.status}</span>
                     </div>
                   ))}
+                  <MoreRow total={linked.loops.length + linked.code.length} shown={10} />
                 </div>
               </Section>
             )}
@@ -314,6 +327,7 @@ function ProjectPeekBody({ id, project, onOpen }: { id: string; project: Project
                       {c.running && <span className="shrink-0 text-primary text-[0.75rem]">running</span>}
                     </div>
                   ))}
+                  <MoreRow total={linked.chats.length} shown={8} />
                 </div>
               </Section>
             )}
@@ -327,6 +341,7 @@ function ProjectPeekBody({ id, project, onOpen }: { id: string; project: Project
                       <span className="shrink-0 text-on-surface-low text-[0.75rem]">{a.kind}</span>
                     </div>
                   ))}
+                  <MoreRow total={linked.artifacts.length} shown={8} />
                 </div>
               </Section>
             )}

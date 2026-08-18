@@ -6,6 +6,7 @@
  * diff, knowledge/web search as result cards. Everything not matched here falls
  * to the schema-driven default + content-type renderers in the registry.
  */
+import { MoreRow } from '../../../ui/MoreRow'
 import { type ReactNode } from 'react'
 import {
   Wrench, Terminal, FileText, FilePen, FilePlus, Search, Globe, Bot, List,
@@ -89,7 +90,7 @@ function hitListOutput(seg: ToolSegment): ReactNode {
             ? <div key={i} className="flex gap-2 py-0.5"><span className="shrink-0 text-primary">{m[1]}</span><span className="shrink-0 text-on-surface-low tabular-nums">{m[2]}</span><span className="truncate text-on-surface-var">{m[3]}</span></div>
             : <div key={i} className="py-0.5 text-on-surface-var">{ln}</div>
         })}
-        {lines.length > 300 && <div className="mt-1 text-on-surface-low">…{lines.length - 300} more</div>}
+        <MoreRow total={lines.length} shown={300} className="mt-1" />
       </div>
     </RawBlock>
   )
@@ -125,6 +126,7 @@ function searchResultsOutput(seg: ToolSegment): ReactNode {
             </div>
           )
         })}
+        <MoreRow total={arr.length} shown={20} />
       </div>
     </RawBlock>
   )
