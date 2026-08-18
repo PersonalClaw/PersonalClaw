@@ -52,6 +52,8 @@ The original design record is kept below — execution logs, measured findings a
 ```
 PR validation workflow: manifest fetch+parse (core `apps/manifest.py`), repo liveness, license present, scanner dry-run verdict recorded; `dangerous` blocks listing, `warning` lists-with-display. The registry repo URL ships as a **default git source** (existing `/api/apps/sources` mechanism, §3.8 — no new install path; scanner gate unchanged at install).
 
+**AS BUILT (`ET-3`, 2026-08-18) — `scratch/registry/`, three deltas from the sketch above.** (1) The row schema is **closed** (`additionalProperties: false`) and `last_validated`/`last_scan_verdict` are **CI-owned**: a listing PR omits them and anything it does supply is overwritten from the run that actually happened. (2) `registry.schema.json` is **generated** from the Python constants (`validate_registry.py --emit-schema`) rather than hand-maintained, so its `types` enum tracks core's `PROVIDER_TYPES` on regeneration; `test_registry_validation.py` reds on drift. (3) Two checks were added beyond the four listed: the row's `types`/`permissions_declared` must equal what the fetched manifest declares (those two fields ARE the pre-install consent surface S4 publishes, so a row that under-declares lies on the user's behalf), and a symlink resolving outside the clone blocks before anything reads the tree (the validator quotes matched evidence into a public PR comment).
+
 ### Integration points
 - **Calls:** provider registry (type table), `apps/manifest.py` (validation), `SkillScanner` dry-run (verdict), the sources-seeding path.
 - **Consumed by:** 40 (a `channel` scaffold template + bounties), 47 (registry records signer identity per listing), 36 (registry surface on the site).
@@ -179,3 +181,58 @@ PR validation workflow: manifest fetch+parse (core `apps/manifest.py`), repo liv
   to produce.
 - **2026-08-17 — NOTE.** This plan had no `## Execution log` section before today (one of 7 of 70); the
   section was created with `ET-1`'s entry rather than the entry being filed elsewhere.
+- **2026-08-18 — DONE (`ET-3`, T2.1): the registry data tier, staged as registry-repo content in
+  `scratch/registry/`.** Follows `ET-2`'s convention (`scratch/` is tracked, outside `testpaths` and
+  outside `make lint`'s targets, and nothing in core imports it), so the owner copies the directory to a
+  new `personalclaw/registry` root and pushes. Twelve files: `registry.json` (empty until `ET-6`),
+  a **generated** `registry.schema.json`, `validate_registry.py`, `CONTRIBUTING.md` (the listing policy),
+  `DELISTING.md`, `requirements.txt` (`personalclaw==0.1.3`, pinned so the scanner rule set — i.e. what the
+  registry accepts — cannot change without someone choosing it), three workflows and three app fixtures.
+  **All three behavioural clauses are driven, not asserted.** The validator reaches a repo exactly one way —
+  `git ls-remote` for liveness, `git clone --depth 1` to fetch — and git treats `file://` and `https://`
+  identically, so 44 committed tests build real one-commit git repositories from the fixture trees and run
+  the REAL fetcher offline. Nothing is stubbed, skipped or xfailed. Measured: valid → exit 0, verdict
+  `clean`, `rows_validated: 1`; dangerous → exit 1 with `scanner_dangerous:destructive_root` naming
+  `scripts/install.sh` and quoting `rm -rf / --no-preserve-root`; warning → **exit 0, `blocking == []`**,
+  verdict `warning` (not `low` — scanning at `community` tier deliberately, because `official`/`trusted`
+  would report a softer verdict than the user's own install gate) with `scanner_warning:curl_network` in
+  `display` and "shown, not blocking" in the PR body. **`file://` requires an explicit
+  `--allow-file-repos`** that none of the three workflows passes (pinned by a test), so the offline
+  affordance is not a production hole.
+- **2026-08-18 — DEVIATION + DISCOVERY (`ET-3`): three additions the plan did not ask for, each because
+  the four listed checks left a real hole.** (1) **Row↔manifest agreement.** S4 publishes `types` +
+  `permissions_declared` as a pre-install consent surface, so validating the manifest while trusting the
+  row's copy of it would let a listing under-declare permissions on the user's behalf; both are now derived
+  from the fetched manifest (`Permissions.to_dict()` keys — so the two permission fields a sibling agent
+  added to `manifest.py` today are picked up with no edit here) and exact equality is required.
+  (2) **Escaping-symlink refusal.** The validator quotes matched scanner evidence into a **public** PR
+  comment, so a committed symlink to `/etc/passwd` would have had its contents read and echoed by a CI
+  runner. Blocked before anything reads the tree, for absolute AND `../`-climbing targets. (3) **Scheduled
+  re-validation** (`revalidate-listings.yml`): `DELISTING.md`'s grounds are all detected by re-running the
+  validator, and a delisting policy with no detection mechanism is inert doctrine. **The discovery came
+  from a vacuity assertion**: the "an internal symlink is left alone" control initially reported
+  `repo_symlink_escape`, because an ABSOLUTE in-repo symlink stops being in-repo the moment the repo is
+  cloned elsewhere — correct behaviour, wrong fixture. The fixture now uses a relative target and the
+  escape test covers both shapes. A live hand-drive also surfaced a copy defect: GitHub answers a
+  nonexistent repo with `Authentication failed`, so the verbatim git message sent a contributor who
+  mistyped a repo name hunting for a credentials problem; the reason now says what actually happened
+  (asserted at the call site, with a vacuity case proving an ordinary git error does NOT get the hint).
+- **2026-08-18 — NOTE (`ET-3`): the listing policy is written down for the first time, and is
+  OWNER-CONFIRMABLE.** `ET-3`'s declared dep is OSS-OPERATIONS' front-door / community-listing policy,
+  which is not separately shipped, so `CONTRIBUTING.md` states the adopted policy explicitly and marks
+  its provenance: four rules come from this plan's Design (§Registry), and the rest — a closed row schema,
+  exact row↔manifest agreement, unique kebab-case names equal to the manifest's, `https`-only repo URLs
+  with no userinfo and no explicit port, and the maintainer expectations — are stated there so the script
+  implements a written policy rather than an implied one. `DELISTING.md` splits grounds into immediate
+  (`dangerous` verdict, malware/impersonation) and 14-day-notice (repo gone across two consecutive weekly
+  runs, manifest stops validating, license removed, row↔manifest divergence), and says plainly that
+  delisting stops NEW discovery and **uninstalls nothing**. Both documents are owner-confirmable, not
+  owner-confirmed. **Not proven, and unprovable until the repo exists:** whether GitHub runs the three
+  workflows. Their action versions mirror core's own `.github/workflows/ci.yml` as observed today
+  (`checkout@v7`, `setup-uv@v7`, `upload-artifact@v7`, `download-artifact@v8`, `github-script@v9`), and the
+  fork-token split (validation holds a read-only token and writes an artifact; a `workflow_run` sibling
+  posts the comment) is copied from core's `ci.yml`/`pr-feedback.yml` pair for the same reason — a fork PR
+  gets a read-only token whatever `permissions:` asks for. The live `https` legs WERE driven by hand once:
+  `github.com/octocat/Hello-World` cloned and then blocked `manifest_missing` with verdict "not reached"
+  (a `None` verdict is never read as clean), and a nonexistent repo blocked `repo_unreachable` without ever
+  hanging on a credential prompt — which is the no-prompt git environment working.

@@ -1,0 +1,110 @@
+# Weekly re-validation of every listing — the detection arm of DELISTING.md.
+#
+# A listing is a claim about a repository that someone else keeps changing. Validating
+# once at merge and never again would leave the registry advertising apps that have
+# since gone private, dropped their license, quietly added a permission, or turned
+# outright hostile. So the same script CI runs on a PR runs over the whole file on a
+# schedule, and a failure opens the issue that starts the notice period.
+#
+# This one runs from the base repo on a schedule, so its token is writable — unlike
+# validate-listings.yml, which is handed a read-only token on fork PRs.
+name: revalidate-listings
+
+on:
+  schedule:
+    - cron: "17 6 * * 1"   # Mondays, 06:17 UTC
+  workflow_dispatch:
+
+concurrency:
+  group: revalidate-listings
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  revalidate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+
+      - name: Install the validator's dependencies
+        run: |
+          uv venv --python 3.12
+          uv pip install -r requirements.txt
+
+      - name: Re-validate every listing
+        id: revalidate
+        # No --base: every row is re-fetched and re-scanned. No --write either — this
+        # job does not touch the data. A stale last_validated is a fact worth seeing.
+        run: |
+          set +e
+          uv run python validate_registry.py registry.json \
+            --report registry-report.json \
+            --markdown registry-report.md
+          code=$?
+          set -e
+          echo "exit_code=${code}" >> "$GITHUB_OUTPUT"
+          cat registry-report.md >> "$GITHUB_STEP_SUMMARY"
+          exit 0
+
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: registry-revalidation
+          path: |
+            registry-report.md
+            registry-report.json
+          retention-days: 90
+
+      - name: Open or update the delisting-notice issue
+        if: steps.revalidate.outputs.exit_code != '0'
+        uses: actions/github-script@v9
+        with:
+          script: |
+            const fs = require('fs');
+            const title = 'Listings failing re-validation';
+            const marker = '<!-- registry-revalidation -->';
+            const report = fs.readFileSync('registry-report.md', 'utf8');
+            const body = [
+              marker,
+              '',
+              'Weekly re-validation found listings that no longer pass. Per',
+              '[DELISTING.md](../blob/main/DELISTING.md) this issue is the **notice**:',
+              'the 14-day grounds are removed if they are still failing when it expires,',
+              'and the immediate grounds (`dangerous` verdict) are removed now.',
+              '',
+              `Run: ${context.serverUrl}/${context.repo.owner}/${context.repo.repo}` +
+                `/actions/runs/${context.runId}`,
+              '',
+              report,
+            ].join('\n');
+            const { owner, repo } = context.repo;
+            const open = await github.paginate(github.rest.issues.listForRepo, {
+              owner, repo, state: 'open', per_page: 100,
+            });
+            const mine = open.find((i) => i.body && i.body.includes(marker));
+            if (mine) {
+              await github.rest.issues.update({
+                owner, repo, issue_number: mine.number, body,
+              });
+              await github.rest.issues.createComment({
+                owner, repo, issue_number: mine.number,
+                body: 'Re-validation still failing — see the updated report above.',
+              });
+            } else {
+              await github.rest.issues.create({ owner, repo, title, body });
+            }
+
+      - name: Fail the run when a listing no longer validates
+        run: exit "${{ steps.revalidate.outputs.exit_code }}"
