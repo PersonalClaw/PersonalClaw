@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useId, useRef, useState } from 'react'
 import { fvs, withWeight } from '../../design/fontWeight'
 import { createPortal } from 'react-dom'
 import { motion, AnimatePresence } from 'framer-motion'
@@ -1090,6 +1090,12 @@ function FileFinder({ ws }: { ws: string }) {
   // Keyboard-highlighted result for ↑/↓ navigation (quick-open expectation). Reset to
   // the top hit on each new result set.
   const [hi, setHi] = useState(0)
+  // 🔴 THIS WAS A KEYBOARD WIDGET THAT ANNOUNCED NOTHING. Arrow keys moved a purely VISUAL highlight
+  // over the results: no listbox, no options, no `aria-activedescendant`, and nothing said the popover
+  // had opened — the same defect `CommandPalette` carried before cycle 181, in the same shape. The
+  // pattern is the app's own (APG combobox): focus stays in the field and a virtual cursor moves, so
+  // the ids below are what assistive tech follows instead of focus.
+  const qoId = useId()
   // `searching` gates the dropdown's empty state so a slow query doesn't flash a
   // premature "No files match" over the PRIOR results before the new ones land.
   const [searching, setSearching] = useState(false)
@@ -1143,10 +1149,16 @@ function FileFinder({ ws }: { ws: string }) {
             else if (e.key === 'Escape') { e.preventDefault(); setQ(''); setResults([]); setOpen(false) }
           }}
           placeholder="Find file by name…  ⌘P" spellCheck={false} autoCapitalize="off" autoCorrect="off"
-          ariaLabel="Find file by name" />
+          ariaLabel="Find file by name"
+          ariaHasPopup="listbox" ariaControls={`${qoId}-list`}
+          ariaExpanded={open && q.trim().length >= 2}
+          ariaActiveDescendant={open && results.length ? `${qoId}-opt-${Math.min(hi, results.length - 1)}` : undefined} />
       </div>
       {open && q.trim().length >= 2 && (
-        <div className="absolute inset-x-2 z-20 mt-1 max-h-[40vh] overflow-y-auto rounded-md border border-outline-variant/50 bg-surface-container shadow-lg">
+        // A listbox is an ARIA input field, so unlike a menu it MUST be named — the exact axe
+        // "serious" finding `ProjectPicker` produced when it declared one namelessly.
+        <div role="listbox" aria-label="Matching files" id={`${qoId}-list`}
+          className="absolute inset-x-2 z-20 mt-1 max-h-[40vh] overflow-y-auto rounded-md border border-outline-variant/50 bg-surface-container shadow-lg">
           {results.length === 0 ? (
             // While a query is in flight, show "Searching…" rather than a premature
             // "No files match" (which would flash over the prior results until the new
@@ -1166,7 +1178,9 @@ function FileFinder({ ws }: { ws: string }) {
             const mi = wsBase ? r.path.lastIndexOf(marker) : -1
             const rel = mi >= 0 ? r.path.slice(mi + marker.length) : (r.path.startsWith(ws) ? r.path.slice(ws.replace(/\/$/, '').length + 1) : r.name)
             return (
-              <button key={r.path} type="button" onClick={() => openFile(r)} onMouseEnter={() => setHi(i)}
+              <button key={r.path} type="button" role="option" aria-selected={i === hi}
+                id={`${qoId}-opt-${i}`}
+                onClick={() => openFile(r)} onMouseEnter={() => setHi(i)}
                 ref={(el) => { if (i === hi && open) el?.scrollIntoView({ block: 'nearest' }) }}
                 className={`flex w-full items-center gap-1.5 px-2.5 py-1.5 text-left text-[0.75rem] ${i === hi ? 'bg-surface-high' : 'hover:bg-surface-high'}`}>
                 <FileCode size={11} className="shrink-0 text-on-surface-low" />

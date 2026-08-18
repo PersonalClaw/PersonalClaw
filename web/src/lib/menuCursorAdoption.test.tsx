@@ -75,7 +75,17 @@ describe('the declaration-implies-implementation census', () => {
   //  focus never leaving the input). Before it, the palette declared no listbox, no options and no
   //  activedescendant at all — 22 commands with a purely visual highlight. The two composer menus keep
   //  their deferral, for the reason stated: their focus lives in a CodeMirror contenteditable.
-  const COMBOBOX = ['ui/composer/SlashMenu.tsx', 'ui/composer/MentionMenu.tsx', 'app/CommandPalette.tsx']
+  //
+  //  🔑 `pages/code/CodeCockpitPage.tsx`'s quick-open joined in cycle 650, the same variant and for the
+  //  same reason: its ⌘P popover had arrow keys moving a purely VISUAL highlight over the results —
+  //  no listbox, no options, no activedescendant, and nothing saying the popover had opened. Focus
+  //  belongs in its search field (that is the whole point of type-to-filter), so it takes the
+  //  CommandPalette shape rather than this hook's, plus `aria-expanded`, which the palette does not
+  //  need because its list is always present while mounted and this one appears and disappears.
+  const COMBOBOX = [
+    'ui/composer/SlashMenu.tsx', 'ui/composer/MentionMenu.tsx', 'app/CommandPalette.tsx',
+    'pages/code/CodeCockpitPage.tsx',
+  ]
   const focusMoving = [...declaring.keys()].filter((rel) => !COMBOBOX.includes(rel))
 
   it('finds the popups — the scan is not vacuous', () => {
@@ -333,5 +343,36 @@ describe('ProjectPicker: a listbox that promised arrows', () => {
     act(() => { fireEvent.keyDown(window, { key: 'Escape' }) })
     await waitFor(() => expect(screen.queryAllByRole('option')).toHaveLength(0))
     expect(document.activeElement).toBe(trigger)
+  })
+})
+
+describe('the quick-open combobox says what it is doing', () => {
+  // Beyond the family census: the three attributes a virtual cursor needs, and the one the palette
+  // does not need. A file could satisfy the census with `aria-activedescendant` anywhere in it; these
+  // pin it to the ids the popover actually renders.
+  const code = codeOf('pages/code/CodeCockpitPage.tsx')
+
+  it('the field points at the list and tracks the active option', () => {
+    expect(code).toMatch(/ariaHasPopup="listbox" ariaControls=\{`\$\{qoId\}-list`\}/)
+    expect(code, 'the cursor is virtual, so the id must follow `hi`').toMatch(
+      /ariaActiveDescendant=\{open && results\.length \? `\$\{qoId\}-opt-\$\{Math\.min\(hi, results\.length - 1\)\}` : undefined\}/,
+    )
+  })
+
+  it('says whether the popover is open — the attribute CommandPalette does not need', () => {
+    // The palette's list exists for as long as the palette does; this one appears on typing and goes
+    // away on Escape, so without `aria-expanded` nothing announces that a list arrived.
+    expect(code).toMatch(/ariaExpanded=\{open && q\.trim\(\)\.length >= 2\}/)
+    expect(readFileSync(join(SRC, 'ui/SearchField.tsx'), 'utf8'), 'and the field must pass it through')
+      .toMatch(/'aria-expanded': ariaExpanded/)
+  })
+
+  it('the options are options, and the active one says so', () => {
+    expect(code).toMatch(/role="option" aria-selected=\{i === hi\}/)
+    expect(code, 'each option needs the id the field points at').toMatch(/id=\{`\$\{qoId\}-opt-\$\{i\}`\}/)
+  })
+
+  it('the listbox is NAMED — the axe serious finding a nameless one produces', () => {
+    expect(code).toMatch(/role="listbox" aria-label="Matching files"/)
   })
 })
