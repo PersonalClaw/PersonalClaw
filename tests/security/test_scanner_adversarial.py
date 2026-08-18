@@ -1,7 +1,7 @@
 """SH-5 — the adversarial corpus harness against ``SkillScanner`` / ``install_scanned``.
 
-Five attack classes, named by SECURITY-HARDENING S3/C3 and stored one directory per
-class under ``tests/security/corpus/``:
+Six attack classes, stored one directory per class under ``tests/security/corpus/``.
+Five were named by SECURITY-HARDENING S3/C3; ``baseline-tamper`` was added by SH-7:
 
 * ``archive`` — zip-slip / absolute-path / mid-path traversal / case-collision.
 * ``integrity-race`` — the scanned-bytes == installed-bytes invariant under a
@@ -10,6 +10,13 @@ class under ``tests/security/corpus/``:
   ``force`` against the non-overridable floor.
 * ``invisible-char`` — bidi overrides and zero-width token splitting.
 * ``degenerate-manifest`` — oversized blobs and manifests that parse to nonsense.
+* ``baseline-tamper`` (SH-7) — the packaged command denylist itself under attack: a
+  self-consistent rewrite of ``baseline_denylist.json``, a digest mismatch, an empty
+  pattern list, an in-process ``.clear()``, and the no-trusted-source-left state where
+  the live list, the snapshot and the file are all unverifiable at once. Each case
+  asserts the same triple — **detected, audited, still enforcing** — because a tamper
+  that raises but is never logged, or is logged but shrinks what gets refused, is not
+  actually defended.
 
 Every corpus case is inert data: a JSON description of a payload. Nothing under
 ``corpus/`` is ever executed — the harness materializes each payload into ``tmp_path``
@@ -34,7 +41,8 @@ from typing import Any, Callable
 
 import pytest
 
-from personalclaw import supply_chain
+from personalclaw import security, supply_chain
+from personalclaw.sel import SecurityEventLog
 from personalclaw.skills import marketplace as mk
 from personalclaw.skills.marketplace import SkillDetail, SkillInstallRefused, SkillsMarketplace
 from personalclaw.supply_chain import TrustTier, Verdict, default_scanner
@@ -47,6 +55,7 @@ ATTACK_CLASSES = (
     "verdict-evasion",
     "invisible-char",
     "degenerate-manifest",
+    "baseline-tamper",
 )
 
 
@@ -411,9 +420,197 @@ def assert_manifest_rejected(case: dict[str, Any], tmp_path: Path) -> None:
     assert not (tmp_path / "live2" / "helper" / "SKILL.md").exists()
 
 
+# ── baseline-tamper drivers (SH-7) ──────────────────────────────────────────────
+#
+# The tamper is applied to a TEMP COPY of the packaged data file, never to the installed
+# one: ``security.resources`` is swapped for a shim that resolves
+# ``baseline_denylist.json`` inside ``tmp_path``, so the REAL ``_read_packaged_baseline``
+# does the reading, hashing and raising. (SH-6's unit tests substitute the whole reader,
+# which re-implements the parse; going through the real function is what makes this
+# corpus class end-to-end rather than a second copy of the same assertions.)
+
+
+class _TamperedResources:
+    """Minimal ``importlib.resources`` stand-in rooted at a temp directory."""
+
+    def __init__(self, root: Path) -> None:
+        self._root = root
+
+    def files(self, _package: str) -> Path:
+        return self._root
+
+
+def _baseline_doc(case_tamper: dict[str, Any], patterns_key: str = "patterns") -> str:
+    """Serialize a tampered ``{version, sha256, patterns}`` doc from a case's spec."""
+    patterns = [str(p) for p in case_tamper.get(patterns_key, [])]
+    if case_tamper.get("recompute_sha256"):
+        digest = security._baseline_digest(patterns)
+    else:
+        digest = str(case_tamper["sha256"])
+    return json.dumps(
+        {"version": int(case_tamper.get("version", 1)), "sha256": digest, "patterns": patterns}
+    )
+
+
+def _install_tampered_file(raw: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    root = tmp_path / "tampered-package"
+    root.mkdir(parents=True, exist_ok=True)
+    (root / security.BASELINE_DENYLIST_FILE).write_text(raw, encoding="utf-8")
+    monkeypatch.setattr(security, "resources", _TamperedResources(root))
+
+
+def _use_home(home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Point the SEL at ``home`` for THIS rail invocation.
+
+    The red-on-weakness tests run the same rail twice (intact, then weakened) and each run
+    must count only its own events — a shared log would let the intact run's tamper event
+    satisfy the weakened run's ``len(rows) == 1``, and the weakening would look caught.
+    """
+    home.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setenv("PERSONALCLAW_HOME", str(home))
+    SecurityEventLog._instance = None
+    SecurityEventLog._initialized = False
+
+
+def _sel_rows(home: Path, event_type: str) -> list[dict[str, Any]]:
+    path = home / "security_events.jsonl"
+    if not path.exists():
+        return []
+    rows = [json.loads(ln) for ln in path.read_text(encoding="utf-8").splitlines() if ln.strip()]
+    return [r for r in rows if r["event_type"] == event_type]
+
+
+def _still_enforcing(case: dict[str, Any]) -> None:
+    """The third leg of the triple. A tamper that is detected and audited but quietly
+    stopped refusing the commands is the outcome that matters, so every case names the
+    probe commands that must STILL be denied — and one that must still not be."""
+    for command in case["variants"]:
+        assert security.denied_command_reason(command) is not None, (
+            f"{case['id']}: {command!r} is no longer refused after the tamper — the "
+            f"baseline shrank"
+        )
+    assert security.denied_command_reason("echo sh7-corpus-negative-control") is None, (
+        f"{case['id']}: the post-tamper denylist refuses a benign command, so 'still "
+        f"enforcing' above proves nothing"
+    )
+
+
+def assert_baseline_file_tamper_detected(
+    case: dict[str, Any], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A self-consistent on-disk rewrite: detected, not adopted, audited, still enforcing."""
+    _use_home(tmp_path, monkeypatch)
+    before = len(security.baseline_denied_command_patterns())
+    _install_tampered_file(_baseline_doc(case["tamper"]), tmp_path, monkeypatch)
+
+    report = security.verify_baseline_denylist()
+
+    assert report["file_verified"] is False, f"{case['id']}: the rewrite was not detected"
+    assert case["detail_contains"] in report["detail"], report["detail"]
+    assert report["sha256"] == security._BASELINE_SHA256, "the tampered digest was ADOPTED"
+    assert report["count"] == before, "the enforced set changed size after the tamper"
+    rows = _sel_rows(tmp_path, "baseline_denylist_tamper_attempt")
+    assert len(rows) == 1, f"{case['id']}: tamper not audited ({len(rows)} events)"
+    assert rows[0]["metadata"]["reason"] == case["sel_reason"]
+    assert rows[0]["outcome"] == "rejected"
+    _still_enforcing(case)
+
+
+def assert_baseline_file_unreadable_detected(
+    case: dict[str, Any], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A file the real reader REFUSES to parse (bad digest / no patterns).
+
+    Two assertions, not one: the read raises (so nothing shortened can be returned) AND
+    the periodic verify turns that raise into an audited tamper event instead of
+    swallowing it.
+    """
+    _use_home(tmp_path, monkeypatch)
+    before = len(security.baseline_denied_command_patterns())
+    _install_tampered_file(_baseline_doc(case["tamper"]), tmp_path, monkeypatch)
+
+    with pytest.raises(ValueError, match=case["raises"]):
+        security._read_packaged_baseline()
+
+    report = security.verify_baseline_denylist()
+
+    assert report["file_verified"] is False
+    assert case["detail_contains"] in report["detail"], report["detail"]
+    assert report["count"] == before
+    rows = _sel_rows(tmp_path, "baseline_denylist_tamper_attempt")
+    assert len(rows) == 1, f"{case['id']}: tamper not audited ({len(rows)} events)"
+    assert rows[0]["metadata"]["reason"] == case["sel_reason"]
+    _still_enforcing(case)
+
+
+def assert_baseline_healed_and_audited(
+    case: dict[str, Any], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An in-process ``.clear()`` is healed on the next read and logged as a re-assert."""
+    _use_home(tmp_path, monkeypatch)
+    before = len(security.baseline_denied_command_patterns())
+    security.BUILTIN_DENIED_COMMAND_PATTERNS.clear()
+    assert security.BUILTIN_DENIED_COMMAND_PATTERNS == [], "the tamper did not apply"
+
+    healed = security.baseline_denied_command_patterns()
+
+    assert len(healed) == before, "the heal did not restore the full baseline"
+    assert list(security.BUILTIN_DENIED_COMMAND_PATTERNS) == list(healed), "live list not repaired"
+    rows = _sel_rows(tmp_path, case["sel_event"])
+    assert len(rows) == 1, f"{case['id']}: heal not audited ({len(rows)} events)"
+    assert rows[0]["outcome"] == "healed"
+    assert rows[0]["metadata"]["restored_count"] == before
+    _still_enforcing(case)
+
+
+def assert_baseline_shrink_refused_and_audited(
+    case: dict[str, Any], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """No trusted source left: live list, snapshot and packaged file all unverifiable.
+
+    The contract is **never fewer**, not "only verified sources". Measured against the
+    code (``security.py``: ``union = dict.fromkeys(live + good + reread)``): the
+    unverified file's patterns ARE folded into the union. That is safe by construction and
+    worth stating rather than asserting against — a denylist is monotone, so an extra entry
+    can only make it refuse *more*. The failure mode to guard is the opposite one, a
+    source being dropped, so this rail pins the superset direction and the audit.
+    """
+    _use_home(tmp_path, monkeypatch)
+    tamper = case["tamper"]
+    _install_tampered_file(_baseline_doc(tamper, "file_patterns"), tmp_path, monkeypatch)
+    monkeypatch.setattr(
+        security, "_BASELINE_PATTERNS", tuple(str(p) for p in tamper["snapshot_patterns"])
+    )
+    security.BUILTIN_DENIED_COMMAND_PATTERNS[:] = [str(p) for p in tamper["live_patterns"]]
+
+    effective = security.baseline_denied_command_patterns()
+
+    for source in ("snapshot_patterns", "live_patterns", "file_patterns"):
+        for pattern in tamper[source]:
+            assert pattern in effective, f"{case['id']}: {source} dropped {pattern!r} — not a union"
+    assert len(effective) >= max(
+        len(tamper["snapshot_patterns"]),
+        len(tamper["live_patterns"]),
+        len(tamper["file_patterns"]),
+    ), f"{case['id']}: the effective set is smaller than one of the copies it unions"
+    assert len(set(effective)) == len(effective), f"{case['id']}: the union did not dedupe"
+    rows = _sel_rows(tmp_path, "baseline_denylist_tamper_attempt")
+    assert len(rows) == 1, f"{case['id']}: rejected shrink not audited ({len(rows)} events)"
+    assert rows[0]["metadata"]["reason"] == case["sel_reason"]
+    assert rows[0]["outcome"] == "rejected"
+    _still_enforcing(case)
+
+
 # ``expect`` → rail. A corpus case whose expect is absent here is a fixture nobody
 # asserts on, and TestCorpusIsComplete reds on it.
-NEEDS_MONKEYPATCH = {"installed_equals_scanned", "midscan_payload_swap_refused"}
+NEEDS_MONKEYPATCH = {
+    "installed_equals_scanned",
+    "midscan_payload_swap_refused",
+    "baseline_file_tamper_detected",
+    "baseline_file_unreadable_detected",
+    "baseline_healed_and_audited",
+    "baseline_shrink_refused_and_audited",
+}
 HANDLERS: dict[str, Callable[..., None]] = {
     "unsafe_path_refused": assert_unsafe_path_refused,
     "dangerous": assert_dangerous,
@@ -425,6 +622,10 @@ HANDLERS: dict[str, Callable[..., None]] = {
     "integrity_tamper_detected": assert_integrity_tamper_detected,
     "oversize_skipped_by_walk_refused_at_commit": assert_oversize_skipped_by_walk_refused_at_commit,
     "manifest_rejected": assert_manifest_rejected,
+    "baseline_file_tamper_detected": assert_baseline_file_tamper_detected,
+    "baseline_file_unreadable_detected": assert_baseline_file_unreadable_detected,
+    "baseline_healed_and_audited": assert_baseline_healed_and_audited,
+    "baseline_shrink_refused_and_audited": assert_baseline_shrink_refused_and_audited,
 }
 
 
@@ -502,6 +703,58 @@ class TestDegenerateManifestClass:
         run_case(case, tmp_path, monkeypatch)
 
 
+@pytest.fixture
+def baseline_state_restored(tmp_path, monkeypatch):
+    """Restore every process-global the baseline-tamper cases deliberately break.
+
+    ``BUILTIN_DENIED_COMMAND_PATTERNS`` is mutated IN PLACE and
+    ``_BASELINE_TAMPER_REPORTED`` is a module-level set, so ``monkeypatch`` cannot undo
+    either — without this, one tamper case would leave a shortened denylist (and a
+    "already reported" marker that suppresses the next case's SEL write) for whatever
+    test the xdist worker picks up next. The SEL singleton is reset so each case's events
+    land in its own ``tmp_path`` home and are counted exactly.
+    """
+    live_before = list(security.BUILTIN_DENIED_COMMAND_PATTERNS)
+    snapshot_before = security._BASELINE_PATTERNS
+    reported_before = set(security._BASELINE_TAMPER_REPORTED)
+    monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path))
+    security._BASELINE_TAMPER_REPORTED.clear()
+    SecurityEventLog._instance = None
+    SecurityEventLog._initialized = False
+    yield
+    security._BASELINE_PATTERNS = snapshot_before
+    security.BUILTIN_DENIED_COMMAND_PATTERNS[:] = live_before
+    security._BASELINE_TAMPER_REPORTED.clear()
+    security._BASELINE_TAMPER_REPORTED.update(reported_before)
+    SecurityEventLog._instance = None
+    SecurityEventLog._initialized = False
+
+
+class TestBaselineTamperClass:
+    """SH-7 — the packaged command denylist under attack.
+
+    Each case asserts the triple: the tamper is **detected**, it is **audited** to the SEL
+    (``baseline_denylist_tamper_attempt`` / ``_reasserted``), and the baseline is **still
+    enforcing** the commands the case names. Asserting only that a function raises would
+    pass against a build that raised and then screened nothing.
+    """
+
+    @pytest.mark.parametrize(
+        "case", load_cases("baseline-tamper"), ids=ids_of(load_cases("baseline-tamper"))
+    )
+    def test_case(self, case, tmp_path, monkeypatch, baseline_state_restored):
+        run_case(case, tmp_path, monkeypatch)
+
+    def test_the_tamper_never_touches_the_installed_data_file(self):
+        """Isolation floor for this class. Every case rewrites a copy under ``tmp_path``;
+        the real packaged file must still verify against the fingerprint captured at
+        import. If a case ever wrote to the checkout, this reds."""
+        version, digest, patterns = security._read_packaged_baseline()
+        assert digest == security._BASELINE_SHA256
+        assert version == security.BASELINE_DENYLIST_VERSION
+        assert len(patterns) == len(security._BASELINE_PATTERNS)
+
+
 # ── the corpus's own floor ──────────────────────────────────────────────────────
 
 
@@ -510,7 +763,7 @@ class TestCorpusIsComplete:
     emptied, a fixture added but never wired, a payload that became executable — must
     fail here rather than look like a clean run."""
 
-    def test_all_five_attack_classes_present_and_populated(self):
+    def test_all_attack_classes_present_and_populated(self):
         assert sorted(p.name for p in CORPUS_ROOT.iterdir() if p.is_dir()) == sorted(ATTACK_CLASSES)
         for cls in ATTACK_CLASSES:
             assert load_cases(cls), cls
@@ -631,3 +884,43 @@ class TestCorpusRedsOnAWeakenedScanner:
 
         monkeypatch.setattr(mk, "install_skill_files", substituting_writer)
         expect_rail_red(assert_installed_equals_scanned, case, tmp_path / "weakened", monkeypatch)
+
+    def test_rereading_the_fingerprint_from_disk_reds_baseline_tamper(
+        self, tmp_path, monkeypatch, baseline_state_restored
+    ):
+        """The precise bug the baseline-tamper class exists to catch: a module that
+        re-derives its fingerprint from the file it is trying to verify. Then a
+        self-consistent rewrite verifies against itself and is adopted silently.
+
+        Weakening = rebinding ``_BASELINE_SHA256`` to the tampered file's own digest. The
+        detection rail must red; if it stayed green, the import-time fingerprint was not
+        the thing doing the work.
+        """
+        case = self._case("baseline-tamper/self-consistent-file-rewrite")
+        assert_baseline_file_tamper_detected(case, tmp_path / "intact", monkeypatch)
+        monkeypatch.undo()
+
+        tampered_digest = security._baseline_digest([str(p) for p in case["tamper"]["patterns"]])
+        monkeypatch.setattr(security, "_BASELINE_SHA256", tampered_digest)
+        expect_rail_red(
+            assert_baseline_file_tamper_detected, case, tmp_path / "weakened", monkeypatch
+        )
+
+    def test_suppressing_the_tamper_audit_reds_baseline_tamper(
+        self, tmp_path, monkeypatch, baseline_state_restored
+    ):
+        """The audit half, pinned separately from the detection half.
+
+        A dedupe that swallows every report (``_note_baseline_tamper`` always False) leaves
+        detection intact and enforcement intact — and makes the tamper invisible. That is a
+        real failure, so the rail must red on it rather than only on a shrink.
+        """
+        case = self._case("baseline-tamper/snapshot-and-file-both-rebound")
+        assert_baseline_shrink_refused_and_audited(case, tmp_path / "intact", monkeypatch)
+        monkeypatch.undo()
+        security._BASELINE_TAMPER_REPORTED.clear()
+
+        monkeypatch.setattr(security, "_note_baseline_tamper", lambda digest: False)
+        expect_rail_red(
+            assert_baseline_shrink_refused_and_audited, case, tmp_path / "weakened", monkeypatch
+        )
