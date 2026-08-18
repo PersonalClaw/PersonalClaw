@@ -78,7 +78,7 @@ export function NotificationRulesMatrix({ doc, onSaved }: { doc: NotificationRul
                           <RotateCcw size={11} /> reset
                         </Button>
                       )}
-                      <SegPills value={r.mode} onChange={(v) => save(r.key, { mode: v })} options={MODES} />
+                      <SegPills ariaLabel={`Delivery mode for ${r.label}`} value={r.mode} onChange={(v) => save(r.key, { mode: v })} options={MODES} />
                       <Button size="xs" variant="ghost" onClick={() => setExpanded(isOpen ? null : r.key)}
                         aria-expanded={isOpen}
                         aria-label={`${isOpen ? 'Hide' : 'Show'} delivery detail for ${r.label}`}>

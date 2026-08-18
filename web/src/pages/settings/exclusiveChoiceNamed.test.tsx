@@ -3,6 +3,7 @@ import { render, screen } from '@testing-library/react'
 import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { SegToggle } from './bento'
+import { SegPills } from './settingsUI'
 
 // ── An exclusive-choice pill group that says neither what it sets nor which one is on ──────
 //
@@ -31,6 +32,24 @@ import { SegToggle } from './bento'
 // and the composer pills do the same with a required `dimension` prop. `SegToggle` now takes a
 // REQUIRED `ariaLabel` for exactly that reason — typecheck stops an unnamed new call site
 // before this rail has to.
+//
+// ── AND THEN THIS RAIL MISSED THE BIGGEST MEMBER, because it enumerated a COMPONENT, not a FAMILY.
+//
+// `SegPills` (pages/settings/settingsUI.tsx) is the same idiom with 8 call sites across 6 settings
+// panels, and it had neither half. Re-measured on the live DOM at 1440×900 dark across
+// `#/settings/chat`, `/guardrails`, `/notifications`, `/agent`:
+//
+//   BEFORE   34 groups · 126 options · 0 with the dimension in any name · 0 with any pressed state
+//   AFTER    34 groups · 126 options · 0 unnamed · 0 stateless (exactly one pressed per group)
+//
+// 🔑 The notification rules matrix renders **26 of those groups at once**, every one of them
+// `[Never | Badge | Notify | Digest]`. A screen-reader user heard 26 indistinguishable sets of four
+// bare buttons — no rule name, no live mode. That is the single worst instance of this defect in the
+// app, and a rail scoped to `SegToggle` could never see it.
+//
+// So the last describe DERIVES the family: any component that maps an `options` list to buttons and
+// compares one of them to a `value` must mark its state programmatically. That is the check that
+// would have found `SegPills` on the day `SegToggle` was fixed.
 
 const SETTINGS = join(process.cwd(), 'src/pages/settings')
 const SRC = join(process.cwd(), 'src')
@@ -133,5 +152,94 @@ describe("the Design panel's hand-rolled mode pills agree with the primitive", (
 
   it('spells color the way the other 1600 sites do', () => {
     expect(src).not.toMatch(/colour/i)
+  })
+})
+
+describe('SegPills announces its dimension and its state', () => {
+  it('names each option <dimension>: <value>', () => {
+    render(<SegPills ariaLabel="Widget density" value="more" onChange={vi.fn()}
+      options={[{ key: 'more', label: 'More' }, { key: 'less', label: 'Less' }]} />)
+    expect(screen.getByRole('button', { name: 'Widget density: More' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Widget density: Less' })).toBeTruthy()
+  })
+
+  it('marks exactly the active option as pressed', () => {
+    render(<SegPills ariaLabel="Scan mode" value="redact" onChange={vi.fn()}
+      options={[{ key: 'warn', label: 'Warn' }, { key: 'redact', label: 'Redact' }, { key: 'block', label: 'Block' }]} />)
+    expect(screen.getByRole('button', { name: 'Scan mode: Redact' }).getAttribute('aria-pressed')).toBe('true')
+    expect(screen.getByRole('button', { name: 'Scan mode: Warn' }).getAttribute('aria-pressed')).toBe('false')
+    expect(screen.getByRole('button', { name: 'Scan mode: Block' }).getAttribute('aria-pressed')).toBe('false')
+  })
+
+  it('leaves the VISIBLE label alone — a naming fix, not a redesign', () => {
+    const { container } = render(<SegPills ariaLabel="Restore window" value="30" onChange={vi.fn()}
+      options={[{ key: '15', label: '15 min' }, { key: '30', label: '30 min' }]} />)
+    expect([...container.querySelectorAll('button')].map((b) => b.textContent)).toEqual(['15 min', '30 min'])
+  })
+})
+
+describe('every SegPills call site names its dimension', () => {
+  const sites = walk(SRC).flatMap((f) => tags(stripComments(readFileSync(f, 'utf8')), 'SegPills').map((t) => ({ f, t })))
+
+  it('finds the call sites (not vacuously green)', () => {
+    // Eight at the time of writing, across six panels. `ariaLabel` is required, so typecheck is the
+    // real gate; this floor only stops the assertion below from passing by matching nothing.
+    expect(sites.length, 'the matcher must find the SegPills call sites').toBeGreaterThanOrEqual(8)
+  })
+
+  it('has no unnamed call site', () => {
+    const mute = sites.filter((s) => !/\bariaLabel=/.test(s.t))
+    expect(mute.map((s) => s.f), 'SegPills without a dimension').toEqual([])
+  })
+
+  it("the 26-at-once matrix names the RULE, not just the dimension", () => {
+    // A shared dimension cannot disambiguate 26 sibling groups; the rule's own label has to be in
+    // the name or the fix is cosmetic on the one surface where it matters most.
+    const src = stripComments(readFileSync(join(SETTINGS, 'NotificationRulesMatrix.tsx'), 'utf8'))
+    expect(src).toMatch(/ariaLabel=\{`Delivery mode for \$\{r\.label\}`\}/)
+  })
+})
+
+describe('the family is DERIVED, so the next pill group cannot be missed', () => {
+  /** An exclusive-choice group: a component that maps an options list to buttons and compares one
+   *  option to a single `value`. That shape — not a component name — is what this rail is about. */
+  function exclusiveGroups() {
+    const out: { rel: string; state: boolean }[] = []
+    for (const f of walk(SRC)) {
+      const src = stripComments(readFileSync(f, 'utf8'))
+      for (const m of src.matchAll(/(?:options|opts|OPTIONS|MODES)\s*\.map\(\s*\(?\s*(\w+)/g)) {
+        const block = src.slice(m.index!, m.index! + 900)
+        if (!/<(?:motion\.)?button/.test(block)) continue
+        if (!new RegExp(`${m[1]}\\.key === value|=== value|value === ${m[1]}`).test(block)) continue
+        out.push({
+          rel: f.slice(SRC.length + 1),
+          state: /aria-pressed|aria-selected|aria-checked|role="(?:tab|radio|option)"/.test(block),
+        })
+      }
+    }
+    return out
+  }
+
+  /** `ui/Combobox.tsx` marks its selected row with a `<Check>` GLYPH only (`const sel = o.value ===
+   *  value` feeds an icon and nothing else), so it is a real member of this family — but its correct
+   *  fix is listbox semantics (`role="option"` + `aria-selected`), which carries a keyboard contract
+   *  this rail's `aria-pressed` form does not. `ui/popupItemRoles.test.tsx` swept six popup
+   *  containers and never named it. Left for its own cycle rather than given the wrong role. */
+  const PENDING = new Set(['ui/Combobox.tsx'])
+
+  it('every exclusive-choice group marks its state, or is a named exception', () => {
+    const groups = exclusiveGroups()
+    // Vacuity floors: this matcher is doing the enumerating, so prove it resolved something.
+    expect(groups.length, 'the sweep must find the pill groups').toBeGreaterThanOrEqual(5)
+    expect(groups.some((g) => g.rel === 'pages/settings/settingsUI.tsx'), 'SegPills must be in scope').toBe(true)
+
+    const mute = groups.filter((g) => !g.state && !PENDING.has(g.rel)).map((g) => g.rel)
+    expect(mute, `these convey selection visually only:\n${mute.join('\n')}`).toEqual([])
+  })
+
+  it('the pending exception is still real — it may only ever be removed', () => {
+    const combo = readFileSync(join(SRC, 'ui/Combobox.tsx'), 'utf8')
+    expect(combo, 'if Combobox gains a programmatic state, delete it from PENDING')
+      .toMatch(/const sel = o\.value === value/)
   })
 })
