@@ -324,3 +324,97 @@ so the merge paths were exercised by calling `_merge_memory` directly.)
 **Remaining:** Sessions 4-5 (the trigger-store provider seam + a proof-of-concept trigger
 provider app), still gated on AUTOMATION-SUBSTRATE steps 1-3 — `triggers.json` and
 `TriggerService` do not exist yet.
+
+### 2026-08-18 — Session 4 / `TSE-4` (§2.2 + §3: the trigger-store seam) — DONE
+
+`TriggerStoreProvider` (the interface §3 calls `TriggerStore`) + the `trigger` provider
+type and its handler in one commit + `Trigger.author` + the structural owner filter +
+`sdk/triggers.py` + foreign-trigger read-only rendering.
+
+**`trigger` is NOT `trigger_source`, and the code says so.** The precedent AUTO-A4 shipped
+contributes the STIMULUS: a live observer with `start`/`stop` pushing typed events onto the
+bus, which the owner's own `kind: event` rows match. This type contributes the RULE: a
+passive store of trigger DEFINITIONS. Push vs pull, events vs rows, machinery-with-a-
+lifecycle vs persistence-with-a-change-notification. One app may register as both, and a
+provider-served row may be bound to a provider-emitted event — which is what collapsing the
+two would make unsayable. Stated in `triggers/provider.py`'s module docstring, in
+`TriggerTypeHandler`'s, and beside the `PROVIDER_TYPES` entry, because they now sit adjacent.
+
+**The extraction's shape.** The native impl already existed and keeps its name
+(`triggers.store.TriggerStore`, ~30 importers across the gateway and CLI); what was missing
+was the abstraction, so `provider.TriggerStoreProvider` is an ABC of exactly §3's list
+(`load`/`list_triggers`/`get`/`upsert`/`delete` + `changed_on_disk` as the change-notify, plus
+`base_dir` because `service.tick` roots the claim store from it) and `TriggerStore` now
+subclasses it. The interface is named `…Provider` to match every other app-facing contract
+(`TriggerSourceProvider`, `SyncTransportProvider`, `SandboxProvider`) rather than renaming a
+class 30 call sites point at.
+
+**The owner filter is structural, and the mutation proves it prevents rather than hides.**
+`provider.armable(store)` is the arm path's ONE row source: it drops broken rows and rows
+`author != owner` before returning, so a foreign row is never in the candidate set. It replaced
+the `for row in store.load(): … row.ok` idiom at all SEVEN arm/fire selection sites —
+`service.tick`, `service.boot`, and the `file`/`idle`/`web_watch`/`view` poll loops plus both
+`chain` lookups — which is a consolidation, not a bolt-on (each site had re-derived the `ok`
+check). Falsified by deleting only the ownership half of `armable`: the foreign row then
+produced a real `DueFire(reason='due')` from `tick` and a real `rearmed` entry from `boot`.
+Both poll-loop and chain assertions reddened in the same run.
+
+**Unattributed reads as the owner's — deliberately, and local creates are NOT stamped.**
+`author=""` is what every pre-existing row has and what a provider that declines to attribute
+sends; both mean "nobody else claims this", matching `Task.belongs_to` and
+`identity.current_username`'s "empty degrades to today's behavior". Handled in ONE place
+(`parse_trigger`, lowercased/stripped at the boundary) — a clean break with no migration and no
+dual read, because an optional field has no old shape, only an unattributed one. DEVIATION
+from the §2.1 tasks precedent: local writes do **not** stamp the owner's username onto new
+rows. `identity`'s own second semantic is that a rename affects future writes only and existing
+records keep their string — so stamping would make a username change turn every existing
+automation foreign and silently stop it. A provider attributes; core does not.
+
+**Rendered before armed, and the gap is named.** A registered provider's rows join the LISTING
+read (`provider.all_rows`, used by the Automations endpoint) but not `armable`. The arm path
+PERSISTS — `tick` writes `next_fire_at`/`run_count`/health back through `store.upsert` — and
+`store` there is the native one, so arming a provider's row would either duplicate it into
+`triggers.json` under one id or leave `next_fire_at` frozen, which is due-again-every-tick, a
+fire storm. Routing a write back to the store that served a row is TSE-5's precondition
+("owner triggers autonomously fire") and is the one piece this session did not build.
+
+**Read-only rendering.** `read_only` is computed SERVER-side from the same
+`ownership.is_owner_authored` the arm path uses and passed through, never re-derived in the UI
+from `author` — two opinions about who owns a trigger would drift. A foreign row loses Edit from
+its context menu, gains an author chip, and its inspector shows enabled STATE as text with no
+toggle and no Run now / Dry run / Delete at all (absent, not `disabled`: a greyed control still
+asserts the action could apply). Mutating a provider-served row is structurally impossible
+anyway — the mutation routes read the native store's `get()`, which never sees it, so they 404.
+**Known gap, stated plainly:** a locally-STORED row attributed to somebody else (e.g. arriving
+via a synced `triggers.json`) renders read-only but the mutation endpoints would still accept a
+write. Nothing produces that shape today; closing it means an ownership refusal in the store
+handler's six mutation branches.
+
+**Two same-commit obligations found by the gates, both real.** (1) `src/personalclaw/reference/
+providers.md` regenerated with `python -m personalclaw.manifest_reference` (byte-checked by
+`test_agent_reference`; falsified — dropping the type reddens it). Note the path: the reference
+ships inside the package, not under `docs/`. (2) `cli_app_new._sdk_module_candidates` gained the
+PLURAL candidate: `trigger` publishes its contract in `sdk/triggers.py`, which the singular-only
+ladder could not resolve, so the scaffold emitted a duck-typed stub with no `load` and
+`TriggerTypeHandler` refused to register it — `test_app_scaffold` caught it. `sdk/triggers.py` is
+the only plural module on the boundary, verified across all 19 types: one resolution added, none
+changed. No capability class was needed (that obligation belongs to `action` providers).
+
+**The inert-surface ratchet was satisfied by adding consumers, never by regenerating.** The five
+new `sdk/triggers.py` `__all__` symbols counted as inert because the census looks for
+`from personalclaw.sdk… import <name>` outside the facade, and importing the module by name does
+not count. Fixed by writing the SDK test in the exact import form an app uses.
+
+**Falsifications** (each applied live, `ast.parse`-checked, restored from a file copy):
+ownership half of `armable` removed → `tick` fires the foreign row; handler registration removed
+→ `#47` rail reds with `declarable_no_handler: ['trigger']`; `trigger` removed from
+`PROVIDER_TYPES` → same rail reds with `handler_not_declarable: ['trigger']` AND the reference
+rail reds; `"author"` dropped from `Trigger.to_dict` → the round-trip and old-shape tests red.
+
+**Gate:** `make lint` green (black 1776 files, isort, flake8, mypy 913 files) · `make test`
+**22101 passed, 30 skipped, 12 xfailed** · web `npm ci` + typecheck + **4024 tests / 397 files**
++ build all green. Tests: `tests/test_triggers_ownership.py` (25 cases) and
+`web/src/pages/triggers/foreignTriggerReadOnly.test.tsx` (6 cases).
+
+**Remaining:** `TSE-5` (the proof-of-concept trigger-provider app), which additionally needs the
+write-back routing described above before an app-served row can autonomously fire.

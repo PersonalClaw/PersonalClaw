@@ -1889,7 +1889,7 @@
         {
           "id": "TSE-4",
           "title": "TriggerStore provider seam: new `trigger` provider type + handler, owner-filter at arm time, foreign-trigger read-only rendering",
-          "status": "todo",
+          "status": "done",
           "scope": "\u00a72.2 Triggers (Session 4) + \u00a73 The Trigger-Store Provider Seam (core \u2014 gated); Implementation Effort row 4",
           "done_when": "TriggerStore interface extracted from TriggerService (list/get/upsert/delete + change-notify, native impl wrapping triggers.json); `trigger` added to PROVIDER_TYPES + TriggerTypeHandler in same commit (test_manifest_types_match_handlers passes); Trigger gains `author` field; TriggerService arms/fires ONLY author==owner rows (structural, a foreign row cannot tick); foreign triggers render read-only in Automations; sdk/triggers.py re-exports contracts (Success Criteria 4).",
           "deps": [
@@ -7826,8 +7826,8 @@
         "plan": "SV"
       },
       {
-        "id": "TSE-4",
-        "title": "TriggerStore provider seam: new `trigger` provider type + handler, owner-filter at arm time, foreign-trigger read-only rendering",
+        "id": "TSE-5",
+        "title": "Proof-of-concept trigger-provider app: owner triggers autonomously fire workflow/automation/prompt/action; second-username inert fixtures",
         "plan": "TSE"
       },
       {
@@ -9683,9 +9683,9 @@
         "code": "TSE",
         "plan": "TEAM-SHARED-ENTITIES",
         "total_atoms": 5,
-        "done": 3,
+        "done": 4,
         "in_progress": 0,
-        "todo": 2,
+        "todo": 1,
         "blocked": 0
       },
       {

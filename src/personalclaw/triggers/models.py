@@ -585,6 +585,14 @@ class Trigger:
     kind: str
     enabled: bool = True
     created_by: str = "user"
+    #: WHO wrote this row (TEAM-SHARED-ENTITIES §2.2 — TSE-4), as an attribution username, not a
+    #: credential. Orthogonal to `created_by`, which records WHAT wrote it (`user`/`agent`/`system`)
+    #: on this machine — a shared store needs both: "the agent on Alice's machine" is one row.
+    #:
+    #: `""` means unattributed and reads as the OWNER's (`ownership.is_owner_authored`): every row
+    #: written before this field existed has it, and stopping every existing automation would be an
+    #: absurd cost for a field nobody asked for.
+    author: str = ""
     spec: dict[str, Any] = field(default_factory=dict)
     gates: dict[str, Any] = field(default_factory=dict)
     capabilities: dict[str, Any] = field(default_factory=dict)
@@ -684,6 +692,7 @@ class Trigger:
             "kind": self.kind,
             "enabled": self.enabled,
             "created_by": self.created_by,
+            "author": self.author,
             "spec": dict(self.spec),
             "gates": dict(self.gates),
             "capabilities": dict(self.capabilities),
@@ -897,6 +906,15 @@ def parse_trigger(raw: dict[str, Any]) -> tuple[Trigger, list[Issue]]:
         # cannot interpret.
         enabled=bool(data.get("enabled", True)) and not fatal,
         created_by=str(data.get("created_by", "user") or "user"),
+        # 🔴 THE ONE PLACE an old-shape row acquires an author (TSE-4). Absent in every row written
+        # before the field existed AND in every row a `trigger` provider chooses not to attribute,
+        # and both mean the same thing here: `""`, which `ownership.is_owner_authored` reads as the
+        # owner's. That is a clean break with no migration and no dual read — the field is optional
+        # by design, so there is no old shape to convert, only an unattributed one to interpret. It
+        # is lowercased and stripped at the boundary so `Alice`, `alice ` and `alice` cannot become
+        # three authors of the same row (`identity.slugify_username` already guarantees the owner
+        # side is canonical, so only the incoming side needs normalizing).
+        author=str(data.get("author", "") or "").strip().lower(),
         spec=dict(spec),
         gates=dict(gates),
         capabilities=(

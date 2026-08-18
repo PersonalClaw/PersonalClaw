@@ -151,6 +151,13 @@ def _sdk_module_candidates(type_name: str) -> list[str]:
     cands = [type_name, type_name.replace("_", "")]
     if type_name.endswith("s"):
         cands.append(type_name[:-1])
+    else:
+        # …and the PLURAL, the mirror of the rule above: `trigger` publishes its contract in
+        # `personalclaw.sdk.triggers` (TSE-4), which the singular-only ladder could not see, so the
+        # generator emitted a duck-typed stub whose provider `TriggerTypeHandler` then refused to
+        # register. `sdk/triggers.py` is the only plural module on the boundary, so this adds one
+        # resolution and changes none.
+        cands.append(f"{type_name}s")
     out: list[str] = []
     for c in cands:
         if c and c not in out:
