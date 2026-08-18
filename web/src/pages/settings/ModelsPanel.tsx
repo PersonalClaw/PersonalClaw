@@ -519,6 +519,11 @@ function UseCaseRow({ useCase, activeModels, allModels, health, onChanged }: {
     try {
       await api.startModelDownload(m.provider, m.id)
       onChanged()
+    } catch (e) {
+      // No catch at all meant an unhandled rejection: the spinner stopped (the `finally` below) and
+      // NOTHING else happened, so a failed repair was indistinguishable from a click that did not
+      // register. Two siblings in this same file already report through `notify`.
+      notify(`Couldn't re-download ${m.id}: ${String((e as Error)?.message || e)}`, 'error')
     } finally { setRepairing(null) }
   }
 
