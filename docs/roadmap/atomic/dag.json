@@ -6674,7 +6674,7 @@
         {
           "id": "EI-8",
           "title": "Turn-bound two-phase file checkpointing + /rewind-to-turn + localhost web preview",
-          "status": "todo",
+          "status": "done",
           "scope": "\u00a76 two-phase checkpoint (identity-set snapshot + pre-edit backup in mcp_core file tools) + /rewind-to-turn (preview diff + confirm, SEL-audited, filesystem-only) + per-session caps; \u00a76.2 localhost web preview (port discovery on the sandbox handle, ephemeral preview_urls); \u00a711 Session 7",
           "done_when": "SC8: after a turn that mangled three files, /rewind-to-turn N previews exactly those files with diffs and restores them byte-identical on confirm; .env files were never captured; the checkpoint store respects its cap and prunes with the session; a run's dev server port surfaces an \"Open Preview\" affordance to localhost:<port>",
           "deps": [
@@ -7584,11 +7584,6 @@
       {
         "id": "EI-5",
         "title": "BYO runner data catalog + Gemini CLI runner + adapter pin/verify + Settings\u2192Agents evidence",
-        "plan": "EI"
-      },
-      {
-        "id": "EI-8",
-        "title": "Turn-bound two-phase file checkpointing + /rewind-to-turn + localhost web preview",
         "plan": "EI"
       },
       {
@@ -10087,9 +10082,9 @@
         "code": "EI",
         "plan": "EXECUTION-ISOLATION",
         "total_atoms": 12,
-        "done": 4,
+        "done": 5,
         "in_progress": 0,
-        "todo": 8,
+        "todo": 7,
         "blocked": 0
       },
       {

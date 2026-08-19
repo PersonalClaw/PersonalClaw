@@ -1020,6 +1020,16 @@ export interface WorkflowWorkspaceReview {
     setup?: { ran: string[]; skipped: string[]; failed: string[]; blocked_run: boolean }
     issues?: Array<{ code: string; message: string; fatal: boolean }>
   }
+  /** The localhost web preview (EXECUTION-ISOLATION §6.2). Scanned per request, never stored:
+   *  a persisted port outlives the process that held it, and an "Open Preview" pointing at a
+   *  dead port is worse than no affordance. `reason` is always populated when `ports` is empty,
+   *  because "nothing is running" and "nothing could look" are different answers to render. */
+  preview?: {
+    ports: Array<{ port: number; url: string; pid: number; command: string; address: string }>
+    root: string
+    scanned: boolean
+    reason: string
+  }
 }
 // One artifact this run published (WORK-CONTAINERS §2.5 outbox). `kind` is what the cockpit resolves
 // through the contentTypes registry — the route declares the TYPE and never the renderer, so a newly

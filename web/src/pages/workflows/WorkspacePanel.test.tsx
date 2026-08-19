@@ -194,3 +194,75 @@ describe('the run cockpit exposes the Workspace trigger', () => {
     expect(await screen.findByTestId('changed-files')).toBeInTheDocument()
   })
 })
+
+// ── EI-8 §6.2: the localhost web preview affordance ─────────────────────────────────
+//
+// What these pin: the link points at `localhost:<port>` and nothing else; its accessible name
+// names the PORT (several dev servers under one run would otherwise be three links all called
+// "Open Preview"); and an empty port list renders the backend's REASON rather than an empty
+// section, because "no server is running" and "nothing could look" are different facts and only
+// the reason distinguishes them.
+describe('WorkspacePanel — localhost web preview (EI-8 §6.2)', () => {
+  beforeEach(() => vi.clearAllMocks())
+
+  it('offers an Open Preview link to localhost:<port>, named by its port', async () => {
+    workflowRunWorkspace.mockResolvedValue(review({
+      preview: {
+        ports: [
+          { port: 5173, url: 'http://localhost:5173', pid: 4242, command: 'node', address: '127.0.0.1' },
+          { port: 8080, url: 'http://localhost:8080', pid: 4243, command: 'python3', address: '*' },
+        ],
+        root: '/tmp/worktrees/run-1',
+        scanned: true,
+        reason: '',
+      },
+    }))
+    render(<WorkspacePanel runId="run-1" onClose={() => {}} />)
+
+    const rows = within(await screen.findByTestId('preview-ports')).getAllByRole('listitem')
+    expect(rows).toHaveLength(2)
+
+    // Named by PORT, so two servers are two distinguishable links rather than one name twice.
+    const first = screen.getByRole('link', { name: /Open Preview on port 5173/i })
+    expect(first).toHaveAttribute('href', 'http://localhost:5173')
+    const second = screen.getByRole('link', { name: /Open Preview on port 8080/i })
+    expect(second).toHaveAttribute('href', 'http://localhost:8080')
+
+    // A new tab without `noopener` hands the opened page a handle on this one.
+    for (const link of [first, second]) {
+      expect(link).toHaveAttribute('target', '_blank')
+      expect(link.getAttribute('rel')).toContain('noopener')
+    }
+    // The scope guard is stated on the surface, not only in the plan.
+    expect(screen.getByText(/Local only/i)).toBeInTheDocument()
+  })
+
+  it('renders the reason when nothing is listening, and offers no link', async () => {
+    workflowRunWorkspace.mockResolvedValue(review({
+      preview: {
+        ports: [],
+        root: '/tmp/worktrees/run-1',
+        scanned: false,
+        reason: 'no port scanner available on this host (install lsof)',
+      },
+    }))
+    render(<WorkspacePanel runId="run-1" onClose={() => {}} />)
+
+    expect(await screen.findByTestId('preview-none')).toHaveTextContent(
+      'no port scanner available on this host (install lsof)',
+    )
+    expect(screen.queryByTestId('preview-ports')).not.toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: /Open Preview/i })).not.toBeInTheDocument()
+  })
+
+  it('shows no preview section at all when the backend sent none', async () => {
+    // VACUITY FLOOR for the two tests above: the section is absent by default, so their
+    // assertions are about the `preview` payload and not about markup that always renders.
+    workflowRunWorkspace.mockResolvedValue(review())
+    render(<WorkspacePanel runId="run-1" onClose={() => {}} />)
+
+    expect(await screen.findByTestId('changed-files')).toBeInTheDocument()
+    expect(screen.queryByTestId('preview-ports')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('preview-none')).not.toBeInTheDocument()
+  })
+})

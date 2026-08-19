@@ -240,15 +240,32 @@ def is_never_captured(path: Path | str) -> bool:
     home-anchored :func:`~personalclaw.security.is_sensitive_path`. Both, not either: the
     globs catch a workspace ``.env`` the home-anchored check cannot see, and
     ``is_sensitive_path`` catches ``~/.aws/config``, which no basename glob would.
+
+    **Both checks run against the LITERAL path and its RESOLVED target**, because a
+    basename list is defeated by a symlink and this was measured, not theorized: on
+    ``main``, ``ws/config.txt -> ws/.env`` returned ``"captured"`` and the dotenv body
+    landed in a blob (the name ``config.txt`` matches no glob, and ``is_sensitive_path`` is
+    ``$HOME``-anchored so a workspace file is invisible to it). ``read_bytes`` follows the
+    link, so the only sound question is "what will actually be read?".
     """
     p = Path(path)
-    name = p.name.lower()
-    if any(fnmatch(name, g.lower()) for g in NEVER_CAPTURE_GLOBS):
+    candidates = [p]
+    try:
+        # `strict=False`: a dangling symlink still resolves to its TARGET name, which is the
+        # name that matters — and a write through it would create that target.
+        resolved = p.resolve()
+        if resolved != p:
+            candidates.append(resolved)
+    except OSError:  # a path that cannot be resolved is not thereby safe
+        logger.debug("turn_checkpoints: could not resolve %s", p, exc_info=True)
         return True
+    for cand in candidates:
+        if any(fnmatch(cand.name.lower(), g.lower()) for g in NEVER_CAPTURE_GLOBS):
+            return True
     try:
         from personalclaw.security import is_sensitive_path
 
-        return bool(is_sensitive_path(str(p)))
+        return any(bool(is_sensitive_path(str(c))) for c in candidates)
     except Exception:  # noqa: BLE001 — a check that cannot run must not widen capture
         logger.debug("turn_checkpoints: sensitive-path check failed for %s", p, exc_info=True)
         return True
@@ -355,7 +372,29 @@ def capture_pre_edit(session_key: str, path: Path | str, *, cwd: Path | str | No
         if not isinstance(files, list):
             files = []
         key = str(target)
+
+        # Record the base this capture ran under, so a later rewind can confine its writes
+        # to it (`session_roots`). It is recorded HERE and not only on the turn manifest
+        # because `begin_turn` legitimately accepts `cwd=None` — a session with no workspace
+        # still gets numbered turns — and the base the WRITE was governed by is the honest
+        # root for restoring that write.
+        roots = man.get("roots")
+        if not isinstance(roots, list):
+            roots = []
+        if cwd:
+            try:
+                base = str(Path(cwd).resolve())
+                if base not in roots:
+                    roots.append(base)
+            except OSError:
+                logger.debug("turn_checkpoints: could not resolve cwd %s", cwd, exc_info=True)
+        man["roots"] = roots
+
         if any(isinstance(f, dict) and f.get("path") == key for f in files):
+            # Still persist a newly-learned root before returning: the second write of a
+            # turn is deduped for BYTES, not for the confinement record.
+            if roots:
+                _write_json(man_path, man)
             return "deduped"
 
         entry: dict = {"path": key, "captured_at": time.time()}
@@ -737,6 +776,71 @@ def preview_rewind(session_key: str, turn: int) -> RewindPreview:
     return pv
 
 
+# ── the restore confinement floor ──────────────────────────────────────────────
+
+
+def session_roots(session_key: str) -> list[Path]:
+    """Every directory a rewind of *session_key* is allowed to write into.
+
+    The union of the ``cwd`` recorded on each of the session's turn manifests and the
+    configured workspace root. The workspace root is always included so the set is never
+    empty — a session opened with no ``cwd`` (which :func:`begin_turn` supports) would
+    otherwise have no root, and an empty root set would have to either refuse every restore
+    or wave every path through. Neither is acceptable, so the floor is "the workspace".
+    """
+    roots: list[Path] = []
+    seen: set[str] = set()
+
+    def _add(raw: object) -> None:
+        text = str(raw or "").strip()
+        if not text:
+            return
+        try:
+            r = Path(text).resolve()
+        except OSError:
+            return
+        if str(r) not in seen:
+            seen.add(str(r))
+            roots.append(r)
+
+    for t in _turn_numbers(session_key):
+        man = _read_json(_turn_dir(session_key, t) / "manifest.json", {})
+        _add(man.get("cwd"))
+        recorded = man.get("roots")
+        if isinstance(recorded, list):
+            for entry in recorded:
+                _add(entry)
+    try:
+        from personalclaw.config.loader import workspace_root
+
+        _add(workspace_root())
+    except Exception:  # noqa: BLE001 — a missing workspace root must not widen the set
+        logger.debug("turn_checkpoints: workspace_root unreadable", exc_info=True)
+    return roots
+
+
+def is_within_roots(path: Path | str, roots: list[Path]) -> bool:
+    """Whether *path* resolves inside one of *roots*.
+
+    Compared on RESOLVED paths, so ``<root>/../../etc/hosts`` and a symlink out of the tree
+    are both caught — a lexical ``startswith`` would pass the first and never see the second.
+    A file that does not exist yet still normalizes, so a restore-to-create is checked too.
+    """
+    if not roots:
+        return False
+    try:
+        target = Path(path).resolve()
+    except OSError:
+        return False
+    for root in roots:
+        try:
+            target.relative_to(root)
+            return True
+        except ValueError:
+            continue
+    return False
+
+
 # ── apply (two-phase, journaled) ───────────────────────────────────────────────
 
 
@@ -747,6 +851,9 @@ class RewindResult:
     deleted: list[str] = field(default_factory=list)
     skipped: list[str] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
+    #: Paths refused because they resolve OUTSIDE the session's roots. Reported separately
+    #: from `errors` so a client can say *why* nothing was written to them.
+    refused: list[str] = field(default_factory=list)
     journal: str = ""
     safety_turn: int = 0
 
@@ -757,6 +864,7 @@ class RewindResult:
             "deleted": self.deleted,
             "skipped": self.skipped,
             "errors": self.errors,
+            "refused": self.refused,
             "journal": self.journal,
             "safety_turn": self.safety_turn,
         }
@@ -789,8 +897,30 @@ def apply_rewind(session_key: str, turn: int, *, preview: RewindPreview | None =
     pv = preview if preview is not None else preview_rewind(session_key, turn)
     res = RewindResult(ok=False)
     actionable = [f for f in pv.files if f.action in ("restore", "delete")]
+
+    # Confinement BEFORE anything is staged. A rewind is the one path in the system that
+    # writes an arbitrary recorded path back to disk, so it verifies the destination itself
+    # rather than trusting the manifest that named it: a tampered store, a traversal
+    # component, or a symlink planted out of the tree must not become a write outside the
+    # session's roots. Refused paths are REPORTED (never silently dropped) — a rewind that
+    # looked complete while one file stayed mangled is the defect this whole preview exists
+    # to prevent.
+    roots = session_roots(session_key)
+    allowed: list[RewindFile] = []
+    for f in actionable:
+        if is_within_roots(f.path, roots):
+            allowed.append(f)
+        else:
+            res.refused.append(f.path)
+            res.errors.append(f"refused (outside the session's workspace roots): {f.path}")
+    actionable = allowed
+
     if not actionable:
-        res.ok = True
+        # `ok` only when there was genuinely nothing to do. A refusal is NOT a no-op: the
+        # user asked for a restore and did not get one, and reporting `ok=True` here would
+        # be the swallowed-write shape — a confirm path that says it succeeded while the
+        # file on disk stayed mangled.
+        res.ok = not res.refused
         res.skipped = [f.path for f in pv.files]
         return res
 
@@ -849,8 +979,12 @@ def apply_rewind(session_key: str, turn: int, *, preview: RewindPreview | None =
         return res
 
     res.journal = str(_journal_path(session_key, token))
-    commit = _commit_journal(session_key, token)
-    res.restored, res.deleted, res.errors = commit
+    # EXTEND, never assign: a confinement refusal recorded before staging would otherwise be
+    # erased here, and `ok` would flip back to True — a confirm path reporting success while a
+    # file the user asked about was never written.
+    restored, deleted, commit_errors = _commit_journal(session_key, token)
+    res.restored, res.deleted = restored, deleted
+    res.errors.extend(commit_errors)
     res.ok = not res.errors
     res.skipped = [f.path for f in pv.files if f.action not in ("restore", "delete")]
     return res

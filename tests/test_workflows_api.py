@@ -767,6 +767,12 @@ class TestWorkspaceRoute:
         body = _body(resp)
         assert body["workspace"]["path"] == ""
         assert body["workspace"]["changed"] == []
+        # EI-8 §6.2: the localhost web preview travels on THIS payload. Pinned at the route,
+        # not only in the service, because the cockpit's type declares the field — a frontend
+        # reader of a key the route never sends is the defect this asserts away. An inline run
+        # has nothing to preview and says so rather than triggering a host-wide port scan.
+        assert body["preview"]["ports"] == []
+        assert "no isolated workspace" in body["preview"]["reason"]
 
     async def test_the_delete_route_forwards_keep_open(self) -> None:
         """One deletion with two dispositions for the workspace. A second route would be a second
