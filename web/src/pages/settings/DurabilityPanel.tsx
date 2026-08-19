@@ -182,8 +182,10 @@ function TimeTravelSection({ cfg, setCfg }: {
   const roots = status.data?.roots ?? []
   const gitMissing = status.data ? status.data.git === false : false
 
+  // `iconTone="muted"` — a category glyph, not a live thing; see settingsUI's iconTone doc and
+  // ProvidersPanel's nine muted entity glyphs.
   return (
-    <Section title="Time travel" hint={hint} icon={History}>
+    <Section title="Time travel" hint={hint} icon={History} iconTone="muted">
       <div className="rounded-lg bg-surface-container px-4 py-1">
         <ToggleRow
           label="Keep a local edit history"
