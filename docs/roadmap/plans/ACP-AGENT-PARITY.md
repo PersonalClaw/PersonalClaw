@@ -1672,3 +1672,34 @@ NOT-EXERCISED remainders listed by *why*, so neither reads as complete.
    — the doc says so per row instead of generalizing them to three providers.
 5. **No `file.py:NNN` citations were used anywhere** (doc or this entry), per the citation rail:
    claims cite ledger ids and `G`-numbers instead. Nothing in `docs/roadmap/atomic/` was touched.
+
+- **2026-08-19 — `AAP-10` CLOSED (`todo` → `done`); both halves are merged.** Core `#1746` landed
+  `docs/agents/acp-parity.md` (451 lines) and apps `#48` added a **Capability boundary** section
+  linking it from all four bundle READMEs (`claude-code-agent`, `codex-agent`, `kiro-cli-agent`,
+  `gemini-cli-agent`) — verified by content on merged `main` in both repos, not by PR title.
+
+  Each `done_when` clause, and where it is satisfied:
+
+  | clause | where |
+  |---|---|
+  | the doc exists | `docs/agents/acp-parity.md` on `main` (`b28cb92c`) |
+  | per provider: at parity / host-compensated / protocol-or-CLI constraint | three bucket headings per provider section |
+  | each ABSENT carries its reason + watch item + verified version | every constraint row; versions in the doc's own version table |
+  | linked from each agent bundle's README | apps `9f284a69`, all four bundles |
+
+  **One clause is satisfied only in the weak sense, and the doc says so:** the plan asks for "the
+  upstream issue to watch, **where one exists**". No row has an upstream issue or PR, so every watch
+  item is written as a change-and-owner statement (what must change, and in the CLI, the adapter, the
+  ACP protocol or a host seam) rather than a tracker link. That is the clause's own escape hatch, not
+  a gap papered over.
+
+  **What the doc deliberately does NOT claim**, because this is the honest-boundary deliverable and
+  overstating it would defeat the point: claude-code and codex are **41- and 43-cell columns**, not 63
+  (22 and 20 cells have no runtime observation, listed and grouped by why); every kiro tool-axis row
+  carries the 2026-08-19 non-reproduction warning; and `AAP-4`/`AAP-5`/`AAP-6`'s host compensation is
+  marked **landed but not re-driven** — it is in the code, with as-a-user measurements only on kiro
+  (`K32`, `K41`).
+
+  Closing this atom does **not** unblock `AAP-4`-`AAP-9`: their `dag` deps are the three Phase-1
+  sweeps (`AAP-1`/`AAP-2`/`AAP-3`), all still `todo`. See the 2026-08-19 discovery entry above for the
+  measured state of their implementations.
