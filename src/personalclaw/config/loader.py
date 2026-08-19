@@ -3351,8 +3351,9 @@ class DurabilityConfig:
         default="",
         metadata=_meta(
             "Sync transport",
-            "Which installed sync transport to use (e.g. git-sync, dir-sync). Empty "
-            "means no transport is chosen yet, so sync stays idle even if enabled.",
+            "Which installed sync transport to use (e.g. git-sync, dir-sync, rsync-sync, "
+            "s3-sync). Empty means no transport is chosen yet, so sync stays idle even "
+            "if enabled.",
         ),
     )
     sync_stale_after_secs: int = field(

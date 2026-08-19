@@ -1893,3 +1893,153 @@ half) is live and safe today; only cross-machine DELETE convergence waits on thi
   `test_durability_conflict_review` + `test_durability_inventory` + `test_durability_shards` +
   `test_config_roundtrip` = **215 passed**. No `web/` change, so the npm gate was not required.
   No config field added, so the round-trip contract does not apply.
+## Execution log — DAS-8b (the two transport apps; closes DAS-8's UNMET item 1) — **PARTIAL**
+
+- [2026-08-18][DAS-8b] **The apps half of DAS-8, in `PersonalClawApps`.** DAS-8's own log
+  (2026-08-17) landed the §4.4 encryption + §4.3 SYNC-egress half in core and named the
+  follow-up exactly: *"the two transport apps in `PersonalClawApps`, which is a genuinely
+  separable, dependency-complete scope now that this merged."* This is that scope. **Both**
+  `s3-sync` and `rsync-sync` shipped, 137 tests, and it needed **zero core code changes** —
+  the prior session's claim that the two apps were buildable against `sdk.sync` alone held
+  exactly. The only core edit here is one user-facing help string (`sync_transport` named
+  two transports; there are now four).
+
+- [2026-08-18][DAS-8b] **`s3-sync`** — SigV4-signed PUT/GET/LIST through `sdk.net.fetch`
+  under `sync_egress_policy(endpoint)`, no `boto3`/`botocore`/`aiohttp` dependency (signing
+  is ~60 lines of `hmac`/`hashlib`, asserted at the AST level so a second unguarded code
+  path cannot appear). **The signature is verified against botocore, not merely pinned:**
+  five request shapes (PUT with `If-None-Match`, prefixed LIST with a query, GET, a key
+  needing percent-encoding, a `host:port` MinIO endpoint) match `botocore.auth.SigV4Auth`
+  byte-for-byte at a pinned clock, and three of those are committed as goldens asserted
+  **unconditionally**, so a signing regression cannot hide behind an environment with no
+  botocore. Two design consequences that are forced, not chosen: **path-style addressing is
+  mandatory** (virtual-host style puts the bucket in the *hostname*, which is not the host
+  the policy pinned, so every request would be refused by the guard), and **a truncated body
+  is an integrity failure** — `fetch` caps at `policy.max_bytes` and *reports* the cap rather
+  than raising, so `pull` drops a truncated object instead of handing a prefix of a shard to
+  the merge. Insert-only is `If-None-Match: *` on the PUT itself: one round trip, and no
+  HEAD-then-PUT race.
+
+- [2026-08-18][DAS-8b] 🔴 **MEASURED DEFECT in `s3-sync`, found by driving the real fetch
+  path, now fixed.** `aiohttp` normalises the response header to `Etag`; the S3 API documents
+  `ETag`. The case-SENSITIVE lookup returned `""` for every ETag, so `cas_registry` hit its
+  "no ETag means we cannot make the write conditional" guard and returned **False on every
+  swap, forever** — a machine could register itself once and then never update the registry
+  again. Invisible to a mocked transport: it only appears when a real HTTP client hands back
+  the headers. Fixed with a case-insensitive `_header()` helper and pinned by a regression
+  test that asserts the *casing* (`"ETag" not in resp.headers`) rather than just the outcome.
+
+- [2026-08-18][DAS-8b] 🔴 **MEASURED DEFECT in `rsync-sync`, found before writing the code.**
+  rsync's quick check compares **size + mtime**, so a rewrite that keeps the same byte length
+  within the same clock second is **not transferred at all — and rsync exits 0**, so the write
+  looks successful. Reproduced with the realistic registry shape: `{"seq":19}` →
+  `{"seq":20}` (same length) left the target holding `{"seq":19}`. Shard objects are immune
+  (insert-only, never rewritten) but `registry.json` is rewritten every cycle, so registry
+  writes use `--ignore-times` and are then **read back and verified**. Also measured: macOS
+  ships **openrsync** ("rsync version 2.6.9 compatible"), not GNU rsync 3.x, so the flag set
+  is deliberately conservative (`-rt`, `-i`, `--ignore-existing`, `--ignore-times`,
+  `--list-only`, `-e`) — all verified against the real binary rather than assumed.
+
+- [2026-08-18][DAS-8b] **DEVIATION (recorded, not smuggled): `rsync-sync` has no CAS, so its
+  registry swap is verify → write → read-back-verify.** rsync has a create-only primitive
+  (`--ignore-existing`, whose `--itemize-changes` output reports whether the file was really
+  created, which is a *real* answer to the `expected_sha is None` case) but nothing
+  conditional for an overwrite. The bias is chosen from core's own retry loop
+  (`push_engine._commit_registry`): a **False re-pulls, re-merges peers' entries and retries**,
+  so a false False costs one round trip, while a false True silently discards another
+  machine's registration. So the transport reports failure whenever it cannot prove its own
+  bytes landed. A residual race remains — two machines swapping in the same instant can lose
+  one update, which the loser re-applies next cycle — and it is documented in the app's README
+  with the pointer that `s3-sync` has genuinely conditional writes. This is the same class of
+  degradation `dir-sync` already ships (rename-lock), not a new one.
+
+- [2026-08-18][DAS-8b] ⚠️ **SECURITY DECISION: `s3-sync` does NOT read the ambient AWS
+  credential chain.** The env fallbacks are `PERSONALCLAW_S3_ACCESS_KEY_ID` /
+  `PERSONALCLAW_S3_SECRET_ACCESS_KEY` / `PERSONALCLAW_S3_SESSION_TOKEN` — deliberately not
+  `AWS_ACCESS_KEY_ID`, not `AWS_PROFILE`, and no instance-role/IMDS chain. A personal sync
+  transport that silently adopted whatever AWS identity happened to be in the operator's
+  shell could write the user's assistant state into a company or production account nobody
+  intended; the `SYNC_DENY_HOSTS` metadata denial closes the same hole from the other side.
+  Pinned by a test that exports four `AWS_*` vars and asserts the provider stays unconfigured.
+  The README states it as a feature, so it reads as a decision rather than an omission.
+  `rsync-sync` likewise never disables host-key checking: no `StrictHostKeyChecking=no`, no
+  `UserKnownHostsFile=/dev/null` (both asserted absent), only `BatchMode=yes` so a key prompt
+  fails fast instead of hanging a background job.
+
+- [2026-08-18][DAS-8b] **Criterion 7 re-proved against BOTH new transports.** Its wording is
+  "adversarially verified against **every** transport", and core proves it against a
+  test-local folder transport — so two new transports need the proof re-run. A canary
+  (`sk-ant-CANARY-<path>`) is planted in **every** path `inventory.secret_paths()` declares,
+  a real `run_sync_cycle` is driven, and the scan runs on **the bytes that actually left** —
+  the captured HTTP request bodies for `s3-sync`, the files on the target for `rsync-sync` —
+  parametrized over encryption ON and OFF (the exclusion must not depend on encryption).
+  Object KEYS are scanned too, since metadata stays plaintext. Each scan carries a vacuity
+  floor (non-empty wire, ≥1 `machines/` shard) **plus** a companion test that plants the
+  canary somewhere that legitimately syncs and asserts the scan **finds** it — a canary scan
+  that cannot fail is not a proof.
+
+- [2026-08-18][DAS-8b] **Criterion 8 now provable as literally worded.** DAS-8 recorded it as
+  met over an on-disk transport with the caveat that *"its literal 'encrypted **S3** sync
+  store' wording is only provable once `s3-sync` exists."* It exists: over the real signed
+  wire, every shard body is `is_ciphertext`, the planted row (`alice@example.com`, `payroll`,
+  `salary-review`) is absent from every byte pushed, while a **second provider holding no
+  passphrase at all** still lists the remote, reads `registry.json` as JSON, and sees the
+  first-write-wins salt object — and a plaintext object planted into the encrypted store is
+  skipped without being merged and without being re-reported on the next cycle.
+
+- [2026-08-18][DAS-8b] **Falsifications — 19 mutations, each restored from a file copy, never
+  `git checkout`.** Reds quoted: insert-only removed → *"insert-only was violated"*; truncation
+  accepted → *"a truncated shard was returned as if it were data"*; query `/` left raw →
+  golden signature mismatch; ambient AWS borrowed → *"assert 'AKIA-AMBIENT-PRODUCTION' == ''"*;
+  ETag read case-sensitively → the original defect reproduces; CAS retried unconditionally
+  after a 501 → *"assert True is False"*; `StrictHostKeyChecking=no` added → *"would open a
+  man-in-the-middle"*; timeout removed → *"an unbounded command could wedge the sync job"*;
+  host/path validation disabled → *"DID NOT RAISE RsyncConfigError"*; directories counted as
+  objects → extra `machines/` entries; mirror traversal guard removed →
+  *"['../../outside.txt', 'a'] == ['a']"*; read-back verify removed → *"assert True is False"*.
+  **THREE mutations came back GREEN and each exposed a real hole in my own rails, now closed:**
+  (1) widening the provider's egress to `allow_only=False` left the whole egress class green,
+  because every assertion was made against `sync_egress_policy` rather than against what the
+  transport actually handed `fetch` — a mechanism test, not a use test; a spy on `fetch` now
+  asserts `allow_only`, the exact `allow_hosts` pin and the surviving deny list. (2) The
+  missing-ETag guard was **unreachable** in the suite (the stub always sent one), so deleting
+  it stayed green; the test now asserts the DECISION — that no PUT is even attempted — instead
+  of the final bytes, which the stub's own 412 had been standing in for. (3) The
+  `--ignore-times` rail was **timing-dependent**: it only reproduced when the two staging
+  writes happened to land in different integer seconds, so removing the flag stayed green;
+  both mtimes are now forced equal, making the quick-check condition hold every run.
+
+- [2026-08-18][DAS-8b] **UNMET — why DAS-8 does not close here.** (1) **No live remote was
+  exercised, by policy, not by omission.** Every AWS profile on this machine is
+  Amazon-internal production, and Amazon production-safety forbids creating or writing any
+  resource in an account that cannot be positively identified as non-production — so no
+  bucket was touched. `s3-sync` is driven end to end against a loopback HTTP stub that
+  implements S3's conditional-write semantics, and the signature is validated against
+  botocore rather than against a live 200. To close it: a **non-production** bucket plus a
+  least-privilege key limited to `s3:PutObject`/`s3:GetObject`/`s3:ListBucket` on that bucket
+  and prefix, then one real cycle asserting ciphertext at rest and a byte-exact round trip.
+  (2) **`rsync-sync`'s ssh hop is proved at the argv level only** — behaviour is driven
+  against a real `rsync` to a local target (push/list/pull/insert-only/CAS all real), and the
+  ssh leg is asserted on the exact command plus every injection vector, but no sshd was
+  contacted. To close it: any host with key-based ssh and a writable directory, then the same
+  two-machine convergence DAS-6d-iii ran over `dir-sync`. (3) **Two-machine convergence over
+  these transports** (criterion 4's shape) is not re-run here; core proved it over a real
+  transport in DAS-6d-iii and the codec boundary is transport-agnostic, but the specific
+  pairing is untested. (4) `rsync-sync` is unverified against **GNU rsync 3.x** — only
+  openrsync was available; the flag set was chosen to be 2.6.9-compatible precisely so this
+  is a low risk, but it is a real gap.
+
+- [2026-08-18][DAS-8b] **Gates.** Apps repo — all four CI jobs run locally and green: 47
+  manifests valid (round-trip stable), import-boundary lint clean (`personalclaw.sdk.*` only),
+  per-bundle tests **`s3-sync` 60 passed · `rsync-sync` 77 passed** (run per bundle; a
+  combined run raises `import file mismatch` on the duplicate `test_provider.py` basename),
+  DCO sign-off present on both commits with no agent trailers. Core — `make lint` **exit 0**
+  (black/isort/flake8 + mypy, 919 source files), `scripts/gate_report.py` **all 3 gates pass**
+  (the help-string edit does not drift `config-baseline.json`, which records path/type/
+  default/sensitive and not help text), and `test_durability_sync_crypto` +
+  `test_config_roundtrip` + `test_durability_sync_cycle` + `test_apps_import_boundary` +
+  `test_provider_registry` + `test_app_manifest` + `test_sync_transport_contract` +
+  `test_durability_sync_service` = **212 passed, 1 skipped**. Every test sets both
+  `PERSONALCLAW_HOME` and `PERSONALCLAW_WORKSPACE` to a tmp path — `net.fetch` writes a SEL
+  audit row per egress decision, so the s3 suite would otherwise have written into the real
+  home on every request.
