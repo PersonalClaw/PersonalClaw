@@ -90,3 +90,137 @@ describe('no settings panel hand-rolls a section title any more', () => {
     expect(uses, 'the primitive must actually be in use').toBeGreaterThanOrEqual(76)
   })
 })
+
+describe('a panel that names its sections names ALL of them', () => {
+  // ── Content attributed to the wrong group, or to none ────────────────────────────────────────
+  //
+  // `Section` renders its `h2` only when given a `title` — deliberately, and the test above pins
+  // that ("still renders a bare section with no header at all"). An untitled Section is therefore a
+  // card, not a named group, and that is fine for a panel whose single group the `h1` already owns.
+  //
+  // What is NOT fine is a panel that titles some groups and not others. Measured across all 33
+  // settings surfaces in a browser (the check a source scan cannot make: walk every control and ask
+  // which heading precedes it), FOUR panels rendered controls that belonged to no section while a
+  // sibling section on the same panel had a heading:
+  //
+  //   #/settings/doctor    14 controls unnamed (Re-run + every "Investigate in chat"), "Maintenance" named
+  //   #/settings/models    16 controls unnamed (every use-case row),   "Prompt caching" named
+  //   #/settings/routing    1 control  unnamed (the use-case select),  "Routing policy" named
+  //   #/settings/apps       the whole installed-app-settings half had no heading — and being a bare
+  //                         SIBLING of the "Store sources" section, it read as part of it
+  //
+  // The outline consequence is worse than "unnamed": a reader walking headings on `#/settings/models`
+  // went "Models" → "Prompt caching" and never met the bindings the panel exists for.
+  //
+  // 🪤 `RoutingPolicySection` also dropped its title in ONE BRANCH: `if (rows === null) return
+  // <Section>` above `return <Section title="Routing policy">`. A group that names itself only when
+  // its data loads loses its heading exactly when it has bad news to deliver. Branch parity is
+  // asserted below.
+  //
+  // 🪤 AND THE NAME `Section` IS TWO COMPONENTS. `ui/`'s Section takes `label`; `settingsUI`'s takes
+  // `title`. A tree-wide scan for "Section without a title" returns 104 sites, ~99 of which are the
+  // other component being used correctly. This scan is scoped to `pages/settings`, which is the only
+  // place `settingsUI`'s Section is imported.
+
+  const DIR = join(process.cwd(), 'src/pages/settings')
+  const clean = (s: string) => s.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
+
+  /** Complete `<Section …>` openings, brace-aware — a `[^>]*>` matcher stops at the `>` inside
+   *  `hint={<span>x</span>}` and would score a titled section as bare. */
+  function sectionTags(src: string): string[] {
+    const out: string[] = []
+    for (const m of src.matchAll(/<Section\b/g)) {
+      let depth = 0
+      for (let i = m.index! + m[0].length; i < src.length; i++) {
+        const c = src[i]
+        if (c === '{') depth++
+        else if (c === '}') depth--
+        else if (c === '>' && depth === 0) { out.push(src.slice(m.index!, i + 1)); break }
+      }
+    }
+    return out
+  }
+
+  const panels = readdirSync(DIR)
+    .filter((n) => /\.tsx$/.test(n) && !/\.(test|doc)\.tsx$/.test(n) && n !== 'settingsUI.tsx')
+    .map((n) => {
+      const tags = sectionTags(clean(readFileSync(join(DIR, n), 'utf8')))
+      return { n, titled: tags.filter((t) => /\stitle=/.test(t)).length, bare: tags.length - tags.filter((t) => /\stitle=/.test(t)).length }
+    })
+    .filter((p) => p.titled + p.bare > 0)
+
+  /** The one panel whose only group is legitimately owned by its `h1`: `SearchPanel` renders a
+   *  single untitled Section holding the four use-case rows, and no titled one. Naming it would add
+   *  a heading that only repeats the page title. It is listed — not pattern-matched — so that adding
+   *  a titled section there forces titling the bare one too. */
+  const H1_OWNS_ITS_ONLY_GROUP = new Set(['SearchPanel.tsx'])
+
+  it('no panel mixes titled sections with untitled ones', () => {
+    expect(panels.length, 'vacuity floor — the scan must resolve the panels').toBeGreaterThanOrEqual(25)
+    expect(panels.reduce((s, p) => s + p.titled, 0), 'and find the titled sections').toBeGreaterThanOrEqual(50)
+    const mixed = panels.filter((p) => p.titled > 0 && p.bare > 0).map((p) => `${p.n} (${p.titled} titled, ${p.bare} bare)`)
+    expect(mixed, `these attribute content to the wrong group, or to none:\n${mixed.join('\n')}`).toEqual([])
+  })
+
+  it('the h1-owns-it exception is exactly one panel, and still has no titled section', () => {
+    for (const n of H1_OWNS_ITS_ONLY_GROUP) {
+      const p = panels.find((x) => x.n === n)
+      expect(p, `${n} must still be in scope`).toBeTruthy()
+      expect(p!.bare, `${n} is the single-group case`).toBeGreaterThan(0)
+      expect(p!.titled, `${n} gained a titled section — now title its bare one too`).toBe(0)
+    }
+    const bareOnly = panels.filter((p) => p.titled === 0 && p.bare > 0).map((p) => p.n)
+    expect(bareOnly.sort(), 'a new bare-only panel needs a verdict here, not silence')
+      .toEqual([...H1_OWNS_ITS_ONLY_GROUP].sort())
+  })
+
+  it('the four fixed panels name their primary group', () => {
+    const titleOf = (n: string) => clean(readFileSync(join(DIR, n), 'utf8'))
+    expect(titleOf('DoctorPanel.tsx')).toMatch(/<Section title="Subsystem probes">/)
+    expect(titleOf('ModelsPanel.tsx')).toMatch(/<Section title="Model bindings" hint=/)
+    expect(titleOf('RoutingPanel.tsx')).toMatch(/<Section title="Model efficiency">/)
+    expect(titleOf('AppsPanel.tsx')).toMatch(/<Section title="Installed app settings" hint=/)
+  })
+
+  it('a section keeps its title in its FAILURE branch, not only its success one', () => {
+    // RoutingPolicySection returns early when the read fails; both returns must name the group.
+    const src = clean(readFileSync(join(DIR, 'RoutingPanel.tsx'), 'utf8'))
+    const policy = src.slice(src.indexOf('function RoutingPolicySection'))
+    const tags = sectionTags(policy)
+    expect(tags.length, 'the early return plus the main render').toBeGreaterThanOrEqual(2)
+    for (const t of tags) expect(t, 'every branch of this section names it').toMatch(/title="Routing policy"/)
+  })
+})
+
+describe('the panels this rail cannot speak for', () => {
+  // Scope honesty. Everything above reasons about `<Section>` call sites, so a panel that renders
+  // NONE is invisible to it — and two such panels are whole surfaces with no headings at all.
+  // Measured in a browser (both at a 2.6s and a 6s settle, so this is not a load-timing artifact):
+  //
+  //   #/settings/audit    0 h2, 69 controls   filter chips, an operation filter, 60 log rows
+  //   #/settings/memory   0 h2, 20 controls   a search field, 5 kind filters, the browse list
+  //
+  // Neither is fixed here: giving them an outline is a surface-shaped change (memory is a studio
+  // over three stores, audit is one long log), not a title on an existing group. They are pinned so
+  // the set cannot grow in silence, which is the failure mode of an unstated scope.
+  const DIR = join(process.cwd(), 'src/pages/settings')
+  const NO_SECTIONS = new Set([
+    'ArchivePanel.tsx',            // a single read-only transcript list
+    'AuditPanel.tsx',              // 0 h2 / 69 controls — OPEN, needs its own cycle
+    'MultiInstanceCard.tsx',       // a card rendered INSIDE another panel's section
+    'ProviderCard.tsx',            // ditto
+    'ProviderConfigForm.tsx',      // ditto
+  ])
+
+  it('is exactly this set — a new sectionless panel needs a verdict, not silence', () => {
+    const found = readdirSync(DIR)
+      .filter((n) => /\.tsx$/.test(n) && !/\.(test|doc)\.tsx$/.test(n) && n !== 'settingsUI.tsx')
+      .filter((n) => {
+        const src = readFileSync(join(DIR, n), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
+        return src.includes("from './settingsUI'") && !src.includes('<Section')
+      })
+    expect(found.length, 'vacuity floor — the scan must resolve files').toBeGreaterThan(0)
+    expect(found.sort(), 'add it to NO_SECTIONS with a reason, or give it sections')
+      .toEqual([...NO_SECTIONS].sort())
+  })
+})

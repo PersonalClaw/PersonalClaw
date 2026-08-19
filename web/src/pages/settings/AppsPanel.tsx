@@ -42,13 +42,21 @@ export function AppsPanel({ navigate }: { navigate?: (p: string) => void }) {
           unrelated list was slow. */}
       <StoreSourcesSection />
 
-      {!apps ? <AppCardsSkeleton /> : configurable.length === 0 ? (
-        <div className="rounded-lg bg-surface-container px-l py-xl text-center text-on-surface-low text-[0.8125rem]">
-          No installed apps expose configurable settings. Browse the <TextLink onClick={() => navigate?.('apps')}>Store</TextLink> to add some.
-        </div>
-      ) : (
-        configurable.map((app) => <AppSettingsCard key={app.name} app={app} navigate={navigate} />)
-      )}
+      {/* 🔴 The panel header promises two things — "where apps come from, PLUS the settings installed
+          apps contribute" — and only the first had a heading. This half rendered as a bare sibling of
+          the "Store sources" section, so to assistive tech (and to anyone reading the outline) every
+          app's settings appeared to live UNDER "Store sources": not merely unnamed, but attributed to
+          the wrong group. The heading holds in the empty state too, because "nothing here" is an
+          answer about THIS group and only reads as one if the group is named. */}
+      <Section title="Installed app settings" hint="Settings contributed by non-provider apps you have installed. An app with nothing to configure does not appear.">
+        {!apps ? <AppCardsSkeleton /> : configurable.length === 0 ? (
+          <div className="rounded-lg bg-surface-container px-l py-xl text-center text-on-surface-low text-[0.8125rem]">
+            No installed apps expose configurable settings. Browse the <TextLink onClick={() => navigate?.('apps')}>Store</TextLink> to add some.
+          </div>
+        ) : (
+          configurable.map((app) => <AppSettingsCard key={app.name} app={app} navigate={navigate} />)
+        )}
+      </Section>
     </div>
   )
 }

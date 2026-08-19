@@ -137,7 +137,12 @@ export function RoutingPanel({ query, setQuery }: Pick<RouteProps, 'query' | 'se
         </div>
       </div>
 
-      <Section>
+      {/* 🔴 Titled: the measured table was the unnamed group while "Routing policy" below it had a
+          heading, so the outline read h1 → "Routing policy" and skipped the observation the policy
+          is derived FROM. The title holds across all four branches (error / loading / empty / table)
+          — a group that names itself only when its data arrives disappears exactly when the user is
+          trying to work out what went wrong. */}
+      <Section title="Model efficiency">
         {data === null ? (
           <div className="rounded-lg bg-surface-container px-3 py-2.5 text-on-surface-var text-[0.8125rem]" role="status">
             Couldn't read routing telemetry right now. It's a read-only view — try switching the bucket or reloading.
@@ -218,8 +223,11 @@ function RoutingPolicySection({ useCase, queryClass }: { useCase: string; queryC
   }
 
   if (rows === null) {
+    // 🔴 The SAME title as the success branch below. This early return dropped it, so the section
+    //    lost its own heading precisely when it had bad news to deliver — the reader gets an
+    //    unattributed "Couldn't read…" with no way to tell which part of the page failed.
     return (
-      <Section>
+      <Section title="Routing policy">
         <div className="rounded-lg bg-surface-container px-3 py-2.5 text-on-surface-var text-[0.8125rem]" role="status">
           Couldn't read the routing policy right now. Your bound models are unaffected — resolution
           falls back to the order you bound them in.
