@@ -217,6 +217,10 @@ describe('the family is DERIVED, so the next pill group cannot be missed', () =>
    *
    *  Literal comparisons (`=== true/false/null/0`) are data predicates, not selection, and are excluded:
    *  `m.downloaded === false` and `t.disabled === true` are not one-of-N groups. */
+  /** Primitives that declare the selection state for their caller. A row rendered through one of these
+   *  is satisfied by construction; each is proven to declare it in the test below. */
+  const DELEGATES = ['TileButton', 'SegToggle', 'SegPills', 'Segmented', 'WidthPill', 'MenuRow']
+
   function exclusiveGroups() {
     const LITERAL = /^(?:true|false|null|undefined|\d+)$/
     const STATE = /aria-pressed|aria-selected|aria-checked|aria-current|aria-expanded|role="(?:tab|radio|option|menuitemradio|treeitem)"/
@@ -229,11 +233,35 @@ describe('the family is DERIVED, so the next pill group cannot be missed', () =>
         const cmp = body.match(new RegExp(`const \\w+ = (?:${item}(?:\\.\\w+)? === (\\w+)|(\\w+) === ${item}(?:\\.\\w+)?)`))
         if (!cmp) continue
         if (LITERAL.test(cmp[1] ?? cmp[2] ?? '')) continue
-        // The state must live on a BUTTON's own opening tag inside this map body — `tags()` is
+        // The state must live on the ROW's own opening tag inside this map body — `tags()` is
         // brace-aware, so it stops at the real `>` and not at one inside an arrow function.
-        const buttons = [...tags(body, 'button'), ...tags(body, 'motion\\.button')]
-        if (buttons.length === 0) continue
-        out.push({ rel: f.slice(SRC.length + 1), state: buttons.some((t) => STATE.test(t)), cmp: cmp[0] })
+        // 🪤 MEASURED, NOT ASSUMED: widening this to `div`/`span`/`a` rows added TWO false positives and
+        // ZERO true ones. `ChatPage`'s `isLast = i === turns.length - 1` is POSITIONAL, and
+        // `TerminalPage`'s `visible = t.id === active` gates which terminal PANE is mounted — neither is a
+        // control, and neither takes a selection state. The one non-button row in the tree
+        // (`TerminalDrawer`'s `div role="tab"`) already declares its own. Buttons plus delegation is the
+        // whole population.
+        //
+        // A positional comparison (`i === turns.length - 1`) survives the literal guard above, because
+        // the captured side is an identifier — but it needs no exclusion of its own while rows are
+        // buttons-only: mutation-checked, and removing such a guard changed nothing. An inert guard in a
+        // rail is the same defect this file exists to catch, so there isn't one.
+        const rows = [...tags(body, 'button'), ...tags(body, 'motion\\.button')]
+        // 🔑 OR THE ROW DELEGATES IT. A row rendered through a state-aware primitive declares nothing
+        // itself — the primitive does, one level down — and every one of those reads as "silent" to a
+        // matcher that only inspects this body. `PersonalityPicker` is the case that proved it:
+        // `<TileButton active={active}>`, where `ui/TileButton` applies `aria-pressed={active}` (and its
+        // comment records that this very picker is why). Treating an unrecognised row as a FAILURE — the
+        // "obvious" hardening — would therefore cry wolf on every correct delegation in the tree, which
+        // is worse than under-reporting. The delegates are named, and `the delegation list is not a
+        // blanket exemption` below proves each one really declares state.
+        const delegates = DELEGATES.some((c) => new RegExp(`<${c}\\b`).test(body))
+        if (rows.length === 0 && !delegates) continue
+        out.push({
+          rel: f.slice(SRC.length + 1),
+          state: delegates || rows.some((t) => STATE.test(t)),
+          cmp: cmp[0],
+        })
       }
     }
     return out
@@ -263,7 +291,13 @@ describe('the family is DERIVED, so the next pill group cannot be missed', () =>
     const groups = exclusiveGroups()
     // Vacuity floors: this matcher is doing the enumerating, so prove it resolved something, and that
     // it still sees the members whose absence it was blind to before.
-    expect(groups.length, 'the sweep must find the groups').toBeGreaterThanOrEqual(14)
+    // 17 with delegation counted, 15 without — the two the button-only scope could not see are
+    // `NotificationRulesMatrix` (renders SegPills) and `PersonalityPicker` (renders TileButton). Counting
+    // them is the point: if either swaps its primitive for a raw button, it appears here unmarked.
+    expect(groups.length, 'the sweep must find the groups').toBeGreaterThanOrEqual(17)
+    for (const rel of ['pages/settings/NotificationRulesMatrix.tsx', 'pages/settings/PersonalityPicker.tsx']) {
+      expect(groups.map((g) => g.rel), `${rel} delegates, and must still be COUNTED`).toContain(rel)
+    }
     expect(groups.some((g) => g.rel === 'pages/settings/settingsUI.tsx'), 'SegPills must be in scope').toBe(true)
     expect(groups.filter((g) => g.rel === 'pages/settings/MemoryPanel.tsx').length,
       'the three the name-keyed sweep could not see').toBeGreaterThanOrEqual(3)
@@ -319,5 +353,56 @@ describe('the last two current-item markers in the tree', () => {
       .toMatch(/aria-expanded=\{entry\.is_dir \? open : undefined\}/)
     // One flag, two cues: if the tint ever stops using `isActive`, this pairing is what breaks.
     expect(code).toMatch(/isActive \? 'color-mix\(in srgb, var\(--color-primary\) 14%, transparent\)'/)
+  })
+})
+
+describe('delegation is a real path, not a hole in the sweep', () => {
+  const codeOf = (rel: string) => readFileSync(join(SRC, rel), 'utf8')
+
+  /** Where each delegate actually declares the state it accepts. If a name is added to `DELEGATES`
+   *  without landing here, the sweep has gained an exemption rather than an understanding. */
+  const DECLARED_IN: Record<string, string> = {
+    TileButton: 'ui/TileButton.tsx',
+    SegToggle: 'pages/settings/bento.tsx',
+    SegPills: 'pages/settings/settingsUI.tsx',
+    Segmented: 'ui/Segmented.tsx',
+    WidthPill: 'ui/WidthPill.tsx',
+    MenuRow: 'ui/Popover.tsx',
+  }
+
+  it('every delegate declares a selection state for its caller', () => {
+    // The sweep counts a row as satisfied when it renders one of these. That is only true if the
+    // primitive really applies the attribute — otherwise a whole family of call sites goes quiet behind
+    // a name on a list.
+    for (const [name, rel] of Object.entries(DECLARED_IN)) {
+      const src = codeOf(rel)
+      expect(src, `${name} (${rel}) must declare a selection state`)
+        .toMatch(/aria-pressed|aria-selected|aria-checked|aria-current|role="(?:tab|option|radio|menuitemradio)"/)
+    }
+  })
+
+  it("the delegate list and the list the sweep uses are the same list", () => {
+    // Two copies of this list would let the sweep exempt a name that nothing proves. Read the sweep's
+    // own array out of this file rather than restating it.
+    const self = readFileSync(join(SRC, 'pages/settings/exclusiveChoiceNamed.test.tsx'), 'utf8')
+    const declared = self.match(/const DELEGATES = \[([^\]]+)\]/)
+    expect(declared, "the sweep's DELEGATES array must be findable").toBeTruthy()
+    const names = [...declared![1].matchAll(/'([A-Za-z]+)'/g)].map((m) => m[1]).sort()
+    expect(names, 'every delegate must be proven above').toEqual(Object.keys(DECLARED_IN).sort())
+  })
+
+  it("PersonalityPicker is the case that proved delegation — and it is NOT a defect", () => {
+    // `<TileButton active={active}>` declares nothing itself; `ui/TileButton` applies
+    // `aria-pressed={active}`, and its own comment records that this picker is why. A sweep that failed
+    // on unrecognised rows would have reported this correct code as broken.
+    // 🪤 `<TileButton[^>]*active=...>` FAILS here, and for the reason this file's own `tags()` helper was
+    // written: the call contains `onClick={() => pick(p)}`, so `[^>]*` stops at the arrow's `>` before
+    // reaching the prop. Use the brace-aware extractor, always.
+    const picker = stripComments(codeOf('pages/settings/PersonalityPicker.tsx'))
+    const tile = tags(picker, 'TileButton')
+    expect(tile.length, 'the picker must still render TileButton').toBeGreaterThan(0)
+    expect(tile.some((t) => /active=\{active\}/.test(t)), 'and hand it the selection').toBe(true)
+    expect(codeOf('ui/TileButton.tsx'), 'and the primitive is where the state lives')
+      .toMatch(/aria-pressed=\{active\}/)
   })
 })
