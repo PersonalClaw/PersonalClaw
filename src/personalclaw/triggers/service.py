@@ -60,6 +60,7 @@ from __future__ import annotations
 import logging
 import time
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 from personalclaw.triggers import provider
@@ -540,7 +541,7 @@ async def tick(
             # did not exist; `ScheduleRunStore.count_since` is it. Read per DUE trigger rather
             # than once per tick because it is per-job JSONL — a tick with one due trigger must
             # not scan every trigger's history. None (unreadable) is NOT zero: see the gate.
-            fires_in_window=await _fires_in_window(trigger, now=now),
+            fires_in_window=await _fires_in_window(trigger, now=now, base_dir=base_dir),
             since_last_fire=_since_last_fire(trigger, now=now),
             busy_slot=claims.busy_slot(trigger, holders=slot_map),
             # 🔴 THE LIVENESS SIGNAL (§3.5 / WF2AUT-9). `skip_if_active` was undeclared anywhere
@@ -593,7 +594,7 @@ async def tick(
         # the silent drop the criterion bans. Gated on `persist` so `automation doctor`'s dry run
         # stays side-effect free, which is the whole point of that flag.
         if persist and not decision.allowed:
-            await _persist_suppression(row, now=now)
+            await _persist_suppression(row, now=now, base_dir=base_dir)
 
         if decision.allowed:
             # Persist the granted claim so the NEXT tick (and any other process — the MCP tools and
@@ -634,7 +635,40 @@ async def tick(
     return result
 
 
-async def _persist_suppression(row: dict[str, Any], *, now: float) -> None:
+def _run_store(base_dir: Any) -> Any:
+    """The run ledger rooted at the home THIS TICK is running under, not the active one.
+
+    🔴 THE ONE FUNNEL for every `ScheduleRunStore` this module opens, for the reason `tick`'s
+    own docstring already gives about claims: *"a claim describing one store must not live in
+    another"*. The ledger is the same kind of sidecar — a row describing a fire from
+    `<base_dir>/triggers.json` belongs in `<base_dir>/cron-history/`, beside the store it
+    describes. Two writers here reached for `config_dir()` instead and so wrote wherever the
+    *ambient* home pointed, which is a different directory entirely whenever a caller passes
+    `base_dir` or hands in a store rooted elsewhere.
+
+    Measured, and this is not hypothetical: driving a tick over a `tmp_path` store with
+    `PERSONALCLAW_HOME` unset deposited its suppression rows in the operator's real
+    `~/.personalclaw/cron-history/`. `pytest` happens to be fenced by a conftest fixture, so the
+    leak only shows itself when something drives a tick *outside* pytest — an ad-hoc script, a
+    dev drive, a probe — and every one of those had been silently appending to the real ledger.
+
+    `config_dir()` remains the fallback and that is not a hedge: every production caller builds
+    its store as `TriggerStore(base_dir=config_dir())`, so `store.base_dir` and `config_dir()`
+    already agree there and the resolved root is unchanged for the gateway, the CLI and the
+    dashboard. Only a caller that deliberately rooted its store somewhere else sees a
+    difference — which is exactly the caller that was being ignored.
+
+    Resolved per call rather than held on the module, matching `dispatch.spool_path`: a
+    module-level store binds to whatever home was set when the module first loaded, and this
+    program has paid for that shape once already.
+    """
+    from personalclaw.config.loader import config_dir
+    from personalclaw.schedule_history import ScheduleRunStore
+
+    return ScheduleRunStore(Path(base_dir) if base_dir is not None else config_dir())
+
+
+async def _persist_suppression(row: dict[str, Any], *, now: float, base_dir: Any = None) -> None:
     """Write a SUPPRESSED fire's typed row to the run store (§7 crit 8 — S171).
 
     🔴 WHY THIS EXISTS. Criterion 8 is *"every suppressed fire appears as a typed ledger row
@@ -660,16 +694,18 @@ async def _persist_suppression(row: dict[str, Any], *, now: float) -> None:
 
     Never raises. The fire's decision has already been made and acted on, so losing its
     bookkeeping is strictly better than turning a correct suppression into a crashed tick.
+
+    `base_dir` is the tick's, threaded through so the row lands beside the `triggers.json` whose
+    fire it describes — see `_run_store` for the leak that closed.
     """
     try:
-        from personalclaw.config.loader import config_dir
-        from personalclaw.schedule_history import ScheduleRun, ScheduleRunStore
+        from personalclaw.schedule_history import ScheduleRun
 
         outcome = str(row.get("outcome") or "")
         trigger_id = str(row.get("trigger_id") or "")
         if not trigger_id or outcome not in INERT_OUTCOMES:
             return
-        await ScheduleRunStore(config_dir()).append(
+        await _run_store(base_dir).append(
             ScheduleRun(
                 run_id=f"skip-{int(now * 1000)}",
                 job_id=trigger_id,
@@ -684,7 +720,7 @@ async def _persist_suppression(row: dict[str, Any], *, now: float) -> None:
         logger.debug("could not persist the suppression row for %s", row.get("trigger_id"))
 
 
-async def _fires_in_window(trigger: Any, *, now: float) -> int | None:
+async def _fires_in_window(trigger: Any, *, now: float, base_dir: Any = None) -> int | None:
     """Fires recorded in the last hour, or None when the ledger could not be read (S152).
 
     Returns None — not 0 — on ANY failure. Zero would hand a runaway trigger a fresh allowance
@@ -694,16 +730,19 @@ async def _fires_in_window(trigger: Any, *, now: float) -> int | None:
 
     Skipped entirely when the trigger declares no hourly cap: this is a file read on the fire path,
     and paying for it to answer a question nobody asked would tax every automation on the machine.
+
+    Reads the tick's OWN ledger (`base_dir`), not the ambient home's. This half of the leak was
+    never a stray write but something worse to reason about: a rate cap measured against a
+    *different install's* history. The same tick that wrote its suppressions into the real
+    `~/.personalclaw` then counted them back out of it, so a cap could be satisfied — or
+    exhausted — by fires that belonged to another store entirely.
     """
     gates = getattr(trigger, "gates", None)
     gates = gates if isinstance(gates, dict) else {}
     if not any(gates.get(k) for k in ("rate_cap", "max_runs_per_hour", "max_actions_per_hour")):
         return None
     try:
-        from personalclaw.config.loader import config_dir
-        from personalclaw.schedule_history import ScheduleRunStore
-
-        return await ScheduleRunStore(config_dir()).count_since(trigger.id, now - 3600.0)
+        return await _run_store(base_dir).count_since(trigger.id, now - 3600.0)
     except Exception:  # noqa: BLE001 - an unreadable ledger must not break the tick
         logger.debug("could not read the rate window for %s", getattr(trigger, "id", "?"))
         return None
