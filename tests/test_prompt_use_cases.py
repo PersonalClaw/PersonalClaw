@@ -108,3 +108,99 @@ class TestSessionKeyDerivation:
         from personalclaw.context import _prompt_use_case_for
 
         assert _prompt_use_case_for("dashboard:x", "code") == "code"
+
+
+# ── How a use case DESCRIBES itself ──────────────────────────────────────────
+#
+# Settings → Prompts renders one row per bindable use case. It used to carry its own
+# four-entry label table against a catalog of forty, so thirty-six rows printed their
+# raw key (`nl_to_cron`) with no description — including as the accessible name of
+# the row's picker (`aria-label="Prompt for nl_to_cron"`). The vocabulary is OPEN (an
+# app contributes bindable use cases), so a table in any single consumer is
+# structurally unable to stay complete; the label/hint/category now come from here.
+
+
+def test_every_core_use_case_has_a_human_label():
+    # The vacuity floor first: this asserts a property of every member, so it is
+    # worthless if the vocabulary ever resolves to a handful.
+    assert len(puc.PROMPT_USE_CASES) >= 40
+    for uc in puc.PROMPT_USE_CASES:
+        label = puc.use_case_label(uc)
+        assert label, f"{uc} has no label"
+        # The defect this replaced: the row showed the key itself. A key with a
+        # separator can never legitimately equal its own label.
+        if "_" in uc or "-" in uc:
+            assert label != uc, f"{uc} still renders its raw key"
+        assert not label.startswith(" ") and label.strip() == label
+
+
+def test_every_core_use_case_has_a_hint():
+    for uc in puc.PROMPT_USE_CASES:
+        assert puc.use_case_hint(uc), f"{uc} has no description"
+
+
+def test_the_four_agent_contexts_describe_the_CONTEXT_not_the_prompt():
+    # Their catalog descriptions say "The bundled PersonalClaw system prompt for the
+    # <x> context" — true of every row on the panel, and so useless as a row hint.
+    # These four are overridden; the assertion is that the override actually wins.
+    for uc in ("chat", "background", "code", "goal_loop"):
+        assert "bundled PersonalClaw system prompt" not in puc.use_case_hint(uc)
+    assert puc.use_case_hint("chat") == "Interactive sessions — dashboard, Slack, CLI"
+
+
+def test_every_core_use_case_lands_in_a_declared_category():
+    # `category` is the catalog's own field, and its docstring already called it "the
+    # Settings-UI grouping" — it simply was never sent to the UI. A category with no
+    # heading would render a group the panel cannot label.
+    for uc in puc.PROMPT_USE_CASES:
+        cat = puc.use_case_category(uc)
+        assert cat in puc.PROMPT_CATEGORY_ORDER, f"{uc} → unknown category {cat!r}"
+        assert puc.PROMPT_CATEGORY_LABEL[cat] and puc.PROMPT_CATEGORY_HINT[cat]
+    # Every declared group must be non-empty, or the vocabulary and the headings have
+    # drifted apart in the other direction.
+    for cat in puc.PROMPT_CATEGORY_ORDER:
+        assert any(puc.use_case_category(uc) == cat for uc in puc.PROMPT_USE_CASES), cat
+
+
+def test_an_app_owned_use_case_is_named_and_described_like_a_bundled_one():
+    # The live system has these: an installed knowledge app contributes four. Before
+    # the registry carried a description they arrived as bare humanized keys.
+    from personalclaw.apps import prompt_registry
+
+    prompt_registry.register_use_case(
+        "widget_summarize",
+        provider="native",
+        prompt_name="task-widget-summarize",
+        category="internal",
+        app="native-widgets",
+        description="Summarize a widget payload for the dashboard.",
+    )
+    try:
+        assert "widget_summarize" in puc.all_prompt_use_cases()
+        assert puc.use_case_label("widget_summarize") == "Widget summarize"
+        assert (
+            puc.use_case_hint("widget_summarize") == "Summarize a widget payload for the dashboard."
+        )
+        assert puc.use_case_category("widget_summarize") == "internal"
+    finally:
+        prompt_registry.unregister_app("native-widgets")
+
+
+def test_an_app_declaring_a_junk_category_still_gets_a_row():
+    # A row dropped because its app typo'd a category is a binding the user cannot
+    # reach at all — worse than a row in the wrong group.
+    from personalclaw.apps import prompt_registry
+
+    prompt_registry.register_use_case(
+        "odd_one",
+        provider="native",
+        prompt_name="task-odd",
+        category="nonsense",
+        app="a",
+        description="",
+    )
+    try:
+        assert puc.use_case_category("odd_one") == "internal"
+        assert puc.use_case_label("odd_one") == "Odd one"
+    finally:
+        prompt_registry.unregister_app("a")

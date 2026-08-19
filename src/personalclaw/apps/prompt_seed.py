@@ -116,6 +116,10 @@ def seed_app_prompts(manifest, app_dir: str | Path) -> None:
                     prompt_name=name,
                     category=str(raw.get("category") or "internal"),
                     app=app_name,
+                    # The manifest already carries the same one-liner the core catalog
+                    # does; Settings → Prompts renders it under the row's label, so an
+                    # app-owned context is described as well as a bundled one.
+                    description=str(raw.get("description") or "").strip(),
                 )
         except (ValueError, OSError):
             logger.debug("failed to seed app %r %s %r", app_name, entity, name, exc_info=True)

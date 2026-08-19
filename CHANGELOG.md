@@ -261,6 +261,19 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
   agent would go on to read and write in whatever directory the host resolved instead. The request is
   now refused with a 400 that names the one deliberate way to unset it (an explicit empty string,
   which still works). Found by driving a real `acp:kiro-cli` session, not by reading the code.
+- **Settings → Prompts named four of its forty-four rows.** The panel lists every bindable runtime
+  context — the prompt that serves chat, the one that writes a conversation title, the one that turns
+  "every Tuesday at 9" into a cron expression, each loop judge and planning brief. Four of them had a
+  human name and a description; the rest showed their internal key (`nl_to_cron`,
+  `history_compression`, `cycle_judge_skeptic`) with no explanation of what binding it, and a screen
+  reader announced the picker as "Prompt for nl_to_cron". They also arrived as one undifferentiated
+  list of forty-four. Every context now names and describes itself, and the rows are grouped — agent
+  system prompts, internal task prompts, loop and orchestration prompts, evaluation prompts — using
+  the grouping the bundled-prompt catalog had already declared for this exact purpose and never sent
+  to the dashboard. The description comes from the prompt catalog itself rather than a table in the
+  dashboard, so a context added later (including one contributed by an installed app, which is where
+  four of these rows come from) arrives already described instead of appearing as a bare key.
+
 - **A scheduler tick wrote its history into the wrong PersonalClaw home.** Two writers on the tick
   path — the suppressed-fire ledger row and the hourly rate meter that reads it back — built their
   run store from the *active* home instead of the home the tick was actually running under. Anything
