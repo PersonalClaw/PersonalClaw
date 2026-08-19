@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest'
-import { render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { DuplicateList } from './DuplicateList'
@@ -64,7 +64,7 @@ function mount(props: Partial<Parameters<typeof DuplicateList>[0]> = {}) {
  *  that calls this helper. */
 async function openConfirmation() {
   const trigger = screen.getByRole('button', { name: /merge into this item/i })
-  trigger.click()
+  fireEvent.click(trigger)
   return await screen.findByRole('alertdialog')
 }
 
@@ -108,7 +108,7 @@ describe('near-duplicate candidates are surfaced for an item', () => {
     const { onOpenItem } = mount()
     // Not `{ name: /open/i }`: four rows would give four identical "Open" names, so the control
     // has to name its own item — the point of inspecting is knowing which one you looked at.
-    screen.getByRole('button', { name: 'Open “Rust async book (1)”' }).click()
+    fireEvent.click(screen.getByRole('button', { name: 'Open “Rust async book (1)”' }))
     expect(onOpenItem).toHaveBeenCalledWith('loser-1')
     expect(merge).not.toHaveBeenCalled()
   })
@@ -181,8 +181,8 @@ describe('the merge only happens on confirmation, and in the right direction', (
   it('cancelling fires NO request', async () => {
     const { onMerged } = mount()
     const dialog = await openConfirmation()
-    ;(Array.from(dialog.querySelectorAll('button'))
-      .find((b) => /cancel/i.test(b.textContent ?? '')) as HTMLButtonElement).click()
+    fireEvent.click(Array.from(dialog.querySelectorAll('button'))
+      .find((b) => /cancel/i.test(b.textContent ?? '')) as HTMLButtonElement)
     await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull())
     expect(merge).not.toHaveBeenCalled()
     expect(onMerged).not.toHaveBeenCalled()
@@ -191,8 +191,8 @@ describe('the merge only happens on confirmation, and in the right direction', (
   it('confirming merges the CANDIDATE into the item being viewed — survivor first', async () => {
     const { onMerged } = mount()
     const dialog = await openConfirmation()
-    ;(Array.from(dialog.querySelectorAll('button'))
-      .find((b) => /merge and delete/i.test(b.textContent ?? '')) as HTMLButtonElement).click()
+    fireEvent.click(Array.from(dialog.querySelectorAll('button'))
+      .find((b) => /merge and delete/i.test(b.textContent ?? '')) as HTMLButtonElement)
     // 🔑 THE ORDER IS THE ASSERTION. `(loser, keeper)` would delete the item on screen and every
     // other assertion in this file would still pass.
     await waitFor(() => expect(merge).toHaveBeenCalledWith(KEEPER.id, 'loser-1'))
@@ -203,8 +203,8 @@ describe('the merge only happens on confirmation, and in the right direction', (
     merge.mockRejectedValue(new Error('database is locked'))
     const { onMerged } = mount()
     const dialog = await openConfirmation()
-    ;(Array.from(dialog.querySelectorAll('button'))
-      .find((b) => /merge and delete/i.test(b.textContent ?? '')) as HTMLButtonElement).click()
+    fireEvent.click(Array.from(dialog.querySelectorAll('button'))
+      .find((b) => /merge and delete/i.test(b.textContent ?? '')) as HTMLButtonElement)
     await waitFor(() => expect(merge).toHaveBeenCalled())
     // The refresh must NOT run: re-reading on a failure would repaint an unchanged list and read
     // as though something happened.
@@ -220,7 +220,7 @@ describe('a failed lookup is not an empty one', () => {
     // 🪤 The claim it must NOT make. This is the entire distinction the atom draws.
     expect(screen.queryByText(/no duplicates/i)).toBeNull()
     expect(screen.getByText(/may still have duplicates/i)).toBeTruthy()
-    screen.getByRole('button', { name: /try again/i }).click()
+    fireEvent.click(screen.getByRole('button', { name: /try again/i }))
     expect(onRetry).toHaveBeenCalled()
     // And no merge control at all: there is nothing to merge, and offering one would imply
     // the lookup answered.
