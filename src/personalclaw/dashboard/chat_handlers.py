@@ -1947,6 +1947,14 @@ async def api_chat_session_workspace_dir(request: web.Request) -> web.Response:
 
     The working directory is the session's workspace: it is the agent's cwd and
     scopes the session's memory partition.
+
+    Clearing is an EXPLICIT ``{"workspace_dir": ""}``. A body that omits the key is
+    refused rather than treated as a clear: measured during the `AAP-3` sweep, a
+    request with a mistyped key (``{"dir": "/some/path"}``) answered
+    ``{"ok": true, "workspace_dir": ""}`` and *unbound* the session's workspace. For
+    an ACP session that binding decides where the agent's CLI actually runs, so a
+    silent clear is the same defect class as the profile-bound cwd escape (`G39`) —
+    the caller believes it set a directory and the agent lands somewhere else.
     """
     state: DashboardState = request.app["state"]
     name = request.match_info["session"]
@@ -1959,7 +1967,12 @@ async def api_chat_session_workspace_dir(request: web.Request) -> web.Response:
         return web.json_response({"error": "invalid JSON"}, status=400)
     if not isinstance(body, dict):
         return web.json_response({"error": "JSON body must be an object"}, status=400)
-    workspace_dir = body.get("workspace_dir", "")
+    if "workspace_dir" not in body:
+        return web.json_response(
+            {"error": "workspace_dir is required (send an empty string to clear it)"},
+            status=400,
+        )
+    workspace_dir = body["workspace_dir"]
     if not isinstance(workspace_dir, str):
         return web.json_response({"error": "workspace_dir must be a string"}, status=400)
     workspace_dir = workspace_dir.strip()
