@@ -5,7 +5,7 @@ import type { LucideIcon } from 'lucide-react'
 import { spring, physics } from '../../design/motion'
 import { fvs } from '../../design/fontWeight'
 import { Toggle } from '../../ui/Toggle'
-import { FieldLabelProvider, NumberField } from '../../ui/forms'
+import { FieldHintProvider, FieldLabelProvider, NumberField } from '../../ui/forms'
 
 /** Shared settings-subpage primitives for consistent layout across panels. */
 
@@ -71,14 +71,21 @@ export function Section({ title, hint, icon: Icon, right, children }: {
 
 /** A labeled row — label/description on the left, control on the right. */
 export function Row({ label, hint, children }: { label: string; hint?: string; children: ReactNode }) {
+  const hintId = useId()
+  // 🪤 A `Row` deliberately does NOT publish a label id — its control names itself (69 hinted rows, and
+  // ux-690 recorded the divided-row layout as a distinction, not drift). The hint is independent of
+  // that: a control with its own `aria-label` still needs the sentence beside it to be its description,
+  // so this provides the hint id without claiming to name anything.
   return (
-    <div className="flex items-center justify-between gap-l border-b border-outline-variant/30 py-3 last:border-0">
-      <div className="min-w-0">
-        <div className="text-on-surface text-[0.8125rem]">{label}</div>
-        {hint && <div className="mt-0.5 text-on-surface-low text-[0.8125rem]">{hint}</div>}
+    <FieldHintProvider value={hint ? hintId : undefined}>
+      <div className="flex items-center justify-between gap-l border-b border-outline-variant/30 py-3 last:border-0">
+        <div className="min-w-0">
+          <div className="text-on-surface text-[0.8125rem]">{label}</div>
+          {hint && <div id={hintId} className="mt-0.5 text-on-surface-low text-[0.8125rem]">{hint}</div>}
+        </div>
+        <div className="shrink-0">{children}</div>
       </div>
-      <div className="shrink-0">{children}</div>
-    </div>
+    </FieldHintProvider>
   )
 }
 
@@ -96,13 +103,20 @@ export function Row({ label, hint, children }: { label: string; hint?: string; c
  *  this Field at once rather than asking each call site to remember an `ariaLabel`. */
 export function Field({ label, hint, children }: { label: string; hint?: string; children: ReactNode }) {
   const labelId = useId()
+  const hintId = useId()
+  // This row already publishes its LABEL through the shared provider, which is what gives its control
+  // an accessible name. The hint rides the same mechanism: measured on `#/settings/account`, all six
+  // inputs were named and NONE was described, so sentences like "At least 12 characters" and "Leave it
+  // empty to keep records unattributed" existed only for sighted users.
   return (
     <FieldLabelProvider value={labelId}>
-      <div className="border-b border-outline-variant/30 py-3 last:border-0">
-        <div id={labelId} className="text-on-surface text-[0.8125rem]">{label}</div>
-        {hint && <div className="mt-0.5 mb-2 text-on-surface-low text-[0.8125rem]">{hint}</div>}
-        <div className="mt-2">{children}</div>
-      </div>
+      <FieldHintProvider value={hint ? hintId : undefined}>
+        <div className="border-b border-outline-variant/30 py-3 last:border-0">
+          <div id={labelId} className="text-on-surface text-[0.8125rem]">{label}</div>
+          {hint && <div id={hintId} className="mt-0.5 mb-2 text-on-surface-low text-[0.8125rem]">{hint}</div>}
+          <div className="mt-2">{children}</div>
+        </div>
+      </FieldHintProvider>
     </FieldLabelProvider>
   )
 }

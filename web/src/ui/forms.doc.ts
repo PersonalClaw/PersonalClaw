@@ -202,6 +202,19 @@ const docs: UiDoc[] = [
     ],
     anatomy: ['React context provider carrying one label id (no DOM of its own)'],
   },
+  {
+    name: 'FieldHintProvider',
+    props: [],
+    anatomy: ['React context provider carrying one hint id (no DOM of its own)'],
+    keywords: ['field', 'hint', 'description', 'accessibility', 'describedby', 'context', 'provider', 'a11y'],
+    description:
+      "The context provider behind Field's accessible-DESCRIPTION contract, and the sibling of FieldLabelProvider: one publishes the id of the label that NAMES a control, this publishes the id of the hint that DESCRIBES it. A Field renders a hint sentence beside its control, and without a published id that sentence is sighted-only, because a control describes itself via aria-describedby and there was nothing to point at. Measured on #/settings/account: all six inputs were correctly NAMED and not one was DESCRIBED, so a constraint (At least 12 characters) and a consequence (Leave it empty to keep records unattributed) never reached a screen reader. 196 call sites pass a hint and none of them had to change. axe cannot see this defect at all — an unassociated paragraph beside an input is valid HTML with no rule to violate.",
+    bestPractices: [
+      { guidance: true, description: 'Publish the id ONLY when a hint is actually rendered: `value={hint ? hintId : undefined}`. An aria-describedby pointing at a missing element is worse than none, because assistive tech resolves it to nothing while the attribute claims a description exists.' },
+      { guidance: true, description: 'Pair it with FieldLabelProvider rather than instead of it. The label is the name and the hint is the description; a control that claims the hint as its NAME announces a paragraph where a noun belongs.' },
+      { guidance: false, description: 'Do not reach for this to attach validation errors. It carries the STATIC hint a layout renders; an error message that appears on failure is a different, live announcement (see FieldError).' },
+    ],
+  },
 ]
 
 export default docs

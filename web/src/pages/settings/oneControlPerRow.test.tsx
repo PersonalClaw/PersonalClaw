@@ -59,8 +59,14 @@ describe('a settings Row labels exactly one control', () => {
   it('Row still renders one label and puts children on the right — the reason this matters', () => {
     // Vacuity guard: the whole argument rests on Row's shape. If Row ever labels each child, this
     // rail's premise changes and it should be re-derived rather than left asserting a stale story.
+    // 🪤 This used to slice 520 CHARACTERS from `export function Row`, and a comment added inside the
+    // function pushed `{label}` past the window — the guard failed while Row's shape was untouched. A
+    // character count is not a scope: slice to the next top-level declaration instead, which is what
+    // "Row's body" actually means.
     const ui = readFileSync(join(SRC, 'pages/settings/settingsUI.tsx'), 'utf8')
-    const row = ui.slice(ui.indexOf('export function Row'), ui.indexOf('export function Row') + 520)
+    const start = ui.indexOf('export function Row')
+    const next = ui.indexOf('\nexport ', start + 1)
+    const row = ui.slice(start, next > start ? next : undefined)
     expect(row).toMatch(/\{label\}/)
     expect(row).toMatch(/shrink-0">\{children\}/)
   })
