@@ -10,12 +10,10 @@ import tempfile
 import unittest.mock
 from pathlib import Path
 
-import pytest
 from hypothesis import assume, given, settings
 from hypothesis import strategies as st
 
 from personalclaw.config.loader import (
-    _HAS_JSONSCHEMA,
     AgentConfig,
     AgentProfile,
     AppConfig,
@@ -28,6 +26,7 @@ from personalclaw.config.loader import (
     resolve_agent_bindings,
     resolve_memory_store_config,
 )
+from personalclaw.config.schema import SCHEMA_REGISTRY as _SCHEMA_REGISTRY
 
 # Logger used by the loader module — needed for capturing warnings in tests
 logger = logging.getLogger("personalclaw.config.loader")
@@ -57,22 +56,15 @@ _ENUM_FIELDS: list[tuple[str, str, list[str], bool]] = [
 # this set drifted — it omitted real sections like `learning`/`legibility`/`loops`, so the
 # unrecognized-keys property test spuriously expected an "unrecognized" warning for a key
 # the loader actually knows. Deriving it keeps the two in lockstep forever.
-try:
-    from personalclaw.config.schema import SCHEMA_REGISTRY as _SCHEMA_REGISTRY
-
-    _SCHEMA_TOP_KEYS = {e.path for e in _SCHEMA_REGISTRY if "." not in e.path and e.path != "*"}
-except ImportError:  # jsonschema-free env: the property test that uses this is skipped anyway
-    _SCHEMA_TOP_KEYS = set()
+_SCHEMA_TOP_KEYS = {e.path for e in _SCHEMA_REGISTRY if "." not in e.path and e.path != "*"}
 # Direct-read sections the loader allowlists (not AppConfig fields) — must match
 # loader._DIRECT_READ_TOP_KEYS. The unrecognized-keys property must NOT generate these.
 _DIRECT_READ_TOP_KEYS = {"providers", "meta", "slack"}
 _KNOWN_TOP_KEYS = _SCHEMA_TOP_KEYS | _DIRECT_READ_TOP_KEYS
 
-# Skip marker for tests that require jsonschema validation
-_requires_jsonschema = pytest.mark.skipif(
-    not _HAS_JSONSCHEMA,
-    reason="jsonschema not available — validation tests require it",
-)
+# No skip marker any more. `jsonschema` is a HARD dependency, and the marker was worse than
+# useless: it turned "validation is entirely absent on a normal install" into six skipped tests,
+# and a skip reads as a pass in every summary.
 
 
 def _load_from_dict(data: object) -> AppConfig:
@@ -307,7 +299,6 @@ class TestConfigLoaderProperties:
         assert loaded.auto_update == config.auto_update
 
     # Feature: config-schema, Property 9: Type mismatch falls back to default
-    @_requires_jsonschema
     @given(
         field_idx=st.integers(min_value=0, max_value=2),
         wrong_idx=st.integers(min_value=0, max_value=3),
@@ -359,7 +350,6 @@ class TestConfigLoaderProperties:
         ), f"Expected default for {section}.{key} after type mismatch"
 
     # Feature: config-schema, Property 10: Enum violation falls back to default
-    @_requires_jsonschema
     @given(
         field_idx=st.integers(min_value=0, max_value=len(_ENUM_FIELDS) - 1),
         bad_value=st.text(min_size=1, max_size=20),
@@ -396,7 +386,6 @@ class TestConfigLoaderProperties:
         )
 
     # Feature: config-schema, Property 11: Unrecognized keys are detected
-    @_requires_jsonschema
     @given(
         extra_keys=st.lists(
             st.text(
@@ -430,7 +419,6 @@ class TestConfigLoaderProperties:
         for k in extra_keys:
             assert k in warning_text, f"Key '{k}' not mentioned in warning: {warning_text}"
 
-    @_requires_jsonschema
     def test_direct_read_sections_meta_providers_not_flagged(self) -> None:
         """`providers` (LLM-provider registry) and `meta` (FS-roundtrip provenance) are
         legitimate top-level sections read DIRECTLY off the raw config — not AppConfig
@@ -487,7 +475,6 @@ class TestConfigLoaderProperties:
         assert isinstance(result.auto_update, bool)
 
     # Feature: config-schema, Property 14: Deprecated fields are accepted during loading
-    @_requires_jsonschema
     @given(
         command_val=st.text(min_size=1, max_size=20),
     )

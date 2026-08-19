@@ -17,18 +17,18 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal
 
+# A HARD dependency (pyproject `[project] dependencies`), imported plainly. It used to sit
+# behind a try/except that set `_HAS_JSONSCHEMA = False`, and `_validate_config_data` returned
+# at its first line when that was False — so on any install without the optional [mcp] extra
+# the whole validation pass (enums, types, unknown-key warning, retired-field pruning) was a
+# no-op that nothing reported.
+import jsonschema
+
 from personalclaw.voice.duplex import (
     DEFAULT_CONFIRMATION_PHRASES,
     DEFAULT_EXIT_PHRASES,
     DEFAULT_PUSH_TO_TALK_CHORD,
 )
-
-try:
-    import jsonschema
-
-    _HAS_JSONSCHEMA = True
-except ImportError:  # pragma: no cover
-    _HAS_JSONSCHEMA = False
 
 logger = logging.getLogger(__name__)
 
@@ -3164,9 +3164,6 @@ def _validate_config_data(data: dict) -> dict:
     remove invalid values (so the loader falls back to field defaults).
     Always returns *data* — never raises.
     """
-    if not _HAS_JSONSCHEMA:
-        return data
-
     # Lazy import to avoid circular import at module level
     from personalclaw.config.schema import JSON_SCHEMA, SCHEMA_REGISTRY
 

@@ -112,6 +112,13 @@ dependencies = [
     # disappears in a future dependency bump. Verification fails CLOSED if it is ever
     # missing (a signature that cannot be checked is refused, not accepted).
     "cryptography>=42",
+    # Config validation. HARD dependency, deliberately, for the same reason as
+    # `cryptography` above: it arrived only transitively through the OPTIONAL [mcp] extra, so
+    # `pip install personalclaw` had NO enum validation, NO type validation, no unknown-key
+    # warning and no pruning of retired fields — `_validate_config_data` returned at its first
+    # line. Measured: `agent.approval_mode = "NOT_A_MODE"` entered the running config. CI could
+    # not see it because [dev] pulls [mcp].
+    "jsonschema>=4",
 ]
 
 # Project URLs — surfaced by `pip show personalclaw` and the PyPI project page.
