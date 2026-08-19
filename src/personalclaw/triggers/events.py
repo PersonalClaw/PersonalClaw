@@ -99,6 +99,23 @@ class EventStatus(str, Enum):
 #: The set is KEPT rather than deleted, with its `verify_dormancy()` guard: a future event added to
 #: `hooks.HOOK_EVENTS` ahead of its subsystem belongs here, and a declaration with no fire site is
 #: exactly what this constant exists to make visible.
+#:
+#: 🔎 **What this set cannot express, measured 2026-08-17 (G40 census).** Dormancy here is binary —
+#: "some code path fires it" — and two events are wired on a path narrower than their catalog `desc`
+#: promises. Recorded rather than fixed: widening either one changes WHEN a hook fires, which is a
+#: semantics decision, not the legibility fix G40 was scoped to.
+#:
+#: * `Error` ("An error occurs in the loop") fires from exactly ONE place,
+#:   `dashboard/chat_runner.py:3860`, inside the generic `except Exception`. The three TYPED ACP
+#:   handlers above it — `AcpProcessDied` (:3773), `PromptBusyExhaustedError` (:3791) and `AcpError`
+#:   (:3809) — each `session.append("error", …)`, so the user is shown an error and the hook is not
+#:   told. Measured: 2 real ACP errors in one sweep, 0 `Error` fires.
+#: * `PostToolUse` fires at `chat_runner.py:2811`, reachable but CLI-dependent on the ACP path: it
+#:   needs an `EVENT_TOOL_RESULT`, which `acp/translate.py:249` emits only for a terminal
+#:   `tool_call_update` (`status` in completed/failed). A CLI that sends the opening `tool_call`
+#:   frame and no terminal update produces none. Measured: 0 fires in a sweep where `SessionStart`
+#:   fired 1, `UserPromptSubmit` 17 and `Stop` 15. This is the same host-authority limit G27 records
+#:   for ungated tool calls — not a missing fire site, so it does NOT belong in the set below.
 DORMANT_EVENTS: frozenset[str] = frozenset()
 
 #: Why each dormant event does not fire, and what would wire it. Per-event rather than one generic

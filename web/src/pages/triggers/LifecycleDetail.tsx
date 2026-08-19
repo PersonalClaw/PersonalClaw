@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Pencil, Trash2, Check, X, FlaskConical, Loader2, AlertTriangle } from 'lucide-react'
+import { Pencil, Trash2, Check, X, FlaskConical, Loader2, AlertTriangle, ShieldOff, ShieldCheck } from 'lucide-react'
 import { Button } from '../../ui/Button'
 import { FormFooter } from '../../ui/FormFooter'
 import { confirmDelete } from '../../ui/dialog'
@@ -45,6 +45,12 @@ export function LifecycleDetail({ hook, providers, onSaved, onDeleted, editing, 
   // Read against the SAVED event, not the edit draft: the chips and stats below describe the trigger
   // as it exists, and following the draft would badge a row the user has not committed.
   const dormancyReason = eventIsDormant(catalog, hook.event) ? (eventDormancyReason(catalog, hook.event) || 'no code fires it yet') : ''
+  // G40. `blocking` is what the event COULD do; `enforcement` is what this hook DOES. Both are the
+  // server's verdict — deliberately not re-derived from `used_by.length` here, because that field
+  // was already on the wire and a user still could not read the state off it. Absent (older
+  // backend) → no claim either way, which is the only safe default for a security control.
+  const enforcement = hook.enforcement
+  const inert = enforcement === 'not_enforcing'
   const eventOptions = (catalog?.lifecycle ?? []).map((e) => ({ value: e.event, label: e.dormant ? `${e.label} · never fires` : e.label, description: e.desc }))
 
   async function save() {
@@ -115,8 +121,27 @@ export function LifecycleDetail({ hook, providers, onSaved, onDeleted, editing, 
           </span>
         )}
         <span className="rounded-pill bg-surface-high px-m h-7 inline-flex items-center text-on-surface-var text-[0.8125rem]">{hook.provider}</span>
+        {/* G40: the two states of a blocking hook, shown as DIFFERENT chips rather than one chip
+            and silence — silence is what a user already had, and it read as "armed". */}
+        {inert && (
+          <span className="inline-flex items-center gap-1.5 rounded-pill px-m h-7 text-[0.8125rem]" style={{ background: 'color-mix(in srgb, var(--color-warn) 14%, transparent)', color: 'var(--color-warn)' }} title="This hook still runs, but its exit code is discarded — only a hook an agent's triggers list references can reject a tool.">
+            <ShieldOff size={13} /> Not enforcing
+          </span>
+        )}
+        {enforcement === 'enforcing' && (
+          <span className="inline-flex items-center gap-1.5 rounded-pill px-m h-7 text-[0.8125rem]" style={{ background: 'color-mix(in srgb, var(--color-ok) 14%, transparent)', color: 'var(--color-ok)' }} title="Bound to an agent, so exiting 2 rejects the tool.">
+            <ShieldCheck size={13} /> Enforcing
+          </span>
+        )}
         {hook.matcher && <span className="rounded-pill bg-surface-high px-m h-7 inline-flex items-center font-mono text-on-surface-var text-[0.75rem]">{hook.matcher}</span>}
       </div>
+      {inert && (
+        <p className="rounded-md px-m py-2 text-[0.8125rem]" style={{ background: 'color-mix(in srgb, var(--color-warn) 10%, transparent)', color: 'var(--color-warn)' }}>
+          This is a blocking hook that cannot block. It runs and its output is logged, but nothing
+          reads its exit code, so a tool it means to deny runs anyway. Add it to an agent's{' '}
+          <span className="font-mono">triggers</span> list to arm it.
+        </p>
+      )}
 
       <Section label="Action config">
         {Object.keys(hook.provider_config ?? {}).length > 0
@@ -132,12 +157,22 @@ export function LifecycleDetail({ hook, providers, onSaved, onDeleted, editing, 
         {dormancyReason && hook.run_count === 0 && (
           <p className="text-on-surface-low text-[0.8125rem] mt-1">Zero runs is expected here: {dormancyReason}.</p>
         )}
+        {/* 🪤 The inverse trap, and the one that was measured: a NON-zero count on an unarmed
+            blocking hook. The sweep's PreToolUse hook read "Ran 3×" while all three writes landed,
+            because those fires came from the informational path. The count is true and its
+            implication is false, so it has to be annotated where it is read. */}
+        {inert && hook.run_count > 0 && (
+          <p className="text-on-surface-low text-[0.8125rem] mt-1">
+            Those {hook.run_count} runs were advisory — the hook fired and was ignored, so none of
+            them blocked anything.
+          </p>
+        )}
       </Section>
 
       <Section label="Used by">
         {hook.used_by.length > 0
           ? <div className="flex flex-wrap gap-1.5">{hook.used_by.map((a) => <span key={a} className="rounded-pill bg-surface-high px-m h-6 inline-flex items-center text-on-surface-var text-[0.75rem]">{a}</span>)}</div>
-          : <p className="text-on-surface-low text-[0.8125rem]">No agents reference this trigger yet — it's dormant until an agent's <span className="font-mono">triggers</span> list includes it.</p>}
+          : <p className="text-on-surface-low text-[0.8125rem]">No agents reference this trigger yet{hook.blocking ? ', so it runs but cannot block' : " — it's dormant"} until an agent's <span className="font-mono">triggers</span> list includes it.</p>}
       </Section>
     </div>
   )

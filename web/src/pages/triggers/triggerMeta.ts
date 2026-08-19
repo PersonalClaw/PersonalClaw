@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { CalendarClock, Webhook, Bell, MessageSquare, ListPlus, Users, TerminalSquare, FileCode2, Zap, Anchor, Bot, Workflow, FolderClock, Globe, Moon, FileText, Inbox, Database, Plug } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
-import { api, type ScheduleJob, type HookItem, type LifecycleEventInfo, type TriggerVariables, type Trigger as WireTrigger, type EventPattern } from '../../lib/api'
+import { api, type ScheduleJob, type HookItem, type HookEnforcement, type LifecycleEventInfo, type TriggerVariables, type Trigger as WireTrigger, type EventPattern } from '../../lib/api'
 import { deriveKind, deriveMode, kindMeta as schedKindMeta, modeMeta as schedModeMeta } from '../schedule/scheduleMeta'
 import { epochSeconds } from '../../lib/epoch'
 
@@ -227,6 +227,13 @@ export interface Trigger {
   state?: string | null
   runCount: number | null
   usedBy: string[]           // lifecycle only
+  /** lifecycle only — whether this hook's event CAN block the loop, and whether this hook
+   *  actually does (G40). The server's verdict, passed through: `enforcement` is computed from the
+   *  same `AgentProfile.triggers` binding the firing path reads, so "enforcing" on a row means a
+   *  tool rejection would really come from it. `undefined` on an older backend → the row makes no
+   *  enforcement claim at all, which is the safe direction. */
+  blocking?: boolean
+  enforcement?: HookEnforcement
   storeKind?: string         // store only: file | web_watch | idle | …
   /** Who wrote the row, and whether this machine's owner did not (TEAM-SHARED-ENTITIES §2.2 —
    *  TSE-4). `readOnly` is the SERVER's verdict, passed through rather than re-derived from
@@ -296,6 +303,7 @@ export function hookToTrigger(h: HookItem): Trigger {
     whenLabel: humanizeEvent(h.event), whenIcon: Anchor, whenTone: 'var(--color-primary)',
     actionLabel: actionLabel(h.provider), actionIcon: actionIcon(h.provider), actionProvider: h.provider,
     lastRunTs: h.last_run || null, lastStatus: h.last_status || null, runCount: h.run_count, usedBy: h.used_by,
+    blocking: h.blocking, enforcement: h.enforcement,
     schedule: undefined, hook: h,
   }
 }

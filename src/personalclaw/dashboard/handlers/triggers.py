@@ -460,6 +460,8 @@ def _schedule_row_for(
 
 
 def _serialize_lifecycle(hook, used_by: list[str]) -> dict[str, Any]:
+    from personalclaw.hooks import BLOCKING_EVENTS, hook_enforcement
+
     return {
         "kind": _LIFECYCLE,
         "id": f"{_LIFECYCLE}:{hook.id}",
@@ -475,6 +477,15 @@ def _serialize_lifecycle(hook, used_by: list[str]) -> dict[str, Any]:
         "last_status": hook.last_status,
         "run_count": hook.run_count,
         "used_by": sorted(used_by),
+        # G40: whether THIS hook can block, not just whether its event could. `used_by` alone made
+        # the user derive it, and `run_count` actively argued against them — an unbound PreToolUse
+        # hook still fires on the informational path, so a policy hook that enforced nothing showed
+        # "Ran 3×". `blocking` is the event's capability; `enforcement` is this row's live state.
+        # See `hooks.hook_enforcement` for the measurement.
+        "blocking": hook.event in BLOCKING_EVENTS,
+        "enforcement": hook_enforcement(
+            hook.event, enabled=bool(hook.enabled), bound=bool(used_by)
+        ),
     }
 
 
