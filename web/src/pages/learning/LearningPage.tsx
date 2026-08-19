@@ -7,14 +7,15 @@ import { Segmented } from '../../ui/forms'
 import { InlineError } from '../../ui/InlineError'
 import { EmptyState, ListSkeleton, LoadError } from '../../ui/ListScaffold'
 import { useCachedData } from '../../lib/useCachedData'
-import { api, type LearningHealth, type LearningInbox, type LearningRow, type StagingWeek } from '../../lib/api'
+import { api, type JudgeBenchView, type LearningHealth, type LearningInbox, type LearningRow, type StagingWeek } from '../../lib/api'
 import { HealthPanel } from './HealthPanel'
+import { JudgeBenchPanel } from './JudgeBenchPanel'
 import { fvs } from '../../design/fontWeight'
 import {
   DAY_HINT, DAY_TONE, bulkBlockedReason, dayLabel, dayState,
   kindIcon, kindLabel, tierLabel, tierTone,
 } from './learningMeta'
-import { HEALTH_KEY, WEEK_KEY, proposalsKey, refreshAfterDecision, refreshEverything } from './proposalCache'
+import { HEALTH_KEY, JUDGE_BENCH_KEY, WEEK_KEY, proposalsKey, refreshAfterDecision, refreshEverything } from './proposalCache'
 import { PageTitle } from '../../ui/PageTitle'
 
 /** The Learning page — the Proposal Inbox plus the capture week panel.
@@ -47,6 +48,13 @@ export function LearningPage() {
   const { data: health, error: healthError, refresh: refreshHealth } = useCachedData<LearningHealth>(
     HEALTH_KEY,
     () => api.learningHealth(7),
+  )
+  // The judge tier table (ES-4). `error` is read for the same reason the health panel's is, plus
+  // one more: its ORDINARY state is a 404 ("no benchmark has run"), and the panel needs the error
+  // to tell that apart from a real failure. Swallowing it would render both as nothing at all.
+  const { data: judgeBench, error: judgeBenchError, refresh: refreshJudgeBench } = useCachedData<JudgeBenchView>(
+    JUDGE_BENCH_KEY,
+    () => api.judgeBench(),
   )
 
   // Kind chips carry their counts, so a filter never has to be clicked to discover it is empty.
@@ -88,7 +96,7 @@ export function LearningPage() {
         right={
           <QuietButton
             title="Refresh"
-            onClick={() => refreshEverything(refreshProposals, refreshWeek, refreshHealth)}
+            onClick={() => refreshEverything(refreshProposals, refreshWeek, refreshHealth, refreshJudgeBench)}
           >
             <RefreshCw size={14} /> Refresh
           </QuietButton>
@@ -115,6 +123,8 @@ export function LearningPage() {
             : week && <WeekPanel week={week} />}
 
           <HealthPanel health={health} error={healthError} onRetry={refreshHealth} />
+
+          <JudgeBenchPanel bench={judgeBench} error={judgeBenchError} onRetry={refreshJudgeBench} />
 
 
           <div className="flex flex-col gap-m">

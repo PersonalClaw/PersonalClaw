@@ -22,7 +22,6 @@ retained under ``matrices/<id>/`` so a surprising aggregate is always drillable.
 
 from __future__ import annotations
 
-import itertools
 import json
 import logging
 import os
@@ -39,11 +38,13 @@ from personalclaw.evals.child import CELL_RESULT_SENTINEL
 from personalclaw.evals.matrix import (
     FAILED,
     PASSED,
+    TRIAL_KEY,
     VERIFIER_ABSENT,
     CellResult,
     MatrixResult,
     MatrixSpec,
     aggregate,
+    expand_cells,
 )
 from personalclaw.sel import sel
 
@@ -52,24 +53,6 @@ logger = logging.getLogger(__name__)
 # Default per-cell wall-clock ceiling. A single-user machine runs cells one at a
 # time, so this bounds one scenario, not a fleet.
 DEFAULT_CELL_TIMEOUT_SECS = 600.0
-
-
-def _expand_cells(spec: MatrixSpec) -> list[dict]:
-    """Expand the axes into the cartesian product of coordinate dicts, repeated
-    ``trial_count`` times (each trial is its own cell — a matrix of N points at
-    k trials runs N×k cells sequentially)."""
-    axes = spec.axes or {}
-    keys = list(axes.keys())
-    value_lists = [list(axes[k]) for k in keys]
-    trials = max(1, int(spec.trial_count))
-    combos: list[dict] = []
-    # itertools.product over an empty axis set yields one empty tuple → one cell,
-    # which is correct: a subject with no axes is still one runnable point.
-    for values in itertools.product(*value_lists) if keys else [()]:
-        coords = dict(zip(keys, values))
-        for trial in range(trials):
-            combos.append({**coords, "_trial": trial})
-    return combos
 
 
 def _budget_blocks_cell(spec: MatrixSpec) -> bool:
@@ -242,9 +225,9 @@ def run_matrix(
     _sel_log(matrix_id, spec, outcome="started")
 
     cells: list[CellResult] = []
-    combos = _expand_cells(spec)
+    combos = expand_cells(spec)
     for cell_index, combo in enumerate(combos):
-        coords = {k: v for k, v in combo.items() if k != "_trial"}
+        coords = {k: v for k, v in combo.items() if k != TRIAL_KEY}
         if _budget_blocks_cell(spec):
             cells.append(CellResult(coords=coords, outcome=VERIFIER_ABSENT))
             continue

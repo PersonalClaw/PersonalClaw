@@ -236,6 +236,11 @@ personalclaw = [
     # into ~/.personalclaw/evals/scenarios/ on first reference; a wheel without this
     # line ships an empty library, so the line is load-bearing, not cosmetic.
     "evals/library/*.json",
+    # The shipped judge fixture sets (ES-4). `judge_bench.resolve_fixture_set_path` reads
+    # these straight out of the package (the home only overrides them), so a wheel without
+    # this line ships a judge benchmark with nothing to benchmark — `personalclaw
+    # judge-bench` would refuse with "shipped sets: <none>" on every install.
+    "evals/benchmarks/judge/*.json",
     "tests_fixtures/**/*",
     "skills/bundled/*/SKILL.md",
     # Progressive-disclosure companions a bundled SKILL.md links to (HC-4's

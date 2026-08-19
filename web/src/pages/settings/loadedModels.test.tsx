@@ -29,6 +29,7 @@ vi.mock('../../lib/api', () => ({
     modelsAvailable: () => Promise.resolve([]),
     modelsActive: () => Promise.resolve({}),
     modelsHealth: () => Promise.resolve({ providers: [] }),
+    judgeBench: () => Promise.reject(new Error('judge_bench_absent')),
     modelDownloadCleanupCandidates: () => Promise.resolve({ candidates: [], total_bytes: 0 }),
   },
 }))

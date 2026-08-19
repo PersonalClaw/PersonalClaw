@@ -243,6 +243,32 @@ def config_snapshot_ref() -> str:
 # ── computing + persisting ───────────────────────────────────────────────────
 
 
+def compute_pin_for_subject(
+    subject_id: str,
+    subject_sha256: str,
+    *,
+    fixture_home: str = scenario_lib.DEFAULT_FIXTURE_HOME,
+) -> RunPin:
+    """Pin a run whose SUBJECT is already identified and hashed by its caller.
+
+    ``RunPin``'s two subject fields are spelled ``scenario_*`` because the scenario
+    library was the first subject to need pinning, and they are the ledger's shipped
+    column names — renaming them would rewrite an append-only header. So a subject that
+    is not a scenario (ES-4's judge fixture SET) passes its own id and canonical hash
+    here, and the ledger's ``kind`` column is what tells a reader which sort of subject
+    a row scored. The three environment parts (model bindings, prompt pack, config) are
+    read the same way for every subject, which is the whole reason this is one function.
+    """
+    return RunPin(
+        scenario_id=subject_id,
+        scenario_sha256=subject_sha256,
+        model_fingerprint=model_fingerprint(),
+        prompt_pack_sha256=prompt_pack_sha256(),
+        config_snapshot_ref=config_snapshot_ref(),
+        fixture_home=fixture_home,
+    )
+
+
 def compute_pin(subject: str) -> RunPin:
     """Compute the pin for ``subject`` (a scenario name or path).
 
@@ -251,12 +277,9 @@ def compute_pin(subject: str) -> RunPin:
     propagate: refusing to run beats producing an unattributable score.
     """
     path = scenario_lib.resolve_scenario_path(subject)
-    return RunPin(
-        scenario_id=path.stem,
-        scenario_sha256=scenario_lib.scenario_sha256(path),
-        model_fingerprint=model_fingerprint(),
-        prompt_pack_sha256=prompt_pack_sha256(),
-        config_snapshot_ref=config_snapshot_ref(),
+    return compute_pin_for_subject(
+        path.stem,
+        scenario_lib.scenario_sha256(path),
         fixture_home=scenario_lib.resolve_fixture_home(path),
     )
 

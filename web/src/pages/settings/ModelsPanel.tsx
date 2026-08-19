@@ -4,9 +4,9 @@ import {
   ChevronRight, Check, MessageSquare, Boxes, Mic, Volume2, Eye, ImagePlus,
   Ear, Music, ScanEye, Clapperboard, Users, Download, Code2, BrainCircuit,
   Moon, Network, RefreshCcw, ArrowUp, ArrowDown, X, AlertTriangle, Wrench,
-  Trash2, type LucideIcon,
+  Trash2, Gavel, type LucideIcon,
 } from 'lucide-react'
-import { api, type AvailableModel, type ProviderHealth } from '../../lib/api'
+import { api, type AvailableModel, type JudgeBenchRecommendation, type ProviderHealth } from '../../lib/api'
 import { humanBytes } from '../../lib/chunkedUpload'
 import {
   occupantDetail, pressureDetail, pressureTone, reclaimableCount, sortOccupants,
@@ -211,6 +211,14 @@ export function ModelsPanel() {
   // mount (persist:false so a broken provider isn't shown green from cache).
   const { data: health } = useCachedData('settings:models-health', () =>
     api.modelsHealth().then((h) => h.providers).catch(() => [] as ProviderHealth[]), { persist: false })
+  // The judge benchmark's tier recommendations (ES-4), so rebinding a judge to the cheapest
+  // adequate tier is ONE action here rather than a hand-translation from a table on another
+  // page. A failure or a 404 collapses to "no recommendation, no chip" — which is an honest
+  // absence rather than a swallowed error, because the Learning page's Judge tiers panel is
+  // the surface that owns reporting WHY there is none.
+  const { data: judgeRecs } = useCachedData('settings:judge-bench-recs', () =>
+    api.judgeBench().then((v) => v.recommendations).catch(() => [] as JudgeBenchRecommendation[]),
+    { persist: false })
   const allModels = data?.allModels
   const active = data?.active ?? {}
 
@@ -239,7 +247,7 @@ export function ModelsPanel() {
           return (
             <div key={uc}>
               {showGroupHeader && <div className="mb-1.5 mt-3 px-1 text-on-surface-low text-[0.75rem] uppercase tracking-wide">{meta.group}</div>}
-              <UseCaseRow useCase={uc} activeModels={active[uc] ?? []} allModels={allModels} health={health ?? []} onChanged={reloadActive} />
+              <UseCaseRow useCase={uc} activeModels={active[uc] ?? []} allModels={allModels} health={health ?? []} judgeRec={(judgeRecs ?? []).find((r) => r.verdict === 'recommended' && r.use_case === uc)} onChanged={reloadActive} />
             </div>
           )
         })}
@@ -419,8 +427,9 @@ function HealthDot({ provider, health }: { provider: string; health: ProviderHea
   return <span role="img" className="size-2 shrink-0 rounded-pill" style={{ background: color }} title={label} aria-label={label} />
 }
 
-function UseCaseRow({ useCase, activeModels, allModels, health, onChanged }: {
-  useCase: string; activeModels: string[]; allModels: AvailableModel[]; health: ProviderHealth[]; onChanged: () => void
+function UseCaseRow({ useCase, activeModels, allModels, health, judgeRec, onChanged }: {
+  useCase: string; activeModels: string[]; allModels: AvailableModel[]; health: ProviderHealth[]
+  judgeRec?: JudgeBenchRecommendation; onChanged: () => void
 }) {
   const [open, setOpen] = useState(false)
   const [saving, setSaving] = useState(false)
@@ -565,6 +574,32 @@ function UseCaseRow({ useCase, activeModels, allModels, health, onChanged }: {
             <span className="size-1.5 rounded-pill" style={{ background: meta.chain ? 'var(--color-primary)' : 'var(--color-on-surface-low)' }} />
             {meta.chain ? 'Fallback chain — first is the default, later entries take over on failure' : 'Single-select — one model per use case'}
           </div>
+
+          {/* ES-4's "one user action": the judge benchmark measured this axis and named the
+              cheapest ADEQUATE tier, so binding it is a click rather than a hand-copy from the
+              Learning page's table. It sets the recommended ref as the DEFAULT — position 0 of a
+              chain, or the single selection — because "rebind the judge" means change what
+              resolves, not append a fallback that never runs.
+              The harness still only recommends: no code binds this without the click. */}
+          {judgeRec && judgeRec.model_ref && (
+            <div className="flex flex-wrap items-center gap-2 rounded-lg bg-surface px-2.5 py-2">
+              <Gavel size={13} className="shrink-0 text-on-surface-low" />
+              <span className="text-on-surface-low text-[0.75rem]">
+                Judge benchmark: cheapest adequate tier is <span className="text-on-surface">{judgeRec.tier}</span>
+                {' '}at {judgeRec.samples} sample{judgeRec.samples === 1 ? '' : 's'} — <span className="text-on-surface">{judgeRec.model_ref}</span>
+              </span>
+              {activeModels[0] === judgeRec.model_ref ? (
+                <span className="inline-flex items-center gap-1 text-on-surface-low text-[0.75rem]">
+                  <Check size={12} /> already the default
+                </span>
+              ) : (
+                <Button size="sm" variant="tonal" disabled={saving}
+                  onClick={() => setActive([judgeRec.model_ref, ...activeModels.filter((m) => m !== judgeRec.model_ref)])}>
+                  Bind as default
+                </Button>
+              )}
+            </div>
+          )}
 
           {/* The ordered chain editor: position 0 is the default; reorder with the
               arrow buttons (keyboard-accessible), remove with ×. Each entry carries

@@ -89,6 +89,26 @@ def scenarios_dir() -> Path:
     return d
 
 
+def benchmarks_dir() -> Path:
+    """``evals/benchmarks/`` — the fixture-set tree (§1.1).
+
+    Created on reference now that ES-4 is a writer of it. The judge benchmark reads its
+    shipped fixture sets out of the PACKAGE and only looks here for the user's own or
+    locally edited sets (the ``prompt_pack`` resolution rule: the home wins when it has a
+    file of that name), so this dir stays empty until the user puts something in it.
+    """
+    d = evals_root() / "benchmarks"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def judge_benchmarks_dir() -> Path:
+    """``evals/benchmarks/judge/`` — judge fixture sets (§6)."""
+    d = benchmarks_dir() / "judge"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
 def results_path() -> Path:
     """``evals/results.tsv`` — the append-only cross-run ledger."""
     return evals_root() / "results.tsv"

@@ -1467,6 +1467,58 @@ export interface MaeBucket {
   labelled: number
   mae: number | null
 }
+/** One (rubric-class x tier x samples) row of the judge tier-recommendation table
+ *  (EVALUATION-SUBSTRATE §6). Every judgement arrives DECIDED by the backend —
+ *  `adequate` and `inadequate_reasons` included — because a frontend that re-derived
+ *  "is this tier good enough" would eventually disagree with the harness, and the copy
+ *  shipping the permissive answer would be the UI.
+ *
+ *  `null` means UNMEASURED, never zero: an unmeasured separation or flip rate is why a
+ *  row is inadequate, and rendering it as 0 would read as a perfect score. */
+export interface JudgeBenchRow {
+  rubric_class: string
+  tier: string
+  samples: number
+  agreement: number | null
+  scored_cells: number
+  verifier_absent: number
+  protocol_errors: number
+  separation: number | null
+  flip_rate: number | null
+  swapped_fixtures: number
+  false_passes: number
+  false_rejects: number
+  forbidden_missed: number
+  cost_usd: number | null
+  wall_secs: number
+  calls: number
+  adequate: boolean
+  inadequate_reasons: string[]
+  notes: string[]
+}
+export interface JudgeBenchRecommendation {
+  rubric_class: string
+  /** 'recommended' | 'no_adequate_tier' | 'cost_unknown' — the two refusals matter more
+   *  than the recommendation, so they are first-class rather than an empty tier. */
+  verdict: string
+  tier: string
+  samples: number
+  /** The model use case to rebind on Settings -> Models. */
+  use_case: string
+  /** The exact `Provider:model` ref the Models panel binds, or '' when nothing is bound. */
+  model_ref: string
+  cost_usd: number | null
+  notes: string[]
+}
+export interface JudgeBenchView {
+  bench_id: string
+  columns: string[]
+  rows: JudgeBenchRow[]
+  floors: { agreement?: number; separation?: number; flip_rate?: number }
+  recommendations: JudgeBenchRecommendation[]
+  pin: Record<string, unknown> | null
+  runs: string[]
+}
 export interface LearningHealth {
   days: number
   composite: {
@@ -3971,6 +4023,10 @@ export const api = {
     get<StagingWeek>(`/api/learning/staging/week?days=${days}`),
   learningHealth: (days = 7) =>
     get<LearningHealth>(`/api/learning/health?days=${days}`),
+  /** The judge tier-recommendation table (ES-4). Read-only: the RUN is
+   *  `personalclaw judge-bench`, because the full matrix is 540 judge calls and a click
+   *  must not start one. 404 carries a distinct code for "no benchmark yet" vs "evals off". */
+  judgeBench: () => get<JudgeBenchView>('/api/evals/judge-bench'),
   skillProposals: () => get<{ proposals: SkillProposal[] }>('/api/skills/proposals').then((d) => d.proposals),
   skillProposalDetail: (id: string) => get<SkillProposalDetail>(`/api/skills/proposals/${encodeURIComponent(id)}`),
   acceptSkillProposal: (id: string, edits?: { description?: string; procedure_md?: string }) =>

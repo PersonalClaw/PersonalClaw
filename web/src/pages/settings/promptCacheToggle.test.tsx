@@ -27,6 +27,10 @@ vi.mock('../../lib/api', () => ({
     modelsAvailable: () => Promise.resolve([]),
     modelsActive: () => Promise.resolve({}),
     modelsHealth: () => Promise.resolve({ providers: [] }),
+    // ES-4: the panel reads the judge benchmark's tier recommendations on mount to offer
+    // the one-click rebind. 404 (no benchmark yet) is the ordinary case, so a reject here
+    // is what the panel really sees on a fresh install.
+    judgeBench: () => Promise.reject(new Error('judge_bench_absent')),
     modelDownloadCleanupCandidates: () => Promise.resolve({ candidates: [], reclaimable_bytes: 0 }),
     // The panel's loaded-models section (LMMV-5) fetches on mount too; an unmocked call
     // here would make this test fail for a reason that has nothing to do with caching.

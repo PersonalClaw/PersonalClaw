@@ -41,6 +41,14 @@ _CALL_SITE_SURFACES = {
     # always gets a bounded match result rather than an error.
     "mcp_workflows.py": "assistant_reasoning",
     "web/fetch.py": "assistant_reasoning",
+    # ES-4's judge benchmark (`live_judge_caller`): the one function in that module that
+    # spends money, routed through `one_shot_completion` on the tier's use case so
+    # resolution walks the same active-models chain a live gate does. Reasoning-axis, and
+    # its no-model floor is BUILT IN at the sampling loop (`judge_bench.py:703`): a
+    # provider fault — including nothing resolving — is recorded as an ABSENT SAMPLE with
+    # its reason in `call_errors`, so the benchmark reports fewer samples and why, rather
+    # than fabricating a score for a model it never reached.
+    "evals/judge_bench.py": "assistant_reasoning",
     "dashboard/chat_retag.py": "assistant_reasoning",
     "dashboard/chat_handlers.py": "assistant_reasoning",
     "dashboard/handlers/loop_routes.py": "assistant_reasoning",
