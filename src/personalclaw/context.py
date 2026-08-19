@@ -305,6 +305,54 @@ class _MemoryCaps(TypedDict):
     episodic_cap: int
 
 
+def _memory_block_timeout_secs() -> float:
+    """The recall budget, reusing `memory.active_recall_timeout_ms` (default 1500).
+
+    The same knob the active-recall path uses, deliberately: it is the same subsystem making
+    the same promise — its own help text already says "on timeout the turn proceeds without
+    it". A second field would be a second name for one budget, and every config field owes a
+    round-trip (dataclass, _meta, load, to_dict, PATCH allowlist, a control) to say nothing new.
+    """
+    try:
+        return float(getattr(AppConfig.load().memory, "active_recall_timeout_ms", 1500)) / 1000.0
+    except Exception:  # noqa: BLE001 - an unreadable config must not decide whether a turn runs
+        return 1.5
+
+
+def _guarded_recall(label: str, fn, *, timeout_secs: float | None = None):
+    """Run a memory read so that a broken memory degrades RECALL, never the turn.
+
+    🔴 The primary block was the one unguarded read in this function. Its three siblings
+    (preference profile, self-model, procedural priors) each sit in their own `try/except`,
+    and `memory_service.get_context` has no internal guard — so a raising vector store, a
+    locked sqlite file or a corrupt index did not thin the prompt, it killed the reply. The
+    asymmetry was the bug: four blocks from ONE subsystem, three of which could fail safely.
+
+    `timeout_secs` is applied only where a HANG is a real failure mode — the recall read that
+    touches the vector index. The cheap standing-state reads beside it (persona, slots, working
+    memory) get the exception guard without a worker thread, because paying for a thread per
+    turn to bound a dict lookup buys nothing. Stated rather than left as an accident.
+    """
+    try:
+        if timeout_secs is None:
+            return fn()
+        import concurrent.futures
+
+        # NOT a `with` block. `ThreadPoolExecutor.__exit__` calls `shutdown(wait=True)`, which
+        # JOINS the still-running worker — so the future times out and the caller then blocks
+        # anyway. Measured while writing this test: a 0.2s budget against a 30s read took 30.3s
+        # to return. `shutdown(wait=False)` is what makes the budget real; the orphaned worker
+        # finishes into a result nobody reads, which is the cost of bounding a sync read.
+        ex = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+        try:
+            return ex.submit(fn).result(timeout=timeout_secs)
+        finally:
+            ex.shutdown(wait=False, cancel_futures=True)
+    except Exception:  # noqa: BLE001 - includes TimeoutError; the turn proceeds either way
+        logger.warning("memory block %r unavailable — continuing without it", label, exc_info=True)
+        return None
+
+
 def _memory_caps(context_window: int | None) -> _MemoryCaps:
     """Per-section memory caps scaled to the resolved model window (mem-adaptive-budget).
 
@@ -1117,14 +1165,19 @@ class ContextBuilder:
             # so no window param has to thread through every build_message call site.
             from personalclaw.model_windows import active_chat_model_window
 
-            memory_ctx = _svc.get_context(**_memory_caps(active_chat_model_window()))
+            _caps = _memory_caps(active_chat_model_window())
+            memory_ctx = _guarded_recall(
+                "recall",
+                lambda: _svc.get_context(**_caps),
+                timeout_secs=_memory_block_timeout_secs(),
+            )
             if memory_ctx:
                 parts.append(memory_ctx)
             # Session working memory (M5c): a rolling distilled summary of THIS
             # session, always injected (not relevance-gated) — a consequence of
             # its scope=session, not a separate code path.
             if session_key:
-                wm = _svc.working_memory(session_key)
+                wm = _guarded_recall("working_memory", lambda: _svc.working_memory(session_key))
                 if wm:
                     parts.append(wm)
             # Agent self-persona (M5e): the agent's positive self-model, injected
@@ -1135,7 +1188,12 @@ class ContextBuilder:
             # SAME normalization so write/read agree on the scope key.
             from personalclaw.agents.defaults import normalize_agent_name
 
-            _persona = _svc.persona_block(agent=normalize_agent_name(agent))
+            _persona = (
+                _guarded_recall(
+                    "persona", lambda: _svc.persona_block(agent=normalize_agent_name(agent))
+                )
+                or ""
+            )
 
             # Memory slots (MEMORY-GRAPH-AND-VAULT §6 — MGAV-8): ONE bounded block of the
             # always-injected registers, placed here so it sits adjacent to the persona and
@@ -1144,7 +1202,7 @@ class ContextBuilder:
             # four-block ambient budget because slots are unconditional by definition: they
             # carry their own hard ceiling (SLOTS_BLOCK_MAX_CHARS) instead of competing for a
             # relevance-scored share, and an empty block costs nothing (lazy built-ins).
-            _slots = self._slots_block(getattr(_svc, "_vs", None))
+            _slots = _guarded_recall("slots", lambda: self._slots_block(getattr(_svc, "_vs", None)))
             if _slots:
                 parts.append(_slots + "\n")
 
@@ -1212,7 +1270,9 @@ class ContextBuilder:
             # directory (see the workspace-identity block above, which tells the agent
             # exactly that). Global lessons come back regardless; a lesson scoped to a
             # different directory does not.
-            lessons_ctx = service_for(memory).lessons_context(cwd) or ""
+            lessons_ctx = (
+                _guarded_recall("lessons", lambda: service_for(memory).lessons_context(cwd)) or ""
+            )
 
         # ONE budget for the named ambient blocks (§2.4 / §7 crit 5). Replaces four
         # independent per-block character caps that summed to ~9× the budget the
