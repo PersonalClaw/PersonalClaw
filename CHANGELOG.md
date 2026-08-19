@@ -264,6 +264,18 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Fixed
 
+- **The audit log's "Failed" filter hid most failures.** Settings → Audit log offers outcome filter
+  pills, and they were defined in the dashboard as two literal words — `denied` and `failed` — while
+  the code that writes the log uses sixty-two different outcome words. So "Failed" matched only the
+  four places that happen to write `failed`, and missed every `failure` and every `error`; "Denied"
+  missed `rejected`, `blocked` and `refused`. On a tamper-evident record of what your agent did, a
+  filter that quietly leaves matching entries out is the worst possible failure — you read the empty
+  list as "nothing went wrong". Found by driving the panel: a real terminal-session delete that had
+  recorded `error` was invisible behind the Failed pill. The pills now cover whole families of
+  outcomes, and the families are defined next to the log itself rather than in the dashboard, so a
+  new outcome word reaches the filter without anyone remembering to update the UI. Each pill names
+  the outcomes it covers on hover.
+
 - **Setting a chat's working directory with a mistyped field no longer silently unbinds it.**
   `POST /api/chat/sessions/{id}/workspace-dir` read a missing `workspace_dir` key as "clear it", so a
   body like `{"dir": "/some/path"}` answered `{"ok": true, "workspace_dir": ""}` and left the session

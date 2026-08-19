@@ -1959,6 +1959,11 @@ export interface SelEvent {
 // bounded tail scan filled up, so older records may exist beyond the window.
 export interface AuditPage {
   events: SelEvent[]; count: number; next_cursor: string; scanned: number; truncated: boolean
+  // The outcome filters, shipped by the module that owns the log's vocabulary
+  // (`sel.AUDIT_OUTCOME_FAMILIES`). `values` are matched ANY-OF server-side, so a family is
+  // one query and the pill cannot disagree with the pagination cursor. The dashboard used to
+  // keep its own two-word list here and missed most of what the writers emit.
+  outcome_families: { key: string; label: string; values: string[] }[]
 }
 // Server-side filters for the audit read. Empty strings are omitted by the caller —
 // an unknown key is REFUSED by the endpoint, never ignored.
