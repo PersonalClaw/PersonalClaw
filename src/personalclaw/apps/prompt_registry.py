@@ -33,13 +33,17 @@ class AppPromptUseCase:
 
     ``provider`` is the prompt provider the prompt lives in (always ``native``
     today — apps seed into the native store), ``prompt_name`` the stored name,
-    ``category`` the Settings-UI grouping (see :mod:`catalog`)."""
+    ``category`` the Settings-UI grouping (see :mod:`catalog`), ``description`` the
+    one-liner Settings → Prompts shows under the row's label — the same field the
+    core catalog carries, so an app-owned context describes itself exactly as well
+    as a bundled one instead of appearing as a bare humanized key."""
 
     use_case: str
     provider: str
     prompt_name: str
     category: str
     app: str  # owning app name (for removal + diagnostics)
+    description: str = ""
 
 
 # use_case → entry. In-process; rebuilt at startup + on enable/disable.
@@ -53,6 +57,7 @@ def register_use_case(
     prompt_name: str,
     category: str = "internal",
     app: str = "",
+    description: str = "",
 ) -> None:
     """Record (or overwrite) one app-owned prompt use-case binding."""
     if not use_case or not prompt_name:
@@ -63,6 +68,7 @@ def register_use_case(
         prompt_name=prompt_name,
         category=category,
         app=app,
+        description=description,
     )
 
 

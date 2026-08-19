@@ -1316,8 +1316,20 @@ export interface PromptSnippet {
   // detail-only: the prompts + other snippets that include this one ({{> name}}).
   used_by?: { prompts: string[]; snippets: string[] }
 }
-export interface PromptBinding { use_case: string; ref: string; effective_ref: string }
-export interface PromptBindings { use_cases: string[]; default_ref: string; bindings: PromptBinding[]; available: PromptItem[] }
+// `label`/`hint`/`category` come from the use-case vocabulary itself
+// (`providers/prompt_use_cases.py`), not from a table in the dashboard: the
+// vocabulary is open — an app may contribute its own bindable use case — so any
+// copy kept here would describe only the contexts that existed when it was written.
+export interface PromptBinding {
+  use_case: string; ref: string; effective_ref: string
+  label: string; hint: string; category: string
+}
+/** One Settings-UI grouping, in the catalog's declared display order. */
+export interface PromptCategoryGroup { key: string; label: string; hint: string }
+export interface PromptBindings {
+  use_cases: string[]; default_ref: string; bindings: PromptBinding[]
+  categories: PromptCategoryGroup[]; available: PromptItem[]
+}
 // Live authoring: render arbitrary (unsaved) template content through the real engine.
 export interface PromptPreview { ok: boolean; rendered?: string; error?: string; detected_variables: PromptVariable[]; includes: string[] }
 // The template-language reference the editor renders as a click-to-insert cheatsheet.

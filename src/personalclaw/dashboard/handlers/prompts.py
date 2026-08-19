@@ -775,9 +775,15 @@ async def api_prompt_bindings(_request: web.Request) -> web.Response:
     from personalclaw.providers.prompt_use_cases import (
         DEFAULT_PROMPT_NAME,
         DEFAULT_PROMPT_PROVIDER,
+        PROMPT_CATEGORY_HINT,
+        PROMPT_CATEGORY_LABEL,
+        PROMPT_CATEGORY_ORDER,
         active_prompt_ref,
         all_prompt_use_cases,
         load_active_prompts,
+        use_case_category,
+        use_case_hint,
+        use_case_label,
     )
 
     active = load_active_prompts()
@@ -792,14 +798,29 @@ async def api_prompt_bindings(_request: web.Request) -> web.Response:
             # The prompt that actually resolves: bound ref, else this use-case's
             # own tailored bundled prompt (NOT the shared chat default).
             "effective_ref": active_prompt_ref(uc),
+            # How the row describes itself. The vocabulary owns this, so a UI cannot
+            # cover four of forty contexts and fall back to printing the raw key —
+            # and an app-owned use case arrives already described.
+            "label": use_case_label(uc),
+            "hint": use_case_hint(uc),
+            "category": use_case_category(uc),
         }
         for uc in use_cases
+    ]
+    # Only the groups that actually hold a row, in the catalog's declared order — a
+    # heading over nothing is worse than no heading.
+    present = {b["category"] for b in bindings}
+    categories = [
+        {"key": key, "label": PROMPT_CATEGORY_LABEL[key], "hint": PROMPT_CATEGORY_HINT[key]}
+        for key in PROMPT_CATEGORY_ORDER
+        if key in present
     ]
     return web.json_response(
         {
             "use_cases": list(use_cases),
             "default_ref": default_ref,
             "bindings": bindings,
+            "categories": categories,
             "available": _list_provider_prompts(),
         }
     )
