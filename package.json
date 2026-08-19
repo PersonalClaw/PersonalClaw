@@ -7,6 +7,7 @@
     "build": "npm run build --workspace=web",
     "typecheck:web": "npm run typecheck --workspace=web",
     "test:web": "npm run test --workspace=web",
+    "test:desktop": "npm run test --workspace=desktop",
     "smoke:render": "node scripts/render_smoke.mjs",
     "hooks:install": "sh scripts/install_git_hooks.sh",
     "postinstall": "sh scripts/install_git_hooks.sh"
