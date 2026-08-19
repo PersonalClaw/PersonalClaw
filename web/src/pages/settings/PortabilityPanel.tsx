@@ -49,10 +49,16 @@ export function PortabilityPanel() {
   const [file, setFile] = useState<File | null>(null)
   const [manifest, setManifest] = useState<PortabilityManifest | null>(null)
   const [busy, setBusy] = useState<string | null>(null)
-  const [msg, setMsg] = useState('')
+  // Named for what it holds: the IMPORT's own result. It used to be a shared `msg` that every failure on
+  // this panel — export, validation, import — also wrote to, and it renders inside the Import card. So a
+  // failed EXPORT reported itself 244px below the button that failed, in the other section, under a
+  // notice about importing. Failures now take the error channel (`notify`), which is where the other 61
+  // failure reports in these panels go and what the sibling `DurabilityPanel` does for the same
+  // `/api/durability/*` calls. The name is the guard: a catch has nothing here to write to.
+  const [importResult, setImportResult] = useState('')
 
   const download = async (spec: (typeof EXPORTS)[number]) => {
-    setBusy(spec.key); setMsg('')
+    setBusy(spec.key)
     try {
       const blob = await api.durabilityExport(spec.domains)
       const url = URL.createObjectURL(blob)
@@ -64,33 +70,42 @@ export function PortabilityPanel() {
       URL.revokeObjectURL(url)
       notify(`${spec.label} export downloaded`, 'success')
     } catch (e) {
-      setMsg(e instanceof Error ? e.message : 'Export failed')
+      notify(`Couldn't export ${spec.label.toLowerCase()}: ${e instanceof Error ? e.message : String(e)}`, 'error')
     }
     setBusy(null)
   }
 
   /** Choosing a file validates it immediately — no `mode`, so nothing is written. */
   const pickFile = async (f: File | null) => {
-    setFile(f); setManifest(null); setMsg('')
+    setFile(f); setManifest(null); setImportResult('')
     if (!f) return
     setBusy('validate')
     try {
       const r = await api.durabilityImport(f)
       if (r.ok && r.manifest) setManifest(r.manifest)
-      else setMsg(r.error?.message || 'Archive failed validation')
-    } catch (e) { setMsg(e instanceof Error ? e.message : 'Validation failed') }
+      else notify(`Couldn't read that archive: ${r.error?.message || 'it failed validation'}`, 'error')
+    } catch (e) {
+      notify(`Couldn't read that archive: ${e instanceof Error ? e.message : String(e)}`, 'error')
+    }
     setBusy(null)
   }
 
   const runImport = async () => {
     if (!file) return
     if (!(await confirm({ title: 'Import this archive?', body: `Merge "${file.name}" into THIS instance? Existing data is kept; the archive fills in what is missing (memory and notifications are deduplicated).`, confirmLabel: 'Import' }))) return
-    setBusy('import'); setMsg('')
+    setBusy('import'); setImportResult('')
     try {
       const r = await api.durabilityImport(file, 'merge')
-      if (r.ok) setMsg(`Import complete: ${r.summary?.items?.join(', ') || 'nothing to merge'}.`)
-      else setMsg(r.error?.message || 'Import failed')
-    } catch (e) { setMsg(e instanceof Error ? e.message : 'Import failed') }
+      if (r.ok) {
+        const what = r.summary?.items?.join(', ') || 'nothing to merge'
+        // Both channels, deliberately: the toast ANNOUNCES it (an on-demand `role="status"` span is not
+        // reliably observed), and the line beside the button is what is still readable a minute later.
+        setImportResult(`Import complete: ${what}.`)
+        notify(`Import complete: ${what}`, 'success')
+      } else notify(`Import failed: ${r.error?.message || 'the server gave no reason'}`, 'error')
+    } catch (e) {
+      notify(`Import failed: ${e instanceof Error ? e.message : String(e)}`, 'error')
+    }
     setBusy(null)
   }
 
@@ -139,7 +154,7 @@ export function PortabilityPanel() {
               {busy === 'import' ? <><Loader2 size={15} className="animate-spin" /> Importing…</> : <><Upload size={15} /> Import</>}
             </Button>
             {busy === 'validate' && <span className="inline-flex items-center gap-1.5 text-on-surface-low text-[0.75rem]"><Loader2 size={13} className="animate-spin" /> Checking archive…</span>}
-            {msg && <span className="text-on-surface-low text-[0.75rem]">{msg}</span>}
+            {importResult && <span className="text-on-surface-low text-[0.75rem]">{importResult}</span>}
           </div>
           {manifest && (
             <div className="mt-3 rounded-md bg-surface px-3 py-2 text-[0.75rem]">
