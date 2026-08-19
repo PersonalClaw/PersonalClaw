@@ -2,10 +2,15 @@
 
 The write half of the maintenance tier is `knowledge-persist`; this is the PROPOSE half.
 A gap-healing draft or a `schema.md` convention edit (KNOWLEDGE-SYNTHESIS §3.3/§3.4) goes
-through `learning.proposals.enqueue` under `Kind.KNOWLEDGE_DRAFT` and waits for a human,
+through `knowledge.updates.queue_draft` under `Kind.KNOWLEDGE_DRAFT` and waits for a human,
 because the alternative was measured and is worse: a drafted entry nobody reviewed becomes
 a citable source for the next draft, and two generations later the store cites itself as
 evidence.
+
+This provider parses one call shape into drafts and reports the outcome; it does NOT talk to
+the queue itself. `knowledge.updates` is the single enqueue site for knowledge (WF2KNO-11),
+so the kind, the body clamp and the meaning of a SKIP are decided once for both a drafted
+entry and an update to an existing one.
 
 Before this provider existed, NOTHING reachable from a workflow could reach the proposal
 queue at all — `enqueue`'s only callers were Python-side, so a template that wanted to
@@ -30,7 +35,7 @@ import time
 from typing import Any
 
 from personalclaw.action_providers.base import ActionContext, ActionProvider, ActionResult
-from personalclaw.learning import proposals
+from personalclaw.knowledge import updates
 
 logger = logging.getLogger(__name__)
 
@@ -38,10 +43,6 @@ logger = logging.getLogger(__name__)
 #: learning pass; this bounds one action node, for the same reason: a pass that files
 #: twenty proposals is not being thorough, it is being unreadable.
 MAX_DRAFTS_PER_CALL = 10
-
-#: Longest body a single draft may carry. A draft is a proposal a human reads in an inbox
-#: card, not a document.
-MAX_BODY_CHARS = 8000
 
 
 class KnowledgeProposeActionProvider(ActionProvider):
@@ -122,10 +123,9 @@ class KnowledgeProposeActionProvider(ActionProvider):
                 skipped.append({"title": title, "reason": "draft reported insufficient evidence"})
                 continue
 
-            verdict, prop = proposals.enqueue(
-                kind=proposals.Kind.KNOWLEDGE_DRAFT.value,
+            verdict, pid, skip_reason = updates.queue_draft(
                 title=title,
-                body=body[:MAX_BODY_CHARS],
+                body=body,
                 target=str(draft.get("target", "") or cfg.get("target", "") or ""),
                 provenance=provenance,
                 source_cadence=cadence,
@@ -134,17 +134,12 @@ class KnowledgeProposeActionProvider(ActionProvider):
                 occurrences=_int(draft.get("mentions", cfg.get("occurrences")), 0),
                 tags=tags,
             )
-            row = {
-                "title": title,
-                "verdict": verdict.value,
-                "id": getattr(prop, "id", "") if prop is not None else "",
-            }
+            row = {"title": title, "verdict": verdict, "id": pid}
             # A SKIP is a successful outcome with an explanation, so it is reported beside
-            # the filed rows rather than as an error. `enqueue` logs the specific reason at
-            # debug and deliberately does not return it — the queue's decision memory is
-            # not the workflow's business.
-            if verdict is proposals.Verdict.SKIP:
-                row["reason"] = "a prior decision covers it, or it is below the evidence floor"
+            # the filed rows rather than as an error. The phrase comes from the updater
+            # because the updater owns the enqueue — one queue, one explanation of a SKIP.
+            if skip_reason:
+                row["reason"] = skip_reason
                 skipped.append(row)
             else:
                 filed.append(row)
@@ -157,7 +152,7 @@ class KnowledgeProposeActionProvider(ActionProvider):
                 "skipped": len(skipped),
                 "considered": len(drafts),
             },
-            "kind": proposals.Kind.KNOWLEDGE_DRAFT.value,
+            "kind": updates.DRAFT_KIND,
             "note": (
                 "Filed as PROPOSALS awaiting review, not written to the knowledge store. "
                 "A skipped draft is a success: a prior decision already covers it, or it is "
