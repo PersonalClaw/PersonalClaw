@@ -63,7 +63,7 @@ capability verdict), `NOT-EXERCISED` (no runtime observation).
 
 | Provider | CONFIRMED | DIVERGED | ENV | NOT-EXERCISED | Sweep |
 |---|---|---|---|---|---|
-| claude-code | 35 | 6 | 0 | **22** | 2026-08-17, adapter `0.60.0`, `claude` `2.1.233.669` |
+| claude-code | 43 | 7 | 0 | **13** | 2026-08-17 + a residual re-drive 2026-08-19, adapter `0.60.0`, `claude` `2.1.233.669` |
 | codex | 33 | 10 | 0 | **20** | 2026-08-17, adapter `1.1.4`, `codex` `0.146.1.359` |
 | kiro-cli | 44 | 16 | 1 | 2 | 2026-08-17/18, plus a follow-up sweep 2026-08-18, `kiro-cli` `2.18.1` |
 | gemini-cli | — | — | — | 63 | never driven; binary not installed |
@@ -80,9 +80,11 @@ claude-code — listed nine callable tools, so host-side tool exposure was healt
 failure is specific to kiro. The cause is **not** established. Every kiro tool row below is
 therefore marked *measured, not reproduced*: read it as history, not as current fact.
 
-**2. claude-code and codex are not complete columns.** 22 and 20 cells respectively have no
+**2. claude-code and codex are not complete columns.** 13 and 20 cells respectively have no
 runtime observation. Their sections list those cells grouped by why, and the summary tables do
-not imply anything about them.
+not imply anything about them. claude's residual came down from 22 in a 2026-08-19 re-drive that
+reused the recipes kiro's follow-up sweep had already proven; the nine cells it closed are marked
+with their own observation ids below.
 
 **3. Two kiro cells are unreachable as-a-user by construction**, not for want of a fixture:
 the skill-ladder review has no forced-run surface (`G44`), and an empty turn cannot be produced
@@ -105,7 +107,7 @@ it is ours.
 | Learning / memory | Procedural-outcome capture (the tool-outcome drain) | Zero rows after multi-tool ACP turns on all three (`O12` — 6 tool calls, nothing; `C14`; `K17` — the only rows came from a **0-tool** correction turn, and the self-model row it wrote asserts `tools: []`). The drain reads an accumulator the native runtime keeps in its own loop; the ACP provider exposes no equivalent | **Host seam** (`G7`; atom `AAP-8`) — accumulate off the neutral tool-call/tool-result stream | adapter `0.60.0` / `1.1.4`, `kiro-cli 2.18.1` |
 | Approvals / safety | A CLI-side refusal never reaches the audit trail | When the CLI refuses on its own, no frame reaches the host and no SEL row is written: claude's own deny list refused `git push --dry-run` invisibly (`O21`, `G11`), and codex's `request_user_input` failed CLI-side with `0 tool calls` counted and no row (`C9`, `G25`). The host's audit therefore under-reports what the CLI declined | **Adapters** would have to emit a refusal frame | adapter `0.60.0` / `1.1.4` (not driven on kiro) |
 | Prompt-side context | Mid-turn queue-steering | The protocol has no mid-turn injection seam. A message sent during a live ACP turn is queued and runs as its own turn afterwards — `{"queued": true}`, then `queue_pop` (`C10`, `K15`). Queue-then-drain is the documented ACP semantic, not a bug | **ACP protocol** | adapter `1.1.4`, `kiro-cli 2.18.1` (claude's probe missed the window — `O26`, not measured) |
-| Prompt-side context | `@prompt` expansion | Provider-independent by construction: expansion is composer-side. A message carrying a literal `@name` reaches the CLI unexpanded and nothing on the ACP path expands it (`K30`, `K31`); the render endpoint works when called directly and the composer is its caller | **Not a provider gap** — whatever the composer substitutes is what any provider receives | `kiro-cli 2.18.1` (not driven on claude or codex) |
+| Prompt-side context | `@prompt` expansion | Provider-independent by construction: expansion is composer-side. A message carrying a literal `@name` reaches the CLI unexpanded and nothing on the ACP path expands it (`K30`, `K31`, and `O34` on claude-code); the render endpoint works when called directly and the composer is its caller | **Not a provider gap** — whatever the composer substitutes is what any provider receives | `kiro-cli 2.18.1`, adapter `0.60.0` (not driven on codex). `O34` is the stronger form: the prompt body was written with `PUT` and proven server-side by `/render` FIRST, so the absent expansion cannot be an empty prompt |
 
 ### Host compensation that landed after these sweeps
 
@@ -135,6 +137,13 @@ complete statement.
 | Prompt-side context | Memory recall injection at turn 0 | `O9`, `O15` — the injection fires and the CLI quoted injected memory and history text back verbatim |
 | Prompt-side context | Task-mode framing | `O14` — a fresh plan-mode session's context contains `## Task mode: Plan` and "you MUST NOT make any edits" |
 | Prompt-side context | Compressed thread-history bootstrap into a new process | `O14`, `O15` — a brand-new session's context replayed prior turns verbatim, including sibling-session history |
+| Prompt-side context | Knowledge `@`-mention / picker injection | `O32` — with `meta.knowledge` bound to the turn the CLI quoted the stored item verbatim, marker string included |
+| Prompt-side context | Attachment / paste text extraction | `O32` — the CLI quoted the extracted attachment marker verbatim from a `meta.files` path |
+| Prompt-side context | Agent-profile system prompt / voice layer | `O32` — a profile with a distinctive `system_prompt` was bound; the CLI quoted the marker AND obeyed its instruction, so the audit's "the CLI's own prompt dominates" worry does not hold |
+| Prompt-side context | Persona injection (theme) | `O33` — with `color_theme` set on the turn the CLI quoted the persona instruction verbatim. It also received the profile's `voice` at the same time and reported the clash itself, unprompted: a profile's voice and a theme's persona are two injection sites with no precedence rule (`G45`, host-side and not ACP-specific) |
+| Learning / memory | Memory consolidation on session end | `O29` — `last_consolidated` 0 → 6 in the history metadata, plus a `consolidate_…` lock. The semantic/episodic counters stayed at 0, which is correct for six short probe turns |
+| Session mechanics | Auto-nudge re-arm | `O28` — `cycle_count` 0 → 1 → 2 of 2, `active` flipping false at the cap, and both `[auto-nudge cycle N]` injections answered by the CLI |
+| Approvals / safety | Unattended mode | `O27` — an unattended Code loop bound to this provider reached `running` and the host's fail-fast denied the write instead of parking it. The audit predicted ABSENT; it is present, and it behaves the same way kiro's `K41` did |
 | Approvals / safety | Interactive approval cards | `O5` — four cards in one turn, each resolvable through the approve route |
 | Approvals / safety | Task mode enforced before approval | `O13` (ask blocks a `Write` and a read-only `ls`), `O19`/`O24` (plan blocks every `Write`), SEL rows carrying `reason: task_mode:ask` / `task_mode:plan` |
 | Approvals / safety | SEL audit of every executed tool | `O10` — hash-chained `tool_invocation` rows with `tool_kind` and `metadata.risk`, plus `approved`/`denied`/`rejected` decisions. Across 44 audited ACP tool events no tool executed without reaching the host gate — with the contingency in the constraint table below |
@@ -171,24 +180,37 @@ re-driven on claude-code.
 | Session mechanics | Concurrent sessions on one adapter process | Two concurrently-bound sessions held two different adapter PIDs (`O11`); the dialect declares no concurrency support | **Adapter** would have to interleave sessions; the flag stays false until a spike proves it | adapter `0.60.0` |
 | Session mechanics | Persona / agent selection | Discovery returns exactly one agent with `provider_agent: ""` — one base agent per adapter, so the picker has no persona rows to offer, and there is no dead UI (`O2`) | **Adapter / CLI** | adapter `0.60.0` |
 
-### Not yet measured (22 of 63 cells)
+### Not yet measured (13 of 63 cells)
 
 No runtime observation exists for these; they are neither working nor absent here. Grouped by
-what was missing, exactly as the sweep recorded it.
+what was missing. **Nine of the original 22 were closed on 2026-08-19** by re-driving them with
+the recipes kiro's follow-up sweep had proven — a residual is a missing fixture, not a verdict,
+so it stays open only until someone builds the fixture.
 
-1. **Needs a model provider in the sweep home** (5): unattended mode, auto-nudge re-arm,
-   skill-ladder review, memory consolidation, the loop half of the failure-breaker check. A
-   loop or cron run failed on `no model provider resolves for use case 'chat'|'background'`
-   (`O16`) before any ACP worker turn.
-2. **Needs a fixture that was not built** (9): knowledge `@`-mention injection,
-   attachment/paste extraction, `@prompt` expansion, agent-profile system prompt, per-agent
-   approval floor, blocking PreToolUse hooks, the other five hook kinds, tool-disable prefs,
-   persona injection.
+1. **Needs a model provider in the sweep home** (~~5~~ **1**): skill-ladder review. The model gap
+   itself is gone — the re-drive home resolved both `chat` and `background` to a local model, which
+   is what closed unattended mode (`O27`), auto-nudge re-arm (`O28`) and memory consolidation
+   (`O29`). The ladder survives for a different reason: `O31` returned `{"proposals": []}` and there
+   is **no forced-run surface**, so "the gate was not met" and "the review is inert" are the same
+   observation from outside — an instrumentation gap (`G44`), reproduced identically on kiro (`K44`).
+2. **Needs a fixture that was not built** (~~9~~ **4**): per-agent approval floor, blocking
+   PreToolUse hooks, the other five hook kinds, and incognito/restricted no-write guarantees. The
+   six that closed: knowledge `@`-mention, attachment/paste and the agent-profile system prompt
+   (`O32`), persona injection (`O33`), `@prompt` expansion (`O34` — absent for a
+   provider-independent reason, see the shared constraints) and tool-disable prefs (`O30` — likewise
+   absent, the only per-tool surface addresses *configured* MCP servers).
 3. **Needs a timing or failure injection that did not land** (5): queued messages and
    queue-steering (`O26` — the probe turn finished 1.2 s early), cancelled-turn preamble
    re-injection, empty-turn auto-retry, pipe-death auto-retry.
 4. **No as-a-user entry point** (3): dry-run replay, OS sandbox confinement, and trust/YOLO
    auto-approve — the last deliberately left off so the gate itself stayed measurable.
+
+1 + 4 + 5 + 3 = 13, counted from the matrix rows themselves. Re-deriving the grouping this way
+caught two errors in the original 22-cell list that had cancelled out in its total: it counted the
+failure-breaker's *loop half* as a cell (it is a sub-clause of a row `O24` already decided) and it
+omitted *incognito/restricted no-write*, a real unexercised row. That loop half is still worth a
+drive — six consecutive failing tool calls inside a loop, kiro's `K15` shape — but it is not a
+thirteenth cell.
 
 ## codex
 

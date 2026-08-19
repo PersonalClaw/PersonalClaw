@@ -4690,7 +4690,7 @@
     {
       "plan": "ACP-AGENT-PARITY",
       "code": "AAP",
-      "status": "todo",
+      "status": "in_progress",
       "summary": "Decomposed ACP-AGENT-PARITY into 10 atoms: 3 per-provider runtime-validation sweeps (Phase 1) gating 6 severity-ordered parity fixes (Phase 2 \u00a72.1\u2013\u00a72.6) plus the honest-boundary parity doc (\u00a72.7). Plan is PROPOSED \u2014 no execution log, no PRs \u2014 so all atoms are TODO. No hard cross-plan dependencies exist (Wave-0 standalone; guardrails/isolation touchpoints are non-blocking), so all edges are intra-plan.",
       "atoms": [
         {
