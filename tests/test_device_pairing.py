@@ -250,6 +250,175 @@ def test_stats_count_devices_without_naming_them(_isolated) -> None:
     assert "secret-nonce" not in json.dumps(stats)
 
 
+# ── The last-seen writer (CA-2) ─────────────────────────────────────────
+#
+# C1 deliberately shipped `DeviceInfo` WITHOUT `last_seen`, on the grounds that its only honest
+# writer is the authorize path and that a throttled write there is a cost decision, not a field
+# declaration. These assert the three properties that made it payable: it is throttled, it never
+# gates the verdict, and an unstamped device reads as "never" rather than as freshly paired.
+
+
+def _stored_device(nonce: str) -> ss.DeviceInfo:
+    """The device on *nonce*'s row, read back off disk."""
+    device = ss.load_session_records()[nonce].device
+    assert device is not None
+    return device
+
+
+def _count_saves(monkeypatch) -> list[int]:
+    """Count real ``save_session_records`` calls. The WRITE is the cost being throttled."""
+    calls = [0]
+    original = ss.save_session_records
+
+    def counting(records):
+        calls[0] += 1
+        original(records)
+
+    monkeypatch.setattr(ss, "save_session_records", counting)
+    return calls
+
+
+def test_last_seen_round_trips_through_the_store(_isolated) -> None:
+    seen = time.time() - 30
+    ss.remember_session(
+        "n1", time.time() + 3600, issuer=ss.ISSUER_PAIR, device=_device(last_seen=seen)
+    )
+    assert _stored_device("n1").last_seen == pytest.approx(seen)
+    assert json.loads(ss.sessions_path().read_text())["sessions"]["n1"]["device"]["last_seen"] == (
+        pytest.approx(seen)
+    ), "the field must be on disk, not only on the dataclass"
+
+
+def test_a_row_with_no_last_seen_reads_as_never_not_as_paired_at(_isolated) -> None:
+    """THE distinction the C1 note is about: a device that never returned must not read fresh."""
+    minted = time.time() - 86400
+    ss.sessions_path().write_text(
+        json.dumps(
+            {
+                "sessions": {
+                    "n1": {
+                        "exp": time.time() + 3600,
+                        "issuer": ss.ISSUER_PAIR,
+                        "device": {
+                            "id": "dev-1",
+                            "name": "Pixel",
+                            "kind": "mobile",
+                            "minted_at": minted,
+                        },
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    device = ss.load_session_records()["n1"].device
+    assert device is not None
+    assert device.minted_at == pytest.approx(minted)
+    assert device.last_seen == 0.0, "an absent stamp is 'never', never a backfill of minted_at"
+
+
+def test_a_stale_device_is_stamped_once_and_then_throttled(_isolated, monkeypatch) -> None:
+    ss.remember_session(
+        "n1", time.time() + 3600, issuer=ss.ISSUER_PAIR, device=_device(last_seen=0.0)
+    )
+    calls = _count_saves(monkeypatch)
+    assert ss.touch_device_last_seen("n1") is True
+    assert calls[0] == 1
+    assert ss.touch_device_last_seen("n1") is False, "still fresh: inside the throttle window"
+    assert calls[0] == 1, "the second touch must not rewrite the store"
+
+
+def test_a_stamp_older_than_the_threshold_is_written_again(_isolated, monkeypatch) -> None:
+    """The throttle must not be a one-shot: an idle device still updates a minute later."""
+    ss.remember_session(
+        "n1", time.time() + 3600, issuer=ss.ISSUER_PAIR, device=_device(last_seen=0.0)
+    )
+    assert ss.touch_device_last_seen("n1") is True
+    calls = _count_saves(monkeypatch)
+    later = time.time() + ss.LAST_SEEN_THROTTLE_SECS + 1
+    assert ss.touch_device_last_seen("n1", now=later) is True
+    assert calls[0] == 1
+    assert _stored_device("n1").last_seen == pytest.approx(later)
+
+
+def test_a_non_device_session_is_never_stamped(_isolated, monkeypatch) -> None:
+    """A plain owner-token row has no device, so there is nothing to be 'last seen'."""
+    ss.remember_session("owner", time.time() + 3600)
+    calls = _count_saves(monkeypatch)
+    assert ss.touch_device_last_seen("owner") is False
+    assert ss.touch_device_last_seen("never-stored") is False
+    assert calls[0] == 0, "a no-op must be a no-op on disk too"
+
+
+def test_two_rapid_authorizations_write_the_store_once(_isolated, monkeypatch) -> None:
+    """The property that made the field payable, asserted at the AUTHORIZE path."""
+    token = token_auth.generate_token("owner", ttl_seconds=3600)
+    nonce = next(iter(ss.load_session_records()))
+    ss.attach_device(nonce, _device(last_seen=0.0))
+    calls = _count_saves(monkeypatch)
+
+    assert token_auth.validate_token(token, use_session_exp=True)[0] is True
+    assert token_auth.validate_token(token, use_session_exp=True)[0] is True
+
+    assert calls[0] == 1, "two authorizations inside the window must cost ONE store write"
+    assert _stored_device(nonce).last_seen > 0.0
+
+
+def test_an_authorization_still_succeeds_when_the_stamp_raises(_isolated, monkeypatch) -> None:
+    """Best-effort by contract: a store that cannot be stamped must not deny a valid session."""
+    token = token_auth.generate_token("owner", ttl_seconds=3600)
+    nonce = next(iter(ss.load_session_records()))
+    ss.attach_device(nonce, _device(last_seen=0.0))
+
+    def exploding(*_a, **_kw):
+        raise OSError("read-only file system")
+
+    monkeypatch.setattr(ss, "touch_device_last_seen", exploding)
+    valid, _user, reason = token_auth.validate_token(token, use_session_exp=True)
+    assert valid is True, reason
+
+    token_auth._state.clear_all()  # force the adopt-from-store path too
+    assert token_auth.validate_token(token, use_session_exp=True)[0] is True
+
+
+def _age_stored_last_seen(nonce: str, age_secs: float) -> None:
+    """Push one row's stamp *age_secs* into the past, leaving in-memory state alone."""
+    raw = json.loads(ss.sessions_path().read_text(encoding="utf-8"))
+    raw["sessions"][nonce]["device"]["last_seen"] = time.time() - age_secs
+    ss.sessions_path().write_text(json.dumps(raw), encoding="utf-8")
+
+
+def test_the_in_memory_throttle_suppresses_even_the_read(_isolated, monkeypatch) -> None:
+    """The two layers are separable: the map suppresses a write the store WOULD have allowed."""
+    token = token_auth.generate_token("owner", ttl_seconds=3600)
+    nonce = next(iter(ss.load_session_records()))
+    ss.attach_device(nonce, _device(last_seen=0.0))
+    assert token_auth.validate_token(token, use_session_exp=True)[0] is True
+    _age_stored_last_seen(nonce, ss.LAST_SEEN_THROTTLE_SECS + 10)
+
+    calls = _count_saves(monkeypatch)
+    assert token_auth.validate_token(token, use_session_exp=True)[0] is True
+    assert calls[0] == 0, "the in-memory attempt map must short-circuit before the file read"
+
+
+def test_a_restart_forgets_the_throttle(_isolated, monkeypatch) -> None:
+    """In-memory state: after a restart the first authorized request stamps again.
+
+    Paired with the test above — same aged-on-disk setup, opposite expectation — because that
+    is the only way to observe the map being cleared rather than merely present.
+    """
+    token = token_auth.generate_token("owner", ttl_seconds=3600)
+    nonce = next(iter(ss.load_session_records()))
+    ss.attach_device(nonce, _device(last_seen=0.0))
+    assert token_auth.validate_token(token, use_session_exp=True)[0] is True
+    _age_stored_last_seen(nonce, ss.LAST_SEEN_THROTTLE_SECS + 10)
+
+    token_auth._state.clear_all()  # the in-memory half of a restart
+    calls = _count_saves(monkeypatch)
+    assert token_auth.validate_token(token, use_session_exp=True)[0] is True
+    assert calls[0] == 1, "a restart must not inherit the previous process's throttle"
+
+
 # ── The routes ──────────────────────────────────────────────────────────
 
 
@@ -373,9 +542,33 @@ async def test_the_registry_lists_the_device_and_never_a_nonce(_isolated) -> Non
 
     assert len(payload["devices"]) == 1
     row = payload["devices"][0]
-    assert {"id", "name", "kind", "minted_at", "issuer", "expires_at"} <= set(row)
+    assert {"id", "name", "kind", "minted_at", "last_seen", "issuer", "expires_at"} <= set(row)
     assert row["issuer"] == ss.ISSUER_PAIR
     assert nonce not in json.dumps(payload), "the registry is read aloud; the nonce is a credential"
+
+
+@pytest.mark.asyncio
+async def test_a_freshly_paired_device_is_listed_as_never_seen(_isolated) -> None:
+    """Pairing is not a sighting. The panel renders 0.0 as "never"; a backfill would lie."""
+    async with TestClient(TestServer(_app())) as client:
+        data = await _start(client)
+        await _complete(client, data["code"], device_name="Pixel", kind="mobile")
+        row = (await (await client.get("/api/devices")).json())["devices"][0]
+
+    assert row["last_seen"] == 0.0
+    assert row["minted_at"] > 0.0, "and it is NOT that the row has no timestamps at all"
+
+
+@pytest.mark.asyncio
+async def test_the_registry_reports_a_real_last_seen_once_stamped(_isolated) -> None:
+    async with TestClient(TestServer(_app())) as client:
+        data = await _start(client)
+        await _complete(client, data["code"], device_name="Pixel", kind="mobile")
+        nonce = next(iter(ss.load_session_records()))
+        assert ss.touch_device_last_seen(nonce) is True
+        row = (await (await client.get("/api/devices")).json())["devices"][0]
+
+    assert row["last_seen"] == pytest.approx(time.time(), abs=30)
 
 
 @pytest.mark.asyncio

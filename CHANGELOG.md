@@ -10,6 +10,22 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Added
 
+- **See every device paired with your gateway, and cut one off.** Settings gains a **Devices** page:
+  each paired phone, tablet or browser with its name, what kind of device it is, when it was last
+  actually seen, how it got in, when it paired and when its session runs out. "Pair a device" gives
+  you a one-time code and a link to open on the other device, with the expiry counting down and both
+  values copyable. Revoking asks first — naming the device it is about to lock out — and the lockout
+  is real: it drops the session in memory *and* on disk, so a revoked device stays out across a
+  restart. A revoke that fails says so instead of quietly leaving the device connected.
+  **"Last seen" is honest about not knowing.** A device that paired and never came back reads
+  **never**, not the time it paired — the distinction matters precisely because you would use this
+  column to decide a device is no longer in use. The timestamp is written where a device's request is
+  authorised, at most once a minute per device, and it can never delay or block a login: if that
+  write fails, you get a stale timestamp, never a locked-out device.
+  The pairing screen shows the link and code rather than a scannable QR image, and says so where the
+  image would go — the link already contains the code, so a second browser on your network needs
+  nothing else.
+
 - **Plan a task before anything runs, from the chat you are already in.** The composer's **Add** menu
   gains **Plan this first**: the chat drafts a plan, hands it to you as editable markdown, and runs
   nothing until you approve it. You can rewrite the plan by hand, comment to have it redrafted, or
