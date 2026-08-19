@@ -1226,6 +1226,125 @@ too). The other apps CI jobs run locally clean: manifest-validate (45 manifests)
 this atom, so no core gate applies beyond this document.
 ---
 
+### 2026-08-19 — Atom AG-9 clauses 1 + 3 (core forward) — DONE; the 2026-08-18 BLOCKED is CLEARED
+
+The previous entry's BLOCKED was correct about the mechanism and correct to stop: the seam was
+half-built, apps-side consuming a request core never sent. This session built core's half. The
+premise was re-verified against `cdd9dc2f` before writing anything — apps `ollama-models/provider.py`
+does define `_FORMAT_FIELD`/`_OUTPUT_TYPE_KEY`, `native_format()` and the popping
+`resolve_output_format()`, and core's `one_shot_completion` did assemble its per-call build kwargs in
+exactly one place with `output_type` absent from it.
+
+**One line-number drift worth recording** (the previous entry's citations are otherwise exact): it
+cites `_bridge_kw` at `llm_helpers.py:363` and `one_shot_completion` as `:289-400`. On `cdd9dc2f`
+`_bridge_kw` is at `:375` and the function spans `:289-506`. The symbols and the claim are unchanged;
+only the offsets moved.
+
+**Shipped — `src/personalclaw/llm_helpers.py`.** `output_type` now rides the bridge as a build kwarg
+to a natively capable provider, so an ollama-bound typed call CONSTRAINS generation instead of only
+asking for a shape in prose.
+
+- New `_enforces_json_schema_natively(model_ref)` — the capability gate. `split_ref` → the
+  registry's `get_entry(provider_name)` → `capability_of(entry.type).structured_output`.
+- `_budget_kw` → **`_entry_kw`**, and the decision lives INSIDE it. That is the per-entry point:
+  all three resolution paths (pin `:522`, chain advance `:543`, plain `:575`) already call it with
+  the ref they are about to run, and the chain walk can advance from a capable entry to an incapable
+  one mid-call. The old name described only one of the three things it now carries.
+
+The three design questions the previous entry refused to improvise are answered here:
+
+1. **Which grade forwards what — `JSON_SCHEMA` ONLY.** `JSON_MODE` is deliberately excluded and the
+   code says so by comparing to the grade rather than `!= NONE`. `JSON_MODE` means OpenAI-wire
+   `response_format={"type": "json_object"}`: a different request field that nothing derives from
+   `output_type`, so forwarding the key to it would reproduce the exact corruption the gate exists to
+   prevent (unconsumed key → `extra_options` → request body → `TypeError` in the JSON encoder). It
+   also cannot express `output_type=list` at all — `json_object` mode requires an object — so for
+   half of the documented inputs the weaker grade is not weaker, it is wrong. Reaching `JSON_MODE` is
+   its own `response_format` kwarg plus an adapter that consumes it; a loosened comparison would be a
+   silent bug, so a test pins the exclusion.
+2. **The universal parse-with-retry still runs behind a native constraint — both layers stay.** A
+   constraint is a request, not a promise, and constrained decoding is measured in this repo to
+   return valid-but-empty documents; skipping the parse because "the provider guarantees it" converts
+   a caught failure into a silent one. Falsified: making a constrained call skip the parse returns
+   `'not json at all'` as the answer.
+3. **A non-`dict`/`list` `output_type` (a Pydantic class) is forwarded verbatim, and that is safe
+   because normalization is the PROVIDER's job, not core's.** Core forwards the request; the ollama
+   app's `native_format` refuses anything it cannot express and sends no `format`, so the wire stays
+   clean and the parse-with-retry governs. Core deciding a wire form for every provider would put
+   vendor knowledge in the provider-agnostic path.
+
+**Everything unverifiable degrades to "send nothing"**, matching `workflows/grounding.py`'s defensive
+read: an unqualified ref, the `"gpt-oss:20b"` shape whose colon is not a provider prefix (the
+`get_entry` miss rejects it exactly as the bridge does), the legacy `"Provider/model"` slash
+spelling, an unregistered type, an unbootstrapped registry, and `""` (the unbound-axis plain path,
+where the implicit fallback has not chosen a provider yet). `output_type=None` short-circuits before
+the lookup, so the default path's kwargs are byte-for-byte unchanged and do no registry work.
+
+Note the predicate difference, which is deliberate rather than an inconsistency: `grounding.py` asks
+`!= NONE` because it answers "does schema-constrained emission exist ANYWHERE in this install", for
+which `JSON_MODE` legitimately counts. This gate asks about one entry's ability to honour one key.
+
+**Tests — `tests/test_llm_helpers.py`, +13** (`TestOneShotNativeStructuredOutput`). Asserted on the
+KWARGS DICT handed to the resolution seam, not on downstream behaviour: "the provider constrained
+generation" is unobservable from core, whereas "core sent the constraint to exactly the providers
+that advertised it" is the contract core can be held to. A graded fixture registry spans
+`JSON_SCHEMA` / `NONE` / `JSON_MODE` plus an entry whose type is registered nowhere — the last is not
+a contrivance, it is what `register_entry` deliberately stores for an app that loads after
+`sync_entries_from_config`, so a raising `capability_of` is a real shape. Both chain orders are
+asserted, because an implementation that caches the first entry's answer passes one direction only.
+
+**Falsified 5 ways** (mutate the live line, `grep -n` to prove it applied, `py_compile`, observe the
+red, restore from a file copy — never `git checkout`): forward unconditionally → 6 red including the
+`NONE`-provider test; decide once per call instead of per entry → exactly the two mixed-chain tests
+red; skip the parse when a constraint was sent → the retry and contract-error tests red; treat a
+raising lookup as capable → the degrade and unknown-ref tests red; loosen the grade to `!= NONE` →
+the `JSON_MODE` exclusion reds alone.
+
+**The repo's own inert-surface census independently confirms the atom's premise.** The first full
+`make test` failed exactly twice, both in `test_inert_surface_baseline.py`, with
+`src/personalclaw/llm/capabilities.py: committed 2 > current 1` — a legitimate SHRINK, so
+`inert-surface-baseline.json` was regenerated in this same commit as the rail instructs (135 → 134;
+`enum:StructuredOutput.JSON_SCHEMA` leaves the inert list). Confirmed to be this diff and not
+merge drift: restoring the base `llm_helpers.py` under the same baseline makes that suite 18 passed.
+Two things follow. First, the census agrees the previous entry was right that the graded field had no
+live caller in the model-call path — it does now. Second, `enum:StructuredOutput.JSON_MODE` stays
+inert, which is the honest record of the scoping decision above rather than an oversight: nothing
+writes or reads that grade, and wiring it would be the separate `response_format` work.
+
+Verified reachable end to end across BOTH repos, with the real objects rather than a synthetic
+capability: loading the apps `origin/main` `ollama-models/provider.py`, registering its actual
+`OLLAMA_CAPABILITY` (grade `JSON_SCHEMA`), and driving
+`one_shot_completion("…", use_case="background", output_type=dict)` on an ollama-bound axis yields
+build kwargs `{'output_type': <class 'dict'>, 'max_tokens': 4096}`, which the app's own
+`resolve_output_format` POPS into `{'type': 'object'}` leaving `extra_options` empty. That also proves
+the enum identity holds across the two independent derivations of `StructuredOutput` (core's class vs
+the app's `type(ProviderCapability.__dataclass_fields__[…].default)`). Probe run from `/tmp`, never
+added to the repo. **Caveat for anyone repeating it:** the apps working checkout was on
+`feature-tse5-shared-automations-app`, whose `ollama-models/provider.py` PREDATES the AG-9 apps commit
+and therefore reports grade `NONE` — probe `origin/main`, not the working tree, or the seam reads dead.
+
+Gate: `make lint` 0 · `tests/test_llm_helpers.py` 43 passed · the 20 suites naming
+`one_shot_completion` 670 passed / 5 skipped · 11 provider/registry/grounding-adjacent suites 203
+passed · `tests/test_inert_surface_baseline.py` 18 passed after the regen · full `make test` 22785
+passed / 30 skipped / 12 xfailed / 0 failed. No `web/` change — this seam has no surface.
+
+**No CHANGELOG entry, deliberately.** The file feeds the in-app Updates panel and every neighbouring
+entry names something a user can see or do; this adds no surface, control or affordance. The only
+user-facing claim available would be a reliability improvement (fewer malformed background results on
+a local model) that has NOT been measured here, and an unmeasured benefit does not belong in
+"what's new". If a retry-rate delta is measured on a real ollama model, that number earns an entry.
+
+**Still open, NOT touched here** (in-scope to name, out of scope to fix): the previous entry's second
+DISCOVERY — `routing/policy.py:_structured_providers()` compares against `declared_capabilities`,
+which can never contain a structured-output member, so it still fail-opens to an empty set on every
+call. This change reads the graded field correctly and does not resurrect that reader; fixing it
+would alter routing ORDER for structured queries, which is a different subsystem with its own tests.
+Also still open, as the previous entry left it: whether `BrandedProviderSpec` should carry
+`structured_output` explicitly instead of the apps side reaching the grade through
+`ProviderCapability.__dataclass_fields__`.
+
+---
+
 ## Status: all four sessions COMPLETE (2026-07-25)
 
 Session 1 (model-call chokepoint), Session 2 (budgets + scan + config), Session 3 (denylist
@@ -1279,3 +1398,61 @@ Wave 3, **after plan 58 S1** (its records feed eligibility). Two new sessions; h
 | S5.1 | `guardrails/autonomy.py` (RUNGS, ActionTypeSpec, registry, resolve_rung with incident clamp, derived eligibility over SEL + plan-58 records, demote+cooldown); `autonomy_rungs.json` store; `guardrails.autonomy` config through the four wiring points | `guardrails/autonomy.py`, `config/loader.py`, `dashboard/handlers/core.py`, tests | a type with 10 clean approvals over 7 days + zero rejections is eligible; one rejection demotes immediately + starts cooldown; incident clamps above one_tap; eligibility is recomputed, never cached to disk |
 | S5.2 | Core action-type declarations (registry seam + inbox affordances) + manifest `autonomy` block for `app:<name>.<action>`; rung routing wired at the three dispatch seams + `profile_for_session` (draft_only→proposal item, one_tap→ApprovalGate, auto_with_undo→execute+reversal handle+notify, autonomous→SEL) | `action_providers/registry.py`, `apps/manifest.py`, `hooks.py`, `gateway.py`, `event_triggers.py`, `guardrails/policy.py` | an app-contributed action inherits its declared floor/ceiling without dispatch-layer special-casing; a leaves-machine type cannot resolve `autonomous` without an explicit ceiling raise |
 | S6.1 | Promotion proposals (user-click accept, SEL-audited like a skill install) + FE: rung chip on trigger/job rows, ladder panel in Settings → Guardrails (current rung, derived record, demotion history), undo affordance on auto_with_undo notifications; as-a-user validation sweep | proposal store wiring, `web/src/pages/settings/GuardrailsPanel.tsx`, trigger row components | promotion never happens without a click; an undo click both reverses and demotes; the chip answers "why is this allowed to run by itself?" in one glance |
+
+- **2026-08-19 — `AG-9` CLOSED: the live leg, driven against a real local model.** The
+  implementation entry above wired the seam; this is the measurement it reserved, and it is a
+  before/after against the same prompt, the same model and the same installed app.
+
+  Setup: the app loaded from `PersonalClawApps@origin/main` (which declares
+  `structured_output=StructuredOutput.JSON_SCHEMA`), an entry registered exactly as
+  `llm/registry.py:401` builds one from config, `httpx.AsyncClient.stream` wrapped to capture the
+  request body, and `one_shot_completion("Pick a colour and a count between 1 and 5. Answer as JSON
+  only.", use_case="background", output_type=dict)` on `Ollama:gemma4:12b`.
+
+  | | base `main` | with this atom |
+  |---|---|---|
+  | advertised grade | `JSON_SCHEMA` | `JSON_SCHEMA` |
+  | `format` on the wire | **absent** | **`{"type": "object"}`** |
+  | returned text | ```` ```json\n{\n  "color": "Blue",\n  "count": 3\n}\n``` ```` | `{"color": "blue", "count": 4}` |
+  | `json.loads` on that text | **raises `JSONDecodeError`** | parses, keys `['color', 'count']` |
+  | requests captured | 1 | 1 |
+  | `output_type` leaked into the body | no | no (the app pops it) |
+
+  Read the base column precisely: it is **not** a failure of today's code — only one request was
+  captured, so `_parse_llm`'s lenient path accepted the fenced block and no retry was needed. What
+  it shows is that without the constraint the *text handed back to the caller* is markdown-fenced,
+  so every caller depends on the lenient parser; with the constraint the caller gets strict JSON and
+  the app pops `output_type` off `extra_options` so nothing unexpected reaches the request body.
+
+  **A second measurement worth recording, because it cuts against the usual warning.** This repo has
+  a standing caution that constrained decoding degrades generative calls. Measured directly against
+  ollama on this model: the same three-word *unconstrained* answer costs **764 eval tokens / 25 s**
+  (the reasoning trace consumes the budget, and with a small `num_predict` returns
+  `done_reason: "length"` with empty content), while the **schema-constrained** extraction above
+  costs **13 eval tokens / 9 s** — the constraint suppresses the reasoning preamble entirely. So the
+  caution is about *generative* calls specifically; for an extraction with a schema the constraint is
+  strictly cheaper, which is exactly the shape `output_type` marks.
+
+  **The repo's own census agrees the seam was dead and now is not:** `inert-surface-baseline.json`
+  moved `capabilities.py` from 2 inert entries to 1 in the same commit, and
+  `enum:StructuredOutput.JSON_MODE` **stays** inert — the honest record of the scoping decision to
+  gate on `JSON_SCHEMA` only, not an oversight.
+
+  **Three stale `plans[].status` fields corrected in this commit** (that field is authored, never
+  derived, so nothing regenerates it): `AG` and `MRI` and `CC` all read `in_progress` while every one
+  of their atoms is `done` — `AG` because this atom was its last, `CC` because `CC-6` closed earlier
+  today, `MRI` since its fifth atom landed. The atomic-status-sync rail couples `dag.json` to
+  per-atom rows, not to this plan-level field.
+
+  **Gates:** `make lint` exit 0 · `test_llm_helpers` **43 passed** (13 new) · with
+  `test_inert_surface_baseline` **61 passed** · the agent additionally ran 20 suites naming
+  `one_shot_completion` (**670 passed, 5 skipped**), 11 provider/registry/grounding suites (**203
+  passed**) and full `make test` (**22,785 passed / 30 skipped / 12 xfailed**). Five falsifications;
+  I independently re-ran the capability-gate one — dropping the gate reds
+  `test_none_provider_is_sent_nothing` with `assert 'output_type' not in {...}`.
+
+  **Still open, deliberately** (recorded, not fixed): `routing/policy.py:_structured_providers()`
+  compares against `declared_capabilities`, which can never contain a structured-output member, so it
+  fail-opens to an empty set — pre-existing, and fixing it changes routing ORDER for structured
+  queries, a different subsystem with its own tests. And whether `BrandedProviderSpec` should carry
+  `structured_output` explicitly is an apps-repo contract question.
