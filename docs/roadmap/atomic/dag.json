@@ -853,7 +853,7 @@
     {
       "plan": "AUTONOMY-GUARDRAILS",
       "code": "AG",
-      "status": "in_progress",
+      "status": "done",
       "summary": "Plan is IN PROGRESS: the S1-S4 substrate (chokepoint, budgets/scan, floor, profiles/egress/health/FE) is fully shipped, and the S5.1/S5.2/S6.1 earned-autonomy rung ladder is now COMPLETE end to end (decision layer, routing at all three dispatch seams, promotion proposals, the HTTP ladder + undo executor, and the FE chip/panel/undo affordance). Six todo atoms remain: the inert SafetyProfile/egress-tier wiring gap (audit 2026-08-04, independently completable) and four logged deferrals (apps-repo native structured_output + channel send() live-writes; run-scope budgets awaiting AUTOMATION-SUBSTRATE; profile/trust enforcement behaviors awaiting WORKFLOWS-V2 engine per-template profiles).",
       "atoms": [
         {
@@ -946,7 +946,7 @@
         {
           "id": "AG-9",
           "title": "Apps-repo guardrails follow-ons: native structured_output + channel send() live-writes (cross-repo)",
-          "status": "todo",
+          "status": "done",
           "scope": "Session-1 deferral: BrandedProviderSpec.structured_output declaration + native json-schema enforcement (ollama format= / OpenAI-wire response_format) lighting up core's capability-dispatch hook (\u00a72.4, Success Criterion #6 ollama half). Session-3 deferral: channel-transport send() calls sdk.guardrails.live_writes_disabled() before transmit (\u00a71.4). Both are PersonalClawApps commits against seams core already shipped.",
           "done_when": "an ollama-bound output_type call uses native json-schema format; a channel app's send() returns a typed refusal under DISABLE_LIVE_WRITES; core's structured_output dispatch hook is exercised natively",
           "deps": [
@@ -1140,7 +1140,7 @@
     {
       "plan": "MCP-READONLY-INBOUND",
       "code": "MRI",
-      "status": "in_progress",
+      "status": "done",
       "atoms": [
         {
           "id": "MRI-1",
@@ -3718,7 +3718,7 @@
     {
       "plan": "CHAT-CRAFT",
       "code": "CC",
-      "status": "in_progress",
+      "status": "done",
       "atoms": [
         {
           "id": "CC-1",
@@ -7412,11 +7412,6 @@
         "plan": "AAP"
       },
       {
-        "id": "AG-9",
-        "title": "Apps-repo guardrails follow-ons: native structured_output + channel send() live-writes (cross-repo)",
-        "plan": "AG"
-      },
-      {
         "id": "APE-3",
         "title": "Background worker SDK (sdk/background.py) + backend_runtime supervised hosting",
         "plan": "APE"
@@ -9563,9 +9558,9 @@
         "code": "AG",
         "plan": "AUTONOMY-GUARDRAILS",
         "total_atoms": 13,
-        "done": 12,
+        "done": 13,
         "in_progress": 0,
-        "todo": 1,
+        "todo": 0,
         "blocked": 0
       },
       {
