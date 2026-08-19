@@ -4,6 +4,7 @@ import json
 import logging
 import pathlib
 from collections import defaultdict
+from collections.abc import Sequence
 from datetime import datetime
 from typing import Any, Callable
 from uuid import uuid4
@@ -439,6 +440,34 @@ class KnowledgeStore:
                 ON item_relations(source_item_id);
             CREATE INDEX IF NOT EXISTS idx_item_relations_target
                 ON item_relations(target_item_id);
+
+            -- Per-MARKER attribution for a synthesized item (WF2KNO-11). Sibling to
+            -- item_relations, and deliberately NOT the same thing: a relation says two items
+            -- are connected, a citation says WHICH numbered source supports which sentence.
+            -- The synthesis path used to store the whole retrieved set as its "citations",
+            -- which answers "what did we look at" and cannot answer the question a reader
+            -- challenging a claim asks. Keyed on (item_id, marker) because the marker number
+            -- the prompt displayed is the identity -- one source cited in three sentences is
+            -- one row, and a re-synthesis reusing marker 2 for a different source overwrites
+            -- rather than accumulating two answers for [2].
+            --
+            -- No REFERENCES items(id) on source_item_id on purpose: a source deleted after
+            -- the synthesis was written should leave the attribution readable ("this claim
+            -- cited an item that is gone") rather than have foreign_keys=ON refuse the
+            -- delete or cascade the evidence away.
+            CREATE TABLE IF NOT EXISTS item_citations (
+                item_id TEXT NOT NULL,
+                marker INTEGER NOT NULL,
+                source_item_id TEXT NOT NULL,
+                chunk_index INTEGER NOT NULL DEFAULT -1,
+                excerpt TEXT NOT NULL DEFAULT '',
+                PRIMARY KEY (item_id, marker)
+            );
+
+            -- "What else cites this item" -- the reverse lookup, which has no covering index
+            -- from the primary key.
+            CREATE INDEX IF NOT EXISTS idx_item_citations_source
+                ON item_citations(source_item_id);
 
             CREATE INDEX IF NOT EXISTS idx_entity_relations_source_id
                 ON entity_relations(source_id);
@@ -1810,6 +1839,73 @@ class KnowledgeStore:
         self.vec_index.drop_item(item_id)  # before the ids go away
         self.db.execute("DELETE FROM chunks WHERE item_id = ?", (item_id,))
         self.db.commit()
+
+    # -- Per-marker citations (WF2KNO-11) ----------------------------------------
+
+    def set_item_citations(self, item_id: str, citations: Sequence[Any]) -> int:
+        """REPLACE the citing item's whole citation set, in one transaction.
+
+        Replace, not append. A synthesized item is re-synthesized (retry, refreshed sources,
+        a template change) and the new prose numbers its sources afresh: appending would leave
+        the previous generation's markers behind, so ``[2]`` would resolve to two different
+        sources and the older, wrong one would read as equally attributed. The delete and the
+        inserts share a transaction so a failure mid-write cannot leave an item with NO
+        attribution after it had some.
+
+        Accepts :class:`~personalclaw.knowledge.citations.Citation` objects or plain dicts --
+        the boundary is dicts on purpose, so this schema and the marker-parsing module stay
+        mutually unaware. Note the field flip: a ``Citation``'s ``item_id`` is the SOURCE
+        being cited, while *item_id* here is the item DOING the citing; a dict may name the
+        source either way.
+
+        Duplicate markers in the input collapse (last wins) rather than raising on the primary
+        key, because the caller's list is derived from prose and a model can restate a marker.
+        """
+        rows: dict[int, tuple[str, int, str, int, str]] = {}
+        for citation in citations:
+            if isinstance(citation, dict):
+                marker = int(citation.get("marker", 0) or 0)
+                source_id = citation.get("source_item_id") or citation.get("item_id") or ""
+                raw_chunk = citation.get("chunk_index", -1)
+                excerpt = citation.get("excerpt", "") or ""
+            else:
+                marker = int(getattr(citation, "marker", 0) or 0)
+                source_id = getattr(citation, "item_id", "") or ""
+                raw_chunk = getattr(citation, "chunk_index", -1)
+                excerpt = getattr(citation, "excerpt", "") or ""
+            # Chunk 0 is a real chunk and falsy, so this is an explicit None check rather
+            # than `raw_chunk or -1`, which would relabel every first chunk "whole item".
+            chunk_index = -1 if raw_chunk is None else int(raw_chunk)
+            rows[marker] = (item_id, marker, str(source_id), chunk_index, str(excerpt))
+
+        self.db.execute("BEGIN")
+        try:
+            self.db.execute("DELETE FROM item_citations WHERE item_id = ?", (item_id,))
+            if rows:
+                self.db.executemany(
+                    "INSERT INTO item_citations "
+                    "(item_id, marker, source_item_id, chunk_index, excerpt) "
+                    "VALUES (?, ?, ?, ?, ?)",
+                    list(rows.values()),
+                )
+            self.db.execute("COMMIT")
+        except Exception:
+            self.db.execute("ROLLBACK")
+            raise
+        return len(rows)
+
+    def item_citations(self, item_id: str) -> list[dict]:
+        """A citing item's attributions, ascending by marker.
+
+        Marker order, not insertion order: the number is what the reader sees in the prose, so
+        a list that does not ascend by it forces the caller to re-sort to render anything.
+        """
+        rows = self.db.execute(
+            "SELECT marker, source_item_id, chunk_index, excerpt FROM item_citations "
+            "WHERE item_id = ? ORDER BY marker",
+            (item_id,),
+        ).fetchall()
+        return [dict(row) for row in rows]
 
     # -- Intent outcomes (Tier-3, stored by value with a soft back-ref) -----------
 
