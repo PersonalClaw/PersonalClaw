@@ -70,6 +70,7 @@ from croniter import croniter  # type: ignore[import-untyped]
 
 from personalclaw.atomic_write import atomic_write
 from personalclaw.config.loader import config_dir
+from personalclaw.knowledge.semantics import RESEARCH_FINDING_KIND as _RESEARCH_FINDING_KIND
 from personalclaw.schedule import ScheduleDefinition, get_local_tz, validate_cron_expr
 from personalclaw.security import redact_credentials, redact_exfiltration_urls
 
@@ -77,13 +78,28 @@ logger = logging.getLogger(__name__)
 
 # The knowledge-node kind every report writes its output as. Siblings (the runner
 # and the retrieval surfaces) key off this constant, never off a literal.
-FINDING_KIND = "research-finding"
+#: The kind a report's finding is written as. Aliased from `semantics`, which owns the
+#: taxonomy: two literals for one kind is how the default-list exclusion and the writer drift
+#: apart, and only one of them would be wrong at a time.
+FINDING_KIND = _RESEARCH_FINDING_KIND
 
 # Citation policies. "cite-source-only" is the default because a finding whose
 # citation points at the assistant's own earlier context is not evidence — it is
 # hearsay one hop removed from the source that justified it.
 CITE_SOURCE_ONLY = "cite-source-only"
 ALLOW_CITING_CONTEXT = "allow-citing-context"
+#: The single-flight key a report run holds while it is in flight. Both halves of the
+#: feature read it — the RUNNER writes it around a run, the manual-run route refuses while
+#: it is held — so it lives here rather than in either of them: the same string spelled in
+#: two places is a lease that silently never matches, which is a 409 that can never fire.
+CLAIM_ID_PREFIX = "research-report:"
+
+
+def report_claim_id(report_id: str) -> str:
+    """The claim id for one report's run. See :data:`CLAIM_ID_PREFIX`."""
+    return f"{CLAIM_ID_PREFIX}{report_id}"
+
+
 CITATION_POLICIES = (CITE_SOURCE_ONLY, ALLOW_CITING_CONTEXT)
 
 _REPORTS_FILE = "research_reports.json"

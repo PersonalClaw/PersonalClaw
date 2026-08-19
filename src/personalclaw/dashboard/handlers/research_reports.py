@@ -51,24 +51,30 @@ logger = logging.getLogger(__name__)
 #: The claim-id namespace a research report's run holds. A sibling runner MUST build its
 #: claim id with :func:`report_claim_id` — the whole point of the lease is that two fires
 #: for one report collide, and two spellings of the key would never collide.
+#: The single-flight key prefix. The OWNING module is
+#: ``knowledge.research_reports.CLAIM_ID_PREFIX``; this literal is the fallback for a build
+#: that does not ship it, and `test_the_claim_prefix_matches_the_owning_module` fails if the
+#: two ever drift — two spellings of the key would make the lease silently unmatchable, i.e.
+#: a 409 that can never fire.
 CLAIM_ID_PREFIX = "research-report:"
+
+
+def report_claim_id(report_id: str) -> str:
+    """The claim id one report's run holds while in flight.
+
+    Read through the owning module when it is importable, so the runner (which writes the
+    claim) and this route (which refuses while it is held) cannot disagree.
+    """
+    mod = _reports_module()
+    prefix = str(getattr(mod, "CLAIM_ID_PREFIX", CLAIM_ID_PREFIX)) if mod else CLAIM_ID_PREFIX
+    return f"{prefix}{report_id}"
+
 
 #: The action provider a report run dispatches. Resolved through the registry rather than
 #: imported, so this module carries no dependency on the provider's implementation.
 RUN_ACTION_PROVIDER = "knowledge-report"
 
 _SCHEDULE_KINDS = ("every", "at", "cron")
-
-
-def report_claim_id(report_id: str) -> str:
-    """The claim-store key for a report's in-flight run.
-
-    Both the manual run below and the scheduled runner must use this function. The claim
-    store sanitizes the key for the filename, so a caller that hand-spelled a different
-    prefix would take a DIFFERENT lease and both fires would proceed — the failure the
-    lease exists to prevent, invisible because each side would report success.
-    """
-    return f"{CLAIM_ID_PREFIX}{report_id}"
 
 
 def _reports_module() -> ModuleType | None:
@@ -343,6 +349,17 @@ async def api_report_run(request: web.Request) -> web.Response:
 
     from personalclaw.triggers import claims as _claims
 
+    # The kill switch, on this manual path too. This handler dispatches a provider directly
+    # rather than through `triggers.tools.run`, so enforcing it only there would leave "Run now"
+    # firing during an incident — and `test_action_provider_chokepoints` requires every module
+    # that reaches a provider to carry one of the named policy checks for exactly this reason.
+    # 200 with `ok: false`, not a 4xx: a guardrail decision is not a malformed request (the rule
+    # the trigger Run path and the event-trigger `/test` both follow).
+    from personalclaw.triggers.tools import manual_refusal
+
+    refusal = manual_refusal()
+    if refusal:
+        return web.json_response({"ok": False, "report_id": report_id, "refused": refusal})
     if _claims.is_running(report_claim_id(report_id)):
         return web.json_response(
             {"error": "a run for this report is already in flight", "reason": "already_running"},
