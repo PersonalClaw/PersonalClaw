@@ -43,7 +43,13 @@ from personalclaw.llm.credentials import Credential  # noqa: F401
 # on AnthropicProvider. (A provider with a distinct wire, e.g. Bedrock's Converse API,
 # owns its own client in its app.)
 from personalclaw.llm.openai import OpenAIProvider  # noqa: F401
-from personalclaw.llm.prompt_cache import PromptCache  # noqa: F401
+
+# ``CACHE_HINT_KEY`` rides alongside ``PromptCache`` because an app whose provider owns
+# its OWN wire (Bedrock's Converse API) must READ the neutral marker to translate it —
+# core never learns that vendor's cache syntax. Core's own tests/test_apps_import_boundary.py
+# names this the prescribed fix: "If a symbol isn't on the SDK yet, the fix is to PROMOTE it
+# to a personalclaw.sdk submodule instead of reaching around the boundary."
+from personalclaw.llm.prompt_cache import CACHE_HINT_KEY, PromptCache  # noqa: F401
 from personalclaw.llm.registry import (  # noqa: F401
     CredentialMissing,
     ProviderEntry,
@@ -79,6 +85,7 @@ __all__ = [
     "Capability",
     "ProviderCapability",
     "PromptCache",
+    "CACHE_HINT_KEY",
     "Credential",
     "get_default_registry",
     "ProviderEntry",

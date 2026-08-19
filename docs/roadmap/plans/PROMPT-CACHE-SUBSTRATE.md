@@ -407,3 +407,120 @@ Status stays DESIGNED — implementation deferred to its natural roadmap positio
   by default, `PATCH agent.prompt_cache_enabled=false` returned 200 and the value came back `False`
   from both the API and `config.json` on disk, flipping back returned 200 and `True`, and a non-bool
   value was refused with 400.
+
+- **PCS-8 PARTIAL — branded-app cache posture + the Bedrock `cachePoint` translation
+  (PersonalClawApps).** Two commits, one per repo. **Apps** (`feature-pcs8-cache-posture`): all
+  **15** apps that register a model-provider type now declare a `prompt_cache` posture EXPLICITLY,
+  each with the evidence for it inline — `bedrock-models` **EXPLICIT** (owns the wire; translates
+  the marker itself), `anthropic-models` / `anthropic-compatible` **EXPLICIT** (their provider IS
+  core's `AnthropicProvider`, already `EXPLICIT` at `llm/anthropic.py:359`, so any other value
+  would make `ProviderCapability` contradict the instance the factory returns), `openai-models` /
+  `openrouter-models` / `deepseek-models` / `google-models` **AUTOMATIC**, and
+  `alibaba-models` / `groq-models` / `mistral-models` / `together-models` / `meta-muse-spark` /
+  `openai-compatible` / `vllm-models` / `ollama-models` **NONE**. `bedrock-models` translates
+  `CACHE_HINT_KEY` into Converse's `{"cachePoint": {"type": "default"}}` content block inside its
+  own `_translate_messages` (system-block list for a hinted system message, last content block
+  otherwise), and reads `cacheReadInputTokens`/`cacheWriteInputTokens` into
+  `LLMEvent.cache_read_tokens`/`.cache_creation_tokens` — **core never learns `cachePoint`**, and
+  core's own sweep at `tests/test_prompt_cache_wire_translation.py:421` (which already named
+  `cachePoint` as "PCS-8's") stays green. **Core** (`feature-pcs8-cache-posture-core`): one export
+  + one rail, nothing else.
+
+- **PCS-8 DEVIATION — one core change was required and is not Execution-log-only.**
+  `CACHE_HINT_KEY` was promoted to `personalclaw.sdk.model` (import + `__all__`). An app may reach
+  core ONLY via `personalclaw.sdk.*`, and a provider that owns its own wire must READ the neutral
+  marker to translate it, so without the promotion the atom is unbuildable except by hand-copying
+  the string literal into the app. This is not an invention: core's own
+  `tests/test_apps_import_boundary.py` docstring prescribes it — *"If a symbol isn't on the SDK yet,
+  the fix is to PROMOTE it to a `personalclaw.sdk` submodule instead of reaching around the
+  boundary."* `sdk/provider_helpers.py` was NOT touched (fenced to a sibling atom) and needed no
+  change: `BrandedProviderSpec.prompt_cache` already threads to `ProviderCapability`.
+  **Consequence — the two commits are ORDERED.** The apps commit does not import against core
+  `origin/main`; the apps CI `tests` job installs core from `main`, so it stays red until the core
+  commit lands. Land core first. Verified locally by running the apps suite against the core
+  worktree's `src` (against `main`'s it fails with
+  `ImportError: cannot import name 'CACHE_HINT_KEY' from 'personalclaw.sdk.model'`).
+
+- **PCS-8 DEVIATION — three of the done_when's postures were measured to be wrong, so they are
+  NONE.** The done_when says "openai-compatible/openrouter-models AUTOMATIC where upstream caches";
+  the qualifier is load-bearing and `openai-compatible` cannot satisfy it. That app is the
+  bring-your-own-endpoint shell (`default_base_url=""`, "user MUST supply the endpoint"), so
+  whether the upstream caches is unknowable at declaration time → **NONE**. `groq-models` →
+  **NONE**: Groq's caching is automatic and cannot be disabled, but Groq's own docs scope it to
+  three `openai/gpt-oss-*` models (OpenRouter's matrix says Kimi K2), and the app pins
+  `default_model=""` and resolves from live discovery, so a provider-wide AUTOMATIC would promise
+  hits most selections never get. `alibaba-models` → **NONE**: Qwen DOES cache but only behind an
+  explicit `cache_control` breakpoint (OpenRouter's provider matrix), and this app rides core's
+  `OpenAIProvider`, which places no marker — declaring EXPLICIT would mark a message nothing
+  translates. `mistral-models` / `together-models` → **NONE**, no prompt-caching documentation
+  exists (`docs.mistral.ai/capabilities/prompt_caching/` and `docs.together.ai/docs/prompt-caching`
+  both HTTP 404, checked 2026-08-18). The rule applied throughout: a posture is a claim about the
+  upstream service, and an unbacked one is worse than NONE, because NONE is honest while a wrong
+  AUTOMATIC silently promises reads that never arrive.
+
+- **PCS-8 DISCOVERY — Bedrock's `system` hoisting made an EXPLICIT posture unreachable, so the
+  §C2 volatile relocation had to be done a second time, app-side.** `runtime.py:621` appends the
+  per-turn note as `{"role": "system", …, "_volatile": True}` for EVERY provider, and
+  `bedrock-models` hoisted every `role: "system"` message into Converse's `system` block list.
+  Converse serves `system` ahead of `messages[0]`, so the cacheable prefix would have differed on
+  every turn and **no checkpoint could ever have been read** — the declaration would have been
+  true on the wire and false in effect. The app now relocates the note to the TAIL as a trailing
+  user turn, exactly as `llm/anthropic.py` does for the same reason: the note moves POSITION, never
+  existence. This widens the atom by one step beyond its done_when, and is the difference between a
+  posture that works and one that lies. §C2 is therefore a per-wire repair, not a one-time core
+  fix — any future app owning its own wire inherits the same obligation.
+
+- **PCS-8 DISCOVERY — PCS-3's unmet "OpenAI adapter declares AUTOMATIC" clause is still unmet, and
+  `BrandedProviderSpec.prompt_cache` never reaches the provider INSTANCE.** `_build_provider`
+  (`sdk/provider_helpers.py:155-179`) constructs `AnthropicProvider`/`OpenAIProvider` without
+  passing the spec's posture, so the runtime value is always the protocol client's class attr:
+  `EXPLICIT` for the Anthropic protocol, `NONE` for the OpenAI protocol. Harmless for AUTOMATIC
+  (AUTOMATIC and NONE are wire-identical by design — `mark_cacheable_prefix` returns the list
+  untouched for both), which is why `openai-models` still declares the truthful vendor behaviour.
+  Left untouched: the fix is one line in `llm/openai.py` and belongs to PCS-3's row, and
+  `provider_helpers.py` was fenced to a sibling atom this session.
+
+- **PCS-8 UNMET — the live-Bedrock validation clause. Not run, not faked.** "validated by driving
+  a real Bedrock-Anthropic multi-turn run that reports cache reads" needs usable AWS Bedrock
+  credentials. `aws sts get-caller-identity` fails with `InvalidClientTokenId` on the default
+  chain, and every one of the 13 named profiles in `~/.aws/config` is an Amazon-internal account
+  (`ias-*-prod`, `marq-na-prod`, `issuance-prod-ro`, …). Under the standing production-safety rules
+  — treat any environment you cannot positively identify as production, prefer least privilege —
+  billing model invocations to a production account for a personal-project validation is not a
+  read-only act on that account's budget, so no run was attempted. **What is missing, precisely:**
+  a non-production AWS account with `bedrock:InvokeModelWithResponseStream` on an Anthropic model,
+  configured as a Bedrock provider under an isolated `PERSONALCLAW_HOME`; then two turns of the
+  same conversation, asserting the second reports a non-zero cache-read count.
+  **Substitute evidence (payload-level, not a live hit):**
+  `test_complete_sends_the_cache_point_on_the_wire_and_reports_cache_reads` drives `complete()`
+  over a stubbed `boto3` with a marked multi-turn history and asserts the request Converse would
+  have received carries EXACTLY ONE `cachePoint`, at the end of the hinted message, with the
+  volatile note after it and the system head unchanged — and that a returned
+  `cacheReadInputTokens: 4096` surfaces as `LLMEvent.cache_read_tokens == 4096`. That proves the
+  translation and the reporting path; it does not prove Bedrock honours the checkpoint.
+
+- **PCS-8 — the posture rail lives in apps CI, not in a bundle's `test_*.py`.** A cross-app sweep
+  cannot live in one app's tests: the apps CI `tests` job runs `pytest` PER bundle, so a
+  root-level test file would never execute (it would read as a pass forever). The rail is
+  `.github/scripts/check_prompt_cache_posture.py` + a `prompt-cache-posture` job, alongside the two
+  cross-app sweeps that already work that way (`manifest-validate`, `boundary`). It enforces four
+  rules — a posture is declared; an evidence comment sits above it; EXPLICIT must actually read
+  `CACHE_HINT_KEY` or ride core's Anthropic client; and vendor cache syntax on the wire must be
+  declared EXPLICIT — over a **vacuity floor** (>= 14 model apps discovered and declared, >= 2
+  EXPLICIT, >= 2 AUTOMATIC, >= 4 NONE), so it cannot pass by inspecting nothing.
+
+- **PCS-8 falsified — eight mutations, each red, each restored from a file copy.** Translation:
+  (a) dropping the `hinted` guard so every message gets a checkpoint →
+  `assert _blocks_with_cache_point(request) == 1` / `assert 3 == 1`, 5 tests red including the
+  PRE-EXISTING `test_translate_messages_plain_string_unchanged`; (b) removing the append entirely →
+  `assert out[0]["content"] == [{"text": "first"}, _CACHE_POINT]` red and `assert 0 == 1` on the
+  wire test; (c) hoisting the volatile note back into `system` →
+  `AssertionError: the volatile note must NOT be in system`. Rail: (d) `bedrock-models` flipped to
+  AUTOMATIC while still emitting `cachePoint` → "emits vendor cache syntax on the wire but declares
+  ['AUTOMATIC']"; (e) `openai-compatible` flipped to EXPLICIT → "declares PromptCache.EXPLICIT but
+  neither reads CACHE_HINT_KEY nor rides core's Anthropic protocol client"; (f) stripping the
+  evidence comment above `deepseek-models`' declaration → "has no evidence comment above it";
+  (g) deleting `groq-models`' declaration → "declares no prompt_cache posture"; (h) running the
+  rail against an empty directory → five VACUITY failures, exit 1. Core: dropping
+  `"CACHE_HINT_KEY"` from `sdk/model.py`'s `__all__` →
+  `test_the_marker_key_is_on_the_app_facing_sdk_facade` red.

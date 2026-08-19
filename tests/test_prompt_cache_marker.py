@@ -485,3 +485,32 @@ def test_the_field_carries_meta_for_the_settings_surface():
     assert f.default is True
     assert f.metadata.get("label") == "Prompt Caching"
     assert f.metadata.get("help")
+
+
+# ── The app-facing SDK surface (PCS-8) ────────────────────────────────────────
+#
+# An app whose provider owns its OWN wire (bedrock-models' Converse client) must READ
+# the neutral marker to translate it into its vendor's syntax — core never learns that
+# syntax. Apps may only reach core through ``personalclaw.sdk.*``
+# (tests/test_apps_import_boundary.py), so the marker key has to be ON that facade or
+# the out-of-repo consumer is stranded with a hand-copied string literal.
+
+
+def test_the_marker_key_is_on_the_app_facing_sdk_facade():
+    """``CACHE_HINT_KEY`` is re-exported by ``personalclaw.sdk.model`` and is the SAME
+    object as the neutral definition — not a second copy that could drift."""
+    from personalclaw.llm import prompt_cache as neutral
+    from personalclaw.sdk import model as sdk_model
+
+    # Imported the way an APP imports it — `from personalclaw.sdk.model import X` — and not
+    # only as an attribute read, because the inert-surface ratchet counts a `sdk_export` as
+    # consumed by scanning for exactly that ImportFrom shape. An attribute read through the
+    # module object leaves the export looking dead to the ratchet while an app depends on it.
+    from personalclaw.sdk.model import CACHE_HINT_KEY as sdk_cache_hint_key
+
+    assert sdk_cache_hint_key is neutral.CACHE_HINT_KEY
+    assert sdk_model.CACHE_HINT_KEY is neutral.CACHE_HINT_KEY
+    assert "CACHE_HINT_KEY" in sdk_model.__all__, (
+        "CACHE_HINT_KEY must be in personalclaw.sdk.model.__all__ — an app's provider "
+        "reads it to translate the marker into its own wire form (PCS-8)."
+    )
