@@ -750,3 +750,33 @@ Where each piece plugs into the pluggable-provider architecture (recon: provider
   `test_config_roundtrip.py` + `test_config_baseline.py` + `test_agent_reference.py` +
   `test_action_provider_chokepoints.py` + `test_inert_surface_baseline.py` + `tests/security/`
   **178 passed**. `inert-surface-baseline.json` needed no regeneration.
+
+- **2026-08-19 — `LMMV-6` CLOSED (`todo` → `done`), on the clause that kept it open.** The atom's
+  own 2026-08-16 entry left it `todo` for one stated reason: *"the ONE reference app is a
+  PersonalClawApps deliverable and is NOT shipped"*. It is shipped. `claude-subscription/` is on
+  `PersonalClawApps@main` (5 files — `provider.py`, `test_provider.py`, `app.json`, `README.md`,
+  `LICENSE`), added by `5908a88` and since carried forward by `#42`, which gave the same spec its
+  `prompt_cache=EXPLICIT` posture. Verified by content on both sides rather than by a PR title:
+  `provider.py:49` declares `CREDENTIAL_SOURCE = "claude-code"` and its spec names that id, while on
+  core `main` `sdk/provider_helpers.py:88` carries `credential_source: str = ""` round-tripping
+  through `to_dict`/`from_dict` (`:112`, `:135`) and `providers/loader.py:176-178` derives the
+  availability probe from `spec_credential_source(provider_type)`. So the five-hop credential order,
+  the derived not-signed-in reason and a real app riding CLI auth all exist on `main` together.
+  No code shipped with this entry — the atom's work was already merged; only the status was stale.
+
+- **2026-08-19 — DISCOVERY (roadmap tracking, cross-plan): the atomic tables had drifted from
+  `dag.json` in three ways, and nothing could see it.** While closing `LMMV-6` I found its row
+  listed **twice** in `docs/roadmap/atomic/LMMV.md` — once as shipped, once, lower down, as not
+  started. A census across all 71 atomic files found the class: **79 rows carried a status mark
+  contradicting `dag.json`** (67 plain `todo` boxes on atoms that are `done`, over 30 files) and
+  **17 atom ids appeared twice** in their own table. `AP`, `AS`, `CATO`, `PCS`, `PHF`, `PP`,
+  `WF2LOO` and `WV` were the worst. Cause: `test_roadmap_dag_derived.py` guards `dag.json`'s own
+  derived block and nothing coupled the human-readable tables to it, so every stale row was free.
+  Fixed all of them (row count is now exactly 640 — one per atom) and added
+  `tests/test_roadmap_atomic_status_sync.py`: mark ⇔ `done`, no duplicate rows, no row for an
+  unknown atom, every atom has a row, and the leading "N atoms" count matches. Falsified all three
+  new assertions by mutation (mark reverted → red; row duplicated → red; count 7→9 → red), each
+  restored from a file copy. Six stale prose summaries were corrected by hand
+  (`DC`/`INU`/`LMMV`/`MGAV`/`PT`/`TSE` — e.g. `INU` said "5 done, 3 todo" for a plan whose 8 atoms
+  are all done); the *narrative* half of those sentences is deliberately left unrailed, since it
+  has no canonical form — only its leading number is pinned.

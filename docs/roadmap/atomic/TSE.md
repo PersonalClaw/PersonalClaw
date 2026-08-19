@@ -4,7 +4,7 @@
 **Code:** `TSE`  
 **Source status:** in_progress
 
-5 atoms: TSE-1/2/3 done (owner identity+attribution, task multi-user tolerance, memory contributor provenance); TSE-4 (trigger-store provider seam, §2.2+§3) and TSE-5 (PoC trigger-provider app, §4) remain — TSE-4 gated on AUTOMATION-SUBSTRATE (now satisfied) + TSE-1, TSE-5 on TSE-4.
+5 atoms: all 5 done — TSE-1/2/3 (owner identity+attribution, task multi-user tolerance, memory contributor provenance), then TSE-4 (trigger-store provider seam, §2.2+§3) and TSE-5 (PoC trigger-provider app, §4), which had been gated on AUTOMATION-SUBSTRATE + TSE-1 and on TSE-4 respectively.
 
 Each atom below executes start-to-finish in one go. If an atom lists dependencies, they must be `done` before it starts — that is the whole point of the split: no atom should ever need pausing to go execute other work.
 

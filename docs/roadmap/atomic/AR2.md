@@ -17,7 +17,7 @@ Each atom below executes start-to-finish in one go. If an atom lists dependencie
 | `AR2-5` | ✅ (#feature-agent-routing) | RoutingChip component: WS-driven pill, Route→setSessionAgent+toast, dismiss, FEEDBACK-SIGNAL double-write | `AR2-3`, `AR2-4`, `EXT:FEEDBACK-SIGNAL:routing_suggestion target-kind + routing_pair producer-kind vocabulary and record_feedback API (plan 58, shipped 2026-07-27)` | chip renders non-blockingly on routing_suggestion for the open session, Route re-targets the session via existing switch path, dismiss suppresses, both actions double-write feedback (routing_suggestion target / routing_pair producer), auto-clears on send/switch, typecheck + vitest green |
 | `AR2-6` | ✅ (#feature-agent-routing) | Authoring fields: Specialty + Routing hints in AgentForm.tsx | `AR2-1` | Specialty + Routing-hints fields (with comma-separated-utterances hint text) round-trip through agent create/edit via draft/empty/toDraft/payload + SavedAgent type |
 | `AR2-7` | ✅ (#feature-agent-routing) | Agent routing settings block (enabled / min confidence / cooldown) in Settings → Chat | `AR2-4` | toggling enabled off stops suggestions immediately with no restart, via the agents_routing.* PATCH allowlist |
-| `AR2-8` | ⬜ | Muted-state row + Unmute affordance on the agent detail page | `AR2-4` | a muted agent shows its muted state on AgentDetail.tsx and an Unmute control (routingUnmute API, already shipped) restores it; muted/unmute state reflected via routingStatus |
+| `AR2-8` | ✅ | Muted-state row + Unmute affordance on the agent detail page | `AR2-4` | a muted agent shows its muted state on AgentDetail.tsx and an Unmute control (routingUnmute API, already shipped) restores it; muted/unmute state reflected via routingStatus |
 
 ## Atom scopes
 

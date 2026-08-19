@@ -4,7 +4,7 @@
 **Code:** `INU`  
 **Source status:** in_progress
 
-8 atoms: 5 done (S1-S5, PRs #111-#115), 3 todo (S6 verification gate, S7 Proposals contract, S8 inbox provider-seam resolution). No blocking cross-plan deps — plan owns the attention contracts; all cross-plan edges are downstream consumers.
+8 atoms: all 8 done (S1-S5 as PRs #111-#115; S6 verification gate, S7 Proposals contract and S8 inbox provider-seam resolution closed since). No blocking cross-plan deps — plan owns the attention contracts; all cross-plan edges are downstream consumers.
 
 Each atom below executes start-to-finish in one go. If an atom lists dependencies, they must be `done` before it starts — that is the whole point of the split: no atom should ever need pausing to go execute other work.
 
