@@ -1,6 +1,6 @@
 import { Fragment, useEffect, useMemo, useState } from 'react'
 import { reportingWrite } from '../../app/reportingWrite'
-import { BookOpen, Plus, Search, Database, Sparkles, Network, Library, Trash2, Target, X, Pin, Star, Archive, Play, FileText, Loader2, CircleAlert, Boxes, WifiOff, Layers, Scale, Tag as TagIcon, Rss, ExternalLink } from 'lucide-react'
+import { BookOpen, FileClock, Plus, Search, Database, Sparkles, Network, Library, Trash2, Target, X, Pin, Star, Archive, Play, FileText, Loader2, CircleAlert, Boxes, WifiOff, Layers, Scale, Tag as TagIcon, Rss, ExternalLink } from 'lucide-react'
 import { TopBar } from '../../ui/TopBar'
 import { fvs } from '../../design/fontWeight'
 import { WorkbenchLayout } from '../../ui/WorkbenchLayout'
@@ -85,7 +85,7 @@ function EmbeddingChip({ stats, busy, onBackfill }: { stats: import('../../lib/a
   )
 }
 
-export function KnowledgeListPage({ onCreate, onOpenItem, onOpenSources, query, setQuery }: { onCreate: () => void; onOpenItem: (id: string) => void; onOpenSources: () => void } & Pick<RouteProps, 'query' | 'setQuery'>) {
+export function KnowledgeListPage({ onCreate, onOpenItem, onOpenSources, onOpenReports, query, setQuery }: { onCreate: () => void; onOpenItem: (id: string) => void; onOpenSources: () => void; onOpenReports: () => void } & Pick<RouteProps, 'query' | 'setQuery'>) {
   const [viewRaw, setView] = useQueryParam(query, setQuery, 'view', 'library', { replace: true })
   const view = viewRaw as View
   // search: the submitted query lives in the URL (?q); the input box is local
@@ -427,6 +427,12 @@ export function KnowledgeListPage({ onCreate, onOpenItem, onOpenSources, query, 
               <HeaderControl icon={Rss} label="Sources" priority="low"
                 hint="Pages, feeds and folders that fill your library on their own"
                 onClick={onOpenSources} />
+                {/* The way IN to scheduled reports (WF2KNO-12). Same reasoning as Sources: its
+                    own destination with its own create flow, and everything the runner writes
+                    stays unreachable-by-configuration until something points here. */}
+                <HeaderControl icon={FileClock} label="Reports" priority="low"
+                  hint="Watch part of your library on a schedule and write up what is new"
+                  onClick={onOpenReports} />
               {view === 'intents'
                 ? <HeaderControl icon={Plus} label="New intent" variant="primary" priority="primary"
                     onClick={() => setSelectedIntent(blankIntent())} />
