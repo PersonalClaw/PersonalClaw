@@ -4,6 +4,7 @@ import json
 import logging
 import pathlib
 from collections import defaultdict
+from collections.abc import Sequence
 from datetime import datetime
 from typing import Any, Callable
 from uuid import uuid4
@@ -440,6 +441,34 @@ class KnowledgeStore:
             CREATE INDEX IF NOT EXISTS idx_item_relations_target
                 ON item_relations(target_item_id);
 
+            -- Per-MARKER attribution for a synthesized item (WF2KNO-11). Sibling to
+            -- item_relations, and deliberately NOT the same thing: a relation says two items
+            -- are connected, a citation says WHICH numbered source supports which sentence.
+            -- The synthesis path used to store the whole retrieved set as its "citations",
+            -- which answers "what did we look at" and cannot answer the question a reader
+            -- challenging a claim asks. Keyed on (item_id, marker) because the marker number
+            -- the prompt displayed is the identity -- one source cited in three sentences is
+            -- one row, and a re-synthesis reusing marker 2 for a different source overwrites
+            -- rather than accumulating two answers for [2].
+            --
+            -- No REFERENCES items(id) on source_item_id on purpose: a source deleted after
+            -- the synthesis was written should leave the attribution readable ("this claim
+            -- cited an item that is gone") rather than have foreign_keys=ON refuse the
+            -- delete or cascade the evidence away.
+            CREATE TABLE IF NOT EXISTS item_citations (
+                item_id TEXT NOT NULL,
+                marker INTEGER NOT NULL,
+                source_item_id TEXT NOT NULL,
+                chunk_index INTEGER NOT NULL DEFAULT -1,
+                excerpt TEXT NOT NULL DEFAULT '',
+                PRIMARY KEY (item_id, marker)
+            );
+
+            -- "What else cites this item" -- the reverse lookup, which has no covering index
+            -- from the primary key.
+            CREATE INDEX IF NOT EXISTS idx_item_citations_source
+                ON item_citations(source_item_id);
+
             CREATE INDEX IF NOT EXISTS idx_entity_relations_source_id
                 ON entity_relations(source_id);
             CREATE INDEX IF NOT EXISTS idx_entity_relations_target_id
@@ -451,6 +480,27 @@ class KnowledgeStore:
                 context TEXT,
                 created_at TEXT NOT NULL,
                 PRIMARY KEY (item_id, entity_id)
+            );
+
+            -- "The entity linker has LOOKED at this item" (KL-14 clause 7). One row per
+            -- item, written by `link_backfill` after it runs the deterministic alias
+            -- linker over the item's text — whether or not that found anything.
+            --
+            -- 🔴 This exists because `mentions` cannot express it. `mentions` records
+            -- what was FOUND, and an item that names no known entity legitimately has
+            -- zero rows there — indistinguishable from an item nobody has swept. A
+            -- backfill keyed on "has no mentions" would therefore re-link the same
+            -- unlinkable items on every maintenance tick and never advance to the rest of
+            -- the library. Separating "looked" from "found" is what makes the sweep
+            -- terminate.
+            --
+            -- Resume state is still the ROWS, never a cursor: each item's sweep row
+            -- commits with its own mentions, so a killed run resumes by asking the
+            -- backlog query again and no crash window can strand a cursor that disagrees
+            -- with the data.
+            CREATE TABLE IF NOT EXISTS mention_sweeps (
+                item_id TEXT PRIMARY KEY REFERENCES items(id),
+                swept_at TEXT NOT NULL
             );
 
             -- Reading annotations (KNOWLEDGE-LIBRARY S3, T3.1). The plan left this an
@@ -1234,6 +1284,13 @@ class KnowledgeStore:
         if extra:
             self.update_item(item_id, **extra)
             self.db.commit()
+        # A NEW indexed document, so the derived graph is stale. Marked here rather
+        # than on entry because both `return None` paths above rolled back and wrote nothing:
+        # a watermark moved for a write that then failed would run the maintenance pass over
+        # an unchanged library on every tick, forever.
+        from personalclaw.knowledge import maintenance
+
+        maintenance.mark_dirty(reason=f"create {item_type}")
         return item_id
 
     def find_source_item(self, source_id: str, guid: str) -> dict | None:
@@ -1387,6 +1444,14 @@ class KnowledgeStore:
             raise
         if row:
             self._load_graph()
+            # Same delete as `delete_item`, reached from a source poll instead of the
+            # UI. Guarded by `row` on purpose: a call for a guid this source never wrote
+            # removes no item, so there is nothing for a maintenance pass to reconcile.
+            # (`archive_source_item`, the other source-side write, needs no call of its own:
+            # it goes through `update_item(is_archived=1)`, which is on the allowlist.)
+            from personalclaw.knowledge import maintenance
+
+            maintenance.mark_dirty(reason="forget source item")
         return bool(row)
 
     def get_item(self, item_id):
@@ -1693,6 +1758,11 @@ class KnowledgeStore:
             self.db.execute("ROLLBACK")
             raise
         self._load_graph()
+        # A merge is a delete plus a re-point: one item left the library and another
+        # one's mentions/tags/chunks changed underneath it.
+        from personalclaw.knowledge import maintenance
+
+        maintenance.mark_dirty(reason="merge items")
         logger.info("merged knowledge item %s into %s: %s", merge_id, keep_id, moved)
         return moved
 
@@ -1810,6 +1880,73 @@ class KnowledgeStore:
         self.vec_index.drop_item(item_id)  # before the ids go away
         self.db.execute("DELETE FROM chunks WHERE item_id = ?", (item_id,))
         self.db.commit()
+
+    # -- Per-marker citations ----------------------------------------------------
+
+    def set_item_citations(self, item_id: str, citations: Sequence[Any]) -> int:
+        """REPLACE the citing item's whole citation set, in one transaction.
+
+        Replace, not append. A synthesized item is re-synthesized (retry, refreshed sources,
+        a template change) and the new prose numbers its sources afresh: appending would leave
+        the previous generation's markers behind, so ``[2]`` would resolve to two different
+        sources and the older, wrong one would read as equally attributed. The delete and the
+        inserts share a transaction so a failure mid-write cannot leave an item with NO
+        attribution after it had some.
+
+        Accepts :class:`~personalclaw.knowledge.citations.Citation` objects or plain dicts --
+        the boundary is dicts on purpose, so this schema and the marker-parsing module stay
+        mutually unaware. Note the field flip: a ``Citation``'s ``item_id`` is the SOURCE
+        being cited, while *item_id* here is the item DOING the citing; a dict may name the
+        source either way.
+
+        Duplicate markers in the input collapse (last wins) rather than raising on the primary
+        key, because the caller's list is derived from prose and a model can restate a marker.
+        """
+        rows: dict[int, tuple[str, int, str, int, str]] = {}
+        for citation in citations:
+            if isinstance(citation, dict):
+                marker = int(citation.get("marker", 0) or 0)
+                source_id = citation.get("source_item_id") or citation.get("item_id") or ""
+                raw_chunk = citation.get("chunk_index", -1)
+                excerpt = citation.get("excerpt", "") or ""
+            else:
+                marker = int(getattr(citation, "marker", 0) or 0)
+                source_id = getattr(citation, "item_id", "") or ""
+                raw_chunk = getattr(citation, "chunk_index", -1)
+                excerpt = getattr(citation, "excerpt", "") or ""
+            # Chunk 0 is a real chunk and falsy, so this is an explicit None check rather
+            # than `raw_chunk or -1`, which would relabel every first chunk "whole item".
+            chunk_index = -1 if raw_chunk is None else int(raw_chunk)
+            rows[marker] = (item_id, marker, str(source_id), chunk_index, str(excerpt))
+
+        self.db.execute("BEGIN")
+        try:
+            self.db.execute("DELETE FROM item_citations WHERE item_id = ?", (item_id,))
+            if rows:
+                self.db.executemany(
+                    "INSERT INTO item_citations "
+                    "(item_id, marker, source_item_id, chunk_index, excerpt) "
+                    "VALUES (?, ?, ?, ?, ?)",
+                    list(rows.values()),
+                )
+            self.db.execute("COMMIT")
+        except Exception:
+            self.db.execute("ROLLBACK")
+            raise
+        return len(rows)
+
+    def item_citations(self, item_id: str) -> list[dict]:
+        """A citing item's attributions, ascending by marker.
+
+        Marker order, not insertion order: the number is what the reader sees in the prose, so
+        a list that does not ascend by it forces the caller to re-sort to render anything.
+        """
+        rows = self.db.execute(
+            "SELECT marker, source_item_id, chunk_index, excerpt FROM item_citations "
+            "WHERE item_id = ? ORDER BY marker",
+            (item_id,),
+        ).fetchall()
+        return [dict(row) for row in rows]
 
     # -- Intent outcomes (Tier-3, stored by value with a soft back-ref) -----------
 
@@ -2047,6 +2184,35 @@ class KnowledgeStore:
         "favorited",
     }
 
+    #: The fields whose change actually invalidates the derived index, so an
+    #: `update_item` that touches one of them moves the graph-maintenance watermark and one
+    #: that does not leaves the index clean.
+    #:
+    #: This is an ALLOWLIST rather than "everything except curation", and the reason is the
+    #: DENY side, not the allow side: `embedding`, `insights`, `ai_title`,
+    #: `processing_status` and `processing_error` are what the maintenance passes THEMSELVES
+    #: write. Marking dirty on those would make every pass re-dirty the index it just
+    #: cleaned, so `clear_up_to(snapshot)` would find `dirty_ts` past its snapshot every
+    #: single time and the watermark could never go clean — a maintenance loop that runs
+    #: forever at full cost and reports success. An allowlist cannot acquire that bug by a
+    #: later column being added; a denylist acquires it by default.
+    #:
+    #: The rest of the deny side is derived or presentational bookkeeping: `updated_at` and
+    #: `word_count` are computed FROM a change that is itself on this list, and
+    #: `read_state`/`favorited`/`is_pinned` plus the file/url metadata columns change nothing
+    #: any pass reads. `status`/`is_archived` ARE here because consolidation's candidate set
+    #: is scoped to active items, so archiving one changes that set.
+    _INDEX_AFFECTING_FIELDS = {
+        "title",
+        "content",
+        "summary",
+        "tags",
+        "url",
+        "item_type",
+        "status",
+        "is_archived",
+    }
+
     def update_item(self, item_id, *, touch: bool = True, **fields):
         if not fields:
             return
@@ -2068,6 +2234,15 @@ class KnowledgeStore:
         safe = {k: v for k, v in fields.items() if k in self._ITEM_COLUMNS}
         if not safe and tags_update is None:
             return
+        # Decided from what will ACTUALLY be written, and only acted on after the
+        # commit below succeeds. `tags` is counted even though it is not a column, for the
+        # same reason `fts_fields` counts it: the indexed value derives from the tag rows.
+        # Both early returns above are deliberately upstream of this — a no-op PATCH must
+        # leave the index clean, or the watermark says "there is graph work to do" for a call
+        # that changed nothing and the pass runs over the whole library for nothing.
+        index_changes = self._INDEX_AFFECTING_FIELDS & (
+            set(safe) | ({"tags"} if tags_update is not None else set())
+        )
         # Read old FTS values BEFORE the update. `tags` counts as an FTS field even
         # though it isn't a column, because the indexed value derives from the tag rows.
         fts_fields = {"title", "content"} & set(fields)
@@ -2116,6 +2291,10 @@ class KnowledgeStore:
         except Exception:
             self.db.execute("ROLLBACK")
             raise
+        if index_changes:
+            from personalclaw.knowledge import maintenance
+
+            maintenance.mark_dirty(reason="update " + ",".join(sorted(index_changes)))
 
     def _delete_item_cascade(self, item_id):
         """Delete item and its dependents without commit/graph reload (for batch use)."""
@@ -2136,6 +2315,10 @@ class KnowledgeStore:
             )
         self.db.execute("DELETE FROM item_tags WHERE item_id = ?", (item_id,))
         self.db.execute("DELETE FROM mentions WHERE item_id = ?", (item_id,))
+        # The link-sweep marker is per-item bookkeeping and dies with the item; an orphan
+        # row is invisible to the backlog query (which selects FROM items) but would
+        # accumulate for the life of the library.
+        self.db.execute("DELETE FROM mention_sweeps WHERE item_id = ?", (item_id,))
         self.db.execute("DELETE FROM entity_relations WHERE source_item_id = ?", (item_id,))
         self.db.execute("DELETE FROM extracted_contents WHERE item_id = ?", (item_id,))
         self.vec_index.drop_item(item_id)  # before the chunk ids go away
@@ -2160,6 +2343,12 @@ class KnowledgeStore:
             self.db.execute("ROLLBACK")
             raise
         self._load_graph()
+        # A delete is index-affecting in both directions: the item leaves the
+        # consolidation candidate set, and the orphan-entity sweep above just changed the
+        # entity graph the other passes read.
+        from personalclaw.knowledge import maintenance
+
+        maintenance.mark_dirty(reason="delete item")
 
     def clear_item_entities(self, item_id):
         """Drop this item's mention/relation rows + any now-orphan entities, WITHOUT
@@ -2270,42 +2459,170 @@ class KnowledgeStore:
         ).fetchall()
         return [{"id": r["id"], "content": r["content"] or ""} for r in rows]
 
+    @staticmethod
+    def _item_embed_one(embedder):
+        """A single-text embed fn for *embedder*, used as ``embed_texts``' per-text fallback.
+
+        Prefers ``.embed`` — literally the call ``embed_for_item`` makes once it has composed
+        its text, so the vector is the same one. An embedder that exposes only
+        ``embed_for_item`` (the shape this class's own docstring promises, and what the
+        re-index tests pass) is adapted by handing it the ALREADY-composed text as the title:
+        ``compose_item_text(composed, None)`` is ``composed`` for text that is already
+        composed and stripped, so that vector is identical too. Returns None when the
+        embedder offers neither, which ``embed_texts`` reports as "everything stays
+        vector-less" — the same outcome the old per-item ``except Exception`` produced.
+        """
+        embed = getattr(embedder, "embed", None)
+        if callable(embed):
+            return embed
+        for_item = getattr(embedder, "embed_for_item", None)
+        if callable(for_item):
+            return lambda text: for_item(text, None)
+        return None
+
+    #: The link backlog predicate, in ONE place so the COUNT and the batch selector can
+    #: never disagree about what work remains — same discipline as
+    #: ``_CHUNK_BACKLOG_WHERE``. An item needs a linker sweep when it is active, not
+    #: archived, carries some text to match against, and has no ``mention_sweeps`` row.
+    #:
+    #: 🔴 The backlog is keyed on ``mention_sweeps``, NOT on "has no ``mentions`` rows".
+    #: That reading looks equivalent and is a non-terminating trap: an item may
+    #: legitimately name no known entity, so it would never gain a mention, never leave
+    #: the backlog, and be re-linked on every tick — the host re-invokes a batched pass
+    #: until it returns 0, so the head of the backlog would absorb every sub-batch and
+    #: the tail would never be reached. The sweep row records that the linker LOOKED,
+    #: which is the fact the backlog actually needs; whether it found anything is the
+    #: ``mentions`` table's business.
+    #:
+    #: Text-less items are excluded rather than swept, mirroring
+    #: ``count_items_missing_embedding``'s "ignores text-less items": there is nothing to
+    #: match, so they are not work rather than work that always finds nothing.
+    _LINK_BACKLOG_WHERE = (
+        "FROM items WHERE status = 'active' "
+        "AND COALESCE(is_archived, 0) = 0 "
+        "AND (COALESCE(title,'') != '' OR COALESCE(summary,'') != '' "
+        "OR COALESCE(content,'') != '') "
+        "AND NOT EXISTS (SELECT 1 FROM mention_sweeps WHERE mention_sweeps.item_id = items.id) "
+    )
+
+    def count_items_missing_mention_sweep(self) -> int:
+        """How many items the entity linker has never swept (KL-14 clause 7).
+
+        Zero means every active text-bearing item has been through the deterministic
+        alias linker at least once, so a maintenance tick costs one COUNT.
+        """
+        row = self.db.execute(
+            f"SELECT COUNT(*) AS n {self._LINK_BACKLOG_WHERE}"  # noqa: S608 — fixed literal
+        ).fetchone()
+        return int(row["n"]) if row else 0
+
+    def items_missing_mention_sweep(self, limit: int, after_id: str | None = None) -> list[dict]:
+        """One bounded batch of the link backlog as ``{id, title, summary, content}``.
+
+        Carries all three text fields because the linker matches entity names anywhere in
+        an item, not just in its vector text — see ``link_backfill`` for why that is a
+        superset of what the ingest path passes.
+
+        ``after_id`` is an exclusive keyset cursor, so a caller that wants several batches
+        within one run steps forward instead of re-reading the head.
+        """
+        params: list[object] = []
+        cursor = ""
+        if after_id:
+            cursor = "AND items.id > ? "
+            params.append(after_id)
+        params.append(int(limit))
+        rows = self.db.execute(
+            f"SELECT id, title, summary, content {self._LINK_BACKLOG_WHERE}{cursor}"  # noqa: S608
+            "ORDER BY items.id ASC LIMIT ?",
+            tuple(params),
+        ).fetchall()
+        return [
+            {
+                "id": r["id"],
+                "title": r["title"] or "",
+                "summary": r["summary"] or "",
+                "content": r["content"] or "",
+            }
+            for r in rows
+        ]
+
+    def record_mention_sweep(self, item_id: str) -> None:
+        """Mark *item_id* as swept by the entity linker. ``INSERT OR REPLACE`` so a
+        re-sweep refreshes the timestamp rather than raising on the primary key."""
+        self.db.execute(
+            "INSERT OR REPLACE INTO mention_sweeps (item_id, swept_at) VALUES (?, ?)",
+            (item_id, datetime.now().isoformat()),
+        )
+        self.db.commit()
+
     def reembed_all(self, embedder, on_progress=None) -> dict:
         """Re-embed every active knowledge item with ``embedder`` (which exposes
         ``embed_for_item(title, summary)``, matching the ingestion pipeline).
 
-        ``on_progress(done, total)`` fires after each item for job-progress
-        streaming. Items whose embedding fails (model returns None) are left
-        vector-less and fall back to keyword/FTS retrieval. Returns counts.
+        Embeds in GROUPS through ``knowledge.embed_batch.embed_texts`` (KL-15) — one provider
+        call per group instead of one per item, with bounded retry and adaptive bisection. On
+        a whole-library re-index that is the difference between a rate-limit blip costing a
+        retry and it costing an item its vector for good. The item text is composed here with
+        the pipeline's own ``compose_item_text``, which is exactly what ``embed_for_item``
+        does internally, so the vectors are identical to the per-item path this replaces.
+
+        ``on_progress(done, total)`` still fires once per item, in order, for job-progress
+        streaming — grouping makes it coarser in TIME, not in call count. Items whose
+        embedding fails are left vector-less and fall back to keyword/FTS retrieval; they are
+        never corrupted and never deleted. Returns counts.
         """
         rows = self.db.execute(
             "SELECT id, title, summary, content FROM items WHERE status = 'active'"
         ).fetchall()
         total = len(rows)
         done = reembedded = failed = 0
-        from personalclaw.knowledge.embedder import floats_to_bytes
+        from personalclaw.knowledge.embed_batch import batch_size_from_config, embed_texts
+        from personalclaw.knowledge.embedder import compose_item_text, floats_to_bytes
+        from personalclaw.knowledge.pipeline.runner import active_batch_embed_fn
 
-        for r in rows:
-            title = r["title"] or ""
-            summary = r["summary"] if "summary" in r.keys() else None
-            content = r["content"] if "content" in r.keys() else None
-            # Fall back to a content prefix when there's no title (chunk items).
-            text_title = title or (content or "")[:200]
-            vec = None
-            try:
-                vec = embedder.embed_for_item(text_title, summary, content)
-            except Exception:
-                vec = None
-            if vec:
-                self.db.execute(
-                    "UPDATE items SET embedding = ? WHERE id = ?", (floats_to_bytes(vec), r["id"])
+        embed_many = active_batch_embed_fn(embedder)
+        embed_one = self._item_embed_one(embedder)
+        size = batch_size_from_config()
+
+        for start in range(0, total, size):
+            group = rows[start : start + size]
+            texts = []
+            for r in group:
+                title = r["title"] or ""
+                summary = r["summary"] if "summary" in r.keys() else None
+                content = r["content"] if "content" in r.keys() else None
+                # Fall back to a content prefix when there's no title (chunk items).
+                text_title = title or (content or "")[:200]
+                texts.append(compose_item_text(text_title, summary, content))
+            # A blank composed text never reaches a provider: ``UnifiedEmbedder.embed``
+            # refuses one today, and a batch call cannot refuse a single member without
+            # refusing its whole group. Such an item counts as failed, exactly as before.
+            embeddable = [i for i, t in enumerate(texts) if t.strip()]
+            vectors: list[list[float] | None] = [None] * len(texts)
+            if embeddable:
+                # `size` matches the slice, so this is one group per call — the outer loop
+                # owns the grouping precisely so progress streams while it runs.
+                got = embed_texts(
+                    [texts[i] for i in embeddable],
+                    embed_many=embed_many,
+                    embed_one=embed_one,
+                    batch_size=size,
                 )
-                reembedded += 1
-            else:
-                failed += 1
-            done += 1
-            if on_progress is not None:
-                on_progress(done, total)
+                for i, vec in zip(embeddable, got):
+                    vectors[i] = vec
+            for r, vec in zip(group, vectors):
+                if vec:
+                    self.db.execute(
+                        "UPDATE items SET embedding = ? WHERE id = ?",
+                        (floats_to_bytes(vec), r["id"]),
+                    )
+                    reembedded += 1
+                else:
+                    failed += 1
+                done += 1
+                if on_progress is not None:
+                    on_progress(done, total)
         self.db.commit()
         return {"reembedded": reembedded, "failed": failed, "total": total}
 

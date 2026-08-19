@@ -194,44 +194,78 @@ class ReindexRegistry:
             job.memory = res.get("reembedded", 0)
 
 
-async def start_chunk_backfill(app: Any) -> "asyncio.Task | None":
-    """Schedule the knowledge CHUNK backfill (KL-12) in the background, or no-op.
+#: The graph-maintenance registry name for the chunk backfill. Owned here, beside the pass
+#: itself, so a second host registers by calling ``register_chunk_backfill_pass`` rather than
+#: re-typing the string — two hosts with two spellings would be two passes, not one.
+CHUNK_BACKFILL_PASS = "chunk_backfill"
+
+
+def chunk_backfill_pass(*, batch_size: int) -> int:
+    """One bounded batch of the knowledge CHUNK backfill (KL-12). Returns units processed.
 
     Sibling of the item-vector re-index above, and deliberately separate from it: the
     re-index rewrites the items' OWN vectors on a model switch, while this only adds the
     chunk layer beneath them for items that predate chunking. Both are needed and neither
     substitutes for the other.
 
-    Safe to call on every boot: the backlog is derived from the rows (see
+    This is a graph-maintenance pass, not a boot hook (KL-14). The backfill used to run from
+    ``app.on_startup``, which fires exactly once: on a gateway that stays up for a week, a
+    library that gains pre-chunking items after boot never gained deep-document recall. The
+    host (:mod:`personalclaw.knowledge.maintenance`) instead calls this on every due tick and
+    keeps claiming sub-batches until it returns 0, so the backlog drains across ticks and the
+    store lock is released between batches.
+
+    Cheap when there is nothing to do: the backlog is derived from the rows (see
     ``store.count_items_missing_chunks``), so a fully-chunked library costs one COUNT and
-    returns. Returns the scheduled task (for tests / callers that want to await it) or None
-    when there is nothing to do. Never raises — a backfill must not be able to fail startup.
+    returns 0 — checked BEFORE resolving an embedder, because resolving one probes the
+    provider over the network and a no-op pass must not pay for that every tick.
+
+    Faults propagate: the host isolates a failing pass (``fatal=False``) and records it in
+    ``MaintenanceResult.errors``, which is strictly more legible than swallowing here. Only
+    the deferred cases (empty backlog, no embedding model bound) return 0.
     """
-    try:
-        state = app["state"]
-        store = getattr(state, "knowledge_store", None)
-        if store is None or store.count_items_missing_chunks() <= 0:
-            return None
-        from personalclaw.dashboard.handlers.embedding_reindex import _resolve_embed
-        from personalclaw.knowledge.chunk_backfill import backfill_item_chunks
+    from personalclaw.knowledge import get_knowledge_store
 
-        embedder, _embed_fn, _model = _resolve_embed(app)
-        if embedder is None:
-            logger.info(
-                "Knowledge chunk backfill pending: item(s) need chunking but no embedding "
-                "model is ready — deep-document recall resumes once one is bound."
-            )
-            return None
+    # The process-wide store at the canonical path — the same DB file the dashboard state
+    # opens. A maintenance pass runs from a tick, which has no aiohttp app to read.
+    store = get_knowledge_store()
+    if store.count_items_missing_chunks() <= 0:
+        return 0
 
-        async def _run() -> None:
-            try:
-                # OFF the event loop: chunking + embedding a real library is CPU-bound and
-                # the store's sqlite connection is synchronous.
-                await asyncio.to_thread(backfill_item_chunks, store, embedder)
-            except Exception:
-                logger.debug("knowledge chunk backfill failed", exc_info=True)
+    from personalclaw.dashboard.handlers.embedding_reindex import _resolve_embed
+    from personalclaw.knowledge.chunk_backfill import BATCH_SIZE as _FETCH_BATCH
+    from personalclaw.knowledge.chunk_backfill import backfill_item_chunks
 
-        return asyncio.ensure_future(_run())
-    except Exception:
-        logger.debug("knowledge chunk backfill startup failed", exc_info=True)
-        return None
+    # _resolve_embed reads the process-wide embedding registry + config; its `app` argument
+    # is unused, so a tick-time caller passes None rather than inventing an app.
+    embedder, _embed_fn, _model = _resolve_embed(None)
+    if embedder is None:
+        logger.info(
+            "Knowledge chunk backfill pending: item(s) need chunking but no embedding "
+            "model is ready — deep-document recall resumes once one is bound."
+        )
+        return 0
+
+    # Two bounds, both real: `max_items` is the host's claim for this call (what makes one
+    # call one batch, so the host's loop — not this function — decides when to stop), while
+    # `batch_size` keeps the per-fetch peak memory at the backfill module's own documented
+    # ceiling, since item content is unbounded and the host's claim may be larger.
+    result = backfill_item_chunks(
+        store,
+        embedder,
+        batch_size=min(int(batch_size), _FETCH_BATCH),
+        max_items=int(batch_size),
+    )
+    return int(result.get("done", 0))
+
+
+def register_chunk_backfill_pass() -> None:
+    """Register the chunk backfill with the graph-maintenance host.
+
+    Registration is boot-time and free (it stores a callable); the WORK is what moved to the
+    tick. Idempotent — the registry is keyed by name, so registering twice replaces rather
+    than appends.
+    """
+    from personalclaw.knowledge import maintenance
+
+    maintenance.register_pass(CHUNK_BACKFILL_PASS, chunk_backfill_pass)

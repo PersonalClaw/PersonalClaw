@@ -37,8 +37,12 @@ logger = logging.getLogger(__name__)
 
 #: Items pulled from the backlog per batch. Bounds peak memory: a backfill holds at most
 #: this many items' full content at once, so a library of any size costs the same. Small
-#: because item content is unbounded (a 30+ page PDF is ~100 KB of text) and each item's
-#: chunks are embedded one at a time anyway — a bigger batch buys no throughput.
+#: because item content is unbounded (a 30+ page PDF is ~100 KB of text), and since KL-15 an
+#: item's chunks are embedded in ONE batched call inside ``embed_item_chunks`` — the provider
+#: round trips already amortize within each item, so raising this bound would buy memory
+#: pressure rather than throughput. Batching ACROSS items is deliberately not done: each
+#: item's chunk write is its own transaction, which is what lets a killed run resume from the
+#: rows instead of a cursor.
 BATCH_SIZE = 25
 
 

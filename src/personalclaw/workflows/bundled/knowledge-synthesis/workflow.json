@@ -113,7 +113,7 @@
             "content": "{{nodes.synthesize.output.content}}",
             "summary": "{{nodes.synthesize.output.summary}}",
             "claims": "{{nodes.synthesize.output.claims}}",
-            "citations": "{{nodes.recall.output.items | map('item_id')}}",
+            "citation_sources": "{{nodes.recall.output.items | source_refs}}",
             "tags": [
               "synthesis"
             ]

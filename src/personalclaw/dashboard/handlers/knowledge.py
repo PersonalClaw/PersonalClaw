@@ -17,6 +17,8 @@ from personalclaw.knowledge.embedder import create_embedder_from_config, floats_
 from personalclaw.knowledge.llm_pool import LLMPool
 from personalclaw.knowledge.media import classify, guess_mime, make_image_thumbnail
 from personalclaw.knowledge.retrieval import HybridRetriever
+from personalclaw.knowledge.semantics import DEFAULT_LIST_EXCLUDED_KINDS
+from personalclaw.knowledge.staleness import is_synthesized, staleness_for
 from personalclaw.security import redact_credentials, redact_exfiltration_urls
 from personalclaw.sel import sel
 
@@ -128,6 +130,11 @@ async def list_items(request: web.Request) -> web.Response:
     store = _store(request)
     q = request.query.get("q")
     item_type = request.query.get("type")
+    # `kind` is the TAXONOMY axis and stays separate from `type` (`item_type`, the ingestion
+    # graph's route). Overloading `?type=` to also accept a kind would make one param answer
+    # "how did this arrive" and "what sort of knowledge is it" — the exact conflation
+    # `semantics.KINDS` exists to prevent.
+    kind = request.query.get("kind")
     status = request.query.get("status")
     provider = request.query.get("provider")
     try:
@@ -166,6 +173,8 @@ async def list_items(request: web.Request) -> web.Response:
                 continue
             if item_type and item.get("item_type") != item_type:
                 continue
+            if kind and item.get("kind") != kind:
+                continue
             if provider and (item.get("provider") or "native") != provider:
                 continue
             item["_score"] = r["score"]
@@ -189,6 +198,20 @@ async def list_items(request: web.Request) -> web.Response:
         if item_type:
             where.append("i.item_type = ?")
             params.append(item_type)
+        # The same bargain one axis over. `semantics.DEFAULT_LIST_EXCLUDED_KINDS`
+        # is INDEXED, not LISTED — a scheduled report's findings are retrievable material,
+        # not library rows the owner has to scroll past, and a weekly report would otherwise
+        # bury everything hand-authored inside a month. Search (above) does not filter them,
+        # and naming one in `?kind=` drops it from the exclusion, because an explicit filter
+        # that silently returns nothing is worse than one that answers.
+        listed_excluded = sorted(DEFAULT_LIST_EXCLUDED_KINDS - {kind or ""})
+        if listed_excluded:
+            marks = ",".join("?" * len(listed_excluded))
+            where.append(f"COALESCE(i.kind, '') NOT IN ({marks})")  # noqa: S608
+            params.extend(listed_excluded)
+        if kind:
+            where.append("i.kind = ?")
+            params.append(kind)
         if status:
             where.append("i.status = ?")
             params.append(status)
@@ -2081,6 +2104,76 @@ async def list_item_relations(request: web.Request) -> web.Response:
     return web.json_response(out)
 
 
+async def get_item_staleness(request: web.Request) -> web.Response:
+    """GET /api/knowledge/items/{id}/staleness — has the corpus moved under this synthesis?
+
+    The count, not just a boolean: "3 new source items" is something a reader can weigh
+    against clicking regenerate, where a bare "may be out of date" is a shrug. ``scope``
+    names what was counted, so the number is arguable rather than oracular. The rules live
+    in :mod:`personalclaw.knowledge.staleness`.
+    """
+    store = _store(request)
+    item_id = request.match_info["id"]
+    try:
+        report = staleness_for(store, item_id)
+    except KeyError:
+        return web.json_response({"error": "not found"}, status=404)
+    return web.json_response(report.to_dict())
+
+
+async def regenerate_item(request: web.Request) -> web.Response:
+    """POST /api/knowledge/items/{id}/regenerate — the one action the staleness banner offers.
+
+    It files a PROPOSAL (``auto_accept=False``) rather than overwriting in place: a synthesis
+    the reader may already have acted on should not change under them without a review step.
+
+    Idempotency belongs to the proposal layer, which owns the pending row; this route only
+    re-surfaces what that layer reports. ``already_pending`` is ``true``/``false`` when
+    :func:`personalclaw.knowledge.updates.propose_update` says so under that key and ``null``
+    when it says nothing — so a second click is never reported as a second proposal created
+    on the strength of a guess here.
+    """
+    store = _store(request)
+    item_id = request.match_info["id"]
+    item = store.get_item(item_id)
+    if not item:
+        return web.json_response({"error": "not found"}, status=404)
+    if not is_synthesized(str(item.get("item_type") or "")):
+        return web.json_response(
+            {"error": "only a synthesized item can be regenerated"}, status=400
+        )
+    try:
+        from personalclaw.knowledge.updates import propose_update
+    except ImportError:
+        # The update pipeline is a separate module; without it there is no regenerate action
+        # to perform. An explicit "unavailable" beats a traceback on a button the banner
+        # itself offered the reader.
+        logger.warning("knowledge update pipeline unavailable", exc_info=True)
+        return web.json_response(
+            {
+                "error": "regeneration is unavailable: the knowledge update pipeline is "
+                "not installed",
+                "reason": "updates_unavailable",
+            },
+            status=503,
+        )
+    result = await propose_update(store, item_id, auto_accept=False)
+    already = result.get("already_pending") if isinstance(result, dict) else None
+    try:
+        sel().log_tool_invocation(
+            session_key="dashboard:knowledge",
+            tool_name="knowledge_regenerate_item",
+            outcome="success",
+            request_id=item_id,
+            source="dashboard",
+        )
+    except Exception:
+        logger.warning("SEL audit failed for knowledge regenerate", exc_info=True)
+    return web.json_response(
+        {"ok": True, "item_id": item_id, "already_pending": already, "proposal": result}
+    )
+
+
 def _int_param(request: web.Request, name: str, default: int, *, low: int, high: int) -> int:
     raw = request.query.get(name)
     try:
@@ -2738,6 +2831,8 @@ def setup_knowledge_routes(app: web.Application) -> None:
     # is the owner's judgement, not something an endpoint should let the system settle.
     app.router.add_get("/api/knowledge/conflicts", list_conflicts)
     app.router.add_get("/api/knowledge/items/{id}/relations", list_item_relations)
+    app.router.add_get("/api/knowledge/items/{id}/staleness", get_item_staleness)
+    app.router.add_post("/api/knowledge/items/{id}/regenerate", regenerate_item)
     app.router.add_patch("/api/knowledge/tags/{id}", rename_tag)
     app.router.add_post("/api/knowledge/tags/{id}/merge", merge_tag)
     app.router.add_delete("/api/knowledge/tags/{id}", delete_tag)

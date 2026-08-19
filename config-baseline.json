@@ -683,6 +683,18 @@
     "type": "str"
   },
   {
+    "default": 32,
+    "path": "knowledge.embed_batch_size",
+    "sensitive": false,
+    "type": "int"
+  },
+  {
+    "default": 3,
+    "path": "knowledge.embed_retry_budget",
+    "sensitive": false,
+    "type": "int"
+  },
+  {
     "default": true,
     "path": "knowledge.idempotent_persist",
     "sensitive": false,
@@ -691,6 +703,12 @@
   {
     "default": 12,
     "path": "knowledge.lint_every_n_persists",
+    "sensitive": false,
+    "type": "int"
+  },
+  {
+    "default": 900,
+    "path": "knowledge.maintenance_max_staleness_secs",
     "sensitive": false,
     "type": "int"
   },

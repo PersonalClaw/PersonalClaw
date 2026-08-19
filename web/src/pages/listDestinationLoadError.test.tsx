@@ -131,7 +131,7 @@ describe('#/knowledge distinguishes a failed read from an empty library', () => 
   }
   const mountKnowledge = async () => {
     const { KnowledgeListPage } = await import('./knowledge/KnowledgeListPage')
-    render(<KnowledgeListPage onCreate={() => {}} onOpenItem={() => {}} onOpenSources={() => {}}
+    render(<KnowledgeListPage onCreate={() => {}} onOpenItem={() => {}} onOpenSources={() => {}} onOpenReports={() => {}}
       query={q} setQuery={setQuery} />)
   }
 

@@ -318,6 +318,7 @@ def _pipe_fenced_sources(value: Any) -> str:
     fence alone tells the model the span is data but not what to do with it — and a model handed
     unattributed context answers from memory when the context comes up short.
     """
+    import personalclaw.knowledge.citations as kcit
     from personalclaw.security import fence_untrusted
 
     items = value if isinstance(value, list) else ([] if value is None else [value])
@@ -329,13 +330,20 @@ def _pipe_fenced_sources(value: Any) -> str:
 
     blocks: list[str] = []
     for index, item in enumerate(items, start=1):
+        # Markers OUT of the source body before this turn's `[1]..[n]` goes in. A retrieved
+        # item is often itself a synthesis carrying its own `[1]`, and left in place that
+        # inherited marker reads as a citation of THIS turn's source 1 — a marker that
+        # resolves to the wrong item is worse than no marker, because it looks answerable.
+        # Only the bodies are stripped; the numbering is untouched, because it is the contract
+        # `citations.register_sources` mirrors.
         if isinstance(item, dict):
             title = str(item.get("title", "") or "").strip()
-            body = str(item.get("content") or item.get("summary") or "").strip()
+            raw_body = str(item.get("content") or item.get("summary") or "")
+            body = kcit.strip_markers(raw_body).strip()
             head = f"[{index}] {title}" if title else f"[{index}]"
             text = f"{head}\n{body}" if body else head
         else:
-            text = f"[{index}] {item}"
+            text = f"[{index}] {kcit.strip_markers(str(item))}"
         blocks.append(fence_untrusted(text, source="knowledge"))
     return "\n".join(
         [
@@ -344,6 +352,33 @@ def _pipe_fenced_sources(value: Any) -> str:
             *blocks,
         ]
     )
+
+
+def _pipe_source_refs(value: Any) -> list[dict[str, Any]]:
+    """`source_refs` — the same numbering `fenced_sources` shows the model, as data.
+
+    `fenced_sources` numbers the retrieved set `[1]..[n]` in the prompt, but nothing carried
+    that numbering anywhere else, so a template could only satisfy the synthesized-kind
+    citation rule by storing the WHOLE retrieved set. That records what was retrieved and can
+    never answer "which source supports this sentence". Handing the refs to the persist step
+    lets it resolve the model's `[n]` markers against the same list the model was reading.
+
+    Registered through `citations.register_sources` rather than re-enumerated here: two
+    enumerations that agree today is exactly how the numbering silently drifts apart later.
+    Emitted as plain dicts because a binding value crosses into an action config as JSON.
+    """
+    import personalclaw.knowledge.citations as kcit
+
+    items = value if isinstance(value, list) else ([] if value is None else [value])
+    return [
+        {
+            "marker": int(ref.marker),
+            "item_id": str(ref.item_id),
+            "chunk_index": int(ref.chunk_index),
+            "excerpt": str(ref.excerpt),
+        }
+        for ref in kcit.register_sources(items)
+    ]
 
 
 def _pipe_clamp(value: Any, low: Any = 0, high: Any = 1) -> Any:
@@ -387,12 +422,20 @@ PIPES: dict[str, Any] = {
     "hygiene": _pipe_hygiene,
     "clamp": _pipe_clamp,
     "fenced_sources": _pipe_fenced_sources,
+    "source_refs": _pipe_source_refs,
 }
 
 #: Pipes that suppress the default sibling view. `window` and `significant` count: a template
 #: that stated its own bound has said what it wants, and silently applying the default on top
 #: would make an explicit `window(50)` mean 20.
-_EXPLICIT_VIEW_PIPES = frozenset({"full", "window", "significant", "unseen", "fenced_sources"})
+#:
+#: `source_refs` is in for a different reason: it must see the SAME items `fenced_sources`
+#: numbered, and `fenced_sources` opts out. If one pipe read the bounded view and the other the
+#: full list, `[3]` in the prompt and ref 3 in the persist step would name different items — a
+#: citation that resolves to the wrong source, which is the failure this pipe exists to prevent.
+_EXPLICIT_VIEW_PIPES = frozenset(
+    {"full", "window", "significant", "unseen", "fenced_sources", "source_refs"}
+)
 
 
 def _parse_pipe_args(raw: str) -> list[Any]:

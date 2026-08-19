@@ -31,6 +31,7 @@ import logging
 import re
 import time
 import uuid
+from dataclasses import dataclass, field
 from typing import Any
 
 from personalclaw.action_providers.base import ActionContext, ActionProvider, ActionResult
@@ -62,7 +63,13 @@ class KnowledgePersistActionProvider(ActionProvider):
             "summary": "…",                  # optional; one line, for retrieval
             "tags": ["perf"],                # optional
             "claims": [{...}],               # optional; structured claims
-            "citations": ["trace-1"],        # required for insight|report|overview
+            # The numbered sources the writing stage was shown, from `| source_refs`. The
+            # provider PARSES the `[n]` markers out of `content` (and `summary`) and derives
+            # `citations` from the ones that resolved — which is how a stored item can answer
+            # "which source supports this sentence" rather than only "what was retrieved".
+            "citation_sources": [{"marker": 1, "item_id": "a1f…"}],
+            "citations": ["1:a1f…"],         # legacy/manual path only; ignored when
+                                             # `citation_sources` is present
             "unsourced": false,              # explicit opt-out of the citation rule
             "source_ref": "…",               # auto-filled from the run when absent
             "read_when": ["…"],              # optional retrieval triggers (KNOW-R12)
@@ -99,15 +106,23 @@ class KnowledgePersistActionProvider(ActionProvider):
                 error="knowledge-persist is missing 'content' — bind it to a node's output",
             )
         body = content if isinstance(content, str) else _stringify(content)
+        summary = str(cfg.get("summary", "") or "")
+
+        # BEFORE the check, because the check now asks what the text actually cited, and before
+        # the write, because the text that gets stored is the resolved one — a marker that
+        # points at nothing must never reach a reader.
+        cited = _resolve_citations(cfg, body=body, summary=summary)
+        body, summary = cited.content, cited.summary
 
         claims_raw = cfg.get("claims") or []
         check = check_persist(
             kind=str(cfg.get("kind", "fact") or "fact"),
             title=title,
             content=body,
-            summary=str(cfg.get("summary", "") or ""),
+            summary=summary,
             claims=[c for c in claims_raw if isinstance(c, dict)],
-            citations=[str(c) for c in (cfg.get("citations") or [])],
+            citations=cited.stored,
+            marker_citations=cited.records,
             unsourced=bool(cfg.get("unsourced")),
             ttl=str(cfg.get("ttl", "") or ""),
             expires_at=str(cfg.get("expires_at", "") or ""),
@@ -141,6 +156,7 @@ class KnowledgePersistActionProvider(ActionProvider):
                         "logical_key": check.logical_key,
                         "created": False,
                         "mentions_appended": 0,
+                        "citation_warnings": cited.warnings,
                         "reason": decision.reason,
                     }
                 ),
@@ -207,6 +223,7 @@ class KnowledgePersistActionProvider(ActionProvider):
                         "created": False,
                         "mentions_appended": appended,
                         "conflicts": conflicts,
+                        "citation_warnings": cited.warnings,
                         "reason": decision.reason,
                     }
                 ),
@@ -234,6 +251,11 @@ class KnowledgePersistActionProvider(ActionProvider):
         for key in ("read_when", "citations", "source", "extraction"):
             if cfg.get(key):
                 metadata[key] = cfg[key]
+        if cited.records is not None:
+            # The marker path OWNS `citations`: the list is what the prose actually cited, not
+            # what the config listed. Assigned even when empty, so a rewrite that dropped every
+            # marker cannot keep the previous write's citations standing behind it.
+            metadata["citations"] = list(cited.stored)
 
         item_id = decision.item_id or uuid.uuid4().hex[:12]
         try:
@@ -242,7 +264,7 @@ class KnowledgePersistActionProvider(ActionProvider):
                 item_id=item_id,
                 title=title,
                 content=body,
-                summary=str(cfg.get("summary", "") or ""),
+                summary=summary,
                 kind=check.normalized_kind,
                 logical_key=check.logical_key,
                 content_hash=check.content_hash,
@@ -259,6 +281,8 @@ class KnowledgePersistActionProvider(ActionProvider):
             # conflict records rather than being recomputed — recomputing could find a different
             # neighbour set and produce edges that do not match the recorded conflicts.
             _write_conflict_edges(store, conflicts, source_item=item_id)
+        # Also after the row exists: the per-marker rows hang off it.
+        _write_item_citations(store, item_id, cited.records or [])
         _enqueue_enrichment(item_id)
         return ActionResult(
             success=True,
@@ -269,10 +293,134 @@ class KnowledgePersistActionProvider(ActionProvider):
                     "created": decision.action == "create",
                     "mentions_appended": appended,
                     "conflicts": conflicts,
+                    "citation_warnings": cited.warnings,
                     "reason": decision.reason,
                 }
             ),
             duration_ms=int((time.monotonic() - started) * 1000),
+        )
+
+
+# ── citations ──
+
+
+@dataclass
+class _CitationWiring:
+    """What the marker pass derived: the text that may be STORED, and the citations it earned.
+
+    `records is None` means no marker pass ran at all — the caller passed a hand-written
+    `citations` list, or nothing. That is a different state from "a pass ran and resolved
+    nothing", and `check_persist` treats them differently, so they must not collapse into one
+    empty list here.
+    """
+
+    content: str
+    summary: str
+    stored: list[str] = field(default_factory=list)
+    records: list[Any] | None = None
+    warnings: list[str] = field(default_factory=list)
+
+
+def _resolve_citations(cfg: dict[str, Any], *, body: str, summary: str) -> _CitationWiring:
+    """Derive citations by PARSING the item's own prose against the sources it was shown.
+
+    The retrieved set is not a citation. A template that stores every item it recalled has
+    recorded what was retrieved, and "which source supports this sentence" stays unanswerable —
+    which was the state of the synthesis template before this: the stage was asked to cite as
+    `[n]` and nothing on the write path ever read an `[n]`.
+
+    So `citation_sources` (the numbered refs the stage was shown) is what turns the model's
+    markers into records. Markers that name no registered source are DROPPED from the stored
+    text rather than kept: a dangling `[7]` in a stored article is a promise of provenance the
+    store cannot keep, and the reader has no way to tell it from a good one.
+    """
+    raw_sources = cfg.get("citation_sources")
+    if not raw_sources:
+        # The legacy/manual path, unchanged: a hand-written list, taken at face value. No pass
+        # ran, so `records` stays None and the check falls back to its presence rule.
+        declared = [str(c) for c in (cfg.get("citations") or [])]
+        return _CitationWiring(content=body, summary=summary, stored=declared)
+
+    import personalclaw.knowledge.citations as kcit
+
+    sources = _coerce_source_refs(raw_sources)
+    resolved = kcit.resolve(body, sources)
+    records = list(resolved.citations)
+    warnings = list(resolved.warnings)
+    new_summary = summary
+    if summary and kcit.parse_markers(summary):
+        # The summary is resolved too when it carries markers — it is the field retrieval shows
+        # first, so a dangling marker there is the one a reader actually hits.
+        resolved_summary = kcit.resolve(summary, sources)
+        new_summary = resolved_summary.text
+        warnings.extend(resolved_summary.warnings)
+        seen = {int(getattr(c, "marker", 0)) for c in records}
+        for extra in resolved_summary.citations:
+            if int(getattr(extra, "marker", 0)) not in seen:
+                records.append(extra)
+        records.sort(key=lambda c: int(getattr(c, "marker", 0)))
+    return _CitationWiring(
+        content=resolved.text,
+        summary=new_summary,
+        stored=list(kcit.persist_form(records)),
+        records=records,
+        warnings=warnings,
+    )
+
+
+def _coerce_source_refs(raw: Any) -> list[Any]:
+    """`citation_sources` as a binding delivers it — dicts, because a binding value is JSON by
+    the time it reaches an action config, not the `SourceRef` objects the pipe started with."""
+    import personalclaw.knowledge.citations as kcit
+
+    refs: list[Any] = []
+    for entry in raw if isinstance(raw, list) else [raw]:
+        if not isinstance(entry, dict):
+            # Already a SourceRef (an in-process caller). Passed through untouched.
+            refs.append(entry)
+            continue
+        try:
+            marker = int(entry.get("marker") or 0)
+            chunk_index = int(entry.get("chunk_index", -1) or -1)
+        except (TypeError, ValueError):
+            continue
+        item_id = str(entry.get("item_id") or "").strip()
+        if marker <= 0 or not item_id:
+            # A ref with no marker or no item cannot answer "which source". Dropped here so the
+            # marker naming it resolves to NOTHING and warns, rather than to a blank item id
+            # that would read as a real citation on retrieval.
+            continue
+        refs.append(
+            kcit.SourceRef(
+                marker=marker,
+                item_id=item_id,
+                chunk_index=chunk_index,
+                excerpt=str(entry.get("excerpt") or ""),
+            )
+        )
+    return refs
+
+
+def _write_item_citations(store, item_id: str, records: list[Any]) -> None:
+    """Hand the resolved per-marker citations to the store, if this store keeps them.
+
+    Guarded by `callable`, not called bare: the per-marker table belongs to the citations
+    module, and an `AttributeError` here would fail a write whose row and compact `citations`
+    list already landed correctly — losing the article to report a missing side table.
+    """
+    if not records:
+        return
+    setter = getattr(store, "set_item_citations", None)
+    if not callable(setter):
+        logger.debug("knowledge store keeps no per-marker citations — skipped for %s", item_id)
+        return
+    try:
+        setter(item_id, records)
+    except Exception:
+        logger.warning(
+            "per-marker citations not stored for %s — the compact list still is",
+            item_id,
+            exc_info=True,
         )
 
 

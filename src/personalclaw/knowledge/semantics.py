@@ -37,6 +37,7 @@ import json
 import logging
 import re
 import unicodedata
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Any
@@ -44,6 +45,12 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 # ── The typed taxonomy ──
+
+#: One written finding produced by a scheduled research report. Named here
+#: rather than in `knowledge/research_reports.py` because the taxonomy is what decides a
+#: kind exists: the report machinery is a PRODUCER of this kind, and a producer naming its
+#: own vocabulary is how a second, disagreeing spelling gets minted.
+RESEARCH_FINDING_KIND = "research-finding"
 
 #: The `kind` vocabulary. Distinct from `item_type`, which routes the INGESTION graph and
 #: stays one of the 12 native types — conflating the two would make "how did this arrive"
@@ -53,6 +60,7 @@ KINDS = (
     "decision",
     "insight",
     "report",
+    RESEARCH_FINDING_KIND,
     "reference",
     "known-issue",
     "preference-note",
@@ -64,7 +72,24 @@ KINDS = (
 #: Kinds that are SYNTHESIZED rather than observed. These require citations, because an
 #: unsourced synthesis is indistinguishable from a confident guess once it is in the store
 #: and being retrieved as fact.
-SYNTHESIZED_KINDS = frozenset({"insight", "report", "overview"})
+#: `research-finding` is in here for the reason the set exists rather than by analogy to
+#: `report`: a scheduled report runs UNATTENDED and recurring, so an unsourced finding is
+#: not one confident guess a reader can weigh — it is a guess that accumulates on a cron
+#: while nobody is reading, and every later retrieval treats it as fact. If a research pass
+#: genuinely produced a finding it cannot source, `unsourced=True` says so out loud.
+SYNTHESIZED_KINDS = frozenset({"insight", "report", RESEARCH_FINDING_KIND, "overview"})
+
+#: Kinds INDEXED but not LISTED: they are absent from the plain library list and re-admitted
+#: the moment a caller names one. Declared here, next to the vocabulary, because an
+#: exclusion hardcoded at the query site is invisible to anyone reading the taxonomy — and a
+#: second list surface would then quietly disagree about what the library contains.
+#:
+#: A report's finding is retrievable material, not a library row the owner has to scroll
+#: past. A single scheduled report writes many findings and keeps writing them every week,
+#: so listing them would bury hand-authored knowledge under machine output within a month —
+#: the report itself is the row a human wants, and its findings are what search and the
+#: report's own detail view resolve to.
+DEFAULT_LIST_EXCLUDED_KINDS: frozenset[str] = frozenset({RESEARCH_FINDING_KIND})
 
 #: Per-kind size budgets in characters. A budget overrun returns a descriptive failure
 #: rather than raising, so the synthesizing stage can condense and retry under the
@@ -74,6 +99,11 @@ KIND_BUDGETS: dict[str, int] = {
     "decision": 8_000,
     "insight": 12_000,
     "report": 40_000,
+    # Between `insight` (12k) and `report` (40k), matching `overview`: a finding is one
+    # written claim WITH its evidence prose and citation block, so it needs more room than a
+    # bare insight — but a scheduled run emits several per pass, and budgeting each at the
+    # whole-report 40k would let one week's output outweigh everything the owner wrote.
+    RESEARCH_FINDING_KIND: 16_000,
     "reference": 20_000,
     "known-issue": 8_000,
     "preference-note": 2_000,
@@ -123,6 +153,27 @@ def effective_budgets() -> dict[str, int]:
     except Exception:
         logger.debug("knowledge budget config unreadable — using defaults", exc_info=True)
     return budgets
+
+
+def citations_required() -> bool:
+    """Whether `knowledge.require_citations` is on. The knob's FIRST reader.
+
+    It shipped with a default, a `_meta` label and a PATCH allowlist entry, and nothing
+    anywhere read it — a switch an owner could flip that changed nothing about what the store
+    would accept. On, it means what it says: a synthesized item has to name a source that
+    actually supports it, not merely carry a non-empty list.
+
+    Fails to ON when config cannot be read, which is also the field's default: a control whose
+    whole job is to keep an unsourced synthesis out of the store must not be relaxed by an
+    unreadable config file.
+    """
+    try:
+        from personalclaw.config.loader import AppConfig
+
+        return bool(getattr(AppConfig.load().knowledge, "require_citations", True))
+    except Exception:
+        logger.debug("knowledge citation config unreadable — requiring citations", exc_info=True)
+        return True
 
 
 # ── Logical identity ──
@@ -456,6 +507,7 @@ def check_persist(
     summary: str = "",
     claims: list[dict] | None = None,
     citations: list[str] | None = None,
+    marker_citations: Sequence[Any] | None = None,
     unsourced: bool = False,
     ttl: str = "",
     expires_at: str = "",
@@ -467,6 +519,11 @@ def check_persist(
     Order is deliberate: identity is computed before the budget check, so a rejected
     oversize write still tells the caller WHICH item it would have been — otherwise the
     retry cannot tell whether it is creating or updating.
+
+    `marker_citations` is the resolved `[n]` citations a caller parsed out of the item's own
+    prose. `None` means no marker pass ran (a hand-written `citations` list, or a caller that
+    predates markers), and that path keeps the presence check it has always had — so no
+    existing caller changes behaviour by not passing it.
     """
     normalized_kind = (kind or "fact").strip().lower()
     if normalized_kind not in KINDS:
@@ -483,16 +540,33 @@ def check_persist(
 
     # Citations on synthesized kinds. An unsourced synthesis is indistinguishable from a
     # confident guess once it is in the store being retrieved as fact — so the requirement
-    # is explicit, and so is the opt-out.
-    if normalized_kind in SYNTHESIZED_KINDS and not citations and not unsourced:
-        return PersistCheck(
-            False,
-            f"kind {normalized_kind!r} is synthesized and needs `citations`, or an explicit "
-            "`unsourced: true` — an unsourced synthesis reads as fact on retrieval",
-            normalized_kind=normalized_kind,
-            logical_key=key,
-            content_hash=digest,
-        )
+    # is explicit, and so is the opt-out. `unsourced` is the escape hatch in BOTH modes.
+    if normalized_kind in SYNTHESIZED_KINDS and not unsourced:
+        if marker_citations is not None and citations_required():
+            # A marker pass ran, so "is the list non-empty" is the wrong question: a caller
+            # could satisfy it by storing the WHOLE retrieved set, which records what was
+            # retrieved and never which source supports which sentence. At least one `[n]`
+            # has to have resolved, or nothing in this item is attributable.
+            if not list(marker_citations):
+                return PersistCheck(
+                    False,
+                    f"kind {normalized_kind!r} is synthesized and cited nothing — no `[n]` "
+                    "marker in its text resolved to one of the numbered sources it was given, "
+                    "so no sentence here is attributable. Cite sources as `[n]`, or pass "
+                    "`unsourced: true` (or turn off `knowledge.require_citations`)",
+                    normalized_kind=normalized_kind,
+                    logical_key=key,
+                    content_hash=digest,
+                )
+        elif not citations:
+            return PersistCheck(
+                False,
+                f"kind {normalized_kind!r} is synthesized and needs `citations`, or an explicit "
+                "`unsourced: true` — an unsourced synthesis reads as fact on retrieval",
+                normalized_kind=normalized_kind,
+                logical_key=key,
+                content_hash=digest,
+            )
 
     limits = budgets if budgets is not None else effective_budgets()
     budget = int(limits.get(normalized_kind, DEFAULT_BUDGET))
