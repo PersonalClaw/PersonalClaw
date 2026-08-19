@@ -200,6 +200,46 @@ describe('the hand-rolled row actions a primitive-shaped census could not see', 
     expect(panel(), 'the dashed spelling silently vanishes on ui/Button').not.toMatch(/<Button[^>]*aria-label=/)
   })
 
+  // ── 2026-08-19 (ux-716): the same defect at ELEVEN instances, one card component ────────────────
+  //
+  // `#/settings/providers` renders one `ProviderCard` per provider. Measured live: **11 buttons, and
+  // every one of them was named "Configure"** — one duplicate group of 11, each opening a DIFFERENT
+  // provider's config form. The card's other controls have the same shape (Sign in · Check availability ·
+  // and the channel strip's Test / Connect / Disconnect), conditional on runtime state, so they are
+  // fixed together rather than left as known members.
+  //
+  // 🔑 THE FILE ALREADY NAMED ONE OF ITS OWN CONTROLS: the enable `Toggle` passes
+  // `label={`Toggle ${ext.name}`}`. So the convention was in the file, applied once.
+  //
+  // The subject is `who = ext.displayName || ext.name` — the card's own visible title, computed once so
+  // six controls cannot drift apart. `title` stays the short verb on the two `SquareIconButton`s, which
+  // is the same split `#/projects` uses (`label={`Delete project: ${p.name}`} title="Delete project"`).
+  //
+  // After: **11 buttons, 0 duplicate name groups.**
+  const PROVIDER_CONTROLS: [string, string][] = [
+    ['Sign in', 'aria-label={`Sign in: ${who}`}'],
+    ['Check availability', 'label={`Check availability: ${who}`} title="Check availability"'],
+    ['Configure', 'label={`Configure: ${who}`} title="Configure"'],
+    ['Test', 'aria-label={`Test: ${channel.name}`}'],
+    ['Disconnect', 'aria-label={`Disconnect: ${channel.name}`}'],
+    ['Connect', 'aria-label={`Connect: ${channel.name}`}'],
+  ]
+
+  it.each(PROVIDER_CONTROLS)('ProviderCard names its %s', (_verb, expected) => {
+    expect(read('pages/settings/ProviderCard.tsx')).toContain(expected)
+  })
+
+  it('the provider subject is the card\'s own visible title, computed once', () => {
+    const code = read('pages/settings/ProviderCard.tsx')
+    expect(code, 'derived from what the card displays, not re-picked per control')
+      .toMatch(/const who = ext\.displayName \|\| ext\.name/)
+    expect(code, 'and the title the card renders is the same expression')
+      .toMatch(/\{ext\.displayName \|\| ext\.name\}/)
+    // The bare names are the defect; none may come back.
+    expect(code).not.toMatch(/label="Configure"/)
+    expect(code).not.toMatch(/label="Check availability"/)
+  })
+
   // ── the derived census: a row action is one whose HANDLER references the mapped item ─────────────
   //
   // Membership by shape, not by primitive and not by verb: inside `.map((item) => …)`, a `<Button>`

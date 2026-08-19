@@ -24,6 +24,8 @@ export function ProviderCard({ ext, runtime, channel, open, onOpenChange, onChan
   const unavailable = ext.available === false
   // A managed provider is an app (install/uninstall = on/off). A non-managed one
   // is an always-on native built-in — mandatory, shown without a toggle.
+  /** What the card's own title shows — the subject every control here acts on. */
+  const who = ext.displayName || ext.name
   const managed = ext.managed === true
 
   const toggle = async () => {
@@ -50,15 +52,21 @@ export function ProviderCard({ ext, runtime, channel, open, onOpenChange, onChan
         </div>
 
         {runtime && !unavailable && <RuntimeChip state={runtime.state} />}
+        {/* Every control in this card is ONE PER PROVIDER, so a static verb announces as N identical
+            entries — measured live on this surface: 11 buttons, every one of them named "Configure".
+            Each name now carries `who`, the card's own visible title; visible text and tooltips are
+            untouched. The Toggle below already named its provider, so the form is this file's own.
+            🪤 This comment sits BEFORE the conditional, not after its `&& (` — a JSX comment in an
+            EXPRESSION position is an object literal, which is four TS1005s and no comment at all. */}
         {runtime && runtime.state === 'needs_login' && runtime.login_command && onSignIn && (
-          <button type="button" onClick={() => onSignIn(runtime)}
+          <button type="button" onClick={() => onSignIn(runtime)} aria-label={`Sign in: ${who}`}
             className="inline-flex shrink-0 items-center gap-1 rounded-pill bg-surface-high px-2.5 py-1 text-on-surface text-[0.75rem] hover:bg-surface-highest">
             <KeyRound size={12} /> Sign in
           </button>
         )}
         {/* Manual availability re-check — forces a fresh readiness probe. */}
         {runtime && runtime.type !== 'native' && !unavailable && onRecheck && (
-          <SquareIconButton label="Check availability" disabled={rechecking} className="shrink-0"
+          <SquareIconButton label={`Check availability: ${who}`} title="Check availability" disabled={rechecking} className="shrink-0"
             onClick={async () => { setRechecking(true); try { await onRecheck() } finally { setRechecking(false) } }}>
             <RefreshCw size={14} className={rechecking ? 'animate-spin' : ''} />
           </SquareIconButton>
@@ -70,7 +78,8 @@ export function ProviderCard({ ext, runtime, channel, open, onOpenChange, onChan
           : <span className="shrink-0 rounded-pill bg-surface-high px-2 py-0.5 text-on-surface-low text-[0.75rem]" title="Built-in provider — always available">Always on</span>
         )}
         {hasConfig && (
-          <SquareIconButton label="Configure" on={open} onClick={() => onOpenChange(!open)} className="shrink-0">
+          <SquareIconButton label={`Configure: ${who}`} title="Configure" on={open}
+            onClick={() => onOpenChange(!open)} className="shrink-0">
             <ChevronDown size={16} className="transition-transform" style={{ transform: open ? 'rotate(180deg)' : 'none' }} />
           </SquareIconButton>
         )}
@@ -127,16 +136,17 @@ function ChannelRuntimeRow({ channel, onChanged }: { channel: ChannelRuntime; on
       </span>
       {(detail ?? channel.health.detail) && <span className="text-on-surface-low text-[0.75rem] truncate max-w-[60%]">{detail ?? channel.health.detail}</span>}
       <div className="ml-auto flex items-center gap-1.5">
-        <button type="button" onClick={() => act('test')} disabled={!!busy}
+        {/* One strip per channel provider, so these three share names across rows too. */}
+        <button type="button" onClick={() => act('test')} disabled={!!busy} aria-label={`Test: ${channel.name}`}
           className="inline-flex items-center gap-1 rounded-md bg-surface-high px-2 py-1 text-[0.75rem] text-on-surface-var hover:text-on-surface disabled:opacity-50">
           {busy === 'test' ? <Loader2 size={11} className="animate-spin" /> : <Beaker size={11} />} Test
         </button>
         {channel.connected
-          ? <button type="button" onClick={() => act('disconnect')} disabled={!!busy}
+          ? <button type="button" onClick={() => act('disconnect')} disabled={!!busy} aria-label={`Disconnect: ${channel.name}`}
               className="inline-flex items-center gap-1 rounded-md bg-surface-high px-2 py-1 text-[0.75rem] text-on-surface-var hover:text-danger disabled:opacity-50">
               {busy === 'disconnect' ? <Loader2 size={11} className="animate-spin" /> : <Plug size={11} />} Disconnect
             </button>
-          : <button type="button" onClick={() => act('connect')} disabled={!!busy}
+          : <button type="button" onClick={() => act('connect')} disabled={!!busy} aria-label={`Connect: ${channel.name}`}
               className="inline-flex items-center gap-1 rounded-md bg-surface-high px-2 py-1 text-[0.75rem] text-on-surface-var hover:text-primary disabled:opacity-50">
               {busy === 'connect' ? <Loader2 size={11} className="animate-spin" /> : <PlugZap size={11} />} Connect
             </button>}
