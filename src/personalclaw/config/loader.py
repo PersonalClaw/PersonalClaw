@@ -500,11 +500,22 @@ def _dotenv_save_credential(key: str, value: str) -> None:
             lines.append(line)
     if not found:
         lines.append(f"{key}={value}")
-    ep.write_text("\n".join(lines) + "\n")
-    try:
-        ep.chmod(0o600)
-    except OSError:
-        logger.warning("Cannot enforce permissions on %s", ep)
+    # `atomic_write(mode=0o600)`, not write_text-then-chmod. Two defects in that pair:
+    #
+    #  • A CREATION WINDOW. `write_text` creates the file at the umask default (0644 under the
+    #    common 022), and the `chmod` narrowed it only AFTER the secret was already on disk. On
+    #    first creation the credential was world-readable for that window.
+    #  • NO ATOMICITY. A crash or a full disk mid-write left the credential file TRUNCATED —
+    #    every other key in it lost — because the target was written in place.
+    #
+    # `atomic_write` closes both: mkstemp creates the temp at 0600, fchmod pins the mode before
+    # any content is visible, and `os.replace` swaps it in one step, so a reader sees either the
+    # old file or the new one. `fsync=True` because losing a credential to a post-rename crash is
+    # the same outage as never having written it. Same shape as apps/app_secret.py::_write_0600,
+    # which names the umask hazard, plus the atomicity that one does not need and this one does.
+    from personalclaw.atomic_write import atomic_write
+
+    atomic_write(ep, "\n".join(lines) + "\n", mode=0o600, fsync=True)
 
 
 def _dotenv_credentials() -> dict[str, str]:
