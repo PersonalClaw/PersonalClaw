@@ -456,6 +456,53 @@
             "KL-10"
           ],
           "pr": 1286
+        },
+        {
+          "id": "KL-13",
+          "title": "Similarity edges: write-time kNN over chunk vectors, item-pair rollup, canonical ordering + chunk-pair provenance",
+          "status": "todo",
+          "scope": "Capability-gap amendment (2026-08-19)",
+          "done_when": "an item-similarity edge table exists with UNIQUE(source_item_id,target_item_id), ON DELETE CASCADE on both legs so edge cleanup on item delete is schema-enforced, a similarity score, and the winning source/target chunk indices stored as provenance so an edge can explain itself; after an item's chunks embed, a kNN pass over the existing chunk vector index fetches a multiple of top-K candidates per chunk, filters at a configured cosine floor, collapses chunk pairs to item pairs keeping the MAX (the same roll-up rule the vector arm already uses), truncates to top-K per item and upserts with canonical (min,max) id ordering; recomputing one item must NOT delete an edge another item's pass created \u2014 a union or canonical-source-only delete, proven by a test that recomputes A and asserts an edge B-A survives; a GLOBAL per-item degree cap is enforced, not merely a per-pass truncation, so inbound edges cannot accumulate unbounded; the related-items endpoint is served from this table with a real threshold, replacing the unthresholded shared-entity COUNT it uses today; the edge pass runs on the KL-14 maintenance host, never inline on the write path; the cosine floor, top-K and degree cap round-trip through config",
+          "deps": [
+            "KL-11",
+            "KL-14"
+          ]
+        },
+        {
+          "id": "KL-14",
+          "title": "Deferred graph-maintenance host: dirty flag + queue-drained/staleness trigger + watermark snapshot",
+          "status": "todo",
+          "scope": "Capability-gap amendment (2026-08-19)",
+          "done_when": "index-affecting writes mark a dirty watermark instead of doing graph work inline; a maintenance task registered on the existing heartbeat cadence is due only when dirty AND (in-flight ingest work is zero OR the dirt is older than a configured max-staleness), so a bulk import coalesces into one pass and a busy pipeline can still never starve maintenance; execute snapshots the watermark BEFORE running and clears only up to that snapshot, so a write landing mid-run stays pending rather than being swallowed; work is claimed in bounded batches with the lock released between sub-batches so UI saves are not stalled; the boot-hook chunk-backfill trigger is deleted in the same change (clean break, no dual path) since a hook that only fires at gateway start never runs again; the memory lint, knowledge consolidation and the graph linker backfill are registered on this host so each runs on a cadence instead of only when a human opens a panel; tests assert a bulk import of N items performs ONE edge pass not N, and that a write during a run is not lost; max-staleness round-trips through config",
+          "deps": []
+        },
+        {
+          "id": "KL-15",
+          "title": "Embedding batch path: provider batching, bounded retry with backoff, adaptive batch bisection",
+          "status": "todo",
+          "scope": "Capability-gap amendment (2026-08-19)",
+          "done_when": "the ingest and re-embed paths call the embedding provider's batch entry point (already implemented by the shipped model apps and currently unreached from core) instead of one provider call per chunk, and the per-call thread-pool churn is removed; a configured batch size groups chunk texts per call; each call is wrapped in bounded retries with exponential backoff, replacing today's failure-returns-None-and-logs-at-debug path; on a retryable or batch-size-shaped error a batch of more than one splits in half and retries each half recursively until it succeeds or an individual chunk fails, so a provider's undeclared batch ceiling is discovered rather than failing the whole import \u2014 this matters precisely because providers are removable app bundles whose limits core cannot know; a fake provider that rejects batches above K proves the bisection converges and that no chunk is silently dropped; batch size and retry budget round-trip through config",
+          "deps": []
+        },
+        {
+          "id": "KL-16",
+          "title": "S4 reading experience: document outline + one prose measure + persistent context rail + in-article find",
+          "status": "todo",
+          "scope": "Capability-gap amendment (2026-08-19)",
+          "done_when": "a document outline panel renders headings parsed from the item body and keyed by SOURCE OFFSET rather than re-slugged from rendered children (so duplicate titles and inline markup cannot drift the outline out of sync with the document), indented from the shallowest heading present, with the active row driven by a rect-based scroll spy and scrolled into view; the two prose measures converge on one token and the 72ch container is retired \u2014 it measures ~101 characters, past the 45-90 return-sweep band, which the narrower reader's own comment already records; reading mode no longer REPLACES the insights dock \u2014 related items, entities and highlights ride a rail split by a container query on the reader pane, not a viewport breakpoint, because the details panel and nav rail steal width without narrowing the viewport; the chat find bar is promoted to a shared primitive and mounted in the reader with a distinct current-match treatment; related rows show a similarity percentage instead of a shared-entity count, and the retrieval score already returned by the API and rendered nowhere is surfaced; reading time moves into one shared helper and appears on the list row and metadata, not only after the user has committed to opening the item; the reading route joins the e2e route manifest so it is axe-scanned and snapshotted for the first time; design-system rails green (token lint, primitive adoption, named scroll region, reduced motion)",
+          "deps": [
+            "KL-7"
+          ]
+        },
+        {
+          "id": "KL-17",
+          "title": "S4 knowledge graph: embedding-projected layout, server-side edge sparsification, collision-checked labels, ego view from the document",
+          "status": "todo",
+          "scope": "Capability-gap amendment (2026-08-19)",
+          "done_when": "node positions are a deterministic 2-D projection of item embeddings computed server-side (power iteration with deflation, fixed-seed init so layouts are reproducible, normalized output, and mixed-dimension vectors placed at the origin rather than dropped), served with the graph payload and memoized with a debounced invalidation \u2014 so on-screen distance carries semantic meaning and the layout is stable across sessions, replacing the insertion-order concentric rings whose centre means 'highest inbound count' above the truncation cap and 'alphabetically first' below it; the payload keeps every node and thins EDGES instead of truncating nodes at a node cap (which loses data) \u2014 a similarity floor plus a top-K-per-node keep, with clusters above a minimum size labelled from their dominant tags; labels are placed by a measure-then-filter pass with a rendered-size floor, a shared placed-rect list and larger nodes winning slots on collision, replacing the degree/zoom threshold; the edge weight already on the wire and drawn nowhere is encoded on two channels (colour and width) since width alone is unreliable under a viewBox; a focused ego view reachable from an item's reading rail expands neighbours by hop depth, reusing the memory graph's existing lit-set BFS and its filter/drawer vocabulary rather than inventing a second one; both canvases keep the shared zoom control; the graph-mark contrast rail is widened from one hardcoded path to a derived census of every file rendering graph marks, with a vacuity assertion that the census is non-empty; the graph is reachable as a route so it is axe-scanned and snapshotted",
+          "deps": [
+            "KL-13"
+          ]
         }
       ]
     },
@@ -567,6 +614,26 @@
           "done_when": "the built-and-tested fast-model conflict pass runs against a live model through a stage node (not inside the action provider, per the action/stage split), and background typed-edge inference beyond `contradicts` is wired; observed end-to-end",
           "deps": [
             "WF2KNO-5"
+          ]
+        },
+        {
+          "id": "WF2KNO-11",
+          "title": "Synthesis legibility: staleness banner, propose-then-accept update, parsed per-marker citations",
+          "status": "todo",
+          "scope": "Capability-gap amendment (2026-08-19)",
+          "done_when": "a synthesized artifact whose sources have changed renders a banner naming the COUNT of new source items and offering one regenerate action, rather than silently serving a stale document; an update runs as a proposal the owner inspects and accepts or dismisses so generated prose never overwrites human writing, and the plain update path is expressed as propose-plus-auto-accept rather than a second code path (clean break, one updater); citation markers are PARSED OUT OF THE MODEL'S OUTPUT and stored relationally per marker (marker index, source item, chunk index, excerpt), keyed on the marker NUMBER rather than order of appearance so a marker emitted out of order does not renumber; a marker with no registered source is dropped with a warning rather than reaching the reader as a dangling reference; markers already present inside a quoted source are stripped before that text re-enters a prompt so every number resolves against the current turn's sources; the require-citations control is no longer satisfiable by storing the whole retrieved set, and a test proves an output that cites nothing fails it \u2014 today 'which source supports this sentence' is unanswerable",
+          "deps": [
+            "WF2KNO-2"
+          ]
+        },
+        {
+          "id": "WF2KNO-12",
+          "title": "Scheduled research reports: source-scope x context-scope x citation-policy, with hardened schedule semantics",
+          "status": "todo",
+          "scope": "Capability-gap amendment (2026-08-19)",
+          "done_when": "a report definition carries a research prompt, a schedule with a timezone, a SOURCE scope (which items count as new material, by tag subtree and time window), a SEPARATE CONTEXT scope (what may be searched while writing) and a CITATION POLICY (cite-source-only vs allow-citing-context) \u2014 that triple is what makes a contradiction scan and an open-question tracker expressible as configuration instead of code; each run writes one finding as an ordinary knowledge item so it inherits search, graph and synthesis for free, excluded from the default item list by kind; the agent loop is bounded by an iteration cap and told not to invent citation markers; schedule semantics are hardened against four named failures \u2014 an unparseable expression fails CLOSED so a malformed report cannot wedge the runner, a never-run report anchors its first fire on its creation time rather than the epoch, a missed window fires ONCE rather than once per window skipped, and a failed run records its error WITHOUT advancing the last-run timestamp; the due watermark is taken at scope-resolution time, not completion time, so an item captured mid-run is not skipped forever; a manual run is idempotent against an in-flight scheduled fire; an empty scope is a terminal success with no model call and no item written; delivery rides the existing digest and notification path rather than adding a second one",
+          "deps": [
+            "WF2KNO-6"
           ]
         }
       ],
@@ -2607,6 +2674,14 @@
             "LMMV-5",
             "LMMV-6"
           ]
+        },
+        {
+          "id": "LMMV-8",
+          "title": "Hardware-aware model fit: one memory budget, one traffic-light verdict, fit-filtered browse",
+          "status": "todo",
+          "scope": "Capability-gap amendment (2026-08-19)",
+          "done_when": "ONE module owns one memory-budget function and one fit verdict \u2014 unified memory counted once, an integrated GPU's VRAM never added on top of system RAM (the arithmetic that otherwise reports a larger budget than the machine has and then OOMs on load), only discrete VRAM adding a second pool, and a fixed reserve subtracted for the OS and runtime \u2014 producing a red/yellow/green/unknown verdict from model weights plus a KV-cache estimate; the host facts we ALREADY collect (GPU probe, total memory, free disk) are routed through one helper instead of three unrelated call sites, so the fit answer cannot disagree with itself; every model row renders a fit chip beside the existing status chips, and a browse filter that hides models the device cannot run defaults ON while an unknown or unmeasured budget hides NOTHING; a quoted size uses the median variant rather than the smallest so the chip cannot promise a fit the user will not get from the variant they actually pick, and the download panel steps down to the largest variant that fits; a pre-download free-space check refuses with a typed reason naming both numbers and SKIPS WITH A WARNING when the filesystem cannot be measured (an unmeasurable disk is not a reason to block a good download); unit tests pin the budget arithmetic including a machine smaller than the reserve, plus a vacuity assertion that on a synthetic small host at least one shipped model is red and at least one is green; the filter default and the reserve round-trip through config",
+          "deps": []
         }
       ]
     },
@@ -7637,8 +7712,28 @@
         "plan": "KL"
       },
       {
+        "id": "KL-14",
+        "title": "Deferred graph-maintenance host: dirty flag + queue-drained/staleness trigger + watermark snapshot",
+        "plan": "KL"
+      },
+      {
+        "id": "KL-15",
+        "title": "Embedding batch path: provider batching, bounded retry with backoff, adaptive batch bisection",
+        "plan": "KL"
+      },
+      {
+        "id": "KL-16",
+        "title": "S4 reading experience: document outline + one prose measure + persistent context rail + in-article find",
+        "plan": "KL"
+      },
+      {
         "id": "LMMV-7",
         "title": "Session 5b \u2014 Hardening: per-model context-budget helper, refresh/registry-drift/destructive-test regressions, full-matrix as-a-user validation",
+        "plan": "LMMV"
+      },
+      {
+        "id": "LMMV-8",
+        "title": "Hardware-aware model fit: one memory budget, one traffic-light verdict, fit-filtered browse",
         "plan": "LMMV"
       },
       {
@@ -7789,6 +7884,16 @@
       {
         "id": "WF2KNO-9",
         "title": "Provider-blocked template slate: market-monitor, trending-repo-digest, dual-sink watcher, paper-ingest",
+        "plan": "WF2KNO"
+      },
+      {
+        "id": "WF2KNO-11",
+        "title": "Synthesis legibility: staleness banner, propose-then-accept update, parsed per-marker citations",
+        "plan": "WF2KNO"
+      },
+      {
+        "id": "WF2KNO-12",
+        "title": "Scheduled research reports: source-scope x context-scope x citation-policy, with hardened schedule semantics",
         "plan": "WF2KNO"
       },
       {
@@ -8108,6 +8213,11 @@
       "KL-10",
       "KL-11",
       "KL-12",
+      "KL-14",
+      "KL-13",
+      "KL-15",
+      "KL-16",
+      "KL-17",
       "LMMV-1",
       "LMMV-2",
       "LMMV-3",
@@ -8115,6 +8225,7 @@
       "LMMV-5",
       "LMMV-6",
       "LMMV-7",
+      "LMMV-8",
       "LV-1",
       "LV-2",
       "LV-3",
@@ -8350,6 +8461,8 @@
       "WF2KNO-8",
       "WF2KNO-9",
       "WF2KNO-10",
+      "WF2KNO-11",
+      "WF2KNO-12",
       "WF2LEA-1",
       "WF2LEA-2",
       "WF2LEA-3",
@@ -9516,19 +9629,19 @@
       {
         "code": "KL",
         "plan": "KNOWLEDGE-LIBRARY",
-        "total_atoms": 12,
+        "total_atoms": 17,
         "done": 11,
         "in_progress": 0,
-        "todo": 1,
+        "todo": 6,
         "blocked": 0
       },
       {
         "code": "WF2KNO",
         "plan": "WORKFLOWS-V2-KNOWLEDGE-SYNTHESIS",
-        "total_atoms": 10,
+        "total_atoms": 12,
         "done": 9,
         "in_progress": 0,
-        "todo": 1,
+        "todo": 3,
         "blocked": 0
       },
       {
@@ -9678,10 +9791,10 @@
       {
         "code": "LMMV",
         "plan": "LOCAL-MODEL-MANAGER-V2",
-        "total_atoms": 7,
+        "total_atoms": 8,
         "done": 6,
         "in_progress": 0,
-        "todo": 1,
+        "todo": 2,
         "blocked": 0
       },
       {
@@ -10108,6 +10221,6 @@
         "blocked": 0
       }
     ],
-    "edge_count": 876
+    "edge_count": 882
   }
 }
