@@ -1,6 +1,7 @@
 import { useRef, useState } from 'react'
 import { Download, Upload, AlertTriangle, Loader2, FileArchive, ShieldCheck } from 'lucide-react'
 import { api, type PortabilityManifest } from '../../lib/api'
+import { humanBytes } from '../../lib/chunkedUpload'
 import { confirm } from '../../ui/dialog'
 import { notify } from '../../app/appSdk'
 import { PanelHeader, Section } from './settingsUI'
@@ -43,6 +44,78 @@ const EXPORTS: { key: string; label: string; domains?: string[]; hint: string }[
     hint: "The assistant's own memory: what it recorded about you, and its learning log.",
   },
 ]
+
+/** The archive summary a person can read, at the moment they decide whether to merge it.
+ *
+ *  🔴 WHAT IT REPLACED. The panel rendered `manifest.contents` straight, `JSON.stringify` and all, so a
+ *  full v3 archive answered "what is in this?" with eighteen rows like these — measured, not paraphrased:
+ *
+ *    workspace/knowledge/knowledge.db: 253952      run_history_files: 0
+ *    security_events.jsonl: 1025511                skill_count: 25
+ *    store_files: {"agents":3,"apps":61,"entity_settings":1,"projects":2,"prompt_snippets":43,…}
+ *
+ *  Raw store paths as labels, raw byte counts, zero-valued rows advertising what the archive does NOT
+ *  hold, and a JSON object inline. Meanwhile `domain_counts` — the per-area summary the server already
+ *  computes, `{knowledge: {bytes, files}, …}` for seven areas — sat UNREAD in the same payload. Same
+ *  family as the packs row that printed `connector_missing:health-records`: a machine value shown to a
+ *  person while the human-shaped field goes unused.
+ *
+ *  So: read `domain_counts` when the archive has it, and keep the raw inventory as the FALLBACK for a
+ *  pre-v3 archive that carries none — dropping it entirely would turn an old archive's answer into
+ *  silence, which is worse than an ugly answer.
+ */
+export interface ArchiveRow { label: string; detail: string }
+
+/** Area keys the server can emit (`durability.DOMAINS`), in the words the panel already uses for the
+ *  three it exports by name. The rest are capitalised rather than guessed at. */
+const AREA_LABELS: Record<string, string> = {
+  memory: 'Memory', knowledge: 'Knowledge', work: 'Work', automation: 'Automation',
+  platform: 'Platform', config: 'Config', security: 'Security',
+}
+const areaLabel = (key: string) => AREA_LABELS[key] ?? (key.charAt(0).toUpperCase() + key.slice(1))
+const plural = (n: number, one: string) => `${n} ${n === 1 ? one : `${one}s`}`
+
+/** A `contents` value is bytes when its key looks like a FILE (it has an extension); everything else is
+ *  a count. Inferring that from the key is the least-bad option available — the payload does not say —
+ *  and it is why the per-area summary above is preferred whenever the archive carries one. */
+const looksLikeFile = (key: string) => /\.[a-z0-9]+$/i.test(key)
+
+export function archiveAreas(manifest: PortabilityManifest): ArchiveRow[] {
+  const counts = manifest.domain_counts
+  if (!counts) return []
+  return Object.entries(counts)
+    .sort((a, b) => (b[1]?.bytes ?? 0) - (a[1]?.bytes ?? 0))
+    .map(([key, v]) => ({
+      label: areaLabel(key),
+      detail: `${plural(v?.files ?? 0, 'file')} · ${humanBytes(v?.bytes ?? 0)}`,
+    }))
+}
+
+/** Only for an archive with no `domain_counts`. Zeros are dropped — a row saying an area holds nothing
+ *  is noise at a decision point — and a nested map is spelled out rather than stringified. */
+export function archiveInventory(manifest: PortabilityManifest): ArchiveRow[] {
+  const raw = (manifest.contents || {}) as Record<string, unknown>
+  return Object.entries(raw).flatMap(([key, v]) => {
+    if (v && typeof v === 'object') {
+      const inner = Object.entries(v as Record<string, number>).filter(([, n]) => Number(n) > 0)
+      if (!inner.length) return []
+      return [{ label: key, detail: inner.map(([k, n]) => `${k} ${n}`).join(', ') }]
+    }
+    const n = Number(v)
+    if (!Number.isFinite(n) || n <= 0) return []
+    return [{ label: key, detail: looksLikeFile(key) ? humanBytes(n) : String(n) }]
+  })
+}
+
+/** The archive's own timestamp, in the reader's timezone. The sibling `ArchivePanel` learned this the
+ *  hard way — its comment says `toISOString` "showed UTC — hours off from the archive's actual local
+ *  write time" — and this panel was still printing the raw `2026-08-19T18:13:44Z`. */
+export function archiveWhen(created: string): string {
+  const d = new Date(created)
+  if (Number.isNaN(d.getTime())) return created
+  const p = (n: number) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`
+}
 
 export function PortabilityPanel() {
   const fileRef = useRef<HTMLInputElement>(null)
@@ -159,7 +232,7 @@ export function PortabilityPanel() {
           {manifest && (
             <div className="mt-3 rounded-md bg-surface px-3 py-2 text-[0.75rem]">
               <div className="text-on-surface" style={fvs(550)}>
-                Archive from {manifest.hostname} · {manifest.user} · {manifest.created_at}
+                Archive from {manifest.hostname} · {manifest.user} · {archiveWhen(manifest.created_at)}
               </div>
               <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-on-surface-low">
                 <span>format v{manifest.version}</span>
@@ -170,11 +243,20 @@ export function PortabilityPanel() {
                   ? <span className="inline-flex items-center gap-1 text-success"><ShieldCheck size={12} /> checksums verified</span>
                   : <span>no checksums to verify (pre-v3 archive)</span>}
               </div>
-              <ul className="mt-1.5 grid grid-cols-2 gap-x-4 gap-y-0.5 text-on-surface-low sm:grid-cols-3">
-                {Object.entries(manifest.contents || {}).map(([k, v]) => (
-                  <li key={k}>{k}: {typeof v === 'object' ? JSON.stringify(v) : String(v)}</li>
-                ))}
-              </ul>
+              {(() => {
+                const areas = archiveAreas(manifest)
+                const rows = areas.length ? areas : archiveInventory(manifest)
+                if (!rows.length) return null
+                return (
+                  <ul className="mt-1.5 grid grid-cols-2 gap-x-4 gap-y-0.5 text-on-surface-low sm:grid-cols-3">
+                    {rows.map((r) => (
+                      <li key={r.label}>
+                        <span className="text-on-surface-var">{r.label}</span> {r.detail}
+                      </li>
+                    ))}
+                  </ul>
+                )
+              })()}
             </div>
           )}
         </div>
