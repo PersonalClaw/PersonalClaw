@@ -659,11 +659,14 @@ function PhaseCapPicker({ label, options, selected, onChange }: {
   return (
     <div className="flex flex-col gap-1">
       <span className="text-on-surface-low text-[0.75rem] uppercase tracking-wide">{label}</span>
-      <div className="flex flex-wrap gap-1">
+      {/* 🔴 Selected caps were coral-filled pills and nothing else — a plan phase could not be read
+          back without seeing it. The uppercase `{label}` above is a `<span>`, so it names nothing;
+          the group repeats it where assistive tech can use it, and each pill states its own state. */}
+      <div role="group" aria-label={label} className="flex flex-wrap gap-1">
         {options.map((o) => {
           const on = selected.includes(o.id)
           return (
-            <button key={o.id} type="button" onClick={() => toggle(o.id)} title={o.id}
+            <button key={o.id} type="button" aria-pressed={on} onClick={() => toggle(o.id)} title={o.id}
               className={`inline-flex items-center gap-1 rounded-pill px-2 h-6 text-[0.75rem] transition-colors ${on ? 'text-on-primary' : 'text-on-surface-low hover:text-on-surface'}`}
               style={{ background: on ? 'var(--color-primary)' : 'var(--color-surface-container)' }}>
               {on && <Check size={10} />}{o.name}

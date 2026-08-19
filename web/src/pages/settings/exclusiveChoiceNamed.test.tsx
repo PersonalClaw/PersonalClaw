@@ -224,15 +224,30 @@ describe('the family is DERIVED, so the next pill group cannot be missed', () =>
   function exclusiveGroups() {
     const LITERAL = /^(?:true|false|null|undefined|\d+)$/
     const STATE = /aria-pressed|aria-selected|aria-checked|aria-current|aria-expanded|role="(?:tab|radio|option|menuitemradio|treeitem)"/
-    const out: { rel: string; state: boolean; cmp: string }[] = []
+    const out: { rel: string; state: boolean; cmp: string; via: 'equality' | 'membership' }[] = []
     for (const f of walk(SRC)) {
       const src = stripComments(readFileSync(f, 'utf8'))
       for (const m of src.matchAll(/\.map\(\s*\(?\s*(\w+)[^)]{0,40}\)?\s*=>\s*\{/g)) {
         const body = src.slice(m.index!, m.index! + 1100)
         const item = m[1]
-        const cmp = body.match(new RegExp(`const \\w+ = (?:${item}(?:\\.\\w+)? === (\\w+)|(\\w+) === ${item}(?:\\.\\w+)?)`))
+        const eq = body.match(new RegExp(`const \\w+ = (?:${item}(?:\\.\\w+)? === (\\w+)|(\\w+) === ${item}(?:\\.\\w+)?)`))
+        // 🪤 THE THIRD CORRECTION, AND THE SHARPEST: IT WAS KEYED ON THE COMPARISON OPERATOR.
+        //    A one-of-N or multi-select group does not have to compare with `===`. When the selection
+        //    is held as a collection, the row asks whether it is IN it — `activeProviders.includes(p.name)`,
+        //    `tagFilter.has(t.id)`, `selected.includes(o.id)`. That is the same interaction in a spelling
+        //    `===` cannot see, and it hid SIX groups, FIVE of them stateless: `SearchPanel`'s provider
+        //    bind (a genuine one-of-N), `ChatPage`'s knowledge picker and tag filter, `AgentForm`'s
+        //    checklist and `LoopPlanReview`'s phase caps. The sixth was already correct (`MenuRow`),
+        //    which is how we know the spelling was the blind spot and not the fix.
+        //    Equality with a scalar, membership of a set: enumerate BOTH, or the count reads complete.
+        const member = body.match(new RegExp(
+          `const \\w+ = !?\\w+\\.(?:includes|has)\\(\\s*${item}(?:\\.\\w+)?\\s*\\)`
+          + `|const \\w+ = \\w+\\.indexOf\\(\\s*${item}(?:\\.\\w+)?\\s*\\)\\s*(?:>= 0|!== -1)`))
+        const cmp = eq ?? member
         if (!cmp) continue
-        if (LITERAL.test(cmp[1] ?? cmp[2] ?? '')) continue
+        // The literal guard belongs to the equality form only — a membership test's left side is a
+        // collection identifier, never `true`/`null`/a number.
+        if (eq && LITERAL.test(eq[1] ?? eq[2] ?? '')) continue
         // The state must live on the ROW's own opening tag inside this map body — `tags()` is
         // brace-aware, so it stops at the real `>` and not at one inside an arrow function.
         // 🪤 MEASURED, NOT ASSUMED: widening this to `div`/`span`/`a` rows added TWO false positives and
@@ -261,6 +276,7 @@ describe('the family is DERIVED, so the next pill group cannot be missed', () =>
           rel: f.slice(SRC.length + 1),
           state: delegates || rows.some((t) => STATE.test(t)),
           cmp: cmp[0],
+          via: eq ? 'equality' : 'membership',
         })
       }
     }
@@ -294,7 +310,10 @@ describe('the family is DERIVED, so the next pill group cannot be missed', () =>
     // 17 with delegation counted, 15 without — the two the button-only scope could not see are
     // `NotificationRulesMatrix` (renders SegPills) and `PersonalityPicker` (renders TileButton). Counting
     // them is the point: if either swaps its primitive for a raw button, it appears here unmarked.
-    expect(groups.length, 'the sweep must find the groups').toBeGreaterThanOrEqual(17)
+    // 17 was the equality-only population; the membership spelling added six more (see the floor
+    // asserted in the test below, which is the one that would catch that matcher silently matching
+    // nothing — the whole population floor is too coarse to notice six missing).
+    expect(groups.length, 'the sweep must find the groups').toBeGreaterThanOrEqual(23)
     for (const rel of ['pages/settings/NotificationRulesMatrix.tsx', 'pages/settings/PersonalityPicker.tsx']) {
       expect(groups.map((g) => g.rel), `${rel} delegates, and must still be COUNTED`).toContain(rel)
     }
@@ -306,6 +325,45 @@ describe('the family is DERIVED, so the next pill group cannot be missed', () =>
 
     const mute = groups.filter((g) => !g.state && !PENDING.has(g.rel)).map((g) => g.rel)
     expect(mute, `these convey selection visually only:\n${mute.join('\n')}`).toEqual([])
+  })
+
+  it('the membership spelling is swept, and every one of its groups is marked', () => {
+    // 🔑 THE FLOOR THAT MATTERS FOR A NEW MATCHER. A regex that resolves to nothing produces exactly
+    // the same green as a clean tree, and this one interpolates the map's item name — one escaping
+    // slip and it silently matches zero. Six is what was measured when it was written: five stateless
+    // (now fixed) plus `ChatPage`'s artifact picker, which was already correct via `MenuRow`.
+    const groups = exclusiveGroups()
+    const member = groups.filter((g) => g.via === 'membership')
+    expect(member.length, 'the membership matcher must resolve its own population').toBeGreaterThanOrEqual(6)
+    for (const rel of [
+      'pages/settings/SearchPanel.tsx',
+      'pages/ChatPage.tsx',
+      'pages/agents/AgentForm.tsx',
+      'pages/loops/LoopPlanReview.tsx',
+    ]) {
+      expect(member.map((g) => g.rel), `${rel} holds its selection in a collection — it must be COUNTED`)
+        .toContain(rel)
+    }
+    const mute = member.filter((g) => !g.state).map((g) => `${g.rel}  ${g.cmp}`)
+    expect(mute, `these hold selection in a collection and announce nothing:\n${mute.join('\n')}`).toEqual([])
+  })
+
+  it('each of those groups also states its DIMENSION, not just its state', () => {
+    // `aria-pressed` alone answers "is this one on?" and never "on for WHAT?". Four of the five sat in
+    // a group whose only label was a `<span>` — text that labels nothing — and `SearchPanel` renders
+    // FOUR sibling lists on one panel, where an unnamed group is genuinely ambiguous. Each name is
+    // asserted at its own site so a later edit cannot quietly drop it.
+    const named: [string, RegExp][] = [
+      ['pages/settings/SearchPanel.tsx', /role="group" aria-label=\{`\$\{meta\.label\} provider`\}/],
+      ['pages/ChatPage.tsx', /role="group" aria-label="Knowledge to attach"/],
+      ['pages/ChatPage.tsx', /role="group" aria-label="Filter by tag"/],
+      ['pages/agents/AgentForm.tsx', /role="group" aria-label=\{label\}/],
+      ['pages/loops/LoopPlanReview.tsx', /role="group" aria-label=\{label\}/],
+    ]
+    for (const [rel, re] of named) {
+      const src = stripComments(readFileSync(join(SRC, rel), 'utf8'))
+      expect(src, `${rel} must name the group its options belong to`).toMatch(re)
+    }
   })
 
   it('the pending list is not stale — every entry is still unmarked', () => {
