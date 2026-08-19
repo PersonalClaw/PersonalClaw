@@ -213,7 +213,7 @@ Every mark in the matrix below cites one of these. `S1` = `chat-1-…` (bound af
 | `O5` | S1 turn: read `probe.txt`, write `written.txt`, `rm -f doomed.txt`; polled `GET /api/chat/sessions` for `pending_approval_info` and resolved each with `POST …/approve {action:"approved"}` | **four consecutive host approval cards** — `Terminal` (bash), `Read File`, `Write`, `Terminal` (`rm`). Every tool of the turn surfaced `session/request_permission`; none executed silently. Each card's `tool_kind` was **`""`** (empty) and `tool_input` was the adapter's `rawInput` JSON as a **string** |
 | `O6` | the same turn's `/api/ws` frames | `tool_call` frames carry `kind` (`execute`/`read`/`edit`) and `input_preview` (raw JSON text) but `input: null`; `tool_result` frames carry `content_type: ""`, `raw_ref: ""`, `truncated: false`, `original_length: null`, `recovery_hints: []`; **zero** `diff` / `file_change` / `old_string` / `new_string` keys in the entire capture |
 | `O7` | the same turn's activity frames | `Session created · default · auto · via acp:claude-agent-acp`; `Turn complete: 106 events, 6 tool calls, context 0%`; one `context_usage` frame with `pct: 0.0`; a `chat_check_work_offer` frame; an `agent_request` inbox notification whose body read "(risk: destructive)" for a read-only `pwd; ls` |
-| `O8` | S2 (workspace_dir = `…/.dev-home/scratch` set BEFORE binding, `PERSONALCLAW_HOME=…/.dev-home`), turn: "Run exactly one Bash command: pwd" | no approval card (read-only-bash auto-resolved); `pwd` → **`/Users/golani/.personalclaw/workspace`**. Neither the session's `workspace_dir` nor the configured `PERSONALCLAW_HOME` reached the ACP process; the file the CLI later wrote landed in the operator's real home |
+| `O8` | S2 (workspace_dir = `…/.dev-home/scratch` set BEFORE binding, `PERSONALCLAW_HOME=…/.dev-home`), turn: "Run exactly one Bash command: pwd" | no approval card (read-only-bash auto-resolved); `pwd` → **`~/.personalclaw/workspace`**. Neither the session's `workspace_dir` nor the configured `PERSONALCLAW_HOME` reached the ACP process; the file the CLI later wrote landed in the operator's real home |
 | `O9` | S2's activity frames | `Injected 11,560 chars of context (memory, lessons, history, episodic)` — turn-0 context assembly runs for an ACP turn |
 | `O10` | `security_events.jsonl` under the isolated home after O5/O8 | 12 `tool_invocation` rows for the ACP turns, hash-chained, e.g. `operation: "Terminal", tool_kind: "execute", outcome: "invoked", metadata: {"risk": "destructive"}`, plus `outcome: "approved"` rows carrying the approval decision. No `risk_level` other than the heuristic one |
 | `O11` | `ls .dev-home/session_pid_*.txt` | `session_pid_28787.txt` → `dashboard:chat-1-…`, `session_pid_52634.txt` → `dashboard:chat-2-…` — the session-key resolution file IS written for ACP sessions, and the two sessions hold **two different PIDs** |
@@ -222,7 +222,7 @@ Every mark in the matrix below cites one of these. `S1` = `chat-1-…` (bound af
 | `O14` | S2 in `plan`, "Quote verbatim every line of your context containing 'Task mode'" | the reply quoted `## Task mode: Agent` — but from **replayed sibling-session history**, not the live framing. Re-run on a FRESH session (S3) created with `task_mode=plan` before its first turn quoted `## Task mode: Plan` and "Plan mode is active… you MUST NOT make any edits" → the framing is live and correct; the stale line was history |
 | `O15` | S3's first-turn context (fresh session) | `Injected 18,394 chars of context (memory, lessons, history, episodic)` and the quoted context contained verbatim user/assistant turns from a DIFFERENT dashboard session — cross-session recall reaches an ACP turn |
 | `O16` | killed the gateway, restarted it, then sent a turn on the SAME session S3 | `GET /api/chat/sessions` now reports S3 with `acp_provider: ""`, `task_mode: "agent"`, `workspace_dir: ""`; the turn resolved on the **native** axis and errored `no model provider resolves for use case 'chat'`. `gateway.log`: `Pool decision: key=dashboard:chat-3-… resume_sid=None …` — no `session/load` was attempted. `session_map.json` holds a sid for the session (`2cb03780-…`) but records no `cwd` |
-| `O17` | S4: `workspace_dir` set to `…/.dev-home/scratch`, provider bound, one `pwd`; DEBUG logging on | `gateway.log`: `Pool decision: key=dashboard:chat-1-1786980914 … cwd=/private/tmp/aap1-wt/.dev-home/scratch pool_cwd=/private/tmp/aap1-wt/.dev-home/scratch` — the cwd DID reach `get_or_create`; the ACP process still answered `pwd` → `/Users/golani/.personalclaw/workspace`. The cwd is dropped between `get_or_create` and the spawn |
+| `O17` | S4: `workspace_dir` set to `…/.dev-home/scratch`, provider bound, one `pwd`; DEBUG logging on | `gateway.log`: `Pool decision: key=dashboard:chat-1-1786980914 … cwd=/private/tmp/aap1-wt/.dev-home/scratch pool_cwd=/private/tmp/aap1-wt/.dev-home/scratch` — the cwd DID reach `get_or_create`; the ACP process still answered `pwd` → `~/.personalclaw/workspace`. The cwd is dropped between `get_or_create` and the spawn |
 | `O18` | `grep -in "set_config_option\|session/new\|mcpServers\|set_mode" gateway.log` at DEBUG | nothing — the host logs no ACP wire frames, so mode/`mcpServers` forwarding cannot be observed from the host's own logs; the marks below that depend on it are taken from CLI-observable behavior instead |
 | `O19` | S5: provider bound, `task_mode=plan` set BEFORE the first turn, then "Use the Write tool now to create … pm3.txt" | the CLI did **not** call `Write`. It emitted a `"Ready to code?"` permission request whose `tool_input.plan` says "My CLI permission mode is `plan`, which forbids writing anywhere except this plan file"; its final reply says "Permission mode: `plan` (Claude Code's CLI plan mode)". Rejecting the card left the file uncreated. On S4, where `plan` was set MID-conversation, the same request produced a plain `Write` attempt and the CLI reported "Agent" mode |
 | `O20` | S6 bound with `{model: "global.anthropic.claude-haiku-4-5-…", reasoning_effort: "low"}`, then "Name the exact model id you are running as" | the bind echoed both values; the activity line read `Session created · default · global.anthropic.claude-haiku-4-5-20251001-v1:0 · via acp:claude-agent-acp`; the CLI answered "Model: `global.anthropic.claude-haiku-4-5-20251001-v1:0`; reasoning effort not specified in session context" |
@@ -459,7 +459,7 @@ being half-fixed.
 ## Phase 1 results — codex verified matrix (atom `AAP-2`)
 
 **Swept:** 2026-08-17 · **Adapter:** `@agentclientprotocol/codex-acp` 1.1.4 ·
-**CLI:** `codex` 0.146.1.359 (stable) at `/Users/golani/.toolbox/bin/codex`, whose own
+**CLI:** `codex` 0.146.1.359 (stable) at `~/.toolbox/bin/codex`, whose own
 `~/.codex/config.toml` sets `model_provider = "amazon-bedrock"`, `model = "openai.gpt-5.6-sol"`,
 `model_reasoning_effort = "xhigh"` · **Node** v24.18.0 · **Host:** this repo at AAP-1's tip
 (`bf0eb342`), isolated `PERSONALCLAW_HOME=/private/tmp/aap2-wt/.dev-home`, gateway on `:10431`,
@@ -496,7 +496,7 @@ Ledger ids are `C…` so they never collide with `AAP-1`'s `O…`. `S1` = `chat-
 | `C1` | `POST /api/apps` with the first-party `codex-agent` dir, then `GET /api/agent-providers` | `acp:codex` registered, `ready: true`, `state: ready`, `detail: "initialize OK (caps: auth, loadSession, mcpCapabilities, promptCapabilities, providers, sessionCapabilities)"` — `loadSession` **is** advertised (as on claude); unlike claude there is no `_meta` capability |
 | `C2` | `GET /api/agent-providers/acp:codex/agents` | one agent (`id: acp:codex`, `name: "Codex"`, `provider_agent: ""`) → no persona axis; `models` = 5 live-discovered ids (`openai.gpt-5.6-sol`, `…-terra`, `…-luna`, `openai.gpt-5.5`, `openai.gpt-5.4`); **`supported_efforts` = `[]`** (claude advertised five); `permission_modes` = the same host-side list `default, acceptEdits, plan, dontAsk, bypassPermissions` |
 | `C3` | `POST …/{S1}/workspace-dir {"/private/tmp/aap2-wt/.dev-home/scratch"}` then `POST …/{S1}/acp-agent {provider:"acp:codex"}`, then `GET /api/chat/sessions` | both round-trip: `workspace_dir` = the scratch dir, `acp_provider: "acp:codex"` |
-| `C4` | S1 turn 1: "Run exactly one shell command: pwd … then list your available tool names verbatim, then YES/NO for knowledge_search, task_create, notify" | `pwd` → **`/Users/golani/.personalclaw/workspace`** — the escape reproduces on codex. Tool list: `exec_command, write_stdin, list_mcp_resources, list_mcp_resource_templates, read_mcp_resource, update_plan, request_user_input, apply_patch, view_image, get_goal, create_goal, update_goal, tool_search_tool, parallel`; `knowledge_search` **NO**, `task_create` **NO**, `notify` **NO**; no `personalclaw-core` MCP server. The turn's FIRST assistant chunk was the CLI's own notice — "Warning: Skill descriptions were shortened to fit the 2% skills context budget. Codex can still see every skill…" — i.e. the operator's real `~/.codex` skills/plugins loaded, and an adapter/CLI notice is rendered to the user as assistant prose |
+| `C4` | S1 turn 1: "Run exactly one shell command: pwd … then list your available tool names verbatim, then YES/NO for knowledge_search, task_create, notify" | `pwd` → **`~/.personalclaw/workspace`** — the escape reproduces on codex. Tool list: `exec_command, write_stdin, list_mcp_resources, list_mcp_resource_templates, read_mcp_resource, update_plan, request_user_input, apply_patch, view_image, get_goal, create_goal, update_goal, tool_search_tool, parallel`; `knowledge_search` **NO**, `task_create` **NO**, `notify` **NO**; no `personalclaw-core` MCP server. The turn's FIRST assistant chunk was the CLI's own notice — "Warning: Skill descriptions were shortened to fit the 2% skills context budget. Codex can still see every skill…" — i.e. the operator's real `~/.codex` skills/plugins loaded, and an adapter/CLI notice is rendered to the user as assistant prose |
 | `C5` | S1 turn 2: read `…/scratch/probe.txt`, create `…/scratch/written.txt`, `rm -f …/scratch/doomed.txt`; `/api/ws` captured and each card resolved with `POST …/approve {action:"approved"}` | the read auto-resolved with **no** card; the edit and the `rm` each raised one `approval` frame, both `risk: "destructive"`, both with **`tool: "unknown"`** and `tool_kind: ""`. `written.txt` was created (`HELLO`) and `doomed.txt` deleted only after approval. The sibling `tool_call` frames DO carry a real title and kind (`Read file '…'`/`read`, `Editing files`/`edit`, `rm -f …`/`execute`) and the edit's `input_preview` is a **unified diff** (`--- … +++ … @@ -0,0 +1 @@ +HELLO`), while `input` is `null` on all three; every `tool_result` carries `content_type: ""`, `raw_ref: ""`, `truncated: false`, `original_length: null`, `recovery_hints: []`. `Session created · default · auto · via acp:codex-acp` printed again on this second turn, and `Turn complete: 103 events, 3 tool calls, context 0%` with one `context_usage` frame `pct: 0.0` |
 
 | `C6` | S1 with `POST /api/chat/task-mode {mode:"ask"}` set before the turn, then "quote every context line containing 'Task mode' … then use apply_patch to create `ask-mode-probe.txt`" | the write was **blocked** — a `tool_call` (`kind: edit`) frame appeared, then **no `tool_result` at all** and the turn ended with the assistant message `*Conversation interrupted*`; the file was never created. SEL: `unknown | denied | {"reason": "task_mode:ask"}`. The model's step-1 answer quoted `## Task mode: Agent` (its 4th turn on a session whose first three ran in agent mode, so live-vs-replayed could not be separated here) |
@@ -526,7 +526,7 @@ Ledger ids are `C…` so they never collide with `AAP-1`'s `O…`. `S1` = `chat-
 | Session-live skill drafts (`skill_remember`) | PARTIAL | CONFIRMED | PARTIAL | `C4` — no `skill_remember` in the tool list |
 | Task-mode framing (Agent/Ask/Plan/Build suffix) | WIRED | CONFIRMED — presence only | the framing block IS injected; whether its value tracks the live mode was NOT separable | `C6` — the CLI quoted `## Task mode: Agent`, but on a session whose earlier turns ran in agent mode, so replayed history is an equally good explanation. `C7` (the fresh-session control) died on the tool denial before answering, and `C18` shows codex otherwise refuses to quote its context |
 | Agent profile system prompt / voice layer | PARTIAL | NOT-EXERCISED | — | no agent profile with a distinctive `system_prompt` was bound |
-| Project binding (context preamble + cwd) | WIRED | **DIVERGED** | the cwd half does not work | `C4` — `workspace_dir` was set to the scratch dir **before** binding and `pwd` inside the spawned CLI answered `/Users/golani/.personalclaw/workspace`; `gateway.log` shows `cwd=…/.dev-home/scratch pool_cwd=/Volumes/workplace/personalclaw-workspace`, so neither the session's dir nor the pool's reaches the process. The preamble half was not separately measured (`C18`) |
+| Project binding (context preamble + cwd) | WIRED | **DIVERGED** | the cwd half does not work | `C4` — `workspace_dir` was set to the scratch dir **before** binding and `pwd` inside the spawned CLI answered `~/.personalclaw/workspace`; `gateway.log` shows `cwd=…/.dev-home/scratch pool_cwd=/Volumes/workplace/personalclaw-workspace`, so neither the session's dir nor the pool's reaches the process. The preamble half was not separately measured (`C18`) |
 | project_id → artifact stamping | ABSENT | CONFIRMED | ABSENT (stronger) | `C4` — `artifact_save` is not reachable at all, so there is nothing to stamp |
 | Persona injection (Lumon theme) | WIRED | NOT-EXERCISED | — | the persona toggle was never enabled |
 | Cancelled-turn preamble re-injection | WIRED | NOT-EXERCISED | — | attempted: `C18` cancelled a turn mid-tool, but codex declines to quote its context, so no verdict on the re-injection |
@@ -749,7 +749,7 @@ half-fixed here.
 
 **Swept:** 2026-08-17/18 · **Adapter:** none — `kiro-cli acp` speaks ACP natively (native binary, no
 npm adapter, so no `npx`/durable-install step and no adapter version to pin) · **CLI:** `kiro-cli`
-2.18.1 at `/Users/golani/.toolbox/bin/kiro-cli` · **Dialect:** the core `default` dialect (the
+2.18.1 at `~/.toolbox/bin/kiro-cli` · **Dialect:** the core `default` dialect (the
 `kiro-cli-agent` bundle ships no protocol code — `provider.py` resolves the binary and nothing else)
 · **Host:** this repo at AAP-2's tip (`aa2610dc`), isolated
 `PERSONALCLAW_HOME=/private/tmp/aap3-wt/.dev-home`, gateway on `:10451`,
@@ -796,7 +796,7 @@ Ledger ids are `K…` so they never collide with `AAP-1`'s `O…` or `AAP-2`'s `
 | `K1` | `POST /api/apps` with the first-party `kiro-cli-agent` dir, then `GET /api/agent-providers` | `acp:kiro-cli` registered, `ready: true`, `state: ready`, `detail: "initialize OK (caps: auth, loadSession, mcpCapabilities, promptCapabilities, sessionCapabilities)"`. `loadSession` **is** advertised (as on claude and codex); unlike codex there is no `providers` cap and unlike claude no `_meta` cap. Install scan: `verdict: clean`, `tier: community`, `signature: unsigned` |
 | `K2` | `GET /api/agent-providers/acp:kiro-cli/agents` | **27 agents** — a real persona axis (claude had one, codex had none). Only **3** are kiro's own built-ins (`kiro_default`, `kiro_planner`, `kiro_guide`); the other **24 are the operator's private AIM/MeshClaw/kirocrew fleet** (`amzn-builder`, `atlas`, `cr-review-agent`, `oe-report-agent`, `offer-health-agent`, `meshclaw*`, `kirocrew*`, `meetings-*`, `oncall-triage`, `stores-builder`, `code-review-sage-reviewer`, …), each carrying its AIM description verbatim. `models` = **21** live-discovered ids (`auto`, `claude-opus-5`, …, `agi-nova-beta-1m`), identical on all 27. **`supported_efforts` = `[]`** on all 27 (claude advertised five; codex also `[]`). **`permission_modes` = `[]`** — where claude and codex both returned the host-side list `default, acceptEdits, plan, dontAsk, bypassPermissions`, kiro returns **nothing**. `cached: true` |
 | `K3` | `POST …/{S1}/workspace-dir {"/private/tmp/aap3-wt/.dev-home/scratch"}`, then `POST …/{S1}/acp-agent {provider:"acp:kiro-cli"}`, then `GET /api/chat/sessions` | both round-trip: `workspace_dir` = the scratch dir, `acp_provider: "acp:kiro-cli"`, `provider_agent: ""`, `model: ""`, `reasoning_effort: ""` |
-| `K4` | S1 turn 1: "Run exactly one shell command: `pwd` … then list your available tool names verbatim, then YES/NO for `knowledge_search`, `task_create`, `notify`" | `pwd` → **`/Users/golani/.personalclaw/workspace`** — **the escape reproduces on the third provider**, with `workspace_dir` set to the scratch dir *before* binding. `knowledge_search` **NO**, `task_create` **NO**, `notify` **NO**; no `personalclaw-core` server. The tool list is **57 tools, and it is the operator's own MCP fleet flattened into the session** — including write-capable and financially consequential internal ones: `get_aws_creds`, `configure_aws_access`, `use_aws`, `submit_expense_report`, `create_expense_report`, `add_expense`, `delete_report`, `switch_delegate`, `list_delegates`, `upload_receipt` — beside kiro's own natives (`shell`, `read`, `write`, `glob`, `grep`, `subagent`, `knowledge`, `todo_list`, `goal`, `introspect`, `web_fetch`, `web_search`, `code`, `parallel`). Telemetry: `Injected 10,471 chars of context (memory, lessons, history, episodic)`, `Session created · default · auto · via acp:kiro-cli`, `Turn complete: 282 events, 1 tool calls, context 0%` with one `context_usage` frame `pct: 0.0` |
+| `K4` | S1 turn 1: "Run exactly one shell command: `pwd` … then list your available tool names verbatim, then YES/NO for `knowledge_search`, `task_create`, `notify`" | `pwd` → **`~/.personalclaw/workspace`** — **the escape reproduces on the third provider**, with `workspace_dir` set to the scratch dir *before* binding. `knowledge_search` **NO**, `task_create` **NO**, `notify` **NO**; no `personalclaw-core` server. The tool list is **57 tools, and it is the operator's own MCP fleet flattened into the session** — including write-capable and financially consequential internal ones: `get_aws_creds`, `configure_aws_access`, `use_aws`, `submit_expense_report`, `create_expense_report`, `add_expense`, `delete_report`, `switch_delegate`, `list_delegates`, `upload_receipt` — beside kiro's own natives (`shell`, `read`, `write`, `glob`, `grep`, `subagent`, `knowledge`, `todo_list`, `goal`, `introspect`, `web_fetch`, `web_search`, `code`, `parallel`). Telemetry: `Injected 10,471 chars of context (memory, lessons, history, episodic)`, `Session created · default · auto · via acp:kiro-cli`, `Turn complete: 282 events, 1 tool calls, context 0%` with one `context_usage` frame `pct: 0.0` |
 | `K5` | the `pwd` call's own frames, captured on `/api/ws` and resolved with `POST …/{S1}/approve {action:"approved"}` | **`pwd` raised an approval card** — `risk: "safe"`, `is_read_only: "1"`, and the turn **blocked** until approved (codex auto-resolved its reads and its six `cat` calls with no card). The reason is visible in the frames: kiro's adapter titles the call honestly, `"Running: pwd"`, so the host classifies it `kind: "execute"`; codex's adapter titles an `exec_command` `"Read file '…'"`, which the host classifies `kind: "read"` and auto-approves. **The `approval` frame here carries a real `tool` title and the real `tool_input`** (`{"command": "pwd", "__tool_use_purpose": …}`) — so `AAP-2`'s `G18` (`tool: "unknown"`) does **not** reproduce on kiro; the frame instead omits `tool_kind` entirely and blanks `tool_purpose` while the sibling `tool_call` frame carries both `kind: execute` and `purpose`. `tool_result` again carries `content_type: ""`, `raw_ref: ""`, `truncated: false`, `original_length: null`, `recovery_hints: []` |
 | `K6` | the `personalclaw.json` unknown, both halves: (a) `ls $PERSONALCLAW_HOME/agents/` + read the file; (b) `kiro-cli agent list`; (c) the tool list from `K4` | **RESOLVED — the file is generated and is NOT honored.** (a) the host **does** write a complete, correct `agents/personalclaw.json` into the isolated home at startup — `name: "personalclaw"`, `tools`/`allowedTools` = `["@personalclaw-core"]`, `mcpServers.personalclaw-core` = `<venv>/personalclaw mcp-core`, plus a `prompt` file URL. Nothing about it is malformed. (b) `kiro-cli agent list` prints its own discovery roots verbatim — `Workspace: <cwd>/.kiro/agents` and `Global: ~/.kiro/agents` — and lists **24 agents, none named `personalclaw`** (the only "personalclaw" substring in the output is the workspace path of the shell that ran it). `$PERSONALCLAW_HOME/agents/` is neither root, so the file is never read. (c) hence `K4`'s three NOs. **Also found in that file:** its `hooks.postToolUse` command is `… >> ~/.personalclaw/audit.log` — a **literal tilde path to the REAL home**, not `$PERSONALCLAW_HOME`. So the file Phase 2 §2.1 Prong B plans to symlink into `~/.kiro/agents/` would, the moment it is honored, make every isolated-home ACP session append to the operator's real `~/.personalclaw/audit.log` |
 | `K7` | the concurrent-sessions unknown: `PATCH /api/config/personalclaw {path:"agent.acp_concurrent_sessions", value:true}` (verified `true` in `config.json`), then S2 + S3 both bound to `acp:kiro-cli` and **both driven at once** (two overlapping `POST /api/chat` counting turns), then `pgrep -f 'toolbox/bin/kiro-cli acp'` mid-flight and after | **DIVERGED — no process is shared.** The gate is genuinely ON (an in-process check under the same home returns `flag=True`, `get_dialect('default').supports_concurrent_sessions=True`, `concurrent_sessions_enabled('default')=True`), and `AcpPool._shared_connection` keys its cached connection on `runtime_id` alone — yet three bound sessions ran on **three distinct `kiro-cli acp` process trees** (`2883` for S1, `17853` for S2, `19208`→ later `19719` for S3, all children of the gateway PID). The plan's step 12 prediction — "two kiro chats, one PID serving both" — does not hold. Each tree is a 5-process stack (`kiro-cli acp` → `aim sandbox --client kiro-cli acp` → the AIM `sandbox/launcher` → the app-bundle `kiro-cli acp` → `kiro-cli-chat acp`), so the cost of not sharing is 5 processes per chat, not 1 |
@@ -825,17 +825,17 @@ Ledger ids are `K…` so they never collide with `AAP-1`'s `O…` or `AAP-2`'s `
 | Feature | audit said | mark | runtime verdict | evidence |
 |---|---|---|---|---|
 | Memory recall injection (turn-0 context) | WIRED | CONFIRMED | WIRED | `K4`, `K22` — `Injected 10,471 / 7,283 / 6,971 / 4,868 chars of context (memory, lessons, history, episodic)` on each fresh session |
-| Knowledge context (@-mention + picker `meta.knowledge`) | WIRED | NOT-EXERCISED | — | no `meta` payload was sent; the injector was never driven |
-| Attachments/paste (extracted text prepended) | WIRED | NOT-EXERCISED | — | as above |
-| @prompt expansion (+ typed vars, snippets) | WIRED | NOT-EXERCISED | — | as above |
+| Knowledge context (@-mention + picker `meta.knowledge`) | WIRED | **CONFIRMED** (follow-up) | WIRED | `K30` — with `meta.knowledge=[<item id>]` the CLI quoted the stored item verbatim: `The AAP3 KIWI PROTOCOL states: the secret sweep codeword is ZANZIBAR-7719 …` |
+| Attachments/paste (extracted text prepended) | WIRED | **CONFIRMED** (follow-up) | WIRED | `K30` — `meta.files=[…/uploads/aap3-brief.txt]`; the CLI quoted the extracted text verbatim: `ATTACHMENT-CONTENT-MARKER-B83: the attached briefing says the sweep vehicle is a hovercraft.` |
+| @prompt expansion (+ typed vars, snippets) | WIRED | **CONFIRMED** (follow-up) | WIRED, but composer-side — nothing on the ACP path expands it | `K30`/`K31` — a message carrying the literal `@aap3-prompt` reached kiro **unexpanded** (it answered `ABSENT`), while `POST /api/prompts/aap3-prompt/render` returns the body and the composer is its caller. So the cell is provider-independent by construction |
 | Skills index in context + `skill_invoke`/`skill_search` execution | PARTIAL | CONFIRMED | PARTIAL | `K4` — neither `skill_invoke` nor `skill_search` appears in the CLI's 57-tool list. The index half was **not** exercised: unlike the codex sweep, no prompt in this one matched a skill, so `gateway.log` carries no `Surfaced skills:` line and SEL has no `skill_surface` row at all |
 | Session-live skill drafts (`skill_remember`) | PARTIAL | CONFIRMED | PARTIAL | `K4` — absent from the tool list |
 | Task-mode framing (Agent/Ask/Plan/Build suffix) | WIRED | **DIVERGED** | the block IS injected and its VALUE goes stale on a reused process | `K23` — the framing quoted verbatim reads `## Task mode: Plan` on a session the API reports as `task_mode: agent`; `K24` — the same session on a fresh process reads `## Task mode: Agent`. This is the cell `AAP-2` could not close on codex (`G26`); kiro closes it and it is broken |
-| Agent profile system prompt / voice layer | PARTIAL | NOT-EXERCISED | — | a kiro **persona** was bound (`kiro_default`), but no PersonalClaw agent profile carrying a distinctive `system_prompt` |
-| Project binding (context preamble + cwd) | WIRED | **DIVERGED** | the cwd half does not work | `K4` — `workspace_dir` set to the scratch dir **before** binding, and `pwd` inside the spawned CLI answered `/Users/golani/.personalclaw/workspace`. The preamble half was not separately measured. `K12` shows the same turn's `rm` call carrying the *correct* `working_dir`, so the two disagree inside one turn |
+| Agent profile system prompt / voice layer | PARTIAL | **CONFIRMED** (follow-up) | WIRED | `K30` — a PersonalClaw profile carrying a distinctive `system_prompt` + `voice` was bound; the CLI quoted `MANDATORY PROFILE MARKER: you must include the exact token PROFILE-MARKER-QX41 in every reply.` verbatim |
+| Project binding (context preamble + cwd) | WIRED | **DIVERGED** | the cwd half does not work | `K4` — `workspace_dir` set to the scratch dir **before** binding, and `pwd` inside the spawned CLI answered `~/.personalclaw/workspace`. The preamble half was not separately measured. `K12` shows the same turn's `rm` call carrying the *correct* `working_dir`, so the two disagree inside one turn |
 | project_id → artifact stamping | ABSENT | CONFIRMED | ABSENT (stronger) | `K4` — `artifact_save` is not reachable at all, so there is nothing to stamp |
-| Persona injection (Lumon theme) | WIRED | NOT-EXERCISED | — | the persona toggle was never enabled |
-| Cancelled-turn preamble re-injection | WIRED | NOT-EXERCISED | — | attempted twice (`K21`, `K22`): both stop attempts landed on turns the plan-mode wedge (`G29`) had already made tool-free, so no tool was ever interrupted and there was no cancellation to re-inject after |
+| Persona injection (Lumon theme) | WIRED | **CONFIRMED** (follow-up) | WIRED | `K30` — `color_theme=lumon` on the turn; the CLI quoted `Use a Lumon-inspired persona. Keep responses technically useful and clear first.` |
+| Cancelled-turn preamble re-injection | WIRED | **CONFIRMED** (follow-up) | WIRED | `K35` — a `sleep 40` tool call was stopped mid-turn (the stop resolved `outcome: soft`), and the NEXT turn quoted `[PREVIOUS TURN WAS CANCELLED BY THE USER -- context restore]` plus its following line verbatim. This is the cell the first sweep could not close because `G29` had made its stop targets tool-free |
 | Compressed thread-history bootstrap (new process) | WIRED | CONFIRMED | WIRED | continuity held across 42 messages / many turns on S1, and after the restart a **fresh** process on a 12-message session still answered in context with a fresh `Injected …` line (`K24`). Note the mechanism differs from the Zed adapters: kiro reuses one process per session (`K8`), so most turns need no re-bootstrap at all |
 
 ### 4b. Approvals / permissions / safety — kiro-cli column
@@ -845,16 +845,16 @@ Ledger ids are `K…` so they never collide with `AAP-1`'s `O…` or `AAP-2`'s `
 | Interactive approval cards | WIRED | CONFIRMED | WIRED | `K5` (a card raised, resolved, the tool then ran), `K12` (three cards in one turn, all resolvable) |
 | trust_reads (effective-safe auto-approve) | PARTIAL | **DIVERGED** | it does not fire on kiro at all — reads are carded | `K5` — `pwd` arrived `risk: "safe"`, `is_read_only: "1"` and **still blocked on a card**; `K12` — a plain file read did too. The auto-approve is title-driven, and kiro's honest `Running: pwd` / `Reading probe.txt:1` titles land as `execute`/`read` without triggering it, where codex's mislabelled `Read file '…'` title for a shell `exec_command` did |
 | Trust (session) / YOLO (global) auto-approve | WIRED | CONFIRMED (session trust) | WIRED for session trust; YOLO not exercised | `K15` — one `{action:"trust"}` and the next five tool calls surfaced `"auto": true` with no card; `trust: true` persists on the session |
-| Per-agent approval floor ("Always allow") | WIRED | NOT-EXERCISED | — | no agent profile with `approval_mode: auto` was bound |
+| Per-agent approval floor ("Always allow") | WIRED | **CONFIRMED** (follow-up) | WIRED | `K36` — a profile with `approval_mode: auto`, with the auto-approver **off**: `echo AUTOFLOOR-OK` executed with no card at all (`pending_approval_info: null`, no `permission` frame) and the session came back `trust: true` |
 | Task-mode enforcement BEFORE approval (trust can't bypass) | PARTIAL | CONFIRMED | WIRED | `K14` (ask-mode write denied, file never created, SEL `denied | task_mode:ask`), `K22` (plan-mode write denied). The *trust-can't-bypass* half was established on codex (`C17`) and not separately re-driven here, because kiro's trust and its ask-mode probes ran on different sessions |
 | Plan mode → native backend plan | WIRED | CONFIRMED | ABSENT — enforced only by the host gate, exactly as the audit predicted **for kiro** | `K22` — plan set before a fresh session's first turn; the CLI called its write tool anyway, the host blocked it, and the reply carried the host's `[SWITCH_TO_AGENT: …]` marker |
 | Hard deny-list (`security.is_denied`) pre-execution | ABSENT | **DIVERGED** | WIRED — it covers ACP tools | `K25` — `git … push` was blocked pre-execution with the pattern named to the user (`blocked: Blocked by security policy: *git*push*`) and a SEL `denied` row. The first positive result for this cell across all three sweeps |
-| PreToolUse hooks blocking execution | PARTIAL | NOT-EXERCISED | — | no hook was installed during the sweep |
-| PostToolUse / Stop / SessionStart / UserPromptSubmit / Error hooks | WIRED | NOT-EXERCISED | — | as above. Note `K6` found the generated `personalclaw.json` *declares* a `postToolUse` hook, but that file is never read (`G31`) |
+| PreToolUse hooks blocking execution | PARTIAL | **DIVERGED** (follow-up) | it blocks ONLY when the session's agent profile references the hook | `K39` — one hook, `exit 2`, two outcomes: *unreferenced*, it fired three times and the write still landed (`hooked.txt` contained `HOOKED`); *referenced by the bound profile*, the tool line read `(hook blocked: aap3-pretool:hook denied)` and `hooked2.txt` was never created |
+| PostToolUse / Stop / SessionStart / UserPromptSubmit / Error hooks | WIRED | **DIVERGED** (follow-up) | 3 of the 5 fire on the ACP path | `K40` — over 25+ turns: `SessionStart` 1, `UserPromptSubmit` 17, `Stop` 15 fired — while `PostToolUse` fired **zero** times and `Error` fired **zero** times despite two real ACP errors (`-32601` on `/compact`, `-32603` model-unavailable) |
 | SEL audit of every executed tool + effective risk | WIRED | CONFIRMED | WIRED — and better named than on codex, with one internal contradiction | `K12`, `K13`, `K15` — hash-chained `tool_invocation` rows for **every** executed tool including the ungated ones, each carrying the real operation title (`AAP-2`'s "every row is named `unknown`" blind spot does **not** reproduce). The contradiction: one read produced `invoked | risk: safe` and `approved | risk: caution` for the same call |
-| Unattended mode (strip interactive tools + fail-fast approvals, T5) | ABSENT | NOT-EXERCISED | — | same blocker as both prior sweeps: this isolated home has no model provider, so a loop fails on `no model provider resolves for use case 'background'` before any ACP worker turn |
-| Dry-run replay (T9 observe mode) | ABSENT | NOT-EXERCISED | — | no dashboard entry point to drive as-a-user |
-| OS sandbox wrap of the agent process | WIRED | NOT-EXERCISED | — | the host's sandbox mode was left at its default and no confinement boundary was probed. (kiro brings its *own* `aim sandbox` layer — visible in every process tree, `K7` — which is not the host's mechanism) |
+| Unattended mode (strip interactive tools + fail-fast approvals, T5) | ABSENT | **DIVERGED** (follow-up) | WIRED — the host fail-fast denies instead of parking | `K41` — a `cron:`-keyed session with the auto-approver off: `Running: @personalclaw-core/get_context (auto-denied: unattended run, no one to approve)`, turn over in 5s, no card left pending, the requested file never created. `AAP-6`'s mechanism, measured as-a-user on kiro |
+| Dry-run replay (T9 observe mode) | ABSENT | **CONFIRMED** (follow-up) | ABSENT — no user-reachable entry point exists | `K46` — surface census: no route matches dry-run/observe beyond session-cleanup's unrelated `dry_run` flag, no config field, and the `dry_run` constructor argument exists only on the native runtime, which an ACP session never builds |
+| OS sandbox wrap of the agent process | WIRED | **ENV** (follow-up) | not determinable on this host | `K47` — the gateway logs at boot `No OS-level sandbox available — app-level checks only`, so there is no host wrap to probe here. Recorded as ENV, never as a capability verdict. (kiro still brings its own `aim sandbox` layer, which is not the host's mechanism) |
 | Isolated CLI config hardening (`PERSONALCLAW_CC_ISOLATE`) | WIRED (opt-in) | **DIVERGED** | there is NO equivalent for kiro either — and its leak is an identity leak, not only a tool leak | `K2` (24 of 27 offered personas are the operator's private AIM/MeshClaw/kirocrew agents), `K4` (57 tools, all the operator's, including `get_aws_creds`, `use_aws`, `configure_aws_access` and the Concur expense-write set), `K7` (5 processes per session) |
 
 ### 4c. Tools — kiro-cli column
@@ -863,7 +863,7 @@ Ledger ids are `K…` so they never collide with `AAP-1`'s `O…` or `AAP-2`'s `
 |---|---|---|---|---|
 | Filesystem/shell tools (cwd-confined + extra_tool_roots) | PARTIAL | **DIVERGED** — worse | PARTIAL, and NOT cwd-confined | `K4` — the CLI's own `shell`/`read`/`write` work, but its cwd is the real `~/.personalclaw/workspace`, not the session's `workspace_dir` |
 | Full native tool registry (knowledge/tasks/loops/inbox/memory/artifacts/workflows/subagents/web/schedule) | UNKNOWN | CONFIRMED | ABSENT | `K4` — `knowledge_search`/`task_create`/`notify` all NO, no `personalclaw-core` server; `K6` — the config that would provide it is never read |
-| Tool disable prefs (PT3/UT4 per-tool + per-provider) | ABSENT | NOT-EXERCISED | — | no tool-disable pref was set |
+| Tool disable prefs (PT3/UT4 per-tool + per-provider) | ABSENT | **CONFIRMED** (follow-up) | ABSENT — the only per-tool surface cannot address an ACP CLI's tools | `K45` — `POST /api/mcp/toggle-tool {"server":"personalclaw-core","tool":"get_context","enabled":false}` → `{"error": "server 'personalclaw-core' not found"}`. The pref keys on *configured* MCP servers; neither kiro's natives nor the protocol-injected `personalclaw-core` is one |
 | Per-turn tool retrieval + progressive disclosure (`tool_search`/`tool_schema`) | ABSENT | CONFIRMED | ABSENT | `K4` — all 57 tools were enumerated up front; kiro ships no `tool_search`-style tool (codex did) |
 | Failure breaker (warn@3/block@5/circuit@30) | ABSENT | CONFIRMED | ABSENT | `K15` — six consecutive failing tool calls in one turn, zero warn/block/abort |
 | Structural loop detection (no-progress/ping-pong) | ABSENT | CONFIRMED | ABSENT | `K15` — six identically-shaped failures, no steering injection |
@@ -882,26 +882,26 @@ Ledger ids are `K…` so they never collide with `AAP-1`'s `O…` or `AAP-2`'s `
 | Preference-facet capture (every turn) | WIRED | CONFIRMED | WIRED | `K16` — `activity_event` kind `learned`: `Learned: never more` (the same bad extraction as on both other providers) |
 | Correction→lesson review | WIRED | CONFIRMED | WIRED | `K16`, `K17` — `Learned: User correction to honor: …` plus `facet_veto` + `after_turn_review` rows in `memory.db` |
 | Procedural-outcome capture (M5d tool-outcome drain) | ABSENT | CONFIRMED | ABSENT | `K17` — after turns of 13, 8 and 3 tool calls, every `memory_events` row came from the **0-tool** correction turn, and the self-model row asserts `tools: []` |
-| Skill-ladder review (4-tier, propose-only) | WIRED | NOT-EXERCISED | — | needs a model provider, which this isolated home lacks |
-| Memory consolidation on session end | WIRED | NOT-EXERCISED | — | same reason |
-| Incognito/restricted no-write guarantees | WIRED | NOT-EXERCISED | — | no incognito/restricted session was driven |
+| Skill-ladder review (4-tier, propose-only) | WIRED | NOT-EXERCISED (follow-up: still) | — | `K44` — the model-provider blocker is gone and 25+ turns ran (corrections included), yet `GET /api/skills/proposals` stayed `{"proposals": []}`, and there is **no forced-run surface**, so "gate not met" and "inert" are indistinguishable from outside. Filed as `G44` |
+| Memory consolidation on session end | WIRED | **CONFIRMED** (follow-up) | WIRED | `K42` — `POST /api/memory/consolidate {"key": "dashboard_<session>"}` on a kiro session: `last_consolidated` 0 → 33, `semantic_memory` 3 → 5, `episodic_memories` 2 → 5. The per-turn cadence has a 30-message threshold (`src/personalclaw/history.py:38`), which is why thirteen short turns had not tripped it |
+| Incognito/restricted no-write guarantees | WIRED | **CONFIRMED** (follow-up) | WIRED | `K33` — an `incognito` session ran the SAME correction turn that wrote three rows on a persistent session and wrote **zero** (`memory_events` 3→3, `semantic_memory` 3→3, `episodic` 0→0); the CLI itself knew ("for the rest of this incognito session"); the transcript persists with `memory_mode: incognito` by design, and the session is not restored after a gateway restart |
 
 ### 4e. Session / conversation mechanics — kiro-cli column
 
 | Feature | audit said | mark | runtime verdict | evidence |
 |---|---|---|---|---|
-| Variants / regenerate (‹n/N› switcher) | WIRED | NOT-EXERCISED | — | not driven; `AAP-2` closed it on codex and re-driving it here would have bought a duplicate observation for one more paid turn |
+| Variants / regenerate (‹n/N› switcher) | WIRED | **CONFIRMED** (follow-up) | WIRED | `K34` — `POST …/regenerate` on a kiro session produced a second answer and persisted BOTH: `variants` with two entries plus `variant_idx` on the assistant row. The re-answer still carried the injected knowledge and the profile marker |
 | Edit & resend, branch continuation (fork) | WIRED | CONFIRMED with a caveat | WIRED, but the branch loses the runtime | `K18` — the fork carries `acp_provider: ""` and inherits `workspace_dir`; it also copied 8 of the parent's 42 messages, where codex's fork copied all of its parent's |
 | Queued messages (merge/pop + live bubbles) | WIRED | CONFIRMED | WIRED end-to-end | `K15` — `queue_push` with a `queue_id` during the turn, then `queue_pop` + `chat_user_message` + its own `Turn complete` after it |
-| Empty-turn auto-retry | WIRED | NOT-EXERCISED | — | no empty turn occurred; not forceable as-a-user |
-| Auto-nudge re-arm (loops) | WIRED | NOT-EXERCISED | — | loop-only; blocked by the missing model provider |
+| Empty-turn auto-retry | WIRED | NOT-EXERCISED (follow-up: still) | — | `K48` — 25+ turns across ten kiro sessions, including a blocked write, a hook-blocked tool, an auto-denied unattended call and two protocol errors: **no empty turn ever occurred**. Forcing one needs stream injection, not a fixture |
+| Auto-nudge re-arm (loops) | WIRED | **CONFIRMED** (follow-up) | WIRED | `K43` — `POST /api/autonudge {"idle_secs": 20, "max_cycles": 2}` on a kiro session: the nudge fired, the timer **re-armed**, fired again, and the loop deactivated at the cap (`cycle_count: 2, active: false`); the transcript carries both injected turns and kiro's `NUDGED` replies. Each nudge also fired the `UserPromptSubmit` hooks |
 | Context-% accounting | PARTIAL (UNKNOWN which backends emit) | **DIVERGED** | the chip is EMITTED but always reports a fabricated `0%` | `K4`, `K12`, `K15` — `context_usage {pct: 0.0}` and `context 0%` on every turn, including one carrying 13 tool calls and 196 events |
 | Compaction | WIRED (CLI-owned `/compact`) | **DIVERGED** | ABSENT via the host | `K11` — `/compact` errors `-32601`; nothing compacts |
 | Slash commands (via `stream_command`) | WIRED (protocol `commands/execute`) | **DIVERGED** | ABSENT — no plain-prompt fallback | `K11` — the same `_vendor.dev/commands/execute` failure as claude and codex, though kiro returns it as a well-formed error with the method in `data` |
 | Session resume across gateway restarts (`session/load`) | PARTIAL (falls to `session/new` + compressed history) | **DIVERGED** — worse | ABSENT, and unrecoverable without an undocumented sequence | `K20` — every session returns with `acp_provider: null` (+ effort, workspace_dir, mode and task_mode null) and the next turn errors on the native axis, with no `session/load` attempted despite `loadSession` advertised; `K21` — re-binding then 404s until a `POST /api/chat` touches the session |
 | Warm pool / instant start | WIRED | CONFIRMED | WIRED, and demonstrably warm | `K8` — a second turn on the same session reused the live process (`pgrep` identical before and after) and answered immediately. The first runtime demonstration of a warm reuse across the three sweeps; codex was cold on every turn |
 | Concurrent sessions on one process (P9) | WIRED for this dialect (`supports_concurrent_sessions = True`) | **DIVERGED** | ABSENT — nothing is shared | `K7` — flag on, gate returns `True`, `_shared_connection` keys on `runtime_id` alone, and three bound sessions still ran on three separate 5-process trees |
-| Pipe-death auto-retry / re-queue | WIRED | NOT-EXERCISED | — | no CLI process was killed mid-turn |
+| Pipe-death auto-retry / re-queue | WIRED | **DIVERGED** (follow-up) | no retry — the turn dies with a timeout error | `K38` — `kill -9` on the session's `kiro-cli acp` tree mid-turn: the stream ended `ACP prompt timed out`, nothing was retried or re-queued, and no replacement process appeared for that turn. The NEXT turn respawned transparently (fresh tree, answer in 2.5s) — but its `session_pid_<pid>.txt` still names the **dead** pid |
 | Model override per session (composer picker) | WIRED | CONFIRMED | WIRED, and legible | `K10` — the bind echoed `claude-haiku-4.5`, the activity line named it (`Session created · kiro_default · claude-haiku-4.5 · via acp:kiro-cli`) and both sessions answered on it. codex's `G20` (the pin lapsing after turn 1) could **not** be re-tested here: kiro does not self-report its model id, so per-turn re-application is unobservable from the CLI side |
 | Reasoning effort per turn | WIRED | **DIVERGED** | the axis does not exist on kiro, yet the host accepts, persists and echoes a value | `K2` — `supported_efforts: []` on all 27 agents; `K10` — a bind with `reasoning_effort: "low"` returns `{"ok": true, …, "reasoning_effort": "low"}`. This is `AAP-2`'s `G21` measured on the provider §2.6 named it for |
 | Agent/persona selection | WIRED (kiro has agents) | CONFIRMED | WIRED — and the axis is populated from the operator's private fleet | `K2` — 27 agents, only 3 of them kiro's built-ins; `K10` — binding `kiro_default` round-trips and the activity line names it |
@@ -910,11 +910,17 @@ Ledger ids are `K…` so they never collide with `AAP-1`'s `O…` or `AAP-2`'s `
 
 ### Mark counts (kiro-cli, the same 63 audit cells)
 
-| mark | count |
-|---|---|
-| CONFIRMED (runtime matched the audit's prediction) | 31 |
-| DIVERGED (runtime contradicted it) | 12 |
-| NOT-EXERCISED (no runtime observation obtained; reasons below) | 20 |
+| mark | first sweep | after the follow-up sweep |
+|---|---|---|
+| CONFIRMED (runtime matched the audit's prediction) | 31 | **44** |
+| DIVERGED (runtime contradicted it) | 12 | **16** |
+| ENV (environment limit, never a capability verdict) | 0 | **1** |
+| NOT-EXERCISED (no runtime observation obtained; reasons below) | 20 | **2** |
+
+The follow-up sweep (below) resolved **18 of the 20** NOT-EXERCISED cells — 13 to CONFIRMED, 4 to
+DIVERGED, 1 to ENV. The two that remain are named with what exactly is missing, and neither is a
+missing fixture: the skill-ladder review has no forced-run surface (`G44`), and an empty turn cannot
+be produced as-a-user.
 
 All four of the audit's literal `UNKNOWN` cells are now definite for kiro (full native registry →
 ABSENT, AskUserQuestion → ABSENT, subagents → ABSENT, context-% → emitted-but-fabricated), as are
@@ -925,21 +931,30 @@ round-trips** (`K10`), concurrent sessions → **declared and absent** (`K7`).
 
 ### Residual not-exercised cells (kiro-cli, and why)
 
-1. **Needs a model provider in the isolated home** (4): unattended mode, auto-nudge re-arm,
-   skill-ladder review, memory consolidation. Identical blocker to both prior sweeps —
-   `no model provider resolves for use case 'chat'|'background'` (`K20`). Three sweeps have now
-   paid this cost; seeding one cheap provider into the sweep home is the obvious `AAP-4` fixture.
-2. **Needs a fixture that was not built** (10): knowledge @-mention, attachment/paste, @prompt
-   expansion, agent-profile system prompt, per-agent approval floor, PreToolUse hooks, the other
-   five hook kinds, tool-disable prefs, Lumon persona injection, incognito/restricted.
-3. **Needs timing/failure injection that did not land** (2): empty-turn auto-retry, pipe-death
-   auto-retry.
-4. **No as-a-user entry point** (2): dry-run replay, OS sandbox confinement probe.
-5. **Blocked by another finding in this sweep** (1): cancelled-turn preamble re-injection — both
-   stop attempts (`K21`, `K22`) hit turns that `G29`'s plan-mode wedge had already made tool-free,
-   so nothing was interrupted. This one is *unblocked by fixing `G29`*, not by new fixtures.
-6. **Deliberately not re-driven** (1): variants/regenerate — closed on codex, and one more paid
-   turn here would only have duplicated it.
+**First sweep (20 cells) — all but two are now closed; kept for provenance.** The groups were:
+needs a model provider (4: unattended mode, auto-nudge re-arm, skill-ladder review, memory
+consolidation); needs a fixture that was not built (10: knowledge @-mention, attachment/paste,
+@prompt expansion, agent-profile system prompt, per-agent approval floor, PreToolUse hooks, the
+other five hook kinds, tool-disable prefs, Lumon persona, incognito/restricted); needs
+timing/failure injection (2: empty-turn auto-retry, pipe-death auto-retry); no as-a-user entry point
+(2: dry-run replay, OS sandbox probe); blocked by `G29` (1: cancelled-turn preamble); deliberately
+not re-driven (1: variants/regenerate).
+
+**After the follow-up sweep, exactly two cells carry no runtime observation:**
+
+1. **Skill-ladder review (4-tier, propose-only)** — the model-provider blocker is gone, 25+ turns
+   ran with corrections among them, and `GET /api/skills/proposals` never left `{"proposals": []}`.
+   There is no forced-run surface, so from outside the system "the gate was not met" and "the review
+   is inert" are the same observation. Filed as `G44` so the next sweep instruments it rather than
+   re-driving it.
+2. **Empty-turn auto-retry** — no empty turn occurred in 25+ turns across ten sessions, including a
+   blocked write, a hook-blocked tool, an auto-denied unattended call and two protocol errors.
+   Producing one requires stream injection, not a fixture, so it is out of reach for an as-a-user
+   sweep by construction.
+
+One further cell is `ENV` rather than a verdict: **OS sandbox wrap** — the host itself reports
+`No OS-level sandbox available — app-level checks only` on this platform, so there is nothing to
+confine and nothing to probe (`K47`).
 
 ### Gap inventory — severity-ranked (kiro-cli findings, continuing `AAP-2`'s numbering)
 
@@ -965,6 +980,18 @@ verbatim, `K23`, which is precisely how this sweep proved `G29`). `G14` is not a
 activity line's `via acp:kiro-cli` names the provider, and for kiro that *is* the CLI. And `G2`
 (contingent gate coverage) does more than reproduce — it is finally **measured**, as `G27`.
 
+**Status changes from the follow-up sweep (2026-08-18, host `252c944f` = this column's tip plus
+`AAP-4`/`AAP-5`/`AAP-6`) — read this before sequencing Phase 2.** `G3` (no `personalclaw-core`
+surface) is **closed**: kiro spawned and called the server from the protocol field with no seeded
+config (`K32`). `G33` (a pid file for only some sessions) **does not reproduce** — four sessions,
+four files (`K37`) — but `G42` replaces it with a staleness window. `G1` is **half fixed**: gone on a
+directly bound session (`K28`), alive on an agent-profile-bound one, re-filed at P0 as `G39`
+(`K50`). Still reproducing unchanged: `G4` (`/compact` → `-32601`, four sweeps now), `G5` (a restart
+nulls `acp_provider`, `workspace_dir`, `task_mode` and `trust`), `G30` (a pre-restart session cannot
+be re-bound — `{"error": "not found"}`), `G16` (and worse: the extractor recorded an *injected
+knowledge block* as "User correction to honor…", `K49`). `G27`'s ungated-tool residue was addressed
+by `AAP-5` after this column was written, so this sweep did not re-measure it.
+
 **P0 — safety**
 
 - **`G27` The host approval gate is provably not universal: seven of thirteen tool calls in one
@@ -981,6 +1008,17 @@ activity line's `via acp:kiro-cli` names the provider, and for kiro that *is* th
   Success Criterion 3's "never silently executed" is not met. Owner: core seam — and it needs a
   *positive* mechanism (deny-by-default for un-permissioned `tool_call`s, or an explicit
   per-provider enumeration of the not-gateable set) rather than another gate on the asking path.
+- **`G39` (follow-up sweep) `G1`'s real-home escape is fixed on the plain path and ALIVE on the
+  agent-profile path.** Two sessions, same host, same isolated home, both with `workspace_dir`
+  explicitly set to a temp dir and confirmed set on `GET /api/chat/sessions`: bound directly to
+  `acp:kiro-cli`, the CLI's own `pwd` answers the temp dir (`K28`) — the first sweep's escape (`K4`)
+  is gone. Bind a PersonalClaw **agent profile** to the session and the same `pwd`, asserted inside
+  the spawned CLI, answers **`~/.personalclaw/workspace`** — the operator's real home
+  (`K50`). The profile carried no `default_dir`, so the empty value wins over the session's explicit
+  one instead of falling through to it. Severity stays P0 because the consequence is unchanged from
+  `G1`: an isolated-home session writes into the real home, and every agent-profile-bound ACP
+  session on any provider takes this path. It is also the shape a fix can miss — a sweep that only
+  drives the plain binding now measures the escape as gone. Owner: core seam.
 - **`G28` kiro has no config-isolation lever either, and its leak is an identity leak on top of a
   tool leak.** Like codex (`G17`) the bundle applies no config isolation — but where codex leaked
   the operator's 12 MCP servers, kiro leaks (a) **24 of the 27 personas the host offers in its
@@ -1045,7 +1083,19 @@ activity line's `via acp:kiro-cli` names the provider, and for kiro that *is* th
   produced **one** pid file (`K9`), where codex produced one per session. §2.1's acceptance
   criterion names this file as the resolution mechanism for subagent completion inject-back, so
   that criterion would pass or fail per-chat with nothing distinguishing them in the UI. Owner:
-  core seam.
+  core seam. **Follow-up sweep: does NOT reproduce** — four live sessions produced four pid files,
+  one each (`K37`). What replaced it is narrower and filed as `G42`: the file survives its process.
+- **`G40` (follow-up sweep) A PreToolUse hook blocks or is ignored depending on which agent
+  references it — same hook, same exit code, no surface says which you have.** With six lifecycle
+  hooks installed through the supported `POST /api/triggers` path, a `PreToolUse` hook exiting 2
+  fired three times and the write still landed while no agent profile referenced it; once the hook
+  ids were bound to the session's agent profile, the identical hook blocked the tool and the tool
+  line named it (`hook blocked: aap3-pretool:hook denied`) (`K39`). Both behaviours are deliberate
+  in isolation — `chat_runner._fire` is agent-scoped ("there is no global firing path") and
+  `fire_tool_hooks` is documented as informational — but together they mean a user who installs a
+  blocking safety hook and does not also attach it to the agent they are chatting with gets a hook
+  that *runs*, *logs*, and *does not block*. That is a safety control with two indistinguishable
+  states. Owner: core seam (make the non-blocking path say so, or make installation attach it).
 
 **P2 — fidelity**
 
@@ -1075,6 +1125,22 @@ activity line's `via acp:kiro-cli` names the provider, and for kiro that *is* th
   27 kiro agents, and a bind with `reasoning_effort: "low"` is accepted, persisted and echoed back
   (`K2`, `K10`) — so "grey the pill on kiro" has its measurement, and keying the fix off
   `supported_efforts` covers both providers as `G21` predicted. No new number.
+- **`G41` (follow-up sweep) Two of the six script-hook kinds never fire on the ACP path — including
+  `Error`, with real errors available to fire it.** Over 25+ turns with all six kinds installed and
+  attached: `SessionStart` 1, `UserPromptSubmit` 17, `Stop` 15, and `PostToolUse` **0**, `Error`
+  **0** (`K40`). The Error miss is measured against two genuine failures in the same sessions — the
+  `-32601` `/compact` error and a vendor `-32603 MODEL_TEMPORARILY_UNAVAILABLE`. `fire_tool_hooks`
+  says PostToolUse "should be fired on EVENT_TOOL_RESULT when available"; on this path nothing does.
+  A user wiring an audit or paging hook to `Error` gets silence exactly when it matters. Owner: core
+  seam.
+- **`G42` (follow-up sweep) A mid-turn CLI death is reported as a timeout, is never retried, and
+  leaves the inject-back pid file pointing at a corpse.** `kill -9` on the session's `kiro-cli acp`
+  tree during an approved `sleep 40`: the turn ended `ACP prompt timed out` with no re-queue and no
+  replacement process, while the session's `_acp_pipe_death_retries` counter exists for exactly this
+  case. The next turn respawned transparently and answered in 2.5 s — and `session_pid_<pid>.txt`
+  still named the **dead** pid, with no file for the live one (`K38`). So `G33`'s per-chat lottery is
+  replaced by a staleness window: the file is wrong from the death until the session is re-created,
+  which is the interval a subagent completion is most likely to arrive in. Owner: core seam.
 
 **P3 — cosmetic / legibility / methodology**
 
@@ -1086,6 +1152,22 @@ activity line's `via acp:kiro-cli` names the provider, and for kiro that *is* th
   functional bug in this sweep — was proven rather than guessed. So the harness need is real but no
   longer blocking: prompt-side cells can be validated on kiro today, and `AAP-4`'s parity doc should
   say so. Owner: whoever runs the remaining Phase 1 follow-ups.
+- **`G43` (follow-up sweep) A hand-authored `hooks.json` is silently rewritten to `{"hooks": []}` by
+  the running gateway.** Six hooks written directly into `$PERSONALCLAW_HOME/hooks.json` load
+  correctly in-process (`ScriptHookStore()` → 6) and are gone after a boot plus one turn — the file
+  reduced to `{"hooks": []}` with the store's own `_save()` shape, twice in a row. `_load` never
+  saves, so a mutator ran against an empty in-memory store and truncated the file. Nothing warns.
+  The supported path (`POST /api/triggers` with `trigger_type: lifecycle` and `action.provider`)
+  persists correctly, which is how `K39`/`K40` were driven — so the user-visible bug is narrow (only
+  hand-edited files) but it is silent data loss in a file the docs describe as user-editable. Owner:
+  core seam.
+- **`G44` (follow-up sweep) The skill-ladder review cannot be observed or forced from any user
+  surface.** With a live model provider and 25+ turns including corrections, `GET
+  /api/skills/proposals` never left `{"proposals": []}`, and the route census offers accept, promote,
+  verify and revert but nothing that runs the review — so a reviewer cannot distinguish "the gate
+  said no" from "the review is inert" (`K44`). This is the one cell in the kiro column that no
+  fixture can close; it needs either a forced-run endpoint or a SEL row per gate decision. Owner:
+  whoever owns the learning cadences.
 
 **Negative results worth keeping** (so nobody re-chases them): the hard deny-list **does** cover ACP
 tools and names the pattern to the user (`K25`) — the first positive on that cell in three sweeps;
@@ -1116,6 +1198,56 @@ the two that look smallest are the two that would have been worst to half-fix:
 and card-payload shapes) all live in `acp/translate.py` and the shared chat-runner gate path — the same
 files `AAP-2` declined to touch, and outside this atom's fence. Each is filed with its exact wire
 evidence instead.
+
+### Follow-up sweep — closing the NOT-EXERCISED remainder (`AAP-3`, 2026-08-18)
+
+The first sweep left **20 of 63 cells NOT-EXERCISED**, so the atom's "every cell CONFIRMED or
+DIVERGED" clause was unmet even though its three named unknowns were closed. This follow-up built the
+fixtures the first sweep named as missing and drove the remainder. Ledger ids continue at `K27`.
+
+**Host tip differs from the first sweep and that matters.** The first column was measured at `aa2610dc`;
+this follow-up ran on `origin/main` @ `252c944f`, which contains `AAP-4`, `AAP-5` and `AAP-6`. So a
+row re-measured here is a *later* observation of the same cell, and where the two disagree the row
+below says so explicitly rather than overwriting history. Same isolated home discipline
+(`PERSONALCLAW_HOME=/private/tmp/aap3n-wt/.dev-home`, `PERSONALCLAW_WORKSPACE=…/.dev-home/ws`,
+`PERSONALCLAW_AUTH_MODE=none`, gateway on `:10461`, apps installed from the first-party clone),
+same marking vocabulary, same rule that reading code is not a mark.
+
+**Auth precondition re-checked FIRST, again three ways — verdict: FRESH.** No cell below is `ENV`
+for auth reasons. (`K27`.)
+
+**The fixture three sweeps deferred now exists.** `bedrock-models` installed into the isolated home,
+provider instance `bedrock` on `global.anthropic.claude-haiku-4-5-20251001-v1:0`, `POST
+/api/model-providers/bedrock/test` → `Connected — 123 model(s) available`, and all six use cases
+(`chat`, `background`, `reasoning`, `code_tools`, `orchestration`, `loops`) bound. This is what
+unblocked the four "needs a model provider" cells (`K29`).
+
+| id | what was run | what was observed |
+|---|---|---|
+| `K27` | the auth precondition, before any capability probe: `~/.midway/cookie` mtime vs `date`; `mwinit -l`; `kiro-cli whoami`; a live model call | **FRESH.** Cookie written `2026-08-18 16:40:57 PDT`, sweep start `17:27:04 PDT` → **47 minutes** old. `mwinit -l` lists the cert and the cookie. `kiro-cli whoami` → `Logged in with IAM Identity Center (https://amzn.awsapps.com/start)`, `golani@amazon.com`, profile `KiroProfile-us-east-1`. Live call `kiro-cli chat --no-interactive "Reply with exactly the word AUTHOK…"` → `AUTHOK` (`Credits: 0.30 • Time: 1s`). `kiro-cli` **2.18.1**, same binary as the first sweep |
+| `K28` | the cwd-confinement re-measurement, asserted **inside** the spawned CLI: S1 bound to `acp:kiro-cli` with `workspace_dir=…/.dev-home/ws`, then "Run exactly one shell command: `pwd`" | **`PWD=/private/tmp/aap3n-wt/.dev-home/ws` — `G1`'s escape does NOT reproduce at this tip.** The first sweep measured `~/.personalclaw/workspace` for the identical probe (`K4`). The `pwd` approval card's own `tool_input` also carries `working_dir: "…/.dev-home/ws"`, so the two no longer disagree inside one turn the way `K12` recorded. `AAP-5`'s log noted the same in passing; this is the direct measurement |
+| `K29` | the model-provider fixture: `POST /api/apps` (`bedrock-models`), gateway restart, `POST /api/model-providers`, `/test`, six `PUT /api/models/active/<uc>` | `Connected — 123 model(s) available`; every use case echoes `["bedrock:global.anthropic.claude-haiku-4-5-20251001-v1:0"]`. The restart is load-bearing — a provider *type* only registers at boot, so creating the instance before it 400s with "unknown type" |
+| `K30` | the combined prompt-side probe, one turn on a fresh session: `agent=aap3-probe` (a profile carrying `system_prompt` + `voice`), `color_theme=lumon`, `meta.knowledge=[<item id>]`, `meta.files=[…/uploads/aap3-brief.txt]`, message containing the literal `@aap3-prompt`, asking for six verbatim quotes | **four cells CONFIRMED in one turn, one ABSENT.** Reply verbatim: `(1) MANDATORY PROFILE MARKER: you must include the exact token PROFILE-MARKER-QX41 in every reply.` `(2) The AAP3 KIWI PROTOCOL states: the secret sweep codeword is ZANZIBAR-7719 …` `(3) ATTACHMENT-CONTENT-MARKER-B83: the attached briefing says the sweep vehicle is a hovercraft.` `(4) ABSENT` `(5) Use a Lumon-inspired persona. Keep responses technically useful and clear first.` `(6) ## Task mode: Agent`. So the agent-profile system prompt, the knowledge injector, the attachment extractor and the Lumon persona all reach kiro; the `@aap3-prompt` reference does **not** |
+| `K31` | the `@prompt` half of `K30`, followed by `POST /api/prompts/aap3-prompt/render` | **expansion is composer-side, not host-side.** The persisted user message stores the literal `@aap3-prompt` unexpanded and the CLI never saw the body; the render endpoint returns `{"rendered": "EXPANDED-PROMPT-BODY-7C2: …"}` when called directly, and `web/src/pages/ChatPage.tsx` is the caller. So on the wire this cell is provider-independent — whatever the composer substitutes is what any provider receives — and nothing on the ACP path expands an `@name` |
+| `K32` | incidental, visible in `K28`'s frames: the first tool call of the turn | `@personalclaw-core/get_context` — **`AAP-4`'s Prong A is live in this sweep**, so `G3`'s "no `personalclaw-core` surface at all" (`K4`) is already closed at this tip, on the protocol field alone with no seeded user config. It also raised its own approval card, i.e. the MCP surface is gated like any other tool |
+| `K33` | the incognito guarantee: a session created `{"memory_mode":"incognito"}`, bound to kiro, driven with the SAME correction text that wrote three rows on a persistent session; db counts before/after; then a gateway restart | **zero writes.** `memory_events` 3→3, `semantic_memory` 3→3, `episodic_memories` 0→0. The CLI knew its posture — it answered "…for the rest of this incognito session". The transcript IS written (`memory_mode: incognito` in its metadata line, which is how the mode is restored, so this is by design, not a leak) and the session is **not** restored into the session list after a restart |
+| `K34` | `POST /api/chat/sessions/<s>/regenerate` on a kiro session, then the persisted assistant row | **two variants persisted** — the row carries `variants` (2 entries) + `variant_idx`, first `(1) …` then `1. …`. So the ‹n/N› switcher has its data on kiro. The regenerated answer still quoted the injected knowledge and the profile marker, i.e. injection survives a regenerate |
+| `K35` | the cancelled-turn preamble: a `sleep 40` shell call approved, `POST …/stop` ~20 s in (resolved `outcome: "soft"`), then a next turn asking to quote any line containing "PREVIOUS TURN WAS CANCELLED" | **CONFIRMED** — kiro quoted `[PREVIOUS TURN WAS CANCELLED BY THE USER -- context restore]` and the line after it verbatim. Note a **soft** stop is enough to arm it; the first sweep's failure was `G29` making its stop targets tool-free, not the stop kind |
+| `K36` | the per-agent approval floor: profile `approval_mode: auto` bound via the turn's `agent` field, background auto-approver switched **off**, then `echo AUTOFLOOR-OK` | ran with **no approval card at all** — no `permission` frame, `pending_approval_info: null` — and the session came back `trust: true`. So the floor is real, and it is implemented by flipping session trust |
+| `K37` | `ls $PERSONALCLAW_HOME/session_pid_*.txt` with four kiro sessions live | **four files, one per session** — `G33` ("written for only some sessions", measured 1-of-3 in the first sweep) **does not reproduce** at this tip. §2.1's subagent inject-back precondition therefore holds for every session here |
+| `K38` | pipe death: `kill -9` on the session's `kiro-cli acp` tree mid-turn (during an approved `sleep 40`), then the same session's next turn, then the pid files | **no retry.** The stream ended `ACP prompt timed out`; nothing was re-queued and no replacement process appeared for that turn. The **next** turn respawned transparently (fresh tree, `RECOVERED` in 2.5 s) — but `session_pid_*.txt` still named the **dead** pid and no file was written for the live one, so the inject-back file is stale exactly after the event that makes it wrong |
+| `K39` | PreToolUse blocking, both halves: six lifecycle hooks created via `POST /api/triggers` (`trigger_type: lifecycle`, `action.provider: bash`), the PreToolUse one `exit 2`; a write driven (a) while no agent referenced the hook, (b) with the hook ids bound to the session's agent profile | **the same hook blocks or does not, depending on who references it.** (a) it fired three times and the write still landed — `hooked.txt` contained `HOOKED`. (b) the tool line read `Running: @personalclaw-core/get_context (hook blocked: aap3-pretool:hook denied)` and `hooked2.txt` was **never created**. `chat_runner`'s `_fire` is agent-scoped by design ("there is no global firing path"); `fire_tool_hooks` is the informational path whose docstring says results "cannot block execution". Filed `G40` |
+| `K40` | the other five hook kinds, same fixture, counted from the hooks' own log file over 25+ turns | `SessionStart` **1**, `UserPromptSubmit` **17**, `Stop` **15** — and `PostToolUse` **0**, `Error` **0**. The Error miss is not for lack of errors: `/compact` produced `-32601` and one turn produced a real `-32603` `MODEL_TEMPORARILY_UNAVAILABLE`, and neither fired it. Filed `G41`. (An auto-nudge injection also fires `UserPromptSubmit`, which is why that count exceeds the human turns) |
+| `K41` | unattended mode as-a-user: a session keyed `cron:aap3-unattended` (the `is_unattended_session` prefix rule), auto-approver **off**, asked for a write | **fail-fast, not parking:** `Running: @personalclaw-core/get_context (auto-denied: unattended run, no one to approve)`, `[DONE]` in 5.2 s, `pending_approval_info: null`, and the requested file never created. The audit predicted ABSENT for this cell; `AAP-6` built it and this is its as-a-user measurement on kiro |
+| `K42` | memory consolidation: 13 short turns to cross the threshold (it did not fire), then `POST /api/memory/consolidate {"key": "dashboard_<session>"}` | **CONFIRMED** — `last_consolidated` 0 → **33**, `semantic_memory` 3 → 5, `episodic_memories` 2 → 5. The per-turn cadence's gate is a 30-message threshold on the *history log* (`src/personalclaw/history.py:38`) and its offset is process-local, so a short session never reaches it; the explicit endpoint is the only way a user can force it |
+| `K43` | auto-nudge re-arm: `POST /api/autonudge {"session_name": <kiro session>, "idle_secs": 20, "max_cycles": 2}`, then 75 s of silence | **armed, fired, re-armed, fired, capped** — `cycle_count: 2`, `active: false`, `last_fire_ts` set; the transcript carries both injected `NUDGE-PROBE` turns and kiro's `NUDGED` replies. First runtime demonstration of the loop-side nudge on an ACP provider |
+| `K44` | the skill ladder, with a live model provider and 25+ turns (corrections included): `GET /api/skills/proposals` | `{"proposals": []}` throughout, and the route census shows accept/promote/verify but **no forced-run surface**. So the cell stays NOT-EXERCISED for a reason that is not a fixture — it needs instrumentation. Filed `G44` |
+| `K45` | tool-disable prefs: `POST /api/mcp/toggle-tool {"server":"personalclaw-core","tool":"get_context","enabled":false}` | `{"error": "server 'personalclaw-core' not found"}` — the only per-tool disable surface addresses *configured* MCP servers, and an ACP CLI's tools are neither (kiro's 57 natives come from its own config; `personalclaw-core` is injected through the protocol field, not the registry). ABSENT with a named reason |
+| `K46` | dry-run replay: a census of what a user can actually reach — routes matching dry-run/observe, config fields, and where the `dry_run` argument is accepted | the only `dry_run` on any surface is session-cleanup's unrelated preview flag; the T9 argument exists solely on the native runtime constructor, which an ACP session never builds. ABSENT by entry-point census rather than by interception, which is stated so nobody reads it as a driven negative |
+| `K47` | the OS sandbox wrap: the gateway's own boot line, and the sandbox module's surface | `WARNING personalclaw.sandbox: No OS-level sandbox available — app-level checks only`. There is no host wrap engaged on this platform, so no confinement boundary exists to probe — **ENV**, not a capability verdict in either direction |
+| `K48` | empty-turn auto-retry: every turn of this sweep, watched for a zero-content assistant turn | none occurred across 25+ turns and ten sessions, including a blocked write, a hook-blocked tool, an auto-denied unattended call, a cancelled turn and two protocol errors. Not forceable as-a-user |
+| `K50` | the escape's other path, measured because `K28` looked like a clean fix: the SAME probe on a session whose turn also carried `agent=<a PersonalClaw profile>` — `workspace_dir` verified set on `GET /api/chat/sessions` (`/private/tmp/aap3n-wt/.dev-home/ws`), `pwd` asserted INSIDE the spawned CLI | **`PWD=~/.personalclaw/workspace` — the real home.** Reproduced on a second profile-bound session, whose `echo` tool call also carried `working_dir: "~/.personalclaw/workspace"` in its approval frame. So `G1` is fixed for a directly-bound session and alive for an agent-profile-bound one; the profile's empty `default_dir` wins over the session's explicit value. Filed `G39` |
+| `K49` | two cross-checks worth keeping: the lesson extractor on an injected-context turn, and one turn's vendor error | **`G16` is worse than "bad extraction":** the lesson row written for `K30`'s turn is `User correction to honor: The user referenced the following item(s) from their knowledge library. Their content is included below …` — the extractor swallowed the *injected knowledge block* as if it were the user's correction, alongside a second row `Never: never violate these):` clipped from prompt boilerplate. Separately, one turn failed with kiro's `-32603` `MODEL_TEMPORARILY_UNAVAILABLE` ("unexpectedly high load"); that is recorded as **ENV** and no cell rests on it |
 
 ## Execution log
 
@@ -1350,3 +1482,50 @@ evidence instead.
   **BOUNDARY:** the ACP observer can warn and abort BETWEEN protocol frames; it cannot refuse a call
   pre-execution the way the native runtime can. That asymmetry is stated in `loop_breaker`'s module
   docstring and belongs in §2.7's parity doc when that atom lands.
+
+- 2026-08-18 — `AAP-3` **follow-up sweep: the atom's remaining clause is now met.** The first sweep
+  closed the three named unknowns but left **20 of 63 cells NOT-EXERCISED**, so "every cell CONFIRMED
+  or DIVERGED" was unmet. This session built the fixtures the first sweep named as missing and drove
+  the remainder: **18 of the 20 resolved** (13 CONFIRMED, 4 DIVERGED, 1 ENV), leaving **two** with a
+  stated reason that is not a fixture. Column now **44 CONFIRMED / 16 DIVERGED / 1 ENV / 2
+  NOT-EXERCISED**. Auth precondition re-checked FIRST and three ways (cookie 47 min old, `whoami` →
+  IAM Identity Center, a live call returning `AUTHOK`) — **no cell is `ENV` for auth reasons**; the
+  one vendor `MODEL_TEMPORARILY_UNAVAILABLE` turn is recorded as ENV and nothing rests on it.
+  Ledger `K27`-`K50`; six new findings `G39`-`G44` filed in the ranked inventory (one P0, one P1, two
+  P2, two P3). **Host tip is `252c944f`, not the first sweep's `aa2610dc`** — so re-measured rows say
+  so instead of overwriting history.
+  **The fixture three sweeps deferred now exists:** `bedrock-models` in the isolated home on
+  `global.anthropic.claude-haiku-4-5-20251001-v1:0`, `Connected — 123 model(s) available`, all six
+  use cases bound. That alone closed unattended mode, auto-nudge re-arm and memory consolidation, and
+  turned the skill-ladder cell from "no model" into a real finding.
+  **DISCOVERY (the one that matters most):** `G1`'s real-home escape is **half fixed, and the
+  remaining half is invisible to the obvious probe.** A directly bound kiro session's own `pwd` now
+  answers the isolated `workspace_dir` (`K28`) — the first sweep measured the real home for the
+  identical probe. Bind a PersonalClaw **agent profile** and the same in-CLI `pwd` answers
+  `~/.personalclaw/workspace` (`K50`), reproduced on a second profile-bound session whose
+  tool frame also carried the real home as `working_dir`. Filed P0 as `G39`: a sweep that only drives
+  the plain binding will now report the escape as gone.
+  **DISCOVERY:** a `PreToolUse` hook is a **two-state safety control**. Installed but not referenced
+  by the session's agent profile, it fires, logs, and the write still lands; referenced, the identical
+  hook blocks the tool and the UI names it (`hook blocked: aap3-pretool:hook denied`) (`K39`, `G40`).
+  Two of the six hook kinds never fire at all on the ACP path — `PostToolUse` and, with two real
+  errors available to fire it, `Error` (`K40`, `G41`).
+  **DISCOVERY:** the prompt-side column can be closed in ONE paid turn on kiro. `G38`'s
+  quote-your-context method carried a profile `system_prompt`, a knowledge injection, an attachment
+  extraction, a Lumon persona and the task-mode line in a single reply (`K30`) — five cells, one turn.
+  The same turn showed `@prompt` expansion is composer-side, so that cell is provider-independent by
+  construction (`K31`).
+  **DISCOVERY:** `G33` does not reproduce (four sessions → four pid files, `K37`), but pipe death
+  replaces it with something worse-bounded: `kill -9` mid-turn yields `ACP prompt timed out`, **no
+  retry**, and a `session_pid_<pid>.txt` still naming the dead pid after the next turn transparently
+  respawns (`K38`, `G42`). Unattended mode measured **better** than the audit predicted — the host
+  auto-denies in 5 s rather than parking (`K41`) — and the cancelled-turn preamble, the cell three
+  sweeps could not close, is quoted verbatim after a **soft** stop (`K35`).
+  **DEVIATION:** the 20 rows keep their first-sweep text and gain a `NOT-EXERCISED → <mark>
+  (follow-up)` mark rather than being overwritten, because the two observations are at different host
+  tips and both are true.
+  **BOUNDARY:** `OS sandbox wrap` is `ENV`, not a verdict — the gateway itself logs `No OS-level
+  sandbox available — app-level checks only` on this platform, so there is no confinement to probe.
+  `Dry-run replay` and `tool-disable prefs` are ABSENT by **entry-point census** (no route, no config
+  field, and `toggle-tool` cannot address a protocol-injected server), which is stated as such so
+  nobody reads them as driven negatives.
