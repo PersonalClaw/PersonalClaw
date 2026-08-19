@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import {
   Check, Copy, Laptop, MonitorSmartphone, QrCode, Smartphone, Terminal, Globe, XCircle,
 } from 'lucide-react'
@@ -88,6 +88,21 @@ export function DevicesPanel() {
   const [pairing, setPairing] = useState<DevicePairStart | null>(null)
   const [starting, setStarting] = useState(false)
   const [left, setLeft] = useState(0)
+  // ── What the pairing flow SAYS, and where it puts you ─────────────────────────────────────────
+  //
+  // Measured on this panel with the keyboard: focus was on "Pair a device", Enter generated a code,
+  // and focus landed on **`<body>`** — the button that had focus is replaced by the code view, so the
+  // user's place is simply gone. And the flow's ONE live region was the ticking countdown: six
+  // distinct texts in six seconds inside a `role="status"`, i.e. ~300 announcements for a 5-minute
+  // code, while the one fact worth announcing — a code is ready — was never announced at all,
+  // because that region is mounted together with its content.
+  //
+  // So: a stable region (always present, empty when idle — the shape `ResultAnnouncement` and
+  // `Toaster` already use) carries the two EVENTS, the countdown keeps its words and tone but stops
+  // being live, and focus moves to the code itself.
+  const announce = useRef('')
+  const [said, setSaid] = useState('')
+  const codeRef = useRef<HTMLDivElement | null>(null)
   const [revoking, setRevoking] = useState<string | null>(null)
 
   // One ticking clock for the code's countdown, alive only while a code is on screen.
@@ -130,10 +145,30 @@ export function DevicesPanel() {
     }
   }
 
+  // 🪤 THESE HOOKS SIT ABOVE THE LOADING/ERROR EARLY RETURNS ON PURPOSE. Placed after them, they run
+  // on some renders and not others — React error #310 ("rendered more hooks than during the previous
+  // render"), which took the whole panel down to its Retry state the first time I wrote this.
+  const expired = pairing != null && left <= 0
+
+  // A NEW code arrived (first one, or "New code"): say so once, and take focus to it. Keyed on the
+  // code itself, so a re-render or a countdown tick cannot re-announce or steal focus.
+  useEffect(() => {
+    if (!pairing) { announce.current = ''; setSaid(''); return }
+    if (announce.current === pairing.code) return
+    announce.current = pairing.code
+    const mins = Math.max(1, Math.round((pairing.expires_in ?? 300) / 60))
+    setSaid(`Pairing code ${pairing.code} is ready. It expires in about ${mins} minute${mins === 1 ? '' : 's'}.`)
+    codeRef.current?.focus()
+  }, [pairing])
+
+  // The expiry is an EVENT worth one announcement — unlike the second-by-second countdown, which is
+  // a value and now says nothing.
+  useEffect(() => {
+    if (expired) setSaid('This pairing code has expired. Generate another.')
+  }, [expired])
+
   if (!data && loadErr) return <LoadError what="devices" error={loadErr} onRetry={refresh} />
   if (!data) return <FormSkeleton sections={2} what="devices" />
-
-  const expired = pairing != null && left <= 0
 
   return (
     <div>
@@ -173,7 +208,11 @@ export function DevicesPanel() {
                   </span>
                 </div>
 
-                <div className="min-w-0 flex-1 flex flex-col gap-l">
+                {/* The programmatic focus target: `tabIndex={-1}` + `role="group"` + a name, so landing
+                    here announces what it is rather than a bare container. It is NOT in the tab order
+                    (−1), so nothing changes for a user tabbing through the card. */}
+                <div ref={codeRef} tabIndex={-1} role="group" aria-label="Pairing code and link"
+                  className="min-w-0 flex-1 flex flex-col gap-l outline-none">
                   <div>
                     <div className="text-on-surface-low text-[0.8125rem]">Code</div>
                     <div className="mt-1 flex items-center gap-s">
@@ -204,9 +243,12 @@ export function DevicesPanel() {
                   by colour would fail 1.4.1 — and an expired code says so instead of counting
                   into negative numbers or looking valid forever. */}
               <div className="flex flex-wrap items-center justify-between gap-l border-t border-outline-variant/30 pt-3">
+                {/* 🪤 THIS USED TO BE `role="status"`, which made the only live region in the flow a
+                    per-second counter: measured six distinct texts in six seconds, ~300 for one code.
+                    A ticking VALUE is not an event. The words and the tone stay (an expiry carried by
+                    colour alone would fail 1.4.1); the announcing moved to the region below. */}
                 <span
                   className={`inline-flex items-center gap-1.5 text-[0.8125rem] ${expired ? 'text-warn' : 'text-on-surface-low'}`}
-                  role="status"
                 >
                   {expired ? <XCircle size={14} /> : null}
                   {expired ? 'This code has expired — generate another.' : `Expires in ${mmss(left)}`}
@@ -224,6 +266,9 @@ export function DevicesPanel() {
               </div>
             </div>
           )}
+          {/* Always mounted, empty when idle — a region created together with its text is not
+              reliably observed, which is exactly how "a code is ready" went unannounced. */}
+          <div role="status" aria-live="polite" className="sr-only">{said}</div>
         </div>
       </Section>
 
