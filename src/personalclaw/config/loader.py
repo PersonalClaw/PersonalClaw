@@ -1304,6 +1304,19 @@ class LoopsConfig:
             "didn't. Off by default: it adds a filesystem pass per stage advance.",
         ),
     )
+    worktree_sparse: bool = field(
+        default=True,
+        metadata=_meta(
+            "Sparse Task Worktrees",
+            "When a parallel task's plan names the files it will touch, hydrate only "
+            "those directories in its git worktree instead of the whole repo. On a "
+            "large codebase this is most of a worktree's setup cost. Safe by "
+            "construction: a task that writes outside its stated scope widens its own "
+            "worktree automatically, a task with no usable scope gets a full checkout, "
+            "and the merged result is identical either way. Turn off to always hydrate "
+            "the full repo.",
+        ),
+    )
 
 
 @dataclass
@@ -4356,6 +4369,7 @@ class AppConfig:
                 judge_use_case=_judge_axis(loops_data.get("judge_use_case", "reasoning")),
                 stagnation_window=_stagnation_window(loops_data.get("stagnation_window", 5)),
                 check_work_stages=bool(loops_data.get("check_work_stages", False)),
+                worktree_sparse=bool(loops_data.get("worktree_sparse", True)),
             ),
             memory=MemoryConfig(
                 semantic_confidence_threshold=memory_data.get("semantic_confidence_threshold", 0.8),

@@ -864,6 +864,12 @@
   },
   {
     "default": true,
+    "path": "loops.worktree_sparse",
+    "sensitive": false,
+    "type": "bool"
+  },
+  {
+    "default": true,
     "path": "memory.active_recall",
     "sensitive": false,
     "type": "bool"
