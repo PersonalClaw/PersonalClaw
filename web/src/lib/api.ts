@@ -2861,6 +2861,17 @@ export interface PlanSession {
   // a failed state + explicit Retry instead of silently re-spawning a fresh pass.
   design_error?: string
 }
+/** A CHAT's binding to that same walkthrough (CC-8). `awaiting_step_id` is the server's
+ *  own derivation of "the review gate is open" — the client never recomputes it from
+ *  step statuses, so the gate the UI shows and the gate the tool guard enforces agree.
+ *  `binding` carries the chat-side attachment record (the task mode to restore, and
+ *  whether a mid-turn activation parked a run). */
+export interface ChatPlanWire {
+  session: PlanSession | null
+  binding: { resume_task_mode?: string; parked?: boolean; parked_messages?: number }
+  awaiting_step_id: string
+  task_mode: TaskMode
+}
 
 export type ApprovalMode = 'normal' | 'trust' | 'trust_reads' | 'yolo'
 // Task mode — orthogonal to approval: gates WHICH tools run + how the agent frames
@@ -3774,6 +3785,34 @@ export const api = {
     post(`/api/chat/sessions/${session}/reasoning-effort`, { reasoning_effort }),
   setApprovalMode: (mode: ApprovalMode, session = '') => post('/api/chat/mode', { mode, session }),
   setTaskMode: (mode: TaskMode, session = '') => post('/api/chat/task-mode', { mode, session }),
+
+  // Chat plan mode (CC-8) — a chat bound to the SAME stepwise planning walkthrough the
+  // loop/code planners use (`PlanSession`/`PlanStep` above, not a second shape). Manual
+  // only: `chatPlanActivate` is the sole way a chat acquires one, so a quick task never
+  // grows a review gate. While a step awaits review the session sits in the `plan` task
+  // mode and the backend's tool gate — not a prompt — is what refuses to execute.
+  chatPlanSession: (session: string) =>
+    get<ChatPlanWire>(`/api/chat/sessions/${encodeURIComponent(session)}/plan-session`),
+  /** Open (or, mid-conversation, extend) the walkthrough. `parked: true` means a turn
+   *  was in flight and has been asked to stop — the transcript is left intact. */
+  chatPlanActivate: (session: string) =>
+    post<{ ok: boolean; session: PlanSession; parked: boolean }>(
+      `/api/chat/sessions/${encodeURIComponent(session)}/plan/activate`,
+    ),
+  chatPlanEdit: (session: string, stepId: string, markdown: string) =>
+    post<{ ok: boolean; session: PlanSession }>(
+      `/api/chat/sessions/${encodeURIComponent(session)}/plan/edit`, { step_id: stepId, markdown }),
+  chatPlanComment: (session: string, stepId: string, text: string) =>
+    post<{ ok: boolean; session: PlanSession }>(
+      `/api/chat/sessions/${encodeURIComponent(session)}/plan/comment`, { step_id: stepId, text }),
+  /** Approve a step. When it completes the walkthrough the reply carries the restored
+   *  task mode, and `resumed` says whether a parked run was continued server-side. */
+  chatPlanApprove: (session: string, stepId: string) =>
+    post<{ ok: boolean; session: PlanSession; complete: boolean; resumed: boolean; task_mode: TaskMode }>(
+      `/api/chat/sessions/${encodeURIComponent(session)}/plan/approve`, { step_id: stepId }),
+  chatPlanCancel: (session: string) =>
+    post<{ ok: boolean; task_mode: TaskMode }>(
+      `/api/chat/sessions/${encodeURIComponent(session)}/plan/cancel`),
 
   // composer tools: prompt optimizer + speech-to-text transcription.
   optimizePrompt: (prompt: string, context = '') =>

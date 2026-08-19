@@ -16,7 +16,7 @@ const DEFAULT_EXIT_PHRASES = ['cancel', 'never mind', 'forget it']
 import { fvs, withWeight } from '../design/fontWeight'
 import { playCue } from '../design/soundCues'
 import { motion, AnimatePresence, useReducedMotion } from 'framer-motion'
-import { Edit3, History, Search, MessageSquare, Trash2, Activity, Brain, Gauge, ChevronRight, ChevronDown, Quote, PanelRight, Clipboard, X, Pin, FileText, BookText, AlertTriangle, Pencil, Sparkles, Link2, Check, Repeat, Rewind, PlayCircle, GitBranch, Folder, FolderPlus, Tag as TagIcon, Columns3, List as ListIcon, EyeOff, Clock, Loader2, Wrench, Target, Code2 as CodeIcon, Paperclip, ExternalLink, ArrowDown, ArrowLeft, ArrowRight, ArrowUp, FolderKanban, GripVertical, MessageCircleQuestion, Bot, ShieldCheck, Shield, Eye, Zap, ClipboardList, Hammer, Camera, NotebookPen, FolderCog, Archive, ArchiveRestore, Boxes, CornerDownLeft, Download, Share2, Coins, type LucideIcon } from 'lucide-react'
+import { Edit3, History, Search, MessageSquare, Trash2, Activity, Brain, Gauge, ChevronRight, ChevronDown, Quote, PanelRight, Clipboard, X, Pin, FileText, BookText, AlertTriangle, Pencil, Sparkles, Link2, Check, Repeat, Rewind, PlayCircle, GitBranch, Folder, FolderPlus, Tag as TagIcon, Columns3, List as ListIcon, ListChecks, EyeOff, Clock, Loader2, Wrench, Target, Code2 as CodeIcon, Paperclip, ExternalLink, ArrowDown, ArrowLeft, ArrowRight, ArrowUp, FolderKanban, GripVertical, MessageCircleQuestion, Bot, ShieldCheck, Shield, Eye, Zap, ClipboardList, Hammer, Camera, NotebookPen, FolderCog, Archive, ArchiveRestore, Boxes, CornerDownLeft, Download, Share2, Coins, type LucideIcon } from 'lucide-react'
 import { IconButton } from '../ui/IconButton'
 import { SquareIconButton } from '../ui/SquareIconButton'
 import { SearchField } from '../ui/SearchField'
@@ -47,6 +47,7 @@ import { MessageUser } from '../ui/chat/MessageUser'
 import { MessageAssistant } from '../ui/chat/MessageAssistant'
 import { Spark } from '../ui/Spark'
 import { StreamingIndicator } from '../ui/chat/StreamingIndicator'
+import { ChatPlanGate } from '../ui/chat/ChatPlanGate'
 import { Markdown } from '../ui/Markdown'
 import { useWidgetActionBridge, takePendingWidgetAction } from '../ui/widget/useWidgetActionBridge'
 import { InlineError } from '../ui/InlineError'
@@ -1636,6 +1637,28 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
     }
   }
 
+  // Plan mode (CC-8) — the composer affordance. One explicit user action opens the
+  // chat's `planning/session.py` walkthrough and puts the session in the `plan` task
+  // mode, which is what makes the backend's tool gate refuse mutations. There is no
+  // heuristic anywhere: a chat only ever gets a plan gate from this click. When a turn
+  // is in flight the server PARKS it (the transcript is kept) and resumes on approval,
+  // so the mid-conversation case needs nothing extra here.
+  async function activatePlanMode() {
+    const sid = sessionRef.current
+    if (!sid) return
+    try {
+      const r = await api.chatPlanActivate(sid)
+      setSelection((sel) => ({ ...sel, taskMode: 'plan' }))
+      if (r.parked) {
+        setMicError('This run is parked — approve the plan below to resume it.')
+        window.setTimeout(() => setMicError(null), 6000)
+      }
+    } catch (e) {
+      setMicError((e as Error)?.message || 'Could not start plan mode.')
+      window.setTimeout(() => setMicError(null), 6000)
+    }
+  }
+
   // Optimize the current draft via the prompt optimizer. The context is role-labeled
   // and newest-last (see chat/optimizerContext.ts) — that shape is what lets the
   // optimizer resolve "that file from earlier" instead of guessing at it.
@@ -2509,6 +2532,15 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
             <OrganizeChip sessionKey={sessionRef.current} refreshKey={turns.length} />
           </div>
         )}
+        {/* Plan review gate (CC-8). Mounted whenever there's a session and renders
+            nothing until the "Plan this first" affordance has opened a walkthrough —
+            keyed on the turn count so the draft the plan-mode turn just produced shows
+            up without a reload. Approve/cancel hand back the restored task mode, so the
+            composer's pill can't drift from the posture the backend gate enforces. */}
+        {sessionRef.current && (
+          <ChatPlanGate session={sessionRef.current} refreshKey={turns.length}
+            onTaskMode={(m) => setSelection((sel) => ({ ...sel, taskMode: m }))} />
+        )}
         <ComposerStage ref={composerRef} value={input} onChange={(v) => { setInput(v); if (preOptimize !== null) setPreOptimize(null); if (followups.length && v.trim().length >= 3) setFollowups([]) }} onSend={() => send()}
           streaming={streaming} onStop={stop} controls={CHAT_CONTROLS} data={data}
           selection={selection} onSelect={applySelection} onAttach={attach} onFocusChange={setComposerFocused}
@@ -2531,6 +2563,14 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
               {screenShare.sharing && sessionRef.current && (
                 <MenuRow icon={<Pin size={16} />} label="Pin shared frame" hint="Save the current screen frame as an ordinary attachment"
                   onClick={() => { close(); void pinScreenFrame() }} />
+              )}
+              {/* Plan mode (CC-8) — an explicit, manual entry. Nothing decides FOR the
+                  user that a message needs planning: a quick task just sends. Offered on
+                  a started chat because the plan is drafted by the next turn in it. */}
+              {started && sessionRef.current && (
+                <MenuRow icon={<ListChecks size={16} />} label="Plan this first"
+                  hint="Draft a plan for review — nothing runs until you approve it"
+                  onClick={() => { close(); void activatePlanMode() }} />
               )}
               {started && sessionRef.current && <AutoNudgeMenuItem session={sessionRef.current!} onOpen={close} />}
             </>

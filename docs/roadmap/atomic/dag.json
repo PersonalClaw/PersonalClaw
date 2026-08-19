@@ -3790,7 +3790,7 @@
         {
           "id": "CC-8",
           "title": "Chat plan-mode entry + mid-task re-planning bound to the existing planning gate",
-          "status": "todo",
+          "status": "done",
           "scope": "Amendment (2026-07-29) (b) Plan Mode; F1.3, F1.4 + VF plan portion",
           "done_when": "a composer affordance opens the EXISTING planning/session.py walkthrough as an editable Markdown artifact (no second state machine), approve/comment route through it, activation is manual-only (quick tasks unaffected), the no-execute guarantee is enforced by the existing plan task-mode gate (test asserts a mutating tool is denied while awaiting approval, not the prompt), and activating mid-turn parks the run awaiting approval without losing the transcript and resumes on approval",
           "deps": []
@@ -7472,11 +7472,6 @@
         "plan": "CC"
       },
       {
-        "id": "CC-8",
-        "title": "Chat plan-mode entry + mid-task re-planning bound to the existing planning gate",
-        "plan": "CC"
-      },
-      {
         "id": "CE-9",
         "title": "Ramp coordination: community bounty issues + channel scaffold registration + trigger-source forward note",
         "plan": "CE"
@@ -9807,9 +9802,9 @@
         "code": "CC",
         "plan": "CHAT-CRAFT",
         "total_atoms": 8,
-        "done": 6,
+        "done": 7,
         "in_progress": 0,
-        "todo": 2,
+        "todo": 1,
         "blocked": 0
       },
       {

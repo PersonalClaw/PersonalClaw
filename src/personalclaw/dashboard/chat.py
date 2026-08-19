@@ -16,6 +16,7 @@ The actual implementation lives in:
 - chat_channel.py     — channel link, handoff, channels
 - chat_fork.py        — fork session
 - chat_tags.py        — tag vocabulary + tag-column CRUD
+- chat_plan.py        — chat plan mode bound to the shared planning walkthrough
 """
 
 # Re-export names that tests monkeypatch on this module
@@ -84,6 +85,14 @@ from personalclaw.dashboard.chat_persistence import (  # noqa: F401
     _save_session_to_history,
     restore_recent_sessions,
     save_all_sessions_to_history,
+)
+from personalclaw.dashboard.chat_plan import (  # noqa: F401
+    api_chat_plan_activate,
+    api_chat_plan_approve,
+    api_chat_plan_cancel,
+    api_chat_plan_comment,
+    api_chat_plan_edit,
+    api_chat_plan_session,
 )
 from personalclaw.dashboard.chat_regenerate import (  # noqa: F401
     _MAX_VARIANTS,

@@ -961,6 +961,14 @@ async def start_dashboard(
     app.router.add_post("/api/chat/sessions/{session}/approve", chat.api_chat_session_approve)
     app.router.add_post("/api/chat/mode", chat.api_chat_mode)
     app.router.add_post("/api/chat/task-mode", chat.api_chat_task_mode)
+    # Chat plan mode (CC-8) — the composer affordance + the shared planning
+    # walkthrough's approve/comment/edit gates, chat-owned.
+    app.router.add_get("/api/chat/sessions/{session}/plan-session", chat.api_chat_plan_session)
+    app.router.add_post("/api/chat/sessions/{session}/plan/activate", chat.api_chat_plan_activate)
+    app.router.add_post("/api/chat/sessions/{session}/plan/edit", chat.api_chat_plan_edit)
+    app.router.add_post("/api/chat/sessions/{session}/plan/comment", chat.api_chat_plan_comment)
+    app.router.add_post("/api/chat/sessions/{session}/plan/approve", chat.api_chat_plan_approve)
+    app.router.add_post("/api/chat/sessions/{session}/plan/cancel", chat.api_chat_plan_cancel)
     app.router.add_post("/api/chat/nav/resolve-links", chat.api_nav_resolve_links)
     app.router.add_post(
         "/api/chat/sessions/{session}/generate-title", chat.api_chat_session_generate_title
