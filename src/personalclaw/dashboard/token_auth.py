@@ -96,6 +96,12 @@ def reset_secret_cache() -> None:
     _SECRET = None
 
 
+#: Cap on the in-memory `last_seen` throttle map. Larger than the concurrent-nonce cap on
+#: purpose: the map also holds nonces that have since been evicted or revoked, and over-trimming
+#: it only costs a redundant file read, never a wrong verdict.
+_MAX_LAST_SEEN_TRACKED = 64
+
+
 class TokenStateManager:
     """Thread-safe manager for token authentication state.
 
@@ -115,6 +121,9 @@ class TokenStateManager:
         self._nonces: OrderedDict[str, float] = OrderedDict()
         self._ip_bindings: dict[str, tuple[str, float]] = {}  # token → (ip, exp)
         self._consumed: dict[str, float] = {}  # token → exp
+        # nonce → when we last ATTEMPTED a `last_seen` stamp. In-memory so the common request
+        # is a dict lookup and never a file read; see `_touch_last_seen`.
+        self._last_seen_touched: dict[str, float] = {}
 
     def register_nonce(self, nonce: str, expiry: float) -> str | None:
         """Register a nonce with its expiry time, evicting oldest if over limit."""
@@ -140,9 +149,13 @@ class TokenStateManager:
         enough to authorize; a session record is the second half of the same fix.
         """
         with self._lock:
-            if nonce in self._nonces:
+            in_memory = nonce in self._nonces
+            if in_memory:
                 self._nonces.move_to_end(nonce)
-                return True, ""
+        if in_memory:
+            # Outside the lock: the stamp takes it again, and it must never gate the verdict.
+            self._touch_last_seen(nonce)
+            return True, ""
 
         # Not in memory: consult the durable store before refusing. A hit means this process
         # restarted (or never saw the mint), NOT that the session is invalid.
@@ -164,7 +177,50 @@ class TokenStateManager:
         with self._lock:
             self._nonces[nonce] = expiry
             self._nonces.move_to_end(nonce)
+        self._touch_last_seen(nonce)
         return True, ""
+
+    def _touch_last_seen(self, nonce: str, now: float | None = None) -> None:
+        """Stamp ``last_seen`` for an authorized device session. NEVER affects the verdict.
+
+        Called on both success paths of :meth:`is_nonce_valid` — an adopted-from-store session
+        is as authorized as an in-memory one, and skipping it would make every device look
+        "never seen" for the first request after a restart.
+
+        Two layers of throttle, for two different costs. This in-memory map suppresses the
+        **file read**, so a device polling every second costs one dict lookup; the store's own
+        staleness check (:data:`LAST_SEEN_THROTTLE_SECS`) suppresses the **write**, and is what
+        holds when several processes share one home. The attempt time is recorded BEFORE the
+        write, so a store that is failing is retried once a minute rather than once a request.
+
+        Non-device sessions fall through to a no-op inside the store; this layer deliberately
+        does not know which sessions carry a device, because that answer lives in the file.
+
+        The ENTIRE body is guarded, import included, because the caller has already decided to
+        authorize by the time this runs.
+        """
+        if not nonce:
+            return
+        try:
+            from personalclaw.dashboard.session_store import (
+                LAST_SEEN_THROTTLE_SECS,
+                touch_device_last_seen,
+            )
+
+            stamp = time.time() if now is None else now
+            with self._lock:
+                if stamp - self._last_seen_touched.get(nonce, 0.0) < LAST_SEEN_THROTTLE_SECS:
+                    return
+                self._last_seen_touched[nonce] = stamp
+                if len(self._last_seen_touched) > _MAX_LAST_SEEN_TRACKED:
+                    # Bounded: a revoked or expired nonce never comes back, so the oldest
+                    # attempt is always the safest to forget, and forgetting one costs a
+                    # single extra file read rather than correctness.
+                    oldest = min(self._last_seen_touched, key=self._last_seen_touched.__getitem__)
+                    self._last_seen_touched.pop(oldest, None)
+            touch_device_last_seen(nonce, now=stamp)
+        except Exception:  # noqa: BLE001 — a failed stamp must not deny a valid session
+            logger.debug("could not stamp last_seen for an authorized session", exc_info=True)
 
     def bind_ip(self, token: str, ip: str, session_exp: float) -> None:
         """Bind a token to a client IP address."""
@@ -228,11 +284,15 @@ class TokenStateManager:
             return existed
 
     def clear_all(self) -> None:
-        """Clear all token state (nonces, IP bindings, consumed tokens)."""
+        """Clear all token state (nonces, IP bindings, consumed tokens, last-seen throttle)."""
         with self._lock:
             self._nonces.clear()
             self._ip_bindings.clear()
             self._consumed.clear()
+            # The throttle is in-memory state like the rest: a restart must forget it, so the
+            # first authorized request after one stamps instead of being suppressed by a
+            # timestamp from the previous process.
+            self._last_seen_touched.clear()
 
 
 # Maximum concurrent valid tokens before oldest is evicted

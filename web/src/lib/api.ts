@@ -508,6 +508,32 @@ export interface CompanionDiscovery {
   addresses: string[]
   txt: Record<string, string>
 }
+/** One paired device with a live session (COMPANION-APPS C2). Derived from `sessions.json`,
+ *  so a row disappears the moment its session is revoked or expires, and it NEVER carries the
+ *  nonce — the registry is read aloud, the nonce is the credential.
+ *
+ *  `last_seen` is 0 for a device that has never made an authorized request. That is a distinct
+ *  state from `minted_at` and must render as "never": the backend deliberately does not
+ *  backfill it from the pairing time, because a device that paired and never came back would
+ *  otherwise read as freshly active. See `DeviceInfo` in `dashboard/session_store.py`. */
+export interface DeviceRec {
+  id: string
+  name: string
+  kind: 'browser' | 'mobile' | 'desktop' | 'cli' | 'unknown'
+  minted_at: number
+  last_seen: number
+  issuer: string
+  expires_at: number
+}
+/** `pair/start`'s reply. `code` arrives pre-grouped (`XXXX-XXXX`) for reading out loud, and
+ *  `pairing_url` already contains it, so the URL is actionable on its own — which is what makes
+ *  it the QR payload as well as the copyable link. `expires_in` is SECONDS. */
+export interface DevicePairStart {
+  code: string
+  pairing_url: string
+  expires_at: number
+  expires_in: number
+}
 export interface AppUiPage { route: string; label: string; icon: string }
 export interface AppSummary {
   name: string; displayName: string; version: string; description: string
@@ -3244,6 +3270,17 @@ export const api = {
   // design. `detail` is the sentence to show — the backend owns the wording so this
   // surface never invents a second one for a state it does not own.
   companionDiscovery: () => get<CompanionDiscovery>('/api/companion/discovery'),
+  // ── The device registry (COMPANION-APPS C2 / CA-2) ──
+  // Settings → Devices is the ONLY device list in the product; other surfaces link here
+  // rather than growing a second one. `devicePairStart` mints a short-lived code; the device
+  // itself redeems it against `pair/complete`, which is deliberately reachable WITHOUT a
+  // session (a device with no session is the whole point), so this dashboard never calls it.
+  devices: () => get<{ devices: DeviceRec[] }>('/api/devices').then((d) => d.devices),
+  devicePairStart: (label?: string) =>
+    post<DevicePairStart>('/api/devices/pair/start', label ? { label } : {}),
+  // Drops the in-memory nonce AND the durable row, so a revoke cannot un-revoke on reboot.
+  deviceRevoke: (id: string) =>
+    post<{ ok: boolean; revoked: number }>(`/api/devices/${encodeURIComponent(id)}/revoke`, {}),
 
   // ── Packs (AGENT-PACKS §3.4/§9, AP-3) ──
   // The installed-pack ledger (each pack's components, connector resolutions +

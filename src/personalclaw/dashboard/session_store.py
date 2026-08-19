@@ -85,6 +85,17 @@ DEVICE_KINDS: tuple[str, ...] = ("browser", "mobile", "desktop", "cli", "unknown
 #: Cap on a device's display name. Same reasoning: untrusted, rendered, so bounded.
 MAX_DEVICE_NAME = 64
 
+#: How stale a recorded ``last_seen`` must be before an authorized request rewrites the store.
+#:
+#: 60s, and the number is a cost decision rather than a taste one: this write sits on the
+#: request path, where a dashboard that polls every few seconds would otherwise rewrite
+#: `sessions.json` several times per second per device. The only reader is a device list that
+#: renders the field as relative minutes ("3 minutes ago"), so a full minute of slack is below
+#: the resolution anyone can perceive while bounding the write rate at one atomic rewrite per
+#: device per minute. Raising it costs the owner accuracy when deciding a device is idle;
+#: lowering it buys resolution nothing renders.
+LAST_SEEN_THROTTLE_SECS = 60.0
+
 
 def key_path() -> Path:
     return config_dir() / KEY_FILE
@@ -161,18 +172,23 @@ class DeviceInfo:
     ``id`` is the registry handle the revoke route takes; it is NOT the nonce, because the
     nonce is the credential and a revoke URL must not carry one.
 
-    **``last_seen`` is deliberately NOT here yet**, though the C1/C2 contract lists it. The only
-    honest place to write it is where a device's request is authorized — the token middleware —
-    and doing that means a throttled write on the request path, which is a decision with a real
-    per-request cost rather than a field to declare. A ``last_seen`` set once at pairing would
-    read as fresh forever, which is worse than an absent column: the owner would use it to
-    decide a device is still in use. Its writer arrives with the surface that needs it.
+    ``last_seen`` is written by :func:`touch_device_last_seen` from the one honest place —
+    where a device's request is AUTHORIZED (`TokenStateManager.is_nonce_valid`) — and nowhere
+    else. It was held back from C1 because that means a throttled write on the request path,
+    which is a per-request cost rather than a field to declare; the surface that needs it (the
+    Settings → Devices list) is what justified paying it.
+
+    **0.0 means "never made an authorized request", and that is load-bearing.** It is NOT
+    backfilled from ``minted_at``: a ``last_seen`` set at pairing time would read as fresh
+    forever, which is worse than an absent value, because the owner would use it to decide a
+    device is still in use. A device that paired and never came back must render as "never".
     """
 
     id: str
     name: str = ""
     kind: str = "unknown"
     minted_at: float = 0.0
+    last_seen: float = 0.0
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -180,6 +196,7 @@ class DeviceInfo:
             "name": self.name,
             "kind": self.kind,
             "minted_at": self.minted_at,
+            "last_seen": self.last_seen,
         }
 
 
@@ -221,11 +238,17 @@ def _parse_device(raw: Any) -> DeviceInfo | None:
         minted_at = float(raw.get("minted_at") or 0.0)
     except (TypeError, ValueError):
         minted_at = 0.0
+    try:
+        # A missing/garbage stamp reads as 0.0 — "never seen" — never as `minted_at`.
+        last_seen = float(raw.get("last_seen") or 0.0)
+    except (TypeError, ValueError):
+        last_seen = 0.0
     return DeviceInfo(
         id=device_id,
         name=sanitize_device_name(raw.get("name", "")),
         kind=sanitize_device_kind(raw.get("kind", "")),
         minted_at=minted_at,
+        last_seen=last_seen,
     )
 
 
@@ -339,6 +362,42 @@ def attach_device(nonce: str, device: DeviceInfo, *, issuer: str = ISSUER_PAIR) 
     records[nonce] = SessionRecord(expiry=existing.expiry, issuer=issuer, device=device)
     save_session_records(records)
     return True
+
+
+def touch_device_last_seen(nonce: str, *, now: float | None = None) -> bool:
+    """Best-effort: stamp ``last_seen`` on *nonce*'s device row. Returns whether it WROTE.
+
+    Three no-ops, each deliberate:
+
+    * **no row** — a nonce the store never recorded is not resurrected here, for the same
+      reason :func:`attach_device` refuses to.
+    * **no device** — a plain owner-token session has no ``DeviceInfo`` and nothing to be
+      "last seen"; the field belongs to the device registry, not to every session.
+    * **still fresh** — while the recorded stamp is newer than
+      :data:`LAST_SEEN_THROTTLE_SECS`, this returns without touching the file. That throttle
+      is the whole reason the field was safe to add: see the constant.
+
+    **Never raises.** This is called from inside the authorization path, so every failure mode
+    — an unreadable store, an unwritable directory, a corrupt row — must degrade to "no stamp
+    written", never to "session denied". A device list with a stale timestamp is a cosmetic
+    defect; an auth path that fails closed on a cosmetic write is an outage.
+    """
+    if not nonce:
+        return False
+    try:
+        stamp = time.time() if now is None else float(now)
+        records = load_session_records()
+        record = records.get(nonce)
+        if record is None or record.device is None:
+            return False
+        if stamp - record.device.last_seen < LAST_SEEN_THROTTLE_SECS:
+            return False
+        record.device.last_seen = stamp
+        save_session_records(records)
+        return True
+    except Exception:  # noqa: BLE001 — best-effort by contract; see the docstring
+        logger.debug("could not stamp device last_seen", exc_info=True)
+        return False
 
 
 def device_sessions() -> dict[str, SessionRecord]:

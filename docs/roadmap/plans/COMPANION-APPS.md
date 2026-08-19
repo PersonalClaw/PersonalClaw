@@ -425,3 +425,118 @@ No new session. S3 T3.1's client contract is WHERE the multi-entry registry + ac
   (not `device_pair_code_expired`). The asymmetry with `device_pair_code_invalid` is C2's; CA-2
   maps these strings to copy, so it was matched rather than tidied. `minted_at` is the row's
   mint timestamp (C1's "minted-at", T1.2's "minted").
+- [2026-08-19][CA-2] DONE: S1 frontend — Settings → Devices (`web/src/pages/settings/DevicesPanel.tsx`),
+  the product's ONE device registry, plus the `last_seen` writer C1 deliberately deferred. The list
+  carries name, kind, last-seen, issuer, paired-at and session expiry; revoke asks a DANGER dialog
+  that NAMES the device and re-reads the list (a failed revoke is reported, never swallowed); pairing
+  shows the `code` and `pairing_url` copyably with the expiry counting down. Registered in `SUBPAGES`,
+  the axe manifest (`web/e2e/routes.ts`) and `SETTINGS_WIDGETS` — the Settings home renders only
+  widgets with no fallback, so a card is what makes the panel reachable rather than URL-only.
+- [2026-08-19][CA-2] DONE: `last_seen` shipped with its writer, honouring C1's constraint verbatim.
+  `DeviceInfo.last_seen` round-trips through `to_dict`/`_parse_device`; `touch_device_last_seen()`
+  is called from `TokenStateManager.is_nonce_valid` on BOTH success paths (in-memory hit and
+  adopted-from-store — skipping the latter would make every device read "never seen" for the first
+  request after a restart). Two throttle layers for two costs: an in-memory attempt map suppresses
+  the file READ, and the store's own staleness check against `LAST_SEEN_THROTTLE_SECS = 60.0`
+  suppresses the WRITE. 60s is a cost decision — the only reader renders relative minutes, so a
+  minute of slack is below perceptible resolution while bounding the rate at one atomic rewrite per
+  device per minute. The whole touch is wrapped so no failure can reach the auth decision, and a
+  non-device session is a no-op. Falsified in six ways (both throttle layers, the best-effort guard,
+  the parser backfill, the panel's "never" branch, the response field) — each mutation reds a named
+  test.
+- [2026-08-19][CA-2] DEVIATION: **"shows a QR" is UNMET for the IMAGE specifically.** There is no QR
+  encoder in either ecosystem (`npm ls | grep qr` → nothing; python `qrcode`/`segno` absent), and
+  adding one is a dependency decision, not this atom's call. The plan itself calls QR "a RENDERING of
+  these routes, not a separate mechanism", and the repo's precedent is that TOTP enrollment ships no
+  QR either (`AccountPanel` sends the owner to `personalclaw auth totp setup`). So the panel ships the
+  `pairing_url` + `code` — which is what a second browser on the LAN actually needs, and the URL
+  already contains the code — behind a LABELLED placeholder (`role="img"`, named "QR code not
+  available — use the pairing link and code"). A silent omission would have read as a broken image;
+  this reads as an absent one, and pairing still completes. This closes CA-5's vacuity DEVIATION above:
+  the pairing surface now exists, minus the scannable rendering.
+- [2026-08-19][CA-2] DISCOVERY (fixed here): `ui/Button` takes `ariaLabel`, NOT the hyphenated
+  `aria-label`, and does not spread rest props — but TypeScript permits any hyphenated attribute on a
+  JSX element WITHOUT type checking, so `aria-label="…"` on a `<Button>` typechecks cleanly and is
+  silently DISCARDED. Five controls in the first draft of this panel shipped nameless and typecheck
+  passed; only the RTL name queries caught it. Anything auditing accessible names by reading source
+  will report these as named.
+- [2026-08-19][CA-2] DISCOVERY (not fixed): FOUR settings panels are unreachable from the Settings
+  home — `companion`, `ambient`, `sources`, `packs` have `SUBPAGES` entries but no `SETTINGS_WIDGETS`
+  card, and `SettingsHome` renders ONLY the widget registry with no fallback list. They are reachable
+  only by typing `#/settings/<id>`. Out of scope here (this atom added its own card so it is not a
+  fifth), but it is a real discoverability gap, and no ratchet catches it — `settingsSubpageCoverage`
+  compares `SUBPAGES` to the axe manifest, not to the widget registry.
+- [2026-08-19][CA-2] DEVIATION: two ratchets fired on the new surface and were ROOT-CAUSED rather than
+  relaxed. `emptyStateRollout`'s PEP-2 census demands a verdict per empty-state file — Devices is
+  recorded `on-ramp` ("Pair your first device", the same `startPairing()` the section above calls),
+  deliberately worded differently from that section's button because two controls sharing one
+  accessible name make the action ambiguous to name-based navigation. `healthUnknown`'s "one per card"
+  assertion counted `Couldn't check` FILE-WIDE and was pinned at 2, so a third card adopting the same
+  correct copy read as a regression while saying nothing about the two cards it names; it is now
+  scoped per card by brace-matching the `doctor` and `guardrails` entries — strictly stronger, since
+  either named card dropping the state now fails BY NAME.
+
+### 2026-08-19 — `CA-2` built and gated; **BLOCKED on an owner scope decision**, atom stays `todo`
+
+The Devices panel, its four api-client methods and the `last_seen` writer `CA-1`'s note asked for are
+built, tested and gated. Then the live drive found that the atom's own `done_when` cannot be reached,
+for a reason outside this atom's surface.
+
+**What was driven.** A token-authenticated gateway on an isolated home, bound to `0.0.0.0` via
+`PERSONALCLAW_BIND_HOST` (the loopback invariant means `AUTH_MODE=none` would have forced 127.0.0.1
+and disabled the very auth pairing exists to cross), with `dashboard.url` declared as the LAN address
+so the LAN origin passes CSRF — `gateway.py:3374` passes `cfg.dashboard.url`, and
+`dashboard.public_url` is a **different** field that does not widen the CSRF set.
+
+- `POST /api/devices/pair/start` over the LAN, as the owner → `{"code": "9WWG-UEXG", "pairing_url":
+  "http://192.168.86.33:10025/pair?code=9WWG-UEXG", "expires_in": 300}`. The mint path works.
+- Opening that `pairing_url` in a **genuinely separate browser context** (own cookie jar, no token) —
+  i.e. the situation a phone is in — renders **`403 — Token required`**, with the instruction
+  *"Run `personalclaw token` in your terminal, then paste the URL below."*
+
+**Two defects, and the second is the blocking one.**
+
+1. **`/pair` is not in the auth bypass.** `_BYPASS_EXACT` (`token_auth.py:305-340`) exempts `/login`
+   *the page* alongside `/api/auth/login`, and exempts `/api/auth/enroll/complete` and
+   `/api/devices/pair/complete` "for the same reason … the device redeeming a code has no session
+   yet — that is the point". The **page** a pairing device must open was never added, so the API is
+   reachable and its entry point is not. The 403 body then tells the joining device to run a command
+   on the host's terminal, which is advice only the owner's own machine can follow.
+2. **There is no pairing screen at all.** No `/pair` route exists server-side and the SPA has no
+   `pair` view: with a valid token `/pair?code=…` returns **200 with the ordinary SPA shell** (16,016
+   bytes — the same as `/nonexistent-xyz`, i.e. the catch-all), and the SPA's hash router lands on the
+   dashboard. So the URL `pair/start` hands out is a dead end in **both** states — 403 without a
+   token, the wrong screen with one. Nothing in the repo redeems a pairing code from a browser.
+
+**Why this is an owner decision rather than something to route around.** Closing `done_when` requires
+building the joining device's redeem screen and exempting its route from token auth. That is (a) a
+different surface from "Settings → Devices panel", which is what this atom and its task row `T1.2`
+describe, and (b) **a new unauthenticated HTTP route**, which is a security-boundary change that
+should be decided deliberately, not slipped into a panel atom. The existing exemptions each carry
+compensating guards named in code (origin check, per-IP lockout, single-use hashed short-TTL code); a
+`/pair` page exemption would need the same treatment and its own review.
+
+Two coherent resolutions, for the owner to choose:
+
+- **(a) Re-scope `CA-2`** to the owner-side panel (what T1.2 actually describes) and file the redeem
+  screen + route exemption as its own atom, which is where `MOBILE-COMPANION`'s folded-in device-side
+  design (`CA-3`) naturally lands. `CA-2`'s `done_when` then loses its "second browser pairs" clause.
+- **(b) Grow `CA-2`** to include the redeem screen and the exemption, and re-drive.
+
+Until then `CA-2` stays `todo` with the panel merged: it lists, revokes and mints pairing codes
+correctly, and the mint's URL is honest about where it points — there is simply nothing serving it yet.
+
+**Also unmet, separately (and not blocking):** "shows a QR" is unmet for the *image*. No QR encoder
+exists in either ecosystem and none was added; the panel ships the `pairing_url` and `code` copyably
+behind a labelled placeholder. The plan itself calls QR "a **rendering of these routes**, not a
+separate mechanism", and TOTP enrollment sets the no-bundled-QR precedent (`AccountPanel` points at
+`personalclaw auth totp setup`). Adding a QR dependency is a separate owner call.
+
+**Gates:** `make lint` exit 0 · `test_device_pairing` + `test_session_store` + `test_token_auth`
+**196 passed** (was 185) · web typecheck 0, full web suite **424 files / 4386 tests**, build 0. Six
+falsifications, each restored from a file copy; I independently re-ran the `last_seen`-backfill one
+(`assert device.last_seen == 0.0` reds when an absent stamp falls back to `minted_at`).
+
+**ARCC was not queried (MCP server unavailable).** The `last_seen` writer is the only auth-path change
+here: best-effort, throttled at 60 s, wrapped so a store failure cannot deny a valid session, and a
+no-op for sessions with no device. No new route, exemption or credential surface ships in this atom.
