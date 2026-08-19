@@ -791,3 +791,69 @@ Templates are the plan's proof-of-life — field-tested shapes with real daily c
   **Gate:** 381 passed / 1 skipped across the new 14-test suite plus every ratchet a new provider + a new enum value trip (`test_workflows_bundled`, `test_action_schema_executor_parity`, `test_inert_surface_baseline`, `test_workflows_audit`, `test_learning_proposals`, `test_inbox_proposals`); `generate_inert_surface_baseline.py` produced NO diff, which is the proof the enum value and provider both have writers rather than being blessed as inert. black/isort/flake8 clean; mypy clean on 782 files; web 1085 passed + typecheck clean (full `npm test`, not path-scoped, because the design ratchets sweep the whole web tree).
   **DISCOVERY — §3.3's other half is a live reader of an unwritten key.** `knowledge/schema_conventions.py` documents that "schema-edit *proposals* route through the learning queue like any other durable change", but nothing in `src/` imports the module at all (`load_conventions`/`ensure_scaffold` have test-only callers) and no bundled template proposes a schema edit. This atom makes the ROUTE exist and a test drives it against `SCHEMA_FILENAME`, but the caller that detects repeated user overrides and files the edit does not exist. Worth its own atom; deliberately not scope-crept into here.
   **DISCOVERY (verification hygiene):** the full backend suite showed 75 failures across the 7 async workflows files (`RuntimeError: Runner is closed`, 120s timeouts) — with another session's `npm ci`/vitest/tsc competing for cores. Re-run serially with `-n0`: **277 passed in 17m25s**. Contention, not this change. The parent pytest PID reads ~0 CPU during an xdist run because the controller idles while workers work; judging liveness by the parent alone is how a healthy run gets killed.
+- [2026-08-19][WF2KNO-11 / capability-gap amendment] DONE: a synthesis can now answer "which source
+  supports this sentence", and one that has been overtaken by its sources says so.
+
+  **The measured defect first.** The bundled template's persist step read
+  `"citations": "{{nodes.recall.output.items | map('item_id')}}"` — it satisfied the synthesized-kind
+  citation requirement by storing THE WHOLE RETRIEVED SET, while the same template's stage prompt asked
+  the model to "cite as [n]" and nothing anywhere parsed a marker. And
+  `config.knowledge.require_citations` had **four references in the tree — a definition, a loader
+  assignment, a PATCH allowlist entry and its comment — and ZERO readers**, so the control that was
+  supposed to guarantee attribution changed nothing about what the store would accept.
+
+  **What landed, clause by clause.**
+  * `knowledge/citations.py` (new): markers are parsed out of the model's own prose and keyed on the
+    marker NUMBER, not order of appearance — `[3]` then `[1]` resolves to `(1, 3)` and never renumbers.
+    `MARKER_RE` is `\[(\d{1,3})\](?!\()`, so a markdown link `[1](url)` is not a citation.
+  * Per-marker relational storage: `item_citations(item_id, marker, source_item_id, chunk_index,
+    excerpt)` plus `set_item_citations` / `item_citations` on the store. The write REPLACES, so a
+    re-synthesis cannot accumulate the previous write's markers. The item's `citations` list keeps a
+    greppable derived form, `cite:<marker>:<chunk>:<item_id>`; the rows are the truth.
+  * A marker with no registered source is DROPPED with a warning and removed from the stored prose, so
+    a dangling reference never reaches the reader.
+  * `_pipe_fenced_sources` strips a quoted source's own markers before fencing it, so a previously
+    synthesized item's `[1]` cannot collide with this turn's numbering; a new `source_refs` pipe hands
+    the SAME numbering to the persist step, and the template now passes `citation_sources` instead of
+    the whole retrieved set.
+  * `semantics.citations_required()` is the knob's first reader and fails to ON. With it on, a
+    synthesized item must have at least one RESOLVED marker; `test_an_output_that_cites_nothing_is_refused`
+    is the atom's headline test, and forcing the reader to `False` makes it fall back to the old
+    presence check — which is the defect, reproduced on demand.
+  * One updater: `knowledge/updates.py::propose_update` is the single enqueue path, and `auto_accept`
+    is propose-plus-accept rather than a second write path. `knowledge-propose` is now a thin caller
+    (its inline enqueue, body cap and SKIP phrase deleted — clean break, `ActionResult` shape
+    unchanged, import sweep unchanged at 2 hits).
+  * The banner: `GET /api/knowledge/items/{id}/staleness` counts new source items and edited cited
+    sources separately, `POST …/regenerate` offers the one action, and `KnowledgeDetail` renders the
+    count above the document. It reports "Already queued" rather than implying a second proposal.
+
+  **DEVIATION (import spelling).** `from personalclaw.knowledge import citations as kcit` makes mypy
+  emit `Module "personalclaw.knowledge" has no attribute "citations"`, which `ignore_missing_imports`
+  does not suppress; `import personalclaw.knowledge.citations as kcit` is used instead. Same module
+  object, and no dead `# type: ignore` left behind.
+
+  **DISCOVERY — `store.update_item` silently drops `kind`, `logical_key` and `content_hash`**: none are
+  in `KnowledgeStore._ITEM_COLUMNS`, which predates the KNOWLEDGE-SYNTHESIS columns, so passing them is
+  a write that reports success and stores nothing. The updater sidesteps it (it recomputes the digest
+  from the row's own fields rather than trusting the column), but the consequence is real and outside
+  this atom: **the `content_hash` column goes stale after an accepted update**, so a later
+  `knowledge-persist` of identical content writes once redundantly instead of no-op'ing.
+
+  **CAVEAT worth carrying.** `auto_accept=True` presents `actor="user"` to the proposal queue's
+  `require_human` gate, so it is only legitimate for owner-initiated calls (dashboard/CLI). Agent and
+  engine callers must pass `auto_accept=False`; the gate cannot tell them apart, so this is a
+  convention the caller honours and the docstring states.
+
+  **Gate:** 255 backend tests green across the five new suites plus the semantics/bindings/contradiction/
+  propose neighbours; `make lint` clean (931 files, mypy included); the manifest-drift, inert-surface and
+  docs-lint ratchets pass; web typecheck + 181 knowledge-page vitests + build green. Sixteen
+  falsifications across the four parts, each mutating a live line and observing a named red — including
+  the require-citations reader re-falsified independently by the driver (`assert False is True` and
+  `'cited nothing' in "kind 'insight' is synthesized and needs \`citations\`…"`).
+
+  **Integration note:** the wiring part was written against a stated contract while the module it calls
+  was built in parallel, so five of its expectations encoded a stand-in's string shape (`"1:k-1"`) and
+  its whitespace behaviour. Re-pointed at the real module (`cite:1:-1:k-1`, and `strip_markers` repairs
+  the hole rather than leaving an orphan space before a comma) — expectations changed, no assertion
+  weakened.

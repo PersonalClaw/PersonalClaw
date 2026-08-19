@@ -233,7 +233,7 @@ def test_storing_the_whole_retrieved_set_no_longer_satisfies_the_rule(monkeypatc
     """What the template used to do: `citations = every item I recalled`. Non-empty, so the old
     presence check passed — while "which source supports this sentence" stayed unanswerable."""
     _knob(monkeypatch, required=True)
-    whole_set = ["1:k-1", "2:k-2", "3:k-3"]
+    whole_set = ["cite:1:-1:k-1", "cite:2:-1:k-2", "cite:3:-1:k-3"]
     refused = sem.check_persist(
         kind="insight",
         title="Latency review",
@@ -332,7 +332,8 @@ def test_fenced_sources_strips_an_items_own_markers_before_numbering():
     because it looks answerable."""
     out = resolve("{{inputs.k | fenced_sources}}", BindingContext(inputs={"k": ITEMS}))
     assert re.findall(r"\[(\d+)\]", out) == ["1", "2", "3"]
-    assert "As shown in , the p99 rose" in out  # the body survives; only the marker went
+    assert "As shown in, the p99 rose" in out  # the body survives; only the marker went,
+    # and `strip_markers` repairs the hole rather than leaving an orphan space.
 
 
 def test_source_refs_mirrors_the_numbering_the_model_reads():
@@ -412,7 +413,7 @@ def test_the_provider_derives_citations_from_the_markers():
         summary="",
     )
     assert [int(c.marker) for c in cited.records or []] == [2, 3]
-    assert cited.stored == ["2:k-2", "3:k-3"]
+    assert cited.stored == ["cite:2:-1:k-2", "cite:3:-1:k-3"]
     assert cited.warnings == []
 
 
@@ -427,7 +428,7 @@ def test_a_dangling_marker_is_stripped_from_what_gets_stored():
     )
     assert "[9]" not in cited.content
     assert "[2]" in cited.content
-    assert cited.stored == ["2:k-2"]
+    assert cited.stored == ["cite:2:-1:k-2"]
     assert cited.warnings and "[9]" in cited.warnings[0]
 
 
@@ -531,7 +532,7 @@ async def test_a_write_stores_what_the_prose_cited(isolated_home, monkeypatch):
     assert ok, error
     content, summary, metadata = _row(payload["item_id"])
     # Only what resolved, and in marker order — not the three items that were retrieved.
-    assert metadata["citations"] == ["1:k-1", "2:k-2"]
+    assert metadata["citations"] == ["cite:1:-1:k-1", "cite:2:-1:k-2"]
     # The write-back: the dangling marker never reaches a reader, in either field.
     assert "[9]" not in content and "[2]" in content
     assert "[2]" in summary
@@ -589,7 +590,7 @@ async def test_a_rewrite_cannot_keep_the_previous_writes_citations(isolated_home
         }
     )
     assert ok, error
-    assert _row(first["item_id"])[2]["citations"] == ["1:k-1", "2:k-2"]
+    assert _row(first["item_id"])[2]["citations"] == ["cite:1:-1:k-1", "cite:2:-1:k-2"]
 
     ok, second, error = await _persist(
         {
@@ -601,4 +602,4 @@ async def test_a_rewrite_cannot_keep_the_previous_writes_citations(isolated_home
     )
     assert ok, error
     assert second["item_id"] == first["item_id"]
-    assert _row(second["item_id"])[2]["citations"] == ["2:k-2"]
+    assert _row(second["item_id"])[2]["citations"] == ["cite:2:-1:k-2"]
