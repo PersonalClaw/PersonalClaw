@@ -1628,3 +1628,47 @@ wrong directory, operator believes otherwise) reachable by an ordinary typo. An 
 400 naming the one deliberate way to unset it; an explicit `{"workspace_dir": ""}` still clears, and
 its existing test still passes. Falsified by restoring the exact pre-fix line — the new tests fail
 `assert 200 == 400`, i.e. they catch precisely the live behaviour I measured, not merely any change.
+
+### 2026-08-19 — `AAP-10` DONE: `docs/agents/acp-parity.md` written from the three verified columns
+
+Wrote the §2.7 deliverable (451 lines): a "how to read this" opening that states plainly that ACP
+providers are **not** at native parity; the versions measured on the dev host today (`claude`
+2.1.234.669 + adapter 0.62.0, `codex` 0.146.1.360 + adapter 1.1.7, `kiro-cli` 2.18.1 native, `gemini`
+absent), including the note that adapters live per-home under `acp-adapters/node_modules/.bin/` so a
+`PATH` check wrongly reads them as missing; a coverage table publishing the real mark counts
+(claude 35/6/22, codex 33/10/20, kiro 44/16/1/2 after its follow-up sweep, gemini 0/63); then per
+provider the three `done_when` buckets — at parity, host-compensated, protocol/CLI constraint — each
+constraint row carrying its reason, its watch item (CLI / adapter / protocol / host seam + owning
+atom) and the version it was measured against, grouped by the five matrix axes so a reader can
+cross-check against the columns. The not-gateable section **renders** `acp/permission_authority`'s
+`NOT_GATEABLE` per §2.2 rather than re-deriving it. Added a "where the columns disagree" table,
+because those asymmetries are the finding (§2.6), and a refresh procedure.
+
+**Version drift is now a first-class part of the doc.** Measured today: claude and codex are running
+NEWER builds than the ones their columns were measured on (claude `2.1.234.669` + adapter `0.62.0`
+vs `2.1.233.669` + `0.60.0`; codex `0.146.1.360` + adapter `1.1.7` vs `0.146.1.359` + `1.1.4`), while
+kiro is on the *same* `2.18.1` that the 2026-08-19
+re-drive above got `NO_TOOLS` from. So every kiro tool-axis row is published tagged **(tool axis)**
+with the "measured, then failed to reproduce on the same build, cause not established" caveat, and
+its `pwd` confinement question is stated as unresolvable from that re-drive (no shell tool, nothing
+to escape with). claude-code and codex are published as 41- and 43-cell columns with their
+NOT-EXERCISED remainders listed by *why*, so neither reads as complete.
+
+**Clauses I could NOT source, stated rather than filled:**
+
+1. **"Linked from each agent bundle's README" is not satisfiable in this repo.** The bundle READMEs
+   live in `PersonalClawApps`; this session wrote core only. The atom's link half is outstanding.
+2. **No upstream tracker item exists for any ABSENT row.** The material names *what* must change and
+   *where* (CLI, adapter, ACP protocol, or host seam) but cites no upstream issue or PR, so every
+   watch item is written as a change-and-owner statement, never as a link. "The upstream issue to
+   watch, where one exists" is therefore satisfied only in the "where one exists" sense: none does.
+3. **gemini-cli has no column at all**, so it is published as 63 unmeasured cells plus the two
+   shipped-data honesty notes already in `agents/runners.py` (its `--experimental-acp` flag is
+   declared from vendor docs, not measured; the health probe only proves `--version`), rather than
+   as an inferred column.
+4. **Post-sweep host compensation is published as landed-but-not-re-driven.** `AAP-4`'s core MCP
+   surface, `AAP-5`'s permission authority + kiro config seeding, and `AAP-6`'s unattended fail-fast
+   and loop breaker exist in the host, but as-a-user measurements exist only on kiro (`K32`, `K41`)
+   — the doc says so per row instead of generalizing them to three providers.
+5. **No `file.py:NNN` citations were used anywhere** (doc or this entry), per the citation rail:
+   claims cite ledger ids and `G`-numbers instead. Nothing in `docs/roadmap/atomic/` was touched.
