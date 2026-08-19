@@ -132,11 +132,14 @@ function CheckList({ label, hint, options, value, onChange }: {
           <div className="px-m py-3 text-on-surface-low text-[0.8125rem]">No {label.toLowerCase()} available.</div>
         ) : (
           <>
-            <div className="max-h-56 overflow-y-auto p-1">
+            {/* 🔴 A checklist whose ticks were only a coral square: `on` painted the box and nothing
+                told assistive tech the row was checked. The group takes the picker's own `label`, so
+                a row announces which list it belongs to (tools vs skills vs workflows). */}
+            <div role="group" aria-label={label} className="max-h-56 overflow-y-auto p-1">
               {filtered.length === 0 ? <div className="px-2 py-2 text-on-surface-low text-[0.8125rem]">No matches.</div> : filtered.map((o) => {
                 const on = selected.has(o.value)
                 return (
-                  <button key={o.value} type="button" onClick={() => toggle(o.value)}
+                  <button key={o.value} type="button" aria-pressed={on} onClick={() => toggle(o.value)}
                     className="flex w-full items-center gap-s rounded-md px-2 py-1.5 text-left hover:bg-surface-high transition-colors">
                     <span className="shrink-0 inline-flex size-4 items-center justify-center rounded-sm border transition-colors" style={{ borderColor: on ? 'var(--color-primary)' : 'var(--color-outline-variant)', background: on ? 'var(--color-primary)' : 'transparent' }}>
                       {on && <Check size={12} className="text-on-primary" />}

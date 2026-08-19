@@ -3123,14 +3123,18 @@ function KnowledgeContextPicker({ attached, onPick, onRemove, onClose }: {
             )}
           </div>
         )}
-        <div className="max-h-[46vh] overflow-y-auto flex flex-col gap-1.5">
+        {/* 🔴 Attached-or-not was announced by COLOUR alone — a tinted row, a coral outline and a
+            check glyph, none of which reaches the accessibility tree. `aria-pressed` is the state;
+            the group carries the dimension so a row announces what it is being attached TO. No tab
+            stop is needed on the scroller because every row in it is a button. */}
+        <div role="group" aria-label="Knowledge to attach" className="max-h-[46vh] overflow-y-auto flex flex-col gap-1.5">
           {loading && !res ? <div className="grid place-items-center py-6 text-on-surface-low"><Loader2 size={16} className="animate-spin" /></div>
             : !q.trim() ? <p className="py-6 text-center text-on-surface-low text-[0.8125rem]">Type to search notes, gists, bookmarks, docs…</p>
             : (res?.results.length ?? 0) === 0 ? <p className="py-6 text-center text-on-surface-low text-[0.8125rem]">No matches for “{q}”.</p>
             : res!.results.map((r) => {
               const on = attachedIds.has(r.id)
               return (
-                <button key={r.id} type="button"
+                <button key={r.id} type="button" aria-pressed={on}
                   onClick={() => on ? onRemove(r.id) : onPick({ id: r.id, name: r.title })}
                   className="flex items-start gap-2 rounded-lg px-3 py-2 text-left transition-colors"
                   style={on ? { background: 'color-mix(in srgb, var(--color-primary) 12%, transparent)', outline: '1px solid color-mix(in srgb, var(--color-primary) 40%, transparent)' } : { background: 'var(--color-surface-container)' }}>
@@ -4286,12 +4290,16 @@ function ChatHistoryPage({ navigate, query, setQuery }: { navigate: (p: string) 
               <div role="status" className="mb-m text-on-surface-var text-[0.8125rem]">{bulkNote}</div>
             )}
             {tags.length > 0 && (
-              <div className="mb-m flex flex-wrap items-center gap-1.5">
+              // 🔴 Which tags were filtering was readable only as a tinted pill. `role="group"` goes on
+              //    the row that already exists — wrapping only the chips would make them ONE flex item
+              //    and break the wrap + gap — and the visible "Filter:" is a bare `<span>`, which labels
+              //    nothing, so the group states the dimension itself.
+              <div role="group" aria-label="Filter by tag" className="mb-m flex flex-wrap items-center gap-1.5">
                 <span className="text-on-surface-low text-[0.75rem] mr-1">Filter:</span>
                 {tags.map((t) => {
                   const on = tagFilter.has(t.id)
                   return (
-                    <button key={t.id} type="button" onClick={() => { const nx = new Set(tagFilter); nx.has(t.id) ? nx.delete(t.id) : nx.add(t.id); setTagFilter(nx) }}
+                    <button key={t.id} type="button" aria-pressed={on} onClick={() => { const nx = new Set(tagFilter); nx.has(t.id) ? nx.delete(t.id) : nx.add(t.id); setTagFilter(nx) }}
                       className="inline-flex items-center gap-1 rounded-pill px-2 h-7 text-[0.75rem] transition-colors"
                       style={on ? { background: `color-mix(in srgb, ${t.color || 'var(--color-primary)'} 22%, transparent)`, color: t.color || 'var(--color-primary)' } : { background: 'var(--color-surface-high)', color: 'var(--color-on-surface-var)' }}>
                       <TagIcon size={11} /> {t.name}
