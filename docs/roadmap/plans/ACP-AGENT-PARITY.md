@@ -1568,3 +1568,63 @@ modules (the only cheap way to keep `discover_agents` honest, since driving it s
 inside a live `kiro-cli`. Also unfixed and out of scope: `session.py:589` `effective_cwd` can be the
 empty string when `default_workspace_dir()` finds no safe root, which spawns in the gateway's own cwd
 (not a real-home escape, but the same family).
+
+### 2026-08-19 — `AAP-3` re-verification attempt: three findings, atom stays `todo`
+
+Picked `AAP-3` as the highest-unblock ready atom (it and `AAP-1`/`AAP-2` each gate the same seven
+atoms, `AAP-4`-`AAP-10`, conjunctively). Before flipping a column I did not measure myself, I drove a
+fresh gateway against it. Auth precondition first, as this atom's `done_when` requires:
+`~/.midway/cookie` written 00:41, **0.9 h old** at drive time — fresh, so nothing below is an ENV
+verdict. `kiro-cli 2.18.1`, the same build the sweep recorded (line 752).
+
+**1. DISCOVERY — the "ACP adapter is not installed" premise is FALSE, and it has been blocking
+`AAP-1`/`AAP-2` on nothing.** In a fresh isolated home (a copy of the dev home), `GET
+/api/agent-providers` returns all four ready:
+
+| provider | ready | detail |
+|---|---|---|
+| `native` | true | in-process runtime |
+| `acp:claude-code` | true | **warmed (pooled live connection)** |
+| `acp:codex` | true | **warmed (pooled live connection)** |
+| `acp:kiro-cli` | true | `initialize OK (caps: auth, loadSession, mcpCapabilities, promptCapabilities, sessionCapabilities)` |
+
+The adapters live **in the home**, not on `PATH`: `<home>/acp-adapters/node_modules/.bin/`
+carries `claude-agent-acp` and `codex-acp` (installed 25 Jul), and the gateway's own children are
+those two node processes. A `command -v claude-code-acp` check reports "not installed" and is simply
+looking in the wrong place for the wrong name — the package is `@agentclientprotocol/claude-agent-acp`.
+So `AAP-1` and `AAP-2` are **not** environment-blocked; their residual cells are fixture and
+injection work, plus the model-provider-dependent ones.
+
+**2. The kiro column's tool rows do NOT reproduce, so `AAP-3` cannot be certified.** Reproduced
+exactly: `K1` (ready + the identical caps string), `K2` (**27** agents, same 3 kiro built-ins + 24
+operator fleet), `K3` (`workspace_dir` + `acp_provider` both round-trip). Then it diverged:
+
+- Asked for one shell command (`pwd`), kiro replied *"I don't have a shell tool available in this
+  turn"* and correctly refused to fabricate the output.
+- Asked to enumerate its callable tools, it replied **`NO_TOOLS`**.
+- `K4` measured **57 tools** on this same CLI version, with its own `shell`/`read`/`write` working.
+
+**Control, same gateway, same isolated home:** a second session bound to `acp:claude-code` listed
+nine callable tools (`Agent, Bash, Edit, Read, ReportFindings, Skill, ToolSearch, Workflow, Write`)
+plus deferred MCP ones — so the host's tool-exposure path is healthy and this is specific to kiro.
+
+Cause **not** established, and I am not guessing one. Candidates: the operator's `~/.kiro` MCP
+servers not starting under the gateway's environment (that fleet is where all 57 came from), singleton
+contention with a concurrently-running MCP fleet on this machine, or a kiro-side change within 2.18.1.
+Consequence: the `pwd` cwd-escape question (`K4`, and whether `G39`/#1729/#1734 fixed it for kiro) is
+**unresolved** here — with no shell tool there was nothing to escape with.
+
+`AAP-3` therefore stays `todo`. Closing it would certify 44 CONFIRMED cells while its tool rows fail
+to reproduce on the first re-drive. The two genuinely-unreachable residual cells (skill-ladder review,
+`G44`; empty-turn auto-retry) remain correctly characterised — that judgment is unchanged and is not
+what blocks the atom.
+
+**3. Incidental bug found in-session and FIXED here** (this campaign's doctrine: *"incidental
+in-session bugs fixed per campaign doctrine"*). `POST /api/chat/sessions/{id}/workspace-dir` read an
+absent `workspace_dir` key as "clear it": my first request used `{"dir": …}` and got
+`{"ok": true, "workspace_dir": ""}` — a 200 that **unbound the session's workspace**. For an ACP
+session that binding is where the CLI runs, so this is the `G39` failure shape (agent lands in the
+wrong directory, operator believes otherwise) reachable by an ordinary typo. An omitted key is now a
+400 naming the one deliberate way to unset it; an explicit `{"workspace_dir": ""}` still clears, and
+its existing test still passes. Falsified by restoring the exact pre-fix line — the new tests fail
+`assert 200 == 400`, i.e. they catch precisely the live behaviour I measured, not merely any change.

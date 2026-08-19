@@ -111,6 +111,58 @@ class TestChatSessionWorkspaceDir:
             assert resp.status == 404
 
 
+class TestAnOmittedKeyIsNotAClear:
+    """A body without ``workspace_dir`` must be refused, not read as "clear it".
+
+    Measured live during the `AAP-3` sweep: `POST …/workspace-dir` with a mistyped key
+    (``{"dir": "/private/tmp/aap3-ws/scratch"}``) answered
+    ``{"ok": true, "workspace_dir": ""}`` and left the session with **no** workspace.
+    The caller had every reason to believe it had set one. For an ACP session that
+    binding is where the agent's CLI runs, so the silent clear lands the agent in
+    whatever directory the host resolves instead — the same user-visible failure as the
+    `G39` profile-bound cwd escape, reached through an ordinary typo.
+
+    Clearing on purpose is still supported and still tested above
+    (`test_clear_workspace_dir`, an explicit empty string).
+    """
+
+    @pytest.mark.asyncio
+    async def test_a_mistyped_key_is_refused_and_changes_nothing(self, tmp_path):
+        session = _ChatSession("test")
+        session.workspace_dir = str(tmp_path)
+        state = _mock_state(session)
+        async with TestClient(TestServer(_make_app(state))) as client:
+            resp = await client.post(
+                "/api/chat/sessions/test/workspace-dir",
+                json={"dir": str(tmp_path)},
+            )
+            assert resp.status == 400
+            body = await resp.json()
+            assert "workspace_dir" in body["error"]
+        # The pre-existing binding survived the rejected request.
+        assert session.workspace_dir == str(tmp_path)
+
+    @pytest.mark.asyncio
+    async def test_an_empty_body_is_refused(self, tmp_path):
+        session = _ChatSession("test")
+        session.workspace_dir = str(tmp_path)
+        state = _mock_state(session)
+        async with TestClient(TestServer(_make_app(state))) as client:
+            resp = await client.post("/api/chat/sessions/test/workspace-dir", json={})
+            assert resp.status == 400
+        assert session.workspace_dir == str(tmp_path)
+
+    @pytest.mark.asyncio
+    async def test_the_error_names_how_to_clear(self, tmp_path):
+        """The refusal has to teach the one legitimate way to unset it."""
+        session = _ChatSession("test")
+        state = _mock_state(session)
+        async with TestClient(TestServer(_make_app(state))) as client:
+            resp = await client.post("/api/chat/sessions/test/workspace-dir", json={})
+            body = await resp.json()
+            assert "empty string" in body["error"]
+
+
 class TestAgentBindingKeepsTheBoundWorkspace:
     """G39 — binding an agent PROFILE must obey ``default_dir``'s declared contract.
 

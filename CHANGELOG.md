@@ -253,6 +253,14 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Fixed
 
+- **Setting a chat's working directory with a mistyped field no longer silently unbinds it.**
+  `POST /api/chat/sessions/{id}/workspace-dir` read a missing `workspace_dir` key as "clear it", so a
+  body like `{"dir": "/some/path"}` answered `{"ok": true, "workspace_dir": ""}` and left the session
+  with no working directory at all — while the caller had every reason to think it had just set one.
+  For a chat bound to an external agent CLI that binding decides where the CLI actually runs, so the
+  agent would go on to read and write in whatever directory the host resolved instead. The request is
+  now refused with a 400 that names the one deliberate way to unset it (an explicit empty string,
+  which still works). Found by driving a real `acp:kiro-cli` session, not by reading the code.
 - **A scheduler tick wrote its history into the wrong PersonalClaw home.** Two writers on the tick
   path — the suppressed-fire ledger row and the hourly rate meter that reads it back — built their
   run store from the *active* home instead of the home the tick was actually running under. Anything
