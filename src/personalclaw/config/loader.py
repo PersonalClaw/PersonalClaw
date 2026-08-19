@@ -3336,6 +3336,18 @@ class DurabilityConfig:
             "Never touches live data; reports pass or fail.",
         ),
     )
+    # ── time-travel (DURABILITY-AND-SYNC §5) ──
+    time_travel: bool = field(
+        default=True,
+        metadata=_meta(
+            "Workspace time travel",
+            "Keep a local, minute-by-minute history of the things you and the "
+            "assistant edit — configuration, skills, prompts, project context and "
+            "the memory notes — so a bad edit is an undo rather than a restore. "
+            "The history stays on this machine and is never synced or exported. "
+            "Secrets are excluded from it entirely.",
+        ),
+    )
     # ── sync (DURABILITY-AND-SYNC §4) — off by default; needs a configured transport ──
     sync_enabled: bool = field(
         default=False,
@@ -4550,6 +4562,12 @@ class AppConfig:
                 keep_weekly=_safe_int(durability_data.get("keep_weekly"), 8),
                 keep_monthly=_safe_int(durability_data.get("keep_monthly"), 12),
                 restore_drills=_guard_flag(durability_data.get("restore_drills")),
+                # Time-travel is fail-OPEN like the backups above and for the same
+                # reason: it is a purely local, secret-excluding history, so the risk
+                # of it running when config is unreadable is a few git commits, while
+                # the risk of it NOT running is the unrecoverable edit this plan exists
+                # to prevent.
+                time_travel=_guard_flag(durability_data.get("time_travel")),
                 # Sync is fail-CLOSED (unlike backups): a sync surface that turns itself
                 # on when config is unreadable would move data off-box unexpectedly, so a
                 # missing/garbage value reads False, not True.

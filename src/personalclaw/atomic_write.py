@@ -5,13 +5,85 @@ deterministic ``.tmp`` filenames, which cause ENOENT when concurrent
 writers target the same file.
 """
 
+import logging
 import os
 import tempfile
 import threading
+from collections.abc import Callable
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 _umask_lock = threading.Lock()
 _default_mode: int | None = None
+
+# ── post-write notifier seam (DURABILITY-AND-SYNC §5) ──────────────────────
+#
+# Every JSON store in PersonalClaw funnels its writes through `_atomic_write`,
+# which makes this the ONE callsite where "state just changed on disk" is
+# knowable without teaching thirty stores to announce themselves. Time-travel's
+# adaptive-debounce committer subscribes here; nothing else may assume it is the
+# only subscriber.
+#
+# Two invariants a hook must never break:
+#   * a failing hook MUST NOT fail the write — the write already succeeded when
+#     the notifier runs, and losing the user's data because a history commit
+#     hiccuped would invert the whole point of this subsystem;
+#   * a hook that itself calls `atomic_write` MUST NOT recurse — the thread-local
+#     guard below drops the nested notification instead of looping.
+_post_write_hooks: list[Callable[[Path], object]] = []
+_hooks_lock = threading.Lock()
+_notifying = threading.local()
+
+
+def register_post_write_hook(hook: Callable[[Path], object]) -> None:
+    """Subscribe *hook* to every successful atomic write (called with the path).
+
+    The return type is ``object``, not ``None``: a subscriber's own signature is its
+    business (time-travel's returns whether the path was tracked), and demanding
+    ``None`` would force every subscriber to wrap itself in a discarding lambda —
+    which is also how a hook stops being findable by name in a test.
+
+    Idempotent: registering the same callable twice subscribes it once, so a
+    module that re-runs its wiring (a gateway restart inside one process, a test
+    fixture) cannot double-fire.
+    """
+    with _hooks_lock:
+        if hook not in _post_write_hooks:
+            _post_write_hooks.append(hook)
+
+
+def unregister_post_write_hook(hook: Callable[[Path], object]) -> None:
+    """Unsubscribe *hook*. Unknown hooks are ignored (teardown is idempotent)."""
+    with _hooks_lock:
+        try:
+            _post_write_hooks.remove(hook)
+        except ValueError:
+            pass
+
+
+def post_write_hooks() -> tuple[Callable[[Path], object], ...]:
+    """The current subscribers — for tests and the doctor surface."""
+    with _hooks_lock:
+        return tuple(_post_write_hooks)
+
+
+def _notify_post_write(path: Path) -> None:
+    with _hooks_lock:
+        hooks = tuple(_post_write_hooks)
+    if not hooks:
+        return
+    if getattr(_notifying, "active", False):
+        return
+    _notifying.active = True
+    try:
+        for hook in hooks:
+            try:
+                hook(path)
+            except Exception:  # noqa: BLE001 — a hook must never fail a write
+                logger.debug("atomic_write: post-write hook failed", exc_info=True)
+    finally:
+        _notifying.active = False
 
 
 def _get_default_mode() -> int:
@@ -89,3 +161,7 @@ def _atomic_write(
         except OSError:
             pass
         raise
+    # Outside the try: the write is DONE and durable here. Notifying inside would
+    # route a notifier bug into the cleanup path, which would try to unlink a temp
+    # file that no longer exists and re-raise over a successful write.
+    _notify_post_write(path)

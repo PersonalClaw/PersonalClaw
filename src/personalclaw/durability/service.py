@@ -239,6 +239,45 @@ def run_incremental_export() -> JobResult:
     )
 
 
+def run_history_commit() -> JobResult:
+    """Hourly git commit of the memory tree — §3's deferred piece, owned by §5.
+
+    Independent of the debouncer: the debouncer only fires when something wrote
+    through `atomic_write`, and the memory markdown tree is edited by paths that
+    do not all funnel there. An hour is therefore the guaranteed ceiling on how
+    much memory history can be missing, which is the direct mitigation for the
+    2026-07-02 loss.
+    """
+    from personalclaw.concurrency import single_flight
+    from personalclaw.durability import state_history
+
+    start = time.perf_counter()
+    if not _cfg().time_travel:
+        return JobResult("history_commit", skipped="time travel is off")
+    if not state_history.git_available():
+        return JobResult("history_commit", skipped="git is not available")
+    with single_flight("durability:history") as acquired:
+        if not acquired:
+            return JobResult("history_commit", skipped="another history commit is running")
+        results = state_history.commit_memory_roots(home=active_home())
+    changed = [r for r in results if r.get("changed")]
+    failed = [r for r in results if not r.get("ok")]
+    _audit(
+        "durability.history_commit", "state-history", outcome="allowed" if not failed else "error"
+    )
+    return JobResult(
+        "history_commit",
+        ok=not failed,
+        detail=(
+            f"{len(changed)} root(s) committed"
+            if not failed
+            else f"{len(failed)} root(s) failed: {failed[0].get('error', '')}"
+        ),
+        duration_secs=time.perf_counter() - start,
+        extra={"roots": results},
+    )
+
+
 def run_nightly_snapshot(*, daily: int = 0, weekly: int = 0, monthly: int = 0) -> JobResult:
     """Nightly: a full tar snapshot, then tiered retention.
 
@@ -529,6 +568,14 @@ def run_due_jobs(*, now: float | None = None, force: str = "", notifier=None) ->
         if result.ok and not result.skipped:
             state["last_export"] = stamp
 
+    # Time-travel's hourly memory commit (§5). Its own cadence key so an export
+    # failure never starves it and vice versa — they mitigate different losses.
+    if force == "history" or _due(state, "last_history", HOURLY_SECS, now=stamp):
+        result = run_history_commit()
+        results.append(result)
+        if result.ok and not result.skipped:
+            state["last_history"] = stamp
+
     if force == "snapshot" or _due(state, "last_snapshot", NIGHTLY_SECS, now=stamp):
         result = run_nightly_snapshot()
         results.append(result)
@@ -658,12 +705,33 @@ class DurabilityService:
         if self._task is not None:
             return
         self._task = asyncio.create_task(self._loop())
+        # Time-travel's debouncer rides the atomic-write seam, not this loop, so it
+        # is installed here rather than inside `_loop`: it must be listening from
+        # the first write of the process, and its gate is `time_travel`, not
+        # `auto_backup` (they are different promises).
+        self._install_history()
         logger.info("Durability service started (tick=%ds)", int(self._tick_secs))
+
+    def _install_history(self) -> None:
+        try:
+            if not _cfg().time_travel:
+                return
+            from personalclaw.durability.history_debounce import install
+
+            install(home=active_home())
+        except Exception:  # noqa: BLE001 — history must never block boot
+            logger.warning("durability: could not install time-travel history", exc_info=True)
 
     def stop(self) -> None:
         if self._task is not None:
             self._task.cancel()
             self._task = None
+        try:
+            from personalclaw.durability.history_debounce import uninstall
+
+            uninstall()
+        except Exception:  # noqa: BLE001
+            logger.debug("durability: history uninstall failed", exc_info=True)
 
     async def _loop(self) -> None:
         from personalclaw import shutdown_event

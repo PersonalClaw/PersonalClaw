@@ -177,6 +177,16 @@ _OPERATOR_EXEMPT: dict[str, str] = {
     # fact (which ports are listening, and whose cwd) and runs no agent code, exactly like the
     # PID and --version probes above.
     "workflows/web_preview.py::_run::subprocess.run": "host-fact: listening-port/cwd probe",
+    # DAS-9's state-history git runner. Every verb in the argv is a module constant; the only
+    # caller-supplied value that reaches git is a commit sha, hex-validated
+    # (`re.fullmatch(r"[0-9a-fA-F]{4,64}")`, state_history.py:581) before use, and the root is a
+    # closed enum of five paths. No shell. The environment is deliberately hostile to
+    # third-party code: `GIT_CONFIG_NOSYSTEM=1`, `GIT_CONFIG_GLOBAL=/dev/null`,
+    # `core.hooksPath=` and `commit.gpgsign=false`, so a user's global hooks or signing config
+    # cannot execute on a history commit. Operator/host-fact, not agent-influenced.
+    "durability/state_history.py::_git::subprocess.run": "operator: state-history git runner",
+    "durability/state_history.py::ensure_repo::subprocess.run": "operator: state-history repo init",
+    "durability/state_history.py::git_available::subprocess.run": "host-fact: git presence probe",
     # App install — operator-initiated (Store install), scanned+vetted.
     "apps/app_manager.py::_run_hook::subprocess.run": "operator: app install setup hook",
     "apps/app_manager.py::_install_python_deps::subprocess.run": "operator: app dep install",
