@@ -128,7 +128,8 @@ export function UpdatesPanel() {
           {isContainer && info.available && (
             <div className="mt-3 rounded-md bg-surface-high px-3 py-2">
               <div className="text-on-surface-low mb-1 text-[0.75rem]">Update this container install by pulling the new image and recreating:</div>
-              <pre className="overflow-auto text-[0.75rem] leading-relaxed text-on-surface"><code>{(info.instructions?.length ? info.instructions : ['docker compose -f deploy/compose/compose.yaml pull', 'docker compose -f deploy/compose/compose.yaml up -d']).join('\n')}</code></pre>
+              <pre tabIndex={0} role="group" aria-label="Update commands"
+                className="overflow-auto text-[0.75rem] leading-relaxed text-on-surface"><code>{(info.instructions?.length ? info.instructions : ['docker compose -f deploy/compose/compose.yaml pull', 'docker compose -f deploy/compose/compose.yaml up -d']).join('\n')}</code></pre>
             </div>
           )}
           {/* Desktop: the shell (electron-updater) owns updates. */}

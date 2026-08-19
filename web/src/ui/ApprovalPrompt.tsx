@@ -95,7 +95,8 @@ export function ApprovalPrompt({
                 // Wrapped and scrollable rather than truncated: on the phone this text IS
                 // the decision. A capped height keeps one enormous payload from burying the
                 // Allow/Deny row below the fold.
-                <pre className="mt-s max-h-[14rem] overflow-auto whitespace-pre-wrap break-all rounded-md bg-surface-high p-s font-mono text-on-surface-var text-[0.75rem]">{args}</pre>
+                <pre tabIndex={0} role="group" aria-label="Tool arguments"
+                  className="mt-s max-h-[14rem] overflow-auto whitespace-pre-wrap break-all rounded-md bg-surface-high p-s font-mono text-on-surface-var text-[0.75rem]">{args}</pre>
               )}
             </>
           ) : (

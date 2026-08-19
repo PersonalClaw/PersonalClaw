@@ -1,8 +1,8 @@
 {
-  "generatedAt": "2026-08-18T23:56:45.201Z",
+  "generatedAt": "2026-08-19T01:10:19.644Z",
   "totals": {
     "driftHits": 8,
-    "filesScanned": 522,
+    "filesScanned": 523,
     "filesWithDrift": 7
   },
   "byCategory": {
@@ -215,8 +215,8 @@
     }
   ],
   "a11y": {
-    "outlineNoneCount": 137,
-    "outlineNoneFiles": 64,
+    "outlineNoneCount": 139,
+    "outlineNoneFiles": 65,
     "localFocusVisibleFiles": 33,
     "reducedMotionFiles": 11,
     "animatedFiles": 167,
@@ -583,6 +583,11 @@
     "pages/settings/AgentDefaultsPanel.tsx": {
       "raw-button": 1,
       "raw-input": 1,
+      "raw-dialog": 0
+    },
+    "pages/settings/AlwaysOnConventions.tsx": {
+      "raw-button": 0,
+      "raw-input": 2,
       "raw-dialog": 0
     },
     "pages/settings/ArchivePanel.tsx": {
