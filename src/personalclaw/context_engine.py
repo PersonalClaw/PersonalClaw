@@ -264,9 +264,15 @@ def active_recall_block(
             builder, text, cwd=cwd, local=local, cap=2000, memory_store=memory_store
         )
 
+    # 🔴 NOT a `with` block, and that is the whole timeout. `ThreadPoolExecutor.__exit__` calls
+    # `shutdown(wait=True)`, which JOINS the still-running worker — so `result(timeout=…)` raised
+    # on schedule, the breaker counted it, and the caller then blocked for the full duration
+    # anyway. Measured: a 0.2s budget against a 3s read returned after 3.00s; with
+    # `shutdown(wait=False)` the same call returns in 0.21s. The budget was inert for every
+    # caller that mattered. The orphaned worker finishes into a result nobody reads.
+    _ex = concurrent.futures.ThreadPoolExecutor(max_workers=1)
     try:
-        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
-            recalled = ex.submit(_recall).result(timeout=timeout_ms / 1000.0)
+        recalled = _ex.submit(_recall).result(timeout=timeout_ms / 1000.0)
         _recall_consecutive_timeouts = 0  # success resets the breaker
     except concurrent.futures.TimeoutError:
         _recall_consecutive_timeouts += 1
@@ -279,6 +285,10 @@ def active_recall_block(
     except Exception:
         logger.debug("active recall failed", exc_info=True)
         return ""
+    finally:
+        # Never `wait=True`: joining here would re-introduce exactly the block the timeout exists
+        # to prevent.
+        _ex.shutdown(wait=False, cancel_futures=True)
     if not recalled:
         return ""
     # Fence as untrusted (it's recalled DATA, not instructions) — reusing PClaw's
@@ -356,9 +366,10 @@ def push_context_block(
         )
         return block
 
+    # Same join hazard as the recall path above — see the note there.
+    _ex = concurrent.futures.ThreadPoolExecutor(max_workers=1)
     try:
-        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
-            block = ex.submit(_push).result(timeout=_PUSH_TIMEOUT_MS / 1000.0)
+        block = _ex.submit(_push).result(timeout=_PUSH_TIMEOUT_MS / 1000.0)
         _push_consecutive_timeouts = 0
     except concurrent.futures.TimeoutError:
         _push_consecutive_timeouts += 1
@@ -371,6 +382,8 @@ def push_context_block(
     except Exception:
         logger.debug("push reflex failed", exc_info=True)
         return ""
+    finally:
+        _ex.shutdown(wait=False, cancel_futures=True)
     return block or ""
 
 
