@@ -4431,8 +4431,12 @@ function SessionOrgMenu({ s, folders, tags, orgLoadFailed, onSetFolder, onToggle
           used inside overflow-clipping containers (board columns, the list
           scroller) — inline absolute positioning gets CLIPPED at their edges;
           the body portal escapes them (and closes on scroll, see Popover). */}
+      {/* A menu trigger: `Popover` renders `trigger(open, toggle)` and adds no ARIA of its own, so the
+          caller owns it — `FilterMenu`, `HeaderActions` and the composer's controls all pass
+          `aria-expanded={open}` on their own raw buttons. This one could not until the primitive learned
+          the prop, so it announced `aria-pressed` for an open menu. */}
       <Popover width={240} align="right" placement="bottom" portal trigger={(open, toggle) => (
-        <SquareIconButton icon={TagIcon} label="Organize chat" title="Folder & tags" on={open} onClick={toggle}
+        <SquareIconButton icon={TagIcon} label="Organize chat" title="Folder & tags" ariaExpanded={open} onClick={toggle}
           className={`shrink-0 transition-opacity ${open ? 'opacity-100' : 'opacity-0 group-hover:opacity-100 focus-within:opacity-100'}`} />
       )}>
         {() => (
