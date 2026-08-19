@@ -70,7 +70,10 @@ function ArchiveRow({ a, open, onToggle }: { a: SessionArchive; open: boolean; o
 
   return (
     <div className="rounded-lg bg-surface-container px-4 py-2.5">
-      <button type="button" onClick={onToggle} className="flex w-full items-center gap-3 text-left">
+      {/* `aria-expanded` on the row itself, matching `AuditPanel`'s event row — the same shape in the
+          same area (a card whose button reveals detail beneath it). The toggle arriving as a PROP is
+          why the cycle-127 disclosure census could not see this one. */}
+      <button type="button" onClick={onToggle} aria-expanded={open} className="flex w-full items-center gap-3 text-left">
         <FileText size={16} className="shrink-0 text-on-surface-low" />
         <div className="min-w-0 flex-1">
           <div className="truncate font-mono text-on-surface text-[0.8125rem]">{a.key}</div>
@@ -80,7 +83,13 @@ function ArchiveRow({ a, open, onToggle }: { a: SessionArchive; open: boolean; o
       {open && (
         <div className="mt-2 border-t border-outline-variant/30 pt-2">
           {loading ? <div className="py-2 text-on-surface-low text-[0.75rem]"><Loader2 size={12} className="inline animate-spin" /> Loading…</div>
-            : <pre className="max-h-80 overflow-auto rounded-md bg-surface px-3 py-2 text-on-surface text-[0.75rem] whitespace-pre-wrap">{content}</pre>}
+            /* The transcript overflows its own cap (measured: 394px of content in a 320px box), so it is
+               a scroll region — `tabIndex={0}` + `role="group"` + a short `aria-label` is this repo's
+               canonical trio for one. Without the name Chrome computes it from the subtree, which here
+               is the whole JSONL transcript announced as the region's name. Static, not the session key:
+               a name must stay a name, and a key is unbounded. */
+            : <pre tabIndex={0} role="group" aria-label="Session transcript"
+                className="max-h-80 overflow-auto rounded-md bg-surface px-3 py-2 text-on-surface text-[0.75rem] whitespace-pre-wrap">{content}</pre>}
         </div>
       )}
     </div>
