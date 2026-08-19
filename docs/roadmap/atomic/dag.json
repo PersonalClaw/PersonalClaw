@@ -127,7 +127,7 @@
     {
       "plan": "INBOX-NOTIFICATIONS-UNIFICATION",
       "code": "INU",
-      "status": "in_progress",
+      "status": "done",
       "summary": "8 atoms: 5 done (S1-S5, PRs #111-#115), 3 todo (S6 verification gate, S7 Proposals contract, S8 inbox provider-seam resolution). No blocking cross-plan deps \u2014 plan owns the attention contracts; all cross-plan edges are downstream consumers. INU-8 is a provider-seam contract change this plan owns; CE-8 part 1 and EIAT-2 are blocked on it.",
       "atoms": [
         {
@@ -462,7 +462,7 @@
     {
       "plan": "WORKFLOWS-V2-KNOWLEDGE-SYNTHESIS",
       "code": "WF2KNO",
-      "status": "done",
+      "status": "in_progress",
       "atoms": [
         {
           "id": "WF2KNO-1",
@@ -726,7 +726,7 @@
     {
       "plan": "PLATFORM-RESILIENCE",
       "code": "PR2",
-      "status": "done",
+      "status": "in_progress",
       "summary": "6 sessions shipped (Doctor core, no-model degraded contract, mid-turn queue/cancel-replace, confirm-gated fixes + simulators + crash capture, health-scored remediation engine, mid-turn steering). 5 todo atoms capture the E6-deferred cross-plan integration remainders and one intra-plan cleanup (full heartbeat-maintenance retirement, success criterion #6).",
       "atoms": [
         {
@@ -1007,7 +1007,7 @@
     {
       "plan": "DESIGN-SYSTEM-CONSISTENCY",
       "code": "DSC",
-      "status": "done",
+      "status": "in_progress",
       "summary": "DSC is owner-closed DONE (2026-07-24): a design-system consistency audit + hardening across S1/S2/S3, executed in ~90 cycles on branch feature-design-system-consistency (not pushed; no PR numbers in the log). 10 done atoms + 2 todo tail atoms (authenticated axe-per-route CI gate + V3 walkthrough; ErrorState primitive + CodeCockpitPage-class raw-button redesign) that the owner deferred as follow-on plans.",
       "atoms": [
         {
@@ -1310,7 +1310,7 @@
     {
       "plan": "DOCUMENT-FIDELITY-EDITOR",
       "code": "DFE",
-      "status": "proposed",
+      "status": "in_progress",
       "summary": "DESIGNED, not started \u2014 verified against code (no documents/parsers/, no Run/Cell/ParagraphStyle/PageSetup in model.py, only GET /raw exists, no document_editing config, no DFE commits; empty execution log is accurate). Decomposed into 8 atoms along the plan's S0\u2013S4 session seams, splitting S1, S2, and S4 at natural feature boundaries. The only pause point is the editor atom (DFE-5), gated on owner task 2's editing-library decision (E5).",
       "atoms": [
         {
@@ -1397,7 +1397,7 @@
     {
       "plan": "BROWSE-AUTOMATION",
       "code": "BA",
-      "status": "proposed",
+      "status": "in_progress",
       "summary": "BROWSE-AUTOMATION is PROPOSED with NO execution log \u2014 nothing has shipped, so all 9 atoms are todo. The plan builds one app-contributed `browse` action provider for token-frugal autonomous web interaction. It decomposes cleanly along its own session/task IDs: original S1-S4 (extraction \u2192 CDP+safety+egress \u2192 browse loop+ActionProvider \u2192 credential handoff), the 2026-07-26 amendment (A1 folds into extraction, A2 live-mirror+auth_needed, A3 scheduled-actuator), and the 2026-07-29 amendment (B1-B4+VB user-browser target via a loopback extension). Hard cross-plan gates: the whole thing is Wave-2, gated on AUTONOMY-GUARDRAILS (egress chokepoint, safety profiles, budget/model-call chokepoint, needs-input gate, earned-autonomy ladder, fail-closed ApprovalGate) and WORKFLOWS-V2-AUTOMATION-SUBSTRATE (action-node dispatch); the actuator consumes WATCHED-SOURCES' escalation seam; the extension connector consumes COMPANION-APPS' device-session/pairing (\u00a7C1/C2 \u2014 must not fork it).",
       "atoms": [
         {
@@ -1614,7 +1614,7 @@
     {
       "plan": "EVALUATION-SUBSTRATE",
       "code": "ES",
-      "status": "proposed",
+      "status": "in_progress",
       "summary": "Plan is PROPOSED with no Execution log and no PR refs \u2014 entirely unstarted; all 11 atoms are todo. \u00a71/\u00a75/\u00a76 (+\u00a73.2 watchdog) are v2-independent and startable now against the existing eval/ package; \u00a72/\u00a74/\u00a77/\u00a78 and the E3 amendment are gated on WORKFLOWS-V2 (Run Ledger), WORKFLOWS-V2-LEARNING-FLYWHEEL (proposal queue/maturity/manifests), WORKFLOWS-V2-UNIVERSAL-PLANNING (UP-R6 approval gate), AUTONOMY-GUARDRAILS (model_calls.jsonl, SpendMeter), and FEEDBACK-SIGNAL (plan 58). Cuts follow the plan's own \u00a7-sections and its ~6-session map; the E1/E2/E3 amendment items are given their own atoms with explicit edges.",
       "atoms": [
         {
@@ -1751,7 +1751,7 @@
     {
       "plan": "ARTIFACTS-EVOLUTION",
       "code": "AE",
-      "status": "in_progress",
+      "status": "done",
       "summary": "ARTIFACTS-EVOLUTION is 9/10 atoms done; the only remaining work is the S3 T3.2 split-view iterate panel (AE-10), which is now startable (all deps landed).",
       "atoms": [
         {
@@ -1916,7 +1916,7 @@
     {
       "plan": "DISTRIBUTION",
       "code": "DIST",
-      "status": "done",
+      "status": "in_progress",
       "summary": "DISTRIBUTION is DONE for all code deliverables (S1\u2013S4). 12 atoms: 9 done (packaging correctness, SDK demotion core+apps halves, sdist SPA fix, client packaging, docs restructure, bootstrap install.sh, containers, self-update generalization) plus the first PyPI publish (PyPI carries core+client through 0.1.3). Remaining todo: owner clean-VM walkthroughs V1\u2013V4 and the out-of-scope S5 Homebrew/Nix channels. The one intra-plan gate that mattered \u2014 the class-B update_kind_aware gate \u2014 was re-scoped to a plain clean break under the pre-1.0 banner (the migration-backed gate regime is deferred; no lifecycle/ package). Key cross-plan edges: CI-RELEASE owns the build pipeline that produces every artifact these paths install; T1.4's SDK demotion was contingent on PROVIDER-BOUNDARY-COMPLETION S2's app pip-step (confirmed supported); DISCOVERABILITY hosts /install.",
       "atoms": [
         {
@@ -2074,7 +2074,7 @@
     {
       "plan": "AMBIENT-SURFACES",
       "code": "AS",
-      "status": "proposed",
+      "status": "in_progress",
       "summary": "9 atoms, all todo. AS-1 (composable home / dashboard-as-views) is the spine most others build on. AS-3, AS-4, AS-7 are independent. AS-6 gated on AUTOMATION-SUBSTRATE; AS-8 gated on INBOX-NOTIFICATIONS-UNIFICATION S1-2.",
       "atoms": [
         {
@@ -2613,7 +2613,7 @@
     {
       "plan": "SESSION-MANAGEMENT",
       "code": "SM",
-      "status": "in_progress",
+      "status": "done",
       "atoms": [
         {
           "id": "SM-1",
@@ -2777,7 +2777,7 @@
     {
       "plan": "PROACTIVE-ASSISTANT",
       "code": "PA",
-      "status": "proposed",
+      "status": "in_progress",
       "summary": "6 atoms, all todo. Triage flagship = PA-1 (approval memory + config foundation, independently landable) \u2192 PA-2 (5-stage digest pipeline) \u2192 PA-3 (inbox-op action provider + budgeted auto-execution) \u2192 PA-5 (triage FE + validation). Decision journal = PA-4 (native type + tools + horizon triggers + R18 lesson) \u2192 PA-6 (journal view + calibration FE). Cross-plan deps (substrate/guardrails/flywheel/inbox-notif) are already DONE/shipped enough to unblock, but recorded as EXT edges.",
       "atoms": [
         {
@@ -2850,7 +2850,7 @@
     {
       "plan": "WORKFLOWS-V2",
       "code": "WV",
-      "status": "in_progress",
+      "status": "done",
       "atoms": [
         {
           "id": "WV-1",
@@ -3022,7 +3022,7 @@
     {
       "plan": "AGENT-PACKS",
       "code": "AP",
-      "status": "proposed",
+      "status": "done",
       "atoms": [
         {
           "id": "AP-1",
@@ -3106,7 +3106,7 @@
     {
       "plan": "MODEL-ROUTING-TELEMETRY",
       "code": "MRT",
-      "status": "proposed",
+      "status": "in_progress",
       "atoms": [
         {
           "id": "MRT-1",
@@ -3341,7 +3341,7 @@
     {
       "plan": "CI-RELEASE-ENGINEERING",
       "code": "CRE",
-      "status": "done",
+      "status": "in_progress",
       "summary": "CI-RELEASE-ENGINEERING is fully shipped: committed flake8 standard + whole-tree reformat (mypy 152\u21920), core ci.yml (lint/test/web/rails) + full.yml matrix, apps-repo ci.yml, release.yml (build/pypi/pypi-client/images/notes/attest via Trusted Publishing), uv.lock + Dependabot + SBOM + coverage badge, and a test-isolation root-cause pass that fixed 4 real product bugs the gate surfaced. Only owner real-world confirmations (GHCR packages\u2192public on first push, optional main branch protection) remain \u2014 no agent-executable code left.",
       "atoms": [
         {
@@ -3432,7 +3432,7 @@
     {
       "plan": "MULTIMODAL-IO",
       "code": "MI",
-      "status": "proposed",
+      "status": "in_progress",
       "summary": "5 atoms along the plan's own session seams. MI-1 (entity+resolver), MI-3 (duplex), MI-4 (screen-context) are independent and buildable now. MI-2 (cloning engine) carries the sole cross-plan edge on LOCAL-MODEL-MANAGER-V2. MI-5 is the UI + full-matrix validation capstone depending on MI-1..MI-4. Nothing done; all TODO.",
       "atoms": [
         {
@@ -3896,7 +3896,7 @@
     {
       "plan": "FEEDBACK-SIGNAL",
       "code": "FS",
-      "status": "in_progress",
+      "status": "done",
       "atoms": [
         {
           "id": "FS-1",
@@ -4051,7 +4051,7 @@
     {
       "plan": "COMPANION-APPS",
       "code": "CA",
-      "status": "proposed",
+      "status": "in_progress",
       "atoms": [
         {
           "id": "CA-1",
@@ -4152,7 +4152,7 @@
     {
       "plan": "EXTERNAL-ACCESS",
       "code": "EA",
-      "status": "proposed",
+      "status": "in_progress",
       "atoms": [
         {
           "id": "EA-1",
@@ -4255,7 +4255,7 @@
     {
       "code": "EIAT",
       "plan": "EMAIL-INBOX-AND-TRIGGERS",
-      "status": "in-progress",
+      "status": "done",
       "summary": "EIAT-1 DONE (2026-08-09): the event-trigger vocabulary is source-agnostic \u2014 event_triggers.py (live runtime for the unified `event` kind) carries source/sender_glob/address_glob + Inbox* patterns, matches() gates on source before pattern, emit_memory_event\u2192emit_event clean break, and inbox_service bridges accepted items to source=inbox events. EIAT-2..5 TODO (EIAT-2/3 are the greenfield mail-inbox app; EIAT-4/5 prompt-bound addresses + Triggers-page UI, owner-gated on test mailbox / receiving-address strategy / draft-by-default confirmation \u2014 those gate validation, not implementation).",
       "atoms": [
         {
@@ -4331,7 +4331,7 @@
     {
       "plan": "COST-AND-TOKEN-OBSERVABILITY",
       "code": "CATO",
-      "status": "proposed",
+      "status": "done",
       "summary": "8 atoms from an unbuilt, dependency-light plan: 5 for S1 (ledger core + 3 attribution write-site groups + read routes) and 3 for S2 surfaces (turn line, session total, Usage panel). No hard cross-plan deps; PROMPT-CACHE coupling is optional/degrading, not a gate.",
       "atoms": [
         {
@@ -4425,7 +4425,7 @@
     {
       "plan": "PROMPT-CACHE-SUBSTRATE",
       "code": "PCS",
-      "status": "proposed",
+      "status": "in_progress",
       "summary": "PROMPT-CACHE-SUBSTRATE decomposed into 8 atoms (all todo \u2014 nothing shipped). One provider-agnostic cache-marker seam: S1 ordering repairs (PCS-1/PCS-2), S2 marker+adoption (PCS-3/PCS-4/PCS-5), S3 producer+proof (PCS-6/PCS-7), plus cross-repo apps posture (PCS-8). No hard cross-plan blockers; one soft coordination edge to COST-AND-TOKEN-OBSERVABILITY for the rendered readout.",
       "atoms": [
         {
@@ -4690,7 +4690,7 @@
     {
       "plan": "ACP-AGENT-PARITY",
       "code": "AAP",
-      "status": "proposed",
+      "status": "todo",
       "summary": "Decomposed ACP-AGENT-PARITY into 10 atoms: 3 per-provider runtime-validation sweeps (Phase 1) gating 6 severity-ordered parity fixes (Phase 2 \u00a72.1\u2013\u00a72.6) plus the honest-boundary parity doc (\u00a72.7). Plan is PROPOSED \u2014 no execution log, no PRs \u2014 so all atoms are TODO. No hard cross-plan dependencies exist (Wave-0 standalone; guardrails/isolation touchpoints are non-blocking), so all edges are intra-plan.",
       "atoms": [
         {
@@ -5018,7 +5018,7 @@
     {
       "plan": "HARNESS-CRAFT",
       "code": "HC",
-      "status": "proposed",
+      "status": "in_progress",
       "atoms": [
         {
           "id": "HC-1",
@@ -5074,7 +5074,7 @@
     {
       "plan": "CHANNEL-EXPANSION",
       "code": "CE",
-      "status": "proposed",
+      "status": "in_progress",
       "summary": "CHANNEL-EXPANSION is DESIGNED and fully unstarted (no core trust seam, no channel apps, no kit/guide/CLI). 9 atoms, all todo: 1 core trust seam, 1 Slack migration, 3 channel apps (Telegram/Discord/email), plus a conformance kit, guide, Slack full-pattern, and ramp-coordination atom. Cross-plan edges to INBOX-NOTIFICATIONS-UNIFICATION (agent_request inbox kind), ECOSYSTEM-TOOLING (channel scaffold), and WORKFLOWS-V2-AUTOMATION-SUBSTRATE (trigger source).",
       "atoms": [
         {
@@ -5191,7 +5191,7 @@
     {
       "plan": "WATCHED-SOURCES",
       "code": "WS",
-      "status": "proposed",
+      "status": "in_progress",
       "atoms": [
         {
           "id": "WS-1",
@@ -5300,7 +5300,7 @@
     {
       "plan": "DESKTOP-CAPABILITIES",
       "code": "DC",
-      "status": "proposed",
+      "status": "in_progress",
       "summary": "6 atoms. DC-2 (capability bridge) and DC-3 (push-to-talk mic capture) are IMPLEMENTED; both stay `todo` for their on-device validation sessions (V2/V3) and their owner tasks, since Electron has never been launched during implementation. DC-2 is the independently-startable capability-bridge seam-owner; DC-3/4/5 hang off it; DC-1 carries the mac signing/updater pipeline; DC-5 and DC-6 carry the two cross-plan gates (INBOX-NOTIF, PLATFORM-REACH).",
       "atoms": [
         {
@@ -5451,7 +5451,7 @@
     {
       "plan": "PLATFORM-REACH",
       "code": "PR",
-      "status": "proposed",
+      "status": "done",
       "atoms": [
         {
           "id": "PR-1",
@@ -5541,7 +5541,7 @@
     {
       "plan": "APP-PLATFORM-EVOLUTION",
       "code": "APE",
-      "status": "proposed",
+      "status": "in_progress",
       "summary": "12 atoms; APE-7 (update surfacing) + APE-8 + APE-9 + APE-12 done, the rest todo. Session 1 = APE-1..3 (background+event capabilities), Session 2 = APE-4..8 (quality bar, native evolution, update surfacing, fix-with-AI), Sessions 3-4 = APE-9..11 (app-to-app broker, cross-app read, richer UI SDK). APE-12 was filed later for a traced defect in APE-9's consent half.",
       "atoms": [
         {
@@ -5783,7 +5783,7 @@
     {
       "plan": "MOBILE-COMPANION",
       "code": "MC",
-      "status": "proposed",
+      "status": "in_progress",
       "atoms": [
         {
           "id": "MC-1",
@@ -6002,7 +6002,7 @@
     },
     {
       "code": "FM",
-      "status": "proposed",
+      "status": "in_progress",
       "summary": "FLUID-MOTION is DESIGNED with no execution log \u2014 nothing shipped. It is a self-contained frontend motion plan (motion.ts, ui/motion/, tokens, router) that touches no cross-plan shared seams and rides existing cosmetic gates (bounciness/expressiveness/prefers-reduced-motion), so no lifecycle/migration re-scopes apply. Decomposed into 7 todo atoms across its 3 sessions: the physics foundation (FM-1), two independent morph primitives + their coherence pass (FM-2/3/4), route transitions and orchestrated entrances (FM-5/6), and the capstone budget proof + CI guard (FM-7). One declared cross-plan edge (DESIGN-SYSTEM-CONSISTENCY, already shipped v0.1.2) and one soft coordination edge (KNOWLEDGE-LIBRARY for a demo morph surface, with alternates available).",
       "plan": "FLUID-MOTION",
       "atoms": [
@@ -6090,7 +6090,7 @@
     {
       "plan": "AGENT-ROOMS",
       "code": "AR",
-      "status": "proposed",
+      "status": "todo",
       "summary": "AGENT-ROOMS is a PROPOSED+DEFERRED direction-holder with no contracts, no task tables, no execution log, and zero done work. The whole plan is gated on an owner un-deferral decision (contingent on the LOOPS-EVOLUTION \"council\" template shipping and demand being re-confirmed) plus four cross-plan prereqs (WORKFLOWS-V2 core slices, ACP-AGENT-PARITY, AUTONOMY-GUARDRAILS, INBOX-NOTIFICATIONS-UNIFICATION). I produced 8 atoms: an un-deferral/design-resolution gate (AR-1) that must land first, and 7 implementation seams from the scope sketch (room store/transcript, member model + listen policies, per-member cursors + fenced transcript feed, deterministic arbitration + round budget, per-member safety profiles + human-sole-approver, room-level SEL, UI surface) \u2014 each depending on AR-1 and its own cross-plan prereq. Nothing is startable now.",
       "atoms": [
         {
@@ -6187,7 +6187,7 @@
     {
       "plan": "ECOSYSTEM-TOOLING",
       "code": "ET",
-      "status": "proposed",
+      "status": "in_progress",
       "atoms": [
         {
           "id": "ET-1",
@@ -6283,7 +6283,7 @@
     {
       "plan": "LEARNING-VISIBILITY",
       "code": "LV",
-      "status": "proposed",
+      "status": "in_progress",
       "atoms": [
         {
           "id": "LV-1",
@@ -6365,7 +6365,7 @@
     {
       "plan": "ONBOARDING-UX",
       "code": "OU",
-      "status": "proposed",
+      "status": "in_progress",
       "atoms": [
         {
           "id": "OU-1",
@@ -6492,7 +6492,7 @@
     {
       "plan": "SECURITY-HARDENING",
       "code": "SH",
-      "status": "proposed",
+      "status": "in_progress",
       "atoms": [
         {
           "id": "SH-1",
@@ -6598,7 +6598,7 @@
     {
       "plan": "EXECUTION-ISOLATION",
       "code": "EI",
-      "status": "proposed",
+      "status": "in_progress",
       "atoms": [
         {
           "id": "EI-1",
@@ -6871,7 +6871,7 @@
     {
       "plan": "DESKTOP-COMPUTER-USE",
       "code": "DCU",
-      "status": "todo",
+      "status": "in_progress",
       "summary": "Delivers native desktop GUI automation that lets the agent read and drive the operator's own desktop applications through the OS accessibility layer \u2014 enumerate on-screen apps, walk a window into an indexed accessibility tree, then act on an element by index (press, type, set value, scroll, named action), with a coordinate path reserved for canvas/custom-drawn UI. macOS ships first (AX API) with honest typed refusals on Windows/Linux until their drivers land. The entire safety floor \u2014 an out-of-band keystone enable, element-index default so the real cursor never moves by accident, a target-app allowlist, SEL audit, and the approval ladder \u2014 lands before any capability is usable.",
       "atoms": [
         {
@@ -6954,7 +6954,7 @@
     {
       "plan": "PLATFORM-HARDENING-FLOORS",
       "code": "PHF",
-      "status": "todo",
+      "status": "in_progress",
       "summary": "Enforcement floors, trust seams, and gate ergonomics for the platform. It corrects an unsafe resource-ceiling delivery mechanism (deliver rlimits after exec via a stdlib shim instead of a fork-unsafe preexec_fn), closes the unauthenticated app-backend inbound trust boundary with a proxy HMAC signature, and adds config/inert-surface drift baselines, an offline fake-model E2E harness, ceiling-intersect-profile guardrail wiring, flake root-cause fixes, and docs/aggregate-gate legibility. Most atoms originate here or deliver a specific mechanism correction; cross-plan edges mark work that lands into a plan another owner holds.",
       "atoms": [
         {
@@ -7097,7 +7097,7 @@
     {
       "plan": "PRODUCT-EXPERIENCE-PARITY",
       "code": "PEP",
-      "status": "todo",
+      "status": "in_progress",
       "summary": "Product-experience improvements to PersonalClaw's own surfaces: progressive-disclosure empty states that seed (never replace) the expert create flows, an always-open App Store category/source rail with polished cards, onboarding import from other local agent tools, artifact folders, local artifact deploy served through PersonalClaw's own gateway, artifacts as an indexed knowledge source, an always-on-conventions viewer, and a first-party product-app suite. Every simplification is progressive disclosure with full power one click away, and artifact deploy is strictly local through the PersonalClaw gateway with no cloud provisioner.",
       "atoms": [
         {
@@ -7214,7 +7214,7 @@
     {
       "plan": "PLATFORM-PRIMITIVES",
       "code": "PP",
-      "status": "todo",
+      "status": "in_progress",
       "summary": "The three missing nouns \u2014 edges, verdicts and policies \u2014 extracted as platform primitives, so the engine's semantics stop being implemented three times.",
       "atoms": [
         {

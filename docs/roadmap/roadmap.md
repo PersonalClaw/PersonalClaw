@@ -136,6 +136,7 @@ What the user sees and how the platform interoperates.
 | 64 | Cost & Token Observability — Answer "What Did This Cost Me?" | [COST-AND-TOKEN-OBSERVABILITY](plans/COST-AND-TOKEN-OBSERVABILITY.md) | ~2 | 2 |
 | 65 | Document Handling Tools — Produce the Formats a Person Actually Sends | [DOCUMENT-HANDLING-TOOLS](plans/DOCUMENT-HANDLING-TOOLS.md) | ~2 | 2 |
 | 66 | Email Inbox & Triggers — Mail as a Source, Any Source as a Trigger | [EMAIL-INBOX-AND-TRIGGERS](plans/EMAIL-INBOX-AND-TRIGGERS.md) | ~3 | 2 |
+| 71 | Document Fidelity Editor — Editing a Real Document, With Layout Control | [DOCUMENT-FIDELITY-EDITOR](plans/DOCUMENT-FIDELITY-EDITOR.md) | ~4 | 4 |
 
 ### Pillar E — Launch, Reach & Ecosystem (new in rev 9)
 
