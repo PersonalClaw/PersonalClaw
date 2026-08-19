@@ -7,8 +7,8 @@ import type { LucideIcon } from 'lucide-react'
 import { useDashboardLive } from '../DashboardLive'
 import { physics } from '../../../design/motion'
 import type { RouteProps } from '../../../app/useQueryState'
+import { ACTIVE_LOOP_STATUSES } from '../../../lib/loopStatus'
 
-const ACTIVE_LOOP_STATES = new Set(['running', 'paused', 'stagnant', 'blocked', 'needs_input'])
 
 /** Hero Pulse Strip — WS-live at-a-glance counts across the whole system, each a
  *  click-through into its section. Counts bounce on change (the count is the
@@ -30,7 +30,7 @@ export function HeroPulse({ navigate, variant = 'strip' }: RouteProps & { varian
   const { approvals, inbox, tasks, loops, notifications } = useDashboardLive()
 
   const runningLoops = useMemo(
-    () => loops.filter((l) => ACTIVE_LOOP_STATES.has(l.status)).length,
+    () => loops.filter((l) => ACTIVE_LOOP_STATUSES.has(l.status)).length,
     [loops],
   )
   const unread = useMemo(() => notifications.filter((n) => !n.acked).length, [notifications])

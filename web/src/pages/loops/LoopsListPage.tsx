@@ -26,14 +26,13 @@ import { loopKindMeta } from '../../lib/loopKind'
 import { loopToGoalLoop } from './goalAdapter'
 import { rowSubject } from '../../lib/rowSubject'
 import { activePhaseIndex, phaseMinCycles, phaseForCycle, hasDistinctName } from './loopPhases'
-import { LOOP_STATUS } from './loopStatusMeta'
+import { loopStatusLabel, loopStatusColor, loopStatusTone, effectiveLoopStatus, ACTIVE_LOOP_STATUSES, PRELAUNCH_LOOP_STATUSES } from '../../lib/loopStatus'
 import { PageTitle } from '../../ui/PageTitle'
 import { notify } from '../../app/appSdk'
 
-// Keyed by LoopStatus PLUS the synthetic 'ended_early' (a non-genuine 'complete'),
-// so the type is the broader string map. Shared with the dashboard Active Work
-// widget via loopStatusMeta (single source of truth for the status color language).
-const STATUS = LOOP_STATUS
+// The status word + accent come from `lib/loopStatus` — the ONE registry every loop
+// surface reads (this page used to carry its own `loopStatusMeta` copy, which had drifted
+// to "Stagnant"/"Completed"/"Needs input" and a contradictory colour language).
 
 // Goal-type glyph for the list row (§10.4) — the at-a-glance kind.
 // Goal-type chip label. "open-ended" (not bare "open") so it doesn't read as a
@@ -109,11 +108,14 @@ export function LoopsListPage({ onOpen, onCreate, query, setQuery }: { onOpen: (
   // mid-planning, matches no filter and is INVISIBLE under the default 'active' view
   // (it'd only show under 'All'). A loop is "done" only when terminal; everything
   // not-terminal-and-not-ongoing-only is active work the user is shepherding.
+  // (`blocked` was the status this list forgot: it was in neither set, so a blocked loop
+  // matched NO filter and was invisible under the default 'active' view. Deriving the bucket
+  // from the ONE active set is what stops that recurring.)
   const DONE_ST = ['complete', 'stopped', 'failed']
-  const ACTIVE_ST = ['running', 'paused', 'stagnant', 'needs_input', 'intake', 'planning', 'review', 'ready']
+  const SHEPHERDING = new Set([...ACTIVE_LOOP_STATUSES, ...PRELAUNCH_LOOP_STATUSES])
   const matchesFilter = (c: GoalLoop, f: typeof filter) =>
     f === 'all' ? true
-    : f === 'active' ? ACTIVE_ST.includes(c.status)
+    : f === 'active' ? SHEPHERDING.has(c.status)
     : f === 'ongoing' ? (c.max_cycles === 0 || c.granularity === 'forever' || c.goal_type === 'monitor')
     : DONE_ST.includes(c.status)  // done
   const matches = (c: GoalLoop) => matchesFilter(c, filter)
@@ -198,7 +200,7 @@ export function LoopsListPage({ onOpen, onCreate, query, setQuery }: { onOpen: (
                 // DoD unmet) → the synthetic 'ended_early' meta, so it doesn't read as a
                 // genuine completion. Mirrors effectiveLoopStatus on the Code surfaces.
                 const endedEarly = c.status === 'complete' && !!c.error_message
-                const st = endedEarly ? STATUS.ended_early : (STATUS[c.status] ?? STATUS.ready)
+                const dispStatus = effectiveLoopStatus(c.status, c.error_message)
                 // A GENUINELY completed loop reached its Definition of Done — show a full
                 // ring. An ended-early one didn't, so its ring tracks actual cycle
                 // progress (capped at 1), not a misleading full ring.
@@ -226,7 +228,7 @@ export function LoopsListPage({ onOpen, onCreate, query, setQuery }: { onOpen: (
                   { icon: <ExternalLink size={15} />, label: 'Open', onSelect: () => setPeekId(c.id) },
                   ...(running ? [{ icon: <Pause size={15} />, label: 'Pause', onSelect: () => act(undefined, c.id, 'pause') }] : []),
                   ...(['paused', 'stagnant', 'needs_input'].includes(c.status) ? [{ icon: <Play size={15} />, label: 'Resume', onSelect: () => act(undefined, c.id, 'resume') }] : []),
-                  ...(ACTIVE_ST.includes(c.status) ? [{ icon: <Square size={15} />, label: 'Stop', onSelect: () => act(undefined, c.id, 'stop') }] : []),
+                  ...(ACTIVE_LOOP_STATUSES.has(c.status) ? [{ icon: <Square size={15} />, label: 'Stop', onSelect: () => act(undefined, c.id, 'stop') }] : []),
                   ...(['complete', 'stopped', 'failed'].includes(c.status) ? [{ icon: <Trash2 size={15} />, label: 'Delete', danger: true, onSelect: () => del(undefined, c.id) }] : []),
                 ]
                 return (
@@ -260,14 +262,14 @@ export function LoopsListPage({ onOpen, onCreate, query, setQuery }: { onOpen: (
                         rendered 76px against its siblings' 78px before it was pinned). */}
                     <div className="flex-1 min-w-0 min-h-[2.875rem]">
                       <div className="flex items-center gap-s">
-                        <span className="size-1.5 rounded-pill shrink-0" style={{ background: st.tone }} />
+                        <span className="size-1.5 rounded-pill shrink-0" style={{ background: loopStatusColor(dispStatus) }} />
                         <span className="truncate text-on-surface text-[0.9375rem]" style={fvs(500)}>{title}</span>
                         {/* kind chip: goal shows its goal-type glyph; general/design show the kind. */}
                         {(() => { const k = (c as { kind?: string }).kind
                           const label = k === 'design' ? 'design' : k === 'general' ? 'loop' : (GOAL_GLYPH[c.goal_type] ?? c.goal_type)
                           const title = k === 'design' ? 'design loop' : k === 'general' ? 'general loop' : `${c.goal_type} goal`
                           return <span className="shrink-0 rounded-pill px-1.5 h-4 inline-flex items-center text-[0.75rem] uppercase tracking-wide bg-surface-high text-on-surface-low" title={title}>{label}</span> })()}
-                        <span className="shrink-0 text-on-surface-low text-[0.75rem]">· {st.label}{(running || c.status === 'paused') && (c.max_cycles === 0 ? ` · ongoing · cycle ${shownCycle}` : ` · cycle ${shownCycle}/${c.max_cycles}`)}</span>
+                        <span className="shrink-0 text-on-surface-low text-[0.75rem]">· {loopStatusLabel(dispStatus)}{(running || c.status === 'paused') && (c.max_cycles === 0 ? ` · ongoing · cycle ${shownCycle}` : ` · cycle ${shownCycle}/${c.max_cycles}`)}</span>
                       </div>
                       {(latestText || goalEarnsItsLine) && (
                         <p className="mt-1 text-on-surface-low text-[0.8125rem] truncate">
@@ -280,7 +282,7 @@ export function LoopsListPage({ onOpen, onCreate, query, setQuery }: { onOpen: (
                     <div className={`flex items-center gap-1 shrink-0 transition-opacity ${confirmDelete === c.id ? 'opacity-100' : 'opacity-0 group-hover:opacity-100 focus-within:opacity-100'}`}>
                       {running && <IconButton icon={Pause} label="Pause" size={34} onClick={(e) => act(e, c.id, 'pause')} />}
                       {['paused', 'stagnant', 'needs_input'].includes(c.status) && <IconButton icon={Play} label="Resume" size={34} onClick={(e) => act(e, c.id, 'resume')} />}
-                      {ACTIVE_ST.includes(c.status) && <IconButton icon={Square} label="Stop" size={34} onClick={(e) => act(e, c.id, 'stop')} />}
+                      {ACTIVE_LOOP_STATUSES.has(c.status) && <IconButton icon={Square} label="Stop" size={34} onClick={(e) => act(e, c.id, 'stop')} />}
                       {['complete', 'stopped', 'failed'].includes(c.status) && (
                         <IconButton icon={Trash2} size={34}
                           label={confirmDelete === c.id ? 'Click again to delete' : 'Delete loop'}
@@ -290,7 +292,7 @@ export function LoopsListPage({ onOpen, onCreate, query, setQuery }: { onOpen: (
                     </div>
 
                     <div className="flex items-center gap-1.5 shrink-0">
-                      <ProgressRing pct={pct} tone={st.tone} label={`Cycle progress: ${shownCycle}${c.max_cycles ? ` of ${c.max_cycles}` : ''}`} />
+                      <ProgressRing pct={pct} tone={loopStatusColor(dispStatus)} label={`Cycle progress: ${shownCycle}${c.max_cycles ? ` of ${c.max_cycles}` : ''}`} />
                       {/* 🪤 "fnd" IS AN ABBREVIATION NOTHING ELSE IN THE APP USES, and a screen reader
                           reads it literally. The visible form cannot grow — the box is `w-9` (36px), and
                           widening it reflows the row — so the abbreviation stays for the eye and the full
@@ -320,7 +322,7 @@ export function LoopsListPage({ onOpen, onCreate, query, setQuery }: { onOpen: (
  *  goal/general/design (code has its own section), so labels say "loop" and the
  *  goal-type glyph only renders for the goal kind. */
 function LoopPeek({ loop, onOpenFull }: { loop: GoalLoop; onOpenFull: () => void }) {
-  const st = STATUS[loop.status] ?? STATUS.ready
+  const dispStatus = effectiveLoopStatus(loop.status, loop.error_message)
   const running = loop.status === 'running'
   const kind = (loop as { kind?: string }).kind
   const shownCycle = running ? loop.total_cycles + 1 : loop.total_cycles
@@ -332,8 +334,8 @@ function LoopPeek({ loop, onOpenFull }: { loop: GoalLoop; onOpenFull: () => void
       <Button onClick={onOpenFull}><ExternalLink size={15} /> Open full loop</Button>
 
       <div className="flex flex-wrap items-center gap-s text-[0.8125rem]">
-        <span className="inline-flex items-center gap-1.5 rounded-pill px-m h-7" style={{ background: `color-mix(in srgb, ${st.tone} 16%, transparent)`, color: st.tone }}>
-          <span className="size-1.5 rounded-pill" style={{ background: st.tone }} /> {st.label}
+        <span className="inline-flex items-center gap-1.5 rounded-pill px-m h-7" style={loopStatusTone(dispStatus)}>
+          <span className="size-1.5 rounded-pill" style={{ background: loopStatusColor(dispStatus) }} /> {loopStatusLabel(dispStatus)}
         </span>
         {/* goal-type glyph is meaningful only for the goal kind; general/design have none. */}
         {kind === 'design' ? <span className="text-on-surface-low">design</span>

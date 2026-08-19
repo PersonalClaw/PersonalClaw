@@ -13,6 +13,7 @@ import { HeaderActions, HeaderControl } from '../../ui/HeaderActions'
 import { ReactWidgetFrame } from '../../ui/widget/ReactWidgetFrame'
 import { api, type Loop, type Artifact, type LoopPhase } from '../../lib/api'
 import { downloadText, safeFilename } from '../../lib/download'
+import { ACTIVE_LOOP_STATUSES } from '../../lib/loopStatus'
 import { useRunStream } from './useRunStream'
 import { CockpitPromptBar } from './CockpitPromptBar'
 import type { RouteProps } from '../../app/useQueryState'
@@ -39,7 +40,6 @@ export interface ResolvedTokens {
   scheme: string
 }
 
-const ACTIVE = new Set(['running', 'paused', 'stagnant', 'needs_input'])
 
 /** Design loop cockpit (Slice 7). A design loop still follows the loop spine
  *  (understand → phase → plan → execute), but its surfaces are design-flow specific:
@@ -101,7 +101,7 @@ export function DesignCockpitPage({ id, onBack, onDeleted, onOpenProject, onBuil
   })
 
   const status = loop?.status
-  const active = !!status && ACTIVE.has(status)
+  const active = !!status && ACTIVE_LOOP_STATUSES.has(status)
   const running = status === 'running'
   // The token spec is editable ONLY pre-launch (intake/planning/review/ready) — once the
   // loop has started, the backend freezes it (store.update_spec returns None → the PUT

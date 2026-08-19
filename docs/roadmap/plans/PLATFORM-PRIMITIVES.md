@@ -204,6 +204,85 @@ rather than deferring them past it.
 
 ## Execution log
 
+- **2026-08-18 — `PP-16` PARTIAL (atom stays `todo`).** The capstone is multi-session; two slices
+  landed complete, with no dual path and nothing half-migrated. **What is shipped ALREADY, measured,
+  not assumed:** *one ledger* — `loop/journal.py` is the SECOND `personalclaw.ledger` producer
+  (PP-5), same kinds, same reader, so the flywheel already sees loop runs; *one attention path* —
+  `loop/watchdog.py:301` raises inbox items through `inbox.emit_attention_item`, the same seam
+  `workflows/attention.py` uses; *the five kinds are already bundled templates* —
+  `general-project`, `goal-pursuit-open-ended`/`-verifiable`, `code-project`, `design-project`,
+  `deep-research` ship under `workflows/bundled/`, and `loop_aliases.KIND_TO_TEMPLATE` resolves a
+  legacy kind to one at READ time. **What is NOT:** the loop row, its store, its watchdog, its
+  adoption path and its cockpit are all live and coexisting with the run path *by design* today
+  (`workflows/watchdog.py:236` names the coexistence and `_publish_to_equivalent_loop_hub` bridges
+  run events onto the loop hub) — so restart-adoption is still implemented twice
+  (`loop/manager.reap_orphaned_loops:537`, called from `gateway.py:2313`, vs
+  `workflows/watchdog._boot_sweep`+`_adopt`), the projection to tasks is still twice
+  (`loop/tasks_link.py` provisions Tasks Projects imperatively; `workflows/materialize.py` projects
+  run state), and the two status vocabularies still both exist.
+- **2026-08-18 — `PP-16` step 1 DONE: the field map.** `workflows/loop_run_map.py` maps all **39**
+  `Loop` dataclass fields onto `WorkflowRun`/`SupervisorPolicy`/`WorkflowDef`/`Intent`/a template
+  input/a node `config` key/a projection — the plan's own first step ("name the ones with no home
+  BEFORE writing code"). Deliberately inert with the `WF2LOO-12` honesty marker, in the
+  `POLICY_KNOB_MAP` idiom, and railed by `tests/test_pp16_loop_field_map.py`: exhaustive in both
+  directions, **18 destination paths resolved attribute-by-attribute** against the real dataclasses,
+  every `RUN_INPUT` checked against the shipped `bundled/*/workflow.json` inputs, the homeless set
+  pinned as a shrink-only ratchet, and `STATUS_VOCABULARY_DELTA` computed from the two enums rather
+  than asserted. Falsified four ways, each red: a new `Loop` field (*"Loop fields with no row"*), a
+  renamed `WorkflowRun.elapsed_seconds` (*"WorkflowRun has no field 'elapsed_seconds'"*), a bogus
+  template input (*"which no bundled template declares"*), and a seventh homeless field (*"the set
+  of Loop fields with NO home changed"*).
+- **2026-08-18 — `PP-16` OWNER DECISIONS the field map surfaced (recorded, not taken).** (1) **A run
+  has no user-facing title.** The runs list labels a row `{workflow_name} — run {id}`
+  (`WorkflowsListPage.tsx:372`); `Loop.name` is user-set (`store.rename`) and shown on every loop
+  surface. Declare a `title` on `WorkflowRun`, or accept `extra['name']` — a tolerant-reader
+  spillover dict, which is a shape decision, not a migration detail. (2) **The status vocabularies
+  are not a superset relationship:** `intake`/`planning`/`review`/`ready`/`stagnant`/`blocked`/
+  `stopped` have no `RunStatus` member and `draft`/`cancelled`/`escalated` have no `LoopStatus` one,
+  so "one status vocabulary" costs a decision per orphan. (3) **`WorkflowRun.task_list_id` is
+  declared and inert** — no writer or reader outside `models.py` — and singular, where a loop keeps
+  one TaskList per phase. (4) Four more fields have no home at all: `provider_agent`,
+  `strategy_id`, `strategy_config`, `auto_teardown_on_complete`. (5) Recorded fidelity losses:
+  `Loop.model` (a concrete model id) vs a node's `model_tier`; `Loop.roster` (N personas on ONE work
+  unit) vs one `agent` per node; loop epoch-float timestamps vs run ISO strings.
+- **2026-08-18 — `PP-16` DONE-NOW: one loop-status vocabulary (the frontend half of "one status
+  vocabulary, one cockpit contract").** One backend enum was narrated by **two** frontend tables:
+  `lib/loopStatus.ts` (Code list, in-chat SDLC card, Projects linked-work rows) and
+  `pages/loops/loopStatusMeta.ts` (Loops list, dashboard Active Work). They disagreed word-for-word
+  (*Stalled/Stagnant*, *Analyzing/Intake*, *Complete/Completed*, *Needs you/Needs input*) **and
+  tone-for-tone** (`running` green in one, primary in the other; `complete` the reverse), so green
+  meant "in flight" on one surface and "finished" on the next. The second table is deleted; the
+  survivor's words follow `workflowMeta`'s for states both nouns share. **The locked
+  terminal-label ruling was being violated by the file its own rail could not see:**
+  `terminalSuccessLabel.test.ts` named the other two registries by path and matched a
+  `{ label: … }` shape `lib/loopStatus.ts` did not use, so the bare adjective *"Complete"* shipped
+  on the Code surfaces; the rail now points at the surviving registry. Six hand-written
+  active-status set literals collapsed onto `ACTIVE_LOOP_STATUSES`/`PRELAUNCH_LOOP_STATUSES`
+  (mirrors of `loop.loop:ACTIVE_STATUSES`/`PRELAUNCH_STATUSES`), which fixed **three live
+  defects**: the Loops-list filter had `blocked` in neither its active nor its done bucket, so a
+  blocked loop matched NO filter and was invisible under the default view; `LoopCockpitPage` and
+  `DesignCockpitPage` both dropped `blocked`, so a blocked loop's cockpit read as finished; and the
+  Stop affordance on the Loops list and the in-chat SDLC card was gated by the FILTER bucket, which
+  offered Stop on the four pre-launch statuses (`loop_routes.py:534` 409s: *"Cannot stop a loop in
+  'ready' state"*) and withheld it from `blocked`. A fourth vocabulary inside
+  `LoopCockpitPage.statusLabel` (which shipped a `draft` key `LoopStatus` has never had) is gone
+  too. Railed cross-tier by `tests/test_loop_status_vocabulary.py`, four tests, each with a vacuity
+  floor; falsified five ways (missing member, stale member, a set missing `blocked`, a reintroduced
+  second registry, a reintroduced hand-written literal) plus both vacuity floors.
+- **2026-08-18 — `PP-16` UNMET, with the census evidence (why no more was started).** Doctrine is
+  clean break, so a slice that cannot finish must not begin. Still open: **the noun change itself**
+  (`loop/store.py`'s 1241-line row + `loop/loop.py`'s entity, read by `loop_routes.py`,
+  `agents/native/sdlc_tools.py`, `tasks/hierarchy_handlers.py`, `learning/loop_end.py`,
+  `investigate.py`, `legibility/discover.py`, `dashboard/chat_*` — 20 modules outside `loop/`);
+  **one adoption/reaping path** (the two implementations differ in kind — the loop side re-ARMS
+  through `kinds.launch_blocker` + `concurrency.reap_orphans`, the run side decides substrate
+  liveness in `_boot_sweep` then resumes from the journal — so unifying them is a policy merge, not
+  an extraction); **one status vocabulary end-to-end** (blocked on owner decision 2 above);
+  **retiring `LoopKindStrategy`** (`loop/kinds/*` is 3.2k lines, `sdlc.py` alone 1566);
+  **one projection to tasks**; **the backend action-guard mirror** — `ACTION_SOURCE_STATES`
+  `resume` still has a hand-written frontend counterpart on several surfaces (`['paused',
+  'stagnant', 'needs_input']` on the Loops list vs the backend's five), which is a second
+  unification and was left whole rather than half-converged.
 - **2026-08-14 — `PP-1` DONE.** `WF_UNORDERED_DEP` (the 47th `WF_*` code) refuses a binding whose
   producer is not ordered before its reader. **The two edge lists now have to agree:** admission reads
   `needs` plus container order (`tick._visit_parallel`), while bindings are a separate graph feeding

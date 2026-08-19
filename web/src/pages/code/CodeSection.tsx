@@ -14,7 +14,7 @@ import { EmptyState, ListSkeleton, LoadError } from '../../ui/ListScaffold'
 import { confirm } from '../../ui/dialog'
 import { WorkspacePicker } from './WorkspacePicker'
 import { api, sdlcStageLabel, type Loop, type LoopPhase } from '../../lib/api'
-import { loopStatusLabel, effectiveLoopStatus, loopStatusTone } from '../../lib/loopStatus'
+import { loopStatusLabel, effectiveLoopStatus, loopStatusTone, ACTIVE_LOOP_STATUSES } from '../../lib/loopStatus'
 import { useVisiblePoll } from '../../lib/useVisiblePoll'
 import { useCachedData, invalidateCache } from '../../lib/useCachedData'
 import type { RouteProps } from '../../app/useQueryState'
@@ -276,8 +276,8 @@ function CodeListPage({ onCreate, onOpen }: { onCreate: () => void; onOpen: (id:
     // that's exactly what the user needs to see in the list to triage where it's stuck
     // ("2/4 stages · Implementation"). Pre-launch + terminal states show the bare count
     // (no single stage is "in play" there).
-    const MID_RUN = ['running', 'paused', 'blocked', 'needs_input', 'stagnant']
-    if (!MID_RUN.includes(p.status) || done >= total) return base
+    // Exactly the backend's ACTIVE_STATUSES — the one set, not a fourth hand-written copy.
+    if (!ACTIVE_LOOP_STATUSES.has(p.status) || done >= total) return base
     // Key EXACTLY as the backend phase_key (`stage.strip() || title.strip()`): a
     // stageless-but-titled row (stage==='') is keyed by its TITLE. The old `?? `
     // (nullish) kept the empty stage → keyed by '' → the stage_status lookup missed,
