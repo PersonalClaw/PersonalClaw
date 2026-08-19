@@ -124,6 +124,9 @@ describe('the triage, pinned per site', () => {
       // WS-9's pause switch on a watched source: the only reason it is ever unavailable is an
       // in-flight PATCH, so it belongs in this class rather than the precondition one.
       'pages/knowledge/SourcesPage.tsx',
+      // WF2KNO-12's pause switch on a scheduled report: same shape as the watched-source one
+      // above — the only thing that ever disables it is its own in-flight PUT.
+      'pages/knowledge/ReportsPage.tsx',
     ]) {
       const src = readFileSync(join(SRC, rel), 'utf8')
       const tag = src.match(/<Toggle\b[\s\S]{0,300}?\/>/)?.[0] ?? ''
@@ -146,7 +149,9 @@ describe('the triage, pinned per site', () => {
     // 🔺 15 → 16 (MGAV-9): Memory → Settings gained the topology-orientation switch, which is
     // a PRECONDITION switch (the map is built from entity-graph links), so it carries a reason
     // naming what unlocks it rather than going dark unexplained. Reasoned sites 4 → 5.
-    expect(sites.length).toBe(16)
+    // 🔺 16 → 17 (WF2KNO-12): the scheduled-report pause switch. An IN-FLIGHT switch (the only
+      // thing that disables it is its own PUT), so it stays native and the reasoned count holds at 5.
+      expect(sites.length).toBe(17)
     expect(sites.filter((m) => /disabledReason/.test(m[0])).length, 'five carry a reason; eleven stay native').toBe(5)
   })
 })

@@ -65,6 +65,39 @@ MAX_SCOPE_ITEMS = 40
 CONTINUE_TOKEN = "CONTINUE"
 
 
+def _hold_claim(report_id: str) -> bool:
+    """Take the single-flight lease for this report's run. False when someone else holds it.
+
+    The manual-run route refuses with a 409 while this claim is held, which is the whole of
+    the atom's "a manual run is idempotent against an in-flight scheduled fire" clause — and
+    that refusal is inert unless a run WRITES the claim. It was: the route read a key nothing
+    ever set. `Claim.max_duration_secs` is the self-expiry, so a process killed mid-run cannot
+    wedge the report forever.
+    """
+    from personalclaw.knowledge.research_reports import report_claim_id
+    from personalclaw.triggers import claims as _claims
+    from personalclaw.triggers.scheduling import Claim
+
+    claim_id = report_claim_id(report_id)
+    if _claims.is_running(claim_id):
+        return False
+    _claims.write_claim(
+        Claim(trigger_id=claim_id, holder="knowledge-report", claimed_at=time.time())
+    )
+    return True
+
+
+def _release_claim(report_id: str) -> None:
+    """Release the lease. Best-effort: a failed release self-expires with the claim."""
+    from personalclaw.knowledge.research_reports import report_claim_id
+    from personalclaw.triggers import claims as _claims
+
+    try:
+        _claims.release_claim(report_claim_id(report_id))
+    except Exception:  # pragma: no cover - a release failure self-heals via max_duration
+        logger.debug("knowledge-report: claim release failed", exc_info=True)
+
+
 class KnowledgeReportActionProvider(ActionProvider):
     """Run one scheduled research report: resolve its scope, write one finding.
 
@@ -89,6 +122,37 @@ class KnowledgeReportActionProvider(ActionProvider):
         return True
 
     async def execute(
+        self,
+        action_config: dict[str, Any],
+        ctx: ActionContext,
+        timeout: int = 30,
+    ) -> ActionResult:
+        """Run one report under the single-flight lease.
+
+        The lease is the atom's "a manual run is idempotent against an in-flight scheduled
+        fire" clause. The refusal lives in the manual-run route, which reads
+        ``research-report:<id>`` — and a route that reads a key nothing ever writes is a 409
+        that can never fire, so the WRITE belongs here, around every exit path.
+        """
+        report_id = str((action_config or {}).get("report_id", "") or "").strip()
+        if not report_id:
+            return ActionResult(
+                success=False,
+                error="knowledge-report is missing 'report_id' — name the report to run",
+            )
+        if not _hold_claim(report_id):
+            # Not a failure: the other run is doing this work. Success with a named skip is
+            # what makes a duplicate manual fire harmless.
+            return ActionResult(
+                success=True,
+                stdout=json.dumps({"report_id": report_id, "skipped": "already_running"}),
+            )
+        try:
+            return await self._execute_locked(action_config, ctx, timeout)
+        finally:
+            _release_claim(report_id)
+
+    async def _execute_locked(
         self,
         action_config: dict[str, Any],
         ctx: ActionContext,

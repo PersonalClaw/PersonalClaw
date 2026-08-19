@@ -57,6 +57,10 @@ EXECUTION_SITES: tuple[tuple[str, str], ...] = (
     # exemption. Its providers are additionally narrowed to a read-only allowlist
     # (`tile_refresh.DATA_PROVIDERS`) — a second fence, not a substitute for these gates.
     ("personalclaw.dashboard.tile_refresh", "the chatless tile-refresh path"),
+    # WF2KNO-12: "Run now" on a scheduled research report dispatches the report provider
+    # directly, so it is a real execution site. User-clicked, so it carries `manual_refusal`
+    # — the same gate and the same documented exemption as the trigger Run path above.
+    ("personalclaw.dashboard.handlers.research_reports", "the manual report Run path"),
 )
 
 
@@ -114,6 +118,11 @@ MANUAL_SEAM = "personalclaw.dashboard.handlers.triggers"
 USER_CLICKED_SEAMS: tuple[str, ...] = (
     MANUAL_SEAM,
     "personalclaw.proposals_contract",  # INU-7: Approve on an inbox proposal
+    # WF2KNO-12: "Run now" on a scheduled research report. Attended by definition — the
+    # SCHEDULED fire of the same report goes through the trigger path, which carries the
+    # denylist — so the exemption is the same argument as the trigger Run path, and the
+    # per-member assertion below holds it to carrying `manual_refusal`.
+    "personalclaw.dashboard.handlers.research_reports",
 )
 
 

@@ -227,6 +227,7 @@ const PEP2_CENSUS: {
   { surface: 'Apps', file: 'pages/apps/AppsSection.tsx', verdict: 'on-ramp', why: '"Browse the Store" — switches to the Store tab, the install flow.' },
   { surface: 'Terminal', file: 'pages/terminal/TerminalPage.tsx', verdict: 'on-ramp', why: '"New session" — spawns a shell, the only way one exists.' },
   { surface: 'Watched sources', file: 'pages/knowledge/SourcesPage.tsx', verdict: 'on-ramp', why: '"Add a source" — the existing SourceCreatePage flow.' },
+  { surface: 'Scheduled reports', file: 'pages/knowledge/ReportsPage.tsx', verdict: 'on-ramp', why: '"New report" — the inline create form on the same page.' },
   { surface: 'Knowledge › Graph', file: 'pages/knowledge/KnowledgeGraph.tsx', verdict: 'on-ramp', why: 'Extraction is a per-item action, and the empty state offers it.' },
   { surface: 'Discover', file: 'pages/discover/DiscoverPage.tsx', verdict: 'on-ramp', why: 'Open Settings — the off case is a SETTING, and the action reaches it.' },
   { surface: 'Devices', file: 'pages/settings/DevicesPanel.tsx', verdict: 'on-ramp',
