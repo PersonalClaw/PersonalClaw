@@ -5004,6 +5004,7 @@
           "id": "PT-6",
           "title": "S2: V2 end-to-end user validation + full CI gate across both personalities and all modes",
           "status": "done",
+          "pr": 1765,
           "scope": "Task breakdown Session 2 V2",
           "done_when": "Full as-a-user tour (dev home) of both personalities across chat/settings/error states, sounds on and off, reduced-motion on and off, dark and light; switching back to a standard scheme leaves zero residue (title, favicon, name, DOM); npm run typecheck && npm test && npm run build + e2e a11y all green",
           "deps": [
