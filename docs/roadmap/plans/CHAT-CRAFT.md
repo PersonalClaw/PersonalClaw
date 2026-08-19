@@ -9,16 +9,17 @@ The original design record is kept below — execution logs, measured findings a
 ---
 # Plan: Chat Craft — Seven Proven Chat-Surface Mechanics
 
-**Status:** IN PROGRESS — S1-S3 shipped 2026-07-27 (true rewind + queue interrupt-now,
+**Status:** COMPLETE (all 8 atoms done, 2026-08-19) — S1-S3 shipped 2026-07-27 (true rewind + queue interrupt-now,
 find-in-conversation + quote toolbar, follow-up chips + smooth streaming; see `## Execution log`).
 Verified wired: `chat_followups.py` ← `chat_runner.py`, `FindBar`/`FollowupChips` imported into
 `ChatPage.tsx`, the `chat_rewound`/`queue_promoted` WS handlers live, and `followup_chips` +
 `stream_reveal` round-tripped with FE controls.
 **S4a (screen-snip) DONE 2026-08-16** as atom `CC-4` — `ui/SnipOverlay.tsx` + the shared
 `ui/composer/displayCapture.ts` (the app's ONE `getDisplayMedia` call site, converged with MI-4's
-screen share). S4's polish/docs/validation wrap-up (`CC-6`) and T4.5 optimizer polish (`CC-5`) are
-still open. The 2026-07-29 amendment (Branch affordance F1.1/F1.2 + the chat entry to the planning
-walkthrough F1.3/F1.4) is **NOT started**.
+screen share). **COMPLETE as of 2026-08-19:** T4.5 optimizer polish (`CC-5`), S4's
+polish/docs/validation wrap-up (`CC-6`), and the 2026-07-29 amendment — Branch affordance
+F1.1/F1.2 (`CC-7`) and the chat entry to the planning walkthrough F1.3/F1.4 (`CC-8`) — all shipped.
+All eight atoms are `done`; the guide covers all nine mechanics.
 ⚠️ Note for whoever takes it: the ChatPage serialization this plan's order relied on was already
 broken — Agent-Routing and Artifacts-Evolution both landed ChatPage churn first, so re-read the recon
 before starting. Status corrected 2026-08-04 by code audit. Created 2026-07-26 (roadmap rev 12; owner
@@ -715,6 +716,100 @@ One task row, landing in **S4** (the polish session); **no count change**.
   watch execution follow the edited plan, activate mid-task) has NOT been performed — no gateway
   was started this session. `VF` stays open.
 
+- **2026-08-19 — `CC-6`: the guide's framing closed at NINE, and the audit with it.** Branch
+  `feature-cc6-nine-mechanics`, one commit. This entry closes the gap the `CC-8` DISCOVERY above
+  opened; the six `done_when` clauses were re-measured **once**, by the 2026-08-18 remainder entry,
+  and this session did not re-drive them (see "taken on the prior entry's word" below).
+
+  **The gap, measured before touching anything.** `docs/guides/chat-surface.md` was 177 lines with
+  seven numbered sections, an intro reading "the **seven** things the chat surface can do" and a
+  recording table opening "Four of these **seven**". `grep -c` for `Branch`: **0**. For `plan mode`:
+  **0**. So the two mechanics that shipped after the guide was written were invisible in it, and
+  three server-side operations were missing from its table — confirmed by `grep -n 'operation='`
+  rather than by reading the atoms: `chat.session_fork` (`chat_fork.py` — one `allowed` emission,
+  four `denied` and one `error`) and `chat.plan_activate` / `chat.plan_approve` (`chat_plan.py`).
+
+  **Where the two new sections went, and why not appended.** Branch is **§2**, immediately after
+  rewind, because the single most useful sentence about it is the contrast with its neighbour —
+  rewind *replaces* an ending, Branch *duplicates* a conversation — and a reader who has just read
+  rewind is the reader who needs that. Plan mode is **§3**, ahead of "let a queued message cut in",
+  making a run-control pair: one mechanic for before a turn runs, one for while it runs. Everything
+  else renumbered in place (`3→5`, `4→6`, `5→7`, `6→8`, `7→9`) with its prose byte-identical. The
+  guide is now 251 lines. `README.md`'s Documentation entry for the guide also said "the seven
+  things"; corrected in the same commit, since that line is where a reader meets the count first.
+
+  **The table recounts to "Six of these nine", and says what is NOT recorded.** Three rows added
+  (`chat.session_fork`, `chat.plan_activate`, `chat.plan_approve`), the client-only paragraph kept
+  verbatim (it is still true, and "the other three" still resolves), and two honest additions: a
+  *refused* branch is recorded with its reason (the endpoint's four denial call sites — a refusal is
+  a decision, not a silence), and plan mode records only the two transitions that open and close the
+  gate. **DISCOVERY, documented rather than fixed:** `api_chat_plan_cancel` restores the previous
+  task mode — leaving a read-only posture — and logs **nothing**. Edit and comment logging nothing is
+  right (they change text still awaiting review); cancel is arguably a security-relevant transition
+  that is currently silent. Adding an emitter is a behaviour change outside a docs+tests atom, so it
+  is stated plainly in the guide and filed here for the owner.
+
+  **`tests/test_chat_craft_sel_audit.py` 483 → 751 lines, 15 → 24 tests**, in the house shape (drive
+  the real handler, count what landed, `== 1` never `>= 1`). New `TestBranchSel`: one
+  `chat.session_fork` per branch with the cut coordinate in `resources` (`at_index=2`), two branches
+  → two events into two distinct slots, and a refused branch recorded as `denied` with
+  `memory_mode=incognito` — the one shape that must never appear is an `allowed` event for a copy
+  never made. New `TestPlanModeSel`: activation is one event carrying `parked=False`; activating
+  mid-turn is still **one** event, now carrying `parked=True` (parking is part of the action, not a
+  second one); approval is one event with `step=` and `complete=True`, and the whole gate — activate,
+  hand-edit through `PS.edit_artifact`, approve — is **exactly two** events, so the panel's text-only
+  controls are proved silent rather than assumed to be; a 409'd approval logs nothing. The draft is
+  handed over by the real turn-end hook (`maybe_submit_plan_draft`), not stitched by hand.
+
+  **`TestTheAuditIsComplete` was the weakest thing in the file and is now the strongest.** Its old
+  first test built a 4-element `set` literal and asserted `len(names) == 4` — true of any four
+  strings, including four the code never writes. Replaced by an `_EMITTERS` map of all **eight**
+  operations → the module that emits each, asserting distinctness *and* that every name literally
+  appears in its own module (a rename now reds instead of passing). Two rails added that the atom's
+  docs clause never had: the guide must carry exactly the sections `1..9`, its two count sentences,
+  and every one of the eight operation names; and both new mechanics' labels are checked against the
+  frontend that renders them (`label="Branch from here"` in `MessageActions.tsx`, `label="Plan this
+  first"` in `ChatPage.tsx`), so a renamed affordance cannot leave the guide pointing at nothing. The
+  end-to-end count goes four → **seven** events for one of each.
+
+  **No CHANGELOG entry, deliberately.** The class-B `rewound` note the clause asks for already sits
+  under `## [0.1.3] — 2026-07-30` with its `personalclaw snapshot` advice — now at
+  `CHANGELOG.md:1965`-`1967`, re-located this session because the 2026-08-18 entry's `:1768`-`:1770`
+  has since been pushed down by `## [Unreleased]` additions. That release placement is correct, not
+  drift: `CC-1` landed 2026-07-27 and 0.1.3 shipped 2026-07-30. This commit changes no user-visible
+  behaviour — it is a doc that was describing seven of nine mechanics, plus test coverage — so a
+  release-notes entry would announce a change a user cannot observe.
+
+  **Falsifications** (mutate the live line by index behind a precondition assert, `grep -n` to
+  confirm it applied, `py_compile`, observe the red, restore from a `/tmp` file copy — never
+  `git checkout`). Six, and three of them target the docs rails, because a rail over prose is the
+  easiest kind to ship vacuous: `chat_fork.py:180` `operation` renamed → `expected exactly 1
+  chat.session_fork, got 0` + `assert 0 == 2` + the end-to-end list (3 red; the denial-path test
+  correctly stayed green, proving the mutation was surgical); `chat_plan.py:319` renamed → 5 red
+  (both activation tests, the two-event gate test, the end-to-end, and the emitter-name rail);
+  `chat_plan.py:428` renamed → 3 red (`expected exactly 1 chat.plan_approve, got 0`); the guide's
+  intro count `nine things` → `seven things` → the docs rail reds; the `chat.session_fork` table row
+  DELETED → `the guide's recording table never mentions chat.session_fork`; `## 9.` renumbered to
+  `## 10.` → the section-numbering assertion reds. Tree clean after restore (md5-verified per file,
+  `git status --porcelain` empty); the 13 benign pre-existing probe matches unchanged, none of them
+  ours.
+
+  **Gate:** `make lint` **exit 0** (black 1819 files unchanged, isort, flake8, mypy 928 source
+  files); targeted pytest **exit 0, 55 passed** over four paths, each `[ -f ]`-confirmed to exist
+  first (`test_chat_craft_sel_audit` 24, `test_docs_lint_baseline`, `test_nav_resolve_links`,
+  `test_getting_started_walkthrough` — the last two because this commit edits `README.md`'s link
+  list); full `make test` **exit 0, 22764 passed / 30 skipped / 12 xfailed** (5m 16s). `web/`
+  untouched, so no typecheck/vitest/build leg and no `consistency-audit.json` churn. No gateway
+  started; no writes to `~/.personalclaw`.
+
+  **Stale references left alone, on purpose.** (1) The 2026-08-18 remainder entry cites
+  `docs/guides/chat-surface.md:141`-`:151` for the iOS-Safari snip deviation; my renumbering moved
+  that block to `:202`-`:212` (offset +61). It also cites `CHANGELOG.md:1768`-`1770`, which drifted on
+  its own. Editing an older entry to fix its coordinates would rewrite the record, so both are named
+  here instead. The deviation itself is untouched and still documented in full. (2) `CC-6`'s
+  own `done_when` in `docs/roadmap/atomic/CC.md` and `dag.json` still reads "covers all seven" —
+  `dag.json` is the driver's file and `CC.md` is generated from it, so neither is edited here.
+
 ## Amendment (2026-07-29 — owner-approved: Branch, and the plan gate for ordinary chat)
 
 **Provenance.** A design gap analysis (2026-07-28/29). Two mechanics were approved for planning: a **Branch** mechanic (fork a session at any message with isolated inherited context) and a **plan-then-act gate**. Both turn out to be **much closer to done than the analysis suggested**, and one of them **directly contradicts an explicit non-goal in this plan's S1**. This amendment resolves that contradiction rather than silently overriding it.
@@ -870,3 +965,56 @@ One behaviour worth recording rather than "fixing": a message sent while a parke
 unwinding returns `{"ok": true, "queued": true}` and runs when the turn ends. Parking asks the
 in-flight turn to stop; it does not kill it mid-generation. The transcript stays coherent, so this is
 the honest shape, not a defect.
+
+- **2026-08-19 — `CC-6` CLOSED (`todo` → `done`), and with it the whole plan: 8 of 8 atoms.**
+  The gap that reopened this atom was the one its own DISCOVERY named — the guide was authored as
+  "the seven things" while `CC-7` (Branch) and `CC-8` (chat plan-mode) had shipped, so it described
+  seven of **nine** mechanics and its audit table omitted three security-relevant operations.
+
+  `docs/guides/chat-surface.md` is now **251 lines / nine numbered sections** (was 177/seven), with
+  Branch as §2 (the useful contrast: rewind *replaces* an ending, Branch *duplicates* the
+  conversation) and plan-mode as §3, pairing it with "let a queued message cut in" as run-control
+  before/while a turn runs. The recording table gained `chat.session_fork`, `chat.plan_activate` and
+  `chat.plan_approve` — each verified by `grep -n 'operation='` against `chat_fork.py` /
+  `chat_plan.py`, not read off a plan. `README.md`'s blurb for the guide said "the seven things" too.
+
+  `tests/test_chat_craft_sel_audit.py` is **751 lines / 24 tests** (was 483/15), extending the
+  one-event-never-zero contract to both new mechanics, and its completeness class now accounts for
+  **nine** rather than seven. Six falsifications, each restored from a file copy; I independently
+  re-ran the `chat.plan_activate` one — mutating that single emitter reds five tests including the
+  rail that asserts the operation name is emitted somewhere in `chat_plan.py` at all.
+
+  **The `done_when` text still reads "covers all seven" and was deliberately NOT rewritten.** The
+  guide covering nine satisfies "covers all seven" a fortiori; editing the clause to match what was
+  built is how a spec quietly becomes a description of the code.
+
+  **Carried forward, not re-litigated:** the iOS-Safari snip clause remains a documented deviation for
+  the reason the 2026-08-18 entry gave — the same branch routes Chrome-on-Linux → macOS gateway to the
+  native path, so hiding it for iOS Safari alone would contradict a landed `CC-4` decision. Reading
+  the clause literally, this atom closes **with one carried deviation**, which is what that entry
+  already concluded. Also taken on that entry's word rather than re-driven: the `aria-live` wording
+  and `role="status"` regions, FindBar/chips keyboard traversal, and mobile docking — it measured all
+  three against `main`, and no browser was opened this session.
+
+  **Two stale coordinates in this log's older prose, reported rather than edited:** the 2026-08-18
+  entry's citation of `chat-surface.md:141`-`:151` for the iOS deviation is now `:202`-`:212` (+61
+  from the new sections), and its `CHANGELOG.md:1768`-`1770` citation for the class-B `rewound` note
+  drifted independently to `:1965`-`:1967`. Rewriting a past entry's evidence would falsify the
+  record; the deviation and the note are both still present and still say what that entry said.
+
+  **DISCOVERY filed, not fixed:** `api_chat_plan_cancel` restores the previous task mode — leaving a
+  read-only posture — and logs **nothing**. Edit and comment logging nothing is correct (they only
+  change text awaiting review), but cancel is arguably a security-relevant transition that is
+  currently silent. Adding an emitter is a behaviour change, so it is out of scope for a docs+tests
+  atom and recorded here instead.
+
+  **The plan's `**Status:**` header was stale in three ways** and is corrected in this commit: it
+  claimed `CC-5` open, `CC-6` open, and the 2026-07-29 amendment "NOT started" — `CC-5`, `CC-7` and
+  `CC-8` have all shipped since. The atomic-table rail added on 2026-08-19 couples `dag.json` to the
+  per-atom rows but not to a plan's prose header, so this class of drift still needs reading.
+
+  **Gates:** `make lint` exit 0 (mypy 928 source files) · `test_chat_craft_sel_audit` +
+  `test_docs_lint_baseline` **36 passed** · with `test_nav_resolve_links` +
+  `test_getting_started_walkthrough` **55 passed** · full `make test` **22,764 passed / 30 skipped /
+  12 xfailed**. No CHANGELOG entry: no user-visible behaviour changed, and the class-B `rewound` note
+  the clause asks for already exists with its `personalclaw snapshot` advice.

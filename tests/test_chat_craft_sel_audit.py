@@ -1,9 +1,11 @@
-"""CC-6 — the Security Event Log audit for CHAT-CRAFT's seven chat-surface mechanics.
+"""CC-6 — the Security Event Log audit for CHAT-CRAFT's nine chat-surface mechanics.
 
 The wrap-up atom's ``done_when`` reads: *"SEL shows one event per security-relevant
-action across all seven mechanics (snip rides existing upload SEL)"*. That sentence has
-three failure modes and this suite is written against all three, because each one leaves
-the surface looking audited when it is not:
+action across all seven mechanics (snip rides existing upload SEL)"*. It was written when
+the surface had seven; the 2026-07-29 amendment added two more — **Branch** (``CC-7``) and
+**chat plan mode** (``CC-8``) — and both carry server actions, so the audit here covers
+**nine**. That sentence has three failure modes and this suite is written against all
+three, because each one leaves the surface looking audited when it is not:
 
   1. **ZERO.** A rail that greps for a ``sel()`` call site passes on a call that never
      executes. So every assertion below drives the REAL handler and counts what landed in
@@ -16,7 +18,7 @@ the surface looking audited when it is not:
      action and split the audit trail for attachments in two. So snip asserts exactly one
      ``upload.file`` **and** that nothing snip-shaped was invented.
 
-**Three of the seven are client-only, and their honest count is zero.** Find, quote-reply
+**Three of the nine are client-only, and their honest count is zero.** Find, quote-reply
 and the streaming reveal never leave the browser: find scans `turns[]` already in memory,
 quote-reply writes into the composer, and the reveal only paces text the turn already
 delivered. There is no endpoint to call and therefore no security-relevant action to
@@ -32,6 +34,7 @@ test produced. A leak into the real ``~/.personalclaw`` would fail conftest's ow
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
@@ -40,8 +43,12 @@ from aiohttp import FormData, web
 from aiohttp.test_utils import TestClient, TestServer
 from chat_test_helpers import _make_state
 
+from personalclaw.dashboard import chat_plan
 from personalclaw.dashboard.chat_followups import _maybe_followups
-from personalclaw.dashboard.chat_fork import api_chat_session_fork_rewound
+from personalclaw.dashboard.chat_fork import (
+    api_chat_session_fork,
+    api_chat_session_fork_rewound,
+)
 from personalclaw.dashboard.chat_handlers import api_chat_session_interrupt
 from personalclaw.dashboard.chat_regenerate import api_chat_session_edit_resend
 from personalclaw.dashboard.handlers.files import api_upload_file
@@ -97,7 +104,7 @@ def _seed(state, name: str, n_turns: int):
 
 class TestRewindSel:
     """Mechanic 1 (S1a): true rewind. Security-relevant because it TRUNCATES a
-    persisted transcript and resets the provider — the most destructive of the seven."""
+    persisted transcript and resets the provider — the most destructive of the nine."""
 
     @pytest.mark.asyncio
     async def test_one_rewind_event_per_rewind_and_never_zero(self, tmp_path, monkeypatch):
@@ -186,11 +193,201 @@ class TestRewindSel:
         assert "from=s1" in events[0]["resources"]
 
 
-# ── 2. Queue interrupt-now ───────────────────────────────────────────────────────────
+# ── 2. Branch — duplicate a whole conversation into a new session ─────────────────────
+
+
+class TestBranchSel:
+    """Mechanic 2 (amendment (a), CC-7): Branch. Security-relevant because it COPIES a
+    persisted transcript into a second session — the event is what tells a user (or an
+    auditor) that another copy of a conversation now exists, and where it was cut."""
+
+    @staticmethod
+    def _app(state) -> web.Application:
+        app = web.Application()
+        app["state"] = state
+        app.router.add_post("/api/chat/sessions/{session}/fork", api_chat_session_fork)
+        return app
+
+    @pytest.mark.asyncio
+    async def test_one_session_fork_event_per_branch_and_never_zero(self, tmp_path, monkeypatch):
+        monkeypatch.setattr("personalclaw.dashboard.state.config_dir", lambda: tmp_path)
+        state = _make_state(tmp_path)
+        _seed(state, "s1", 3)
+
+        assert _count("chat.session_fork") == 0, "a stale event exists before the action ran"
+        async with TestClient(TestServer(self._app(state))) as client:
+            r = await client.post("/api/chat/sessions/s1/fork", json={"at_message_index": 2})
+            assert r.status == 200, await r.text()
+            child = (await r.json())["key"]
+
+        events = _ops("chat.session_fork")
+        assert len(events) == 1, f"expected exactly 1 chat.session_fork, got {len(events)}"
+        assert events[0]["outcome"] == "allowed"
+        # WHERE the cut was made is part of the record: an entry that cannot say how much of
+        # the conversation was duplicated cannot answer the only question asked of it.
+        assert f"from=s1,to={child}" in events[0]["resources"]
+        assert "at_index=2" in events[0]["resources"]
+        # Branch must not borrow rewind's vocabulary — "duplicated a conversation" and
+        # "restored a discarded ending" are different events on the audit page.
+        assert _count("chat.fork_rewound") == 0
+
+    @pytest.mark.asyncio
+    async def test_branching_the_same_message_twice_logs_two_events(self, tmp_path, monkeypatch):
+        """The amendment's *"the same message may be branched repeatedly"* clause, counted.
+        Two branches are two copies; a per-session-once event would under-report the
+        second."""
+        monkeypatch.setattr("personalclaw.dashboard.state.config_dir", lambda: tmp_path)
+        state = _make_state(tmp_path)
+        _seed(state, "s1", 2)
+        async with TestClient(TestServer(self._app(state))) as client:
+            children = []
+            for _ in range(2):
+                r = await client.post("/api/chat/sessions/s1/fork", json={"at_message_index": 1})
+                assert r.status == 200, await r.text()
+                children.append((await r.json())["key"])
+        assert children[0] != children[1], "the second branch reused the first one's slot"
+        assert _count("chat.session_fork") == 2
+
+    @pytest.mark.asyncio
+    async def test_a_refused_branch_records_the_refusal_not_an_allow(self, tmp_path, monkeypatch):
+        """The other direction, and here the honest count is NOT zero: an incognito chat
+        cannot be branched, and the endpoint records the refusal *with its reason*. The one
+        thing that must never appear is an ``allowed`` event for a copy never made."""
+        monkeypatch.setattr("personalclaw.dashboard.state.config_dir", lambda: tmp_path)
+        state = _make_state(tmp_path)
+        session = _seed(state, "s1", 1)
+        session.memory_mode = "incognito"
+        async with TestClient(TestServer(self._app(state))) as client:
+            r = await client.post("/api/chat/sessions/s1/fork", json={})
+            assert r.status == 400, await r.text()
+        events = _ops("chat.session_fork")
+        assert len(events) == 1, f"expected exactly 1 chat.session_fork, got {len(events)}"
+        assert [e["outcome"] for e in events] == ["denied"]
+        assert "memory_mode=incognito" in events[0]["resources"]
+
+
+# ── 3. Chat plan mode — the review gate over the shared walkthrough ──────────────────
+
+
+class TestPlanModeSel:
+    """Mechanic 3 (amendment (b), CC-8): plan mode. TWO security-relevant transitions, not
+    one — activation puts the chat under the read-only ``plan`` tool gate, and approval
+    takes it back out of that posture and runs the plan. Each is exactly one event, and the
+    panel's text-only controls (edit, comment) add none."""
+
+    @staticmethod
+    def _app(state) -> web.Application:
+        app = web.Application()
+        app["state"] = state
+        app.router.add_post(
+            "/api/chat/sessions/{session}/plan/activate", chat_plan.api_chat_plan_activate
+        )
+        app.router.add_post("/api/chat/sessions/{session}/plan/edit", chat_plan.api_chat_plan_edit)
+        app.router.add_post(
+            "/api/chat/sessions/{session}/plan/approve", chat_plan.api_chat_plan_approve
+        )
+        return app
+
+    @pytest.mark.asyncio
+    async def test_activation_logs_exactly_one_plan_activate(self, tmp_path, monkeypatch):
+        monkeypatch.setattr("personalclaw.dashboard.state.config_dir", lambda: tmp_path)
+        state = _make_state(tmp_path)
+        chat = _seed(state, "s1", 1)
+
+        assert _count("chat.plan_activate") == 0
+        async with TestClient(TestServer(self._app(state))) as client:
+            r = await client.post("/api/chat/sessions/s1/plan/activate")
+            assert r.status == 200, await r.text()
+        # The posture really changed — otherwise the event describes a gate that isn't on.
+        assert chat._task_mode == "plan"
+
+        events = _ops("chat.plan_activate")
+        assert len(events) == 1, f"expected exactly 1 chat.plan_activate, got {len(events)}"
+        assert events[0]["outcome"] == "enabled"
+        assert "session=s1" in events[0]["resources"]
+        assert "parked=False" in events[0]["resources"]
+        # Opening the gate is not approving anything.
+        assert _count("chat.plan_approve") == 0
+
+    @pytest.mark.asyncio
+    async def test_activating_mid_turn_records_the_park_in_the_same_one_event(
+        self, tmp_path, monkeypatch
+    ):
+        """Parking a running turn is part of the SAME action, not a second one: the entry
+        says a run was parked, and there is still exactly one event."""
+        monkeypatch.setattr("personalclaw.dashboard.state.config_dir", lambda: tmp_path)
+        state = _make_state(tmp_path)
+        chat = _seed(state, "s1", 1)
+        chat.task = _FakeTask()  # → chat.running is True
+        chat._stop_state = "idle"
+        state.sessions.stop_turn = AsyncMock(return_value="soft")
+        async with TestClient(TestServer(self._app(state))) as client:
+            r = await client.post("/api/chat/sessions/s1/plan/activate")
+            assert r.status == 200, await r.text()
+            assert (await r.json())["parked"] is True
+        events = _ops("chat.plan_activate")
+        assert len(events) == 1, f"expected exactly 1 chat.plan_activate, got {len(events)}"
+        assert "parked=True" in events[0]["resources"]
+
+    @pytest.mark.asyncio
+    async def test_approval_logs_one_event_and_the_hand_edit_stays_silent(
+        self, tmp_path, monkeypatch
+    ):
+        monkeypatch.setattr("personalclaw.dashboard.state.config_dir", lambda: tmp_path)
+        state = _make_state(tmp_path)
+        chat = _seed(state, "s1", 1)
+        async with TestClient(TestServer(self._app(state))) as client:
+            assert (await client.post("/api/chat/sessions/s1/plan/activate")).status == 200
+            # The plan-mode turn's reply IS the artifact, handed over by the REAL turn-end
+            # hook — so the gate opens on the path production opens it on.
+            chat.append("assistant", "## Plan\n1. read\n2. report", "msg msg-a")
+            chat.drain()
+            assert chat_plan.maybe_submit_plan_draft(state, chat) is True
+            r = await client.post(
+                "/api/chat/sessions/s1/plan/edit",
+                json={"step_id": "chat-plan-1", "markdown": "## Plan\n1. read only"},
+            )
+            assert r.status == 200, await r.text()
+            r = await client.post(
+                "/api/chat/sessions/s1/plan/approve", json={"step_id": "chat-plan-1"}
+            )
+            assert r.status == 200, await r.text()
+            assert (await r.json())["complete"] is True
+
+        approvals = _ops("chat.plan_approve")
+        assert len(approvals) == 1, f"expected exactly 1 chat.plan_approve, got {len(approvals)}"
+        assert approvals[0]["outcome"] == "allowed"
+        assert "step=chat-plan-1" in approvals[0]["resources"]
+        assert "complete=True" in approvals[0]["resources"]
+        # The whole gate is TWO events: opening it, and approving out of it. The hand-edit
+        # in between only rewrote text still awaiting review, so it adds no third — and
+        # neither transition fired twice.
+        ops = sorted(e.get("operation", "") for e in sel().recent(limit=500))
+        assert ops == ["chat.plan_activate", "chat.plan_approve"], ops
+
+    @pytest.mark.asyncio
+    async def test_an_approval_the_state_machine_refuses_logs_nothing(self, tmp_path, monkeypatch):
+        """The vacuity check: a step that is not awaiting review is refused (409). An event
+        here would claim a plan was approved and a read-only posture dropped when the
+        walkthrough never opened the gate."""
+        monkeypatch.setattr("personalclaw.dashboard.state.config_dir", lambda: tmp_path)
+        state = _make_state(tmp_path)
+        _seed(state, "s1", 1)
+        async with TestClient(TestServer(self._app(state))) as client:
+            assert (await client.post("/api/chat/sessions/s1/plan/activate")).status == 200
+            r = await client.post(
+                "/api/chat/sessions/s1/plan/approve", json={"step_id": "chat-plan-1"}
+            )
+            assert r.status == 409, await r.text()
+        assert _count("chat.plan_approve") == 0
+        assert _count("chat.plan_activate") == 1
+
+
+# ── 4. Queue interrupt-now ───────────────────────────────────────────────────────────
 
 
 class TestInterruptSel:
-    """Mechanic 2 (S1b): interrupt-now. Security-relevant because it CANCELS a running
+    """Mechanic 4 (S1b): interrupt-now. Security-relevant because it CANCELS a running
     provider turn and promotes someone else's queued message ahead of it."""
 
     @pytest.mark.asyncio
@@ -241,7 +438,7 @@ class TestInterruptSel:
         assert _count("dashboard_interrupt") == 0
 
 
-# ── 5. Follow-up chips ───────────────────────────────────────────────────────────────
+# ── 7. Follow-up chips ───────────────────────────────────────────────────────────────
 
 
 def _mock_bg_stream(state, text):
@@ -261,7 +458,7 @@ def _mock_bg_stream(state, text):
 
 
 class TestFollowupChipsSel:
-    """Mechanic 5 (S3a): follow-up chips. Security-relevant because it spends a MODEL
+    """Mechanic 7 (S3a): follow-up chips. Security-relevant because it spends a MODEL
     CALL on the user's budget without them asking for it — the audit page is how they
     find out it happened."""
 
@@ -297,11 +494,11 @@ class TestFollowupChipsSel:
         assert _count("chat_followups") == 0
 
 
-# ── 7. Screen-snip — rides the EXISTING upload SEL ───────────────────────────────────
+# ── 9. Screen-snip — rides the EXISTING upload SEL ───────────────────────────────────
 
 
 class TestSnipRidesUploadSel:
-    """Mechanic 7 (S4a): screen-snip. The cropped PNG goes through ``api.uploadFiles``,
+    """Mechanic 9 (S4a): screen-snip. The cropped PNG goes through ``api.uploadFiles``,
     so the security-relevant action is the FILE WRITE, already logged as
     ``upload.file``. The clause is that snip rides that event — so the assertion is one
     ``upload.file`` and no snip-specific second event."""
@@ -358,11 +555,11 @@ class TestSnipRidesUploadSel:
             assert invented not in ops
 
 
-# ── 3, 4, 6. The client-only three — correctly silent, asserted structurally ─────────
+# ── 5, 6, 8. The client-only three — correctly silent, asserted structurally ─────────
 
 
 class TestClientOnlyMechanicsAreCorrectlySilent:
-    """Find (3), quote-reply (4) and the streaming reveal (6) have no server action, so
+    """Find (5), quote-reply (6) and the streaming reveal (8) have no server action, so
     zero SEL events is the RIGHT answer, not a gap.
 
     Asserted structurally because a count of zero proves nothing on its own: it reads the
@@ -403,23 +600,72 @@ class TestClientOnlyMechanicsAreCorrectlySilent:
         assert "api." not in body, "quote-reply started calling the server"
 
 
-# ── The audit as a whole: every seven accounted for, none double-writing ─────────────
+# ── The audit as a whole: every nine accounted for, none double-writing ─────────────
 
 
 class TestTheAuditIsComplete:
-    def test_the_four_server_side_operations_are_distinct_names(self):
-        """Four server-side actions, four operation names. A shared name would make the
-        audit page unable to tell a rewind from a fork, or an interrupt from a stop."""
-        names = {"chat.rewind", "chat.fork_rewound", "dashboard_interrupt", "upload.file"}
-        assert len(names) == 4
+    #: Every operation the nine mechanics emit, mapped to the module that emits it. This is
+    #: the audit's contract in one place: one distinct name per action, and the name the
+    #: user-facing guide prints is the name the code actually writes.
+    _EMITTERS = {
+        "chat.rewind": "dashboard/chat_regenerate.py",
+        "chat.fork_rewound": "dashboard/chat_fork.py",
+        "chat.session_fork": "dashboard/chat_fork.py",
+        "chat.plan_activate": "dashboard/chat_plan.py",
+        "chat.plan_approve": "dashboard/chat_plan.py",
+        "dashboard_interrupt": "dashboard/chat_handlers.py",
+        "chat_followups": "dashboard/chat_followups.py",
+        "upload.file": "dashboard/handlers/files.py",
+    }
+
+    def test_every_operation_name_is_distinct_and_written_where_it_is_claimed(self):
+        """Eight actions, eight names, each present in the module that owns it.
+
+        Distinctness is what lets the audit page tell a rewind from a branch, or an
+        interrupt from a stop. The second half is the part that keeps this table from
+        becoming fiction: a name that exists only here would describe a log nobody writes,
+        which is exactly how a renamed operation slips past a suite of green tests.
+        """
+        assert len(set(self._EMITTERS)) == len(self._EMITTERS) == 8
+        for op, rel in self._EMITTERS.items():
+            src = (_ROOT / "src" / "personalclaw" / rel).read_text(encoding="utf-8")
+            assert f'"{op}"' in src, f"{op} is not emitted anywhere in {rel}"
+
+    def test_the_guide_documents_all_nine_mechanics_and_everything_they_record(self):
+        """CC-6's docs clause as a rail rather than a promise.
+
+        The guide is the only place a user learns what the chat surface can do and what it
+        records. Two mechanics shipped *after* it was written (Branch, plan mode) and it
+        went on saying "seven" with three operations missing from its table — a wrong count
+        in the one document whose job is the count. So the count, the section numbering and
+        every recorded operation are asserted here, beside the audit they describe.
+        """
+        guide = (_ROOT / "docs" / "guides" / "chat-surface.md").read_text(encoding="utf-8")
+        numbered = re.findall(r"(?m)^## (\d+)\. ", guide)
+        assert numbered == [str(i) for i in range(1, 10)], numbered
+        assert "nine things the chat surface can do" in guide
+        assert "of these nine change something a security log" in guide
+        for op in self._EMITTERS:
+            assert f"`{op}`" in guide, f"the guide's recording table never mentions {op}"
+
+    def test_the_two_newest_mechanics_are_named_in_the_guide_as_the_ui_names_them(self):
+        """The guide's "Where:" line has to match the control a user is hunting for. Both
+        new mechanics are reached by a label, so the label is checked against the frontend
+        that renders it — a renamed affordance leaves the guide pointing at nothing."""
+        guide = (_ROOT / "docs" / "guides" / "chat-surface.md").read_text(encoding="utf-8")
+        actions = (_WEB / "pages" / "chat" / "MessageActions.tsx").read_text(encoding="utf-8")
+        page = (_WEB / "pages" / "ChatPage.tsx").read_text(encoding="utf-8")
+        assert 'label="Branch from here"' in actions and "**Branch from here**" in guide
+        assert 'label="Plan this first"' in page and "**Plan this first**" in guide
 
     @pytest.mark.asyncio
-    async def test_the_whole_log_after_one_of_each_is_exactly_four_events(
+    async def test_the_whole_log_after_one_of_each_is_exactly_seven_events(
         self, tmp_path, monkeypatch
     ):
-        """The end-to-end count. One rewind + one restore-as-fork + one interrupt + one
-        snip upload = FOUR events, no more. This is the assertion a duplicate writer
-        anywhere in the seven fails, and the assertion a dropped emitter fails."""
+        """The end-to-end count. One rewind + one restore-as-fork + one branch + one plan
+        activation + one plan approval + one interrupt + one snip upload = SEVEN events, no
+        more. This is the assertion a duplicate writer anywhere in the nine fails, and the
+        assertion a dropped emitter fails."""
         monkeypatch.setattr("personalclaw.dashboard.state.config_dir", lambda: tmp_path)
         monkeypatch.setattr(
             "personalclaw.dashboard.handlers.files._upload_dir", lambda: tmp_path / "uploads"
@@ -448,6 +694,13 @@ class TestTheAuditIsComplete:
         app.router.add_post(
             "/api/chat/sessions/{session}/fork-rewound", api_chat_session_fork_rewound
         )
+        app.router.add_post("/api/chat/sessions/{session}/fork", api_chat_session_fork)
+        app.router.add_post(
+            "/api/chat/sessions/{session}/plan/activate", chat_plan.api_chat_plan_activate
+        )
+        app.router.add_post(
+            "/api/chat/sessions/{session}/plan/approve", chat_plan.api_chat_plan_approve
+        )
         app.router.add_post("/api/chat/sessions/{session}/interrupt", api_chat_session_interrupt)
         app.router.add_post("/api/upload/file", api_upload_file)
 
@@ -461,6 +714,18 @@ class TestTheAuditIsComplete:
             r = await client.post(
                 "/api/chat/sessions/s1/edit-resend",
                 json={"ts": session.messages[0]["ts"], "content": "edited", "rewind": True},
+            )
+            assert r.status == 200, await r.text()
+            r = await client.post("/api/chat/sessions/s1/fork", json={"at_message_index": 0})
+            assert r.status == 200, await r.text()
+            # Plan mode BEFORE the turn is made to look running, so this activation is the
+            # ordinary (unparked) one and the interrupt below still has a turn to cancel.
+            assert (await client.post("/api/chat/sessions/s1/plan/activate")).status == 200
+            session.append("assistant", "## Plan\n1. read", "msg msg-a")
+            session.drain()
+            assert chat_plan.maybe_submit_plan_draft(state, session) is True
+            r = await client.post(
+                "/api/chat/sessions/s1/plan/approve", json={"step_id": "chat-plan-1"}
             )
             assert r.status == 200, await r.text()
             session.task = _FakeTask()  # → session.running is True
@@ -477,7 +742,10 @@ class TestTheAuditIsComplete:
         ops = sorted(e.get("operation", "") for e in sel().recent(limit=500))
         assert ops == [
             "chat.fork_rewound",
+            "chat.plan_activate",
+            "chat.plan_approve",
             "chat.rewind",
+            "chat.session_fork",
             "dashboard_interrupt",
             "upload.file",
-        ], f"the seven mechanics produced {ops}"
+        ], f"the nine mechanics produced {ops}"

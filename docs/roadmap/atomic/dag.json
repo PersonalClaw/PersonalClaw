@@ -3768,7 +3768,7 @@
         {
           "id": "CC-6",
           "title": "S4 wrap-up: a11y/SEL/mobile polish + docs + CHANGELOG + full validation gate",
-          "status": "todo",
+          "status": "done",
           "scope": "Session 4 T4.3, T4.4, V4; Design S4(b)",
           "done_when": "FindBar/chips keyboard traversal + aria-live clean, SEL shows one event per security-relevant action across all seven mechanics (snip rides existing upload SEL), mobile degrades sanely (find docked, chips wrap, snip hidden on iOS Safari), the chat-surface docs guide covers all seven, a class-B CHANGELOG entry for the rewound field carries snapshot advice, and the full local gate is green (make lint / targeted pytest / make test / web typecheck+test+build)",
           "deps": [
@@ -7467,11 +7467,6 @@
         "plan": "CA"
       },
       {
-        "id": "CC-6",
-        "title": "S4 wrap-up: a11y/SEL/mobile polish + docs + CHANGELOG + full validation gate",
-        "plan": "CC"
-      },
-      {
         "id": "CE-9",
         "title": "Ramp coordination: community bounty issues + channel scaffold registration + trigger-source forward note",
         "plan": "CE"
@@ -9802,9 +9797,9 @@
         "code": "CC",
         "plan": "CHAT-CRAFT",
         "total_atoms": 8,
-        "done": 7,
+        "done": 8,
         "in_progress": 0,
-        "todo": 1,
+        "todo": 0,
         "blocked": 0
       },
       {
