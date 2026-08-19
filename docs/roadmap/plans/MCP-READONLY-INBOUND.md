@@ -616,3 +616,182 @@ All three fixes falsified by mutating the live line and observing the specific r
 
   **Gates:** `tests/test_docs_lint_baseline.py` + `tests/test_agent_reference.py` green (docs-lint
   ratchet did not rise) · `make lint` clean. Gateway on 10521 stopped; `~/.personalclaw` untouched.
+
+### 2026-08-18 — MRI-5 re-validation on current `main` — **DONE** (the 2026-08-17 PARTIAL is closed)
+
+The 2026-08-17 MRI-5 entry above was PARTIAL for two reasons: it had to fix three defects
+*mid-drive*, so no single clean run had ever exercised the surface end to end; and Defect 4.
+All three fixes are on `main` (verified by content, not by changelog: `_enum_value` at
+`inbound/tools.py:88`, the `initialize` counter-offer + `SUPPORTED_PROTOCOL_VERSIONS` at
+`inbound/mcp_http.py:72`, `refused="invalid arguments"` at `inbound/mcp_http.py:317`). This is
+the clean run: **no code was changed to make anything pass.** Isolated home
+`/private/tmp/mri5-drive2/home`, loopback port 10357, never `~/.personalclaw`. Default auth mode
+throughout — MRI-4's harness trap says `AUTH_MODE=none` swaps out the very middleware under test.
+
+**Client:** the official SDK, `mcp 1.28.1`, `mcp.client.streamable_http.streamablehttp_client`
+→ `ClientSession`. Recorded precisely because the `done_when` names an alternative: the venv's
+`mcp` CLI **cannot** serve as the client — its commands are `version` / `dev` / `run` / `install`,
+all server-side dev tooling, with no connect-to-a-remote-HTTP-server verb. The SDK client library
+is the thing an IDE actually runs, and it is what ran here. No hand-rolled JSON-RPC in any happy
+path; where raw HTTP appears below it is to read a status code the SDK hides, and it says so.
+
+| Clause | Verdict |
+|---|---|
+| real MCP client connects over loopback | ✅ unpinned: client asked its default `2025-11-25`, session came up on the counter-offered `2025-06-18`, `serverInfo personalclaw 0.1.3`, `capabilities {'tools': {}}` |
+| exercises all six tools | ✅ all six, against pre-seeded data, every one fenced |
+| trips the rate cap | ✅ request #21 refused, verbatim below; recovery confirmed |
+| flips the kill switch mid-session | ✅ **re-measured** — the first attempt was contaminated (below) |
+| SEL + `inbound_audit.jsonl` trails match design | ✅ 19 refusals ↔ 19 SEL `denied` rows, reason strings identical; `verify_integrity` all-valid |
+| remote refused without `allow_remote` + `public_url` | ✅ refused — Defect 4 unchanged: still the *wrong layer*, third independent reproduction |
+| validation ledger written | ✅ this entry |
+
+**All six tools, enumerated off the wire from `TOOLS`, not counted from the doc.** `tools/list`
+returned exactly six: `knowledge_search`, `memory_recall`, `sessions_search`, `status`,
+`task_get`, `tasks_list`. Every read path was seeded FIRST through its own non-MCP write path
+(`VectorMemoryStore.write_episodic`, `create_typed_item`, `ConversationLog.append`,
+`registry.create_task`), marker `zarafruit`, so an empty list could not be mistaken for a
+working tool:
+
+- `status {}` → `PersonalClaw 0.1.3 / tasks: available / memory: keyword search + entity graph / knowledge items: 1`
+- `memory_recall {"query":"zarafruit","limit":5}` → `1 memory hit(s)` + the seeded episode
+- `knowledge_search {"query":"zarafruit","limit":5}` → `1 knowledge item(s): zarafruit harvest notes`
+- `sessions_search {"query":"zarafruit","limit":5}` → the transcript, and the planted
+  `sk-ant-api03-…` came back `[REDACTED: credential]` — §C3 redaction live
+- `tasks_list {"limit":10}` → `1 of 1 task(s): - [open] t-180fcf1b: Audit the zarafruit ledger`
+- `task_get {"id":"t-180fcf1b"}` → full record, `status: open · priority: high`
+
+The enum fix is confirmed by a **contrast**, not by reading the code: the seeding script printed
+`TaskStatus.OPEN TaskPriority.HIGH` from the same objects the tool rendered as `open` / `high`.
+
+**Rate cap, verbatim, from a full bucket** (`rps 1.0`, `burst 20`). Requests 1–20 → `200`; then
+
+```
+request #21: HTTP 429 Retry-After='1' Cache-Control='no-store' body={"error": "rate limited"}
+```
+
+Recovery works as designed: 2.5s idle at 1 token/s bought two more `200`s. The SDK symptom is
+harsher than the HTTP one — the session died at request #19 with an `ExceptionGroup`, because
+`raise_for_status` in the streamable-http transport escapes the `async with` blocks, so exceeding
+the burst costs an IDE its whole connection rather than one call (already noted 2026-08-17;
+re-confirmed, shape unchanged).
+
+**Kill switch mid-session — and the trap that nearly produced a false pass.** The first run
+flipped the switch in a phase that ran *after* the tool sweep, by which point phases 1–2 had
+already drained the 20-token bucket. The next call returned `McpError: Session terminated` — which
+is **exactly** what a `429` transport teardown also produces. That reading would have credited the
+kill switch for the rate cap's work. Re-measured in isolation: waited out the bucket, stayed under
+six requests, confirmed the session healthy immediately before the flip, then flipped
+`inbound.mcp.enabled → false` through the real write path (`personalclaw config set`), and read the
+**status code** off a raw POST on a separate connection, because 404 and 429 are indistinguishable
+from the SDK error alone:
+
+```
+BEFORE flip, live SDK session ->  PersonalClaw 0.1.3
+   CLI said: inbound.mcp.enabled = false
+   raw POST /mcp [post-flip] -> HTTP 404 Retry-After=- body={"error": "not found"}
+   SYMPTOM, same still-open SDK session: McpError: Session terminated
+   CLI said: inbound.mcp.enabled = true
+   raw POST /mcp [post-re-enable] -> HTTP 200
+AFTER re-enable, fresh SDK session ->  PersonalClaw 0.1.3
+```
+
+`404` + the surface's own JSON body is the kill switch; the re-enable needs no restart, matching
+MRI-4's asymmetry note (off-live works because enablement is re-checked per request).
+
+**Both trails, and a refused call in each.** 91 audit rows, of which 19 are refusals spanning
+every refusal class the surface has, each carrying `refused_reason`; the SEL holds 19
+`caller_identity=inbound:mcp` `outcome=denied` rows with **byte-identical reason strings** — a
+1:1 mirror, not a sampled one:
+
+| `refused_reason` | status | audit | SEL `denied` |
+|---|---|---|---|
+| `rate limit` | 429 | 5 | 5 |
+| `disabled: inbound.mcp.enabled is off` | 404 | 3 | 3 |
+| `non-loopback peer and allow_remote is off` | 403 | 3 | 3 |
+| `invalid arguments` | 200 | 2 | 2 |
+| `GET not supported` | 405 | 2 | 2 |
+| `unknown tool` | 200 | 1 | 1 |
+| `allow_remote is on but inbound.public_url is unset` | 403 | 1 | 1 |
+| `Host '127.0.0.1:10358' does not match inbound.public_url` | 403 | 1 | 1 |
+| `bad or missing bearer token` | 401 | 1 | 1 |
+
+Verbatim, the argument refusal that 2026-08-17 found reaching neither trail — now in both:
+
+```
+{"ts": "2026-08-19T02:33:34.466707+00:00", "surface": "mcp", "route": "POST /mcp", "status": 200,
+ "bytes_in": 110, "bytes_out": 129, "duration_ms": 6, "tool": "tasks_list",
+ "refused_reason": "invalid arguments"}
+{"event_id": "bc5285b1f7924a0f", "event_type": "api_access", "caller_identity": "inbound:mcp",
+ "source": "inbound", "operation": "POST /mcp", "outcome": "denied",
+ "resources": "invalid arguments", "prev_hash": "bb84581b…", "entry_hash": "a360af88…"}
+```
+
+`sel().verify_integrity(max_entries=None)` → `checked=51 valid=51`. Also worth recording so it is
+not re-filed: the SEL's hash chain **forks** at every `cli` → `inbound` process boundary (four
+breaks in this drive, all where a `config set` row precedes a gateway row). That is **documented
+design, not a defect** — `sel.py:349` tolerates `prev_hash` mismatches explicitly because
+gateway/channel/mcp processes append without IPC, and the per-entry HMAC is the integrity
+primitive. Flipping the kill switch via the CLI is the *documented* way to do it, so this fork is
+reachable in ordinary use; the verifier is built for it.
+
+**NEW finding — a CSRF-layer refusal reaches NEITHER trail.** Ten remote requests in this drive
+were refused by `csrf_middleware`, and the inbound audit and the SEL both contain **zero** rows
+for them (`grep -ci csrf` → 0 in each; the 19 audited refusals are all accounted for by the
+`peer_allowed`-reachable probes). Because the middleware refuses before the route runs,
+`handle_mcp` never executes and never audits. So for the caller Defect 4 actually affects — a
+remote MCP client — the refusal is *invisible* to the surface's own security trail. The module's
+"every rejection is audited" holds only for rejections that reach the module. This is Defect 4's
+blast radius, not a separate defect, and it goes to the same owner.
+
+**Remote refusal: proven, and Defect 4 reproduced a third time.** Exercised with a genuinely
+non-loopback peer at **zero network exposure** by binding a second gateway to `fe80::1%lo0` — an
+IPv6 link-local address present only on `lo0` yet absent from `auth._LOOPBACK`
+(`{"127.0.0.1","::1","::ffff:127.0.0.1","localhost"}`), so `is_loopback()` is False for it.
+`lsof` confirmed the listener as `[fe80:1::1]:10358` and nothing of this drive's on `0.0.0.0`.
+All five states — including the one that should have been **allowed** — returned the identical
+
+```
+HTTP 403  body=CSRF check failed: request origin not allowed.
+```
+
+That failed vacuity floor *is* the finding, exactly as 2026-08-17 recorded it. The layer is then
+pinned by changing **one header**: with `Origin: http://127.0.0.1:10358` (an allowed origin from
+`build_allowed_origins`) on the same non-loopback peer with the same token, the body becomes
+`{"error": "forbidden"}` — the inbound surface's own. `csrf_middleware` therefore runs before
+`peer_allowed` and refuses every remote MCP client regardless of the knobs. With it out of the
+way, `peer_allowed` is **correct and non-vacuous**:
+
+| State | Result |
+|---|---|
+| `allow_remote` off (shipped default) | `403 {"error":"forbidden"}` |
+| on, `public_url` unset | `403` |
+| on, `Host` ≠ `public_url` | `403` |
+| **both satisfied (vacuity floor)** | **`200`, six tools** |
+| both satisfied, wrong token | `401 {"error":"unauthorized"}` |
+| forged `Host`, `allow_remote` off | `403` — a forged Host buys nothing |
+
+Config was restored to the shipped closed default (`allow_remote false`, `public_url ""`) and
+verified by re-reading `config.json`. **Nothing was widened to make a probe pass**; the one
+widening used (states 2–5) is the knob's own documented setting, on a `lo0`-only address, reverted
+immediately. Defect 4 stays where 2026-08-17 put it: an owner scope call (E4) belonging to
+EXTERNAL-ACCESS (24). Security outcome remains fail-closed — remote is refused harder than
+designed — so this clause is met as written; what is broken is the *legibility* of the knob and,
+per the finding above, the auditability of the refusal.
+
+**NOT exercised, with reasons:** an IDE's own MCP config (no IDE is installed here; the SDK client
+an IDE embeds is what ran, and the `mcp` CLI has no client verb — see above); `2025-03-26`, a real
+published revision this surface still rejects, unchanged from 2026-08-17 and still a wire-contract
+decision rather than a validation call; a genuinely off-host peer (deliberately avoided — the
+`fe80::1%lo0` bind reaches the same branch without exposing a port).
+
+**Gates:** `make lint` exit 0 (black 1790 files, isort, flake8, mypy 919 sources) ·
+`tests/test_inbound_mcp.py` **101 passed** alone, and **256 passed** for the union of
+`test_inbound_mcp.py`, `tests/security/`, `test_config_roundtrip.py`, `test_docs_lint_baseline.py`,
+`test_agent_reference.py`, `test_inert_surface_baseline.py` — the three ratchets included because
+this change edits a doc, and none of them rose. Both gateways stopped and both ports confirmed
+free.
+**Real-home probe, non-vacuous:** `find <dir> -newer /private/tmp/mri5-drive2/REF_MARKER` (a
+marker touched before anything started; `find` here is `bfs 4.1.1`, so a *relative* timestamp
+would have errored while exiting 0 — hence `-newer <file>`) → `~/.personalclaw` **0**,
+`~/workplace` **0**, positive control under the drive dir **564**, so the probe does find files
+when there are files to find.
