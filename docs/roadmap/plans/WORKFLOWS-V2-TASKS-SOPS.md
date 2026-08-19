@@ -1,6 +1,6 @@
 # WORKFLOWS-V2-TASKS-SOPS
 
-**Status:** DECOMPOSED — the executable work now lives in [`../atomic/WF2TAS.md`](../atomic/WF2TAS.md) as 11 atomic plan(s).
+**Status:** DECOMPOSED — the executable work now lives in [`../atomic/WF2TAS.md`](../atomic/WF2TAS.md) as 12 atomic plan(s).
 
 This plan was split because parts of it blocked on other plans, which forced it to sit half-done while other work ran. Each atom below its own file executes start-to-finish in one go; the dependency graph lives in [`../atomic/dag.json`](../atomic/dag.json).
 

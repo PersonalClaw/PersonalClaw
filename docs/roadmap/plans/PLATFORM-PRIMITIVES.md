@@ -1,22 +1,11 @@
 # Plan: Platform Primitives — Edges, Verdicts and Policies as First-Class Nouns
 
-**Status:** IN PROGRESS — 6 of 16 atoms shipped (`PP-4` ledger extraction, `PP-1` `WF_UNORDERED_DEP`, `PP-3` the `output_contract` reader cross-check, `PP-9` the general outcome record, `PP-11` the `AdmissionPolicy` seam, and `PP-10` consumer-liveness detection, all 2026-08-14 — see `## Execution log`). Startable now: `PP-2` (unblocked by `PP-1`), `PP-6`/`PP-8` (by `PP-4`), `PP-12` (by `PP-11`), and `PP-5`/`PP-14` (by `WF2LOO-16`). `PP-7` waits on `PP-6`, `PP-13` on `PP-12`. 16 atoms in [`../atomic/PP.md`](../atomic/PP.md).
-**Status:** IN PROGRESS — 2 of 16 atoms shipped (`PP-4` the ledger extraction and `PP-9` the general
-outcome record, both 2026-08-14 — see `## Execution log`). Five startable now (`PP-1`, `PP-6`,
-`PP-8`, `PP-10`, `PP-11`): `PP-4` unblocked four, and `PP-9` landing unblocked `PP-10`. `PP-5` still
-waits on `WF2LOO-16` and `PP-7` on `PP-6`. 16 atoms in [`../atomic/PP.md`](../atomic/PP.md).
-**Status:** IN PROGRESS — 2 of 16 atoms shipped (`PP-4` the ledger extraction and `PP-11` the
-admission seam, both 2026-08-14 — see `## Execution log`). Five startable now (`PP-1`, `PP-6`,
-`PP-8`, `PP-9`, `PP-12`): `PP-4` unblocked four and `PP-11` unblocked `PP-12`. `PP-5` still waits on
-`WF2LOO-16` and `PP-7` on `PP-6`. 16 atoms in [`../atomic/PP.md`](../atomic/PP.md).
-**Status:** IN PROGRESS — 6 of 16 atoms shipped (`PP-4` ledger extraction, `PP-1`
-`WF_UNORDERED_DEP`, `PP-3` the `output_contract` reader cross-check, `PP-9` the general outcome
-record, `PP-11` the admission seam, and `PP-2` deriving ordering from bindings — all 2026-08-14,
-see `## Execution log`). Startable now: `PP-6`, `PP-8`, `PP-10`, `PP-12` (deps `PP-4`/`PP-9`/`PP-11`
-all landed). `PP-5` and `PP-14` are unblocked by `WF2LOO-16`; `PP-7` still waits on `PP-6`. 16 atoms
-in [`../atomic/PP.md`](../atomic/PP.md).
-<!-- Header consolidated 2026-08-14 (PP-2): three sibling branches (PP-1/PP-3, PP-9, PP-11) each
-left their own `**Status:**` block on merge; they are folded into the single accurate line above. -->
+**Status:** IN PROGRESS — 15 of 16 atoms shipped (see `## Execution log`). `PP-16` (a Loop becomes a WorkflowRun) is the only atom not yet done. 16 atoms in [`../atomic/PP.md`](../atomic/PP.md).
+<!-- Header consolidated 2026-08-18: four sibling branches each left their own
+`**Status:**` block on merge. The 2026-08-14 note claiming they had been folded into one
+line was never actually applied — all four blocks were still present, and all four quoted a
+shipped-atom count the atoms had already overtaken. They are replaced by the single line
+above, whose count is derived from `../atomic/dag.json`. -->
 
 **Pillar:** A (Execution Engine + Convergence) · **rev 17** (2026-08-14)
 
