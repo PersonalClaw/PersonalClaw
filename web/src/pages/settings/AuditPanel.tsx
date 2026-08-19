@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Search, RefreshCw, ShieldCheck, ShieldAlert, KeyRound, Loader2, Download, SlidersHorizontal } from 'lucide-react'
-import { api, type AuditFilters, type SelEvent, type SelVerify } from '../../lib/api'
+import { api, type AuditFilters, type AuditPage, type SelEvent, type SelVerify } from '../../lib/api'
 import { invalidateCache } from '../../lib/useCachedData'
 import { confirm } from '../../ui/dialog'
 import { InvestigateButton } from '../../ui/InvestigateButton'
@@ -20,15 +20,23 @@ const OUTCOME_TONE: Record<string, string> = {
   needs_confirm: 'var(--color-warning)',
 }
 
-// Outcome presets. Each writes the SERVER-side `outcome` filter, so the pill and the
-// pagination agree — the old client-side pills filtered the page AFTER it was fetched,
-// which made "Load more" fetch rows the pill then hid, and the count meaningless.
-// Each label is therefore one real substring of an outcome value, not a regex union.
-const OUTCOME_PRESETS = [
-  { key: '', label: 'All' },
-  { key: 'denied', label: 'Denied' },
-  { key: 'failed', label: 'Failed' },
-] as const
+// 🔴 THE PILLS NO LONGER DEFINE THE VOCABULARY THEY FILTER ON. They used to: two entries,
+// one literal substring each (`denied`, `failed`), against a log whose writers emit fourteen
+// different outcome words. Measured across `src/personalclaw`:
+//
+//     denied 163 · rejected 24 · blocked 5 · refused 1     "Denied" matched 163 of 193
+//     failure 23 · error 21 · failed 4                     "Failed" matched 4 of 48
+//
+// and confirmed live before the fix: a real `DELETE /api/terminal/sessions/…` recorded
+// `outcome=error` was INVISIBLE to the Failed pill (`outcome=failed` → 0 rows,
+// `outcome=error` → 1). On an audit surface a filter that silently omits matching records is
+// the worst available failure: the operator reads it as "nothing happened".
+//
+// `sel.AUDIT_OUTCOME_FAMILIES` owns the families now and the page ships them, so a word added
+// to the vocabulary reaches this pill without anyone editing the dashboard. The filter stays
+// SERVER-side (the pill and the pagination cursor must agree — the old client-side pills made
+// "Load more" fetch rows the pill then hid); the server matches a family ANY-OF.
+const ALL_PRESET = { key: '', label: 'All', values: [] as string[] }
 
 const PAGE_SIZE = 50
 
@@ -66,6 +74,9 @@ export function AuditPanel() {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<unknown>(null)
   const [verify, setVerify] = useState<SelVerify | null>(null)
+  // Shipped by the endpoint (`sel.AUDIT_OUTCOME_FAMILIES`). Empty until the first page lands,
+  // so the pill row renders "All" alone rather than a stale local guess at the vocabulary.
+  const [families, setFamilies] = useState<AuditPage['outcome_families']>([])
 
   // Every fetch is stamped; only the newest one may write state. Without this, a slow
   // page-1 response landing after a filter change would overwrite the filtered list
@@ -80,6 +91,9 @@ export function AuditPanel() {
       const page = await api.auditEvents({ limit: PAGE_SIZE, cursor: opts.cursor, filters: opts.filters })
       if (id !== runId.current) return
       setEvents((prev) => (opts.cursor && prev ? [...prev, ...page.events] : page.events))
+      // Every page carries them; taking them on each load means a family widened on the
+      // backend appears without a reload, and an older payload cannot blank the pills.
+      if (page.outcome_families?.length) setFamilies(page.outcome_families)
       setCursor(page.next_cursor)
       setTruncated(page.truncated)
       setError(null)
@@ -101,6 +115,7 @@ export function AuditPanel() {
   }, [filters, load])
 
   const setFilter = (k: keyof AuditFilters, v: string) => setFilters((f) => ({ ...f, [k]: v }))
+  const presets = [ALL_PRESET, ...families]
   const reload = () => { setEvents(null); void load({ filters }) }
   const loadMore = () => { void load({ cursor, filters }) }
 
@@ -139,10 +154,15 @@ export function AuditPanel() {
 
       <div className="mb-3 flex flex-wrap items-center gap-2">
         <div className="inline-flex rounded-pill bg-surface-container p-0.5" role="group" aria-label="Filter by outcome">
-          {OUTCOME_PRESETS.map((f) => {
-            const active = (filters.outcome ?? '') === f.key
+          {presets.map((f) => {
+            // The pill sends the whole family, comma-joined; the server matches any-of. Comparing
+            // against the SENT value (not the key) keeps the pressed state honest when a filter
+            // arrives from anywhere else — a key comparison would light up the wrong pill.
+            const sent = f.values.join(',')
+            const active = (filters.outcome ?? '') === sent
             return (
-              <button key={f.key || 'all'} type="button" onClick={() => setFilter('outcome', f.key)} aria-pressed={active}
+              <button key={f.key || 'all'} type="button" onClick={() => setFilter('outcome', sent)} aria-pressed={active}
+                title={f.values.length ? `Outcomes: ${f.values.join(', ')}` : undefined}
                 className="rounded-pill px-3 h-7 text-[0.8125rem] transition-colors"
                 style={active ? { background: 'var(--color-surface-highest)', color: 'var(--color-on-surface)' } : { color: 'var(--color-on-surface-low)' }}>{f.label}</button>
             )
