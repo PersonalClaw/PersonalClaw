@@ -4,6 +4,8 @@ import { DevicesPanel } from './DevicesPanel'
 import { DialogHost } from '../../ui/dialog/DialogHost'
 import { closeDialog, subscribeDialogs } from '../../ui/dialog/dialogStore'
 import { invalidateCache } from '../../lib/useCachedData'
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { api, type DeviceRec, type DevicePairStart } from '../../lib/api'
 
 // ── Settings → Devices (COMPANION-APPS C2 / CA-2) ─────────────────────────────────────────────
@@ -276,5 +278,104 @@ describe('pairing surfaces the code and the link', () => {
 
     await waitFor(() => expect(toasts.some((t) => /Couldn't start pairing/i.test(t))).toBe(true))
     expect(toasts.join(' ')).toMatch(/too many outstanding codes/)
+  })
+})
+
+// ── 2026-08-19 (ux-718): the code appeared, and the flow said nothing while dropping your place ────
+//
+// `#/settings/devices` was the ONE shipped settings panel missing from the polish loop's capture
+// inventory (it is in the axe manifest, so `npm run e2e:a11y` covered it — the two lists had drifted
+// while staying the same LENGTH, 32 each, which is how a set difference hides from a count). Adding
+// it and driving the pairing flow with the keyboard found two things a scan cannot see:
+//
+//   focus on "Pair a device" → Enter →  focus = **<body>**
+//     The button that had focus is REPLACED by the code view, so the user's place is simply gone.
+//
+//   the flow's only live region was the COUNTDOWN: measured **6 distinct texts in 6 seconds** inside
+//     a `role="status"` — ~300 announcements for one 5-minute code — while the single fact worth
+//     announcing, *a code is ready*, was never announced at all, because that region is mounted
+//     together with its content ("a region created with its content is not reliably observed").
+//
+// After, measured the same way:
+//
+//   focus after Enter : DIV role="group" aria-label="Pairing code and link"
+//   announced         : "Pairing code 2K2W-WDXF is ready. It expires in about 5 minutes."
+//   countdown is live : false          stable region repeats: 1  (once per code, not per tick)
+//
+// 🔑 A TICKING VALUE IS NOT AN EVENT. The countdown keeps its words and its tone (an expiry carried
+// by colour alone would fail 1.4.1) and stops being a live region; the two EVENTS — a code arrived,
+// a code expired — go through one always-mounted `role="status" aria-live="polite" sr-only` region,
+// the shape `ResultAnnouncement` and `Toaster` already use.
+//
+// 🪤 THE HOOKS MUST SIT ABOVE THE LOADING/ERROR EARLY RETURNS. Written after them they run on some
+// renders and not others: React error #310, which took the panel down to its Retry state — and the
+// build was green, so only driving it in a browser showed the crash.
+
+describe('the pairing flow says what happened, and keeps your place', () => {
+  it('announces the code once, through an always-mounted region', async () => {
+    vi.spyOn(api, 'devices').mockResolvedValue([])
+    vi.spyOn(api, 'devicePairStart').mockResolvedValue(START)
+    const { container } = mount()
+    await waitFor(() => expect(screen.getByText(/No devices paired/i)).toBeTruthy())
+
+    // Mounted and EMPTY before anything happens — that is what makes the later update observable.
+    const region = () => container.querySelector('[role="status"][aria-live="polite"].sr-only')
+    expect(region(), 'the announcement region must exist before the event').toBeTruthy()
+    expect(region()!.textContent, 'and say nothing while idle').toBe('')
+
+    fireEvent.click(screen.getAllByRole('button', { name: /Pair a device/i })[0])
+    await waitFor(() => expect(screen.getByText('ABCD-EFGH')).toBeTruthy())
+    await waitFor(() => expect(region()!.textContent).toMatch(/Pairing code ABCD-EFGH is ready/))
+    expect(region()!.textContent, 'and it says how long it lasts, in words').toMatch(/expires in about 5 minutes/)
+  })
+
+  it('the countdown is NOT a live region — a ticking value is not an event', async () => {
+    vi.spyOn(api, 'devices').mockResolvedValue([])
+    vi.spyOn(api, 'devicePairStart').mockResolvedValue(START)
+    const { container } = mount()
+    await waitFor(() => expect(screen.getByText(/No devices paired/i)).toBeTruthy())
+    fireEvent.click(screen.getAllByRole('button', { name: /Pair a device/i })[0])
+    await waitFor(() => expect(screen.getByText(/Expires in/)).toBeTruthy())
+
+    const ticking = screen.getByText(/Expires in/)
+    expect(ticking.getAttribute('role'), 'six announcements in six seconds is not an announcement')
+      .not.toBe('status')
+    expect(ticking.closest('[aria-live]'), 'nor may an ancestor make it live').toBeNull()
+    // The words and the tone stay: an expiry carried only by colour would fail 1.4.1.
+    expect(ticking.textContent).toMatch(/Expires in \d+:\d\d/)
+    // And exactly ONE live region exists in the card — the stable one.
+    expect(container.querySelectorAll('[role="status"]').length).toBe(1)
+  })
+
+  it('focus moves to the code, on a named group that is not in the tab order', async () => {
+    vi.spyOn(api, 'devices').mockResolvedValue([])
+    vi.spyOn(api, 'devicePairStart').mockResolvedValue(START)
+    mount()
+    await waitFor(() => expect(screen.getByText(/No devices paired/i)).toBeTruthy())
+    fireEvent.click(screen.getAllByRole('button', { name: /Pair a device/i })[0])
+    await waitFor(() => expect(screen.getByText('ABCD-EFGH')).toBeTruthy())
+
+    const group = screen.getByRole('group', { name: 'Pairing code and link' })
+    await waitFor(() => expect(document.activeElement).toBe(group))
+    expect(group.getAttribute('tabindex'), 'a programmatic target, not a new tab stop').toBe('-1')
+    expect(group.contains(screen.getByText('ABCD-EFGH')), 'and it must actually contain the code').toBe(true)
+  })
+
+  it('the hooks that do this run before the panel can bail out', () => {
+    // 🪤 React #310, and the build cannot see it. Written after the loading/error returns these effects
+    // run on some renders only, and the panel renders its Retry state instead of itself.
+    const src = readFileSync(join(process.cwd(), 'src/pages/settings/DevicesPanel.tsx'), 'utf8')
+    const firstEffectForCode = src.indexOf('if (announce.current === pairing.code) return')
+    const firstEarlyReturn = src.indexOf('if (!data && loadErr) return')
+    expect(firstEffectForCode, 'the announce/focus effect must exist').toBeGreaterThan(-1)
+    expect(firstEarlyReturn, 'the loading guard must exist').toBeGreaterThan(-1)
+    expect(firstEffectForCode, 'hooks before guards, always').toBeLessThan(firstEarlyReturn)
+  })
+
+  it('the announcement is keyed on the CODE, so a tick cannot re-announce or steal focus', () => {
+    const src = readFileSync(join(process.cwd(), 'src/pages/settings/DevicesPanel.tsx'), 'utf8')
+    expect(src, 'guarded on the code it already announced').toContain('if (announce.current === pairing.code) return')
+    expect(src, 'and the effect depends on the pairing object, not on the countdown').toMatch(/\}, \[pairing\]\)/)
+    expect(src, 'the countdown state must NOT be a dependency of the focus effect').not.toMatch(/\}, \[pairing, left\]\)/)
   })
 })
