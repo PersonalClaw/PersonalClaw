@@ -37,6 +37,7 @@ import json
 import logging
 import re
 import unicodedata
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Any
@@ -123,6 +124,27 @@ def effective_budgets() -> dict[str, int]:
     except Exception:
         logger.debug("knowledge budget config unreadable — using defaults", exc_info=True)
     return budgets
+
+
+def citations_required() -> bool:
+    """Whether `knowledge.require_citations` is on. The knob's FIRST reader.
+
+    It shipped with a default, a `_meta` label and a PATCH allowlist entry, and nothing
+    anywhere read it — a switch an owner could flip that changed nothing about what the store
+    would accept. On, it means what it says: a synthesized item has to name a source that
+    actually supports it, not merely carry a non-empty list.
+
+    Fails to ON when config cannot be read, which is also the field's default: a control whose
+    whole job is to keep an unsourced synthesis out of the store must not be relaxed by an
+    unreadable config file.
+    """
+    try:
+        from personalclaw.config.loader import AppConfig
+
+        return bool(getattr(AppConfig.load().knowledge, "require_citations", True))
+    except Exception:
+        logger.debug("knowledge citation config unreadable — requiring citations", exc_info=True)
+        return True
 
 
 # ── Logical identity ──
@@ -456,6 +478,7 @@ def check_persist(
     summary: str = "",
     claims: list[dict] | None = None,
     citations: list[str] | None = None,
+    marker_citations: Sequence[Any] | None = None,
     unsourced: bool = False,
     ttl: str = "",
     expires_at: str = "",
@@ -467,6 +490,11 @@ def check_persist(
     Order is deliberate: identity is computed before the budget check, so a rejected
     oversize write still tells the caller WHICH item it would have been — otherwise the
     retry cannot tell whether it is creating or updating.
+
+    `marker_citations` is the resolved `[n]` citations a caller parsed out of the item's own
+    prose. `None` means no marker pass ran (a hand-written `citations` list, or a caller that
+    predates markers), and that path keeps the presence check it has always had — so no
+    existing caller changes behaviour by not passing it.
     """
     normalized_kind = (kind or "fact").strip().lower()
     if normalized_kind not in KINDS:
@@ -483,16 +511,33 @@ def check_persist(
 
     # Citations on synthesized kinds. An unsourced synthesis is indistinguishable from a
     # confident guess once it is in the store being retrieved as fact — so the requirement
-    # is explicit, and so is the opt-out.
-    if normalized_kind in SYNTHESIZED_KINDS and not citations and not unsourced:
-        return PersistCheck(
-            False,
-            f"kind {normalized_kind!r} is synthesized and needs `citations`, or an explicit "
-            "`unsourced: true` — an unsourced synthesis reads as fact on retrieval",
-            normalized_kind=normalized_kind,
-            logical_key=key,
-            content_hash=digest,
-        )
+    # is explicit, and so is the opt-out. `unsourced` is the escape hatch in BOTH modes.
+    if normalized_kind in SYNTHESIZED_KINDS and not unsourced:
+        if marker_citations is not None and citations_required():
+            # A marker pass ran, so "is the list non-empty" is the wrong question: a caller
+            # could satisfy it by storing the WHOLE retrieved set, which records what was
+            # retrieved and never which source supports which sentence. At least one `[n]`
+            # has to have resolved, or nothing in this item is attributable.
+            if not list(marker_citations):
+                return PersistCheck(
+                    False,
+                    f"kind {normalized_kind!r} is synthesized and cited nothing — no `[n]` "
+                    "marker in its text resolved to one of the numbered sources it was given, "
+                    "so no sentence here is attributable. Cite sources as `[n]`, or pass "
+                    "`unsourced: true` (or turn off `knowledge.require_citations`)",
+                    normalized_kind=normalized_kind,
+                    logical_key=key,
+                    content_hash=digest,
+                )
+        elif not citations:
+            return PersistCheck(
+                False,
+                f"kind {normalized_kind!r} is synthesized and needs `citations`, or an explicit "
+                "`unsourced: true` — an unsourced synthesis reads as fact on retrieval",
+                normalized_kind=normalized_kind,
+                logical_key=key,
+                content_hash=digest,
+            )
 
     limits = budgets if budgets is not None else effective_budgets()
     budget = int(limits.get(normalized_kind, DEFAULT_BUDGET))
