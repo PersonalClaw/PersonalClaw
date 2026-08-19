@@ -4014,6 +4014,15 @@ async def _run_chat(
             # "Check this work" offer (HARNESS-CRAFT §3.3): deterministic, model-free,
             # OFFER-only — the skill runs when the user clicks the chip, never here.
             maybe_offer_check_work(state, session, _turn_tool_call_count)
+            # Chat plan mode (CC-8): when this chat is inside the planning walkthrough,
+            # the turn's reply IS the step's artifact — hand it to the EXISTING planning
+            # session so its review gate opens on real content. A single sidecar read
+            # and a no-op for every chat that never opened a walkthrough, so a quick
+            # task is untouched. Imported here (not at module scope) because chat_plan
+            # dispatches back into _run_chat on approval.
+            from personalclaw.dashboard.chat_plan import maybe_submit_plan_draft
+
+            maybe_submit_plan_draft(state, session)
             ft = asyncio.create_task(_maybe_followups(state, session))
             session._followups_task = ft
             state._background_tasks.add(ft)

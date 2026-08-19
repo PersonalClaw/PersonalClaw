@@ -152,6 +152,12 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `POST /api/chat/sessions/{session}/organize/accept` — apply the proposal.
 - `POST /api/chat/sessions/{session}/organize/decline` — remember the refusal.
 - `PATCH /api/chat/sessions/{session}/pin` — toggle pinned state.
+- `GET /api/chat/sessions/{session}/plan-session` — the walkthrough state.
+- `POST /api/chat/sessions/{session}/plan/activate` — open the plan walkthrough.
+- `POST /api/chat/sessions/{session}/plan/approve` — {step_id} — approve a step.
+- `POST /api/chat/sessions/{session}/plan/cancel` — abandon the walkthrough.
+- `POST /api/chat/sessions/{session}/plan/comment` — {step_id, text} — comment + redraft.
+- `POST /api/chat/sessions/{session}/plan/edit` — {step_id, markdown} — edit the plan.
 - `DELETE /api/chat/sessions/{session}/queue/{queue_id}` — cancel a queued message.
 - `POST /api/chat/sessions/{session}/reasoning-effort` — set reasoning effort.
 - `POST /api/chat/sessions/{session}/regenerate` — regenerate the last assistant reply.

@@ -4,7 +4,7 @@
 **Code:** `CC`  
 **Source status:** in_progress
 
-Decomposed CHAT-CRAFT (CC) into 8 atoms: 5 done (S1-S3, shipped as one feature-chat-craft commit 2026-07-27; S4's screen-snip 2026-08-16; the Branch mechanic 2026-08-17) and 3 todo (optimizer polish, S4 polish/docs/validation wrap-up, chat plan-mode entry). No blocking cross-plan edges; one intra-plan edge (wrap-up needs all seven surfaces).
+Decomposed CHAT-CRAFT (CC) into 8 atoms: 7 done (S1-S3, shipped as one feature-chat-craft commit 2026-07-27; S4's screen-snip 2026-08-16; the Branch mechanic and the optimizer polish 2026-08-17; the chat plan-mode entry 2026-08-19) and 1 todo (S4 polish/docs/validation wrap-up). No blocking cross-plan edges; one intra-plan edge (wrap-up needs all seven surfaces).
 
 Each atom below executes start-to-finish in one go. If an atom lists dependencies, they must be `done` before it starts — that is the whole point of the split: no atom should ever need pausing to go execute other work.
 
@@ -79,7 +79,7 @@ Amendment (2026-07-29) (a) Branch; F1.1, F1.2 + VF branch portion
 
 ### `CC-8` — Chat plan-mode entry + mid-task re-planning bound to the existing planning gate
 
-**Status:** todo
+**Status:** done
 
 Amendment (2026-07-29) (b) Plan Mode; F1.3, F1.4 + VF plan portion
 
