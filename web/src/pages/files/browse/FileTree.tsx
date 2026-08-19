@@ -223,6 +223,10 @@ function TreeNode({ entry, depth, dirs, activePath, gitStatuses, onOpenFile, art
             // Expose the folder's open/closed state to assistive tech (a dir row
             // toggles expand; files carry no expanded state).
             aria-expanded={entry.is_dir ? open : undefined}
+            // The row the editor has open was a 14% primary tint and a recoloured name, and nothing else.
+            // `aria-current` is the marker `ui/NavRail` uses for "the thing you are on", and this mirrors
+            // the tint exactly: whatever the colour claims is current, this says.
+            aria-current={isActive ? 'page' : undefined}
             className="group flex w-full items-center gap-1.5 rounded-md py-1.5 pr-2 text-left transition-colors hover:bg-surface-high"
             style={{
               paddingLeft: 10 + depth * 16,

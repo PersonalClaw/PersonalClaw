@@ -243,8 +243,10 @@ describe('the family is DERIVED, so the next pill group cannot be missed', () =>
    *  its own cycle rather than given the wrong one. Every entry was read before being listed — a false
    *  positive recorded as pending is a filed non-finding:
    *
-   *    pages/tasks/TasksListPage.tsx  the active task-list pill (`isActive = active === l.id`) — this
-   *                                   one IS this rail's form and is simply not done yet
+   *  🔑 The list is EMPTY, and that is the point of keeping it typed: `TasksListPage`'s active-list pill
+   *  was the last member in this rail's own form and is now marked (asserted below). An empty pending set
+   *  with a live sweep above it means "swept, and nothing outstanding" — which is a different claim from
+   *  a rail that simply never looked.
    *
    *  🔑 `ChatPage` and `SyntaxReference` came off this list WITHOUT being fixed here, because listing
    *  them here was a mistake of the same kind this file's history is full of: they are DISCLOSURES
@@ -255,9 +257,7 @@ describe('the family is DERIVED, so the next pill group cannot be missed', () =>
    *
    *  `ui/Combobox.tsx` came off for the ordinary reason: it declares listbox semantics now (see
    *  `ui/comboboxListbox.test.tsx`). The list may only ever shrink. */
-  const PENDING = new Set([
-    'pages/tasks/TasksListPage.tsx',
-  ])
+  const PENDING = new Set<string>([])
 
   it('every exclusive-choice group marks its state, or is a named exception', () => {
     const groups = exclusiveGroups()
@@ -293,5 +293,31 @@ describe('the family is DERIVED, so the next pill group cannot be missed', () =>
       const mute = mine.filter((g) => !g.state).map((g) => g.cmp)
       expect(mute, `${rel} still conveys selection visually only:\n${mute.join('\n')}`).toEqual([])
     }
+  })
+})
+
+describe('the last two current-item markers in the tree', () => {
+  const codeOf = (rel: string) => readFileSync(join(SRC, rel), 'utf8')
+    .replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
+
+  it("the task-list pill says which list the page is showing", () => {
+    // Its `bg-primary text-on-primary` was the only cue. This rail's own form applies: the name carries
+    // the dimension, and it sits on the PICK button — the pill wrapper also holds Reset, so a state on
+    // the wrapper would describe two controls at once.
+    const code = codeOf('pages/tasks/TasksListPage.tsx')
+    expect(code).toMatch(/aria-label=\{`Task list: \$\{l\.name\}`\} aria-pressed=\{isActive\}/)
+    expect(code, 'and the Reset button keeps its own separate name')
+      .toMatch(/aria-label=\{`Reset list \$\{l\.name\}`\}/)
+  })
+
+  it("the file tree says which file is open, and only where the tint claims it", () => {
+    // `aria-current` mirrors the same `isActive` the 14% tint uses, so the announcement and the colour
+    // cannot disagree — the failure mode of adding a second, independently-computed condition.
+    const code = codeOf('pages/files/browse/FileTree.tsx')
+    expect(code).toMatch(/aria-current=\{isActive \? 'page' : undefined\}/)
+    expect(code, 'the row still declares folder expansion separately')
+      .toMatch(/aria-expanded=\{entry\.is_dir \? open : undefined\}/)
+    // One flag, two cues: if the tint ever stops using `isActive`, this pairing is what breaks.
+    expect(code).toMatch(/isActive \? 'color-mix\(in srgb, var\(--color-primary\) 14%, transparent\)'/)
   })
 })
