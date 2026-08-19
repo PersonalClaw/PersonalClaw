@@ -93,7 +93,12 @@ export function AccountPanel() {
                 the tab order, so a keyboard user tabbed past this Save without learning there is
                 nothing to save. The dimming has to name BOTH selectors — `disabled:opacity-40`
                 cannot match an element that is no longer natively disabled. */}
+            {/* Three fields on this panel each had a button whose whole accessible name was "Save",
+                measured live as 3 identical entries in the control list — so a reader could not tell
+                which one commits which field. `Verb: subject`, the form `design/rowActionNames`
+                declares; the visible word stays "Save". */}
             <button type="button" onClick={dirty ? save : undefined} aria-disabled={!dirty || undefined}
+              aria-label="Save: Your name"
               title={!dirty ? 'No changes to save' : undefined}
               className="inline-flex items-center gap-1 rounded-md px-3 h-9 text-[0.8125rem] disabled:opacity-40 aria-disabled:opacity-40"
               style={{ background: dirty ? 'var(--color-primary)' : 'var(--color-surface-high)', color: dirty ? 'var(--color-on-primary)' : 'var(--color-on-surface-low)' }}>
@@ -109,7 +114,7 @@ export function AccountPanel() {
             </div>
             {/* The shared Button primitive — the two older Save buttons in this
                 panel are hand-rolled, but new chrome adopts the kit. */}
-            <Button size="sm" variant={handleDirty ? 'primary' : 'secondary'}
+            <Button size="sm" variant={handleDirty ? 'primary' : 'secondary'} ariaLabel="Save: Username"
               disabled={!handleDirty} disabledReason={!handleDirty ? 'No changes to save' : undefined} onClick={saveHandle}>
               {handleSaved ? <Check size={14} /> : null} {handleSaved ? 'Saved' : 'Save'}
             </Button>
@@ -118,7 +123,8 @@ export function AccountPanel() {
         <Field label="Assistant name" hint="What the assistant calls itself in prompts and greetings ({{bot_name}}). Empty uses the default, PersonalClaw.">
           <div className="flex items-center gap-s">
             <div className="flex-1" style={{ maxWidth: 280 }}><TextInput value={botDraft} onChange={setBotDraft} placeholder="PersonalClaw" /></div>
-<button type="button" onClick={botDirty ? saveBot : undefined} aria-disabled={!botDirty || undefined}
+            <button type="button" onClick={botDirty ? saveBot : undefined} aria-disabled={!botDirty || undefined}
+              aria-label="Save: Assistant name"
               title={!botDirty ? 'No changes to save' : undefined}
               className="inline-flex items-center gap-1 rounded-md px-3 h-9 text-[0.8125rem] disabled:opacity-40 aria-disabled:opacity-40"
               style={{ background: botDirty ? 'var(--color-primary)' : 'var(--color-surface-high)', color: botDirty ? 'var(--color-on-primary)' : 'var(--color-on-surface-low)' }}>
@@ -171,6 +177,8 @@ function LoginSection() {
 
   if (!state) return null
 
+  // A username edit with no password typed is the case that used to vanish: the button now says so.
+  const userDirty = userDraft.trim() !== (state.username || '')
   const pwLongEnough = pwDraft.length >= 12
   const pwMatches = pwDraft.length > 0 && pwDraft === pwConfirm
   const canSavePw = pwLongEnough && pwMatches && !busy
@@ -203,21 +211,19 @@ function LoginSection() {
     <Section title="Sign in from outside your network"
       hint="Off by default. Turn this on only if you reach this dashboard over a tunnel or from the internet — on your home network the token link is simpler and safer.">
 
-      <Field label="Sign-in username"
-        hint="The name you'll type at the sign-in form. There is still exactly one account — this is a subject for the login, not a user list.">
-        <div className="flex items-center gap-s">
-          <div className="flex-1" style={{ maxWidth: 280 }}>
-            <TextInput value={userDraft} onChange={setUserDraft} placeholder="you" />
-          </div>
-        </div>
-      </Field>
-
-      <Field label={state.credential_configured ? 'Change password' : 'Set a password'}
-        hint="At least 12 characters — length matters more than symbols. Stored as an argon2id hash; it is never shown again, and never leaves this box.">
+      {/* 🔴 THE SIGN-IN USERNAME USED TO SIT IN ITS OWN FIELD WITH NO SAVE CONTROL AT ALL, and the
+          only writer of it — `POST /api/auth/password` — requires a password in the same call
+          (`creds.set_password(username, password)`). Driven: typed a new username, left the panel,
+          came back — the field read "" again, and its Field contained zero buttons. An editable box
+          on a SECURITY surface that silently discards what you type.
+          It now lives in the form whose button commits it, which is what the server's contract
+          actually is, and the button says why a username alone cannot be saved. Three controls in one
+          Field, so each carries its own name — the case `ui/forms` carves an explicit `ariaLabel` out
+          for. */}
+      <Field label={state.credential_configured ? 'Change the sign-in username or password' : 'Set a sign-in username and password'}
+        hint="Both are saved together, in one step — so changing the username means entering the password again. At least 12 characters: length matters more than symbols. Stored as an argon2id hash; it is never shown again, and never leaves this box.">
         <div className="flex flex-col gap-s" style={{ maxWidth: 280 }}>
-          {/* TWO controls in ONE Field, so each needs its own name: claiming the Field's label would
-              make both announce "Set a password" and leave them indistinguishable — exactly the
-              multi-control case ui/forms' comment carves out for an explicit ariaLabel. */}
+          <TextInput value={userDraft} onChange={setUserDraft} placeholder="you" ariaLabel="Sign-in username" />
           <TextInput type="password" value={pwDraft} onChange={setPwDraft} placeholder="New password" ariaLabel="New password" />
           <TextInput type="password" value={pwConfirm} onChange={setPwConfirm} placeholder="Confirm password" ariaLabel="Confirm password" />
           <div className="flex items-center gap-s">
@@ -225,8 +231,11 @@ function LoginSection() {
                 once something has been typed, so the button was the sole affordance for an
                 untouched form and it said nothing. */}
             <Button size="sm" variant={canSavePw ? 'primary' : 'secondary'} disabled={!canSavePw} onClick={savePassword}
-              disabledReason={busy ? undefined : !pwLongEnough ? 'Use at least 12 characters' : 'Both fields must match'}>
-              {pwSaved ? <Check size={14} /> : null} {pwSaved ? 'Saved' : 'Save password'}
+              disabledReason={busy ? undefined
+                : !pwLongEnough
+                  ? (userDirty ? 'Enter the password too — the username is saved with it' : 'Use at least 12 characters')
+                  : 'Both fields must match'}>
+              {pwSaved ? <Check size={14} /> : null} {pwSaved ? 'Saved' : 'Save sign-in'}
             </Button>
             {pwDraft.length > 0 && !pwLongEnough ? (
               <span className="text-[0.75rem]" style={{ color: 'var(--color-on-surface-low)' }}>
