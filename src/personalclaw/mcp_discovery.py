@@ -49,6 +49,7 @@ SCOPE_PERSONALCLAW = "personalclaw"
 SCOPE_LEGACY_GLOBAL = "globalMcp"
 SCOPE_CC_GLOBAL = "ccGlobal"
 
+
 # Single source of truth pairing each config path with its scope label.
 # Priority at collision time is controlled by the explicit scope iteration
 # order in :func:`_load_mcp_json` (personalclaw > legacy global), not by this
@@ -64,9 +65,15 @@ SCOPE_CC_GLOBAL = "ccGlobal"
 # dropped (its content is migrated into this file once, at startup, by
 # handlers/mcp._migrate_legacy_mcp_json) so there is a single read+write path the
 # dashboard, the provider instances, agent.py, and the native runtime all share.
-_MCP_SOURCES: tuple[tuple[Path, str], ...] = (
-    (Path.home() / ".personalclaw" / "mcp.json", SCOPE_PERSONALCLAW),
-)
+# A FUNCTION, not a module constant: a `Path.home()` value computed at import time is
+# frozen before `PERSONALCLAW_HOME` can matter, so an isolated dev home read the operator's
+# real `~/.personalclaw/mcp.json` — their servers and their credentials — while the
+# dashboard wrote the dev home. Resolved per call, through `config_dir()`.
+def _mcp_sources() -> tuple[tuple[Path, str], ...]:
+    from personalclaw.config.loader import config_dir
+
+    return ((config_dir() / "mcp.json", SCOPE_PERSONALCLAW),)
+
 
 # External backend MCP configs PersonalClaw can *import from* (but never
 # silently loads). Each entry maps a config file to the backend label shown in
@@ -74,9 +81,12 @@ _MCP_SOURCES: tuple[tuple[Path, str], ...] = (
 # once their formats are confirmed — the discovery + import path is backend-agnostic.
 _IMPORT_SOURCES: tuple[tuple[Path, str], ...] = ((Path.home() / ".claude.json", "Claude Code"),)
 
-# Test override seam: tests monkeypatch this to inject fixture paths.
-# Derived from :data:`_MCP_SOURCES` so the two can never drift.
-_MCP_JSON_PATHS: tuple[Path, ...] = tuple(p for p, _ in _MCP_SOURCES)
+
+# Test override seam: tests monkeypatch this FUNCTION to inject fixture paths (several
+# patch more than one path to exercise merge precedence, which a single `config_dir()`
+# derivation cannot express). Derived from :func:`_mcp_sources` so the two cannot drift.
+def _mcp_json_paths() -> tuple[Path, ...]:
+    return tuple(p for p, _ in _mcp_sources())
 
 
 @dataclass
@@ -233,18 +243,18 @@ def _load_mcp_json_by_source() -> dict[str, dict[str, Any]]:
     their origin scope.  Unlike :func:`_load_mcp_json`, no cross-source
     merging happens — callers that need per-scope presence use this.
 
-    Iterates :data:`_MCP_SOURCES` (path + scope pairs), so paths and scope
-    labels can never drift.  When tests monkeypatch :data:`_MCP_JSON_PATHS`
+    Iterates :func:`_mcp_sources` (path + scope pairs), so paths and scope
+    labels can never drift.  When tests monkeypatch :func:`_mcp_json_paths`
     to a shorter tuple for isolation, the corresponding scopes are
-    recovered by looking up each patched path in ``_MCP_SOURCES``; any
+    recovered by looking up each patched path in ``_mcp_sources()``; any
     unknown path falls back to :data:`SCOPE_PERSONALCLAW`.
     """
     result: dict[str, dict[str, Any]] = {
         SCOPE_PERSONALCLAW: {},
         SCOPE_LEGACY_GLOBAL: {},
     }
-    path_to_scope = {p: scope for p, scope in _MCP_SOURCES}
-    for p in _MCP_JSON_PATHS:
+    path_to_scope = {p: scope for p, scope in _mcp_sources()}
+    for p in _mcp_json_paths():
         scope = path_to_scope.get(p, SCOPE_PERSONALCLAW)
         if not p.is_file():
             continue
@@ -261,7 +271,7 @@ def _load_mcp_json_by_source() -> dict[str, dict[str, Any]]:
         if isinstance(servers, dict):
             # Merge instead of overwriting — if two paths resolve to the
             # same scope (legitimate duplicates, or tests that monkeypatch
-            # _MCP_JSON_PATHS with fallback-scoped paths), setdefault keeps
+            # _mcp_json_paths() with fallback-scoped paths), setdefault keeps
             # first-wins semantics within the scope.
             bucket = result[scope]
             for name, spec in servers.items():

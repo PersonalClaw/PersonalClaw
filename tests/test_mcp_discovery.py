@@ -114,7 +114,9 @@ class TestListServers:
         }
         (agents_dir / "personalclaw.json").write_text(json.dumps(installed))
         monkeypatch.setattr("personalclaw.mcp_discovery.Path.home", lambda: tmp_path)
-        monkeypatch.setattr("personalclaw.mcp_discovery._MCP_JSON_PATHS", (tmp_path / "nope.json",))
+        monkeypatch.setattr(
+            "personalclaw.mcp_discovery._mcp_json_paths", lambda: (tmp_path / "nope.json",)
+        )
         servers = list_servers()
         names = {s.name for s in servers}
         assert "personalclaw-schedule" in names
@@ -137,7 +139,9 @@ class TestListServers:
 
     def test_list_empty_no_config(self, tmp_path, monkeypatch) -> None:
         monkeypatch.setenv("PERSONALCLAW_PROJECT_DIR", str(tmp_path))
-        monkeypatch.setattr("personalclaw.mcp_discovery._MCP_JSON_PATHS", (tmp_path / "nope.json",))
+        monkeypatch.setattr(
+            "personalclaw.mcp_discovery._mcp_json_paths", lambda: (tmp_path / "nope.json",)
+        )
         monkeypatch.setattr("personalclaw.mcp_discovery.Path.home", lambda: tmp_path)
         servers = list_servers()
         assert servers == []
@@ -152,7 +156,7 @@ class TestListServers:
         mcp_json.write_text(
             json.dumps({"mcpServers": {"ext-srv": {"command": "b", "args": ["--x"]}}})
         )
-        monkeypatch.setattr("personalclaw.mcp_discovery._MCP_JSON_PATHS", (mcp_json,))
+        monkeypatch.setattr("personalclaw.mcp_discovery._mcp_json_paths", lambda: (mcp_json,))
         servers = list_servers()
         names = {s.name for s in servers}
         assert "agent-srv" in names
@@ -169,7 +173,7 @@ class TestListServers:
         monkeypatch.setenv("PERSONALCLAW_PROJECT_DIR", str(tmp_path))
         mcp_json = tmp_path / "mcp.json"
         mcp_json.write_text(json.dumps({"mcpServers": {"shared": {"command": "mcp-cmd"}}}))
-        monkeypatch.setattr("personalclaw.mcp_discovery._MCP_JSON_PATHS", (mcp_json,))
+        monkeypatch.setattr("personalclaw.mcp_discovery._mcp_json_paths", lambda: (mcp_json,))
         servers = list_servers()
         shared = [s for s in servers if s.name == "shared"]
         assert len(shared) == 1
@@ -187,7 +191,7 @@ class TestListServers:
         }
         (agent_dir / "defaults.json").write_text(json.dumps(cfg))
         monkeypatch.setenv("PERSONALCLAW_PROJECT_DIR", str(tmp_path))
-        monkeypatch.setattr("personalclaw.mcp_discovery._MCP_JSON_PATHS", (tmp_path / "x",))
+        monkeypatch.setattr("personalclaw.mcp_discovery._mcp_json_paths", lambda: (tmp_path / "x",))
         monkeypatch.setattr("personalclaw.mcp_discovery.Path.home", lambda: tmp_path)
         servers = list_servers()
         names = {s.name for s in servers}
@@ -209,7 +213,7 @@ class TestListServers:
                 }
             )
         )
-        monkeypatch.setattr("personalclaw.mcp_discovery._MCP_JSON_PATHS", (mcp_json,))
+        monkeypatch.setattr("personalclaw.mcp_discovery._mcp_json_paths", lambda: (mcp_json,))
         servers = list_servers()
         names = {s.name for s in servers}
         assert "active" in names
@@ -225,7 +229,7 @@ class TestListServers:
         mcp_json = tmp_path / "mcp.json"
         mcp_json.write_text(json.dumps({"mcpServers": {"srv": {"command": "b"}}}))
         monkeypatch.setenv("PERSONALCLAW_PROJECT_DIR", str(tmp_path))
-        monkeypatch.setattr("personalclaw.mcp_discovery._MCP_JSON_PATHS", (mcp_json,))
+        monkeypatch.setattr("personalclaw.mcp_discovery._mcp_json_paths", lambda: (mcp_json,))
         monkeypatch.setattr("personalclaw.mcp_discovery.Path.home", lambda: tmp_path)
         assert not any(s.name == "srv" for s in list_servers())
 
@@ -241,7 +245,7 @@ class TestListServers:
             json.dumps({"mcpServers": {"srv": {"disabled": True, "disabledTools": ["t1"]}}})
         )
         monkeypatch.setenv("PERSONALCLAW_PROJECT_DIR", str(tmp_path))
-        monkeypatch.setattr("personalclaw.mcp_discovery._MCP_JSON_PATHS", (mcp_json,))
+        monkeypatch.setattr("personalclaw.mcp_discovery._mcp_json_paths", lambda: (mcp_json,))
         monkeypatch.setattr("personalclaw.mcp_discovery.Path.home", lambda: tmp_path)
         servers = list_servers()
         assert len(servers) == 1
@@ -261,7 +265,7 @@ class TestListServers:
         }
         (agent_dir / "defaults.json").write_text(json.dumps(cfg))
         monkeypatch.setenv("PERSONALCLAW_PROJECT_DIR", str(tmp_path))
-        monkeypatch.setattr("personalclaw.mcp_discovery._MCP_JSON_PATHS", (tmp_path / "x",))
+        monkeypatch.setattr("personalclaw.mcp_discovery._mcp_json_paths", lambda: (tmp_path / "x",))
         monkeypatch.setattr("personalclaw.mcp_discovery.Path.home", lambda: tmp_path)
         servers = list_servers()
         assert len(servers) == 1
@@ -298,7 +302,7 @@ class TestListServers:
             )
         )
         monkeypatch.setattr(
-            "personalclaw.mcp_discovery._MCP_JSON_PATHS", (legacy_mcp, personalclaw_mcp)
+            "personalclaw.mcp_discovery._mcp_json_paths", lambda: (legacy_mcp, personalclaw_mcp)
         )
 
         servers = list_servers()
@@ -321,7 +325,7 @@ class TestListServers:
         bad.write_text("{invalid json")
         good = tmp_path / "good.json"
         good.write_text(json.dumps({"mcpServers": {"srv": {"command": "x"}}}))
-        monkeypatch.setattr("personalclaw.mcp_discovery._MCP_JSON_PATHS", (bad, good))
+        monkeypatch.setattr("personalclaw.mcp_discovery._mcp_json_paths", lambda: (bad, good))
 
         servers = list_servers()
         assert any(s.name == "srv" for s in servers)
@@ -338,7 +342,7 @@ class TestListServers:
         bad.write_text(json.dumps({"mcpServers": ["not", "a", "dict"]}))
         good = tmp_path / "good.json"
         good.write_text(json.dumps({"mcpServers": {"srv": {"command": "x"}}}))
-        monkeypatch.setattr("personalclaw.mcp_discovery._MCP_JSON_PATHS", (bad, good))
+        monkeypatch.setattr("personalclaw.mcp_discovery._mcp_json_paths", lambda: (bad, good))
 
         servers = list_servers()
         assert any(s.name == "srv" for s in servers)
@@ -355,7 +359,7 @@ class TestListServers:
         blocked.write_text("{}")
         good = tmp_path / "good.json"
         good.write_text(json.dumps({"mcpServers": {"srv": {"command": "x"}}}))
-        monkeypatch.setattr("personalclaw.mcp_discovery._MCP_JSON_PATHS", (blocked, good))
+        monkeypatch.setattr("personalclaw.mcp_discovery._mcp_json_paths", lambda: (blocked, good))
 
         original = __import__("personalclaw.hooks", fromlist=["safe_read_file"]).safe_read_file
 
@@ -388,7 +392,7 @@ class TestDiscoverNew:
                 }
             )
         )
-        monkeypatch.setattr("personalclaw.mcp_discovery._MCP_JSON_PATHS", (mcp_json,))
+        monkeypatch.setattr("personalclaw.mcp_discovery._mcp_json_paths", lambda: (mcp_json,))
         new = discover_servers_to_sync()
         assert len(new) == 1
         assert new[0].name == "brand-new"
@@ -402,7 +406,7 @@ class TestDiscoverNew:
         monkeypatch.setenv("PERSONALCLAW_PROJECT_DIR", str(tmp_path))
         mcp_json = tmp_path / "mcp.json"
         mcp_json.write_text(json.dumps({"mcpServers": {"srv": {"command": "a"}}}))
-        monkeypatch.setattr("personalclaw.mcp_discovery._MCP_JSON_PATHS", (mcp_json,))
+        monkeypatch.setattr("personalclaw.mcp_discovery._mcp_json_paths", lambda: (mcp_json,))
         new = discover_servers_to_sync()
         assert new == []
 
@@ -417,7 +421,7 @@ class TestDiscoverNew:
         mcp_json.write_text(
             json.dumps({"mcpServers": {"srv": {"command": "a", "env": {"KEY": "val"}}}})
         )
-        monkeypatch.setattr("personalclaw.mcp_discovery._MCP_JSON_PATHS", (mcp_json,))
+        monkeypatch.setattr("personalclaw.mcp_discovery._mcp_json_paths", lambda: (mcp_json,))
         result = discover_servers_to_sync()
         assert len(result) == 1
         assert result[0].name == "srv"
@@ -434,7 +438,7 @@ class TestDiscoverNew:
         mcp_json.write_text(
             json.dumps({"mcpServers": {"srv": {"command": "a", "env": {"KEY": "val"}}}})
         )
-        monkeypatch.setattr("personalclaw.mcp_discovery._MCP_JSON_PATHS", (mcp_json,))
+        monkeypatch.setattr("personalclaw.mcp_discovery._mcp_json_paths", lambda: (mcp_json,))
         result = discover_servers_to_sync()
         assert result == []
 
@@ -449,7 +453,7 @@ class TestDiscoverNew:
         mcp_json.write_text(
             json.dumps({"mcpServers": {"srv": {"command": "a", "env": {"NEW": "val"}}}})
         )
-        monkeypatch.setattr("personalclaw.mcp_discovery._MCP_JSON_PATHS", (mcp_json,))
+        monkeypatch.setattr("personalclaw.mcp_discovery._mcp_json_paths", lambda: (mcp_json,))
         result = discover_servers_to_sync()
         assert result == []
 
@@ -750,7 +754,7 @@ class TestProbeCache:
         cfg = {"mcpServers": {"my-srv": {"command": "cmd"}}}
         (agent_dir / "defaults.json").write_text(json.dumps(cfg))
         monkeypatch.setenv("PERSONALCLAW_PROJECT_DIR", str(tmp_path))
-        monkeypatch.setattr("personalclaw.mcp_discovery._MCP_JSON_PATHS", (tmp_path / "x",))
+        monkeypatch.setattr("personalclaw.mcp_discovery._mcp_json_paths", lambda: (tmp_path / "x",))
         monkeypatch.setattr("personalclaw.mcp_discovery.Path.home", lambda: tmp_path)
 
         # Before probe: unknown
