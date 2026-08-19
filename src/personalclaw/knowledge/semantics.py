@@ -46,6 +46,12 @@ logger = logging.getLogger(__name__)
 
 # ── The typed taxonomy ──
 
+#: One written finding produced by a scheduled research report (WF2KNO-12). Named here
+#: rather than in `knowledge/research_reports.py` because the taxonomy is what decides a
+#: kind exists: the report machinery is a PRODUCER of this kind, and a producer naming its
+#: own vocabulary is how a second, disagreeing spelling gets minted.
+RESEARCH_FINDING_KIND = "research-finding"
+
 #: The `kind` vocabulary. Distinct from `item_type`, which routes the INGESTION graph and
 #: stays one of the 12 native types — conflating the two would make "how did this arrive"
 #: and "what sort of knowledge is it" the same field, and they answer different questions.
@@ -54,6 +60,7 @@ KINDS = (
     "decision",
     "insight",
     "report",
+    RESEARCH_FINDING_KIND,
     "reference",
     "known-issue",
     "preference-note",
@@ -65,7 +72,24 @@ KINDS = (
 #: Kinds that are SYNTHESIZED rather than observed. These require citations, because an
 #: unsourced synthesis is indistinguishable from a confident guess once it is in the store
 #: and being retrieved as fact.
-SYNTHESIZED_KINDS = frozenset({"insight", "report", "overview"})
+#: `research-finding` is in here for the reason the set exists rather than by analogy to
+#: `report`: a scheduled report runs UNATTENDED and recurring, so an unsourced finding is
+#: not one confident guess a reader can weigh — it is a guess that accumulates on a cron
+#: while nobody is reading, and every later retrieval treats it as fact. If a research pass
+#: genuinely produced a finding it cannot source, `unsourced=True` says so out loud.
+SYNTHESIZED_KINDS = frozenset({"insight", "report", RESEARCH_FINDING_KIND, "overview"})
+
+#: Kinds INDEXED but not LISTED: they are absent from the plain library list and re-admitted
+#: the moment a caller names one. Declared here, next to the vocabulary, because an
+#: exclusion hardcoded at the query site is invisible to anyone reading the taxonomy — and a
+#: second list surface would then quietly disagree about what the library contains.
+#:
+#: A report's finding is retrievable material, not a library row the owner has to scroll
+#: past. A single scheduled report writes many findings and keeps writing them every week,
+#: so listing them would bury hand-authored knowledge under machine output within a month —
+#: the report itself is the row a human wants, and its findings are what search and the
+#: report's own detail view resolve to.
+DEFAULT_LIST_EXCLUDED_KINDS: frozenset[str] = frozenset({RESEARCH_FINDING_KIND})
 
 #: Per-kind size budgets in characters. A budget overrun returns a descriptive failure
 #: rather than raising, so the synthesizing stage can condense and retry under the
@@ -75,6 +99,11 @@ KIND_BUDGETS: dict[str, int] = {
     "decision": 8_000,
     "insight": 12_000,
     "report": 40_000,
+    # Between `insight` (12k) and `report` (40k), matching `overview`: a finding is one
+    # written claim WITH its evidence prose and citation block, so it needs more room than a
+    # bare insight — but a scheduled run emits several per pass, and budgeting each at the
+    # whole-report 40k would let one week's output outweigh everything the owner wrote.
+    RESEARCH_FINDING_KIND: 16_000,
     "reference": 20_000,
     "known-issue": 8_000,
     "preference-note": 2_000,
