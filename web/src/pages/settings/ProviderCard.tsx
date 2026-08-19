@@ -77,8 +77,11 @@ export function ProviderCard({ ext, runtime, channel, open, onOpenChange, onChan
           ? <Toggle on={ext.enabled} onChange={toggle} label={`Toggle ${ext.name}`} />
           : <span className="shrink-0 rounded-pill bg-surface-high px-2 py-0.5 text-on-surface-low text-[0.75rem]" title="Built-in provider — always available">Always on</span>
         )}
+        {/* Configure is a DISCLOSURE, not a toggle: it reveals the config form below. `ariaExpanded`
+            rather than `on` — the tint is identical, the announcement is the true one.
+            🪤 And this comment sits before the conditional, not after its `&& (`. */}
         {hasConfig && (
-          <SquareIconButton label={`Configure: ${who}`} title="Configure" on={open}
+          <SquareIconButton label={`Configure: ${who}`} title="Configure" ariaExpanded={open}
             onClick={() => onOpenChange(!open)} className="shrink-0">
             <ChevronDown size={16} className="transition-transform" style={{ transform: open ? 'rotate(180deg)' : 'none' }} />
           </SquareIconButton>

@@ -114,7 +114,11 @@ function InstanceRow({ ext, inst, schema, onChanged }: {
         <span className="min-w-0 flex-1 truncate text-on-surface text-[0.8125rem]">{inst.display_name || inst.id}</span>
         <div className="flex shrink-0 items-center gap-0.5">
           <SquareIconButton label="Test" onClick={runTest} disabled={testing}>{testing ? <Loader2 size={13} className="animate-spin" /> : <Wifi size={13} />}</SquareIconButton>
-          <SquareIconButton label="Edit" onClick={() => setEditing((v) => !v)} on={editing}>{editing ? <X size={13} /> : <Pencil size={13} />}</SquareIconButton>
+          {/* Bound to the SAME expression that gates the form below (`editing && props.length > 0`),
+              not merely to `editing`: with an empty schema this button reveals nothing, and
+              `aria-expanded="true"` there would be a promise the card does not keep. */}
+          <SquareIconButton label="Edit" onClick={() => setEditing((v) => !v)}
+            ariaExpanded={editing && props.length > 0}>{editing ? <X size={13} /> : <Pencil size={13} />}</SquareIconButton>
           <SquareIconButton label="Delete" onClick={remove}><Trash2 size={13} /></SquareIconButton>
         </div>
       </div>

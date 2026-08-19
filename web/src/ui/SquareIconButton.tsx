@@ -18,7 +18,8 @@ import { spring, expr } from '../design/motion'
  *  destructive (delete/remove) variant: idle at ink-low, hover tints the glyph
  *  red with no fill — the restrained treatment those buttons already ship. */
 export function SquareIconButton({
-  icon: Icon, children, label, title, onClick, on, disabled, disabledReason, tone = 'neutral', iconSize = 14, className,
+  icon: Icon, children, label, title, onClick, on, ariaExpanded, disabled, disabledReason,
+  tone = 'neutral', iconSize = 14, className,
 }: {
   icon?: LucideIcon
   children?: React.ReactNode
@@ -27,8 +28,21 @@ export function SquareIconButton({
    *  from the accessible name (e.g. a disabled button explaining *why* it's gated). */
   title?: string
   onClick?: (e: React.MouseEvent) => void
-  /** Selected/toggled — carries the coral tint (bg + text). */
+  /** Selected/toggled — carries the coral tint (bg + text) and announces `aria-pressed`.
+   *  For a control that REVEALS adjacent content, pass `ariaExpanded` instead: a disclosure and a
+   *  toggle answer different questions, and this primitive only ever had the second one. */
   on?: boolean
+  /** This button reveals adjacent content, and the content is currently shown.
+   *
+   *  🔑 SAME SPELLING AS `Button` AND `QuietButton`, deliberately — `ariaExpanded`, not a third name for
+   *  the same question. Cycle 129 gave this primitive `on` → `aria-pressed` and measured 18 nodes gaining
+   *  it on `#/settings/providers`; what it did not do (it did do it for `QuietButton`) was classify the
+   *  callers. Three of them are disclosures — `ProviderCard`'s Configure, `WidgetFrame`'s iteration rail,
+   *  `MultiInstanceCard`'s Edit — and two are true toggles (Bookmark, Pin), which keep `on`.
+   *
+   *  Passing this SUPPRESSES `aria-pressed`: a control that claims both states claims one of them
+   *  falsely. The coral tint follows either, so nothing moves visually. */
+  ariaExpanded?: boolean
   /** Action currently unavailable: 40% opacity, not-allowed, onClick suppressed. */
   disabled?: boolean
   /** WHY it is unavailable, when `disabled` is true. This primitive already keeps its tab
@@ -52,6 +66,8 @@ export function SquareIconButton({
 }) {
   const reduce = useReducedMotion()
   const pressScale = reduce || disabled ? 1 : 1 - expr(0.1, 0.5)
+  // The tint means "this is the live one" for both questions; the ARIA state is the one that differs.
+  const lit = on || ariaExpanded
   return (
     <motion.button
       type="button"
@@ -61,7 +77,8 @@ export function SquareIconButton({
       // (after Button, HeaderControl, IconButton, FilterChip). Two callers pass it: the Edit buttons on
       // `#/settings/providers` and each multi-instance card, where "editing" vs "not editing" was a tint
       // and nothing else. `undefined` unless a caller opts in, so a plain icon action claims no state.
-      aria-pressed={on}
+      aria-pressed={ariaExpanded === undefined ? on : undefined}
+      aria-expanded={ariaExpanded}
       title={disabled && disabledReason ? `${title ?? label} — ${disabledReason}` : (title ?? label)}
       onClick={disabled ? undefined : onClick}
       whileTap={disabled ? undefined : { scale: pressScale }}
@@ -70,14 +87,14 @@ export function SquareIconButton({
         'grid size-7 place-items-center rounded-md transition-colors',
         disabled
           ? 'text-on-surface-low opacity-40 cursor-not-allowed'
-          : on
+          : lit
             ? 'text-primary'
             : tone === 'danger'
               ? 'text-on-surface-low hover:text-danger'
               : 'text-on-surface-low hover:bg-surface-high hover:text-on-surface',
         className,
       )}
-      style={on && !disabled ? { background: 'color-mix(in srgb, var(--color-primary) 14%, transparent)' } : undefined}
+      style={lit && !disabled ? { background: 'color-mix(in srgb, var(--color-primary) 14%, transparent)' } : undefined}
     >
       {Icon ? <Icon size={iconSize} /> : children}
     </motion.button>
