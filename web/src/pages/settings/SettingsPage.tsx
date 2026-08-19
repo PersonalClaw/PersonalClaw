@@ -2,7 +2,7 @@ import { useEffect } from 'react'
 import {
   Palette, Plug, Bell, Cpu, Shield, ShieldAlert, Database, User, MessageSquare, Bot, Inbox,
   FolderSync, ScrollText, Archive, AudioLines, DownloadCloud, FileText, ChevronRight, Search, Blocks, Activity, Scissors, Compass, Stethoscope, ThumbsUp,
-  HardDriveDownload, Coins, Route, LayoutDashboard, Rss, Package, Smartphone,
+  HardDriveDownload, Coins, Route, LayoutDashboard, Rss, Package, Smartphone, MonitorSmartphone,
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { TopBar } from '../../ui/TopBar'
@@ -34,6 +34,7 @@ import { ProjectionRulesPanel } from './ProjectionRulesPanel'
 import { LegibilityPanel } from './LegibilityPanel'
 import { AmbientPanel } from './AmbientPanel'
 import { CompanionPanel } from './CompanionPanel'
+import { DevicesPanel } from './DevicesPanel'
 import { SourcesPanel } from './SourcesPanel'
 import { PacksPanel } from './PacksPanel'
 import { GuardrailsPanel } from './GuardrailsPanel'
@@ -75,6 +76,10 @@ const SUBPAGES: SubPage[] = [
   { id: 'inbox', label: 'Inbox', icon: Inbox, render: () => <InboxSettingsPanel /> },
   { id: 'notifications', label: 'Notifications', icon: Bell, render: () => <NotificationsPanel /> },
   { id: 'security', label: 'Security', icon: Shield, render: () => <SecurityPanel /> },
+  // Next to Security on purpose: "what is paired to my gateway, and can I cut it off" is a
+  // security question. This is the ONE device registry — `companion` above is the LAN/PWA
+  // transport settings, not a list of devices.
+  { id: 'devices', label: 'Devices', icon: MonitorSmartphone, render: () => <DevicesPanel /> },
   { id: 'guardrails', label: 'Guardrails', icon: ShieldAlert, render: () => <GuardrailsPanel /> },
   { id: 'audit', label: 'Audit log', icon: ScrollText, render: () => <AuditPanel /> },
   { id: 'doctor', label: 'Doctor', icon: Stethoscope, render: () => <DoctorPanel /> },

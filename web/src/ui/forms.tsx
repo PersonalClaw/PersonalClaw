@@ -29,6 +29,20 @@ export function useFieldLabelId() { return useContext(FieldLabelCtx) }
  *  bug. */
 export const FieldLabelProvider = FieldLabelCtx.Provider
 
+/** And a Field publishes the id of its visible HINT, so the control can point at it with
+ *  `aria-describedby`.
+ *
+ *  🔴 Measured on `#/settings/account`: all six inputs were correctly NAMED (the label contract above
+ *  works) and not one had `aria-describedby` — so every hint was sighted-only. That includes a
+ *  CONSTRAINT ("At least 12 characters") and a consequence ("Leave it empty to keep records
+ *  unattributed"): a screen-reader user heard "Username, edit text" and none of the rule they were
+ *  expected to follow. 196 call sites pass a hint today (Field 99, settingsUI's Row 69, NumberRow 28),
+ *  and none of them has to change — the id is published here and claimed by the same controls that
+ *  already claim the label. axe cannot see this: an unassociated paragraph is valid HTML. */
+const FieldHintCtx = createContext<string | undefined>(undefined)
+export function useFieldHintId() { return useContext(FieldHintCtx) }
+export const FieldHintProvider = FieldHintCtx.Provider
+
 /** Field wrapper — label row (optional right slot for a SoonTag) + control.
  *  The label carries a stable id and is exposed via context so the wrapped
  *  control associates with it for accessibility. */
@@ -53,16 +67,22 @@ export function FieldError({ children, className }: {
 
 export function Field({ label, hint, right, children }: { label: string; hint?: string; right?: ReactNode; children: ReactNode }) {
   const labelId = useId()
+  const hintId = useId()
   return (
     <FieldLabelCtx.Provider value={labelId}>
+      {/* The hint id is published only when there IS a hint — an `aria-describedby` pointing at a
+          missing element is worse than none, because assistive tech resolves it to nothing while the
+          attribute claims a description exists. */}
+      <FieldHintCtx.Provider value={hint ? hintId : undefined}>
       <div>
         <div className="mb-1.5 flex items-center gap-s">
           <span id={labelId} className="text-on-surface-low text-[0.75rem] uppercase tracking-wide">{label}</span>
           {right}
         </div>
         {children}
-        {hint && <p className="mt-1 text-on-surface-low text-[0.75rem]">{hint}</p>}
+        {hint && <p id={hintId} className="mt-1 text-on-surface-low text-[0.75rem]">{hint}</p>}
       </div>
+      </FieldHintCtx.Provider>
     </FieldLabelCtx.Provider>
   )
 }
@@ -144,6 +164,7 @@ export function TextInput({ value, onChange, placeholder, autoFocus, onKeyDown, 
   leadingIcon?: ReactNode
 }) {
   const labelId = useFieldLabelId()
+  const hintId = useFieldHintId()
   const autoId = useId()
   // Accessible name: a labelless, name-less control that sits in a Field claims
   // that Field's published label via aria-labelledby. Otherwise (a control with
@@ -159,6 +180,7 @@ export function TextInput({ value, onChange, placeholder, autoFocus, onKeyDown, 
   const input = (
     <input value={value} type={type} autoFocus={autoFocus} name={name} id={name || autoId}
       aria-labelledby={claimsFieldLabel ? labelId : undefined} aria-label={claimsFieldLabel ? undefined : ariaLabel}
+      aria-describedby={hintId}
       aria-required={required || undefined}
       onChange={(e) => onChange(e.target.value)} onKeyDown={onKeyDown} placeholder={placeholder}
       className={cx(INPUT_BASE, FIELD_SIZE[size], FIELD_SURFACE[surface], leadingIcon ? 'pl-9 pr-m' : 'px-m', mono && 'font-mono')} />
@@ -193,6 +215,7 @@ const TEXTAREA_TEXT: Record<FieldSize, string> = {
 
 export function TextArea({ value, onChange, placeholder, rows = 4, mono, ariaLabel, autoFocus, size = 'lg' }: { value: string; onChange: (v: string) => void; placeholder?: string; rows?: number; mono?: boolean; ariaLabel?: string; autoFocus?: boolean; size?: FieldSize }) {
   const labelId = useFieldLabelId()
+  const hintId = useFieldHintId()
   const autoId = useId()
   // Prefer a Field's published label (aria-labelledby); else an explicit ariaLabel
   // for call-sites that wrap the control in their own (non-Field) section label.
@@ -203,7 +226,7 @@ export function TextArea({ value, onChange, placeholder, rows = 4, mono, ariaLab
   // member. `aria-labelledby={labelId}` used to be unconditional, silently ignoring a caller's
   // ariaLabel.
   return (
-    <textarea value={value} rows={rows} autoFocus={autoFocus} id={autoId} aria-labelledby={!ariaLabel ? labelId : undefined} aria-label={!labelId || ariaLabel ? ariaLabel : undefined} onChange={(e) => onChange(e.target.value)} placeholder={placeholder}
+    <textarea value={value} rows={rows} autoFocus={autoFocus} id={autoId} aria-describedby={hintId} aria-labelledby={!ariaLabel ? labelId : undefined} aria-label={!labelId || ariaLabel ? ariaLabel : undefined} onChange={(e) => onChange(e.target.value)} placeholder={placeholder}
       className={`w-full rounded-md bg-surface-container px-m py-2 text-on-surface ${TEXTAREA_TEXT[size]} placeholder:text-on-surface-low outline-none resize-y focus:ring-2 focus:ring-inset focus:ring-primary/50 ${mono ? 'font-mono text-[0.8125rem]' : ''}`} />
   )
 }
@@ -232,6 +255,7 @@ export function NumberField({ value, onChange, min, max, step, width = 'w-24', a
   ariaLabel?: string
 }) {
   const labelId = useFieldLabelId()
+  const hintId = useFieldHintId()
   const [local, setLocal] = useState(String(value))
   // Re-sync when the committed value changes out from under us (external patch,
   // clamp, another editor) — but never mid-edit, since we only read `value`.
@@ -245,7 +269,7 @@ export function NumberField({ value, onChange, min, max, step, width = 'w-24', a
   }
   return (
     <input type="number" value={local} min={min} max={max} step={step ?? 1}
-      aria-labelledby={!ariaLabel ? labelId : undefined} aria-label={ariaLabel}
+      aria-labelledby={!ariaLabel ? labelId : undefined} aria-label={ariaLabel} aria-describedby={hintId}
       onChange={(e) => setLocal(e.target.value)} onBlur={commit}
       onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}
       className={cx('h-8 rounded-md bg-surface-high px-2 text-right text-[0.8125rem] text-on-surface tabular-nums outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50', width)} />
@@ -254,9 +278,10 @@ export function NumberField({ value, onChange, min, max, step, width = 'w-24', a
 
 export function DateInput({ value, onChange }: { value: string; onChange: (v: string) => void }) {
   const labelId = useFieldLabelId()
+  const hintId = useFieldHintId()
   const autoId = useId()
   return (
-    <input type="date" value={value} id={autoId} aria-labelledby={labelId} onChange={(e) => onChange(e.target.value)}
+    <input type="date" value={value} id={autoId} aria-labelledby={labelId} aria-describedby={hintId} onChange={(e) => onChange(e.target.value)}
       className="h-10 rounded-md bg-surface-container px-m text-on-surface text-[0.9375rem] outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50" />
   )
 }
@@ -270,11 +295,13 @@ export function Select({ value, onChange, options, disabled, name, ariaLabel }: 
    *  precedence as TextInput's. */
   ariaLabel?: string }) {
   const labelId = useFieldLabelId()
+  const hintId = useFieldHintId()
   const autoId = useId()
   const claimsFieldLabel = !!labelId && !name && !ariaLabel
   return (
     <select value={value} onChange={(e) => onChange(e.target.value)} disabled={disabled} name={name} id={name || autoId}
       aria-labelledby={claimsFieldLabel ? labelId : undefined} aria-label={claimsFieldLabel ? undefined : ariaLabel}
+      aria-describedby={hintId}
       className="w-full h-10 appearance-none rounded-md bg-surface-container pl-m pr-8 text-on-surface text-[0.9375rem] outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50 disabled:opacity-50">
       {options.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
     </select>
@@ -291,6 +318,7 @@ export function ChipInput({ values, onChange, placeholder, max, suggestions, ari
   const [draft, setDraft] = useState('')
   const listId = useId()
   const labelId = useFieldLabelId()
+  const hintId = useFieldHintId()
   const add = () => {
     const v = draft.trim().replace(/,$/, '')
     if (v && !values.includes(v) && (!max || values.length < max)) onChange([...values, v])
@@ -312,7 +340,7 @@ export function ChipInput({ values, onChange, placeholder, max, suggestions, ari
         </span>
       ))}
       <input value={draft} onChange={(e) => setDraft(e.target.value)} placeholder={values.length ? '' : placeholder}
-        list={remaining.length ? listId : undefined} name={`chip-${listId}`} aria-labelledby={labelId} aria-label={labelId ? undefined : ariaLabel ?? 'Add a tag'}
+        list={remaining.length ? listId : undefined} name={`chip-${listId}`} aria-describedby={hintId} aria-labelledby={labelId} aria-label={labelId ? undefined : ariaLabel ?? 'Add a tag'}
         onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ',') { e.preventDefault(); add() } else if (e.key === 'Backspace' && !draft && values.length) onChange(values.slice(0, -1)) }}
         onBlur={add}
         className="flex-1 min-w-[80px] bg-transparent text-on-surface text-[0.8125rem] placeholder:text-on-surface-low outline-none" />

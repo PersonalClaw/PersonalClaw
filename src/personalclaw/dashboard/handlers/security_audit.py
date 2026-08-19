@@ -22,7 +22,12 @@ import re
 
 from aiohttp import web
 
-from personalclaw.sel import _VERIFY_WINDOW, AUDIT_FILTER_FIELDS, sel
+from personalclaw.sel import (
+    _VERIFY_WINDOW,
+    AUDIT_FILTER_FIELDS,
+    AUDIT_OUTCOME_FAMILIES,
+    sel,
+)
 
 #: Cap on one page. The rows are redacted and hash-checked individually, so an unbounded
 #: page is real work; 200 matches the old panel's single fixed fetch.
@@ -170,6 +175,18 @@ async def api_security_audit(request: web.Request) -> web.Response:
             "next_cursor": page["next_cursor"],
             "scanned": page["scanned"],
             "truncated": page["truncated"],
+            # The outcome filters, from the module that owns the vocabulary they filter on.
+            # The panel used to keep its own two-word list and missed most of what the
+            # writers emit (see sel.AUDIT_OUTCOME_FAMILIES); shipping them means a word
+            # added to a family reaches the UI without anyone editing the dashboard.
+            "outcome_families": [
+                {
+                    "key": f["key"],
+                    "label": f["label"],
+                    "values": list(f["values"]),  # type: ignore[call-overload]
+                }
+                for f in AUDIT_OUTCOME_FAMILIES
+            ],
         }
     )
 

@@ -356,6 +356,9 @@ async def api_devices_list(request: web.Request) -> web.Response:
                 "name": device.name,
                 "kind": device.kind,
                 "minted_at": device.minted_at,
+                # 0.0 means "never made an authorized request" and the panel renders it as
+                # "never". It is deliberately not coalesced to `minted_at` — see `DeviceInfo`.
+                "last_seen": device.last_seen,
                 "issuer": record.issuer,
                 "expires_at": record.expiry,
             }

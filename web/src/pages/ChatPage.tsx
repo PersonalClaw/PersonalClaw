@@ -16,7 +16,7 @@ const DEFAULT_EXIT_PHRASES = ['cancel', 'never mind', 'forget it']
 import { fvs, withWeight } from '../design/fontWeight'
 import { playCue } from '../design/soundCues'
 import { motion, AnimatePresence, useReducedMotion } from 'framer-motion'
-import { Edit3, History, Search, MessageSquare, Trash2, Activity, Brain, Gauge, ChevronRight, ChevronDown, Quote, PanelRight, Clipboard, X, Pin, FileText, BookText, AlertTriangle, Pencil, Sparkles, Link2, Check, Repeat, Rewind, PlayCircle, GitBranch, Folder, FolderPlus, Tag as TagIcon, Columns3, List as ListIcon, EyeOff, Clock, Loader2, Wrench, Target, Code2 as CodeIcon, Paperclip, ExternalLink, ArrowDown, ArrowLeft, ArrowRight, ArrowUp, FolderKanban, GripVertical, MessageCircleQuestion, Bot, ShieldCheck, Shield, Eye, Zap, ClipboardList, Hammer, Camera, NotebookPen, FolderCog, Archive, ArchiveRestore, Boxes, CornerDownLeft, Download, Share2, Coins, type LucideIcon } from 'lucide-react'
+import { Edit3, History, Search, MessageSquare, Trash2, Activity, Brain, Gauge, ChevronRight, ChevronDown, Quote, PanelRight, Clipboard, X, Pin, FileText, BookText, AlertTriangle, Pencil, Sparkles, Link2, Check, Repeat, Rewind, PlayCircle, GitBranch, Folder, FolderPlus, Tag as TagIcon, Columns3, List as ListIcon, ListChecks, EyeOff, Clock, Loader2, Wrench, Target, Code2 as CodeIcon, Paperclip, ExternalLink, ArrowDown, ArrowLeft, ArrowRight, ArrowUp, FolderKanban, GripVertical, MessageCircleQuestion, Bot, ShieldCheck, Shield, Eye, Zap, ClipboardList, Hammer, Camera, NotebookPen, FolderCog, Archive, ArchiveRestore, Boxes, CornerDownLeft, Download, Share2, Coins, type LucideIcon } from 'lucide-react'
 import { IconButton } from '../ui/IconButton'
 import { SquareIconButton } from '../ui/SquareIconButton'
 import { SearchField } from '../ui/SearchField'
@@ -47,6 +47,7 @@ import { MessageUser } from '../ui/chat/MessageUser'
 import { MessageAssistant } from '../ui/chat/MessageAssistant'
 import { Spark } from '../ui/Spark'
 import { StreamingIndicator } from '../ui/chat/StreamingIndicator'
+import { ChatPlanGate } from '../ui/chat/ChatPlanGate'
 import { Markdown } from '../ui/Markdown'
 import { useWidgetActionBridge, takePendingWidgetAction } from '../ui/widget/useWidgetActionBridge'
 import { InlineError } from '../ui/InlineError'
@@ -1636,6 +1637,28 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
     }
   }
 
+  // Plan mode — the composer affordance. One explicit user action opens the
+  // chat's `planning/session.py` walkthrough and puts the session in the `plan` task
+  // mode, which is what makes the backend's tool gate refuse mutations. There is no
+  // heuristic anywhere: a chat only ever gets a plan gate from this click. When a turn
+  // is in flight the server PARKS it (the transcript is kept) and resumes on approval,
+  // so the mid-conversation case needs nothing extra here.
+  async function activatePlanMode() {
+    const sid = sessionRef.current
+    if (!sid) return
+    try {
+      const r = await api.chatPlanActivate(sid)
+      setSelection((sel) => ({ ...sel, taskMode: 'plan' }))
+      if (r.parked) {
+        setMicError('This run is parked — approve the plan below to resume it.')
+        window.setTimeout(() => setMicError(null), 6000)
+      }
+    } catch (e) {
+      setMicError((e as Error)?.message || 'Could not start plan mode.')
+      window.setTimeout(() => setMicError(null), 6000)
+    }
+  }
+
   // Optimize the current draft via the prompt optimizer. The context is role-labeled
   // and newest-last (see chat/optimizerContext.ts) — that shape is what lets the
   // optimizer resolve "that file from earlier" instead of guessing at it.
@@ -2509,6 +2532,15 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
             <OrganizeChip sessionKey={sessionRef.current} refreshKey={turns.length} />
           </div>
         )}
+        {/* Plan review gate. Mounted whenever there's a session and renders
+            nothing until the "Plan this first" affordance has opened a walkthrough —
+            keyed on the turn count so the draft the plan-mode turn just produced shows
+            up without a reload. Approve/cancel hand back the restored task mode, so the
+            composer's pill can't drift from the posture the backend gate enforces. */}
+        {sessionRef.current && (
+          <ChatPlanGate session={sessionRef.current} refreshKey={turns.length}
+            onTaskMode={(m) => setSelection((sel) => ({ ...sel, taskMode: m }))} />
+        )}
         <ComposerStage ref={composerRef} value={input} onChange={(v) => { setInput(v); if (preOptimize !== null) setPreOptimize(null); if (followups.length && v.trim().length >= 3) setFollowups([]) }} onSend={() => send()}
           streaming={streaming} onStop={stop} controls={CHAT_CONTROLS} data={data}
           selection={selection} onSelect={applySelection} onAttach={attach} onFocusChange={setComposerFocused}
@@ -2531,6 +2563,14 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
               {screenShare.sharing && sessionRef.current && (
                 <MenuRow icon={<Pin size={16} />} label="Pin shared frame" hint="Save the current screen frame as an ordinary attachment"
                   onClick={() => { close(); void pinScreenFrame() }} />
+              )}
+              {/* Plan mode — an explicit, manual entry. Nothing decides FOR the
+                  user that a message needs planning: a quick task just sends. Offered on
+                  a started chat because the plan is drafted by the next turn in it. */}
+              {started && sessionRef.current && (
+                <MenuRow icon={<ListChecks size={16} />} label="Plan this first"
+                  hint="Draft a plan for review — nothing runs until you approve it"
+                  onClick={() => { close(); void activatePlanMode() }} />
               )}
               {started && sessionRef.current && <AutoNudgeMenuItem session={sessionRef.current!} onOpen={close} />}
             </>
@@ -3123,14 +3163,18 @@ function KnowledgeContextPicker({ attached, onPick, onRemove, onClose }: {
             )}
           </div>
         )}
-        <div className="max-h-[46vh] overflow-y-auto flex flex-col gap-1.5">
+        {/* 🔴 Attached-or-not was announced by COLOUR alone — a tinted row, a coral outline and a
+            check glyph, none of which reaches the accessibility tree. `aria-pressed` is the state;
+            the group carries the dimension so a row announces what it is being attached TO. No tab
+            stop is needed on the scroller because every row in it is a button. */}
+        <div role="group" aria-label="Knowledge to attach" className="max-h-[46vh] overflow-y-auto flex flex-col gap-1.5">
           {loading && !res ? <div className="grid place-items-center py-6 text-on-surface-low"><Loader2 size={16} className="animate-spin" /></div>
             : !q.trim() ? <p className="py-6 text-center text-on-surface-low text-[0.8125rem]">Type to search notes, gists, bookmarks, docs…</p>
             : (res?.results.length ?? 0) === 0 ? <p className="py-6 text-center text-on-surface-low text-[0.8125rem]">No matches for “{q}”.</p>
             : res!.results.map((r) => {
               const on = attachedIds.has(r.id)
               return (
-                <button key={r.id} type="button"
+                <button key={r.id} type="button" aria-pressed={on}
                   onClick={() => on ? onRemove(r.id) : onPick({ id: r.id, name: r.title })}
                   className="flex items-start gap-2 rounded-lg px-3 py-2 text-left transition-colors"
                   style={on ? { background: 'color-mix(in srgb, var(--color-primary) 12%, transparent)', outline: '1px solid color-mix(in srgb, var(--color-primary) 40%, transparent)' } : { background: 'var(--color-surface-container)' }}>
@@ -4286,12 +4330,16 @@ function ChatHistoryPage({ navigate, query, setQuery }: { navigate: (p: string) 
               <div role="status" className="mb-m text-on-surface-var text-[0.8125rem]">{bulkNote}</div>
             )}
             {tags.length > 0 && (
-              <div className="mb-m flex flex-wrap items-center gap-1.5">
+              // 🔴 Which tags were filtering was readable only as a tinted pill. `role="group"` goes on
+              //    the row that already exists — wrapping only the chips would make them ONE flex item
+              //    and break the wrap + gap — and the visible "Filter:" is a bare `<span>`, which labels
+              //    nothing, so the group states the dimension itself.
+              <div role="group" aria-label="Filter by tag" className="mb-m flex flex-wrap items-center gap-1.5">
                 <span className="text-on-surface-low text-[0.75rem] mr-1">Filter:</span>
                 {tags.map((t) => {
                   const on = tagFilter.has(t.id)
                   return (
-                    <button key={t.id} type="button" onClick={() => { const nx = new Set(tagFilter); nx.has(t.id) ? nx.delete(t.id) : nx.add(t.id); setTagFilter(nx) }}
+                    <button key={t.id} type="button" aria-pressed={on} onClick={() => { const nx = new Set(tagFilter); nx.has(t.id) ? nx.delete(t.id) : nx.add(t.id); setTagFilter(nx) }}
                       className="inline-flex items-center gap-1 rounded-pill px-2 h-7 text-[0.75rem] transition-colors"
                       style={on ? { background: `color-mix(in srgb, ${t.color || 'var(--color-primary)'} 22%, transparent)`, color: t.color || 'var(--color-primary)' } : { background: 'var(--color-surface-high)', color: 'var(--color-on-surface-var)' }}>
                       <TagIcon size={11} /> {t.name}
@@ -4383,8 +4431,12 @@ function SessionOrgMenu({ s, folders, tags, orgLoadFailed, onSetFolder, onToggle
           used inside overflow-clipping containers (board columns, the list
           scroller) — inline absolute positioning gets CLIPPED at their edges;
           the body portal escapes them (and closes on scroll, see Popover). */}
+      {/* A menu trigger: `Popover` renders `trigger(open, toggle)` and adds no ARIA of its own, so the
+          caller owns it — `FilterMenu`, `HeaderActions` and the composer's controls all pass
+          `aria-expanded={open}` on their own raw buttons. This one could not until the primitive learned
+          the prop, so it announced `aria-pressed` for an open menu. */}
       <Popover width={240} align="right" placement="bottom" portal trigger={(open, toggle) => (
-        <SquareIconButton icon={TagIcon} label="Organize chat" title="Folder & tags" on={open} onClick={toggle}
+        <SquareIconButton icon={TagIcon} label="Organize chat" title="Folder & tags" ariaExpanded={open} onClick={toggle}
           className={`shrink-0 transition-opacity ${open ? 'opacity-100' : 'opacity-0 group-hover:opacity-100 focus-within:opacity-100'}`} />
       )}>
         {() => (

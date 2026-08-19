@@ -149,6 +149,37 @@ describe('the accordions the boolean-flip census could not see', () => {
       return /\.tsx$/.test(n) && !/\.(test|doc)\.tsx$/.test(n) ? [p] : []
     })
 
+  /** Does the markup around a toggle actually publish an expanded state?
+   *
+   *  🪤 TWO SPELLINGS, AND ONLY ONE IS VALID PER ELEMENT TYPE. A raw `<button>` takes the DOM
+   *  attribute `aria-expanded`. `ui/Button` declares camelCase props (`ariaExpanded`) and spreads no
+   *  rest, so on IT the hyphenated form is silently DROPPED — TypeScript does not excess-property-check
+   *  a JSX attribute whose name contains a dash, so it compiles and reaches nothing. Measured on
+   *  `#/settings/notifications`: 27 triggers with no `aria-expanded` in the DOM at all, every one of
+   *  them written `aria-expanded={isOpen}` in the source. `ui/ariaPropForwarding.test.tsx` now forbids
+   *  that spelling on our components.
+   *
+   *  Accepting `ariaExpanded` ONLY beside a `<Button` keeps this strict rather than merely permissive:
+   *  on a raw `<button>` that spelling vanishes just as quietly, and must still count as silent. That
+   *  distinction is asserted directly below, because nothing in the tree exercises it today — a guard
+   *  whose strictness is untested is a guard that is only claimed. */
+  function announcesDisclosure(around: string): boolean {
+    return /aria-expanded/.test(around)
+      || (/ariaExpanded=/.test(around) && /<Button\b/.test(around))
+  }
+
+  it('the two spellings are accepted on the right elements, and only there', () => {
+    // Synthetic, because the tree contains no counter-example — which is exactly why this is here.
+    expect(announcesDisclosure('<Button onClick={() => setOpen(open ? null : id)} ariaExpanded={isOpen}>'),
+      'camelCase on ui/Button reaches the DOM').toBe(true)
+    expect(announcesDisclosure('<button onClick={() => setOpen(open ? null : id)} aria-expanded={isOpen}>'),
+      'the DOM attribute on a raw button').toBe(true)
+    expect(announcesDisclosure('<button onClick={() => setOpen(open ? null : id)} ariaExpanded={isOpen}>'),
+      'camelCase on a RAW button is dropped by React — still silent').toBe(false)
+    expect(announcesDisclosure('<Button onClick={() => setOpen(open ? null : id)}>detail</Button>'),
+      'and a Button that says nothing is still silent').toBe(false)
+  })
+
   function accordions() {
     const out: { rel: string; announced: boolean }[] = []
     for (const abs of walkPages(PAGES)) {
@@ -156,7 +187,7 @@ describe('the accordions the boolean-flip census could not see', () => {
       for (const m of src.matchAll(ACCORDION)) {
         // Anchored on the toggle, not on tag boundaries — the lesson this file already carries.
         const around = src.slice(Math.max(0, m.index! - 300), m.index! + 320)
-        out.push({ rel: abs.slice(PAGES.length + 1), announced: /aria-expanded/.test(around) })
+        out.push({ rel: abs.slice(PAGES.length + 1), announced: announcesDisclosure(around) })
       }
     }
     return out
@@ -192,5 +223,109 @@ describe('the accordions the boolean-flip census could not see', () => {
       // `{flag && (` and `{flag && <X/>}` are both used in this tree — assert the gate, not its bracket.
       expect(src, `${rel}: and ${flag} must be what reveals the content`).toMatch(new RegExp(`\\{${flag} && [(<]`))
     }
+  })
+})
+
+// ── 2026-08-19: the THIRD write pattern — a toggle handed DOWN as a prop ───────────────────────────
+//
+// This file already carries the lesson twice: **when a census defines membership by a WRITE pattern,
+// enumerate the other ways the same interaction is written.** Here is the next instance, found by
+// reviewing `#/settings/archive` rather than by re-reading the matcher.
+//
+// `ArchivePanel` opens a transcript with
+//
+//   onToggle={() => setOpen(open === a.name ? null : a.name)}     ← the parent
+//   <button type="button" onClick={onToggle}>                     ← the child, in the same file
+//
+// Both earlier matchers key on `onClick={() => setX(…)}`, so BOTH are structurally blind to it:
+//   · the boolean-flip census wants `!x` — this is an accordion, so there is no `!`;
+//   · the accordion census wants `onClick=` and a bare `\w+ ? null :` — this is `onToggle=` with an
+//     `open === a.name` condition.
+// Measured on the live surface with three archives seeded: `aria-expanded` read **null collapsed and
+// null expanded**, while `AuditPanel`'s structurally identical event row — a card whose button reveals
+// detail beneath it, in the same settings area — has declared `aria-expanded={open}` all along.
+//
+// 🔑 THE GAP IS PINNED, NOT JUST CLOSED. The test below asserts the two older regexes do NOT match this
+// shape, so the hole is documented as structural rather than accidental — and nobody can "simplify" the
+// three matchers into one that quietly re-opens it.
+//
+// 🔑 THE POPULATION IS 23, AND MOST OF IT IS NOT THIS FAMILY. Several prop-passed toggles are FILTER
+// selections (`KnowledgeListPage`'s four curation filters write `setCurationFilter(x === 'read' ? '' :
+// 'read')` — the same syntax, a different act) and they must NOT take `aria-expanded`: nothing is
+// revealed, so the promise would be false. That is the DiagnosticsPanel distinction again, and it is why
+// this describe carries a classified table plus a ceiling rather than a blanket assertion.
+
+describe('the disclosures whose toggle arrives as a PROP', () => {
+  /** [file, the flag the child announces, the parent's prop-passed toggle]. */
+  const PROP_DISCLOSURES: [string, string, string][] = [
+    ['settings/ArchivePanel.tsx', 'open', 'onToggle={() => setOpen(open === a.name ? null : a.name)}'],
+  ]
+
+  for (const [rel, flag, toggle] of PROP_DISCLOSURES) {
+    it(`${rel} announces expansion on the child that owns the button`, () => {
+      const src = read(rel)
+      expect(src, 'the parent must still hand the toggle down').toContain(toggle)
+      // 🪤 NOT a window around the toggle: the button lives in a SIBLING component further down the
+      // file, so any adjacency window either misses it or spans unrelated markup. Two independent facts
+      // about the same flag is the check that cannot rot — the form this file already settled on.
+      expect(src, `the child's button must announce ${flag}`).toMatch(new RegExp(`aria-expanded=\\{${flag}\\}`))
+      expect(src, `and ${flag} must be what reveals the content`).toMatch(new RegExp(`\\{${flag} && [(<]`))
+    })
+  }
+
+  /** A toggle handed to a child: `onAnything={() => setX(<a flip, an accordion, or a clear>)}`. */
+  const PROP_TOGGLE = /\bon[A-Z]\w*=\{\(\) => \{?\s*set(\w+)\(([^)]*)\)/g
+
+  it('the two older matchers are BLIND to this shape — the gap is structural', () => {
+    // Synthetic and exact: this is the line that shipped silent for as long as both censuses existed.
+    const shape = "onToggle={() => setOpen(open === a.name ? null : a.name)}"
+    expect(/onClick=\{\(\) => set\w+\(\(?\w*\)? ?=> ?!\w+\)|onClick=\{\(\) => set\w+\(!\w+\)/.test(shape),
+      'the boolean-flip census cannot see it (no `!`, and not onClick=)').toBe(false)
+    expect(/onClick=\{\(\) => set\w+\(\s*\w+ \? null : [\w.]+\s*\)/.test(shape),
+      'the accordion census cannot see it either (onToggle=, and a `===` condition)').toBe(false)
+    expect(PROP_TOGGLE.test(shape), 'and this one does').toBe(true)
+    PROP_TOGGLE.lastIndex = 0
+  })
+
+  const walkPages = (d: string): string[] =>
+    readdirSync(d).flatMap((n) => {
+      const p = join(d, n)
+      if (statSync(p).isDirectory()) return walkPages(p)
+      return /\.tsx$/.test(n) && !/\.(test|doc)\.tsx$/.test(n) ? [p] : []
+    })
+
+  function propToggles() {
+    const out: { rel: string; state: string; announced: boolean }[] = []
+    for (const abs of walkPages(PAGES)) {
+      const src = readFileSync(abs, 'utf8').replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
+      for (const m of src.matchAll(PROP_TOGGLE)) {
+        const arg = m[2]
+        if (!/!\w+/.test(arg) && !/\?\s*null\s*:/.test(arg) && !/\?\s*''\s*:/.test(arg)) continue
+        // File-level, and deliberately so: the receiving button is a sibling component (sometimes in
+        // another file), so there is no window that can hold both ends. Coarse on purpose — it is a
+        // CEILING, not a per-site verdict, and the classified table above carries the per-site proof.
+        out.push({ rel: abs.slice(PAGES.length + 1), state: m[1], announced: /aria-expanded|ariaExpanded=/.test(src) })
+      }
+    }
+    return out
+  }
+
+  it('finds the population (not vacuously green)', () => {
+    const found = propToggles()
+    expect(found.length, 'the prop-toggle scan must find its population').toBeGreaterThanOrEqual(23)
+    expect(found.map((t) => t.rel), 'including the one this cycle drove').toContain('settings/ArchivePanel.tsx')
+  })
+
+  it('the silent remainder is a measured ceiling, and may only fall', () => {
+    // **9 today** — the number is measured, and this assertion is how I learned my own count of it was
+    // wrong (I wrote 8 from reading a scan by eye; the rail said 9 and named the ninth). Five of the nine
+    // are `KnowledgeListPage`'s curation filters, which are selections and must NOT take
+    // `aria-expanded`; the rest need classifying — disclosure → `aria-expanded`, filter/selection →
+    // `aria-pressed` or a state-naming label — before any of them can be called done. A NEW silent prop
+    // toggle pushes this over, which is the point: the default for an unclassified one is "not yet
+    // reviewed", not "fine".
+    const silent = propToggles().filter((t) => !t.announced)
+    expect(silent.length, `classify a new prop toggle, do not add to this number:\n${
+      silent.map((s) => `${s.rel} set${s.state}`).join('\n')}`).toBeLessThanOrEqual(9)
   })
 })

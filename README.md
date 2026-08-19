@@ -219,7 +219,7 @@ run on every push to `main`.
 ## Documentation
 
 - [Getting started](docs/guides/getting-started.md) — install → first chat.
-- [Working inside a chat](docs/guides/chat-surface.md) — the seven things the chat surface does beyond a send button: rewind to any earlier message, let a queued message cut in, find and quote, follow-up suggestions, the streaming reveal, and putting part of your screen into the conversation.
+- [Working inside a chat](docs/guides/chat-surface.md) — the nine things the chat surface does beyond a send button: rewind to any earlier message, branch a conversation two ways, have a plan approved before anything runs, let a queued message cut in, find and quote, follow-up suggestions, the streaming reveal, and putting part of your screen into the conversation.
 - [Remote access](docs/guides/remote-access.md) — reaching your dashboard from outside your home network (tunnel + password + 2FA), and what it does *not* protect you from.
 - [Companion apps](docs/guides/companion-apps.md) — a phone or a second machine on your own network: pairing, the optional LAN discovery (off by default), and exactly what it announces.
 - [Build a channel app](docs/guides/build-a-channel-app.md) — bringing a new chat app or mailbox to PersonalClaw: the transport/delivery obligations, trust and pairing, and the conformance kit.

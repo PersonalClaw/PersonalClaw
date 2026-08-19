@@ -60,8 +60,13 @@ export function DoctorPanel() {
         </Button>
       </div>
 
+      {/* 🔴 Titled, because this panel's PRIMARY content was the one group with no heading while
+          "Maintenance" below it had one. `settingsUI`'s Section renders its `h2` only when given a
+          `title`, so an untitled one is a card, not a named group: measured on `#/settings/doctor`,
+          14 controls (Re-run + every "Investigate in chat") sat under the `h1` with no section of
+          their own, and a screen-reader user walking the headings met "Maintenance" first. */}
       {report && (
-        <Section>
+        <Section title="Subsystem probes">
           <div className="flex flex-col gap-m">
             {caps.map(([key, cap]) => <CapabilityCard key={key} name={key} cap={cap} onFixed={refresh} />)}
           </div>

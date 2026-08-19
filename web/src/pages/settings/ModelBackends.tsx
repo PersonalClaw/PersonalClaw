@@ -151,10 +151,13 @@ function InstanceCard({ provider, models, onChanged }: { provider: ModelProvider
         <CredBadge status={provider.credential_status} />
         <div className="flex shrink-0 items-center gap-0.5">
           <SquareIconButton label="Test connection" onClick={runTest} disabled={testing}>{testing ? <Loader2 size={14} className="animate-spin" /> : <Wifi size={14} />}</SquareIconButton>
-          <SquareIconButton label={provider.type === 'ollama' ? 'Manage models' : 'View models'} onClick={() => setShowModels((v) => !v)} on={showModels}>
+          {/* Both of these reveal content further down the card (`{showModels && …}` and
+              `{editing && <EditInstanceForm/>}`), so they announce expansion rather than pressedness.
+              Test connection and Delete claim no state at all. */}
+          <SquareIconButton label={provider.type === 'ollama' ? 'Manage models' : 'View models'} onClick={() => setShowModels((v) => !v)} ariaExpanded={showModels}>
             <ChevronRight size={14} style={{ transform: showModels ? 'rotate(90deg)' : 'none' }} />
           </SquareIconButton>
-          <SquareIconButton label="Edit" onClick={() => setEditing((v) => !v)} on={editing}>{editing ? <X size={14} /> : <Pencil size={14} />}</SquareIconButton>
+          <SquareIconButton label="Edit" onClick={() => setEditing((v) => !v)} ariaExpanded={editing}>{editing ? <X size={14} /> : <Pencil size={14} />}</SquareIconButton>
           <SquareIconButton label="Delete" onClick={remove}><Trash2 size={14} /></SquareIconButton>
         </div>
       </div>

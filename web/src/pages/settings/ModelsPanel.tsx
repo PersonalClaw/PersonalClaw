@@ -234,7 +234,13 @@ export function ModelsPanel() {
         <PanelHeader title="Models" hint="Assign discovered models to each use case. Chat and its routing sub-categories store an ordered fallback chain — the first model is the default; later ones take over when an earlier provider is down. Modality means understanding that media as input; Generation means producing it." />
         <div className="shrink-0 pt-1"><ReclaimButton onReclaimed={reloadActive} /></div>
       </div>
-      <Section>
+      {/* 🔴 Titled: this is the panel's primary group and it was the only one without a heading,
+          while "Prompt caching" further down had one. Measured on `#/settings/models`: 16 controls
+          — every use-case row — belonged to no section, so the heading outline jumped from "Models"
+          straight to "Prompt caching" and skipped the thing the panel is for. The uppercase group
+          labels inside (`meta.group`) stay plain `<div>`s: they are a visual grouping of rows within
+          this one section, and promoting them is its own change. */}
+      <Section title="Model bindings" hint="One model — or an ordered fallback chain — per use case.">
         {allModels.length === 0 && (
           <div className="mb-3 rounded-lg border border-dashed border-outline-variant/50 bg-surface-container px-4 py-5 text-center text-on-surface-low text-[0.8125rem]">
             No models discovered. Add a backend in <span className="text-on-surface">Providers</span> and test its connection.

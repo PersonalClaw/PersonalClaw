@@ -286,6 +286,72 @@ def save_conversation_turn(
         )
 
 
+def _enforces_json_schema_natively(model_ref: str) -> bool:
+    """Does the provider behind ``model_ref`` enforce a supplied JSON Schema NATIVELY?
+
+    The gate on forwarding ``output_type`` as a build kwarg (AUTONOMY-GUARDRAILS §2.4,
+    AG-9). It asks a narrow question about ONE entry and answers ``False`` to every
+    doubt, because a false positive here does not degrade to a weaker constraint — it
+    corrupts the request. Build kwargs land in the provider's ``extra_options``, and both
+    wire clients copy that bag onto the request body (``llm/openai.py`` assigns
+    unconditionally, ``llm/anthropic.py`` ``setdefault``s). A provider that does not POP
+    ``output_type`` therefore hands a Python ``type`` to the JSON encoder and dies with an
+    opaque ``TypeError`` from the HTTP client — a call that works today would start
+    failing. So only a provider that ADVERTISED the capability is sent the key; the ollama
+    app pops it (``resolve_output_format``) and normalizes it into ollama's own ``format``.
+
+    ``JSON_SCHEMA`` ONLY. ``JSON_MODE`` is deliberately excluded, and the comparison below
+    names the grade rather than spelling it ``!= NONE`` so the code states that decision.
+    A ``JSON_MODE`` provider speaks OpenAI-wire ``response_format={"type":
+    "json_object"}`` — a DIFFERENT request field that no adapter derives from
+    ``output_type``, so the key would ride through unconsumed (the corruption above)
+    instead of being translated. It also cannot express ``output_type=list`` at all
+    (``json_object`` mode requires an object), so for half of this function's real inputs
+    the weaker grade is not weaker, it is wrong. Reaching ``JSON_MODE`` is genuine work —
+    its own ``response_format`` build kwarg plus an adapter that consumes it — not a
+    loosened comparison here.
+
+    Contrast ``workflows/grounding.py``, which asks ``!= NONE``: that answers a different
+    question — "does schema-constrained emission exist ANYWHERE in this install" — for
+    which ``JSON_MODE`` legitimately counts.
+
+    The comparison is ``==`` rather than ``is`` because :class:`StructuredOutput` is a
+    ``str`` enum: that accepts both the enum member and its own ``"json_schema"`` spelling
+    (an app declaring the grade as a bare string still gets its capability honoured) and
+    nothing else — no other grade or value compares equal, so the acceptance set widens
+    without admitting a false positive.
+
+    Everything unverifiable degrades to ``False``: an unqualified ref (a bare model id,
+    including the ``"gpt-oss:20b"`` shape whose colon is not a provider prefix — the
+    ``get_entry`` lookup rejects it exactly as the bridge does), the legacy
+    ``"Provider/model"`` slash spelling, an unregistered provider type, an unbootstrapped
+    registry, or ``""`` (the unbound-axis plain path, where the implicit fallback has not
+    picked a provider yet). In every one of those cases core sends no constraint and the
+    universal parse-with-targeted-retry net in ``_run`` owns the contract — byte-for-byte
+    today's behaviour.
+    """
+    try:
+        from personalclaw.llm.capabilities import StructuredOutput
+        from personalclaw.llm.registry import get_default_registry
+        from personalclaw.providers.use_cases import split_ref
+
+        parsed = split_ref(model_ref)
+        if not parsed:
+            return False
+        registry = get_default_registry()
+        # get_entry raises for a name that is not a registered entry, which is exactly
+        # how the bridge distinguishes a "Provider:model" ref from a bare id whose model
+        # name happens to contain a colon. Same rule, same outcome.
+        cap = registry.capability_of(registry.get_entry(parsed[0]).type)
+        grade = getattr(cap, "structured_output", StructuredOutput.NONE)
+        return grade == StructuredOutput.JSON_SCHEMA
+    except Exception:  # noqa: BLE001 — an unverifiable capability is NOT a capability
+        logger.debug(
+            "one_shot_completion: no native schema enforcement resolvable for %r", model_ref
+        )
+        return False
+
+
 async def one_shot_completion(
     prompt: str,
     *,
@@ -324,6 +390,19 @@ async def one_shot_completion(
     returned at every call site. Returns the raw text unchanged when ``output_type``
     is ``None`` (the response is still a ``str``; typed callers parse the returned
     text, e.g. via ``json.loads``).
+
+    ``output_type`` ALSO rides the bridge as a build kwarg (AG-9) — but only to an entry
+    whose provider advertised ``StructuredOutput.JSON_SCHEMA``, so a natively capable
+    provider CONSTRAINS generation instead of merely being asked nicely in prose. The
+    ollama app is the first consumer: it pops the key and normalizes ``dict``/``list``
+    into ollama's own ``format=<schema>``. The gate is per ENTRY, not per call, because a
+    chain can advance from a capable model to an incapable one mid-call; a provider that
+    never advertised the capability is sent NOTHING, because build kwargs reach the
+    request body and an unconsumed key there is a corrupt request, not a soft no-op.
+    ``JSON_MODE`` is deliberately excluded — see :func:`_enforces_json_schema_natively`.
+    The native constraint LAYERS with the parse-and-retry above rather than replacing it:
+    constrained decoding can still return a valid-but-empty document, so dropping the
+    parse would turn a caught failure into a silent one.
 
     ``model`` PINS resolution to one concrete model (a ``"Provider:model_id"`` ref,
     or a bare id), bypassing the use case's active-selection CHAIN — a pin is not a
@@ -374,10 +453,11 @@ async def one_shot_completion(
     # caller asked for rather than silently reverting to the provider default.
     _bridge_kw: dict = {} if temperature is None else {"temperature": float(temperature)}
 
-    async def _budget_kw(model_ref: str) -> dict:
-        """Build kwargs carrying the per-model output budget DERIVED for ``model_ref``.
+    async def _entry_kw(model_ref: str) -> dict:
+        """The build kwargs for the ONE entry ``model_ref`` names: budget + constraint.
 
-        The number comes from the local-model catalog's ``context_tokens`` /
+        ``max_tokens`` is the per-model output budget DERIVED for ``model_ref``. The
+        number comes from the local-model catalog's ``context_tokens`` /
         ``output_tokens`` (LMMV §2.2) via ``local_models.budgets``, which falls back to
         the shared hosted-model window table and, only when that too is silent, to the
         4096 the adapters used to hardcode. Riding it as a build kwarg means it reaches
@@ -388,14 +468,37 @@ async def one_shot_completion(
         Fail-soft: an unresolvable budget must not be the thing that stops a completion,
         so the call site degrades to "pass nothing" (the adapter default) rather than
         raising.
+
+        ``output_type`` rides here too (AG-9), and ONLY when this entry's provider
+        advertised ``StructuredOutput.JSON_SCHEMA`` — see
+        :func:`_enforces_json_schema_natively` for why an unadvertised provider must not
+        receive the key. PER ENTRY is the whole point of deciding here rather than once
+        up front: every resolution path (pin / chain advance / plain) funnels through this
+        function WITH the ref it is about to run, and the chain walk below can advance
+        from a capable entry to an incapable one mid-call. A decision made once would send
+        the constraint to a fallback provider that cannot honour it — precisely the
+        corrupt-request failure the capability gate exists to prevent.
+
+        The constraint is a REQUEST, never a promise, so it does not replace anything: the
+        parse-with-targeted-retry net in ``_run`` still checks every response. Constrained
+        decoding is measured in this repo to return valid-but-empty documents, so dropping
+        the parse because "the provider guarantees it" would convert a caught failure into
+        a silent one. Both layers stay.
+
+        ``output_type=None`` (the overwhelmingly common case) short-circuits before the
+        capability lookup, so the kwargs are byte-for-byte what they were and no registry
+        work happens on that path.
         """
+        kw = dict(_bridge_kw)
+        if output_type is not None and _enforces_json_schema_natively(model_ref):
+            kw["output_type"] = output_type
         try:
             from personalclaw.local_models.budgets import output_budget
 
-            return {**_bridge_kw, "max_tokens": await output_budget(model_ref)}
+            kw["max_tokens"] = await output_budget(model_ref)
         except Exception:  # noqa: BLE001 — a budget miss degrades, it never blocks
             logger.debug("one_shot_completion: budget derivation failed for %r", model_ref)
-            return dict(_bridge_kw)
+        return kw
 
     async def _run(provider) -> str:
         try:
@@ -429,7 +532,7 @@ async def one_shot_completion(
     if model:
         return await _run(
             resolve_provider_for_use_case(
-                resolved_uc, model_override=model, **(await _budget_kw(model))
+                resolved_uc, model_override=model, **(await _entry_kw(model))
             )
         )
 
@@ -450,7 +553,7 @@ async def one_shot_completion(
         for i, ref in enumerate(_chain):
             try:
                 entry_provider = resolve_provider_for_use_case(
-                    resolved_uc, model_override=ref, **(await _budget_kw(ref))
+                    resolved_uc, model_override=ref, **(await _entry_kw(ref))
                 )
             except Exception as exc:  # noqa: BLE001 — an unbuildable entry advances
                 last_exc = exc
@@ -482,7 +585,7 @@ async def one_shot_completion(
     # is one) rather than from nothing — an unbound axis falls back to the window table.
     _plain_ref = _chain[0] if _chain else ""
     try:
-        provider = resolve_provider_for_use_case(resolved_uc, **(await _budget_kw(_plain_ref)))
+        provider = resolve_provider_for_use_case(resolved_uc, **(await _entry_kw(_plain_ref)))
     except Exception:
         logger.debug(
             "one_shot_completion: use-case bridge resolve failed for %r", resolved_uc, exc_info=True

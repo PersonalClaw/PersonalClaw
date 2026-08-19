@@ -102,11 +102,17 @@ function UseCaseRow({ useCase, activeProviders, providers, onChanged }: {
                 : 'No search providers configured. Add one in Providers first.'}
             </div>
           ) : (
-            <div className="-m-1 flex flex-col gap-0.5 p-1" style={{ opacity: saving ? 0.6 : 1 }}>
+            // 🔴 One-of-N, and the bind was announced by COLOUR alone: the filled circle and the
+            //    tinted row are the only thing that said "this provider is bound". The group is named
+            //    with its use-case so the four sibling groups on this panel are distinguishable —
+            //    "General search provider" and "News search provider", not four identical lists.
+            <div role="group" aria-label={`${meta.label} provider`}
+              className="-m-1 flex flex-col gap-0.5 p-1" style={{ opacity: saving ? 0.6 : 1 }}>
               {eligible.map((p) => {
                 const on = activeProviders.includes(p.name)
                 return (
                   <button key={p.name} type="button" onClick={() => toggle(p.name)} disabled={saving}
+                    aria-pressed={on}
                     className="flex items-center gap-2.5 rounded-md px-3 py-2 text-left transition-colors hover:bg-surface-high"
                     style={on ? { background: 'color-mix(in srgb, var(--color-primary) 12%, transparent)' } : undefined}>
                     <span className="grid size-4 shrink-0 place-items-center rounded-full border"

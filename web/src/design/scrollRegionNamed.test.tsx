@@ -240,4 +240,44 @@ describe('the scrollable <pre> family is derived, not hand-listed', () => {
     const fixed = [...PENDING].filter((rel) => !xScroll.includes(rel))
     expect(fixed, `these are handled now — prune them from PENDING:\n${fixed.join('\n')}`).toEqual([])
   })
+
+  // ── 2026-08-19: "latent" expires the moment real data arrives ───────────────────────────────────
+  //
+  // The `yCapped` bucket above is collected and then never asserted, on the reasoning that a
+  // `whitespace-pre-wrap` box scrolls "only when a `max-h-*` cap is exceeded — latent, and axe flags it
+  // only once it actually does". True, and it is exactly where `#/settings/archive`'s transcript sat.
+  //
+  // With three archived sessions seeded into a disposable dev home and one row expanded, it is not
+  // latent at all — measured on the live page: **394px of content in a 320px box**, `tabIndex` −1, not
+  // in the tab order (Tab traversal, not `el.focus()`, which succeeds on the very defect under test),
+  // and axe fires `scrollable-region-focusable` [**serious**].
+  //
+  // 🔑 WHY EVERY EARLIER SWEEP MISSED IT — this is the reusable part. The rail's own note says
+  // "Sweeping all 49 surfaces afterwards: 0 unnamed scrollable tab stops remain", and that was honest:
+  // the sweep visited each surface in its DEFAULT state. This region does not exist there. It needs two
+  // things first — archives on disk, and a row expanded — so no default-state pass over any number of
+  // surfaces can see it. **A region that only exists in a disclosed state is invisible to a sweep of
+  // undisclosed ones**, and the fix is to enforce measured members here rather than to sweep harder.
+  const OVERFLOWS_WITH_REAL_DATA: [string, string][] = [
+    ['pages/settings/ArchivePanel.tsx', 'Session transcript'],
+  ]
+
+  it('a capped box MEASURED to overflow is named — it is no longer latent', () => {
+    const { named, yCapped } = census()
+    for (const [rel, label] of OVERFLOWS_WITH_REAL_DATA) {
+      expect(named, `${rel} overflows with real data, so it needs the trio`).toContain(rel)
+      expect(yCapped, `${rel} must not slip back into the un-asserted latent bucket`).not.toContain(rel)
+      expect(readFileSync(join(SRC, rel), 'utf8'), `${rel}'s region name`)
+        .toMatch(new RegExp(`aria-label="${label}"`))
+      expect(label.length, 'a name must stay a name, not become the content').toBeLessThan(40)
+    }
+  })
+
+  it('the latent bucket is still being collected — the check above is not measuring an empty set', () => {
+    // If `yCapped` ever reads 0 the rule above would pass by accident. It is the population that makes
+    // the assertion mean something, so assert the population exists.
+    const { yCapped } = census()
+    expect(yCapped.length, 'capped whitespace-pre-wrap boxes still exist and are still unasserted')
+      .toBeGreaterThan(0)
+  })
 })

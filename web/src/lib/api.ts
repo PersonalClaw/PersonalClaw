@@ -508,6 +508,32 @@ export interface CompanionDiscovery {
   addresses: string[]
   txt: Record<string, string>
 }
+/** One paired device with a live session. Derived from `sessions.json`,
+ *  so a row disappears the moment its session is revoked or expires, and it NEVER carries the
+ *  nonce — the registry is read aloud, the nonce is the credential.
+ *
+ *  `last_seen` is 0 for a device that has never made an authorized request. That is a distinct
+ *  state from `minted_at` and must render as "never": the backend deliberately does not
+ *  backfill it from the pairing time, because a device that paired and never came back would
+ *  otherwise read as freshly active. See `DeviceInfo` in `dashboard/session_store.py`. */
+export interface DeviceRec {
+  id: string
+  name: string
+  kind: 'browser' | 'mobile' | 'desktop' | 'cli' | 'unknown'
+  minted_at: number
+  last_seen: number
+  issuer: string
+  expires_at: number
+}
+/** `pair/start`'s reply. `code` arrives pre-grouped (`XXXX-XXXX`) for reading out loud, and
+ *  `pairing_url` already contains it, so the URL is actionable on its own — which is what makes
+ *  it the QR payload as well as the copyable link. `expires_in` is SECONDS. */
+export interface DevicePairStart {
+  code: string
+  pairing_url: string
+  expires_at: number
+  expires_in: number
+}
 export interface AppUiPage { route: string; label: string; icon: string }
 export interface AppSummary {
   name: string; displayName: string; version: string; description: string
@@ -1316,8 +1342,20 @@ export interface PromptSnippet {
   // detail-only: the prompts + other snippets that include this one ({{> name}}).
   used_by?: { prompts: string[]; snippets: string[] }
 }
-export interface PromptBinding { use_case: string; ref: string; effective_ref: string }
-export interface PromptBindings { use_cases: string[]; default_ref: string; bindings: PromptBinding[]; available: PromptItem[] }
+// `label`/`hint`/`category` come from the use-case vocabulary itself
+// (`providers/prompt_use_cases.py`), not from a table in the dashboard: the
+// vocabulary is open — an app may contribute its own bindable use case — so any
+// copy kept here would describe only the contexts that existed when it was written.
+export interface PromptBinding {
+  use_case: string; ref: string; effective_ref: string
+  label: string; hint: string; category: string
+}
+/** One Settings-UI grouping, in the catalog's declared display order. */
+export interface PromptCategoryGroup { key: string; label: string; hint: string }
+export interface PromptBindings {
+  use_cases: string[]; default_ref: string; bindings: PromptBinding[]
+  categories: PromptCategoryGroup[]; available: PromptItem[]
+}
 // Live authoring: render arbitrary (unsaved) template content through the real engine.
 export interface PromptPreview { ok: boolean; rendered?: string; error?: string; detected_variables: PromptVariable[]; includes: string[] }
 // The template-language reference the editor renders as a click-to-insert cheatsheet.
@@ -1947,6 +1985,11 @@ export interface SelEvent {
 // bounded tail scan filled up, so older records may exist beyond the window.
 export interface AuditPage {
   events: SelEvent[]; count: number; next_cursor: string; scanned: number; truncated: boolean
+  // The outcome filters, shipped by the module that owns the log's vocabulary
+  // (`sel.AUDIT_OUTCOME_FAMILIES`). `values` are matched ANY-OF server-side, so a family is
+  // one query and the pill cannot disagree with the pagination cursor. The dashboard used to
+  // keep its own two-word list here and missed most of what the writers emit.
+  outcome_families: { key: string; label: string; values: string[] }[]
 }
 // Server-side filters for the audit read. Empty strings are omitted by the caller —
 // an unknown key is REFUSED by the endpoint, never ignored.
@@ -2861,6 +2904,17 @@ export interface PlanSession {
   // a failed state + explicit Retry instead of silently re-spawning a fresh pass.
   design_error?: string
 }
+/** A CHAT's binding to that same walkthrough. `awaiting_step_id` is the server's
+ *  own derivation of "the review gate is open" — the client never recomputes it from
+ *  step statuses, so the gate the UI shows and the gate the tool guard enforces agree.
+ *  `binding` carries the chat-side attachment record (the task mode to restore, and
+ *  whether a mid-turn activation parked a run). */
+export interface ChatPlanWire {
+  session: PlanSession | null
+  binding: { resume_task_mode?: string; parked?: boolean; parked_messages?: number }
+  awaiting_step_id: string
+  task_mode: TaskMode
+}
 
 export type ApprovalMode = 'normal' | 'trust' | 'trust_reads' | 'yolo'
 // Task mode — orthogonal to approval: gates WHICH tools run + how the agent frames
@@ -3221,6 +3275,17 @@ export const api = {
   // design. `detail` is the sentence to show — the backend owns the wording so this
   // surface never invents a second one for a state it does not own.
   companionDiscovery: () => get<CompanionDiscovery>('/api/companion/discovery'),
+  // ── The device registry ──
+  // Settings → Devices is the ONLY device list in the product; other surfaces link here
+  // rather than growing a second one. `devicePairStart` mints a short-lived code; the device
+  // itself redeems it against `pair/complete`, which is deliberately reachable WITHOUT a
+  // session (a device with no session is the whole point), so this dashboard never calls it.
+  devices: () => get<{ devices: DeviceRec[] }>('/api/devices').then((d) => d.devices),
+  devicePairStart: (label?: string) =>
+    post<DevicePairStart>('/api/devices/pair/start', label ? { label } : {}),
+  // Drops the in-memory nonce AND the durable row, so a revoke cannot un-revoke on reboot.
+  deviceRevoke: (id: string) =>
+    post<{ ok: boolean; revoked: number }>(`/api/devices/${encodeURIComponent(id)}/revoke`, {}),
 
   // ── Packs ──
   // The installed-pack ledger (each pack's components, connector resolutions +
@@ -3774,6 +3839,34 @@ export const api = {
     post(`/api/chat/sessions/${session}/reasoning-effort`, { reasoning_effort }),
   setApprovalMode: (mode: ApprovalMode, session = '') => post('/api/chat/mode', { mode, session }),
   setTaskMode: (mode: TaskMode, session = '') => post('/api/chat/task-mode', { mode, session }),
+
+  // Chat plan mode — a chat bound to the SAME stepwise planning walkthrough the
+  // loop/code planners use (`PlanSession`/`PlanStep` above, not a second shape). Manual
+  // only: `chatPlanActivate` is the sole way a chat acquires one, so a quick task never
+  // grows a review gate. While a step awaits review the session sits in the `plan` task
+  // mode and the backend's tool gate — not a prompt — is what refuses to execute.
+  chatPlanSession: (session: string) =>
+    get<ChatPlanWire>(`/api/chat/sessions/${encodeURIComponent(session)}/plan-session`),
+  /** Open (or, mid-conversation, extend) the walkthrough. `parked: true` means a turn
+   *  was in flight and has been asked to stop — the transcript is left intact. */
+  chatPlanActivate: (session: string) =>
+    post<{ ok: boolean; session: PlanSession; parked: boolean }>(
+      `/api/chat/sessions/${encodeURIComponent(session)}/plan/activate`,
+    ),
+  chatPlanEdit: (session: string, stepId: string, markdown: string) =>
+    post<{ ok: boolean; session: PlanSession }>(
+      `/api/chat/sessions/${encodeURIComponent(session)}/plan/edit`, { step_id: stepId, markdown }),
+  chatPlanComment: (session: string, stepId: string, text: string) =>
+    post<{ ok: boolean; session: PlanSession }>(
+      `/api/chat/sessions/${encodeURIComponent(session)}/plan/comment`, { step_id: stepId, text }),
+  /** Approve a step. When it completes the walkthrough the reply carries the restored
+   *  task mode, and `resumed` says whether a parked run was continued server-side. */
+  chatPlanApprove: (session: string, stepId: string) =>
+    post<{ ok: boolean; session: PlanSession; complete: boolean; resumed: boolean; task_mode: TaskMode }>(
+      `/api/chat/sessions/${encodeURIComponent(session)}/plan/approve`, { step_id: stepId }),
+  chatPlanCancel: (session: string) =>
+    post<{ ok: boolean; task_mode: TaskMode }>(
+      `/api/chat/sessions/${encodeURIComponent(session)}/plan/cancel`),
 
   // composer tools: prompt optimizer + speech-to-text transcription.
   optimizePrompt: (prompt: string, context = '') =>

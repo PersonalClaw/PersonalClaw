@@ -7,7 +7,7 @@ import { api, type SettingsProvider, type AgentRuntime, type ChannelRuntime } fr
 import { useCachedData, invalidateCache } from '../../lib/useCachedData'
 import { requestRunInTerminal } from '../terminal/terminalBridge'
 import { useQueryParam, type RouteProps } from '../../app/useQueryState'
-import { PanelHeader } from './settingsUI'
+import { Section, PanelHeader } from './settingsUI'
 import { Skeleton, LoadingStatus } from '../../ui/ListScaffold'
 import { ProviderCard } from './ProviderCard'
 import { MultiInstanceCard } from './MultiInstanceCard'
@@ -220,16 +220,23 @@ function ProvidersSkeleton() {
 function EntitySection({ icon: Icon, label, hint, count, children }: {
   icon: LucideIcon; label: string; hint: string; count: number; children: React.ReactNode
 }) {
+  // 🔴 This hand-rolled what `Section` provides, and two rails caught it in sequence. First
+  // `#/settings/providers` reported `h1 → h3` (axe heading-order, both themes and phone): the row
+  // rendered an `h3` under `PanelHeader`'s `h1`. Changing the tag alone then tripped
+  // `sectionHeadingScale`, whose recorded standard is that settings panels do NOT write their own
+  // section titles — its detector had simply never matched this one, because it keys on `h2` and this
+  // outlier used `h3`. A level fix made the hand-roll visible.
+  //
+  // 🔑 So this adopts the primitive, which is what that rail's own conclusion prescribes: "a primitive
+  // that the majority uses and the outliers cannot is missing a slot, not being ignored" — and `Section`
+  // already grew the three slots this header needs (`icon`, a ReactNode `hint`, and `right` for the
+  // count). The count moves from beside the label to the row's right edge and the glyph takes the
+  // primitive's `text-primary` tint; that is what adopting it looks like, and the diff shows it.
   return (
-    <section className="mb-2xl">
-      <div className="mb-1 flex items-center gap-2">
-        <Icon size={16} className="text-on-surface-low" />
-        <h3 className="text-on-surface text-[0.9375rem]" style={fvs(600)}>{label}</h3>
-        <span className="rounded-pill bg-surface-high px-1.5 py-0.5 text-on-surface-low text-[0.75rem] tabular-nums">{count}</span>
-      </div>
-      {hint && <p className="mb-m text-on-surface-low text-[0.8125rem]">{hint}</p>}
+    <Section iconTone="muted" icon={Icon} hint={hint}
+      title={<>{label}<span className="ml-2 rounded-pill bg-surface-high px-1.5 py-0.5 text-on-surface-low text-[0.75rem] tabular-nums">{count}</span></>}>
       <div className="flex flex-col gap-2">{children}</div>
-    </section>
+    </Section>
   )
 }
 

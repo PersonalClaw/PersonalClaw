@@ -141,6 +141,16 @@ export function DiagnosticsPanel() {
         }
         right={
           <div className="flex items-center gap-s">
+            {/* 🔴 THE VISIBLE COUNTERPART OF THE NAME THIS GROUP ALREADY HAS. Measured on
+                `#/settings/diagnostics`: both pill rows on this panel render the identical visible
+                string "DEBUG INFO WARNING ERROR", while one WRITES a persistent backend setting and
+                this one only filters what is on screen. Their accessible names already say which is
+                which — "Backend log level: DEBUG" vs "Show DEBUG and above", per the note on the
+                other group — so the only reader who could tell them apart was the one using a screen
+                reader. This is the sighted half of that same fix.
+                `sm:` only: on phone the toolbar is tight and the two groups sit far apart under
+                their own headings, so the label buys less there than the width costs. */}
+            <span className="hidden shrink-0 text-on-surface-low text-[0.75rem] sm:inline">Show</span>
             {/* min-level floor for the VIEW (distinct from the backend level) */}
             <div className="inline-flex rounded-pill bg-surface-container p-1">
               {LEVELS.map((l) => {

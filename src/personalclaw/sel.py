@@ -63,6 +63,60 @@ _MAX_ENTRIES = 50000
 #: audit surface can least afford.
 AUDIT_FILTER_FIELDS = ("caller_identity", "operation", "outcome", "downstream_service")
 
+#: The audit surface's outcome filters, defined HERE because this module owns the log the
+#: words are written into. The dashboard used to carry its own two-entry list — one literal
+#: substring each, `denied` and `failed` — against a vocabulary of fourteen. Measured across
+#: the writers in ``src/personalclaw``:
+#:
+#:     denied 163 · rejected 24 · blocked 5 · refused 1        the "Denied" pill saw 163 of 193
+#:     failure 23 · error 21 · failed 4                        the "Failed" pill saw 4 of 48
+#:
+#: and confirmed live: a real ``DELETE /api/terminal/sessions/…`` recorded ``outcome=error``
+#: was invisible to the "Failed" filter (``outcome=failed`` → 0 rows, ``outcome=error`` → 1).
+#: On an audit surface a filter that quietly omits matching records is the worst shape there
+#: is — the operator concludes nothing happened. A view over a vocabulary has to be defined
+#: WITH the vocabulary, or it describes only the words that existed when someone typed it.
+#:
+#: ``values`` are matched any-of (see :func:`_audit_matches`), so a family stays one
+#: server-side query and pagination keeps agreeing with the pill.
+#: Every value here is matched as a SUBSTRING, which is what makes the prefixed variants fall
+#: in for free: ``denied_running``/``denied_mismatch``/``denied_invalid`` under ``denied``,
+#: ``rejected_spawn``/``rejected_invalid_cwd`` under ``rejected``, the five ``refused_*`` under
+#: ``refused``, ``hook_blocked`` under ``blocked``, ``hook_error`` under ``error``. And every
+#: value must be a word a writer actually emits — a filter offering a term nobody writes is the
+#: same silent-zero defect from the other direction, so ``test_audit_outcome_families.py``
+#: checks each one against the tree's real vocabulary.
+AUDIT_OUTCOME_FAMILIES: tuple[dict[str, object], ...] = (
+    {
+        "key": "denied",
+        "label": "Denied",
+        "values": ("denied", "rejected", "blocked", "refused"),
+    },
+    {
+        # ``not_found`` is included deliberately: the operation did not do what was asked, and
+        # an operator scanning for what went wrong wants it. ``tampered`` is NOT — an integrity
+        # break is not an operation failure and deserves its own surface, not a bucket.
+        "key": "failed",
+        "label": "Failed",
+        "values": ("failure", "failed", "error", "not_found"),
+    },
+)
+
+#: Outcomes that mean the thing succeeded, and neutral/informational ones. Not filterable
+#: families today — they exist so the coverage rail below can tell "this word is accounted
+#: for" from "nobody classified this word", which is the state that produced the bug above.
+AUDIT_OUTCOME_SUCCESS = (
+    "success",
+    "ok",
+    "allowed",
+    "approved",
+    "auto_approved",
+    "completed",
+    "granted",
+    "enabled",
+    "disabled",
+)
+
 #: Structural fields :func:`redact_event` leaves byte-identical. Each is machine-generated
 #: and cannot carry a user/tool payload, so there is nothing in them to redact — while
 #: rewriting them would be actively harmful: mangling ``entry_hash``/``prev_hash`` makes an
@@ -129,9 +183,19 @@ def _audit_matches(data: dict, filters: dict[str, str], since: str, until: str) 
     Field filters are case-insensitive substring matches; the time bounds are
     lexicographic over the ISO-8601 UTC timestamp, which is ordering-correct because
     every writer formats it identically (``datetime.now(tz=utc).isoformat()``).
+
+    A comma in a needle means ANY-OF: ``outcome=failure,error,failed`` matches a record
+    whose outcome contains any one of them. That is what lets an outcome FAMILY
+    (:data:`AUDIT_OUTCOME_FAMILIES`) stay a single server-side query, so the filter pill and
+    the pagination cursor cannot disagree — the reason these filters became server-side in
+    the first place. AND still holds ACROSS fields; the OR is only within one field.
     """
     for field_name, needle in filters.items():
-        if needle.lower() not in str(data.get(field_name, "")).lower():
+        haystack = str(data.get(field_name, "")).lower()
+        alternatives = [part.strip().lower() for part in needle.split(",") if part.strip()]
+        if not alternatives:
+            continue
+        if not any(alt in haystack for alt in alternatives):
             return False
     ts = str(data.get("timestamp", ""))
     if since and ts < since:

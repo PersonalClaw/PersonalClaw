@@ -8,10 +8,9 @@
       ]
     },
     "src/personalclaw/llm/capabilities.py": {
-      "inert": 2,
+      "inert": 1,
       "surfaces": [
-        "enum:StructuredOutput.JSON_MODE",
-        "enum:StructuredOutput.JSON_SCHEMA"
+        "enum:StructuredOutput.JSON_MODE"
       ]
     },
     "src/personalclaw/llm/prompt_cache.py": {
@@ -321,10 +320,10 @@
     "by_kind": {
       "config": 0,
       "editable_config": 0,
-      "enum": 10,
+      "enum": 9,
       "sdk_export": 125,
       "trigger_kind": 0
     },
-    "inert": 135
+    "inert": 134
   }
 }

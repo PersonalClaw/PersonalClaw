@@ -117,11 +117,38 @@ describe('the settings health and safety cards say when they could not check', (
     }
   })
 
+  /** One `SETTINGS_WIDGETS` entry, brace-matched from its `id:` line.
+   *
+   *  🪤 This used to be a FILE-WIDE count pinned at 2, which made the rail measure the wrong
+   *  thing: it passed only while exactly two cards in the whole file used this copy. CA-2's
+   *  Devices card adopted the same good form — a failed read must not read as "no devices" on a
+   *  security surface — and the count went to 3, reporting a regression where there was none,
+   *  while still saying nothing about whether THESE two cards kept the pattern. Scoped per card
+   *  it is strictly stronger: an unrelated adopter is invisible, and either named card dropping
+   *  the state fails by name. */
+  const cardBlock = (c: string, id: string) => {
+    const at = c.indexOf(`id: '${id}', group:`)
+    expect(at, `the ${id} card must exist`).toBeGreaterThan(-1)
+    const open = c.lastIndexOf('{', at)
+    let i = open
+    let depth = 0
+    do {
+      if (c[i] === '{') depth++
+      else if (c[i] === '}') depth--
+      i++
+    } while (i < c.length && depth > 0)
+    return c.slice(open, i)
+  }
+
   it('both cards render a "could not check" state and keep their loading flag honest', () => {
     const c = code()
     // Two cards, one form. `loading` must not stay true forever on a rejection either.
-    expect((c.match(/Could ?n['’]t check/g) ?? []).length, 'one per card').toBe(2)
-    expect((c.match(/=== undefined && !\w?Err/g) ?? []).length, 'loading excludes the failed case').toBe(2)
+    for (const id of ['doctor', 'guardrails']) {
+      const block = cardBlock(c, id)
+      expect(block, `the ${id} card must offer a could-not-check state`).toMatch(/Could ?n['’]t check/)
+      expect(block, `the ${id} card's loading must exclude the failed case`)
+        .toMatch(/=== undefined && !\w*Err/)
+    }
   })
 
   it('the savings tile keeps its catch — a missing number really is "no data"', () => {

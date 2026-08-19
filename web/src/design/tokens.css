@@ -60,14 +60,30 @@
      single value could never satisfy both. */
   --color-on-danger: #3f1008;
 
-  /* Ink for a label ON A TRANSLUCENT primary TINT (Button's `tonal` variant, 22 sites).
-     `text-primary` on `bg-primary/15` measured 4.46:1 in LIGHT — a 0.04 miss of the 4.5 AA floor,
-     because the tint pulls the ground toward the same hue as the ink. Deliberately the SAME value as
-     `--color-primary` here: dark measures ~6.9:1 already, and changing the default theme's label
-     colour to fix a light-mode miss would be collateral. Light overrides it one step deeper. Same
-     shape as `--color-on-danger` above — a dedicated ink for one ground, reusing palette values
-     rather than inventing a shade. */
-  --color-on-primary-tint: #ff6b5b;
+  /* Ink for a label ON A TRANSLUCENT primary TINT (Button's `tonal` variant, 22 sites, painted
+     `bg-primary/15` at rest and `hover:bg-primary/25` on hover).
+
+     🔴 THIS TOKEN CANNOT BE A FIXED LITERAL, WHICH IS HOW IT SHIPPED. It was `#ff6b5b` — the
+     DEFAULT scheme's `--color-primary`. But the ground under it is the ACTIVE scheme's primary
+     composited at 15%/25% over the surface, and picking a scheme retints that ground without
+     retinting this ink. So the pair's contrast depended on a scheme the ink knew nothing about.
+     Composited across the curated set — 12 schemes × 2 modes × 3 grounds (`--color-surface`,
+     `-low`, `-container`) × {rest, hover} = 144 combos — the literal missed AA in **58**, worst
+     **3.07:1** (Mono / dark / surface-container / hover). Eight of those misses are the RESTING
+     state and are two clicks away: pick Amber or Mono, dark mode, look at any tonal button.
+
+     THE FIX IS TO MAKE THE INK A SCHEME PROPERTY. Dark takes the scheme's own
+     `--color-primary-emphasis` — the shade the design system ALREADY ships for accent text that
+     needs more contrast than `--color-primary` can carry. This is not a new rule: `ghost-accent`
+     in ui/Button.tsx moved to `text-primary-emphasis` for exactly this reason (and counted its
+     hover ground while doing it), and schemeContrast.test.ts enforces the same shade on the
+     canvas / surface-high / surface-low grounds. The tonal tint is one more such ground.
+     Referencing the token (rather than precomputing 24 per-scheme values) also means the ink
+     follows a user's hand-picked custom primary, which no baked value could.
+     Measured after the fix: 0 of 144 below AA, worst 5.40 dark / 9.62 light.
+     Light takes a different token for a measured reason — see its own note in the `.light` block.
+     Rail: schemeContrast.test.ts §"tonal tint". */
+  --color-on-primary-tint: var(--color-primary-emphasis);
 
   /* ── brand gradient stops (coral-weighted spectrum) ── */
   --grad-1: #c85a48;
@@ -188,10 +204,31 @@
   --color-primary-container: #ffe0d6;
   --color-on-primary-container: #3f1008;
   --color-primary-emphasis: #a33922;
-  /* One step deeper than this theme's `--color-primary` (#c8452e), and the same value
-     `--color-primary-emphasis` already carries, so the tonal chip's label clears AA on a
-     primary-tinted ground without a new shade entering the palette. */
-  --color-on-primary-tint: #a33922;
+  /* Light needs a MUCH deeper ink than dark, and unlike dark it does not need to track the scheme.
+     Both halves of that are measured.
+
+     A light tint composites toward WHITE, so the ground stays bright — a 25% tint over
+     `--color-surface-low` still lands near luminance .57 — and no accent-weight shade clears it:
+     this theme's own `--color-primary-emphasis` misses AA in **33 of 72** light combos (worst
+     3.49:1, Rose / surface-low / hover), and the coral literal that used to sit here missed 14
+     (worst 3.92, Mono). Dark has no such problem because its tint composites toward the dark
+     surface, moving the ground AWAY from a light ink instead of toward it.
+
+     So light routes onto `--color-on-primary-container` — the ink the design system ALREADY paints
+     on a pale accent tint (`--color-primary-container`, e.g. #ffe0d6), which is the identical
+     visual situation, and whose pairing schemeContrast.test.ts already guards in all 12 schemes.
+     At that depth every scheme's light tint is far away: worst **9.62:1**, more than twice the
+     floor. THAT MARGIN is what licenses a single scheme-independent value here where dark needed a
+     scheme-tracking one — and the rail asserts the margin, not just AA, so nobody can lighten this
+     back toward the accent without being told to make it scheme-tracking first.
+
+     🪤 NOT `color-mix()`. A `color-mix(in srgb, var(--color-primary-emphasis) 78%, black)` here
+     measures beautifully (worst 5.01) and BUILDS WRONG. Lightning CSS downlevels a color-mix in a
+     custom property into a static fallback plus an `@supports` block, and it resolves the `var()`
+     against the FIRST declaration it saw — the dark `@theme` one — so the fallback came out
+     **#c77869**: a pale salmon, computed from dark's emphasis, applied to the light theme. Verified
+     in `dist/assets/*.css`. A plain `var()` reference emits verbatim; a color-mix does not. */
+  --color-on-primary-tint: var(--color-on-primary-container);
   /* semantic status hues, AA-dark for light surfaces (see tokenRegistry.ts) */
   --color-ok: #076e37;
   --color-warn: #954c19;

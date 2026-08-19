@@ -466,7 +466,14 @@ function VocabularySection({ scrollTo }: { scrollTo: boolean }) {
               </div>
             )}
 
-            <h4 className="mt-6 mb-1 text-on-surface text-[0.8125rem]" style={fvs(600)}>Learned corrections</h4>
+            {/* 🔴 `h3`, not `h4`. This sits inside `<Section title="Vocabulary & corrections">`, which
+                renders an `h2` under the panel's `h1`, so a level-4 heading skipped level 3. Measured in
+                the live DOM: `H1 > H2 > H2 > H2 > H2 > H4`. The size comes from the class, so this is
+                pixel-identical — the same rule `settingsUI`'s `Section` states for itself.
+                🪤 `ux-audit` did NOT report this one, and providers' skip on the same run: it evaluates
+                after the panel's skeleton clears but BEFORE this nested, separately-fetched block
+                renders, so the h4 is not in the DOM it measures. A static rail catches it instead. */}
+            <h3 className="mt-6 mb-1 text-on-surface text-[0.8125rem]" style={fvs(600)}>Learned corrections</h3>
             <p className="mb-2 text-on-surface-low text-[0.75rem]">Fixes captured from your transcript edits. Toggle “always” to auto-apply next time.</p>
             {data.corrections.length === 0 ? (
               <div className="rounded-lg border border-dashed border-outline-variant/50 bg-surface-container px-4 py-6 text-center text-on-surface-low text-[0.8125rem]">

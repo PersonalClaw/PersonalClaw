@@ -284,6 +284,32 @@ function InstalledPacks({ packs }: { packs: InstalledPackRec[] }) {
   )
 }
 
+/** The pack row's connector warning, in words.
+ *
+ *  🔴 IT RENDERED THE MACHINE CODE. `packs/connectors.py` is explicit about what these strings are:
+ *  "the machine-readable degraded-completion marker for a skipped connector … a stable code, NEVER
+ *  PROSE, so a UI can branch on it". The row branched on it by printing it — measured on
+ *  `#/settings/packs` with `health-os` installed, the hint read
+ *  **"Unavailable: connector_missing:health-records"**.
+ *
+ *  Two things wrong, not one. The code leaked, and "Unavailable" overstates it: the pack installed
+ *  fine and all eight of its components are on the machine — one connector was skipped, which the
+ *  backend itself calls *degraded* completion. `MISSING_PREFIX` (`connector_missing:`) is the only
+ *  marker shape there is, so this parse is bounded; an unrecognised marker is still SHOWN verbatim
+ *  rather than swallowed, because a code nobody planned for is better read than hidden.
+ *
+ *  Exported for test — the branches are the finding. */
+export function connectorWarning(markers: string[]): string | undefined {
+  if (!markers.length) return undefined
+  const PREFIX = 'connector_missing:'
+  const named = markers.filter((m) => m.startsWith(PREFIX)).map((m) => m.slice(PREFIX.length)).filter(Boolean)
+  const other = markers.filter((m) => !m.startsWith(PREFIX))
+  const parts: string[] = []
+  if (named.length) parts.push(`Needs ${named.length === 1 ? 'a connector' : 'connectors'}: ${named.join(', ')}`)
+  if (other.length) parts.push(other.join(', '))
+  return parts.join(' · ')
+}
+
 /** One resolved connector, as the ledger recorded it.
  *
  *  `mode` is `configure` | `substitute` | `skip`, and each mode means something different to a
@@ -367,7 +393,7 @@ export function PackRow({ pack }: { pack: InstalledPackRec }) {
   return (
     <div className="rounded-lg bg-surface-container px-4 py-3">
       <Row label={`${pack.name} ${pack.version}`.trim()}
-        hint={pack.connector_markers.length > 0 ? `Unavailable: ${pack.connector_markers.join(', ')}` : undefined}>
+        hint={connectorWarning(pack.connector_markers)}>
         <div className="flex items-center gap-2">
           {pack.setup_pending && (
             <Button variant="primary" size="sm" disabled={busy} onClick={finishSetup}>Finish setup</Button>

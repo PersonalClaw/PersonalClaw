@@ -66,8 +66,22 @@ def core_mcp_servers(*, session_key: str | None = None) -> list[dict[str, Any]]:
         return []
 
     from personalclaw.config import config_dir
+    from personalclaw.config.loader import AppConfig
 
     env: list[dict[str, str]] = [{"name": "PERSONALCLAW_HOME", "value": str(config_dir())}]
+    # The gateway's PORT, declared rather than assumed. ``mcp_core`` builds its API
+    # base from ``dashboard.url`` and falls back to 10000, so a gateway started with
+    # ``--port`` (or ``--port auto``, which ``--test-mode`` uses) spawned an MCP
+    # server that posted to a port nobody was listening on: every HTTP-bridged core
+    # tool answered with a raw ``<urlopen error [Errno 61] Connection refused>`` while
+    # the in-process tools beside it worked. Measured on a kiro ACP session (`K58`).
+    # ``parse_dashboard_url`` already honours ``PERSONALCLAW_PORT`` on both sides, and
+    # the gateway exports the bound port into its own environment, so reading it here
+    # yields the live port even when the config carries no URL at all.
+    from personalclaw.dashboard.origin import parse_dashboard_url
+
+    _, _port = parse_dashboard_url(AppConfig.load().dashboard.url)
+    env.append({"name": "PERSONALCLAW_PORT", "value": str(_port)})
     if session_key:
         env.append({"name": "PERSONALCLAW_SESSION_KEY", "value": str(session_key)})
 

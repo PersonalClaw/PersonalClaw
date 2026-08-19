@@ -5,7 +5,7 @@ import type { LucideIcon } from 'lucide-react'
 import { spring, physics } from '../../design/motion'
 import { fvs } from '../../design/fontWeight'
 import { Toggle } from '../../ui/Toggle'
-import { FieldLabelProvider, NumberField } from '../../ui/forms'
+import { FieldHintProvider, FieldLabelProvider, NumberField } from '../../ui/forms'
 
 /** Shared settings-subpage primitives for consistent layout across panels. */
 
@@ -28,13 +28,23 @@ export function PanelHeader({ title, hint }: { title: string; hint?: string }) {
   )
 }
 
-export function Section({ title, hint, icon: Icon, right, children }: {
-  title?: string
+export function Section({ title, hint, icon: Icon, iconTone = 'primary', right, children }: {
+  /** ReactNode, not string: a count badge belongs INSIDE the heading, where it reads as part of the
+   *  section's name rather than as a control parked at the far edge. `ui/PageTitle` already sanctions
+   *  exactly that for the page h1 ("lets the title own trailing chrome"). A plain string is still a
+   *  ReactNode, so every existing caller is untouched. */
+  title?: ReactNode
   /** ReactNode, not string: `DiagnosticsPanel`'s "Live logs" hint carries a live connection dot and
    *  a count, which is why that panel hand-rolled its heading rather than adopt this. */
   hint?: ReactNode
   /** Leading glyph inside the heading — `DesignPanel`'s three control sections each have one. */
   icon?: LucideIcon
+  /** Tone for that glyph. `primary` is right where the icon marks a live, primary thing (Design's
+   *  three control sections). It is WRONG for a decorative category glyph: coral in this app means
+   *  "active / primary", and `ProvidersPanel` has NINE entity glyphs down one page — rendering them
+   *  coral would make the accent decorative, which the design system forbids. Default keeps every
+   *  existing adopter byte-identical. */
+  iconTone?: 'primary' | 'muted'
   /** Trailing slot on the title row (a mode switcher, a log toolbar). Keeps a bespoke header row
    *  from being the reason a panel opts out of the primitive. */
   right?: ReactNode
@@ -51,7 +61,7 @@ export function Section({ title, hint, icon: Icon, right, children }: {
   // 0%. A primitive gaining an option must be inert for everyone who does not pass it.
   const heading = title && (
     <h2 className={`mb-s text-on-surface text-[0.9375rem]${Icon ? ' flex items-center gap-s' : ''}`} style={fvs(600)}>
-      {Icon && <Icon size={16} className="shrink-0 text-primary" />}
+      {Icon && <Icon size={16} className={`shrink-0 ${iconTone === 'muted' ? 'text-on-surface-low' : 'text-primary'}`} />}
       {title}
     </h2>
   )
@@ -71,14 +81,21 @@ export function Section({ title, hint, icon: Icon, right, children }: {
 
 /** A labeled row — label/description on the left, control on the right. */
 export function Row({ label, hint, children }: { label: string; hint?: string; children: ReactNode }) {
+  const hintId = useId()
+  // 🪤 A `Row` deliberately does NOT publish a label id — its control names itself (69 hinted rows, and
+  // ux-690 recorded the divided-row layout as a distinction, not drift). The hint is independent of
+  // that: a control with its own `aria-label` still needs the sentence beside it to be its description,
+  // so this provides the hint id without claiming to name anything.
   return (
-    <div className="flex items-center justify-between gap-l border-b border-outline-variant/30 py-3 last:border-0">
-      <div className="min-w-0">
-        <div className="text-on-surface text-[0.8125rem]">{label}</div>
-        {hint && <div className="mt-0.5 text-on-surface-low text-[0.8125rem]">{hint}</div>}
+    <FieldHintProvider value={hint ? hintId : undefined}>
+      <div className="flex items-center justify-between gap-l border-b border-outline-variant/30 py-3 last:border-0">
+        <div className="min-w-0">
+          <div className="text-on-surface text-[0.8125rem]">{label}</div>
+          {hint && <div id={hintId} className="mt-0.5 text-on-surface-low text-[0.8125rem]">{hint}</div>}
+        </div>
+        <div className="shrink-0">{children}</div>
       </div>
-      <div className="shrink-0">{children}</div>
-    </div>
+    </FieldHintProvider>
   )
 }
 
@@ -96,13 +113,20 @@ export function Row({ label, hint, children }: { label: string; hint?: string; c
  *  this Field at once rather than asking each call site to remember an `ariaLabel`. */
 export function Field({ label, hint, children }: { label: string; hint?: string; children: ReactNode }) {
   const labelId = useId()
+  const hintId = useId()
+  // This row already publishes its LABEL through the shared provider, which is what gives its control
+  // an accessible name. The hint rides the same mechanism: measured on `#/settings/account`, all six
+  // inputs were named and NONE was described, so sentences like "At least 12 characters" and "Leave it
+  // empty to keep records unattributed" existed only for sighted users.
   return (
     <FieldLabelProvider value={labelId}>
-      <div className="border-b border-outline-variant/30 py-3 last:border-0">
-        <div id={labelId} className="text-on-surface text-[0.8125rem]">{label}</div>
-        {hint && <div className="mt-0.5 mb-2 text-on-surface-low text-[0.8125rem]">{hint}</div>}
-        <div className="mt-2">{children}</div>
-      </div>
+      <FieldHintProvider value={hint ? hintId : undefined}>
+        <div className="border-b border-outline-variant/30 py-3 last:border-0">
+          <div id={labelId} className="text-on-surface text-[0.8125rem]">{label}</div>
+          {hint && <div id={hintId} className="mt-0.5 mb-2 text-on-surface-low text-[0.8125rem]">{hint}</div>}
+          <div className="mt-2">{children}</div>
+        </div>
+      </FieldHintProvider>
     </FieldLabelProvider>
   )
 }

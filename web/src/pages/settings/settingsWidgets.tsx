@@ -1,6 +1,7 @@
 import {
   User, Palette, MessageSquare, Plug, Cpu, FileText, Database, Bot, AudioLines,
   Inbox, Bell, Shield, ShieldAlert, ScrollText, Archive, FolderSync, DownloadCloud, CheckCircle2, Search, Blocks, Activity, Compass, Stethoscope, Scissors, ThumbsUp, HardDriveDownload, Coins, Route, Trophy,
+  MonitorSmartphone,
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { notify } from '../../app/appSdk'
@@ -9,7 +10,7 @@ import {
   type SettingsProvider, type NotificationSettings, type UpdateCheck,
   type PromptBindings, type SelVerify, type SavedAgent,
   type SearchProviderInfo,
-  type ToolsSavings,
+  type ToolsSavings, type DeviceRec,
 } from '../../lib/api'
 import { useCachedData, invalidateCache } from '../../lib/useCachedData'
 import { useIdentity } from '../../app/identity'
@@ -137,6 +138,12 @@ const useDoctor = () => useCachedData('settings:doctor', () => api.doctor(), { p
 // incident pill. On the one card that says whether unattended work is suspended, blank is not an
 // answer. (`toolsSavings` below keeps its catch: a missing SAVINGS number is genuinely "no data".)
 const useIncident = () => useCachedData('settings:incident', () => api.incident(), { persist: true })
+// A SEPARATE key from the panel's `settings:devices` (like `settings:durability-card`): this one
+// swallows a read failure into `null` so the card can say "couldn't check", while the panel needs
+// the raw error to render `LoadError`. One key with two fetchers would make which behaviour you get
+// depend on which surface mounted first.
+const useDevices = () => useCachedData('settings:devices-card',
+  () => api.devices().catch(() => null as DeviceRec[] | null), { persist: true })
 // Same story: `#/settings/tool-output` reads the error now, and this tile shares its key.
 const useProjectionRules = () => useCachedData('settings:projection-rules', () => api.projectionRules(), { persist: true })
 const useToolsSavings = () => useCachedData('settings:tools-savings', () => api.toolsSavings().catch(() => null as ToolsSavings | null), { persist: true })
@@ -584,6 +591,33 @@ export const SETTINGS_WIDGETS: SettingsWidget[] = [
               ? <StatusPill label="Gateway core failing" tone="warn" />
               : <><StatusPill query={query} label={`${d.worst} degraded`} tone="warn" />
                   <div className="mt-1.5 text-on-surface-low text-[0.75rem]">Core healthy · one capability needs attention</div></>)}
+        </BentoCard>
+      )
+    },
+  },
+  {
+    // Devices sits beside Security because "what is paired to my gateway" is a security
+    // question. Without a card here the panel would be reachable only by typing the URL —
+    // this home grid IS the navigation, and it renders SETTINGS_WIDGETS with no fallback.
+    id: 'devices', group: 'System', label: 'Devices', icon: MonitorSmartphone, size: 'sm',
+    description: 'Paired phones, tablets and browsers — and the switch that locks one out.',
+    useSearchText() {
+      const { data: d } = useDevices()
+      return `devices paired device phone tablet browser desktop pairing code qr revoke lock out last seen session ${d ? `${d.length} paired ${d.map((x) => x.name).join(' ')}` : ''}`
+    },
+    render(query, go) {
+      const { data: d, error: dErr } = useDevices()
+      return (
+        <BentoCard icon={MonitorSmartphone} title="Devices" query={query} onClick={() => go('devices')} loading={d === undefined && !dErr}>
+          {!d
+            ? <StatusPill label="Couldn't check" tone="warn" />
+            : d.length === 0
+              ? <><StatusPill label="No devices paired" tone="muted" />
+                  <div className="mt-1.5 text-on-surface-low text-[0.75rem]">Pair a phone or another browser</div></>
+              : <><BigStat value={d.length} caption={d.length === 1 ? 'paired device' : 'paired devices'} />
+                  <div className="mt-1.5 truncate text-on-surface-low text-[0.75rem]">
+                    <Highlight text={d.map((x) => x.name || 'Unnamed device').join(' · ')} query={query} />
+                  </div></>}
         </BentoCard>
       )
     },

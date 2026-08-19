@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { render } from '@testing-library/react'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { Field as SettingsField } from './settingsUI'
+import { Field as SettingsField, Row as SettingsRow, NumberRow } from './settingsUI'
 import { Field as FormField, TextInput, TextArea } from '../../ui/forms'
 
 // ── The settings `Field` owned a label and published nothing ───────────────────
@@ -131,5 +131,94 @@ describe('AccountPanel names all six of its controls', () => {
     const src = readFileSync(join(process.cwd(), 'src/pages/settings/AccountPanel.tsx'), 'utf8')
     expect(src).toMatch(/ariaLabel="New password"/)
     expect(src).toMatch(/ariaLabel="Confirm password"/)
+  })
+})
+
+// ── 2026-08-19: the label was claimed, the HINT was still sighted-only ────────────────────────────
+//
+// The contract above gives a control its NAME. Its description was a separate, unfixed half: measured
+// on `#/settings/account`, all six inputs were correctly named and **not one had `aria-describedby`**.
+// So sentences the layout renders right beside the control existed only for sighted users — including a
+// CONSTRAINT ("At least 12 characters — length matters more than symbols") and a consequence ("Leave it
+// empty to keep records unattributed"). A screen-reader user heard "Username, edit text" and none of
+// the rule they were expected to follow.
+//
+// 196 call sites pass a `hint` (Field ×99, settingsUI's Row ×69, NumberRow ×28) and **none of them
+// changed**: the id is published by the three layouts and claimed by the same controls that already
+// claim the label — the exact mechanism, and the exact zero-call-site-change property, the label half
+// was built for.
+//
+// 🪤 axe CANNOT SEE THIS. An unassociated `<p>` beside an input is valid HTML with no rule to violate;
+// all 19 newly-visible settings surfaces reported 0 blocking findings at dark, light and phone. The
+// only way to find it is to ask each control what describes it.
+
+describe('a Field publishes its hint as the control DESCRIPTION', () => {
+  const describedText = (el: Element, root: HTMLElement) => {
+    const id = el.getAttribute('aria-describedby')
+    if (!id) return null
+    const target = root.querySelector(`#${CSS.escape(id)}`)
+    return target ? (target.textContent || '').trim() : 'DANGLING'
+  }
+
+  it('the settings Field describes its control with the hint', () => {
+    const { container } = render(
+      <SettingsField label="Username" hint="A short handle stamped onto things you create.">
+        <TextInput value="" onChange={() => {}} />
+      </SettingsField>,
+    )
+    const input = container.querySelector('input')!
+    expect(describedText(input, container as HTMLElement))
+      .toBe('A short handle stamped onto things you create.')
+    // The NAME is still the label — the neighbouring contract must not shift.
+    expect(accessibleName(input, container as HTMLElement)).toBe('Username')
+  })
+
+  it('the ui/forms Field does it too — one rule, both layouts', () => {
+    const { container } = render(
+      <FormField label="Brief" hint="Shared as context with every agent.">
+        <TextArea value="" onChange={() => {}} rows={3} />
+      </FormField>,
+    )
+    expect(describedText(container.querySelector('textarea')!, container as HTMLElement))
+      .toBe('Shared as context with every agent.')
+  })
+
+  it('a Row describes a control that names ITSELF', () => {
+    // A `Row` publishes no label id on purpose (its control carries its own `aria-label`, and ux-690
+    // recorded the divided-row layout as a distinction). The description is independent of that.
+    const { container } = render(
+      <SettingsRow label="Idle timeout" hint="Auto-close an idle session after this long.">
+        <TextInput value="" onChange={() => {}} ariaLabel="Idle timeout" />
+      </SettingsRow>,
+    )
+    const input = container.querySelector('input')!
+    expect(describedText(input, container as HTMLElement))
+      .toBe('Auto-close an idle session after this long.')
+    expect(accessibleName(input, container as HTMLElement)).toBe('Idle timeout')
+  })
+
+  it('NumberRow inherits it by COMPOSITION, not by luck', () => {
+    // It renders a settings `Field`, so the 28 hinted NumberRows are covered by construction. If it
+    // ever stops composing Field, this fails rather than silently losing 28 descriptions.
+    const { container } = render(
+      <NumberRow label="Turns kept" hint="How many recent turns you can rewind to."
+        cfg={{ turns: 5 }} field="turns" min={1} max={9} patch={() => {}} />,
+    )
+    expect(describedText(container.querySelector('input')!, container as HTMLElement))
+      .toBe('How many recent turns you can rewind to.')
+  })
+
+  it('an UNHINTED field sets no aria-describedby at all', () => {
+    // 🔑 The half that matters as much as the fix: `aria-describedby` pointing at a missing element is
+    // worse than absent, because assistive tech resolves it to nothing while the attribute claims a
+    // description exists. The id is published only when a hint is rendered.
+    for (const el of [
+      render(<SettingsField label="Your name"><TextInput value="" onChange={() => {}} /></SettingsField>),
+      render(<FormField label="Your name"><TextInput value="" onChange={() => {}} /></FormField>),
+      render(<SettingsRow label="Your name"><TextInput value="" onChange={() => {}} ariaLabel="Your name" /></SettingsRow>),
+    ]) {
+      const input = el.container.querySelector('input')!
+      expect(input.getAttribute('aria-describedby'), 'no hint means no description attribute').toBeNull()
+    }
   })
 })

@@ -88,6 +88,32 @@ def test_core_spec_omits_an_empty_session_key(home):
     assert "PERSONALCLAW_SESSION_KEY" not in _env_of(core_mcp_servers()[0])
 
 
+def test_core_spec_declares_the_gateway_port(home, monkeypatch):
+    """``PERSONALCLAW_PORT`` is declared, not left to the 10000 default.
+
+    ``mcp_core`` builds its API base from ``dashboard.url`` and falls back to 10000.
+    A gateway on any other port — ``--port 10051``, or the ``--port auto`` that
+    ``--test-mode`` uses — therefore spawned an MCP server that POSTed where nothing
+    listened, and every HTTP-bridged core tool returned its ``urlopen`` error as result
+    text. Driven on a kiro ACP session: ``subagent_run`` answered
+    ``<urlopen error [Errno 61] Connection refused>`` while ``skill_search``,
+    ``artifact_save`` and ``knowledge`` (in-process) all worked in the same turn.
+    """
+    monkeypatch.setenv("PERSONALCLAW_PORT", "10051")
+    env = _env_of(core_mcp_servers(session_key="sk")[0])
+    assert env["PERSONALCLAW_PORT"] == "10051"
+
+
+def test_core_spec_port_follows_the_configured_url(home, monkeypatch):
+    """With no env override the declared port is the configured one, not the default."""
+    monkeypatch.delenv("PERSONALCLAW_PORT", raising=False)
+    (home / "config.json").write_text(
+        '{"dashboard": {"url": "http://localhost:6777"}}', encoding="utf-8"
+    )
+    env = _env_of(core_mcp_servers(session_key="sk")[0])
+    assert env["PERSONALCLAW_PORT"] == "6777"
+
+
 # ── prong A: the three client sites + the pooled path ───────────────────────
 
 

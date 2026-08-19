@@ -10,6 +10,10 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Added
 
+- **See every device paired with your gateway, and cut one off.**
+
+- **Plan a task before anything runs, from the chat you are already in.**
+
 - **See everything your agents are doing at a glance.**
 - **The desktop app has a live menu-bar item, and quitting it no longer risks the gateway.**
 - **Undo a bad edit instead of restoring a backup.**
@@ -43,9 +47,16 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Fixed
 
+- **The audit log's "Failed" filter hid most failures.**
+
+- **Setting a chat's working directory with a mistyped field no longer silently unbinds it.**
+- **Settings → Prompts named four of its forty-four rows.**
+
 - **A scheduler tick wrote its history into the wrong PersonalClaw home.**
 - **An agent CLI could run in your home directory instead of the folder you gave the chat.**
 - **A "Pre tool use" hook that blocks nothing now says so.**
+- **A chat with no folder set could run its agent CLI wherever the app itself happened to be started.**
+- **Tinted "chip" buttons had unreadable labels in six of the twelve colour schemes.**
 
 - **"Unattended runs need a verified adapter" only covered one kind of unattended run.**
 

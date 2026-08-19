@@ -229,6 +229,8 @@ const PEP2_CENSUS: {
   { surface: 'Watched sources', file: 'pages/knowledge/SourcesPage.tsx', verdict: 'on-ramp', why: '"Add a source" — the existing SourceCreatePage flow.' },
   { surface: 'Knowledge › Graph', file: 'pages/knowledge/KnowledgeGraph.tsx', verdict: 'on-ramp', why: 'Extraction is a per-item action, and the empty state offers it.' },
   { surface: 'Discover', file: 'pages/discover/DiscoverPage.tsx', verdict: 'on-ramp', why: 'Open Settings — the off case is a SETTING, and the action reaches it.' },
+  { surface: 'Devices', file: 'pages/settings/DevicesPanel.tsx', verdict: 'on-ramp',
+    why: '"Pair your first device" — the same startPairing() the section above calls, so there is one pairing flow with two entrances. The label deliberately differs from that section\'s "Pair a device" button: identical accessible names on one screen make the action ambiguous to name-based navigation. A paired device is user-created, so "produced" would be dishonest here.' },
   // ── nothing for the user to create ──
   { surface: 'Inbox', file: 'pages/inbox/InboxPage.tsx', verdict: 'produced',
     why: 'Inbox zero is the good news. Items arrive from connected providers; the connect flow is Settings › Inbox, not a create button on an empty queue.' },

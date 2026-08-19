@@ -53,6 +53,116 @@ BUNDLED_PROMPT_NAME: dict[str, str] = {p.use_case: p.name for p in _CATALOG}
 DEFAULT_PROMPT_NAME = BUNDLED_PROMPT_NAME["chat"]
 
 
+# ── How a use case DESCRIBES itself ──────────────────────────────────────────
+# Settings → Prompts renders one row per bindable use case, and the row has to say
+# what the context IS. That text belongs here, next to the vocabulary, for the same
+# reason the vocabulary itself does: any consumer that hardcodes its own copy covers
+# only the use cases that existed the day it was written. The dashboard's panel used
+# to carry a four-entry table against a catalog of forty, so forty rows rendered
+# their raw key (`nl_to_cron`) with no description at all — including in their
+# accessible name.
+#
+# Derived from the catalog wherever it already says something true, so there is no
+# second table to keep in step:
+#   label     humanized use case, with an override only where humanizing is wrong
+#   hint      the bundled prompt's own `description` (a good one-liner for every
+#             internal/loop/eval context), overridden for the four agent contexts
+#             whose catalog description describes the PROMPT rather than the context
+#   category  the catalog's `category`, whose docstring already declares it to be
+#             "the Settings-UI grouping" — it simply was never sent to the UI
+BUNDLED_PROMPT_DESCRIPTION: dict[str, str] = {p.use_case: p.description for p in _CATALOG}
+BUNDLED_PROMPT_CATEGORY: dict[str, str] = {p.use_case: p.category for p in _CATALOG}
+
+# Humanizing produces the right label for most keys ("history_compression" →
+# "History compression"). These are the ones where it does not.
+_USE_CASE_LABEL_OVERRIDES: dict[str, str] = {
+    "goal_loop": "Goal Loop",
+    "nl_to_cron": "Natural language → cron",
+    "sdlc_stage_gate": "SDLC stage gate",
+    "eval_judge": "Eval judge",
+    "cycle_judge_skeptic": "Cycle judge (skeptic)",
+    "nav_links": "Navigation links",
+}
+
+# The four agent contexts' catalog descriptions describe the bundled PROMPT ("The
+# bundled PersonalClaw system prompt for the chat context.") — true, and useless as
+# a row hint, because every row on the panel could say it. These say what the
+# CONTEXT is instead. Kept verbatim from the dashboard table this replaced.
+_USE_CASE_HINT_OVERRIDES: dict[str, str] = {
+    "chat": "Interactive sessions — dashboard, Slack, CLI",
+    "background": "Unattended runs — cron, heartbeat, campaigns",
+    "code": "The Code feature's coder agent",
+    "goal_loop": "Autonomous goal-engine workers",
+}
+
+# Display order + headings for the catalog's four categories. The wording is lifted
+# from the catalog docstring that defines them, so the panel cannot describe a
+# grouping differently from the module that assigns it.
+PROMPT_CATEGORY_ORDER: tuple[str, ...] = ("agent", "internal", "loop", "eval")
+PROMPT_CATEGORY_LABEL: dict[str, str] = {
+    "agent": "Agent system prompts",
+    "internal": "Internal task prompts",
+    "loop": "Loop & orchestration prompts",
+    "eval": "Evaluation prompts",
+}
+PROMPT_CATEGORY_HINT: dict[str, str] = {
+    "agent": "The default-agent system prompt for a runtime context.",
+    "internal": "One-shot LLM tasks the system runs on your behalf.",
+    "loop": "Autonomous loop and orchestration prompts — classifiers, judges, planning briefs.",
+    "eval": "Evaluation-harness prompts.",
+}
+_FALLBACK_CATEGORY = "internal"
+
+
+def _humanize_use_case(use_case: str) -> str:
+    """``history_compression`` → ``History compression``. Sentence case, not Title
+    Case: these sit as row labels beside ordinary prose, and Title Case On Every
+    Row reads as a heading."""
+    words = use_case.replace("-", " ").replace("_", " ").split()
+    if not words:
+        return use_case
+    return " ".join([words[0].capitalize(), *words[1:]])
+
+
+def use_case_label(use_case: str) -> str:
+    """The human name for a bindable use case. Never empty, and never the raw key
+    for a core use case — an app-owned one humanizes, which is still readable."""
+    override = _USE_CASE_LABEL_OVERRIDES.get(use_case)
+    return override if override else _humanize_use_case(use_case)
+
+
+def use_case_hint(use_case: str) -> str:
+    """One line on what this context does. Empty only for an app-owned use case
+    whose manifest declared no description — the row still has its label."""
+    override = _USE_CASE_HINT_OVERRIDES.get(use_case)
+    if override:
+        return override
+    hint = BUNDLED_PROMPT_DESCRIPTION.get(use_case)
+    if hint:
+        return hint
+    try:
+        entry = _app_prompt_use_cases().get(use_case)
+    except Exception:  # noqa: BLE001 — a registry hiccup must not blank a row
+        return ""
+    return entry.description if entry else ""
+
+
+def use_case_category(use_case: str) -> str:
+    """The Settings-UI grouping for a use case: its catalog category, else the
+    owning app's declared one, else ``internal`` (a one-shot task is the safe
+    reading of an unlabelled prompt, and it keeps the row visible)."""
+    category = BUNDLED_PROMPT_CATEGORY.get(use_case)
+    if category:
+        return category
+    try:
+        entry = _app_prompt_use_cases().get(use_case)
+    except Exception:  # noqa: BLE001 — a registry hiccup must not hide a row
+        return _FALLBACK_CATEGORY
+    if entry and entry.category in PROMPT_CATEGORY_LABEL:
+        return entry.category
+    return _FALLBACK_CATEGORY
+
+
 def _app_prompt_use_cases():
     """The app-contributed prompt-use-case registry (lazy import — avoids a cycle,
     since the apps layer imports the prompt system). Returns the module."""

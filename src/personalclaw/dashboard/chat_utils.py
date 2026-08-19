@@ -97,6 +97,18 @@ def task_mode_denies(
     return task_modes.task_mode_denies(mode, title, tool_kind, tool_input)
 
 
+def apply_task_mode(state: DashboardState, session: "_ChatSession", mode: str) -> None:
+    """The ONE write path for a session's task mode.
+
+    Two writes that must never drift apart: the session's own posture (read by the
+    dashboard-side gate + the prompt framing) and the runtime's posture (read by the
+    native runtime's ``_guard_and_invoke`` gate, before approval). Setting only the
+    first leaves a "plan" session whose tools still run.
+    """
+    session._task_mode = mode
+    state.sessions.set_task_mode(f"dashboard:{session.key}", mode)
+
+
 # Per-task-mode system-prompt framing — appended to the agent's system prompt so
 # the model FRAMES the work to match the mode (the tool gate enforces it; this
 # shapes intent + output so the agent doesn't fight the gate). 'agent' adds nothing.

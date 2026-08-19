@@ -90,9 +90,16 @@ export function AlwaysOnConventions() {
 
   return (
     <>
+      {/* 🔴 `iconTone="muted"`: coral means "the agent is alive / this is active / this is the
+          primary action", so a decorative CATEGORY glyph in coral spends the accent on nothing —
+          the rule `settingsUI`'s own `iconTone` doc states, and the reason `ProvidersPanel`'s nine
+          entity glyphs are muted. Measured across the settings area: 9 muted section glyphs against
+          7 coral, and 4 of those 7 are `DesignPanel`'s control sections, which that doc names as the
+          legitimate `primary` case. These two were the drift. */}
       <Section
         title="Always-on skills"
         icon={Globe}
+        iconTone="muted"
         hint="Skills injected into every session in full, before you type. Read from the same string the session itself receives, so this list cannot drift from the real prompt."
       >
         {skills.length === 0 ? (
@@ -110,6 +117,7 @@ export function AlwaysOnConventions() {
       <Section
         title="Project instructions"
         icon={FolderGit2}
+        iconTone="muted"
         hint="Documents a project-bound session inlines into every turn. The overview is current state and editable here; the ledgers are append-only history."
         right={
           <select

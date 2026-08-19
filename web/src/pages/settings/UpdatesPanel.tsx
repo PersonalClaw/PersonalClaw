@@ -13,6 +13,42 @@ import { notify } from '../../app/appSdk'
 /** Updates — current version, available updates, auto-update toggle, and the
  *  rendered changelog. Backed by /api/update/check + /api/changelog + POST
  *  /api/update (apply) + /api/update/auto. */
+/** The document's front matter is written for CONTRIBUTORS, and it was rendering as product copy.
+ *
+ *  Measured on `#/settings/updates`: `/api/changelog` serves CHANGELOG.md verbatim (255,413 chars), so the
+ *  card headed "Changelog · What's changed recently" opened with
+ *
+ *    H1  Changelog                                    ← a SECOND <h1>, nested inside this h2 section
+ *    P   All notable changes to PersonalClaw are recorded here. The format follows Keep a Changelog…
+ *    P   The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's new."
+ *
+ *  — a duplicated title, a note about the format, and a sentence telling the reader how the panel they
+ *  are looking at is implemented. The endpoint is right to serve the file whole; deciding what "what's
+ *  changed recently" means is this panel's job.
+ *
+ *  Also fixes the outline. `## [Unreleased]` rendered as an `h2`, a SIBLING of the panel's own
+ *  "Version" / "Automatic updates" / "Changelog" sections, so heading navigation read a release as a
+ *  peer of the page's furniture. Demoting by one puts the release under the section that introduces it:
+ *  h1 Updates › h2 Changelog › h3 Unreleased › h4 Added.
+ *
+ *  Two deliberate refusals:
+ *  · Headings inside fenced code are left alone. There are none today (2 fence markers, 0 `#` lines
+ *    inside them) — which is exactly why the guard is asserted synthetically in the rail rather than
+ *    trusted to a green run.
+ *  · A document with no `## ` release heading is returned UNCHANGED. Hiding everything because a parse
+ *    found nothing is the worse failure: an empty "what's new" reads as "nothing has changed". */
+export function changelogBody(md: string): string {
+  const lines = md.split('\n')
+  const first = lines.findIndex((l) => l.startsWith('## '))
+  if (first < 0) return md
+  let fenced = false
+  return lines.slice(first).map((l) => {
+    if (l.trimStart().startsWith('```')) { fenced = !fenced; return l }
+    if (fenced) return l
+    return /^#{1,5} /.test(l) ? `#${l}` : l
+  }).join('\n')
+}
+
 export function UpdatesPanel() {
   const [applying, setApplying] = useState(false)
   const [msg, setMsg] = useState('')
@@ -157,7 +193,7 @@ export function UpdatesPanel() {
         {changelog.trim()
           // CHANGELOG.md is markdown — render it (headings/lists/links), not a raw <pre>.
           ? <div className="max-h-96 overflow-auto rounded-lg bg-surface-container px-4 py-3 text-[0.8125rem]">
-              <Markdown>{changelog}</Markdown>
+              <Markdown>{changelogBody(changelog)}</Markdown>
             </div>
           : <p className="text-on-surface-low text-[0.8125rem] italic">No changelog available.</p>}
       </Section>

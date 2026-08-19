@@ -161,8 +161,9 @@ jobs:
         # (a text-*/bg-*/border-* class must compile to real CSS — a name with no
         # token emits NOTHING and styles silently vanish). A new hardcoded value, a
         # new bespoke element, or a new inert utility turns this step — and CI — red.
-        # (The axe-per-route a11y rail lives in web/e2e/ and mounts here once the
-        # harness auth-seed lands.)
+        # (The axe-per-route a11y rail lives in web/e2e/ and runs in the `e2e-a11y` job below —
+        # the harness auth-seed it was waiting for is web/e2e/auth.setup.ts. It is a separate job
+        # because the harness boots a real gateway, so it needs the Python toolchain too.)
         run: npm run test:web
       - name: test (desktop, node --test)
         # desktop/ is the OTHER member of this single root workspace, so the `npm ci`
@@ -185,6 +186,54 @@ jobs:
         run: npx playwright install --with-deps chromium
       - name: render smoke (built SPA mounts in a real browser)
         run: npm run smoke:render
+
+  e2e-a11y:
+    # ── The axe-per-route rail, finally EXECUTED ─────────────────────────────────────────────────
+    # `web/e2e/a11y.spec.ts` scans every nav route and every settings panel with axe-core (both
+    # themes) plus five surfaces that only exist after an interaction, and fails on any
+    # serious/critical WCAG 2 AA violation. It has been in the tree, complete and passing, while
+    # running in NO automated gate: the `web` job's own comment said it "mounts here once the
+    # harness auth-seed lands", and that seed landed — `web/e2e/auth.setup.ts` performs the
+    # gateway's real token handshake and exports a storageState the specs reuse.
+    #
+    # The harness is self-contained: playwright's `webServer` boots an ISOLATED gateway
+    # (PERSONALCLAW_HOME under $TMPDIR, never a real home) and captures its token from the
+    # PERSONALCLAW_READY line, then builds and previews the SPA against it. So this job needs both
+    # toolchains and nothing else. Measured locally before wiring: 107 passed, 4 skipped
+    # (the two peek docks have no rows to open in a fresh home), ~60s per theme.
+    #
+    # Auth stays ON — no PERSONALCLAW_AUTH_MODE=none, which would swap the csrf middleware for the
+    # dev one and make every finding describe a user who does not exist.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+          cache: npm
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+      # The harness starts `../.venv/bin/personalclaw`, so the gateway must be importable.
+      - name: Install (locked)
+        run: uv sync --locked --extra dev
+      # npm from the REPO ROOT (single-root workspace lockfile — npm/cli#4828).
+      - name: npm ci (root)
+        run: npm ci
+      - name: install chromium
+        run: npx playwright install --with-deps chromium
+      - name: axe per route, both themes (web/e2e/a11y.spec.ts)
+        working-directory: web
+        run: npx playwright test e2e/a11y.spec.ts --project=chromium
+      - name: upload the axe reports
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: axe-violations
+          path: web/test-results/
+          if-no-files-found: ignore
+          retention-days: 7
 
   rails:
     # Cheap anti-regression rails: the machine-checked invariants roadmap plans add.

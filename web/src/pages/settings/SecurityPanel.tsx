@@ -241,17 +241,45 @@ function EgressPolicyEditor() {
   )
 }
 
+/** Why an entry was refused. Returns `null` when the host is addable.
+ *
+ *  🔴 THE THREE REFUSALS USED TO BE SILENT, and on this panel that is a security defect: a user who
+ *  pastes `https://nas.local` believes they have allowed their homelab, and they have not. Driven with
+ *  the guard route intercepted — nothing was added, no error, no live region, three times:
+ *
+ *    input                  before                                   after
+ *    https://nas.local      nothing added, draft KEPT, no message    "Enter a bare hostname — no
+ *    nas.local:8080         "                                         scheme, port, or spaces…"
+ *    two words              "                                        "
+ *    nas.local (duplicate)  nothing added, draft CLEARED, silent     "nas.local is already listed"
+ *
+ *  The duplicate case is the worse one: clearing the box is exactly what a SUCCESSFUL add does, so the
+ *  interface actively said "done". Separated here so both branches are assertable without a DOM. */
+export function hostRefusal(raw: string, hosts: string[]): string | null {
+  const h = raw.trim().toLowerCase()
+  if (!h) return null                                    // the Add button is already gated on this
+  if (hosts.includes(h)) return `${h} is already listed.`
+  // Bare hostname only, mirroring the server guard — a scheme, a port or a space means the user pasted
+  // a URL, which is the single most likely mistake here.
+  if (h.includes('/') || h.includes(':') || h.includes(' ')) {
+    return 'Enter a bare hostname — no scheme, port, or spaces (e.g. nas.local).'
+  }
+  return null
+}
+
 /** A small add/remove editor for a bare-hostname list. */
 function HostList({ label, hint, hosts, disabled, onChange }: {
   label: string; hint: string; hosts: string[]; disabled: boolean; onChange: (hosts: string[]) => void
 }) {
   const [draft, setDraft] = useState('')
+  const [refused, setRefused] = useState('')
   const add = () => {
     const h = draft.trim().toLowerCase()
-    if (!h || hosts.includes(h)) { setDraft(''); return }
-    // bare hostname only (mirror the server guard) — reject scheme/path/port.
-    if (h.includes('/') || h.includes(':') || h.includes(' ')) return
-    onChange([...hosts, h]); setDraft('')
+    if (!h) return
+    const why = hostRefusal(draft, hosts)
+    // The draft is KEPT on a refusal — emptying it is what a successful add looks like.
+    if (why) { setRefused(why); return }
+    setRefused(''); onChange([...hosts, h]); setDraft('')
   }
   return (
     <div>
@@ -274,7 +302,8 @@ function HostList({ label, hint, hosts, disabled, onChange }: {
               allow box for the deny box is a security-relevant mistake. */}
           <input value={draft} disabled={disabled}
             aria-label={`Add a host to ${label.toLowerCase()}`}
-            onChange={(e) => setDraft(e.target.value)}
+            aria-invalid={refused ? true : undefined}
+            onChange={(e) => { setDraft(e.target.value); if (refused) setRefused('') }}
             onKeyDown={(e) => { if (e.key === 'Enter') add() }}
             placeholder="e.g. nas.local"
             className="min-w-0 flex-1 rounded-lg bg-surface-container px-3 py-2 text-on-surface text-[0.8125rem] outline-none placeholder:text-on-surface-low" />
@@ -284,6 +313,9 @@ function HostList({ label, hint, hosts, disabled, onChange }: {
             <Plus size={15} /> Add
           </button>
         </div>
+        {/* `FieldError` rather than a hand-rolled danger line: it carries `role="alert"`, which is the
+            difference between "the refusal is on screen" and "the user was told". */}
+        {refused && <FieldError>{refused}</FieldError>}
       </div>
     </div>
   )

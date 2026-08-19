@@ -60,13 +60,38 @@ function ProducerRow({ row, busy, act }: {
   const key = `${row.producer_kind}:${row.producer_id}`
   const producer = { producer_kind: row.producer_kind, producer_id: row.producer_id }
   return (
-    <div className="flex items-center gap-3 rounded-lg bg-surface-container px-3 py-2.5">
-      <div className="min-w-0 flex-1">
+    // 🔴 THE SUPPRESSED ROW LOST ITS OWN IDENTITY AT 390px — the row that matters most. Every chip
+    //    on the right is `shrink-0`, and a suppressed producer has one more of them (accuracy +
+    //    "suppressed" + Snooze + Clear), so the identity block — `min-w-0 flex-1`, i.e. free to
+    //    collapse to zero — was squeezed out and its text painted UNDERNEATH the pills. Measured at
+    //    390×844: the "prompt 3 6" line occupied x 36–78 while the "33%" pill occupied x 48–88 and
+    //    sat on top of it, and `task-inbox-classify` was not readable at all. The healthy sibling row
+    //    (one chip fewer) rendered correctly, which is what made it look fine at a glance.
+    //    `ux-audit --viewport phone` reported it as a 3.93:1 contrast failure "via: sibling" against
+    //    `rgb(86,51,50)` — the danger pill's own tint. That number is not a colour bug: measured
+    //    against the real backdrop the ink is 5.93:1 and passes AA. The audit was reporting the
+    //    OVERLAP, correctly, in the only vocabulary it has.
+    //    Same shape as the projection-rule rows: a `flex-1` box with permission to reach zero beside
+    //    siblings that cannot shrink. Fix is the same — let the row wrap, and give the block a floor.
+    <div className="flex flex-wrap items-center gap-3 rounded-lg bg-surface-container px-3 py-2.5">
+      <div className="min-w-40 flex-1">
         <div className="truncate font-mono text-on-surface text-[0.8125rem]">{row.producer_id}</div>
         <div className="mt-0.5 flex items-center gap-2 text-on-surface-low text-[0.75rem]">
           <span>{row.producer_kind}</span>
-          <span className="inline-flex items-center gap-1"><ThumbsUp size={10} /> {row.ups}</span>
-          <span className="inline-flex items-center gap-1"><ThumbsDown size={10} /> {row.downs}</span>
+          {/* 🔴 A 10px GLYPH WAS THE ONLY THING SAYING WHICH COUNT IS WHICH. Measured on the live
+              row: the accessible text was "task-inbox-classify prompt 3 6 33% suppressed" — two bare
+              integers, and reading them the wrong way round inverts the meaning of the whole panel
+              ("was this source right?" becomes "was it wrong?"). Lucide renders a bare `<svg>` with
+              no name, so nothing carried the distinction.
+              `role="img"` + a label is this repo's declared form for exactly that case — see
+              `ModelsPanel`'s breaker dot ("the dot is the ONLY carrier of the state, no text
+              equivalent") and `UsagePanel`'s bar row. The wording follows `ui/FeedbackThumbs`, the
+              interactive twin of these same two icons ("Mark accurate" / "Mark wrong"), so the
+              summary and the control that produces it speak one vocabulary. */}
+          <span role="img" aria-label={`${row.ups} marked accurate`}
+            className="inline-flex items-center gap-1"><ThumbsUp size={10} /> {row.ups}</span>
+          <span role="img" aria-label={`${row.downs} marked wrong`}
+            className="inline-flex items-center gap-1"><ThumbsDown size={10} /> {row.downs}</span>
         </div>
       </div>
       {row.collecting ? (

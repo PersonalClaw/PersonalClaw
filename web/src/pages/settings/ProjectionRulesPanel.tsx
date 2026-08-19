@@ -145,7 +145,7 @@ function StrategyPicker({ value, disabled, onChange, forRule }: {
   return (
     <select value={value} disabled={disabled} onChange={(e) => onChange(e.target.value as ProjectionStrategy)}
       aria-label={forRule ? `Strategy for ${forRule}` : 'Strategy for the new rule'}
-      className="h-9 rounded-md bg-surface px-2 text-on-surface text-[0.8125rem] outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50">
+      className="min-w-0 max-w-full h-9 rounded-md bg-surface px-2 text-on-surface text-[0.8125rem] outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50">
       {STRATEGIES.map((s) => <option key={s.id} value={s.id}>{s.label} — {s.blurb}</option>)}
     </select>
   )
@@ -159,19 +159,30 @@ function RuleRow({ rule, disabled, onChange, onRemove }: {
   const inputCls = 'h-9 rounded-md bg-surface px-2 font-mono text-on-surface text-[0.8125rem] placeholder:text-on-surface-low outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50'
   return (
     <div className="flex flex-col gap-2 rounded-lg bg-surface-container px-3 py-2.5">
-      <div className="flex items-center gap-2">
+      {/* Same pairing, same collapse: measured 16×36 at 390px for an EXISTING rule's name too, so
+          the field holding the value you are editing had vanished. Both rows are the family. */}
+      <div className="flex flex-wrap items-center gap-2">
         <Scissors size={13} className="shrink-0 text-on-surface-low" />
         <input value={rule.name} disabled={disabled} placeholder="rule name"
           aria-label="Rule name"
           onChange={(e) => onChange({ ...rule, name: e.target.value })}
-          className="min-w-0 flex-1 h-9 rounded-md bg-surface px-2 text-on-surface text-[0.8125rem] placeholder:text-on-surface-low outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50" />
-        <StrategyPicker value={rule.strategy} disabled={disabled} forRule={rule.name}
-          onChange={(s) => onChange({ ...rule, strategy: s })} />
-        {/* One button per rule row, so a constant "Remove rule" announces identically N times.
-            Matches the sibling pattern in SecurityPanel (`Remove ${h}`). */}
-        <button type="button" disabled={disabled} onClick={onRemove}
-          aria-label={rule.name ? `Remove rule ${rule.name}` : 'Remove rule'}
-          className="shrink-0 rounded-md p-1 text-on-surface-low hover:bg-surface-high hover:text-on-surface"><X size={15} /></button>
+          className="min-w-40 flex-1 h-9 rounded-md bg-surface px-2 text-on-surface text-[0.8125rem] placeholder:text-on-surface-low outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50" />
+        {/* The select and Remove travel TOGETHER when the row wraps. Wrapped independently, Remove
+            landed alone on a third line — and before the row could wrap at all it was pushed off the
+            card entirely at 390px, so the only way to delete a rule was to widen the window. */}
+        {/* No `flex-1` here on purpose: as a flex-1 sibling this group COMPETED with the name field
+            on one line (measured 390px: name 160, select squeezed to 98 — the option text gone).
+            With an auto basis it is wider than the space left beside the field, so it wraps as a
+            unit and the field keeps its width. */}
+        <div className="flex min-w-0 items-center gap-2">
+          <StrategyPicker value={rule.strategy} disabled={disabled} forRule={rule.name}
+            onChange={(s) => onChange({ ...rule, strategy: s })} />
+          {/* One button per rule row, so a constant "Remove rule" announces identically N times.
+              Matches the sibling pattern in SecurityPanel (`Remove ${h}`). */}
+          <button type="button" disabled={disabled} onClick={onRemove}
+            aria-label={rule.name ? `Remove rule ${rule.name}` : 'Remove rule'}
+            className="ml-auto shrink-0 rounded-md p-1 text-on-surface-low hover:bg-surface-high hover:text-on-surface"><X size={15} /></button>
+        </div>
       </div>
       <input value={rule.match_regex} disabled={disabled} spellCheck={false} placeholder="match regex, e.g. ^\[MYAPP\]"
         aria-label={rule.name ? `Match regex for ${rule.name}` : 'Match regex'}
@@ -224,12 +235,20 @@ function AddRule({ disabled, onAdd }: { disabled?: boolean; onAdd: (r: Projectio
   }
   return (
     <div className="flex flex-col gap-2 rounded-lg border border-dashed border-outline-variant/50 px-3 py-2.5">
-      <div className="flex items-center gap-2">
+      {/* 🔴 `min-w-0` on a TEXT INPUT is permission to disappear. Measured at 390×844: this field
+          rendered **16×36** — a sliver between the `+` and the strategy `<select>`, with no visible
+          placeholder and nothing typeable — while the select held 325px, because its widest option
+          ("Log — keep head + error/warning lines + tail") sets its intrinsic width and it had no
+          shrink permission of its own. `min-w-0` is the right pairing for text that should TRUNCATE;
+          for a control the user must still be able to use, it is the bug. `flex-wrap` + a `min-w-40`
+          floor (the idiom AuditPanel's filter field already uses) drops the select to its own line
+          instead of starving the field. Desktop is unchanged — there is room, so nothing wraps. */}
+      <div className="flex flex-wrap items-center gap-2">
         <Plus size={13} className="shrink-0 text-on-surface-low" />
         <input value={name} disabled={disabled} placeholder="new rule name"
           aria-label="New rule name"
           onChange={(e) => setName(e.target.value)}
-          className="min-w-0 flex-1 h-9 rounded-md bg-surface px-2 text-on-surface text-[0.8125rem] placeholder:text-on-surface-low outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50" />
+          className="min-w-40 flex-1 h-9 rounded-md bg-surface px-2 text-on-surface text-[0.8125rem] placeholder:text-on-surface-low outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50" />
         <StrategyPicker value={strat} disabled={disabled} onChange={setStrat} />
       </div>
       <div className="flex items-center gap-2">
