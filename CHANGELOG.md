@@ -199,6 +199,19 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Fixed
 
+- **A scheduler tick wrote its history into the wrong PersonalClaw home.** Two writers on the tick
+  path — the suppressed-fire ledger row and the hourly rate meter that reads it back — built their
+  run store from the *active* home instead of the home the tick was actually running under. Anything
+  that drove a tick against an isolated home (an ad-hoc script, a dev drive, a diagnostic) therefore
+  appended its rows to the real `~/.personalclaw/cron-history/`, and then measured its rate caps
+  against that same foreign history — so a cap could be satisfied, or exhausted, by fires belonging
+  to a different install. Both now resolve through one funnel rooted at the tick's own home, matching
+  the rule already documented for trigger claims: a record describing one store must not live in
+  another. No behaviour change for the gateway, the CLI or the dashboard, where the two roots were
+  always the same directory. If you have driven ticks outside the normal gateway, your real
+  `cron-history/` may hold stray rows for job ids you do not recognise; they are inert bookkeeping
+  and safe to delete once you have checked them.
+
 - **"Unattended runs need a verified adapter" only covered one kind of unattended run.** The switch
   promised to refuse background work onto an external agent CLI whose ACP adapter has no verified
   provenance, and it did — for a subagent. A cron fire, a loop-cycle worker, the background session,

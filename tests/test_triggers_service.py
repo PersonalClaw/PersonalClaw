@@ -824,3 +824,108 @@ def test_a_GRANTED_fire_is_NOT_written_here(store, tmp_path, monkeypatch):
         asyncio.run(SVC.tick(store, now=NOW + i * 120, base_dir=tmp_path, persist=True))
         claims.release_claim("clock:ok", base_dir=tmp_path)
     assert _stored(tmp_path, "clock:ok") == 0
+
+
+# ── 🔴 the ledger wrote to the AMBIENT home, not the TICK'S (a real-home write leak) ──
+#
+# Why the three tests above did not catch this: every one of them patches `config_dir()` to
+# `tmp_path`, the SAME directory it passes as `base_dir`. Both roots agree, so the write lands in
+# the right place whichever one the code picked, and the assertion cannot tell them apart. They
+# test that a row is written; they cannot test WHERE. The fixture below splits the two roots so
+# that question has an answer.
+
+
+def _seed_ledger(root, tid, n, *, start=NOW):
+    """`n` settled rows for `tid` in the ledger under `root`, through the real store."""
+    from personalclaw.schedule_history import ScheduleRun, ScheduleRunStore
+
+    async def _go():
+        runs = ScheduleRunStore(root)
+        for i in range(n):
+            await runs.append(
+                ScheduleRun(
+                    run_id=f"seed-{tid}-{i}",
+                    job_id=tid,
+                    trigger="clock",
+                    started_at=start + i,
+                    finished_at=start + i,
+                    status="succeeded",
+                )
+            )
+
+    asyncio.run(_go())
+
+
+@pytest.fixture
+def homes(tmp_path, monkeypatch):
+    """A tick home and a DECOY ambient home, with the REAL `config_dir()` resolving to the decoy.
+
+    🔴 THE DECOY IS THE POINT. A rail that only asserted "the row is in the tmp home" would pass
+    just as well against a writer that wrote nowhere at all, and one that patched `config_dir()`
+    to the tick's own home could not distinguish the two roots — which is precisely how the leak
+    survived three tests of this exact write path. With the ambient home pointed somewhere else
+    entirely, "landed under `base_dir`" and "landed under `config_dir()`" become different
+    observable outcomes, and a writer that skips the ledger fails the positive leg.
+
+    `config_dir()` is moved by the ENV VAR, not by monkeypatching the function, so the resolution
+    path under test is the one a real ad-hoc script takes. `PERSONALCLAW_WORKSPACE` is set for the
+    same reason: an isolated home does not by itself confine the workspace, and nothing in this
+    suite should be able to reach the operator's real one.
+    """
+    from personalclaw.config.loader import config_dir
+
+    home = tmp_path / "home"
+    decoy = tmp_path / "decoy"
+    workspace = tmp_path / "ws"
+    for d in (home, decoy, workspace):
+        d.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setenv("PERSONALCLAW_HOME", str(decoy))
+    monkeypatch.setenv("PERSONALCLAW_WORKSPACE", str(workspace))
+    # Vacuity guard: if the env var stopped steering `config_dir()`, the decoy would silently BE
+    # the tick's home and every assertion below would hold for the wrong reason.
+    assert config_dir().resolve() == decoy.resolve()
+    return home, decoy
+
+
+def test_a_SUPPRESSED_row_lands_in_the_TICKS_home_not_the_AMBIENT_one(homes):
+    """🔴 THE DEFECT. `_persist_suppression` built its `ScheduleRunStore` from `config_dir()` while
+    the tick around it ran under `base_dir`, so a tick driven against an isolated home appended its
+    suppression rows to whatever home the environment happened to name — in practice the operator's
+    real `~/.personalclaw/cron-history/`. `tick`'s own docstring had already ruled on this for the
+    sibling sidecar: "a claim describing one store must not live in another". The ledger is the same
+    kind of sidecar and was never wired to the same rule.
+
+    Both legs matter. The POSITIVE leg fails if the row goes missing (the criterion-8 silent drop
+    this writer exists to prevent); the NEGATIVE leg fails if it goes to the ambient home instead.
+    A fix that satisfies one by breaking the other is not a fix."""
+    home, decoy = homes
+    store = TriggerStore(base_dir=home)
+    _quiet(store, home, tid="clock:leak")
+    for i in range(3):
+        asyncio.run(SVC.tick(store, now=NOW + i * 120, base_dir=home, persist=True))
+
+    # POSITIVE: the rows are in the home the tick actually ran under.
+    assert _stored(home, "clock:leak") == 3
+    # NEGATIVE: and the ambient home was never touched — no per-job log, no index, no directory.
+    assert not (decoy / "cron-history").exists()
+
+
+def test_the_RATE_METER_reads_the_TICKS_ledger_not_the_AMBIENT_one(homes):
+    """The read half of the same leak, and the worse half to reason about: `_fires_in_window` is the
+    meter three rate caps enforce against, so counting the ambient home's rows let a cap be
+    satisfied — or exhausted — by fires belonging to a different install entirely.
+
+    The decoy is seeded MORE heavily than the tick's home so the two answers cannot coincide, and
+    the decoy count is asserted directly as a positive control: without it, reading `2` could just
+    as easily mean the seed silently failed as it could mean the right ledger was read."""
+    from types import SimpleNamespace
+
+    home, decoy = homes
+    _seed_ledger(decoy, "clock:rate", 5)
+    _seed_ledger(home, "clock:rate", 2)
+    trigger = SimpleNamespace(id="clock:rate", gates={"max_runs_per_hour": 10})
+
+    # Positive control: the decoy really does hold 5 readable rows for this job.
+    assert asyncio.run(SVC._fires_in_window(trigger, now=NOW + 60, base_dir=decoy)) == 5
+    # The meter under test reads the tick's ledger, so it must see 2 — never the decoy's 5.
+    assert asyncio.run(SVC._fires_in_window(trigger, now=NOW + 60, base_dir=home)) == 2
