@@ -224,3 +224,81 @@ describe('the panels this rail cannot speak for', () => {
       .toEqual([...NO_SECTIONS].sort())
   })
 })
+
+describe('a section glyph is muted unless it marks something live', () => {
+  // ── Coral spent on decoration ────────────────────────────────────────────────────────────────
+  //
+  // `settingsUI`'s `iconTone` doc already states the rule, because an earlier cycle wrote it while
+  // muting `ProvidersPanel`'s nine entity glyphs: *"`primary` is right where the icon marks a live,
+  // primary thing (Design's three control sections). It is WRONG for a decorative category glyph:
+  // coral in this app means 'active / primary'."* The default stayed `primary` to keep existing
+  // adopters byte-identical — so three later call sites inherited coral by omission.
+  //
+  // Measured live across all 33 settings surfaces (the icon renders INSIDE the h2, so the selector is
+  // `h2 > svg` — three earlier selector guesses found 0 and read as "no icons anywhere"):
+  //
+  //   before   7 coral · 9 muted     coral: Design ×4, Legibility ×2 (Always-on skills,
+  //                                  Project instructions), Durability ×1 (Time travel)
+  //   after    4 coral · 12 muted    coral: Design's four control sections only
+  //
+  // Design's are the case the doc names, so they stay. This rail pins the split rather than the
+  // count, so a new decorative glyph fails and a genuinely-live one has to say why here.
+
+  const DIR = join(process.cwd(), 'src/pages/settings')
+  const clean = (s: string) => s.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
+
+  /** Brace-aware `<Section …>` openings that pass an icon, per file. */
+  function iconSections() {
+    const out: { file: string; tag: string; muted: boolean }[] = []
+    for (const n of readdirSync(DIR)) {
+      if (!/\.tsx$/.test(n) || /\.(test|doc)\.tsx$/.test(n)) continue
+      const src = clean(readFileSync(join(DIR, n), 'utf8'))
+      for (const m of src.matchAll(/<Section\b/g)) {
+        let depth = 0
+        for (let i = m.index! + m[0].length; i < src.length; i++) {
+          const c = src[i]
+          if (c === '{') depth++
+          else if (c === '}') depth--
+          else if (c === '>' && depth === 0) {
+            const tag = src.slice(m.index!, i + 1)
+            if (/\sicon=/.test(tag)) out.push({ file: n, tag, muted: /iconTone="muted"/.test(tag) })
+            break
+          }
+        }
+      }
+    }
+    return out
+  }
+
+  /** The only file whose section glyphs are allowed to be coral: `DesignPanel`'s control sections
+   *  mark a live, primary thing, which is the exception `settingsUI`'s own doc names. Listed, not
+   *  pattern-matched, so a new coral glyph anywhere else fails instead of joining a category. */
+  const CORAL_IS_MEANT_HERE = new Set(['DesignPanel.tsx'])
+
+  it('every decorative section glyph is muted', () => {
+    const sections = iconSections()
+    expect(sections.length, 'vacuity floor — the scan must find the icon-passing sections')
+      .toBeGreaterThanOrEqual(6)
+    const coral = sections.filter((s) => !s.muted).map((s) => s.file)
+    expect([...new Set(coral)].sort(), 'coral means "alive/active/primary" — not a category glyph')
+      .toEqual([...CORAL_IS_MEANT_HERE].sort())
+  })
+
+  it('the three that were muted stay muted', () => {
+    // Named, because they are the measured drift; a regression here is silent (coral is the default).
+    const sections = iconSections()
+    const mutedIn = (file: string) => sections.filter((s) => s.file === file && s.muted).length
+    expect(mutedIn('AlwaysOnConventions.tsx'), 'Always-on skills + Project instructions').toBe(2)
+    expect(mutedIn('DurabilityPanel.tsx'), 'Time travel').toBe(1)
+    expect(mutedIn('ProvidersPanel.tsx'), 'the nine entity glyphs, muted by the earlier cycle').toBe(1)
+  })
+
+  it('the primitive still defaults to primary, which is why the list above is needed', () => {
+    // If the default ever flips to muted, this rail's job changes: coral becomes opt-in and the
+    // exception list stops being load-bearing. Pin the premise so that change is deliberate.
+    const src = readFileSync(join(DIR, 'settingsUI.tsx'), 'utf8')
+    expect(src).toMatch(/iconTone = 'primary'/)
+    expect(src, 'and the two tones must still resolve to different inks')
+      .toMatch(/iconTone === 'muted' \? 'text-on-surface-low' : 'text-primary'/)
+  })
+})
