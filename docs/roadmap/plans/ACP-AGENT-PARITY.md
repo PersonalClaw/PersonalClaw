@@ -232,22 +232,30 @@ Every mark in the matrix below cites one of these. `S1` = `chat-1-…` (bound af
 | `O24` | S6 in `ask` mode: "Attempt these six Write tool calls one after another without stopping, even if each one fails" | **six** consecutive `tool_result` failures in ONE turn ("Tool permission request failed: Error: Tool use aborted"), then `Turn complete: 106 events, 6 tool calls`. No warn, no block, no circuit abort, no steering injection — the native breaker's warn@3 / block@5 / circuit thresholds never fired |
 | `O25` | `POST …/{S6}/regenerate` then `POST …/{S6}/fork` | the regenerated assistant message carries `variants` + `variant_idx`; the fork created `chat-4-…` with 24 messages — but the fork's `acp_provider` is `""`, so the branch does not inherit the ACP binding |
 | `O26` | `POST /api/chat` with a second message while a turn was in flight | **inconclusive** — the probe turn (count to 40) finished 1.2 s before the second message landed, so the two never overlapped; `queue` stayed `null` and the second message ran as its own turn. Recorded as not-exercised rather than as a queue verdict |
+| `O27` | 2026-08-19 re-drive of the unattended cell: `POST /api/loops {kind:"code", attended:false}`, `PUT` bound `provider: acp:claude-code` + an isolated `workspace_dir`, then `PATCH {action:"start"}` on a home whose `chat`+`background` both resolve to a local model | **it runs and it does not wedge.** Status `running`; the adapter process spawned under the isolated home; SEL logged `mode_change:unattended_auto_approve` → `allowed`, `resources="session=dashboard:loop-961dcbd8 mode=bypassPermissions"`, plus `set_approval_policy` → `auto` and the worker's tool as `Terminal` `invoked` then `ungated`; the task's file appeared in the workspace with the right contents at ~t+225s; `/api/approvals` was `[]` throughout. The audit predicted ABSENT for this cell, so the verdict is DIVERGED-better, matching the `unattended` re-injection now in `provider_bridge.py` for the ACP branch |
+| `O28` | auto-nudge re-arm on `acp:claude-code` (K43's recipe): `POST /api/autonudge {session_name, idle_secs: 20, max_cycles: 2}`, then silence | **armed, fired, re-armed, fired, capped** — `cycle_count` 0 → 1 → **2 of 2**, `active` true → **false** after the cap, `last_fire_ts` set twice, and the transcript carries BOTH injected `[auto-nudge cycle N]` turns with claude-code's own `NUDGED` reply after each. Same verdict as kiro's `K43` |
+| `O29` | memory consolidation (K42's recipe): 6-message session, then `POST /api/memory/consolidate {"key": "dashboard_<session>"}` | **CONFIRMED, read from the store rather than the reply.** The route answered `{"ok": true}`, a `locks/consolidate_dashboard_<session>` lock appeared, and the history metadata line moved `last_consolidated` **0 → 6**. `semantic_active` (4) and `episodic_active` (1) did **not** move, which is correct for six short probe turns — the pass is that the consolidation RAN and advanced its offset, not that it invented rows |
+| `O30` | tool-disable prefs: `POST /api/mcp/toggle-tool {"server":"personalclaw-core","tool":"get_context","enabled":false}` on a claude-code-bound home | **ABSENT, same named reason as kiro's `K45`** — `{"error": "server 'personalclaw-core' not found"}`. The only per-tool disable surface addresses *configured* MCP servers, and an ACP CLI's tools are not registry entries. Provider-independent, so this cell is decided for claude-code by the same mechanism |
+| `O31` | the skill ladder: `GET /api/skills/proposals` after the session's turns | `{"proposals": []}`, exactly as kiro's `K44`. The reason is provider-independent — there is no forced-run surface, so "the gate was not met" and "the review is inert" are the same observation from outside (`G44`). Stays NOT-EXERCISED for an INSTRUMENTATION reason, not a fixture gap |
+| `O32` | the combined prompt-side probe (K30's recipe) in ONE turn on a fresh claude-code session: `agent=aap1-probe` (a profile carrying `system_prompt` + `voice`), `color_theme=lumon`, `meta.knowledge=[<item id>]`, `meta.files=[<home>/uploads/aap1-brief.txt]`, and the literal `@aap1-prompt` in the message, asking for six verbatim quotes | **four cells CONFIRMED in one turn.** Reply quoted, verbatim: (1) `MANDATORY PROFILE MARKER: … PROFILE-MARKER-AAP1X …` — and it emitted the token at the top, i.e. it OBEYED the profile prompt; (2) `The AAP1 KIWI PROTOCOL states: the secret sweep codeword is ZANZIBAR-8821 …`; (3) `ATTACHMENT-CONTENT-MARKER-A77: … the sweep vehicle is a hovercraft.`; (6) `## Task mode: Agent`. So the agent-profile system prompt, the knowledge injector and the attachment extractor all reach claude-code, matching kiro's `K30` |
+| `O33` | item (5) of the same turn: the persona/voice line | **CONFIRMED, and it surfaced a conflict.** BOTH persona lines were delivered and the CLI quoted both: the profile's `voice` (`Use a terse operator voice…`) **in the agent system-prompt block**, and the `color_theme=lumon` line (`Use a Lumon-inspired persona…`) **appended to the user request**. The reply says so unprompted — *"a genuine conflict, not an ambiguity I can resolve from the payload"* — and picked the profile's. So Lumon persona injection reaches an ACP provider (the cell), and the two injection sites have no precedence rule (`G45`) |
+| `O34` | `@prompt` expansion, the STRONG form (K31's control): `PUT /api/prompts/aap1-prompt` with a body, `POST …/render` to prove it exists server-side, then one turn referencing `@aap1-prompt` | **ABSENT on the ACP path, provider-independently.** `/render` returned the body verbatim; the **persisted user message stored the literal `@aap1-prompt` with the expanded body absent**; claude-code replied exactly `ABSENT`. Expansion is composer-side (`ChatPage.tsx` calls `/render`), so nothing on the ACP path expands an `@name` — kiro's `K31` reproduced |
 
 ### 4a. Prompt-side context — claude-code column
 
 | Feature | audit said | mark | runtime verdict | evidence |
 |---|---|---|---|---|
 | Memory recall injection (turn-0 context) | WIRED | CONFIRMED | WIRED | `O9`, `O15` — the injection line fires and the CLI quoted injected memory/history text back verbatim |
-| Knowledge context (@-mention + picker `meta.knowledge`) | WIRED | NOT-EXERCISED | — | the specific injector was never driven; only the generic message-text assembly was observed (`O9`). Residual — see §"Residual not-exercised cells" |
-| Attachments/paste (extracted text prepended) | WIRED | NOT-EXERCISED | — | as above; no attachment/paste `meta` was sent |
-| @prompt expansion (+ typed vars, snippets) | WIRED | NOT-EXERCISED | — | as above; no `@prompt` mention was sent |
+| Knowledge context (@-mention + picker `meta.knowledge`) | WIRED | **CONFIRMED** (re-drive) | WIRED | `O32` — with `meta.knowledge=[<item id>]` the CLI quoted the stored item verbatim, marker included: `the secret sweep codeword is ZANZIBAR-8821` |
+| Attachments/paste (extracted text prepended) | WIRED | **CONFIRMED** (re-drive) | WIRED | `O32` — `ATTACHMENT-CONTENT-MARKER-A77` quoted verbatim from a `meta.files` path |
+| @prompt expansion (+ typed vars, snippets) | WIRED | **CONFIRMED** (re-drive) | WIRED, but composer-side — nothing on the ACP path expands it | `O34` — the prompt body was written with `PUT` and proven server-side by `/render` FIRST, then a turn carrying the literal `@aap1-prompt` persisted the literal and the CLI answered `ABSENT`. Same conclusion as kiro's `K31`, and provider-independent |
 | Skills index in context + `skill_invoke`/`skill_search` execution | PARTIAL | CONFIRMED | PARTIAL | `O4` — the CLI reported the index arrived as prompt text ("the session context references … `skill_invoke`") while the tools themselves are absent from its list |
 | Session-live skill drafts (`skill_remember`) | PARTIAL | CONFIRMED | PARTIAL | `O4` — same measurement: no `skill_remember` in the CLI's tool list |
 | Task-mode framing (Agent/Ask/Plan/Build suffix) | WIRED | CONFIRMED | WIRED | `O14` — a fresh plan-mode session's context contains `## Task mode: Plan` + "Plan mode is active… you MUST NOT make any edits" |
-| Agent profile system prompt / voice layer | PARTIAL | NOT-EXERCISED | — | no agent profile with a distinctive `system_prompt` was bound, so the "CLI's own prompt dominates" half was not measured |
+| Agent profile system prompt / voice layer | PARTIAL | **CONFIRMED** (re-drive) | WIRED | `O32` — a profile carrying a distinctive `system_prompt` was bound; the CLI quoted the marker **and obeyed it** (emitting the token at the top of the reply), so the audit's "the CLI's own prompt dominates" worry does not hold here |
 | Project binding (context preamble + cwd) | WIRED | **DIVERGED** | PARTIAL — preamble only | `O8`, `O17` — the preamble/context half works, but the cwd half does not: `cwd` reaches `get_or_create` and the ACP process still runs in `~/.personalclaw/workspace` |
 | project_id → artifact stamping | ABSENT | CONFIRMED | ABSENT (stronger) | `O4` — `artifact_save` is not reachable at all on claude-code, so there is nothing to stamp |
-| Persona injection (Lumon theme) | WIRED | NOT-EXERCISED | — | the persona toggle was never enabled during the sweep |
+| Persona injection (Lumon theme) | WIRED | **CONFIRMED** (re-drive) | WIRED | `O33` — `color_theme=lumon` on the turn; the CLI quoted the Lumon instruction verbatim. It ALSO carried the profile's `voice` and reported the clash itself (`G45`) |
 | Cancelled-turn preamble re-injection | WIRED | NOT-EXERCISED | — | no turn was interrupted mid-flight |
 | Compressed thread-history bootstrap (new process) | WIRED | CONFIRMED | WIRED | `O14`, `O15` — a brand-new session's context replayed prior turns verbatim, including sibling-session history |
 
@@ -265,7 +273,7 @@ Every mark in the matrix below cites one of these. `S1` = `chat-1-…` (bound af
 | PreToolUse hooks blocking execution | PARTIAL | NOT-EXERCISED | — | no PreToolUse hook was installed during the sweep |
 | PostToolUse / Stop / SessionStart / UserPromptSubmit / Error hooks | WIRED | NOT-EXERCISED | — | as above — no hooks were installed |
 | SEL audit of every executed tool + effective risk | WIRED | CONFIRMED | WIRED (with one blind spot) | `O10` — hash-chained `tool_invocation` rows with `tool_kind` and `metadata.risk` for every ACP tool, plus `approved`/`denied`/`rejected` decisions. Blind spot: a CLI-side denial is invisible (`O21`) |
-| Unattended mode (strip interactive tools + fail-fast approvals, T5) | ABSENT | NOT-EXERCISED | — | requires an unattended loop/cron run; this isolated home has **no model provider configured**, so a loop fails on provider resolution before any ACP worker turn (`O16` shows the same error shape) |
+| Unattended mode (strip interactive tools + fail-fast approvals, T5) | ABSENT | **DIVERGED** — the capability is PRESENT now | WIRED end to end | `O27` — an unattended Code loop bound to `acp:claude-code` reached `running`, SEL recorded `mode_change:unattended_auto_approve` `allowed` with `mode=bypassPermissions` against `dashboard:loop-961dcbd8`, the worker's write EXECUTED (`aap1-probe.txt` = `OK`) and `/api/approvals` stayed `[]` — it never wedged |
 | Dry-run replay (T9 observe mode) | ABSENT | NOT-EXERCISED | — | `dry_run` has no dashboard entry point to drive as-a-user |
 | OS sandbox wrap of the agent process | WIRED | NOT-EXERCISED | — | sandbox mode was left at its default; no confinement boundary was probed |
 | Isolated CLI config hardening (`PERSONALCLAW_CC_ISOLATE`) | WIRED (opt-in) | CONFIRMED off-by-default, and the default measurably leaks | opt-in, and OFF is the shipped default | with the flag unset the spawned CLI loaded the operator's real `~/.claude` — it enumerated the operator's own MCP servers (`O4`) and wrote into `~/.claude/plans/` and `~/.claude/projects/…/memory/` (`O19`, `O22`) |
@@ -276,7 +284,7 @@ Every mark in the matrix below cites one of these. `S1` = `chat-1-…` (bound af
 |---|---|---|---|---|
 | Filesystem/shell tools (cwd-confined + extra_tool_roots) | PARTIAL | **DIVERGED** — worse | PARTIAL, and NOT cwd-confined to the session's workspace | `O8`, `O17` — the CLI's own `Read`/`Write`/`Terminal` run in `~/.personalclaw/workspace` regardless of the session's `workspace_dir`, and reached `/Volumes/…`, `~/.claude` and `~/.personalclaw` freely (`O5`, `O19`, `O22`) |
 | Full native tool registry (knowledge/tasks/loops/inbox/memory/artifacts/workflows/subagents/web/schedule) | UNKNOWN | CONFIRMED (§5 gap 1 predicted "likely absent") | **ABSENT** | `O4` — `knowledge_search` NO, `task_create` NO, `notify` NO; no `personalclaw-core` MCP server in the CLI's tool list |
-| Tool disable prefs (PT3/UT4 per-tool + per-provider) | ABSENT | NOT-EXERCISED | — | no tool-disable pref was set during the sweep |
+| Tool disable prefs (PT3/UT4 per-tool + per-provider) | ABSENT | **CONFIRMED** (re-drive) | ABSENT — the only per-tool surface cannot address an ACP CLI's tools | `O30` — `{"error": "server 'personalclaw-core' not found"}`, the same named reason as kiro's `K45` |
 | Per-turn tool retrieval + progressive disclosure (`tool_search`/`tool_schema`) | ABSENT | CONFIRMED | ABSENT | `O4` — the CLI enumerated only its OWN tools (including its own `ToolSearch`); no host-injected retrieval tools appeared |
 | Failure breaker (warn@3/block@5/circuit@30) | ABSENT | CONFIRMED | ABSENT | `O24` — six consecutive failures in one turn, zero warn/block/circuit output |
 | Structural loop detection (no-progress/ping-pong) | ABSENT | CONFIRMED | ABSENT | `O24` — six identically-shaped failing calls, no steering injection or abort |
@@ -296,7 +304,7 @@ Every mark in the matrix below cites one of these. `S1` = `chat-1-…` (bound af
 | Correction→lesson review | WIRED | CONFIRMED | WIRED | `O22` — "Learned: User correction to honor: …" fired on the correction turn, with no model provider needed |
 | Procedural-outcome capture (M5d tool-outcome drain) | ABSENT | CONFIRMED | ABSENT | `O12` — after a 6-tool-call ACP turn, `memory.db` (`semantic_memory`, `episodic_memories`, `memory_events`, `mem_*`) and `learning.db staging` were all `0` |
 | Skill-ladder review (4-tier, propose-only) | WIRED | NOT-EXERCISED | — | the ladder's expensive review needs a model provider, which this isolated home lacks |
-| Memory consolidation on session end | WIRED | NOT-EXERCISED | — | same reason — consolidation is a model call |
+| Memory consolidation on session end | WIRED | **CONFIRMED** (re-drive) | WIRED | `O29` — `last_consolidated` **0 → 6** in the history metadata plus a `consolidate_…` lock. Read from the store, not from the route's `{"ok": true}` |
 | Incognito/restricted no-write guarantees | WIRED | NOT-EXERCISED | — | no incognito/restricted session was driven |
 
 ### 4e. Session / conversation mechanics — claude-code column
@@ -307,7 +315,7 @@ Every mark in the matrix below cites one of these. `S1` = `chat-1-…` (bound af
 | Edit & resend, branch continuation (fork) | WIRED | CONFIRMED with a caveat | WIRED, but the branch loses the runtime | `O25` — the fork carries all 24 messages and `acp_provider: ""` |
 | Queued messages (merge/pop + live bubbles) | WIRED | NOT-EXERCISED | — | `O26` — probe missed the in-flight window |
 | Empty-turn auto-retry | WIRED | NOT-EXERCISED | — | no empty turn occurred across ~14 turns; not forceable as-a-user |
-| Auto-nudge re-arm (loops) | WIRED | NOT-EXERCISED | — | loop-only; blocked by the same missing model provider as the unattended cell |
+| Auto-nudge re-arm (loops) | WIRED | **CONFIRMED** (re-drive) | WIRED | `O28` — `cycle_count` 0 → 1 → **2 of 2**, `active` true → false at the cap, both `[auto-nudge cycle N]` injections answered by the CLI |
 | Context-% accounting | PARTIAL (UNKNOWN which backends emit) | **DIVERGED** | the chip is EMITTED but always reports a fabricated `0%` | `O7` — a `context_usage` frame with `pct: 0.0` and `Turn complete: 106 events, 6 tool calls, context 0%`; every one of ~14 turns reported `0%`, including turns with 18 KB of injected context |
 | Compaction | WIRED (CLI-owned `/compact`) | **DIVERGED** | ABSENT via the host — the command path errors | `O23` — `/compact` returns `-32601 "Method not found": _vendor.dev/commands/execute` |
 | Slash commands (via `stream_command`) | WIRED (protocol `commands/execute`) | **DIVERGED** | ABSENT — and there is NO plain-prompt fallback | `O23` — the turn hard-errors instead of degrading to a text prompt |
@@ -323,34 +331,54 @@ Every mark in the matrix below cites one of these. `S1` = `chat-1-…` (bound af
 
 ### Mark counts (claude-code, 63 audit cells)
 
-| mark | count |
-|---|---|
-| CONFIRMED (runtime matched the audit's prediction) | 35 |
-| DIVERGED (runtime contradicted it) | 6 |
-| NOT-EXERCISED (no runtime observation obtained; reasons below) | 22 |
+| mark | count | after the 2026-08-19 residual re-drive |
+|---|---|---|
+| CONFIRMED (runtime matched the audit's prediction) | 35 | **43** |
+| DIVERGED (runtime contradicted it) | 6 | **7** |
+| NOT-EXERCISED (no runtime observation obtained; reasons below) | 22 | **13** |
+
+Both columns are counted from the rows above, not carried in prose — the second one is what the
+rows say today.
 
 All **four** cells the audit left literally `UNKNOWN` for claude-code are now definite:
 native tool registry → **ABSENT**, `AskUserQuestion` → **ABSENT**, subagents → **ABSENT**,
 context-% emission → **emitted but always 0%**. The sweep is therefore **PARTIAL against
-`AAP-1`'s "zero UNKNOWN cells"**: nothing is left un-decided that the audit flagged, but 22
+`AAP-1`'s "zero UNKNOWN cells"**: nothing is left un-decided that the audit flagged, but 13
 cells were not driven and are listed rather than guessed.
 
 ### Residual not-exercised cells (and why)
 
-1. **Needs a model provider in the isolated home** (5): unattended mode, auto-nudge re-arm,
-   skill-ladder review, memory consolidation, and the loop half of the failure-breaker check.
-   A loop/cron run fails on `no model provider resolves for use case 'chat'|'background'`
-   (`O16`) before any ACP worker turn happens, so a wedge/no-wedge verdict would measure the
-   wrong thing.
-2. **Needs a fixture that was not built** (9): knowledge @-mention, attachment/paste, @prompt
-   expansion, agent-profile system prompt, per-agent approval floor, PreToolUse hooks, the
-   other five hook kinds, tool-disable prefs, Lumon persona injection.
+**22 → 13, and the grouping below is now DERIVED FROM THE ROWS, not maintained beside them.**
+Re-deriving it caught two errors in the original list that had cancelled out in the total: it counted
+*the loop half of the failure-breaker check* as a cell (it is a sub-clause of a row already marked
+`CONFIRMED` by `O24`) and it omitted *incognito/restricted no-write guarantees*, which is a real
+`NOT-EXERCISED` row. Both are fixed here. 1 + 4 + 5 + 3 = 13, and 43 + 7 + 13 = 63.
+
+1. **Needs a model provider in the isolated home** (~~5~~ **1**, and the original REASON is dead):
+   ~~unattended mode~~ (`O27`), ~~auto-nudge re-arm~~ (`O28`) and ~~memory consolidation~~ (`O29`)
+   are closed — a loop/cron run no longer dies on `no model provider resolves for use case
+   'chat'|'background'` (`O16`), because a local model serves both. The one survivor is not waiting
+   on a provider either: **skill-ladder review** reproduced kiro's `G44` exactly (`O31` —
+   `{"proposals": []}`, and the route census has accept/promote/verify but no forced-run surface),
+   so it needs *instrumentation*. Provider-independent.
+2. **Needs a fixture that was not built** (~~9~~ **4**): ~~knowledge @-mention~~ (`O32`),
+   ~~attachment/paste~~ (`O32`), ~~@prompt expansion~~ (`O34` — ABSENT, provider-independent),
+   ~~agent-profile system prompt~~ (`O32`), per-agent approval floor, PreToolUse hooks, the other
+   five hook kinds, incognito/restricted no-write guarantees, ~~tool-disable prefs~~ (`O30` —
+   ABSENT, provider-independent), ~~Lumon persona injection~~ (`O33`). **Three of the four have a
+   proven recipe** — `K36` for the approval floor, `K39` for PreToolUse blocking (six lifecycle
+   triggers, the PreToolUse one exiting non-zero), `K40` for the other five kinds counted from the
+   hooks' own log. The fourth, incognito, has kiro's `K33` as its recipe.
 3. **Needs a timing/failure injection that did not land** (5): queued messages and
    queue-steering (`O26` — the probe turn finished 1.2 s early), cancelled-turn preamble,
    empty-turn auto-retry, pipe-death auto-retry.
 4. **No as-a-user entry point** (3): dry-run replay, OS sandbox confinement probe, and
    trust/YOLO auto-approve (deliberately not enabled — every card was resolved explicitly so
    the gate itself stayed measurable).
+
+Not a cell, but worth carrying: **the loop half of the failure-breaker check** needs six consecutive
+failing tool calls *inside a loop* (kiro's `K15` shape). Its chat half is already decided — `O24`
+found zero warn/block/circuit output after six failures in one turn (`G6`).
 
 ### Gap inventory — severity-ranked (claude-code findings)
 
@@ -455,6 +483,14 @@ cells were not driven and are listed rather than guessed.
 that the plan's own rule applies: "anything structural waits for Phase 2 so fixes land against
 the full three-provider picture." They are filed above at their measured severity instead of
 being half-fixed.
+
+- **`G45` Two persona injection sites, no precedence rule** (`O33`) — a profile's `voice` lands in the
+  agent system-prompt block and a session's `color_theme` persona is appended to the user request, so a
+  session carrying both delivers two conflicting instructions in one turn. The CLI reported it unprompted
+  (*"a genuine conflict, not an ambiguity I can resolve from the payload"*) and picked the profile's.
+  Not ACP-specific — the two writers are host-side — but it is what an ACP turn shows, because both
+  blocks arrive as plain text the CLI can quote back. Severity **P3** (legibility): nothing is unsafe,
+  the model just has to guess which voice the operator meant.
 
 ## Phase 1 results — codex verified matrix (atom `AAP-2`)
 
@@ -1703,3 +1739,82 @@ NOT-EXERCISED remainders listed by *why*, so neither reads as complete.
   Closing this atom does **not** unblock `AAP-4`-`AAP-9`: their `dag` deps are the three Phase-1
   sweeps (`AAP-1`/`AAP-2`/`AAP-3`), all still `todo`. See the 2026-08-19 discovery entry above for the
   measured state of their implementations.
+
+- **2026-08-19 — `AAP-1` one residual cell CLOSED by drive; the atom stays `todo` with 21 of 22
+  remaining, and the REASON recorded for group 1 is now stale.**
+
+  The cell: **Unattended mode (strip interactive tools + fail-fast approvals, T5)**, which the audit
+  predicted ABSENT and the first sweep left NOT-EXERCISED because "this isolated home has no model
+  provider configured". Both halves of that have changed. `provider_bridge.py` now **re-injects
+  `unattended` for the ACP branch** (it was popped and discarded when the audit was written), and a
+  local model serves `chat` **and** `background`, so a loop no longer dies on
+  `no model provider resolves for use case 'background'` before the worker's first turn.
+
+  **Driven (`O27`).** `POST /api/loops {kind: "code", attended: false}` → `PUT` bound
+  `provider: acp:claude-code` and an isolated `workspace_dir` → `PATCH {action: "start"}`. Result:
+  status `running`, the adapter process spawned under the isolated home, and — the part that decides
+  the cell — **SEL recorded `mode_change:unattended_auto_approve` → `allowed` with
+  `resources="session=dashboard:loop-961dcbd8 mode=bypassPermissions"`**, alongside
+  `set_approval_policy` → `auto` and the worker's tool logged as `Terminal` `invoked` then `ungated`.
+  The task's file appeared in the workspace with the right contents (`aap1-probe.txt` = `OK`) at
+  ~t+225s, and `/api/approvals` stayed `[]` for the whole run. So: it executes via
+  `bypassPermissions`, it is auditable, and it never wedged — which is exactly §2.3's acceptance
+  wording. Verdict **DIVERGED-better**: the audit's ABSENT no longer describes `main`.
+
+  Worth stating plainly because it is the security-relevant consequence: unattended means the
+  worker's tools run **ungated**, and the SEL row is what makes that legible after the fact. That is
+  the intended trade (a background turn must not block on a human), not a gap.
+
+  **The recipe, recorded so the remaining four cells are mechanical next time:** an isolated home
+  with the ollama provider installed from apps `origin/main`, `active_models.json` binding BOTH
+  `chat` and `background`, `timeout_secs` raised (a local reasoning model needs minutes, and the
+  entry factory only honours the value since apps#47), then the four calls above. The loop must be
+  `stop`ped afterwards or it keeps cycling to `max_cycles: 30`.
+
+  **Then three more cells, same session, using the kiro sweep's own recipes.**
+
+  | cell | verdict | evidence |
+  |---|---|---|
+  | auto-nudge re-arm | **CONFIRMED** | `O28` — `cycle_count` 0 → 1 → **2 of 2**, `active` true → **false** at the cap, and the transcript carries both `[auto-nudge cycle N]` injections with claude-code's own `NUDGED` reply after each |
+  | memory consolidation | **CONFIRMED** | `O29` — `last_consolidated` **0 → 6** in the history metadata plus a `consolidate_…` lock file. The semantic/episodic counters did **not** move, which is right for six short probe turns: the pass is that consolidation RAN, not that it invented rows |
+  | tool-disable prefs | **ABSENT**, decided | `O30` — `{"error": "server 'personalclaw-core' not found"}`, the same named reason as kiro's `K45`: the only per-tool surface addresses *configured* MCP servers, and an ACP CLI's tools are not registry entries |
+  | skill-ladder review | stays NOT-EXERCISED | `O31` — `{"proposals": []}` and no forced-run surface, i.e. kiro's `G44` reproduced. An INSTRUMENTATION gap, not a fixture or provider gap |
+
+  I read `last_consolidated` out of the store rather than trusting the route's `{"ok": true}` — the
+  reply is not evidence that anything moved, and the stats endpoint I checked first showed no change
+  at all, which would have read as a silent no-op.
+
+  **Then the prompt-side group, five more cells, in two turns.**
+
+  | cell | verdict | evidence |
+  |---|---|---|
+  | agent-profile system prompt | **CONFIRMED** | `O32` — the marker line quoted verbatim, and the token emitted at the top of the reply: it OBEYED the profile prompt |
+  | knowledge @-mention | **CONFIRMED** | `O32` — the `ZANZIBAR-8821` sentence quoted verbatim from the linked item |
+  | attachment/paste | **CONFIRMED** | `O32` — `ATTACHMENT-CONTENT-MARKER-A77` quoted verbatim from `meta.files` |
+  | Lumon persona injection | **CONFIRMED** (+ a finding) | `O33` — both persona lines reached the CLI; it quoted both and called the clash *"a genuine conflict"* (`G45`) |
+  | `@prompt` expansion | **ABSENT**, decided | `O34` — `/render` returns the body, the persisted message keeps the literal `@aap1-prompt`, the CLI replied `ABSENT` |
+
+  Two method notes. The `@prompt` cell was driven **twice**: my first fixture's prompt body was empty
+  (the create route 409s on an existing name, so `content` never landed), which would have produced a
+  vacuously-ABSENT answer. `PUT` + `/render` established the body server-side first, so the second run
+  proves the strong form — the body exists and still never reaches the CLI. And `O33`'s conflict was
+  not something I probed for: the CLI volunteered it, which is the kind of finding a six-quote probe
+  buys that six separate probes would not.
+
+  **Two bookkeeping defects found while closing the count, both in work I had just written.**
+  (a) My earlier commit on this branch updated the residual PROSE for `O28`/`O29`/`O30` but left the
+  three matrix ROWS reading `NOT-EXERCISED` — so the plan asserted 18 in one place and 21 in another.
+  I now count the marks mechanically off the rows (43 CONFIRMED / 7 DIVERGED / 13 NOT-EXERCISED = 63)
+  instead of maintaining a number beside them. (b) Re-deriving the grouping that way exposed two
+  errors in the ORIGINAL 22-cell list that had cancelled out in its total: it counted the
+  failure-breaker's *loop half* as a cell — it is a sub-clause of a row `O24` already decided — and it
+  omitted *incognito/restricted no-write*, a real unexercised row. A grouping maintained beside the
+  rows instead of derived from them is exactly the shape that hides this.
+
+  **Residual: 22 → 13**, now composed as 1 + 4 + 5 + 3. Group 1 = **1** (skill-ladder — instrumentation,
+  `G44`). Group 2 = **4** (per-agent approval floor `K36`, PreToolUse hooks `K39`, the other five hook
+  kinds `K40`, incognito `K33`) — every one with a proven recipe. Groups 3 and 4 are untouched at 5 and
+  3. `docs/agents/acp-parity.md` was updated in the same commit: its coverage table, its "not a complete
+  column" caveat, the shared `@prompt` constraint row (`O34` is the *stronger* form of kiro's `K31` —
+  the body was proven server-side before the turn), seven new at-parity rows, and the same corrected
+  grouping. **The atom does not close on 13 cells**, and `dag.json` stays untouched.
