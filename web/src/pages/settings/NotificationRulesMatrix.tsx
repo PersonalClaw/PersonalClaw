@@ -79,9 +79,17 @@ export function NotificationRulesMatrix({ doc, onSaved }: { doc: NotificationRul
                         </Button>
                       )}
                       <SegPills ariaLabel={`Delivery mode for ${r.label}`} value={r.mode} onChange={(v) => save(r.key, { mode: v })} options={MODES} />
+                      {/* 🔴 `ariaLabel`/`ariaExpanded`, NOT `aria-label`/`aria-expanded`. `ui/Button`
+                          declares camelCase props and spreads no rest, so the hyphenated forms were
+                          accepted by the compiler and dropped on the floor — TypeScript does not
+                          excess-property-check a JSX attribute whose name contains a dash, because it
+                          cannot be an identifier. Measured on `#/settings/notifications` before this:
+                          27 chevron triggers with NO `aria-expanded` at all, and all 27 sharing the
+                          single accessible name "detail". The intent was written correctly the first
+                          time and never reached the DOM. */}
                       <Button size="xs" variant="ghost" onClick={() => setExpanded(isOpen ? null : r.key)}
-                        aria-expanded={isOpen}
-                        aria-label={`${isOpen ? 'Hide' : 'Show'} delivery detail for ${r.label}`}>
+                        ariaExpanded={isOpen}
+                        ariaLabel={`${isOpen ? 'Hide' : 'Show'} delivery detail for ${r.label}`}>
                         {hasConditions ? 'conditions' : 'detail'}
                         <ChevronDown size={12} style={{ transform: isOpen ? 'rotate(180deg)' : undefined, transition: 'transform 150ms' }} />
                       </Button>
