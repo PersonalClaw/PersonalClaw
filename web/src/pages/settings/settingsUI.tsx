@@ -28,13 +28,23 @@ export function PanelHeader({ title, hint }: { title: string; hint?: string }) {
   )
 }
 
-export function Section({ title, hint, icon: Icon, right, children }: {
-  title?: string
+export function Section({ title, hint, icon: Icon, iconTone = 'primary', right, children }: {
+  /** ReactNode, not string: a count badge belongs INSIDE the heading, where it reads as part of the
+   *  section's name rather than as a control parked at the far edge. `ui/PageTitle` already sanctions
+   *  exactly that for the page h1 ("lets the title own trailing chrome"). A plain string is still a
+   *  ReactNode, so every existing caller is untouched. */
+  title?: ReactNode
   /** ReactNode, not string: `DiagnosticsPanel`'s "Live logs" hint carries a live connection dot and
    *  a count, which is why that panel hand-rolled its heading rather than adopt this. */
   hint?: ReactNode
   /** Leading glyph inside the heading — `DesignPanel`'s three control sections each have one. */
   icon?: LucideIcon
+  /** Tone for that glyph. `primary` is right where the icon marks a live, primary thing (Design's
+   *  three control sections). It is WRONG for a decorative category glyph: coral in this app means
+   *  "active / primary", and `ProvidersPanel` has NINE entity glyphs down one page — rendering them
+   *  coral would make the accent decorative, which the design system forbids. Default keeps every
+   *  existing adopter byte-identical. */
+  iconTone?: 'primary' | 'muted'
   /** Trailing slot on the title row (a mode switcher, a log toolbar). Keeps a bespoke header row
    *  from being the reason a panel opts out of the primitive. */
   right?: ReactNode
@@ -51,7 +61,7 @@ export function Section({ title, hint, icon: Icon, right, children }: {
   // 0%. A primitive gaining an option must be inert for everyone who does not pass it.
   const heading = title && (
     <h2 className={`mb-s text-on-surface text-[0.9375rem]${Icon ? ' flex items-center gap-s' : ''}`} style={fvs(600)}>
-      {Icon && <Icon size={16} className="shrink-0 text-primary" />}
+      {Icon && <Icon size={16} className={`shrink-0 ${iconTone === 'muted' ? 'text-on-surface-low' : 'text-primary'}`} />}
       {title}
     </h2>
   )

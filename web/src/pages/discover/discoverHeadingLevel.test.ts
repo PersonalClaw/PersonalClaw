@@ -86,10 +86,17 @@ describe("Discover's area headings sit one rung under the page title", () => {
     const withH3 = walk(SRC)
       .filter((abs) => /<h3[\s>]/.test(strip(readFileSync(abs, 'utf8'))))
       .map((abs) => abs.replace(SRC + '/', ''))
+    // 2026-08-19, and the classification was re-done as this comment requires:
+    //   · `settings/ProvidersPanel` LEFT the list — it reported `h1 → h3` (axe heading-order) and now
+    //     renders its group headings through `settingsUI`'s `Section` (an h2), so it writes no heading
+    //     tag of its own at all.
+    //   · `settings/VoicePanel` JOINED it — its "Learned corrections" sub-heading was an `h4` under a
+    //     `Section` h2 (measured live: `H1 > H2 > H2 > H2 > H2 > H4`) and is now the h3 that nesting
+    //     actually calls for. Panel-level, correctly nested: the classification above still holds.
     expect(withH3.sort(), 'files still using h3').toEqual([
       'pages/code/CodeCockpitPage.tsx',
       'pages/settings/DesignPanel.tsx',
-      'pages/settings/ProvidersPanel.tsx',
+      'pages/settings/VoicePanel.tsx',
       'pages/workflows/IntrospectPanel.tsx',
       'pages/workflows/NodeInspectorDrawer.tsx',
       'pages/workflows/OutboxPanel.tsx',
