@@ -1296,6 +1296,7 @@
           "id": "DAS-10",
           "title": "\u00a76 DSAR portability endpoints + remaining Durability FE (Session 5, \u00a76)",
           "status": "done",
+          "pr": 1725,
           "scope": "\u00a76 User-Facing Portability Endpoints (NEW-4.b); \u00a74.3 sync config via /api/providers routes; \u00a74.2 conflict review surface FE; Implementation Order Session 5 (endpoints + FE half)",
           "done_when": "POST /api/durability/export (full or per-domain shard zip, secret\u222aderived excluded, \u00a72 manifest inside), POST /api/durability/import {mode:merge|replace} extending validate_import_zip/apply_import_zip to the full inventory with MANIFEST v3 (v1|2 back-compat), GET /api/durability/archive + POST /api/durability/archive/{id}/restore with per-domain row counts and last-drill validate status; separate memory vs knowledge export buttons (knowledge includes files/ originals); Settings \u2192 Durability panel gains archive browser, sync config via standard /api/providers routes, and the conflict review queue; criteria 9-10 met (memory/knowledge separately exportable + separate conflict surfaces; a third-party type:\"sync\" app registers/configures/syncs with zero core changes)",
           "deps": [
@@ -2160,6 +2161,7 @@
           "id": "AS-9",
           "title": "Agent-worlds seam: AgentActivityFeed contract + useAgentActivity hook + first-party world",
           "status": "done",
+          "pr": 1725,
           "scope": "Amendment 2026-07-26 round 2 (b) Agent worlds, task A2-3 (platform contributes the seam, not the scene).",
           "done_when": "the AgentActivityFeed contract is documented and a useAgentActivity() hook folds GET /api/loops + chat session states + subagent states, refreshed by existing WS envelopes (chat_status/sessions/subagent*/update_progress) as signals only; one first-party modern (WebGL/high-craft canvas) world renders live states from the hook alone (no private endpoints) with smooth state interpolation and a passing prefers-reduced-motion static-layout audit; an APP-PLATFORM-EVOLUTION coordination note for app-contributed worlds is added as a doc note (not code).",
           "deps": [
