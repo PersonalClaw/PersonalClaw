@@ -255,13 +255,23 @@ function TimeTravelSection({ cfg, setCfg }: {
                   <div className="mt-2 flex flex-wrap gap-2">
                     {/* The newest commit IS the current state, so rolling back to it would be a
                         no-op button — offered only from the second row down. */}
+                    {/* One pair of buttons per entry, so the visible verbs alone announce as a run of
+                        identical controls. The name carries the row.
+                        🪤 NAMING BY `entry.subject` ALONE DOES NOT WORK HERE, measured: all three
+                        entries in this tree read "Configuration: 1 file changed", and their ages
+                        (3.87h / 3.87h / 3.88h) all render "4 hours ago" — so subject, time, and
+                        subject+time each still collide. The POSITION is what actually distinguishes one
+                        row from the next in a chronological list, and it is human where `entry.sha`
+                        would be a machine code read out loud. */}
                     {i > 0 && (
                       <Button variant="secondary" size="sm" disabled={busy}
+                        ariaLabel={`See going back to here: change ${i + 1} of ${timeline.data!.entries.length} — ${entry.subject}`}
                         onClick={() => takePreview(entry, 'rollback')}>
                         See going back to here
                       </Button>
                     )}
                     <Button variant="secondary" size="sm" disabled={busy}
+                      ariaLabel={`See undoing just this: change ${i + 1} of ${timeline.data!.entries.length} — ${entry.subject}`}
                       onClick={() => takePreview(entry, 'revert')}>
                       See undoing just this
                     </Button>
@@ -530,10 +540,12 @@ function ArchiveSection({ snaps, onChanged }: {
                 </div>
                 <DomainCounts counts={a.domains} />
                 <div className="mt-2 flex flex-wrap items-center gap-2">
-                  <Button variant="secondary" size="sm" onClick={() => preview(a)} disabled={busy !== ''}>
+                  <Button variant="secondary" size="sm" ariaLabel={`Preview restore: ${a.name}`}
+                    onClick={() => preview(a)} disabled={busy !== ''}>
                     {busy === a.id ? <><Loader2 size={14} className="animate-spin" /> Working…</> : 'Preview restore'}
                   </Button>
-                  <Button variant="secondary" size="sm" onClick={() => mergeRestore(a)} disabled={busy !== ''}>
+                  <Button variant="secondary" size="sm" ariaLabel={`Merge-restore: ${a.name}`}
+                    onClick={() => mergeRestore(a)} disabled={busy !== ''}>
                     Merge-restore
                   </Button>
                 </div>
@@ -811,14 +823,22 @@ function ConflictsSection({ read, onChanged }: {
                   )}
 
                 <div className="mt-2 flex flex-wrap items-center gap-2">
-                  <Button variant="secondary" size="sm" disabled={busy !== ''} onClick={() => resolve(c, 'keep_local')}>
+                  {/* Three near-identical choices per conflict, and a wrong pick overwrites an edit —
+                      so which ROW you are answering has to be in the name. `c.entity_id` is what the row
+                      displays and what the confirm body and the toast already say. */}
+                  <Button variant="secondary" size="sm" disabled={busy !== ''}
+                    ariaLabel={`${CHOICE_LABELS.keep_local}: ${c.entity_id}`}
+                    onClick={() => resolve(c, 'keep_local')}>
                     {busy === c.id ? <><Loader2 size={14} className="animate-spin" aria-hidden /> Writing…</> : CHOICE_LABELS.keep_local}
                   </Button>
-                  <Button variant="secondary" size="sm" disabled={busy !== ''} onClick={() => resolve(c, 'take_remote')}>
+                  <Button variant="secondary" size="sm" disabled={busy !== ''}
+                    ariaLabel={`${CHOICE_LABELS.take_remote}: ${c.entity_id}`}
+                    onClick={() => resolve(c, 'take_remote')}>
                     {CHOICE_LABELS.take_remote}
                   </Button>
                   <Button variant="secondary" size="sm" disabled={busy !== '' || !c.proposal}
                     disabledReason={!c.proposal ? 'No merge has been drafted for this conflict' : undefined}
+                    ariaLabel={`${CHOICE_LABELS.accept_proposal}: ${c.entity_id}`}
                     onClick={() => resolve(c, 'accept_proposal')}>
                     {CHOICE_LABELS.accept_proposal}
                   </Button>
