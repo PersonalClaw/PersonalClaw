@@ -246,6 +246,15 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
   The session's working directory now reaches the process, agent discovery uses the configured
   workspace, and an agent that declares no default directory of its own no longer relocates a chat
   you had already pointed somewhere. An agent that *does* declare one still opens there, unchanged.
+- **A "Pre tool use" hook that blocks nothing now says so.** Only a lifecycle hook an agent's
+  trigger list references can reject a tool; an unreferenced one still runs, but its exit code is
+  read by nobody. Both looked identical on the Triggers page — and the unreferenced one was the more
+  convincing of the two, because it fired on every tool call and its run count climbed. Measured: a
+  hook exiting 2 to deny a file write fired three times while all three writes landed. A blocking
+  hook now carries **Not enforcing** or **Enforcing** wherever it is listed, the run count on an
+  unarmed one is labelled advisory, and the reply to creating one says which state it starts in.
+  Hooks on the other lifecycle events are unchanged: they have nothing to arm, so they are not
+  badged. Nothing about when a hook blocks changed — only whether you can tell.
 
 - **"Unattended runs need a verified adapter" only covered one kind of unattended run.** The switch
   promised to refuse background work onto an external agent CLI whose ACP adapter has no verified

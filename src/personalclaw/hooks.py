@@ -175,6 +175,56 @@ LIFECYCLE_EVENT_CATALOG: tuple[dict, ...] = (
     },
 )
 
+#: Lifecycle events whose hook can short-circuit the loop (exit 2 → the tool is rejected).
+#: Derived from the catalog's ``blocking`` flag so the fact is declared exactly once, and read by
+#: :func:`hook_enforcement` and the trigger read model rather than re-listed per surface.
+BLOCKING_EVENTS: frozenset[str] = frozenset(
+    str(e["event"]) for e in LIFECYCLE_EVENT_CATALOG if e.get("blocking")
+)
+
+#: The three enforcement states of a lifecycle hook. Spelled as data because they are a wire
+#: contract two UIs render, and because "armed vs unarmed" needs a third value for the events
+#: where arming is meaningless — otherwise a `Stop` hook reads as a disarmed safety control.
+ENFORCEMENT_ENFORCING = "enforcing"
+ENFORCEMENT_NOT_ENFORCING = "not_enforcing"
+ENFORCEMENT_ADVISORY = "advisory"
+ENFORCEMENT_STATES: frozenset[str] = frozenset(
+    {ENFORCEMENT_ENFORCING, ENFORCEMENT_NOT_ENFORCING, ENFORCEMENT_ADVISORY}
+)
+
+
+def hook_enforcement(event: str, *, enabled: bool, bound: bool) -> str:
+    """Whether a lifecycle hook on ``event`` can actually block, given its binding.
+
+    🔴 **The measured hole this exists to close (G40).** The same ``PreToolUse`` hook blocks or
+    does not block depending on who references it, and nothing said which state a user's hook was
+    in. Driven twice against the same six lifecycle hooks:
+
+    * **Unbound** (no agent profile references the hook id) — the hook fired three times on the
+      informational path and the write **still landed**. ``run_count`` climbed to 3, which reads
+      as "my policy hook is working".
+    * **Bound** (hook ids on the session agent's ``triggers``) — the tool line read
+      ``(hook blocked: …)`` and the file was never created.
+
+    Two firing paths, one hook kind:
+
+    * :meth:`ScriptHookStore.fire_for_ids` — agent-scoped, reached from
+      ``chat_runner._fire`` and ``provider_bridge``'s native ``hook_fire``. Its ``BLOCKED:``
+      sentinel is what rejects a tool, and it fires **only** hook ids the session agent
+      references. ``hook_ids`` empty → fires nothing.
+    * :func:`fire_tool_hooks` → :meth:`ScriptHookStore.fire` — global, informational. Reached
+      from the ACP ``EVENT_TOOL_CALL`` seam, ``subagent`` and ``llm_helpers``, where the tool is
+      already running. Its results are discarded, so exit 2 there changes nothing.
+
+    So a blocking hook enforces only while it is enabled AND bound. ``advisory`` is returned for
+    the events that have no blocking seam at all, so an unbound ``Stop`` hook is not mislabelled
+    as a disarmed control. Never returns ``enforcing`` on a maybe: an unresolvable binding is
+    reported ``not_enforcing``, because a control that only *looks* armed is worse than none.
+    """
+    if event not in BLOCKING_EVENTS:
+        return ENFORCEMENT_ADVISORY
+    return ENFORCEMENT_ENFORCING if (enabled and bound) else ENFORCEMENT_NOT_ENFORCING
+
 
 @dataclass
 class HookResult:

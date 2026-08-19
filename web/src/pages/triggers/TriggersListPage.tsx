@@ -1,6 +1,6 @@
 import { useEffect, useMemo } from 'react'
 import { fvs } from '../../design/fontWeight'
-import { Plus, Zap, Clock, Pencil, CalendarDays, Users } from 'lucide-react'
+import { Plus, Zap, Clock, Pencil, CalendarDays, Users, ShieldOff } from 'lucide-react'
 import { TopBar } from '../../ui/TopBar'
 import { WorkbenchLayout } from '../../ui/WorkbenchLayout'
 import { HeaderActions, HeaderControl } from '../../ui/HeaderActions'
@@ -253,7 +253,18 @@ export function TriggersListPage({ onCreate, query, setQuery }: {
                           <span className={`truncate text-[0.9375rem] ${t.enabled ? 'text-on-surface' : 'text-on-surface-var'}`} style={fvs(500)}>{t.name}</span>
                           {!t.enabled && <span className="shrink-0 text-on-surface-low text-[0.75rem]">· disabled</span>}
                           {t.kind === 'schedule' && t.schedule?.is_running && <span className="shrink-0 inline-flex items-center gap-1 text-primary text-[0.75rem]"><span className="relative flex size-1.5"><span className="absolute inline-flex h-full w-full animate-ping rounded-pill bg-primary opacity-60" /><span className="relative inline-flex size-1.5 rounded-pill bg-primary" /></span>running</span>}
-                          {t.kind === 'lifecycle' && t.usedBy.length === 0 && <span className="shrink-0 text-on-surface-low text-[0.75rem]">· dormant</span>}
+                          {/* G40: a BLOCKING hook that no agent binds still fires — on the
+                              informational path, whose results are discarded — so its run count
+                              climbs while the write it exists to stop lands anyway. Measured: 3
+                              fires, file written. The dim "· dormant" it used to share with every
+                              other unbound event cannot carry that, and the run count argues
+                              against it, so an inert safety control gets warn ink and the word
+                              "enforcing" the user was looking for. Non-blocking events keep
+                              "· dormant": accurate for them, and crying wolf on 14 of the 15
+                              would train the eye to skip the one that matters. */}
+                          {t.kind === 'lifecycle' && t.enforcement === 'not_enforcing'
+                            ? <span className="shrink-0 inline-flex items-center gap-1 text-warn text-[0.75rem]"><ShieldOff size={11} /> not enforcing</span>
+                            : t.kind === 'lifecycle' && t.usedBy.length === 0 && <span className="shrink-0 text-on-surface-low text-[0.75rem]">· dormant</span>}
                           {t.kind === 'store' && t.broken && t.broken.length > 0 && <span className="shrink-0 text-danger text-[0.75rem]">· needs attention</span>}
                           {t.kind === 'store' && t.storeKind && <span className="shrink-0 text-on-surface-low text-[0.75rem]">· {t.storeKind}</span>}
                           {/* The AUTHOR chip §2.2 asks for. Shown only for a foreign row — a chip

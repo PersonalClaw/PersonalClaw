@@ -1305,9 +1305,17 @@ export interface ImportableMcpServer {
   env?: Record<string, string>; url?: string; headers?: Record<string, string>
 }
 export interface ToolInvokeResult { ok: boolean; output?: string; error?: string }
+// `blocking` / `enforcement` (G40): whether this hook's EVENT can short-circuit the loop, and
+// whether THIS hook actually does. Both are the server's verdict, not re-derived here: the backend
+// computes `enforcement` from the same `AgentProfile.triggers` binding the firing path reads, so a
+// row the page calls "enforcing" is a row a tool rejection would really come from. Deriving it in
+// the FE from `used_by.length` would restate the bug — `used_by: []` was already on the wire and a
+// user still could not tell an armed blocking hook from an inert one.
+export type HookEnforcement = 'enforcing' | 'not_enforcing' | 'advisory'
 export interface HookItem {
   id: string; name: string; event: string; matcher: string; provider: string; provider_config: Record<string, unknown>
   timeout: number; enabled: boolean; last_run: number; last_status: string; run_count: number; used_by: string[]
+  blocking?: boolean; enforcement?: HookEnforcement
 }
 // The wired data-event patterns (event_triggers.EVENT_PATTERNS). Each belongs to exactly one
 // source (event_triggers.PATTERN_SOURCE), which the backend derives — the wire never supplies it.
@@ -1355,6 +1363,7 @@ export interface Trigger {
   is_running?: boolean; running_since?: number | null; has_session?: boolean; created_ts?: number | null
   // lifecycle fields (kind=lifecycle)
   event?: string; matcher?: string; timeout?: number; last_run?: number; run_count?: number; used_by?: string[]
+  blocking?: boolean; enforcement?: HookEnforcement
 }
 /** Project the shared ScheduleForm's flat draft body onto the unified Trigger
  *  wire shape: a single canonical `action` + the schedule mechanism fields. The
@@ -1381,6 +1390,10 @@ function _triggerToHook(t: Trigger): HookItem {
     provider: t.action.provider, provider_config: t.action.config ?? {},
     timeout: t.timeout ?? 30, enabled: t.enabled, last_run: t.last_run ?? 0,
     last_status: t.last_status ?? '', run_count: t.run_count ?? 0, used_by: t.used_by ?? [],
+    // Carried through, never defaulted to a reassuring value: an older backend that omits these
+    // leaves them undefined so the detail view renders NO enforcement claim, rather than a
+    // confident "enforcing" chip over a hook nothing binds.
+    blocking: t.blocking, enforcement: t.enforcement,
   }
 }
 // An action provider (renamed from "hook provider" in the Triggers vision) —
