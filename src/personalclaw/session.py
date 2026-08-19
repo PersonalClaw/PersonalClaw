@@ -176,6 +176,54 @@ async def _fire_session_end(key: str, reason: str, session: "_Session") -> None:
     )
 
 
+def _resolve_acp_spawn_cwd(cwd: str | None) -> Path:
+    """The directory an ACP CLI will actually be spawned in — never an ambient one.
+
+    An explicit per-session ``cwd`` wins. With none, the default is
+    ``default_workspace_dir()``, whose empty return is a REFUSAL rather than an "unknown":
+    it means the resolved workspace root is either not a usable directory or is a
+    sensitive (credential) location, so it declines to name one. That refusal must not be
+    laundered, in either of the two available directions:
+
+    * Passing the empty string on is what this fixes. ``AcpProcess`` does
+      ``Path(work_dir)``, and ``Path("")`` is ``Path(".")``, so the CLI got spawned in
+      whatever directory the GATEWAY happens to be running in — a repo checkout, ``/``, or
+      whatever a service manager set — and every file it wrote landed somewhere the user
+      cannot find. Same family as G39's real-home escape: a containment decision falling
+      through to an ambient value.
+    * Substituting ``workspace_root()`` (G39's standardised definition) would be worse in
+      the case that actually reaches here, because that is the very path the sensitivity
+      check rejected. It would spawn the CLI inside a credential directory.
+
+    So this refuses, loudly, at the last point that can still stop the spawn. A wrong cwd
+    is unrecoverable from the user's side (they cannot find the files); an error naming the
+    missing workspace is.
+    """
+    from personalclaw.acp.errors import AcpWorkspaceUnresolved
+
+    explicit = str(cwd or "").strip()
+    if explicit:
+        return Path(explicit)
+    default = str(default_workspace_dir() or "").strip()
+    if default:
+        return Path(default)
+    logger.warning(
+        "Refusing to spawn an ACP CLI: no usable workspace resolved "
+        "(PERSONALCLAW_WORKSPACE=%r) — the directory it would otherwise inherit is the "
+        "gateway's own cwd %r",
+        os.environ.get("PERSONALCLAW_WORKSPACE", ""),
+        os.getcwd(),
+    )
+    raise AcpWorkspaceUnresolved(
+        "No usable workspace directory resolved, so there is no safe folder to run this "
+        "agent CLI in. Starting it in the gateway's own working directory is refused — "
+        "files it writes would land somewhere you cannot find. Set a workspace root "
+        "(PERSONALCLAW_WORKSPACE, or the workspace directory in Settings), or give this "
+        "chat its own working directory. The configured root is either missing or a "
+        "sensitive location that is never used as a workspace."
+    )
+
+
 @dataclass
 class _Session:
     provider: ModelProvider
@@ -567,6 +615,9 @@ class SessionManager:
         provider_kind = str(extra_factory_kwargs.get("provider_kind") or "")
         if not provider_kind.startswith("acp:"):
             return None
+        # Bound before the try so the handler at the bottom can name it.
+        from personalclaw.acp.errors import AcpWorkspaceUnresolved
+
         try:
             from personalclaw.acp.connection_pool import get_acp_pool
             from personalclaw.llm.acp_session_provider import concurrent_sessions_enabled
@@ -586,7 +637,10 @@ class SessionManager:
             sfd = options.get("session_files_dir")
             from pathlib import Path as _Path
 
-            effective_cwd = _Path(str(cwd)) if cwd else default_workspace_dir()
+            # Never an ambient directory: an unresolvable workspace refuses the spawn
+            # instead of inheriting the gateway's cwd. Always a Path — the old fallback
+            # branch handed ``open_session`` a bare ``str`` (and ``""`` at that).
+            effective_cwd = _resolve_acp_spawn_cwd(cwd)
             provider = await pool.open_session(
                 provider_kind,
                 cwd=effective_cwd,
@@ -621,6 +675,12 @@ class SessionManager:
                     await provider.set_reasoning_effort(_effort)
             logger.info("Opened concurrent ACP session for %s (runtime=%s)", key, provider_kind)
             return provider
+        except AcpWorkspaceUnresolved:
+            # NOT a "try the other path" failure. Returning None here would fall through
+            # to the one-session path, which resolves the SAME workspace and would spawn
+            # in the same wrong place — moving the containment escape instead of stopping
+            # it. The user gets the error naming the missing workspace.
+            raise
         except Exception:
             logger.debug(
                 "ACP concurrent open_session failed for %s — falling back", key, exc_info=True

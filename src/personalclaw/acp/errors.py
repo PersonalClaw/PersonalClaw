@@ -30,3 +30,13 @@ class AcpPermissionNeeded(AcpError):  # noqa: N818
 
 class AcpProcessDied(AcpError):  # noqa: N818
     """ACP agent subprocess exited unexpectedly."""
+
+
+class AcpWorkspaceUnresolved(AcpError):  # noqa: N818
+    """No containable working directory resolved, so no ACP CLI may be spawned.
+
+    Distinct from every other error here in the one way a caller cares about: retrying on
+    a different spawn path cannot help, because every path resolves the SAME workspace and
+    would make the same wrong choice. So a caller that degrades other ACP failures to a
+    fallback spawn path must let THIS one through — degrading only moves the escape.
+    """

@@ -281,6 +281,14 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
   unarmed one is labelled advisory, and the reply to creating one says which state it starts in.
   Hooks on the other lifecycle events are unchanged: they have nothing to arm, so they are not
   badged. Nothing about when a hook blocks changed — only whether you can tell.
+- **A chat with no folder set could run its agent CLI wherever the app itself happened to be
+  started.** If no workspace directory resolved — none configured, or the configured one turned out
+  to be missing or a credential folder that is never usable as a workspace — a chat you had not
+  pointed anywhere fell back to the app's own current directory, which on a service install is
+  whatever the system launcher chose. Files the agent wrote landed somewhere you had no way to find.
+  Such a session is now refused before the CLI starts, with a message naming what to set and where.
+  A chat that already has a working directory, and one whose workspace resolves normally, are
+  unaffected.
 
 - **"Unattended runs need a verified adapter" only covered one kind of unattended run.** The switch
   promised to refuse background work onto an external agent CLI whose ACP adapter has no verified
