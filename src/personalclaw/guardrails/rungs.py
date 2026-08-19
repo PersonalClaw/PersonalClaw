@@ -199,11 +199,14 @@ _PROVIDER_SPECS: tuple[ActionTypeSpec, ...] = (
         ceiling=RUNG_AUTONOMOUS,
         providers=("artifact-update", "render-report"),
     ),
+    # `usage-recap` (MRT-3) shares this class rather than minting its own: both are
+    # deterministic, no-model, local-only notification writers, so a separate key would be a
+    # second name for one governed behavior. Neither leaves the machine.
     ActionTypeSpec(
         key="action.digest",
         floor=RUNG_AUTONOMOUS,
         ceiling=RUNG_AUTONOMOUS,
-        providers=("notification-digest",),
+        providers=("notification-digest", "usage-recap"),
     ),
     # Spawns an LLM turn. `leaves_machine` because the turn's own toolset can reach the
     # network — the profile it runs under bounds that, not this declaration.

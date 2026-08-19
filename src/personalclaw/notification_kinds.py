@@ -274,6 +274,12 @@ _KINDS: tuple[NotificationKind, ...] = (
         verifiable=True,
     ),
     NotificationKind("system", "digest", "Daily digest", "immediate", SEV_INFO, attention=True),
+    # The monthly spend recap (MRT-3). `digest` by DEFAULT, unlike every other kind here: a
+    # recap of a month that already closed is the least urgent thing the system emits, and
+    # interrupting for it would teach a user to mute the channel that also carries a budget
+    # warning. `attention=False` — the recap persists no row of its own; the digest it rides
+    # into is the durable item.
+    NotificationKind("system", "usage_recap", "Monthly usage recap", "digest", SEV_INFO),
     # apps — an installed app's source offers a newer version (APE-7). Attention-bearing
     # (a durable inbox row deep-links to the app), emitted once per (name, latest_version)
     # via emit_attention_item on the existing /api/apps read path — no polling loop.
@@ -310,8 +316,9 @@ _LEGACY_FLAT: dict[str, tuple[str, str]] = {
     GENERIC_KIND: (GENERIC_SOURCE, GENERIC_KIND),
 }
 
-#: Wire strings introduced BY the attention kinds (S2+), kept separate from the legacy map
-#: above because the two answer different questions.
+#: Wire strings introduced BY kinds registered after the legacy set — the attention kinds (S2+)
+#: and, since MRT-3, `usage_recap`. Kept separate from the legacy map above because the two
+#: answer different questions.
 #:
 #: `_LEGACY_FLAT` is a historical record: "what did an emitter already in the tree pass?"
 #: Its entries carry a severity obligation — re-ranking one changes min-severity filtering
@@ -334,6 +341,10 @@ _ATTENTION_FLAT: dict[str, tuple[str, str]] = {
     "agent_request": ("system", "agent_request"),
     "digest": ("system", "digest"),
     "app_update": ("apps", "update"),
+    # Not an attention kind (it persists no row of its own), but it shares the property this
+    # map actually encodes: no pre-registry emitter ever passed it, so it carries no historical
+    # severity obligation and is free to rank as the info it is.
+    "usage_recap": ("system", "usage_recap"),
 }
 
 #: Every wire string this build understands, for resolution. Legacy entries win a collision:
@@ -365,6 +376,7 @@ SUCCESS = "success"
 APP_ROUTE_DRIFT = "app.route.drift"
 SESSION = "session"
 FEEDBACK_RETIRE = "feedback_retire"
+USAGE_RECAP = "usage_recap"
 GENERIC = GENERIC_KIND
 
 #: Every constant above, for the import-time consistency check and the drift test.
@@ -382,6 +394,7 @@ WIRE_CONSTANTS: tuple[str, ...] = (
     APP_ROUTE_DRIFT,
     SESSION,
     FEEDBACK_RETIRE,
+    USAGE_RECAP,
     GENERIC,
 )
 

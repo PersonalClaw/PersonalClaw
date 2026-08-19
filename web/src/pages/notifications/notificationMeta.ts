@@ -1,4 +1,4 @@
-import { Bell, BellRing, CheckCircle2, Clock, Webhook, Bot, HeartPulse, Info, AlertTriangle, Target, XCircle, Newspaper, MessageSquare, MessageCircle, Activity, Lightbulb, Archive, Route, HelpCircle, ShieldQuestion, RefreshCw } from 'lucide-react'
+import { Bell, BellRing, CheckCircle2, Clock, Webhook, Bot, HeartPulse, Info, AlertTriangle, Target, XCircle, Newspaper, MessageSquare, MessageCircle, Activity, Lightbulb, Archive, Route, HelpCircle, ShieldQuestion, RefreshCw, Receipt } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import type { NotificationItem } from '../../lib/api'
 
@@ -41,6 +41,8 @@ const KINDS: Record<string, KindMeta> = {
   learning_proposal: { label: 'Learning proposal', icon: Lightbulb, tone: 'var(--color-primary)' },
   planning_proposal: { label: 'Planning proposal', icon: Lightbulb, tone: 'var(--color-primary)' },
   digest: { label: 'Daily digest', icon: Newspaper, tone: 'var(--color-on-surface-low)' },
+  // system/usage_recap (MRT-3). Its bare kind IS its wire string, so one row covers both.
+  usage_recap: { label: 'Monthly usage recap', icon: Receipt, tone: 'var(--color-on-surface-low)' },
   // apps/update — bare kind `update` (persisted history) + the `app_update` wire string
   // emit_attention_item actually hands state.notify(). Both map to the registry's label.
   update: { label: 'App update available', icon: RefreshCw, tone: 'var(--color-primary)' },

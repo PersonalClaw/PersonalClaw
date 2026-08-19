@@ -1864,6 +1864,17 @@ class GatewayOrchestrator:
                 reconcile_digest_cron(_trigger_store)
             except Exception:
                 logger.warning("digest-cron reconcile failed", exc_info=True)
+            # The monthly usage recap (MRT-3). Sits in the `--no-crons` else-branch with every
+            # other unattended writer: a recap is background work, and a harness run must not
+            # emit one. Creation only, not convergence — "monthly" is the feature, not a setting.
+            try:
+                from personalclaw.action_providers.usage_recap_provider import (
+                    reconcile_usage_recap_cron,
+                )
+
+                reconcile_usage_recap_cron(_trigger_store)
+            except Exception:
+                logger.warning("usage-recap-cron reconcile failed", exc_info=True)
             # 🔴 THE BOOT SWEEP (§3.1/§3.4, criterion 7 — S142). `service.boot` is what recovers
             # the exactly-one-upcoming invariant, STAGGERS an overdue population, and produces the
             # missed-fire review. It had **zero callers**: boot ran `migrate_and_arm`, which only
