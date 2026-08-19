@@ -63,6 +63,12 @@ const IPC_CHANNELS = {
   capturing: `${IPC_PREFIX}capturing`,
   /** main → renderer push: the chord fired, or the shell is asking capture to stop. */
   pushToTalk: `${IPC_PREFIX}push-to-talk`,
+  /** renderer → main: read the "open at login" registration (DC-4). A preference,
+   * not an OS permission — so it is handled by `registerLoginItemIpc` on its own
+   * channels rather than folded into the capability vocabulary. */
+  loginItemGet: `${IPC_PREFIX}login-item-get`,
+  /** renderer → main: register or un-register the login item (DC-4). */
+  loginItemSet: `${IPC_PREFIX}login-item-set`,
 };
 
 /**

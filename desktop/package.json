@@ -31,6 +31,9 @@
       "find-bin.js",
       "capabilities.js",
       "pushToTalk.js",
+      "trayPresence.js",
+      "loginItem.js",
+      "gatewayShutdown.js",
       "preload.js",
       "loading.html",
       "icon.png"

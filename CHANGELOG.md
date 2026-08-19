@@ -24,6 +24,19 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
   (`docs/architecture/agent-activity-feed.md`) that folds `/api/loops`, chat sessions, subagents and
   approvals into one typed shape, refreshed by existing WebSocket envelopes **as signals only**. Apps
   will be able to contribute their own worlds against it without asking for a single permission.
+- **The desktop app has a live menu-bar item, and quitting it no longer risks the gateway.**
+  The macOS menu-bar menu now shows pending approvals and running loops and refreshes itself,
+  with every row deep-linking into the dashboard (approvals stay clickable at zero, so the row
+  is a way in rather than a control that greys out). **Open at Login** is there too — off by
+  default, reversible from the same checkbox or from System Settings → General → Login Items,
+  registering only this app bundle with no launch agent and no administrator password, and
+  turning it on twice cannot leave two entries behind. **Quit now waits for the gateway to
+  actually exit** instead of signalling it and disappearing, escalating after a grace period
+  and saying so in the log if the gateway still will not stop — the old path could leave an
+  orphaned gateway holding the port after a slow shutdown. If the menu-bar item cannot be
+  created, closing the window closes it for real rather than hiding it, so a failed tray can
+  never leave a running app with no way back to its window.
+  *Quick Capture opens the Inbox for now; writing the note itself is not built yet.*
 
 - **Apps can subscribe to platform events they declare.** An app that declares
   `permissions.eventSubscriptions` now receives `session.created`, `knowledge.ingested` and

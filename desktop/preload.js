@@ -94,4 +94,23 @@ contextBridge.exposeInMainWorld("pclawDesktop", {
       return () => ipcRenderer.removeListener(IPC_CHANNELS.pushToTalk, handler);
     },
   },
+
+  /** "Open PersonalClaw at login" (DC-4), so Settings can drive the same registration
+   * the tray's checkbox drives — one mechanism, two surfaces.
+   *
+   * A preference, not an OS permission, so it is NOT in the capability vocabulary:
+   * `probe`/`request` answer "may we?", this answers "should we?".
+   *
+   * `set()` is the only persistent change the bridge can make to the user's machine.
+   * It is idempotent and reversible by the same call with `false`, and the main
+   * process coerces the argument and reads the result back from the OS, so a caller
+   * cannot be told "enabled" when nothing was registered. */
+  loginItem: {
+    /** Resolves {enabled, supported, describes} — `describes` names what it touches,
+     * so a Settings UI can tell the user before they flip it. */
+    get: () => ipcRenderer.invoke(IPC_CHANNELS.loginItemGet),
+
+    /** Resolves {ok, enabled, changed, supported, reason?}. */
+    set: (enabled) => ipcRenderer.invoke(IPC_CHANNELS.loginItemSet, Boolean(enabled)),
+  },
 });
