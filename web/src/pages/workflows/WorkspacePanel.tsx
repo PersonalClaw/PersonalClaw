@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { FileDiff, FolderGit2, TriangleAlert } from 'lucide-react'
+import { ExternalLink, FileDiff, FolderGit2, TriangleAlert } from 'lucide-react'
 import { SidePanel } from '../../ui/SidePanel'
 import { Skeleton, LoadingStatus } from '../../ui/ListScaffold'
 import { InlineError } from '../../ui/InlineError'
@@ -88,7 +88,7 @@ function verbCommand(verb: string, branch: string): string {
 }
 
 function WorkspaceBody({ data }: { data: WorkflowWorkspaceReview }) {
-  const { workspace: ws, reintegration: offer, declared } = data
+  const { workspace: ws, reintegration: offer, declared, preview } = data
   const conflicts = offer?.conflicts ?? []
   const setup = declared?.setup
 
@@ -130,6 +130,53 @@ function WorkspaceBody({ data }: { data: WorkflowWorkspaceReview }) {
           <TriangleAlert size={13} className="mt-0.5 shrink-0" />
           {declared.degraded_reason}
         </p>
+      )}
+
+      {/* The localhost web preview (§6.2). Placed ABOVE the diff because "is it running?" is the
+          question a user opens this panel with when the run built something servable, and below the
+          liveness row because a removed workspace cannot be serving anything. */}
+      {preview && (
+        <Block label="Preview">
+          {preview.ports.length > 0 ? (
+            <ul data-testid="preview-ports" className="flex flex-col gap-2xs">
+              {preview.ports.map((p) => (
+                <li key={p.port} className="flex items-center gap-s rounded-md bg-surface px-2.5 py-1.5 text-[0.75rem]">
+                  <span className="min-w-0 flex-1 truncate font-mono text-on-surface">{p.url}</span>
+                  {p.command && (
+                    <span className="shrink-0 truncate font-mono text-on-surface-low text-[0.6875rem]">{p.command}</span>
+                  )}
+                  {/* A plain link, not a scripted window.open: the dev server is a document at a
+                      real URL, and a link is what middle-click / open-in-new-window expect.
+
+                      The PORT is in the accessible name, because several dev servers under one
+                      run would otherwise give this panel three links all named "Open Preview" —
+                      a non-null but ambiguous name. It is an `aria-label` rather than an
+                      `sr-only` span: measured here, an sr-only suffix did NOT reach the computed
+                      name, so the disambiguation would have shipped inert. The label still
+                      CONTAINS the visible text, so WCAG 2.5.3 (label in name) holds. */}
+                  <a
+                    href={p.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex h-7 shrink-0 items-center gap-1 rounded-md px-2 text-on-surface-low text-[0.75rem] hover:bg-surface-high hover:text-on-surface"
+                    aria-label={`Open Preview on port ${p.port}`}
+                    title={`Open localhost:${p.port} in a new tab`}
+                  >
+                    <ExternalLink size={13} /> Open Preview
+                  </a>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p data-testid="preview-none" className="text-on-surface-low text-[0.75rem]">
+              {preview.reason || 'No dev server is listening in this run’s workspace.'}
+            </p>
+          )}
+          <p className="text-on-surface-low text-[0.75rem]">
+            Local only — this machine, no tunnel and no sharing. Links are checked each time you
+            open this panel, so a server that has stopped disappears from the list.
+          </p>
+        </Block>
       )}
 
       {ws.preserved_workspace_path && (

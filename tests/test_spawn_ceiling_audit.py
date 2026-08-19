@@ -170,6 +170,13 @@ _OPERATOR_EXEMPT: dict[str, str] = {
     # runners/<id>.json), never from a model or a turn, and it runs no agent code: it reads a
     # host fact about a CLI the operator installed, exactly like the node/npm probes above.
     "agents/runners.py::probe_runner::subprocess.run": "host-fact: runner --version probe",
+    # EI-8's localhost preview probe. Every argv is a CONSTANT list — `lsof -nP -iTCP
+    # -sTCP:LISTEN -FpPn`, `ss -lntpH`, `ps -o comm= -p <pid>`, `lsof -a -p <pids> -d cwd -Fn`
+    # — assembled from literals plus pids the scan itself just read, never from a model, a
+    # turn, or a workflow input. No shell, `check=False`, and a 4s timeout. It reads a host
+    # fact (which ports are listening, and whose cwd) and runs no agent code, exactly like the
+    # PID and --version probes above.
+    "workflows/web_preview.py::_run::subprocess.run": "host-fact: listening-port/cwd probe",
     # App install — operator-initiated (Store install), scanned+vetted.
     "apps/app_manager.py::_run_hook::subprocess.run": "operator: app install setup hook",
     "apps/app_manager.py::_install_python_deps::subprocess.run": "operator: app dep install",

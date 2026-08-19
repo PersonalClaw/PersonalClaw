@@ -1550,6 +1550,14 @@ def workspace_review(run_id: str) -> dict[str, Any]:
             store.save(run)
     except Exception:
         logger.debug("could not record preserved_workspace_path for %s", run_id, exc_info=True)
+    # The localhost web preview (§6.2). Scanned HERE, on read, rather than stamped on the run
+    # record: a persisted port list outlives the process that owned the port, and an "Open
+    # Preview" built from a stale port is worse than no affordance at all. The panel that asks
+    # "what did this run change and how do I take it" is the same panel that should be able to
+    # show it running.
+    from personalclaw.workflows import web_preview
+
+    body["preview"] = web_preview.preview_scan(run).to_dict()
     return _ok(**body)
 
 

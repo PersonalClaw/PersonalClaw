@@ -225,6 +225,15 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
   server and no scripts in it. Settings gained the vault folder, a topology-orientation switch, the
   claim-attribution switch, and a budget for what slots may cost each turn.
 
+- **See what a run actually built, in a browser.** When a code run leaves a dev server running in
+  its workspace, the run's **Workspace** panel now shows a **Preview** block with an **Open
+  Preview** link straight to `localhost:<port>`. Ports are matched to the run by which process is
+  working inside its workspace, so one run never offers you another run's server, and the list is
+  checked each time you open the panel — a server you have since stopped simply is not there. If
+  nothing is listening the panel says so, and if the machine has no way to look it says *that*
+  instead, because "your server isn't running" and "nothing checked" are different problems. Local
+  only: this is your machine, with no tunnel and nothing shared.
+
 ### Fixed
 
 - **A scheduler tick wrote its history into the wrong PersonalClaw home.** Two writers on the tick
@@ -995,6 +1004,21 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
   the only thing chosen for you is the narrowest scope, which remembers nothing.
 
 ### Security
+
+- **A `.env` reached a file checkpoint through a symlink.** File checkpoints — the backups behind
+  `/rewind-to-turn` — never copy credential-shaped files like `.env`. That rule was applied to the
+  name the agent wrote to, so a file called something harmless that was really a link to your `.env`
+  was copied anyway, secret and all, into a store that lives under your home and travels in
+  snapshots. The check now looks at what will actually be read, not just what it is called, which
+  also closes the same trick pointed at `~/.aws/`. Nothing else changes: an excluded file is still
+  reported in the rewind preview as "not captured" rather than silently skipped.
+
+- **A rewind now refuses to write outside the workspace it belongs to.** Restoring files is the one
+  place PersonalClaw writes a previously recorded path back to disk, so it no longer takes that path
+  on trust: a destination that resolves outside the session's own workspace — through a `..`
+  component or a symlink planted out of the tree — is refused and reported, and a rewind that
+  refused anything is reported as incomplete rather than as a success. Files inside the workspace
+  restore exactly as before.
 
 - **An app can no longer change the version of a library PersonalClaw itself depends on.** Apps are
   allowed to bring their own Python packages, and they are installed into the same environment

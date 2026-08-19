@@ -899,3 +899,73 @@ D0 is documentation and should land immediately — an inaccurate security claim
   `PersonalClawApps`, which has `claude-code-agent`, `codex-agent` and `kiro-cli-agent` and no Gemini
   sibling. That is a one-app change in the other repo, outside this branch's fence. Owner call needed
   on whether EI-5 closes on the catalog row alone or waits for the apps-repo bundle.
+- [2026-08-18][EI-8] **§6.2 LANDED — the localhost web preview, the clause that kept `EI-8` at
+  `todo`.** New `src/personalclaw/workflows/web_preview.py`, wired into `service.workspace_review`
+  (so it travels on `GET /api/workflows/runs/{id}/workspace`) and rendered as a "Preview" block with
+  an **Open Preview** link in `WorkspacePanel.tsx`. Port attribution is by OWNING PROCESS: two
+  probes (all listening TCP sockets, then one batched cwd lookup for just the pids found), keeping a
+  port only when its process's cwd resolves inside the run's workspace. Driven against two real
+  `http.server` processes in sibling directories — the one under the run root was found (from a
+  SUBDIRECTORY of it, which is how a dev server is actually started), the sibling was not, and
+  `curl` returned **HTTP 200** on the discovered URL, so the affordance is not a dead link.
+- [2026-08-18][EI-8] **DEVIATION — `preview_urls` is computed on read, NOT stamped on the run
+  record.** §6.2 says "discovered ports registered as `preview_urls` on the run record". A persisted
+  port list is the stale-link defect this repo has been bitten by repeatedly: the dev server exits,
+  the record keeps the port, and the cockpit offers an "Open Preview" that loads nothing — or loads
+  whatever process took the port next. There is exactly one writer and one reader and no cache, so
+  §6.2's "removed from the run record on sandbox teardown" costs zero code and cannot go stale: a
+  torn-down workspace has no processes under it, so it reports no ports and says why.
+- [2026-08-18][EI-8] **DEVIATION — no `SandboxSpec.expose_ports`, and no `SandboxHandle.list_ports`.**
+  §6.2 asks for both for the docker/lima tier. `EI-2`'s container provider does not exist (the only
+  provider is in-core `none`), and nothing holds a `SandboxHandle` for a workflow run — handles are
+  an ACP-transport spawn concern. Adding either would have been a declared field no code reads and a
+  method with no caller, which is the defect class this plan's own log keeps recording. The host tier
+  is built and measured; the mapped-port half stays with the provider that will own it.
+- [2026-08-18][EI-8] **No new config field, deliberately.** §6.2 specifies none, and the atom's
+  done-when needs none. A knob nobody would flip would have cost the five round-trip points and put
+  this branch into `config-baseline.json` / `configuration.md` / the Settings pages — all shared with
+  four sibling branches — for no user-visible gain.
+- [2026-08-18][EI-8] **A REAL `.env` LEAK on `main`, found by census and closed here.** The secrecy
+  floor matched `NEVER_CAPTURE_GLOBS` against the **literal** basename, and `read_bytes` follows a
+  symlink. Measured on unmodified `main`: `ws/config.txt -> ws/.env` returned `"captured"` and the
+  planted canary landed in
+  `checkpoints/<slug>/blobs/552adcef…bin`. `security.is_sensitive_path` does not cover it either — it
+  is `$HOME`-anchored, so a workspace `.env` is invisible to it. `is_never_captured` now runs BOTH
+  checks against the literal path AND its resolved target; the same fix closes a symlink into
+  `~/.aws/`. The prior session's proof was sound for a DIRECT write to `.env` and simply never asked
+  what a link would do. Falsified: dropping the resolved candidate reds with
+  `AssertionError: assert 'captured' == 'secret'`. The rail carries a vacuity floor — an ordinary
+  file must still return `"captured"`, or a check that refused everything would pass it forever.
+- [2026-08-18][EI-8] **A rewind now refuses to write outside the session's roots.** `apply_rewind`
+  is the one path that writes an arbitrary RECORDED path back to disk, so it verifies the destination
+  instead of trusting the manifest that named it (`session_roots` / `is_within_roots`, compared on
+  RESOLVED paths so a traversal component and an out-of-tree symlink are both caught). Roots are the
+  turn manifests' `cwd` plus a new per-turn `roots` list recorded at capture time — needed because
+  `begin_turn(cwd=None)` is legitimate, so the manifest alone leaves a session with no root, and the
+  base the WRITE was governed by is the honest root for restoring that write. Falsified twice: the
+  rail reds with `assert [] == ['…/outside.txt']`, and a direct drive with the guard removed
+  overwrote a file outside the root ("MUST NOT CHANGE" → "GOOD") **while reporting `ok=True`**.
+- [2026-08-18][EI-8] **The confinement test caught a swallowed-write bug in the fix itself.**
+  `res.restored, res.deleted, res.errors = _commit_journal(...)` **assigned** over `errors`, erasing
+  the refusals recorded before staging and flipping `ok` back to `True` — a confirm path reporting
+  success while a file the user asked about was never written. Now extends. This is why the refusal
+  is asserted on `ok` and on the untouched file's hash, not just on the `refused` list.
+- [2026-08-18][EI-8] **Two harness artifacts worth recording, both of which faked a finding.**
+  (1) A stale `http.server` from an earlier probe was squatting port 18711, so the fixture's server
+  never started and the scan looked broken — `a.log` held `Address already in use`. Suspect the
+  harness before the fix; the test now allocates a free port per run rather than a literal.
+  (2) The "Open Preview" link's port was disambiguated with an `sr-only` span, and the computed
+  accessible name **did not include it** (`textContent` did; the name did not), so the
+  disambiguation would have shipped inert while looking present in the markup. It is an `aria-label`
+  now, which still contains the visible text so WCAG 2.5.3 holds. Measured, not assumed.
+- [2026-08-18][EI-8] **Gate:** `make lint` exit 0 (black/isort/flake8 + mypy clean, 920 files);
+  `pytest` 255 passed over `test_turn_checkpoints` (+2 new) / `test_rewind_to_turn_api` /
+  `test_run_web_preview` (12 new) / `test_workflows_containers` / `test_workflows_api` (+1 rail) /
+  `test_portability` / `test_config_roundtrip`, plus `test_workflows_provisioning` 40 passed; web
+  `typecheck` + `4157 tests in 412 files` + `build` all exit 0. `~/.personalclaw` unchanged (the
+  suite's own real-home rail).
+- [2026-08-18][EI-8] **What is NOT done, so the next session does not re-derive it.** The `ss` (Linux)
+  listener parser is asserted from a fixture string only — this box is Darwin, so its live path is
+  unproven. The docker/lima mapped-port tier is unbuilt (see the deviation above). The §6 line item
+  still open from the previous session is unchanged: an over-threshold file is manifest-only by SIZE
+  rather than by binary detection. `dag.json` and `EI.md` untouched (driver-owned); no push, no PR.

@@ -513,3 +513,75 @@ def test_three_files_mangled_through_the_real_tools_restore_byte_identical(ws):
     assert res.ok, res.errors
     for path, want in originals.items():
         assert _sha(Path(path)) == want
+
+
+# ── the secrecy floor is about what will be READ, not what the path is called ──────
+
+
+def test_a_symlinked_dotenv_is_never_captured(ws):
+    """A basename list is defeated by a symlink. Measured on ``main`` before the fix:
+    ``ws/config.txt -> ws/.env`` returned ``"captured"`` and the dotenv body landed in a
+    blob, because the check matched the LITERAL basename while ``read_bytes`` follows the
+    link. ``is_sensitive_path`` does not cover it either — it is ``$HOME``-anchored, so a
+    workspace ``.env`` is invisible to it.
+    """
+    # Vacuity: the search below is only meaningful if the secret is really in the file.
+    assert PLANTED_SECRET in (ws / ".env").read_text(encoding="utf-8")
+    tc.begin_turn(SESSION, cwd=ws)
+
+    (ws / "config.txt").symlink_to(ws / ".env")
+    (ws / "deep").mkdir()
+    (ws / "deep" / "notes.md").symlink_to(ws / ".env")
+
+    assert tc.capture_pre_edit(SESSION, ws / "config.txt") == "secret"
+    assert tc.capture_pre_edit(SESSION, ws / "deep" / "notes.md") == "secret"
+    # VACUITY FLOOR: a check that simply refused everything would satisfy both assertions
+    # above while breaking the store. An ordinary file must still be captured.
+    assert tc.capture_pre_edit(SESSION, ws / "alpha.py") == "captured"
+
+    assert PLANTED_SECRET.encode() not in _all_store_bytes(tc.store_root())
+
+
+# ── a restore writes inside the session's roots, or it refuses ─────────────────────
+
+
+def test_a_rewind_refuses_a_target_outside_the_sessions_roots(ws, tmp_path):
+    """A rewind is the one path that writes a RECORDED path back to disk, so it verifies
+    the destination itself rather than trusting the manifest that named it.
+
+    The manifest is edited to name a traversal path, carrying a VALID blob sha — so the
+    only thing that can stop the write is the confinement check, not a missing body.
+    """
+    assert tc.begin_turn(SESSION, cwd=ws) == 1
+    original = _sha(ws / "alpha.py")
+    assert tc.capture_pre_edit(SESSION, ws / "alpha.py", cwd=ws) == "captured"
+
+    outside = tmp_path / "outside.txt"
+    outside.write_text("untouched by any rewind\n", encoding="utf-8")
+    outside_sha = _sha(outside)
+
+    man_path = tc.session_dir(SESSION) / "turn-000001" / "manifest.json"
+    man = json.loads(man_path.read_text(encoding="utf-8"))
+    good = next(f for f in man["files"] if f.get("sha256"))
+    traversal = str(ws / ".." / "outside.txt")
+    man["files"].append(
+        {"path": traversal, "existed": True, "sha256": good["sha256"], "size": good["size"]}
+    )
+    man_path.write_text(json.dumps(man), encoding="utf-8")
+
+    (ws / "alpha.py").write_text("MANGLED\n", encoding="utf-8")
+    assert tc.begin_turn(SESSION, cwd=ws) == 2
+
+    res = tc.apply_rewind(SESSION, 0)
+
+    # The refusal is REPORTED, and it makes the whole rewind not-ok. Reporting `ok=True`
+    # here would be the swallowed-write shape: the user is told a restore happened while a
+    # file they asked about was never written.
+    assert res.refused == [traversal], res.refused
+    assert not res.ok
+    assert any("outside the session" in e for e in res.errors), res.errors
+    assert _sha(outside) == outside_sha, "a rewind must not write outside its roots"
+    # VACUITY FLOOR: the guard must refuse the traversal WITHOUT refusing the legitimate
+    # restore in the same plan — a guard that blocked everything would also pass the
+    # assertion above.
+    assert _sha(ws / "alpha.py") == original
