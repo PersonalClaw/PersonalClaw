@@ -335,6 +335,11 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `GET /api/knowledge/items/{id}/thumbnail` — - serve a generated thumbnail (image/webp).
 - `GET /api/knowledge/providers` — _(no summary)_
 - `POST /api/knowledge/regenerate-intelligence` — - re-run the full ingestion
+- `GET /api/knowledge/reports` — every definition, newest state as persisted.
+- `POST /api/knowledge/reports` — create one definition.
+- `DELETE /api/knowledge/reports/{id}` — remove one definition.
+- `PUT /api/knowledge/reports/{id}` — update one definition.
+- `POST /api/knowledge/reports/{id}/run` — run one report NOW, by hand.
 - `GET /api/knowledge/search-for-context` — _(no summary)_
 - `GET /api/knowledge/source-recipes` — - the bundled source-recipe directory.
 - `GET /api/knowledge/sources` — the watched sources, with health, plus the kind catalog.
