@@ -220,3 +220,56 @@ def _maybe_inject_persona(message: str, color_theme: str, is_new: bool) -> str: 
 - [2026-08-18][S2/V2] **DELIBERATELY NOT FIXED HERE (E6, scope pressure — recorded rather than improvised).** The fix is a design-system change, not a personality change: either `--color-on-primary-tint` becomes per-scheme (24 token values across `SCHEMES` plus a new contrast rail, since `schemeContrast.test.ts` sweeps accent tokens and does **not** composite this translucent pair — that is the gate hole), or the dark ink darkens globally, which `onPrimaryTintInk.test.ts` argues against in writing ("repainting 22 labels there to fix a light-mode miss would be collateral damage dressed as an accessibility fix"). Moving claw-arcade off `amber` was considered and REJECTED: it would make the personality read clean while hiding a live defect from the only gate that found it. Owner call, and it belongs with **Design-System Consistency**, not inside a validation atom. `PT-6`'s `done_when` is the tour plus its four gate legs; both are satisfied.
 - [2026-08-18][S2/V2] Gate, all five legs, from the repo root at `252c944f` with the venv active: `npm run typecheck --workspace web` **rc 0** · FULL `npm test --workspace web` **rc 0 — 412 files / 4154 tests passed (123.9s)**, zero failures and no sign of the known `conflictReviewQueue` alertdialog contention flake on this run · `npm run build --workspace web` **rc 0** · `npm run e2e:a11y --workspace web` **rc 0 — 105 passed / 4 skipped (1.5m)** · `make lint` **rc 0** (black 1789 files, isort, flake8, mypy 919 source files). No source file changed in this atom, so `docs/design/consistency-audit.json`'s regeneration (`generatedAt` plus `filesScanned` 520 → 523, i.e. the committed copy is still stale on `main`) was discarded, not committed.
 - [2026-08-18][S2/V2] Isolation: real-home file count **110500 → 110500**, zero delta; `~/workplace` had zero files modified since the session's first action, with a positive control proving the `-newermt` predicate was not vacuous. The dev home under `/private/tmp/pt6-drive/home` received all the state instead (22k `config.json`, `incident.json`, `security_events.jsonl`), which is the positive direction of the same proof. Incident mode was turned back off, the temporary axe bundle staged into the gitignored `web/dist/assets/` was removed, the gateway was killed, and `git status --porcelain` is empty.
+
+- [2026-08-19][S2/V2 · atom `PT-6`] **CLOSED (`todo` → `done`), which completes this plan (6/6).**
+  The 2026-08-18 entry above already declared it DONE; the atom had simply never been flipped. Rather
+  than inherit that verdict across ~40 intervening commits, its two sharpest clauses were re-measured
+  against today's `main`.
+
+  **The residue clause, driven live.** Applying Retro Terminal moved every carrier the clause names:
+  title → `TERM://PersonalClaw`, favicon → `/icons/personality-retro-terminal.svg` (fetched: **200
+  `image/svg+xml`**), `data-personality` → `retro-terminal`, `.crt-raster` and `.crt-beam` present,
+  and the shell registry mounting `data-shell-element="terminal-scanlines"`. Switching back to the
+  default restored **all** of them — title `PersonalClaw`, favicon `/claw.svg` (200 `image/svg+xml`),
+  `data-personality=personalclaw`, both CRT layers gone, and the `data-shell-element` registry
+  **empty**.
+
+  **Two harness traps caught on the way, worth the ink because both would have produced a false
+  finding.** (1) The first drive ran against a **day-old `web/dist`**: the personality icons were
+  absent from it (`/icons/personality-retro-terminal.svg` → 404) and the applied favicon read
+  `/favicon.svg`, which looked exactly like a broken carrier. Both are tracked in `web/public/icons/`;
+  a fresh `npm run build` served them 200 and the applied href matched the declared one. A stale dist
+  is indistinguishable from a product defect from the browser's side. (2) A residue probe using
+  `[class*="terminal"]` reported the strip still present after switching back — it was matching two
+  nav `<svg>` elements whose `className` is an `SVGAnimatedString`. Measured precisely via
+  `data-shell-element`, the strip is gone. Scope a probe to the marker the component actually writes.
+
+  **The a11y discovery this atom recorded as deliberately-not-fixed (E6) is now closed.** It asked for
+  `--color-on-primary-tint` to become per-scheme *plus* a contrast rail, "since `schemeContrast.test.ts`
+  sweeps accent tokens and does **not** composite this translucent pair — that is the gap". Both landed
+  in #1730: the token is per-scheme on `main` (`tokens.css:86`/`:231`) and
+  `web/src/design/onPrimaryTintInk.test.ts` composites the pair across 12 schemes × 2 modes × 3 grounds
+  × {rest, hover}.
+
+  **The `e2e a11y` clause, and a flake found while verifying it.** One 9-worker/111-test run reported
+  `[serious] color-contrast … 2.77` on `#/dashboard` (dark), 2 nodes. The named foreground `#5b5d5c` is
+  **not a token**: it is the row's resting `#c4c7c5` composited over `#141414` at **α ≈ 0.40** —
+  per-channel `(0x5b-0x14)/(0xc4-0x14) = 0.40`, `(0x5d-0x14)/(0xc7-0x14) = 0.41` — and the resting pair
+  measures **10.81:1**. The flagged node was `nth-child(4)` of `dashboard/widgets/Suggestions.tsx`,
+  which animates `opacity: 0 → 1` with `delay: i * 0.04`, while `gotoRoute` waited a fixed **400 ms**.
+  So the scan landed inside the fade.
+
+  **It did not reproduce: once in four runs.** Not with the new settle (107 passed), not without it in
+  isolation (2 passed), and not without it in a second full 9-worker run (107 passed). The mechanism is
+  proven arithmetically; the occurrence is load-dependent. `settleEntranceAnimations()` therefore ships
+  as **hardening, not as a demonstrated fix**, and says so in its own docstring — a gate that can report
+  `serious` from a ~200ms frame trains people to ignore it. It waits on a condition (no inline opacity
+  strictly between 0 and 1, no running `getAnimations()`) rather than a bigger constant, because a fixed
+  wait cannot know how many staggered children a route has.
+
+  Recorded plainly: I stated mid-tick that "PT-6's last clause is red on main". That was one flaky run;
+  the suite is green on `main`, and the clause holds.
+
+  **Gates:** web `typecheck` rc 0 · `e2e:a11y` **107 passed** · roadmap rails + docs-lint green.
+  Also corrects `plans[].status` for `MRI`, `CC` and `PT` — authored, never derived, so nothing
+  regenerates it.
