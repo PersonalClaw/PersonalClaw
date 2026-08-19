@@ -170,3 +170,13 @@ def _ensure_default_providers_registered() -> None:
         )
 
         register_action_provider(KnowledgeProposeActionProvider())
+    if "knowledge-report" not in _providers:
+        # KNOWLEDGE-SYNTHESIS WF2KNO-12: the scheduled-research-report runner — one fire is one
+        # report run (resolve scope → write one finding → stamp the watermark). It writes through
+        # `knowledge-persist` rather than the store, so the report's finding is an ordinary
+        # knowledge item on the one write path.
+        from personalclaw.action_providers.knowledge_report_provider import (
+            KnowledgeReportActionProvider,
+        )
+
+        register_action_provider(KnowledgeReportActionProvider())
