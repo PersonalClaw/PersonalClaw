@@ -224,7 +224,7 @@
     {
       "plan": "MEMORY-GRAPH-AND-VAULT",
       "code": "MGAV",
-      "status": "in_progress",
+      "status": "done",
       "summary": "9 atoms: 4 shipped (S1 graph model+linker, S2a recall arm, S2b push reflex, \u00a71.3 knowledge pre-pass PR #118), 5 remaining (S3 formation+Louvain, S4 vault two-way, memory citations, S5 slots, S5 FE+config). All deps intra-plan; no cross-plan gate.",
       "atoms": [
         {
