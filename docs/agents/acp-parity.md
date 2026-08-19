@@ -65,20 +65,22 @@ capability verdict), `NOT-EXERCISED` (no runtime observation).
 |---|---|---|---|---|---|
 | claude-code | 43 | 7 | 0 | **13** | 2026-08-17 + a residual re-drive 2026-08-19, adapter `0.60.0`, `claude` `2.1.233.669` |
 | codex | 33 | 10 | 0 | **20** | 2026-08-17, adapter `1.1.4`, `codex` `0.146.1.359` |
-| kiro-cli | 44 | 16 | 1 | 2 | 2026-08-17/18, plus a follow-up sweep 2026-08-18, `kiro-cli` `2.18.1` |
+| kiro-cli | 43 | 18 | 1 | **1** | 2026-08-17/18, a follow-up sweep 2026-08-18, plus a residual re-drive 2026-08-19, `kiro-cli` `2.18.1` |
 | gemini-cli | — | — | — | 63 | never driven; binary not installed |
 
 Three things a reader must carry into every section below.
 
-**1. kiro's tool-axis rows were measured, then failed to reproduce on the same CLI build.** A
-re-drive on 2026-08-19 against the same `kiro-cli 2.18.1` asked the CLI to enumerate its
-callable tools and got **`NO_TOOLS`**; asked for one shell command, it answered that it had no
-shell tool available and correctly refused to fabricate output. The matrix row it contradicts
-(`K4`) measured **57 tools** on that same version with its own `shell`/`read`/`write` working.
-A control in the same gateway and the same isolated home — a second session bound to
-claude-code — listed nine callable tools, so host-side tool exposure was healthy and the
-failure is specific to kiro. The cause is **not** established. Every kiro tool row below is
-therefore marked *measured, not reproduced*: read it as history, not as current fact.
+**1. kiro's tool axis reproduces, and four of its rows were wrong.** An earlier drive on
+2026-08-19 got `NO_TOOLS` from `kiro-cli 2.18.1` and this document briefly published every kiro tool
+row as *measured, not reproduced*. A second drive the same day, on a fresh isolated home, settles it:
+the CLI enumerated **151 tool names** — its own `shell`/`read`/`write`/`grep`/`glob`, the operator's
+twelve MCP servers, **and the whole `personalclaw-core` surface** — and `pwd` answered the session's
+own `workspace_dir` (`K51`). The `NO_TOOLS` answer is best explained as a **gate artifact**: the
+turn's first tool call raises an approval card and parks the turn, and the CLI's own wording was
+per-turn (*"in this turn"*) (`K52`). What the reproduction then exposed is more serious than the
+scare: `K4`'s enumeration had missed the protocol-delivered surface, and **four rows were scored off
+it** — the native registry, both skills rows and subagents. All four are corrected below, three of
+them by CALLING the tools rather than re-reading a list (`K57`).
 
 **2. claude-code and codex are not complete columns.** 13 and 20 cells respectively have no
 runtime observation. Their sections list those cells grouped by why, and the summary tables do
@@ -86,9 +88,13 @@ not imply anything about them. claude's residual came down from 22 in a 2026-08-
 reused the recipes kiro's follow-up sweep had already proven; the nine cells it closed are marked
 with their own observation ids below.
 
-**3. Two kiro cells are unreachable as-a-user by construction**, not for want of a fixture:
-the skill-ladder review has no forced-run surface (`G44`), and an empty turn cannot be produced
-without stream injection. Both are named in kiro's section with the reason.
+**3. ONE kiro cell has no runtime observation**, and the reason changed. The skill-ladder review is
+not gate-less: its condition is a correction signal **or** four tool calls, both drivable, and driving
+it shows the ladder running (and, on a local model with the shipped 60 s HTTP timeout, dying silently
+mid-pass). What blocks the cell is that **no surface attributes a model call to its caller**, so a
+ladder that declines and a ladder that never ran look identical from outside (`G47`, superseding
+`G44`). The other cell once called unreachable — empty-turn auto-retry — was closed by asking the CLI
+for zero characters (`K55`); it was never unreachable, just never attempted.
 
 ## Constraints that hold on all three providers
 
@@ -118,7 +124,7 @@ said here rather than generalized — a landed mechanism is not a measured one.
 | What the host now supplies | Driven as-a-user on | Boundary |
 |---|---|---|
 | The `personalclaw-core` tool surface (knowledge, tasks, artifacts, workflows, subagents, `notify`) passed in `mcpServers` at `session/new` | **kiro only** (`K32` — the turn's first tool call was `@personalclaw-core/get_context`, and it raised its own approval card). claude and codex last measured "no `personalclaw-core` surface at all" (`O4`, `C4`) at their earlier tips and have not been re-driven | A CLI that ignores protocol-passed `mcpServers` needs config seeding instead (below) |
-| Config seeding for kiro's agent discovery: the generated `personalclaw.json` is made discoverable from a root kiro actually reads, via a marker-scoped, receipt-recorded, reversible symlink | **not re-driven** since `K6`/`G31` measured the file "generated correctly and stored where kiro never looks" | Seeding never edits a user file; a pre-existing path we did not write is refused, not clobbered |
+| ~~Config seeding for kiro's agent discovery~~ — **it does not run, and it is not needed** (`K54`, `G46`). The seeding code is real, but its only caller is gated on an `agent_config_dir` argument **no ACP bundle passes**: driven end to end there is no seed log line, no receipt, nothing in `~/.kiro/agents/`, and kiro's discovery returns the same 27 agents as `K2`. Nor is it required — with no `~/.kiro/mcp.json` on the machine and no agent file naming us, a kiro session still enumerated the whole `personalclaw-core` surface, so kiro honours protocol-passed `mcpServers` | **driven 2026-08-19** (`K54`) | Seeding never edits a user file; a pre-existing path we did not write is refused, not clobbered |
 | Permission authority: the host refuses to hand a Zed dialect a self-approving mode (`acceptEdits`/`dontAsk`/`bypassPermissions`) outside an explicit unattended session, and the deny-list is evaluated against the **real command** rather than the truncated permission title | **not re-driven** as a column | Covers only tools the CLI chooses to escalate — see the not-gateable residual below |
 | Unattended fail-fast: an approval request arriving on an unattended session is auto-denied with a reason and the turn ends, instead of parking forever waiting for a human | **kiro only** (`K41` — `auto-denied: unattended run, no one to approve`, `[DONE]` in 5.2 s, nothing left pending, the requested file never created). The claude and codex cells were never driven | kiro has no permission-mode axis, so it gets the fail-fast half only — there is no restrictive mode to forward |
 | The runtime-agnostic failure breaker and structural loop detection, run by the host off the neutral event stream for ACP turns | **not re-driven**: the last as-a-user measurement of these cells (`O24`, `C10`, `K15` — six consecutive failing tool calls, zero warn/block/circuit/steering) predates it and measured them ABSENT | The host observer can abort or steer **between** protocol events; it cannot block the next tool call pre-execution the way the native breaker does |
@@ -297,20 +303,22 @@ adapter version. Core's `default` dialect, which has no permission-mode axis. Th
 completely measured column (2 of 63 cells unmeasured, and both for stated structural reasons)
 and the one with a live contradiction.
 
-> **Version-drift warning — the tool-axis rows below were measured and then failed to
-> reproduce on the same build.** A re-drive on 2026-08-19 against this same `kiro-cli 2.18.1`
-> got **`NO_TOOLS`** when it asked the CLI to enumerate its callable tools, and the CLI answered
-> that it had no shell tool available in that turn (correctly refusing to fabricate a `pwd`
-> result). `K4` — the row every tool claim below rests on — measured **57 tools** on this same
-> version with its own `shell`/`read`/`write` working. A control session on claude-code in the
-> same gateway and the same isolated home listed nine callable tools, so host-side tool exposure
-> was healthy and the failure is kiro-specific. **The cause is not established.** Candidates
-> named at the time: the operator's own MCP fleet not starting under the gateway's environment
-> (that fleet is where all 57 tools came from), singleton contention with a concurrently running
-> fleet, or a kiro-side change within `2.18.1`. Every row tagged **(tool axis)** below is history
-> — a measurement that did not survive its first re-drive — not current fact. It also means the
-> `pwd` confinement question cannot be re-answered from that re-drive: with no shell tool there
-> was nothing to escape with.
+> **The tool-axis scare is RESOLVED — and it left four wrong rows behind.** An earlier drive on
+> 2026-08-19 got `NO_TOOLS` from this same `kiro-cli 2.18.1` and every tool row below was published as
+> history rather than fact. A second drive the same day, on a fresh isolated home, reproduces the axis:
+> **151 tool names** (kiro's own `shell`/`read`/`write`/`grep`/`glob`, the operator's twelve MCP
+> servers, and the entire `personalclaw-core` surface) and a `pwd` that answers the session's own
+> `workspace_dir` — so the confinement question this warning called unanswerable is answered, in
+> `K28`'s favour (`K51`). The `NO_TOOLS` reply is best explained as a **gate artifact**: the turn's
+> first tool call raises an approval card and parks the turn, and kiro's wording was per-turn (*"in
+> this turn"*) (`K52`).
+>
+> **The real damage was upstream of the scare.** `K4`'s enumeration — the row every tool claim rested
+> on — had missed the protocol-delivered `personalclaw-core` surface, so four rows were scored against
+> a list that was short: the native registry, both skills rows and subagents. Three were then
+> re-measured by CALLING the tools (`skill_search`, `artifact_save`, `knowledge`, `subagent_run` — all
+> execute, each behind its own approval card) (`K57`). Read any remaining "absent tool" claim here as
+> *absent from a 151-name census*, not as absent from a 57-name list.
 
 ### At parity
 
@@ -349,19 +357,19 @@ and the one with a live contradiction.
 | Approvals / safety | Plan mode | kiro has no mode axis, so plan is enforced **only** by the host gate: the CLI called its write tool, the host blocked it, and the reply carried the host's `[SWITCH_TO_AGENT: …]` marker (`K22`) | kiro never enters a native plan mode. "kiro plans" means "the host refuses mutations", nothing more |
 | Approvals / safety | Unattended runs | `K41` — a `cron:`-keyed session with the auto-approver off: `auto-denied: unattended run, no one to approve`, `[DONE]` in 5.2 s, nothing left pending, the requested file never created | Fail-fast only: with no permission-mode axis there is no restrictive mode to forward, so an unattended kiro run resolves prompts deterministically rather than being pre-configured to avoid them |
 | Approvals / safety | Blocking PreToolUse hooks | `K39` — with the hook ids bound to the session's agent profile, the tool line read `(hook blocked: …)` and the file was never created | **Conditional:** the same hook, unreferenced by any agent, fired three times and the write still landed. Hook firing is agent-scoped by design; the global path is informational and cannot block (`G40`) |
-| Prompt-side context | Skills | The `skill_invoke`/`skill_search`/`skill_remember` tools are absent from the CLI **(tool axis)** (`K4`) | The index half was **not** exercised on kiro — no prompt in the sweep matched a skill, so there is no `Surfaced skills:` line and no `skill_surface` row to point at. codex measured that half |
-| Tools | kiro's agent discovery of `personalclaw.json` | Config seeding makes the generated file discoverable from a root kiro actually reads (landed after this column) | Not re-driven: `K6`/`G31` measured the file generated correctly and stored where kiro never looks |
+| Prompt-side context | Skills | ~~The tools are absent from the CLI~~ — **corrected**: `skill_invoke`/`skill_search`/`skill_remember` are all present, and `skill_search` was CALLED and answered (`K51`, `K57`). What is unmeasured on kiro is only the INDEX half | No prompt in the sweep matched a skill, so there is no `Surfaced skills:` line and no `skill_surface` row to point at. codex measured that half |
+| Tools | kiro's agent discovery of `personalclaw.json` | The file is generated correctly and stored where kiro never looks (`K6`, `G31`), and the seeding meant to fix that **never runs** — its caller is gated on an argument no bundle passes (`K54`, `G46`). It is also unnecessary: the core tool surface arrives over the protocol instead (`K51`) | **Host seam** (atom `AAP-4`) — wire the seed or delete it; deleting is the clean-break option | `kiro-cli 2.18.1` |
 
 ### Protocol or CLI constraint
 
 | Axis | Capability | Why it does not work | Watch — what must change, where | Measured against |
 |---|---|---|---|---|
 | Approvals / safety | The host gate is **provably not universal** | Seven of thirteen tool calls in one turn executed with **no** permission request — kiro's native `todo_list` — and the host itself labelled each of them `risk: "destructive"`, in the same turns where the read, the write and the `rm` each raised a card (`K13`, `K15`, `G27`). The severity is structural, not about one tool: host safety on ACP is opt-in **by the CLI**, so a provider's ungated set is whatever that CLI chooses not to ask about | **CLI** would have to escalate every tool; failing that, **host seam** needs a positive mechanism (deny-by-default for un-permissioned tool calls) plus the per-provider enumeration rendered below | `kiro-cli 2.18.1` |
-| Approvals / safety | There is **no config-isolation lever**, and the leak is an identity leak on top of a tool leak | 24 of the 27 personas offered in the picker are the operator's own private agents (`K2`); the CLI's 57 tools **(tool axis)** are all the operator's, including cloud-credential and expense-write tools (`K4`); each session is a five-process tree (`K7`, `G28`) | **Bundle + host seam** (atom `AAP-5`) | `kiro-cli 2.18.1` |
+| Approvals / safety | There is **no config-isolation lever**, and the leak is an identity leak on top of a tool leak | 24 of the 27 personas offered in the picker are the operator's own private agents (`K2`); the CLI's tools are largely the operator's, including cloud-credential and expense-write tools — the re-drive counted **151** of them, twelve MCP servers' worth, from `~/.kiro/settings/mcp.json` (`K4`, `K51`); each session is a five-process tree (`K7`, `G28`) | **Bundle + host seam** (atom `AAP-5`) | `kiro-cli 2.18.1` |
 | Tools | Per-tool disable prefs | The only per-tool disable surface addresses *configured* MCP servers; neither kiro's own tools nor the protocol-injected `personalclaw-core` is one — the request returns `server 'personalclaw-core' not found` (`K45`) | **Host seam** — a per-tool pref that can address an ACP CLI's tools does not exist | `kiro-cli 2.18.1` |
 | Tools | Read auto-approve (`trust_reads`) does not fire at all | A `pwd` arrived `risk: "safe"`, `is_read_only: "1"` and **still blocked on a card**; a plain file read did too (`K5`, `K12`). The auto-approve is title-driven, and kiro's honest `Running: pwd` / `Reading probe.txt:1` titles do not trip it, where codex's mislabelled "Read file '…'" title for a shell command did — so the honest provider is the one penalized (`G34`) | **Host seam** — classify on the structured `kind`, not the adapter's prose | `kiro-cli 2.18.1` |
-| Tools | `AskUserQuestion` card | kiro exposes no `request_user_input`-style tool at all **(tool axis)** (`K26`) | **CLI**, or the core MCP surface supplying one | `kiro-cli 2.18.1` |
-| Tools | Subagents | No `subagent_run` **(tool axis)**; kiro's own native `subagent` is not the platform's (`K4`, `K26`). The inject-back precondition itself holds — one pid file per live session at the later tip (`K37`) — but goes stale exactly when it matters: after a mid-turn CLI death the file still names the dead pid (`K38`) | **Host seam** — reachable through the core MCP surface; the pid-file staleness is its own defect (`G42`) | `kiro-cli 2.18.1` |
+| Tools | `AskUserQuestion` card | kiro exposes no `request_user_input`-style tool at all — still true against the 151-name census (`K26`, `K51`) | **CLI**, or the core MCP surface supplying one | `kiro-cli 2.18.1` |
+| Tools | Subagents | **Corrected: `subagent_run` is reachable and it SPAWNS** — protocol-delivered, not absent (`K57`). Two things still block it: it failed outright until this repo fixed the gateway-port defect that pointed the MCP server at a dead port (`K58`), and no `[Subagent completion event]` arrives because the spawn resolves an EMPTY originating session (`K59`, `G49`) — while the bundled `subagent-orchestration` snippet tells the agent to *"just wait"* for one | **Host seam** (atom `AAP-8`) — resolve the originating session on the spawn path | `kiro-cli 2.18.1` |
 | Tools | Dry-run replay | Absent by entry-point census, not by interception: the only `dry_run` on any user-reachable surface is session cleanup's unrelated preview flag, and the observe-mode argument exists solely on the native runtime constructor, which an ACP session never builds (`K46`) | **Host seam** — no ACP entry point exists to build | `kiro-cli 2.18.1` |
 | Prompt-side context | Task-mode framing goes **stale** on a reused process | The framing block is injected, and its value drifts: it read `## Task mode: Plan` on a session the API reported as `task_mode: agent` (`K23`), while the same session on a fresh process read `## Task mode: Agent` (`K24`). Because kiro reuses one process per session, this is the common case, not the edge one. Related: a session that has ever been in plan mode wedges (`G29`) | **Host seam** | `kiro-cli 2.18.1` |
 | Prompt-side context | Workspace confinement on an agent-profile-bound session | Directly bound, the CLI's own `pwd` answers the session's `workspace_dir` — the earlier escape is gone (`K28`). Bind a PersonalClaw **agent profile** and the same `pwd`, asserted inside the spawned CLI, answers `~/.personalclaw/workspace` — the operator's real home (`K50`, `G39`) — because the profile's empty default directory wins over the session's explicit value | **Host seam**. This is the shape a fix can miss: a sweep that drives only the plain binding measures the escape as gone | `kiro-cli 2.18.1` |

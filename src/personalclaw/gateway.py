@@ -3346,6 +3346,24 @@ class GatewayOrchestrator:
         )
         self.subagent_mgr.start_reaper()
 
+    def _export_runtime_port(self) -> None:
+        """Publish the bound dashboard port into this process's environment.
+
+        Child processes resolve the gateway's API base through
+        ``mcp_core._resolve_api_base()`` -> ``parse_dashboard_url(dashboard.url)``,
+        which falls back to the 10000 default. Neither ``--port`` nor ``--port auto``
+        writes that config, so on any other port an MCP server spawned for a session
+        posted where nothing was listening and its tools returned a raw ``urlopen``
+        error as their result text. Exporting ``PERSONALCLAW_PORT`` -- the override
+        ``parse_dashboard_url`` already documents -- makes every child (MCP servers,
+        ACP CLIs, sandboxed helpers, which allowlist this name) agree with the socket
+        we actually bound. Measured on a kiro ACP session: ``subagent_run`` failed with
+        ``<urlopen error [Errno 61] Connection refused>`` while the in-process tools
+        beside it worked (`AAP-3`, `K58`).
+        """
+        if self._dashboard_port:
+            os.environ["PERSONALCLAW_PORT"] = str(self._dashboard_port)
+
     async def _init_dashboard(self) -> None:
         """Start the dashboard web server."""
         assert self.sessions is not None
@@ -3381,6 +3399,7 @@ class GatewayOrchestrator:
             addresses = self._dashboard_runner.addresses
             if addresses:
                 self._dashboard_port = addresses[0][1]
+        self._export_runtime_port()
         if self.dashboard_state:
             self.dashboard_state.no_crons = self._no_crons  # dashboard mode
             # (S107) The scheduler's refresh callback is gone. It fired only from
@@ -3420,6 +3439,7 @@ class GatewayOrchestrator:
             addresses = self._dashboard_runner.addresses
             if addresses:
                 self._dashboard_port = addresses[0][1]
+        self._export_runtime_port()
         if self.dashboard_state:
             self.dashboard_state.no_crons = self._no_crons  # API-only mode
 

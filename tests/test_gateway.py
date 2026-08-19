@@ -3130,3 +3130,36 @@ class TestShutdownReapsAppBackends:
             # Must not raise despite stop_all blowing up.
             await orch._shutdown()
         sup.stop_all.assert_called_once()
+
+
+class TestRuntimePortIsExportedToChildren:
+    """The bound port must reach child processes, not just the READY line.
+
+    ``mcp_core._resolve_api_base()`` derives the gateway's API base from
+    ``dashboard.url`` and falls back to 10000; neither ``--port`` nor the ``--port auto``
+    that ``--test-mode`` uses writes that config. So a gateway on any other port spawned
+    a ``personalclaw-core`` MCP server pointed at a dead port, and its HTTP-bridged tools
+    returned a raw ``urlopen`` error as their result text. Driven on a kiro ACP session
+    (``AAP-3``/``K58``): ``subagent_run`` answered
+    ``<urlopen error [Errno 61] Connection refused>`` while the in-process tools in the
+    same turn all worked.
+    """
+
+    def test_a_bound_port_is_exported(self, monkeypatch):
+        monkeypatch.delenv("PERSONALCLAW_PORT", raising=False)
+        orch = _make_orchestrator()
+        orch._dashboard_port = 10051
+        orch._export_runtime_port()
+        import os
+
+        assert os.environ["PERSONALCLAW_PORT"] == "10051"
+
+    def test_an_unbound_port_exports_nothing(self, monkeypatch):
+        """Port 0 means "not bound yet" — publishing it would point children at nothing."""
+        monkeypatch.delenv("PERSONALCLAW_PORT", raising=False)
+        orch = _make_orchestrator()
+        orch._dashboard_port = 0
+        orch._export_runtime_port()
+        import os
+
+        assert "PERSONALCLAW_PORT" not in os.environ

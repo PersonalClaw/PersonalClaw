@@ -669,6 +669,37 @@ plan called out for codex specifically (compaction → ABSENT, slash commands �
 
 ### Gap inventory — severity-ranked (codex findings, continuing AAP-1's numbering)
 
+- **`G46` §2.1 prong B seeds nothing, and would not need to** (`K54`) — `acp/config_seed.py` is 237
+  lines of receipt-recorded, reversible, SEL-audited machinery whose only production caller runs
+  `if agent_config_dir:`, and **no ACP bundle passes that argument** (0 hits in all three). Measured
+  end to end: no seed log line, no `acp_seeds.json`, nothing in `~/.kiro/agents/`, and kiro's
+  discovery returns the same 27 agents as `K2`. Its premise is also false — with no `~/.kiro/mcp.json`
+  on the machine and no agent file naming us, a kiro session still enumerated the whole
+  `personalclaw-core` surface, i.e. kiro honours protocol-passed `mcpServers` (`K51`). So the prong-B
+  path is both inert and unnecessary; `AAP-4` owns the decision to wire it or delete it, and deleting
+  it is the clean-break option. Severity **P2** (dead machinery a doc describes as landed).
+- **`G48` An artifact saved through the protocol MCP surface loses BOTH its project and its session**
+  (`K59`) — the CLI's `artifact_save` on a session bound to project `p-14b92d4c` persisted
+  `project_id: ""` and a created-event `session_id: ""`. The `project_id → artifact stamping` row was
+  already ABSENT, but for the wrong reason (`K4` thought the tool unreachable), and the session half is
+  a second loss nobody had recorded. Severity **P2**: an agent-authored artifact cannot be traced to
+  the work that produced it, which is what the stamping was for.
+- **`G49` A spawned subagent resolves an EMPTY originating session, so nothing can inject back**
+  (`K59`) — `subagent_run` now spawns from an ACP session, and the gateway logs
+  `_spawn_session_resolver: rid=spawn:6c6039b3 agent_id=6c6039b3 info=True session=`. No
+  `[Subagent completion event]` arrived in ~4 minutes. The bundled `subagent-orchestration` snippet
+  promises the CLI *"results are injected back automatically … don't poll, just wait"*, so the agent is
+  told to wait for something that cannot arrive. Severity **P1**: the prompt-level contract and the
+  runtime disagree, and the failure mode is an agent waiting forever.
+- **`G47` A model call cannot be attributed to its caller, so a background pass is unfalsifiable**
+  (`K56`) — supersedes `G44`. `model_calls.jsonl` and `/api/models/telemetry` both key on
+  `(use_case, query_class)`; the skill ladder's success path broadcasts a transient WS chip and logs
+  nothing; its failure path is `logger.debug`. Consequence, measured: a ladder pass that timed out at
+  exactly 60,010 ms was invisible at the default log level, and a ladder pass that completed cannot be
+  distinguished from any other `background` caller. Two one-line fixes make the cell measurable — a
+  caller/subsystem field on the ledger row, and an INFO line carrying the ladder's verdict. Severity
+  **P2** (an expensive learning pass can be silently dead in production and no surface would say so).
+
 **Cross-provider confirmations first.** Eleven of AAP-1's sixteen findings reproduce on codex with
 a different adapter, a different CLI and a different vendor, which promotes them from
 "claude-code behavior" to **host-side defects**: `G1` (cwd/home escape — `C4`), `G3` (no
@@ -864,12 +895,12 @@ Ledger ids are `K…` so they never collide with `AAP-1`'s `O…` or `AAP-2`'s `
 | Knowledge context (@-mention + picker `meta.knowledge`) | WIRED | **CONFIRMED** (follow-up) | WIRED | `K30` — with `meta.knowledge=[<item id>]` the CLI quoted the stored item verbatim: `The AAP3 KIWI PROTOCOL states: the secret sweep codeword is ZANZIBAR-7719 …` |
 | Attachments/paste (extracted text prepended) | WIRED | **CONFIRMED** (follow-up) | WIRED | `K30` — `meta.files=[…/uploads/aap3-brief.txt]`; the CLI quoted the extracted text verbatim: `ATTACHMENT-CONTENT-MARKER-B83: the attached briefing says the sweep vehicle is a hovercraft.` |
 | @prompt expansion (+ typed vars, snippets) | WIRED | **CONFIRMED** (follow-up) | WIRED, but composer-side — nothing on the ACP path expands it | `K30`/`K31` — a message carrying the literal `@aap3-prompt` reached kiro **unexpanded** (it answered `ABSENT`), while `POST /api/prompts/aap3-prompt/render` returns the body and the composer is its caller. So the cell is provider-independent by construction |
-| Skills index in context + `skill_invoke`/`skill_search` execution | PARTIAL | CONFIRMED | PARTIAL | `K4` — neither `skill_invoke` nor `skill_search` appears in the CLI's 57-tool list. The index half was **not** exercised: unlike the codex sweep, no prompt in this one matched a skill, so `gateway.log` carries no `Surfaced skills:` line and SEL has no `skill_surface` row at all |
-| Session-live skill drafts (`skill_remember`) | PARTIAL | CONFIRMED | PARTIAL | `K4` — absent from the tool list |
+| Skills index in context + `skill_invoke`/`skill_search` execution | PARTIAL | CONFIRMED | PARTIAL — **execution works**, the index half is still unmeasured | `K57` — `skill_search` was CALLED and answered (*"No skills matched"*), so `K4`'s "neither appears in the tool list" was an enumeration artifact. The index half was **not** exercised: unlike the codex sweep, no prompt in this one matched a skill, so `gateway.log` carries no `Surfaced skills:` line and SEL has no `skill_surface` row at all |
+| Session-live skill drafts (`skill_remember`) | PARTIAL | CONFIRMED | PARTIAL — the tool is REACHABLE, a live draft was not driven | `K51`/`K57` — `skill_remember` is in the CLI's enumeration and its siblings execute; `K4`'s "absent from the tool list" was an enumeration artifact |
 | Task-mode framing (Agent/Ask/Plan/Build suffix) | WIRED | **DIVERGED** | the block IS injected and its VALUE goes stale on a reused process | `K23` — the framing quoted verbatim reads `## Task mode: Plan` on a session the API reports as `task_mode: agent`; `K24` — the same session on a fresh process reads `## Task mode: Agent`. This is the cell `AAP-2` could not close on codex (`G26`); kiro closes it and it is broken |
 | Agent profile system prompt / voice layer | PARTIAL | **CONFIRMED** (follow-up) | WIRED | `K30` — a PersonalClaw profile carrying a distinctive `system_prompt` + `voice` was bound; the CLI quoted `MANDATORY PROFILE MARKER: you must include the exact token PROFILE-MARKER-QX41 in every reply.` verbatim |
 | Project binding (context preamble + cwd) | WIRED | **DIVERGED** | the cwd half does not work | `K4` — `workspace_dir` set to the scratch dir **before** binding, and `pwd` inside the spawned CLI answered `~/.personalclaw/workspace`. The preamble half was not separately measured. `K12` shows the same turn's `rm` call carrying the *correct* `working_dir`, so the two disagree inside one turn |
-| project_id → artifact stamping | ABSENT | CONFIRMED | ABSENT (stronger) | `K4` — `artifact_save` is not reachable at all, so there is nothing to stamp |
+| project_id → artifact stamping | ABSENT | CONFIRMED | ABSENT — and now for the RIGHT reason | `K57`/`K59` — `artifact_save` **is** reachable and saved `AAP3-STAMP-PROBE` from a session bound to project `p-14b92d4c`; the persisted artifact carries `project_id: ""` and its created event carries `session_id: ""` (`G48`). `K4`'s "not reachable at all" was an enumeration artifact |
 | Persona injection (Lumon theme) | WIRED | **CONFIRMED** (follow-up) | WIRED | `K30` — `color_theme=lumon` on the turn; the CLI quoted `Use a Lumon-inspired persona. Keep responses technically useful and clear first.` |
 | Cancelled-turn preamble re-injection | WIRED | **CONFIRMED** (follow-up) | WIRED | `K35` — a `sleep 40` tool call was stopped mid-turn (the stop resolved `outcome: soft`), and the NEXT turn quoted `[PREVIOUS TURN WAS CANCELLED BY THE USER -- context restore]` plus its following line verbatim. This is the cell the first sweep could not close because `G29` had made its stop targets tool-free |
 | Compressed thread-history bootstrap (new process) | WIRED | CONFIRMED | WIRED | continuity held across 42 messages / many turns on S1, and after the restart a **fresh** process on a 12-message session still answered in context with a fresh `Injected …` line (`K24`). Note the mechanism differs from the Zed adapters: kiro reuses one process per session (`K8`), so most turns need no re-bootstrap at all |
@@ -898,7 +929,7 @@ Ledger ids are `K…` so they never collide with `AAP-1`'s `O…` or `AAP-2`'s `
 | Feature | audit said | mark | runtime verdict | evidence |
 |---|---|---|---|---|
 | Filesystem/shell tools (cwd-confined + extra_tool_roots) | PARTIAL | **DIVERGED** — worse | PARTIAL, and NOT cwd-confined | `K4` — the CLI's own `shell`/`read`/`write` work, but its cwd is the real `~/.personalclaw/workspace`, not the session's `workspace_dir` |
-| Full native tool registry (knowledge/tasks/loops/inbox/memory/artifacts/workflows/subagents/web/schedule) | UNKNOWN | CONFIRMED | ABSENT | `K4` — `knowledge_search`/`task_create`/`notify` all NO, no `personalclaw-core` server; `K6` — the config that would provide it is never read |
+| Full native tool registry (knowledge/tasks/loops/inbox/memory/artifacts/workflows/subagents/web/schedule) | UNKNOWN | **DIVERGED** (re-drive) | **REACHABLE** — over the protocol, not the config | `K51`/`K53` — the earlier ABSENT was a naming artifact: `K4` scored two strings (`knowledge_search`, `task_create`) that exist in no provider's registry. Re-measured against the CLI's own enumeration, `knowledge`, `todo_list`, `memory_*`, `artifact_*`, `workflow_*`, `subagent_*` and `notify` are all present, delivered by protocol-passed `mcpServers` (`K54`) |
 | Tool disable prefs (PT3/UT4 per-tool + per-provider) | ABSENT | **CONFIRMED** (follow-up) | ABSENT — the only per-tool surface cannot address an ACP CLI's tools | `K45` — `POST /api/mcp/toggle-tool {"server":"personalclaw-core","tool":"get_context","enabled":false}` → `{"error": "server 'personalclaw-core' not found"}`. The pref keys on *configured* MCP servers; neither kiro's natives nor the protocol-injected `personalclaw-core` is one |
 | Per-turn tool retrieval + progressive disclosure (`tool_search`/`tool_schema`) | ABSENT | CONFIRMED | ABSENT | `K4` — all 57 tools were enumerated up front; kiro ships no `tool_search`-style tool (codex did) |
 | Failure breaker (warn@3/block@5/circuit@30) | ABSENT | CONFIRMED | ABSENT | `K15` — six consecutive failing tool calls in one turn, zero warn/block/abort |
@@ -907,7 +938,7 @@ Ledger ids are `K…` so they never collide with `AAP-1`'s `O…` or `AAP-2`'s `
 | Structured tool-input rendering (dict → schema-driven fields) | ABSENT | CONFIRMED | ABSENT — and the structured payload IS on the wire | `K12` — `input_preview` carries real JSON (`command`, `working_dir`, `operations[].mode/path`, `__tool_use_purpose`) while `input` is `null`, so the host has the fields and drops them |
 | File-change diff chips (write/edit before-after) | ABSENT | CONFIRMED | ABSENT — with the raw material already present | `K12` — the edit card's payload is a **unified diff** (`--- … +++ … @@ -0,0 +1 @@ +HELLO`), rendered as prose |
 | AskUserQuestion card | UNKNOWN | CONFIRMED | **ABSENT** | `K26` — kiro exposes no `request_user_input`-style tool at all (codex had one that failed CLI-side) |
-| Subagents (`subagent_run` + completion inject-back) | UNKNOWN | CONFIRMED | **ABSENT**, and the precondition is patchy | `K4`/`K26` — no `subagent_run`; kiro's own native `subagent` is not the platform's. `K9` — the `session_pid_<pid>.txt` inject-back precondition existed for only 1 of 3 live sessions |
+| Subagents (`subagent_run` + completion inject-back) | UNKNOWN | **DIVERGED** (re-drive) | **REACHABLE and it SPAWNS**; the inject-back half does not land | `K57`/`K58` — the tool is protocol-delivered, not absent: it first failed with `<urlopen error [Errno 61] Connection refused>` (the gateway-port defect this commit fixes) and then answered `Spawned 1 subagent(s) … 6c6039b3`. `K59` — no `[Subagent completion event]` arrived in ~4 min and the gateway logged `_spawn_session_resolver: … session=` (empty), which is the inject-back's precondition (`G49`). `K4`/`K26`'s "no `subagent_run`" was an enumeration artifact |
 | MCP tools (external servers) | PARTIAL | CONFIRMED | PARTIAL — and the subset is the OPERATOR'S entire fleet | `K4` — 57 tools, none from PersonalClaw, all from the operator's real `~/.kiro` MCP configuration |
 | Queue-steering mid-turn (#37) | ABSENT | CONFIRMED | ABSENT — the message queues instead | `K15` — a mid-turn send returned `{"queued": true}`, ran after the turn, and injected nothing into the running one |
 
@@ -918,7 +949,7 @@ Ledger ids are `K…` so they never collide with `AAP-1`'s `O…` or `AAP-2`'s `
 | Preference-facet capture (every turn) | WIRED | CONFIRMED | WIRED | `K16` — `activity_event` kind `learned`: `Learned: never more` (the same bad extraction as on both other providers) |
 | Correction→lesson review | WIRED | CONFIRMED | WIRED | `K16`, `K17` — `Learned: User correction to honor: …` plus `facet_veto` + `after_turn_review` rows in `memory.db` |
 | Procedural-outcome capture (M5d tool-outcome drain) | ABSENT | CONFIRMED | ABSENT | `K17` — after turns of 13, 8 and 3 tool calls, every `memory_events` row came from the **0-tool** correction turn, and the self-model row asserts `tools: []` |
-| Skill-ladder review (4-tier, propose-only) | WIRED | NOT-EXERCISED (follow-up: still) | — | `K44` — the model-provider blocker is gone and 25+ turns ran (corrections included), yet `GET /api/skills/proposals` stayed `{"proposals": []}`, and there is **no forced-run surface**, so "gate not met" and "inert" are indistinguishable from outside. Filed as `G44` |
+| Skill-ladder review (4-tier, propose-only) | WIRED | NOT-EXERCISED (re-drive: still, new reason) | — | `K56` — the gate is drivable (a correction signal OR >=4 tool calls) and the ladder DOES run: with a 60 s provider timeout its pass dies as `provider_error` at 60,010 ms, logged only at DEBUG; with 900 s the background passes complete and `proposals` stays `[]`. What blocks the cell now is ATTRIBUTION — no surface ties a model call to its caller and the success path emits only a transient chip (`G47`), superseding `G44`'s "no forced-run surface" |
 | Memory consolidation on session end | WIRED | **CONFIRMED** (follow-up) | WIRED | `K42` — `POST /api/memory/consolidate {"key": "dashboard_<session>"}` on a kiro session: `last_consolidated` 0 → 33, `semantic_memory` 3 → 5, `episodic_memories` 2 → 5. The per-turn cadence has a 30-message threshold (`src/personalclaw/history.py:38`), which is why thirteen short turns had not tripped it |
 | Incognito/restricted no-write guarantees | WIRED | **CONFIRMED** (follow-up) | WIRED | `K33` — an `incognito` session ran the SAME correction turn that wrote three rows on a persistent session and wrote **zero** (`memory_events` 3→3, `semantic_memory` 3→3, `episodic` 0→0); the CLI itself knew ("for the rest of this incognito session"); the transcript persists with `memory_mode: incognito` by design, and the session is not restored after a gateway restart |
 
@@ -929,7 +960,7 @@ Ledger ids are `K…` so they never collide with `AAP-1`'s `O…` or `AAP-2`'s `
 | Variants / regenerate (‹n/N› switcher) | WIRED | **CONFIRMED** (follow-up) | WIRED | `K34` — `POST …/regenerate` on a kiro session produced a second answer and persisted BOTH: `variants` with two entries plus `variant_idx` on the assistant row. The re-answer still carried the injected knowledge and the profile marker |
 | Edit & resend, branch continuation (fork) | WIRED | CONFIRMED with a caveat | WIRED, but the branch loses the runtime | `K18` — the fork carries `acp_provider: ""` and inherits `workspace_dir`; it also copied 8 of the parent's 42 messages, where codex's fork copied all of its parent's |
 | Queued messages (merge/pop + live bubbles) | WIRED | CONFIRMED | WIRED end-to-end | `K15` — `queue_push` with a `queue_id` during the turn, then `queue_pop` + `chat_user_message` + its own `Turn complete` after it |
-| Empty-turn auto-retry | WIRED | NOT-EXERCISED (follow-up: still) | — | `K48` — 25+ turns across ten kiro sessions, including a blocked write, a hook-blocked tool, an auto-denied unattended call and two protocol errors: **no empty turn ever occurred**. Forcing one needs stream injection, not a fixture |
+| Empty-turn auto-retry | WIRED | **CONFIRMED** (re-drive) | WIRED | `K55` — an empty turn IS producible as-a-user (a prompt demanding zero characters), so `K48`'s "needs stream injection" was wrong. The host re-queued the prompt silently once (the duplicated user row) and surfaced `Empty response — please retry.` on the second consecutive empty, exactly as `chat_runner:3623-3652` specifies |
 | Auto-nudge re-arm (loops) | WIRED | **CONFIRMED** (follow-up) | WIRED | `K43` — `POST /api/autonudge {"idle_secs": 20, "max_cycles": 2}` on a kiro session: the nudge fired, the timer **re-armed**, fired again, and the loop deactivated at the cap (`cycle_count: 2, active: false`); the transcript carries both injected turns and kiro's `NUDGED` replies. Each nudge also fired the `UserPromptSubmit` hooks |
 | Context-% accounting | PARTIAL (UNKNOWN which backends emit) | **DIVERGED** | the chip is EMITTED but always reports a fabricated `0%` | `K4`, `K12`, `K15` — `context_usage {pct: 0.0}` and `context 0%` on every turn, including one carrying 13 tool calls and 196 events |
 | Compaction | WIRED (CLI-owned `/compact`) | **DIVERGED** | ABSENT via the host | `K11` — `/compact` errors `-32601`; nothing compacts |
@@ -946,17 +977,32 @@ Ledger ids are `K…` so they never collide with `AAP-1`'s `O…` or `AAP-2`'s `
 
 ### Mark counts (kiro-cli, the same 63 audit cells)
 
-| mark | first sweep | after the follow-up sweep |
-|---|---|---|
-| CONFIRMED (runtime matched the audit's prediction) | 31 | **44** |
-| DIVERGED (runtime contradicted it) | 12 | **16** |
-| ENV (environment limit, never a capability verdict) | 0 | **1** |
-| NOT-EXERCISED (no runtime observation obtained; reasons below) | 20 | **2** |
+| mark | first sweep | after the follow-up sweep | after the 2026-08-19 residual re-drive |
+|---|---|---|---|
+| CONFIRMED (runtime matched the audit's prediction) | 31 | 44 | **43** |
+| DIVERGED (runtime contradicted it) | 12 | 16 | **18** |
+| ENV (environment limit, never a capability verdict) | 0 | 1 | **1** |
+| NOT-EXERCISED (no runtime observation obtained; reasons below) | 20 | 2 | **1** |
 
-The follow-up sweep (below) resolved **18 of the 20** NOT-EXERCISED cells — 13 to CONFIRMED, 4 to
-DIVERGED, 1 to ENV. The two that remain are named with what exactly is missing, and neither is a
-missing fixture: the skill-ladder review has no forced-run surface (`G44`), and an empty turn cannot
-be produced as-a-user.
+Every column is counted from the rows above rather than carried in prose. The follow-up sweep resolved
+**18 of the 20** first-sweep NOT-EXERCISED cells; the residual re-drive then resolved one of the two
+survivors and moved one CONFIRMED cell to DIVERGED:
+
+* **empty-turn auto-retry → CONFIRMED** (`K55`). It was called unreachable-without-stream-injection;
+  a prompt demanding zero characters produces one, so that judgment was simply wrong.
+* **full native tool registry → DIVERGED** (`K53`). Its ABSENT verdict came from scoring two tool
+  names that exist in no registry; the capabilities are present and protocol-delivered.
+* **skill-ladder review → still NOT-EXERCISED**, but `G44`'s reason is superseded by `G47` (`K56`):
+  the gate is drivable and the ladder runs — what is missing is caller attribution for a model call.
+* **subagents → DIVERGED** (`K57`-`K59`). `subagent_run` is not absent, it is protocol-delivered; it
+  spawns once the gateway-port defect this commit fixes is out of the way, and only the inject-back
+  half is missing (`G49`).
+
+**One root cause explains four of those rows.** `K4` enumerated the CLI's tools without the
+protocol-delivered `personalclaw-core` surface, and four verdicts were then built on that
+enumeration — the native registry, the two skills rows and subagents. `K51`'s 151-name census plus
+`K57`'s four live calls replace all four. A capability row must be scored against a censused name
+list and, where the row claims a capability rather than a listing, against an actual CALL.
 
 All four of the audit's literal `UNKNOWN` cells are now definite for kiro (full native registry →
 ABSENT, AskUserQuestion → ABSENT, subagents → ABSENT, context-% → emitted-but-fabricated), as are
@@ -976,17 +1022,24 @@ timing/failure injection (2: empty-turn auto-retry, pipe-death auto-retry); no a
 (2: dry-run replay, OS sandbox probe); blocked by `G29` (1: cancelled-turn preamble); deliberately
 not re-driven (1: variants/regenerate).
 
-**After the follow-up sweep, exactly two cells carry no runtime observation:**
+**After the 2026-08-19 residual re-drive, exactly ONE cell carries no runtime observation:**
 
-1. **Skill-ladder review (4-tier, propose-only)** — the model-provider blocker is gone, 25+ turns
-   ran with corrections among them, and `GET /api/skills/proposals` never left `{"proposals": []}`.
-   There is no forced-run surface, so from outside the system "the gate was not met" and "the review
-   is inert" are the same observation. Filed as `G44` so the next sweep instruments it rather than
-   re-driving it.
-2. **Empty-turn auto-retry** — no empty turn occurred in 25+ turns across ten sessions, including a
-   blocked write, a hook-blocked tool, an auto-denied unattended call and two protocol errors.
-   Producing one requires stream injection, not a fixture, so it is out of reach for an as-a-user
-   sweep by construction.
+1. **Skill-ladder review (4-tier, propose-only)** — and the reason has changed. `G44` said "no
+   forced-run surface"; the gate is in fact a documented pair of conditions, both drivable as-a-user
+   (`LearningGate._worthwhile(PER_TURN)`: a correction signal **or** `tool_calls >= 4`). Driven, the
+   ladder RUNS: with the ollama bundle's 60 s default read timeout its pass dies as a
+   `provider_error` at 60,010 ms visible only in `model_calls.jsonl` and one DEBUG line; with
+   `timeout_secs=900` the background passes complete and `proposals` stays `[]` (`K56`). The cell is
+   still unexercised because **nothing attributes a model call to its caller** — the ledger and
+   `/api/models/telemetry` both key on `use_case`, and the ladder's success path emits only a
+   transient WS chip — so "the ladder declined" and "some other background pass ran" remain
+   indistinguishable from outside. Filed as `G47`, which supersedes `G44`: the fix is one attribution
+   field or one INFO line, not a new surface.
+
+~~2. **Empty-turn auto-retry**~~ — **CLOSED as CONFIRMED** (`K55`). The claim that producing an empty
+   turn "requires stream injection" was wrong: a prompt demanding zero characters produces one, the
+   host silently re-queues once, and the second consecutive empty raises the card. A cell called
+   unreachable by construction stayed shut for three sweeps because nobody tried the cheapest input.
 
 One further cell is `ENV` rather than a verdict: **OS sandbox wrap** — the host itself reports
 `No OS-level sandbox available — app-level checks only` on this platform, so there is nothing to
@@ -1283,6 +1336,15 @@ unblocked the four "needs a model provider" cells (`K29`).
 | `K47` | the OS sandbox wrap: the gateway's own boot line, and the sandbox module's surface | `WARNING personalclaw.sandbox: No OS-level sandbox available — app-level checks only`. There is no host wrap engaged on this platform, so no confinement boundary exists to probe — **ENV**, not a capability verdict in either direction |
 | `K48` | empty-turn auto-retry: every turn of this sweep, watched for a zero-content assistant turn | none occurred across 25+ turns and ten sessions, including a blocked write, a hook-blocked tool, an auto-denied unattended call, a cancelled turn and two protocol errors. Not forceable as-a-user |
 | `K50` | the escape's other path, measured because `K28` looked like a clean fix: the SAME probe on a session whose turn also carried `agent=<a PersonalClaw profile>` — `workspace_dir` verified set on `GET /api/chat/sessions` (`/private/tmp/aap3n-wt/.dev-home/ws`), `pwd` asserted INSIDE the spawned CLI | **`PWD=~/.personalclaw/workspace` — the real home.** Reproduced on a second profile-bound session, whose `echo` tool call also carried `working_dir: "~/.personalclaw/workspace"` in its approval frame. So `G1` is fixed for a directly-bound session and alive for an agent-profile-bound one; the profile's empty `default_dir` wins over the session's explicit value. Filed `G39` |
+| `K51` | **the tool-axis re-drive that the 2026-08-19 note said had failed.** Fresh isolated home (`/private/tmp/aap3-home`), kiro bundle installed from a local Store source, `kiro_default` bound, `workspace_dir` = the home's `ws/`; one turn asking for `pwd`, then every callable tool name verbatim, then YES/NO for three named tools. **The axis REPRODUCES.** `pwd` → `/private/tmp/aap3-home/ws` (the session's own `workspace_dir`, so `K28`'s confinement result reproduces too and `G39`/#1729/#1734 hold for kiro), followed by **~150 tool names**: kiro's own (`shell`, `read`, `write`, `grep`, `glob`, `code`, `use_aws`, `web_fetch`, `introspect`), the operator's twelve MCP servers from `~/.kiro/settings/mcp.json`, **and the whole `personalclaw-core` surface** (`get_context`, `notify`, `knowledge`, `memory_recall`, `artifact_save`, `workflow_*`, `subagent_run`, `automation_*`, `prompt_render`, `skill_invoke`, `todo_list`) |
+| `K52` | why the earlier re-drive got `NO_TOOLS`, from the frames this one produced | **most likely a GATE artifact, not a registry fact.** The turn's FIRST action is `@personalclaw-core/get_context`, which raises an approval card and **parks the turn**; only after approving it (and a second card for `pwd`) did the enumeration arrive. The earlier note quotes kiro saying *"I don't have a shell tool available in this turn"* — per-turn wording that fits a denied/unresolved card. What would settle it: record the approval decisions next to the tool enumeration, because a probe that reads the tool list while its first call is pending measures the gate, not the registry |
+| `K53` | the `Full native tool registry` verdict, re-measured against the ACTUAL tool names | **the ABSENT verdict was a NAMING artifact.** `K4` asked YES/NO for `knowledge_search` and `task_create`; neither string exists in the registry under any provider. The capabilities do: `knowledge`, `todo_list` / `automation_create`, `memory_*`, `artifact_*`, `workflow_*`, `subagent_*`, and `notify` (which `K4` itself scored YES). Registry rows must be scored against a censused name list, never against three remembered ones |
+| `K54` | §2.1 prong B (the `personalclaw.json` config seed) end to end: does it run, and is it needed | **inert, and its premise is false.** (a) INERT — `register_acp_cli_entry` only seeds when a bundle passes `agent_config_dir`, and **zero of the three ACP bundles passes it** (`grep -c` = 0 each); the drive's log has no `agent-config seed` line, `$HOME/acp_seeds.json` was never written, and `~/.kiro/agents/` has no `personalclaw.json` — kiro's discovery returned the same 27 agents as `K2`, none of them ours. (b) NOT NEEDED — `~/.kiro/mcp.json` does not exist and no agent file mentions `personalclaw`, yet `K51`'s session listed the full `personalclaw-core` surface, so those tools arrived over the protocol's `mcpServers` at `session/new`. kiro does NOT ignore protocol-passed servers. `G46` |
+| `K55` | the empty-turn cell, driven instead of declared unreachable: one turn saying *"Reply with absolutely nothing. Emit zero characters…"* | **CONFIRMED — no stream injection required.** The session shows the user row **twice** and then `error: Empty response — please retry.`, which is exactly `chat_runner`'s contract (`:3623-3652`): first empty → silent re-queue of the same prompt, second consecutive empty → the card. The duplicate user row IS the retry's fingerprint; the INFO line naming it is invisible only because the home's log level was WARNING |
+| `K56` | the skill-ladder cell, driven against its real gate. Gate read from code first: `learning_decision_for_turn` → `LearningGate._worthwhile(PER_TURN)` = **a correction signal OR `tool_calls >= learning.min_tool_calls` (4)** — both drivable as-a-user, so `G44`'s "no forced-run surface" is not the obstacle. Drove a correction turn (heuristic verified offline: `is_correction_signal(msg) is True`) with `chat`+`background` bound to `Ollama:gemma4:12b` | **the ladder RUNS and it dies silently on a local model.** Under DEBUG the log reads `skill-ladder review: completion failed` → `after_turn_review.py:483` → `httpcore.ReadTimeout`, and `model_calls.jsonl` carries the matching row: `use_case=background, failure_mode=provider_error, latency_ms=60010` — the ollama bundle's 60 s default read timeout (`PersonalClawApps#47`, merged upstream, absent from this machine's clone). With `options.timeout_secs=900` the background passes complete (86.6 s / 94.1 s / 83.5 s, 5.7k-11k tokens in) and `GET /api/skills/proposals` still returns `[]`. **Still NOT-EXERCISED** — but for a new and fixable reason: nothing attributes a model call to its caller (`model_calls.jsonl` and `/api/models/telemetry` key on `use_case`, not subsystem) and the ladder's success path emits only a transient WS chip, so "the ladder declined" and "another background pass ran" stay indistinguishable. `G47` |
+| `K57` | the second wave the census forced: **are the core tools merely LISTED, or callable?** One turn on a project-bound kiro session asking for four real calls — `skill_search`, `artifact_save`, `subagent_run`, `knowledge` | **all four executed, each behind its own approval card** (six cards in the turn). Raw results: `skill_search` → *"No skills matched. Try broader terms"*; `artifact_save` → *"Saved artifact 'AAP3-STAMP-PROBE' (slug: aap3-stamp-probe, version 1)"*; `knowledge` → *"No knowledge base entries found"*; `subagent_run` → **`<urlopen error [Errno 61] Connection refused>`**. So `K4`'s ABSENT verdicts on the skills tools, `artifact_save` and subagents were all artifacts of an enumeration that missed the protocol-delivered surface |
+| `K58` | the one failure in `K57`, root-caused rather than reported | **a real host defect, found by driving and FIXED in this commit.** `mcp_core._resolve_api_base()` builds the API base from `dashboard.url` and falls back to **10000**; neither `--port` nor the `--port auto` that `--test-mode` uses writes that config, and nothing exported the bound port — so the MCP server POSTed to a dead port while the in-process tools beside it worked. The gateway now exports `PERSONALCLAW_PORT` after binding (both the dashboard and API-only paths) and `core_mcp_servers()` declares it in the child's env. **Before/after on the same home and CLI:** `1 task(s) queued (at capacity): … Connection refused` → `Spawned 1 subagent(s) … 6c6039b3` |
+| `K59` | the artifact and subagent halves the calls exposed, read from the store rather than the reply | **two attribution losses.** (a) The artifact saved by the CLI on a session bound to project `p-14b92d4c` persisted with **`project_id: ""`** *and* `events[0].session_id: ""` — so the ABSENT verdict for `project_id → artifact stamping` is right, but for the opposite reason to the one recorded (`G48`). (b) The spawned subagent produced **no `[Subagent completion event]` injection** in ~4 minutes, and the gateway logged `_spawn_session_resolver: rid=spawn:6c6039b3 … session=` — an **empty** originating session, which is exactly the inject-back's precondition (`G49`) |
 | `K49` | two cross-checks worth keeping: the lesson extractor on an injected-context turn, and one turn's vendor error | **`G16` is worse than "bad extraction":** the lesson row written for `K30`'s turn is `User correction to honor: The user referenced the following item(s) from their knowledge library. Their content is included below …` — the extractor swallowed the *injected knowledge block* as if it were the user's correction, alongside a second row `Never: never violate these):` clipped from prompt boilerplate. Separately, one turn failed with kiro's `-32603` `MODEL_TEMPORARILY_UNAVAILABLE` ("unexpectedly high load"); that is recorded as **ENV** and no cell rests on it |
 
 ## Execution log
@@ -1655,6 +1717,17 @@ to reproduce on the first re-drive. The two genuinely-unreachable residual cells
 `G44`; empty-turn auto-retry) remain correctly characterised — that judgment is unchanged and is not
 what blocks the atom.
 
+> **CORRECTION, 2026-08-19 (later the same day) — the tool axis DOES reproduce, and the second
+> sentence above was wrong twice.** A second re-drive on a fresh isolated home enumerated **~150
+> tools** including kiro's own `shell`/`read`/`write` and the entire `personalclaw-core` surface, with
+> `pwd` answering the session's `workspace_dir` (`K51`) — so the cwd question this note called
+> unresolvable is resolved, in `K28`'s favour. The `NO_TOOLS` answer is best explained as a **gate
+> artifact**: the turn's first tool call raises an approval card and parks, and kiro's own wording was
+> per-turn (*"in this turn"*) (`K52`). And of the "two genuinely-unreachable" cells, one was not
+> unreachable at all — an empty turn is produced by asking for zero characters (`K55`) — while the
+> other's reason is superseded (`G47` replaces `G44`, `K56`). **What still blocks the atom** is a
+> single unexercised cell plus one `ENV` cell, not the tool axis.
+
 **3. Incidental bug found in-session and FIXED here** (this campaign's doctrine: *"incidental
 in-session bugs fixed per campaign doctrine"*). `POST /api/chat/sessions/{id}/workspace-dir` read an
 absent `workspace_dir` key as "clear it": my first request used `{"dir": …}` and got
@@ -1818,3 +1891,70 @@ NOT-EXERCISED remainders listed by *why*, so neither reads as complete.
   column" caveat, the shared `@prompt` constraint row (`O34` is the *stronger* form of kiro's `K31` —
   the body was proven server-side before the turn), seven new at-parity rows, and the same corrected
   grouping. **The atom does not close on 13 cells**, and `dag.json` stays untouched.
+
+### 2026-08-19 — `AAP-3` PARTIAL: the kiro tool axis reproduces, and its residual is 2 → 1
+
+**Started from my own blocking claim** at the top of this log: *"The kiro column's tool rows do NOT
+reproduce, so `AAP-3` cannot be certified."* Re-drove it on a fresh isolated home
+(`/private/tmp/aap3-home`, gateway `:10051`, kiro bundle installed from a local Store source,
+`kiro_default` bound), after checking the clause the atom asks for first — **mwinit was fresh**
+(`~/.midway/cookie` stamped earlier the same day) and every kiro call succeeded, so nothing here is
+`ENV`.
+
+| cell / claim | before | after | evidence |
+|---|---|---|---|
+| tool axis reproducibility | "does NOT reproduce; `AAP-3` cannot be certified" | **reproduces** | `K51` — ~150 tool names, kiro's own plus the operator's twelve MCP servers plus the whole `personalclaw-core` surface |
+| `pwd` confinement (the note called it unresolvable) | unresolved | **confined** | `K51` — `pwd` = the session's `workspace_dir`; `K28` reproduces and `G39`/#1729/#1734 hold for kiro |
+| why the earlier drive said `NO_TOOLS` | cause "not established" | **gate artifact** (best-supported) | `K52` — the first tool call raises a card and PARKS the turn; kiro's wording was *"in this turn"* |
+| Full native tool registry | CONFIRMED as ABSENT | **DIVERGED — reachable** | `K53` — the ABSENT verdict scored two names (`knowledge_search`, `task_create`) that exist in no registry |
+| Empty-turn auto-retry | NOT-EXERCISED, "needs stream injection" | **CONFIRMED** | `K55` — a prompt demanding zero characters; duplicated user row = the silent re-queue, then the card |
+| Skill-ladder review | NOT-EXERCISED, "no forced-run surface" (`G44`) | **still NOT-EXERCISED, new reason** (`G47`) | `K56` — the gate is drivable and the ladder runs; a 60,010 ms `provider_error` is DEBUG-only, and no surface attributes a call to its caller |
+| §2.1 prong B config seeding | published as landed | **inert, and premise false** (`G46`) | `K54` — no bundle passes `agent_config_dir`; no receipt, nothing in `~/.kiro/agents/`; and kiro honours protocol-passed `mcpServers` anyway |
+
+**A second wave, because the census forced it.** Correcting one row on the strength of a 151-name
+enumeration meant every OTHER row scored off `K4`'s tool list was suspect. Four were: the native
+registry, both skills rows and subagents. So I stopped correcting rows and CALLED the tools instead —
+one turn, four real calls, six approval cards (`K57`): `skill_search`, `artifact_save` and `knowledge`
+all executed; `subagent_run` failed with `<urlopen error [Errno 61] Connection refused>`.
+
+**That failure was a host defect, and it is FIXED in this commit** (`K58`, campaign doctrine: incidental
+in-session bugs get fixed). `mcp_core._resolve_api_base()` derives the gateway's API base from
+`dashboard.url` and falls back to **10000**; neither `--port` nor the `--port auto` that `--test-mode`
+uses writes that config, and nothing exported the bound port — so a gateway on any other port spawned an
+MCP server that POSTed where nothing listened, and every HTTP-bridged core tool returned its raw
+`urlopen` error as result text while the in-process tools beside it worked. The gateway now exports
+`PERSONALCLAW_PORT` after binding (both the dashboard and the API-only path) and `core_mcp_servers()`
+declares it in the child's env. **Driven before/after on the same home and CLI:**
+`1 task(s) queued (at capacity): … Connection refused` → `Spawned 1 subagent(s) … 6c6039b3`. Four tests,
+each falsified by mutating the live line and observing the specific red.
+
+Two further findings fell out of those calls (`K59`): an artifact saved by the CLI on a project-bound
+session persists `project_id: ""` **and** `session_id: ""` (`G48`), and the spawn resolver logs an
+**empty** originating session, which is precisely the inject-back precondition (`G49`) — the bundled
+`subagent-orchestration` snippet meanwhile tells the agent to *"just wait"* for a completion event.
+
+**Marks (counted off the rows, not carried): 43 CONFIRMED / 18 DIVERGED / 1 ENV / 1 NOT-EXERCISED =
+63.** One row was rendering as five cells because it never had a closing pipe; fixed in passing.
+
+**Three lessons worth more than the cells.** First, *a probe that reads a tool list while its own first
+call is pending measures the gate, not the registry* — three sweeps of tool rows rest on turns whose
+approval decisions were never recorded next to the enumeration. Second, *"unreachable by construction"
+deserves one cheap attempt before it is written down*: the empty-turn cell was declared out of reach
+for three sweeps and fell to a one-sentence prompt. Third, *one bad instrument contaminates every row
+that read it* — `K4`'s enumeration produced four ABSENT/PARTIAL verdicts, and correcting only the row I
+happened to notice would have left three wrong. When a measurement is replaced, re-score everything
+that cited it.
+
+**`AAP-3` stays `todo`** on one unexercised cell (skill-ladder) and one `ENV` cell (OS sandbox — the
+host reports no sandbox on this platform, `K47`), because its `done_when` asks for every cell
+CONFIRMED-or-DIVERGED. What closes it is now small and named: land `G47`'s attribution field or INFO
+line, then re-drive a single correction turn. `dag.json` is untouched — the atom does not flip, and
+PR #1772 is concurrently editing that file.
+
+**Incidental, recorded not fixed** (the gateway-port defect above WAS fixed; these two are outside
+this atom's reach): the ollama bundle's
+timeout defect is `PersonalClawApps#47`, **merged upstream** but absent from this machine's clone,
+which is 19 commits behind — so a local-only install still silently loses every background pass
+longer than 60 s. And `POST /api/model-providers` accepted a body with `settings` (the route reads
+`options`) with `{"ok": true}` and dropped it: an unknown key on a config-writing route should be a
+400, not a silent no-op.
