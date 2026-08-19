@@ -234,8 +234,10 @@ export function WidgetFrame({ html, title = 'Widget', slug, messageTs, widgetInd
 
   const actionCluster = (
     <>
+      {/* The rail is revealed content (`{railOpen && !streaming && …}` below), so this announces
+          expansion. Bookmark and Pin beneath it keep `on`: those are states, not disclosures. */}
       <SquareIconButton label={railOpen ? 'Close the iteration rail' : 'Iterate — tweak parameters or mark elements'}
-        onClick={() => setRailOpen((v) => !v)} on={railOpen}>
+        onClick={() => setRailOpen((v) => !v)} ariaExpanded={railOpen}>
         <Sliders size={13} />
       </SquareIconButton>
       <SquareIconButton label={saved ? 'Saved — click to remove' : 'Save as artifact'} onClick={toggleSave} disabled={savePending} on={saved}>
