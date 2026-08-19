@@ -289,6 +289,18 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
   Such a session is now refused before the CLI starts, with a message naming what to set and where.
   A chat that already has a working directory, and one whose workspace resolves normally, are
   unaffected.
+- **Tinted "chip" buttons had unreadable labels in six of the twelve colour schemes.** The label
+  colour on a tonal button (the primary-tinted CTA — "Open Chat" on the dashboard is one) was a fixed
+  coral, but the tint underneath it is painted from whichever scheme you picked. So the label's
+  contrast depended on a scheme it knew nothing about: in dark mode Mono, Amber, Phosphor, Jade,
+  Honey and Forest all fell below WCAG AA at rest, worst 4.07:1 against a 4.5 floor, and once the
+  hover tint is counted the default coral scheme missed it too. The label now takes the active
+  scheme's own accent shade instead of a frozen value, so it follows the scheme — including a custom
+  primary you pick yourself. **Visible change:** tonal button labels are a shade lighter in dark mode
+  and a shade deeper in light mode, in every scheme including the default. A new rail composites the
+  translucent pair over all 12 schemes × 2 modes × 3 surfaces × {rest, hover} and fails the build on
+  any combination below AA, which is what was missing — the old guard only checked the opaque
+  filled-button pair.
 
 - **"Unattended runs need a verified adapter" only covered one kind of unattended run.** The switch
   promised to refuse background work onto an external agent CLI whose ACP adapter has no verified

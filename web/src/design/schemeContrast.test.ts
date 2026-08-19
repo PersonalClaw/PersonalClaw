@@ -232,3 +232,229 @@ describe('accent container: ink on the tinted accent surface meets AA in every s
     })
   }
 })
+
+// ── The TONAL TINT pair: a label on a TRANSLUCENT tint of the scheme's own primary ────────────
+//
+// 🔴 THE GROUND THIS FILE NEVER COMPOSITED. Everything above pairs an ink with an OPAQUE ground —
+// a hex against a hex. `Button`'s `tonal` variant does something no such pair can describe: it
+// paints `bg-primary/15` (and `hover:bg-primary/25`), so its ground is the ACTIVE scheme's primary
+// composited over whatever surface the button sits on. The block above even names the failure mode
+// in prose — "the ink does NOT track the scheme" — and then checks only `on-primary-container` over
+// `primary-container`, the OPAQUE accent pair. The translucent one went unchecked in all 12 schemes,
+// which is how `--color-on-primary-tint` shipped as a fixed literal (`#ff6b5b`, the DEFAULT scheme's
+// primary) over eleven other schemes' tints.
+//
+// Composited: **58 of 144** combos below AA, worst **3.07:1** (Mono / dark / surface-container /
+// hover), of which 8 were the resting state — two clicks from any dashboard (pick Amber or Mono,
+// dark mode, look at "Open Chat").
+//
+// This rail closes it along all four axes at once: every scheme × both modes × every ground a tonal
+// control legitimately sits on × BOTH alphas the variant paints. Three deliberate choices:
+//
+//  1. THE ALPHAS ARE PARSED FROM THE VARIANT STRING, not restated here. Change `bg-primary/15` and
+//     this rail follows; add a third state and it is covered without an edit. A restated constant
+//     would have silently kept measuring a tint the component no longer paints.
+//  2. THE HOVER ALPHA COUNTS. Hover text is text — WCAG 1.4.3 exempts no state — and this repo
+//     already settled the point one variant over: `ghost-accent` justifies its shade by naming
+//     `hover:bg-surface-high` as "the HOVER ground" (ui/Button.tsx). Excluding it here would have
+//     left 50 of the 58 failures behind a green rail.
+//  3. THE INK DECLARATION IS RESOLVED, not restated. The token's VALUE is read from tokens.css and
+//     interpreted (`var(…)` / `color-mix(in srgb, …)`) against each scheme, so this rail reds both
+//     for a bad shade AND for the structural defect itself — an ink written as a literal resolves to
+//     the same value in all 12 schemes and fails wherever a scheme's tint has drifted from coral's.
+
+/** The `--color-on-primary-tint` declaration for a mode, verbatim from tokens.css. Read from source
+ *  (never restated) so a retint cannot drift this guard — the discipline the whole file follows. */
+function tintInkDecl(mode: 'dark' | 'light'): string {
+  const css = readFileSync(join(process.cwd(), 'src/design/tokens.css'), 'utf8')
+  const scope = mode === 'dark'
+    ? css.slice(0, css.search(/\.light\s*\{/))     // the @theme default block comes first
+    : /\.light\s*\{([\s\S]*?)\n\}/.exec(css)?.[1] ?? ''
+  const m = scope.match(/--color-on-primary-tint:\s*([^;]+);/)
+  if (!m) throw new Error(`could not find --color-on-primary-tint for ${mode}`)
+  return m[1].trim()
+}
+
+/** The surfaces a tonal button legitimately sits on, per mode, read from tokens.css.
+ *  `surface` (page/panel), `surface-low` (dashboard row, cockpit strip) and `surface-container`
+ *  (card) are the three the 22 call sites land on. `surface-high`/`-highest` are excluded for the
+ *  reason stated at the top of this file: even the AA-verified default coral does not clear them, so
+ *  they are not text-bearing accent grounds and testing them would invent a failure. */
+function tonalGrounds(mode: 'dark' | 'light'): Array<[string, string]> {
+  const css = readFileSync(join(process.cwd(), 'src/design/tokens.css'), 'utf8')
+  const scope = mode === 'dark' ? css.slice(0, css.search(/\.light\s*\{/)) : /\.light\s*\{([\s\S]*?)\n\}/.exec(css)?.[1] ?? ''
+  return ['--color-surface', '--color-surface-low', '--color-surface-container'].map((name) => {
+    const m = scope.match(new RegExp(`${name}:\\s*(#[0-9a-fA-F]{6})`))
+    if (!m) throw new Error(`could not find ${name} for ${mode}`)
+    return [name.replace('--color-', ''), m[1]] as [string, string]
+  })
+}
+
+/** Every `bg-primary/NN` alpha the `tonal` variant paints, parsed out of the variant string so the
+ *  rail tracks the COMPONENT rather than a copy of it. `hover:`-prefixed = the hover ground. */
+function tonalAlphas(): Array<[string, number]> {
+  const btn = readFileSync(join(process.cwd(), 'src/ui/Button.tsx'), 'utf8')
+    .replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
+  const tonal = /tonal:\s*'([^']+)'/.exec(btn)?.[1] ?? ''
+  return [...tonal.matchAll(/(hover:)?bg-primary\/(\d+)\b/g)]
+    .map((m) => [m[1] ? 'hover' : 'rest', Number(m[2]) / 100] as [string, number])
+}
+
+type Rgb = [number, number, number]
+const toRgb = (hex: string): Rgb => {
+  const h = hex.replace('#', '')
+  return [0, 2, 4].map((i) => parseInt(h.slice(i, i + 2), 16)) as Rgb
+}
+function luminanceRgb([r, g, b]: Rgb): number {
+  const chan = (v: number) => { const s = v / 255; return s <= 0.03928 ? s / 12.92 : Math.pow((s + 0.055) / 1.055, 2.4) }
+  return 0.2126 * chan(r) + 0.7152 * chan(g) + 0.0722 * chan(b)
+}
+function contrastRgb(a: Rgb, b: Rgb): number {
+  const la = luminanceRgb(a), lb = luminanceRgb(b)
+  const hi = Math.max(la, lb), lo = Math.min(la, lb)
+  return (hi + 0.05) / (lo + 0.05)
+}
+/** What `bg-primary/NN` actually paints: source-over of an alpha'd accent on an OPAQUE surface. */
+const composite = (fg: Rgb, bg: Rgb, a: number): Rgb => fg.map((v, i) => a * v + (1 - a) * bg[i]) as Rgb
+/** `color-mix(in srgb, C p%, other)`. `in srgb` interpolates the GAMMA-ENCODED channels, and both
+ *  operands are opaque, so this is a plain per-channel lerp — no premultiplication, no linearizing.
+ *  Kept in floating point (no hex round-trip) so the rail measures what the browser computes. */
+const colorMixSrgb = (c: Rgb, p: number, other: Rgb): Rgb => c.map((v, i) => p * v + (1 - p) * other[i]) as Rgb
+
+/** Resolve a tint-ink DECLARATION against one scheme. Understands the two shapes the token is
+ *  allowed to take — a reference to a scheme token, or a `color-mix` of one — and falls back to
+ *  parsing a bare literal so that a regression to a literal produces a real contrast number rather
+ *  than a thrown error (a literal resolves identically in all 12 schemes, which is the defect). */
+function resolveTintInk(decl: string, s: (typeof SCHEMES)[number], mode: 'dark' | 'light'): Rgb {
+  /** Resolve a token the way the browser does: a scheme override if the scheme carries one (the
+   *  appearance store sets those inline on <html>), otherwise the mode's tokens.css value. Both are
+   *  legitimate — `--color-primary-emphasis` is per-scheme, `--color-on-primary-container` is one
+   *  value per mode — and the difference is exactly what the two assertions below are about. */
+  const resolveToken = (varName: string): Rgb => {
+    const fromScheme = s.colors[varName]?.[mode]
+    if (fromScheme) return toRgb(fromScheme)
+    const css = readFileSync(join(process.cwd(), 'src/design/tokens.css'), 'utf8')
+    const scope = mode === 'dark' ? css.slice(0, css.search(/\.light\s*\{/)) : /\.light\s*\{([\s\S]*?)\n\}/.exec(css)?.[1] ?? ''
+    const m = scope.match(new RegExp(`${varName}:\\s*(#[0-9a-fA-F]{6})`))
+    if (!m) throw new Error(`the tonal ink references ${varName}, which is neither a scheme token nor a ${mode} value in tokens.css`)
+    return toRgb(m[1])
+  }
+  const schemeToken = resolveToken
+  const ref = /^var\(\s*(--[a-z0-9-]+)\s*\)$/.exec(decl)
+  if (ref) return schemeToken(ref[1])
+  const mixed = /^color-mix\(\s*in srgb\s*,\s*var\(\s*(--[a-z0-9-]+)\s*\)\s+([\d.]+)%\s*,\s*(black|white)\s*\)$/.exec(decl)
+  if (mixed) {
+    return colorMixSrgb(schemeToken(mixed[1]), Number(mixed[2]) / 100, mixed[3] === 'black' ? [0, 0, 0] : [255, 255, 255])
+  }
+  const literal = /^(#[0-9a-fA-F]{6})$/.exec(decl)
+  if (literal) return toRgb(literal[1])
+  throw new Error(`--color-on-primary-tint (${mode}) is "${decl}" — not a var(), a color-mix(in srgb, var() N%, black|white), or a hex`)
+}
+
+describe('tonal tint: the ink clears AA over the scheme\'s OWN composited tint, every scheme × mode × ground × state', () => {
+  const DECL = { dark: tintInkDecl('dark'), light: tintInkDecl('light') }
+  const ALPHAS = tonalAlphas()
+  const MODES = ['dark', 'light'] as const
+
+  type Combo = { scheme: string; mode: 'dark' | 'light'; ground: string; state: string; ratio: number }
+  const COMBOS: Combo[] = []
+  for (const s of SCHEMES) {
+    for (const mode of MODES) {
+      const ink = resolveTintInk(DECL[mode], s, mode)
+      const primary = toRgb(s.colors['--color-primary'][mode])
+      for (const [ground, hex] of tonalGrounds(mode)) {
+        for (const [state, alpha] of ALPHAS) {
+          COMBOS.push({ scheme: s.id, mode, ground, state, ratio: contrastRgb(ink, composite(primary, toRgb(hex), alpha)) })
+        }
+      }
+    }
+  }
+
+  // ── VACUITY FLOOR ──────────────────────────────────────────────────────────────────────────
+  // Every input to the 144 assertions below is DERIVED (schemes imported, grounds and the ink
+  // declaration parsed from tokens.css, alphas parsed from Button.tsx). Each of those parses can
+  // come back empty, and an empty parse makes the loop above iterate NOTHING while every `it` still
+  // reports green. So the population is pinned by COUNT here: deleting a scheme, dropping a ground,
+  // removing the hover state, or renaming the token cannot turn this rail green by matching nothing.
+  it('inspected the full population — 12 schemes × 2 modes × 3 grounds × 2 states', () => {
+    expect(SCHEMES.length, 'the curated scheme set').toBe(12)
+    expect(ALPHAS.map(([s]) => s), 'both tint states, parsed out of the tonal variant').toEqual(['rest', 'hover'])
+    expect(ALPHAS.map(([, a]) => a), 'bg-primary/15 at rest, hover:bg-primary/25 on hover').toEqual([0.15, 0.25])
+    for (const mode of MODES) {
+      const grounds = tonalGrounds(mode)
+      expect(grounds.length, `${mode}: three grounds a tonal control sits on`).toBe(3)
+      for (const [, hex] of grounds) expect(hex, `${mode} ground is a real hex`).toMatch(/^#[0-9a-fA-F]{6}$/)
+      expect(DECL[mode], `${mode}: the ink declaration was found`).toBeTruthy()
+    }
+    expect(COMBOS.length, '12 × 2 × 3 × 2 — the whole grid was walked').toBe(144)
+    expect(new Set(COMBOS.map((c) => `${c.scheme}/${c.mode}/${c.ground}/${c.state}`)).size,
+      'and every combo is distinct (no scheme silently measured twice)').toBe(144)
+  })
+
+  // ── The structural half: a FROZEN ink is the defect, and only margin excuses one ─────────────
+  it('neither mode freezes a hex — the ink is a token reference', () => {
+    // The 58 shipped failures were not a badly chosen shade. They were a shade that could not
+    // follow the ground it was painted on: one scheme's `--color-primary` hard-coded as the ink for
+    // all twelve schemes' tints. A hex that happens to pass today regresses the moment a scheme is
+    // added or retinted, so the SHAPE is asserted here and the numbers below.
+    for (const mode of MODES) {
+      expect(DECL[mode], `${mode}: a frozen hex cannot track 12 schemes' tints`)
+        .not.toMatch(/^#[0-9a-fA-F]{3,8}$/)
+      expect(DECL[mode], `${mode}: must reference a palette token`).toMatch(/^var\(--color-[a-z-]+\)$/)
+    }
+  })
+
+  it('dark TRACKS the scheme, because dark has no margin to spare', () => {
+    // Dark's tint composites toward the dark surface, so the ground rises with the scheme's own
+    // primary and a scheme-independent ink gets overtaken — that is exactly what happened. Even the
+    // best fixed value would sit near the floor, so dark must be the scheme's own accent shade:
+    // `--color-primary-emphasis`, the shade already shipped for accent text needing more contrast
+    // than `--color-primary` (`ghost-accent` in ui/Button.tsx, and the canvas/surface-high/
+    // surface-low grounds above). Worst across the grid: 5.40.
+    expect(DECL.dark).toBe('var(--color-primary-emphasis)')
+  })
+
+  it('light may be scheme-INDEPENDENT only while it keeps a wide margin', () => {
+    // 🔑 THE ASYMMETRY IS EARNED, NOT ASSUMED. Light's ink does NOT track the scheme: it is
+    // `--color-on-primary-container`, one fixed value per mode. That is safe here for a reason this
+    // assertion pins rather than trusts — at that depth the nearest light tint is still 2× the AA
+    // floor away, so no scheme can catch it. Lighten it back toward the accent and this reds while
+    // plain AA would still pass, which is the point: the next person is told to make it
+    // scheme-tracking (as dark is) instead of spending the last of the margin.
+    const MARGIN = 6
+    const lightWorst = Math.min(...COMBOS.filter((c) => c.mode === 'light').map((c) => c.ratio))
+    expect(lightWorst, `a scheme-independent light ink needs headroom, not just AA (got ${lightWorst.toFixed(2)})`)
+      .toBeGreaterThanOrEqual(MARGIN)
+  })
+
+  it('the no-scheme-applied default is covered by the coral row', () => {
+    // Nothing applies a scheme until the user picks one; the bare `@theme` + `.light` values are
+    // what a first paint uses. They are coral's, so the coral row above measures the default state
+    // too — but only while that stays true, hence this assertion.
+    const css = readFileSync(join(process.cwd(), 'src/design/tokens.css'), 'utf8')
+    const coral = SCHEMES.find((s) => s.id === 'coral')!
+    const dark = css.slice(0, css.search(/\.light\s*\{/))
+    const light = /\.light\s*\{([\s\S]*?)\n\}/.exec(css)?.[1] ?? ''
+    for (const [mode, scope] of [['dark', dark], ['light', light]] as const) {
+      for (const varName of ['--color-primary', '--color-primary-emphasis'] as const) {
+        const m = scope.match(new RegExp(`${varName}:\\s*(#[0-9a-fA-F]{6})`))
+        expect(m?.[1]?.toLowerCase(), `${mode} ${varName} default must equal coral's`)
+          .toBe(coral.colors[varName][mode].toLowerCase())
+      }
+    }
+  })
+
+  for (const s of SCHEMES) {
+    describe(`scheme '${s.id}'`, () => {
+      for (const mode of MODES) {
+        it(`${mode}: on-primary-tint over every tonal ground, at rest AND on hover, ≥ AA`, () => {
+          const rows = COMBOS.filter((c) => c.scheme === s.id && c.mode === mode)
+          expect(rows.length, 'three grounds × two states').toBe(6)
+          const fails = rows.filter((c) => c.ratio < AA)
+            .map((c) => `${c.ground}/${c.state} = ${c.ratio.toFixed(2)}`)
+          expect(fails, `tonal label below AA on its own tint:\n  ${fails.join('\n  ')}`).toEqual([])
+        })
+      }
+    })
+  }
+})
