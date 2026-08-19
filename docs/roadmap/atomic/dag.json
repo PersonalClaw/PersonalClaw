@@ -4943,7 +4943,7 @@
     {
       "plan": "PERSONALITY-THEMES",
       "code": "PT",
-      "status": "in_progress",
+      "status": "done",
       "summary": "6 atoms: S1 identity/registry/persona layer is DONE (1 atom); S2 remains as 3 independent feature atoms (sound cues, shell element, error treatments) + 1 proofs/a11y-test atom + 1 end-to-end validation atom. No cross-plan dependencies \u2014 the APP-PLATFORM-EVOLUTION seam is an out-of-scope forward hook.",
       "atoms": [
         {
@@ -5003,7 +5003,7 @@
         {
           "id": "PT-6",
           "title": "S2: V2 end-to-end user validation + full CI gate across both personalities and all modes",
-          "status": "todo",
+          "status": "done",
           "scope": "Task breakdown Session 2 V2",
           "done_when": "Full as-a-user tour (dev home) of both personalities across chat/settings/error states, sounds on and off, reduced-motion on and off, dark and light; switching back to a standard scheme leaves zero residue (title, favicon, name, DOM); npm run typecheck && npm test && npm run build + e2e a11y all green",
           "deps": [
@@ -7762,11 +7762,6 @@
         "plan": "PR2"
       },
       {
-        "id": "PT-6",
-        "title": "S2: V2 end-to-end user validation + full CI gate across both personalities and all modes",
-        "plan": "PT"
-      },
-      {
         "id": "PUBL-10",
         "title": "Publicize once the DISCOVERABILITY-LAUNCH gate is green",
         "plan": "PUBL"
@@ -9909,9 +9904,9 @@
         "code": "PT",
         "plan": "PERSONALITY-THEMES",
         "total_atoms": 6,
-        "done": 5,
+        "done": 6,
         "in_progress": 0,
-        "todo": 1,
+        "todo": 0,
         "blocked": 0
       },
       {
