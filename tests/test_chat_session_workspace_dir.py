@@ -6,7 +6,8 @@ import pytest
 from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
 
-from personalclaw.dashboard.chat import api_chat_session_workspace_dir
+from personalclaw.config.loader import AgentProfile, AppConfig
+from personalclaw.dashboard.chat import api_chat_session_agent, api_chat_session_workspace_dir
 from personalclaw.dashboard.state import DashboardState, _ChatSession
 
 
@@ -108,3 +109,72 @@ class TestChatSessionWorkspaceDir:
                 json={"workspace_dir": "/tmp"},
             )
             assert resp.status == 404
+
+
+class TestAgentBindingKeepsTheBoundWorkspace:
+    """G39 — binding an agent PROFILE must obey ``default_dir``'s declared contract.
+
+    *"Empty inherits the workspace root. Overridable per-session."* — so a profile that
+    declared no directory must NOT displace a workspace the user bound through
+    ``POST …/workspace-dir``. It used to overwrite it with the resolved fallback, which
+    silently relocated the session (and, on the ACP spawn path, out of the configured home).
+    """
+
+    @pytest.fixture(autouse=True)
+    def _isolated_home(self, tmp_path, monkeypatch):
+        """Real-home containment: this suite reads config and resolves a workspace root."""
+        monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path / "home"))
+        monkeypatch.setenv("PERSONALCLAW_WORKSPACE", str(tmp_path / "ws"))
+
+    @staticmethod
+    def _app(state: DashboardState) -> web.Application:
+        app = web.Application()
+        app["state"] = state
+        app.router.add_post("/api/chat/sessions/{session}/agent", api_chat_session_agent)
+        return app
+
+    @staticmethod
+    def _state_for(session: _ChatSession) -> DashboardState:
+        state = _mock_state(session)
+        state.sessions = MagicMock()
+        state.sessions.reset = AsyncMock()
+        state.conversation_log = None
+        return state
+
+    async def _bind(self, session, cfg):
+        state = self._state_for(session)
+        with (
+            patch("personalclaw.dashboard.chat_handlers.AppConfig") as app_cfg,
+            patch("personalclaw.dashboard.chat_handlers._sync_dashboard_sessions", MagicMock()),
+        ):
+            app_cfg.load.return_value = cfg
+            async with TestClient(TestServer(self._app(state))) as client:
+                resp = await client.post(
+                    "/api/chat/sessions/test/agent", json={"agent": "bound-agent"}
+                )
+                assert resp.status == 200
+                return await resp.json()
+
+    @pytest.mark.asyncio
+    async def test_profile_without_default_dir_keeps_the_bound_workspace(self, tmp_path):
+        session = _ChatSession("test")
+        session.workspace_dir = str(tmp_path)
+        cfg = AppConfig.load()
+        cfg.agents = {"bound-agent": AgentProfile()}
+
+        data = await self._bind(session, cfg)
+
+        assert session.workspace_dir == str(tmp_path)
+        assert data["workspace_dir"] == str(tmp_path)
+
+    @pytest.mark.asyncio
+    async def test_profile_with_a_default_dir_still_wins(self, tmp_path):
+        """The other half of the contract — a DECLARED directory remains the profile's opinion."""
+        session = _ChatSession("test")
+        session.workspace_dir = str(tmp_path / "bound")
+        cfg = AppConfig.load()
+        cfg.agents = {"bound-agent": AgentProfile(default_dir=str(tmp_path / "opinion"))}
+
+        await self._bind(session, cfg)
+
+        assert session.workspace_dir == str(tmp_path / "opinion")

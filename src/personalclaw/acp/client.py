@@ -127,9 +127,24 @@ class AcpClient:
         unattended: bool = False,
     ):
         from personalclaw.acp.dialect import DefaultDialect
+        from personalclaw.config.loader import workspace_root
 
         self._dialect: ACPDialect = dialect or DefaultDialect()
-        self._work_dir = Path(work_dir) if work_dir else Path.home() / ".personalclaw" / "workspace"
+        # The spawned CLI's cwd. An unbound session inherits the CONFIGURED workspace
+        # root — ``workspace_root()``, the same definition ``default_workspace_dir()``
+        # and ``resolve_agent_bindings`` use, so it honors PERSONALCLAW_WORKSPACE, the
+        # saved ``<home>/workspace_dir`` file and PERSONALCLAW_HOME. The literal this
+        # replaced (``Path.home()/".personalclaw"/"workspace"``) read the OPERATOR'S
+        # REAL HOME regardless of every isolation mechanism in the repo, so a test
+        # fixture, a dev home or a PERSONALCLAW_HOME-isolated gateway that failed to
+        # bind a per-session cwd spawned its CLI in the real home and wrote there.
+        #
+        # Held on the transport, NOT here: ``_work_dir`` below is a property over
+        # ``self._transport._work_dir``, because the transport is what puts ``cwd=`` on
+        # the spawn. Two copies meant a post-construction rebind (``set_workspace`` →
+        # ``client._work_dir = …``) moved this view and left the process spawning in
+        # the ORIGINAL directory.
+        resolved_work_dir = Path(work_dir) if work_dir else workspace_root()
         self._model = model or DEFAULT_MODEL
         self._agent = agent
         # Unattended run (§2.3 gap 3): set BEFORE the mode clamp below, which reads it.
@@ -163,7 +178,7 @@ class AcpClient:
         # so the leaky ``_pid`` proxy (read by session.py / session_pid.py) works.
         self._transport = AcpProcess(
             command=self._command or [],
-            work_dir=self._work_dir,
+            work_dir=resolved_work_dir,
             sandbox_mode=self._sandbox_mode,
             sandbox=self._sandbox,
             extra_env=self._extra_env or None,
@@ -199,6 +214,15 @@ class AcpClient:
     # shared AcpProcess transport. These proxies keep external reach-throughs
     # (``client._pid`` in session.py / session_pid.py; ``_work_dir`` in acp_agent.py)
     # and the test suite reading/writing the same names.
+    @property
+    def _work_dir(self) -> Path:
+        """The spawned CLI's cwd — SINGLE-SOURCED from the transport that spawns it."""
+        return self._transport._work_dir
+
+    @_work_dir.setter
+    def _work_dir(self, value: "str | Path") -> None:
+        self._transport._work_dir = Path(value)
+
     @property
     def _process(self) -> "asyncio.subprocess.Process | None":
         return self._transport.process

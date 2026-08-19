@@ -18,7 +18,7 @@ from personalclaw.config.loader import (
     AppConfig,
     config_dir,
     default_workspace_dir,
-    resolve_agent_bindings,
+    resolve_session_workspace,
 )
 from personalclaw.dashboard.chat_persistence import (
     _attach_variants,
@@ -883,8 +883,7 @@ async def api_chat_session_create(request: web.Request) -> web.Response:
     try:
         cfg = AppConfig.load()
         if agent and agent in cfg.agents:
-            bindings = resolve_agent_bindings(cfg, agent)
-            workspace_dir = str(bindings.workspace_dir)
+            workspace_dir = resolve_session_workspace(cfg, agent)
     except Exception:
         logger.warning("Failed to resolve bindings for session create", exc_info=True)
     # A project-bound chat works in the project's bound workspace (so file tools +
@@ -1768,8 +1767,10 @@ async def api_chat_session_agent(request: web.Request) -> web.Response:
                     matched = k
                     break
         if matched:
-            bindings = resolve_agent_bindings(cfg, matched)
-            session.workspace_dir = str(bindings.workspace_dir)
+            # Honor default_dir's contract: a profile that declared NO directory
+            # INHERITS, so it must not displace a workspace the user bound to this
+            # session via POST …/workspace-dir (G39).
+            session.workspace_dir = resolve_session_workspace(cfg, matched, session.workspace_dir)
     except Exception:
         logger.warning("Failed to resolve agent bindings for %r", agent_name, exc_info=True)
 

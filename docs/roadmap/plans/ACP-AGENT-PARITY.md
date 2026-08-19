@@ -1529,3 +1529,42 @@ unblocked the four "needs a model provider" cells (`K29`).
   `Dry-run replay` and `tool-disable prefs` are ABSENT by **entry-point census** (no route, no config
   field, and `toggle-tool` cannot address a protocol-injected server), which is stated as such so
   nobody reads them as driven negatives.
+---
+
+**2026-08-17 — DONE (ad-hoc P0, not an atom): `G39` a profile-bound ACP session spawned its CLI in
+the operator's REAL home.** Three sites, one shape — a per-session working directory that the
+resolvers got right and the spawn path then ignored, landing on a real-home literal:
+
+1. `llm/acp_agent.py` `_factory` read `cwd` from `entry.options` ONLY, while every sibling
+   per-session axis in the same function (`agent`, `model`, `acp_mode`, `reasoning_effort`,
+   `sandbox`) honors the kwarg over the option. So `session.workspace_dir` — threaded from
+   `chat_runner` → `SessionPool` → `provider_bridge` → `registry.build(cwd=…)` — was dropped on the
+   one-session path. (The N-session concurrent path was correct: `session.py`'s
+   `_open_concurrent_acp_session` passes `cwd=` to `pool.open_session`. That is why a directly-bound
+   session measured CORRECT and a profile-bound one did not — a profile whose runtime doesn't resolve
+   a `provider_kind` takes the factory path.)
+2. `acp/client.py` then fell back to `Path.home() / ".personalclaw" / "workspace"` — a real-home
+   literal that ignores `PERSONALCLAW_HOME`, dev homes and test fixtures. `AcpProcess.spawn` MKDIRs
+   that cwd, so this wrote to the operator's home. Now `workspace_root()`. `_work_dir` also became a
+   property over the transport's copy: two copies meant `set_workspace` moved the client's view and
+   left the process spawning in the ORIGINAL directory.
+3. `AcpAgentProvider.discover_agents` had the same literal for its throwaway probe connection.
+
+Separately, `POST /api/chat/sessions/{s}/agent` assigned `resolve_agent_bindings().workspace_dir`
+UNCONDITIONALLY, so a profile with an EMPTY `default_dir` displaced a workspace the user had bound
+via `POST …/workspace-dir` — a direct contradiction of that field's own contract (`config/loader.py`:
+*"Empty inherits the workspace root. Overridable per-session."*). New
+`config.loader.resolve_session_workspace()` states the precedence once and both handlers (bind + create)
+use it; a NON-empty `default_dir` still wins, unchanged.
+
+Rails: `tests/test_acp_spawn_cwd_containment.py` asserts the **spawn kwargs** (the `cwd=` handed to
+the sandbox handle's `exec`, i.e. what `create_subprocess_exec` receives), not a resolver's return
+value — plus a containment assertion that reds on any spawn cwd outside `workspace_root()`, a vacuity
+guard on the capture seam, and an AST rail forbidding `Path.home()` in any of the six ACP spawn
+modules (the only cheap way to keep `discover_agents` honest, since driving it spawns a real CLI).
+`tests/test_chat_session_workspace_dir.py` covers the handler precedence both ways.
+
+**Not verified without a real CLI:** the fix was proven at the spawn kwargs, not by reading `pwd`
+inside a live `kiro-cli`. Also unfixed and out of scope: `session.py:589` `effective_cwd` can be the
+empty string when `default_workspace_dir()` finds no safe root, which spawns in the gateway's own cwd
+(not a real-home escape, but the same family).
