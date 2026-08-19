@@ -50,9 +50,68 @@ export async function gotoRoute(page: Page, route: string): Promise<void> {
   // Give the route cross-fade a beat to finish (animations are disabled for the
   // screenshot itself, but the mount still needs to resolve).
   await page.waitForTimeout(400)
+  // …then WAIT for the entrance animations rather than hoping 400ms covered them.
+  await settleEntranceAnimations(page)
   // Every caller measures the route it just navigated to; none of them can tell an
   // onboarding hijack from a clean surface on their own.
   await assertShellMounted(page)
+}
+
+/** Block until no element is mid-fade, so a scan measures the page AT REST.
+ *
+ *  A partially-faded element composites its ink toward the background, and axe reads
+ *  the composite. Measured on `#/dashboard` (dark): the suggestion rows' resting pair
+ *  is `#c4c7c5` on `#141414` — **10.81:1**, comfortably AA — but axe reported
+ *  `[serious] color-contrast … 2.77` against a foreground of `#5b5d5c`. That value is
+ *  not a token: it is the resting colour composited at **α ≈ 0.40** (solving per
+ *  channel: (0x5b-0x14)/(0xc4-0x14) = 0.40, (0x5d-0x14)/(0xc7-0x14) = 0.41). The rows
+ *  animate `opacity: 0 → 1` with `delay: i * 0.04`, and the flagged node was
+ *  `nth-child(4)` — the longest stagger. So the gate was failing on a frame that exists
+ *  for ~200ms and is invisible once the page settles.
+ *
+ *  HOW OFTEN: once in four runs. The red appeared in a 9-worker/111-test run and then
+ *  did NOT reproduce — not with this settle (107 passed), not without it in isolation
+ *  (2 passed), and not without it in a second full 9-worker run (107 passed). So this is
+ *  a flake whose MECHANISM is proven by the arithmetic above, not a deterministic
+ *  failure, and it cannot be demonstrated by reverting this helper. It is shipped as
+ *  hardening: the composite is real whenever the scan lands inside the fade, and a gate
+ *  that reports `serious` from a ~200ms frame teaches people to ignore it.
+ *
+ *  The 400ms above is why this needs a CONDITION, not a bigger number: a fixed wait
+ *  cannot know how many staggered children a route has, and the next widget to add a
+ *  fifth row would slip past any constant we picked.
+ *
+ *  Scoped to INLINE opacity because that is what the motion library writes while
+ *  animating; class-based translucency (a decorative overlay at rest) must not keep us
+ *  waiting. `getAnimations()` is checked too, for animations that never touch inline
+ *  style. Best-effort by design: on timeout we proceed exactly as before, so a route
+ *  with a permanently-animating element degrades to today's behaviour instead of
+ *  failing.
+ *
+ *  Deliberately NOT solved by emulating `prefers-reduced-motion`: that would skip the
+ *  animated path entirely, and this gate should measure what a user actually sees.
+ */
+export async function settleEntranceAnimations(page: Page, timeout = 2_000): Promise<void> {
+  await page
+    .waitForFunction(
+      () => {
+        const midFade = Array.from(document.querySelectorAll<HTMLElement>('[style*="opacity"]')).some(
+          (el) => {
+            const v = Number.parseFloat(el.style.opacity)
+            return Number.isFinite(v) && v > 0.01 && v < 0.99
+          },
+        )
+        const running =
+          typeof document.getAnimations === 'function' &&
+          document.getAnimations().some((a) => a.playState === 'running')
+        return !midFade && !running
+      },
+      undefined,
+      { timeout },
+    )
+    .catch(() => {
+      /* a permanently-animating surface must not fail the scan — fall through */
+    })
 }
 
 /** Assert an interaction actually grew the DOM, i.e. the surface really opened.
