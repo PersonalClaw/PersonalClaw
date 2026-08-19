@@ -4795,7 +4795,7 @@
         {
           "id": "AAP-10",
           "title": "\u00a72.7 Parity doc \u2014 docs/agents/acp-parity.md (the honest-boundary deliverable)",
-          "status": "todo",
+          "status": "done",
           "scope": "\u00a72.7 The parity doc (per-provider capability statement generated from Phase 1 matrices + Phase 2 end-state)",
           "done_when": "docs/agents/acp-parity.md exists stating per provider what is at parity, host-compensated, and a protocol/CLI constraint (each ABSENT written down with its reason + upstream watch item + verified CLI/adapter version); linked from each agent app README and the discovered-agents UI capability notes (SC #7).",
           "deps": [
@@ -9901,9 +9901,9 @@
         "code": "AAP",
         "plan": "ACP-AGENT-PARITY",
         "total_atoms": 10,
-        "done": 0,
+        "done": 1,
         "in_progress": 0,
-        "todo": 10,
+        "todo": 9,
         "blocked": 0
       },
       {
