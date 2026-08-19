@@ -847,6 +847,12 @@ ALLOWED_HOOK_PROVIDERS = frozenset(
         # action-provider registry in the same commit as these lines — the registry's own
         # comment records why: a provider in one set but not the other validates, saves, and
         # then fails at run time.
+        # WF2KNO-12: the scheduled research report runner. The report's SCHEDULE is an ordinary
+        # trigger, so its action goes through this same validation — a provider registered in the
+        # registry but missing here validates nowhere and is silently dropped from the workflow
+        # bundle (`workflows/grounding.py`), which is the "registered but unreachable" shape the
+        # comments above are all about. Added in the same commit that registers it.
+        "knowledge-report",
         "knowledge-persist",
         "knowledge-retrieve",
         "knowledge-health",

@@ -857,3 +857,80 @@ Templates are the plan's proof-of-life — field-tested shapes with real daily c
   its whitespace behaviour. Re-pointed at the real module (`cite:1:-1:k-1`, and `strip_markers` repairs
   the hole rather than leaving an orphan space before a comma) — expectations changed, no assertion
   weakened.
+- [2026-08-19][WF2KNO-12 / capability-gap amendment] PARTIAL — the atom stays `todo`. A report can be
+  defined, run, refused, listed and delivered; **nothing fires one on its own yet**, and that clause is
+  named below with its evidence rather than papered over.
+
+  **What landed and is tested (86 backend tests + 8 web tests, all green).**
+  * **The triple, as configuration.** `knowledge/research_reports.py` — a `ReportDefinition` carrying a
+    research prompt, a `ScheduleDefinition` REUSED from `personalclaw.schedule` (no second cadence
+    vocabulary), a timezone, a SOURCE scope (tag subtree + time window), a SEPARATE CONTEXT scope, and a
+    CITATION POLICY (`cite-source-only` | `allow-citing-context`). Persisted to one hand-editable JSON
+    file; a corrupt store loads as `[]` rather than taking the gateway down.
+  * **The four named schedule failures, each with a falsified test.** An unparseable expression fails
+    CLOSED (and never raises, so one malformed report cannot wedge a runner that iterates every
+    definition); a never-run report anchors its first fire on `created_ts`, and a definition with no
+    `created_ts` refuses to anchor at all rather than on the epoch; fifty skipped windows fire ONCE;
+    a failed run records its error and advances **neither** `last_run_ts` **nor** the watermark —
+    advancing past items a failed run never read would skip them forever.
+  * **The watermark is scope-resolution time.** The runner reads `resolution_ts` BEFORE resolving and
+    threads that exact value to `record_run`; falsified by swapping it for completion time.
+  * **An empty scope is a terminal success** with no model call (asserted by counting model calls, not
+    by the absence of an item) and no item written, and the watermark still advances.
+  * **The loop is bounded** by `iteration_cap` (clamped 1..10 on both the save and the load path,
+    because the file is hand-editable) and the prompt tells the model not to invent citation markers.
+    The cap is proven by counting model calls under a stub that always asks to continue.
+  * **The citation policy decides which refs are REGISTERED**, riding WF2KNO-11's marker registry:
+    source-only registers the new material; allow-citing-context appends the context scope to the same
+    numbering. A context marker resolves under one policy and not the other.
+  * **The finding is an ordinary knowledge item** of a new `research-finding` kind — in `KINDS`, in
+    `KIND_BUDGETS` at 16k, and in `SYNTHESIZED_KINDS` (a report runs unattended on a cron, so an
+    unsourced finding is not one guess a reader weighs — it accumulates while nobody is looking).
+    Excluded from the default item list through a DECLARED `DEFAULT_LIST_EXCLUDED_KINDS` the handler
+    reads, re-admitted by an explicit `?kind=`, and still findable by search.
+  * **Delivery rides the existing path**: `inbox.emit_attention_item`, which already persists the
+    durable row and calls `notify` as one event, plus one `notification_kinds` row so the finding gets
+    its own digest heading instead of failing open to `system/generic`. No new sender.
+  * **The surface**: `#/knowledge/reports` with a create form that shows all three scoping decisions
+    together, a row naming schedule + scope + policy, Run now, enable/pause, delete — reachable from a
+    `Reports` control beside `Sources` on the library header, because everything here is
+    unreachable-by-configuration until something points at it.
+
+  **Three integration seams the parallel split exposed, all closed in this branch.**
+  1. **The lease had a reader and no writer.** The manual-run route refused while
+     `research-report:<id>` was held — and nothing ever wrote that claim, so the 409 could never fire.
+     The runner now takes the claim around every exit path (`execute` wraps `_execute_locked` in a
+     `finally`), the key has ONE home in `research_reports`, and `test_research_report_single_flight.py`
+     asserts the claim is held INSIDE the run, released on the failing path too, that a second
+     concurrent fire is a named skip rather than a doubled run, and that both layers spell the key
+     identically. Falsified by removing the writer (2 reds, one a timeout — the second fire waited on a
+     lock nobody held) and by emptying the `finally`.
+  2. **`knowledge-report` was registered but not dispatchable.** Missing from
+     `ALLOWED_HOOK_PROVIDERS`, it would have validated nowhere and been silently dropped from the
+     workflow bundle. Added in the same commit, per that file's own convention.
+  3. **A new execution site needs a policy check.** `test_action_provider_chokepoints` caught the
+     manual-run route reaching a provider with no gate: it now calls `manual_refusal` (the kill switch,
+     on this path too) and is registered as a documented user-clicked seam, so the exemption cannot
+     outlive its own gate.
+
+  **UNMET — why the atom stays `todo`.** Nothing calls `research_reports.is_due`, so **a due report
+  never fires**: the definition store, the runner, the API, the UI, the kind and the delivery path are
+  all live, but the schedule is not attached to anything. Measured: `grep -rn 'is_due' src/` returns no
+  caller outside the module and its tests. The fix must NOT be a second sweeper loop — `gateway.py`'s
+  `_clock_loop` docstring is explicit that a clock fire and a file fire go through ONE dispatch path
+  "rather than two that drift", so a report's schedule belongs in the `TriggerStore` as a row whose
+  action is `{provider: "knowledge-report", config: {report_id}}`, synced on create/update/delete/
+  enable. `is_due` then keeps a real caller as the runner's pre-flight (the four hardening rules) with a
+  manual run skipping it. That is one bounded piece of work and it is the whole remainder.
+
+  **Gate:** `make lint` clean (934 files, mypy included); 86 tests across the five new backend suites;
+  the chokepoint, denylist-seam, agent-reference, manifest-drift, inert-surface and notification-kind
+  ratchets pass; web typecheck + 202 knowledge-page vitests + build green. Nineteen falsifications
+  across the four parts plus three of my own on the integration seams.
+
+  **DISCOVERY (second sighting, now from two independent agents):** `KnowledgeStore.update_item` cannot
+  write `kind`, `logical_key` or `content_hash` — they are absent from `_ITEM_COLUMNS`, which predates
+  the KNOWLEDGE-SYNTHESIS columns, so `create_typed_item(extra={"kind": ...})` reports success and
+  stores nothing. The only writer of `items.kind` is the persist provider's `_upsert_item`, which is why
+  the runner must persist through it. Same swallowed-write shape recorded for WF2KNO-11's `content_hash`
+  staleness; it belongs to whoever owns `store.py` next.
