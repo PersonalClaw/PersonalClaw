@@ -17,6 +17,7 @@ from personalclaw.knowledge.embedder import create_embedder_from_config, floats_
 from personalclaw.knowledge.llm_pool import LLMPool
 from personalclaw.knowledge.media import classify, guess_mime, make_image_thumbnail
 from personalclaw.knowledge.retrieval import HybridRetriever
+from personalclaw.knowledge.semantics import DEFAULT_LIST_EXCLUDED_KINDS
 from personalclaw.knowledge.staleness import is_synthesized, staleness_for
 from personalclaw.security import redact_credentials, redact_exfiltration_urls
 from personalclaw.sel import sel
@@ -129,6 +130,11 @@ async def list_items(request: web.Request) -> web.Response:
     store = _store(request)
     q = request.query.get("q")
     item_type = request.query.get("type")
+    # `kind` is the TAXONOMY axis and stays separate from `type` (`item_type`, the ingestion
+    # graph's route). Overloading `?type=` to also accept a kind would make one param answer
+    # "how did this arrive" and "what sort of knowledge is it" — the exact conflation
+    # `semantics.KINDS` exists to prevent.
+    kind = request.query.get("kind")
     status = request.query.get("status")
     provider = request.query.get("provider")
     try:
@@ -167,6 +173,8 @@ async def list_items(request: web.Request) -> web.Response:
                 continue
             if item_type and item.get("item_type") != item_type:
                 continue
+            if kind and item.get("kind") != kind:
+                continue
             if provider and (item.get("provider") or "native") != provider:
                 continue
             item["_score"] = r["score"]
@@ -190,6 +198,20 @@ async def list_items(request: web.Request) -> web.Response:
         if item_type:
             where.append("i.item_type = ?")
             params.append(item_type)
+        # WF2KNO-12: the same bargain one axis over. `semantics.DEFAULT_LIST_EXCLUDED_KINDS`
+        # is INDEXED, not LISTED — a scheduled report's findings are retrievable material,
+        # not library rows the owner has to scroll past, and a weekly report would otherwise
+        # bury everything hand-authored inside a month. Search (above) does not filter them,
+        # and naming one in `?kind=` drops it from the exclusion, because an explicit filter
+        # that silently returns nothing is worse than one that answers.
+        listed_excluded = sorted(DEFAULT_LIST_EXCLUDED_KINDS - {kind or ""})
+        if listed_excluded:
+            marks = ",".join("?" * len(listed_excluded))
+            where.append(f"COALESCE(i.kind, '') NOT IN ({marks})")  # noqa: S608
+            params.extend(listed_excluded)
+        if kind:
+            where.append("i.kind = ?")
+            params.append(kind)
         if status:
             where.append("i.status = ?")
             params.append(status)
