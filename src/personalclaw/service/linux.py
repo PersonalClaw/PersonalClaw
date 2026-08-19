@@ -63,7 +63,7 @@ def render_unit() -> str:
     return (
         "[Unit]\n"
         "Description=PersonalClaw gateway (dashboard + channels + cron)\n"
-        "Documentation=https://github.com/personalclaw/personalclaw\n"
+        "Documentation=https://github.com/PersonalClaw/PersonalClaw\n"
         "After=network-online.target\n"
         "Wants=network-online.target\n"
         # If the gateway crashes hard 3 times within 5 minutes, give up.

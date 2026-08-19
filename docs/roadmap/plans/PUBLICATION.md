@@ -293,3 +293,93 @@ in test.** `PERSONALCLAW_PROJECT_DIR` has no other automatic writer, so before t
 contributor running from a clone had the pip path silently substituted for the git path on
 both surfaces. Worth a release note when this ships: a 0.x user who clicked "Update & Restart"
 in a checkout got a wheel installed into their venv.
+### 2026-08-18 — `PUBL-7` fresh-clone getting-started walkthrough — DONE
+
+**What ran.** Anonymous clone of `https://github.com/PersonalClaw/PersonalClaw` with
+`GIT_TERMINAL_PROMPT=0`: no credentials, 27s, 206 MB, HEAD `87c0e396`. No `.gitmodules` and
+`git submodule status` empty — the submodule-free-clone clause holds. A brand-new
+`python3 -m venv` inside the clone (Python **3.14.6**, today's homebrew default; the project
+declares `requires-python = ">=3.12"` unbounded but classifies only 3.12/3.13), then the
+guide's own pip row: `pip install personalclaw` → **0.1.3 from PyPI, 29s, clean, no build
+from source**. All state under an isolated `PERSONALCLAW_HOME` inside the clone.
+
+**Result: a working gateway.** `personalclaw gateway` → listening on 127.0.0.1:10000;
+`GET /` **200**, SPA `index-*.js` **200 / 6,964,545 bytes** and `index-*.css` **200 /
+279,181 bytes**, `GET /api/status` **200**. The wheel ships `personalclaw/static/dist/`, so
+the guide's "source checkouts only" 404-assets caveat correctly does not apply to this path.
+
+**Deviations the guide required — each one a finding.**
+
+1. **`personalclaw setup` (guide § 1) crashed.** With stdin not a terminal it aborted
+   partway through the wizard with a raw `EOFError: EOF when reading a line` traceback,
+   exit 1. Six bare `input()` calls, zero `isatty` guards. Fixed: all six route through
+   `_ask()`, which takes the printed default and says so. *(The bootstrap one-liner is NOT
+   affected — `deploy/website/install.sh:126` already detects non-interactive and declines
+   to run setup. The exposed paths are a Dockerfile `RUN`, CI, and a plain redirect.)*
+2. **`setup` collects neither of the two things § 1 promised.** The comment claimed
+   "name + first provider credential"; it asks for workspace directory and timezone. It
+   never asks a name, and it *cannot* ask for a provider credential — on a fresh install no
+   provider app exists to hold one, exactly as § 3 then explains. § 1 and § 3 contradicted
+   each other at the newcomer's expense. `deploy/website/install.sh:114` repeated the same
+   claim. Both corrected; § 3's "runs a credential wizard" replaced with the real
+   `--provider/--credential` invocation.
+3. **`personalclaw chat -m "hello"` (guide § 4) crashed.** In the state the guide leaves you
+   in (gateway up, no provider yet) it dumped ~30 asyncio frames, burying an already
+   well-composed `WHAT/WHY/FIX` message at the very bottom. Fixed at the dispatch, catching
+   both resolution-error classes the way `session.py` already does.
+4. **`personalclaw doctor` nagged with unactionable advice.** "project dir: ⚠️ not set (run
+   personalclaw setup from project root)" — but `setup` only records that path when
+   `_detect_project_dir` already found a directory holding both `agents/` and `skills/`, so
+   a wheel/uv/pipx/Docker user has no project root, and re-running `setup` could never
+   create one. Now reported as `⏹ not set (source checkouts only — not needed here)`.
+5. **Own-org URL casing, in shipped state.** `github.com/personalclaw/personalclaw`
+   (lowercase) in the knowledge crawler's outbound `User-Agent` and in the systemd unit's
+   `Documentation=` field that `personalclaw service install` — a "Where to go next"
+   recommendation — writes onto the user's machine. Measured: GitHub answers the lowercase
+   form **200 with no redirect**, so this is legibility, not a broken link. Fixed, plus
+   `TEMPLATE_REPO` and its `cli.md` row, so the new rail needs no exception.
+6. **`personalclaw gateway` printed nothing to a non-TTY** — no URL, no token, and
+   `$PERSONALCLAW_HOME/gateway.log` stayed 0 bytes. Combined with a browser-open that
+   cannot succeed headless, a user has no way in. Guide line 72 does document the recovery
+   (`personalclaw token`, which worked), so this is left as recorded friction, not fixed.
+
+**Clean per the named clauses.** Zero `raw.githubusercontent` references anywhere in
+user-facing docs; every relative link in the guide resolves in the clone (and
+`docs-lint-baseline.json` already ratchets dead relative links, so no new rail was added
+for that). No stale `keyurgolani/` URL in `README.md` or the guide.
+
+**Could not complete, stated plainly.** § 3 "Configure a model provider" and § 4's success
+path need a real vendor credential, which this run did not have; no credential was faked.
+So the walkthrough proves the guide to a **working gateway** — the `done_when` bar — and not
+to a completed chat turn.
+
+**Simulation imperfections.** Not a clean *machine*: homebrew `python3`/`uv`/`pipx`, mise
+`node`, `git` and `ffmpeg` pre-existed and `doctor` found them, so the guide's
+"you do not need Python or Node yourself" claim was not exercised from true zero. `$HOME`
+was the owner's, so `setup`'s workspace default (`~/workplace/personalclaw-workspace`,
+which `PERSONALCLAW_HOME` does not relocate) was deliberately overridden rather than
+accepted.
+
+**DISCOVERY — needs an owner decision, not part of this atom.**
+`cli.md`'s `app new --from-template` row documents fetching `app-template`, but
+`codeload.github.com` and `github.com` both answer **404 anonymously under either casing**
+(`personalclaw/` and `PersonalClaw/`). Casing is *not* the cause: codeload resolves the real
+repo under both casings (200/200). Anonymously I cannot distinguish "unpublished" from
+"private", but either way the documented fork-and-go path cannot work for a newcomer, who is
+anonymous. Left unchanged beyond the casing.
+
+**DISCOVERY.** `cli_setup._fix_shell_profiles()` is defined and never called — dead code
+that rewrites the user's `~/.zshrc`/`~/.bashrc` if it ever gains a caller. Not touched.
+
+**Rails.** `tests/test_getting_started_walkthrough.py` — 7 offline tests: the two guide
+commands driven through the real entry point in a subprocess with an isolated
+`PERSONALCLAW_HOME`, the `_ask` guard both ways, a no-bare-`input()` rail, the org-casing
+rail (vacuity floors: ≥10 URLs, ≥5 files, ≥8 own-org hits), and the docs-claim rail.
+Falsified: reverting `_ask` reds with the exact original `EOFError: EOF when reading a
+line`; neutering the chat handler reds with `Traceback (most recent call last)`;
+re-lowercasing the systemd URL and restoring the false docs claim each red their rail.
+
+**Gate.** `make lint` clean (black 1770 files, isort, flake8, mypy 908 sources).
+`pytest` 191 passed across `test_docs_lint_baseline`, `test_getting_started_walkthrough`,
+`test_app_from_template`, `test_onboarding_setup_pointer`, `test_resilience_doctor`,
+`test_service`, `test_web_url_egress`, `test_auth_config_and_cli`.

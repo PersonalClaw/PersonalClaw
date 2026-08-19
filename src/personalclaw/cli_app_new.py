@@ -850,7 +850,7 @@ def scaffold(
 #
 # Nothing shells out: no ``git clone``, no ``curl``. The URL never reaches a shell.
 
-TEMPLATE_REPO = "personalclaw/app-template"
+TEMPLATE_REPO = "PersonalClaw/app-template"
 TEMPLATE_REF = "main"
 #: codeload serves the tarball directly. ``github.com/…/archive/….tar.gz`` would answer
 #: 302 to this host, and we refuse redirects — so we ask the host that actually serves it.
