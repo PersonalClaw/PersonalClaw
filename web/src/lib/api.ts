@@ -1764,6 +1764,24 @@ export interface KnowledgeItem {
   shared_entities?: number
 }
 /** The ingestion node-graph shape for an item's type — nodes + edges + terminals. */
+/** Whether a SYNTHESIZED item (insight/report/overview) has been overtaken by its sources.
+ *
+ *  `new_source_items` is the count the banner names. A synthesis that silently serves a
+ *  stale document is the defect this answers: a reader cannot tell a current article from
+ *  one written before half its sources arrived. `scope` is the server's own one-phrase
+ *  account of what counted as new material, so the number is defensible rather than
+ *  mysterious. */
+export interface KnowledgeStaleness {
+  item_id: string
+  stale: boolean
+  /** Distinct source items created or updated since the synthesis. */
+  new_source_items: number
+  /** Cited sources whose own text moved after the synthesis. */
+  changed_sources: number
+  checked_at: string
+  scope: string
+}
+
 export interface KnowledgeIngestGraph {
   item_type: string
   nodes: { node_type: string; backend?: string; model_backed?: boolean; terminal?: boolean }[]
@@ -4390,6 +4408,22 @@ export const api = {
 
   knowledgeItem: (id: string) => get<KnowledgeItem>(`/api/knowledge/items/${encodeURIComponent(id)}`),
   knowledgeItemRelated: (id: string) => get<KnowledgeItem[]>(`/api/knowledge/items/${encodeURIComponent(id)}/related`),
+  /** Staleness for a synthesized item. 404 for an unknown id; a non-synthesized item
+   *  answers `stale: false` rather than erroring, so the caller needs no kind check. */
+  knowledgeStaleness: (id: string) =>
+    get<KnowledgeStaleness>(`/api/knowledge/items/${encodeURIComponent(id)}/staleness`),
+  /** The ONE action the staleness banner offers. It queues a proposal the owner accepts —
+   *  generated prose never overwrites human writing on its own (WF2KNO-11).
+   *
+   *  `already_pending` is `null` when the server could not tell (the update pipeline did
+   *  not report it), which the UI must treat as "unknown", not as "no". */
+  knowledgeRegenerate: (id: string) =>
+    post<{
+      ok: boolean
+      item_id: string
+      already_pending: boolean | null
+      proposal: { proposal_id?: string; applied?: boolean; pending?: boolean; reason?: string } | null
+    }>(`/api/knowledge/items/${encodeURIComponent(id)}/regenerate`),
   // Re-run the ingestion node-graph over a batch — scope 'missing' (un-enriched
   // items, default) or 'all'. Returns the count queued.
   regenerateKnowledgeIntelligence: (scope: 'missing' | 'all' = 'missing') =>
