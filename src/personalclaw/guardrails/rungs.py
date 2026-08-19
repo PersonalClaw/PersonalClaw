@@ -191,7 +191,17 @@ _PROVIDER_SPECS: tuple[ActionTypeSpec, ...] = (
         key="action.knowledge_write",
         floor=RUNG_AUTONOMOUS,
         ceiling=RUNG_AUTONOMOUS,
-        providers=("knowledge-persist", "knowledge-consolidate", "knowledge-propose"),
+        # WF2KNO-12's `knowledge-report` shares this class rather than minting its own key: what it
+        # ultimately does is write a knowledge item, through the same persist provider listed beside
+        # it. Its extra powers (it spends a model call, and it fires on a schedule) are governed
+        # where they can be evaluated — the write-capable fence in `triggers/screen.py` and the
+        # report's own iteration cap — not by a second name for one governed behavior.
+        providers=(
+            "knowledge-persist",
+            "knowledge-consolidate",
+            "knowledge-propose",
+            "knowledge-report",
+        ),
     ),
     ActionTypeSpec(
         key="action.artifact_write",

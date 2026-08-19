@@ -934,3 +934,17 @@ Templates are the plan's proof-of-life — field-tested shapes with real daily c
   stores nothing. The only writer of `items.kind` is the persist provider's `_upsert_item`, which is why
   the runner must persist through it. Same swallowed-write shape recorded for WF2KNO-11's `content_hash`
   staleness; it belongs to whoever owns `store.py` next.
+
+  **CI caught a FIFTH seam a new provider owes, and it is the most useful finding of the tick.** The
+  full-suite job reported five reds, all one family — every registry that must classify a provider *in
+  the same commit that registers it*, and none of them reachable from a file-scoped run:
+  `triggers/screen.py`'s capability table (unclassified ⇒ the fail-closed write-capable default, "safe
+  but silent"), `guardrails/rungs.py`'s autonomy declaration, `resilience/degraded.py`'s no-model
+  contract for the new `one_shot_completion` call site, and the `.last_status` writer census. Each is now
+  a deliberate line: **write-capable** (a report spends a model call and writes unattended, on a cron,
+  forever); the **existing** `action.knowledge_write` rung rather than a new key (what it ultimately does
+  is write a knowledge item through the same persist provider, and its extra powers are governed where
+  they can be evaluated); a **new `research_report` degraded surface** whose floor is the honest one — a
+  run is DEFERRED, not dropped, because the failure advances neither the stamp nor the watermark; and the
+  status census names the report's own two-value field so a same-named field on a different entity is a
+  decision on the record rather than census drift.

@@ -448,6 +448,10 @@ WRITE_CAPABLE_PROVIDERS: frozenset[str] = frozenset(
         # needs the opt-in — an unbounded one turns the review queue into the noise it exists
         # to prevent.
         "knowledge-propose",
+        # WF2KNO-12: a scheduled research report spends a model call and writes a knowledge item
+        # unattended, on a cron, forever. Write-capable is the only honest side of this table for
+        # it — and being explicit here is what keeps the fail-closed default from being the reason.
+        "knowledge-report",
     }
 )
 
