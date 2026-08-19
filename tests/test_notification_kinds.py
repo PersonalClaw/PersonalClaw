@@ -136,11 +136,38 @@ def test_every_default_mode_is_immediate():
     Every emitter that passes the global gate produces a toast today. A `badge` default
     would silently stop delivering that kind — experienced as "notifications broke," with
     no setting the user knowingly changed. `badge` is opt-in per row in the rules matrix.
+
+    The obligation is BEHAVIOR PRESERVATION, so it binds exactly the kinds that HAD a
+    pre-registry emitter — the `_LEGACY_FLAT` population. A kind nothing ever emitted has no
+    "today's delivery" to preserve and may declare an honest default; that is the same
+    no-history-no-obligation split `_ATTENTION_FLAT` already makes for SEVERITY (see
+    `test_attention_pairs_have_no_legacy_history`). The exempt population is pinned by the test
+    below, so widening it is a deliberate act rather than a drift.
     """
-    offenders = [k.key for k in nk.all_kinds() if k.default_mode != "immediate"]
+    historical = {nk.kind_for_legacy(flat).key for flat in nk._LEGACY_FLAT}
+    offenders = [
+        k.key for k in nk.all_kinds() if k.default_mode != "immediate" and k.key in historical
+    ]
     assert not offenders, (
         "these kinds would change delivery behavior with no rules file: "
         f"{offenders} — see the module docstring"
+    )
+
+
+def test_the_kinds_defaulting_to_something_other_than_immediate_are_EXACTLY_these():
+    """The vacuity guard on the carve-out above.
+
+    Without this, scoping the invariant to the historical population would let any future kind
+    quietly ship a `badge` or `never` default and deliver nothing, which is the exact failure the
+    invariant exists to prevent — just displaced onto new kinds.
+
+    `system/usage_recap` (MRT-3) is a monthly recap of a month that already closed: the least
+    urgent thing the system emits, and its atom specifies digest delivery.
+    """
+    quiet = sorted(k.key for k in nk.all_kinds() if k.default_mode != "immediate")
+    assert quiet == ["system/usage_recap"], (
+        f"the non-immediate default population changed to {quiet} — every addition needs the "
+        "same justification usage_recap carries, so widen this list deliberately"
     )
 
 
@@ -331,9 +358,16 @@ def _emitted_kind_strings() -> set[str]:
 
 
 def test_every_wire_constant_resolves():
-    """A constant that lost its registration silently downgrades every site using it."""
+    """A constant that lost its registration silently downgrades every site using it.
+
+    Checks `_WIRE_TO_PAIR`, the same map as the import-time guard directly below it in
+    `notification_kinds.py` — "every wire string this build understands". It read `_LEGACY_FLAT`
+    while every constant happened to be a legacy one; `USAGE_RECAP` (MRT-3) is the first named
+    constant for a kind with no pre-registry emitter, and requiring legacy membership would have
+    forced a brand-new kind to claim a history it does not have.
+    """
     for const in nk.WIRE_CONSTANTS:
-        assert const in nk._LEGACY_FLAT, f"{const!r} has no registration"
+        assert const in nk._WIRE_TO_PAIR, f"{const!r} has no registration"
         assert nk.kind_for_legacy(const).kind != nk.GENERIC_KIND or const == nk.GENERIC
 
 

@@ -561,3 +561,105 @@ Folded into **Session 1** as its second half (Session 1 was already "telemetry r
 - **Also corrected while here:** `UsagePanel`'s header claimed the ledger covered "every turn (chat,
   subagents, loops, automations)". It does not cover guarded `complete()` calls, so the copy
   overstated its own coverage; it now says what is excluded and points at the section that sizes it.
+
+## Execution log — MRT-3, session 2 (the recap's DELIVERY + the money-honesty defect)
+
+- **Census first: 7 of 10 clauses were already SHIPPED and correct.** The fold, the hand-computed
+  fixture, `GET /api/usage`'s `rows`/`total`/`estimated_share`, the Usage section's charts and
+  `usage_recap`'s verbatim pin all measured green. Two shapes this repo keeps hitting were checked
+  and were NOT present: the rebuild clause is a real property (`test_routing_usage.py:262`
+  `.unlink()`s `usage_stats.json` and re-folds, rather than commenting that it could), and
+  `estimated_share` is computed by `_share()` (`routing/usage.py:477`) with
+  `test_routing_usage.py:392` pinning 0.0 when there are no dollars — not a field nobody fills.
+
+- **DONE — the recap's delivery, the clause the previous session recorded as NOT BUILT.** New
+  `action_providers/usage_recap_provider.py`: renders `usage_recap(previous_month())` and emits it
+  through `DashboardState.notify()`, so it inherits the whole policy stack rather than
+  re-implementing any of it — global gate (mute-all / min-severity / quiet hours) first, then the
+  per-`(source, kind)` rule. Registered `system/usage_recap` in `notification_kinds.py`, added the
+  provider to the three places a provider must appear together (`action_providers/registry.py`,
+  `validation.ALLOWED_HOOK_PROVIDERS`, `triggers/screen.py`'s write-capable set), declared it under
+  `action.digest` in `guardrails/rungs.py`, gave it a row in the SPA display map, and reconciled a
+  monthly `0 9 1 * *` system cron at boot in the `--no-crons` else-branch beside the digest's.
+
+- **The writer trace, since "delivers one notification" is a claim about a writer.** boot
+  `_init_cron` (`gateway.py:1866`, `--no-crons` else-branch) → `reconcile_usage_recap_cron` writes
+  the UNIFIED trigger store directly and arms it (writing `crons.json` is the S108 bug that made
+  the digest inert for a release) → the clock tick fires `usage-recap` → the provider renders and
+  calls `notify()` → `notification_allowed()` → the rule → the digest queue. Nothing in that path
+  touches the real home: the fold, the mark and the queue are all under `config_dir()`, and the
+  suite's real-home rail reports `~/.personalclaw` unchanged.
+
+- **Exactly-one is enforced by a mark, not by trusting the cron.** `usage_recap_sent.json` keys on
+  the month and is checked BEFORE rendering. A monthly cron firing twice is real rather than
+  hypothetical — the boot sweep re-arms an overdue trigger, so a machine asleep across the 1st
+  fires on wake — and without the mark the feature is "one recap per boot in the first week of the
+  month". The mark is written whether or not the note survived the gate: a recap suppressed by the
+  user's own quiet hours is suppressed, not deferred, and retrying until it lands is the escalation
+  a quiet-hours setting exists to refuse. `delivered` records which happened.
+
+- **FALSIFIED, both gates, by mutating the live line and quoting the red.** Deleting the
+  quiet-hours/mute gate (`dashboard/state.py:1240` → `if False:`) reds
+  `AssertionError: quiet hours did not suppress the recap` and `assert [{'kind': 'us...}] == []`,
+  plus the same for `mute_all` — so those two tests observe the gate rather than an empty fixture.
+  Deleting the mark check (`usage_recap_provider.py:123` → `if False:`) reds
+  `assert 2 == 1` / `the second fire delivered a SECOND recap`. That second red arrived on the
+  wording assertion first, so the assertions were REORDERED to put the queue count ahead of the
+  stdout string — a falsification that reds on a message rather than on the property is measuring
+  the message.
+
+- **Every rail carries a vacuity floor.** A recap rail over a month with no usage passes forever, so
+  the delivery test asserts the fixture produced `"12 turns"` before asserting anything about the
+  gate, each suppression test is paired with an identical-fixture unsuppressed control, and the
+  once-per-month test asserts the FIRST fire delivered before asserting the second did not.
+
+- **DEVIATION — the `default_mode == "immediate"` invariant was SCOPED, not weakened.** The clause
+  requires a `digest`-mode notification, and `test_every_default_mode_is_immediate` /
+  `test_no_rules_file_delivers_exactly_like_before` asserted every registered kind defaults to
+  `immediate`. That invariant's own docstring gives its reason — "Every emitter that passes the
+  global gate produces a toast today", i.e. BEHAVIOR PRESERVATION — and `usage_recap` has no
+  pre-registry emitter, so there is no prior delivery to preserve. Both now bind the
+  `_LEGACY_FLAT` population, which is the same no-history-no-obligation split `_ATTENTION_FLAT`
+  already makes for SEVERITY. Guarded against becoming a loophole by
+  `test_the_kinds_defaulting_to_something_other_than_immediate_are_EXACTLY_these`, which pins the
+  exempt set to exactly `["system/usage_recap"]`. Also widened
+  `test_every_wire_constant_resolves` from `_LEGACY_FLAT` to `_WIRE_TO_PAIR` — the map the
+  import-time guard three lines below it already used — because `USAGE_RECAP` is the first named
+  wire constant for a kind with no legacy history.
+
+- **DONE — a money-honesty defect in the run-cost line the previous session declared "satisfied by
+  existing code".** It is not: `IntrospectPanel.tsx:261` rendered
+  `` `$${data.stats.cost_usd.toFixed(4)} this run` `` — four decimals of apparent precision on a
+  figure `pricing.py` describes as derived ("Providers report token counts but not always a dollar
+  cost (most set `cost_usd=0.0`)"), and with no `~` where the atom's own clause says `~$X`. Now
+  `runCostText()`: `~$0.1234 this run — estimated from model prices, not a provider-reported
+  charge`, `~$4.20` once past a dollar (reusing `routing/usage.py::_usd`'s rounding rather than
+  re-deciding it), and for zero `Nothing recorded — a local model, or one with no price row`
+  instead of `$0.00`, because zero cannot distinguish free-and-local from unpriced.
+
+- **Also corrected while here — one panel was making two different claims about one dollar.** The
+  same `cost_usd` renders three times in `IntrospectPanel`: the "Cost" stat (`:101`), the money
+  answer (`:261`) and each timeline row (`:325`). Only one disclosed. All three now carry the
+  tilde and the stat is labelled `Cost (est.)`, with the full sentence stated once.
+
+- **STILL UNMET, with a sharper measurement than the previous session's — the LOOP detail's
+  "~$X this run".** That session called it blocked on `SpendMeter._run_totals` being in-memory.
+  PP-5 has since landed, so a loop IS a ledger producer (`loop/journal.py` — "the SECOND producer
+  of the platform ledger") and `ledger.run_totals` is durable. But `LoopLedger.cycle()`
+  (`loop/journal.py:104-112`) writes `STEP_COMPLETED` with `cycle`/`node_id`/`task_id`/
+  `source_file`/`finding` and **no `tokens` and no `cost_usd`** — the two fields `run_totals`
+  sums — so `run_totals` over a loop store returns `cost_usd: 0.0` and a loop-detail money line
+  wired to it would render exactly the "~$0.00 this run" that must never ship.
+  `LoopCockpitPage.tsx` still contains no dollar figure. The fix is a cost-carrying loop cycle
+  emitter, which needs the loop's per-cycle model spend threaded to the ledger write; that is
+  PP-5 follow-on work in the loop engine, not this atom's fence, and inventing a number to fill
+  the surface would be worse than the gap. **So MRT-3 remains PARTIAL on this one clause.**
+
+- **Not swept into this change:** `docs/design/consistency-audit.json` regenerates as a side
+  effect of the web suite and drifted (`filesScanned` 522→526, a new
+  `pages/settings/AlwaysOnConventions.tsx` row) because `ef42a5cb` landed that file without a
+  regen. `driftHits` and `filesWithDrift` are unchanged and this change adds no web file, so the
+  artifact was discarded rather than committed — the staleness is PEP-10's to regenerate. Worth
+  noting for whoever does: a `npx vitest run --root web` of the audit test reds where the full
+  `npm test --workspace web` (417 files, 4282 tests) is green, so the rooted invocation is a false
+  red on that file.

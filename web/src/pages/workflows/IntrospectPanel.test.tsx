@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import type { WorkflowIntrospection } from '../../lib/api'
-import { IntrospectPanel, riskyText, rowSummary } from './IntrospectPanel'
+import { IntrospectPanel, riskyText, rowSummary, runCostText } from './IntrospectPanel'
 
 // ── WF2WOR-7 criteria 6 & 8: the nine questions are answerable from the cockpit ──
 //
@@ -94,7 +94,9 @@ describe('the nine questions reach the DOM', () => {
     // Merging them would conflate a slow start with slow work — one is what a watching user
     // feels, the other is what a scheduler budgets.
     render(<IntrospectPanel runId="r1" onClose={() => {}} />)
-    expect(await screen.findByText('$0.0342')).toBeTruthy()
+    // `~$`, not `$` (MRT-3): the strip and the "what is costing money" answer render the SAME
+    // rate-table-derived number, so both carry the estimate marker or the panel contradicts itself.
+    expect(await screen.findByText('~$0.0342')).toBeTruthy()
     expect(screen.getByText(/to first output/i)).toBeTruthy()
     expect(screen.getByText('830 ms')).toBeTruthy()
   })
@@ -294,5 +296,41 @@ describe('the live touched-items feed', () => {
     render(<IntrospectPanel runId="r1" onClose={() => {}} />)
     fireEvent.click(await screen.findByRole('tab', { name: /timeline/i }))
     expect(screen.queryByText('Touched')).toBeNull()
+  })
+})
+
+// ── MRT-3: the run's money line says it is an estimate ──
+//
+// The atom's clause is `~$X this run`. The shipped line was `$${cost.toFixed(4)} this run` —
+// four decimals of precision on a figure `pricing.py` derives from a static price table. These
+// pin the disclosure, not the arithmetic: a money surface that reads as exact is the defect.
+
+describe('the run cost line', () => {
+  it('marks a derived cost as an estimate and never renders it as exact', () => {
+    const text = runCostText(0.1234)
+    expect(text).toContain('~$0.1234')
+    expect(text).toContain('estimated from model prices')
+    expect(text).toContain('not a provider-reported charge')
+    // The tilde is the point: no leading bare "$0.1234".
+    expect(text.startsWith('$')).toBe(false)
+  })
+
+  it('rounds to cents once there is a dollar, matching the Usage panel', () => {
+    expect(runCostText(4.2)).toContain('~$4.20')
+    // …and keeps four decimals below a dollar, so a real $0.0012 is not "$0.00".
+    expect(runCostText(0.0012)).toContain('~$0.0012')
+  })
+
+  it('does not claim $0.00 when nothing was recorded', () => {
+    for (const zero of [0, -0, Number.NaN]) {
+      const text = runCostText(zero)
+      expect(text).not.toContain('$')
+      expect(text).toContain('no price row')
+    }
+  })
+
+  it('reaches the DOM as the answer to "what is costing money"', async () => {
+    render(<IntrospectPanel runId="r1" onClose={() => {}} />)
+    expect(await screen.findByText(/~\$.* this run/)).toBeTruthy()
   })
 })

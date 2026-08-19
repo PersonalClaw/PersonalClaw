@@ -68,6 +68,10 @@ def _ensure_default_providers_registered() -> None:
         )
 
         register_action_provider(NotificationDigestActionProvider())
+    if "usage-recap" not in _providers:
+        from personalclaw.action_providers.usage_recap_provider import UsageRecapActionProvider
+
+        register_action_provider(UsageRecapActionProvider())
     if "create-task" not in _providers:
         from personalclaw.action_providers.create_task_provider import CreateTaskActionProvider
 

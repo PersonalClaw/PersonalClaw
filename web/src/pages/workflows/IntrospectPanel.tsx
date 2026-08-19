@@ -98,7 +98,12 @@ export function IntrospectPanel({ runId, onClose }: { runId: string; onClose: ()
                   <DollarSign size={13} aria-hidden /> Cost and latency
                 </h3>
                 <dl className="grid grid-cols-2 gap-xs text-[0.75rem] sm:grid-cols-4">
-                  <Stat label="Cost" value={`$${data.stats.cost_usd.toFixed(4)}`} />
+                  {/* `~` for the same reason `runCostText` carries it: this run's cost is derived
+                      from a price table, not billed. One panel rendering the SAME number as
+                      "~$0.0342" in one place and "$0.0342" in another would read as two different
+                      claims about the same dollar. The tilde is the marker everywhere; the
+                      "what is costing money" answer below is where it is spelled out once. */}
+                  <Stat label="Cost (est.)" value={`~$${data.stats.cost_usd.toFixed(4)}`} />
                   <Stat label="Tokens" value={data.stats.tokens.toLocaleString()} />
                   <Stat label="Duration" value={fmtElapsed(data.stats.duration_secs)} />
                   <Stat label="To first output" value={`${Math.round(data.stats.first_byte_ms)} ms`} />
@@ -258,7 +263,7 @@ export function IntrospectPanel({ runId, onClose }: { runId: string; onClose: ()
                     q="What failed"
                     a={data.answers.failed.length ? `${data.answers.failed.length} node(s) failed` : 'Nothing failed'}
                   />
-                  <Answer q="What is costing money" a={`$${data.stats.cost_usd.toFixed(4)} this run`} />
+                  <Answer q="What is costing money" a={runCostText(data.stats.cost_usd)} />
                   <Answer
                     q="What is risky"
                     a={riskyText(data.answers.risky.degraded.length, fakeChecks.length, data.stats.verification_debt)}
@@ -322,7 +327,9 @@ export function IntrospectPanel({ runId, onClose }: { runId: string; onClose: ()
                     <span className="flex flex-wrap gap-xs text-on-surface-low tabular-nums">
                       {row.model ? <span>{row.model}</span> : null}
                       {typeof row.tokens === 'number' && row.tokens ? <span>{row.tokens.toLocaleString()} tokens</span> : null}
-                      {typeof row.cost_usd === 'number' && row.cost_usd ? <span>${row.cost_usd.toFixed(4)}</span> : null}
+                      {/* Same tilde, same reason: a per-step dollar is the same estimate the run
+                          total sums. Rendered only when non-zero, so "~$0.0000" never appears. */}
+                      {typeof row.cost_usd === 'number' && row.cost_usd ? <span>~${row.cost_usd.toFixed(4)}</span> : null}
                       {typeof row.duration_secs === 'number' && row.duration_secs ? <span>{fmtElapsed(row.duration_secs)}</span> : null}
                       {typeof row.approved === 'boolean' ? <span>{row.approved ? 'approved' : 'rejected'}</span> : null}
                     </span>
@@ -407,6 +414,26 @@ function Answer({ q, a }: { q: string; a: string }) {
       <dd className="text-on-surface">{a}</dd>
     </div>
   )
+}
+
+/** The run's money line — `~$X this run`, and why the tilde is not decoration (MRT-3).
+ *
+ *  A run's `cost_usd` sums `step_completed.cost_usd`, and `pricing.py` says out loud what that
+ *  number is: "Providers report token counts but not always a dollar cost (most set
+ *  `cost_usd=0.0`)", so the figure is normally DERIVED from `model_pricing.json` rather than
+ *  billed. This used to render `$${cost.toFixed(4)}` — four decimals of precision on an estimate,
+ *  which is the one thing a money surface must not do.
+ *
+ *  Zero is its own case, and NOT "$0.00". Zero means the provider reported nothing and the model
+ *  had no price row, or the model ran locally and was genuinely free — indistinguishable from
+ *  this number alone. "$0.00 this run" would assert the second reading; the copy states both.
+ *
+ *  The 2dp-above-a-dollar / 4dp-below rule is `routing/usage.py::_usd`'s, reused rather than
+ *  re-decided, so a run's money and the Usage panel's money are rounded the same way. */
+export function runCostText(costUsd: number): string {
+  if (!(costUsd > 0)) return 'Nothing recorded — a local model, or one with no price row'
+  const usd = costUsd >= 1 ? `$${costUsd.toFixed(2)}` : `$${costUsd.toFixed(4)}`
+  return `~${usd} this run — estimated from model prices, not a provider-reported charge`
 }
 
 /** The risk answer, assembled from its three real sources.
