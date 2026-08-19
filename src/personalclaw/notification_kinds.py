@@ -286,6 +286,24 @@ _KINDS: tuple[NotificationKind, ...] = (
     NotificationKind(
         "apps", "update", "App update available", "immediate", SEV_INFO, attention=True
     ),
+    # knowledge — one finding written by a scheduled research report (WF2KNO-12).
+    # Attention-bearing: the report runs while nobody is watching, so a transient toast is
+    # the one delivery shape that can lose the whole point of the feature. Emitted through
+    # `inbox.emit_attention_item`, so the durable row and the notification are the same
+    # event by construction; the report machinery adds no sender of its own.
+    #
+    # `immediate` like everything else here, NOT `digest`, even though a weekly report is
+    # the most digest-shaped thing this system emits: a default that quietly stops toasting
+    # is experienced as "notifications broke", with no setting the user knowingly changed.
+    # It has its own registry row precisely so `digest` is one click in the rules matrix.
+    NotificationKind(
+        "knowledge",
+        "research_finding",
+        "Research report finding",
+        "immediate",
+        SEV_INFO,
+        attention=True,
+    ),
     # The synthetic fallback, registered so the rules UI can show a row for it.
     NotificationKind(GENERIC_SOURCE, GENERIC_KIND, "Uncategorized", "immediate", SEV_INFO),
 )
@@ -341,6 +359,9 @@ _ATTENTION_FLAT: dict[str, tuple[str, str]] = {
     "agent_request": ("system", "agent_request"),
     "digest": ("system", "digest"),
     "app_update": ("apps", "update"),
+    # Its OWN wire string, not "finding": the wire value is what the digest groups by, and a
+    # generic "finding" would collapse research output into whatever else ever writes one.
+    "research_finding": ("knowledge", "research_finding"),
     # Not an attention kind (it persists no row of its own), but it shares the property this
     # map actually encodes: no pre-registry emitter ever passed it, so it carries no historical
     # severity obligation and is free to rank as the info it is.
@@ -377,6 +398,7 @@ APP_ROUTE_DRIFT = "app.route.drift"
 SESSION = "session"
 FEEDBACK_RETIRE = "feedback_retire"
 USAGE_RECAP = "usage_recap"
+RESEARCH_FINDING = "research_finding"
 GENERIC = GENERIC_KIND
 
 #: Every constant above, for the import-time consistency check and the drift test.
@@ -395,6 +417,7 @@ WIRE_CONSTANTS: tuple[str, ...] = (
     SESSION,
     FEEDBACK_RETIRE,
     USAGE_RECAP,
+    RESEARCH_FINDING,
     GENERIC,
 )
 
