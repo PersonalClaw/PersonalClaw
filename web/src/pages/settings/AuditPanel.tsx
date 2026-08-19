@@ -152,7 +152,10 @@ export function AuditPanel() {
           <TextInput value={filters.operation ?? ''} onChange={(v) => setFilter('operation', v)} placeholder="Filter by operation" ariaLabel="Filter by operation"
             size="md" surface="high" leadingIcon={<Search size={14} />} />
         </div>
-        <Button variant="secondary" size="sm" onClick={() => setShowMore((s) => !s)} aria-expanded={showMore}><SlidersHorizontal size={14} /> Filters</Button>
+        {/* `ariaExpanded`, not `aria-expanded` — see NotificationRulesMatrix: `ui/Button` declares
+            camelCase aria props and spreads no rest, and a dashed JSX attribute name is not
+            excess-property-checked, so the hyphenated form compiled and vanished. */}
+        <Button variant="secondary" size="sm" onClick={() => setShowMore((s) => !s)} ariaExpanded={showMore}><SlidersHorizontal size={14} /> Filters</Button>
         {/* Icon-only, so it needs its own name — `title` is the kit's convention for a bare glyph. */}
         <Button variant="secondary" size="sm" onClick={reload} disabled={busy} title={busy ? 'Refreshing the audit log' : 'Refresh the audit log'}>{busy ? <Loader2 size={15} className="animate-spin" /> : <RefreshCw size={14} />}</Button>
         <Button variant="secondary" size="sm" onClick={runVerify}><ShieldCheck size={14} /> Verify</Button>

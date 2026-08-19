@@ -149,6 +149,37 @@ describe('the accordions the boolean-flip census could not see', () => {
       return /\.tsx$/.test(n) && !/\.(test|doc)\.tsx$/.test(n) ? [p] : []
     })
 
+  /** Does the markup around a toggle actually publish an expanded state?
+   *
+   *  🪤 TWO SPELLINGS, AND ONLY ONE IS VALID PER ELEMENT TYPE. A raw `<button>` takes the DOM
+   *  attribute `aria-expanded`. `ui/Button` declares camelCase props (`ariaExpanded`) and spreads no
+   *  rest, so on IT the hyphenated form is silently DROPPED — TypeScript does not excess-property-check
+   *  a JSX attribute whose name contains a dash, so it compiles and reaches nothing. Measured on
+   *  `#/settings/notifications`: 27 triggers with no `aria-expanded` in the DOM at all, every one of
+   *  them written `aria-expanded={isOpen}` in the source. `ui/ariaPropForwarding.test.tsx` now forbids
+   *  that spelling on our components.
+   *
+   *  Accepting `ariaExpanded` ONLY beside a `<Button` keeps this strict rather than merely permissive:
+   *  on a raw `<button>` that spelling vanishes just as quietly, and must still count as silent. That
+   *  distinction is asserted directly below, because nothing in the tree exercises it today — a guard
+   *  whose strictness is untested is a guard that is only claimed. */
+  function announcesDisclosure(around: string): boolean {
+    return /aria-expanded/.test(around)
+      || (/ariaExpanded=/.test(around) && /<Button\b/.test(around))
+  }
+
+  it('the two spellings are accepted on the right elements, and only there', () => {
+    // Synthetic, because the tree contains no counter-example — which is exactly why this is here.
+    expect(announcesDisclosure('<Button onClick={() => setOpen(open ? null : id)} ariaExpanded={isOpen}>'),
+      'camelCase on ui/Button reaches the DOM').toBe(true)
+    expect(announcesDisclosure('<button onClick={() => setOpen(open ? null : id)} aria-expanded={isOpen}>'),
+      'the DOM attribute on a raw button').toBe(true)
+    expect(announcesDisclosure('<button onClick={() => setOpen(open ? null : id)} ariaExpanded={isOpen}>'),
+      'camelCase on a RAW button is dropped by React — still silent').toBe(false)
+    expect(announcesDisclosure('<Button onClick={() => setOpen(open ? null : id)}>detail</Button>'),
+      'and a Button that says nothing is still silent').toBe(false)
+  })
+
   function accordions() {
     const out: { rel: string; announced: boolean }[] = []
     for (const abs of walkPages(PAGES)) {
@@ -156,7 +187,7 @@ describe('the accordions the boolean-flip census could not see', () => {
       for (const m of src.matchAll(ACCORDION)) {
         // Anchored on the toggle, not on tag boundaries — the lesson this file already carries.
         const around = src.slice(Math.max(0, m.index! - 300), m.index! + 320)
-        out.push({ rel: abs.slice(PAGES.length + 1), announced: /aria-expanded/.test(around) })
+        out.push({ rel: abs.slice(PAGES.length + 1), announced: announcesDisclosure(around) })
       }
     }
     return out
