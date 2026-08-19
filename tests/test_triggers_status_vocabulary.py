@@ -451,6 +451,12 @@ def test_the_writer_file_census_is_pinned() -> None:
         # `web_poll.py` writes an HTTP status CODE (an int) to a different entity's field. Named
         # here so its absence from the tables is a decision on the record, not an oversight.
         "triggers/web_poll.py",
+        # WF2KNO-12: a report definition carries its OWN `last_status` ("ok" | "error" | ""), which
+        # is not the trigger status vocabulary this file pins — it is the report's own two-value
+        # run outcome, read by the reports list to say "last run failed" without losing the run
+        # time. Named here for the same reason as `web_poll.py`: a same-named field on a different
+        # entity should be a decision on the record rather than a silent census drift.
+        "knowledge/research_reports.py",
     }, f"the set of modules assigning .last_status changed: {sorted(attr_files)}"
     assert call_files == {
         "gateway.py",

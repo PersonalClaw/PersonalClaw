@@ -238,6 +238,18 @@ def _register_builtin_contracts() -> None:
             "extraction is skipped and the item is marked partial until a model returns.",
         )
     )
+    # scheduled research reports (WF2KNO-12) — with no model a run cannot write its finding,
+    # and that is a DEFERRAL rather than a loss: the failure is recorded without advancing the
+    # run stamp or the watermark, so the next window sees exactly the same new material again.
+    register_contract(
+        DegradedContract(
+            surface="research_report",
+            use_cases=("background",),
+            floor="A scheduled report's run is deferred, not dropped: the failure is recorded "
+            "without advancing its last-run stamp or its watermark, so the next window retries "
+            "over the same new material. Definitions, schedules and manual runs stay available.",
+        )
+    )
     # search ranking — hybrid retrieval degrades vector-arm-off to FTS + graph +
     # recency automatically; the real backlog is items missing an embedding.
     register_contract(

@@ -41,6 +41,10 @@ _CALL_SITE_SURFACES = {
     # always gets a bounded match result rather than an error.
     "mcp_workflows.py": "assistant_reasoning",
     "web/fetch.py": "assistant_reasoning",
+    # WF2KNO-12's scheduled-report runner. Its own surface rather than the reasoning axis: the
+    # honest floor is a DEFERRED run (no stamp, no watermark advance, retried next window), which
+    # is a different promise from "you get an unreasoned answer".
+    "action_providers/knowledge_report_provider.py": "research_report",
     # ES-4's judge benchmark (`live_judge_caller`): the one function in that module that
     # spends money, routed through `one_shot_completion` on the tier's use case so
     # resolution walks the same active-models chain a live gate does. Reasoning-axis, and
