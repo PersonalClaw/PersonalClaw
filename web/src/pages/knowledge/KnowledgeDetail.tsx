@@ -1,13 +1,13 @@
 import { useEffect, useState } from 'react'
 import { fvs } from '../../design/fontWeight'
-import { Pencil, Trash2, Check, X, ExternalLink, Sparkles, Layers, Loader2, Pin, Star, BookOpen, BookOpenText, Archive, Download, Target, Maximize2, Wand2, ChevronDown, WifiOff, RefreshCw, MessageCircleQuestion } from 'lucide-react'
+import { AlertTriangle, Pencil, Trash2, Check, X, ExternalLink, Sparkles, Layers, Loader2, Pin, Star, BookOpen, BookOpenText, Archive, Download, Target, Maximize2, Wand2, ChevronDown, WifiOff, RefreshCw, MessageCircleQuestion } from 'lucide-react'
 import { HeaderActions, HeaderControl } from '../../ui/HeaderActions'
 import { useFocusTrap } from '../../ui/useFocusTrap'
 import { investigate } from '../../lib/investigate'
 import { Button } from '../../ui/Button'
 import { Markdown } from '../../ui/Markdown'
 import { ChipInput, FieldError } from '../../ui/forms'
-import type { KnowledgeAnnotation, KnowledgeItem, IntentOutcome, IntentOutcomeField } from '../../lib/api'
+import type { KnowledgeAnnotation, KnowledgeItem, IntentOutcome, IntentOutcomeField, KnowledgeStaleness } from '../../lib/api'
 import { ReadingView } from './ReadingView'
 import { resolveType, insightRows, fmtBytes, relTime, GIST_LANGUAGES } from './knowledgeMeta'
 import { getKnowledge, updateKnowledge, deleteKnowledge } from './knowledgeStore'
@@ -28,6 +28,75 @@ function gistFence(code: string, lang?: string): string {
  *  image·audio·video / code gist / doc), extracted content, AI insights,
  *  entities/relations/related, and per-type edit + delete. Works against both
  *  backend items and the local stub (knowledgeStore merges them). */
+/** The kinds that are WRITTEN from other items rather than observed. Mirrors
+ *  `knowledge/semantics.py::SYNTHESIZED_KINDS`; only these can be overtaken by their
+ *  sources, so only these ask the server about staleness. */
+const SYNTHESIZED_KINDS = new Set(['insight', 'report', 'overview'])
+
+/** A synthesis whose sources moved on says so, and offers exactly one way out.
+ *
+ *  Before this the reader got a stale article with nothing to distinguish it from a
+ *  current one: the count of source items that arrived AFTER the prose was written lived
+ *  only in the store. "Regenerate" queues a proposal rather than rewriting in place —
+ *  generated prose never overwrites human writing without the owner accepting it, which
+ *  is why the outcome line promises a queue and not a rewrite.
+ *
+ *  Silent when the item is not synthesized, when nothing changed, or when the request
+ *  fails: a banner that cannot state a number has nothing to say, and a failed check must
+ *  not displace the document the reader came for. */
+function StaleSynthesisBanner({ item }: { item: KnowledgeItem }) {
+  const [state, setState] = useState<KnowledgeStaleness | null>(null)
+  const [busy, setBusy] = useState(false)
+  const [outcome, setOutcome] = useState('')
+
+  useEffect(() => {
+    let alive = true
+    setState(null); setOutcome('')
+    if (!SYNTHESIZED_KINDS.has(item.item_type ?? '')) return
+    api.knowledgeStaleness(item.id).then((s) => { if (alive) setState(s) }).catch(() => {})
+    return () => { alive = false }
+  }, [item.id, item.item_type])
+
+  if (!state?.stale) return null
+  const n = state.new_source_items
+  const changed = state.changed_sources
+  // Two independent reasons, named separately: new material and edited sources are
+  // different problems, and one blended number would hide which of them happened.
+  const parts = [
+    n > 0 ? `${n} new source item${n === 1 ? '' : 's'}` : '',
+    changed > 0 ? `${changed} cited source${changed === 1 ? '' : 's'} edited` : '',
+  ].filter(Boolean)
+
+  return (
+    <div role="status" className="flex shrink-0 flex-wrap items-center gap-s rounded-lg border border-outline-variant/60 bg-surface-container/60 px-3 py-2">
+      <AlertTriangle size={14} className="shrink-0" style={{ color: 'var(--color-warning)' }} />
+      <span className="min-w-0 text-on-surface-var text-[0.8125rem]">
+        {parts.join(' \u00b7 ')} since this was written{state.scope ? ` (${state.scope})` : ''}.
+      </span>
+      <Button size="xs" variant="secondary" className="ml-auto" disabled={busy}
+        ariaLabel="Regenerate this synthesis as a proposal"
+        onClick={() => {
+          setBusy(true); setOutcome('')
+          api.knowledgeRegenerate(item.id)
+            .then((r) => {
+              const p = r.proposal ?? {}
+              // `already_pending` distinguishes "yours is queued" from "one was ALREADY
+              // queued" — without it a second click reads as a second proposal, which is
+              // the duplicate the idempotence rule exists to prevent.
+              if (r.already_pending) return setOutcome('Already queued — accept it in the proposal queue.')
+              if (p.pending) return setOutcome('Queued — accept it in the proposal queue to apply.')
+              return setOutcome(p.reason || (p.applied ? 'Applied.' : 'Nothing to regenerate.'))
+            })
+            .catch((e) => setOutcome(String((e as Error)?.message || e)))
+            .finally(() => setBusy(false))
+        }}>
+        Regenerate
+      </Button>
+      {outcome && <span className="w-full text-on-surface-low text-[0.75rem]">{outcome}</span>}
+    </div>
+  )
+}
+
 export function KnowledgeDetail({ item, onChanged, onDeleted, onTagClick, onShowDetails, detailsOpen, detailsCount, onHeader, reading = false, onToggleReading, annotations = [], onAnnotationsChanged }: { item: KnowledgeItem; onChanged: () => void; onDeleted: () => void; onTagClick?: (tag: string) => void; onShowDetails?: () => void; detailsOpen?: boolean; detailsCount?: number; onHeader?: (parts: { wand: React.ReactNode; actions: React.ReactNode; editing: boolean } | null) => void; reading?: boolean; onToggleReading?: () => void; annotations?: KnowledgeAnnotation[]; onAnnotationsChanged?: () => void }) {
   const [full, setFull] = useState<KnowledgeItem>(item)
   const [editing, setEditing] = useState(false)
@@ -417,6 +486,9 @@ export function KnowledgeDetail({ item, onChanged, onDeleted, onTagClick, onShow
       {/* The title + wand + action cluster live in the dedicated page's header bar
           (published via onHeader) — not inline here, so there's a single header. */}
       {err && <FieldError>{err}</FieldError>}
+
+      {/* A stale synthesis announces itself BEFORE the reader starts reading. */}
+      <StaleSynthesisBanner item={full} />
 
       {/* Metadata row: provider/size/shape/words/age on the left, the live ingestion
           status DAG floated to the right of the same row — dropping onto its OWN line
