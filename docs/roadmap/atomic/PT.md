@@ -4,7 +4,7 @@
 **Code:** `PT`  
 **Source status:** in_progress
 
-6 atoms: S1 identity/registry/persona layer is DONE (1 atom); S2 remains as 3 independent feature atoms (sound cues, shell element, error treatments) + 1 proofs/a11y-test atom + 1 end-to-end validation atom. No cross-plan dependencies — the APP-PLATFORM-EVOLUTION seam is an out-of-scope forward hook.
+6 atoms: 5 done, 1 todo. S1's identity/registry/persona layer and S2's three feature atoms (sound cues, shell element, error treatments) plus the proofs/a11y-test atom are done; the end-to-end validation atom (PT-6) remains. No cross-plan dependencies — the APP-PLATFORM-EVOLUTION seam is an out-of-scope forward hook.
 
 Each atom below executes start-to-finish in one go. If an atom lists dependencies, they must be `done` before it starts — that is the whole point of the split: no atom should ever need pausing to go execute other work.
 

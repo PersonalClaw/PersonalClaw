@@ -2589,7 +2589,7 @@
         {
           "id": "LMMV-6",
           "title": "Session 5a \u2014 Subscription-credential model providers (credential_source resolver + one reference app)",
-          "status": "todo",
+          "status": "done",
           "scope": "\u00a78 Subscription-Credential Model Providers (am.d)",
           "done_when": "BrandedProviderSpec (sdk/provider_helpers.py) gains credential_source; _factory's credential order becomes entry.credential \u2192 options.api_key \u2192 subscription-source resolver \u2192 spec.api_key_env \u2192 anon placeholder; the resolver reads the named agent CLI's own credential store read-only (e.g. claude-code OAuth/keychain); not-logged-in fails soft/typed via providers/loader.py availability() reporting (False, 'sign in with `claude login` first') so the extensions list greys it out with the reason; ONE reference model-provider app ships (PersonalClawApps) riding CLI auth with no separate API key, sessions/models/catalogs flowing through the normal branded-app path (no agent runtime involved). NOTE CORE HALF LANDED, atom stays todo: the credential_source field, the five-hop _factory order, the read-only resolver (llm/subscription_credentials.py) and the availability() probe providers/loader.py derives from a declared credential_source are all in with tests (tests/test_subscription_credentials.py). ONLY the reference app remains, and it is a PersonalClawApps deliverable \u2014 a separate repository, unreachable from core (git ls-files apps/ is 0 here) \u2014 so the mechanism is production-INERT until one app registers a SubscriptionSource. Its exact app.json + provider.py contract is written out in the plan's Execution log entry for this session.",
           "deps": []
@@ -6205,7 +6205,7 @@
         {
           "id": "ET-2",
           "title": "Template repo content (`personalclaw/app-template`) + app-creation-guide scaffold quickstart",
-          "status": "todo",
+          "status": "done",
           "scope": "Session 1 (T1.4); Design \u2014 Template repo; Owner tasks 1 (owner pushes the org repo)",
           "done_when": "the scaffold's `--type tool` output plus apps-repo CI config and a clone-to-installed README are prepared in-tree under scratch/ (owner pushes to the org repo); apps-repo docs/app-creation-guide gains a 'minutes to first run' quickstart at the top; quickstart tested verbatim; `app new --from-template` fetches the template repo",
           "deps": [
@@ -6644,7 +6644,7 @@
         {
           "id": "EI-5",
           "title": "BYO runner data catalog + Gemini CLI runner + adapter pin/verify + Settings\u2192Agents evidence",
-          "status": "todo",
+          "status": "done",
           "scope": "\u00a73.1 runners-stay-apps + <name>.runner.json sidecar (health evidence, capability persistence from normalize_discovery, pinned+sha256 adapter bundles), Gemini first-party app via acp_bundles/_register.py; \u00a73.2 config wiring (agents.runner_* four-point); \u00a711 Session 4",
           "done_when": "SC4: Settings\u2192Agents shows Claude Code, Codex, Gemini CLI, Kiro rows with health evidence (last handshake, version, latency) + capability chips; a runner removed from PATH flips unhealthy with the verbatim probe error; an unattended spawn against an unverified adapter is refused when agents.unattended_requires_verified_adapter is on",
           "deps": []
@@ -7582,8 +7582,18 @@
         "plan": "EI"
       },
       {
-        "id": "EI-5",
-        "title": "BYO runner data catalog + Gemini CLI runner + adapter pin/verify + Settings\u2192Agents evidence",
+        "id": "EI-6",
+        "title": "Runner lifecycle (idle-release/lease/reconnect) + durable tmux-backed sessions",
+        "plan": "EI"
+      },
+      {
+        "id": "EI-7",
+        "title": "Second-opinion handoff + ProposerBackend + sandbox-internal tool gateway",
+        "plan": "EI"
+      },
+      {
+        "id": "EI-9",
+        "title": "Reviewer-comment triage primitive (line-anchored findings \u2192 accepted-subset dispatch)",
         "plan": "EI"
       },
       {
@@ -7612,11 +7622,6 @@
         "plan": "ES"
       },
       {
-        "id": "ET-2",
-        "title": "Template repo content (`personalclaw/app-template`) + app-creation-guide scaffold quickstart",
-        "plan": "ET"
-      },
-      {
         "id": "ET-4",
         "title": "Default-source seeding: ship the registry URL as a removable default git source",
         "plan": "ET"
@@ -7624,6 +7629,11 @@
       {
         "id": "ET-6",
         "title": "Build the four scaffold-generated exemplar apps and list them in the registry",
+        "plan": "ET"
+      },
+      {
+        "id": "ET-7",
+        "title": "Bounty board: labeled `bounty` issues for wanted apps, linking scaffold/guide/conformance",
         "plan": "ET"
       },
       {
@@ -7642,8 +7652,8 @@
         "plan": "KL"
       },
       {
-        "id": "LMMV-6",
-        "title": "Session 5a \u2014 Subscription-credential model providers (credential_source resolver + one reference app)",
+        "id": "LMMV-7",
+        "title": "Session 5b \u2014 Hardening: per-model context-budget helper, refresh/registry-drift/destructive-test regressions, full-matrix as-a-user validation",
         "plan": "LMMV"
       },
       {
@@ -9689,9 +9699,9 @@
         "code": "LMMV",
         "plan": "LOCAL-MODEL-MANAGER-V2",
         "total_atoms": 7,
-        "done": 5,
+        "done": 6,
         "in_progress": 0,
-        "todo": 2,
+        "todo": 1,
         "blocked": 0
       },
       {
@@ -10031,9 +10041,9 @@
         "code": "ET",
         "plan": "ECOSYSTEM-TOOLING",
         "total_atoms": 8,
-        "done": 2,
+        "done": 3,
         "in_progress": 0,
-        "todo": 6,
+        "todo": 5,
         "blocked": 0
       },
       {
@@ -10067,9 +10077,9 @@
         "code": "EI",
         "plan": "EXECUTION-ISOLATION",
         "total_atoms": 12,
-        "done": 5,
+        "done": 6,
         "in_progress": 0,
-        "todo": 7,
+        "todo": 6,
         "blocked": 0
       },
       {

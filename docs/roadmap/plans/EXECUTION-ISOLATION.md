@@ -969,3 +969,27 @@ D0 is documentation and should land immediately — an inaccurate security claim
   unproven. The docker/lima mapped-port tier is unbuilt (see the deviation above). The §6 line item
   still open from the previous session is unchanged: an over-threshold file is manifest-only by SIZE
   rather than by binary detection. `dag.json` and `EI.md` untouched (driver-owned); no push, no PR.
+
+- **2026-08-19 — `EI-5` CLOSED (`todo` → `done`); the BLOCKED line above is resolved.** That entry
+  said the atom could not close from this repo because *"the scope line's 'Gemini first-party app via
+  `acp_bundles/_register.py`' needs a bundle in `PersonalClawApps`"* and asked for an owner call on
+  whether `EI-5` closes on the catalog row alone. **The call is moot: the bundle exists.**
+  `gemini-cli-agent/` is on `PersonalClawApps@main` as `5acd4396` (PR apps#46) — `provider.py`,
+  `test_provider.py` (14 passing), `app.json`, `README.md`, `LICENSE` — so the stricter reading of
+  the clause is satisfied, not just the catalog-row reading. It registers `acp:gemini-cli` with
+  `extension: "gemini-cli-agent"`, the key Settings → Agents joins the card on, and its test reads the
+  shipped core row back through `agents.runners.definition_for_runtime("acp:gemini-cli")` with
+  `runners.user_catalog_dir` monkeypatched to a tmp path, so a BYO row in the operator's real home
+  cannot stand in for the packaged one. Core was not touched by that PR.
+
+  **One divergence recorded there, because it is a latent bug here too:** `resolve_acp_cli` never
+  appends a subcommand to an env override ("an override IS the complete argv"). For kiro that yields
+  `["/opt/kiro-cli"]` with no `acp`; for Gemini the same path would launch the interactive REPL, which
+  never answers `initialize`. The bundle re-appends `--experimental-acp` when the resolved argv lacks
+  it. **`kiro-cli-agent` carries the identical latent bug and was deliberately left alone** — outside
+  that PR's fence, worth its own fix.
+
+  **Still unmet and unchanged:** the `agents.runner_idle_release_secs` DEVIATION above (that field is
+  `EI-6`'s scope — adding it here would ship a knob with no reader), and the bundle has not been driven
+  in a live gateway, so nobody has *seen* Settings → Agents render the Gemini row; `gemini` is not on
+  this machine's PATH, so no real ACP handshake was exercised. Evidence stops at the join contract.

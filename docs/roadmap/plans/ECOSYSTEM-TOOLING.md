@@ -344,3 +344,16 @@ PR validation workflow: manifest fetch+parse (core `apps/manifest.py`), repo liv
   Also NOTE: the seeded URL 404s until the owner creates `personalclaw/registry` (Owner task 1). Measured
   cost of the dangling source on `GET /api/apps/catalog`: **0.61s then 0.52s** — git fails fast on a missing
   public repo, no credential prompt, no hang.
+
+- **2026-08-19 — `ET-2` CLOSED (`todo` → `done`).** Both halves of the done-when are on `main`, in
+  the repo each one names. Core: `scratch/app-template/` holds the `--type tool` output plus the
+  root-level apps-repo CI config, the clone-to-installed `README.md` and `.gitignore`, and
+  `cli_app_new.py:1043 from_template()` implements `--from-template` (`:1100`) as a hostile-input
+  surface — `tests/test_app_from_template.py` drives it against a **local** archive server (a
+  non-allowlisted host never reaches the network, a non-200 is refused, a redirect is refused, a
+  200 tarball extracts), so the clause is proven without depending on the org repo existing yet.
+  Apps: `docs/app-creation-guide.md` carries `## Quickstart: minutes to first run` at line 24, the
+  destination the 2026-08-18 remainder entry above chased after finding zero hits for it. The
+  remaining owner action — pushing `scratch/app-template/` to `personalclaw/app-template` — is
+  Owner task 1 and sits outside this atom's done-when, which says "prepared in-tree under
+  `scratch/` (owner pushes to the org repo)".
