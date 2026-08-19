@@ -296,3 +296,104 @@ describe('the dashboard does not skip a heading level', () => {
     expect(src).toMatch(/function Section\(/)
   })
 })
+
+// ── 2026-08-19: two more skips, and the reason this file's checks did not see them ────────────────
+//
+// `#/settings/providers` reported `h1 → h3 — "Agent providers"` at BOTH themes and at phone width, and
+// `#/settings/voice` renders `H1 > H2 > H2 > H2 > H2 > H4` in the live DOM. Both are the defect this
+// file already exists to prevent, in a third area.
+//
+// 🔑 THE TWO SKIP CHECKS ABOVE ARE SCOPED TO THE AREAS THAT WERE FIXED — `pages/tasks` and the
+// dashboard's shared `Section`. Neither looks anywhere else, so `pages/settings` was never in scope.
+// A rail scoped to the area of the last fix cannot find the next instance; the rule is what should be
+// scoped, not the folder. The check below derives its own population instead.
+//
+// 🪤 AND `ux-audit` REPORTED ONLY ONE OF THE TWO. It caught providers (whose panel reads a
+// `persist: true` key, so its headings paint immediately) and missed voice's h4 entirely — measured
+// four consecutive runs, `headings: []` each time, while the h4 sits in the DOM at 1196×20 with no
+// hidden ancestor. Its settle waits for the panel's own skeleton to clear, and voice's "Learned
+// corrections" block belongs to a NESTED, separately-fetched section that arrives after that. So a
+// heading inside a late sub-fetch is invisible to the audit — which is precisely why this check reads
+// the SOURCE and cannot race anything.
+
+describe('a panel that owns its h1 does not skip a level', () => {
+  const PAGES = join(process.cwd(), 'src/pages')
+  const walkPages = (d: string): string[] =>
+    readdirSync(d).flatMap((n) => {
+      const p = join(d, n)
+      if (statSync(p).isDirectory()) return walkPages(p)
+      return /\.tsx$/.test(n) && !/\.(test|doc)\.tsx$/.test(n) ? [p] : []
+    })
+  const strip = (s: string) => s
+    .replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '').replace(/\{\/\*[\s\S]*?\*\/\}/g, '')
+
+  /** Only files that render their OWN h1 — via `PanelHeader` or `PageTitle`. A child component whose
+   *  h1 lives in its parent route (settings' own hub, `TaskForm`, `PinnedTiles`, …) cannot be judged
+   *  from one file, and guessing would fill this rail with false positives: 15 of 25 heading-bearing
+   *  files look wrong that way and almost all are fine.
+   *
+   *  ⚠️ UNVERIFIED, deliberately out of scope: `code/CodeCockpitPage`, `workflows/IntrospectPanel`
+   *  (×6), `workflows/NodeInspectorDrawer`, `workflows/OutboxPanel` (×2) and
+   *  `workflows/WorkspacePanel` each render an `h3` with no `h2` in the file. Those are panels and
+   *  drawers the default surface does not render, so neither the audit nor a source scan can settle
+   *  them — they need a drive-open pass, not an assertion. */
+  function ownsItsH1() {
+    return walkPages(PAGES)
+      .map((abs) => ({ rel: abs.slice(PAGES.length + 1), src: strip(readFileSync(abs, 'utf8')) }))
+      .filter((f) => /<h[1-6]\b/.test(f.src) && /<PanelHeader\b|<PageTitle\b/.test(f.src))
+  }
+
+  /** The primitives the rule leans on. If either changes level, the rule's arithmetic is wrong and
+   *  these two assertions fail before the sweep can report a false verdict. */
+  it('the premises hold: PanelHeader is an h1 and Section is an h2', () => {
+    const ui = readFileSync(join(process.cwd(), 'src/pages/settings/settingsUI.tsx'), 'utf8')
+    expect(ui, 'PanelHeader must render the panel title as h1').toMatch(/<h1 className="text-on-surface"/)
+    expect(ui, 'Section must render its heading as h2').toMatch(/<h2 className=\{`mb-s text-on-surface/)
+  })
+
+  it('finds the population (not vacuously green)', () => {
+    const files = ownsItsH1().map((f) => f.rel)
+    expect(files.length, 'the scan must resolve the self-titled panels').toBeGreaterThanOrEqual(3)
+    // 🪤 `settings/ProvidersPanel` is deliberately NOT here any more: fixing its level exposed that it
+    // hand-rolled a section title at all, so it now renders `Section` and owns no heading tag — which
+    // takes it out of a population defined by "files with their own <hN>". The panel that still owns
+    // one, and the reason this check exists, is VoicePanel.
+    expect(files).toContain('settings/VoicePanel.tsx')
+  })
+
+  it('every own heading has the level above it available', () => {
+    const bad: string[] = []
+    for (const { rel, src } of ownsItsH1()) {
+      // What the file's own primitives put on the page before its hand-rolled headings.
+      const available = new Set<number>()
+      if (/<PanelHeader\b|<PageTitle\b/.test(src)) available.add(1)
+      if (/<Section\b/.test(src)) available.add(2)
+      for (const m of src.matchAll(/<h([1-6])\b/g)) {
+        const level = Number(m[1])
+        if (level > 1 && !available.has(level - 1)) bad.push(`${rel}: h${level} with no h${level - 1} above it`)
+        available.add(level)
+      }
+    }
+    expect(bad, `these skip a heading level:\n${bad.join('\n')}`).toEqual([])
+  })
+
+  it('the two fixed panels keep what replaced their skipped headings', () => {
+    // Pinned by name as well as by the sweep. VoicePanel's fix is a TAG whose size comes from its
+    // class, so an edit could "restore" the h4 without moving a pixel and nothing visual would object.
+    // 🪤 Asserted by the PROPS present, not by their order: the first version of this pinned
+    // `<Section title={label} hint={hint} icon={Icon}` and broke the moment the call was rewritten to
+    // put the count inside the title. Attribute order is incidental; what matters is which props the
+    // panel hands the primitive.
+    const providers = readFileSync(join(PAGES, 'settings/ProvidersPanel.tsx'), 'utf8')
+    const sectionCall = providers.slice(providers.indexOf('<Section'), providers.indexOf('<Section') + 400)
+    expect(sectionCall, 'the entity group renders the shared Section').toContain('<Section')
+    for (const prop of ['icon={Icon}', 'hint={hint}', '{label}']) {
+      expect(sectionCall, `it must still hand Section its ${prop}`).toContain(prop)
+    }
+    expect(sectionCall, 'with the muted tone — coral on nine decorative glyphs is a system violation')
+      .toContain('iconTone="muted"')
+    expect(/<h[1-6]\b/.test(providers), 'and writes no heading tag of its own').toBe(false)
+    const voice = readFileSync(join(PAGES, 'settings/VoicePanel.tsx'), 'utf8')
+    expect(voice, 'Learned corrections nests under its Section h2').toMatch(/<h3 [^>]*>Learned corrections<\/h3>/)
+  })
+})
