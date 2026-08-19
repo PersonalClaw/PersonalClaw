@@ -289,7 +289,13 @@ class AcpAgentProvider(ModelProvider, AgentProvider):
         # the discovery snapshot we need (no half-built client, no retired internals).
         from personalclaw.acp.session import AcpConnection
 
-        work_dir = Path.home() / ".personalclaw" / "workspace"
+        # The CONFIGURED workspace root, not a real-home literal: discovery spawns a real
+        # CLI, and ``AcpConnection.spawn`` mkdirs its cwd — so hardcoding
+        # ``Path.home()/".personalclaw"/"workspace"`` made a PERSONALCLAW_HOME-isolated
+        # gateway (or a test) create and work in the OPERATOR'S home anyway (G39).
+        from personalclaw.config.loader import workspace_root
+
+        work_dir = workspace_root()
         timeout = float(options.get("probe_timeout_secs") or 45)
         connection: "AcpConnection | None" = None
         try:
@@ -811,7 +817,13 @@ def _factory(
         )
     command = [str(part) for part in command_value]
 
-    cwd_value = options.get("cwd")
+    # Working directory is PER SESSION, exactly like the agent/model/mode/effort axes
+    # below: the bridge threads ``session.workspace_dir`` here as the ``cwd`` kwarg, and
+    # it must win over the entry-level default. Reading ONLY options.cwd dropped it, so
+    # every profile-bound turn on this path spawned its CLI in AcpClient's fallback
+    # directory instead of the workspace the session is bound to — defeating
+    # PERSONALCLAW_HOME / dev-home / test-fixture isolation for that session (G39).
+    cwd_value = str(kwargs.get("cwd") or "").strip() or options.get("cwd")
     cwd: Path | None = Path(str(cwd_value)) if cwd_value else None
 
     env_value = options.get("env") or {}

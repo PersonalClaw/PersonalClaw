@@ -5252,3 +5252,30 @@ def resolve_agent_bindings(
         triggers=list(getattr(agent_cfg, "triggers", []) or []),
         provider=provider,
     )
+
+
+def resolve_session_workspace(
+    config: "AppConfig", agent_name: str | None, current: str = ""
+) -> str:
+    """The working directory a session should carry after binding *agent_name*.
+
+    Implements ``AgentProfile.default_dir``'s declared contract verbatim — *"Empty
+    inherits the workspace root. Overridable per-session."*:
+
+    * a NON-EMPTY ``default_dir`` is the profile's own opinion and wins;
+    * an EMPTY one INHERITS — so an explicit per-session ``current`` survives, and a
+      session with none falls back to the resolved workspace root.
+
+    ``resolve_agent_bindings().workspace_dir`` cannot express this on its own: it
+    collapses both cases to a concrete path, so a caller assigning it unconditionally
+    lets a profile that declared NO directory silently relocate a session the user
+    had explicitly bound elsewhere — the G39 real-home escape, where the relocation
+    also landed outside every configured home.
+    """
+    profile = (config.agents or {}).get(agent_name) if agent_name else None
+    declared = str(getattr(profile, "default_dir", "") or "").strip() if profile else ""
+    if declared:
+        return declared
+    return str(current or "").strip() or str(
+        resolve_agent_bindings(config, agent_name).workspace_dir
+    )

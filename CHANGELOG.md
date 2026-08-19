@@ -226,6 +226,13 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
   always the same directory. If you have driven ticks outside the normal gateway, your real
   `cron-history/` may hold stray rows for job ids you do not recognise; they are inert bookkeeping
   and safe to delete once you have checked them.
+- **An agent CLI could run in your home directory instead of the folder you gave the chat.** Picking
+  an agent for a chat used to run its CLI in a hardcoded `~/.personalclaw/workspace` rather than the
+  working directory bound to that session — so files landed outside the folder you chose, and a
+  gateway or test started with `PERSONALCLAW_HOME` pointing elsewhere still wrote into the real home.
+  The session's working directory now reaches the process, agent discovery uses the configured
+  workspace, and an agent that declares no default directory of its own no longer relocates a chat
+  you had already pointed somewhere. An agent that *does* declare one still opens there, unchanged.
 
 - **"Unattended runs need a verified adapter" only covered one kind of unattended run.** The switch
   promised to refuse background work onto an external agent CLI whose ACP adapter has no verified
