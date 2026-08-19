@@ -8,6 +8,15 @@ const { findPersonalclawBin } = require("./find-bin");
 const { attachContextMenu } = require("./context-menu");
 const { IPC_CHANNELS, makeCapabilities, registerCapabilityIpc } = require("./capabilities");
 const { makePushToTalk, registerPushToTalkIpc } = require("./pushToTalk");
+const {
+  DEEP_LINKS,
+  summarizePresence,
+  makeTrayPresence,
+  shouldHideOnClose,
+  shouldQuitOnAllWindowsClosed,
+} = require("./trayPresence");
+const { makeLoginItem, registerLoginItemIpc } = require("./loginItem");
+const { shutdownGateway } = require("./gatewayShutdown");
 
 /**
  * Resolve the user's real login-shell PATH.
@@ -53,14 +62,18 @@ const POLL_INTERVAL_MS = 500;
 const MAX_WAIT_MS = 120_000; // 2 min max wait for backend
 const PERSONALCLAW_HOME = process.env.PERSONALCLAW_HOME || path.join(os.homedir(), ".personalclaw");
 const TAB_BAR_HEIGHT = 28; // macOS native tab bar height in px
+/** How often the menu bar refreshes its approvals/loops counts (DC-4 T4.1). */
+const PRESENCE_REFRESH_MS = 5000;
+/** How long quit waits for the gateway to stop before escalating (DC-4 T4.3). */
+const GATEWAY_GRACE_MS = 8000;
 
 // Set app name for macOS menu bar and dock
 app.name = "PersonalClaw";
 
 let mainWindow = null;
-let tray = null;
 let gatewayProcess = null;
 let isQuitting = false;
+let presenceTimer = null;
 let backendUrl = null; // resolved from the gateway's READY line once bound
 
 // ── Backend lifecycle ──
@@ -159,12 +172,28 @@ function startGateway() {
   });
 }
 
-function stopGateway() {
-  if (gatewayProcess) {
-    console.log("Stopping gateway...");
-    gatewayProcess.kill("SIGTERM");
-    gatewayProcess = null;
-  }
+/**
+ * Stop the gateway and WAIT for it (DC-4 T4.3).
+ *
+ * The shell spawned this process, so quit is the one moment its data can be torn in
+ * half. This used to be `kill("SIGTERM")` followed immediately by dropping the
+ * handle inside a synchronous `before-quit` — which never learned whether the child
+ * exited, and (spawned `detached: false`, so with no process group of its own) left
+ * an orphan gateway holding the port whenever SIGTERM was slow to land. The waiting
+ * and the SIGKILL escalation live in `gatewayShutdown.js`; the outcome is logged so a
+ * quit that MIGHT have orphaned something says so.
+ */
+async function stopGateway() {
+  const child = gatewayProcess;
+  if (!child) return { outcome: "none" };
+  gatewayProcess = null;
+  const result = await shutdownGateway({
+    child,
+    graceMs: GATEWAY_GRACE_MS,
+    log: (msg) => console.log(`gateway shutdown: ${msg}`),
+  });
+  console.log(`Gateway shutdown outcome: ${result.outcome}`);
+  return result;
 }
 
 // ── Capability bridge ↔ gateway registration (DC-2) ──
@@ -227,15 +256,20 @@ const pushToTalk = makePushToTalk({
  * `title` (text beside the icon) rather than only a tooltip: a tooltip requires a
  * hover to discover, and "you have to go looking for it" disqualifies an indicator
  * whose whole job is to be noticed without being sought.
+ *
+ * Since DC-4 the title has exactly ONE writer (`composeTrayTitle` in
+ * `trayPresence.js`), because the approvals badge wants the same pixels. Capture wins
+ * there: an approvals count can wait a second, a live-microphone indicator cannot.
+ *
+ * ORDERING: `trayPresence` is declared further down this file, so this function must
+ * not be called during module evaluation. It cannot be — `onCapturing` fires only from
+ * `setCapturing`/`clearCapturing`, which run on Electron events, and every one of
+ * those is after the module finished loading. Keep it that way: a synchronous caller
+ * added above the `trayPresence` declaration would be a temporal-dead-zone crash at
+ * startup, not a lint error.
  */
 function setCaptureIndicator(on) {
-  if (!tray) return;
-  try {
-    tray.setTitle(on ? "● Listening" : "");
-    tray.setToolTip(on ? "PersonalClaw is listening — press the shortcut again to stop" : "PersonalClaw");
-  } catch {
-    /* tray may be destroyed during shutdown */
-  }
+  trayPresence.setCapturing(on);
 }
 
 /** Read the gateway's per-session local secret. Same-user filesystem access is the
@@ -559,8 +593,11 @@ function createWindow() {
   mainWindow = makeWindow();
   setupWindowContents(mainWindow);
 
+  // Hiding on close is only safe while the menu bar can bring the window back, so
+  // the decision reads the tray's real availability rather than assuming macOS has
+  // one (DC-4). With no tray this closes for real.
   mainWindow.on("close", (e) => {
-    if (!isQuitting) {
+    if (shouldHideOnClose({ trayAvailable: trayPresence.available, isQuitting })) {
       e.preventDefault();
       mainWindow.hide();
     }
@@ -569,22 +606,153 @@ function createWindow() {
   return mainWindow;
 }
 
-function createTray() {
-  const iconPath = path.join(__dirname, "icon.png");
-  const icon = nativeImage.createFromPath(iconPath).resize({ width: 18, height: 18 });
-  tray = new Tray(icon);
-  tray.setToolTip("PersonalClaw");
-  tray.setContextMenu(
-    Menu.buildFromTemplate([
-      { label: "Show PersonalClaw", click: () => mainWindow?.show() },
-      { type: "separator" },
-      { label: "New Tab", click: () => openNewTab() },
-      { label: "Merge All Windows", click: () => mergeAllWindows() },
-      { type: "separator" },
-      { label: "Quit", click: () => { isQuitting = true; app.quit(); } },
-    ])
-  );
-  tray.on("click", () => mainWindow?.show());
+// ── Menu-bar presence (DC-4 T4.1) ──
+
+/** Bring the window forward, creating nothing: the tray is presence, not a spawner. */
+function showMainWindow() {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  if (!mainWindow.isVisible()) mainWindow.show();
+  mainWindow.focus();
+}
+
+/**
+ * Deep-link the dashboard SPA from the menu bar.
+ *
+ * The dashboard is hash-routed, so a link is a hash assignment rather than a reload —
+ * reloading would throw away the live WS connection and any in-flight chat turn just
+ * to change route. `mainWindow.webContents` is the ACTIVE tab's contents (assigned in
+ * `setupWindowContents`), so this follows the tab the user is actually looking at.
+ *
+ * The hash comes from `DEEP_LINKS`, a closed map, and any interpolated id is
+ * `encodeURIComponent`-ed there before `JSON.stringify` quotes it here — a loop name
+ * from the gateway never reaches the page as code.
+ */
+function deepLink(hash) {
+  showMainWindow();
+  const wc = mainWindow?.webContents;
+  if (!wc || wc.isDestroyed?.()) return;
+  try {
+    wc.executeJavaScript(`window.location.hash = ${JSON.stringify(String(hash))}`);
+  } catch (err) {
+    console.warn(`deep link to ${hash} failed: ${err.message}`);
+  }
+}
+
+/**
+ * "Open at login" (DC-4 T4.3). Opt-in, reversible, idempotent — see `loginItem.js`
+ * for exactly what it registers with the OS. Nothing enables it implicitly: the only
+ * callers are the tray checkbox and the Settings bridge, both user actions.
+ */
+const loginItem = makeLoginItem({
+  app,
+  log: (msg) => console.warn(`login item: ${msg}`),
+});
+
+/**
+ * The menu-bar item. Electron's pieces are injected so the menu, the title
+ * arbitration and the degradation paths are unit-testable without launching an app
+ * (`test/trayPresence.test.js`).
+ *
+ * `trayPresence.available` is load-bearing beyond cosmetics: window-close hides the
+ * window instead of closing it, which is only safe while a menu-bar item exists to
+ * bring it back. A tray that fails to build therefore changes the close behavior
+ * rather than leaving a phantom hidden window.
+ */
+const trayPresence = makeTrayPresence({
+  TrayCtor: Tray,
+  MenuCtor: Menu,
+  nativeImageMod: nativeImage,
+  iconPath: path.join(__dirname, "icon.png"),
+  log: (msg) => console.warn(`tray: ${msg}`),
+  actions: {
+    open: () => showMainWindow(),
+    deepLink: (hash) => deepLink(hash),
+    // Quick capture routes to the Inbox with a capture intent. The note-writing half
+    // is NOT ours to invent: no endpoint creates an inbox item from text (every
+    // /api/inbox POST acts on an existing item), and the attention-path contracts
+    // belong to INBOX/Notifications-Unification. Minting POST /api/inbox/capture here
+    // would be a consumer defining its owner's contract.
+    quickCapture: () => deepLink(`${DEEP_LINKS.inbox}?capture=1`),
+    toggleLoginItem: (next) => {
+      const result = loginItem.set(next);
+      if (!result.ok && result.reason) console.warn(`login item unchanged: ${result.reason}`);
+      // Re-read rather than assume: the checkbox must show what the OS did, not what
+      // the click asked for.
+      trayPresence.setLoginItemState({ supported: loginItem.supported, enabled: loginItem.isEnabled() });
+    },
+    quit: () => {
+      isQuitting = true;
+      app.quit();
+    },
+  },
+});
+
+/** GET JSON from the loopback gateway. Resolves null on any failure — a menu-bar
+ * refresh must never be able to throw into the app. */
+function getGateway(pathname) {
+  return new Promise((resolve) => {
+    if (!backendUrl) return resolve(null);
+    let url;
+    try {
+      url = new URL(pathname, backendUrl);
+    } catch {
+      return resolve(null);
+    }
+    const req = http.request(
+      {
+        hostname: url.hostname,
+        port: url.port,
+        path: `${url.pathname}${url.search}`,
+        method: "GET",
+        timeout: 3000,
+      },
+      (res) => {
+        let buf = "";
+        res.on("data", (c) => (buf += c));
+        res.on("end", () => {
+          if (res.statusCode !== 200) return resolve(null);
+          try {
+            resolve(JSON.parse(buf));
+          } catch {
+            resolve(null);
+          }
+        });
+      }
+    );
+    req.on("error", () => resolve(null));
+    req.on("timeout", () => {
+      req.destroy();
+      resolve(null);
+    });
+    req.end();
+  });
+}
+
+/**
+ * Refresh the live counts. `GET /api/approvals` is a bare array; `GET /api/loops` is
+ * `{loops: [...]}` — both shapes are folded by `summarizePresence`, which renders a
+ * failed poll as "not connected" rather than as a zero that looks like good news.
+ */
+async function refreshPresence() {
+  if (!trayPresence.available) return;
+  const [approvals, loops] = await Promise.all([getGateway("/api/approvals"), getGateway("/api/loops")]);
+  trayPresence.setPresence(summarizePresence(approvals, loops));
+}
+
+/** Start the presence poll. Polling the loopback API (not the WS) is deliberate: the
+ * menu bar needs a low-frequency count, and a poll cannot leave a half-open socket
+ * behind on quit. */
+function startPresenceRefresh() {
+  if (!trayPresence.available || presenceTimer) return;
+  refreshPresence();
+  presenceTimer = setInterval(refreshPresence, PRESENCE_REFRESH_MS);
+}
+
+function stopPresenceRefresh() {
+  if (presenceTimer) {
+    clearInterval(presenceTimer);
+    presenceTimer = null;
+  }
 }
 
 // ── Loading screen ──
@@ -737,8 +905,16 @@ if (!app.requestSingleInstanceLock()) {
     // the RENDERER (it is the process that reads `voice.push_to_talk_chord` from the
     // gateway), so the shell never has to parse config to know what to listen for.
     registerPushToTalkIpc(ipcMain, pushToTalk, IPC_CHANNELS);
+    // The login item's bridge half (DC-4), so Settings can drive the same toggle the
+    // tray checkbox drives. Its own channels, not the capability vocabulary's.
+    registerLoginItemIpc(ipcMain, loginItem, IPC_CHANNELS);
 
-    createTray();
+    // Menu-bar presence. A failed tray is reported, not fatal — and it changes the
+    // window-close behavior below so the window can never become unreachable.
+    if (!trayPresence.start()) {
+      console.warn("running without menu-bar presence — the window will close on close");
+    }
+    trayPresence.setLoginItemState({ supported: loginItem.supported, enabled: loginItem.isEnabled() });
     const win = createWindow();
 
     try {
@@ -750,6 +926,9 @@ if (!app.requestSingleInstanceLock()) {
     // failure here leaves the gateway reporting "not connected" — degraded but
     // honest — and never blocks the window.
     await registerWithGateway();
+    // Counts need `backendUrl`, so the poll starts after the gateway is up. With no
+    // gateway the menu simply reads "not connected".
+    startPresenceRefresh();
     await showLoadingThenConnect(win);
 
     app.on("activate", () => {
@@ -762,18 +941,45 @@ if (!app.requestSingleInstanceLock()) {
   });
 }
 
-app.on("before-quit", () => {
+/** Set once the async shutdown has run, so the second `before-quit` lets go. */
+let shutdownComplete = false;
+
+/**
+ * Graceful quit (DC-4 T4.3).
+ *
+ * `before-quit` is synchronous, so waiting for the gateway means taking the quit back
+ * once: `preventDefault()`, run the shutdown, then `app.quit()` again — which fires
+ * this handler a second time, now with `shutdownComplete` set, and the app exits for
+ * real. Without the deferral Electron tears the process down while the gateway is
+ * still flushing, which is the difference between "we sent SIGTERM" and "the gateway
+ * stopped".
+ */
+app.on("before-quit", (event) => {
   isQuitting = true;
+  if (shutdownComplete) return;
+  event.preventDefault();
+
   // Release the chord and take the indicator down before the tray is torn out from
   // under it — a quit that left "● Listening" as the last thing drawn would be the
   // one moment the indicator is guaranteed to be lying.
   pushToTalk.unbind();
   pushToTalk.clearCapturing();
+  stopPresenceRefresh();
   unregisterFromGateway();
-  stopGateway();
+
+  stopGateway()
+    .catch((err) => console.warn(`gateway shutdown failed: ${err.message}`))
+    .finally(() => {
+      trayPresence.destroy();
+      shutdownComplete = true;
+      app.quit();
+    });
 });
 
 app.on("window-all-closed", () => {
-  // macOS: keep running in tray
-  if (process.platform !== "darwin") app.quit();
+  // macOS keeps running with no windows ONLY because the menu-bar item is still there
+  // to bring one back. With no tray, staying alive is the phantom state.
+  if (shouldQuitOnAllWindowsClosed({ platform: process.platform, trayAvailable: trayPresence.available })) {
+    app.quit();
+  }
 });

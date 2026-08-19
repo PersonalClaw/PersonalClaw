@@ -9,6 +9,51 @@ Everything the shell adds is a *capability*, granted individually and visible in
 **Settings → Security → Desktop capabilities**. In a browser tab that panel says "desktop
 app not connected" and none of this applies.
 
+## The menu-bar item
+
+The shell puts an icon in the macOS menu bar and keeps it there while PersonalClaw is
+running. Its menu is live, refreshed every few seconds from the local gateway:
+
+- **Approvals waiting** — how many tool approvals are pending. Clicking the row opens
+  the chat surface where they are answered. It stays clickable at zero, so it is a way
+  in rather than a row that greys out the moment you catch up.
+- **Loops running** — a submenu of the loops currently `running`; each entry deep-links
+  to that loop. Paused, blocked and awaiting-input loops are *not* counted here — they
+  are active, but nothing is working on them.
+- **Quick Capture Note** — opens the Inbox ready to capture. *(The note-writing half is
+  not built yet; today this is a shortcut to the Inbox.)*
+- **Open Dashboard**, **Open at Login**, and **Quit PersonalClaw**.
+
+When the count beside the icon and the "● Listening" capture indicator want the same
+space, **listening always wins** — a live microphone is never hidden behind a badge.
+
+If the gateway cannot be reached the menu says **"not connected"** rather than showing
+zeroes, because a zero looks like good news.
+
+### Closing the window is not quitting
+
+Closing the window hides it; the menu-bar item brings it back, and PersonalClaw keeps
+running. If the menu-bar item could not be created — a missing icon, or a platform
+without one — the shell notices and closes the window for real instead, so you can
+never end up with a running app you have no way to reach.
+
+## Open PersonalClaw at login
+
+**Off by default.** Turn it on from the menu bar's **Open at Login**, and off from the
+same place. It registers this app with macOS Login Items — the same list in **System
+Settings → General → Login Items**, where you can also remove it without launching
+PersonalClaw. It needs no administrator password, writes no launch agent of its own, and
+turning it on twice cannot leave two entries behind.
+
+## Quitting shuts the gateway down, not off
+
+The desktop app starts its own gateway, so quitting has to stop it in the right order.
+Quit asks the gateway to shut down and then **waits for it to actually exit** before the
+app goes away, rather than sending a signal and disappearing — the difference between a
+clean stop and a half-finished write. A gateway that will not stop is escalated after a
+few seconds, and if it still will not, the app says so in its log rather than pretending
+the quit was clean.
+
 ## Push-to-talk
 
 Press the shortcut, speak, press it again. The recording is transcribed by whichever
