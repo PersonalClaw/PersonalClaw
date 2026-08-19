@@ -1174,7 +1174,7 @@
         {
           "id": "MRI-5",
           "title": "V2 owner validation: drive the surface from a real MCP-enabled client end-to-end",
-          "status": "todo",
+          "status": "done",
           "scope": "Session 2 \u2014 V2 + Owner tasks (real-world validation client)",
           "done_when": "A real MCP-enabled client (IDE MCP config or mcp CLI) on the same machine connects over loopback, exercises all six tools, trips the rate cap, flips the kill switch mid-session, and SEL + inbound_audit.jsonl trails match design; remote access still refused without allow_remote + public_url; validation ledger written. (Owner-gated: requires an MCP client installed on the machine.)",
           "deps": [
@@ -7672,11 +7672,6 @@
         "plan": "MI"
       },
       {
-        "id": "MRI-5",
-        "title": "V2 owner validation: drive the surface from a real MCP-enabled client end-to-end",
-        "plan": "MRI"
-      },
-      {
         "id": "MRT-3",
         "title": "Usage/spend read model \u2014 fold, /api/usage, Usage UI, monthly recap",
         "plan": "MRT"
@@ -9586,9 +9581,9 @@
         "code": "MRI",
         "plan": "MCP-READONLY-INBOUND",
         "total_atoms": 5,
-        "done": 4,
+        "done": 5,
         "in_progress": 0,
-        "todo": 1,
+        "todo": 0,
         "blocked": 0
       },
       {
