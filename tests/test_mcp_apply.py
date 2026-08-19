@@ -37,7 +37,7 @@ class TestSetPersonalclawEntry:
         from personalclaw.dashboard.handlers import mcp as mcp_mod
 
         mc_path = tmp_path / "personalclaw.mcp.json"
-        monkeypatch.setattr(mcp_mod, "_PERSONALCLAW_MCP_JSON", mc_path)
+        monkeypatch.setattr(mcp_mod, "_canonical_mcp_json", lambda: mc_path)
         action = mcp_mod._set_personalclaw_entry("srv", enabled=True, spec={"command": "x"})
         assert action == "added"
         assert json.loads(mc_path.read_text())["mcpServers"]["srv"] == {"command": "x"}
@@ -47,7 +47,7 @@ class TestSetPersonalclawEntry:
 
         mc_path = tmp_path / "personalclaw.mcp.json"
         mc_path.write_text(json.dumps({"mcpServers": {"srv": {"command": "x"}}}))
-        monkeypatch.setattr(mcp_mod, "_PERSONALCLAW_MCP_JSON", mc_path)
+        monkeypatch.setattr(mcp_mod, "_canonical_mcp_json", lambda: mc_path)
         action = mcp_mod._set_personalclaw_entry("srv", enabled=False)
         assert action == "disabled"
         assert json.loads(mc_path.read_text())["mcpServers"]["srv"]["disabled"] is True
@@ -57,7 +57,7 @@ class TestSetPersonalclawEntry:
 
         mc_path = tmp_path / "personalclaw.mcp.json"
         mc_path.write_text(json.dumps({"mcpServers": {"srv": {"command": "x", "disabled": True}}}))
-        monkeypatch.setattr(mcp_mod, "_PERSONALCLAW_MCP_JSON", mc_path)
+        monkeypatch.setattr(mcp_mod, "_canonical_mcp_json", lambda: mc_path)
         action = mcp_mod._set_personalclaw_entry("srv", enabled=True)
         assert action == "enabled"
         assert "disabled" not in json.loads(mc_path.read_text())["mcpServers"]["srv"]
@@ -66,7 +66,7 @@ class TestSetPersonalclawEntry:
         from personalclaw.dashboard.handlers import mcp as mcp_mod
 
         mc_path = tmp_path / "personalclaw.mcp.json"
-        monkeypatch.setattr(mcp_mod, "_PERSONALCLAW_MCP_JSON", mc_path)
+        monkeypatch.setattr(mcp_mod, "_canonical_mcp_json", lambda: mc_path)
         action = mcp_mod._set_personalclaw_entry("srv", enabled=False, spec={"command": "x"})
         assert action == "disabled"
         entry = json.loads(mc_path.read_text())["mcpServers"]["srv"]
@@ -143,7 +143,7 @@ class TestApplyEndpoint:
         )
         agent_path.write_text(json.dumps({"mcpServers": {}}))
 
-        monkeypatch.setattr(mcp_mod, "_PERSONALCLAW_MCP_JSON", mc_path)
+        monkeypatch.setattr(mcp_mod, "_canonical_mcp_json", lambda: mc_path)
         monkeypatch.setattr(mcp_mod, "_GLOBAL_MCP_JSON", global_path)
         monkeypatch.setattr(mcp_mod, "_CC_GLOBAL_JSON", cc_path)
         # Point _find_server_spec_anywhere's lookup list at our tmp paths.
@@ -203,7 +203,7 @@ class TestApplyEndpoint:
         for p in (mc_path, global_path, cc_path):
             p.write_text(json.dumps({"mcpServers": {"foo": {"command": "f"}}}))
 
-        monkeypatch.setattr(mcp_mod, "_PERSONALCLAW_MCP_JSON", mc_path)
+        monkeypatch.setattr(mcp_mod, "_canonical_mcp_json", lambda: mc_path)
         monkeypatch.setattr(mcp_mod, "_GLOBAL_MCP_JSON", global_path)
         monkeypatch.setattr(mcp_mod, "_CC_GLOBAL_JSON", cc_path)
         # Prevent the handler from shelling out to a real `personalclaw`
@@ -238,7 +238,7 @@ class TestApplyEndpoint:
     async def test_calls_rebuild_agent_config_once(self, tmp_path, monkeypatch):
         from personalclaw.dashboard.handlers import mcp as mcp_mod
 
-        monkeypatch.setattr(mcp_mod, "_PERSONALCLAW_MCP_JSON", tmp_path / "mc.json")
+        monkeypatch.setattr(mcp_mod, "_canonical_mcp_json", lambda: tmp_path / "mc.json")
         monkeypatch.setattr(mcp_mod, "_GLOBAL_MCP_JSON", tmp_path / "global_mcp.json")
         monkeypatch.setattr(mcp_mod, "_CC_GLOBAL_JSON", tmp_path / "cc.json")
         # The last change is an uninstall that would try to run
@@ -293,7 +293,7 @@ class TestApplyEndpoint:
             json.dumps({"mcpServers": {"cc-srv": {"command": "npx", "args": ["cc-mcp"]}}})
         )
 
-        monkeypatch.setattr(mcp_mod, "_PERSONALCLAW_MCP_JSON", mc_path)
+        monkeypatch.setattr(mcp_mod, "_canonical_mcp_json", lambda: mc_path)
         monkeypatch.setattr(mcp_mod, "_GLOBAL_MCP_JSON", global_path)
         monkeypatch.setattr(mcp_mod, "_CC_GLOBAL_JSON", cc_path)
 
@@ -369,7 +369,7 @@ class TestHostileNameRejection:
         mc_path = tmp_path / "mc.json"
         global_path = tmp_path / "global_mcp.json"
         cc_path = tmp_path / "cc.json"
-        monkeypatch.setattr(mcp_mod, "_PERSONALCLAW_MCP_JSON", mc_path)
+        monkeypatch.setattr(mcp_mod, "_canonical_mcp_json", lambda: mc_path)
         monkeypatch.setattr(mcp_mod, "_GLOBAL_MCP_JSON", global_path)
         monkeypatch.setattr(mcp_mod, "_CC_GLOBAL_JSON", cc_path)
         # Trap: if the handler tries to shell out despite the name-gate, fail loudly.
@@ -418,7 +418,7 @@ class TestHostileNameRejection:
         from personalclaw.dashboard.handlers import mcp as mcp_mod
 
         mc_path = tmp_path / "mc.json"
-        monkeypatch.setattr(mcp_mod, "_PERSONALCLAW_MCP_JSON", mc_path)
+        monkeypatch.setattr(mcp_mod, "_canonical_mcp_json", lambda: mc_path)
         monkeypatch.setattr(mcp_mod, "_GLOBAL_MCP_JSON", tmp_path / "global_mcp.json")
         monkeypatch.setattr(mcp_mod, "_CC_GLOBAL_JSON", tmp_path / "cc.json")
         monkeypatch.setattr(mcp_mod, "_find_server_spec_anywhere", lambda n: {"command": "x"})

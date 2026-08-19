@@ -24,7 +24,7 @@ def test_claude_json_not_a_silent_discovery_source(tmp_path, monkeypatch):
     cc = tmp_path / ".claude.json"
     _write(cc, {"cc-only": {"command": "npx", "args": ["cc-mcp"]}})
     # Only PClaw scopes are discovery sources now (no claude.json).
-    monkeypatch.setattr(disc, "_MCP_JSON_PATHS", (tmp_path / "mcp.json",))
+    monkeypatch.setattr(disc, "_mcp_json_paths", lambda: (tmp_path / "mcp.json",))
     monkeypatch.setattr(disc, "_load_agent_config", lambda: {})
     names = {s.name for s in disc.list_servers()}
     assert "cc-only" not in names
@@ -42,7 +42,7 @@ def test_discover_importable_returns_cc_servers_not_in_pclaw(tmp_path, monkeypat
     )
     monkeypatch.setattr(disc, "_IMPORT_JSON_PATHS", ((cc, "Claude Code"),))
     # No PClaw-scope servers configured.
-    monkeypatch.setattr(disc, "_MCP_JSON_PATHS", (tmp_path / "nope.json",))
+    monkeypatch.setattr(disc, "_mcp_json_paths", lambda: (tmp_path / "nope.json",))
     monkeypatch.setattr(disc, "_load_agent_config", lambda: {})
 
     out = disc.discover_importable_servers()
@@ -60,7 +60,7 @@ def test_discover_importable_excludes_already_known(tmp_path, monkeypatch):
     pclaw = tmp_path / "mcp.json"
     _write(pclaw, {"shared": {"command": "npx"}})
     monkeypatch.setattr(disc, "_IMPORT_JSON_PATHS", ((cc, "Claude Code"),))
-    monkeypatch.setattr(disc, "_MCP_JSON_PATHS", (pclaw,))
+    monkeypatch.setattr(disc, "_mcp_json_paths", lambda: (pclaw,))
     monkeypatch.setattr(disc, "_load_agent_config", lambda: {})
 
     assert disc.discover_importable_servers() == []
@@ -68,6 +68,6 @@ def test_discover_importable_excludes_already_known(tmp_path, monkeypatch):
 
 def test_discover_importable_no_source_file(tmp_path, monkeypatch):
     monkeypatch.setattr(disc, "_IMPORT_JSON_PATHS", ((tmp_path / "absent.json", "Claude Code"),))
-    monkeypatch.setattr(disc, "_MCP_JSON_PATHS", (tmp_path / "nope.json",))
+    monkeypatch.setattr(disc, "_mcp_json_paths", lambda: (tmp_path / "nope.json",))
     monkeypatch.setattr(disc, "_load_agent_config", lambda: {})
     assert disc.discover_importable_servers() == []
