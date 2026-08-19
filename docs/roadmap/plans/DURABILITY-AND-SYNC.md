@@ -2043,3 +2043,125 @@ half) is live and safe today; only cross-machine DELETE convergence waits on thi
   `PERSONALCLAW_HOME` and `PERSONALCLAW_WORKSPACE` to a tmp path — `net.fetch` writes a SEL
   audit row per egress decision, so the s3 suite would otherwise have written into the real
   home on every request.
+---
+
+## Execution log — DAS-9 (§5 workspace time-travel) — **PARTIAL**
+
+- [2026-08-18][DAS-9] **DONE — the engine, the seam, the debounce, rollback/revert/preview, the
+  hourly memory commit, the endpoints and the panel.** New `durability/state_history.py` (roots,
+  per-root repo, deny-by-default ignore, commit, timeline, preview, rollback, revert, forward refs)
+  and `durability/history_debounce.py` (adaptive 10s→0 debounce, serialized per root). The seam is
+  `atomic_write.register_post_write_hook` at the single `_atomic_write` callsite, which covers both
+  `atomic_write` and `atomic_write_bytes`; a failing hook cannot fail a write and a hook that writes
+  cannot recurse. `run_history_commit()` joins `run_due_jobs` on its own `last_history` hourly key
+  (§3's deferred piece), attributed `scheduled`. Three routes: `GET /api/durability/history`,
+  `GET …/{root}/timeline`, `POST …/{root}/{rollback|revert}`. FE: Settings → Backups → **Time
+  travel** (root picker, timeline, "what changed while I slept" filter, rendered diff preview,
+  rollback + revert). Config: `durability.time_travel` (all five legs — dataclass + `_meta`,
+  `load()` fail-open, `to_dict()`, `_EDITABLE_CONFIG` PATCH, FE toggle).
+
+- [2026-08-18][DAS-9] **DESIGN — the repo is a separate git DIR, never a `.git` in the user's tree.**
+  `git init --bare <home>/state-history/<root>.git` + `core.bare=false` + `--work-tree=<the tree>`,
+  so nothing appears inside the home or the workspace and no other subsystem (or the user's own
+  tooling) can trip over one. The ignore rules live in `<gitdir>/info/exclude`, which is also why
+  "secrets are gitignored" is structural rather than a maintained denylist: the `config` root's work
+  tree IS the home, and its exclude is `/*` then `!/config.json` + `!/entity_settings/` — the
+  credential store and `.local_secret` are never re-included, so no future edit can leak them.
+  `GIT_CONFIG_NOSYSTEM=1` + `GIT_CONFIG_GLOBAL=/dev/null` + `core.hooksPath=` keeps the user's
+  global config (a `hooksPath`, a signing requirement) out of the history path. Every git call
+  asserts its git dir sits under `<home>/state-history` and ends in `.git`; no code path accepts a
+  caller-supplied git dir, because this module runs `reset --hard` for a living.
+
+- [2026-08-18][DAS-9] **BOTH HALVES OF THE SECRET CLAIM ARE PROVEN, and they are proven differently.**
+  (1) *Never committed*: `test_a_secret_never_enters_a_commit_object` walks `rev-list --all --objects`
+  and `cat-file -p`s every blob in both the `config` and `skills` repos, asserting no
+  `.env`/`credentials` path and no secret bytes anywhere in history — `ls-files` would have missed a
+  secret committed once and removed later. (2) *Preserved across a rollback*: `reset --hard` only
+  rewrites TRACKED paths and this module never runs `git clean`, so the ignored `.env` and
+  `security/credentials.json` survive with unchanged bytes. Falsified by adding
+  `git clean -fdx` after the reset → *"AssertionError: the ignored secret was deleted by the
+  rollback"* plus a `FileNotFoundError` on the credential store.
+
+- [2026-08-18][DAS-9] **"NEVER SYNCS" IS PROVEN BY BUILDING THE ENTRY SET, not by reading a list.**
+  `state-history` joins `inventory.IGNORED` (beside `sync` and `shards`) — IGNORED rather than
+  declared, because a declared entry would put a git object database into every export and grafting
+  one machine's undo history onto another's tree is the opposite of one-writer-per-mechanism. The
+  rail runs the REAL `shards.export_shards()` over a home with a POPULATED history (vacuity floor:
+  >10 history files and a non-zero commit count) and asserts no produced path or byte derives from
+  it, plus `audit_home()` stays green. Falsified two ways: dropping `"state-history"` from IGNORED
+  reds the audit rail (`assert inv.is_ignored('state-history')` → False), and DECLARING it as a
+  plain `tree` entry reds both export rails (`assert '.git' not in '{...pid\n.git/\n'` — the
+  history's own exclude file inside a shard).
+
+- [2026-08-18][DAS-9] **THE DEBOUNCE IS DRIVEN BY AN INJECTED CLOCK, never by sleeping.**
+  `HistoryDebouncer` owns no time: it takes `clock` + `committer` and is driven by
+  `run_pending(now=…)`, which a one-line daemon thread calls on a 0.5s cadence in production. So the
+  collapse is measured, not timed — five writes inside the window produce ZERO commits, and one pass
+  after the window produces exactly one commit carrying `writes=5`. Serialization is measured with a
+  barrier: two threads are held inside the committer and the second observes `skipped: "busy"`, with
+  `peak == 1` and the skipped work re-armed rather than lost (a depth-1 queue per root). Both rails
+  carry their own vacuity check — `test_the_rail_fails_when_the_debounce_is_disabled` drives the same
+  writes with everything forced due and asserts three separate commits, and falsifying
+  `delay_for_writes` to `return 0.0` reds the collapse rail
+  (`assert [{'root': 'co...': True, ...}] == []`) while falsifying the per-root lock to a fresh
+  `threading.Lock()` reds the serialization rail (*"the second pass must observe the root as BUSY —
+  otherwise this rail never exercised the lock and proves nothing"*).
+
+- [2026-08-18][DAS-9] **THE MANDATORY PREVIEW IS SERVER-ENFORCED, not a frontend convention.**
+  One endpoint per operation, two phases: no `confirm` returns the preview and touches nothing, and
+  a confirming request must echo the `expected_head` that preview returned. A caller therefore
+  cannot produce a valid confirm without having received a preview, and a preview that went stale is
+  refused (409 `preview_stale`) rather than applied to a tree the user never saw. Falsified on both
+  sides: neutering the server check (`if False and expected != prev["head"]`) reds two route rails
+  (`assert 200 == 409`), and making the panel send `''` as the head reds the FE rail (*expected
+  "durabilityHistoryApply" to be called with …*).
+
+- [2026-08-18][DAS-9] **BUG FOUND AND FIXED IN MY OWN CODE: `str.splitlines()` eats `\x1e`.**
+  `forward_refs` formatted `for-each-ref` records with `\x1e` (ASCII record separator) and read them
+  back with `splitlines()` — which treats `\x1e` as a LINE boundary, so every record shattered into
+  single fields and the function returned `[]` over a repo that demonstrably held the ref. The git
+  command was correct and its stdout was correct; only the parse was wrong, which is exactly the
+  shape that reads as "the feature does not work". Field separator is now `\x1f` with an explicit
+  `split("\n")`.
+
+- [2026-08-18][DAS-9] **DISCOVERY — an isolated home does NOT confine the workspace, and this plan's
+  own service tests were exposed.** `tests/test_durability_service.py`'s autouse `_isolate` set only
+  `PERSONALCLAW_HOME`; `workspace_root()` falls through to the real
+  `~/workplace/personalclaw-workspace`, so the new hourly job would have taken the developer's REAL
+  memory notes as a git work tree. Verified no damage on this machine (no `.git` and no
+  `state-history` anywhere under the real home or workspace) and pinned `PERSONALCLAW_WORKSPACE` in
+  that fixture, so the next job to reach the workspace inherits the isolation instead of
+  rediscovering this. Three existing scheduling assertions were updated for the new cadence key
+  (`last_history`), and `test_the_hourly_job_comes_due_before_the_nightly` now names both hourly
+  jobs rather than one.
+
+- [2026-08-18][DAS-9] **UNMET, deliberately, with evidence.**
+  (1) **`plan_memory/`** from the §5 root list **does not exist in the codebase** — `grep -rn
+  "plan_memory" src/` returns nothing — so it is not a root. Declaring one would be dead code.
+  (2) **The `background` writing surface has no producer.** `state_history.writing_surface()` +
+  `_dominant_surface` carry it end to end and the hourly job sets `scheduled`, so the panel's "what
+  changed while I slept" filter is non-vacuous today; but nothing yet wraps an unattended trigger
+  dispatch in `writing_surface(SURFACE_BACKGROUND)`. The signal exists —
+  `guardrails.policy.is_unattended_session` (`gateway.py:256`) — and wiring it is a one-line change
+  at `gateway.py:975`'s dispatch, deliberately left out of this atom's fence.
+  (3) **Criterion 6's `git log -p` half is met; its "restore the memory tree via the panel" half is
+  met for a whole root, not for a file subset** — `rollback`/`revert` operate on a root, and a
+  per-file restore is not built.
+  (4) **`state-history` lives at `<home>/state-history/`, not `<home>/backups/state-history/`**
+  (DEVIATION): no `backups/` directory exists in the home — the tar output is `snapshots/` — so a
+  new nesting level would have been invented for one consumer.
+  (5) **Not driven through a live gateway.** Proven by unit + route + FE-render rails only.
+
+- [2026-08-18][DAS-9] **Gates:** `make lint` exit 0 (black 1792 files, isort, flake8, mypy 921
+  source files) · `scripts/gate_report.py` **all 3 gates pass** (config-baseline regenerated for
+  `durability.time_travel`; inert-surface and docs-lint needed nothing) ·
+  `pytest tests/test_durability_state_history.py tests/test_durability_inventory.py
+  tests/test_durability_service.py tests/test_config_roundtrip.py tests/test_config_baseline.py
+  tests/test_portability.py tests/test_durability_shards.py tests/test_durability_dsar_routes.py
+  tests/test_durability_conflict_review.py tests/test_durability_convergence_e2e.py
+  tests/test_snapshot.py` → **402 passed**, real-home rail clean · web:
+  `npm run typecheck && npm test && npm run build` all green. 🪤 A first attempt at the pytest leg
+  reported **"no tests ran"** twice — once for a test path that does not exist
+  (`tests/test_atomic_write.py`) and once because zsh does not word-split an unquoted `$PATHS` — an
+  unrun leg wearing a pass's clothes. Every path is now verified individually with `ls` before the
+  run.

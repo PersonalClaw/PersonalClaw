@@ -901,6 +901,12 @@ IGNORED: tuple[str, ...] = (
     # mid-cycle — a self-referential synced store.
     "sync",
     "shards",  # shard export output (S2)
+    # Time-travel's git repositories (§5). IGNORED, not declared: this history is
+    # LOCAL-ONLY by design — one writer per mechanism, and the shard/sync layer is
+    # the cross-machine story. Declaring it would put a git object database into
+    # every export and every transport, and restoring it onto a second machine
+    # would graft one machine's undo history onto another's live tree.
+    "state-history",
     "locks",  # runtime lock files
     "__pycache__",
     "*.log",

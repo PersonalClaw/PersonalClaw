@@ -37,6 +37,23 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
   created, closing the window closes it for real rather than hiding it, so a failed tray can
   never leave a running app with no way back to its window.
   *Quick Capture opens the Inbox for now; writing the note itself is not built yet.*
+- **Undo a bad edit instead of restoring a backup.** PersonalClaw now keeps a local, continuous
+  git history of the state you and the assistant actually edit — configuration and entity settings,
+  `skills/`, prompts and prompt snippets, per-project context, and the memory markdown tree. A commit
+  is scheduled about ten seconds after a write and tightens toward immediate under sustained editing,
+  so history costs nothing and lags nothing; the memory tree is also committed hourly, which bounds
+  how much memory history can ever be missing to one hour. Settings → Backups → **Time travel** shows
+  the per-root timeline with a "what changed while I slept" filter, and offers two distinct verbs:
+  **roll back** (go to a point in time; the changes you set aside stay listed, so you can come
+  forward) and **undo just this** (reverse one change and keep later edits, failing loudly and
+  changing nothing if a later edit touched the same lines). Both are preview-first and the *server*
+  enforces it — a confirming request must echo the head the preview returned, so nothing destructive
+  can run against a tree you did not see, and a preview that went stale is refused rather than
+  applied. Secrets are excluded from the history structurally (each repository ignores everything and
+  re-includes only the declared paths) and are **preserved across a rollback** — your credential
+  store and `.env` are never committed and never deleted. This history is local-only: it is never
+  synced, exported, or included in a snapshot. New setting `durability.time_travel` (on by default;
+  needs `git` installed, and degrades to "no history" without it).
 
 - **Apps can subscribe to platform events they declare.** An app that declares
   `permissions.eventSubscriptions` now receives `session.created`, `knowledge.ingested` and

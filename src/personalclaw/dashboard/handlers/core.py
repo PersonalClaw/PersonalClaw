@@ -629,6 +629,7 @@ _EDITABLE_CONFIG: dict[str, dict] = {
     "durability.keep_weekly": {"type": "int", "min": 0, "max": 260},
     "durability.keep_monthly": {"type": "int", "min": 0, "max": 120},
     "durability.restore_drills": {"type": "bool"},
+    "durability.time_travel": {"type": "bool"},
     # DURABILITY-AND-SYNC §4 — sync knobs. sync_enabled is fail-closed in load(); the
     # transport is a free-text provider name (validated against installed transports at
     # cycle time, not here — an unknown name simply leaves sync idle).

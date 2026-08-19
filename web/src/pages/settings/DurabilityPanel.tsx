@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { epochSeconds } from '../../lib/epoch'
-import { AlertTriangle, HardDriveDownload, Loader2, ShieldAlert, ShieldCheck, ShieldQuestion } from 'lucide-react'
+import { AlertTriangle, History, HardDriveDownload, Loader2, ShieldAlert, ShieldCheck, ShieldQuestion } from 'lucide-react'
 import {
   api,
   type DurabilityArchive,
@@ -8,12 +8,14 @@ import {
   type DurabilityConflict,
   type DurabilityConflictChoice,
   type DurabilityConflicts,
+  type DurabilityHistoryEntry,
+  type DurabilityHistoryPreview,
   type DurabilityStatus,
   type SettingsProvider,
 } from '../../lib/api'
 import { notify } from '../../app/appSdk'
 import { useCachedData } from '../../lib/useCachedData'
-import { PanelHeader, Section, Row, Toggle, SavedToast } from './settingsUI'
+import { PanelHeader, Section, Row, Toggle, ToggleRow, SavedToast } from './settingsUI'
 import { NumberField, Select } from '../../ui/forms'
 import { Button } from '../../ui/Button'
 import { fvs } from '../../design/fontWeight'
@@ -75,6 +77,7 @@ export function DurabilityPanel() {
       <ScheduleSection cfg={cfg} setCfg={setCfg} status={data.status} />
       <RetentionSection cfg={cfg} setCfg={setCfg} snaps={data.snaps} />
       <ArchiveSection snaps={data.snaps} onChanged={refresh} />
+      <TimeTravelSection cfg={cfg} setCfg={setCfg} />
       <SyncSection cfg={cfg} setCfg={setCfg} status={data.status} transports={data.transports} />
       <ConflictsSection read={data.conflicts} onChanged={refresh} />
     </div>
@@ -90,6 +93,241 @@ function settle<T>(p: Promise<T>): Promise<Settled<T>> {
   return p.then(
     (value) => ({ ok: true as const, value }),
     (e: unknown) => ({ ok: false as const, error: e instanceof Error ? e.message : String(e) }),
+  )
+}
+
+
+// ── Time travel (DURABILITY-AND-SYNC §5) ────────────────────────────────────
+
+/** The undo surface for the state a human edits.
+ *
+ *  Distinct from the archive browser above on purpose: that one restores a whole
+ *  home from a nightly tarball (a disaster tool), this one walks a per-root commit
+ *  timeline and undoes one change (a mistake tool). Two different questions, so two
+ *  different sections rather than one screen that tries to be both.
+ *
+ *  The destructive buttons are two-phase and the SERVER enforces it: this panel
+ *  cannot apply anything without first holding the `expected_head` that a preview
+ *  handed back, so "preview before you destroy" is not a promise the frontend keeps
+ *  on its own.
+ *
+ *  Rollback and revert are offered as distinct verbs with distinct copy because they
+ *  do different things to later edits — rollback discards them, revert keeps them.
+ *  Collapsing them into one "undo" button would make the difference invisible at the
+ *  moment it matters most. */
+function TimeTravelSection({ cfg, setCfg }: {
+  cfg: Record<string, unknown>
+  setCfg: (c: Record<string, unknown>) => void
+}) {
+  const patch = usePatch(cfg, setCfg, () => {})
+  const on = cfg.time_travel !== false
+  const [root, setRoot] = useState('config')
+  const [sleptOnly, setSleptOnly] = useState(false)
+  const [pending, setPending] = useState<
+    { entry: DurabilityHistoryEntry; op: 'rollback' | 'revert'; head: string; preview: DurabilityHistoryPreview } | null
+  >(null)
+  const [busy, setBusy] = useState(false)
+
+  const status = useCachedData('settings:history', () => api.durabilityHistory(), { persist: false })
+  const timeline = useCachedData(
+    `settings:history:${root}:${sleptOnly ? 'slept' : 'all'}`,
+    () => api.durabilityHistoryTimeline(root, { limit: 30, unattended: sleptOnly }),
+    { persist: false },
+  )
+
+  const hint = 'A local, continuous history of the things you and the assistant edit — so a bad edit is an undo, not a restore. It stays on this machine: it is never synced, exported, or included in a backup, and it never records secrets.'
+
+  const takePreview = async (entry: DurabilityHistoryEntry, op: 'rollback' | 'revert') => {
+    setBusy(true)
+    try {
+      const r = await api.durabilityHistoryPreview(root, op, entry.sha)
+      setPending({ entry, op, head: r.expected_head, preview: r.preview })
+    } catch (e) {
+      notify(`Couldn't read what that would change: ${String((e as Error)?.message || e)}`, 'error')
+    }
+    setBusy(false)
+  }
+
+  const apply = async () => {
+    if (!pending) return
+    const { entry, op, head } = pending
+    if (!(await confirm({
+      title: op === 'rollback' ? 'Roll back to this point?' : 'Undo just this change?',
+      body: op === 'rollback'
+        ? `Everything in ${root} goes back to how it was at "${entry.subject}". The ${pending.preview.commits_rolled_away} change(s) made since are set aside — they stay listed here, so you can come forward again. Nothing outside this history is touched, and your saved credentials are untouched.`
+        : `This one change is undone by applying its opposite. Anything edited afterwards is kept. If a later edit touched the same lines, nothing is applied and you will be told which file blocked it.`,
+      confirmLabel: op === 'rollback' ? 'Roll back' : 'Undo it',
+      danger: op === 'rollback',
+    }))) return
+    setBusy(true)
+    try {
+      const r = await api.durabilityHistoryApply(root, op, entry.sha, head)
+      notify(
+        r.reload_required
+          ? 'Done. Restart PersonalClaw for the change to take effect everywhere.'
+          : 'Done.',
+        'success',
+      )
+      setPending(null)
+      timeline.refresh()
+      status.refresh()
+    } catch (e) {
+      // The server refuses an overlap and a stale preview by name. Neither is "done",
+      // and neither leaves a half-applied tree — say so rather than a generic failure.
+      notify(`Nothing was changed: ${String((e as Error)?.message || e)}`, 'error')
+    }
+    setBusy(false)
+  }
+
+  const roots = status.data?.roots ?? []
+  const gitMissing = status.data ? status.data.git === false : false
+
+  return (
+    <Section title="Time travel" hint={hint} icon={History}>
+      <div className="rounded-lg bg-surface-container px-4 py-1">
+        <ToggleRow
+          label="Keep a local edit history"
+          hint="Records configuration, skills, prompts, project context and memory notes as they change, roughly ten seconds after you stop typing. Off means no history is recorded from now on; what is already recorded is kept."
+          cfg={cfg}
+          field="time_travel"
+          patch={patch} />
+      </div>
+
+      {gitMissing && (
+        <div className="mt-3 flex items-start gap-2 rounded-lg bg-surface-container px-4 py-3 text-[0.8125rem]" style={{ color: 'var(--color-warn)' }}>
+          <AlertTriangle size={14} className="mt-0.5 shrink-0" aria-hidden />
+          <span>Time travel needs <code>git</code> installed, and this machine has none. Nothing is being recorded.</span>
+        </div>
+      )}
+
+      {on && !gitMissing && (
+        <div className="mt-3 rounded-lg bg-surface-container px-4 py-3">
+          <div className="flex flex-wrap items-end gap-4">
+            <label className="flex min-w-0 flex-col gap-1 text-[0.75rem] text-on-surface-low">
+              What to look through
+              <Select
+                value={root}
+                ariaLabel="What to look through"
+                onChange={(v) => { setRoot(v); setPending(null) }}
+                options={roots.map((r) => ({
+                  value: r.id,
+                  label: `${r.label}${r.exists ? ` — ${r.commits} recorded change${r.commits === 1 ? '' : 's'}` : ' — nothing recorded yet'}`,
+                }))} />
+            </label>
+            <Row label="Only what changed while I slept"
+              hint="Changes made by scheduled or background work, rather than by you at the dashboard.">
+              <Toggle on={sleptOnly} onChange={setSleptOnly} label="Only what changed while I slept" />
+            </Row>
+          </div>
+
+          {timeline.error ? (
+            <div className="mt-3 text-[0.8125rem]" style={{ color: 'var(--color-error)' }}>
+              The history could not be read ({errorText(timeline.error)}). That is not the same
+              as having no history.
+            </div>
+          ) : null}
+
+          {timeline.data && timeline.data.entries.length === 0 && (
+            <p className="mt-3 text-on-surface-low text-[0.8125rem]">
+              {sleptOnly
+                ? 'Nothing changed here while you were away.'
+                : timeline.data.commits === 0
+                  ? 'Nothing recorded here yet. The first edit you make will show up.'
+                  : 'No changes match this filter.'}
+            </p>
+          )}
+
+          {timeline.data && timeline.data.entries.length > 0 && (
+            <ul className="mt-3 flex list-none flex-col gap-3 p-0">
+              {timeline.data.entries.map((entry, i) => (
+                <li key={entry.sha} className="border-outline-var border-t pt-3 first:border-t-0 first:pt-0">
+                  <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+                    <span className="min-w-0 flex-1 truncate text-on-surface text-[0.8125rem]" style={fvs(550)}>
+                      {entry.subject}
+                    </span>
+                    <span className="shrink-0 text-on-surface-low text-[0.75rem]">
+                      {relativeTime(entry.at)}
+                      {entry.unattended ? ' · while you were away' : ''}
+                    </span>
+                  </div>
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    {/* The newest commit IS the current state, so rolling back to it would be a
+                        no-op button — offered only from the second row down. */}
+                    {i > 0 && (
+                      <Button variant="secondary" size="sm" disabled={busy}
+                        onClick={() => takePreview(entry, 'rollback')}>
+                        See going back to here
+                      </Button>
+                    )}
+                    <Button variant="secondary" size="sm" disabled={busy}
+                      onClick={() => takePreview(entry, 'revert')}>
+                      See undoing just this
+                    </Button>
+                  </div>
+
+                  {pending?.entry.sha === entry.sha && (
+                    <PreviewCard preview={pending.preview} op={pending.op} busy={busy}
+                      onApply={apply} onCancel={() => setPending(null)} />
+                  )}
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
+    </Section>
+  )
+}
+
+/** The mandatory preview, rendered. A file whose diff exceeded the server's render
+ *  budget is LISTED with its size rather than shown as an empty diff — "no changes"
+ *  and "too big to show" must never look the same on a screen that gates a
+ *  destructive action. */
+/** A caught `unknown` rendered as text. `String(e)` on an Error gives "Error: ..." and on a
+ *  plain object gives "[object Object]"; neither belongs on screen. */
+function errorText(e: unknown): string {
+  return e instanceof Error ? e.message : typeof e === 'string' ? e : 'unknown error'
+}
+
+function PreviewCard({ preview, op, busy, onApply, onCancel }: {
+  preview: DurabilityHistoryPreview
+  op: 'rollback' | 'revert'
+  busy: boolean
+  onApply: () => void
+  onCancel: () => void
+}) {
+  return (
+    <div className="mt-2 rounded-md bg-surface px-3 py-2">
+      <p className="text-on-surface-low text-[0.75rem]">
+        {op === 'rollback'
+          ? `${preview.files.length} file(s) would change, and ${preview.commits_rolled_away} later change(s) would be set aside.`
+          : `${preview.files.length} file(s) would change. Later edits are kept.`}
+      </p>
+      {preview.files.length === 0 && (
+        <p className="mt-1 text-on-surface-low text-[0.75rem]">Nothing would change.</p>
+      )}
+      <ul className="mt-2 flex list-none flex-col gap-2 p-0">
+        {preview.files.map((f) => (
+          <li key={f.path}>
+            <div className="truncate text-on-surface text-[0.75rem]" style={fvs(550)}>{f.path}</div>
+            {f.rendered ? (
+              <pre className="mt-1 max-h-48 overflow-auto rounded bg-surface-container px-2 py-1 text-[0.6875rem] leading-snug"><code>{f.diff}</code></pre>
+            ) : (
+              <div className="mt-1 text-on-surface-low text-[0.6875rem]">
+                Too large to show here ({formatSize(f.bytes)}).
+              </div>
+            )}
+          </li>
+        ))}
+      </ul>
+      <div className="mt-3 flex flex-wrap gap-2">
+        <Button variant={op === 'rollback' ? 'danger' : 'primary'} size="sm" disabled={busy}
+          onClick={onApply}>
+          {op === 'rollback' ? 'Roll back' : 'Undo it'}
+        </Button>
+        <Button variant="secondary" size="sm" disabled={busy} onClick={onCancel}>Cancel</Button>
+      </div>
+    </div>
   )
 }
 

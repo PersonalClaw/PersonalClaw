@@ -210,6 +210,73 @@ export interface DurabilityConflict {
   resolution: string
   resolved_at: string
 }
+/** One tracked state tree in the time-travel history (DURABILITY-AND-SYNC §5). */
+export interface DurabilityHistoryRoot {
+  id: string
+  label: string
+  worktree: string
+  exists: boolean
+  commits: number
+  memory: boolean
+}
+export interface DurabilityHistoryStatus {
+  enabled: boolean
+  git: boolean
+  dir: string
+  roots: DurabilityHistoryRoot[]
+}
+/** `unattended` is the "what changed while I slept" flag — the commit's writes came
+ *  from a scheduled or background surface, not from someone at the dashboard. */
+export interface DurabilityHistoryEntry {
+  sha: string
+  short: string
+  at: number
+  subject: string
+  surface: string
+  unattended: boolean
+}
+export interface DurabilityHistoryTimeline {
+  root: string
+  label: string
+  commits: number
+  entries: DurabilityHistoryEntry[]
+  forward_refs: { ref: string; sha: string; at: number }[]
+}
+/** `rendered: false` means the diff exceeded the server's render budget: it is listed
+ *  with its size, never silently shown as empty. */
+export interface DurabilityHistoryDiffFile {
+  path: string
+  status: string
+  bytes: number
+  rendered: boolean
+  diff: string
+}
+export interface DurabilityHistoryPreview {
+  operation: 'rollback' | 'revert'
+  root: string
+  target: string
+  head: string
+  files: DurabilityHistoryDiffFile[]
+  commits_rolled_away: number
+  reversible: boolean
+}
+/** Phase one of the two-phase contract: the preview, plus the `expected_head` a
+ *  confirming call must echo. There is no way to apply without first holding this. */
+export interface DurabilityHistoryPreviewResponse {
+  confirmed: boolean
+  expected_head: string
+  preview: DurabilityHistoryPreview
+}
+export interface DurabilityHistoryResult {
+  ok: boolean
+  operation: string
+  root: string
+  head: string
+  prior_head?: string
+  prior_ref?: string
+  reverted?: string
+  reload_required: boolean
+}
 export interface DurabilityConflicts {
   conflicts: DurabilityConflict[]
   truncated: boolean
@@ -3265,6 +3332,31 @@ export const api = {
     const q = qs.toString()
     return get<DurabilityConflicts>(`/api/durability/conflicts${q ? `?${q}` : ''}`)
   },
+  // ── Time travel (DURABILITY-AND-SYNC §5) ──
+  durabilityHistory: () => get<DurabilityHistoryStatus>('/api/durability/history'),
+  durabilityHistoryTimeline: (root: string, opts: { limit?: number; unattended?: boolean } = {}) => {
+    const q = new URLSearchParams()
+    if (opts.limit) q.set('limit', String(opts.limit))
+    if (opts.unattended) q.set('unattended', '1')
+    const qs = q.toString()
+    return get<DurabilityHistoryTimeline>(
+      `/api/durability/history/${encodeURIComponent(root)}/timeline${qs ? `?${qs}` : ''}`,
+    )
+  },
+  /** Phase one. Sends no `confirm`, so the server returns the preview and touches nothing. */
+  durabilityHistoryPreview: (root: string, op: 'rollback' | 'revert', sha: string) =>
+    post<DurabilityHistoryPreviewResponse>(
+      `/api/durability/history/${encodeURIComponent(root)}/${op}`, { sha },
+    ),
+  /** Phase two. `expected_head` MUST be the value phase one returned — the server refuses a
+   *  preview that went stale rather than applying it to a tree the user never saw. */
+  durabilityHistoryApply: (
+    root: string, op: 'rollback' | 'revert', sha: string, expectedHead: string,
+  ) =>
+    post<DurabilityHistoryResult>(
+      `/api/durability/history/${encodeURIComponent(root)}/${op}`,
+      { sha, confirm: true, expected_head: expectedHead },
+    ),
   /** Writes the chosen version into the live store. `confirm: true` is required for every
    *  choice — the server refuses without it, so this never sends it implicitly. */
   resolveDurabilityConflict: (id: string, choice: DurabilityConflictChoice) =>

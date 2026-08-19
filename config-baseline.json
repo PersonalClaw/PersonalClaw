@@ -449,6 +449,12 @@
     "type": "str"
   },
   {
+    "default": true,
+    "path": "durability.time_travel",
+    "sensitive": false,
+    "type": "bool"
+  },
+  {
     "default": 30,
     "path": "evals.ablation_cadence_days",
     "sensitive": false,

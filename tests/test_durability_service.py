@@ -28,6 +28,15 @@ def _snap(directory: Path, when: datetime, *, size: int = 100) -> Path:
 def _isolate(tmp_path, monkeypatch):
     monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path / "home"))
     (tmp_path / "home").mkdir(parents=True, exist_ok=True)
+    # 🪤 AN ISOLATED HOME DOES NOT CONFINE THE WORKSPACE. `workspace_root()` reads
+    # `PERSONALCLAW_WORKSPACE` first and otherwise falls through to the platform default
+    # — the developer's REAL `~/workplace/personalclaw-workspace`. Harmless while every
+    # job here only touched the home; DAS-9's history job takes the memory workspace as a
+    # git work tree, so an unpinned workspace would point it at real user notes. Pinned
+    # here rather than in that one test, because the next job to reach the workspace
+    # should inherit the isolation rather than rediscover this.
+    monkeypatch.setenv("PERSONALCLAW_WORKSPACE", str(tmp_path / "ws"))
+    (tmp_path / "ws").mkdir(parents=True, exist_ok=True)
     yield
 
 
@@ -481,16 +490,22 @@ class TestScheduling:
         import time
 
         now = time.time()
-        service.save_state({"last_export": now, "last_snapshot": now, "last_drill": now})
+        service.save_state(
+            {"last_export": now, "last_snapshot": now, "last_drill": now, "last_history": now}
+        )
         assert service.run_due_jobs(now=now + 60) == []
 
     def test_the_hourly_job_comes_due_before_the_nightly(self):
         import time
 
         now = time.time()
-        service.save_state({"last_export": now, "last_snapshot": now, "last_drill": now})
+        service.save_state(
+            {"last_export": now, "last_snapshot": now, "last_drill": now, "last_history": now}
+        )
         jobs = [r.job for r in service.run_due_jobs(now=now + service.HOURLY_SECS + 1)]
-        assert jobs == ["incremental_export"]
+        # Two jobs share the hourly cadence now — the shard export and DAS-9's memory
+        # history commit — and neither nightly nor monthly is due yet.
+        assert jobs == ["incremental_export", "history_commit"]
 
     def test_a_failed_drill_is_still_stamped(self, tmp_path):
         """Otherwise a failing drill retries every tick and buries the user in
@@ -512,7 +527,7 @@ class TestScheduling:
         from personalclaw.config.loader import DurabilityConfig
 
         monkeypatch.setattr(service, "_cfg", lambda: DurabilityConfig(restore_drills=False))
-        service.save_state({"last_export": 9e9, "last_snapshot": 9e9})
+        service.save_state({"last_export": 9e9, "last_snapshot": 9e9, "last_history": 9e9})
         assert [r.job for r in service.run_due_jobs()] == []
 
 
@@ -712,6 +727,9 @@ class TestConfigContract:
         # field here or on the dataclass: it lives in the credential store, so there is
         # nothing for a PATCH to carry.
         "sync_encrypt",
+        # §5 (DAS-9) — the time-travel switch. Its FE control is the Time Travel
+        # section of Settings → Backups, so it completes all five legs.
+        "time_travel",
     )
 
     def test_every_field_is_patchable(self):
