@@ -38,6 +38,7 @@ from personalclaw.dashboard.chat_utils import (
     _redact_for_display,
     _remove_queued_by_id,
     _sync_dashboard_sessions,
+    apply_task_mode,
     resolve_history_key,
 )
 from personalclaw.dashboard.state import (
@@ -2390,12 +2391,33 @@ async def api_chat_task_mode(request: web.Request) -> web.Response:
         if session_name is not None
         else list(state._sessions.values())
     )
+    # A chat inside the plan walkthrough may not be relaxed out of `plan` by this
+    # control: while a step's review gate is open, the no-execute guarantee IS the plan
+    # task mode, so letting the pill drop it would make that guarantee decorative. The
+    # exits are Approve and Cancel, both named here (CC-8).
+    if mode != "plan":
+        from personalclaw.dashboard import chat_plan
+
+        gated = [s.key for s in targets if chat_plan.awaiting_review(s.key)]
+        if gated:
+            return web.json_response(
+                {
+                    "error": {
+                        "code": "plan_awaiting_approval",
+                        "message": (
+                            "This chat's plan is awaiting your review — approve it or "
+                            "cancel plan mode to change the task mode."
+                        ),
+                    },
+                    "sessions": gated,
+                },
+                status=409,
+            )
     for session in targets:
-        session._task_mode = mode
-        # Push to the runtime so its tool gate enforces the mode regardless of
-        # approval (native runtime gates in _guard_and_invoke, before approval —
-        # so a Trust/YOLO auto-approve can't bypass an ask/plan/build restriction).
-        state.sessions.set_task_mode(f"dashboard:{session.key}", mode)
+        # One write path for both postures — the session's own and the runtime's (the
+        # native runtime gates in _guard_and_invoke, before approval, so a Trust/YOLO
+        # auto-approve can't bypass an ask/plan/build restriction).
+        apply_task_mode(state, session, mode)
     try:
         sel().log_api_access(
             caller="dashboard:task-mode",

@@ -10,6 +10,17 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Added
 
+- **Plan a task before anything runs, from the chat you are already in.** The composer's **Add** menu
+  gains **Plan this first**: the chat drafts a plan, hands it to you as editable markdown, and runs
+  nothing until you approve it. You can rewrite the plan by hand, comment to have it redrafted, or
+  approve it and watch the work follow what you approved. It is manual only — a quick question is
+  never interrupted by a planning step — and the no-execute promise is enforced by the same tool gate
+  that backs `ask`/`plan` task modes, not by asking the model nicely: while a plan is awaiting review a
+  mutating tool is refused, and the task-mode pill declines to drop out of `plan` until you approve or
+  cancel. Turning it on mid-task parks the run in flight, keeps the whole transcript, and continues
+  from your approved plan. It reuses the planning walkthrough the loops already use, so there is one
+  planner in the product rather than two.
+
 - **See everything your agents are doing at a glance.** The dashboard gains an **Agent world** — an
   ambient scene where every running loop, live chat and background subagent is a body in orbit,
   pulled toward the centre as it starts to want you: waiting on you nearest, then waiting for
