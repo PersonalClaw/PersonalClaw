@@ -629,6 +629,7 @@ _EDITABLE_CONFIG: dict[str, dict] = {
     "durability.keep_weekly": {"type": "int", "min": 0, "max": 260},
     "durability.keep_monthly": {"type": "int", "min": 0, "max": 120},
     "durability.restore_drills": {"type": "bool"},
+    "durability.time_travel": {"type": "bool"},
     # Sync knobs. sync_enabled is fail-closed in load(); the
     # transport is a free-text provider name (validated against installed transports at
     # cycle time, not here — an unknown name simply leaves sync idle).
@@ -773,6 +774,7 @@ _EDITABLE_CONFIG: dict[str, dict] = {
     # The SDLC post-gate check-work hook. Off by default; on, a
     # passing stage gate additionally re-derives checks from the stage's own claims.
     "loops.check_work_stages": {"type": "bool"},
+    "loops.worktree_sparse": {"type": "bool"},
     "inbox.engagement_ranking_enabled": {"type": "bool"},
     "inbox.engagement_half_life_days": {"type": "float", "min": 0.0, "max": 365.0},
     # Gates the poll-based message sources (filesystem/channel apps). The UI

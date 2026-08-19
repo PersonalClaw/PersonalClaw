@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest'
 import { render } from '@testing-library/react'
-import { readFileSync } from 'node:fs'
+import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { NativeAgentDetail } from '../pages/agents/AgentDetail'
 import type { SavedAgent } from '../lib/api'
@@ -130,5 +130,114 @@ describe('the canonical form has one shape across the family', () => {
     const rail = read('pages/tasks/scrollRegionKeyboard.test.tsx')
     expect(rail).toMatch(/column scroll region must own a tab stop/)
     expect(rail, 'and it asserts the same trio').toMatch(/toBe\('group'\)/)
+  })
+})
+
+// ── 2026-08-19: the same defect in the SHARED markdown blocks, and a derived census ───────────────
+//
+// The census above was hand-listed, so it held the two regions that cycle fixed and nothing else.
+// `#/settings/updates` at 390px then failed `scrollable-region-focusable` — on a surface the capture
+// inventory had never held (19 of 31 settings sections were missing from `surfaces.json`; adding them
+// is what surfaced this). Measured by TAB TRAVERSAL, not `el.focus()`:
+//
+//   before   focus lands on <pre role=null>, computed name = 122 chars of the code inside it
+//   after    focus lands on <pre role="group" aria-label="bash code">, content untouched
+//
+// The offender was `ui/Markdown`'s CodeBlock — a SHARED primitive, so this was every fenced code block
+// in the app (chat replies, release notes, prompt previews, docs), not one panel. Five sites took the
+// trio: Markdown's diff and code blocks, the mermaid fallback (the diagram's source when rendering
+// fails), `ApprovalPrompt`'s argument payload — whose own comment says "on the phone this text IS the
+// decision" — and `UpdatesPanel`'s command block.
+//
+// 🔑 NAMES ARE THE SURFACE'S OWN WORDS, as this file's earlier half insists: the code block reuses the
+// language its header already displays (`bash code`), the diff block says `Diff`.
+
+describe('the scrollable <pre> family is derived, not hand-listed', () => {
+  const SRC = join(process.cwd(), 'src')
+  const walkTsx = (d: string): string[] =>
+    readdirSync(d).flatMap((n) => {
+      const p = join(d, n)
+      if (statSync(p).isDirectory()) return walkTsx(p)
+      return /\.tsx$/.test(n) && !/\.(test|doc)\.tsx$/.test(n) ? [p] : []
+    })
+
+  /** Complete `<pre …>` openings, brace-aware: a `[^>]*>` matcher stops at the `>` inside
+   *  `{(info.instructions?.length ? … )}` and would report every site as attribute-less. */
+  function preTags(src: string): string[] {
+    const out: string[] = []
+    for (const m of src.matchAll(/<pre\b/g)) {
+      let depth = 0
+      for (let i = m.index! + m[0].length; i < src.length; i++) {
+        const ch = src[i]
+        if (ch === '{') depth++
+        else if (ch === '}') depth--
+        else if (ch === '>' && depth === 0) { out.push(src.slice(m.index!, i + 1)); break }
+      }
+    }
+    return out
+  }
+
+  function census() {
+    const named: string[] = [], xScroll: string[] = [], yCapped: string[] = []
+    for (const abs of walkTsx(SRC)) {
+      for (const tag of preTags(readFileSync(abs, 'utf8'))) {
+        if (!/overflow/.test(tag)) continue
+        const rel = abs.slice(SRC.length + 1)
+        if (/tabIndex=\{0\}/.test(tag) && /aria-label/.test(tag)) { named.push(rel); continue }
+        // `whitespace-pre-wrap` removes horizontal overflow, so such a box scrolls only when a
+        // `max-h-*` cap is exceeded — latent, and axe flags it only once it actually does.
+        if (!/whitespace-pre-wrap/.test(tag)) xScroll.push(rel)
+        else if (/max-h-/.test(tag)) yCapped.push(rel)
+      }
+    }
+    return { named, xScroll, yCapped }
+  }
+
+  /** x-scrolling boxes still unnamed. Each verified as horizontally scrollable and nameless; none
+   *  overflows with this dev home's data, so axe does not flag them yet — latent, not clean. They are
+   *  page-level one-offs rather than shared primitives, which is why this cycle stopped here. */
+  const PENDING = new Set([
+    'pages/code/DiffReveal.tsx',
+    'pages/code/TypingReveal.tsx',
+    'pages/settings/DoctorPanel.tsx',
+    'pages/settings/DurabilityPanel.tsx',
+    'pages/skills/SkillInspector.tsx',
+  ])
+
+  it('finds the population (not vacuously green)', () => {
+    const { named, xScroll, yCapped } = census()
+    expect(named.length + xScroll.length + yCapped.length,
+      'the <pre> scan must resolve the scrollable boxes').toBeGreaterThanOrEqual(20)
+    expect(named.length, 'and the named ones this cycle added').toBeGreaterThanOrEqual(6)
+  })
+
+  it('every horizontally-scrolling <pre> is named, or is a listed pending one-off', () => {
+    const { xScroll } = census()
+    const mute = [...new Set(xScroll)].filter((rel) => !PENDING.has(rel))
+    expect(mute, `these scroll sideways and would be announced as their own content:\n${mute.join('\n')}`)
+      .toEqual([])
+  })
+
+  it('the shared primitives are named — one fix covering every call site', () => {
+    const shared: [string, RegExp][] = [
+      ['ui/Markdown.tsx', /aria-label="Diff"/],
+      ['ui/Markdown.tsx', /aria-label=\{lang \? `\$\{lang\} code` : 'Code'\}/],
+      ['ui/widget/MermaidBlock.tsx', /aria-label="Diagram source"/],
+      ['ui/ApprovalPrompt.tsx', /aria-label="Tool arguments"/],
+      ['pages/settings/UpdatesPanel.tsx', /aria-label="Update commands"/],
+    ]
+    for (const [rel, re] of shared) {
+      const src = readFileSync(join(SRC, rel), 'utf8')
+      expect(src, `${rel} must carry its region name`).toMatch(re)
+      // The trio, not just a name: a named box that is not a `group` still takes its name from content.
+      expect(preTags(src).some((t) => /tabIndex=\{0\}/.test(t) && /role="group"/.test(t)),
+        `${rel} must pair the name with tabIndex={0} + role="group"`).toBe(true)
+    }
+  })
+
+  it('the pending list is not stale — every entry is still unnamed and still x-scrolling', () => {
+    const { xScroll } = census()
+    const fixed = [...PENDING].filter((rel) => !xScroll.includes(rel))
+    expect(fixed, `these are handled now — prune them from PENDING:\n${fixed.join('\n')}`).toEqual([])
   })
 })

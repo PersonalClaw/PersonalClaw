@@ -675,6 +675,78 @@ async def _run_eval(args: argparse.Namespace) -> None:
     print(f"\nResults saved to:\n  {report_path}\n  {json_path}")
 
 
+def _parse_csv_ints(raw: str, default: tuple[int, ...]) -> tuple[int, ...]:
+    """``"1,3"`` → ``(1, 3)``. A blank falls back to ``default``; a non-integer raises,
+    because silently dropping ``"3x"`` would run a narrower matrix than the user asked
+    for and report it as the one they asked for."""
+    if not raw:
+        return default
+    return tuple(int(part.strip()) for part in raw.split(",") if part.strip())
+
+
+def _parse_csv(raw: str, default: tuple[str, ...]) -> tuple[str, ...]:
+    if not raw:
+        return default
+    return tuple(part.strip() for part in raw.split(",") if part.strip())
+
+
+async def _judge_bench(args: argparse.Namespace) -> None:
+    """Run the judge benchmark and print the tier-recommendation table (ES-4).
+
+    Prints the spend preflight FIRST and honours ``--dry-run``, because the full shipped
+    matrix is 540 judge calls: a user who sees the count can narrow ``--tiers``/``--samples``
+    before paying for a matrix they did not want.
+    """
+    from personalclaw.evals import judge_bench as jb
+
+    if getattr(args, "list_sets", False):
+        for name in jb.list_fixture_sets():
+            print(name)
+        return
+
+    try:
+        tiers = _parse_csv(getattr(args, "tiers", "") or "", jb.TIERS)
+        samples = _parse_csv_ints(getattr(args, "samples", "") or "", jb.SAMPLE_COUNTS)
+        fixture_set = jb.load_fixture_set(args.fixture_set)
+        paired, unpaired = jb.build_specs(fixture_set, tiers=tiers, sample_counts=samples)
+    except (jb.JudgeBenchError, ValueError) as exc:
+        print(f"Error: {exc}")
+        raise SystemExit(1) from exc
+
+    cells = jb.bench_cells(paired, unpaired)
+    calls = sum(int(c["judge_samples"]) for c in cells)
+    print(
+        f"Judge benchmark '{fixture_set.name}' "
+        f"({len(fixture_set.fixtures)} fixtures, {', '.join(fixture_set.rubric_classes())})\n"
+        f"  tiers:   {', '.join(tiers)}\n"
+        f"  samples: {', '.join(str(s) for s in samples)}\n"
+        f"  cells:   {len(cells)}\n"
+        f"  judge calls (the spend): {calls}\n"
+    )
+    if getattr(args, "dry_run", False):
+        print("--dry-run: nothing was called.")
+        return
+
+    result = await jb.run_judge_bench(
+        args.fixture_set, tiers=tiers, sample_counts=samples, budget_usd=args.budget
+    )
+    print(jb.render_table_tsv(result.table))
+    print("## Recommendations")
+    for rec in result.recommendations:
+        if rec.verdict == jb.REC_RECOMMENDED:
+            print(
+                f"  {rec.rubric_class}: bind '{rec.use_case}' to {rec.model_ref or '<unbound>'} "
+                f"(tier {rec.tier}, judge_samples {rec.samples}, ${rec.cost_usd})"
+            )
+        else:
+            print(f"  {rec.rubric_class}: {rec.verdict}")
+        for note in rec.notes:
+            print(f"    - {note}")
+    from personalclaw.evals import store
+
+    print(f"\nArtifacts: {store.matrix_dir(result.bench_id)}")
+
+
 def _learn(args: argparse.Namespace) -> None:
     """Save, list, or remove learned corrections in memory.db ``lesson.*``."""
 

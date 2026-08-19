@@ -3,7 +3,7 @@
 Two things are asserted here, and they fail for opposite reasons:
 
 1. **The staged template does not rot.** ``scratch/app-template/`` is the content the owner
-   pushes to ``github.com/personalclaw/app-template``. Its four generated files are compared
+   pushes to ``github.com/PersonalClaw/app-template``. Its four generated files are compared
    BYTE-FOR-BYTE against a fresh ``app new app-template --type tool`` run, so a scaffold
    change that the template didn't follow reds here instead of shipping a template that
    contradicts the generator. (``README.md`` and ``LICENSE`` are deliberately excluded: the
@@ -225,8 +225,8 @@ def test_the_shipped_template_allowlists_are_narrow() -> None:
 
 
 def test_the_default_archive_url_names_the_documented_repo() -> None:
-    assert TEMPLATE_REPO == "personalclaw/app-template"
-    assert TEMPLATE_ARCHIVE_URL.startswith("https://codeload.github.com/personalclaw/app-template/")
+    assert TEMPLATE_REPO == "PersonalClaw/app-template"
+    assert TEMPLATE_ARCHIVE_URL.startswith("https://codeload.github.com/PersonalClaw/app-template/")
     # No redirect is followed, so the URL must name the host that actually serves the file.
     assert "//github.com/" not in TEMPLATE_ARCHIVE_URL
 

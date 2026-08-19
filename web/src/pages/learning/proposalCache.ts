@@ -11,6 +11,7 @@ import { invalidateCache } from '../../lib/useCachedData'
 export const PROPOSALS_KEY_PREFIX = 'learning:proposals:'
 export const WEEK_KEY = 'learning:week'
 export const HEALTH_KEY = 'learning:health'
+export const JUDGE_BENCH_KEY = 'learning:judge-bench'
 
 /** The cache key for one facet of the proposal list. `kind` is `''` for the All tab. */
 export function proposalsKey(kind: string): string {
@@ -52,11 +53,17 @@ export function refreshEverything(
   refreshProposals: () => void,
   refreshWeek: () => void,
   refreshHealth: () => void = () => {},
+  refreshJudgeBench: () => void = () => {},
 ): void {
   invalidateCache(PROPOSALS_KEY_PREFIX, true)
   invalidateCache(WEEK_KEY)
   invalidateCache(HEALTH_KEY)
+  // The judge table moves only when `personalclaw judge-bench` runs, which the user does from a
+  // terminal — so it is the one read on this page whose staleness the PAGE cannot detect, and an
+  // explicit Refresh is exactly when re-asking is worth a request.
+  invalidateCache(JUDGE_BENCH_KEY)
   refreshProposals()
   refreshWeek()
   refreshHealth()
+  refreshJudgeBench()
 }

@@ -494,7 +494,12 @@ function TaskListBar({ lists, repeatableId, active, onPick, onReset }: {
         const repeatable = !!repeatableId && l.project_id === repeatableId
         return (
           <span key={l.id} className={`inline-flex items-center rounded-pill h-7 pl-3 ${repeatable ? 'pr-1' : 'pr-3'} text-[0.8125rem] transition-colors ${isActive ? 'bg-primary text-on-primary' : 'bg-surface-container text-on-surface-var hover:bg-surface-high'}`}>
-            <button type="button" onClick={() => onPick(l)} className="inline-flex items-center gap-1">{l.name}</button>
+            {/* One-of-N: which task list the page is showing. `bg-primary text-on-primary` was the only
+                cue, so this takes the app's recorded form — `<dimension>: <value>` plus `aria-pressed`.
+                The name goes on the PICK button, not the pill wrapper, because the wrapper also holds the
+                Reset control and a state on it would describe both. */}
+            <button type="button" aria-label={`Task list: ${l.name}`} aria-pressed={isActive}
+              onClick={() => onPick(l)} className="inline-flex items-center gap-1">{l.name}</button>
             {repeatable && (
               <button type="button" onClick={(e) => { e.stopPropagation(); onReset(l) }} title="Reset this repeatable list (all tasks must be done)"
                 className={`ml-1.5 inline-flex size-5 items-center justify-center rounded-full ${isActive ? 'hover:bg-on-primary/20' : 'hover:bg-surface-container'}`} aria-label={`Reset list ${l.name}`}>

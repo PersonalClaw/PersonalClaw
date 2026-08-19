@@ -611,6 +611,46 @@ Examples:
     )
     eval_parser.add_argument("--judge", action="store_true", help="Enable LLM judge scoring")
 
+    # judge-bench
+    bench_parser = sub.add_parser(
+        "judge-bench",
+        help="Benchmark the judge across tiers and sample counts; print the tier table",
+        epilog="""
+Examples:
+  personalclaw judge-bench --dry-run          # the spend preflight, nothing called
+  personalclaw judge-bench                    # the full matrix (540 judge calls)
+  personalclaw judge-bench --tiers fast,reasoning --samples 1,3
+  personalclaw judge-bench --list-sets
+
+The table says which tier each rubric class actually needs; rebinding is a user
+action on Settings -> Models, never automatic.
+""",
+        formatter_class=_fmt,
+    )
+    bench_parser.add_argument(
+        "fixture_set",
+        nargs="?",
+        default="starter",
+        help="Fixture set name or path (default: starter)",
+    )
+    bench_parser.add_argument(
+        "--tiers", default="", help="Comma-separated judge tiers (default: fast,standard,reasoning)"
+    )
+    bench_parser.add_argument(
+        "--samples", default="", help="Comma-separated judge_samples counts (default: 1,3,5)"
+    )
+    bench_parser.add_argument(
+        "--budget", type=float, default=0.0, help="Hard spend cap in USD (0 = no cap)"
+    )
+    bench_parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Print the cell/judge-call preflight and exit without calling a model",
+    )
+    bench_parser.add_argument(
+        "--list-sets", action="store_true", help="List runnable fixture sets and exit"
+    )
+
     sec_sub = sec_parser.add_subparsers(dest="sec_action")
     sec_sub.add_parser("audit", help="Scan conversation history for suspicious tool usage")
     sec_sub.add_parser("deny-list", help="Show active deny patterns")
@@ -953,7 +993,22 @@ Examples:
         logging.getLogger(_lname).addHandler(_fh)
 
     if args.command == "chat":
-        asyncio.run(_chat(args.message, args.model))
+        # A fresh install has no chat model bound yet, and the getting-started
+        # guide's "first chat" step lands exactly there. The resolver already
+        # composes a WHAT/WHY/FIX message; print that and exit 1 instead of
+        # dumping an asyncio traceback that buries the fix under 30 stack frames.
+        # Two classes carry the signal (the bridge's and the LLM registry's) —
+        # catch both, as `session.py` does for the same reason.
+        from personalclaw.llm.registry import ProviderResolutionError as _LLMResolveErr
+        from personalclaw.providers.provider_bridge import (
+            ProviderResolutionError as _BridgeResolveErr,
+        )
+
+        try:
+            asyncio.run(_chat(args.message, args.model))
+        except (_BridgeResolveErr, _LLMResolveErr) as exc:
+            print(str(exc), file=sys.stderr)
+            raise SystemExit(1) from None
     elif args.command == "gateway":
         gw_kwargs = _resolve_gateway_args(args)
         asyncio.run(_gateway(**gw_kwargs))
@@ -987,6 +1042,8 @@ Examples:
         run_mcp_core_server()
     elif args.command == "eval":
         asyncio.run(_run_eval(args))
+    elif args.command == "judge-bench":
+        asyncio.run(_judge_bench(args))
     elif args.command == "security":
         _security(args)
     elif args.command == "update":
@@ -1074,6 +1131,7 @@ from personalclaw.cli_commands import (  # noqa: E402
     _cron,
     _discover,
     _handle_agent,
+    _judge_bench,
     _learn,
     _memory_cmd,
     _pair,

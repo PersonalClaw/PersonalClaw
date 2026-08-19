@@ -224,9 +224,13 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `GET /api/durability/conflicts` — the review queue (§4.2).
 - `POST /api/durability/conflicts/{id}/resolve` — {choice, confirm} — apply one decision.
 - `POST /api/durability/export` — {domains?} — the DSAR export (§6).
+- `GET /api/durability/history` — per-root repo status for the Time Travel panel.
+- `GET /api/durability/history/{root}/timeline` — the timeline.
+- `POST /api/durability/history/{root}/{op}` — {sha, confirm?, expected_head?}.
 - `POST /api/durability/import` — validate, then apply, an export zip (§6).
 - `POST /api/durability/run` — {job} — run one backup job now.
 - `GET /api/durability/status` — schedule state + what's due.
+- `GET /api/evals/judge-bench` — the newest tier-recommendation table.
 - `POST /api/feedback` — record one verdict.
 - `GET /api/feedback/producers` — per-producer accuracy.
 - `POST /api/feedback/producers/clear` — un-suppress after an artifact edit.

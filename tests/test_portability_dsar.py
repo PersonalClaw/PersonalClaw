@@ -539,3 +539,123 @@ def test_the_real_home_is_never_touched(seeded_home, tmp_path):
     assert str(Path.home() / ".personalclaw") not in str(port._pc_dir())
     create_export_zip()
     assert port._pc_dir() == seeded_home
+
+
+# ── a declared database leaves through the backup API, or not at all ─────────
+#
+# The suite above seeds its databases at the top of the home, where only ONE write site
+# can reach them. Two of the inventory's declared sqlite stores
+# (`workspace/knowledge/knowledge.db`, `workspace/lexicon/lexicon.db`) live INSIDE the
+# `workspace` tree, which a second write site walks — so they were written twice, and
+# the fixture's shape made that invisible.
+
+
+@pytest.fixture
+def home_with_a_db_inside_the_workspace_tree(tmp_path, monkeypatch):
+    """A home whose declared database sits inside the `workspace` tree, with a real
+    uncheckpointed WAL — the shape that reaches both write sites at once."""
+    home = tmp_path / "home"
+    home.mkdir()
+    (home / "config.json").write_text(json.dumps({"theme": "dark"}))
+
+    lex = home / "workspace" / "lexicon" / "lexicon.db"
+    lex.parent.mkdir(parents=True)
+    conn = sqlite3.connect(str(lex))
+    try:
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("CREATE TABLE terms (v TEXT)")
+        for i in range(500):
+            conn.execute("INSERT INTO terms (v) VALUES (?)", (f"term {i}",))
+        conn.commit()  # committed into the WAL and deliberately NOT checkpointed
+        assert Path(str(lex) + "-wal").exists(), "fixture did not produce a WAL"
+        monkeypatch.setenv("PERSONALCLAW_HOME", str(home))
+        # An isolated home does not confine the workspace; both are pinned.
+        monkeypatch.setenv("PERSONALCLAW_WORKSPACE", str(home / "workspace"))
+        with patch("personalclaw.portability.config_dir", return_value=home):
+            yield home
+    finally:
+        conn.close()
+
+
+def _entries(blob: bytes) -> list[str]:
+    """Every archive entry, prefix stripped, DUPLICATES PRESERVED. `_zip_of` sorts into a
+    set-like list, which is precisely what hid a path written twice."""
+    zf = zipfile.ZipFile(io.BytesIO(blob))
+    return [n.split("/", 1)[1] for n in zf.namelist() if "/" in n and not n.endswith("/")]
+
+
+def test_a_declared_database_is_written_exactly_once(home_with_a_db_inside_the_workspace_tree):
+    """No archive entry appears twice, and the manifest's member count matches the zip.
+
+    Measured before the fix: 6 entries against 5 declared members, and zipfile raised
+    `UserWarning: Duplicate name` for `workspace/lexicon/lexicon.db`. A duplicate is not
+    cosmetic — the later entry wins on extraction, so the raw copy silently replaced the
+    WAL-checkpointed one the export took care to make.
+    """
+    blob, manifest = create_export_zip()
+    entries = _entries(blob)
+
+    # Vacuity floor: an empty (or database-free) export satisfies "no duplicates" forever.
+    assert "workspace/lexicon/lexicon.db" in entries, "the declared database did not travel"
+    assert len(entries) >= 3, f"export carried only {len(entries)} entries: {entries}"
+
+    dupes = sorted({n for n in entries if entries.count(n) > 1})
+    assert dupes == [], f"written more than once: {dupes}"
+    # +1 for MANIFEST.json, which the manifest cannot declare itself.
+    assert (
+        len(entries) == len(manifest["members"]) + 1
+    ), f"{len(entries)} zip entries against {len(manifest['members'])} declared members"
+
+
+def test_wal_sidecars_never_travel(home_with_a_db_inside_the_workspace_tree):
+    """`-wal`/`-shm` are meaningless without the `.db` they belong to and actively
+    dangerous beside a backup taken at a different instant. The inventory sweep already
+    excluded them; the tree walk shipped both."""
+    blob, _ = create_export_zip()
+    entries = _entries(blob)
+    assert "workspace/lexicon/lexicon.db" in entries, "vacuity: no database in this export"
+    sidecars = [n for n in entries if n.endswith("-wal") or n.endswith("-shm")]
+    assert sidecars == [], f"sqlite sidecars travelled: {sidecars}"
+
+
+def test_a_database_the_backup_api_skipped_does_not_travel_raw(
+    home_with_a_db_inside_the_workspace_tree,
+):
+    """The projection's fail-closed skip must actually withhold the store.
+
+    `create_export_zip` treats an unreadable database as skippable ("writing a torn copy
+    would put corruption in the artifact a user trusts"). The tree walk defeated that: the
+    store shipped as a raw copy anyway AND the manifest declared it, so the artifact
+    presented a member the export had decided not to carry.
+    """
+    with patch.object(
+        port, "_backup_sqlite", side_effect=sqlite3.DatabaseError("unreadable store")
+    ):
+        blob, manifest = create_export_zip()
+    entries = _entries(blob)
+    declared = [m["path"] if isinstance(m, dict) else m for m in manifest["members"]]
+
+    assert "workspace/lexicon/lexicon.db" not in entries, "a skipped database still travelled"
+    assert "workspace/lexicon/lexicon.db" not in declared, "the manifest declared a skipped store"
+    # Vacuity floor: the rest of the export must still be there, or this passes trivially.
+    assert "config.json" in entries, f"nothing else survived either: {entries}"
+
+
+def test_an_undeclared_database_in_the_users_workspace_still_travels(
+    home_with_a_db_inside_the_workspace_tree,
+):
+    """The guard is scoped to DECLARED stores on purpose.
+
+    `workspace/` is the user's own directory. Skipping every `.db` there — the blunter
+    rule the inventory sweep uses for platform trees — would drop a sqlite file the user
+    put in their own workspace from a DSAR export, trading one data defect for another.
+    """
+    home = home_with_a_db_inside_the_workspace_tree
+    mine = home / "workspace" / "my-project" / "notes.db"
+    mine.parent.mkdir(parents=True)
+    mine.write_bytes(b"SQLite format 3\x00 a file the user made")
+
+    entries = _entries(create_export_zip()[0])
+    assert (
+        "workspace/my-project/notes.db" in entries
+    ), f"the user's own database was dropped: {entries}"

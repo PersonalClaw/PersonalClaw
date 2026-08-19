@@ -37,8 +37,14 @@ After a uv/pipx/pip install the `personalclaw` command is on your PATH:
 
 ```bash
 uv tool install personalclaw
-personalclaw setup      # interactive: name + first provider credential
+personalclaw setup      # interactive: workspace directory + timezone
 ```
+
+`setup` does **not** ask for a model provider credential — on a fresh install
+there is no provider app to hold one yet. Providers arrive in
+[§3](#3-configure-a-model-provider), after the gateway is up. Run `setup` on a
+real terminal: it prompts, so piping or redirecting stdin makes it fall back to
+the printed defaults.
 
 ### Optional extras
 
@@ -90,8 +96,10 @@ Model providers are installable apps — nothing is hardwired to a vendor.
    The same panel binds models for background work, embeddings, ingestion,
    speech, and more — they can all be different providers.
 
-Prefer the terminal? `personalclaw setup` runs a credential wizard, and
-`personalclaw doctor` verifies the result end to end.
+Prefer the terminal? Once a provider app is installed,
+`personalclaw setup --provider NAME --credential NAME=VALUE` stores the
+credential without the dashboard, and `personalclaw doctor` verifies the result
+end to end.
 
 ## 4. First chat
 

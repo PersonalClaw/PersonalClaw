@@ -449,6 +449,12 @@
     "type": "str"
   },
   {
+    "default": true,
+    "path": "durability.time_travel",
+    "sensitive": false,
+    "type": "bool"
+  },
+  {
     "default": 30,
     "path": "evals.ablation_cadence_days",
     "sensitive": false,
@@ -861,6 +867,12 @@
     "path": "loops.trust_ttl_secs",
     "sensitive": false,
     "type": "int"
+  },
+  {
+    "default": true,
+    "path": "loops.worktree_sparse",
+    "sensitive": false,
+    "type": "bool"
   },
   {
     "default": true,

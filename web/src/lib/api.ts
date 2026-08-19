@@ -210,6 +210,73 @@ export interface DurabilityConflict {
   resolution: string
   resolved_at: string
 }
+/** One tracked state tree in the time-travel history. */
+export interface DurabilityHistoryRoot {
+  id: string
+  label: string
+  worktree: string
+  exists: boolean
+  commits: number
+  memory: boolean
+}
+export interface DurabilityHistoryStatus {
+  enabled: boolean
+  git: boolean
+  dir: string
+  roots: DurabilityHistoryRoot[]
+}
+/** `unattended` is the "what changed while I slept" flag — the commit's writes came
+ *  from a scheduled or background surface, not from someone at the dashboard. */
+export interface DurabilityHistoryEntry {
+  sha: string
+  short: string
+  at: number
+  subject: string
+  surface: string
+  unattended: boolean
+}
+export interface DurabilityHistoryTimeline {
+  root: string
+  label: string
+  commits: number
+  entries: DurabilityHistoryEntry[]
+  forward_refs: { ref: string; sha: string; at: number }[]
+}
+/** `rendered: false` means the diff exceeded the server's render budget: it is listed
+ *  with its size, never silently shown as empty. */
+export interface DurabilityHistoryDiffFile {
+  path: string
+  status: string
+  bytes: number
+  rendered: boolean
+  diff: string
+}
+export interface DurabilityHistoryPreview {
+  operation: 'rollback' | 'revert'
+  root: string
+  target: string
+  head: string
+  files: DurabilityHistoryDiffFile[]
+  commits_rolled_away: number
+  reversible: boolean
+}
+/** Phase one of the two-phase contract: the preview, plus the `expected_head` a
+ *  confirming call must echo. There is no way to apply without first holding this. */
+export interface DurabilityHistoryPreviewResponse {
+  confirmed: boolean
+  expected_head: string
+  preview: DurabilityHistoryPreview
+}
+export interface DurabilityHistoryResult {
+  ok: boolean
+  operation: string
+  root: string
+  head: string
+  prior_head?: string
+  prior_ref?: string
+  reverted?: string
+  reload_required: boolean
+}
 export interface DurabilityConflicts {
   conflicts: DurabilityConflict[]
   truncated: boolean
@@ -1020,6 +1087,16 @@ export interface WorkflowWorkspaceReview {
     setup?: { ran: string[]; skipped: string[]; failed: string[]; blocked_run: boolean }
     issues?: Array<{ code: string; message: string; fatal: boolean }>
   }
+  /** The localhost web preview. Scanned per request, never stored:
+   *  a persisted port outlives the process that held it, and an "Open Preview" pointing at a
+   *  dead port is worse than no affordance. `reason` is always populated when `ports` is empty,
+   *  because "nothing is running" and "nothing could look" are different answers to render. */
+  preview?: {
+    ports: Array<{ port: number; url: string; pid: number; command: string; address: string }>
+    root: string
+    scanned: boolean
+    reason: string
+  }
 }
 // One artifact this run published (WORK-CONTAINERS §2.5 outbox). `kind` is what the cockpit resolves
 // through the contentTypes registry — the route declares the TYPE and never the renderer, so a newly
@@ -1305,9 +1382,17 @@ export interface ImportableMcpServer {
   env?: Record<string, string>; url?: string; headers?: Record<string, string>
 }
 export interface ToolInvokeResult { ok: boolean; output?: string; error?: string }
+// `blocking` / `enforcement`: whether this hook's EVENT can short-circuit the loop, and
+// whether THIS hook actually does. Both are the server's verdict, not re-derived here: the backend
+// computes `enforcement` from the same `AgentProfile.triggers` binding the firing path reads, so a
+// row the page calls "enforcing" is a row a tool rejection would really come from. Deriving it in
+// the FE from `used_by.length` would restate the bug — `used_by: []` was already on the wire and a
+// user still could not tell an armed blocking hook from an inert one.
+export type HookEnforcement = 'enforcing' | 'not_enforcing' | 'advisory'
 export interface HookItem {
   id: string; name: string; event: string; matcher: string; provider: string; provider_config: Record<string, unknown>
   timeout: number; enabled: boolean; last_run: number; last_status: string; run_count: number; used_by: string[]
+  blocking?: boolean; enforcement?: HookEnforcement
 }
 // The wired data-event patterns (event_triggers.EVENT_PATTERNS). Each belongs to exactly one
 // source (event_triggers.PATTERN_SOURCE), which the backend derives — the wire never supplies it.
@@ -1355,6 +1440,7 @@ export interface Trigger {
   is_running?: boolean; running_since?: number | null; has_session?: boolean; created_ts?: number | null
   // lifecycle fields (kind=lifecycle)
   event?: string; matcher?: string; timeout?: number; last_run?: number; run_count?: number; used_by?: string[]
+  blocking?: boolean; enforcement?: HookEnforcement
 }
 /** Project the shared ScheduleForm's flat draft body onto the unified Trigger
  *  wire shape: a single canonical `action` + the schedule mechanism fields. The
@@ -1381,6 +1467,10 @@ function _triggerToHook(t: Trigger): HookItem {
     provider: t.action.provider, provider_config: t.action.config ?? {},
     timeout: t.timeout ?? 30, enabled: t.enabled, last_run: t.last_run ?? 0,
     last_status: t.last_status ?? '', run_count: t.run_count ?? 0, used_by: t.used_by ?? [],
+    // Carried through, never defaulted to a reassuring value: an older backend that omits these
+    // leaves them undefined so the detail view renders NO enforcement claim, rather than a
+    // confident "enforcing" chip over a hook nothing binds.
+    blocking: t.blocking, enforcement: t.enforcement,
   }
 }
 // An action provider (renamed from "hook provider" in the Triggers vision) —
@@ -1466,6 +1556,58 @@ export interface MaeBucket {
   /** …of which a human actually labelled. `mae` is null until at least one did. */
   labelled: number
   mae: number | null
+}
+/** One (rubric-class x tier x samples) row of the judge tier-recommendation table
+ *  (EVALUATION-SUBSTRATE §6). Every judgement arrives DECIDED by the backend —
+ *  `adequate` and `inadequate_reasons` included — because a frontend that re-derived
+ *  "is this tier good enough" would eventually disagree with the harness, and the copy
+ *  shipping the permissive answer would be the UI.
+ *
+ *  `null` means UNMEASURED, never zero: an unmeasured separation or flip rate is why a
+ *  row is inadequate, and rendering it as 0 would read as a perfect score. */
+export interface JudgeBenchRow {
+  rubric_class: string
+  tier: string
+  samples: number
+  agreement: number | null
+  scored_cells: number
+  verifier_absent: number
+  protocol_errors: number
+  separation: number | null
+  flip_rate: number | null
+  swapped_fixtures: number
+  false_passes: number
+  false_rejects: number
+  forbidden_missed: number
+  cost_usd: number | null
+  wall_secs: number
+  calls: number
+  adequate: boolean
+  inadequate_reasons: string[]
+  notes: string[]
+}
+export interface JudgeBenchRecommendation {
+  rubric_class: string
+  /** 'recommended' | 'no_adequate_tier' | 'cost_unknown' — the two refusals matter more
+   *  than the recommendation, so they are first-class rather than an empty tier. */
+  verdict: string
+  tier: string
+  samples: number
+  /** The model use case to rebind on Settings -> Models. */
+  use_case: string
+  /** The exact `Provider:model` ref the Models panel binds, or '' when nothing is bound. */
+  model_ref: string
+  cost_usd: number | null
+  notes: string[]
+}
+export interface JudgeBenchView {
+  bench_id: string
+  columns: string[]
+  rows: JudgeBenchRow[]
+  floors: { agreement?: number; separation?: number; flip_rate?: number }
+  recommendations: JudgeBenchRecommendation[]
+  pin: Record<string, unknown> | null
+  runs: string[]
 }
 export interface LearningHealth {
   days: number
@@ -3190,6 +3332,31 @@ export const api = {
     const q = qs.toString()
     return get<DurabilityConflicts>(`/api/durability/conflicts${q ? `?${q}` : ''}`)
   },
+  // ── Time travel ──
+  durabilityHistory: () => get<DurabilityHistoryStatus>('/api/durability/history'),
+  durabilityHistoryTimeline: (root: string, opts: { limit?: number; unattended?: boolean } = {}) => {
+    const q = new URLSearchParams()
+    if (opts.limit) q.set('limit', String(opts.limit))
+    if (opts.unattended) q.set('unattended', '1')
+    const qs = q.toString()
+    return get<DurabilityHistoryTimeline>(
+      `/api/durability/history/${encodeURIComponent(root)}/timeline${qs ? `?${qs}` : ''}`,
+    )
+  },
+  /** Phase one. Sends no `confirm`, so the server returns the preview and touches nothing. */
+  durabilityHistoryPreview: (root: string, op: 'rollback' | 'revert', sha: string) =>
+    post<DurabilityHistoryPreviewResponse>(
+      `/api/durability/history/${encodeURIComponent(root)}/${op}`, { sha },
+    ),
+  /** Phase two. `expected_head` MUST be the value phase one returned — the server refuses a
+   *  preview that went stale rather than applying it to a tree the user never saw. */
+  durabilityHistoryApply: (
+    root: string, op: 'rollback' | 'revert', sha: string, expectedHead: string,
+  ) =>
+    post<DurabilityHistoryResult>(
+      `/api/durability/history/${encodeURIComponent(root)}/${op}`,
+      { sha, confirm: true, expected_head: expectedHead },
+    ),
   /** Writes the chosen version into the live store. `confirm: true` is required for every
    *  choice — the server refuses without it, so this never sends it implicitly. */
   resolveDurabilityConflict: (id: string, choice: DurabilityConflictChoice) =>
@@ -3971,6 +4138,10 @@ export const api = {
     get<StagingWeek>(`/api/learning/staging/week?days=${days}`),
   learningHealth: (days = 7) =>
     get<LearningHealth>(`/api/learning/health?days=${days}`),
+  /** The judge tier-recommendation table. Read-only: the RUN is
+   *  `personalclaw judge-bench`, because the full matrix is 540 judge calls and a click
+   *  must not start one. 404 carries a distinct code for "no benchmark yet" vs "evals off". */
+  judgeBench: () => get<JudgeBenchView>('/api/evals/judge-bench'),
   skillProposals: () => get<{ proposals: SkillProposal[] }>('/api/skills/proposals').then((d) => d.proposals),
   skillProposalDetail: (id: string) => get<SkillProposalDetail>(`/api/skills/proposals/${encodeURIComponent(id)}`),
   acceptSkillProposal: (id: string, edits?: { description?: string; procedure_md?: string }) =>

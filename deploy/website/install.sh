@@ -111,7 +111,7 @@ offer_setup() {
     have personalclaw || return 0
     say ""
     step "Installed. Next steps:"
-    say "  personalclaw setup      # configure your name + first model provider"
+    say "  personalclaw setup      # configure your workspace directory + timezone"
     say "  personalclaw gateway    # start the dashboard on http://localhost:10000"
     say ""
     # Only prompt when we have a real TTY (piped `curl | sh` has none — don't hang).

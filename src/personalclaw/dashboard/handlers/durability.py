@@ -708,3 +708,201 @@ async def api_durability_conflict_resolve(request: web.Request) -> web.Response:
             "conflict": outcome.record,
         }
     )
+
+
+# ── §5 time-travel ─────────────────────────────────────────────────────────
+#
+# Three routes, one confirmation contract. Rollback and revert share ONE endpoint
+# per operation and are **two-phase by construction**: a request without
+# ``confirm`` returns the preview and changes nothing, and the preview is what
+# hands back the ``expected_head`` a confirming request must echo. So "preview is
+# mandatory" is not a convention the UI is trusted to follow — a caller cannot
+# produce a valid confirm without having received a preview, and a preview that
+# went stale (the history moved underneath it) is refused rather than applied to
+# a tree the user never saw.
+
+
+def _history_root(request: web.Request):
+    """Resolve ``{root}`` to a declared root, or return an error response."""
+    from personalclaw.durability import service, state_history
+
+    raw = str(request.match_info.get("root", "") or "").strip()
+    root = state_history.root_by_id(raw, home=service.active_home())
+    if root is None:
+        known = ", ".join(r.id for r in state_history.roots(service.active_home()))
+        return None, web.json_response(
+            {
+                "error": {
+                    "code": "unknown_root",
+                    "message": f"unknown history root {raw!r}; known roots: {known}",
+                }
+            },
+            status=404,
+        )
+    return root, None
+
+
+async def _history_body(request: web.Request) -> tuple[dict, web.Response | None]:
+    if not request.can_read_body:
+        return {}, None
+    try:
+        body = await request.json()
+    except (json.JSONDecodeError, ValueError):
+        return {}, web.json_response(
+            {"error": {"code": "bad_body", "message": "body must be JSON"}}, status=400
+        )
+    if not isinstance(body, dict):
+        return {}, web.json_response(
+            {"error": {"code": "bad_body", "message": "body must be a JSON object"}}, status=400
+        )
+    return body, None
+
+
+async def api_durability_history(request: web.Request) -> web.Response:
+    """GET /api/durability/history — per-root repo status for the Time Travel panel."""
+    denied = _reject_app(request)
+    if denied is not None:
+        return denied
+    from personalclaw.durability import service, state_history
+
+    cfg = service._cfg()
+    return web.json_response(
+        {
+            "enabled": bool(getattr(cfg, "time_travel", True)),
+            **state_history.status(home=service.active_home()),
+        }
+    )
+
+
+async def api_durability_history_timeline(request: web.Request) -> web.Response:
+    """GET /api/durability/history/{root}/timeline?limit=&unattended= — the timeline."""
+    denied = _reject_app(request)
+    if denied is not None:
+        return denied
+    from personalclaw.durability import service, state_history
+
+    root, err = _history_root(request)
+    if err is not None:
+        return err
+    try:
+        limit = max(1, min(500, int(request.query.get("limit", "50"))))
+    except (TypeError, ValueError):
+        limit = 50
+    unattended = str(request.query.get("unattended", "")).lower() in ("1", "true", "yes")
+    home = service.active_home()
+    try:
+        entries = state_history.timeline(root, limit=limit, unattended_only=unattended, home=home)
+        forward = state_history.forward_refs(root, home=home)
+        commits = state_history.commit_count(root, home=home)
+    except state_history.HistoryError as exc:
+        return web.json_response(
+            {"error": {"code": "history_unavailable", "message": str(exc)}}, status=503
+        )
+    return web.json_response(
+        {
+            "root": root.id,
+            "label": root.label,
+            "commits": commits,
+            "entries": entries,
+            "forward_refs": forward,
+        }
+    )
+
+
+async def api_durability_history_operate(request: web.Request) -> web.Response:
+    """POST /api/durability/history/{root}/{op} {sha, confirm?, expected_head?}.
+
+    ``op`` is ``rollback`` or ``revert``. Without ``confirm`` this returns the
+    preview and touches nothing; with ``confirm`` it requires ``expected_head`` to
+    match the root's current HEAD so a preview the user read cannot be applied to
+    a tree that moved since.
+    """
+    denied = _reject_app(request)
+    if denied is not None:
+        return denied
+    from personalclaw.durability import service, state_history
+
+    root, err = _history_root(request)
+    if err is not None:
+        return err
+    operation = str(request.match_info.get("op", "") or "").strip()
+    if operation not in ("rollback", "revert"):
+        return web.json_response(
+            {
+                "error": {
+                    "code": "unknown_operation",
+                    "message": "operation must be 'rollback' or 'revert'",
+                }
+            },
+            status=404,
+        )
+    body, err = await _history_body(request)
+    if err is not None:
+        return err
+    sha = str(body.get("sha", "") or "").strip()
+    if not sha:
+        return web.json_response(
+            {"error": {"code": "sha_required", "message": "a commit id is required"}}, status=400
+        )
+    home = service.active_home()
+    try:
+        prev = state_history.preview(root, sha, operation=operation, home=home)
+    except state_history.HistoryError as exc:
+        _audit_api(request, f"durability.history_{operation}", "denied", f"{root.id}:{exc}")
+        return web.json_response(
+            {"error": {"code": "unknown_commit", "message": str(exc)}}, status=404
+        )
+
+    if not body.get("confirm"):
+        # Phase one. The preview IS the response, and it carries the token phase
+        # two must echo.
+        return web.json_response(
+            {"confirmed": False, "expected_head": prev["head"], "preview": prev}
+        )
+
+    expected = str(body.get("expected_head", "") or "").strip()
+    if expected != prev["head"]:
+        _audit_api(request, f"durability.history_{operation}", "denied", f"{root.id}:stale")
+        return web.json_response(
+            {
+                "error": {
+                    "code": "preview_stale",
+                    "message": (
+                        "the history moved since this preview was taken; "
+                        "review the new preview before confirming"
+                    ),
+                },
+                "expected_head": prev["head"],
+                "preview": prev,
+            },
+            status=409,
+        )
+
+    try:
+        if operation == "rollback":
+            result = state_history.rollback(root, sha, home=home)
+        else:
+            result = state_history.revert(root, sha, home=home)
+    except state_history.OverlapError as exc:
+        _audit_api(request, "durability.history_revert", "denied", f"{root.id}:overlap")
+        return web.json_response(
+            {
+                "error": {
+                    "code": "revert_overlap",
+                    "message": str(exc),
+                },
+                "files": exc.files,
+            },
+            status=409,
+        )
+    except state_history.HistoryError as exc:
+        _audit_api(request, f"durability.history_{operation}", "error", f"{root.id}:{exc}")
+        return web.json_response(
+            {"error": {"code": "history_failed", "message": str(exc)}}, status=500
+        )
+    _audit_api(request, f"durability.history_{operation}", "allowed", f"{root.id}:{sha[:12]}")
+    # Config and skills live in process memory too, so the caller must be told a
+    # reload is needed rather than being left with a stale runtime.
+    result["reload_required"] = root.id in ("config", "skills", "prompts")
+    result["ok"] = True
+    return web.json_response(result)

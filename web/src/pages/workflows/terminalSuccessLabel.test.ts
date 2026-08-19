@@ -11,6 +11,16 @@ import { runLook, nodeLook } from './workflowMeta'
 //   taskMeta terminal `done`  "Completed"
 //   workflowMeta.complete     "Complete"      (RunStatus.COMPLETE = "complete")   ← the outlier
 //
+// PP-16 UPDATE — this rail had a blind spot, and the blind spot shipped the very bug the rail
+// exists to stop. There were FOUR registries, not three: `lib/loopStatus.ts` (read by the Code
+// list, the in-chat SDLC card and the Projects linked-work rows) said the bare "Complete", and
+// escaped both checks below because the path list did not name it AND because its flat
+// `Record<string, string>` shape did not match the `{ label: ... }` regexes. The loop registries
+// are now ONE table in `lib/loopStatus.ts` (`pages/loops/loopStatusMeta.ts` is deleted), that
+// table says "Completed", and LOOP_META below points at it. The cross-tier half — that the one
+// table covers exactly the backend `LoopStatus` enum — is `tests/test_loop_status_vocabulary.py`,
+// which also fails if a second loop-status registry reappears anywhere under `web/src`.
+//
 // A run that has finished is being DESCRIBED, so the past tense is the right form — and "Complete"
 // additionally collides with the IMPERATIVE verb `TasksListPage` uses for its row action ("Complete"
 // = complete this task). Two of three registries already said "Completed", so the majority and the
@@ -29,7 +39,7 @@ import { runLook, nodeLook } from './workflowMeta'
 //    turn a command into a description.
 
 const WORKFLOW_META = join(process.cwd(), 'src/pages/workflows/workflowMeta.ts')
-const LOOP_META = join(process.cwd(), 'src/pages/loops/loopStatusMeta.ts')
+const LOOP_META = join(process.cwd(), 'src/lib/loopStatus.ts')
 const TASK_META = join(process.cwd(), 'src/pages/tasks/taskMeta.tsx')
 
 describe('a finished run is "Completed" everywhere', () => {

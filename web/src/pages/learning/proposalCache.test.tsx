@@ -51,6 +51,7 @@ const rejectLearningProposal = vi.fn<() => Promise<void>>()
 // double that omits a fetch the page makes throws inside a passive effect — which surfaces as
 // five unrelated failures about rows and cache keys, and hides which fetch is missing.
 const learningHealth = vi.fn<() => Promise<never>>()
+const judgeBench = vi.fn<() => Promise<never>>()
 
 vi.mock('../../lib/api', () => ({
   api: {
@@ -59,6 +60,7 @@ vi.mock('../../lib/api', () => ({
     learningHealth: () => learningHealth(),
     acceptLearningProposal: () => acceptLearningProposal(),
     rejectLearningProposal: () => rejectLearningProposal(),
+    judgeBench: () => judgeBench(),
   },
 }))
 
@@ -72,6 +74,10 @@ describe('LearningPage drops a decided row from the screen (#676)', () => {
     // fails to load must not change what the list does. `HealthPanel.test.tsx` owns the
     // panel's own error rendering.
     learningHealth.mockRejectedValue(new Error('not under test'))
+    // Same posture as the health panel, for the same reason: the judge-tier panel's own
+    // rendering is not this suite's subject, and a 404 is its ORDINARY state (no benchmark
+    // has run), so the list must be unaffected by it.
+    judgeBench.mockRejectedValue(new Error('judge_bench_absent'))
     acceptLearningProposal.mockResolvedValue({ ok: true })
     rejectLearningProposal.mockResolvedValue(undefined)
   })

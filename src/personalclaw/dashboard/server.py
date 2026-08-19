@@ -458,6 +458,17 @@ async def start_dashboard(
     app.router.add_post(
         "/api/durability/conflicts/{id}/resolve", handlers.api_durability_conflict_resolve
     )
+    # Workspace time travel. The operate route is two-phase: no
+    # `confirm` returns the preview, and confirming requires echoing the
+    # `expected_head` that preview handed back, so a destructive call cannot be
+    # made without having seen what it would do.
+    app.router.add_get("/api/durability/history", handlers.api_durability_history)
+    app.router.add_get(
+        "/api/durability/history/{root}/timeline", handlers.api_durability_history_timeline
+    )
+    app.router.add_post(
+        "/api/durability/history/{root}/{op}", handlers.api_durability_history_operate
+    )
     # The Electron shell seam. The three POSTs are
     # loopback-only and credential-bearing (see handlers/desktop.py); the GETs are
     # the truth surface for Settings → Security and for apps holding a manifest
@@ -501,6 +512,11 @@ async def start_dashboard(
     from personalclaw.dashboard.handlers.learning import register_learning_routes
 
     register_learning_routes(app)
+    # The judge tier-recommendation table. Read-only: the RUN is
+    # `personalclaw judge-bench` (540 judge calls on the full matrix), so no route starts one.
+    from personalclaw.dashboard.handlers.evals import register_evals_routes
+
+    register_evals_routes(app)
     # Investigate Anywhere — chat-with-context from any entity row
     from personalclaw.dashboard.handlers.investigate import register_investigate_routes
 

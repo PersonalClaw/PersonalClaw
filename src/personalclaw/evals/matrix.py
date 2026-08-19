@@ -14,6 +14,7 @@ so an unrunnable check can never be averaged in as a failure.
 
 from __future__ import annotations
 
+import itertools
 from dataclasses import dataclass, field
 
 # ── the three-state outcome (auto-harness semantics) ─────────────────────────
@@ -118,6 +119,37 @@ class MatrixResult:
             cells=[CellResult.from_dict(c) for c in (data.get("cells") or [])],
             aggregates=dict(data.get("aggregates") or {}),
         )
+
+
+#: The key :func:`expand_cells` adds to each coordinate dict to distinguish repeated trials
+#: of the SAME axis point. Callers strip it before treating the dict as coordinates.
+TRIAL_KEY = "_trial"
+
+
+def expand_cells(spec: MatrixSpec) -> list[dict]:
+    """Expand ``spec``'s axes into the cartesian product of coordinate dicts, repeated
+    ``trial_count`` times (each trial is its own cell — a matrix of N points at k trials
+    runs N×k cells).
+
+    Lives HERE, beside the spec it reads and the :func:`aggregate` that closes the loop,
+    because it is a pure function of the spec and BOTH matrix consumers need it: the
+    scenario runner (:mod:`personalclaw.evals.runner`) and the judge benchmark
+    (:mod:`personalclaw.evals.judge_bench`). A private copy in either one would be a
+    second axis-expansion rule, and two rules over one product is how an axis silently
+    stops being crossed.
+    """
+    axes = spec.axes or {}
+    keys = list(axes.keys())
+    value_lists = [list(axes[k]) for k in keys]
+    trials = max(1, int(spec.trial_count))
+    combos: list[dict] = []
+    # itertools.product over an empty axis set yields one empty tuple → one cell,
+    # which is correct: a subject with no axes is still one runnable point.
+    for values in itertools.product(*value_lists) if keys else [()]:
+        coords = dict(zip(keys, values))
+        for trial in range(trials):
+            combos.append({**coords, TRIAL_KEY: trial})
+    return combos
 
 
 def aggregate(cells: list[CellResult]) -> dict:

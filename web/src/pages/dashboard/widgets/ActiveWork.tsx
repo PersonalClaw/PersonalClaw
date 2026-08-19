@@ -3,14 +3,11 @@ import { AnimatePresence, motion } from 'framer-motion'
 import { Send, MessageCircleQuestion, Coffee } from 'lucide-react'
 import { api, type Loop } from '../../../lib/api'
 import { useDashboardLive } from '../DashboardLive'
-import { loopStatusMeta } from '../../loops/loopStatusMeta'
+import { loopStatusLabel, loopStatusColor, effectiveLoopStatus, ACTIVE_LOOP_STATUSES } from '../../../lib/loopStatus'
 import { SlotEmptyState, RowAction, StatusDot } from './kit'
 import { ProgressRing } from '../../../ui/ProgressRing'
 import { spring } from '../../../design/motion'
 import type { RouteProps } from '../../../app/useQueryState'
-
-// Loops the user should see as "active work" — anything in flight or awaiting them.
-const ACTIVE = new Set(['running', 'paused', 'stagnant', 'blocked', 'needs_input'])
 
 function pendingText(l: Loop): string | null {
   const q = l.pending_question
@@ -25,7 +22,8 @@ function pendingText(l: Loop): string | null {
 export function ActiveWork({ navigate }: RouteProps) {
   const { loops } = useDashboardLive()
   const active = loops
-    .filter((l) => ACTIVE.has(l.status))
+    // Anything in flight or awaiting them — the ONE active-status set (lib/loopStatus).
+    .filter((l) => ACTIVE_LOOP_STATUSES.has(l.status))
     .sort((a, b) => (b.started_at ?? b.created_at) - (a.started_at ?? a.created_at))
 
   if (active.length === 0) {
@@ -44,7 +42,8 @@ export function ActiveWork({ navigate }: RouteProps) {
 function ActiveRow({ loop, navigate }: { loop: Loop; navigate: RouteProps['navigate'] }) {
   // One label for the row: the heading a user reads AND the subject each action names.
   const loopLabel = loop.name || loop.task?.slice(0, 60) || 'Loop'
-  const meta = loopStatusMeta(loop.status)
+  const dispStatus = effectiveLoopStatus(loop.status, loop.error_message)
+  const statusColor = loopStatusColor(dispStatus)
   const question = pendingText(loop)
   const [answering, setAnswering] = useState(false)
   const [text, setText] = useState('')
@@ -73,12 +72,12 @@ function ActiveRow({ loop, navigate }: { loop: Loop; navigate: RouteProps['navig
       <div className="flex items-center gap-s">
         <button type="button" onClick={() => navigate(`loops/${loop.id}`)} className="flex min-w-0 flex-1 items-center gap-s text-left">
           {pct != null
-            ? <ProgressRing pct={pct} tone={meta.tone} label={`Cycle progress for ${loop.name || loop.task || 'this loop'}`} />
-            : <StatusDot color={meta.tone} pulse={loop.status === 'running'} />}
+            ? <ProgressRing pct={pct} tone={statusColor} label={`Cycle progress for ${loop.name || loop.task || 'this loop'}`} />
+            : <StatusDot color={statusColor} pulse={loop.status === 'running'} />}
           <div className="min-w-0">
             <p data-type="title-m" className="truncate text-on-surface">{loopLabel}</p>
             <p data-type="body-m" className="truncate text-on-surface-low">
-              <span style={{ color: meta.tone }}>{meta.label}</span> · {cycleText}
+              <span style={{ color: statusColor }}>{loopStatusLabel(dispStatus)}</span> · {cycleText}
             </p>
           </div>
         </button>

@@ -305,6 +305,43 @@ def _isolate_single_flight_locks(tmp_path_factory, monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _forbid_real_model_roots(monkeypatch):
+    """Make the bound-model-deletion incident unreproducible BY CONSTRUCTION (LMMV SC-10).
+
+    ``local_models/layouts.py`` is the one seam every download probe and the single
+    deletion sweep go through, so wrapping its entry points for the whole suite is enough
+    to state the invariant structurally: **no fs-touching test can reach a real model dir
+    or cache root — only ``tmp_path``.** The incident was a real delete against a real HF
+    cache root; the convention "always pass tmp_path" was already in force when it
+    happened, which is exactly why this is a fixture and not a review note.
+
+    Scoped to the NAMED real roots (see ``real_model_root_guard.FORBIDDEN_SUBPATHS``)
+    rather than to all of ``$HOME``: a developer's checkout usually lives under ``$HOME``,
+    so a blanket home-rejection would fire on an ordinary relative path and get disabled.
+    Detection is a separate module so it can be driven against a fake root and proven to
+    fire (``tests/test_local_model_root_guard.py``) — the same reason the real-home rail
+    keeps its detection in ``real_home_guard``.
+    """
+    import real_model_root_guard
+
+    from personalclaw.local_models import layouts
+
+    for fn_name in real_model_root_guard.GUARDED_FUNCTIONS:
+        original = getattr(layouts, fn_name, None)
+        if original is None:  # pragma: no cover — a renamed entry point must be re-listed
+            raise AssertionError(
+                f"layouts.{fn_name} no longer exists; update GUARDED_FUNCTIONS so the "
+                f"model-root rail keeps covering every cache-root entry point."
+            )
+
+        def _guarded(cache_root, *args, _original=original, _name=fn_name, **kwargs):
+            real_model_root_guard.assert_safe(_name, cache_root)
+            return _original(cache_root, *args, **kwargs)
+
+        monkeypatch.setattr(layouts, fn_name, _guarded)
+
+
+@pytest.fixture(autouse=True)
 def _reset_knowledge_store_singleton():
     """Drop the process-wide ``KnowledgeStore`` between tests (SH6.2).
 

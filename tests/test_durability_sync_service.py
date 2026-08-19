@@ -64,6 +64,10 @@ class _Cfg:
         self.sync_transport = transport
         self.sync_stale_after_secs = stale
         self.restore_drills = False
+        # DAS-9 added the `time_travel` guard flag, and `service._due_schedule` reads it on
+        # the sync path. Default False here: this stub exists to exercise SYNC scheduling,
+        # and leaving history off keeps that the only variable under test.
+        self.time_travel = False
 
 
 class FakeTransport(SyncTransportProvider):

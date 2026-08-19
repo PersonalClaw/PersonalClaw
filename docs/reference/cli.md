@@ -157,7 +157,7 @@ Scaffold a third-party app.
 |---|---|
 | `app new --list-types` | Print the provider types this build accepts, derived at runtime from the provider registry — plus the SDK contract each type's stub implements and how many providers of that type are registered. A type added upstream shows up here without a scaffold change. |
 | `app new NAME --type TYPE [--dir DIR] [--display-name] [--description] [--author] [--force]` | Generate an installable app: `app.json` (validated against core's own manifest parser, with the plan-32 `cli.*` seams and `loggerRoots`), a provider stub implementing that type's SDK ABC, a passing `test_provider.py`, `README.md`, and an MIT `LICENSE`. Declares no permissions — add only what the provider uses. |
-| `app new --from-template [--dir DIR] [--template-url URL] [--template-archive FILE] [--force]` | Fork-and-go: fetch the [`personalclaw/app-template`](https://github.com/personalclaw/app-template) repo into `DIR/app-template` instead of generating. Same `--type tool` output, plus CI and a clone-to-installed README. Takes no NAME — renaming is a documented four-edit step in the template's README; use `--type` to generate a named app. |
+| `app new --from-template [--dir DIR] [--template-url URL] [--template-archive FILE] [--force]` | Fork-and-go: fetch the [`PersonalClaw/app-template`](https://github.com/PersonalClaw/app-template) repo into `DIR/app-template` instead of generating. Same `--type tool` output, plus CI and a clone-to-installed README. Takes no NAME — renaming is a documented four-edit step in the template's README; use `--type` to generate a named app. |
 
 Names are kebab-case. `pytest <dir>` passes on the generated bundle as-generated, and
 installing it from that local path registers the provider.

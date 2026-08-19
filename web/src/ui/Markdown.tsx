@@ -47,7 +47,14 @@ function DiffBlock({ code }: { code: string }) {
           </AnimatePresence>
         </button>
       </div>
-      <pre className="overflow-x-auto px-m py-2 text-[0.8125rem] leading-relaxed font-mono">
+      {/* 🔴 A horizontally-scrolling box that Chromium puts in the tab order, with no explicit name, is
+          announced as its own CONTENT — measured on `#/settings/updates` at 390px: focus landed on this
+          `<pre>` and its computed name was 122 characters of the code inside it. The trio
+          `tabIndex={0}` + `role="group"` + `aria-label` is this repo's canonical form for a text scroll
+          region (`ui/content/ContentSurface` ×2, `DiagnosticsPanel`, `SecurityPanel`), and a named
+          `group` stops taking its name from its subtree. */}
+      <pre tabIndex={0} role="group" aria-label="Diff"
+        className="overflow-x-auto px-m py-2 text-[0.8125rem] leading-relaxed font-mono">
         {code.split('\n').map((ln, i) => {
           const add = /^\+(?!\+)/.test(ln), del = /^-(?!-)/.test(ln), hunk = /^@@/.test(ln)
           return (
@@ -167,7 +174,10 @@ function CodeBlock({ code, lang }: { code: string; lang?: string }) {
           </button>
         </div>
       </div>
-      <pre className="overflow-x-auto px-m py-2 text-[0.8125rem] leading-relaxed"><code className="hljs font-mono" dangerouslySetInnerHTML={{ __html: html }} /></pre>
+      {/* Named by the fence's own language when it declares one — the same word this block already
+          shows in its header — and "Code" when it does not. */}
+      <pre tabIndex={0} role="group" aria-label={lang ? `${lang} code` : 'Code'}
+        className="overflow-x-auto px-m py-2 text-[0.8125rem] leading-relaxed"><code className="hljs font-mono" dangerouslySetInnerHTML={{ __html: html }} /></pre>
     </div>
   )
 }

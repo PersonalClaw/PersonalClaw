@@ -20,9 +20,12 @@ import re
 from dataclasses import dataclass
 
 # Confirmed-dup thresholds (conservative — false-merge is worse than a missed merge; the
-# loser is only ARCHIVED, but a wrongly-merged report series is data loss).
-_FUZZY_COSINE_MIN = 0.90  # semantic near-identity on the embedding
-_FILENAME_SIM_MIN = 0.85  # title/filename-stem token overlap (Jaccard)
+# loser is only ARCHIVED, but a wrongly-merged report series is data loss). PUBLIC because the
+# store's on-demand surfacing path (`find_duplicates`) applies the filename leg as a cheap SQL-side
+# prefilter before it decodes any embedding: it must gate at the SAME number this resolver does, and
+# a second copy of "0.85" in store.py is how the prefilter and the scorer drift apart silently.
+FUZZY_COSINE_MIN = 0.90  # semantic near-identity on the embedding
+FILENAME_SIM_MIN = 0.85  # title/filename-stem token overlap (Jaccard)
 
 # Recurring-series date tokens in a title/filename — if two otherwise-identical items carry
 # DIFFERENT date tokens they are DISTINCT (the date gate). Ordered widest-match first. Use a
@@ -102,6 +105,15 @@ def _stem_similarity(a: str, b: str) -> float:
     return len(sa & sb) / len(sa | sb)
 
 
+def filename_similarity(name_a: str, name_b: str) -> float:
+    """The filename leg of the dup rule, on two RAW titles/paths — normalize both stems, then
+    Jaccard. This is the whole metric ``resolve_duplicate`` gates on, exposed because it is the
+    only leg that needs no embedding: a caller scanning a whole library can run this over cheap
+    title columns and decode blobs only for what passes. Both call sites therefore compute the
+    same number by construction rather than by two implementations agreeing."""
+    return _stem_similarity(normalize_filename_stem(name_a), normalize_filename_stem(name_b))
+
+
 def format_recall_winner(a: dict, b: dict) -> tuple[dict, dict]:
     """Given two confirmed-dup item rows, return (winner, loser) — keep the richer copy.
     Precedence: processing_status done > partial/other; then file > bookmark (item_type);
@@ -138,8 +150,8 @@ def resolve_duplicate(
     candidate: dict,
     existing: dict,
     *,
-    cosine_min: float = _FUZZY_COSINE_MIN,
-    filename_sim_min: float = _FILENAME_SIM_MIN,
+    cosine_min: float = FUZZY_COSINE_MIN,
+    filename_sim_min: float = FILENAME_SIM_MIN,
 ) -> DupVerdict:
     """Decide whether ``candidate`` duplicates ``existing`` (both item rows carrying at least
     ``title``/``file_path`` + ``embedding`` as a float list). A dup requires ALL of:
@@ -147,8 +159,7 @@ def resolve_duplicate(
     (differing tokens ⇒ DISTINCT series). On a dup, names the format-recall winner/loser."""
     name_c = candidate.get("title") or candidate.get("file_path") or ""
     name_e = existing.get("title") or existing.get("file_path") or ""
-    stem_c, stem_e = normalize_filename_stem(name_c), normalize_filename_stem(name_e)
-    fsim = _stem_similarity(stem_c, stem_e)
+    fsim = filename_similarity(name_c, name_e)
     cos = cosine_similarity(candidate.get("embedding") or [], existing.get("embedding") or [])
 
     if fsim < filename_sim_min:

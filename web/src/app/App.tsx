@@ -17,6 +17,7 @@ import type { RouteProps } from './useQueryState'
 import { ErrorBoundary } from './ErrorBoundary'
 import { api } from '../lib/api'
 import { useVisiblePoll } from '../lib/useVisiblePoll'
+import { ACTIVE_LOOP_STATUSES } from '../lib/loopStatus'
 import { CommandPalette, type Command } from './CommandPalette'
 import { TerminalDrawer } from '../pages/terminal/TerminalDrawer'
 import { Toaster } from '../ui/Toaster'
@@ -218,9 +219,8 @@ function AppInner() {
   // (general/goal/code/design) — the union of every kind's active states — so a running
   // General or Design loop is counted too, not just goal+code.
   const [activeLoops, setActiveLoops] = useState(0)
-  const ACTIVE_LOOP_STATES = new Set(['running', 'paused', 'stagnant', 'blocked', 'needs_input'])
   useVisiblePoll(() => {
-    api.uLoops().then((ls) => setActiveLoops(ls.filter((l) => ACTIVE_LOOP_STATES.has(l.status)).length)).catch(() => {})
+    api.uLoops().then((ls) => setActiveLoops(ls.filter((l) => ACTIVE_LOOP_STATUSES.has(l.status)).length)).catch(() => {})
   }, 8000)
 
   // Installed apps → the Apps nav section. Apps do NOT auto-register: the user

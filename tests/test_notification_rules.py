@@ -44,18 +44,37 @@ def _write_rules(home, doc):
 
 
 def test_no_rules_file_delivers_exactly_like_before(home):
-    """No rules file ⇒ every registered kind resolves to immediate with dashboard only."""
+    """No rules file ⇒ every registered kind resolves to its registered default, dashboard only.
+
+    The `immediate` half binds the kinds that HAD a pre-registry emitter — that is the delivery
+    this equivalence property preserves. A kind nothing ever emitted has no prior behavior to
+    reproduce, so it resolves to its own registered default; `test_notification_kinds.py` pins
+    both the carve-out and the exact population it covers.
+
+    Targets and conditions stay universal: those are not behavior-preservation claims, they are
+    "an unconfigured rule adds no delivery channel and escalates nothing", which must hold for
+    every kind including a brand-new one.
+    """
+    historical = {nk.kind_for_legacy(flat).key for flat in nk._LEGACY_FLAT}
     for k in nk.all_kinds():
         rule = nr.resolve_rule(k.source, k.kind)
-        assert rule.mode == "immediate", f"{k.key} would not deliver as before"
+        assert rule.mode == k.default_mode, f"{k.key} did not resolve to its registered default"
+        if k.key in historical:
+            assert rule.mode == "immediate", f"{k.key} would not deliver as before"
         assert rule.targets == ("dashboard",)
         assert rule.conditions.matches("anything at all") == ""
 
 
 def test_every_legacy_wire_kind_resolves_to_immediate_by_default(home):
-    """The wire format is the flat string; each must reach an immediate rule."""
+    """The wire format is the flat string; each LEGACY one must reach an immediate rule.
+
+    Scoped to `_LEGACY_FLAT` rather than all of `WIRE_CONSTANTS`, matching this test's own name:
+    the tuple gained `USAGE_RECAP`, a named constant for a kind with no pre-registry emitter and
+    therefore no immediate-delivery obligation.
+    """
     for flat in nk.WIRE_CONSTANTS:
-        assert nr.resolve_rule_for_legacy(flat).mode == "immediate"
+        if flat in nk._LEGACY_FLAT:
+            assert nr.resolve_rule_for_legacy(flat).mode == "immediate"
 
 
 # ── mode resolution ─────────────────────────────────────────────────────

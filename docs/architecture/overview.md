@@ -164,6 +164,7 @@ directory on `sys.path`, and registers its contributions through a typed
 | Inbox & channels | [inbox-channels.md](inbox-channels.md) | `inbox.py`, `inbox_service.py`, `channel_delivery.py` |
 | App platform | [app-platform.md](app-platform.md) | `apps/app_manager.py`, `apps/backend_runtime.py`, `apps/permissions.py` |
 | Security | [security.md](security.md) | `security.py`, `net/`, `auth/`, `sel.py`, `supply_chain.py` |
+| Agent worlds | [agent-activity-feed.md](agent-activity-feed.md) | `web/src/lib/useAgentActivity.ts`, `web/src/pages/dashboard/world/` |
 
 ## Configuration
 

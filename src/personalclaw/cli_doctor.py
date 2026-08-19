@@ -218,7 +218,13 @@ def _doctor() -> None:
         else:
             print("  git repo:    ⚠️  not a git repo")
     elif not stale_project:
-        print("  project dir: ⚠️  not set (run personalclaw setup from project root)")
+        # Only a source checkout has a project root (a dir holding both agents/ and
+        # skills/). Wheel, uv, pipx and Docker installs never have one, and `setup`
+        # only records the path when `_detect_project_dir` already found it — so the
+        # old "run personalclaw setup from project root" advice named a directory
+        # most users do not have and a re-run could never create. Report it as
+        # not-applicable, matching how doctor reports other inert-by-design rows.
+        print("  project dir: ⏹  not set (source checkouts only — not needed here)")
 
     # ── Agent config ──
     print("\nAgent")

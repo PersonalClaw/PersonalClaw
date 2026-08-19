@@ -10,6 +10,10 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Added
 
+- **See everything your agents are doing at a glance.**
+- **The desktop app has a live menu-bar item, and quitting it no longer risks the gateway.**
+- **Undo a bad edit instead of restoring a backup.**
+
 - **Apps can subscribe to platform events they declare.**
 
 - **Pair a phone or tablet as its own device.**
@@ -35,12 +39,20 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **Take your data out — all of it, or just the part you asked for.**
 - **You can now edit the memory registers the assistant reads every session, and see who your memories are about.**
 
+- **See what a run actually built, in a browser.**
+
 ### Fixed
+
+- **A scheduler tick wrote its history into the wrong PersonalClaw home.**
+- **An agent CLI could run in your home directory instead of the folder you gave the chat.**
+- **A "Pre tool use" hook that blocks nothing now says so.**
 
 - **"Unattended runs need a verified adapter" only covered one kind of unattended run.**
 
 - **Settings → Agents could show you a stale runner reading as if it were current.**
 - **A provider that rides a CLI subscription could look signed in and still fail.**
+- **"Possible duplicates" only looked at your 25 newest items.**
+- **An export could carry the same database twice, and one copy was the unsafe one.**
 
 - **Your ready-task list was in no particular order.**
 
@@ -126,6 +138,10 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **The approval prompt now tells you what a tool call can touch, and how far your answer reaches.**
 
 ### Security
+
+- **A `.env` reached a file checkpoint through a symlink.**
+
+- **A rewind now refuses to write outside the workspace it belongs to.**
 
 - **An app can no longer change the version of a library PersonalClaw itself depends on.**
 - **Credentials can now live in your OS keychain, and Doctor tells you where they actually are.**

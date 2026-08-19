@@ -56,7 +56,7 @@ class WebUrlConnector(BaseConnector):
     """Connector that fetches and stores text content from any web URL."""
 
     _HEADERS = {
-        "User-Agent": "PersonalClaw-KnowledgeBot/1.0 (compatible; +https://github.com/personalclaw/personalclaw)"  # noqa: E501
+        "User-Agent": "PersonalClaw-KnowledgeBot/1.0 (compatible; +https://github.com/PersonalClaw/PersonalClaw)"  # noqa: E501
     }
 
     def source_type(self) -> str:

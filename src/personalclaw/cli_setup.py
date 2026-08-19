@@ -3,6 +3,7 @@
 import json
 import os
 import socket
+import sys
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -23,6 +24,27 @@ from personalclaw.constants import DATA_WARNING
 from personalclaw.env import browser_available
 from personalclaw.orchestrator_skill import generate_orchestrator_skill
 from personalclaw.skills import SkillsLoader
+
+
+def _ask(prompt: str) -> str:
+    """Read one wizard answer, or ``""`` when stdin is not a terminal.
+
+    Every ``setup`` prompt prints its default (or its skip behaviour) before
+    asking, so a blank answer always means "take what you just showed me". A
+    non-interactive stdin — a pipe, a redirect, a Dockerfile ``RUN``, CI —
+    therefore accepts those defaults instead of aborting the wizard with a raw
+    ``EOFError`` traceback partway through. `personalclaw setup` is the first
+    command the getting-started guide hands a newcomer; it must not crash when
+    it cannot prompt.
+    """
+    if not sys.stdin.isatty():
+        print(f"{prompt}(non-interactive stdin — taking the default)")
+        return ""
+    try:
+        return input(prompt).strip()
+    except EOFError:
+        print()
+        return ""
 
 
 def _fix_shell_profiles() -> None:
@@ -252,7 +274,7 @@ def _setup_workspace_dir() -> None:
     print("── Workspace Directory ──\n")
     print("  LLM sessions and task output are stored in a workspace directory.")
     print(f"  {label}: {default}\n")
-    answer = input(f"  Workspace path [{default}]: ").strip()
+    answer = _ask(f"  Workspace path [{default}]: ")
     chosen = default if answer.lower() in ("", "y", "yes") else Path(answer).expanduser()
     try:
         chosen.mkdir(parents=True, exist_ok=True)
@@ -303,17 +325,17 @@ def _setup_timezone() -> None:
     print("── Timezone ──\n")
     if current:
         print(f"  Current: {current}")
-        answer = input(f"  Timezone [{current}]: ").strip()
+        answer = _ask(f"  Timezone [{current}]: ")
         if not answer:
             print(f"  ✅ Keeping: {current}\n")
             return
         tz_val = answer
     elif detected:
         print(f"  Detected: {detected}")
-        answer = input(f"  Timezone [{detected}]: ").strip()
+        answer = _ask(f"  Timezone [{detected}]: ")
         tz_val = answer or detected
     else:
-        tz_val = input("  IANA timezone (e.g. America/Los_Angeles): ").strip()
+        tz_val = _ask("  IANA timezone (e.g. America/Los_Angeles): ")
         if not tz_val:
             print("  ⏭  Skipped. Cron schedules will show UTC.\n")
             return
@@ -353,7 +375,7 @@ def _setup_timezone() -> None:
                 print(f"  ❌ Unknown timezone '{tz_val}'.")
                 print("     Use IANA format, e.g. America/Los_Angeles, Europe/London")
             if attempt < max_retries - 1:
-                tz_val = input("  Timezone: ").strip()
+                tz_val = _ask("  Timezone: ")
                 if not tz_val:
                     print("  ⏭  Skipped.\n")
                     return
@@ -402,7 +424,7 @@ def _maybe_setup_dashboard_url() -> None:
         print("  Leave blank for localhost-only.\n")
 
     hint = f" [{current}]" if current else ""
-    answer = input(f"  Dashboard URL (e.g. http://{hostname}:{DASHBOARD_PORT}){hint}: ").strip()
+    answer = _ask(f"  Dashboard URL (e.g. http://{hostname}:{DASHBOARD_PORT}){hint}: ")
 
     if answer == "" and current:
         print(f"  ✅ Keeping: {current}\n")

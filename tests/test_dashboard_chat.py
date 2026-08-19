@@ -1933,7 +1933,9 @@ class TestRuntimeWiring:
         state.sessions.reset = AsyncMock()
 
         mock_cfg = MagicMock()
-        mock_cfg.agents = {"oncall": MagicMock(memory_store="oncall-mem")}
+        mock_cfg.agents = {
+            "oncall": MagicMock(memory_store="oncall-mem", default_dir="/tmp/oncall")
+        }
 
         mock_bindings = MagicMock()
         mock_bindings.workspace_dir = Path("/tmp/oncall")
@@ -1943,10 +1945,6 @@ class TestRuntimeWiring:
         monkeypatch.setattr("personalclaw.dashboard.chat_handlers.AppConfig.load", lambda: mock_cfg)
         monkeypatch.setattr(
             "personalclaw.dashboard.chat.resolve_agent_bindings",
-            lambda cfg, name: mock_bindings,
-        )
-        monkeypatch.setattr(
-            "personalclaw.dashboard.chat_handlers.resolve_agent_bindings",
             lambda cfg, name: mock_bindings,
         )
 
@@ -2013,7 +2011,9 @@ class TestRuntimeWiring:
         state = _make_state(tmp_path)
 
         mock_cfg = MagicMock()
-        mock_cfg.agents = {"research": MagicMock(memory_store="default")}
+        mock_cfg.agents = {
+            "research": MagicMock(memory_store="default", default_dir="/tmp/research")
+        }
 
         mock_bindings = MagicMock()
         mock_bindings.workspace_dir = Path("/tmp/research")
@@ -2023,10 +2023,6 @@ class TestRuntimeWiring:
         monkeypatch.setattr("personalclaw.dashboard.chat_handlers.AppConfig.load", lambda: mock_cfg)
         monkeypatch.setattr(
             "personalclaw.dashboard.chat.resolve_agent_bindings",
-            lambda cfg, name: mock_bindings,
-        )
-        monkeypatch.setattr(
-            "personalclaw.dashboard.chat_handlers.resolve_agent_bindings",
             lambda cfg, name: mock_bindings,
         )
 

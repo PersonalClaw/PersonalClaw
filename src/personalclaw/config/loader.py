@@ -1304,6 +1304,19 @@ class LoopsConfig:
             "didn't. Off by default: it adds a filesystem pass per stage advance.",
         ),
     )
+    worktree_sparse: bool = field(
+        default=True,
+        metadata=_meta(
+            "Sparse Task Worktrees",
+            "When a parallel task's plan names the files it will touch, hydrate only "
+            "those directories in its git worktree instead of the whole repo. On a "
+            "large codebase this is most of a worktree's setup cost. Safe by "
+            "construction: a task that writes outside its stated scope widens its own "
+            "worktree automatically, a task with no usable scope gets a full checkout, "
+            "and the merged result is identical either way. Turn off to always hydrate "
+            "the full repo.",
+        ),
+    )
 
 
 @dataclass
@@ -3323,6 +3336,18 @@ class DurabilityConfig:
             "Never touches live data; reports pass or fail.",
         ),
     )
+    # ── time-travel ──
+    time_travel: bool = field(
+        default=True,
+        metadata=_meta(
+            "Workspace time travel",
+            "Keep a local, minute-by-minute history of the things you and the "
+            "assistant edit — configuration, skills, prompts, project context and "
+            "the memory notes — so a bad edit is an undo rather than a restore. "
+            "The history stays on this machine and is never synced or exported. "
+            "Secrets are excluded from it entirely.",
+        ),
+    )
     # ── sync — off by default; needs a configured transport ──
     sync_enabled: bool = field(
         default=False,
@@ -3338,8 +3363,9 @@ class DurabilityConfig:
         default="",
         metadata=_meta(
             "Sync transport",
-            "Which installed sync transport to use (e.g. git-sync, dir-sync). Empty "
-            "means no transport is chosen yet, so sync stays idle even if enabled.",
+            "Which installed sync transport to use (e.g. git-sync, dir-sync, rsync-sync, "
+            "s3-sync). Empty means no transport is chosen yet, so sync stays idle even "
+            "if enabled.",
         ),
     )
     sync_stale_after_secs: int = field(
@@ -4356,6 +4382,7 @@ class AppConfig:
                 judge_use_case=_judge_axis(loops_data.get("judge_use_case", "reasoning")),
                 stagnation_window=_stagnation_window(loops_data.get("stagnation_window", 5)),
                 check_work_stages=bool(loops_data.get("check_work_stages", False)),
+                worktree_sparse=bool(loops_data.get("worktree_sparse", True)),
             ),
             memory=MemoryConfig(
                 semantic_confidence_threshold=memory_data.get("semantic_confidence_threshold", 0.8),
@@ -4535,6 +4562,12 @@ class AppConfig:
                 keep_weekly=_safe_int(durability_data.get("keep_weekly"), 8),
                 keep_monthly=_safe_int(durability_data.get("keep_monthly"), 12),
                 restore_drills=_guard_flag(durability_data.get("restore_drills")),
+                # Time-travel is fail-OPEN like the backups above and for the same
+                # reason: it is a purely local, secret-excluding history, so the risk
+                # of it running when config is unreadable is a few git commits, while
+                # the risk of it NOT running is the unrecoverable edit this plan exists
+                # to prevent.
+                time_travel=_guard_flag(durability_data.get("time_travel")),
                 # Sync is fail-CLOSED (unlike backups): a sync surface that turns itself
                 # on when config is unreadable would move data off-box unexpectedly, so a
                 # missing/garbage value reads False, not True.
@@ -5237,4 +5270,31 @@ def resolve_agent_bindings(
         approval_mode=agent_cfg.approval_mode,
         triggers=list(getattr(agent_cfg, "triggers", []) or []),
         provider=provider,
+    )
+
+
+def resolve_session_workspace(
+    config: "AppConfig", agent_name: str | None, current: str = ""
+) -> str:
+    """The working directory a session should carry after binding *agent_name*.
+
+    Implements ``AgentProfile.default_dir``'s declared contract verbatim — *"Empty
+    inherits the workspace root. Overridable per-session."*:
+
+    * a NON-EMPTY ``default_dir`` is the profile's own opinion and wins;
+    * an EMPTY one INHERITS — so an explicit per-session ``current`` survives, and a
+      session with none falls back to the resolved workspace root.
+
+    ``resolve_agent_bindings().workspace_dir`` cannot express this on its own: it
+    collapses both cases to a concrete path, so a caller assigning it unconditionally
+    lets a profile that declared NO directory silently relocate a session the user
+    had explicitly bound elsewhere — the G39 real-home escape, where the relocation
+    also landed outside every configured home.
+    """
+    profile = (config.agents or {}).get(agent_name) if agent_name else None
+    declared = str(getattr(profile, "default_dir", "") or "").strip() if profile else ""
+    if declared:
+        return declared
+    return str(current or "").strip() or str(
+        resolve_agent_bindings(config, agent_name).workspace_dir
     )

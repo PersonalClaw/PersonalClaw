@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest'
-import { render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { DurabilityPanel } from './DurabilityPanel'
 import { DialogHost } from '../../ui/dialog/DialogHost'
 import { closeDialog, subscribeDialogs } from '../../ui/dialog/dialogStore'
@@ -127,7 +127,7 @@ describe('a queued conflict is reviewable', () => {
     stubPanel(() => Promise.resolve(queue()))
     mount()
     await waitFor(() => expect(screen.getByText('task-42')).toBeTruthy())
-    screen.getByRole('button', { name: /compare both versions/i }).click()
+    fireEvent.click(screen.getByRole('button', { name: /compare both versions/i }))
     await waitFor(() => expect(screen.getByText(/Ship the exporter/)).toBeTruthy())
     expect(screen.getByText(/"Ship the export"/)).toBeTruthy()
   })
@@ -143,7 +143,7 @@ describe('a queued conflict is reviewable', () => {
     // not that it vanished from the keyboard.
     const accept = screen.getByRole('button', { name: /accept the drafted merge/i })
     expect(accept.getAttribute('aria-disabled')).toBe('true')
-    accept.click()
+    fireEvent.click(accept)
     expect(resolveCall).not.toHaveBeenCalled()
     expect(screen.getByText(/no reasoning model configured/)).toBeTruthy()
   })
@@ -154,7 +154,7 @@ describe('resolving is confirmed, and never silent', () => {
     stubPanel(() => Promise.resolve(queue()))
     mount()
     await waitFor(() => expect(screen.getByText('task-42')).toBeTruthy())
-    screen.getByRole('button', { name: /take the other machine/i }).click()
+    fireEvent.click(screen.getByRole('button', { name: /take the other machine/i }))
     // `alertdialog` is the shell's danger role — finding it here IS the proof the write was
     // raised as destructive rather than as a neutral "are you sure?".
     const dialog = await screen.findByRole('alertdialog')
@@ -169,11 +169,11 @@ describe('resolving is confirmed, and never silent', () => {
     stubPanel(() => Promise.resolve(queue()))
     mount()
     await waitFor(() => expect(screen.getByText('task-42')).toBeTruthy())
-    screen.getByRole('button', { name: /take the other machine/i }).click()
+    fireEvent.click(screen.getByRole('button', { name: /take the other machine/i }))
     const dialog = await screen.findByRole('alertdialog')
     const cancel = Array.from(dialog.querySelectorAll('button')).find((b) => /cancel/i.test(b.textContent ?? ''))
     expect(cancel).toBeTruthy()
-    cancel!.click()
+    fireEvent.click(cancel!)
     await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull())
     expect(resolveCall).not.toHaveBeenCalled()
   })
@@ -182,10 +182,10 @@ describe('resolving is confirmed, and never silent', () => {
     stubPanel(() => Promise.resolve(queue()))
     mount()
     await waitFor(() => expect(screen.getByText('task-42')).toBeTruthy())
-    screen.getByRole('button', { name: /take the other machine/i }).click()
+    fireEvent.click(screen.getByRole('button', { name: /take the other machine/i }))
     const dialog = await screen.findByRole('alertdialog')
     const go = Array.from(dialog.querySelectorAll('button')).find((b) => /write it/i.test(b.textContent ?? ''))
-    go!.click()
+    fireEvent.click(go!)
     await waitFor(() => expect(resolveCall).toHaveBeenCalledWith('c0ffee1234567890', 'take_remote'))
   })
 })
