@@ -47,6 +47,26 @@ function fmtUsd(n: number): string {
   return n >= 1 ? `$${n.toFixed(2)}` : `$${n.toFixed(4)}`
 }
 
+/** The headline cost figure. Exported for test — the three branches ARE the finding.
+ *
+ *  🔴 ONE UNPRICED MODEL USED TO ERASE THE WHOLE NUMBER. Measured with a seeded ledger: four
+ *  models, three of them priced, `cost_usd` **11.3496**, `priced: false` — and this stat rendered
+ *  the word "unpriced", so a spend surface showed no spend while its own table listed
+ *  $6.02 + $4.59 + $0.7398 immediately below.
+ *
+ *  The backend's rule is right — "a single unpriced constituent taints the total … it can never
+ *  present as complete" (`usage_ledger`) — but **"not complete" is not "not knowable"**: the ledger
+ *  had computed a real floor. This panel already uses exactly that concept 250 lines down: "Floor —
+ *  … Real spend is higher than **the figure above**", copy that presupposes a figure there.
+ *
+ *  So: the exact number when everything is priced, an explicit floor when some of it is, and the
+ *  bare word only when there is no floor to state — "≥$0.00" would be true and useless. The Partial
+ *  marker under the stat carries the incompleteness either way. */
+export function headlineCost(t: { cost_usd: number; priced: boolean }): string {
+  if (t.priced) return fmtUsd(t.cost_usd)
+  return t.cost_usd > 0 ? `≥${fmtUsd(t.cost_usd)}` : 'unpriced'
+}
+
 /** Cumulative model wall-clock. Kept panel-local beside its sibling formatters: this is the only
  *  duration on this surface, and one call site does not justify a shared primitive. */
 function fmtDuration(ms: number): string {
@@ -134,7 +154,7 @@ export function UsagePanel({ query, setQuery }: Pick<RouteProps, 'query' | 'setQ
 
       {t && (
         <div className="mb-l grid grid-cols-2 gap-2 sm:grid-cols-3">
-          <BigStat value={t.priced ? fmtUsd(t.cost_usd) : 'unpriced'} caption="cost" />
+          <BigStat caption="cost" value={headlineCost(t)} />
           <BigStat value={fmtTokens(t.input_tokens + t.output_tokens)} caption="tokens" />
           <BigStat value={t.turns.toLocaleString()} caption="turns" />
         </div>
