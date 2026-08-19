@@ -18,6 +18,7 @@ from personalclaw.dashboard import (
     ws,
 )
 from personalclaw.dashboard.handlers.knowledge import setup_knowledge_routes
+from personalclaw.dashboard.handlers.research_reports import setup_research_report_routes
 from personalclaw.dashboard.origin import build_allowed_origins, check_origin, resolve_bind_host
 from personalclaw.dashboard.state import _DEFAULT_PORT, DashboardState
 from personalclaw.dashboard.token_auth import token_auth_middleware
@@ -1290,6 +1291,7 @@ async def start_dashboard(
 
     # Knowledge Library
     setup_knowledge_routes(app)
+    setup_research_report_routes(app)
 
     async def _transports_startup(app_: web.Application) -> None:
         """Register the always-present in-app Web UI transport at boot.
