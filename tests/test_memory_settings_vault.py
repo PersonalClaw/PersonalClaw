@@ -1,9 +1,12 @@
 """Regression: the memory-settings endpoint must round-trip the vault settings.
 
-The PUT handler has an explicit field allowlist; the vault fields were initially
+The PUT handler writes a declared set of fields; the vault fields were initially
 missing from it, so toggling the vault in the UI silently dropped the write (the
 toggle looked on, config never changed). These tests pin both the PUT persistence
-and the GET echo so that allowlist can't regress.
+and the GET echo so that set can't regress. (The "allowlist" this docstring used to
+claim only became one later: until then a field's ABSENCE was a silent no-op rather
+than a 400, which is the same defect one layer up — see
+`test_config_write_paths_are_one_validated_mutator.py`.)
 
 MGAV-6 replaced the ``vault_enabled`` bool with the three-valued ``vault_mode``
 (off|mirror|two_way). The legacy key is no longer writable and no longer echoed;
@@ -36,6 +39,10 @@ def _put_request(body: dict):
     request = MagicMock()
     request.method = "PUT"
     request.app = {"state": MagicMock(consolidator=None)}
+    # The PUT audits to SEL now, and a SEL row is serialised to JSONL — a MagicMock
+    # caller (what `MagicMock().get(...)` returns) is not JSON-serialisable, so the
+    # fake request has to carry the same authenticated user a real one does.
+    request.get = lambda key, default=None: "tester" if key == "user" else default
 
     async def _json():
         return body
