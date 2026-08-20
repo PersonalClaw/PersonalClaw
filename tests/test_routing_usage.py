@@ -317,10 +317,19 @@ def test_a_row_with_no_usable_day_is_counted_not_silently_discarded(tmp_path):
 
 
 def test_reachable_purposes_reports_only_what_a_writer_can_produce():
-    """`eval` has no writer today. A surface uses this to avoid rendering a permanent zero row;
-    if a writer appears, this test is the reminder to update it."""
-    assert U.reachable_purposes() == ("interactive", "background", "loop", "app")
-    assert set(U.PURPOSES) - set(U.reachable_purposes()) == {"eval"}
+    """`eval` AND `loop` have no turn-ledger writer today.
+
+    This test previously asserted `loop` was reachable, which contradicted its own name: the five
+    live `record_from_event` call sites pass `background` | `channel` | `cron` | `subagent` |
+    `cli` | `chat`-or-an-app-name, and none of them passes `loop`. A loop's inferences resolve
+    under the `loops` guard axis into `model_calls.jsonl`, which the fold CENSUSES into
+    `uncounted` rather than sums — so no `loop` cell can ever be filled.
+
+    `test_usage_reachable_purposes.py` censuses the real call sites, so if a writer appears this
+    goes red there with the reason rather than here with a bare tuple mismatch."""
+    assert U.reachable_purposes() == ("interactive", "background", "app")
+    assert set(U.PURPOSES) - set(U.reachable_purposes()) == {"eval", "loop"}
+    assert U.UNWRITTEN_PURPOSES == {"eval", "loop"}
 
 
 def test_every_mapping_target_is_in_the_fixed_vocabulary():
