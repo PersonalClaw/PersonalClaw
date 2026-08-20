@@ -663,3 +663,65 @@ Folded into **Session 1** as its second half (Session 1 was already "telemetry r
   noting for whoever does: a `npx vitest run --root web` of the audit test reds where the full
   `npm test --workspace web` (417 files, 4282 tests) is green, so the rooted invocation is a false
   red on that file.
+
+## Execution log — MRT-3, session 3 (why the last clause is still unmet, measured one layer deeper)
+
+**MRT-3 REMAINS `todo`.** This session set out to close the one unmet clause — the loop detail's
+"~$X this run" — on the reasoning that session 2 had deferred it to "PP-5 follow-on work" and PP-5
+has since landed. PP-5 landing was necessary but not sufficient, and the measurement below is the
+reason. No money surface was added.
+
+**What session 2 established (re-verified, both citations still accurate):** `LoopLedger.cycle()`
+writes `STEP_COMPLETED` with `cycle`/`node_id`/`task_id`/`source_file`/`finding` and no `tokens`,
+no `cost_usd`; `ledger.run_totals` (`ledger/reader.py:43-44`) sums exactly those two fields. So
+`run_totals` over a loop store returns `cost_usd: 0.0`.
+
+**The deeper reason, new this session: NOTHING ties model spend to a specific loop, in either
+record.**
+
+- **The turn ledger has no loop rows at all.** `PURPOSE_BY_SOURCE` declares `"loop": "loop"`, but a
+  census of the five live `record_from_event` call sites shows the sources actually passed are
+  `background` (`gateway.py:1943`, the heartbeat), `channel`/`cron` (`gateway.py:2864`),
+  `subagent` (`subagent.py:2231`), `cli` (`cli_chat.py:56`) and `chat`-or-an-app-name
+  (`chat_runner.py:3515`, `session._app or "chat"`). **No writer passes `loop`.** The loop package
+  contains zero references to `cost_usd`, `usage`, `tokens_in` or `total_tokens`, and no
+  `record_from_event` call.
+- **Therefore the module note's double-count example is aspirational, not current.**
+  `routing/usage.py:22` states "a loop worker's turn is recorded as a `source="loop"` turn AND its
+  inner inference resolves under the `loops` axis into a guarded attempt row". The first half does
+  not happen. Loop spend exists only in `model_calls.jsonl`, which the fold CENSUSES into
+  `fold["uncounted"]` rather than sums — which is why loop spend is invisible in the fold today,
+  and it is not a double-count problem but a no-writer one.
+- **And the audit row cannot be scoped to one loop.** `AttemptRecord` (`guardrails/audit.py:39`)
+  carries `audit_id`/`ts`/`use_case`/`provider`/`model`/`attempt`/`tokens_in`/`tokens_out`/
+  `dollars_est`/… and no loop, run or session identifier — confirming the note's "no session key on
+  an attempt".
+
+**So the clause needs spend ATTRIBUTION, not just a durable ledger.** The available half-measures
+were both rejected: wiring the cockpit to `run_totals` renders the forbidden "~$0.00 this run", and
+recording turn rows only at the loop's judge/gate inference sites (`loop/gates.py:133`, which does
+observe `EVENT_COMPLETE`) would attribute a FRACTION of a loop's spend — the worker's inference does
+not run through the loop package at all — so the cockpit would state a dollar figure that is
+confidently wrong and lower than the truth. An understated money number is the same defect class as
+an invented one. Closing this needs the loop's worker execution seam identified and a loop
+identifier threaded to whichever record is chosen as authoritative; that remains loop-engine scope.
+
+**Shipped instead — the one defect this measurement exposed, in MRT-3's own module.**
+`reachable_purposes()` existed precisely so a surface would not render a bucket nothing can fill,
+and it excluded only `eval` while advertising `loop`. It now excludes both, via a named
+`UNWRITTEN_PURPOSES` frozenset whose basis is stated, plus `tests/test_usage_reachable_purposes.py`,
+which censuses the real call sites so the exclusion cannot go stale silently — the load-bearing
+direction being a purpose that GAINS a writer while still listed as unwritten, which would hide real
+spend. Falsified by pointing a live call site at `source="loop"`: 3 red including
+`['loop'] now HAS a turn-ledger writer but is still listed as unwritten`; restored from a file copy.
+The pre-existing `test_reachable_purposes_reports_only_what_a_writer_can_produce` asserted `loop`
+was reachable, contradicting its own name; it now asserts the measured set.
+
+**Scoped honestly:** `reachable_purposes` ships in the `/api/usage` payload and is typed in the
+frontend (`api.ts:3120`), but `UsagePanel.tsx` does not read it yet — so this fixes a payload
+contract and forecloses the zero-row before a consumer arrives, rather than removing a row a user
+currently sees. The census test's first cut was itself wrong in the same family: scoped per FILE it
+swept up `dashboard`/`gateway` from unrelated calls and would have counted `watchdog.py`'s
+`emit_attention_item(source="loop")` — an INBOX source — as a turn-ledger writer, inverting the very
+finding above. It is now scoped per CALL by paren balance, with a test asserting the innocent line
+does not count.
