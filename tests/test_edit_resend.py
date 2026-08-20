@@ -30,9 +30,9 @@ async def _noop_run_chat(state, session, msg, **kwargs):
 
 @pytest.fixture(autouse=True)
 def _mock_run_chat(monkeypatch):
-    # Edit-resend spawns _run_chat (real LLM turn); stub it so the test exercises
+    # Edit-resend spawns run_chat (real LLM turn); stub it so the test exercises
     # only the message-location + re-append logic.
-    monkeypatch.setattr("personalclaw.dashboard.chat_regenerate._run_chat", _noop_run_chat)
+    monkeypatch.setattr("personalclaw.dashboard.chat_regenerate.run_chat", _noop_run_chat)
 
 
 class TestEditResend:

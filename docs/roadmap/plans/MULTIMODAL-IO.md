@@ -321,7 +321,7 @@ Four things worth recording because they changed the design:
    `_inject_attachment_content`.** §5.3 named the attachment-injection point, but the
    routing decision needs the live `client` (does this transport carry an image?) and
    the resolved model id (does this model read images?), neither of which exists at
-   that point in `_run_chat`. Same turn, same one-shot contract, ~650 lines later.
+   that point in `run_chat`. Same turn, same one-shot contract, ~650 lines later.
 
 3. **Two independent conditions, not one.** The model's declared vision capability
    (`infer_capabilities(model_id)` — the same per-model source Settings → Models
@@ -368,7 +368,18 @@ same shape — a guarantee the surrounding prose claimed and the code did not de
 2. **A test that asserted neither half of its own name.**
    `test_no_leftover_bytes_module_import_is_side_effect_free` carried
    `assert io is not None` — a vacuous assertion whose only job was to keep an unused
-   import past flake8 — and an emptiness check the autouse fixture already guaranteed.
+   import already
+   import an
+   import and
+   import autouse
+   import check
+   import emptiness
+   import fixture
+   import flake8
+   import guaranteed.
+   import past
+   import the
+   import —
    Giving the module a genuine import-time side effect left it green, which is the
    proof. Replaced with a subprocess import under a fresh home asserting both an empty
    registry and an empty home.

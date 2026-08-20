@@ -1,4 +1,4 @@
-"""Core LLM runner — _run_chat, segment flushing, prompt expansion."""
+"""Core LLM runner — run_chat, segment flushing, prompt expansion."""
 
 import asyncio
 import json
@@ -24,7 +24,7 @@ from personalclaw.constants import CHAT_TURN_TIMEOUT
 from personalclaw.context_engine import assemble_context, check_headroom
 from personalclaw.context_headroom import HeadroomState
 from personalclaw.dashboard.chat_followups import _maybe_followups, maybe_offer_check_work
-from personalclaw.dashboard.chat_persistence import _build_history_prefix, _save_session_to_history
+from personalclaw.dashboard.chat_persistence import _build_history_prefix, save_session_to_history
 from personalclaw.dashboard.chat_title import _maybe_auto_title
 from personalclaw.dashboard.chat_utils import (
     _BLOCKED_SLASH_COMMANDS,
@@ -1439,7 +1439,7 @@ def _report_ungated_tool_call(
     return abort
 
 
-async def _run_chat(
+async def run_chat(
     state: DashboardState,
     session: _ChatSession,
     message: str,
@@ -1447,11 +1447,18 @@ async def _run_chat(
     _prompt_depth: int = 0,
     regenerate_hint: str = "",
 ) -> None:
-    """Stream LLM response into *session*.  Survives browser disconnect."""
+    """Stream LLM response into *session*.  Survives browser disconnect.
+
+    Public because it is the core↔channel seam every channel app drives: an inbound
+    message becomes a turn here, and core mirrors the reply back out through the app's
+    registered delivery. Re-exported as `personalclaw.sdk.channel.run_chat`, so the
+    signature above (positional `state, session, message`) is a published contract —
+    `_prompt_depth` stays private because it is this function's own recursion counter.
+    """
     # Reset the per-turn error flag; the except block sets it True on a crash.
     session._last_turn_errored = False
     # Phase 1 of the turn checkpoint (EXECUTION-ISOLATION §6): open a numbered turn and
-    # record the identity set. Only at depth 0 — a nested `_run_chat` (prompt expansion,
+    # record the identity set. Only at depth 0 — a nested `run_chat` (prompt expansion,
     # auto-continue) is the SAME user turn, and numbering it separately would make
     # /rewind-to-turn N mean something the transcript's turn N does not.
     if _prompt_depth == 0:
@@ -1602,7 +1609,7 @@ async def _run_chat(
     needs_session_reset = False
     saw_compaction = False
     # Reset the per-turn file-change accumulator here — all dispatch paths
-    # (handler, orchestrator, queued re-dispatch) funnel through _run_chat.
+    # (handler, orchestrator, queued re-dispatch) funnel through run_chat.
     session._file_changes = []
     # Same for the per-turn episodic-citation manifest: populated from the assembled
     # context below (new session only), attached to each assistant message's meta.
@@ -1667,8 +1674,8 @@ async def _run_chat(
                     outcome="ok",
                     metadata={"mention": f"@{name}", "session": session.key, "via": "/prompts get"},
                 )
-                # Re-enter _run_chat with the expanded message (depth=1, no further expansion)
-                await _run_chat(state, session, expanded, _prompt_depth=1)
+                # Re-enter run_chat with the expanded message (depth=1, no further expansion)
+                await run_chat(state, session, expanded, _prompt_depth=1)
             elif status == "blocked":
                 sel().log_tool_invocation(
                     session_key="",
@@ -1785,7 +1792,7 @@ async def _run_chat(
             # bridge cannot map back to the profile to re-derive the kind.
             provider_kind = getattr(bindings, "provider", "") or ""
         except Exception:
-            logger.warning("Failed to resolve agent bindings in _run_chat", exc_info=True)
+            logger.warning("Failed to resolve agent bindings in run_chat", exc_info=True)
 
         # Task-mode framing — a LAYER on the resolved system prompt, threaded as
         # system_prompt_suffix (NOT folded into the override): for the default
@@ -2448,7 +2455,7 @@ async def _run_chat(
         # exists yet at the attachment-injection point. Skipped for slash commands —
         # `/compact` is not a question about the user's screen, and the drain would
         # burn the frame the next real turn wants. Never re-entrant: a depth>0
-        # prompt-expansion re-dispatch reaches its own `_run_chat`, whose drain finds
+        # prompt-expansion re-dispatch reaches its own `run_chat`, whose drain finds
         # the slot already empty (one-shot), so the frame can attach only once.
         if not is_slash:
             try:
@@ -3852,7 +3859,7 @@ async def _run_chat(
         if assistant_text:
             _flush_segment(state, session, assistant_text, broadcast=False)
         # Save to history and trigger memory consolidation
-        _save_session_to_history(state, session)
+        save_session_to_history(state, session)
         session._prompt_busy_retries = 0
         session._acp_pipe_death_retries = 0
 
@@ -4191,7 +4198,7 @@ async def _run_chat(
                 )
 
             task = asyncio.create_task(
-                asyncio.wait_for(_run_chat(state, session, next_msg), timeout=CHAT_TURN_TIMEOUT)
+                asyncio.wait_for(run_chat(state, session, next_msg), timeout=CHAT_TURN_TIMEOUT)
             )
             session.task = task
             state._background_tasks.add(task)
@@ -4216,7 +4223,7 @@ async def _run_chat(
                 t.add_done_callback(state._background_tasks.discard)
             # Follow-up chips (CHAT-CRAFT S3): suggest 2-3 next messages via one cheap
             # background call. Fire-and-forget — never blocks the turn; the handle is
-            # stored so the next _run_chat dispatch cancels a still-pending generation.
+            # stored so the next run_chat dispatch cancels a still-pending generation.
             # "Check this work" offer (HARNESS-CRAFT §3.3): deterministic, model-free,
             # OFFER-only — the skill runs when the user clicks the chip, never here.
             maybe_offer_check_work(state, session, _turn_tool_call_count)
@@ -4225,7 +4232,7 @@ async def _run_chat(
             # session so its review gate opens on real content. A single sidecar read
             # and a no-op for every chat that never opened a walkthrough, so a quick
             # task is untouched. Imported here (not at module scope) because chat_plan
-            # dispatches back into _run_chat on approval.
+            # dispatches back into run_chat on approval.
             from personalclaw.dashboard.chat_plan import maybe_submit_plan_draft
 
             maybe_submit_plan_draft(state, session)

@@ -7,7 +7,7 @@ through the shared background lite session (``BACKGROUND_KEY``) whose provider
 build is already ``ModelCallGuard``-wrapped (breaker + timeout + budgets), with
 permission requests rejected and the output redacted. It NEVER blocks the turn:
 the task is fire-and-forget, stored on ``session._followups_task``, and the next
-``_run_chat`` dispatch cancels it. When no model is bound the background session
+``run_chat`` dispatch cancels it. When no model is bound the background session
 factory raises → caught here → no event fires (the degrade contract), so the turn
 completes normally and the FE simply renders no chips.
 """

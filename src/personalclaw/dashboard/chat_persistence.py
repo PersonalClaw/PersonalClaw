@@ -151,7 +151,7 @@ def save_all_sessions_to_history(state: DashboardState) -> None:
     """Save all active sessions to history. Called on gateway shutdown."""
     for session in list(state._sessions.values()):
         try:
-            _save_session_to_history(state, session, force=True)
+            save_session_to_history(state, session, force=True)
         except Exception:
             logger.error("Shutdown: failed to save session %s", session.key, exc_info=True)
 
@@ -548,7 +548,7 @@ def restore_recent_sessions(
     return restored
 
 
-def _save_session_to_history(
+def save_session_to_history(
     state: DashboardState,
     session: _ChatSession,
     messages: list[dict] | None = None,
@@ -556,7 +556,12 @@ def _save_session_to_history(
     closed: bool = False,
     force: bool = False,
 ) -> None:
-    """Persist session messages to JSONL history."""
+    """Persist session messages to JSONL history.
+
+    Public because it is re-exported as `personalclaw.sdk.channel.save_session_to_history`:
+    a channel app that mutates a linked session out-of-band (an interactive option pick,
+    a link/unlink) has to flush it, or the thread it just changed is lost on restart.
+    """
     msgs = messages if messages is not None else session.messages
     if not state.conversation_log or not msgs:
         return

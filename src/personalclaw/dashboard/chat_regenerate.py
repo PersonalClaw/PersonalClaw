@@ -6,8 +6,8 @@ from datetime import datetime, timezone
 
 from aiohttp import web
 
-from personalclaw.dashboard.chat_persistence import _save_session_to_history
-from personalclaw.dashboard.chat_runner import _run_chat
+from personalclaw.dashboard.chat_persistence import save_session_to_history
+from personalclaw.dashboard.chat_runner import run_chat
 from personalclaw.dashboard.state import DashboardState, _ChatSession
 from personalclaw.security import redact_credentials, redact_exfiltration_urls
 from personalclaw.sel import sel
@@ -31,7 +31,7 @@ async def _persist_history_off_thread(
     """
     try:
         msgs_snapshot = list(session.messages)
-        await asyncio.to_thread(_save_session_to_history, state, session, msgs_snapshot)
+        await asyncio.to_thread(save_session_to_history, state, session, msgs_snapshot)
     except Exception:
         logger.warning("%s: failed to persist session history", label, exc_info=True)
 
@@ -97,7 +97,7 @@ async def api_chat_session_regenerate(request: web.Request) -> web.Response:
             "vary phrasing, structure, or angle. Do not say you already answered or "
             "reference the prior reply."
         )
-        task = asyncio.create_task(_run_chat(state, session, user_msg, regenerate_hint=hint))
+        task = asyncio.create_task(run_chat(state, session, user_msg, regenerate_hint=hint))
         session.task = task
         state._background_tasks.add(task)
         task.add_done_callback(state._background_tasks.discard)
@@ -286,7 +286,7 @@ async def api_chat_session_edit_resend(request: web.Request) -> web.Response:
             resources=session.key,
         )
 
-        # Fork-and-swap: reset the provider so the next _run_chat's `is_new` path
+        # Fork-and-swap: reset the provider so the next run_chat's `is_new` path
         # rebuilds context from the truncated transcript (the running provider owns
         # its own history and doesn't know we truncated the dashboard list). Only on
         # rewind — the last-turn path relies on the provider absorbing the resend.
@@ -299,7 +299,7 @@ async def api_chat_session_edit_resend(request: web.Request) -> web.Response:
                 {"session": session.key, "index": index, "retained": retained},
             )
 
-        task = asyncio.create_task(_run_chat(state, session, _bc))
+        task = asyncio.create_task(run_chat(state, session, _bc))
         session.task = task
         state._background_tasks.add(task)
         task.add_done_callback(state._background_tasks.discard)
@@ -307,7 +307,7 @@ async def api_chat_session_edit_resend(request: web.Request) -> web.Response:
         def _on_done(t: asyncio.Task) -> None:
             if not t.cancelled() and t.exception() is not None:
                 logger.error(
-                    "edit-resend _run_chat failed for %s", session.key, exc_info=t.exception()
+                    "edit-resend run_chat failed for %s", session.key, exc_info=t.exception()
                 )
 
         task.add_done_callback(_on_done)

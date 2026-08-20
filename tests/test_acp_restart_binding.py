@@ -6,7 +6,7 @@ The gap as filed had four claims. Three were about persistence (``acp_provider``
 matters when a binding genuinely cannot be restored: the turn must SAY SO.
 
 Every restart test drives the real pair of code paths rather than asserting on a dict:
-the end-of-turn save (``_save_session_to_history``, which rebuilds the whole metadata
+the end-of-turn save (``save_session_to_history``, which rebuilds the whole metadata
 line from the in-memory session and is what silently clobbered the bind endpoint's own
 write) and the startup bulk restore (``restore_recent_sessions``, which is the path a
 restart takes and the one that used to skip the runtime binding entirely). A test that
@@ -25,10 +25,10 @@ import pytest
 
 from personalclaw.dashboard.chat_persistence import (
     _rehydrate_session_from_history,
-    _save_session_to_history,
     restore_recent_sessions,
+    save_session_to_history,
 )
-from personalclaw.dashboard.chat_runner import _run_chat
+from personalclaw.dashboard.chat_runner import run_chat
 from personalclaw.dashboard.chat_utils import apply_task_mode
 from personalclaw.dashboard.state import DashboardState, _ChatSession
 from personalclaw.history import ConversationLog
@@ -90,7 +90,7 @@ class TestBindingSurvivesARestart:
         monkeypatch.setattr("personalclaw.dashboard.state.config_dir", lambda: tmp_path)
         st = _state(tmp_path)
         s = _bound_session(st)
-        _save_session_to_history(st, s, force=True)
+        save_session_to_history(st, s, force=True)
 
         _, restored = _restart(tmp_path)
         assert restored is not None
@@ -107,7 +107,7 @@ class TestBindingSurvivesARestart:
         """
         monkeypatch.setattr("personalclaw.dashboard.state.config_dir", lambda: tmp_path)
         st = _state(tmp_path)
-        _save_session_to_history(st, _bound_session(st, task_mode="plan"), force=True)
+        save_session_to_history(st, _bound_session(st, task_mode="plan"), force=True)
 
         fresh, restored = _restart(tmp_path)
         assert restored is not None
@@ -124,7 +124,7 @@ class TestBindingSurvivesARestart:
         """
         monkeypatch.setattr("personalclaw.dashboard.state.config_dir", lambda: tmp_path)
         st = _state(tmp_path)
-        _save_session_to_history(st, _bound_session(st), force=True)
+        save_session_to_history(st, _bound_session(st), force=True)
 
         _, restored = _restart(tmp_path)
         assert restored is not None
@@ -139,14 +139,14 @@ class TestBindingSurvivesARestart:
         """
         monkeypatch.setattr("personalclaw.dashboard.state.config_dir", lambda: tmp_path)
         st = _state(tmp_path)
-        _save_session_to_history(st, _bound_session(st, task_mode="agent"), force=True)
+        save_session_to_history(st, _bound_session(st, task_mode="agent"), force=True)
         assert "task_mode" not in _meta(tmp_path)
 
     def test_a_hand_edited_task_mode_cannot_escape_the_closed_set(self, tmp_path, monkeypatch):
         """A junk mode restores as Agent, never as an un-gated unknown."""
         monkeypatch.setattr("personalclaw.dashboard.state.config_dir", lambda: tmp_path)
         st = _state(tmp_path)
-        _save_session_to_history(st, _bound_session(st), force=True)
+        save_session_to_history(st, _bound_session(st), force=True)
         path = tmp_path / f"dashboard_{SESSION}.jsonl"
         lines = path.read_text(encoding="utf-8").splitlines()
         meta = json.loads(lines[0])
@@ -164,7 +164,7 @@ class TestTurnSaveDoesNotClobberTheBindEndpoint:
         """The measured mechanism behind claim 1.
 
         ``POST /api/chat/sessions/{s}/acp-agent`` persists the binding with
-        ``ConversationLog.update_metadata`` (a merge). ``_save_session_to_history``
+        ``ConversationLog.update_metadata`` (a merge). ``save_session_to_history``
         REBUILDS the line from the in-memory session, carrying over only
         ``created_at``/``last_consolidated``/``side`` — so the merge survived exactly
         until the end of the next turn and then vanished. That ordering is the test.
@@ -172,7 +172,7 @@ class TestTurnSaveDoesNotClobberTheBindEndpoint:
         monkeypatch.setattr("personalclaw.dashboard.state.config_dir", lambda: tmp_path)
         st = _state(tmp_path)
         s = _bound_session(st)
-        _save_session_to_history(st, s, force=True)  # the file must exist to merge into
+        save_session_to_history(st, s, force=True)  # the file must exist to merge into
         st.conversation_log.update_metadata(
             HISTORY_KEY, {"acp_provider": "acp:other-cli", "acp_provider_agent": "gpu"}
         )
@@ -180,7 +180,7 @@ class TestTurnSaveDoesNotClobberTheBindEndpoint:
 
         s.acp_provider = "acp:other-cli"
         s.acp_provider_agent = "gpu"
-        _save_session_to_history(st, s, force=True)  # the next turn ends
+        save_session_to_history(st, s, force=True)  # the next turn ends
 
         assert _meta(tmp_path)["acp_provider"] == "acp:other-cli"
         _, restored = _restart(tmp_path)
@@ -196,7 +196,7 @@ class TestTurnSaveDoesNotClobberTheBindEndpoint:
         """
         monkeypatch.setattr("personalclaw.dashboard.state.config_dir", lambda: tmp_path)
         st = _state(tmp_path)
-        _save_session_to_history(st, _bound_session(st), force=True)
+        save_session_to_history(st, _bound_session(st), force=True)
 
         _, bulk = _restart(tmp_path)
         targeted = _rehydrate_session_from_history(_state(tmp_path), SESSION)
@@ -241,7 +241,7 @@ async def _aiter(items):
 
 async def _drive(state: DashboardState, session: _ChatSession) -> None:
     with patch("personalclaw.dashboard.chat_runner.sel", MagicMock()):
-        await _run_chat(state, session, "hello")
+        await run_chat(state, session, "hello")
 
 
 def _binding_notices(bcast: MagicMock) -> list[str]:

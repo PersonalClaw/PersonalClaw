@@ -732,7 +732,7 @@ D0 is documentation and should land immediately — an inaccurate security claim
 - [2026-08-17][EI-8] **PARTIAL — `EI-8` stays `todo`.** §6 landed whole; **§6.2 (localhost web preview,
   the fourth done-when clause) is NOT built**, so the atom is not flipped. Shipped:
   `src/personalclaw/turn_checkpoints.py` (the store), `dashboard/chat_file_rewind.py` (GET preview +
-  POST confirm), the pre-edit hook in `agents/native/builtin_tools.py`, phase 1 in `chat_runner._run_chat`,
+  POST confirm), the pre-edit hook in `agents/native/builtin_tools.py`, phase 1 in `chat_runner.run_chat`,
   the prune in `chat_handlers.api_chat_session_delete`, a `CheckpointsConfig` section wired through all
   five round-trip points incl. a Settings → Chat control, and a `turn_checkpoints` inventory entry.
   Two test files, 47 tests.

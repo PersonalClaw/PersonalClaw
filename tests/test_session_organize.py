@@ -449,7 +449,7 @@ def test_accept_applies_folder_and_tags(home, monkeypatch):
     by accepting is indistinguishable from a hand-made one."""
     saves = []
     monkeypatch.setattr(
-        "personalclaw.dashboard.chat_persistence._save_session_to_history",
+        "personalclaw.dashboard.chat_persistence.save_session_to_history",
         lambda state, session, force=False: saves.append(session.key),
     )
     state = FakeState(FOLDERS, list(TAGS))
@@ -472,7 +472,7 @@ def test_accept_validates_the_folder_against_live_state(home, monkeypatch):
     """Same validation `chat_folders.api_chat_session_folder` does — an echoed proposal is
     not trust. A deleted folder id must not be written."""
     monkeypatch.setattr(
-        "personalclaw.dashboard.chat_persistence._save_session_to_history",
+        "personalclaw.dashboard.chat_persistence.save_session_to_history",
         lambda state, session, force=False: None,
     )
     state = FakeState(FOLDERS, list(TAGS))
