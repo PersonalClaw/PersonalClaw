@@ -754,3 +754,120 @@ closure (worker killed). `docs/design/consistency-audit.json` drift was left alo
 folding it in here would mask a real drift later. Someone's next design-system change should regen it.
 
 **`FM-7` is now unblocked** (its deps were `FM-4`, `FM-5`, `FM-6`) and enters the ready frontier.
+
+### 2026-08-20 — `FM-7` (S3: motion budget proof) — **DONE**. The plan is complete (7/7).
+
+Three fenced slices plus assembly: close the reduced-motion hole, rail it app-wide, and measure the
+budget in a real browser.
+
+**🔴 The atom found a real off-switch hole, not just a measurement.** `motion.ts` had two transition
+families and only one was gated. `bouncy()` carries a docstring claiming it is *"the single place
+`prefers-reduced-motion` zeroes it … no preset can be added that silently escapes"* — **true of
+`physics`, false of the module.** `export const spring = {…}` was a static object literal whose three
+spatial members carry `type: 'spring'` and route through nothing. Measured reach: **`spring.*` is used
+in 72 non-test files against `physics.*`'s 27 — the ungated family was the larger one** — and only 15
+mention any reduced-motion pattern at all. Confirmed from a third angle: of 71 `spring.*` users,
+**exactly one** has a dedicated reduced-motion test (`SpotlightTour`), and it passes because it
+hand-writes `reduce ? instant : spring.spatialFast`. Safety was by memory, not by the gate. The root
+`<MotionConfig reducedMotion="user">` is not a substitute — `FM-4` measured that it neutralises
+framer *transforms* while still animating non-transform properties.
+
+**The fix is one `gated()` a level ABOVE both families**, which is exactly where the old claim was
+wrong: it lived *inside* `bouncy()`, which is how `spring` escaped it. The four `spring` members
+became getters over lifted constants. **No call-site edits**: all 138 references are property reads,
+so a getter substitutes for a value with identical syntax and identical reference identity while
+motion is allowed. 18 sites spread a preset (`{ ...spring.spatialDefault, delay: i*0.03 }`) and the
+spread is safe because `instant`'s explicit `type: 'tween'` survives it — the module's own docstring
+already documented that hazard, and it is now asserted.
+
+**Getters exposed a latent bug class, twice.** A gated getter read at MODULE SCOPE resolves the
+media query once at import and freezes it for the session. `overlayEnter.exit` in `motion.ts` had it
+(fixed in-slice) and so did `ui/chat/MessageUser.tsx`'s `travelEnter` (fixed at assembly). Two
+instances in one atom is a pattern, so it has a rail. 🪤 The rail scopes by **brace balance, not a
+line window**: a 14-line window written while investigating reported `ui/SearchField.tsx` as an
+offender because it walked out of a Tailwind class-string const and into a *different* declaration
+twelve lines later that legitimately reads `physics.snappy` inside a render function. A window is not
+a scope, and both directions are asserted — the pre-fix shape must fire, the innocent must not.
+
+**Rulings taken, not deferred.**
+· **Bounciness must NOT reach the spatial springs; reduced-motion collapse only.** `physics` IS the
+personality family (its four presets exist so one slider dials the app's character); `spring` is the
+neutral tier for moves with no character to dial. Widening it would invent three calm-damping
+constants the plan never specifies, move the feel of 112 references at every slider position below 1,
+and leave two families doing one job under two names. The clause requires "zero springs" under the
+off-switches; it does not require every spring to be bouncy. The **invariance is asserted as a
+decision**, so widening it later breaks a red test rather than drifting in.
+· **`spring.effects` collapses under reduced motion but is bounciness-invariant** — it is a tween, so
+there is no overshoot for an overshoot dial to scale, and a 0.2s crossfade is still 0.2s of motion.
+
+**🔴 OWNER RULING — the clause's "expressiveness=0" half is MIS-SPECIFIED and is rejected as
+written.** The clause asks that *"expressiveness=0 and prefers-reduced-motion both … yield
+instant/crossfade with zero springs"*. Expressiveness=0 does not, and must not:
+· `motion.ts:221` states it outright — *"expr() is the **aesthetic** dial, not the a11y switch"* — and
+records that reduced motion overrides *independently*.
+· A **green test** (`motion.test.ts:174`, *"scales its step with expressiveness — and stays TIGHT, not
+dead, at 0"*) asserts `refined > 0` with the reason: *"Zeroing it would make the aesthetic dial
+duplicate the a11y switch, which is exactly the split `expr()` exists to keep."* `REGION_STEP_FLOOR`
+exists for that.
+· `FM-4` independently measured the same thing in a browser: expressiveness 0 is **the floor, not an
+off switch** — the morph still runs at ~3% of the default amplitude with the idle breathe dropped.
+Satisfying the clause literally would delete a tested invariant, collapse two knobs into one, and
+change the default feel (default is 0.8). So the atom implements and proves the **real** off-switch
+and records this. If the owner wants expressiveness=0 to become an off-switch, that is a NEW atom
+about a11y semantics, not a line in this one.
+
+**The budget, measured** (`scripts/motion_frame_budget.mjs`, following `render_smoke.mjs`'s
+standalone-driver convention rather than the zero-diff `web/e2e/` gate tier, because a frame-time
+distribution has no machine-independent threshold). Headless shell, 1440x900 @DPR2, unthrottled,
+M5 Pro; idle control 8.33ms (~120Hz, **not** 60 — stated in the doc):
+
+| surface / step | b=1 mean | worst | b=0 mean |
+|---|---|---|---|
+| loop cockpit — route entrance, disclosure, hover | **8.33-8.42** | ≤16.8 | 8.34-8.42 |
+| ChatPage — own motion (entrance, composer, hover) | **8.33-9.81** | ≤16.8 | 8.34-9.81 |
+| command palette — open | **19.32** | 40.5 | 20.15 |
+| command palette — list scroll | **18.51** | 41.5 | 17.38 |
+
+**bounciness=1 and bounciness=0 are indistinguishable in every distribution** — not luck, but
+`bouncy()`'s contract holding: it interpolates damping only, touching neither stiffness nor duration.
+The calm dial is free, and a change that makes either dial cheaper *or* dearer is a `bouncy()` bug.
+
+**The one 60fps miss is NOT motion, and that is the finding.** Every miss in the ChatPage column
+lives in `app/CommandPalette.tsx`; strip those two steps and the surface sits at its idle floor. But
+that overlay's motion is one scrim opacity fade plus one spring on the card — its 22 rows are plain
+`<button>`s with no per-row animation, and its scoring is already `useMemo`'d. So the overrun is
+**overlay paint/scroll cost, not motion budget**, which is why both dials move it identically. It is
+recorded here as a discovered defect for whoever owns that surface, not tuned inside a motion atom.
+Second finding: ChatPage's composer typing is invisible at 1x (8.45ms) and a **106.7ms frame at 4x
+CPU throttle** — the shape of bug that ships.
+
+**The harness proves it can see a stall**, which is the only thing that makes a frame number worth
+reading. `--inject-stall 200` (a permanent, default-off flag, and the reason a probe-pattern grep now
+finds two intentional hits in `scripts/`) was re-run independently at assembly: baseline worst
+26.2ms `jank:false` → injected worst **198.6ms `jank:true`**, with the idle control still at 10.4ms
+and every real step still `jank:false`, so the stall is attributed to its own slice rather than
+smeared. Two further anti-fake controls fired for real during the slice: the route assertion refused
+two runs that had re-addressed themselves mid-measurement, and the palette detector was itself
+falsified (it reported "did not open" on a run whose frames showed it opening — `CommandPalette`
+renders `[role="listbox"]`, never `[role="dialog"]`).
+
+**CI coverage, verified not assumed.** The app-wide rail is a unit test, so `npm run test:web` runs it
+in CI. The frame harness is **not** in CI and no coverage is claimed: `ci.yml` runs only
+`test:web`, `test:desktop`, `smoke:render` and `e2e/a11y.spec.ts`, and `run_prepush.sh` gates on a
+`FRONTEND_PATHS` list the script is not in. (This also re-confirms `KL-17`'s finding that
+`web/e2e/visual.spec.ts` is never run by CI at all.)
+
+**Gate:** `make lint` clean (mypy 941); web **454 files / 4,722 tests**, `typecheck` + `build` clean;
+Python **23,245 passed, 30 skipped, 12 xfailed**; roadmap sync rails green. Falsifications re-run
+independently at assembly: un-gating one spatial getter (red in **both** tiers, naming
+`spring.spatialDefault → {"type":"spring",…}`), reverting `travelEnter` to a module-scope literal
+(the brace-balanced rail fired), and the stall injection above. The slices' own five and thirteen
+falsifications included two that are the reason to trust the rest: blinding the spring detector made
+the headline tests pass while the **vacuity floor** went red, and disabling comment-blanking inflated
+the census — both proving the floors are load-bearing rather than decorative.
+
+**Left for others, reported not silently shipped:** `thinkingPulse` runs an infinite 3.2s pulse with
+no reduced-motion gate (it passes "zero springs" and gating it changes behaviour for its callers —
+its own atom); the command-palette paint cost above; and `docs/design/consistency-audit.json` is a
+stale committed baseline on `main` that every full web run rewrites (8 files' drift, none from this
+atom), left out for a fifth tick rather than mixing another plan's delta into this diff.

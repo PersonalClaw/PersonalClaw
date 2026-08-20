@@ -9,10 +9,15 @@ import { MessageBody, type TurnPaste } from '../../pages/chat/PasteChip'
  *  its transcript slot (rise + slight grow), in concert with the glow that splits
  *  off the composer. A spring gives it weight + a soft settle. Older user bubbles
  *  use the quiet default `messageEnter`. */
-const travelEnter = {
+/*  A FUNCTION, not an object literal, because `spring.spatialSlow` is a getter that reads
+ *  `prefers-reduced-motion` at access time (FM-7). Held as a module-scope literal it would
+ *  resolve the gate ONCE at import and freeze that answer for the session, so a user who
+ *  turns reduced motion on mid-session would keep the 120px spring travel — the same trap
+ *  `overlayEnter.exit` carried in `design/motion.ts` until this atom made it a function. */
+const travelEnter = () => ({
   initial: { opacity: 0, y: 120, scale: 0.94 },
   animate: { opacity: 1, y: 0, scale: 1, transition: spring.spatialSlow },
-}
+})
 
 /** User turn — right-aligned contained bubble (40px radius, surface-container,
  *  max-width 452px). The ONLY bubbled side in NE chat. Content renders as
@@ -21,7 +26,7 @@ const travelEnter = {
  *  sent bubble travel up from the composer (Stage 3 glow-travel). */
 export function MessageUser({ children, fromComposer = false, onFileClick, pastes, optimized }: { children: string; fromComposer?: boolean; onFileClick?: (path: string) => void; pastes?: TurnPaste[]; optimized?: string }) {
   return (
-    <motion.div variants={fromComposer ? travelEnter : messageEnter} initial="initial" animate="animate" className="flex justify-end">
+    <motion.div variants={fromComposer ? travelEnter() : messageEnter} initial="initial" animate="animate" className="flex justify-end">
       <div
         className="bg-surface-container text-on-surface [&_>div>*:first-child]:mt-0 [&_>div>*:last-child]:mb-0"
         style={withWeight({

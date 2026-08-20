@@ -349,3 +349,189 @@ tests will catch:
 `web/src/design/motion.test.ts` pins the round trip, both dials per preset, and the gesture
 thresholds. It is the rail to extend when you add to the system — and the first place to look
 when a slider stops doing anything.
+
+---
+
+## 8. The budget, measured
+
+§2 calls the motion budgeted. This section is what the budget actually costs, measured rather
+than asserted, and the numbers are here because the claim they replace ("60fps, no jank") is
+the easiest one in this file to fake.
+
+**Why it cannot live in the unit tier.** `requestAnimationFrame` under jsdom is a `setTimeout`
+shim with no frame clock — it will report whatever rate you ask it for. So the measurement is a
+real browser driven by `scripts/motion_frame_budget.mjs`, next to `render_smoke.mjs` for the
+same reason that one is a standalone driver: it loads the built artifact and needs a live
+gateway. Deliberately **not** a spec in `web/e2e/`, which is the zero-diff gate tier — a
+frame-time distribution has no committed baseline and no machine-independent threshold, so a
+red/green there would be a claim about hardware. Nothing in CI runs it (`ci.yml` runs exactly
+one file out of `web/e2e/`, `a11y.spec.ts`, by explicit path); it is a driver you point at a
+gateway and read.
+
+**Why the unit of the report is a distribution.** A mean hides a stall: 60fps with one 400ms
+freeze averages to something respectable, and the freeze is the entire content of "no jank". So
+every window reports frames, mean, p50/p95/p99, worst, and the count over one 60Hz frame
+(16.7ms) and two (33.3ms). `worstMs` is the jank number; the mean is the throughput number.
+
+**Why an idle number would be worthless.** 60fps while nothing moves proves nothing, so each
+surface is measured *during* provoked motion — a route change into it (`viewTransition` plus the
+arriving `EntranceGroup` cascade), the command palette opening on `physics.playful`, a
+22-row list scrolled by wheel and by arrow key, a surface disclosure, a hover sweep across its
+controls — and each run also carries an **idle control window** on the same page in the same
+process, so the reader can see what the machine costs at rest. The control is the baseline; it
+is never the claim. The runner also samples `document.getAnimations()` inside the window and
+refuses to present a window that never observed a running animation as a result.
+
+### Environment (state it or the numbers mean nothing)
+
+`chrome-headless-shell` 151.0.7922.34, headless, 1440×900 at DPR 2, **CPU unthrottled**, Apple
+M5 Pro (18 cores), darwin arm64, against a gateway seeded with the `demo-home` fixture. This is
+the most generous environment the app will ever run in, and the headline table below is
+labelled as such rather than presented as a guarantee — which is why the 4× throttled and
+headed-on-real-vsync runs follow it.
+
+One thing that changes how to read every row: **the headless shell does not present at 60Hz.**
+Its idle control lands on 8.33ms flat — an uncapped ~120Hz clock. The *same page in a headed
+window on this machine's real display* idles at 13.34ms (≈75Hz), so 8.33ms is a property of the
+harness's browser, not of the hardware. That makes the headless run the more **sensitive**
+instrument — every frame is being asked to fit 8.33ms, twice as demanding as the 60fps floor —
+and it means a 16.7ms delta, a full miss at 120Hz, still *meets* the 60fps floor. `over16_7` is
+therefore the honest 60fps miss count either way. The two clocks do not rank the same steps the
+same, which is the subject of the third table.
+
+### What it measured
+
+Unthrottled, per interaction (`mean` in ms, `worst` in ms, `>16.7` = frames that missed 60fps):
+
+| Surface / step | b=1 mean | b=1 worst | b=1 >16.7 | b=0 mean | b=0 worst | b=0 >16.7 |
+|---|---|---|---|---|---|---|
+| **idle control** (both surfaces) | 8.33 | ≤10.4 | 0 / 360 | 8.33 | ≤10.5 | 0 / 360 |
+| **ChatPage** — whole window | 10.39 | 41.5 | 60 / 754 | 10.34 | 42.9 | 73 / 753 |
+| · route crossfade + entrance | 9.73 | 41.4 | 7 / 143 | 9.81 | 35.2 | 13 / 142 |
+| · command palette open | **19.32** | 40.5 | 10 / 28 | **20.15** | 42.9 | 11 / 26 |
+| · palette list scroll + close | **18.51** | 41.5 | 42 / 100 | **17.38** | 41.4 | 48 / 107 |
+| · composer typing + slash menu | 8.45 | 16.8 | 1 / 223 | 8.44 | 17.1 | 1 / 219 |
+| · disclosure open/close | 8.33 | 10.3 | 0 / 133 | 8.35 | 10.3 | 0 / 133 |
+| · hover sweep | 8.33 | 10.3 | 0 / 127 | 8.33 | 10.3 | 0 / 126 |
+| **Loop cockpit** (`#/loops/a17c3f92`) — whole window | 9.95 | 32.2 | 65 / 583 | 10.07 | 34.1 | 54 / 574 |
+| · route crossfade + entrance | 8.38 | 16.8 | 1 / 166 | 8.42 | 25.3 | 1 / 165 |
+| · disclosure open/close | 8.34 | 10.4 | 0 / 134 | 8.35 | 10.3 | 0 / 133 |
+| · hover sweep | 8.33 | 10.3 | 0 / 128 | 8.33 | 10.3 | 0 / 128 |
+| · command palette open | **15.17** | 32.2 | 19 / 34 | **15.64** | 34.1 | 12 / 32 |
+| · palette list scroll + close | **14.12** | 25.9 | 45 / 121 | **14.79** | 32.0 | 41 / 116 |
+
+Four things fall out of that, and the last two are the ones worth acting on.
+
+1. **No stall anywhere.** The worst single frame across every unthrottled run is **42.9ms** —
+   about 2.5 dropped frames at 60Hz, a hitch rather than a freeze. Nothing crossed 50ms.
+2. **Both dials cost the same.** Every b=1 and b=0 pair above is within noise of the other.
+   That is not luck, it is §2's contract holding: `bouncy()` interpolates **damping only**, so
+   bounciness changes the shape of the settle and touches neither stiffness (the preset's
+   identity) nor duration. The calm dial is free, and a future change that makes it cheaper
+   *or* dearer than playful is a bug in `bouncy()`, not a tuning result.
+3. **The loop cockpit's own motion is the cheapest thing measured** — its route entrance,
+   disclosure and hover sweep all sit at the 8.33ms idle floor, i.e. they cost nothing
+   detectable on this clock. It arrives, it settles, and no frame it owns misses 60fps.
+4. **The command palette is the most expensive motion in the app, and it is shell chrome.**
+   Its open sustains a 15–20ms mean — 51–66fps — for ~1.3s, and its 22-row list scroll holds
+   14–18ms; it costs the same on both surfaces because it belongs to neither. Every frame that
+   misses 60fps in the ChatPage column is inside those two steps: strip them and ChatPage's own
+   motion is 8.33–9.81ms. **This is a finding, not a fix**: `app/CommandPalette.tsx` is the
+   owner of it, and the honest reading is that the app clears its budget everywhere except one
+   overlay that animates 22 staggered rows at once, which is §5's "choreograph, don't scatter"
+   pointing at itself.
+
+### The same run at 4× CPU throttle
+
+`--cpu-throttle 4` (CDP `Emulation.setCPUThrottlingRate`) is the closest thing here to user
+hardware, and it separates the two surfaces sharply. The **idle control is unchanged at
+8.33ms** — the resting page does no main-thread work worth throttling — so everything below is
+interaction cost:
+
+| Surface | mean | p95 | worst | >16.7 |
+|---|---|---|---|---|
+| Loop cockpit, b=1 | 10.24 | 18.3 | 49.7 | 65 / 573 |
+| Loop cockpit, b=0 | 10.49 | 24.8 | 58.5 | 57 / 561 |
+| ChatPage, b=1 | **20.43** | 50.0 | **117.2** | 249 / 469 |
+| ChatPage, b=0 | **19.92** | 49.8 | **108.5** | 233 / 469 |
+
+The cockpit degrades gracefully: its own steps stay at 8.4–8.75ms and only the palette gets
+dear (16.4ms mean, against 41.7ms for the same overlay on ChatPage). ChatPage does not — its route entrance goes to 26ms mean / 117ms worst, and
+**composer typing** goes to 21.5ms mean with a 106.7ms worst, which unthrottled was the
+cheapest step on the page (8.45ms). A per-keystroke cost that is invisible at 1× and becomes a
+100ms frame at 4× is the shape of bug that ships, and it is the one to look at first if this
+page ever feels heavy on a real laptop.
+
+### The same run headed, on the real display — and why it disagrees
+
+`--headed` swaps the headless shell for the full browser in a visible window, which puts the
+page on the machine's actual vsync. ChatPage at b=1:
+
+| Window | frames | mean | p50 | p95 | p99 | worst | >16.7 | >33.3 |
+|---|---|---|---|---|---|---|---|---|
+| idle control | 224 | 13.34 | 13.3 | 15.2 | 15.3 | 15.4 | 0 | 0 |
+| interaction | 530 | 14.64 | 13.3 | 15.1 | **81.9** | **162** | 8 | 8 |
+
+Read the two instruments together, because **they rank the steps differently and each hides
+what the other shows**:
+
+- Vsync **absorbs** small overruns. `palette list scroll` — the *worst* step headless (18.51ms
+  mean, 41.5ms worst) — is spotless here (13.33ms mean, 15.6ms worst): its per-frame work fits
+  inside one 13.3ms interval, so the presented cadence never wavers. Every headless p95 above
+  is measuring work that a real display would not have shown a user.
+- Vsync **exposes** long tasks, and the headless clock spreads them. Every step that was fine
+  headless has a single multi-frame stall here: **162ms in composer typing**, 133.4ms in the
+  disclosure, 93.3ms in the palette open, 81.9ms in the route entrance — 6–12 dropped frames
+  each, i.e. exactly the "60fps with one 400ms stall" that §8's whole shape exists to catch.
+  `p99` is 81.9ms against a `p95` of 15.1ms: five nines of clean cadence with a visible hitch
+  buried in the tail, which no mean and no p95 would have reported.
+
+**Caveat this one harder than the rest.** A headed Chromium window that loses focus or gets
+occluded has its `requestAnimationFrame` throttled by the compositor, and that produces
+sporadic long frames indistinguishable from an application stall. This run was not screened for
+occlusion, so treat the four stalls as *reproducible-looking candidates* — the throttled column
+independently found a 106.7ms frame in the same composer-typing step, which is the corroboration
+that makes them worth chasing — and confirm on a focused window before attributing one to a
+component. The steady-state columns (mean/p50/p95) are unaffected by that risk.
+
+### The harness, and what it does not see
+
+```bash
+# 1. build the SPA and point the gateway's static/dist SYMLINK at it (a `cp -R` here leaves
+#    a frozen directory that shadows the link and serves a STALE bundle — `make web-build`
+#    is the one that gets the symlink right)
+make web-build
+# 2. an ISOLATED home, seeded — `demo-home` is what gives the cockpit a launched loop
+PERSONALCLAW_HOME="$PWD/.dev-home" PERSONALCLAW_AUTH_MODE=none \
+  .venv/bin/personalclaw gateway --seed demo-home --seed-replace --no-open --port 10473
+# 3. confirm it is serving YOUR bundle, not a stale one — these two must match
+curl -s http://127.0.0.1:10473/ | grep -o 'assets/index-[^"]*\.js'; ls web/dist/assets/index-*.js
+# 4. measure
+node scripts/motion_frame_budget.mjs --url http://127.0.0.1:10473
+node scripts/motion_frame_budget.mjs --url http://127.0.0.1:10473 --inject-stall 200
+node scripts/motion_frame_budget.mjs --url http://127.0.0.1:10473 --cpu-throttle 4
+node scripts/motion_frame_budget.mjs --url http://127.0.0.1:10473 --headed
+```
+
+**`--inject-stall` is the reason to believe any of the above.** It blocks the page's main
+thread synchronously from inside the measured window, in its own labelled slice. A 200ms stall
+reports `worst 206.4ms` on ChatPage and `206.7ms` on the cockpit, attributed to that slice and
+to no other, on runs whose next-worst frame was 42.4ms and 33.4ms. A harness that reported
+60fps whether or not the page froze would be measuring nothing, and this is what rules that
+out. Re-run it whenever you change the collector.
+
+Four gaps the run does not cover, stated because a measurement's blind spots are part of it:
+
+- **Neither surface's own column scrolls** with the `demo-home` fixture at 1440×900 (`docOver`
+  is 0 and every `overflow-y:auto` container fits its content), so the scroll path is measured
+  on the palette's 22-row list instead and the per-surface scroll step records an explicit
+  skip rather than a zero. A taller fixture — or `--viewport 1280x720`, where the nav rail
+  overflows by 149px — is what would close it.
+- **The cockpit is not live.** The seeded loop is `status=complete`, so the run stream and its
+  live region never animate; what was measured is the cockpit's arrival, its disclosure and its
+  hover states. A running loop is the missing case.
+- **The headed window was not screened for occlusion**, so its four long frames are candidates
+  rather than attributed defects (above).
+- **One machine, single runs.** These are one-shot numbers from one Apple-silicon dev box, not a
+  distribution over hardware or over repeats. `--cpu-throttle` simulates a slow CPU only — not a
+  slow GPU, a cold cache, a 60Hz panel, or a machine with something else running on it.

@@ -1,13 +1,24 @@
 // PersonalClaw motion presets for Framer Motion.
 //
 // TWO families, and only two — pick by whether the move carries personality:
-//   • `spring` — the raw tiers. Unscaled spatial defaults + `effects`, the
+//   • `spring` — the raw tiers. Fixed-damping spatial defaults + `effects`, the
 //     critically-damped transition for opacity/color/content (no overshoot ever).
 //   • `physics` — the four named PRESETS (snappy/smooth/fluid/playful). Every one
 //     is built by `bouncy()`, so every one scales with the user's `--bounciness`
-//     slider and collapses to `instant` under `prefers-reduced-motion`.
+//     slider.
 // Reach for `physics` for anything spatial with character; reach for `spring.effects`
 // for a fade. There is deliberately no third set of names — see docs/design/motion.md.
+//
+// The two dials divide cleanly, and the division is the module's contract:
+//   • `prefers-reduced-motion` — an A11Y OFF-SWITCH, so it binds on EVERY family. Both
+//     exit through `gated()`; there is exactly one place it is decided and one answer
+//     (`instant`). No member of either family can escape it, which is why every one of
+//     them is a getter or a function rather than a value.
+//   • `--bounciness` — a TASTE dial, so it binds on `physics` alone. `spring` is
+//     bounciness-invariant by design; see the note on `spring` for why widening it is a
+//     taste decision and not a bug fix.
+// `motion.test.ts` enumerates the module's exports and pins both halves, so a family
+// added later is covered without anyone remembering to cover it.
 
 import type { Transition, Variants } from 'framer-motion'
 
@@ -32,31 +43,90 @@ export function prefersReducedMotion(): boolean {
  *  reduced-motion collapse would leak right back through the spread. */
 export const instant: Transition = { type: 'tween', duration: 0 }
 
+/** THE reduced-motion gate. Every transition this module hands out exits through here,
+ *  and `instant` is the only answer it gives.
+ *
+ *  It exists one level ABOVE the families because that claim used to be made one level
+ *  below and was false of the module. `bouncy()` documented itself as "the single place
+ *  `prefers-reduced-motion` zeroes it" — true of the four `physics` presets that route
+ *  through it, and untrue of `spring`, which was a static object literal routing through
+ *  nothing. The ungated family was the LARGER one (72 non-test files import `spring`
+ *  against 27 for `physics`), so the app's most-used transitions ignored the setting
+ *  outright.
+ *
+ *  `<MotionConfig reducedMotion="user">` at the app root is not a substitute and never
+ *  was: it neutralises framer TRANSFORMS while continuing to animate non-transform
+ *  properties, so a spring on opacity/height/color still springs underneath it.
+ *
+ *  Read at CALL time, never cached — which is what forces every member of `spring` to be
+ *  a getter and both preset-bearing variants to be functions. A value would freeze
+ *  whatever the media query said at import. */
+function gated(t: Transition): Transition {
+  return prefersReducedMotion() ? instant : t
+}
+
+// The spatial tiers' constants, lifted out of the getters below so the three numbers
+// that ARE the tiers stay one glance apart and each getter is only plumbing. Shared
+// module constants rather than fresh objects per read, which keeps the reference
+// identity these presets have always had.
+const SPATIAL_DEFAULT: Transition = { type: 'spring', stiffness: 380, damping: 30, mass: 1 }
+const SPATIAL_FAST: Transition = { type: 'spring', stiffness: 800, damping: 34, mass: 1 }
+const SPATIAL_SLOW: Transition = { type: 'spring', stiffness: 200, damping: 26, mass: 1 }
+const EFFECTS: Transition = { duration: 0.2, ease: [0.2, 0, 0, 1] }
+
+/** The RAW tiers — the fixed-damping counterpart to `physics`.
+ *
+ *  These are deliberately BOUNCINESS-INVARIANT, and that invariance is the line between
+ *  the two families rather than an oversight. `physics` is the personality family: its
+ *  four presets exist precisely so one slider dials the app's whole character. `spring`
+ *  is the neutral one — "gentle settle" / "snappy" / "soft" tiers an author reaches for
+ *  when the move carries no character to dial, plus one fade. Widening them to
+ *  `--bounciness` would mean inventing three calm-damping constants here (the plan
+ *  specifies endpoints for the four `physics` presets and for nothing else), would change
+ *  the feel of ~112 call sites at every slider position below 1, and would leave the
+ *  module with two families doing the same job under two sets of names — the
+ *  parallel-vocabulary defect the physics reconciliation deleted. So: the a11y off-switch
+ *  is a contract and is closed here; the taste dial stays where the taste lives.
+ *
+ *  Every member is a getter so `gated()` runs at animation time. Nothing destructures
+ *  this object and nothing reads a member during module evaluation inside this file, both
+ *  of which would snapshot the gate — see the note on `overlayEnter.exit`. */
 export const spring = {
   /** default.spatial — gentle settle */
-  spatialDefault: { type: 'spring', stiffness: 380, damping: 30, mass: 1 } as Transition,
+  get spatialDefault(): Transition { return gated(SPATIAL_DEFAULT) },
   /** fast.spatial — snappy with a little overshoot */
-  spatialFast: { type: 'spring', stiffness: 800, damping: 34, mass: 1 } as Transition,
+  get spatialFast(): Transition { return gated(SPATIAL_FAST) },
   /** slow.spatial — soft, expressive */
-  spatialSlow: { type: 'spring', stiffness: 200, damping: 26, mass: 1 } as Transition,
-  /** effects — critically damped, no bounce (opacity/color) */
-  effects: { duration: 0.2, ease: [0.2, 0, 0, 1] } as Transition,
+  get spatialSlow(): Transition { return gated(SPATIAL_SLOW) },
+  /** effects — critically damped, no bounce (opacity/color/content).
+   *
+   *  A TWEEN, not a spring, so `--bounciness` has no overshoot to scale here and must
+   *  not reach it: bounciness means overshoot, and stretching a fade's duration with it
+   *  would make one dial mean two things (speed already has its own).
+   *
+   *  Reduced motion still collapses it, because a 0.2s crossfade is 0.2s of motion the
+   *  user asked not to have, and because `instant` is this module's one reduced-motion
+   *  answer everywhere else (`bouncy`, `swipeDismiss`, `viewTransition`). A 200ms fade
+   *  here would be a second doctrine in the file whose whole job is to hold one. */
+  get effects(): Transition { return gated(EFFECTS) },
 }
 
 /** A bounce spring whose overshoot scales with `runtime.bounciness` (0 → critically
  *  damped, 1 → the given playful damping). Lets one slider dial the whole app's
  *  personality without touching call sites. Lower damping = more overshoot.
  *
- *  This is THE gate for both budget dials that matter here: it is the single place
- *  the bounciness slider enters the spring family, and the single place
- *  `prefers-reduced-motion` zeroes it. Every named preset routes through it, so no
- *  preset can be added that silently escapes either. */
+ *  This is THE gate for the BOUNCINESS dial: the single place the slider enters the
+ *  spring family, so no preset can be added that silently ignores it. Reduced motion is
+ *  gated one level out, in `gated()`, which both families exit through — this function
+ *  used to own that check too, and owning it here is exactly what let `spring` escape
+ *  it. The damping is computed before the gate and discarded under reduced motion; two
+ *  arithmetic ops are cheaper than a second early return that would have to be
+ *  remembered. */
 function bouncy(stiffness: number, dampingAtPlayful: number, calmDamping: number): Transition {
-  if (prefersReducedMotion()) return instant
   const b = Math.max(0, Math.min(1, runtime.bounciness))
   // Interpolate damping from calm (high, no overshoot) → playful (low, overshoot).
   const damping = calmDamping + (dampingAtPlayful - calmDamping) * b
-  return { type: 'spring', stiffness, damping, mass: 1 }
+  return gated({ type: 'spring', stiffness, damping, mass: 1 })
 }
 
 /** The named physics presets — the ONE set an author picks from (plan FLUID-MOTION §C1).
@@ -101,11 +171,18 @@ export const messageEnter: Variants = {
  *  and freezes whatever bounciness (and whatever reduced-motion answer) happened to
  *  be true then — every overlay in the app would ignore the slider for the rest of
  *  the session. Framer resolves a variant function per animation, so the preset is
- *  read fresh each time it opens. */
+ *  read fresh each time it opens.
+ *
+ *  `exit` is a function for the SAME reason, and it did not used to be. While
+ *  `spring.effects` was a static literal an object here was harmless; now that it is a
+ *  getter, a literal would read the reduced-motion gate once at import and every overlay
+ *  in the app would exit on whatever the media query happened to say then. This is the
+ *  one shape that turns the new gate back into a snapshot, so it is the shape to look for
+ *  when adding anything to this file. */
 export const overlayEnter: Variants = {
   initial: { opacity: 0, scale: 0.96, y: 4 },
   animate: () => ({ opacity: 1, scale: 1, y: 0, transition: physics.playful }),
-  exit: { opacity: 0, scale: 0.98, transition: spring.effects },
+  exit: () => ({ opacity: 0, scale: 0.98, transition: spring.effects }),
 }
 
 /** Thinking glow — slow opacity/scale pulse. */
