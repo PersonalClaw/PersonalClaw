@@ -482,6 +482,27 @@ class KnowledgeStore:
                 PRIMARY KEY (item_id, entity_id)
             );
 
+            -- "The entity linker has LOOKED at this item" (KL-14 clause 7). One row per
+            -- item, written by `link_backfill` after it runs the deterministic alias
+            -- linker over the item's text — whether or not that found anything.
+            --
+            -- 🔴 This exists because `mentions` cannot express it. `mentions` records
+            -- what was FOUND, and an item that names no known entity legitimately has
+            -- zero rows there — indistinguishable from an item nobody has swept. A
+            -- backfill keyed on "has no mentions" would therefore re-link the same
+            -- unlinkable items on every maintenance tick and never advance to the rest of
+            -- the library. Separating "looked" from "found" is what makes the sweep
+            -- terminate.
+            --
+            -- Resume state is still the ROWS, never a cursor: each item's sweep row
+            -- commits with its own mentions, so a killed run resumes by asking the
+            -- backlog query again and no crash window can strand a cursor that disagrees
+            -- with the data.
+            CREATE TABLE IF NOT EXISTS mention_sweeps (
+                item_id TEXT PRIMARY KEY REFERENCES items(id),
+                swept_at TEXT NOT NULL
+            );
+
             -- Reading annotations (KNOWLEDGE-LIBRARY S3, T3.1). The plan left this an
             -- open question — "annotations as `mentions` vs a dedicated `annotations`
             -- table — default: reuse `mentions`; promote to its own table only if
@@ -2294,6 +2315,10 @@ class KnowledgeStore:
             )
         self.db.execute("DELETE FROM item_tags WHERE item_id = ?", (item_id,))
         self.db.execute("DELETE FROM mentions WHERE item_id = ?", (item_id,))
+        # The link-sweep marker is per-item bookkeeping and dies with the item; an orphan
+        # row is invisible to the backlog query (which selects FROM items) but would
+        # accumulate for the life of the library.
+        self.db.execute("DELETE FROM mention_sweeps WHERE item_id = ?", (item_id,))
         self.db.execute("DELETE FROM entity_relations WHERE source_item_id = ?", (item_id,))
         self.db.execute("DELETE FROM extracted_contents WHERE item_id = ?", (item_id,))
         self.vec_index.drop_item(item_id)  # before the chunk ids go away
@@ -2454,6 +2479,82 @@ class KnowledgeStore:
         if callable(for_item):
             return lambda text: for_item(text, None)
         return None
+
+    #: The link backlog predicate, in ONE place so the COUNT and the batch selector can
+    #: never disagree about what work remains — same discipline as
+    #: ``_CHUNK_BACKLOG_WHERE``. An item needs a linker sweep when it is active, not
+    #: archived, carries some text to match against, and has no ``mention_sweeps`` row.
+    #:
+    #: 🔴 The backlog is keyed on ``mention_sweeps``, NOT on "has no ``mentions`` rows".
+    #: That reading looks equivalent and is a non-terminating trap: an item may
+    #: legitimately name no known entity, so it would never gain a mention, never leave
+    #: the backlog, and be re-linked on every tick — the host re-invokes a batched pass
+    #: until it returns 0, so the head of the backlog would absorb every sub-batch and
+    #: the tail would never be reached. The sweep row records that the linker LOOKED,
+    #: which is the fact the backlog actually needs; whether it found anything is the
+    #: ``mentions`` table's business.
+    #:
+    #: Text-less items are excluded rather than swept, mirroring
+    #: ``count_items_missing_embedding``'s "ignores text-less items": there is nothing to
+    #: match, so they are not work rather than work that always finds nothing.
+    _LINK_BACKLOG_WHERE = (
+        "FROM items WHERE status = 'active' "
+        "AND COALESCE(is_archived, 0) = 0 "
+        "AND (COALESCE(title,'') != '' OR COALESCE(summary,'') != '' "
+        "OR COALESCE(content,'') != '') "
+        "AND NOT EXISTS (SELECT 1 FROM mention_sweeps WHERE mention_sweeps.item_id = items.id) "
+    )
+
+    def count_items_missing_mention_sweep(self) -> int:
+        """How many items the entity linker has never swept (KL-14 clause 7).
+
+        Zero means every active text-bearing item has been through the deterministic
+        alias linker at least once, so a maintenance tick costs one COUNT.
+        """
+        row = self.db.execute(
+            f"SELECT COUNT(*) AS n {self._LINK_BACKLOG_WHERE}"  # noqa: S608 — fixed literal
+        ).fetchone()
+        return int(row["n"]) if row else 0
+
+    def items_missing_mention_sweep(self, limit: int, after_id: str | None = None) -> list[dict]:
+        """One bounded batch of the link backlog as ``{id, title, summary, content}``.
+
+        Carries all three text fields because the linker matches entity names anywhere in
+        an item, not just in its vector text — see ``link_backfill`` for why that is a
+        superset of what the ingest path passes.
+
+        ``after_id`` is an exclusive keyset cursor, so a caller that wants several batches
+        within one run steps forward instead of re-reading the head.
+        """
+        params: list[object] = []
+        cursor = ""
+        if after_id:
+            cursor = "AND items.id > ? "
+            params.append(after_id)
+        params.append(int(limit))
+        rows = self.db.execute(
+            f"SELECT id, title, summary, content {self._LINK_BACKLOG_WHERE}{cursor}"  # noqa: S608
+            "ORDER BY items.id ASC LIMIT ?",
+            tuple(params),
+        ).fetchall()
+        return [
+            {
+                "id": r["id"],
+                "title": r["title"] or "",
+                "summary": r["summary"] or "",
+                "content": r["content"] or "",
+            }
+            for r in rows
+        ]
+
+    def record_mention_sweep(self, item_id: str) -> None:
+        """Mark *item_id* as swept by the entity linker. ``INSERT OR REPLACE`` so a
+        re-sweep refreshes the timestamp rather than raising on the primary key."""
+        self.db.execute(
+            "INSERT OR REPLACE INTO mention_sweeps (item_id, swept_at) VALUES (?, ?)",
+            (item_id, datetime.now().isoformat()),
+        )
+        self.db.commit()
 
     def reembed_all(self, embedder, on_progress=None) -> dict:
         """Re-embed every active knowledge item with ``embedder`` (which exposes

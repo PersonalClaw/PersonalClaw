@@ -211,6 +211,7 @@ class KnowledgeConsolidateActionProvider(ActionProvider):
         except Exception as exc:  # pragma: no cover — environmental
             return ActionResult(success=False, error=f"knowledge store unavailable: {exc}")
 
+        cfg_min_hours, cfg_min_cluster = _config_gate_defaults()
         items = _load_items(store)
         unprocessed = [i for i in items if not i.consolidated and not i.is_archived]
         gate = consolidation.check_gates(
@@ -218,7 +219,11 @@ class KnowledgeConsolidateActionProvider(ActionProvider):
             hours_since_last=_hours_since_last_pass(store),
             lock_held=False,
             min_new_items=_int(cfg.get("min_new_items"), consolidation.MIN_NEW_ITEMS),
-            min_hours=float(_int(cfg.get("min_hours"), consolidation.MIN_HOURS_BETWEEN_PASSES)),
+            # The USER'S floor is the default; an explicit `min_hours` on the node overrides it.
+            # That order is the whole point: `knowledge.consolidate_min_hours` was a settable knob
+            # with no reader anywhere, so a user who widened the floor in Settings changed nothing
+            # and a workflow that never mentions `min_hours` silently ran on the module constant.
+            min_hours=float(_int(cfg.get("min_hours"), cfg_min_hours)),
         )
         if not gate:
             # A DECLINED pass is a success with a reason, not a failure: "there was nothing worth
@@ -234,7 +239,9 @@ class KnowledgeConsolidateActionProvider(ActionProvider):
         plan = consolidation.plan_consolidation(
             items,
             similarity=_similarity_for(store),
-            min_size=_int(cfg.get("min_cluster_size"), consolidation.MIN_CLUSTER_SIZE),
+            # Same precedence as `min_hours` above, and the same bug before it:
+            # `knowledge.consolidate_min_cluster` had no reader either.
+            min_size=_int(cfg.get("min_cluster_size"), cfg_min_cluster),
         )
 
         summaries = cfg.get("summaries")
@@ -602,6 +609,34 @@ def _int(raw: Any, fallback: int) -> int:
     return int(raw)
 
 
+def _config_gate_defaults() -> tuple[int, int]:
+    """`(consolidate_min_hours, consolidate_min_cluster)` from the user's config.
+
+    Falls back to the module constants on ANY failure, and never raises. An action must not die
+    because a config file is mid-write or a field went away: the constants are the same values
+    the dataclass defaults to, so a fallback degrades to today's behaviour rather than to a
+    different one. Read per call rather than cached because Settings can PATCH both knobs while
+    the gateway runs, and a cadence that honoured the value from boot would look inert again.
+    """
+    try:
+        from personalclaw.config.loader import AppConfig
+
+        knowledge = AppConfig.load().knowledge
+        return (
+            _int(
+                getattr(knowledge, "consolidate_min_hours", None),
+                consolidation.MIN_HOURS_BETWEEN_PASSES,
+            ),
+            _int(
+                getattr(knowledge, "consolidate_min_cluster", None),
+                consolidation.MIN_CLUSTER_SIZE,
+            ),
+        )
+    except Exception:
+        logger.debug("knowledge config unreadable; using consolidation constants", exc_info=True)
+        return consolidation.MIN_HOURS_BETWEEN_PASSES, consolidation.MIN_CLUSTER_SIZE
+
+
 def _open_store() -> Any:
     from personalclaw.knowledge.store import KnowledgeStore, knowledge_db_path
 
@@ -610,3 +645,80 @@ def _open_store() -> Any:
     # `<home>/workspace/knowledge/knowledge.db`, so workflow-persisted knowledge landed in a
     # second database the UI could never see — with no error on either side.
     return KnowledgeStore(db_path=str(knowledge_db_path()))
+
+
+# ── the maintenance-host entry point (KL-14) ──
+
+
+def _pass_context() -> ActionContext:
+    """The `ActionContext` a maintenance tick runs under.
+
+    `event` is EMPTY on purpose. `ActionContext.event` documents itself as "one of the names
+    defined in `personalclaw.hooks.HOOK_EVENTS`", and no hook fired this — the dirty watermark
+    did. Borrowing a real event name (`session_start`, `task_complete`) to fill the field would
+    make a templated action interpolate `$EVENT` into a lifecycle moment that never happened.
+    `payload` carries the provenance instead, in the same key the persist provider already reads
+    node identity from.
+    """
+    return ActionContext(
+        event="",
+        context="knowledge graph maintenance",
+        payload={"source": "graph_maintenance", "pass": "knowledge_consolidation"},
+    )
+
+
+def run_consolidation_pass(*, batch_size: int = 0) -> int:
+    """Run the consolidation pass through the PROVIDER and report what it found.
+
+    Registered `batched=False`: one call per tick over the whole store, so the return value is a
+    REPORT, not a backlog. A store with three standing clusters returns 3 on every tick; a host
+    that read that as remaining work would re-sweep it once per allowed sub-batch forever.
+    `batch_size` is accepted to satisfy the host's `Callable[..., int]` and is deliberately
+    unused for that reason.
+
+    Returns the number of clusters the pass identified, 0 when the gate DECLINED (a normal
+    outcome of a frequent cadence, not an error) and 0 on any failure. Never raises: a pass that
+    throws costs the whole tick, including the other passes registered beside it.
+
+    🔴 **Dry run. This does NOT apply.** `_apply` writes a model-authored summary and then
+    ARCHIVES every input item, and no config knob authorises that without a user present.
+    Applying also needs one model call per cluster, so an unattended tick would spend unbounded
+    tokens on work nobody asked for — the `conflict_model_pass` knob exists precisely because
+    this codebase treats a background model call as opt-in. Going through
+    `KnowledgeConsolidateActionProvider.execute` rather than calling `plan_consolidation`
+    directly is the substantive part: `execute` is where `check_gates` lives, so the min-hours
+    and min-cluster knobs are finally honoured on a cadence instead of only when a human opens a
+    panel. The previous pass bypassed `execute` and therefore bypassed the gate entirely.
+    """
+    import asyncio
+
+    provider = KnowledgeConsolidateActionProvider()
+
+    try:
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            result = asyncio.run(provider.execute({}, _pass_context()))
+        else:
+            # A running loop means we are NOT on the host's worker thread, and this pass has no
+            # non-blocking form. Deliberately not the `ThreadPoolExecutor` bridge used by
+            # `EmbeddingProvider.get_embed_fn`: `with ThreadPoolExecutor() as pool` calls
+            # `shutdown(wait=True)` on exit, which blocks for the task's full duration even
+            # after `future.result(timeout=...)` has raised — so that shape defeats its own
+            # timeout. Reporting nothing done is honest; wedging a tick would not be.
+            logger.warning("consolidation pass skipped: called from a running event loop")
+            return 0
+    except Exception:
+        logger.warning("consolidation pass failed", exc_info=True)
+        return 0
+
+    if not result.success:
+        logger.debug("consolidation pass declined: %s", result.error)
+        return 0
+
+    payload = _json(result.stdout)
+    if not payload.get("ran"):
+        # The gate said "not yet". A success with a reason, and 0 work done.
+        return 0
+    clusters = payload.get("plan", {}).get("clusters")
+    return len(clusters) if isinstance(clusters, list) else 0

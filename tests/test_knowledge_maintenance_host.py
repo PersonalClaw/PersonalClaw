@@ -345,6 +345,7 @@ def test_the_standing_passes_register(home):
     names = maintenance_passes.register_all()
     assert maintenance_passes.PASS_MEMORY_LINT in names
     assert maintenance_passes.PASS_CONSOLIDATION in names
+    assert maintenance_passes.PASS_LINK_BACKFILL in names
     assert set(names) <= set(m.registered_passes())
 
 
@@ -357,15 +358,60 @@ def test_the_standing_passes_are_single_sweep_not_batched(home):
         assert m._PASSES[name].batched is False, f"{name} would busy-loop on its own report"
 
 
-def test_the_linker_backfill_is_recorded_as_ABSENT_not_forgotten(home):
-    """KL-14 names a third job that has no callable. The stub carries the reason.
+def test_the_linker_backfill_is_registered_as_RESUMABLE_not_a_sweep(home):
+    """The third named job, and the one pass whose return value IS a backlog.
 
-    This is the honest half of a PARTIAL: the clause is unmet, the evidence is in the module,
-    and a reader grepping for "linker" finds a decision rather than a gap.
+    Registered `batched=True` on purpose: it returns items processed and 0 when drained, so the
+    host's sub-batch loop is what finishes the library. Marked `False` it would still work and
+    still look wired while only ever draining ONE batch per tick — a library larger than a batch
+    would never finish, and nothing in the result would say so.
     """
     from personalclaw.knowledge import maintenance_passes
 
-    assert "linker" not in " ".join(m.registered_passes())
-    with pytest.raises(NotImplementedError) as exc:
-        maintenance_passes._probe_unregistered_linker_backfill()
-    assert "does not exist as a callable" in str(exc.value)
+    maintenance_passes.register_all()
+    assert maintenance_passes.PASS_LINK_BACKFILL in m.registered_passes()
+    assert m._PASSES[maintenance_passes.PASS_LINK_BACKFILL].batched is True
+
+
+def test_the_registered_linker_pass_CALLS_the_real_backfill(home, monkeypatch):
+    """The call site, not the registration.
+
+    A registered name proves a dict entry; it does not prove the callable reaches the module
+    that does the work. This drives `execute` and asserts `link_backfill.link_backfill_pass`
+    was the thing invoked, with the host's batch size passed through.
+    """
+    from personalclaw.knowledge import link_backfill, maintenance_passes
+
+    seen: list[int] = []
+    monkeypatch.setattr(
+        link_backfill,
+        "link_backfill_pass",
+        lambda *, batch_size: (seen.append(batch_size), 0)[1],
+    )
+    m.mark_dirty(now=1000.0)
+    maintenance_passes.register_all()
+    m.execute(batch_size=7)
+    assert seen == [7], f"the registered pass did not reach link_backfill_pass: {seen}"
+
+
+def test_the_linker_pass_DRAINS_across_sub_batches(home, monkeypatch):
+    """What `batched=True` buys, asserted through the host rather than assumed.
+
+    Three sub-batches then empty — the drain loop must keep claiming while the pass reports
+    work, and stop when it reports none.
+    """
+    from personalclaw.knowledge import link_backfill, maintenance_passes
+
+    returns = [5, 5, 2, 0]
+    calls: list[int] = []
+
+    def _fake(*, batch_size: int) -> int:
+        calls.append(batch_size)
+        return returns[len(calls) - 1] if len(calls) <= len(returns) else 0
+
+    monkeypatch.setattr(link_backfill, "link_backfill_pass", _fake)
+    m.mark_dirty(now=1000.0)
+    maintenance_passes.register_all()
+    result = m.execute(batch_size=5)
+    assert len(calls) == 4, f"the backlog was not drained across sub-batches: {calls}"
+    assert result.per_pass[maintenance_passes.PASS_LINK_BACKFILL] == 12
