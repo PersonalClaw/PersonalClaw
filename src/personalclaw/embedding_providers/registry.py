@@ -15,7 +15,11 @@ import asyncio
 import logging
 from collections.abc import Callable
 
-from personalclaw.embedding_providers.base import EmbeddingModel, EmbeddingProvider
+from personalclaw.embedding_providers.base import (
+    EmbeddingModel,
+    EmbeddingProvider,
+    run_embed_sync,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -215,13 +219,7 @@ def _llm_embed_fn(provider_name: str, model_id: str) -> Callable[[str], list[flo
             return list(vecs[0]) if vecs else None
 
         try:
-            asyncio.get_running_loop()
-            import concurrent.futures
-
-            with concurrent.futures.ThreadPoolExecutor() as pool:
-                return pool.submit(asyncio.run, _run()).result(timeout=60)
-        except RuntimeError:
-            return asyncio.run(_run())
+            return run_embed_sync(_run, timeout=60)
         except Exception:
             logger.debug("Remote embed failed", exc_info=True)
             return None
@@ -252,15 +250,7 @@ def get_active_embed_fn() -> Callable[[str], list[float] | None] | None:
 
         def _direct_embed(text: str) -> list[float] | None:
             try:
-                asyncio.get_running_loop()
-                import concurrent.futures
-
-                with concurrent.futures.ThreadPoolExecutor() as pool:
-                    return pool.submit(asyncio.run, direct.embed(text, model=model_id)).result(
-                        timeout=60
-                    )
-            except RuntimeError:
-                return asyncio.run(direct.embed(text, model=model_id))
+                return run_embed_sync(lambda: direct.embed(text, model=model_id), timeout=60)
             except Exception:
                 logger.debug("Direct embed provider %r failed", provider_name, exc_info=True)
                 return None
@@ -268,6 +258,46 @@ def get_active_embed_fn() -> Callable[[str], list[float] | None] | None:
         return _direct_embed
 
     return _llm_embed_fn(provider_name, model_id)
+
+
+def get_active_embed_many_fn() -> Callable[[list[str]], list[list[float] | None]] | None:
+    """A BATCH embedding fn for the active selection, or None when the provider has no batch path.
+
+    `EmbeddingProvider.embed_batch` has been on the ABC since embeddings shipped and had ZERO
+    callers in core — implemented by the `bedrock-models` and `sentence-transformers` app
+    bundles and unreached by the ingest path that would benefit. This is the accessor that
+    reaches it.
+
+    Returns None rather than a per-text shim when there is no batch path: `embed_batch.embed_texts`
+    already falls back to the single-text fn, and a shim here would make "this provider batches"
+    unanswerable — the caller could not tell 32 real batch calls from 32 sequential ones.
+    """
+    spec = _active_embedding_spec()
+    if not spec:
+        return None
+    provider_name, model_id = spec
+    if provider_name in _NATIVE_NAMES:
+        ensure_registered()
+        provider = _providers.get("native")
+    else:
+        _ensure_scanned()
+        provider = _providers.get(provider_name)
+    if provider is None:
+        return None
+    batch = getattr(provider, "embed_batch", None)
+    if not callable(batch):
+        return None
+    # `embed_batch` is declared on the ABC, so a provider that never overrode it inherits the
+    # base implementation. That is still a real batch path (the base loops), so it is used —
+    # what matters to the caller is one call per group, not how the provider satisfies it.
+
+    def _embed_many(texts: list[str]) -> list[list[float] | None]:
+        # One `asyncio.run` per BATCH is the whole point of batching — never one per text.
+        # (The per-text executor churn this used to warn about is gone from the single-text
+        # sites too; they share `base.run_embed_sync` now.)
+        return list(asyncio.run(batch(texts, model=model_id)) or [])
+
+    return _embed_many
 
 
 def get_active_embedding_dim() -> int | None:
@@ -283,23 +313,14 @@ def get_active_embedding_dim() -> int | None:
         provider = _providers.get("native")
         if provider is not None:
             try:
-                import asyncio
-
                 # This sync helper is called from BOTH sync (CLI, context builder)
                 # and async (the memory handler) contexts. A bare asyncio.run()
-                # raises inside a running loop, so run list_models() on a worker
-                # thread when a loop is already active (mirrors get_active_embed_fn).
+                # raises inside a running loop, so the shared bridge runs list_models()
+                # off-loop when one is already active (mirrors get_active_embed_fn).
                 async def _list():
                     return await provider.list_models()  # type: ignore[attr-defined]  # CI-3
 
-                try:
-                    asyncio.get_running_loop()
-                    import concurrent.futures
-
-                    with concurrent.futures.ThreadPoolExecutor() as pool:
-                        models = pool.submit(asyncio.run, _list()).result(timeout=30)
-                except RuntimeError:
-                    models = asyncio.run(_list())
+                models = run_embed_sync(_list, timeout=30)
                 for m in models:
                     if m.name == model_id:
                         return m.dimension

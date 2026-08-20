@@ -479,7 +479,7 @@
         {
           "id": "KL-15",
           "title": "Embedding batch path: provider batching, bounded retry with backoff, adaptive batch bisection",
-          "status": "todo",
+          "status": "done",
           "scope": "Capability-gap amendment (2026-08-19)",
           "done_when": "the ingest and re-embed paths call the embedding provider's batch entry point (already implemented by the shipped model apps and currently unreached from core) instead of one provider call per chunk, and the per-call thread-pool churn is removed; a configured batch size groups chunk texts per call; each call is wrapped in bounded retries with exponential backoff, replacing today's failure-returns-None-and-logs-at-debug path; on a retryable or batch-size-shaped error a batch of more than one splits in half and retries each half recursively until it succeeds or an individual chunk fails, so a provider's undeclared batch ceiling is discovered rather than failing the whole import \u2014 this matters precisely because providers are removable app bundles whose limits core cannot know; a fake provider that rejects batches above K proves the bisection converges and that no chunk is silently dropped; batch size and retry budget round-trip through config",
           "deps": []
@@ -7719,11 +7719,6 @@
         "plan": "KL"
       },
       {
-        "id": "KL-15",
-        "title": "Embedding batch path: provider batching, bounded retry with backoff, adaptive batch bisection",
-        "plan": "KL"
-      },
-      {
         "id": "KL-16",
         "title": "S4 reading experience: document outline + one prose measure + persistent context rail + in-article find",
         "plan": "KL"
@@ -9622,9 +9617,9 @@
         "code": "KL",
         "plan": "KNOWLEDGE-LIBRARY",
         "total_atoms": 17,
-        "done": 11,
+        "done": 12,
         "in_progress": 0,
-        "todo": 6,
+        "todo": 5,
         "blocked": 0
       },
       {
