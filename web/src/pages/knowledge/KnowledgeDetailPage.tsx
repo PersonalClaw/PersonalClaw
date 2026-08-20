@@ -221,6 +221,16 @@ export function KnowledgeDetailPage({ id, onBack, onOpenItem, query, setQuery }:
             onToggleReading={toggleReading}
             annotations={annotations}
             onAnnotationsChanged={reloadAnnotations}
+            // KL-16: the reader keeps the dock's attention sections instead of replacing
+            // them. Passed as a NODE rather than imported by `ReadingView`, because this
+            // module already imports `KnowledgeDetail` → `ReadingView`, and an import back
+            // the other way would close that into a cycle. It also keeps the rail's data
+            // (related items, annotation removal, item routing) owned here, where it is
+            // fetched, rather than re-fetched a second time inside the reader.
+            insightRail={hasReaderInsights(item, related, annotations) ? (
+              <ReaderInsights item={item} related={related} annotations={annotations}
+                onRemoveAnnotation={removeAnnotation} onOpenItem={onOpenItem} />
+            ) : undefined}
           />
         ) : (
           <div className="grid h-40 place-items-center text-on-surface-low text-[0.8125rem]">Loading…</div>
@@ -258,11 +268,7 @@ function KnowledgeExtras({ item, pool, related, onOpenItem, annotations, onRemov
     <div className="flex flex-col gap-l">
       {/* Highlights lead: they are the only thing here the USER wrote, and they belong on
           the item whether or not the reader happens to be open. */}
-      {annotations.length > 0 && (
-        <Section label={`Highlights · ${annotations.length}`} icon={Highlighter}>
-          <AnnotationList annotations={annotations} onDelete={onRemoveAnnotation} />
-        </Section>
-      )}
+      <HighlightsSection annotations={annotations} onRemove={onRemoveAnnotation} />
       {/* Duplicates sit SECOND — above the read-only sections — because this is the only
           section here that asks the user to DO something, and library hygiene decays the longer
           two copies of a document coexist. The count is omitted when the lookup failed: "· 0"
@@ -289,16 +295,7 @@ function KnowledgeExtras({ item, pool, related, onOpenItem, annotations, onRemov
           </div>
         </Section>
       )}
-      {entities.length > 0 && (
-        <Section label={`Entities · ${entities.length}`} icon={Network}>
-          <div className="flex flex-wrap gap-1.5">
-            {entities.slice(0, 60).map((e) => (
-              <span key={e.id} className="inline-flex items-center gap-1 rounded-pill bg-surface-container px-2 h-6 text-on-surface-var text-[0.75rem]" title={e.entity_type}>{e.name}{e.entity_type && <span className="text-on-surface-low">· {e.entity_type}</span>}</span>
-            ))}
-            <MoreRow total={entities.length} shown={60} className="px-1" />
-          </div>
-        </Section>
-      )}
+      <EntitiesSection entities={entities} />
       {relations.length > 0 && (
         <Section label={`Relations · ${relations.length}`}>
           <div className="flex flex-col gap-1">
@@ -309,40 +306,119 @@ function KnowledgeExtras({ item, pool, related, onOpenItem, annotations, onRemov
           </div>
         </Section>
       )}
-      {related.length > 0 && (
-        <Section label={`Related · ${related.length}`} icon={Network}>
-          <div className="flex flex-col gap-1">
-            {related.slice(0, 15).map((r) => (
-              <button key={r.id} type="button" onClick={() => onOpenItem(r.id)}
-                className="flex items-center gap-2 rounded-md px-2 py-1.5 text-left transition-colors hover:bg-surface-high">
-                <span className="truncate text-on-surface text-[0.8125rem]">{r.title || '(untitled)'}</span>
-                {/* The badge names whatever CHOSE this ordering. KL-13 replaced an unthresholded
-                    shared-entity count with a cosine similarity edge above a real floor, so a
-                    "3 shared" chip would no longer explain why this row sits where it does. The
-                    tooltip carries the rest — which passage matched, and the entity overlap the
-                    score no longer ranks by — so the number stays accountable. Falls back to the
-                    old chip when a response predates the edge table. */}
-                {typeof r.score === 'number' ? (
-                  <span className="ml-auto shrink-0 text-on-surface-low text-[0.75rem]"
-                    title={[
-                      `${Math.round(r.score * 100)}% similar`,
-                      typeof r.chunk_index === 'number' && typeof r.neighbour_chunk_index === 'number'
-                        ? `matched section ${r.chunk_index + 1} of this item against section ${r.neighbour_chunk_index + 1} of the other`
-                        : '',
-                      typeof r.shared_entities === 'number' ? `${r.shared_entities} shared entities` : '',
-                    ].filter(Boolean).join(' · ')}>
-                    {Math.round(r.score * 100)}%
-                  </span>
-                ) : typeof r.shared_entities === 'number' ? (
-                  <span className="ml-auto shrink-0 text-on-surface-low text-[0.75rem]">{r.shared_entities} shared</span>
-                ) : null}
-              </button>
-            ))}
-            <MoreRow total={related.length} shown={15} />
-          </div>
-        </Section>
-      )}
+      <RelatedSection related={related} onOpenItem={onOpenItem} />
     </div>
+  )
+}
+
+// ── The three dock sections the reader's insight rail also carries ───────────────────
+//
+// KL-16's clause: reading mode "no longer REPLACES the insights dock — related items,
+// entities and highlights ride a rail". Those three sections therefore have TWO homes: the
+// "More details" side panel (KnowledgeExtras, above) and the reader's rail (ReaderInsights,
+// below). They are extracted as components rather than duplicated into a second reader-only
+// component, so a change to how a related item or an entity chip reads lands on both
+// surfaces at once.
+//
+// 🔑 Extracted as THREE components rather than one block, because the dock's ordering is
+// deliberate and interleaved (highlights, then duplicates, then extracted content, then
+// entities, then relations, then related). One combined component could not be dropped into
+// that sequence without reordering it.
+
+/** The item's highlights — the only thing on the item the USER wrote. */
+export function HighlightsSection({ annotations, onRemove }: {
+  annotations: KnowledgeAnnotation[]
+  onRemove: (id: string) => void
+}) {
+  if (annotations.length === 0) return null
+  return (
+    <Section label={`Highlights · ${annotations.length}`} icon={Highlighter}>
+      <AnnotationList annotations={annotations} onDelete={onRemove} />
+    </Section>
+  )
+}
+
+/** The entities extracted from the item, as chips. */
+export function EntitiesSection({ entities }: { entities: NonNullable<KnowledgeItem['entities']> }) {
+  if (entities.length === 0) return null
+  return (
+    <Section label={`Entities · ${entities.length}`} icon={Network}>
+      <div className="flex flex-wrap gap-1.5">
+        {entities.slice(0, 60).map((e) => (
+          <span key={e.id} className="inline-flex items-center gap-1 rounded-pill bg-surface-container px-2 h-6 text-on-surface-var text-[0.75rem]" title={e.entity_type}>{e.name}{e.entity_type && <span className="text-on-surface-low">· {e.entity_type}</span>}</span>
+        ))}
+        <MoreRow total={entities.length} shown={60} className="px-1" />
+      </div>
+    </Section>
+  )
+}
+
+/** Items this one shares entities with, each a route to that item. */
+export function RelatedSection({ related, onOpenItem }: {
+  related: KnowledgeItem[]
+  onOpenItem: (id: string) => void
+}) {
+  if (related.length === 0) return null
+  return (
+    <Section label={`Related · ${related.length}`} icon={Network}>
+      <div className="flex flex-col gap-1">
+        {related.slice(0, 15).map((r) => (
+          <button key={r.id} type="button" onClick={() => onOpenItem(r.id)}
+            className="flex items-center gap-2 rounded-md px-2 py-1.5 text-left transition-colors hover:bg-surface-high">
+            <span className="truncate text-on-surface text-[0.8125rem]">{r.title || '(untitled)'}</span>
+            {/* The badge names whatever CHOSE this ordering. KL-13 replaced an unthresholded
+                shared-entity count with a cosine similarity edge above a real floor, so a
+                "3 shared" chip would no longer explain why this row sits where it does. The
+                tooltip carries the rest — which passage matched, and the entity overlap the
+                score no longer ranks by — so the number stays accountable. Falls back to the
+                old chip when a response predates the edge table. */}
+            {typeof r.score === 'number' ? (
+              <span className="ml-auto shrink-0 text-on-surface-low text-[0.75rem]"
+                title={[
+                  `${Math.round(r.score * 100)}% similar`,
+                  typeof r.chunk_index === 'number' && typeof r.neighbour_chunk_index === 'number'
+                    ? `matched section ${r.chunk_index + 1} of this item against section ${r.neighbour_chunk_index + 1} of the other`
+                    : '',
+                  typeof r.shared_entities === 'number' ? `${r.shared_entities} shared entities` : '',
+                ].filter(Boolean).join(' · ')}>
+                {Math.round(r.score * 100)}%
+              </span>
+            ) : typeof r.shared_entities === 'number' ? (
+              <span className="ml-auto shrink-0 text-on-surface-low text-[0.75rem]">{r.shared_entities} shared</span>
+            ) : null}
+          </button>
+        ))}
+        <MoreRow total={related.length} shown={15} />
+      </div>
+    </Section>
+  )
+}
+
+/** True when the reader's insight rail would have something to say.
+ *
+ *  Exported and asked BEFORE the rail is built, because in a wide reader pane the rail is
+ *  always on screen — an empty column beside the article is a worse outcome than no column,
+ *  and `ReadingView` cannot inspect a React node to find out. So the decision is made here,
+ *  where the data is, and travels as the presence or absence of the node itself. */
+export function hasReaderInsights(item: KnowledgeItem, related: KnowledgeItem[], annotations: KnowledgeAnnotation[]): boolean {
+  return annotations.length > 0 || (item.entities ?? []).length > 0 || related.length > 0
+}
+
+/** The reader's insight rail body: the same highlights / entities / related sections the
+ *  More-details dock shows, so opening the reader no longer costs the reader access to them. */
+export function ReaderInsights({ item, related, annotations, onRemoveAnnotation, onOpenItem }: {
+  item: KnowledgeItem
+  related: KnowledgeItem[]
+  annotations: KnowledgeAnnotation[]
+  onRemoveAnnotation: (id: string) => void
+  onOpenItem: (id: string) => void
+}) {
+  return (
+    <>
+      <HighlightsSection annotations={annotations} onRemove={onRemoveAnnotation} />
+      <EntitiesSection entities={item.entities ?? []} />
+      <RelatedSection related={related} onOpenItem={onOpenItem} />
+    </>
   )
 }
 
