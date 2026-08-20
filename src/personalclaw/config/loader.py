@@ -2180,6 +2180,45 @@ class KnowledgeConfig:
             "imports; higher = fewer passes.",
         ),
     )
+    similarity_min_score: float = field(
+        default=0.55,
+        metadata=_meta(
+            "Similarity Edge Floor",
+            "Minimum cosine similarity for two items to be linked by a similarity edge. Sits "
+            "deliberately ABOVE the vector arm's retrieval floor (0.25): a search hit only has "
+            "to be worth RANKING against the other hits for one query the user just typed, "
+            "while an edge is a standing claim that two items are related — read later, by "
+            "someone who never saw the query that justified it. So the edge is the stronger "
+            "claim and pays the higher bar. 0.55 rather than a little above 0.25 because "
+            "retrieval floors a short QUERY against a passage, where scores compress downward, "
+            "while both sides of an edge are full passages: a floor near the retrieval one "
+            "connects nearly every pair and the graph becomes a hairball. Lower fills the graph "
+            "with near-orthogonal neighbours nobody asked about; higher leaves genuinely "
+            "related items unlinked.",
+        ),
+    )
+    similarity_top_k: int = field(
+        default=8,
+        metadata=_meta(
+            "Similarity Edges Per Item",
+            "Strongest neighbours kept per item when the pass runs. This is the OUTBOUND "
+            "budget for one item, so it bounds the pass's write volume but not an item's total "
+            "degree — a popular item still collects inbound edges from every neighbour that "
+            "picked it, which is what the degree ceiling is for.",
+        ),
+    )
+    similarity_degree_cap: int = field(
+        default=32,
+        metadata=_meta(
+            "Similarity Degree Ceiling",
+            "Hard per-item edge ceiling counting INBOUND edges too. Top-K alone cannot bound "
+            "degree: a hub item that everything else finds similar accumulates one inbound "
+            "edge per neighbour and no outbound budget of its own ever stops it, so one item "
+            "ends up adjacent to the whole store and every traversal through it is a fan-out. "
+            "The weakest edges are dropped first when an item reaches the cap. Set it at or "
+            "above the top-K, or the cap immediately discards edges the pass just chose.",
+        ),
+    )
     consolidate_min_cluster: int = field(
         default=5,
         metadata=_meta(
@@ -4789,6 +4828,25 @@ class AppConfig:
                 embed_retry_budget=int(knowledge_data.get("embed_retry_budget", 3) or 3),
                 maintenance_max_staleness_secs=int(
                     knowledge_data.get("maintenance_max_staleness_secs", 900) or 900
+                ),
+                # KL-13's three edge knobs. config.json is hand-editable and the
+                # `_EDITABLE_CONFIG` bounds only guard the PATCH path, so each one enforces its
+                # own floor here. A cosine floor of zero (or below) is not a LOOSER floor, it is
+                # NO floor — every item becomes every other item's neighbour and the edge set
+                # degenerates into "an arbitrary K per item" — so <= 0 resolves to the shipped
+                # default rather than clamping to 0.0, while a value above 1.0 (unsatisfiable
+                # for a cosine) clamps down to 1.0 = "near-identical only", which is at least a
+                # coherent thing to have asked for.
+                similarity_min_score=min(
+                    1.0,
+                    max(0.0, _safe_float(knowledge_data.get("similarity_min_score"), 0.55)) or 0.55,
+                ),
+                # Zero edges per item disables the pass without saying so, so 0 takes the
+                # shipped default like its siblings in this block; a NEGATIVE is a typo with no
+                # reading at all and clamps to the minimum useful value instead.
+                similarity_top_k=max(1, _safe_int(knowledge_data.get("similarity_top_k"), 8) or 8),
+                similarity_degree_cap=max(
+                    1, _safe_int(knowledge_data.get("similarity_degree_cap"), 32) or 32
                 ),
                 consolidate_min_cluster=int(knowledge_data.get("consolidate_min_cluster", 5) or 5),
                 consolidate_min_hours=int(knowledge_data.get("consolidate_min_hours", 6) or 6),

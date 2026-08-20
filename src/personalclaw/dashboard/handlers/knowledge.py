@@ -986,37 +986,122 @@ async def delete_item_annotation(request: web.Request) -> web.Response:
     return web.json_response({"ok": True})
 
 
+# How far past `limit` to ask the similarity pass for. Neighbours are scored over
+# content, but archived/non-active items are excluded HERE (the edge table carries no
+# lifecycle column), so filtering happens after scoring. Without an over-fetch a single
+# archived neighbour would silently shorten a list the caller asked to be `limit` long.
+_RELATED_OVERFETCH = 3
+
+
+def _shared_entity_counts(store, item_id: str, others: list[str]) -> dict[str, int]:
+    """How many distinct entities each of ``others`` shares with ``item_id``.
+
+    One query for the whole result set, not one per neighbour. This no longer *ranks*
+    anything -- KL-13 ranks by similarity score -- it annotates an already-chosen
+    neighbour so a reader can be told why two items sit next to each other in entity
+    terms. Neighbours sharing nothing are absent from the result and read as 0.
+    """
+    if not others:
+        return {}
+    placeholders = ",".join("?" * len(others))
+    return {
+        str(r["other"]): int(r["shared"])
+        for r in store.db.execute(
+            "SELECT m2.item_id AS other, COUNT(DISTINCT m2.entity_id) AS shared "  # noqa: S608
+            "FROM mentions m1 JOIN mentions m2 ON m1.entity_id = m2.entity_id "
+            f"WHERE m1.item_id = ? AND m2.item_id IN ({placeholders}) GROUP BY m2.item_id",
+            [item_id, *others],
+        ).fetchall()
+    }
+
+
 async def get_related_items(request: web.Request) -> web.Response:
-    """GET /api/knowledge/items/{id}/related -- items sharing entities with given item."""
+    """GET /api/knowledge/items/{id}/related -- nearest neighbours by embedding similarity.
+
+    KL-13 serves this from the precomputed similarity-edge table behind a real score floor
+    (``knowledge.similarity_min_score``), replacing the unthresholded
+    ``COUNT(DISTINCT entity_id)`` overlap it ranked by before. That count had no floor at
+    all, so one incidentally shared entity -- a common tag, a person named once in passing
+    -- ranked level with a genuine topical neighbour, and the endpoint returned *something*
+    for very nearly any item. "Related" therefore carried no information.
+
+    The honest consequence of a real floor: an item whose nearest neighbour scores below it
+    now returns ``[]`` where it used to return weak matches. That empty answer is correct,
+    and it is deliberately distinguishable from an unknown item, which is a 404 -- with a
+    floor in place ``[]`` is common, so conflating "nothing is close enough" with "no such
+    item" would be least legible exactly where it matters most.
+
+    ``shared_entities`` survives in the payload but has changed job: it is descriptive
+    (explaining a neighbour the score already chose) rather than the ranking key. The
+    Related chip in ``web/src/pages/knowledge/KnowledgeDetailPage.tsx`` renders it, so
+    dropping the key would have silently emptied a live surface.
+
+    ``chunk_index``/``neighbour_chunk_index`` carry the store's provenance through
+    unrenamed. They are oriented to the item asked about -- ``chunk_index`` always names a
+    chunk of *this* item -- because the edge table stores one row per unordered pair under
+    a canonical (min, max) ordering, so "source" and "target" are storage legs and not
+    roles. Renaming them ``source_``/``target_`` here would re-import exactly the confusion
+    that orientation exists to remove.
+    """
+    from personalclaw.config.loader import AppConfig
+
     store = _store(request)
     item_id = request.match_info["id"]
+    # Read defensively: these two fields land with a sibling KL-13 change, and the
+    # fallbacks are the contract's own defaults rather than a guess.
+    knowledge_cfg = getattr(AppConfig.load(), "knowledge", None)
+    top_k = int(getattr(knowledge_cfg, "similarity_top_k", 8) or 8)
+    min_score = float(getattr(knowledge_cfg, "similarity_min_score", 0.55))
     try:
-        limit = min(20, max(1, int(request.query.get("limit", 8) or 8)))
+        limit = min(20, max(1, int(request.query.get("limit", top_k) or top_k)))
     except ValueError:
         return web.json_response({"error": "invalid limit"}, status=400)
 
-    # Find entities mentioned in this item
-    entity_ids = [
-        r["entity_id"]
-        for r in store.db.execute(
-            "SELECT entity_id FROM mentions WHERE item_id = ?", (item_id,)
-        ).fetchall()
-    ]
-    if not entity_ids:
+    if store.db.execute("SELECT 1 FROM items WHERE id = ?", (item_id,)).fetchone() is None:
+        return web.json_response({"error": "item not found"}, status=404)
+
+    # `similar_items` reads both legs and normalises each row to this item's point of view,
+    # so one call returns every neighbour regardless of which side of the edge it is stored
+    # on. `item_id` in each row is the NEIGHBOUR's id, not the one asked about.
+    edges: dict[str, dict] = {}
+    for edge in store.similar_items(item_id, limit=limit * _RELATED_OVERFETCH, min_score=min_score):
+        other = str(edge.get("item_id") or "")
+        if other and other != item_id and other not in edges:
+            edges[other] = edge
+    if not edges:
         return web.json_response([])
 
-    # Find other items that mention the same entities, ranked by overlap count
-    placeholders = ",".join("?" * len(entity_ids))
-    rows = store.db.execute(
-        f"SELECT i.*, COUNT(DISTINCT m.entity_id) as shared_entities "  # noqa: S608
-        f"FROM items i JOIN mentions m ON i.id = m.item_id "
-        f"WHERE m.entity_id IN ({placeholders}) AND i.id != ? AND i.status = 'active' "
-        f"AND COALESCE(i.is_archived, 0) = 0 "
-        f"GROUP BY i.id ORDER BY shared_entities DESC LIMIT ?",
-        [*entity_ids, item_id, limit],
-    ).fetchall()
+    # Lifecycle filtering is the handler's, not the edge table's: the pass scores content,
+    # while archiving is a later and reversible act on the item.
+    placeholders = ",".join("?" * len(edges))
+    rows = {
+        str(r["id"]): r
+        for r in store.db.execute(
+            f"SELECT * FROM items WHERE id IN ({placeholders}) "  # noqa: S608
+            "AND status = 'active' AND COALESCE(is_archived, 0) = 0",
+            list(edges),
+        ).fetchall()
+    }
+    if not rows:
+        return web.json_response([])
+
+    overlap = _shared_entity_counts(store, item_id, list(rows))
+    # Stable sort on descending score: ties keep the store's own ordering.
+    ordered = sorted(
+        (e for oid, e in edges.items() if oid in rows),
+        key=lambda e: -float(e.get("score") or 0.0),
+    )
     return web.json_response(
-        [{**store._serialize_item(r), "shared_entities": r["shared_entities"]} for r in rows]
+        [
+            {
+                **store._serialize_item(rows[str(edge["item_id"])]),
+                "score": round(float(edge.get("score") or 0.0), 6),
+                "chunk_index": edge.get("chunk_index"),
+                "neighbour_chunk_index": edge.get("neighbour_chunk_index"),
+                "shared_entities": overlap.get(str(edge["item_id"]), 0),
+            }
+            for edge in ordered[:limit]
+        ]
     )
 
 

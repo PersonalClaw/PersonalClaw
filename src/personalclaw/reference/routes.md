@@ -329,7 +329,7 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `POST /api/knowledge/items/{id}/merge` — fold another item into this one.
 - `POST /api/knowledge/items/{id}/read-state` — unread | reading | read.
 - `POST /api/knowledge/items/{id}/regenerate` — the one action the staleness banner offers.
-- `GET /api/knowledge/items/{id}/related` — - items sharing entities with given item.
+- `GET /api/knowledge/items/{id}/related` — - nearest neighbours by embedding similarity.
 - `GET /api/knowledge/items/{id}/relations` — the typed edges into and out of one item.
 - `GET /api/knowledge/items/{id}/staleness` — has the corpus moved under this synthesis?
 - `GET /api/knowledge/items/{id}/thumbnail` — - serve a generated thumbnail (image/webp).

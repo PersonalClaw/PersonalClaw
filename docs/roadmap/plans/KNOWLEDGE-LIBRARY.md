@@ -1219,3 +1219,109 @@ Sequence these **independently of S1-S3** — they touch the store's indexing la
   entities"), so a fixture built on a bare `add_entity()` measures the prune, not the pass — anchor
   each entity with one already-swept item. And a pass that takes no store argument must open its own,
   which is what makes that prune reachable from a maintenance tick at all.
+
+- [2026-08-20][KL-13] **DONE — similarity edges, on KL-14's host, behind a real floor.** Unblocked by
+  KL-11 + KL-14; unblocks KL-17. Built as four fenced parallel slices (store/pass · config · endpoint ·
+  host registration) and assembled, which is also how three cross-slice defects were caught.
+
+  **The table.** `item_similarity_edges(source_item_id, target_item_id, score, source_chunk_index,
+  target_chunk_index, by_source, by_target, computed_at)` with `UNIQUE(source_item_id, target_item_id)`
+  and `ON DELETE CASCADE` on **both** legs. "Schema-enforced" is TRUE here and was verified rather
+  than assumed: `store.py:272` sets `PRAGMA foreign_keys=ON` (the two `=OFF` sites at 673/787 are
+  one-time migration blocks that re-enable it), and the proof is a falsification — flipping the pragma
+  to `OFF` makes the cascade test fail with *"edge survived the cascade"*. No application-level edge
+  delete was added, and the test deletes via raw `DELETE FROM items` so no application line can be the
+  thing that passes it. Ids are canonicalised in `upsert_similarity_edges`, not trusted from callers.
+
+  **🔴 The clause that needed real design: "recomputing one item must NOT delete an edge another
+  item's pass created."** Canonical (min,max) ordering means an edge B discovered is stored with A as
+  `source_item_id` whenever A < B, so `DELETE WHERE source_item_id = A` destroys B's finding in
+  exactly one of the two id orderings. `by_source`/`by_target` are **writer claims** — a canonical
+  pair has exactly two possible authors, so two flags capture the whole claim set in bounded space —
+  and `release_similarity_claims` clears only this item's flag, deleting the row only when both are 0.
+  The test is parametrized over BOTH orderings, and that mattered: under the naive delete the
+  `author_is_lower_id=True` case **passed** while the other failed, so a single-ordering test would
+  have been a false green. Re-verified independently at assembly (2 passed → 1 of 2 params red).
+
+  **A GLOBAL degree cap, not a per-pass truncation.** `enforce_similarity_degree_cap` counts both legs
+  and evicts lowest-score-first; `recompute_item_edges` applies it to `[item_id, *neighbours]`. Capping
+  only the swept item is the "per-pass truncation posing as a cap" defect — top-K bounds what one item
+  writes and does nothing about 500 other items each pointing one edge at the same hub. Falsified by
+  narrowing the cap to `[item_id]`.
+
+  **The backlog is keyed on whether the pass LOOKED, not on whether it produced an edge**
+  (`similarity_sweeps`), for the same reason the entity linker is: an item can legitimately have no
+  neighbour above the floor, so a backlog keyed on "has an edge" never drains. Measured: 5 items at
+  `min_score=0.999` (zero edges written) drains `[2, 2, 1, 0]`; keyed on edges it returns
+  `[2, 2, 2, 2, 2, 2]` forever.
+
+  **The floor: 0.55, and the two slices disagreed.** The config author proposed 0.35 reasoning that an
+  edge is a stronger claim than a search hit; the pass author measured 0.55 and argued the sharper
+  point — retrieval's `_VECTOR_MIN_SIMILARITY = 0.25` floors a short QUERY against a passage, where
+  scores compress downward, while **both sides of an edge are full passages**, so a floor near the
+  retrieval one connects nearly every pair and the graph becomes a hairball. Config wins at runtime,
+  so 0.35 would have shipped the hairball. Unified on **0.55** in both places, with the reasoning in
+  the field's help text. Two follow-on corrections at assembly: the endpoint carried its own `0.35`
+  `getattr` fallback (a second source of truth), and the endpoint tests hardcoded floor-relative
+  fixtures — they now derive from `KnowledgeConfig().similarity_min_score`, so the next taste change
+  retunes them instead of failing them.
+
+  **Three knobs round-trip** (`similarity_min_score` float, `similarity_top_k`, `similarity_degree_cap`)
+  through dataclass + `_meta` → `load()` → `to_dict()` → `_EDITABLE_CONFIG` → a reader, with
+  `config-baseline.json` regenerated in the same commit. `_EDITABLE_CONFIG`'s float branch **rejects**
+  out-of-bounds rather than clamping, so the floor's PATCH minimum is `0.05` not `0.0`: a `0.0`
+  accepted there would be written and then silently replaced by the default on the next `load()` — a
+  PATCH that returns 200 and changes nothing. Zero-vs-negative are two separate tests, deliberately:
+  the `or <default>` idiom already handles `0`, so a clamp test written with `0` passes with the clamp
+  deleted (that exact vacuous test shipped in KL-15 and had to be split). `candidate_multiple` is
+  deliberately NOT config-mapped — the atom names three knobs, no field exists for the overfetch, and
+  mapping it would make the pass a reader of a key nothing ever writes.
+
+  **The endpoint now has a real threshold.** `GET /api/knowledge/items/{id}/related` ranked by an
+  unthresholded `COUNT(DISTINCT entity_id)`, so one incidentally-shared entity ranked level with a
+  genuine topical neighbour and the endpoint answered with *something* for nearly any item. It is now
+  served from the edge table above `knowledge.similarity_min_score`, carrying `score` plus
+  `chunk_index`/`neighbour_chunk_index` provenance oriented to the item asked about. The honest
+  consequence is asserted: an item whose nearest neighbour is below the floor now returns `[]`, and
+  that is kept distinguishable from an unknown item (a new 404). Lifecycle filtering stays in the
+  handler — the edge table has no lifecycle column — with a bounded overfetch so one archived
+  neighbour cannot silently shorten the list.
+
+  **The frontend moved with it** (the product half). `KnowledgeDetailPage` rendered `{shared_entities}
+  shared`, guarded by a `typeof` check — so dropping the key would have made the chip **silently
+  vanish** rather than crash. `shared_entities` is retained but demoted to descriptive; the badge now
+  shows the similarity percentage that actually chose the ordering, with the matched sections and the
+  entity overlap in its tooltip. `api.ts` gains `score`/`chunk_index`/`neighbour_chunk_index`.
+
+  **The pass runs on KL-14's host, `batched=True`, never inline on the write path.** It is the second
+  genuinely resumable pass there (the lint and the consolidation sweep return reports). The negative
+  half is asserted with a real store: five `create_typed_item` calls invoke it **0 times** while
+  marking the watermark, then one `execute(batch_size=9)` invokes it exactly once with 9 — paired with
+  a vacuity partner proving the same recorder does observe a direct call. What it does not prove is
+  recorded: it covers the `create` write path of five `mark_dirty` sites, and says nothing about a
+  synchronous call from the HTTP layer. `batch_size=0` defers to the pass's own default rather than
+  forwarding a literal zero, which is load-bearing — the pass treats `<= 0` as "drained".
+
+  **An existing test was invalidated and re-seeded, not deleted.**
+  `test_knowledge_typed_items.py::test_related_items_excludes_archived` seeded only a shared-entity
+  mention and asserted the neighbour appeared — exactly the mechanism this atom removes, so it failed
+  semantically rather than incidentally. Its INTENT (an archived item drops out of related) is
+  preserved and it now seeds a real above-floor edge.
+
+  **Gate:** `make lint` clean (mypy 940 files); Python **23,195 passed, 30 skipped, 12 xfailed**; web
+  **439 files / 4,530 tests**, `typecheck` + `build` clean; roadmap sync rails green. Falsifications
+  re-run independently at assembly, one per slice, each mutating the live line and restoring from a
+  file copy: the naive source-side delete (1 of 2 params red), `similarity_top_k` dropped from
+  `load()` (the reader test red while `to_dict()` and baseline stayed green — the "round-tripped knob
+  nothing reads" asymmetry), the endpoint floor zeroed (3 red), and the pass registered as a sweep
+  (drain red at `[5]` instead of `[5,5,2,0]`). `src/personalclaw/reference/routes.md` was regenerated
+  in the same commit — the endpoint's docstring changed, and that staleness is a red only the
+  full-suite job catches. `docs/design/consistency-audit.json` drift was left out: it is the same
+  inherited `ProjectionRulesPanel.tsx` drift clean `origin/main` reproduces byte for byte, in a file
+  this atom never touches.
+
+  **Two traps for whoever takes KL-17** (now unblocked, in the ready frontier): a document's own chunks
+  are its nearest neighbours (self-similarity ~1.0), so the ANN candidate budget must carry headroom
+  for them — `top_k * candidate_multiple + len(own_chunks)` — or a 12-chunk document spends its whole
+  budget on itself and finds nobody. And `upsert_similarity_edges` keeps **MAX on conflict** across
+  passes, not just within one, so an edge's strength does not depend on which item was swept last.

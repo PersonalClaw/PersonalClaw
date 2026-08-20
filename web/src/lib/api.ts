@@ -1760,7 +1760,14 @@ export interface KnowledgeItem {
   has_embedding?: boolean
   // populated by GET /items/{id}
   entities?: KnowledgeEntity[]; relations?: KnowledgeRelation[]
-  // populated by GET /items/{id}/related (overlap count)
+  // populated by GET /items/{id}/related. `score` is the RANKING key (KL-13: a cosine
+  // similarity edge above `knowledge.similarity_min_score`), and `chunk_index` /
+  // `neighbour_chunk_index` are its provenance — oriented to the item asked about, so a
+  // surface can explain WHY two items are related. `shared_entities` survives but is now
+  // descriptive rather than the thing that chose the ordering.
+  score?: number
+  chunk_index?: number
+  neighbour_chunk_index?: number
   shared_entities?: number
 }
 /** The ingestion node-graph shape for an item's type — nodes + edges + terminals. */

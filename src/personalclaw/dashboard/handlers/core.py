@@ -870,6 +870,18 @@ _EDITABLE_CONFIG: dict[str, dict] = {
     # the watermark exists for. `maintenance.max_staleness_secs()` enforces its own floor
     # too, because config.json is hand-editable and this bound only guards the PATCH path.
     "knowledge.maintenance_max_staleness_secs": {"type": "int", "min": 60, "max": 86400},
+    # KL-13's similarity-edge shape. Runtime-editable because the right floor depends on the
+    # embedding model and on what a store holds, and finding it means changing the value and
+    # LOOKING at the edges it produced — a restart per attempt means nobody tunes it at all.
+    # The floor's own floor is 0.05, not 0.0: this path REJECTS out-of-bounds rather than
+    # clamping, and a 0.0 accepted here would be silently replaced by the shipped default on
+    # the next load (a PATCH that reports success and changes nothing). Refusing it says so.
+    # The ceiling is 1.0 because the value is a cosine similarity and nothing above 1.0 is
+    # satisfiable. Note these three are validated INDEPENDENTLY: a degree cap set below the
+    # top-K is accepted by both entries and only the pass can see that they disagree.
+    "knowledge.similarity_min_score": {"type": "float", "min": 0.05, "max": 1.0},
+    "knowledge.similarity_top_k": {"type": "int", "min": 1, "max": 64},
+    "knowledge.similarity_degree_cap": {"type": "int", "min": 1, "max": 512},
     # KL-15. The ceiling is generous because the real limit is the PROVIDER's and core cannot
     # know it — an oversized batch is discovered by bisection and costs a few extra calls, not
     # a failed import, so the bound here only needs to stop a typo, not to be correct.
