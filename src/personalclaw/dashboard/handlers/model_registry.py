@@ -164,12 +164,60 @@ async def _discover_video_gen_models() -> list[dict[str, Any]]:
         return []
 
 
+_BYTES_PER_MB = 1024 * 1024
+
+
+def _fit_probe() -> tuple[Any, int | None, bool]:
+    """``(host, budget_bytes, hide_unrunnable)`` — the host facts, gathered ONCE.
+
+    Every fit answer on this surface comes from :mod:`personalclaw.local_models.fit`, so the
+    chip on a row and the download panel's own arithmetic cannot disagree. Runs on a worker
+    thread (see the call site): the first probe may shell out to ``nvidia-smi`` /
+    ``system_profiler`` and reading config touches the disk — neither belongs on the loop.
+    """
+    from personalclaw.local_models import fit as _fit
+
+    host = _fit.host_capacity()
+    budget = _fit.usable_memory_bytes(host, reserve_gb=_fit.configured_reserve_gb())
+    return host, budget, _fit.hide_unrunnable_default()
+
+
+def _step_down_name(
+    rows: list[dict[str, Any]], family: str, verdict: str, budget_bytes: int | None
+) -> str | None:
+    """The variant a row that cannot load should step DOWN to, or None.
+
+    Only a ``red`` row has anywhere to step down to, and the target is the largest sibling
+    that still fits per :func:`fit.largest_that_fits` — offering a variant that loads instead
+    of one that OOMs. None when the row fits, the host is unmeasured, or no sibling fits:
+    with nothing that fits there is nothing honest to offer. The sibling's OWN size decides,
+    not the family quote, because the step-down target is a concrete download.
+    """
+    if verdict != "red":
+        return None
+    from personalclaw.local_models import fit as _fit
+
+    siblings = [r for r in rows if _fit.family_key(str(r.get("name", ""))) == family]
+    target = _fit.largest_that_fits([float(r.get("size_mb") or 0) for r in siblings], budget_bytes)
+    if target is None:
+        return None
+    for r in siblings:
+        if float(r.get("size_mb") or 0) == target:
+            return str(r.get("name", "")) or None
+    return None
+
+
 async def api_models_available(request: web.Request) -> web.Response:
     """GET /api/models/available — discover models from all configured providers.
 
-    Returns {providers: [{name, type, models: [{id, name, capabilities, ...}]}]}.
+    Returns {providers: [{name, type, models: [{id, name, capabilities, ...}]}], fit: {...}}.
     Includes both config-based providers (Ollama, OpenAI, etc.) and bundled
     providers (sentence-transformers, faster-whisper, piper, image-gen).
+
+    LOCAL rows carry a hardware-fit verdict (``fit`` / ``fit_reason`` / ``fit_need_mb`` /
+    ``quoted_size_mb`` / ``fit_step_down``) and the response carries the one memory budget
+    they were judged against. Config-provider and image/video-gen rows carry NO fit fields:
+    they have no local weights, and an absent field is how the UI knows to draw no chip.
     """
     providers_cfg = _get_providers_from_config()
     result: list[dict[str, Any]] = []
@@ -215,17 +263,51 @@ async def api_models_available(request: web.Request) -> web.Response:
     # diarization backends, ollama, …). Each card lists the provider's full catalog
     # (downloaded AND downloadable) with per-model capabilities, so the same surface
     # drives binding, download, and runtime. No per-kind branching, no hardcoded names.
+    from personalclaw.local_models import fit as _fit
     from personalclaw.local_models.registry import catalog_for as _local_catalog
     from personalclaw.local_models.registry import registered as _local_registered
+
+    # ONE host probe for the whole response — not one per model. The budget every row is
+    # judged against is the same number the response reports, so a chip and the panel's
+    # header can never quote different capacities.
+    host, budget_bytes, hide_unrunnable = await asyncio.to_thread(_fit_probe)
 
     # Key each card by the REGISTRY key (the app name) — matches the Providers UI's ext
     # name AND the ``provider:model`` binding refs — not the provider's internal .name.
     for pkey, prov in _local_registered():
+        rows = [lm.to_dict() for lm in await _local_catalog(prov)]
+        # A family QUOTES its median variant, never its smallest: quoting the smallest
+        # promises a fit the user will not get from the variant they actually pick. A
+        # colonless name is a family of one, so its quote is its own size and nothing
+        # changes for it.
+        sizes_by_family: dict[str, list[float]] = {}
+        for d in rows:
+            sizes_by_family.setdefault(_fit.family_key(str(d.get("name", ""))), []).append(
+                float(d.get("size_mb") or 0)
+            )
         models = []
-        for lm in await _local_catalog(prov):
-            d = lm.to_dict()
+        for d in rows:
+            family = _fit.family_key(str(d.get("name", "")))
+            quoted = _fit.median_variant_size_mb(sizes_by_family.get(family, []))
+            # The VERDICT is judged against the weights this row actually pulls — its own
+            # size. Judging every variant by the family quote would paint the family's
+            # largest variant with the median's verdict, i.e. promise a fit that OOMs. A row
+            # that publishes NO size (a family entry in a searchable catalog) falls back to
+            # the family quote, which is the median and never the smallest for exactly the
+            # reason above; with neither, ``fit_verdict`` answers "unknown".
+            own_size_mb = float(d.get("size_mb") or 0)
+            assessment = _fit.fit_verdict(
+                size_mb=own_size_mb or quoted,
+                context_tokens=int(d.get("context_tokens") or 0),
+                budget_bytes=budget_bytes,
+            )
             d["provider"] = pkey
             d["provider_type"] = pkey
+            d["quoted_size_mb"] = round(quoted, 1)
+            d["fit"] = assessment.verdict
+            d["fit_reason"] = assessment.reason
+            d["fit_need_mb"] = round(assessment.need_bytes / _BYTES_PER_MB, 1)
+            d["fit_step_down"] = _step_down_name(rows, family, assessment.verdict, budget_bytes)
             models.append(d)
         result.append(
             {
@@ -258,7 +340,24 @@ async def api_models_available(request: web.Request) -> web.Response:
         for pname, models in by_provider_v.items():
             result.append({"name": pname, "type": "video_gen", "models": models})
 
-    return web.json_response({"providers": result})
+    return web.json_response(
+        {
+            "providers": result,
+            # ``budget_mb`` is null — never 0 — on a host whose memory could not be
+            # measured: "unknown" and "nothing fits" are different answers and only one of
+            # them should hide models from the user.
+            "fit": {
+                "budget_mb": (
+                    None if budget_bytes is None else round(budget_bytes / _BYTES_PER_MB)
+                ),
+                "total_ram_mb": round(host.total_ram_bytes / _BYTES_PER_MB),
+                "unified_memory": bool(host.unified_memory),
+                "gpu_model": host.gpu_model,
+                "measured": bool(host.memory_measured),
+                "hide_unrunnable": bool(hide_unrunnable),
+            },
+        }
+    )
 
 
 async def api_models_active(request: web.Request) -> web.Response:

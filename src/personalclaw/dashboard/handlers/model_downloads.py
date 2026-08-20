@@ -13,7 +13,11 @@ whole multi-minute fetch.
 
 from __future__ import annotations
 
+import logging
+
 from aiohttp import web
+
+logger = logging.getLogger(__name__)
 
 
 def _registry(request: web.Request):
@@ -31,6 +35,12 @@ async def api_model_download_start(request: web.Request) -> web.Response:
 
     Returns ``202`` with the job. Re-requesting an in-flight ``(provider, model)``
     returns the same job; an already-downloaded model returns a ``done`` job.
+
+    This handler downloads exactly the model it was asked for. The memory step-down (offer
+    the largest variant that FITS instead of one that cannot load) belongs in the browse
+    payload — ``GET /api/models/available`` carries ``fit_step_down`` per row — because a
+    substitution here would return a job for a model the user never requested, and its SSE
+    stream and progress would be keyed to that other model.
     """
     try:
         body = await request.json()
@@ -41,10 +51,55 @@ async def api_model_download_start(request: web.Request) -> web.Response:
 
     provider = str(body.get("provider", ""))
     model = str(body.get("model", ""))
+
+    # Free space BEFORE the fetch: a download that cannot land should be refused in the
+    # request, not after the user waits for gigabytes. The refusal names both numbers.
+    precheck = await _download_precheck(_registry(request), provider, model)
+    if precheck is not None and not precheck.ok:
+        return web.json_response({"error": precheck.reason}, status=400)
+
     job, error = _registry(request).start(provider, model)
     if error is not None:
         return web.json_response({"error": error}, status=400)
-    return web.json_response(job.to_dict(), status=202)
+    payload = job.to_dict()
+    if precheck is not None and precheck.warning:
+        # An unmeasurable filesystem is not a reason to block a good download — but the
+        # user is told the download was never verified to fit rather than assuming it was.
+        payload["warning"] = precheck.warning
+    return web.json_response(payload, status=202)
+
+
+async def _download_precheck(reg, provider_name: str, model: str):
+    """The pre-download free-space decision, or None when there is nothing to check.
+
+    Returns a :class:`personalclaw.local_models.fit.DiskPrecheck`. None (skip entirely) when
+    no bytes are about to land: an unknown provider (``start`` reports that itself), a model
+    the catalog already has on disk, or a re-request for an in-flight job — every one of
+    those would otherwise refuse a request that downloads nothing.
+    """
+    from personalclaw.local_models import fit
+    from personalclaw.local_models.registry import catalog_for, get_provider
+
+    provider = get_provider(provider_name)
+    if provider is None:
+        return None
+    live = ("queued", "running")
+    for job in reg.list():
+        if job.provider == provider_name and job.model == model and job.state in live:
+            return None
+
+    need_mb = 0.0
+    try:
+        for lm in await catalog_for(provider):
+            if lm.name == model:
+                if lm.downloaded:
+                    return None  # already on disk; nothing to land
+                need_mb = float(lm.size_mb or 0)
+                break
+    except Exception:  # noqa: BLE001 — a catalog failure must not block a download
+        logger.debug("catalog lookup failed for %s/%s", provider_name, model, exc_info=True)
+
+    return fit.disk_precheck(need_mb, _provider_cache_dir(provider))
 
 
 async def api_model_download_stream(request: web.Request) -> web.StreamResponse:

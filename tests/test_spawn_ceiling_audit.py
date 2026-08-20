@@ -273,6 +273,10 @@ _OPERATOR_EXEMPT: dict[str, str] = {
     "dashboard/handlers_system.py::_collect_gpu_metrics::subprocess.check_output": (
         "host-fact: GPU metrics"
     ),
+    # The ONE GPU/VRAM capacity probe (LMMV-8) — `nvidia-smi` + `system_profiler`, both
+    # static argv host-fact READS. Capacity detection lives here so a fit verdict cannot
+    # disagree with the metrics widget; the widget keeps only its live-telemetry query.
+    "local_models/fit.py::_probe_gpu::subprocess.check_output": ("host-fact: GPU/VRAM capacity"),
     "dashboard/handlers_system.py::_collect_system_metrics::subprocess.check_output": (
         "host-fact: system metrics"
     ),

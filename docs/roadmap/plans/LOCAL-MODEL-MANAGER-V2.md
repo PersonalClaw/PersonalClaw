@@ -780,3 +780,57 @@ Where each piece plugs into the pluggable-provider architecture (recon: provider
   (`DC`/`INU`/`LMMV`/`MGAV`/`PT`/`TSE` — e.g. `INU` said "5 done, 3 todo" for a plan whose 8 atoms
   are all done); the *narrative* half of those sentences is deliberately left unrailed, since it
   has no canonical form — only its leading number is pinned.
+
+**DONE — `LMMV-8` (2026-08-20).** Hardware-aware model fit landed: `local_models/fit.py` owns one
+memory budget and one verdict. Unified memory is counted once — an integrated GPU's VRAM is never
+added on top of system RAM — only a discrete GPU adds a second pool, and a configurable reserve is
+held back for the OS and runtime. Driven end to end on a 48 GB Apple M5 Pro: budget 46080 MB against
+49152 MB total, `unified_memory: true`, `discrete_vram_bytes: 0`. Falsified by deleting the
+`if not host.unified_memory:` guard on the live line → `assert 22548578304 <= 17179869184`, a 16 GB
+machine claiming 21 GB; restored from a file copy.
+
+The three host-fact collectors are now one. `handlers_system.py` turned out to hold **three**
+memory-total readers, not the one the plan predicted (`_get_static_system_info`,
+`_collect_system_metrics`, plus `fit`'s own) — all now route through `residency.memory_pressure()`,
+with the static card, the live tick and `fit.host_capacity()` independently agreeing at 48.0 GB. The
+GPU capacity probe (vendor/model/VRAM total/unified) moved into `fit`; the widget keeps only its
+live-telemetry query (`utilization.gpu,memory.used,temperature.gpu`) and all seven payload keys
+survive. Free disk was deliberately left local in that file, with the reason recorded: `HostCapacity`
+carries no disk *total*, so routing the gauge through the helper would mean two reads of one
+filesystem in one payload that could disagree, and there is no capacity disk question there — the
+capacity question is the pre-download precheck, which is `fit`'s and lives in `model_downloads.py`.
+
+Validated as a user against a real installed provider (faster-whisper, six real cards 75→2900 MB) on
+`#/settings/providers`: three fit chips with accessible names ("Fits — fits comfortably in ~1.0 GB"),
+the filter ON by default showing 3 of 6 rows with a "3 hidden" notice, toggling to 6 and back to 3,
+`role="switch"`, zero console errors. The reserve and the filter default round-trip through config,
+verified live via `PATCH /api/config/personalclaw`: budget 46080 → 1024 → 0 MB as the reserve rose.
+
+**DEVIATION — the verdict is judged per row, not on the family quote.** The atom asks for a median
+family quote and a fit verdict; computing the verdict *from* that quote made a 16 GB model read
+`yellow` on an 8 GB machine — precisely the "promise a fit the user will not get" the clause forbids.
+So `quoted_size_mb` is the family median while the verdict is judged against the row's own
+`size_mb`, falling back to the quote only for a row that publishes no size. The UI states the row's
+own size and appends the family median only when the two differ.
+
+**DISCOVERY — the family rule reaches tag catalogs, not the shipped static ones.** Variants are
+grouped by `family_key(name) = name.split(":")[0]`, which is the ollama `family:tag` form. Measured:
+for `qwen3:4b|8b|16b` the quote is the median (8000, not the minimum 4000) and the step-down resolves
+(`largest_that_fits → 8000`). But faster-whisper ships `tiny|base|small|medium|large-v3|turbo` —
+six colonless names, hence six families of one — so a live drive with a 1 GB budget returned
+`fit_step_down: None` on every red row, and `quoted_size_mb == size_mb` throughout. The median quote
+is harmless there (each row states its own exact size, so no false promise is possible), but the
+step-down affordance cannot fire for that catalog. It is live for the tag-based ollama catalog, which
+is a shipped provider, and is asserted at the handler and in the UI. Closing the gap properly needs a
+provider-declared variant family — a `LocalModel` field plus per-app declarations in
+PersonalClawApps — which is a cross-repo change and deliberately not folded into this atom. Widening
+the rule inside core was rejected: grouping a provider's whole catalog would offer "Amy" as a
+step-down for "Lessac" in piper-tts, i.e. a different voice presented as the same thing smaller.
+
+**FIXED during validation — a measured budget of 0 read as "unknown".** `usable_memory_bytes` returns
+0, distinctly from `None`, for a machine smaller than the reserve; the frontend gate tested
+`budget_mb > 0` and so collapsed that legitimate value into the absent marker, silently disarming the
+filter on exactly the machines that need it. Reproduced live: a 48 GB host with the reserve at 64 GB
+chipped all six models "Won't fit" and hid none of them. The gate now tests `>= 0`, `measured` alone
+carries the unknown case, and a test asserts the two answers DISAGREE. After the fix the same drive
+hides all six with a "6 hidden" notice and an empty state that explains itself.
