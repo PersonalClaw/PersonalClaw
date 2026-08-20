@@ -889,6 +889,97 @@ PROFILE_NONE = "none"
 _PROFILES = frozenset({PROFILE_TOOL, PROFILE_SESSION_HOST, PROFILE_BUILD, PROFILE_NONE})
 
 
+# ── Tier 2: cgroup v2 scopes (Linux) ──
+#
+# The RLIMIT shim is the enforcement FLOOR, and NOFILE is the only ceiling it delivers
+# reliably. Neither of the other two is a per-process-TREE bound as an rlimit: RLIMIT_NPROC
+# counts every process of the real uid (so it either denies every fork in the tree or bounds
+# the tree not at all), and RLIMIT_AS bounds one address space rather than a tree's total —
+# and on macOS it cannot be installed at all (measured; see ``_warn_unenforced_ceilings``).
+# A cgroup v2 scope is the only mechanism that says "this spawn AND all of its descendants,
+# together". It is opt-in (``sandbox.cgroup_scopes``) because it requires a systemd user
+# session, and it wraps OUTSIDE the shim so the scope contains the shim and the exec'd
+# target alike — a second layer above the NOFILE floor, never a replacement for it.
+
+#: The unified (v2) hierarchy's root controller list. Its readability is the cheapest
+#: positive evidence that this host is on cgroup v2 rather than v1/hybrid. Module-level so
+#: tests can point it at a ``tmp_path`` file instead of monkeypatching ``open``.
+_CGROUP2_CONTROLLERS = "/sys/fs/cgroup/cgroup.controllers"
+
+
+def _cgroup_scopes_available() -> tuple[bool, str]:
+    """Uncached body of :func:`probe_cgroup_scopes`. Returns ``(available, detail)``.
+
+    Split out from the cached wrapper so a test can (a) simulate each platform combination
+    through real filesystem/PATH/env inputs and (b) count how many times the underlying
+    check actually runs. Never raises — every failure mode is a ``False`` with a reason.
+    """
+    try:
+        if sys.platform != "linux":
+            return False, f"not Linux ({sys.platform}) — cgroup scopes are a Linux-only tier"
+        try:
+            with open(_CGROUP2_CONTROLLERS, encoding="ascii") as fh:
+                controllers = fh.read().split()
+        except OSError as exc:
+            return False, (
+                f"no unified cgroup v2 hierarchy: {_CGROUP2_CONTROLLERS} unreadable "
+                f"({exc.__class__.__name__}) — a v1/hybrid host cannot host a v2 scope"
+            )
+        run = shutil.which("systemd-run")
+        if run is None:
+            return False, "systemd-run is not on PATH — no systemd to create a scope"
+        # A *live user bus* is the part that actually fails on a container or an SSH login
+        # with no user manager. We test what is observable for free — the bus address env
+        # var, else the well-known $XDG_RUNTIME_DIR/bus socket — rather than shelling out
+        # to `systemctl --user is-system-running`: that costs a process spawn on every
+        # gateway start and can BLOCK on a wedged user manager, which a probe on the spawn
+        # path must never do. The trade-off is deliberate and one-directional: the env/
+        # socket check can say "available" where `systemd-run` would still fail, and in
+        # that case the spawn fails loudly with systemd's own diagnostic — which is the
+        # correct outcome for an opt-in enforcement tier (far better than silently
+        # dropping the ceiling the user asked for).
+        if not os.environ.get("DBUS_SESSION_BUS_ADDRESS"):
+            xdg = os.environ.get("XDG_RUNTIME_DIR") or ""
+            sock = os.path.join(xdg, "bus") if xdg else ""
+            if not sock or not os.path.exists(sock):
+                return False, (
+                    "no live systemd user bus (DBUS_SESSION_BUS_ADDRESS unset and "
+                    "$XDG_RUNTIME_DIR/bus absent) — 'systemd-run --user' cannot connect"
+                )
+        return True, (
+            "cgroup v2 + systemd user session available "
+            f"({run}; root controllers: {' '.join(controllers) or 'none'})"
+        )
+    except Exception as exc:  # pragma: no cover - defensive; the branches above are total
+        return False, f"probe error ({exc.__class__.__name__}) — treated as unavailable"
+
+
+@functools.lru_cache(maxsize=1)
+def probe_cgroup_scopes() -> tuple[bool, str]:
+    """Return ``(available, detail)`` for the cgroup-scope tier. NEVER raises.
+
+    "Available" means BOTH halves of what a ``systemd-run --user --scope`` needs:
+
+    1. a **unified cgroup v2 hierarchy** — ``/sys/fs/cgroup/cgroup.controllers`` is
+       readable (it exists only on v2; a v1/hybrid mount has no such file); and
+    2. a **usable systemd user session** — ``systemd-run`` resolvable on ``PATH`` *and* an
+       observable user bus (``DBUS_SESSION_BUS_ADDRESS``, else ``$XDG_RUNTIME_DIR/bus``).
+
+    Cached at ``maxsize=1`` (the module's existing probe-caching idiom, cf.
+    ``_ssh_supports_accept_new``) because it sits on the spawn path and the answer cannot
+    change within a process' life; call ``probe_cgroup_scopes.cache_clear()`` in tests.
+
+    Caveat recorded honestly rather than probed: a readable root controller list does not
+    prove the ``pids``/``memory`` controllers are *delegated* to the user slice, so
+    ``TasksMax``/``MemoryMax`` can still be inert on a host with an unusual delegation
+    policy. The root controller names are included in *detail* so the doctor line shows
+    what this host actually has.
+    """
+    available, detail = _cgroup_scopes_available()
+    logger.debug("cgroup scope probe: available=%s (%s)", available, detail)
+    return available, detail
+
+
 class ResourceCeilings:
     """Translates the numeric ``sandbox.*`` config into a per-profile shim policy.
 
@@ -905,13 +996,22 @@ class ResourceCeilings:
     #: gateway.
     OOM_BIAS = 1000
 
-    def __init__(self, nofile: int = 4096, max_pids: int = 0, max_rss_mb: int = 0) -> None:
+    def __init__(
+        self,
+        nofile: int = 4096,
+        max_pids: int = 0,
+        max_rss_mb: int = 0,
+        cgroup_scopes: bool = False,
+    ) -> None:
         # Defaults mirror SandboxConfig: NOFILE is the enforced floor; max_pids defaults to
         # 0 (OFF) because RLIMIT_NPROC is a PER-USER cap counting every process the user
         # already runs — an absolute default would break a busy host with 'cannot fork'.
+        # cgroup_scopes defaults OFF: it is the opt-in second tier and needs a systemd user
+        # session, so it must never be a silent requirement of a default spawn.
         self.nofile = int(nofile)
         self.max_pids = int(max_pids)
         self.max_rss_mb = int(max_rss_mb)
+        self.cgroup_scopes = bool(cgroup_scopes)
 
     @classmethod
     def from_config(cls) -> "ResourceCeilings":
@@ -925,7 +1025,12 @@ class ResourceCeilings:
             from personalclaw.config.loader import AppConfig
 
             sb = AppConfig.load().sandbox
-            return cls(nofile=sb.nofile, max_pids=sb.max_pids, max_rss_mb=sb.max_rss_mb)
+            return cls(
+                nofile=sb.nofile,
+                max_pids=sb.max_pids,
+                max_rss_mb=sb.max_rss_mb,
+                cgroup_scopes=sb.cgroup_scopes,
+            )
         except Exception:
             logger.debug("ResourceCeilings.from_config fell back to defaults", exc_info=True)
             return cls()
@@ -957,6 +1062,106 @@ class ResourceCeilings:
         return {"limits": limits, "oom_score_adj": oom}
 
 
+#: Process-wide latch for the unenforced-ceiling warning. A tool-heavy turn spawns dozens of
+#: children; one warning per spawn would bury the message it exists to deliver.
+_UNENFORCED_CEILINGS_WARNED = False
+
+
+def _warn_unenforced_ceilings(ceilings: "ResourceCeilings") -> None:
+    """Warn EXACTLY ONCE per process when configured pids/RSS ceilings are not really enforced.
+
+    Silent on two paths, both deliberate: when neither ceiling is configured (nothing is
+    unenforced, so there is nothing to say), and when the cgroup-scope tier is both opted in
+    and available (then pids/RSS *are* enforced, per tree).
+
+    What macOS actually fails to enforce was MEASURED on this host (Darwin 26.6.1, CPython
+    3.13), not assumed:
+
+    * ``RLIMIT_AS`` *is* ``RLIMIT_RSS`` on Darwin (the two constants are equal) and is
+      inherited as ``(RLIM_INFINITY, RLIM_INFINITY)``, yet ``setrlimit`` rejects ANY finite
+      value — including a soft-only change well under the reported hard limit — with
+      ``ValueError: current limit exceeds maximum limit``. The shim swallows that
+      (``except (ValueError, OSError): continue``), so ``max_rss_mb`` is silently dropped:
+      the ceiling is never even installed, let alone enforced.
+    * ``RLIMIT_NPROC`` *does* install (hard cap 12000 inherited here) but counts every
+      process of the real uid rather than this spawn's tree: under a cap of 5, the very
+      FIRST ``fork()`` in the capped child failed with ``BlockingIOError(35)`` / EAGAIN
+      while its own tree held one process. So the number does not mean "how many processes
+      this tree may have" — below the user's existing process count it denies every fork
+      (breaking legitimate tool subprocesses), above it, it bounds the tree not at all.
+
+    Hence neither ceiling delivers "a fork bomb dies contained at ``max_pids``" on macOS.
+    NOFILE, the floor, is unaffected and still applies — the warning says so, because a user
+    who reads "not enforced" must not conclude the whole shim is inert.
+    """
+    global _UNENFORCED_CEILINGS_WARNED
+    if ceilings.max_pids <= 0 and ceilings.max_rss_mb <= 0:
+        return
+    if ceilings.cgroup_scopes and probe_cgroup_scopes()[0]:
+        return
+    if _UNENFORCED_CEILINGS_WARNED:
+        return
+    _UNENFORCED_CEILINGS_WARNED = True
+    if sys.platform == "darwin":
+        why = (
+            "RLIMIT_AS aliases RLIMIT_RSS on Darwin and this kernel refuses to set it to any "
+            "finite value, so the RSS ceiling is silently dropped; RLIMIT_NPROC counts every "
+            "process of your uid, so the pids ceiling denies forks instead of sizing the tree"
+        )
+    else:
+        why = (
+            "RLIMIT_NPROC counts every process of your uid rather than this spawn's tree, and "
+            "RLIMIT_AS bounds one address space rather than the tree's total; per-tree pids/"
+            "RSS containment needs a cgroup v2 scope"
+        )
+    logger.warning(
+        "sandbox ceilings NOT enforced on this platform: sandbox.max_pids=%d (pids) and "
+        "sandbox.max_rss_mb=%d (RSS) do not bound this spawn's process tree — %s. A fork bomb "
+        "or memory blowup in an agent child is NOT contained. sandbox.nofile=%d (NOFILE) IS "
+        "still enforced by the exec shim. For real pids/RSS containment, run on Linux with "
+        "cgroup v2 + a systemd user session and set sandbox.cgroup_scopes=true (probe: %s).",
+        ceilings.max_pids,
+        ceilings.max_rss_mb,
+        why,
+        ceilings.nofile,
+        probe_cgroup_scopes()[1],
+    )
+
+
+def cgroup_scope_argv(argv: list[str], ceilings: "ResourceCeilings") -> list[str]:
+    """Wrap *argv* in a ``systemd-run --user --scope``, or return it UNCHANGED.
+
+    Unchanged on every opted-out or unenforceable path — the tier is additive, so a host
+    that cannot host a scope keeps exactly the behaviour it had before this tier existed:
+
+    * ``ceilings.cgroup_scopes`` is False (the default — not opted in);
+    * neither ``max_pids`` nor ``max_rss_mb`` is configured (a scope with no properties
+      would cost a systemd round-trip per spawn and enforce nothing);
+    * :func:`probe_cgroup_scopes` says the host has no v2 hierarchy / user session.
+
+    A property is emitted only when its ceiling is configured (``> 0``): ``TasksMax=0``
+    would be an accidental *total* denial rather than a disabled limit. ``MemorySwapMax=0``
+    always accompanies ``MemoryMax`` — without it the tree can escape the memory cap into
+    swap, which is exactly the blowup ``MemoryMax`` is there to stop.
+    """
+    if not argv:
+        return argv
+    if not ceilings.cgroup_scopes:
+        return list(argv)
+    if ceilings.max_pids <= 0 and ceilings.max_rss_mb <= 0:
+        return list(argv)
+    available, _detail = probe_cgroup_scopes()
+    if not available:
+        return list(argv)
+    props: list[str] = []
+    if ceilings.max_pids > 0:
+        props.append(f"--property=TasksMax={ceilings.max_pids}")
+    if ceilings.max_rss_mb > 0:
+        props.append(f"--property=MemoryMax={ceilings.max_rss_mb}M")
+        props.append("--property=MemorySwapMax=0")
+    return ["systemd-run", "--user", "--scope", "--quiet", *props, "--", *argv]
+
+
 def spawn_shim_argv(
     argv: list[str],
     profile: str = PROFILE_TOOL,
@@ -968,6 +1173,13 @@ def spawn_shim_argv(
     startup cost. Otherwise the result is
     ``[sys.executable, "-m", _SHIM_MODULE, <policy-json>, "--", *argv]``; the shim applies
     the limits in the exec'd child and ``execv``s ``argv``.
+
+    When the cgroup-scope tier is opted in and available, that shim invocation is itself
+    wrapped in a ``systemd-run --user --scope`` (see :func:`cgroup_scope_argv`) so the scope
+    contains the shim *and* the exec'd target: a second enforcement layer ABOVE the NOFILE
+    floor, never a substitute for it. Composing it here — the single point every
+    agent-influenced spawn already funnels through, including
+    :func:`create_subprocess_limited` — keeps the tier from needing a second call site.
     """
     if not argv:
         return argv
@@ -975,7 +1187,8 @@ def spawn_shim_argv(
     policy = cel.policy(profile)
     if not policy:
         return list(argv)
-    return [
+    _warn_unenforced_ceilings(cel)
+    shimmed = [
         sys.executable,
         "-m",
         _SHIM_MODULE,
@@ -983,6 +1196,7 @@ def spawn_shim_argv(
         "--",
         *argv,
     ]
+    return cgroup_scope_argv(shimmed, cel)
 
 
 async def create_subprocess_limited(

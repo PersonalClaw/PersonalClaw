@@ -33,6 +33,7 @@ from aiohttp.multipart import BodyPartReader
 
 from personalclaw.dashboard.handlers._shared import _is_restricted_session
 from personalclaw.dashboard.sse import stream_response
+from personalclaw.safety_flags import strict_bool
 from personalclaw.sel import sel
 from personalclaw.workflows import service, store
 
@@ -493,7 +494,7 @@ async def api_run_start(request: web.Request) -> web.Response:
         project_id=str(body.get("project_id", "") or ""),
         idempotency_key=str(body.get("idempotency_key", "") or ""),
         blocking_timeout=float(body.get("blocking_timeout", 0) or 0),
-        skip_preflight=bool(body.get("skip_preflight", False)),
+        skip_preflight=strict_bool(body.get("skip_preflight"), field="skip_preflight"),
     )
     _audit(
         request,
@@ -848,7 +849,7 @@ async def api_run_resume(request: web.Request) -> web.Response:
         supervisor=_supervisor(request),
         token=str(body.get("resume_token", "") or ""),
         answer=body.get("answer"),
-        always_allow=bool(body.get("always_allow")),
+        always_allow=strict_bool(body.get("always_allow"), field="always_allow"),
     )
     _audit(request, "workflow_run_resume", "success" if result.get("ok") else "failure", run_id)
     return _reply(result)

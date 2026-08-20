@@ -1,0 +1,50 @@
+# Network-egress hosts — the machine-checked census of every routable hostname that
+# appears as a literal in shipped PersonalClaw code (core `src/personalclaw/**/*.py` and
+# the SPA `web/src/**/*.{ts,tsx}`). The sweep test
+# (tests/test_network_egress_hosts.py) fails if a routable host literal appears that is
+# NOT listed here, and fails if a listed host no longer appears (stale entry).
+#
+# WHY THIS FILE EXISTS. PersonalClaw's privacy posture is "no telemetry, no phone-home":
+# SECURITY.md and the website both say so, and it is true. Nothing enforced it. A new
+# analytics endpoint, crash reporter, or "check for news" ping could be added in any PR and
+# no test, lint or review checklist would notice — the claim was documentation, not a
+# control. This table makes the destination list explicit, so adding a destination is a
+# deliberate, visible act with a written justification.
+#
+# WHAT IT DOES NOT ANSWER. This is a census of DESTINATIONS, not of payloads. It cannot
+# tell you what is sent to an approved host, and a new module reaching an already-listed
+# host does not red the sweep. Static scanning cannot answer "what data left"; it can
+# answer "is there somewhere new it could go", which is the question a phone-home is.
+#
+# Reserved and non-routable names are skipped by rule rather than listed, because a name
+# that cannot resolve cannot be a destination: RFC 2606/6761 (`example.com`, `*.example`,
+# `*.invalid`, `*.test`, `*.localhost`), loopback and RFC 1918 addresses, and `{...}`
+# template placeholders.
+#
+# Format: <host> — <judgment>. State whether it is FETCHED and by WHOSE action.
+#
+# ── Fetched by the product, on its own schedule ────────────────────────────────
+api.github.com — FETCHED, unprompted. The release-check endpoint (`self_update.py`) and the GitHub feed source. Unauthenticated and ETag'd; the request carries no identifiers beyond what any HTTP client sends, but it does reveal the instance's IP to GitHub on a schedule. This is the closest thing in the product to a phone-home and it is the reason `updates.check_enabled` exists.
+# ── Fetched, but only because the user asked for that specific thing ───────────
+codeload.github.com — FETCHED on `personalclaw app new`: downloads the app-template tarball. User-initiated, one-shot, never on a schedule.
+hn.algolia.com — FETCHED only if the user enables the shipped Hacker News feed preset. A preset is a suggestion; nothing polls it until it is turned on.
+news.ycombinator.com — same preset as above (the item-link host in its rendered rows).
+doi.org — a RESOLVER url built from a DOI the user supplied in a knowledge source. Not fetched unless that source is fetched.
+arxiv.org — the PDF url built from an arXiv identifier the user supplied. Same shape as doi.org.
+# ── Browser-side, from an iframe the user's own content created ────────────────
+cdn.jsdelivr.net — a CSP `script-src` entry and a `<script>` tag inside the artifact/widget iframe: Babel standalone, for transforming a react widget the agent produced. Loaded by the USER'S BROWSER, not by the gateway, and only when a react widget renders.
+cdnjs.cloudflare.com — same iframe: the pinned React and ReactDOM UMD bundles.
+cdn.tailwindcss.com — same iframe: Tailwind's browser build, for an artifact that uses utility classes.
+# ── Never fetched: namespace identifiers, DTDs and schema ids ─────────────────
+www.w3.org — the SVG XML namespace on inline `<svg xmlns=…>` markup. An XML namespace is an identifier, not a URL to retrieve.
+schemas.openxmlformats.org — the WordprocessingML namespace, used to build ElementTree tag names when parsing a .docx locally.
+json-schema.org — the `$schema` draft identifier stamped into the generated config schema.
+www.apple.com — the PropertyList DTD identifier in the launchd plist header. Declared by every macOS plist; the DTD is not retrieved.
+api.w.org — a WordPress REST-API link `rel` VALUE that `web_source` compares against when reading a page's `<link>` tags. A string equality test, not a request.
+169.254.169.254 — the cloud metadata address, named in `triggers/web_poll`'s docstring as the SSRF target its host guard exists to BLOCK. Listed because a security control that names its threat is worth keeping visible; the code refuses this address rather than fetching it.
+# ── Never fetched: documentation and links ────────────────────────────────────
+github.com — repository links: docstring references to upstream specs (the Agent Client Protocol) and, in the SPA, the outbound link on an app's source. A link the user may click is not egress by the product.
+agentskills.io — named in a docstring as the source of the skill-manifest FORMAT the loader implements. The format is implemented locally; nothing is fetched.
+docs.astral.sh — the uv documentation URL printed in an installer error message, so a user missing pip is told where to get uv.
+pypi.org — an EXAMPLE url inside `triggers/web_poll`'s docstring, showing what a user's watch expression looks like.
+api.openai.com — the default base url for an OpenAI-COMPATIBLE endpoint in `llm/catalog`. Reached only when a user configures a model against that default; core ships no OpenAI credentials and no OpenAI provider (that lives in an app bundle). Kept here as a default STRING, which is why it appears in core at all.

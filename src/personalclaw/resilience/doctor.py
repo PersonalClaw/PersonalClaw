@@ -30,6 +30,7 @@ import contextlib
 import enum
 import socket
 import sqlite3
+import sys
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -1123,6 +1124,116 @@ async def _probe_knowledge_vault(ctx: DoctorContext) -> ProbeResult:
     )
 
 
+async def _probe_sandbox_cgroup_scopes(ctx: DoctorContext) -> ProbeResult:
+    """sandbox — does the cgroup v2 pids/RSS enforcement tier exist on THIS host?
+
+    The NOFILE floor is a per-process rlimit and applies everywhere. The pids and RSS
+    ceilings are only enforceable as a transient ``systemd-run --user --scope`` over a
+    unified cgroup v2 hierarchy, so on macOS, a non-systemd Linux, or a container without a
+    systemd user session they are simply not enforced. This row says that in plain words
+    rather than simulating a bound that does not exist.
+
+    **The ok=True vs ok=False call.** Unavailability is not a gateway failure — this is a
+    tier-3 CAPABILITY probe, so a red here degrades only the sandbox row and never justifies
+    a restart. The split is therefore by CONSEQUENCE, not by platform:
+
+    * tier available → ``ok=True``; ``evidence.enforced`` names what is actually bounded.
+    * tier unavailable and NO pids/RSS ceiling configured → ``ok=True``. A permanent red on
+      every Mac trains operators to ignore the doctor, and nothing is being silently
+      dropped: both ceilings are off (0). The ``detail`` still names what is unenforced, so
+      the fact is on the row rather than hidden behind a green.
+    * tier unavailable while a ceiling IS configured → ``ok=False``. Here a green would hide
+      two configured controls that cannot do what the operator asked of them, which is
+      exactly the dishonesty this probe exists to prevent.
+
+    The availability decision itself is ``sandbox.probe_cgroup_scopes()`` — the same cached
+    function the spawn path consults — so the doctor can never report a tier the spawn path
+    does not actually use. A second copy of the detection here would drift from enforcement.
+
+    Precision note for the wording: where the tier is missing the shim may still set
+    ``RLIMIT_NPROC``/``RLIMIT_AS`` when configured, but those are a per-USER process count
+    and an address-space cap, not a per-subtree pids/RSS bound — hence "not enforced".
+
+    Never raises: a missing ``/sys/fs/cgroup``, an absent ``systemd-run``, an unreadable
+    file, or a permission error all degrade to unavailable with the cause recorded in
+    ``evidence.availability_detail``. Degrading toward "not enforced" is the honest
+    direction — a probe that cannot prove enforcement must not claim it. The probe only
+    REPORTS; the single loud warning belongs to the sandbox module, so re-running the doctor
+    can never multiply it.
+    """
+    evidence: dict[str, Any] = {"platform": sys.platform}
+
+    nofile = max_pids = max_rss_mb = 0
+    try:
+        from personalclaw.sandbox import ResourceCeilings
+
+        ceilings = await asyncio.to_thread(ResourceCeilings.from_config)
+        nofile, max_pids, max_rss_mb = ceilings.nofile, ceilings.max_pids, ceilings.max_rss_mb
+    except Exception as exc:
+        evidence["ceilings_detail"] = _mask(f"sandbox ceilings unreadable: {exc}")
+
+    try:
+        from personalclaw.sandbox import probe_cgroup_scopes
+
+        available, why = await asyncio.to_thread(probe_cgroup_scopes)
+    except Exception as exc:
+        available = False
+        why = (
+            f"{sys.platform}: the cgroup availability check could not be completed "
+            f"({type(exc).__name__})"
+        )
+        evidence["availability_error"] = _mask(str(exc))
+
+    configured = {"nofile": nofile, "max_pids": max_pids, "max_rss_mb": max_rss_mb}
+    requested = [name for name in ("max_pids", "max_rss_mb") if configured[name] > 0]
+    reason = _mask(
+        str(why) or f"{sys.platform}: no cgroup v2 unified hierarchy / systemd user session"
+    )
+    evidence.update(
+        {
+            "cgroup_scope_tier_available": bool(available),
+            "availability_detail": reason,
+            "configured_ceilings": configured,
+            "enforced": ["NOFILE", "pids", "RSS"] if available else ["NOFILE"],
+            "unenforced": [] if available else ["pids", "RSS"],
+        }
+    )
+
+    if available:
+        return ProbeResult(
+            ok=True,
+            detail=(
+                f"cgroup v2 scope tier available — {reason}. pids and RSS ceilings are "
+                "enforced per spawn subtree, and the NOFILE limit applies as always."
+            ),
+            evidence=evidence,
+        )
+
+    unenforced = (
+        f"pids and RSS ceilings are NOT enforced on this host — {reason}. "
+        "The NOFILE limit still applies to every spawn."
+    )
+    if requested:
+        asked = " and ".join(f"sandbox.{name}={configured[name]}" for name in requested)
+        return ProbeResult(
+            ok=False,
+            detail=(
+                f"{unenforced} You have configured {asked}, which this host cannot enforce "
+                "as a per-subtree scope — run on Linux with a systemd user session, or set "
+                "it back to 0 so the config stops promising a bound nothing applies."
+            ),
+            evidence=evidence,
+        )
+    return ProbeResult(
+        ok=True,
+        detail=(
+            f"{unenforced} No pids or RSS ceiling is configured, so nothing is being "
+            "silently dropped."
+        ),
+        evidence=evidence,
+    )
+
+
 def _register_builtin_probes() -> None:
     register_probe(
         Probe(
@@ -1267,6 +1378,15 @@ def _register_builtin_probes() -> None:
             Tier.CAPABILITY,
             _probe_credential_backend,
             "Active credential backend (keychain / .env 0600)",
+        )
+    )
+    register_probe(
+        Probe(
+            "sandbox.cgroup_scopes",
+            "sandbox",
+            Tier.CAPABILITY,
+            _probe_sandbox_cgroup_scopes,
+            "Sandbox pids/RSS enforcement",
         )
     )
 

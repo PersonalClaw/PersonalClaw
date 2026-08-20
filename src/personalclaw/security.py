@@ -75,25 +75,84 @@ _SENSITIVE_HOME_DIRS: list[str] = [
     ".personalclaw/governance",
 ]
 
-# Regex for bash commands that read sensitive paths.
-# Matches: cat, head, tail, less, more, strings, xxd, base64, cp, scp, open
-# followed by a path containing any sensitive dir.
-_READ_CMDS = r"(?:cat|head|tail|less|more|strings|xxd|base64|cp|scp|open|vi|vim|nano|code)\s"
+# Regex for bash commands that read sensitive paths, followed by a path containing any
+# sensitive dir. The list is every command that RETURNS FILE CONTENT (or copies it
+# somewhere the agent can read), not every command that opens a file: what matters is
+# whether the bytes come back.
+#
+# 🔴 Measured, because the original fifteen were not enough. Against the shipped guard,
+# 15 of 18 content-returning forms passed: `grep -a . ~/.ssh/id_rsa`, `awk '{print}'
+# ~/.aws/credentials`, `sed -n 1,99p ~/.netrc`, `od`, `hexdump`, `nl`, `cut`, `sort`,
+# `wc`, `diff`, `tar cf - ~/.gnupg`, `rsync -a ~/.ssh/`, `jq . ~/.docker/config.json`,
+# `bat`, and a python one-liner using `read_text()` instead of `open()`. Every one of
+# those returns the same bytes `cat` is blocked from — the guard was enumerating the
+# tools someone thought of rather than the capability.
+#
+# Adding a command here can only ever block MORE, and only when the command also names a
+# sensitive path: `grep -r pattern .` is untouched, `grep pattern ~/.ssh/id_rsa` is not.
+_READ_CMDS = (
+    r"(?:cat|bat|head|tail|less|more|strings|xxd|od|hexdump|nl|base64|cp|scp|rsync|tar|"
+    r"zip|gzip|dd|grep|egrep|fgrep|rg|ag|awk|sed|cut|paste|tr|sort|uniq|wc|jq|yq|diff|"
+    r"cmp|open|vi|vim|nano|emacs|code)\s"
+)
 
-# Matches python/ruby/perl one-liners that open sensitive paths
-_SCRIPT_OPEN = r"(?:python|ruby|perl)\S*\s.*open\s*\("
+# An INTERPRETER invocation whose command line names a sensitive path. Deliberately broader
+# than the read verbs it replaces: the old form required `open(` to appear BEFORE the path,
+# so `python -c "...Path('~/.ssh/id_rsa').expanduser().read_text()"` — where the path comes
+# first — passed, and so did every `node -e "fs.readFileSync(...)"`. Enumerating read verbs
+# in five languages is a losing game; naming the interpreters is not.
+#
+# It over-blocks a one-liner that merely MENTIONS a credential path without reading it. That
+# is the fail-closed direction on a narrow input, and the refusal is visible with a reason —
+# where the alternative is a read that succeeds and looks like nothing happened.
+_SCRIPT_OPEN = r"(?:python|ruby|perl|node|deno|bun|php|osascript)\S*\s"
+
+
+#: How each language spells "the user's home" when it builds the path instead of writing it.
+#: Measured need: `node -e "...readFileSync(process.env.HOME+'/.ssh/id_rsa')"` named no `~`,
+#: no `$HOME` and no literal home path, so the guard saw nothing to match.
+_HOME_EXPRESSIONS = (
+    "$HOME",
+    "~",
+    "process.env.HOME",
+    "os.environ[HOME]",
+    "os.path.expanduser",
+    "Path.home()",
+    "os.homedir()",
+    "ENV[HOME]",
+    "%USERPROFILE%",
+    "$env:USERPROFILE",
+)
+
+
+def strip_shell_quotes(command: str) -> str:
+    """Remove quote characters so a quoted respelling reads as the path it is.
+
+    🔴 Measured against the shipped guard: `cat ~/'.ssh'/id_rsa` and `cat ~/.s''sh/id_rsa`
+    were both ALLOWED, and both are ordinary shell that reads the file — the quotes are
+    invisible to the shell and opaque to a regex. Dropping them first collapses that whole
+    family into the plain spelling.
+
+    It cannot close the CONCATENATION family (`'/.s' + 'sh/id_rsa'`, `$'\x2e'ssh`): no regex
+    over a command string can, because the string that names the file never exists in the
+    text. That is the documented limit of this control and the reason the OS sandbox
+    bind-mounts empty dirs over `~/.aws`, `~/.gnupg` and friends — the guard here is
+    defence in depth, not the fence.
+    """
+    return command.replace("'", "").replace('"', "").replace("\\", "")
 
 
 def _build_sensitive_regex() -> re.Pattern[str]:
     """Build a compiled regex matching bash reads of sensitive paths."""
-    home = re.escape(str(Path.home()))
-    tilde = re.escape("~")
-    home_var = re.escape("$HOME")
-    home_alts = f"(?:{home}|{tilde}|{home_var})"
+    home = str(Path.home())
+    home_alts = "(?:" + "|".join(re.escape(h) for h in (home, *_HOME_EXPRESSIONS)) + ")"
     escaped_dirs = [re.escape(d) for d in _SENSITIVE_HOME_DIRS]
     dirs_pattern = "|".join(escaped_dirs)
+    # `[+,\s]*` between the home expression and the slash: a built path joins them with a
+    # concatenation operator or a comma rather than writing them adjacent.
     return re.compile(
-        rf"(?:{_READ_CMDS}.*|{_SCRIPT_OPEN}.*|.*[<>|]\s*){home_alts}/(?:{dirs_pattern})(?:/|\s|$|['\"])",  # noqa: E501
+        rf"(?:{_READ_CMDS}.*|{_SCRIPT_OPEN}.*|.*[<>|]\s*){home_alts}[+,\s]*/(?:{dirs_pattern})"
+        rf"(?:/|\s|$|['\"),])",
         re.IGNORECASE,
     )
 
@@ -125,9 +184,25 @@ def is_sensitive_path(path_str: str) -> bool:
         home = str(Path.home().resolve())
     except (OSError, ValueError):
         home = str(Path.home())
+    # CASE-INSENSITIVE comparison, because the comparison is the control.
+    #
+    # 🔴 Measured on macOS: `~/.SSH/id_rsa` was ALLOWED while `~/.ssh/id_rsa` was blocked,
+    # and the default macOS filesystem (like Windows) is case-INSENSITIVE — a temp dir
+    # created as `.ssh` was read back through `.SSH` and returned the file's contents. So
+    # every one of the fourteen entries above, INCLUDING `~/.personalclaw/.env` and the
+    # governance ceiling, was one shifted key away from being readable, across the ~70 call
+    # sites that route through this function. `Path.resolve()` normalises `..`, `.`, `//`,
+    # `~` and `$HOME` (all verified blocked); it does not normalise case.
+    #
+    # Always casefold rather than probing the filesystem per call: a per-path probe is
+    # itself a control that fails when the probe fails, and on a case-SENSITIVE filesystem
+    # casefolding can only over-block — a directory literally named `~/.SSH` that holds no
+    # credentials would be refused, which is the safe direction for a credential guard and
+    # the error a user can see and report.
+    resolved_cmp = resolved.casefold()
     for sensitive_dir in _SENSITIVE_HOME_DIRS:
-        sensitive_path = os.path.join(home, sensitive_dir)
-        if resolved == sensitive_path or resolved.startswith(sensitive_path + os.sep):
+        sensitive_path = os.path.join(home, sensitive_dir).casefold()
+        if resolved_cmp == sensitive_path or resolved_cmp.startswith(sensitive_path + os.sep):
             return True
     return False
 
@@ -193,12 +268,58 @@ def is_system_path(path_str: str) -> bool:
         resolved = expanded
     if not resolved:
         return True
-    if resolved in _SYSTEM_PARENTS:
+    # Casefolded for the same reason as `is_sensitive_path` — measured: `/etc/passwd` was
+    # blocked (macOS resolves `/etc` through a symlink, which normalises the case as a side
+    # effect) while `/SYSTEM/x` and `/USR/bin/x` were ALLOWED. Two roots out of the set
+    # behaving differently from the rest is the tell that the comparison, not the set, is
+    # the bug.
+    resolved_cmp = resolved.casefold()
+    if resolved_cmp in {p.casefold() for p in _SYSTEM_PARENTS}:
         return True
     for root in _SYSTEM_SUBTREES:
-        if resolved == root or resolved.startswith(root + os.sep):
+        root_cmp = root.casefold()
+        if resolved_cmp == root_cmp or resolved_cmp.startswith(root_cmp + os.sep):
             return True
     return False
+
+
+#: Chain separators, the same set the deny path uses — one vocabulary for "more than one command".
+_CHAIN_SPLIT_RE = re.compile(r"(?:&&|\|\||;|\||\n)")
+
+#: A segment that moves the shell to the user's home: `cd`, `cd ~`, `cd $HOME`, `cd "${HOME}"`.
+_HOME_CD_RE = re.compile(r"^\s*cd\s*(?:~|\$HOME|\$\{HOME\})?\s*$")
+
+#: A dot-relative path that would be sensitive if it were home-relative (`.ssh/id_rsa`).
+_DOT_RELATIVE_RE = re.compile(r"(?<![\w/~$.])(\.[A-Za-z0-9_.-]+/)")
+
+
+def _normalise_for_matching(command: str) -> str:
+    """Rewrite spellings that name a sensitive path without spelling it the guard's way.
+
+    Two respellings reached credentials past the regex, both measured against the shipped guard:
+
+    * ``cat ${HOME}/.ssh/id_rsa`` — ALLOWED, while the unbraced ``$HOME`` form was blocked. The
+      brace is pure syntax, so it is collapsed before matching.
+    * ``cd ~ && cat .ssh/id_rsa`` — ALLOWED. The path never appears home-qualified in the text;
+      the ``cd`` put the shell there. When a segment of the chain moves to home, later segments'
+      dot-relative paths are rewritten as home-relative so the existing patterns see them.
+
+    Only ever makes the guard block MORE, and only when a home-cd is actually present: without
+    one, a dot-relative path is left exactly as written.
+    """
+    text = re.sub(r"\$\{(\w+)\}", r"$\1", command)
+    segments = _CHAIN_SPLIT_RE.split(text)
+    if not any(_HOME_CD_RE.match(seg) for seg in segments):
+        return text
+    out: list[str] = []
+    at_home = False
+    for seg in segments:
+        if _HOME_CD_RE.match(seg):
+            at_home = True
+            out.append(seg)
+            continue
+        out.append(_DOT_RELATIVE_RE.sub(r"~/\1", seg) if at_home else seg)
+    return " && ".join(out)
 
 
 def is_sensitive_bash_command(command: str) -> str | None:
@@ -206,7 +327,7 @@ def is_sensitive_bash_command(command: str) -> str | None:
 
     Returns denial reason string, or None if clean.
     """
-    if _get_sensitive_re().search(command):
+    if _get_sensitive_re().search(strip_shell_quotes(_normalise_for_matching(command))):
         return "Blocked: command accesses sensitive credential path"
     return None
 

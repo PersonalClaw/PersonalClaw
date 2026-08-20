@@ -36,6 +36,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
 
+from personalclaw.safety_flags import strict_bool
 from personalclaw.workflows import leases, longrun, ownership
 from personalclaw.workflows.bindings import BindingContext, BindingError, resolve
 from personalclaw.workflows.compaction import complete_with_compaction
@@ -1823,7 +1824,9 @@ def _ask_payload(node: Node, cfg: dict[str, Any]) -> dict[str, Any]:
             "fields": cfg.get("fields") or [],
             "choices": cfg.get("choices") or [],
             "node_id": node.id,
-            "unattended_suppress": bool(cfg.get("unattended_suppress", False)),
+            "unattended_suppress": strict_bool(
+                cfg.get("unattended_suppress"), field="unattended_suppress"
+            ),
         }
     ).to_dict()
 

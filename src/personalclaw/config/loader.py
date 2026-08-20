@@ -2887,6 +2887,18 @@ class WorkflowsConfig:
             "its runs finish would otherwise stack them without bound.",
         ),
     )
+    self_schedule_max_outstanding: int = field(
+        default=20,
+        metadata=_meta(
+            "Self-Scheduled Tasks — Max Outstanding",
+            "How many enabled automations the agent may hold at once via set_onetime_task / "
+            "set_recurring_task. The bound exists because a self-scheduling agent can create "
+            "work faster than it retires it: each task it parks wakes it again later, and an "
+            "unbounded fan-out of clocks is how a helpful loop becomes a runaway one. Counted "
+            "over ENABLED agent-created automations, so pausing one frees a slot without "
+            "deleting it.",
+        ),
+    )
     max_concurrent_nodes: int = field(
         default=6,
         metadata=_meta(
@@ -3894,7 +3906,11 @@ class SandboxConfig:
     profiles in ``sandbox.py`` translate these into the per-spawn policy — the ``tool``
     profile applies them fully with an OOM bias, ``session_host`` deliberately raises NOFILE
     to the inherited hard limit (an ACP host multiplexes many MCP pipes; a low cap causes
-    EMFILE), and ``none`` applies nothing. ``0`` disables an individual limit."""
+    EMFILE), and ``none`` applies nothing. ``0`` disables an individual limit.
+
+    ``cgroup_scopes`` is the one non-numeric knob here: it opts into a SECOND, Linux-only
+    enforcement tier that applies the same ceilings to a child's whole subtree via a
+    transient systemd user scope. It is off by default and a no-op off Linux."""
 
     nofile: int = field(
         default=4096,
@@ -3925,6 +3941,19 @@ class SandboxConfig:
             "RLIMIT_AS ceiling in megabytes for an agent child's address space. 0 disables "
             "the memory cap (the default — RLIMIT_AS is coarse and can break memory-mapped "
             "toolchains, so it is opt-in).",
+        ),
+    )
+    cgroup_scopes: bool = field(
+        default=False,
+        metadata=_meta(
+            "Sandbox Cgroup Scopes (Linux)",
+            "Opt into the second enforcement tier: wrap an agent-influenced spawn in a "
+            "transient systemd user scope (systemd-run --user --scope) carrying TasksMax / "
+            "MemoryMax / MemorySwapMax derived from the ceilings above, so they bound the "
+            "child's whole subtree instead of one process. This is the real fork-bomb "
+            "containment RLIMIT_NPROC cannot give. Linux-only and OFF by default — a no-op "
+            "where a systemd user manager is unavailable (macOS, most containers), where it "
+            "leaves the post-exec rlimit shim as the only tier.",
         ),
     )
     env_passthrough: list[str] = field(
@@ -4849,6 +4878,9 @@ class AppConfig:
             workflows=WorkflowsConfig(
                 enabled=bool(workflows_data.get("enabled", True)),
                 max_active_runs=_safe_int(workflows_data.get("max_active_runs", 10), 10),
+                self_schedule_max_outstanding=_safe_int(
+                    workflows_data.get("self_schedule_max_outstanding", 20), 20
+                ),
                 max_concurrent_nodes=_safe_int(workflows_data.get("max_concurrent_nodes", 6), 6),
                 default_node_timeout_total_secs=_safe_int(
                     workflows_data.get("default_node_timeout_total_secs", 900), 900
@@ -5114,6 +5146,11 @@ class AppConfig:
                 nofile=max(0, _safe_int(sandbox_data.get("nofile", 4096), 4096)),
                 max_pids=max(0, _safe_int(sandbox_data.get("max_pids", 0), 0)),
                 max_rss_mb=max(0, _safe_int(sandbox_data.get("max_rss_mb", 0), 0)),
+                # Parsed fail-OFF, the same belt-and-braces the numeric siblings above use:
+                # the derived JSON_SCHEMA already strips a non-boolean here, and load()
+                # still coerces so an opt-in tier's ambiguity resolves to "not opted in".
+                # `bool("false")` is True in Python — exactly the trap `_expose_flag` avoids.
+                cgroup_scopes=_expose_flag(sandbox_data.get("cgroup_scopes")),
                 env_passthrough=[
                     str(n).strip()
                     for n in (sandbox_data.get("env_passthrough") or [])

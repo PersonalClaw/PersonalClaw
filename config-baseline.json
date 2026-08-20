@@ -1271,6 +1271,12 @@
     "type": "float"
   },
   {
+    "default": false,
+    "path": "sandbox.cgroup_scopes",
+    "sensitive": false,
+    "type": "bool"
+  },
+  {
     "default": [],
     "path": "sandbox.env_passthrough",
     "sensitive": false,
@@ -1624,6 +1630,12 @@
   {
     "default": 100,
     "path": "workflows.retention_per_def",
+    "sensitive": false,
+    "type": "int"
+  },
+  {
+    "default": 20,
+    "path": "workflows.self_schedule_max_outstanding",
     "sensitive": false,
     "type": "int"
   },

@@ -115,6 +115,42 @@ def _payload_env(ctx: ActionContext) -> dict[str, str]:
     return out
 
 
+def _sel_refusal(command: str, reason: str, ctx: "ActionContext") -> None:
+    """Audit a refused bash action, using the same SEL shape `security.py` writes.
+
+    Best-effort on purpose: an audit fault must never turn a refusal into a run. It is logged at
+    WARNING rather than swallowed, so a control that stopped being recorded is visible.
+    """
+    try:
+        import uuid
+        from datetime import datetime, timezone
+
+        from personalclaw.sel import SecurityEvent, SecurityEventLog
+
+        SecurityEventLog().log(
+            SecurityEvent(
+                event_id=uuid.uuid4().hex[:16],
+                timestamp=datetime.now(tz=timezone.utc).isoformat(),
+                event_type="action_refused",
+                caller_identity="",
+                agent="personalclaw",
+                source="action_provider",
+                operation="bash_action_screened",
+                tool_kind="execute_bash",
+                outcome="denied",
+                resources=reason,
+                # The command is the evidence, and the SEL is local-only.
+                metadata={
+                    "provider": "bash",
+                    "event": getattr(ctx, "event", ""),
+                    "command": command[:400],
+                },
+            )
+        )
+    except Exception:  # noqa: BLE001 - never let auditing decide whether a refusal holds
+        logger.warning("bash action refused (%s) but the SEL row failed", reason, exc_info=True)
+
+
 class BashActionProvider(ActionProvider):
     @property
     def name(self) -> str:
@@ -137,6 +173,25 @@ class BashActionProvider(ActionProvider):
         command = (action_config.get("command") or "").strip()
         if not command:
             return ActionResult(success=False, error="Bash hook is missing 'command' field")
+
+        # 🔴 Screen the command the way the INTERACTIVE path does. This provider runs
+        # `/bin/sh -c <command>` straight from `action_config`, and nothing on the way in
+        # screened it: `hooks.py` and the native bash tool both call
+        # `security.is_sensitive_bash_command`, but an ACTION never reached either. So a bash
+        # action could read `~/.ssh/id_rsa` where the same command typed at the agent is refused.
+        #
+        # The import path is why this matters beyond the API: `snapshot._merge_crons` appends an
+        # imported job VERBATIM, so restoring an archive installed whatever bash action it carried.
+        # Screening here rather than at import covers every creator — import, the HTTP API, the UI,
+        # another app — instead of the one that happened to be noticed.
+        #
+        # Refused, not sanitised: there is no safe rewrite of a command that names a credential.
+        from personalclaw import security
+
+        refusal = security.is_sensitive_bash_command(command)
+        if refusal:
+            _sel_refusal(command, refusal, ctx)
+            return ActionResult(success=False, error=refusal)
 
         # 🔴 The action's OWN bound wins over the caller's default, matching `run-script`
         # (which has always read `action_config["timeout"]` and preferred it). Measured on the
