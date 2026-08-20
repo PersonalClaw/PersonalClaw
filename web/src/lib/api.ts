@@ -1760,7 +1760,14 @@ export interface KnowledgeItem {
   has_embedding?: boolean
   // populated by GET /items/{id}
   entities?: KnowledgeEntity[]; relations?: KnowledgeRelation[]
-  // populated by GET /items/{id}/related (overlap count)
+  // populated by GET /items/{id}/related. `score` is the RANKING key (KL-13: a cosine
+  // similarity edge above `knowledge.similarity_min_score`), and `chunk_index` /
+  // `neighbour_chunk_index` are its provenance — oriented to the item asked about, so a
+  // surface can explain WHY two items are related. `shared_entities` survives but is now
+  // descriptive rather than the thing that chose the ordering.
+  score?: number
+  chunk_index?: number
+  neighbour_chunk_index?: number
   shared_entities?: number
 }
 /** The ingestion node-graph shape for an item's type — nodes + edges + terminals. */
@@ -2688,9 +2695,11 @@ export interface SavedAgent {
 
 
 // ── Goal Loop — the unified autonomous goal engine.
-export type LoopStatus =
-  | 'intake' | 'planning' | 'review' | 'ready' | 'running' | 'paused'
-  | 'stagnant' | 'needs_input' | 'complete' | 'failed' | 'stopped'
+// Lifecycle status is `UnifiedLoopStatus` below — ONE union for one backend enum. A
+// goal-shaped and a code-shaped copy used to live here and there; the goal one omitted
+// `blocked`, which the backend both emits and accepts a `resume` from, so a comparison
+// against it was a type error and every hand-written affordance guard dropped that state.
+// Railed against `loop.loop:LoopStatus` by `tests/test_loop_status_vocabulary.py`.
 export type GoalType = 'verifiable' | 'open_ended' | 'monitor'
 export type Granularity = 'quick' | 'balanced' | 'exhaustive' | 'forever'
 export interface LoopFinding {
@@ -2734,7 +2743,7 @@ export interface GoalLoop {
   success_criteria: string | null; verify_command?: string
   rubric?: string[]; best_score?: number; last_score?: number | null; ratchet_mode?: string
   marginal_scores?: number[]
-  status: LoopStatus; total_cycles: number; error_message: string | null
+  status: UnifiedLoopStatus; total_cycles: number; error_message: string | null
   created_at: number; started_at: number | null; completed_at: number | null; elapsed_seconds?: number
   findings?: LoopFinding[]; verdicts?: LoopVerdict[]; pending_question?: string | null; nudges?: LoopNudge[]
   feedback_producer?: FeedbackProducer
@@ -2769,13 +2778,9 @@ export interface LoopIntakePhase { id: string; title: string; description: strin
 export interface LoopIntakePlan { phases: LoopIntakePhase[]; current_phase_id?: string; current_step_id?: string }
 
 // ── Code — the SDLC planning/execution engine (mini-IDE). Sibling of GoalLoop. ──
-export type CodeStatus =
-  | 'intake' | 'planning' | 'review' | 'ready' | 'running' | 'paused'
-  | 'blocked' | 'needs_input' | 'complete' | 'failed' | 'stopped'
-  // The unified engine's shared watchdog can stagnate ANY kind (the legacy code engine
-  // couldn't) — a code loop reaches 'stalled — needs direction' too, so the code-shaped
-  // view-model status must include it (resume/stop/steer all valid).
-  | 'stagnant'
+// Code's lifecycle status is `UnifiedLoopStatus` too. The shared watchdog can stagnate
+// ANY kind (the legacy code engine could not), and every kind can block, so a per-kind
+// status union only ever encoded which states its author remembered.
 export type EntryStage =
   | 'ideation' | 'requirements' | 'design' | 'decomposition' | 'implementation'
   | 'verification' | 'review' | 'bugfix' | 'cr_comments' | 'refactor' | 'investigation'
@@ -2844,7 +2849,7 @@ export interface CodeProject {
   files_dir?: string
   max_cycles: number; idle_secs: number
   success_criteria: string | null; verify_command?: string; test_command?: string
-  status: CodeStatus; total_cycles: number; error_message: string | null
+  status: UnifiedLoopStatus; total_cycles: number; error_message: string | null
   created_at: number; started_at: number | null; completed_at: number | null; elapsed_seconds?: number
   project_id?: string; tasks_project_id?: string; task_list_ids?: Record<string, string>; session_key?: string
   findings?: CodeFinding[]; pending_question?: { question: string; why?: string } | null
@@ -4447,6 +4452,13 @@ export const api = {
   lexiconReset: () => post<{ ok: boolean }>('/api/lexicon/reset'),
 
   knowledgeItem: (id: string) => get<KnowledgeItem>(`/api/knowledge/items/${encodeURIComponent(id)}`),
+  /** The whole positioned, edge-thinned entity graph. One method for both the full
+   *  canvas and the reader's ego view — `KnowledgeGraph` used to raw-`fetch` this path with a
+   *  `limit` the handler no longer honours, which is how two callers drift. */
+  knowledgeGraph: () => get<{
+    nodes: { id: string; name?: string; type?: string; x?: number; y?: number; placed?: boolean; degree?: number; cluster?: number | null }[]
+    edges: { source: string; target: string; type?: string; weight?: number }[]
+  }>('/api/knowledge/graph'),
   knowledgeItemRelated: (id: string) => get<KnowledgeItem[]>(`/api/knowledge/items/${encodeURIComponent(id)}/related`),
   /** Staleness for a synthesized item. 404 for an unknown id; a non-synthesized item
    *  answers `stale: false` rather than erroring, so the caller needs no kind check. */

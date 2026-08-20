@@ -36,7 +36,7 @@ import { belongsToLoop } from '../workflows/containerKey'
 import { useQueryFlag, type RouteProps } from '../../app/useQueryState'
 import { accentChip } from '../../design/accent'
 import { tabListKeys } from '../../lib/tabListKeys'
-import { loopStatusLabel, effectiveLoopStatus, ACTIVE_LOOP_STATUSES } from '../../lib/loopStatus'
+import { loopStatusLabel, effectiveLoopStatus, ACTIVE_LOOP_STATUSES, LOOP_ACTION_SOURCE_STATUSES } from '../../lib/loopStatus'
 import { notify } from '../../app/appSdk'
 
 /** Decode the `?sel=` Details-rail drill-down ref. */
@@ -580,12 +580,24 @@ export function LoopCockpitPage({ id, onBack, onDeleted, onOpenArtifact, onOpenT
           // overflow menu absorbs it first as the header tightens. Header tenet:
           // the side-panel opener (Details) is the RIGHTMOST control; Delete sits
           // LEFTMOST of the right-edge group; everything else in between.
+          //
+          // The four run-controls ask LOOP_ACTION_SOURCE_STATUSES — the mirror of the guard the
+          // action route enforces — so this header cannot offer a press that answers 409, nor
+          // withhold one the backend accepts. It did both: Start was gated on `ready` alone while
+          // the backend also accepts a loop still in `review` (the sibling design cockpit offered
+          // it, so the same loop had a Start button on one page and none here), and Resume's
+          // hand-written list was missing `blocked`, stranding a blocked loop.
+          //
+          // Stop asks the map rather than the `active` flag below it. The two agree today (the
+          // mirror's `stop` row IS the active set, by reference) — but `active` is a BUCKET this
+          // file also uses for Nudge, Delete and the live clock, and reading a lifecycle gate off
+          // a bucket is how these guards drifted in the first place.
           <HeaderActions className="max-w-[60vw]">
             {!active && <HeaderControl icon={Trash2} label={confirmDelete ? 'Confirm delete?' : 'Delete'} danger priority="low" onClick={del} />}
-            {c.status === 'ready' && <HeaderControl icon={Start} label="Start" variant="primary" priority="primary" onClick={() => act('start')} />}
-            {running && <HeaderControl icon={Pause} label="Pause" variant="secondary" priority="primary" onClick={() => act('pause')} />}
-            {['paused', 'stagnant', 'needs_input', 'failed'].includes(c.status) && <HeaderControl icon={Play} label="Resume" variant="primary" priority="primary" onClick={() => act('resume')} />}
-            {active && <HeaderControl icon={Square} label={confirmStop ? 'Stop for good?' : 'Stop'} variant={confirmStop ? 'danger' : 'secondary'} onClick={() => { if (!confirmStop) { setConfirmStop(true); return } setConfirmStop(false); act('stop') }} />}
+            {LOOP_ACTION_SOURCE_STATUSES.start.has(c.status) && <HeaderControl icon={Start} label="Start" variant="primary" priority="primary" onClick={() => act('start')} />}
+            {LOOP_ACTION_SOURCE_STATUSES.pause.has(c.status) && <HeaderControl icon={Pause} label="Pause" variant="secondary" priority="primary" onClick={() => act('pause')} />}
+            {LOOP_ACTION_SOURCE_STATUSES.resume.has(c.status) && <HeaderControl icon={Play} label="Resume" variant="primary" priority="primary" onClick={() => act('resume')} />}
+            {LOOP_ACTION_SOURCE_STATUSES.stop.has(c.status) && <HeaderControl icon={Square} label={confirmStop ? 'Stop for good?' : 'Stop'} variant={confirmStop ? 'danger' : 'secondary'} onClick={() => { if (!confirmStop) { setConfirmStop(true); return } setConfirmStop(false); act('stop') }} />}
             {active && <HeaderControl icon={MessageSquarePlus} label="Nudge" variant="secondary" onClick={() => setNudgeOpen(!nudgeOpen)} />}
             <HeaderControl icon={PanelRight} label="Details" active={railOpen} onClick={() => { setRailOpen(!railOpen); setSelected(null) }} />
           </HeaderActions>
@@ -669,7 +681,12 @@ export function LoopCockpitPage({ id, onBack, onDeleted, onOpenArtifact, onOpenT
                 <Icon size={14} className="shrink-0" /> {c.status === 'failed' ? 'This loop stopped on an error' : info ? 'Completed on its cycle budget' : 'Last cycle hit an error'}
               </div>
               <p className="break-words opacity-90">{c.error_message}</p>
-              {['failed', 'stagnant'].includes(c.status) && <p className="mt-1.5 opacity-75">Fix the underlying cause, then <span style={fvs(500)}>Resume</span> to continue from where it left off.</p>}
+              {/* The hint follows the BUTTON, not a third hand-written list: this banner only
+                  renders with an `error_message`, and every status that can resume from one
+                  deserves to be told how. It used to name failed/stagnant only, so a `blocked`
+                  loop — which the backend has always accepted a resume from — got the Resume
+                  control with no explanation of what to do first. */}
+              {LOOP_ACTION_SOURCE_STATUSES.resume.has(c.status) && <p className="mt-1.5 opacity-75">Fix the underlying cause, then <span style={fvs(500)}>Resume</span> to continue from where it left off.</p>}
             </motion.div>
           )})()}
           {judgeDegraded && running && (

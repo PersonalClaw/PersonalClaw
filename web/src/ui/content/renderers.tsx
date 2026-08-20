@@ -16,6 +16,7 @@ import { ArtifactIterationRail } from '../widget/ArtifactIterationRail'
 import { sanitizeInlineHtml } from './sanitize'
 import { ImagePreview, PdfPreview, CsvPreview, JsonPreview } from '../../pages/files/browse/FilePreviews'
 import { api } from '../../lib/api'
+import { PROSE_MEASURE_CLASS } from '../../design/measure'
 
 /** Markdown — react-markdown + widget blocks (the chat/file markdown renderer). */
 export const MarkdownPreview = memo(function MarkdownPreview({ content }: PreviewProps) {
@@ -126,7 +127,12 @@ export const SvgPreview = memo(function SvgPreview({ content }: PreviewProps) {
  *  allowlist) before in-DOM render so prose styling survives but script/handlers/
  *  unsafe URLs are dropped. Rendered in the parent DOM (NOT an iframe) so the
  *  text-selection comment layer can attach (the editorial doc is commentable).
- *  `.doc` scopes a readable editorial type scale (see tokens.css). */
+ *  `.doc` scopes a readable editorial type scale (see tokens.css), and the line
+ *  length comes from the shared prose measure (design/measure.ts) — the SAME token
+ *  the knowledge reader and the HTML export use, so a document reads identically
+ *  wherever it is shown. It formerly capped in `ch` units, which measured 101
+ *  characters on a full line rather than the 72 they looked like — the token carries
+ *  that measurement. */
 export const DocumentPreview = memo(function DocumentPreview({ content, ...rest }: PreviewProps) {
   // Fail-soft: a kind=document artifact that actually holds markdown (agent mis-tag)
   // renders as literal '#'/'**' through the HTML path — sniff it and delegate to the
@@ -137,7 +143,7 @@ export const DocumentPreview = memo(function DocumentPreview({ content, ...rest 
   const clean = useMemo(() => (asMarkdown ? '' : sanitizeInlineHtml(content, 'document')), [content, asMarkdown])
   if (asMarkdown) return <MarkdownPreview content={content} {...rest} />
   if (content.trim() && !clean.trim()) return <SanitizedEmpty what="document" />
-  return <div className="doc mx-auto max-w-[72ch] px-l py-xl" dangerouslySetInnerHTML={{ __html: clean }} />
+  return <div className={`doc mx-auto ${PROSE_MEASURE_CLASS} px-l py-xl`} dangerouslySetInnerHTML={{ __html: clean }} />
 })
 
 /** Plain text / JSON-as-text fallback — preformatted, wrapped. */

@@ -3,6 +3,7 @@
  *  infographic PNG/SVG path lazy-loads the AntV engine it already uses to render. */
 import { sanitizeInlineHtml } from './sanitize'
 import { loadInfographicEngine } from './antvEngine'
+import { PROSE_MEASURE } from '../../design/measure'
 
 function download(filename: string, blob: Blob): void {
   const url = URL.createObjectURL(blob)
@@ -20,7 +21,16 @@ function safeName(title: string, fallback: string): string {
 }
 
 /** A document → a standalone, self-contained HTML file (sanitized body + a minimal
- *  editorial stylesheet inlined) so it opens cleanly anywhere, not just in-app. */
+ *  editorial stylesheet inlined) so it opens cleanly anywhere, not just in-app.
+ *
+ *  The prose measure is the SAME token the in-app preview uses (design/measure.ts),
+ *  so an exported document reads at the line length it was read at. It is INTERPOLATED
+ *  AS A LITERAL (`35rem`) rather than referenced as `var(--prose-measure)` on purpose:
+ *  this file is self-contained and never loads the app's tokens.css, an unresolved
+ *  `var()` makes the whole `max-width` declaration invalid at parse time, and the
+ *  export would then silently lose its measure entirely — full-viewport lines, worse
+ *  than the `ch`-unit cap it replaces. Importing the constant keeps the number single-sourced
+ *  even though the emitted CSS carries the value. */
 export function exportDocumentHtml(content: string, title: string): void {
   const body = sanitizeInlineHtml(content, 'document')
   const doc = `<!DOCTYPE html>
@@ -29,7 +39,7 @@ export function exportDocumentHtml(content: string, title: string): void {
 <style>
   :root { color-scheme: light dark; }
   body { margin: 0; font: 16px/1.7 -apple-system, system-ui, "Segoe UI", Roboto, sans-serif; color: #1a1a1a; background: #fff; }
-  main { max-width: 72ch; margin: 0 auto; padding: 3rem 1.5rem; }
+  main { max-width: ${PROSE_MEASURE}; margin: 0 auto; padding: 3rem 1.5rem; }
   h1,h2,h3,h4 { line-height: 1.25; margin: 2em 0 0.6em; font-weight: 650; }
   h1 { font-size: 2rem; } h2 { font-size: 1.5rem; } h3 { font-size: 1.2rem; }
   p, li { margin: 0.6em 0; } ul,ol { padding-left: 1.4em; }

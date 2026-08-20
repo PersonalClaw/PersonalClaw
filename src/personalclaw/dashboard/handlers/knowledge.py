@@ -6,6 +6,8 @@ import logging
 import re
 import shutil
 import tempfile
+import time
+from collections import Counter, defaultdict
 from pathlib import Path
 from uuid import uuid4
 
@@ -16,7 +18,7 @@ from personalclaw.knowledge.artifact_ingest import ARTIFACT_ITEM_TYPE, ARTIFACT_
 from personalclaw.knowledge.embedder import create_embedder_from_config, floats_to_bytes
 from personalclaw.knowledge.llm_pool import LLMPool
 from personalclaw.knowledge.media import classify, guess_mime, make_image_thumbnail
-from personalclaw.knowledge.retrieval import HybridRetriever
+from personalclaw.knowledge.retrieval import HybridRetriever, _bytes_to_floats
 from personalclaw.knowledge.semantics import DEFAULT_LIST_EXCLUDED_KINDS
 from personalclaw.knowledge.staleness import is_synthesized, staleness_for
 from personalclaw.security import redact_credentials, redact_exfiltration_urls
@@ -986,67 +988,496 @@ async def delete_item_annotation(request: web.Request) -> web.Response:
     return web.json_response({"ok": True})
 
 
+# How far past `limit` to ask the similarity pass for. Neighbours are scored over
+# content, but archived/non-active items are excluded HERE (the edge table carries no
+# lifecycle column), so filtering happens after scoring. Without an over-fetch a single
+# archived neighbour would silently shorten a list the caller asked to be `limit` long.
+_RELATED_OVERFETCH = 3
+
+
+def _shared_entity_counts(store, item_id: str, others: list[str]) -> dict[str, int]:
+    """How many distinct entities each of ``others`` shares with ``item_id``.
+
+    One query for the whole result set, not one per neighbour. This no longer *ranks*
+    anything -- KL-13 ranks by similarity score -- it annotates an already-chosen
+    neighbour so a reader can be told why two items sit next to each other in entity
+    terms. Neighbours sharing nothing are absent from the result and read as 0.
+    """
+    if not others:
+        return {}
+    placeholders = ",".join("?" * len(others))
+    return {
+        str(r["other"]): int(r["shared"])
+        for r in store.db.execute(
+            "SELECT m2.item_id AS other, COUNT(DISTINCT m2.entity_id) AS shared "  # noqa: S608
+            "FROM mentions m1 JOIN mentions m2 ON m1.entity_id = m2.entity_id "
+            f"WHERE m1.item_id = ? AND m2.item_id IN ({placeholders}) GROUP BY m2.item_id",
+            [item_id, *others],
+        ).fetchall()
+    }
+
+
 async def get_related_items(request: web.Request) -> web.Response:
-    """GET /api/knowledge/items/{id}/related -- items sharing entities with given item."""
+    """GET /api/knowledge/items/{id}/related -- nearest neighbours by embedding similarity.
+
+    KL-13 serves this from the precomputed similarity-edge table behind a real score floor
+    (``knowledge.similarity_min_score``), replacing the unthresholded
+    ``COUNT(DISTINCT entity_id)`` overlap it ranked by before. That count had no floor at
+    all, so one incidentally shared entity -- a common tag, a person named once in passing
+    -- ranked level with a genuine topical neighbour, and the endpoint returned *something*
+    for very nearly any item. "Related" therefore carried no information.
+
+    The honest consequence of a real floor: an item whose nearest neighbour scores below it
+    now returns ``[]`` where it used to return weak matches. That empty answer is correct,
+    and it is deliberately distinguishable from an unknown item, which is a 404 -- with a
+    floor in place ``[]`` is common, so conflating "nothing is close enough" with "no such
+    item" would be least legible exactly where it matters most.
+
+    ``shared_entities`` survives in the payload but has changed job: it is descriptive
+    (explaining a neighbour the score already chose) rather than the ranking key. The
+    Related chip in ``web/src/pages/knowledge/KnowledgeDetailPage.tsx`` renders it, so
+    dropping the key would have silently emptied a live surface.
+
+    ``chunk_index``/``neighbour_chunk_index`` carry the store's provenance through
+    unrenamed. They are oriented to the item asked about -- ``chunk_index`` always names a
+    chunk of *this* item -- because the edge table stores one row per unordered pair under
+    a canonical (min, max) ordering, so "source" and "target" are storage legs and not
+    roles. Renaming them ``source_``/``target_`` here would re-import exactly the confusion
+    that orientation exists to remove.
+    """
+    from personalclaw.config.loader import AppConfig
+
     store = _store(request)
     item_id = request.match_info["id"]
+    # Read defensively: these two fields land with a sibling KL-13 change, and the
+    # fallbacks are the contract's own defaults rather than a guess.
+    knowledge_cfg = getattr(AppConfig.load(), "knowledge", None)
+    top_k = int(getattr(knowledge_cfg, "similarity_top_k", 8) or 8)
+    min_score = float(getattr(knowledge_cfg, "similarity_min_score", 0.55))
     try:
-        limit = min(20, max(1, int(request.query.get("limit", 8) or 8)))
+        limit = min(20, max(1, int(request.query.get("limit", top_k) or top_k)))
     except ValueError:
         return web.json_response({"error": "invalid limit"}, status=400)
 
-    # Find entities mentioned in this item
-    entity_ids = [
-        r["entity_id"]
-        for r in store.db.execute(
-            "SELECT entity_id FROM mentions WHERE item_id = ?", (item_id,)
-        ).fetchall()
-    ]
-    if not entity_ids:
+    if store.db.execute("SELECT 1 FROM items WHERE id = ?", (item_id,)).fetchone() is None:
+        return web.json_response({"error": "item not found"}, status=404)
+
+    # `similar_items` reads both legs and normalises each row to this item's point of view,
+    # so one call returns every neighbour regardless of which side of the edge it is stored
+    # on. `item_id` in each row is the NEIGHBOUR's id, not the one asked about.
+    edges: dict[str, dict] = {}
+    for edge in store.similar_items(item_id, limit=limit * _RELATED_OVERFETCH, min_score=min_score):
+        other = str(edge.get("item_id") or "")
+        if other and other != item_id and other not in edges:
+            edges[other] = edge
+    if not edges:
         return web.json_response([])
 
-    # Find other items that mention the same entities, ranked by overlap count
-    placeholders = ",".join("?" * len(entity_ids))
-    rows = store.db.execute(
-        f"SELECT i.*, COUNT(DISTINCT m.entity_id) as shared_entities "  # noqa: S608
-        f"FROM items i JOIN mentions m ON i.id = m.item_id "
-        f"WHERE m.entity_id IN ({placeholders}) AND i.id != ? AND i.status = 'active' "
-        f"AND COALESCE(i.is_archived, 0) = 0 "
-        f"GROUP BY i.id ORDER BY shared_entities DESC LIMIT ?",
-        [*entity_ids, item_id, limit],
-    ).fetchall()
+    # Lifecycle filtering is the handler's, not the edge table's: the pass scores content,
+    # while archiving is a later and reversible act on the item.
+    placeholders = ",".join("?" * len(edges))
+    rows = {
+        str(r["id"]): r
+        for r in store.db.execute(
+            f"SELECT * FROM items WHERE id IN ({placeholders}) "  # noqa: S608
+            "AND status = 'active' AND COALESCE(is_archived, 0) = 0",
+            list(edges),
+        ).fetchall()
+    }
+    if not rows:
+        return web.json_response([])
+
+    overlap = _shared_entity_counts(store, item_id, list(rows))
+    # Stable sort on descending score: ties keep the store's own ordering.
+    ordered = sorted(
+        (e for oid, e in edges.items() if oid in rows),
+        key=lambda e: -float(e.get("score") or 0.0),
+    )
     return web.json_response(
-        [{**store._serialize_item(r), "shared_entities": r["shared_entities"]} for r in rows]
+        [
+            {
+                **store._serialize_item(rows[str(edge["item_id"])]),
+                "score": round(float(edge.get("score") or 0.0), 6),
+                "chunk_index": edge.get("chunk_index"),
+                "neighbour_chunk_index": edge.get("neighbour_chunk_index"),
+                "shared_entities": overlap.get(str(edge["item_id"]), 0),
+            }
+            for edge in ordered[:limit]
+        ]
     )
 
 
-async def get_full_graph(request: web.Request) -> web.Response:
-    """GET /api/knowledge/graph -- full entity graph (top N by connections)."""
-    store = _store(request)
-    try:
-        limit = min(200, max(1, int(request.query.get("limit", 100) or 100)))
-    except ValueError:
-        return web.json_response({"error": "invalid limit"}, status=400)
-    nodes_by_degree = sorted(store.graph.nodes, key=lambda n: store.graph.degree(n), reverse=True)[
-        :limit
-    ]
-    if not nodes_by_degree:
-        return web.json_response({"nodes": [], "edges": []})
-    node_set = set(nodes_by_degree)
+# ---------- Full graph payload ------------------
+#
+# The graph payload keeps EVERY entity and thins EDGES. The retired shape sorted nodes by
+# degree and sliced the top `limit` (default 100, hard cap 200): a library with 3,000
+# entities rendered 200 of them and the other 2,800 were not "collapsed" or "hidden", they
+# were absent from the response with nothing in it saying so. Thinning edges bounds the
+# payload without losing a single node.
+#
+# Two controls, both live query params:
+#   * a WEIGHT FLOOR  -- drop relations weaker than `min_weight`
+#   * a TOP-K-PER-NODE keep -- each node keeps its K strongest incident edges, then the
+#     keeps are UNIONED. Deliberately not a global top-K: a handful of hub entities would
+#     eat the entire global budget and every peripheral node would ship edgeless, which is
+#     the node cap again wearing a different hat.
+#
+# 🔴 MEASURED, and the reason `min_weight` defaults to 0.0: the only production writer of
+# `entity_relations` (`knowledge/pipeline/runner.py:619`) never passes `weight`, so every
+# relation in a real library carries the column default 1.0. With one distinct weight in
+# the data ANY floor is either a no-op (<= 1.0) or total data loss (> 1.0) -- there is no
+# default that makes the floor bite without emptying the graph. So it ships at 0.0: live,
+# tested against graded weights, and honestly not binding until some writer grades them.
+# Today's real thinning is done entirely by the top-K keep.
+_GRAPH_MIN_WEIGHT = 0.0
+_GRAPH_TOP_K_PER_NODE = 6
+#: Smallest connected component that earns a cluster id + a label. Below this, "cluster"
+#: is noise -- a two-entity component labelled from one item's dominant tag says nothing.
+_GRAPH_CLUSTER_MIN_SIZE = 3
+#: The invalidation DEBOUNCE. The memo notices a content change immediately but refuses to
+#: recompute more often than this, so importing 500 items costs one reprojection, not 500.
+#: The interval is the whole mechanism: without it a "cache" keyed on content is just a
+#: recompute-every-write with extra steps.
+_GRAPH_MEMO_DEBOUNCE_SECS = 30.0
+#: (db_path, min_weight, top_k) -> {"signature", "payload", "computed_at"}. The db path is
+#: part of the key on purpose: a process-global cache keyed on content alone would serve
+#: one entity's graph to another home, and would leak between tests.
+_graph_memo: dict[tuple, dict] = {}
+
+
+def _load_project_2d():
+    """Resolve the 2-D projection primitive.
+
+    Imported through this one seam rather than at module scope so the projection module is
+    a runtime dependency of this endpoint alone, and so a test can substitute a spy to
+    prove the memo really is not recomputing.
+    """
+    from personalclaw.knowledge.projection import project_2d
+
+    return project_2d
+
+
+def _graph_signature(store) -> tuple:
+    """A content digest of everything the payload is derived from, in ONE query.
+
+    This is what the memo is keyed on -- deliberately not a wall-clock timestamp (which
+    never hits) and not the entity count alone (which serves a stale layout forever after
+    an in-place edit). Covers: the nodes, the edges and their weights, the item<->entity
+    mentions that place the nodes, the tags that label the clusters, and the embeddings
+    themselves. `MAX(items.updated_at)` catches an edit that changes no count.
+    """
+    row = store.db.execute(
+        "SELECT (SELECT COUNT(*) FROM entities) AS e, "
+        "(SELECT COUNT(*) FROM entity_relations) AS r, "
+        "(SELECT COALESCE(SUM(weight), 0) FROM entity_relations) AS rw, "
+        "(SELECT COUNT(*) FROM mentions) AS m, "
+        "(SELECT COUNT(*) FROM item_tags) AS t, "
+        "(SELECT COUNT(*) FROM items WHERE embedding IS NOT NULL) AS v, "
+        "(SELECT COALESCE(SUM(LENGTH(embedding)), 0) FROM items WHERE embedding IS NOT NULL) "
+        "AS vb, "
+        "(SELECT COALESCE(MAX(updated_at), '') FROM items) AS ts"
+    ).fetchone()
+    return tuple(row)
+
+
+def _thin_edges(graph, *, min_weight: float, top_k: int) -> tuple[list[dict], int]:
+    """Thin the edge set by a weight floor plus a top-K-per-node keep.
+
+    Returns the kept edges and how many there were before thinning, so the payload can
+    say "340 of 1,200" instead of silently under-drawing.
+
+    Order-independent by construction: the keep is a SET union of per-node selections and
+    the result is sorted on (-weight, source, target, type), so the answer does not depend
+    on the order the graph happens to enumerate its edges in.
+    """
+    raw: list[tuple[float, str, str, str]] = []
+    for u, v, d in graph.edges(data=True):
+        w = d.get("weight")
+        # None -> 1.0 mirrors the `weight REAL DEFAULT 1.0` column default; treating it as
+        # 0.0 instead would let any positive floor silently delete an ungraded graph.
+        raw.append((1.0 if w is None else float(w), u, v, d.get("relation_type") or ""))
+    incident: dict[str, list[tuple[float, str, str, str]]] = defaultdict(list)
+    for edge in raw:
+        if edge[0] >= min_weight:
+            incident[edge[1]].append(edge)
+            incident[edge[2]].append(edge)
+    keep: set[tuple[float, str, str, str]] = set()
+    for edges in incident.values():
+        edges.sort(key=lambda e: (-e[0], e[1], e[2], e[3]))
+        keep.update(edges[:top_k])
+    ordered = sorted(keep, key=lambda e: (-e[0], e[1], e[2], e[3]))
+    kept = [{"source": u, "target": v, "type": t or None, "weight": w} for w, u, v, t in ordered]
+    return kept, len(raw)
+
+
+def _entity_positions(
+    store, entity_ids: list[str]
+) -> tuple[dict[str, tuple[float, float]], set[str]]:
+    """Position every entity at the CENTROID of the projected items that mention it.
+
+    KL-17 clause 1 says "a 2-D projection of item embeddings" while the graph's nodes are
+    entities, and entities carry no embedding of their own. The reading under which both
+    are true: entity nodes stay the nodes, and each is placed by projecting the embeddings
+    of the ITEMS THAT MENTION IT. An entity mentioned by several items sits at their
+    centroid; an entity with no usable item vector goes to the origin, matching the
+    projection's own unplaceable rule.
+
+    Returns the ids that were genuinely placed alongside the positions, because the origin
+    is NOT a reliable test for it. Measured against the real projection: an entity
+    mentioned by one item in each of two opposed clusters has a centroid of (0, 0) -- so a
+    canvas labelling "at the origin" as "no embedding yet" would mislabel it. The set is
+    what the per-node `placed` flag is derived from.
+
+    Three queries, none of them per-entity. The N+1 this avoids is the obvious shape --
+    "for each entity, select its mentions" -- which over a library of thousands of
+    entities is thousands of round trips for data two scans already hold.
+
+    Returns a position for EVERY requested id, plus the subset genuinely placed.
+    """
+    wanted = set(entity_ids)
+    vectors: dict[str, list[float]] = {}
+    dims: Counter = Counter()
+    for row in store.db.execute(
+        "SELECT id, embedding FROM items WHERE status = 'active' AND embedding IS NOT NULL"
+    ):
+        vec = _bytes_to_floats(row["embedding"])
+        if vec:
+            vectors[row["id"]] = vec
+            dims[len(vec)] += 1
+    if dims:
+        # Keep only the DOMINANT dimension -- items embedded under a previous model are
+        # vector-dead. The projection also resolves a basis dimension and returns the
+        # origin for anything off it, so this is NOT the same filter twice: dropping them
+        # HERE keeps an unplaceable sentinel out of a centroid AVERAGE. An entity
+        # mentioned by one live item and one stale one must sit on the live item, not
+        # half-way between it and the middle of the canvas. Ties break to the larger
+        # dimension so the choice is deterministic rather than dict-order.
+        active_dim = max(dims.items(), key=lambda kv: (kv[1], kv[0]))[0]
+        vectors = {k: v for k, v in vectors.items() if len(v) == active_dim}
+
+    by_entity: dict[str, list[str]] = defaultdict(list)
+    for row in store.db.execute("SELECT entity_id, item_id FROM mentions"):
+        if row["entity_id"] in wanted and row["item_id"] in vectors:
+            by_entity[row["entity_id"]].append(row["item_id"])
+
+    # Project only the items that actually place a node. The projection is a fit over its
+    # whole input, so feeding it items no entity mentions would move every node for no
+    # reason -- and it is the expensive step.
+    used = sorted({iid for ids in by_entity.values() for iid in ids})
+    points: dict[str, tuple[float, float]] = (
+        _load_project_2d()({iid: vectors[iid] for iid in used}) if used else {}
+    )
+
+    positions: dict[str, tuple[float, float]] = {}
+    placed: set[str] = set()
+    for eid in entity_ids:
+        pts = [points[i] for i in sorted(by_entity.get(eid, [])) if i in points]
+        if not pts:
+            positions[eid] = (0.0, 0.0)
+            continue
+        placed.add(eid)
+        positions[eid] = (
+            sum(p[0] for p in pts) / len(pts),
+            sum(p[1] for p in pts) / len(pts),
+        )
+    return positions, placed
+
+
+def _graph_components(node_ids: list[str], edges: list[dict]) -> list[list[str]]:
+    """Connected components of the THINNED, direction-ignoring edge set.
+
+    "Cluster" is defined from what the payload actually contains rather than from a
+    clustering the store does not compute: two entities are in one cluster when the
+    shipped edges connect them. Defining it over the unthinned graph would label groups
+    the user cannot see the connection between.
+
+    Deterministic: nodes are visited in sorted order and components come back sorted by
+    (size desc, first id), so cluster ids are stable across calls.
+    """
+    adj: dict[str, set[str]] = defaultdict(set)
+    for e in edges:
+        adj[e["source"]].add(e["target"])
+        adj[e["target"]].add(e["source"])
+    seen: set[str] = set()
+    comps: list[list[str]] = []
+    for nid in sorted(node_ids):
+        if nid in seen:
+            continue
+        comp: set[str] = set()
+        stack = [nid]
+        while stack:
+            cur = stack.pop()
+            if cur in comp:
+                continue
+            comp.add(cur)
+            seen.add(cur)
+            stack.extend(adj.get(cur, set()) - comp)
+        comps.append(sorted(comp))
+    comps.sort(key=lambda c: (-len(c), c[0]))
+    return comps
+
+
+def _cluster_labels(store, graph, comps: list[list[str]]) -> tuple[list[dict], dict[str, int]]:
+    """Label each big-enough cluster from the dominant tag of its entities' items.
+
+    One query for the whole graph's entity -> tag names, joined through `mentions`; the
+    per-cluster tally is then done in memory. Ties break on the tag name ascending -- an
+    unstable label is the same defect as an unstable layout, so every fallback below is
+    total and deterministic:
+
+        dominant tag -> dominant entity_type -> first entity name -> first entity id
+
+    `label_source` reports which rung was used, so "labelled from their dominant tags" is
+    an assertion a test can make rather than a claim the docstring makes.
+    """
+    tags_by_entity: dict[str, list[str]] = defaultdict(list)
+    for row in store.db.execute(
+        "SELECT m.entity_id AS entity_id, t.name AS name FROM mentions m "
+        "JOIN item_tags it ON it.item_id = m.item_id "
+        "JOIN tags t ON t.id = it.tag_id"
+    ):
+        tags_by_entity[row["entity_id"]].append(row["name"])
+
+    clusters: list[dict] = []
+    membership: dict[str, int] = {}
+    for cid, comp in enumerate(c for c in comps if len(c) >= _GRAPH_CLUSTER_MIN_SIZE):
+        tally: Counter = Counter()
+        for eid in comp:
+            tally.update(tags_by_entity.get(eid, []))
+        if tally:
+            label = min(tally.items(), key=lambda kv: (-kv[1], kv[0]))[0]
+            source = "tag"
+        else:
+            types: Counter = Counter(
+                t for t in (graph.nodes[e].get("entity_type") for e in comp) if t
+            )
+            if types:
+                label = min(types.items(), key=lambda kv: (-kv[1], kv[0]))[0]
+                source = "entity_type"
+            else:
+                names = sorted(n for n in (graph.nodes[e].get("name") for e in comp) if n)
+                label, source = (names[0], "entity_name") if names else (comp[0], "entity_id")
+        clusters.append({"id": cid, "label": label, "label_source": source, "size": len(comp)})
+        for eid in comp:
+            membership[eid] = cid
+    return clusters, membership
+
+
+def _graph_payload_shell(min_weight: float, top_k: int, **over: object) -> dict:
+    """The response shape, in ONE place, so the empty-graph answer is the same shape as a
+    populated one. A consumer that has to branch on which keys exist is a consumer that
+    will crash on the empty library."""
+    shell: dict = {
+        "nodes": [],
+        "edges": [],
+        "clusters": [],
+        "thinning": {
+            "min_weight": min_weight,
+            "top_k": top_k,
+            "edges_total": 0,
+            "edges_kept": 0,
+        },
+        "layout": {
+            "placed": 0,
+            "unplaceable": 0,
+            "cluster_min_size": _GRAPH_CLUSTER_MIN_SIZE,
+        },
+    }
+    shell.update(over)
+    return shell
+
+
+def _build_graph_payload(store, *, min_weight: float, top_k: int) -> dict:
+    """Compose the whole payload: every node, thinned edges, positions, cluster labels."""
+    node_ids = sorted(store.graph.nodes)
+    edges, edges_total = _thin_edges(store.graph, min_weight=min_weight, top_k=top_k)
+    positions, placed = _entity_positions(store, node_ids)
+    comps = _graph_components(node_ids, edges)
+    clusters, membership = _cluster_labels(store, store.graph, comps)
     nodes = [
         {
             "id": n,
             "name": store.graph.nodes[n].get("name"),
             "type": store.graph.nodes[n].get("entity_type"),
+            "x": positions[n][0],
+            "y": positions[n][1],
+            # Whether (x, y) is a real position or the unplaceable sentinel. Carried as a
+            # flag because the coordinates cannot answer it: a centroid over two opposed
+            # clusters is legitimately (0, 0), so "at the origin" and "not placed" are
+            # different questions and a canvas must not infer one from the other.
+            "placed": n in placed,
+            # Degree in the FULL graph, not the thinned one: it is what the node's
+            # importance actually is, and a node drawn with 6 edges but a degree of 40 is
+            # a hub whose relations were thinned -- worth being able to say.
+            "degree": store.graph.degree(n),
+            "cluster": membership.get(n),
         }
-        for n in node_set
+        for n in node_ids
     ]
-    edges = [
-        {"source": u, "target": v, "type": d.get("relation_type"), "weight": d.get("weight")}
-        for u, v, d in store.graph.edges(data=True)
-        if u in node_set and v in node_set
-    ]
-    return web.json_response({"nodes": nodes, "edges": edges})
+    return _graph_payload_shell(
+        min_weight,
+        top_k,
+        nodes=nodes,
+        edges=edges,
+        clusters=clusters,
+        thinning={
+            "min_weight": min_weight,
+            "top_k": top_k,
+            "edges_total": edges_total,
+            "edges_kept": len(edges),
+        },
+        layout={
+            "placed": len(placed),
+            "unplaceable": len(node_ids) - len(placed),
+            "cluster_min_size": _GRAPH_CLUSTER_MIN_SIZE,
+        },
+    )
+
+
+async def get_full_graph(request: web.Request) -> web.Response:
+    """GET /api/knowledge/graph -- the whole entity graph, positioned and edge-thinned.
+
+    Every entity ships. The old `?limit=` node cap is gone: it answered a big library with
+    its 200 best-connected entities and no indication the rest existed. The payload is
+    bounded by thinning EDGES instead -- `?min_weight=` drops weak relations, `?top_k=`
+    keeps each node's K strongest and unions the keeps, so a hub cannot starve peripheral
+    nodes of theirs. `thinning.edges_total` vs `edges_kept` reports what that cost.
+
+    Nodes carry `x`/`y` from a 2-D projection of the embeddings of the items that mention
+    them (centroid when several do, origin when none is usable), `placed` -- whether that
+    position is real, which the coordinates cannot tell you since a centroid over opposed
+    clusters is legitimately the origin -- `degree` in the full graph, and `cluster`, the id
+    of their connected component in the thinned graph, set only for components of at least
+    `layout.cluster_min_size`. `clusters` names each one from its entities' dominant item
+    tag.
+
+    Memoized per (library, min_weight, top_k) on a content signature of the tables the
+    payload derives from, with the invalidation DEBOUNCED: a changed signature is served
+    from cache (flagged `stale: true`) until `_GRAPH_MEMO_DEBOUNCE_SECS` has passed since
+    the last compute, so a bulk import reprojects once rather than once per item.
+    """
+    store = _store(request)
+    try:
+        min_weight = float(request.query.get("min_weight") or _GRAPH_MIN_WEIGHT)
+        top_k = int(request.query.get("top_k") or _GRAPH_TOP_K_PER_NODE)
+    except (TypeError, ValueError):
+        return web.json_response({"error": "invalid min_weight or top_k"}, status=400)
+    if top_k < 1:
+        return web.json_response({"error": "invalid min_weight or top_k"}, status=400)
+    if not store.graph.nodes:
+        return web.json_response(_graph_payload_shell(min_weight, top_k, stale=False))
+
+    key = (str(store.db_path), min_weight, top_k)
+    signature = _graph_signature(store)
+    now = time.monotonic()
+    entry = _graph_memo.get(key)
+    if entry is not None and (
+        entry["signature"] == signature or now - entry["computed_at"] < _GRAPH_MEMO_DEBOUNCE_SECS
+    ):
+        return web.json_response({**entry["payload"], "stale": entry["signature"] != signature})
+    payload = _build_graph_payload(store, min_weight=min_weight, top_k=top_k)
+    _graph_memo[key] = {"signature": signature, "payload": payload, "computed_at": now}
+    return web.json_response({**payload, "stale": False})
 
 
 # ---------- Stats ----------

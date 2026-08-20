@@ -11,6 +11,8 @@ import { Markdown } from '../../ui/Markdown'
 import { KnowledgeDetail } from './KnowledgeDetail'
 import { AnnotationList } from './ReadingView'
 import { DuplicateList } from './DuplicateList'
+import { KnowledgeEgoGraph, type KnowledgeGraphPayload } from './KnowledgeEgoGraph'
+import { Button } from '../../ui/Button'
 import { resolveType, typeLabel } from './knowledgeMeta'
 import { api, type KnowledgeAnnotation, type KnowledgeDuplicate, type KnowledgeItem, type ExtractedContent, ApiError } from '../../lib/api'
 import { useQueryParam, type RouteProps } from '../../app/useQueryState'
@@ -221,6 +223,16 @@ export function KnowledgeDetailPage({ id, onBack, onOpenItem, query, setQuery }:
             onToggleReading={toggleReading}
             annotations={annotations}
             onAnnotationsChanged={reloadAnnotations}
+            // The reader keeps the dock's attention sections instead of replacing
+            // them. Passed as a NODE rather than imported by `ReadingView`, because this
+            // module already imports `KnowledgeDetail` → `ReadingView`, and an import back
+            // the other way would close that into a cycle. It also keeps the rail's data
+            // (related items, annotation removal, item routing) owned here, where it is
+            // fetched, rather than re-fetched a second time inside the reader.
+            insightRail={hasReaderInsights(item, related, annotations) ? (
+              <ReaderInsights item={item} related={related} annotations={annotations}
+                onRemoveAnnotation={removeAnnotation} onOpenItem={onOpenItem} />
+            ) : undefined}
           />
         ) : (
           <div className="grid h-40 place-items-center text-on-surface-low text-[0.8125rem]">Loading…</div>
@@ -258,11 +270,7 @@ function KnowledgeExtras({ item, pool, related, onOpenItem, annotations, onRemov
     <div className="flex flex-col gap-l">
       {/* Highlights lead: they are the only thing here the USER wrote, and they belong on
           the item whether or not the reader happens to be open. */}
-      {annotations.length > 0 && (
-        <Section label={`Highlights · ${annotations.length}`} icon={Highlighter}>
-          <AnnotationList annotations={annotations} onDelete={onRemoveAnnotation} />
-        </Section>
-      )}
+      <HighlightsSection annotations={annotations} onRemove={onRemoveAnnotation} />
       {/* Duplicates sit SECOND — above the read-only sections — because this is the only
           section here that asks the user to DO something, and library hygiene decays the longer
           two copies of a document coexist. The count is omitted when the lookup failed: "· 0"
@@ -289,16 +297,7 @@ function KnowledgeExtras({ item, pool, related, onOpenItem, annotations, onRemov
           </div>
         </Section>
       )}
-      {entities.length > 0 && (
-        <Section label={`Entities · ${entities.length}`} icon={Network}>
-          <div className="flex flex-wrap gap-1.5">
-            {entities.slice(0, 60).map((e) => (
-              <span key={e.id} className="inline-flex items-center gap-1 rounded-pill bg-surface-container px-2 h-6 text-on-surface-var text-[0.75rem]" title={e.entity_type}>{e.name}{e.entity_type && <span className="text-on-surface-low">· {e.entity_type}</span>}</span>
-            ))}
-            <MoreRow total={entities.length} shown={60} className="px-1" />
-          </div>
-        </Section>
-      )}
+      <EntitiesSection entities={entities} />
       {relations.length > 0 && (
         <Section label={`Relations · ${relations.length}`}>
           <div className="flex flex-col gap-1">
@@ -309,21 +308,178 @@ function KnowledgeExtras({ item, pool, related, onOpenItem, annotations, onRemov
           </div>
         </Section>
       )}
-      {related.length > 0 && (
-        <Section label={`Related · ${related.length}`} icon={Network}>
-          <div className="flex flex-col gap-1">
-            {related.slice(0, 15).map((r) => (
-              <button key={r.id} type="button" onClick={() => onOpenItem(r.id)}
-                className="flex items-center gap-2 rounded-md px-2 py-1.5 text-left transition-colors hover:bg-surface-high">
-                <span className="truncate text-on-surface text-[0.8125rem]">{r.title || '(untitled)'}</span>
-                {typeof r.shared_entities === 'number' && <span className="ml-auto shrink-0 text-on-surface-low text-[0.75rem]">{r.shared_entities} shared</span>}
-              </button>
-            ))}
-            <MoreRow total={related.length} shown={15} />
-          </div>
-        </Section>
-      )}
+      <RelatedSection related={related} onOpenItem={onOpenItem} />
     </div>
+  )
+}
+
+// ── The three dock sections the reader's insight rail also carries ───────────────────
+//
+// The clause: reading mode "no longer REPLACES the insights dock — related items,
+// entities and highlights ride a rail". Those three sections therefore have TWO homes: the
+// "More details" side panel (KnowledgeExtras, above) and the reader's rail (ReaderInsights,
+// below). They are extracted as components rather than duplicated into a second reader-only
+// component, so a change to how a related item or an entity chip reads lands on both
+// surfaces at once.
+//
+// 🔑 Extracted as THREE components rather than one block, because the dock's ordering is
+// deliberate and interleaved (highlights, then duplicates, then extracted content, then
+// entities, then relations, then related). One combined component could not be dropped into
+// that sequence without reordering it.
+
+/** The item's highlights — the only thing on the item the USER wrote. */
+export function HighlightsSection({ annotations, onRemove }: {
+  annotations: KnowledgeAnnotation[]
+  onRemove: (id: string) => void
+}) {
+  if (annotations.length === 0) return null
+  return (
+    <Section label={`Highlights · ${annotations.length}`} icon={Highlighter}>
+      <AnnotationList annotations={annotations} onDelete={onRemove} />
+    </Section>
+  )
+}
+
+/** The entities extracted from the item, as chips. */
+export function EntitiesSection({ entities }: { entities: NonNullable<KnowledgeItem['entities']> }) {
+  if (entities.length === 0) return null
+  return (
+    <Section label={`Entities · ${entities.length}`} icon={Network}>
+      <div className="flex flex-wrap gap-1.5">
+        {entities.slice(0, 60).map((e) => (
+          <span key={e.id} className="inline-flex items-center gap-1 rounded-pill bg-surface-container px-2 h-6 text-on-surface-var text-[0.75rem]" title={e.entity_type}>{e.name}{e.entity_type && <span className="text-on-surface-low">· {e.entity_type}</span>}</span>
+        ))}
+        <MoreRow total={entities.length} shown={60} className="px-1" />
+      </div>
+    </Section>
+  )
+}
+
+/** Items this one shares entities with, each a route to that item. */
+export function RelatedSection({ related, onOpenItem }: {
+  related: KnowledgeItem[]
+  onOpenItem: (id: string) => void
+}) {
+  if (related.length === 0) return null
+  return (
+    <Section label={`Related · ${related.length}`} icon={Network}>
+      <div className="flex flex-col gap-1">
+        {related.slice(0, 15).map((r) => (
+          <button key={r.id} type="button" onClick={() => onOpenItem(r.id)}
+            className="flex items-center gap-2 rounded-md px-2 py-1.5 text-left transition-colors hover:bg-surface-high">
+            <span className="truncate text-on-surface text-[0.8125rem]">{r.title || '(untitled)'}</span>
+            {/* The badge names whatever CHOSE this ordering. KL-13 replaced an unthresholded
+                shared-entity count with a cosine similarity edge above a real floor, so a
+                "3 shared" chip would no longer explain why this row sits where it does. The
+                tooltip carries the rest — which passage matched, and the entity overlap the
+                score no longer ranks by — so the number stays accountable. Falls back to the
+                old chip when a response predates the edge table. */}
+            {typeof r.score === 'number' ? (
+              <span className="ml-auto shrink-0 text-on-surface-low text-[0.75rem]"
+                title={[
+                  `${Math.round(r.score * 100)}% similar`,
+                  typeof r.chunk_index === 'number' && typeof r.neighbour_chunk_index === 'number'
+                    ? `matched section ${r.chunk_index + 1} of this item against section ${r.neighbour_chunk_index + 1} of the other`
+                    : '',
+                  typeof r.shared_entities === 'number' ? `${r.shared_entities} shared entities` : '',
+                ].filter(Boolean).join(' · ')}>
+                {Math.round(r.score * 100)}%
+              </span>
+            ) : typeof r.shared_entities === 'number' ? (
+              <span className="ml-auto shrink-0 text-on-surface-low text-[0.75rem]">{r.shared_entities} shared</span>
+            ) : null}
+          </button>
+        ))}
+        <MoreRow total={related.length} shown={15} />
+      </div>
+    </Section>
+  )
+}
+
+/** True when the reader's insight rail would have something to say.
+ *
+ *  Exported and asked BEFORE the rail is built, because in a wide reader pane the rail is
+ *  always on screen — an empty column beside the article is a worse outcome than no column,
+ *  and `ReadingView` cannot inspect a React node to find out. So the decision is made here,
+ *  where the data is, and travels as the presence or absence of the node itself. */
+export function hasReaderInsights(item: KnowledgeItem, related: KnowledgeItem[], annotations: KnowledgeAnnotation[]): boolean {
+  return annotations.length > 0 || (item.entities ?? []).length > 0 || related.length > 0
+}
+
+/** The reader's insight rail body: the same highlights / entities / related sections the
+ *  More-details dock shows, so opening the reader no longer costs the reader access to them. */
+export function ReaderInsights({ item, related, annotations, onRemoveAnnotation, onOpenItem }: {
+  item: KnowledgeItem
+  related: KnowledgeItem[]
+  annotations: KnowledgeAnnotation[]
+  onRemoveAnnotation: (id: string) => void
+  onOpenItem: (id: string) => void
+}) {
+  return (
+    <>
+      <HighlightsSection annotations={annotations} onRemove={onRemoveAnnotation} />
+      <EntitiesSection entities={item.entities ?? []} />
+      <RelatedSection related={related} onOpenItem={onOpenItem} />
+      <EgoGraphSection item={item} onOpenItem={onOpenItem} />
+    </>
+  )
+}
+
+/** The ego view, in the reading rail. Centred on the item's best-connected entity, because
+ *  the graph's nodes ARE entities — an item is not a node in it, so "this document's
+ *  neighbourhood" is honestly "the neighbourhood of what this document is about".
+ *
+ *  🔴 Loads the graph ONLY when opened. The payload is the whole positioned graph (every node,
+ *  edges thinned) and the projection behind it is a whole-library computation; paying for that on
+ *  every reader open would tax the common case to serve the rare one. A collapsed section that
+ *  has never been expanded issues no request at all. */
+function EgoGraphSection({ item, onOpenItem }: {
+  item: KnowledgeItem
+  onOpenItem: (id: string) => void
+}) {
+  const [open, setOpen] = useState(false)
+  const [data, setData] = useState<KnowledgeGraphPayload | null>(null)
+  const [err, setErr] = useState<unknown>(null)
+
+  // The focus: the item's entity with the most connections in the graph once it arrives, and
+  // before that its first entity. Falls back to '' so the view renders its own not-in-the-graph
+  // state rather than this section inventing an empty one.
+  const entities = item.entities ?? []
+  const focusId = (() => {
+    if (!entities.length) return ''
+    if (!data) return String(entities[0].id ?? '')
+    const degree = new Map<string, number>()
+    for (const e of data.edges) {
+      degree.set(e.source, (degree.get(e.source) ?? 0) + 1)
+      degree.set(e.target, (degree.get(e.target) ?? 0) + 1)
+    }
+    const ids = entities.map((e) => String(e.id ?? '')).filter(Boolean)
+    return ids.slice().sort((a, b) => (degree.get(b) ?? 0) - (degree.get(a) ?? 0) || a.localeCompare(b))[0] ?? ''
+  })()
+
+  useEffect(() => {
+    if (!open || data || err) return
+    let alive = true
+    api.knowledgeGraph()
+      .then((d) => { if (alive) setData(d as KnowledgeGraphPayload) })
+      .catch((e) => { if (alive) setErr(e) })
+    return () => { alive = false }
+  }, [open, data, err])
+
+  if (!entities.length) return null
+  return (
+    <Section label="Neighbourhood" icon={Network}>
+      <Button variant="ghost" size="sm" ariaExpanded={open} onClick={() => setOpen((v) => !v)}>
+        {open ? 'Hide the graph' : 'Show this in the graph'}
+      </Button>
+      {open && (
+        err
+          ? <LoadError what="knowledge graph" error={err} onRetry={() => setErr(null)} />
+          : data
+          ? <div className="mt-s"><KnowledgeEgoGraph data={data} focusId={focusId} onSelect={onOpenItem} /></div>
+          : <div data-type="body-s" className="px-s py-m text-on-surface-low">Loading the graph…</div>
+      )}
+    </Section>
   )
 }
 

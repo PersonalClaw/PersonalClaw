@@ -76,7 +76,8 @@ import { spring, stagger, listItemEnter, expr } from '../design/motion'
 import { api, type ApprovalMode, type TaskMode, type ReasoningEffort, type ChatSessionSummary, type ChatHistoryMsg, type DiscoveredAgent, type MemoryMode, type NudgeLoop, type ChatFolder, type ChatTag, type RetagJob, type SessionTemplate, type RewindFileWire } from '../lib/api'
 import { useChatSocket, type WsMessage } from '../lib/useChatSocket'
 import { useStreamCoalescer } from './chat/useStreamCoalescer'
-import { FindBar } from './chat/FindBar'
+import { FindBar } from '../ui/FindBar'
+import { findSegments } from './chat/findSegments'
 import { FollowupChips, followupAnnouncement } from './chat/FollowupChips'
 import { CheckWorkChip } from './chat/CheckWorkChip'
 import { applyCoalescedFlush, insertActivity } from './chat/coalesceReducers'
@@ -2774,8 +2775,12 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
             <>
               <div ref={scrollRef} className="relative flex-1 overflow-y-auto">
                 <AnimatePresence>
+                  {/* `ui/FindBar` is surface-agnostic; chat supplies what a turn's searchable
+                      text is (`findSegments`) and which node to scroll to. Both references are
+                      stable, so a composer keystroke does not re-scan the transcript. */}
                   {findOpen && (
-                    <FindBar turns={turns} scrollRef={scrollRef} turnNodes={turnNodes} onClose={() => setFindOpen(false)} />
+                    <FindBar items={turns} segmentsOf={findSegments} nodeOf={(_t, i) => turnNodes.current.get(i)}
+                      scrollRef={scrollRef} label="Find in conversation" onClose={() => setFindOpen(false)} />
                   )}
                 </AnimatePresence>
                 <SelectionQuote scrollRef={scrollRef} onQuote={quoteToComposer} attributionFor={attributionForNode} />

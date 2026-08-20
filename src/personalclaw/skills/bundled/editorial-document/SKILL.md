@@ -58,8 +58,9 @@ paragraph; 2–4 sentences each.
 Use `<figure>` + `<figcaption>` for images/diagrams.
 
 **Typography.** Don't hand-set fonts/sizes/colors — the reader stylesheet owns the
-type scale (heading hierarchy, line length ~72ch, readable line-height) and is
-theme-aware. Your job is correct *semantics*; the styling follows.
+type scale (heading hierarchy, a measure of roughly 75 characters, readable
+line-height) and is theme-aware. Your job is correct *semantics*; the styling
+follows.
 
 ## Example
 

@@ -97,7 +97,7 @@ function StaleSynthesisBanner({ item }: { item: KnowledgeItem }) {
   )
 }
 
-export function KnowledgeDetail({ item, onChanged, onDeleted, onTagClick, onShowDetails, detailsOpen, detailsCount, onHeader, reading = false, onToggleReading, annotations = [], onAnnotationsChanged }: { item: KnowledgeItem; onChanged: () => void; onDeleted: () => void; onTagClick?: (tag: string) => void; onShowDetails?: () => void; detailsOpen?: boolean; detailsCount?: number; onHeader?: (parts: { wand: React.ReactNode; actions: React.ReactNode; editing: boolean } | null) => void; reading?: boolean; onToggleReading?: () => void; annotations?: KnowledgeAnnotation[]; onAnnotationsChanged?: () => void }) {
+export function KnowledgeDetail({ item, onChanged, onDeleted, onTagClick, onShowDetails, detailsOpen, detailsCount, onHeader, reading = false, onToggleReading, annotations = [], onAnnotationsChanged, insightRail }: { item: KnowledgeItem; onChanged: () => void; onDeleted: () => void; onTagClick?: (tag: string) => void; onShowDetails?: () => void; detailsOpen?: boolean; detailsCount?: number; onHeader?: (parts: { wand: React.ReactNode; actions: React.ReactNode; editing: boolean } | null) => void; reading?: boolean; onToggleReading?: () => void; annotations?: KnowledgeAnnotation[]; onAnnotationsChanged?: () => void; /** The dock's attention sections (highlights / entities / related), for the reader's insight rail — see `ReaderInsights` in KnowledgeDetailPage. Absent when there is nothing to put in it. */ insightRail?: React.ReactNode }) {
   const [full, setFull] = useState<KnowledgeItem>(item)
   const [editing, setEditing] = useState(false)
   // Tag autocomplete, fetched lazily when the user first enters edit mode.
@@ -539,14 +539,20 @@ export function KnowledgeDetail({ item, onChanged, onDeleted, onTagClick, onShow
           collide with the content's own controls (e.g. a gist's copy button). The
           per-node pool / entities / relations / related live in the page's "More
           details" side panel (KnowledgeExtras), not inline. */}
-      {/* Reading mode replaces the preview + insights dock rather than sitting beside
-          them: the whole point is to give the article the column, and a reader competing
-          with a metadata strip and a dock is the data view it exists to escape. The
-          metadata and tag rows above stay — they are one line each and they are how a
-          reader confirms WHAT they are reading. */}
+      {/* Reading mode replaces the PREVIEW and the generated-insights dock: the whole point
+          is to give the article the column, and a reader competing with a preview frame and
+          a summary panel is the data view it exists to escape. The metadata and tag rows
+          above stay — they are one line each and they are how a reader confirms WHAT they
+          are reading.
+          🔑 KL-16 corrected the other half of that trade. It used to cost the reader the
+          More-details dock's attention sections too, which is a different thing: the
+          article's highlights, entities and related items are what a reader reaches for
+          WHILE reading, and losing them meant leaving the reader to follow a lead. They now
+          ride the reader's own insight rail (`insightRail`), split against the reader pane's
+          width by a container query rather than dropped. */}
       {readingMode ? (
         <ReadingView item={full} annotations={annotations}
-          onAnnotationsChanged={onAnnotationsChanged ?? (() => {})} />
+          onAnnotationsChanged={onAnnotationsChanged ?? (() => {})} insightRail={insightRail} />
       ) : (
         <>
           <Preview item={full} tm={tm} prominent />

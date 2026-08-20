@@ -22,7 +22,7 @@ import { useCachedData } from '../../lib/useCachedData'
 import { useChatSocket, type WsMessage } from '../../lib/useChatSocket'
 import { useVisiblePoll } from '../../lib/useVisiblePoll'
 import { cleanSay, toolDetail } from '../../lib/agentFeed'
-import { ACTIVE_LOOP_STATUSES } from '../../lib/loopStatus'
+import { ACTIVE_LOOP_STATUSES, LOOP_ACTION_SOURCE_STATUSES } from '../../lib/loopStatus'
 import { useRunStream } from '../loops/useRunStream'
 import { belongsToLoop } from '../workflows/containerKey'
 import { foldReducer, emptyRunFlags, type RunFlags } from '../loops/runFold'
@@ -633,16 +633,16 @@ export function CodeCockpitPage({ id, onBack, onDeleted, onNewTarget, onOpenProj
           {/* Run controls + terminal toggle are primary/default (frequent, contextual);
               everything else (run build/tests, reuse workspace, navigate away, delete)
               is low-priority so the cluster's own overflow menu absorbs it first. */}
-          {active
+          {LOOP_ACTION_SOURCE_STATUSES.pause.has(p.status)
             ? <HeaderControl icon={Pause} label="Pause" priority="primary" onClick={() => act('pause')} disabled={acting} />
-            : (p.status === 'paused' || p.status === 'blocked' || p.status === 'needs_input' || p.status === 'failed' || p.status === 'stagnant')
+            : LOOP_ACTION_SOURCE_STATUSES.resume.has(p.status)
               ? <HeaderControl icon={Play} label="Resume" priority="primary" onClick={() => act('resume')} variant="primary" disabled={acting} />
-              : (p.status === 'ready' || p.status === 'review')
+              : LOOP_ACTION_SOURCE_STATUSES.start.has(p.status)
                 ? <HeaderControl icon={Play} label="Start" priority="primary" onClick={() => act('start')} variant="primary" disabled={acting} />
                 : null}
           {/* Stop is TERMINAL + non-resumable — confirm first, like Delete. `stagnant`
               is an active attention state (resume + stop both valid). */}
-          {(active || ['paused', 'blocked', 'needs_input', 'stagnant'].includes(p.status)) &&
+          {LOOP_ACTION_SOURCE_STATUSES.stop.has(p.status) &&
             <HeaderControl icon={Square} label="Stop" priority="primary" onClick={async () => {
               // 🔴 THE MISSING HALF WAS THE ONE A USER LOSES WORK TO. Stop is terminal, and its teardown
               // runs `worktree.cleanup_all`, which for every task worktree does

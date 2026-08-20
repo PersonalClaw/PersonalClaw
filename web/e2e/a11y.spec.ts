@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test'
 import AxeBuilder from '@axe-core/playwright'
-import { ROUTES, SETTINGS_ROUTES, THEMES } from './routes'
+import { ROUTES, SETTINGS_ROUTES, VIEW_ROUTES, THEMES } from './routes'
 import { seedTheme, gotoRoute, assertMounted, OPENERS } from './helpers'
 
 // ── a11y (WCAG 2 AA) scan — every nav route × both themes ───────────────────
@@ -31,7 +31,7 @@ const BLOCKING = new Set(['serious', 'critical'])
 
 for (const theme of THEMES) {
   test.describe(`a11y (WCAG AA): ${theme} theme`, () => {
-    for (const { route, label } of [...ROUTES, ...SETTINGS_ROUTES]) {
+    for (const { route, id, label } of [...ROUTES, ...SETTINGS_ROUTES, ...VIEW_ROUTES]) {
       test(`${label} (#/${route})`, async ({ page }, testInfo) => {
         await seedTheme(page, theme)
         await gotoRoute(page, route)
@@ -42,7 +42,7 @@ for (const theme of THEMES) {
 
         const blocking = results.violations.filter((v) => BLOCKING.has(v.impact ?? ''))
         // Attach the full violation set to the report for triage regardless.
-        await testInfo.attach(`axe-${route}-${theme}.json`, {
+        await testInfo.attach(`axe-${id ?? route}-${theme}.json`, {
           body: JSON.stringify(results.violations, null, 2),
           contentType: 'application/json',
         })

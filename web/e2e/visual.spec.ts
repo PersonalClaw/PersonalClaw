@@ -1,5 +1,5 @@
 import { test } from '@playwright/test'
-import { ROUTES, THEMES } from './routes'
+import { ROUTES, VIEW_ROUTES, THEMES } from './routes'
 import { seedTheme, gotoRoute, expectRouteScreenshot } from './helpers'
 
 // ── Visual-regression baselines — every nav route × both themes ─────────────
@@ -12,11 +12,14 @@ import { seedTheme, gotoRoute, expectRouteScreenshot } from './helpers'
 
 for (const theme of THEMES) {
   test.describe(`visual: ${theme} theme`, () => {
-    for (const { route, label } of ROUTES) {
+    // VIEW_ROUTES are a nav page's query-param sub-surfaces (e.g. the knowledge
+    // graph). They snapshot under their `id`, since `?`/`=` cannot go in a
+    // baseline filename.
+    for (const { route, id, label } of [...ROUTES, ...VIEW_ROUTES]) {
       test(`${label} (#/${route})`, async ({ page }) => {
         await seedTheme(page, theme)
         await gotoRoute(page, route)
-        await expectRouteScreenshot(page, `${route}-${theme}`)
+        await expectRouteScreenshot(page, `${id ?? route}-${theme}`)
       })
     }
   })
