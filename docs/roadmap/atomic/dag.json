@@ -501,7 +501,7 @@
         {
           "id": "KL-17",
           "title": "S4 knowledge graph: embedding-projected layout, server-side edge sparsification, collision-checked labels, ego view from the document",
-          "status": "todo",
+          "status": "done",
           "scope": "Capability-gap amendment (2026-08-19)",
           "done_when": "node positions are a deterministic 2-D projection of item embeddings computed server-side (power iteration with deflation, fixed-seed init so layouts are reproducible, normalized output, and mixed-dimension vectors placed at the origin rather than dropped), served with the graph payload and memoized with a debounced invalidation \u2014 so on-screen distance carries semantic meaning and the layout is stable across sessions, replacing the insertion-order concentric rings whose centre means 'highest inbound count' above the truncation cap and 'alphabetically first' below it; the payload keeps every node and thins EDGES instead of truncating nodes at a node cap (which loses data) \u2014 a similarity floor plus a top-K-per-node keep, with clusters above a minimum size labelled from their dominant tags; labels are placed by a measure-then-filter pass with a rendered-size floor, a shared placed-rect list and larger nodes winning slots on collision, replacing the degree/zoom threshold; the edge weight already on the wire and drawn nowhere is encoded on two channels (colour and width) since width alone is unreliable under a viewBox; a focused ego view reachable from an item's reading rail expands neighbours by hop depth, reusing the memory graph's existing lit-set BFS and its filter/drawer vocabulary rather than inventing a second one; both canvases keep the shared zoom control; the graph-mark contrast rail is widened from one hardcoded path to a derived census of every file rendering graph marks, with a vacuity assertion that the census is non-empty; the graph is reachable as a route so it is axe-scanned and snapshotted",
           "deps": [
@@ -7719,11 +7719,6 @@
         "plan": "KL"
       },
       {
-        "id": "KL-17",
-        "title": "S4 knowledge graph: embedding-projected layout, server-side edge sparsification, collision-checked labels, ego view from the document",
-        "plan": "KL"
-      },
-      {
         "id": "LMMV-7",
         "title": "Session 5b \u2014 Hardening: per-model context-budget helper, refresh/registry-drift/destructive-test regressions, full-matrix as-a-user validation",
         "plan": "LMMV"
@@ -9617,9 +9612,9 @@
         "code": "KL",
         "plan": "KNOWLEDGE-LIBRARY",
         "total_atoms": 17,
-        "done": 15,
+        "done": 16,
         "in_progress": 0,
-        "todo": 2,
+        "todo": 1,
         "blocked": 0
       },
       {
