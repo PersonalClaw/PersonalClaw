@@ -6084,7 +6084,7 @@
     },
     {
       "code": "FM",
-      "status": "in_progress",
+      "status": "done",
       "summary": "FLUID-MOTION is DESIGNED with no execution log \u2014 nothing shipped. It is a self-contained frontend motion plan (motion.ts, ui/motion/, tokens, router) that touches no cross-plan shared seams and rides existing cosmetic gates (bounciness/expressiveness/prefers-reduced-motion), so no lifecycle/migration re-scopes apply. Decomposed into 7 todo atoms across its 3 sessions: the physics foundation (FM-1), two independent morph primitives + their coherence pass (FM-2/3/4), route transitions and orchestrated entrances (FM-5/6), and the capstone budget proof + CI guard (FM-7). One declared cross-plan edge (DESIGN-SYSTEM-CONSISTENCY, already shipped v0.1.2) and one soft coordination edge (KNOWLEDGE-LIBRARY for a demo morph surface, with alternates available).",
       "plan": "FLUID-MOTION",
       "atoms": [
@@ -6159,7 +6159,7 @@
         {
           "id": "FM-7",
           "title": "Motion budget proof: 60fps pass + reduced-motion/expressiveness=0 zero-motion CI guard",
-          "status": "todo",
+          "status": "done",
           "scope": "Session 3 \u2014 budget proof (T3.3, V3)",
           "done_when": "60fps verified on ChatPage + a cockpit with no jank; expressiveness=0 and prefers-reduced-motion both proven to yield instant/crossfade with zero springs; a reduced-motion assertion added to web CI where feasible; full-app motion pass holds at bounciness=1 (delightful) and bounciness=0 (calm)",
           "deps": [
@@ -7708,11 +7708,6 @@
         "id": "ET-8",
         "title": "Registry surface on personalclaw.dev generated from `registry.json`",
         "plan": "ET"
-      },
-      {
-        "id": "FM-7",
-        "title": "Motion budget proof: 60fps pass + reduced-motion/expressiveness=0 zero-motion CI guard",
-        "plan": "FM"
       },
       {
         "id": "KL-8",
@@ -10099,9 +10094,9 @@
         "code": "FM",
         "plan": "FLUID-MOTION",
         "total_atoms": 7,
-        "done": 6,
+        "done": 7,
         "in_progress": 0,
-        "todo": 1,
+        "todo": 0,
         "blocked": 0
       },
       {
