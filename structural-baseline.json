@@ -283,6 +283,12 @@
           "core-must-not-import-the-http-surface -> personalclaw.dashboard.state"
         ]
       },
+      "src/personalclaw/cli_config.py": {
+        "edges": 1,
+        "violations": [
+          "core-must-not-import-the-http-surface -> personalclaw.dashboard.handlers.core"
+        ]
+      },
       "src/personalclaw/cli_doctor.py": {
         "edges": 1,
         "violations": [
@@ -488,11 +494,11 @@
     "totals": {
       "by_rule": {
         "core-must-not-import-its-own-published-facade": 10,
-        "core-must-not-import-the-http-surface": 56,
+        "core-must-not-import-the-http-surface": 57,
         "ledger-is-a-leaf": 0
       },
-      "edges": 66,
-      "files": 33
+      "edges": 67,
+      "files": 34
     }
   },
   "structural-size": {

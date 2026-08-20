@@ -4,18 +4,16 @@ import asyncio
 import hmac
 import json
 import logging
-import math
 import os
-import re
 from pathlib import Path
-from typing import Any
 
 from aiohttp import web
 from aiohttp.client_exceptions import ClientConnectionResetError
 
 import personalclaw.validation as _validation_mod
 from personalclaw.atomic_write import atomic_write
-from personalclaw.config.loader import AppConfig
+from personalclaw.config.edit_spec import ConfigValueError, coerce_edit_value
+from personalclaw.config.loader import MEMORY_VAULT_MODES, AppConfig
 from personalclaw.dashboard.state import DashboardState
 from personalclaw.dashboard.token_auth import MAX_SESSION_TTL_SECS, generate_token, parse_duration
 from personalclaw.security import SUSPICIOUS_BASH_PATTERNS
@@ -432,24 +430,33 @@ async def api_personalclaw_config(request: web.Request) -> web.Response:
         if not isinstance(data.get("agent"), dict):
             data["agent"] = {}
         agent = data["agent"]
-        # (lower, upper) per field. max_subagents accepts 0 = auto-size from host.
-        limits = {"subagent_max_turns": (1, 200), "max_subagents": (0, 16)}
+        # The three `agent.*` fields this endpoint owns. Their bounds are NOT restated here:
+        # all three are already declared in `_EDITABLE_CONFIG`, so this used to be a second
+        # copy of the same numbers — identical today, one edit away from disagreeing, and
+        # nothing would have caught the divergence because each path tested its own copy.
+        agent_fields = ("subagent_max_turns", "max_subagents", "orchestrator_skill")
+        # An unrecognised key used to be dropped in silence whenever at least one recognised
+        # key rode along, so `{"max_subagents": 4, "subagent_max_tunrs": 999}` returned 200
+        # and applied half of what was asked.
+        unknown = sorted(k for k in agent_settings if k not in agent_fields)
+        if unknown:
+            return _deny(
+                f"unknown agent settings: {', '.join(unknown)} "
+                f"(writable: {', '.join(agent_fields)})"
+            )
         applied: list[str] = []
-        for key, (lower, upper) in limits.items():
-            if key in agent_settings:
-                val = agent_settings[key]
-                if isinstance(val, bool) or not isinstance(val, int) or val < lower or val > upper:
-                    return _deny(f"{key} must be an integer between {lower} and {upper}")
-                agent[key] = val
-                applied.append(key)
-        # Boolean toggles
-        for key in ("orchestrator_skill",):
-            if key in agent_settings:
-                val = agent_settings[key]
-                if not isinstance(val, bool):
-                    return _deny(f"{key} must be a boolean")
-                agent[key] = val
-                applied.append(key)
+        for key in agent_fields:
+            if key not in agent_settings:
+                continue
+            try:
+                agent[key] = coerce_edit_value(
+                    f"agent.{key}", agent_settings[key], _EDITABLE_CONFIG[f"agent.{key}"]
+                )
+            except ConfigValueError as exc:
+                # The message names the field: this endpoint can carry several at once, so
+                # a bare "must be between 0 and 16" would not say which one was refused.
+                return _deny(f"{key} {exc}", exc.status)
+            applied.append(key)
         if not applied:
             return _deny("no recognized settings provided")
         atomic_write(path, json.dumps(data, indent=2) + "\n", fsync=True)
@@ -696,6 +703,35 @@ _EDITABLE_CONFIG: dict[str, dict] = {
     # the always-injected block. The per-slot caps are NOT here — which individual register is
     # full is a per-class judgment fixed in code, not a number to tune from Settings.
     "memory.slot_size_cap": {"type": "int", "min": 200, "max": 4000},
+    # The retention / behaviour / vault fields that `PUT /api/memory/settings` writes.
+    # Declared HERE rather than validated a second time in that handler: they are editable
+    # config fields by definition (the Memory panel writes them), and an endpoint carrying
+    # its own private copy of the rules is how `graph_enabled` ended up with two answers —
+    # this allowlist demanded a real boolean while the PUT ran `bool(body[flag])`, so
+    # `{"graph_enabled": "false"}` turned the feature ON. Bounds are stated, not clamped:
+    # a request that "succeeded" having stored something else is the one outcome a caller
+    # can never notice. The two floors (0.5h idle, 7d retention) are the ones the PUT
+    # already enforced by clamping; the ceilings are new and deliberately generous —
+    # they exist so an accidental extra digit is a 400 rather than "retention: never".
+    "memory.history_idle_hours": {"type": "float", "min": 0.5, "max": 8760.0},
+    "memory.history_max_days": {"type": "int", "min": 7, "max": 3650},
+    "memory.l1_manifest": {"type": "bool"},
+    "memory.active_recall": {"type": "bool"},
+    "memory.proactive_commitments": {"type": "bool"},
+    # The one-time "legacy memory has been migrated" marker. Editable because the Memory
+    # panel clears it to re-offer the migration; a bool, so it cannot be set by typing a
+    # word that happens to be truthy.
+    "memory.migrated": {"type": "bool"},
+    # MEMORY-GRAPH-AND-VAULT §5.1 — the vault. `vault_mode` is a closed three-value enum
+    # (an unrecognised value must be a 400, never a silent fall back to "off", or mirroring
+    # stops while the setting looks saved). `vault_path` normalises empty → the default at
+    # the write boundary so config.json matches what load() reads back.
+    "memory.vault_mode": {"type": "enum", "values": list(MEMORY_VAULT_MODES)},
+    "memory.vault_path": {
+        "type": "str",
+        "max_len": 256,
+        "sanitize": lambda v: v.strip() or "memory-vault",
+    },
     "feedback.enabled": {"type": "bool"},
     "feedback.retire_threshold": {"type": "float", "min": 0.1, "max": 0.9},
     "feedback.min_n": {"type": "int", "min": 3, "max": 50},
@@ -1015,189 +1051,12 @@ async def api_personalclaw_config_patch(request: web.Request) -> web.Response:
     if not spec:
         return _deny(f"field not editable: {path_key}", f"{path_key}={value}")
 
-    # Validate value
-    if spec["type"] == "enum":
-        if value not in spec["values"]:
-            return _deny(f"invalid value, must be one of {spec['values']}", f"{path_key}={value}")
-    elif spec["type"] == "int":
-        if value is None:
-            return _deny("must be an integer", f"{path_key}={value}")
-        try:
-            value = int(value)
-        except (TypeError, ValueError):
-            return _deny("must be an integer", f"{path_key}={value}")
-        lo, hi = spec.get("min", 0), spec.get("max", 999999)
-        if value < lo or value > hi:
-            return _deny(f"must be between {lo} and {hi}", f"{path_key}={value}")
-    elif spec["type"] == "bool":
-        if not isinstance(value, bool):
-            return _deny("must be a boolean", f"{path_key}={value}")
-    elif spec["type"] == "float":
-        if value is None:
-            return _deny("must be a number", f"{path_key}={value}")
-        try:
-            value = float(value)
-        except (TypeError, ValueError):
-            return _deny("must be a number", f"{path_key}={value}")
-        if not math.isfinite(value):
-            return _deny("must be a finite number", f"{path_key}={value}")
-        lo, hi = spec.get("min", 0.0), spec.get("max", 999999.0)
-        if value < lo or value > hi:
-            return _deny(f"must be between {lo} and {hi}", f"{path_key}={value}")
-    elif spec["type"] == "duration":
-        # A duration string like "30d" / "12h" / "15m". Validated with the SAME regex the
-        # loader reads it back with, so a value accepted here can never be one the loader
-        # then quietly replaces with a default — a PATCH that "succeeded" while changing
-        # nothing is the worst outcome for a session-lifetime field.
-        if not isinstance(value, str):
-            return _deny("must be a duration string like 30d, 12h or 15m", f"{path_key}={value}")
-        if not re.fullmatch(r"\d+[mhd]", value.strip()):
-            return _deny(
-                "must be a duration like 30d, 12h or 15m (integer + m/h/d)",
-                f"{path_key}={value}",
-            )
-        value = value.strip()
-        if int(value[:-1]) <= 0:
-            return _deny("must be greater than zero", f"{path_key}={value}")
-    elif spec["type"] == "str_list":
-        if not isinstance(value, list) or not all(isinstance(v, str) for v in value):
-            return _deny("must be a list of strings", f"{path_key}={value}")
-        max_items = spec.get("max_items", 20)
-        if len(value) > max_items:
-            return _deny(f"must have at most {max_items} items", f"{path_key}={value}")
-        if spec.get("each_regex"):
-            for v in value:
-                try:
-                    re.compile(v)
-                except re.error as exc:
-                    return _deny(f"invalid regex {v!r}: {exc}", f"{path_key}={value}")
-    elif spec["type"] == "str":
-        if not isinstance(value, str):
-            return _deny("must be a string", f"{path_key}={value}")
-        max_len = spec.get("max_len", 256)
-        if len(value) > max_len:
-            return _deny(f"must be at most {max_len} characters", f"{path_key}={value}")
-        if "values" in spec and value not in spec["values"]:
-            return _deny(f"invalid value, must be one of {spec['values']}", f"{path_key}={value}")
-        values_fn = spec.get("values_fn")
-        if values_fn and value not in values_fn():
-            return _deny(f"invalid value for {path_key}", f"{path_key}={value}")
-        # Normalise at the WRITE boundary so the file matches what load() will
-        # produce — otherwise the file carries the raw value (e.g. markdown/brace
-        # syntax in bot_name) while runtime sees the sanitized one: split-brain.
-        sanitize = spec.get("sanitize")
-        if sanitize:
-            value = sanitize(value)
-    elif spec["type"] == "egress":
-        # The operator egress overrides object: {allow_hosts:[str], deny_hosts:[str],
-        # allow_private:bool}. Normalise to exactly those keys so a stray field can't be
-        # smuggled into config. Hosts are bare domains/hostnames (no scheme/path).
-        if not isinstance(value, dict):
-            return _deny("must be an object", f"{path_key}={value}")
-        clean: dict[str, Any] = {}
-        for key in ("allow_hosts", "deny_hosts"):
-            hosts = value.get(key, [])
-            if not isinstance(hosts, list) or not all(isinstance(h, str) for h in hosts):
-                return _deny(f"{key} must be a list of strings", f"{path_key}.{key}")
-            if len(hosts) > 100:
-                return _deny(f"{key} must have at most 100 items", f"{path_key}.{key}")
-            # A host entry is a bare domain/hostname — reject anything with a scheme,
-            # path, or whitespace (a URL in the allow-list would be a footgun).
-            for h in hosts:
-                if "/" in h or ":" in h or " " in h or len(h) > 253:
-                    return _deny(
-                        f"invalid host {h!r} (bare domain/hostname only)", f"{path_key}.{key}"
-                    )
-            clean[key] = hosts
-        ap = value.get("allow_private", False)
-        if not isinstance(ap, bool):
-            return _deny("allow_private must be a boolean", f"{path_key}.allow_private")
-        clean["allow_private"] = ap
-        value = clean
-    elif spec["type"] == "projection_rules":
-        # A list of user-taught tool-output projection rules (TokenJuice OP6 + §2.3):
-        # [{name, match_regex, strategy, head?, tail?, keep?, skip?, count?}].
-        # Normalise to exactly those keys; every regex must compile + each strategy
-        # must be a known builtin projector. Declarative only (no code) — a bad rule
-        # is rejected here, never at dispatch time.
-        from personalclaw.tool_providers.projection import _PROJECTORS  # noqa: F811
-
-        if not isinstance(value, list):
-            return _deny("must be a list", f"{path_key}={value}")
-        if len(value) > 50:
-            return _deny("must have at most 50 rules", f"{path_key}")
-        strategies = set(_PROJECTORS)  # log/diff/json/test/csv/code
-        clean_rules: list[dict[str, object]] = []
-        for i, r in enumerate(value):
-            if not isinstance(r, dict):
-                return _deny("each rule must be an object", f"{path_key}[{i}]")
-            name = str(r.get("name", "")).strip()[:80]
-            rx = str(r.get("match_regex", "")).strip()
-            strat = str(r.get("strategy", "")).strip().lower()
-            if not rx:
-                return _deny("each rule needs a match_regex", f"{path_key}[{i}]")
-            if len(rx) > 500:
-                return _deny("match_regex too long (max 500)", f"{path_key}[{i}]")
-            try:
-                re.compile(rx)
-            except re.error as exc:
-                return _deny(f"invalid regex {rx!r}: {exc}", f"{path_key}[{i}]")
-            if strat not in strategies:
-                return _deny(f"strategy must be one of {sorted(strategies)}", f"{path_key}[{i}]")
-            clean_rule: dict[str, object] = {"name": name, "match_regex": rx, "strategy": strat}
-            # Rule ops v2 (§2.3): optional declarative line operations. Each op regex
-            # must compile; head/tail must be small non-negative ints. Omitted = off.
-            for k in ("head", "tail"):
-                try:
-                    n = int(r.get(k, 0) or 0)
-                except (TypeError, ValueError):
-                    return _deny(f"{k} must be an integer", f"{path_key}[{i}]")
-                if n < 0 or n > 10_000:
-                    return _deny(f"{k} must be 0..10000", f"{path_key}[{i}]")
-                if n:
-                    clean_rule[k] = n
-            for k in ("keep", "skip", "count"):
-                op_rx = str(r.get(k, "") or "").strip()
-                if not op_rx:
-                    continue
-                if len(op_rx) > 500:
-                    return _deny(f"{k} regex too long (max 500)", f"{path_key}[{i}]")
-                try:
-                    re.compile(op_rx)
-                except re.error as exc:
-                    return _deny(f"invalid {k} regex {op_rx!r}: {exc}", f"{path_key}[{i}]")
-                clean_rule[k] = op_rx
-            clean_rules.append(clean_rule)
-        value = clean_rules
-    elif spec["type"] == "skill_catalogs":
-        # A list of external skill-catalog sources (AGENT-PACKS §6): [{name, url, kind}].
-        # Normalise to exactly those keys; a url is required and must be http(s); kind is a
-        # closed set. Pure data — nothing here is fetched or executed (AP-6 registers the
-        # marketplace + fetches under the CONNECTOR egress profile). A credential is never a
-        # catalog field: it would ride a request log, so it goes through the credential store.
-        if not isinstance(value, list):
-            return _deny("must be a list", f"{path_key}={value}")
-        if len(value) > 50:
-            return _deny("must have at most 50 catalogs", f"{path_key}")
-        clean_catalogs: list[dict[str, object]] = []
-        for i, c in enumerate(value):
-            if not isinstance(c, dict):
-                return _deny("each catalog must be an object", f"{path_key}[{i}]")
-            name = str(c.get("name", "")).strip()[:80]
-            url = str(c.get("url", "")).strip()
-            kind = str(c.get("kind", "index")).strip().lower() or "index"
-            if not url:
-                return _deny("each catalog needs a url", f"{path_key}[{i}]")
-            if len(url) > 512:
-                return _deny("url too long (max 512)", f"{path_key}[{i}]")
-            if not (url.startswith("https://") or url.startswith("http://")):
-                return _deny("url must be http(s)", f"{path_key}[{i}]")
-            if kind not in ("index", "tap"):
-                return _deny("kind must be 'index' or 'tap'", f"{path_key}[{i}]")
-            clean_catalogs.append({"name": name, "url": url, "kind": kind})
-        value = clean_catalogs
-    else:
-        return _deny("unsupported config type", f"{path_key}={value}", 500)
+    # Validate value. The rules live in `config/edit_spec.py` because three other write
+    # paths need exactly these ones — see that module for why they are one function.
+    try:
+        value = coerce_edit_value(path_key, value, spec)
+    except ConfigValueError as exc:
+        return _deny(str(exc), exc.resources, exc.status)
 
     # Read, update, write
     cfg_path = config_path()
