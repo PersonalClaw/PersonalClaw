@@ -12,8 +12,9 @@ import { join } from 'node:path'
 //
 //   `ui/Composer.tsx`                  send + optimize   **has a reason** ("Type a bit more first")
 //   `code/CodeCockpitPage.tsx` ×2      steer send        MUTE  ← same job, same primitive, no reason
-//   `chat/FindBar.tsx` ×2              prev / next match MUTE  ← the 0/0 counter beside them speaks,
-//                                                              the buttons did not
+//   `ui/FindBar.tsx` ×2                prev / next match MUTE  ← the 0/0 counter beside them speaks,
+//   (censused at `chat/FindBar.tsx`;                              the buttons did not
+//    promoted to `ui/` in KL-16)
 //   ModelsPanel ×3 · PlanReview ×4     first/last, saving  self-evident or transient → left native
 //   6 × `testing`/`busy`/`rechecking`  in flight           already reads as busy → left alone
 //
@@ -48,8 +49,8 @@ describe('a gated icon button whose gate the user can fix says so', () => {
   const ADOPTERS: [string, RegExp][] = [
     ['pages/code/CodeCockpitPage.tsx', /disabled=\{!text\.trim\(\) \|\| busy\}/],
     ['pages/code/CodeCockpitPage.tsx', /disabled=\{!text\.trim\(\) \|\| sending\}/],
-    ['pages/chat/FindBar.tsx', /label="Previous match"/],
-    ['pages/chat/FindBar.tsx', /label="Next match"/],
+    ['ui/FindBar.tsx', /label="Previous match"/],
+    ['ui/FindBar.tsx', /label="Next match"/],
   ]
 
   for (const [rel, gate] of ADOPTERS) {

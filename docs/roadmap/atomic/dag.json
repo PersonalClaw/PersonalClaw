@@ -490,7 +490,7 @@
         {
           "id": "KL-16",
           "title": "S4 reading experience: document outline + one prose measure + persistent context rail + in-article find",
-          "status": "todo",
+          "status": "done",
           "scope": "Capability-gap amendment (2026-08-19)",
           "done_when": "a document outline panel renders headings parsed from the item body and keyed by SOURCE OFFSET rather than re-slugged from rendered children (so duplicate titles and inline markup cannot drift the outline out of sync with the document), indented from the shallowest heading present, with the active row driven by a rect-based scroll spy and scrolled into view; the two prose measures converge on one token and the 72ch container is retired \u2014 it measures ~101 characters, past the 45-90 return-sweep band, which the narrower reader's own comment already records; reading mode no longer REPLACES the insights dock \u2014 related items, entities and highlights ride a rail split by a container query on the reader pane, not a viewport breakpoint, because the details panel and nav rail steal width without narrowing the viewport; the chat find bar is promoted to a shared primitive and mounted in the reader with a distinct current-match treatment; related rows show a similarity percentage instead of a shared-entity count, and the retrieval score already returned by the API and rendered nowhere is surfaced; reading time moves into one shared helper and appears on the list row and metadata, not only after the user has committed to opening the item; the reading route joins the e2e route manifest so it is axe-scanned and snapshotted for the first time; design-system rails green (token lint, primitive adoption, named scroll region, reduced motion)",
           "deps": [
@@ -7718,11 +7718,6 @@
         "plan": "KL"
       },
       {
-        "id": "KL-16",
-        "title": "S4 reading experience: document outline + one prose measure + persistent context rail + in-article find",
-        "plan": "KL"
-      },
-      {
         "id": "KL-17",
         "title": "S4 knowledge graph: embedding-projected layout, server-side edge sparsification, collision-checked labels, ego view from the document",
         "plan": "KL"
@@ -9621,9 +9616,9 @@
         "code": "KL",
         "plan": "KNOWLEDGE-LIBRARY",
         "total_atoms": 17,
-        "done": 14,
+        "done": 15,
         "in_progress": 0,
-        "todo": 3,
+        "todo": 2,
         "blocked": 0
       },
       {

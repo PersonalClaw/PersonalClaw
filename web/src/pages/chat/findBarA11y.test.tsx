@@ -2,7 +2,8 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { createRef } from 'react'
 import { render, within, fireEvent, waitFor, act } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { FindBar, findAnnouncement } from './FindBar'
+import { FindBar, findAnnouncement } from '../../ui/FindBar'
+import { findSegments } from './findSegments'
 import { FollowupChips, followupAnnouncement } from './FollowupChips'
 import type { ChatTurn } from './chatTypes'
 
@@ -49,9 +50,9 @@ function mountBar(text: string, onClose = () => {}) {
 
   const scrollRef = createRef<HTMLDivElement>() as React.MutableRefObject<HTMLDivElement | null>
   scrollRef.current = host
-  const turnNodes = { current: new Map<number, HTMLDivElement>() }
   const utils = render(
-    <FindBar turns={[turnOf(text)]} scrollRef={scrollRef} turnNodes={turnNodes} onClose={onClose} />,
+    <FindBar items={[turnOf(text)]} segmentsOf={findSegments} nodeOf={() => null}
+      scrollRef={scrollRef} label="Find in conversation" onClose={onClose} />,
   )
   return { ...utils, host, opener }
 }
@@ -122,10 +123,9 @@ describe('FindBar aria-live is CONTENT, not an attribute', () => {
     document.body.appendChild(host)
     const scrollRef = createRef<HTMLDivElement>() as React.MutableRefObject<HTMLDivElement | null>
     scrollRef.current = host
-    const turnNodes = { current: new Map<number, HTMLDivElement>() }
     const { container } = render(
-      <FindBar turns={[turnOf('target one'), turnOf('target two')]} scrollRef={scrollRef}
-        turnNodes={turnNodes} onClose={() => {}} />,
+      <FindBar items={[turnOf('target one'), turnOf('target two')]} segmentsOf={findSegments}
+        nodeOf={() => null} scrollRef={scrollRef} label="Find in conversation" onClose={() => {}} />,
     )
     await typeQuery(container, 'target')
     await waitFor(() => expect(announced(container)).toBe('Match 1 of 2'))
@@ -157,10 +157,9 @@ describe('FindBar keyboard traversal is DRIVEN, not declared', () => {
     document.body.appendChild(host)
     const scrollRef = createRef<HTMLDivElement>() as React.MutableRefObject<HTMLDivElement | null>
     scrollRef.current = host
-    const turnNodes = { current: new Map<number, HTMLDivElement>() }
     const { container } = render(
-      <FindBar turns={[turnOf('target one'), turnOf('target two')]} scrollRef={scrollRef}
-        turnNodes={turnNodes} onClose={() => {}} />,
+      <FindBar items={[turnOf('target one'), turnOf('target two')]} segmentsOf={findSegments}
+        nodeOf={() => null} scrollRef={scrollRef} label="Find in conversation" onClose={() => {}} />,
     )
     const input = await typeQuery(container, 'target')
     await waitFor(() => expect(announced(container)).toBe('Match 1 of 2'))
@@ -176,10 +175,9 @@ describe('FindBar keyboard traversal is DRIVEN, not declared', () => {
     document.body.appendChild(host)
     const scrollRef = createRef<HTMLDivElement>() as React.MutableRefObject<HTMLDivElement | null>
     scrollRef.current = host
-    const turnNodes = { current: new Map<number, HTMLDivElement>() }
     const { container } = render(
-      <FindBar turns={[turnOf('target one'), turnOf('target two')]} scrollRef={scrollRef}
-        turnNodes={turnNodes} onClose={() => {}} />,
+      <FindBar items={[turnOf('target one'), turnOf('target two')]} segmentsOf={findSegments}
+        nodeOf={() => null} scrollRef={scrollRef} label="Find in conversation" onClose={() => {}} />,
     )
     const input = await typeQuery(container, 'target')
     fireEvent.keyDown(input, { key: 'Enter' })

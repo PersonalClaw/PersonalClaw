@@ -1325,3 +1325,116 @@ Sequence these **independently of S1-S3** — they touch the store's indexing la
   for them — `top_k * candidate_multiple + len(own_chunks)` — or a 12-chunk document spends its whole
   budget on itself and finds nobody. And `upsert_similarity_edges` keeps **MAX on conflict** across
   passes, not just within one, so an edge's strength does not depend on which item was swept last.
+
+- [2026-08-20][KL-16] **DONE — S4 reading experience: outline, one measure, a container-queried
+  insight rail, and Find promoted.** Four fenced parallel slices plus assembly. Driven in a real
+  browser, which is where three of the four clauses are actually decidable.
+
+  **The outline is keyed by SOURCE OFFSET, and that is not a contradiction of KL-7.**
+  `readingOutline.parseOutline(markdown)` returns `{offset, depth, text}`. `readingAnchors`'
+  docstring says a source offset is *"useless"* — and it is right, **for locating rendered text**,
+  which is why highlights use quote+occurrence. Here the offset is **identity**: collision-free by
+  construction, because two headings cannot begin at the same character. Both docstrings now state
+  the distinction so the next reader does not conclude one is wrong.
+
+  Re-slugging from rendered children fails two ways, both pinned: a document with two `## Setup`
+  sections yields one key twice, so the outline's second row scrolls to the first section forever;
+  and `## The \`config\` file` renders as three child nodes, so a text-derived key drifts when the
+  renderer changes how it splits them. Falsified by keying on the heading text — *"and their keys
+  are distinct: expected 1 to be 2"*.
+
+  Handled: ATX at 0-3 spaces, closing `#`s stripped only when spaced off (`## C#` keeps its sharp),
+  **fenced code skipped** (``` and `~~~`, closer must match char and length), 4+ space indent
+  skipped, `#hashtag` and 7 markers are prose. Deliberately skipped and recorded: setext,
+  blockquoted/list-nested, and raw-HTML headings — ingest is trafilatura/html2text so it emits ATX,
+  and a `---` underline has no `#` for an offset to mean. `depth` is normalised to the **shallowest
+  heading present**, so a document whose top level is `##` renders flat.
+
+  **The two prose measures converged and `72ch` is retired.** `design/measure.ts` exports
+  `PROSE_MEASURE = '35rem'` + `PROSE_MEASURE_CLASS`; `renderers.tsx`'s document preview and the
+  reader both read it, and `exporters.ts` interpolates the raw value. Why not a CSS var there: the
+  export is a self-contained document that never loads `tokens.css`, so `var(--…)` would resolve to
+  nothing and invalidate the whole declaration — the export would silently lose its measure
+  entirely, worse than the old cap. 🔴 **Measured: `ch` is the advance of "0", 0.66em in this font,
+  so `72ch` was 758px and ~101 characters — past the 45-90 return-sweep band.** This is therefore a
+  real narrowing of the document preview, not a refactor. No visual snapshot covers a document
+  preview (32 PNGs, all top-level list routes), so the change is genuinely unobserved by the visual
+  gate rather than silently accepted by it.
+
+  **🔴 A finding worth carrying: Tailwind's scanner reads COMMENTS.** Documenting the retired
+  utility as `` `max-w-[72ch]` `` in prose kept its dead rule in the shipped CSS. Reworded to "72
+  `ch` units"; verified `72ch` in `dist/assets/*.css` went 1 → **0**. The same trap bit twice more
+  this session: `design/primitiveAdoption.test.ts` went red from a docstring that spelled a raw tag
+  twice, and `tokenLint` read the string `#546` in a doc file as a raw hex colour. Its scans are
+  text scans with no comment stripping.
+
+  **The insight rail is split by a container query on the reader pane.** `ReadingView`'s root
+  carries `@container`; the split row is `flex-col` with `@min-[58rem]:flex-row`. 58rem = the 35rem
+  measure + 3rem padding + a 17rem minimum rail + gap. A `lg:` breakpoint would have been wrong for
+  the reason the clause states: the nav rail and the "More details" `SidePanel` both take width from
+  the pane, so a viewport query says "wide" while the pane is narrow. The rail is one DOM instance
+  either way — the query *moves* it, the disclosure *reveals* it — and the fold-out flag deliberately
+  does not gate the render, because `{railOpen && <aside/>}` would remove the rail from the DOM in
+  exactly the wide pane CSS cannot bring it back in. The rail renders the dock's **own** components
+  (`HighlightsSection`/`EntitiesSection`/`RelatedSection`, extracted, not copied) passed down as a
+  ReactNode so no import cycle closes.
+
+  **Driven in Chromium against this worktree's own bundle** (isolated dev home, a seeded markdown
+  article carrying both traps — a duplicate `## Setup` and a fenced `# shell comment`). Zero console
+  errors in every regime; the route was asserted before measuring, which caught the probe landing on
+  `/onboarding` on the first attempt.
+
+  | | wide pane (1600) | narrow pane (900) |
+  |---|---|---|
+  | rail beside the article | **yes** — rail x=1280 w=304 | no, collapsed |
+  | fold-out control | hidden | **visible** |
+  | `@container` ancestor | present | present |
+  | article measure | 528px inside the 35rem cap | same |
+
+  Outline rows: `["Overview", "Setup", "Setup on macOS", "Setup"]` — **the duplicate renders as two
+  distinct rows and the fenced `#` line is absent.** The rect-based spy walked
+  Overview → Setup → Setup on macOS → **Setup** across the scroll; a slug-keyed outline would have
+  re-highlighted the first "Setup" at the end, so the product itself demonstrates the keying.
+
+  **Find is a shared primitive.** `pages/chat/FindBar.tsx` → `ui/FindBar.tsx`, generic over its item
+  (`{items, segmentsOf, nodeOf, scrollRef, label, onClose}`), with the chat-shaped half left in chat
+  as `findSegments.ts` and the matcher lifted to `ui/findText.ts`. Clean break — no re-export shim.
+  The hard-coded "Find in conversation" became a required `label`, because a default would ship
+  chat's vocabulary to every surface. A bonus defect avoided in the lift: a cheap `hasMatch` written
+  as `text.toLowerCase().includes(…)` **silently disagrees** with per-code-point folding (Greek `Σ`
+  → final sigma `ς`); both now share one `fold()`, pinned by an equivalence test.
+
+  🔴 **The deletion's real cost was in string-keyed rails that no compiler can see.** Three tests
+  keyed the old path as a *string* and would have thrown `ENOENT`: `ui/gatedIconButtonSaysWhy.test.ts`,
+  `ui/listResultAnnounce.test.tsx` (an `EXEMPT` map key read twice per run) — and, found only by the
+  full Python gate, **`tests/test_chat_craft_sel_audit.py`**, which read two `pages/chat/` files to
+  prove Find makes no server call. A TypeScript deletion broke a Python test; a `web/`-scoped sweep
+  could never have seen it. All three rekeyed, and a repo-wide sweep across `tests/ src/ web/e2e
+  harness/` is now clean.
+
+  Also corrected outside every slice's fence: `skills/bundled/editorial-document/SKILL.md` told the
+  model the reader's "line length ~72ch" — a shipped **prompt** carrying the retired measure, which
+  would have kept authoring documents against the wrong band.
+
+  **Gate:** `make lint` clean (mypy 940 files); web **446 files / 4,603 tests**, `typecheck` +
+  `build` clean; Python **23,195 passed, 30 skipped, 12 xfailed**; roadmap sync rails green.
+  Falsifications re-run independently at assembly, one per slice: keying by heading text (*"keys are
+  distinct: expected 1 to be 2"*), `72ch` restored in the renderer (2 red), the split swapped to
+  `lg:flex-row` (*"the split must be governed by a container query"*), and a stranded FindBar import
+  (`error TS2307`). 🪤 The container-query falsification **first passed** — the class name appears
+  twice in that file and a first-occurrence replacement hit the **comment**, not the live
+  `className`. Re-derived against line 465 and it went red. A mutation that produces no red is a
+  suspect mutation before it is a weak test.
+
+  **Two pre-existing defects found incidentally, neither in scope** (reported, not fixed here):
+  `--spacing-2xs` does not exist in `tokens.css`, so **`gap-2xs` is an inert utility — silently zero
+  gap — at 7 sites** under `pages/workflows/` (confirmed absent from the built bundle;
+  `design/inertUtilities.test.ts` cannot see it because it scans only `text-`/`bg-`/`border-`
+  prefixes). And `aria-current` is not reachable from `ui/Button` (it declares `ariaLabel`/
+  `ariaExpanded`/`ariaPressed` and spreads no rest props), so the outline's active row ships
+  `aria-pressed`; a three-line `ariaCurrent` addition to the primitive would let it use the honest
+  attribute. `docs/design/consistency-audit.json` drift was left out again — every full web run
+  rewrites it and main's copy is stale, so folding it in would mix `ProjectionRulesPanel`'s
+  unrelated delta into this atom and mask a real one later.
+
+  **`KL-17` remains the only KL atom this unblocks-adjacent work leaves open besides `KL-8`.**
