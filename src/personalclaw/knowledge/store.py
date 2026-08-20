@@ -2434,42 +2434,94 @@ class KnowledgeStore:
         ).fetchall()
         return [{"id": r["id"], "content": r["content"] or ""} for r in rows]
 
+    @staticmethod
+    def _item_embed_one(embedder):
+        """A single-text embed fn for *embedder*, used as ``embed_texts``' per-text fallback.
+
+        Prefers ``.embed`` — literally the call ``embed_for_item`` makes once it has composed
+        its text, so the vector is the same one. An embedder that exposes only
+        ``embed_for_item`` (the shape this class's own docstring promises, and what the
+        re-index tests pass) is adapted by handing it the ALREADY-composed text as the title:
+        ``compose_item_text(composed, None)`` is ``composed`` for text that is already
+        composed and stripped, so that vector is identical too. Returns None when the
+        embedder offers neither, which ``embed_texts`` reports as "everything stays
+        vector-less" — the same outcome the old per-item ``except Exception`` produced.
+        """
+        embed = getattr(embedder, "embed", None)
+        if callable(embed):
+            return embed
+        for_item = getattr(embedder, "embed_for_item", None)
+        if callable(for_item):
+            return lambda text: for_item(text, None)
+        return None
+
     def reembed_all(self, embedder, on_progress=None) -> dict:
         """Re-embed every active knowledge item with ``embedder`` (which exposes
         ``embed_for_item(title, summary)``, matching the ingestion pipeline).
 
-        ``on_progress(done, total)`` fires after each item for job-progress
-        streaming. Items whose embedding fails (model returns None) are left
-        vector-less and fall back to keyword/FTS retrieval. Returns counts.
+        Embeds in GROUPS through ``knowledge.embed_batch.embed_texts`` (KL-15) — one provider
+        call per group instead of one per item, with bounded retry and adaptive bisection. On
+        a whole-library re-index that is the difference between a rate-limit blip costing a
+        retry and it costing an item its vector for good. The item text is composed here with
+        the pipeline's own ``compose_item_text``, which is exactly what ``embed_for_item``
+        does internally, so the vectors are identical to the per-item path this replaces.
+
+        ``on_progress(done, total)`` still fires once per item, in order, for job-progress
+        streaming — grouping makes it coarser in TIME, not in call count. Items whose
+        embedding fails are left vector-less and fall back to keyword/FTS retrieval; they are
+        never corrupted and never deleted. Returns counts.
         """
         rows = self.db.execute(
             "SELECT id, title, summary, content FROM items WHERE status = 'active'"
         ).fetchall()
         total = len(rows)
         done = reembedded = failed = 0
-        from personalclaw.knowledge.embedder import floats_to_bytes
+        from personalclaw.knowledge.embed_batch import batch_size_from_config, embed_texts
+        from personalclaw.knowledge.embedder import compose_item_text, floats_to_bytes
+        from personalclaw.knowledge.pipeline.runner import active_batch_embed_fn
 
-        for r in rows:
-            title = r["title"] or ""
-            summary = r["summary"] if "summary" in r.keys() else None
-            content = r["content"] if "content" in r.keys() else None
-            # Fall back to a content prefix when there's no title (chunk items).
-            text_title = title or (content or "")[:200]
-            vec = None
-            try:
-                vec = embedder.embed_for_item(text_title, summary, content)
-            except Exception:
-                vec = None
-            if vec:
-                self.db.execute(
-                    "UPDATE items SET embedding = ? WHERE id = ?", (floats_to_bytes(vec), r["id"])
+        embed_many = active_batch_embed_fn(embedder)
+        embed_one = self._item_embed_one(embedder)
+        size = batch_size_from_config()
+
+        for start in range(0, total, size):
+            group = rows[start : start + size]
+            texts = []
+            for r in group:
+                title = r["title"] or ""
+                summary = r["summary"] if "summary" in r.keys() else None
+                content = r["content"] if "content" in r.keys() else None
+                # Fall back to a content prefix when there's no title (chunk items).
+                text_title = title or (content or "")[:200]
+                texts.append(compose_item_text(text_title, summary, content))
+            # A blank composed text never reaches a provider: ``UnifiedEmbedder.embed``
+            # refuses one today, and a batch call cannot refuse a single member without
+            # refusing its whole group. Such an item counts as failed, exactly as before.
+            embeddable = [i for i, t in enumerate(texts) if t.strip()]
+            vectors: list[list[float] | None] = [None] * len(texts)
+            if embeddable:
+                # `size` matches the slice, so this is one group per call — the outer loop
+                # owns the grouping precisely so progress streams while it runs.
+                got = embed_texts(
+                    [texts[i] for i in embeddable],
+                    embed_many=embed_many,
+                    embed_one=embed_one,
+                    batch_size=size,
                 )
-                reembedded += 1
-            else:
-                failed += 1
-            done += 1
-            if on_progress is not None:
-                on_progress(done, total)
+                for i, vec in zip(embeddable, got):
+                    vectors[i] = vec
+            for r, vec in zip(group, vectors):
+                if vec:
+                    self.db.execute(
+                        "UPDATE items SET embedding = ? WHERE id = ?",
+                        (floats_to_bytes(vec), r["id"]),
+                    )
+                    reembedded += 1
+                else:
+                    failed += 1
+                done += 1
+                if on_progress is not None:
+                    on_progress(done, total)
         self.db.commit()
         return {"reembedded": reembedded, "failed": failed, "total": total}
 

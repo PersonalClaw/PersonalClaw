@@ -870,6 +870,11 @@ _EDITABLE_CONFIG: dict[str, dict] = {
     # the watermark exists for. `maintenance.max_staleness_secs()` enforces its own floor
     # too, because config.json is hand-editable and this bound only guards the PATCH path.
     "knowledge.maintenance_max_staleness_secs": {"type": "int", "min": 60, "max": 86400},
+    # KL-15. The ceiling is generous because the real limit is the PROVIDER's and core cannot
+    # know it — an oversized batch is discovered by bisection and costs a few extra calls, not
+    # a failed import, so the bound here only needs to stop a typo, not to be correct.
+    "knowledge.embed_batch_size": {"type": "int", "min": 1, "max": 2048},
+    "knowledge.embed_retry_budget": {"type": "int", "min": 1, "max": 10},
     "knowledge.consolidate_min_cluster": {"type": "int", "min": 2, "max": 100},
     "knowledge.consolidate_min_hours": {"type": "int", "min": 0, "max": 720},
     "knowledge.session_brief_max_tokens": {"type": "int", "min": 0, "max": 8000},

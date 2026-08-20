@@ -683,6 +683,18 @@
     "type": "str"
   },
   {
+    "default": 32,
+    "path": "knowledge.embed_batch_size",
+    "sensitive": false,
+    "type": "int"
+  },
+  {
+    "default": 3,
+    "path": "knowledge.embed_retry_budget",
+    "sensitive": false,
+    "type": "int"
+  },
+  {
     "default": true,
     "path": "knowledge.idempotent_persist",
     "sensitive": false,

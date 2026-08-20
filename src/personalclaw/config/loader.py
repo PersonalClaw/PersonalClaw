@@ -2150,6 +2150,25 @@ class KnowledgeConfig:
             "nobody added to does not need linting, and a busy week needs it more than once.",
         ),
     )
+    embed_batch_size: int = field(
+        default=32,
+        metadata=_meta(
+            "Embedding Batch Size",
+            "Chunk texts sent to the embedding provider per call. Higher is faster to import "
+            "and cheaper in round trips; if a provider rejects a batch this large, the batch "
+            "is split in half automatically rather than failing the import, so a wrong value "
+            "costs a few extra calls rather than a broken library.",
+        ),
+    )
+    embed_retry_budget: int = field(
+        default=3,
+        metadata=_meta(
+            "Embedding Retry Budget",
+            "Attempts per embedding call before a batch is split (or, for a single chunk, "
+            "stored without a vector and logged). Exponential backoff between attempts, so 3 "
+            "rides out a rate-limit blip without making a failed import look like a hang.",
+        ),
+    )
     maintenance_max_staleness_secs: int = field(
         default=900,
         metadata=_meta(
@@ -4766,6 +4785,8 @@ class AppConfig:
                 max_mentions_per_claim=int(knowledge_data.get("max_mentions_per_claim", 20) or 20),
                 synthesis_window=int(knowledge_data.get("synthesis_window", 20) or 20),
                 lint_every_n_persists=int(knowledge_data.get("lint_every_n_persists", 12) or 12),
+                embed_batch_size=int(knowledge_data.get("embed_batch_size", 32) or 32),
+                embed_retry_budget=int(knowledge_data.get("embed_retry_budget", 3) or 3),
                 maintenance_max_staleness_secs=int(
                     knowledge_data.get("maintenance_max_staleness_secs", 900) or 900
                 ),
