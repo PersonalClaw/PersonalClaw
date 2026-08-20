@@ -827,6 +827,38 @@ def _embed(store, item_id: str, embedder) -> str:
         return "failed"
 
 
+def active_batch_embed_fn(embedder):
+    """The provider's BATCH embedding entry point for the active selection, or ``None``.
+
+    ``None`` is not a failure — it means "this provider has no batch path", and
+    ``embed_batch.embed_texts`` then falls back to the per-text fn for an identical result,
+    only slower. So every caller passes both and reasons about one code path.
+
+    Gated on *embedder* being the ``UnifiedEmbedder`` that ``create_embedder_from_config``
+    builds, because that is the only embedder guaranteed to resolve the SAME active
+    ``embedding`` selection the registry accessor resolves — i.e. the only one for which the
+    batch fn and the embedder are the same model. An embedder the caller supplied (a test
+    stub, or one handed in by an app) therefore keeps going through its own ``.embed``:
+    routing it through the registry instead would write vectors from one model beside vectors
+    from another in the same index, which is exactly the mixed-model corruption the
+    embedding re-index path exists to prevent.
+
+    Shared by ``embed_item_chunks`` here and ``KnowledgeStore.reembed_all`` — the two batch
+    call sites — so the gate is decided once rather than re-derived per site.
+    """
+    from personalclaw.knowledge.embedder import UnifiedEmbedder
+
+    if not isinstance(embedder, UnifiedEmbedder):
+        return None
+    try:
+        from personalclaw.embedding_providers.registry import get_active_embed_many_fn
+
+        return get_active_embed_many_fn()
+    except Exception:  # noqa: BLE001 — no batch path degrades to per-text, never fails ingest
+        logger.debug("embed batching: batch entry point unresolvable", exc_info=True)
+        return None
+
+
 def embed_item_chunks(store, item_id: str, content: str, embedder) -> None:
     """Structurally chunk *content* and write each chunk (with its embedding) to the
     ``chunks`` table, additive to the item's whole-item vector.
@@ -836,12 +868,21 @@ def embed_item_chunks(store, item_id: str, content: str, embedder) -> None:
     go through ``store.replace_chunks``, which is what keeps the ANN index (KL-11) in step
     — a bulk writer taking any other route would leave that index stale.
 
+    All of an item's chunks are embedded in ONE pass through ``embed_batch.embed_texts``
+    (KL-15) rather than one provider call per chunk. Two things change beyond the round
+    trips: a transient failure is now retried with backoff instead of being swallowed by an
+    inline ``except Exception: vec = None``, and a group that fails in a batch-shaped way is
+    bisected, so a provider's undeclared ceiling costs a split rather than an item's whole
+    chunk layer. The old inline swallow left an unembeddable library indistinguishable from a
+    working one, with no log line anywhere.
+
     Never raises into the ingest: a chunking/embedding hiccup must not fail an item whose
     whole-item vector already landed. A chunk whose embedding degrades to None is stored
     vector-less (still FTS/keyword reachable) rather than dropped. When the embedder has
     no ``embed`` (a minimal test stub) chunk embedding is skipped, matching the graceful
     no-model path."""
     from personalclaw.knowledge.chunking import chunk_text
+    from personalclaw.knowledge.embed_batch import embed_texts
     from personalclaw.knowledge.embedder import floats_to_bytes
 
     embed_one = getattr(embedder, "embed", None)
@@ -849,13 +890,18 @@ def embed_item_chunks(store, item_id: str, content: str, embedder) -> None:
         return
     try:
         chunks = chunk_text(content)
-        for c in chunks:
-            vec = None
-            try:
-                vec = embed_one(c.text)
-            except Exception:
-                vec = None
-            c.embedding = floats_to_bytes(vec) if vec else None
+        if chunks:
+            # `embed_texts` returns exactly one result per text, positionally aligned, so
+            # this zip can neither drop a chunk nor attach one chunk's vector to another.
+            vectors = embed_texts(
+                [c.text for c in chunks],
+                embed_many=active_batch_embed_fn(embedder),
+                embed_one=embed_one,
+            )
+            for c, vec in zip(chunks, vectors):
+                c.embedding = floats_to_bytes(vec) if vec else None
+        # Outside the `if`: an empty chunk list still has to reach `replace_chunks`, which is
+        # what clears a previous generation's rows when a re-chunk yields nothing.
         store.replace_chunks(item_id, chunks)
     except Exception:
         logger.debug("knowledge chunk-embed failed for %s", item_id, exc_info=True)

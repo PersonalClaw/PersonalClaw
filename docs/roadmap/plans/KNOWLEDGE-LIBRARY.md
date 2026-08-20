@@ -1039,3 +1039,93 @@ Sequence these **independently of S1-S3** — they touch the store's indexing la
   exercising the novelty gate; and `maintenance`'s only clock use is `time.time()`, so
   `monkeypatch.setattr(maintenance, "time", fake)` makes the stamp inequalities exact — under real
   time the mid-run assertion flakes in the direction that HIDES a swallowed write.
+
+- [2026-08-20][KL-15] DONE — the embedding batch path, with retry and adaptive bisection. Every
+  clause is met; the atom flips.
+
+  **The measured starting state.** `EmbeddingProvider.embed_batch` had been on the ABC since
+  embeddings shipped and had **zero callers in core** — implemented by the `bedrock-models` and
+  `sentence-transformers` app bundles and unreached by the ingest path that would benefit.
+  `pipeline/runner.embed_item_chunks` called the provider once per chunk inside a bare
+  `except Exception: vec = None`: no retry, no log, and a transient 429 indistinguishable from a
+  permanently unembeddable chunk. `chunk_backfill.py`'s own comment stated the consequence —
+  "chunks are embedded one at a time anyway — a bigger batch buys no throughput" — and is
+  corrected in this change.
+
+  **Why bisection instead of a configured ceiling.** Providers are removable app bundles, so core
+  cannot know their batch limits: the limit is per-provider, per-model, sometimes per-token rather
+  than per-item, and it changes when the app updates. A number core declares is wrong in both
+  directions — too low wastes the batching, too high fails whole imports. So a batch that fails
+  splits in half and each half retries, recursively, to size 1. The ceiling is DISCOVERED per run
+  and the cost of discovering it is logarithmic: measured, 32 texts against a ceiling of 8 converge
+  in fewer than 32 calls, and the atom's own named fixture (a provider rejecting batches above K)
+  embeds all 16 of 16 texts with K=4.
+
+  **The invariant that makes it safe on an import path.** `embed_texts` returns a list of exactly
+  `len(texts)`, positionally aligned; an un-embeddable text is `None`, which the caller already
+  stores as a vector-less chunk (still keyword-reachable). Nothing is dropped, reordered or
+  truncated — a short list would attach one chunk's vector to another's text and no test downstream
+  could detect it. Falsified from both sides: carrying only texts through a split reds the
+  by-value alignment test, and zipping a wrong-count provider response reds its own test.
+
+  **Retry classification.** A terminal error (auth, unknown model) is NOT retried — retrying one 3x
+  per batch across a 2,000-chunk import is 6,000 pointless calls and a slow, confusing failure.
+  An UNRECOGNISED error still bisects, deliberately: core cannot enumerate every app bundle's
+  wording, so "we did not recognise this message" must not become "abandon the import". Both
+  directions are pinned, and tightening the rule to a strict allowlist reds the unrecognised case.
+
+  **Call sites.** `embed_item_chunks` now makes ONE provider call for an item's chunks — asserted
+  by counting calls on a fake, observed 1 for a 6-chunk document, with the chunk count itself
+  asserted so the test cannot go vacuous on a chunker change. `store.reembed_all` batches by the
+  configured size while preserving its `{reembedded, failed, total}` shape and firing
+  `on_progress` once per item, in order (grouping made progress coarser in TIME, not in call
+  count). The re-embed composition was checked rather than assumed — `embed_for_item` is
+  `embed(compose_item_text(...))` — and a byte-identity test pins the stored blobs, which caught a
+  dropped-summary mutation that the existing `test_embedding_reindex` could not, because its fake
+  returns a constant.
+
+  A design decision worth naming: the registry's batch fn resolves the ACTIVE embedding selection,
+  so it is used only when the embedder IS the `UnifiedEmbedder` resolving that same selection. A
+  caller-supplied embedder keeps its own `.embed` — otherwise chunk vectors from one model would
+  land beside item vectors from another, the mixed-model index the re-index path exists to prevent.
+  A test asserts the accessor is never consulted in that case.
+
+  **The thread-pool churn, and a second defect inside it.** Four sites wrapped a single async embed
+  in a brand-new `ThreadPoolExecutor` — one executor AND one event loop per text, so a
+  2,100-chunk library meant 2,100 of each. Measured, the timeout in that shape also did not work:
+  `with ThreadPoolExecutor() as pool:` calls `shutdown(wait=True)` on `__exit__`, which joins the
+  still-running worker, so `.result(timeout=0.2)` raised on schedule and the block then blocked
+  anyway — **3.00s on a 0.2s budget, a 15x overrun**, reproduced independently at the real call
+  site before and after. All four now share one bridge: a single daemon thread hosting one
+  persistent loop, reached with `run_coroutine_threadsafe`, so the happy path creates NOTHING per
+  call and a timed-out task is genuinely cancelled. Each site keeps its OWN budget (30s / 60s /
+  60s / 30s) rather than a silently unified one, pinned per site. "No churn" is asserted three
+  ways: zero `ThreadPoolExecutor` constructions across 25 embeds, one identical loop object, and a
+  bounded `threading.active_count()` delta.
+
+  Tradeoff recorded rather than hidden: one loop thread means a provider doing BLOCKING sync I/O
+  inside `async def` (plausible for a boto3-backed embed) occupies the loop, so concurrent callers
+  queue and hit their own timeouts. That is strictly better than today, where those callers blocked
+  for the full duration with the timeout defeated, and it self-heals when the blocking call
+  returns.
+
+  **Gate:** `make lint` clean (mypy 938 files); 41 targeted across the three new suites, 426 in the
+  knowledge/embedding slice, 1142 across all `test_knowledge*`, 343 across the backfill/reindex
+  consumers; full suite green. `config-baseline.json` regenerated for the two new config fields —
+  and worth recording, the parallel agent hit those two reds, measured the drift as exactly the
+  spine's 12 lines, and RESTORED the file rather than committing another fence's generated
+  artifact, which is why there was no conflict.
+
+  **Eleven falsifications**, each mutating the live line, confirming it applied, observing the named
+  red and restoring from a file copy. Two findings from that pass are worth carrying forward:
+  * My own `sleep: Callable = time.sleep` was a DEFAULT-ARGUMENT SNAPSHOT, so the injection point
+    was unpatchable, an autouse fixture that looked like it controlled time did nothing, and the
+    backoff tests really slept — the suite took 48s and dropped to 9.9s once `sleep` was resolved
+    at call time. A default argument is an unsupplied input.
+  * My reader-side clamp test used `0`, which `_config_int`'s `or default` already handles, so it
+    PASSED with the clamp deleted. The clamp actually guards a NEGATIVE (`-5 or 32` is `-5`, and a
+    negative step yields no groups at all — an import that reports success having embedded
+    nothing). Both inputs now have their own test.
+  * A falsification leg produced NO output rather than a red on the first attempt, because a
+    regex-based body replacement mangled the function. Redone as a single verified line swap; an
+    unrun leg is not a pass.
