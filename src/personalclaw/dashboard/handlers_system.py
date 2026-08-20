@@ -132,6 +132,28 @@ async def api_status(request: web.Request) -> web.Response:
     return web.json_response(data)
 
 
+def _memory_totals() -> tuple[float, float] | None:
+    """``(total_gb, available_gb)`` from the ONE owner of this host fact, or ``None``.
+
+    System memory is owned by :mod:`personalclaw.local_models.residency` — the same reader
+    the model-fit budget is computed from — so the static system card, the live metrics
+    tick and the fit chip cannot name three different totals for one machine.
+
+    ``None`` rather than zeros on a host whose memory could not be read: the caller then
+    omits the memory keys entirely, so "unknown" never renders as "0 GB".
+    """
+    from personalclaw.local_models.residency import memory_pressure
+
+    # The threshold is passed explicitly because this payload publishes raw totals and
+    # never the warn flag: letting it default would read (and JSON-Schema-validate) config
+    # on every metrics tick.
+    snapshot = memory_pressure(warn_pct=100)
+    total_mb = int(snapshot.get("total_mb") or 0)
+    if total_mb <= 0 or snapshot.get("source") == "unavailable":
+        return None
+    return round(total_mb / 1024, 1), round(int(snapshot.get("available_mb") or 0) / 1024, 1)
+
+
 def _get_static_system_info() -> dict[str, object]:
     global _STATIC_SYSTEM_INFO
     if _STATIC_SYSTEM_INFO is not None:
@@ -167,25 +189,10 @@ def _get_static_system_info() -> dict[str, object]:
         "cwd": os.getcwd(),
     }
 
-    # Total memory (static) — cross-platform
-    if sys.platform == "darwin":
-        try:
-            out = (
-                subprocess.check_output(["sysctl", "-n", "hw.memsize"], timeout=2).decode().strip()
-            )
-            info["mem_total_gb"] = round(int(out) / (1024**3), 1)
-        except Exception:
-            pass
-    elif sys.platform == "linux":
-        try:
-            with open("/proc/meminfo") as f:
-                for line in f:
-                    if line.startswith("MemTotal:"):
-                        kb = int(line.split()[1])
-                        info["mem_total_gb"] = round(kb / (1024**2), 1)
-                        break
-        except Exception:
-            pass
+    # Total memory (static) — one reader, shared with the live tick (see _memory_totals).
+    totals = _memory_totals()
+    if totals is not None:
+        info["mem_total_gb"] = totals[0]
 
     _STATIC_SYSTEM_INFO = info
     return info
@@ -221,15 +228,23 @@ def _path_home_pclaw():
         return _P.home() / ".personalclaw"
 
 
-_GPU_PROBE_AT: float = 0.0
-_GPU_HAS_NVIDIA_SMI: bool | None = None
+#: Timeout for the live GPU telemetry read. A wedged `nvidia-smi` must degrade the widget,
+#: never stall a metrics tick.
+_GPU_TELEMETRY_TIMEOUT = 2
 
 
 def _collect_gpu_metrics() -> dict[str, object]:
-    """Best-effort GPU + VRAM stats. Returns empty dict if no GPU detected.
+    """Best-effort GPU stats. Returns empty dict if no GPU detected.
 
-    Probes once for `nvidia-smi` availability and caches the result, so the
-    cost on machines without NVIDIA hardware is a single `shutil.which` call.
+    The **capacity** half of this payload — vendor, model, and VRAM *total* — is a host
+    fact the fit verdict is taken against, so it is read from the ONE host-fact probe
+    (:func:`personalclaw.local_models.fit._probe_gpu`, cached there) rather than detected a
+    second time here. Two detectors is how the system widget ends up naming a VRAM total
+    the fit chip disagrees with.
+
+    The **telemetry** half stays local: utilisation, temperature and *used* VRAM change on
+    every tick, so they are read live and uncached, and only on NVIDIA hardware (Apple
+    Silicon utilisation needs powermetrics, which needs root).
 
     Output schema (all optional):
         gpu_present:     bool — true if any GPU was detected
@@ -240,79 +255,59 @@ def _collect_gpu_metrics() -> dict[str, object]:
         vram_used_gb:    float
         vram_total_gb:   float
     """
-    global _GPU_HAS_NVIDIA_SMI
-    if _GPU_HAS_NVIDIA_SMI is None:
-        _GPU_HAS_NVIDIA_SMI = shutil.which("nvidia-smi") is not None
+    from personalclaw.local_models.fit import _probe_gpu
 
-    if _GPU_HAS_NVIDIA_SMI:
-        try:
-            out = (
-                subprocess.check_output(
-                    [
-                        "nvidia-smi",
-                        "--query-gpu=name,utilization.gpu,memory.used,memory.total,temperature.gpu",
-                        "--format=csv,noheader,nounits",
-                    ],
-                    timeout=2,
-                    stderr=subprocess.DEVNULL,
-                )
-                .decode()
-                .strip()
-            )
-        except Exception:
-            return {}
-        # Take the first GPU only — most installs have one, and the inline pill
-        # has no room for per-card breakdowns.
-        line = out.splitlines()[0] if out else ""
-        parts = [p.strip() for p in line.split(",")]
-        if len(parts) >= 4:
-            try:
-                name, util_pct, vram_used_mb, vram_total_mb = parts[:4]
-                temp_c = parts[4] if len(parts) >= 5 else ""
-                result: dict[str, object] = {
-                    "gpu_present": True,
-                    "gpu_vendor": "nvidia",
-                    "gpu_model": name,
-                    "gpu_pct": float(util_pct),
-                    "vram_used_gb": round(float(vram_used_mb) / 1024, 1),
-                    "vram_total_gb": round(float(vram_total_mb) / 1024, 1),
-                }
-                if temp_c:
-                    try:
-                        result["gpu_temp_c"] = int(float(temp_c))
-                    except ValueError:
-                        pass
-                return result
-            except (ValueError, IndexError):
-                return {}
+    facts = _probe_gpu()
+    vendor = str(facts.get("vendor") or "")
+    model = str(facts.get("model") or "")
+    if not vendor:
+        return {}
 
-    # macOS Apple Silicon — system_profiler can identify the GPU but reading
-    # utilisation requires elevated privileges (powermetrics). Just report the
-    # presence and model so the UI can show it.
-    if sys.platform == "darwin":
-        try:
-            out = subprocess.check_output(
-                ["system_profiler", "SPDisplaysDataType", "-json"],
-                timeout=3,
+    data: dict[str, object] = {"gpu_present": True, "gpu_vendor": vendor}
+    if model:
+        data["gpu_model"] = model
+    # Unified-memory hosts report 0: their "VRAM" IS system memory, already published as
+    # mem_total_gb, and naming it twice would double-count it in the reader's head.
+    vram_total_bytes = int(facts.get("vram_bytes") or 0)
+    if vram_total_bytes > 0:
+        data["vram_total_gb"] = round(vram_total_bytes / (1024**3), 1)
+
+    if vendor != "nvidia":
+        # No utilisation source without root, so presence + model is the whole answer.
+        return data if model else {}
+
+    try:
+        out = (
+            subprocess.check_output(
+                [
+                    "nvidia-smi",
+                    "--query-gpu=utilization.gpu,memory.used,temperature.gpu",
+                    "--format=csv,noheader,nounits",
+                ],
+                timeout=_GPU_TELEMETRY_TIMEOUT,
                 stderr=subprocess.DEVNULL,
-            ).decode()
-            import json as _json
-
-            blob = _json.loads(out)
-            cards = blob.get("SPDisplaysDataType", [])
-            if cards:
-                first = cards[0]
-                model = first.get("sppci_model") or first.get("_name") or ""
-                if model:
-                    return {
-                        "gpu_present": True,
-                        "gpu_vendor": "apple",
-                        "gpu_model": model,
-                    }
-        except Exception:
+            )
+            .decode()
+            .strip()
+        )
+    except Exception:
+        return data
+    # Take the first GPU only — most installs have one, and the inline pill
+    # has no room for per-card breakdowns.
+    line = out.splitlines()[0] if out else ""
+    parts = [p.strip() for p in line.split(",")]
+    if len(parts) >= 2:
+        try:
+            data["gpu_pct"] = float(parts[0])
+            data["vram_used_gb"] = round(float(parts[1]) / 1024, 1)
+        except ValueError:
             pass
-
-    return {}
+    if len(parts) >= 3 and parts[2]:
+        try:
+            data["gpu_temp_c"] = int(float(parts[2]))
+        except ValueError:
+            pass
+    return data
 
 
 def _collect_system_metrics() -> dict[str, object]:
@@ -333,51 +328,14 @@ def _collect_system_metrics() -> dict[str, object]:
     except Exception:
         data["proc_mem_mb"] = 0
 
-    # System-wide memory — cross-platform
-    try:
-        if sys.platform == "darwin":
-            out = (
-                subprocess.check_output(["sysctl", "-n", "hw.memsize"], timeout=2).decode().strip()
-            )
-            total_bytes = int(out)
-            data["mem_total_gb"] = round(total_bytes / (1024**3), 1)
-            vm = subprocess.check_output(["vm_stat"], timeout=2).decode()
-            page_size = 16384
-            for line in vm.splitlines():
-                if "page size of" in line:
-                    page_size = int(line.split()[-2])
-                    break
-            free_pages = 0
-            for line in vm.splitlines():
-                if "Pages free" in line:
-                    free_pages = int(line.split()[-1].rstrip("."))
-                elif "Pages inactive" in line:
-                    free_pages += int(line.split()[-1].rstrip("."))
-            mem_free: float = round(free_pages * page_size / (1024**3), 1)
-            mem_total: float = round(total_bytes / (1024**3), 1)
-            data["mem_free_gb"] = mem_free
-            data["mem_used_gb"] = round(mem_total - mem_free, 1)
-        else:
-            with open("/proc/meminfo") as f:
-                meminfo: dict[str, int] = {}
-                for line in f:
-                    parts = line.split()
-                    meminfo[parts[0].rstrip(":")] = int(parts[1])
-                mem_total = round(meminfo.get("MemTotal", 0) / (1024**2), 1)
-                mem_free = round(
-                    (
-                        meminfo.get("MemFree", 0)
-                        + meminfo.get("Buffers", 0)
-                        + meminfo.get("Cached", 0)
-                    )
-                    / (1024**2),
-                    1,
-                )
-                data["mem_total_gb"] = mem_total
-                data["mem_free_gb"] = mem_free
-                data["mem_used_gb"] = round(mem_total - mem_free, 1)
-    except Exception:
-        pass
+    # System-wide memory — the SAME single reader as the static card (see _memory_totals);
+    # the keys stay absent on an unmeasurable host, because 0 GB is a different claim.
+    mem_totals = _memory_totals()
+    if mem_totals is not None:
+        mem_total, mem_free = mem_totals
+        data["mem_total_gb"] = mem_total
+        data["mem_free_gb"] = mem_free
+        data["mem_used_gb"] = round(mem_total - mem_free, 1)
 
     # CPU usage
     cores = os.cpu_count() or 1

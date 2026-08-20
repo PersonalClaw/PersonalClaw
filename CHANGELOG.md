@@ -10,6 +10,23 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Added
 
+- **Know whether a model will actually run on your machine before you download it.** Every model in
+  the download lists now carries a fit chip — green, yellow, red — computed from this machine's real
+  memory budget: total RAM, minus a reserve held back for the OS and the inference runtime, plus a
+  discrete graphics card's own VRAM where there is one. A browse filter hides models this device
+  cannot run, and Settings → Models gains both the reserve and that filter's default.
+  **Unified memory is counted once.** On an Apple Silicon Mac — or any machine with integrated
+  graphics — the GPU's memory *is* system memory. Adding the two together reports a budget larger
+  than the machine physically has, promises a fit, and then runs out of memory at load time, after
+  you already waited through a multi-gigabyte download. Only a discrete card adds a second pool.
+  **An unknown budget hides nothing.** If this machine's memory could not be measured, every model
+  stays listed and its chip reads unknown: "we could not measure this" and "nothing fits" are
+  different answers, and only one of them should take models off your screen. For the same reason a
+  model family quotes its **median** variant rather than its smallest, so the chip cannot promise a
+  fit you will not get from the variant you actually pick, and the download panel steps down to the
+  largest variant that does fit. A download with nowhere to land is refused with both numbers named
+  — what it needs and what is free — but when the filesystem cannot be measured at all, the check is
+  skipped with a warning instead of blocking a download that would have been fine.
 - **See every device paired with your gateway, and cut one off.** Settings gains a **Devices** page:
   each paired phone, tablet or browser with its name, what kind of device it is, when it was last
   actually seen, how it got in, when it paired and when its session runs out. "Pair a device" gives
