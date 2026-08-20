@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 
 /**
  * Stale-while-revalidate data hook. The app shell loads instantly, but each page
@@ -45,11 +45,25 @@ export function useCachedData<T>(
   key: string,
   fetcher: () => Promise<T>,
   opts: { persist?: boolean } = {},
-): { data: T | undefined; loading: boolean; error: unknown; refresh: () => void } {
+): {
+  data: T | undefined
+  loading: boolean
+  /** A fetch is in flight, INCLUDING a revalidation that is repainting a value we already
+   *  have. `loading` deliberately cannot express that: it is set only when nothing is cached
+   *  (`if (seeded === undefined)`), because its job is to gate the `if (!data) return
+   *  <Skeleton/>` idiom, and a cached revalidation must NOT flash a skeleton. So a caller that
+   *  wants to say "this is current, and nothing is re-reading it" — rather than "there is
+   *  something to show" — has to read this instead. Measured the hard way: keying a state
+   *  indicator on `loading` looks correct and never fires once the value is cached. */
+  revalidating: boolean
+  error: unknown
+  refresh: () => void
+} {
   const { persist = false } = opts
   const cached = (persist ? _seedFromSession<T>(key) : _cache.get(key) as T | undefined)
   const [data, setData] = useState<T | undefined>(cached)
   const [loading, setLoading] = useState(cached === undefined)
+  const [revalidating, setRevalidating] = useState(true)
   const [error, setError] = useState<unknown>(null)
   const [tick, setTick] = useState(0)
   // Keep the latest fetcher without making it a re-run dependency.
@@ -71,6 +85,8 @@ export function useCachedData<T>(
     const keyChanged = fetchedKeyRef.current !== key
     fetchedKeyRef.current = key
     if (seeded === undefined) setLoading(true)
+    // Unconditional, unlike `loading`: a revalidation over a cached value IS in flight.
+    setRevalidating(true)
     // Paint the cached value instantly while revalidating. On a same-key refresh
     // with nothing cached, HOLD the current value rather than dropping to
     // undefined — the refetch is already in flight and `loading` marks it.
@@ -84,11 +100,20 @@ export function useCachedData<T>(
         setError(null)
       })
       .catch((e) => { if (alive) setError(e) })
-      .finally(() => { if (alive) setLoading(false) })
+      .finally(() => { if (alive) { setLoading(false); setRevalidating(false) } })
     return () => { alive = false }
   }, [key, tick, persist])
 
-  return { data, loading, error, refresh: () => setTick((t) => t + 1) }
+  // STABLE identity. `refresh` was a fresh closure on every render, and a consumer that
+  // depends on it — `useEffect(() => { if (reloadKey) refresh() }, [reloadKey, refresh])` in
+  // `dashboard/PinnedTiles` is the shipped example — then re-ran that effect on EVERY render,
+  // called refresh, bumped `tick`, refetched, re-rendered, and looped. Measured in a browser:
+  // 289,116 failed requests and `net::ERR_INSUFFICIENT_RESOURCES`, after which every artifact
+  // fetch failed and the tile sat in its loading state forever. The effect looks correctly
+  // dependency-listed, which is what makes an unstable identity a trap rather than a smell.
+  const refresh = useCallback(() => setTick((t) => t + 1), [])
+
+  return { data, loading, revalidating, error, refresh }
 }
 
 /** Read the last-cached value for a key WITHOUT triggering a fetch — for callers
