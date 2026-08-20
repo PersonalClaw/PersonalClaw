@@ -253,6 +253,43 @@ file to get wrong:
   scatter/blur entirely rather than shrinking them. The whole family splits at `exprHeavy()`'s
   default threshold — passing your own would give the family two definitions of "bold".
 
+### Adopting a liquid state transition
+
+The pinned artifact tile (`pages/dashboard/PinnedTiles.tsx`) is where the family's in-place member
+lives. Its always-mounted header row carries the morph, and the silhouette settles from `blob` to
+`squircle` as the tile's body arrives. That pairing is the vocabulary rather than a per-call-site
+choice: `blob` is the unsettled, organic form and `squircle` the composed one, so a load reads as
+something gathering itself instead of two graphics swapping.
+
+**A state morph needs a host that survives the state change.** This is the one way to adopt
+`LiquidShape` that looks right in every screenshot and animates never — so it is worth knowing
+before you place one. The primitive holds its progress in a `useMotionValue(active ? 1 : 0)` and
+starts the spring from an effect, which means a component that **remounts** on the transition gets
+a fresh motion value already sitting at the target: no distance to travel, no frame, no error, no
+morph. Put it in a region mounted on both sides of the state it depicts — the tile's header row —
+and never inside the branch that switches on it, which for that tile is the ternary swapping the
+`WidgetFrame` body in. It is §5a's remount trap one level down, with the failure inverted: there,
+forgetting the group
+costs the entrance and nothing else; here, hosting it in the wrong place costs the *only* thing the
+primitive does.
+
+Three things the call site owes:
+
+- **Text carries the meaning.** The primitive is `aria-hidden` and `pointer-events-none` by
+  contract, like `DotGlow` — a screen reader and a keyboard never learn it exists. The tile keeps
+  its "Loading tile…" line for exactly that reason: the morph is a second, ambient reading of a
+  state the surface already states in words, never the only place a user could learn something.
+- **`intensity` is a plain number.** The primitive scales the amplitude through `expr()` itself, so
+  pre-scaling at the call site applies the knob twice — an extra factor of `0.35 + 0.65·e`. That is
+  13% low at the default expressiveness and 65% low at 0, so it is the shape of bug that ships:
+  nearly invisible where it is measured, and worst for the users who dialled the knob *down*.
+- **Tint is a theme var.** It defaults to `var(--color-primary)`, and both gradient stops are that
+  one var at two opacities. A hex here survives a theme flip.
+
+`pages/dashboard/liquidAdoptionRail.test.ts` names the adopting surface and the candidates
+deliberately left out, and fails if the primitive drops back to zero product call sites — which is
+the state it shipped in, and the state a refactor returns it to for free.
+
 ---
 
 ## 6. Route transitions

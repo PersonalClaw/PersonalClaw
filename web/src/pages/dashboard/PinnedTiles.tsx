@@ -6,6 +6,7 @@ import { useCachedData, invalidateCache } from '../../lib/useCachedData'
 import { useVisiblePoll } from '../../lib/useVisiblePoll'
 import { relPast } from '../schedule/scheduleMeta'
 import { WidgetFrame } from '../../ui/widget/WidgetFrame'
+import { LiquidShape } from '../../ui/motion'
 import { SquareIconButton } from '../../ui/SquareIconButton'
 import { costLabel, isLive, lastRefreshFailed, sourceChips } from './tileFreshness'
 
@@ -114,6 +115,15 @@ function FreshnessBar({ tile, row }: { tile: DashboardTile; row: TileRefreshRow 
   )
 }
 
+/** Shape-character amplitude for the tile's composure silhouette (FLUID-MOTION §S2
+ *  T2.2 / atom FM-4). A PLAIN number on purpose: `LiquidShape` multiplies through
+ *  `expr()` itself, so passing `expr(1)` here would scale the expressiveness knob
+ *  twice. Small, because this is decoration beside a title, not a hero graphic.
+ *  Exported so the call-site test can render the primitive standalone at the SAME
+ *  amplitude and pin the state→silhouette mapping by exact geometry (same reason
+ *  `artifactTiles` above is exported). */
+export const TILE_COMPOSURE_INTENSITY = 0.5
+
 // ── One tile: an artifact rendered live, with a header + (for proposals) chips ──
 function PinnedTile({ tile, onResolve }: { tile: DashboardTile; onResolve: (ref: string, keep: boolean) => void }) {
   const slug = tile.ref.slice('artifact:'.length)
@@ -121,7 +131,14 @@ function PinnedTile({ tile, onResolve }: { tile: DashboardTile; onResolve: (ref:
   const live = isLive(tile)
 
   // Cached SWR paint of the artifact body — instant on revisit, revalidates behind.
-  const { data: artifact, refresh } = useCachedData<Artifact | null>(
+  // `revalidating` is the in-flight leg and it is what makes the composure silhouette below
+  // depict something a user can actually see happen: MEASURED, body-presence alone never
+  // transitions in practice — on localhost the artifact resolves before the silhouette
+  // first mounts (0 of 276 sampled frames had the tile in its loading state), so the blob
+  // would be a shape that is always already settled. Revalidation keeps the cached body
+  // painted while it is true, so the two together read as "settled, and not
+  // currently being re-read".
+  const { data: artifact, refresh, revalidating: reReading } = useCachedData<Artifact | null>(
     `dashboard:tile:${slug}`, () => api.artifact(slug).catch(() => null), { persist: true },
   )
   const [reloadKey, setReloadKey] = useState(0)
@@ -153,9 +170,47 @@ function PinnedTile({ tile, onResolve }: { tile: DashboardTile; onResolve: (ref:
       .catch(reportActionFailure('refresh this tile'))
   }, [live, tile.ref, refresh])
 
+  // The body the tile currently has, if any. ONE expression feeds both the composure
+  // silhouette in the header and the frame at the bottom, so the two cannot disagree
+  // about whether this tile has settled.
+  const body = artifact?.content
+
   return (
     <div className="flex min-w-0 flex-col gap-xs rounded-lg border border-outline-variant/40 bg-surface-low/60 p-s">
       <div className="flex items-center gap-s">
+        {/* The tile's COMPOSURE as a silhouette: `blob` (unsettled, organic) while the
+            body has not painted yet, morphing to `squircle` (settled, deliberate) once
+            it has — the primitive's own vocabulary for loading→loaded. `active` is
+            therefore read as "settled", which is the polarity that lets `from`/`to`
+            stay in the primitive's stated direction (`from` = unsettled resting form)
+            instead of inverting it at the call site.
+
+            Settled means "there is a body AND nothing is re-reading it". Body-presence
+            alone was the first version and it was MEASURED not to transition at all: on
+            localhost the artifact resolves before the silhouette first mounts (0 of 276
+            sampled frames caught the tile in its loading state), so the blob was a shape
+            that had always already settled. the in-flight read is what a user can see happen —
+            press Refresh and the silhouette unsettles while the read is in flight.
+
+            Hosted HERE, in the always-rendered header row, and deliberately NOT inside
+            the body ternary below: a morph is only observable if its host survives the
+            state change, and that ternary swaps its whole subtree at exactly the moment
+            the state flips — a silhouette placed inside it would be created
+            already-settled and would never animate. `pinnedTileLiquid.test.tsx` fails
+            if it is moved there.
+
+            Decorative by the primitive's contract (aria-hidden + pointer-events-none,
+            both applied by the primitive). The state it depicts is carried in TEXT by
+            this header's own `FreshnessBar` — its labelled source chips and ledger
+            stamp — and by the "Loading tile…" line below, so the silhouette is never
+            the only place a user could learn something. */}
+        <LiquidShape
+          from="blob"
+          to="squircle"
+          active={Boolean(body) && !reReading}
+          intensity={TILE_COMPOSURE_INTENSITY}
+          className="size-4 shrink-0"
+        />
         <span data-type="label-m" className="min-w-0 flex-1 truncate text-on-surface-var">
           {artifact?.name || slug}
         </span>
@@ -183,8 +238,8 @@ function PinnedTile({ tile, onResolve }: { tile: DashboardTile; onResolve: (ref:
           </SquareIconButton>
         )}
       </div>
-      {artifact?.content
-        ? <WidgetFrame html={artifact.content} title={artifact.name || slug} slug={slug} />
+      {body
+        ? <WidgetFrame html={body} title={artifact?.name || slug} slug={slug} />
         : <div data-type="body-s" className="px-s py-l text-center text-on-surface-low">Loading tile…</div>}
     </div>
   )

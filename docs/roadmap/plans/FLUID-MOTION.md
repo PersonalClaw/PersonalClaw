@@ -665,3 +665,92 @@ No decorative motion was bolted onto a surface on executor taste, per `FM-3`'s o
 · `npm run build --workspace web` clean · `make lint` clean. Docs: `docs/design/motion.md` §5b ("The
 morph family — one vocabulary") carries the three rules, the "adding a fifth member" contract, and the
 two-off-switches section.
+
+### 2026-08-20 — `FM-4` (S2: coherence pass; contract §C2) — **DONE**, closing the PARTIAL above
+
+The 2026-08-18 entry left one clause open: `done_when` names "**a liquid state transition** … stays
+clean", and `LiquidShape` had **no product call site**, so the clause was verified for the primitive
+but could not be driven. That entry also recorded ⚠️ *"ADOPTION IS NOW UNOWNED"* and asked for an
+owner call. This closes both.
+
+**The owner call, and why it is not executor taste.** The plan's own consumer mapping (line 60) names
+*"ambient surfaces (20 — liquid state transitions)"*, and its example (line 51) is
+`active={loaded}` — loading→loaded. The pinned ambient dashboard tile (`dashboard/PinnedTiles.tsx`)
+is that surface in DOM. The alternatives were ruled out **structurally, not by preference**:
+`dashboard/world/AgentWorld.tsx`, the other live ambient surface, is a **canvas painter** and cannot
+host an SVG React child. `pages/loops/LoopCockpitPage.tsx` **does exist** (1,284 lines, carries
+phase/running state) and is a real second candidate — deliberately deferred, recorded in the rail so
+a later pass is not told it is absent. An earlier draft of this session's brief claimed no loop
+cockpit existed; that was wrong (`pages/loop/` is a different, smaller directory).
+
+`from="blob"` → `to="squircle"` is the primitive's own vocabulary for unsettled→settled, `active`
+reads as *settled* so `from`/`to` keep their stated direction, `intensity` is a plain `0.5` (the
+primitive applies `expr()` itself), tint is the theme default.
+
+**🔴 The clause could not be met by the obvious signal, and only a browser showed it.** Keyed on
+body-presence alone the silhouette **never transitions**: on localhost the artifact resolves before
+the silhouette first mounts — measured, **0 of 276 sampled frames** caught the tile in its loading
+state — so the blob was a shape that had always already settled. Every jsdom test passed. Settled
+therefore means *body present AND nothing re-reading it*, which a user can watch by pressing Refresh.
+
+**That exposed a real defect in the shared SWR hook, which is why this diff reaches beyond
+`ui/motion/**`.** `useCachedData` sets `loading` **only when nothing is cached**
+(`if (seeded === undefined) setLoading(true)`) — correct for gating `if (!data) return <Skeleton/>`,
+but it means the hook could not express "showing stale data, refetch in flight" to any of its 68
+consumers. An additive `revalidating` flag now does; `loading` is untouched.
+
+**And driving it found an outage-class bug the whole test suite was blind to.** `refresh` was a fresh
+closure every render, so a consumer that lists it as a dependency — `useEffect(() => { if (reloadKey)
+refresh() }, [reloadKey, refresh])`, shipped in `PinnedTiles` — re-ran that effect on every render,
+called refresh, refetched, re-rendered, and looped. Measured in Chrome: **289,116 requests and
+`net::ERR_INSUFFICIENT_RESOURCES`**, after which every artifact fetch failed and the tile sat in its
+loading state permanently. The effect is correctly dependency-listed, which is what makes an unstable
+identity a trap rather than a smell. `refresh` is now a stable `useCallback`. The regression test is
+in `useCachedData.test.ts`; with the fix reverted it does not merely fail, it **kills the vitest
+worker** (6 of 9 tests never complete) — the loop is unbounded.
+
+**The two off-switches, measured SEPARATELY in Chromium at 1440x900** against a gateway serving this
+worktree's own bundle (verified by chunk hash `index-7VIbRrDV.js`), isolated dev home, a real seeded
+artifact pinned to the Overview view. `sameNodeThroughout: true` in all three regimes, so no
+measurement is a remount artifact, and `consoleErrors: 0` (the storm above is gone). Positive control
+throughout: the tile rendered its real name, "Weekly Sales", and its body painted.
+
+| regime | `data-liquid-shape` | idle breathe (x0 range) | after Refresh | distinct silhouettes |
+|---|---|---|---|---|
+| full motion, expressiveness 0.8 | `morph` | 0.24 | **1.26** | 264 |
+| `prefers-reduced-motion` | `instant` | **0** | 1.63 (one jump) | **2** |
+| `expressiveness = 0` | `morph` | **0** | **0.04** | 42 |
+
+Reduced motion is **instant, not fast**: exactly two silhouettes, no perpetual driver, computed
+transform `none` throughout. Expressiveness 0 is the **floor, not an off switch** — it still morphs,
+at ~3% of the default amplitude, with the idle breathe dropped entirely (the refined tier drops a
+heavy effect rather than shrinking it). The two switches behave differently, confirming the previous
+entry's point that they are not the same switch.
+
+**A source rail keeps the adoption from silently vanishing** (`dashboard/liquidAdoptionRail.test.ts`,
+following `FM-6`'s `surfaceEntranceAdoption.test.ts` precedent): barrel import, renders, no
+hand-rolled family timing, the morph precedes the body-switching conditional, plain-number
+`intensity`, no hex tint, the text carriers intact, and a whole-`src` census asserting LiquidShape
+has at least one non-test call site outside `ui/motion/`. It carries a vacuity floor — pointed at a
+nonexistent path it goes red rather than passing on an empty scan. `motion.md` gains the adoption,
+the shape semantics and the **mounted-host rule** (a state morph needs a host that survives the state
+change, or it silently never animates) — that rule is the reusable lesson, so it belongs in the doc.
+
+**Also corrected:** the plan's example at line 51 is wrong twice — `intensity={expr(1)}`
+double-applies the knob (an extra factor of `0.35 + 0.65·e`: 13% low at the default, **65% low at
+0**), and `from="circle"` contradicts the primitive's docstring, which names `blob`→`squircle` as the
+load pairing. `data-liquid-shape` carries the BRANCH (`morph`/`instant`), not the silhouette name, so
+the state→shape mapping is pinned by exact path geometry instead.
+
+**Gate:** `make lint` clean (mypy 939 files); web **439 files / 4,530 tests**; `npm run typecheck`
+and `npm run build` clean; Python **23,122 passed, 30 skipped, 12 xfailed**; roadmap sync rails green.
+Falsifications, each mutating the live line, confirming it applied, observing the named red and
+restoring from a file copy: `active` inverted (the loading tile drew the settled shape), the morph
+moved inside the body conditional (rail red on both the position and its own floor), `revalidating`
+made conditional like `loading` (the in-flight test red), and `refresh` reverted to an unstable
+closure (worker killed). `docs/design/consistency-audit.json` drift was left alone deliberately —
+**clean `origin/main` reproduces it byte for byte** (`filesScanned` 527→529, `raw-input` 5→6,
+`outlineNoneCount` 141→142 in a settings panel this atom never touched), so it is inherited, and
+folding it in here would mask a real drift later. Someone's next design-system change should regen it.
+
+**`FM-7` is now unblocked** (its deps were `FM-4`, `FM-5`, `FM-6`) and enters the ready frontier.
