@@ -952,3 +952,90 @@ Sequence these **independently of S1-S3** — they touch the store's indexing la
     primitive-adoption or reduced-motion ratchet moved) · `npm run build --workspace web` rc 0.
     `duplicateMerge.test.tsx` — the known intermittent — **passed first try, 17 tests in 927 ms, in
     the union run**; not touched by this change, so no concurrency probe was needed.
+
+- [2026-08-20][KL-14] **PARTIAL — the atom stays `todo`.** The host is built, wired and driven; two
+  clauses of clause 7 are unmet and named below with their evidence rather than papered over.
+
+  **What landed.** `knowledge/maintenance.py` is the deferred graph-maintenance host: a dirty
+  watermark, a due rule, a snapshot-bounded clear, a bounded-batch claim loop and a pass registry.
+  `knowledge/maintenance_passes.py` registers the standing jobs. The durability tick drives it,
+  the gateway installs its in-flight probe and registers its passes, and every index-affecting
+  knowledge write moves the watermark instead of doing graph work inline.
+
+  **The clauses, one at a time.**
+  1. *Writes mark a watermark, not inline work.* Five sites: `create_typed_item`, `update_item`,
+     `delete_item`, `forget_source_item`, `merge_items` — each AFTER the commit, so a rolled-back
+     write marks nothing. `update_item` is gated on an ALLOWLIST
+     (`_INDEX_AFFECTING_FIELDS`), and the allowlist direction is load-bearing: `embedding`,
+     `insights`, `ai_title` and the processing columns are what the maintenance passes THEMSELVES
+     write, so a denylist would have every pass re-dirty the index it just cleaned and
+     `clear_up_to(snapshot)` would find `dirty_ts` past its snapshot forever — a loop that reports
+     success. An allowlist cannot acquire that bug when a column is added later; a denylist
+     acquires it by default.
+  2. *Due only when dirty AND (queue drained OR dirt older than max-staleness).* Both disjuncts
+     asserted. TWO stamps, not one: `dirty_since` is the FIRST write since the last clean and is
+     what the staleness rule reads, because a busy pipeline's LATEST write is always recent — a
+     rule written against it would defer forever exactly when the backlog is largest. `dirty_ts`
+     is the snapshot boundary. One stamp cannot be both, and that was the first thing I got wrong.
+  3. *Coalescing and anti-starvation.* A 7-item bulk import performs ZERO passes inline and ONE
+     after a host run (asserted at the host with a counting pass, not inferred from the stamp).
+  4. *The snapshot.* `execute` reads `dirty_ts` before running and clears only up to it, so a
+     write landing mid-pass leaves the state dirty. Falsified by clearing to `time.time()` instead.
+  5. *Bounded batches.* Each `run(batch_size)` call opens and closes its own store work, so the
+     lock is released between sub-batches; a pass that always claims more is capped at
+     `max_batches` so a buggy job costs one tick, not the loop.
+  6. *The boot hook is deleted (clean break).* `_backfill_item_chunks_startup` and
+     `start_chunk_backfill` are gone — a hook that only fires at gateway start never runs again,
+     which is the defect. Verified as a DELETION the way mypy cannot (`ignore_missing_imports`
+     hides a stranded first-party import): a runtime import sweep over 10 modules, all clean, and
+     `grep -rn start_chunk_backfill src tests` → **0**. `backfill_item_chunks` already had both a
+     `batch_size` and a `max_items` bound, so the pass uses them rather than inventing one.
+  7. **UNMET, in two ways.**
+     * *The graph linker backfill has no callable.* Measured:
+       `grep -rn "def .*backfill" src/personalclaw/knowledge/` returns
+       `chunk_backfill.backfill_item_chunks` (registered), `store.backfill_entity_description` (a
+       one-entity setter) and `artifact_ingest.ArtifactIngest.backfill`. The nearest thing to a
+       linker pass is `knowledge_maintain_provider._reindex` / `_wikilink_mentions` — both PRIVATE
+       helpers inside an action provider, neither a resumable library sweep. Registering a private
+       helper across a module boundary, or inventing a public linker backfill, is a design decision
+       that belongs to whoever owns the linker, not a side effect of building a host.
+       `maintenance_passes._probe_unregistered_linker_backfill` carries the reason at the grep site
+       and a test asserts it stays absent, so this reads as a decision rather than an omission.
+     * *Consolidation is registered PLAN-ONLY.* `plan_consolidation`'s own docstring is "Everything
+       a pass would do, without doing any of it", and that is the half that belongs on an
+       unattended cadence today. `KnowledgeConsolidateActionProvider.execute` spends model calls and
+       merges the user's items; putting that on a timer is an autonomy decision, not a cadence fix.
+  8. *Tests.* 20 write-side + 25 host-side + 13 reindex, plus the store slice (491) and
+     `test_knowledge.py`. Max-staleness round-trips dataclass → `_meta` → `load()` → `to_dict()` →
+     `_EDITABLE_CONFIG` → the reader, asserted end to end.
+
+  **A host-selection hazard worth recording.** The host rides the durability tick because that loop
+  already exists and `gateway.py`'s rule is one dispatch path "rather than two that drift". But
+  that loop gates its jobs on `durability.auto_backup`, so registering inside the gate would mean a
+  user turning off scheduled backups silently loses graph maintenance — two unrelated failure
+  mitigations tied to one switch. Maintenance is called OUTSIDE the gate and
+  `test_maintenance_runs_with_auto_backup_off` is the proof rather than the intention.
+
+  **A second inert-by-default trap.** The in-flight probe cannot be imported: the ingest queue is a
+  lazy accessor on `DashboardState` that STARTS a worker when none exists, so asking "how busy is
+  it?" would create one, and `knowledge/` importing the dashboard inverts the boundary. It is
+  injected by the gateway, reads the PRIVATE attribute so probing cannot construct the thing it
+  probes, and an ABSENT probe logs a warning instead of silently reading "drained" — the first
+  version called a `knowledge.get_ingest_queue` that does not exist, so every lookup fell into an
+  except and the coalescing clause would have been inert.
+
+  **Gate:** `make lint` clean (mypy 936 files); 193 targeted + the store slice; full suite green.
+  Ten falsifications across the three parts, each mutating the LIVE line, confirming it applied,
+  observing the named red and restoring from a file copy: clear-to-now (swallowed write), staleness
+  off the latest stamp (starvation), the in-flight gate dropped (a pass per tick), a single-sweep
+  pass treated as batched (the lint busy-loop — 10 runs), maintenance behind the `auto_backup` gate,
+  the probe not installed, the registration call dropped, the no-op-on-chunked-library guard removed,
+  `mark_dirty` removed from `create_typed_item`, and inline `execute()` in the write path (the exact
+  N-vs-1 defect). One test of mine failed for a real reason and was fixed rather than adjusted: the
+  tick's guard lived in the durability loop, not in the seam a direct caller touches.
+
+  **Two facts for whoever takes KL-13 (which this unblocks once clause 7 closes):** `source_seen`
+  has a FOREIGN KEY to `sources`, so a fabricated `source_id` raises `IntegrityError` instead of
+  exercising the novelty gate; and `maintenance`'s only clock use is `time.time()`, so
+  `monkeypatch.setattr(maintenance, "time", fake)` makes the stamp inequalities exact — under real
+  time the mid-run assertion flakes in the direction that HIDES a swallowed write.

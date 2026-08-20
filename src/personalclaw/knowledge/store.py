@@ -1263,6 +1263,13 @@ class KnowledgeStore:
         if extra:
             self.update_item(item_id, **extra)
             self.db.commit()
+        # KL-14 — a NEW indexed document, so the derived graph is stale. Marked here rather
+        # than on entry because both `return None` paths above rolled back and wrote nothing:
+        # a watermark moved for a write that then failed would run the maintenance pass over
+        # an unchanged library on every tick, forever.
+        from personalclaw.knowledge import maintenance
+
+        maintenance.mark_dirty(reason=f"create {item_type}")
         return item_id
 
     def find_source_item(self, source_id: str, guid: str) -> dict | None:
@@ -1416,6 +1423,14 @@ class KnowledgeStore:
             raise
         if row:
             self._load_graph()
+            # KL-14 — same delete as `delete_item`, reached from a source poll instead of the
+            # UI. Guarded by `row` on purpose: a call for a guid this source never wrote
+            # removes no item, so there is nothing for a maintenance pass to reconcile.
+            # (`archive_source_item`, the other source-side write, needs no call of its own:
+            # it goes through `update_item(is_archived=1)`, which is on the allowlist.)
+            from personalclaw.knowledge import maintenance
+
+            maintenance.mark_dirty(reason="forget source item")
         return bool(row)
 
     def get_item(self, item_id):
@@ -1722,6 +1737,11 @@ class KnowledgeStore:
             self.db.execute("ROLLBACK")
             raise
         self._load_graph()
+        # KL-14 — a merge is a delete plus a re-point: one item left the library and another
+        # one's mentions/tags/chunks changed underneath it.
+        from personalclaw.knowledge import maintenance
+
+        maintenance.mark_dirty(reason="merge items")
         logger.info("merged knowledge item %s into %s: %s", merge_id, keep_id, moved)
         return moved
 
@@ -2143,6 +2163,35 @@ class KnowledgeStore:
         "favorited",
     }
 
+    #: KL-14 — the fields whose change actually invalidates the derived index, so an
+    #: `update_item` that touches one of them moves the graph-maintenance watermark and one
+    #: that does not leaves the index clean.
+    #:
+    #: This is an ALLOWLIST rather than "everything except curation", and the reason is the
+    #: DENY side, not the allow side: `embedding`, `insights`, `ai_title`,
+    #: `processing_status` and `processing_error` are what the maintenance passes THEMSELVES
+    #: write. Marking dirty on those would make every pass re-dirty the index it just
+    #: cleaned, so `clear_up_to(snapshot)` would find `dirty_ts` past its snapshot every
+    #: single time and the watermark could never go clean — a maintenance loop that runs
+    #: forever at full cost and reports success. An allowlist cannot acquire that bug by a
+    #: later column being added; a denylist acquires it by default.
+    #:
+    #: The rest of the deny side is derived or presentational bookkeeping: `updated_at` and
+    #: `word_count` are computed FROM a change that is itself on this list, and
+    #: `read_state`/`favorited`/`is_pinned` plus the file/url metadata columns change nothing
+    #: any pass reads. `status`/`is_archived` ARE here because consolidation's candidate set
+    #: is scoped to active items, so archiving one changes that set.
+    _INDEX_AFFECTING_FIELDS = {
+        "title",
+        "content",
+        "summary",
+        "tags",
+        "url",
+        "item_type",
+        "status",
+        "is_archived",
+    }
+
     def update_item(self, item_id, *, touch: bool = True, **fields):
         if not fields:
             return
@@ -2164,6 +2213,15 @@ class KnowledgeStore:
         safe = {k: v for k, v in fields.items() if k in self._ITEM_COLUMNS}
         if not safe and tags_update is None:
             return
+        # KL-14 — decided from what will ACTUALLY be written, and only acted on after the
+        # commit below succeeds. `tags` is counted even though it is not a column, for the
+        # same reason `fts_fields` counts it: the indexed value derives from the tag rows.
+        # Both early returns above are deliberately upstream of this — a no-op PATCH must
+        # leave the index clean, or the watermark says "there is graph work to do" for a call
+        # that changed nothing and the pass runs over the whole library for nothing.
+        index_changes = self._INDEX_AFFECTING_FIELDS & (
+            set(safe) | ({"tags"} if tags_update is not None else set())
+        )
         # Read old FTS values BEFORE the update. `tags` counts as an FTS field even
         # though it isn't a column, because the indexed value derives from the tag rows.
         fts_fields = {"title", "content"} & set(fields)
@@ -2212,6 +2270,10 @@ class KnowledgeStore:
         except Exception:
             self.db.execute("ROLLBACK")
             raise
+        if index_changes:
+            from personalclaw.knowledge import maintenance
+
+            maintenance.mark_dirty(reason="update " + ",".join(sorted(index_changes)))
 
     def _delete_item_cascade(self, item_id):
         """Delete item and its dependents without commit/graph reload (for batch use)."""
@@ -2256,6 +2318,12 @@ class KnowledgeStore:
             self.db.execute("ROLLBACK")
             raise
         self._load_graph()
+        # KL-14 — a delete is index-affecting in both directions: the item leaves the
+        # consolidation candidate set, and the orphan-entity sweep above just changed the
+        # entity graph the other passes read.
+        from personalclaw.knowledge import maintenance
+
+        maintenance.mark_dirty(reason="delete item")
 
     def clear_item_entities(self, item_id):
         """Drop this item's mention/relation rows + any now-orphan entities, WITHOUT

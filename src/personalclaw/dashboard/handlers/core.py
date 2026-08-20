@@ -865,6 +865,11 @@ _EDITABLE_CONFIG: dict[str, dict] = {
     # restart per attempt makes nobody do.
     "knowledge.synthesis_window": {"type": "int", "min": 1, "max": 200},
     "knowledge.lint_every_n_persists": {"type": "int", "min": 1, "max": 1000},
+    # KL-14's anti-starvation window. Floor 60s rather than 1: below a minute this stops
+    # being a staleness window and becomes "run every tick", which defeats the coalescing
+    # the watermark exists for. `maintenance.max_staleness_secs()` enforces its own floor
+    # too, because config.json is hand-editable and this bound only guards the PATCH path.
+    "knowledge.maintenance_max_staleness_secs": {"type": "int", "min": 60, "max": 86400},
     "knowledge.consolidate_min_cluster": {"type": "int", "min": 2, "max": 100},
     "knowledge.consolidate_min_hours": {"type": "int", "min": 0, "max": 720},
     "knowledge.session_brief_max_tokens": {"type": "int", "min": 0, "max": 8000},

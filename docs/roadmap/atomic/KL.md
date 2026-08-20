@@ -262,7 +262,23 @@ Capability-gap amendment (2026-08-19)
 
 ### `KL-14` — Deferred graph-maintenance host: dirty flag + queue-drained/staleness trigger + watermark snapshot
 
-**Status:** todo
+**Status:** todo — PARTIAL, host built and driven (2026-08-20)
+
+The host, the watermark, the due rule, the snapshot, the bounded batches, the write-side marking and
+the boot-hook deletion all landed; `max_staleness` round-trips. TWO clauses of "the memory lint,
+knowledge consolidation and the graph linker backfill are registered on this host" remain, and the
+atom stays `todo` for them:
+
+* **the graph linker backfill has no callable to register.** Measured — the only backfills in
+  `knowledge/` are `chunk_backfill.backfill_item_chunks` (registered), a one-entity
+  `store.backfill_entity_description` setter, and `ArtifactIngest.backfill`. The nearest linker code
+  is private inside an action provider and is not a resumable library sweep, so registering it (or
+  inventing a public one) is the linker owner's design decision, not a host's side effect.
+* **consolidation is registered PLAN-ONLY.** Executing it spends model calls and merges the user's
+  items; putting that on an unattended timer is an autonomy decision rather than a cadence fix.
+
+See the plan's Execution log entry for 2026-08-20 for the evidence and the two inert-by-default traps
+the build hit (the `auto_backup` coupling and the uninstallable in-flight probe).
 
 Capability-gap amendment (2026-08-19)
 

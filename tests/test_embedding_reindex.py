@@ -171,12 +171,15 @@ async def test_reindex_start_blocks_when_model_not_ready(monkeypatch):
     assert json.loads(resp.body)["code"] == "model_not_ready"
 
 
-# ── KL-12: the chunk-backfill boot hook ──────────────────────────────────────
+# ── KL-12/KL-14: the chunk backfill as a graph-maintenance pass ──────────────
 #
 # The backfill's product surface is that it runs by itself: a user who upgrades gets deep
-# recall over the library they already have without knowing to ask for it. So the hook is
-# tested as a hook — that it fires, that it is cheap when there is nothing to do, and that
-# something in the app actually registers it.
+# recall over the library they already have without knowing to ask for it. It used to run
+# from a boot hook, which fires exactly once — so a gateway left up for a week never chunked
+# anything ingested after start. It is now a maintenance pass, and is tested as one: that it
+# chunks a pre-existing library, that it is cheap when there is nothing to do, that it defers
+# when no model is bound, that ONE call is ONE bounded batch (the host owns the loop), and
+# that something actually registers it.
 
 
 class _ChunkEmbedder:
@@ -187,84 +190,129 @@ class _ChunkEmbedder:
         return [1.0, 0.0, 0.0, 0.0]
 
 
-def _app_with(store):
-    class _State:
-        knowledge_store = store
-
-    return {"state": _State()}
-
-
 def _stub_resolve(monkeypatch, embedder):
     from personalclaw.dashboard.handlers import embedding_reindex as handler
 
     monkeypatch.setattr(handler, "_resolve_embed", lambda app: (embedder, None, "stub:model"))
 
 
-@pytest.mark.asyncio
-async def test_start_chunk_backfill_chunks_the_pre_existing_library(tmp_path, monkeypatch):
-    from personalclaw.dashboard.embedding_reindex import start_chunk_backfill
+def _stub_store(monkeypatch, store):
+    """Point the pass's process-wide store accessor at a tmp_path store.
+
+    The pass runs from a tick and has no aiohttp app, so this accessor — not an app dict —
+    is the seam. Patched so the real home is never opened.
+    """
+    import personalclaw.knowledge as knowledge
+
+    monkeypatch.setattr(knowledge, "get_knowledge_store", lambda: store)
+
+
+def test_chunk_backfill_pass_chunks_the_pre_existing_library(tmp_path, monkeypatch):
+    from personalclaw.dashboard.embedding_reindex import chunk_backfill_pass
 
     store = _kstore(tmp_path)
     for i in range(3):
         _add(store, f"doc {i}", f"# H{i}\n\nbody of document {i}\n")
     assert store.count_items_missing_chunks() == 3
+    _stub_store(monkeypatch, store)
     _stub_resolve(monkeypatch, _ChunkEmbedder())
 
-    task = await start_chunk_backfill(_app_with(store))
-    assert task is not None
-    await task
+    assert chunk_backfill_pass(batch_size=25) == 3
     assert store.count_items_missing_chunks() == 0
     assert all(store.get_chunks(r["id"]) for r in store.db.execute("SELECT id FROM items"))
 
 
-@pytest.mark.asyncio
-async def test_start_chunk_backfill_is_a_cheap_no_op_on_a_chunked_library(tmp_path, monkeypatch):
-    """It runs on EVERY boot, so "nothing to do" must not resolve a model or start a task."""
-    from personalclaw.dashboard.embedding_reindex import start_chunk_backfill
+def test_chunk_backfill_pass_is_a_cheap_no_op_on_a_chunked_library(tmp_path, monkeypatch):
+    """It runs on EVERY tick, so "nothing to do" must not resolve a model (which probes the
+    provider) and must report 0 so the host stops claiming sub-batches."""
+    from personalclaw.dashboard.embedding_reindex import chunk_backfill_pass
 
     store = _kstore(tmp_path)
     _add(store, "blank", "")  # no content — never in the backlog
     calls = []
     from personalclaw.dashboard.handlers import embedding_reindex as handler
 
+    _stub_store(monkeypatch, store)
     monkeypatch.setattr(handler, "_resolve_embed", lambda app: calls.append(1) or (None, None, ""))
-    assert await start_chunk_backfill(_app_with(store)) is None
+    assert chunk_backfill_pass(batch_size=25) == 0
     assert calls == [], "the embedder must not be resolved when the backlog is empty"
 
 
-@pytest.mark.asyncio
-async def test_start_chunk_backfill_defers_when_no_model_is_ready(tmp_path, monkeypatch):
-    from personalclaw.dashboard.embedding_reindex import start_chunk_backfill
+def test_chunk_backfill_pass_defers_when_no_model_is_ready(tmp_path, monkeypatch):
+    from personalclaw.dashboard.embedding_reindex import chunk_backfill_pass
 
     store = _kstore(tmp_path)
     _add(store, "doc", "# H\n\nreal content\n")
+    _stub_store(monkeypatch, store)
     _stub_resolve(monkeypatch, None)
-    assert await start_chunk_backfill(_app_with(store)) is None
-    assert store.count_items_missing_chunks() == 1, "still pending, for the next boot"
+    assert chunk_backfill_pass(batch_size=25) == 0
+    assert store.count_items_missing_chunks() == 1, "still pending, for the next tick"
 
 
-@pytest.mark.asyncio
-async def test_start_chunk_backfill_never_raises_into_startup(tmp_path, monkeypatch):
-    from personalclaw.dashboard.embedding_reindex import start_chunk_backfill
+def test_chunk_backfill_pass_claims_one_bounded_batch_per_call(tmp_path, monkeypatch):
+    """The host loops until a pass returns 0, so ONE call must be ONE bounded batch. A pass
+    that drained the whole library per call would hold the store for a big library and make
+    `max_batches` meaningless."""
+    from personalclaw.dashboard.embedding_reindex import chunk_backfill_pass
 
-    class _Exploding:
-        @property
-        def knowledge_store(self):
-            raise RuntimeError("forced: store unavailable")
+    store = _kstore(tmp_path)
+    for i in range(3):
+        _add(store, f"doc {i}", f"# H{i}\n\nbody of document {i}\n")
+    _stub_store(monkeypatch, store)
+    _stub_resolve(monkeypatch, _ChunkEmbedder())
 
-    assert await start_chunk_backfill({"state": _Exploding()}) is None
+    assert chunk_backfill_pass(batch_size=2) == 2
+    assert store.count_items_missing_chunks() == 1, "the rest stays in the backlog"
+    assert chunk_backfill_pass(batch_size=2) == 1
+    assert store.count_items_missing_chunks() == 0
+    assert chunk_backfill_pass(batch_size=2) == 0, "0 == nothing left, which stops the host"
 
 
-def test_the_gateway_registers_the_chunk_backfill_startup_hook():
-    """The function above is only worth anything if something calls it — assert the CALL
-    SITE, not just the mechanism."""
+def test_a_chunk_backfill_fault_does_not_take_down_the_maintenance_host(tmp_path, monkeypatch):
+    """The pass propagates and the HOST isolates it. Asserted at the host rather than by
+    swallowing inside the pass: a pass that ate its own faults would report success forever
+    with the backlog untouched, and nothing downstream could tell."""
+    import personalclaw.knowledge as knowledge
+    from personalclaw.config import loader
+    from personalclaw.dashboard.embedding_reindex import register_chunk_backfill_pass
+    from personalclaw.knowledge import maintenance
+
+    monkeypatch.setattr(loader, "config_dir", lambda: tmp_path)  # watermark file, not the home
+    monkeypatch.setattr(maintenance, "_PASSES", {})
+
+    def _boom():
+        raise RuntimeError("forced: store unavailable")
+
+    monkeypatch.setattr(knowledge, "get_knowledge_store", _boom)
+    ran = []
+    # Sorted after "chunk_backfill", so it only runs if the failing pass did not end the run.
+    maintenance.register_pass("zz_other", lambda *, batch_size: ran.append(batch_size) or 0)
+    register_chunk_backfill_pass()
+
+    result = maintenance.execute(batch_size=5)
+    assert "RuntimeError" in result.errors.get("chunk_backfill", "")
+    assert ran == [5], "an independent pass must still get its cadence"
+
+
+def test_the_gateway_registers_the_chunk_backfill_maintenance_pass(monkeypatch):
+    """The pass is only worth anything if something registers it — assert the CALL SITE, not
+    just the mechanism, and assert the boot hook it replaced is really gone."""
     import ast
     import pathlib
+
+    from personalclaw.dashboard.embedding_reindex import register_chunk_backfill_pass
+    from personalclaw.knowledge import maintenance
 
     src = pathlib.Path(
         __import__("personalclaw.dashboard.server", fromlist=["x"]).__file__
     ).read_text()
     tree = ast.parse(src)
+    called = {
+        node.func.id
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+    }
+    assert "register_chunk_backfill_pass" in called
     appended = {
         node.args[0].id
         for node in ast.walk(tree)
@@ -276,5 +324,9 @@ def test_the_gateway_registers_the_chunk_backfill_startup_hook():
         and node.args
         and isinstance(node.args[0], ast.Name)
     }
-    assert "_backfill_item_chunks_startup" in appended
-    assert "start_chunk_backfill" in src
+    assert "_backfill_item_chunks_startup" not in appended, "the boot hook must stay deleted"
+
+    # …and the registrar really registers, under the name the host will look up.
+    monkeypatch.setattr(maintenance, "_PASSES", {})
+    register_chunk_backfill_pass()
+    assert maintenance.registered_passes() == ["chunk_backfill"]
