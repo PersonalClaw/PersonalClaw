@@ -316,7 +316,26 @@ function KnowledgeExtras({ item, pool, related, onOpenItem, annotations, onRemov
               <button key={r.id} type="button" onClick={() => onOpenItem(r.id)}
                 className="flex items-center gap-2 rounded-md px-2 py-1.5 text-left transition-colors hover:bg-surface-high">
                 <span className="truncate text-on-surface text-[0.8125rem]">{r.title || '(untitled)'}</span>
-                {typeof r.shared_entities === 'number' && <span className="ml-auto shrink-0 text-on-surface-low text-[0.75rem]">{r.shared_entities} shared</span>}
+                {/* The badge names whatever CHOSE this ordering. KL-13 replaced an unthresholded
+                    shared-entity count with a cosine similarity edge above a real floor, so a
+                    "3 shared" chip would no longer explain why this row sits where it does. The
+                    tooltip carries the rest — which passage matched, and the entity overlap the
+                    score no longer ranks by — so the number stays accountable. Falls back to the
+                    old chip when a response predates the edge table. */}
+                {typeof r.score === 'number' ? (
+                  <span className="ml-auto shrink-0 text-on-surface-low text-[0.75rem]"
+                    title={[
+                      `${Math.round(r.score * 100)}% similar`,
+                      typeof r.chunk_index === 'number' && typeof r.neighbour_chunk_index === 'number'
+                        ? `matched section ${r.chunk_index + 1} of this item against section ${r.neighbour_chunk_index + 1} of the other`
+                        : '',
+                      typeof r.shared_entities === 'number' ? `${r.shared_entities} shared entities` : '',
+                    ].filter(Boolean).join(' · ')}>
+                    {Math.round(r.score * 100)}%
+                  </span>
+                ) : typeof r.shared_entities === 'number' ? (
+                  <span className="ml-auto shrink-0 text-on-surface-low text-[0.75rem]">{r.shared_entities} shared</span>
+                ) : null}
               </button>
             ))}
             <MoreRow total={related.length} shown={15} />

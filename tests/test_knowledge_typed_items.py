@@ -1327,12 +1327,28 @@ class TestArchivedHiddenFromRetrieval:
 
         a = store.create_typed_item(item_type="note", title="A", content="x")
         b = store.create_typed_item(item_type="note", title="B-archived", content="y")
-        eid = self._link(store, a, "SharedThing")
-        store.add_mention(b, eid)
+        # Seeded as a SIMILARITY EDGE, not a shared entity mention (KL-13). The endpoint used
+        # to rank by an unthresholded `COUNT(DISTINCT entity_id)`, so one incidentally-shared
+        # concept made B "related" to A; it is now served from `item_similarity_edges` above a
+        # real cosine floor. This test's INTENT — an archived item drops out of the related
+        # list — is unchanged and still worth asserting; only the seeding moves. A score of
+        # 0.9 is comfortably above the shipped floor so the assertion is about archiving
+        # rather than about where the floor happens to sit.
+        store.upsert_similarity_edges(
+            [
+                {
+                    "source_item_id": a,
+                    "target_item_id": b,
+                    "score": 0.9,
+                    "source_chunk_index": 0,
+                    "target_chunk_index": 0,
+                }
+            ]
+        )
         store.db.commit()
         # Before archiving, B is related to A.
         rel = json.loads(_run(H.get_related_items(_req(store, "GET", match_info={"id": a}))).body)
-        assert any(r["id"] == b for r in rel)
+        assert any(r["id"] == b for r in rel), f"the seeded edge did not surface: {rel}"
         # Archive B → drops out of A's related.
         store.update_item(b, is_archived=1)
         store.db.commit()

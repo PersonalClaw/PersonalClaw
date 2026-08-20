@@ -568,6 +568,70 @@ class KnowledgeStore:
 
             CREATE INDEX IF NOT EXISTS idx_chunks_item_id ON chunks(item_id);
 
+            -- Item-similarity edges (KL-13). The store had no similarity-derived edge of
+            -- any kind: the chunk vector index was queried at READ time and never
+            -- materialised into a graph, so "related items" could only be answered by an
+            -- unthresholded shared-entity COUNT. This table is that graph.
+            --
+            -- One row per unordered ITEM PAIR, stored in canonical (min, max) id order so
+            -- the pair has exactly one representation and `UNIQUE` can enforce it. Without
+            -- canonicalisation A→B and B→A are two rows the uniqueness constraint cannot
+            -- see, and every reader would have to union both legs and de-duplicate.
+            --
+            -- ON DELETE CASCADE on BOTH legs, so deleting either endpoint removes the edge
+            -- with no application code involved. That is real here and not decoration:
+            -- `PRAGMA foreign_keys=ON` is set on this connection at open (see `__init__`),
+            -- which is the only thing that makes a SQLite FK action fire at all.
+            --
+            -- `source_chunk_index` / `target_chunk_index` are PROVENANCE: the pair of
+            -- chunks whose cosine won the MAX roll-up. An edge can therefore explain
+            -- itself — "these two documents are related because §3 of one and §7 of the
+            -- other say the same thing" — instead of asserting a bare number. They are
+            -- nullable because a pass may legitimately be unable to name the winner (a
+            -- chunk row deleted between scoring and write).
+            --
+            -- `by_source` / `by_target` are the WRITER CLAIMS, and they are what makes
+            -- recomputing one item non-destructive. A canonical edge (X, Y) has exactly
+            -- two possible authors — X's pass and Y's pass — so two flags capture the
+            -- whole claim set in bounded space. Recomputing X clears only X's flag on the
+            -- pairs X no longer derives and deletes the row only once BOTH flags are
+            -- clear. A plain `DELETE WHERE source_item_id = X` cannot do this: when
+            -- X < Y the canonical source of an edge that Y's pass discovered is X, so
+            -- that delete silently destroys Y's finding, and the naive both-legs delete
+            -- destroys every neighbour's finding.
+            CREATE TABLE IF NOT EXISTS item_similarity_edges (
+                source_item_id TEXT NOT NULL REFERENCES items(id) ON DELETE CASCADE,
+                target_item_id TEXT NOT NULL REFERENCES items(id) ON DELETE CASCADE,
+                score REAL NOT NULL,
+                source_chunk_index INTEGER,
+                target_chunk_index INTEGER,
+                by_source INTEGER NOT NULL DEFAULT 0,
+                by_target INTEGER NOT NULL DEFAULT 0,
+                computed_at TEXT NOT NULL,
+                UNIQUE(source_item_id, target_item_id)
+            );
+
+            -- The source leg is already covered by the UNIQUE index's leading column;
+            -- the target leg needs its own so a neighbour lookup and the GLOBAL degree
+            -- cap (which counts inbound edges too) are not table scans.
+            CREATE INDEX IF NOT EXISTS idx_item_sim_edges_target
+                ON item_similarity_edges(target_item_id);
+
+            -- The similarity sweep marker (KL-13), keyed the same way KL-14's
+            -- `mention_sweeps` is and for the identical reason: the backlog must be keyed
+            -- on whether the pass LOOKED at an item, never on whether it produced an
+            -- edge. An item can legitimately have no neighbour above the cosine floor, so
+            -- a backlog keyed on "has no edges" never gains a row, never drains, and —
+            -- because the maintenance host re-invokes a batched pass until it returns 0 —
+            -- lets the head of the backlog absorb every sub-batch forever.
+            --
+            -- ON DELETE CASCADE (which `mention_sweeps` predates) so a deleted item's
+            -- marker goes with it rather than accumulating for the life of the library.
+            CREATE TABLE IF NOT EXISTS similarity_sweeps (
+                item_id TEXT PRIMARY KEY REFERENCES items(id) ON DELETE CASCADE,
+                swept_at TEXT NOT NULL
+            );
+
             -- Intent outcomes (Tier-3, redesign). A natural-language intent's match
             -- against one item, stored BY VALUE: the takeaway + typed fields + a
             -- denormalized item title are copied in. item_id is a SOFT back-reference
@@ -1850,6 +1914,11 @@ class KnowledgeStore:
         # indexes. A failure here is swallowed by the index (an index write must never fail a
         # chunk write) and repaired by the next process's reconciliation.
         self.vec_index.sync_item(item_id, [(r[0], r[4]) for r in rows])
+        # KL-13: the item's vectors just changed, so the similarity edges derived from the
+        # previous generation are stale. Dropping the sweep marker puts the item back in the
+        # similarity backlog; without it a re-chunk would keep its old content's neighbours
+        # for good, because a sweep is once-per-item.
+        self.clear_similarity_sweep(item_id)
         self.db.commit()
         return len(rows)
 
@@ -1879,6 +1948,7 @@ class KnowledgeStore:
         """Drop an item's chunk rows (e.g. before a re-ingest)."""
         self.vec_index.drop_item(item_id)  # before the ids go away
         self.db.execute("DELETE FROM chunks WHERE item_id = ?", (item_id,))
+        self.clear_similarity_sweep(item_id)  # KL-13 — its vectors are gone; re-look later
         self.db.commit()
 
     # -- Per-marker citations (WF2KNO-11) ----------------------------------------
@@ -2555,6 +2625,374 @@ class KnowledgeStore:
             (item_id, datetime.now().isoformat()),
         )
         self.db.commit()
+
+    # -- Item-similarity edges (KL-13) --------------------------------------------
+
+    #: The similarity backlog predicate, in ONE place so the COUNT and the batch selector
+    #: cannot disagree about what work remains — same discipline as ``_LINK_BACKLOG_WHERE``
+    #: and ``_CHUNK_BACKLOG_WHERE``. An item needs a similarity sweep when it is active, not
+    #: archived, has at least one EMBEDDED chunk to compare, and has no ``similarity_sweeps``
+    #: row.
+    #:
+    #: 🔴 Keyed on ``similarity_sweeps``, NOT on "has no ``item_similarity_edges`` rows".
+    #: Those look equivalent and the second does not terminate: an item may legitimately
+    #: have no neighbour above the cosine floor, so it would never gain an edge, never leave
+    #: the backlog, and be recomputed on every tick — and since the maintenance host
+    #: re-invokes a batched pass until it returns 0, the head of the backlog would absorb
+    #: every sub-batch and the tail would never be reached. This exact defect was measured
+    #: and fixed for the entity linker (KL-14): drain ``[2, 2, 2, 2, ...]`` instead of
+    #: ``[2, 2, 1, 0]``. The sweep row records that the pass LOOKED, which is the fact the
+    #: backlog needs; whether it found a neighbour is the edge table's business.
+    #:
+    #: Items with no embedded chunk are EXCLUDED rather than swept, mirroring
+    #: ``_CHUNK_BACKLOG_WHERE``'s text-less exclusion: there is nothing to compare, so they
+    #: are not work rather than work that always finds nothing. That exclusion is also what
+    #: makes "after an item's chunks embed" true without a trigger — an item enters this
+    #: backlog the moment its first chunk vector commits.
+    _SIMILARITY_BACKLOG_WHERE = (
+        "FROM items WHERE status = 'active' "
+        "AND COALESCE(is_archived, 0) = 0 "
+        "AND EXISTS (SELECT 1 FROM chunks WHERE chunks.item_id = items.id "
+        "AND chunks.embedding IS NOT NULL) "
+        "AND NOT EXISTS (SELECT 1 FROM similarity_sweeps "
+        "WHERE similarity_sweeps.item_id = items.id) "
+    )
+
+    def count_items_missing_similarity_sweep(self) -> int:
+        """How many items the similarity pass has never looked at (KL-13).
+
+        Zero means every active, embedded-chunk-bearing item has been through the kNN pass
+        at least once, so a maintenance tick costs one COUNT.
+        """
+        row = self.db.execute(
+            f"SELECT COUNT(*) AS n {self._SIMILARITY_BACKLOG_WHERE}"  # noqa: S608 — fixed literal
+        ).fetchone()
+        return int(row["n"]) if row else 0
+
+    def items_missing_similarity_sweep(self, limit: int, after_id: str | None = None) -> list[str]:
+        """One bounded batch of the similarity backlog, as item ids in id order.
+
+        Ids only: the pass re-reads each item's chunk vectors anyway, and carrying item text
+        it never uses would make peak memory O(batch x document size) for nothing.
+
+        ``after_id`` is an exclusive keyset cursor rather than an OFFSET, so a caller taking
+        several batches in one run steps forward instead of re-reading the head.
+        """
+        params: list[object] = []
+        cursor = ""
+        if after_id:
+            cursor = "AND items.id > ? "
+            params.append(after_id)
+        params.append(int(limit))
+        rows = self.db.execute(
+            f"SELECT id {self._SIMILARITY_BACKLOG_WHERE}{cursor}"  # noqa: S608
+            "ORDER BY items.id ASC LIMIT ?",
+            tuple(params),
+        ).fetchall()
+        return [r["id"] for r in rows]
+
+    def record_similarity_sweep(self, item_id: str) -> None:
+        """Mark *item_id* as looked at by the similarity pass. ``INSERT OR REPLACE`` so a
+        re-sweep refreshes the timestamp rather than raising on the primary key."""
+        self.db.execute(
+            "INSERT OR REPLACE INTO similarity_sweeps (item_id, swept_at) VALUES (?, ?)",
+            (item_id, datetime.now().isoformat()),
+        )
+        self.db.commit()
+
+    def clear_similarity_sweep(self, item_id: str) -> None:
+        """Drop *item_id*'s sweep marker so it re-enters the similarity backlog.
+
+        Called when an item's chunk rows are replaced or cleared: its vectors changed, so
+        the edges derived from them are stale and the pass must look again. Without this a
+        re-chunked item would keep the edges of its previous content forever, because a
+        sweep is once-per-item.
+        """
+        self.db.execute("DELETE FROM similarity_sweeps WHERE item_id = ?", (item_id,))
+
+    @staticmethod
+    def _canonical_edge(a_id: str, b_id: str, a_chunk, b_chunk) -> tuple:
+        """One unordered item pair in its single canonical representation.
+
+        ``(min(id), max(id))`` with the chunk-index provenance TRANSPOSED alongside the ids,
+        so ``source_chunk_index`` always names a chunk of ``source_item_id``. Swapping the
+        ids without swapping their chunk indices is the silent way to make an edge explain
+        itself with the wrong section of the wrong document.
+        """
+        if a_id <= b_id:
+            return (a_id, b_id, a_chunk, b_chunk)
+        return (b_id, a_id, b_chunk, a_chunk)
+
+    def upsert_similarity_edges(self, rows: list[dict]) -> int:
+        """Write similarity edges, canonicalised, MAX-wins on conflict. Returns rows written.
+
+        Each row is ``{source_item_id, target_item_id, score, source_chunk_index,
+        target_chunk_index}``; ``claimed_by`` is optional and names the item whose pass
+        derived the row (see the ``by_source``/``by_target`` note on the table). Ids are
+        canonicalised HERE rather than trusted from the caller, so the (min, max) invariant
+        holds for every writer including the related-items endpoint.
+
+        **MAX wins on conflict, matching the roll-up rule one level up.** Cosine is
+        symmetric, so two passes over the same pair should agree — but each pass sees only
+        the candidates its own ANN query returned, so the narrower view can score the pair
+        lower. Keeping the larger score makes the MAX rule hold across passes as well as
+        within one, and stops an edge's strength from depending on which item was swept
+        last. A losing row still records its claim flag, which is what keeps the edge alive
+        when the other writer withdraws.
+        """
+        written = 0
+        now = datetime.now().isoformat()
+        for row in rows or []:
+            a_id = str(row.get("source_item_id") or "")
+            b_id = str(row.get("target_item_id") or "")
+            if not a_id or not b_id or a_id == b_id:
+                continue  # a self-edge is not a similarity finding
+            src, tgt, src_chunk, tgt_chunk = self._canonical_edge(
+                a_id, b_id, row.get("source_chunk_index"), row.get("target_chunk_index")
+            )
+            claimed_by = row.get("claimed_by")
+            by_source = 1 if claimed_by == src else 0
+            by_target = 1 if claimed_by == tgt else 0
+            self.db.execute(
+                "INSERT INTO item_similarity_edges "
+                "(source_item_id, target_item_id, score, source_chunk_index, "
+                " target_chunk_index, by_source, by_target, computed_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?) "
+                "ON CONFLICT(source_item_id, target_item_id) DO UPDATE SET "
+                # The score and its provenance move together: a score that came from a
+                # different chunk pair than the one recorded would make the edge explain
+                # itself with evidence that does not support it.
+                "  source_chunk_index = CASE WHEN excluded.score > item_similarity_edges.score "
+                "    THEN excluded.source_chunk_index ELSE item_similarity_edges.source_chunk_index"
+                "    END, "
+                "  target_chunk_index = CASE WHEN excluded.score > item_similarity_edges.score "
+                "    THEN excluded.target_chunk_index ELSE item_similarity_edges.target_chunk_index"
+                "    END, "
+                "  score = MAX(excluded.score, item_similarity_edges.score), "
+                # Claims accumulate: a second writer must never clear the first writer's
+                # flag, or the pair would die the next time that first writer withdrew.
+                "  by_source = MAX(excluded.by_source, item_similarity_edges.by_source), "
+                "  by_target = MAX(excluded.by_target, item_similarity_edges.by_target), "
+                "  computed_at = excluded.computed_at",
+                (
+                    src,
+                    tgt,
+                    float(row.get("score") or 0.0),
+                    src_chunk,
+                    tgt_chunk,
+                    by_source,
+                    by_target,
+                    now,
+                ),
+            )
+            written += 1
+        if written:
+            self.db.commit()
+        return written
+
+    def release_similarity_claims(self, item_id: str, keep: set[tuple[str, str]]) -> int:
+        """Withdraw *item_id*'s authorship of every edge it touches except the pairs in
+        *keep*, deleting rows no writer claims any more. Returns rows deleted.
+
+        This is the whole answer to "recomputing one item must NOT delete an edge another
+        item's pass created". *keep* holds canonical ``(source, target)`` tuples the current
+        pass re-derived; every other edge touching *item_id* loses only ITS OWN claim flag.
+        The row survives on the other endpoint's flag and is deleted only when both flags
+        reach 0 — so an edge B-A that B's pass found outlives any number of recomputes of A,
+        in either id ordering, and a stale edge nobody vouches for is still reclaimed.
+        """
+        rows = self.db.execute(
+            "SELECT source_item_id, target_item_id, by_source, by_target "
+            "FROM item_similarity_edges WHERE source_item_id = ? OR target_item_id = ?",
+            (item_id, item_id),
+        ).fetchall()
+        deleted = 0
+        for r in rows:
+            src, tgt = r["source_item_id"], r["target_item_id"]
+            if (src, tgt) in keep:
+                continue
+            mine = "by_source" if src == item_id else "by_target"
+            theirs = "by_target" if src == item_id else "by_source"
+            if not r[mine]:
+                continue  # never claimed this pair; not ours to withdraw
+            if r[theirs]:
+                self.db.execute(
+                    f"UPDATE item_similarity_edges SET {mine} = 0 "  # noqa: S608 — fixed literal
+                    "WHERE source_item_id = ? AND target_item_id = ?",
+                    (src, tgt),
+                )
+                continue
+            self.db.execute(
+                "DELETE FROM item_similarity_edges "
+                "WHERE source_item_id = ? AND target_item_id = ?",
+                (src, tgt),
+            )
+            deleted += 1
+        self.db.commit()
+        return deleted
+
+    def similarity_degree(self, item_id: str) -> int:
+        """How many similarity edges TOUCH *item_id*, inbound and outbound.
+
+        Degree counts both legs because the canonical (min, max) ordering makes which leg an
+        edge lands on an accident of id sort order, not a direction. A one-legged count
+        would let a popular item accumulate unbounded edges on its other leg.
+        """
+        row = self.db.execute(
+            "SELECT COUNT(*) AS n FROM item_similarity_edges "
+            "WHERE source_item_id = ? OR target_item_id = ?",
+            (item_id, item_id),
+        ).fetchone()
+        return int(row["n"]) if row else 0
+
+    def enforce_similarity_degree_cap(self, item_ids, cap: int) -> int:
+        """Evict the lowest-scoring edges until every id in *item_ids* has degree <= *cap*.
+        Returns rows deleted.
+
+        🔴 This is a GLOBAL cap, not the pass's per-item top-K truncation, and the two are
+        not interchangeable. Top-K bounds how many edges ONE item's pass writes; it says
+        nothing about 500 other items each writing one edge that happens to point at the
+        same popular document. The cap is therefore applied to every item a write touched —
+        the swept item AND each of its neighbours — which is what makes inbound accumulation
+        bounded no matter how many passes converge on one item.
+
+        Eviction is by lowest score first, with ``rowid`` breaking ties so the outcome is
+        deterministic rather than dependent on SQLite's scan order.
+        """
+        limit = max(0, int(cap))
+        deleted = 0
+        for item_id in dict.fromkeys(item_ids):  # de-duplicate, preserve order
+            if not item_id:
+                continue
+            excess = self.similarity_degree(item_id) - limit
+            if excess <= 0:
+                continue
+            victims = self.db.execute(
+                "SELECT source_item_id, target_item_id FROM item_similarity_edges "
+                "WHERE source_item_id = ? OR target_item_id = ? "
+                "ORDER BY score ASC, rowid ASC LIMIT ?",
+                (item_id, item_id, excess),
+            ).fetchall()
+            for v in victims:
+                self.db.execute(
+                    "DELETE FROM item_similarity_edges "
+                    "WHERE source_item_id = ? AND target_item_id = ?",
+                    (v["source_item_id"], v["target_item_id"]),
+                )
+                deleted += 1
+        if deleted:
+            self.db.commit()
+        return deleted
+
+    def similar_items(self, item_id: str, *, limit: int, min_score: float) -> list[dict]:
+        """*item_id*'s similar neighbours above *min_score*, best first.
+
+        Reads BOTH legs and normalises each row to the caller's point of view: ``item_id``
+        is the neighbour's id and ``chunk_index``/``neighbour_chunk_index`` are oriented so
+        the first always names a chunk of the item asked about. Canonical (min, max) storage
+        means the queried item is sometimes the stored source and sometimes the stored
+        target, and a reader that forgets that silently returns half its neighbours.
+
+        The threshold is a real one applied in SQL, which is the point of the table: the
+        related-items surface it replaces ranked by an unthresholded shared-entity COUNT, so
+        two documents that merely both mentioned a common word scored as "related".
+        """
+        rows = self.db.execute(
+            "SELECT source_item_id, target_item_id, score, source_chunk_index, "
+            "       target_chunk_index "
+            "FROM item_similarity_edges "
+            "WHERE (source_item_id = ? OR target_item_id = ?) AND score >= ? "
+            "ORDER BY score DESC, source_item_id ASC, target_item_id ASC LIMIT ?",
+            (item_id, item_id, float(min_score), max(0, int(limit))),
+        ).fetchall()
+        out: list[dict] = []
+        for r in rows:
+            mine_is_source = r["source_item_id"] == item_id
+            out.append(
+                {
+                    "item_id": r["target_item_id"] if mine_is_source else r["source_item_id"],
+                    "score": float(r["score"]),
+                    "chunk_index": (
+                        r["source_chunk_index"] if mine_is_source else r["target_chunk_index"]
+                    ),
+                    "neighbour_chunk_index": (
+                        r["target_chunk_index"] if mine_is_source else r["source_chunk_index"]
+                    ),
+                }
+            )
+        return out
+
+    def count_similarity_edges(self) -> int:
+        """Total materialised similarity edges. One row per unordered pair, so this is the
+        edge count of the graph and not double it."""
+        row = self.db.execute("SELECT COUNT(*) AS n FROM item_similarity_edges").fetchone()
+        return int(row["n"]) if row else 0
+
+    def chunk_vectors_by_ids(self, chunk_ids) -> list[dict]:
+        """``{id, item_id, chunk_index, embedding}`` for the given chunk ids, embeddings
+        decoded, unembedded rows dropped.
+
+        Serves the ANN arm: ``candidate_chunk_ids`` returns ids, and scoring needs the
+        vector plus which item and which chunk position it belongs to. Ids are inlined as
+        placeholders (never interpolated values) and the list is bounded by the caller's k.
+        """
+        ids = [c for c in dict.fromkeys(chunk_ids) if c]
+        if not ids:
+            return []
+        from personalclaw.knowledge.embedder import bytes_to_floats
+
+        marks = ",".join("?" * len(ids))
+        rows = self.db.execute(
+            "SELECT id, item_id, chunk_index, embedding FROM chunks "  # noqa: S608 — placeholders
+            f"WHERE id IN ({marks}) AND embedding IS NOT NULL",
+            tuple(ids),
+        ).fetchall()
+        out = []
+        for r in rows:
+            vec = bytes_to_floats(r["embedding"]) if r["embedding"] else []
+            if vec:
+                out.append(
+                    {
+                        "id": r["id"],
+                        "item_id": r["item_id"],
+                        "chunk_index": r["chunk_index"],
+                        "embedding": vec,
+                    }
+                )
+        return out
+
+    def iter_embedded_chunks(self, exclude_item_id: str | None = None):
+        """Stream ``{item_id, chunk_index, embedding}`` for every embedded chunk, optionally
+        skipping one item's own chunks.
+
+        The exact-scan fallback for when the ANN index cannot serve a query. STREAMED rather
+        than ``fetchall``-ed, exactly as the retrieval vector arm does, so peak memory stays
+        O(1) rows instead of O(corpus) on a library of any size.
+        """
+        from personalclaw.knowledge.embedder import bytes_to_floats
+
+        sql = "SELECT item_id, chunk_index, embedding FROM chunks WHERE embedding IS NOT NULL"
+        params: tuple = ()
+        if exclude_item_id:
+            sql += " AND item_id != ?"
+            params = (exclude_item_id,)
+        for r in self.db.execute(sql, params):
+            vec = bytes_to_floats(r["embedding"]) if r["embedding"] else []
+            if vec:
+                yield {"item_id": r["item_id"], "chunk_index": r["chunk_index"], "embedding": vec}
+
+    def count_items_with_embedded_chunks(self) -> int:
+        """How many items have at least one embedded chunk.
+
+        The similarity pass's PRECONDITION check: with fewer than two such items there is no
+        pair to score, and sweeping anyway would mint sweep rows the pass can never revisit
+        (a sweep is once-per-item), permanently stranding the library's first documents with
+        no edges. Same shape as ``link_backfill._has_entities``.
+        """
+        row = self.db.execute(
+            "SELECT COUNT(DISTINCT item_id) AS n FROM chunks WHERE embedding IS NOT NULL"
+        ).fetchone()
+        return int(row["n"]) if row else 0
 
     def reembed_all(self, embedder, on_progress=None) -> dict:
         """Re-embed every active knowledge item with ``embedder`` (which exposes
