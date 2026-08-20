@@ -6160,6 +6160,7 @@
           "id": "FM-7",
           "title": "Motion budget proof: 60fps pass + reduced-motion/expressiveness=0 zero-motion CI guard",
           "status": "done",
+          "pr": 1829,
           "scope": "Session 3 \u2014 budget proof (T3.3, V3)",
           "done_when": "60fps verified on ChatPage + a cockpit with no jank; expressiveness=0 and prefers-reduced-motion both proven to yield instant/crossfade with zero springs; a reduced-motion assertion added to web CI where feasible; full-app motion pass holds at bounciness=1 (delightful) and bounciness=0 (calm)",
           "deps": [
