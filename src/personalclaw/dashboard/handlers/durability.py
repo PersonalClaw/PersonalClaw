@@ -27,7 +27,7 @@ import asyncio
 import json
 import logging
 import tempfile
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 from aiohttp import web
 from aiohttp.multipart import BodyPartReader
@@ -758,6 +758,98 @@ async def _history_body(request: web.Request) -> tuple[dict, web.Response | None
     return body, None
 
 
+def _history_paths(raw: object, *, field: str) -> tuple[list[str], web.Response | None]:
+    """Normalize a repo-relative path subset from a request body.
+
+    ``None`` and ``[]`` both mean "the whole root" and normalize to ``[]``, so the
+    two-phase path-set comparison below cannot be tripped by a client that omits
+    the field where another sends an empty array.
+
+    A non-list, or a non-string element, is a typed 400 rather than a coercion: a
+    caller that sent ``{"paths": "config.json"}`` may have meant one path or may
+    have meant a bug, and guessing on a destructive verb is how a user ends up
+    restoring something they never selected. Shape problems answer ``bad_paths``;
+    a path that cannot be a repo-relative selector answers ``invalid_path`` and
+    NAMES the offending value, because "one of your paths is wrong" is not an
+    actionable message.
+
+    The result is sorted and de-duplicated: order must not matter to the request,
+    and ``["a", "a"]`` is the same selection as ``["a"]``.
+    """
+    if raw is None:
+        return [], None
+    if not isinstance(raw, list):
+        return [], web.json_response(
+            {
+                "error": {
+                    "code": "bad_paths",
+                    "message": f"{field} must be an array of repo-relative path strings",
+                }
+            },
+            status=400,
+        )
+    out: set[str] = set()
+    for item in raw:
+        if not isinstance(item, str):
+            return [], web.json_response(
+                {
+                    "error": {
+                        "code": "bad_paths",
+                        "message": (
+                            f"{field} must contain only strings; "
+                            f"got {type(item).__name__} in {field}"
+                        ),
+                    }
+                },
+                status=400,
+            )
+        # Backslashes fold to "/" exactly as the history module folds them, so the
+        # two normalizations cannot disagree about what set the user named.
+        raw_value = item.replace("\\", "/").strip()
+        if raw_value.startswith(("~", "/")) or "\0" in raw_value:
+            return [], _invalid_path(field, item)
+        pure = PurePosixPath(raw_value)
+        normalized = pure.as_posix()
+        if pure.is_absolute() or ".." in pure.parts or normalized in ("", "."):
+            return [], _invalid_path(field, item)
+        out.add(normalized)
+    return sorted(out), None
+
+
+def _invalid_path(field: str, value: str) -> web.Response:
+    """The one shape for "that path cannot be a selector", naming the value."""
+    return web.json_response(
+        {
+            "error": {
+                "code": "invalid_path",
+                "message": (
+                    f"{field} entry {value!r} is not a repo-relative path inside this "
+                    "root; paths must be relative and may not contain '..'"
+                ),
+            },
+            "path": value,
+        },
+        status=400,
+    )
+
+
+def _commit_previews(root, sha: str, *, operation: str, home: Path) -> bool:
+    """Whether *sha* previews at all for the WHOLE root.
+
+    Classification only: the module reports an unresolvable commit and an
+    unacceptable path subset through the same exception type, and the two are
+    different mistakes with different fixes. If the whole-root preview succeeds,
+    the subset is what was refused.
+    """
+    from personalclaw.durability import state_history
+
+    try:
+        state_history.preview(root, sha, operation=operation, home=home)
+    except state_history.HistoryError:
+        return False
+    return True
+
+
 async def api_durability_history(request: web.Request) -> web.Response:
     """GET /api/durability/history — per-root repo status for the Time Travel panel."""
     denied = _reject_app(request)
@@ -810,12 +902,23 @@ async def api_durability_history_timeline(request: web.Request) -> web.Response:
 
 
 async def api_durability_history_operate(request: web.Request) -> web.Response:
-    """POST /api/durability/history/{root}/{op} {sha, confirm?, expected_head?}.
+    """POST /api/durability/history/{root}/{op} {sha, paths?, confirm?, expected_head?,
+    expected_paths?}.
 
     ``op`` is ``rollback`` or ``revert``. Without ``confirm`` this returns the
     preview and touches nothing; with ``confirm`` it requires ``expected_head`` to
     match the root's current HEAD so a preview the user read cannot be applied to
     a tree that moved since.
+
+    ``paths`` restricts the operation to a repo-relative subset (omitted, ``null``
+    or ``[]`` all mean the whole root, which is the shipped behaviour). A subset
+    makes ``expected_head`` alone an insufficient binding between a preview and
+    its confirm: the same HEAD would happily accept a whole-root confirm behind a
+    two-file preview, or a ten-file confirm behind a two-file one, and the user
+    would be shown one thing while another was applied. So phase one also returns
+    ``expected_paths`` and a confirming request must echo it — the normalized SETS
+    must match, or the call is refused with ``preview_paths_mismatch``. That is
+    what keeps "the preview is mandatory by construction" true for a subset.
     """
     denied = _reject_app(request)
     if denied is not None:
@@ -844,25 +947,62 @@ async def api_durability_history_operate(request: web.Request) -> web.Response:
         return web.json_response(
             {"error": {"code": "sha_required", "message": "a commit id is required"}}, status=400
         )
+    paths, err = _history_paths(body.get("paths"), field="paths")
+    if err is not None:
+        return err
+    expected_paths, err = _history_paths(body.get("expected_paths"), field="expected_paths")
+    if err is not None:
+        return err
     home = service.active_home()
     try:
-        prev = state_history.preview(root, sha, operation=operation, home=home)
+        prev = state_history.preview(root, sha, operation=operation, paths=paths, home=home)
     except state_history.HistoryError as exc:
+        # Two failures arrive through one exception type, and they are not the same
+        # user's mistake: an unresolvable commit is a 404, while a path the module
+        # will not accept is a 400 the user fixes by fixing the path. Classify by
+        # re-previewing WITHOUT the subset — one extra call, only on the error path.
+        if paths and _commit_previews(root, sha, operation=operation, home=home):
+            _audit_api(
+                request,
+                f"durability.history_{operation}",
+                "denied",
+                f"{root.id}:bad-paths:paths={len(paths)}",
+            )
+            return web.json_response(
+                {
+                    "error": {
+                        "code": "invalid_path",
+                        "message": f"{exc} (requested: {', '.join(paths)})",
+                    },
+                    "paths": paths,
+                },
+                status=400,
+            )
         _audit_api(request, f"durability.history_{operation}", "denied", f"{root.id}:{exc}")
         return web.json_response(
             {"error": {"code": "unknown_commit", "message": str(exc)}}, status=404
         )
 
     if not body.get("confirm"):
-        # Phase one. The preview IS the response, and it carries the token phase
-        # two must echo.
+        # Phase one. The preview IS the response, and it carries both tokens phase
+        # two must echo: the head it was taken at and the path set it describes.
         return web.json_response(
-            {"confirmed": False, "expected_head": prev["head"], "preview": prev}
+            {
+                "confirmed": False,
+                "expected_head": prev["head"],
+                "expected_paths": list(prev.get("paths", paths)),
+                "preview": prev,
+            }
         )
 
     expected = str(body.get("expected_head", "") or "").strip()
     if expected != prev["head"]:
-        _audit_api(request, f"durability.history_{operation}", "denied", f"{root.id}:stale")
+        _audit_api(
+            request,
+            f"durability.history_{operation}",
+            "denied",
+            f"{root.id}:stale:paths={len(paths)}",
+        )
         return web.json_response(
             {
                 "error": {
@@ -873,6 +1013,33 @@ async def api_durability_history_operate(request: web.Request) -> web.Response:
                     ),
                 },
                 "expected_head": prev["head"],
+                "expected_paths": list(prev.get("paths", paths)),
+                "preview": prev,
+            },
+            status=409,
+        )
+
+    if set(expected_paths) != set(paths):
+        # The head matched, so the tree did not move — but the SELECTION did. Applying
+        # this would act on a path set the user was never shown, which is the same
+        # defect as a stale head wearing a different hat. Refused, nothing touched.
+        _audit_api(
+            request,
+            f"durability.history_{operation}",
+            "denied",
+            f"{root.id}:paths-mismatch:paths={len(paths)}:expected={len(expected_paths)}",
+        )
+        return web.json_response(
+            {
+                "error": {
+                    "code": "preview_paths_mismatch",
+                    "message": (
+                        "this confirm names a different set of paths than the preview it "
+                        "cites; re-take the preview for the paths you mean to restore"
+                    ),
+                },
+                "expected_head": prev["head"],
+                "expected_paths": list(prev.get("paths", paths)),
                 "preview": prev,
             },
             status=409,
@@ -880,11 +1047,13 @@ async def api_durability_history_operate(request: web.Request) -> web.Response:
 
     try:
         if operation == "rollback":
-            result = state_history.rollback(root, sha, home=home)
+            result = state_history.rollback(root, sha, paths=paths, home=home)
         else:
-            result = state_history.revert(root, sha, home=home)
+            result = state_history.revert(root, sha, paths=paths, home=home)
     except state_history.OverlapError as exc:
-        _audit_api(request, "durability.history_revert", "denied", f"{root.id}:overlap")
+        _audit_api(
+            request, "durability.history_revert", "denied", f"{root.id}:overlap:paths={len(paths)}"
+        )
         return web.json_response(
             {
                 "error": {
@@ -900,7 +1069,15 @@ async def api_durability_history_operate(request: web.Request) -> web.Response:
         return web.json_response(
             {"error": {"code": "history_failed", "message": str(exc)}}, status=500
         )
-    _audit_api(request, f"durability.history_{operation}", "allowed", f"{root.id}:{sha[:12]}")
+    # The COUNT, never the names: an audit line is not a place to dump a user's file
+    # names, but a reader still has to be able to tell a subset restore from a
+    # whole-root one, and ``paths=0`` says "whole root".
+    _audit_api(
+        request,
+        f"durability.history_{operation}",
+        "allowed",
+        f"{root.id}:{sha[:12]}:paths={len(paths)}",
+    )
     # Config and skills live in process memory too, so the caller must be told a
     # reload is needed rather than being left with a stale runtime.
     result["reload_required"] = root.id in ("config", "skills", "prompts")

@@ -10,6 +10,9 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Added
 
+- **Know whether a model will actually run on your machine before you download it.**
+- **Put back one file, not your whole configuration.**
+
 - **See every device paired with your gateway, and cut one off.**
 
 - **Plan a task before anything runs, from the chat you are already in.**
@@ -205,8 +208,6 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **A `foreach` with `on_item_error: collect` now has defined behaviour, and it collects.**
 
 - **Security docs now describe what the sandbox actually does — credential-hiding, not confinement.**
-
-### Added
 
 - **The desktop app can now tell the dashboard what it is actually allowed to do.**
 

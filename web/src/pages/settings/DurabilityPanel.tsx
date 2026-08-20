@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { epochSeconds } from '../../lib/epoch'
 import { AlertTriangle, History, HardDriveDownload, Loader2, ShieldAlert, ShieldCheck, ShieldQuestion } from 'lucide-react'
 import {
@@ -8,6 +8,7 @@ import {
   type DurabilityConflict,
   type DurabilityConflictChoice,
   type DurabilityConflicts,
+  type DurabilityHistoryDiffFile,
   type DurabilityHistoryEntry,
   type DurabilityHistoryPreview,
   type DurabilityStatus,
@@ -16,7 +17,7 @@ import {
 import { notify } from '../../app/appSdk'
 import { useCachedData } from '../../lib/useCachedData'
 import { PanelHeader, Section, Row, Toggle, ToggleRow, SavedToast } from './settingsUI'
-import { NumberField, Select } from '../../ui/forms'
+import { Checkbox, NumberField, Select } from '../../ui/forms'
 import { Button } from '../../ui/Button'
 import { fvs } from '../../design/fontWeight'
 import { confirm } from '../../ui/dialog'
@@ -123,10 +124,21 @@ function TimeTravelSection({ cfg, setCfg }: {
   const on = cfg.time_travel !== false
   const [root, setRoot] = useState('config')
   const [sleptOnly, setSleptOnly] = useState(false)
-  const [pending, setPending] = useState<
-    { entry: DurabilityHistoryEntry; op: 'rollback' | 'revert'; head: string; preview: DurabilityHistoryPreview } | null
-  >(null)
+  const [pending, setPending] = useState<Pending | null>(null)
   const [busy, setBusy] = useState(false)
+  // The user's CURRENT ticks, deliberately separate from `pending.paths` (the set the server
+  // previewed). They diverge for exactly as long as a re-preview is in flight, and the apply
+  // reads only the latter — see `Pending`.
+  const [selected, setSelected] = useState<string[]>([])
+  // A refusal belongs ON the card that asked for it. `notify` alone is a toast the user may
+  // never see, and "the restore silently did nothing" is the worst outcome on this surface.
+  const [applyErr, setApplyErr] = useState('')
+  // The newest tick set asked for. Two quick ticks race two previews, and without this the SECOND
+  // answer can land first and leave the held `paths` behind the ticks — an apply would then restore
+  // a set the card no longer shows. Identity, not contents: each toggle mints a fresh array.
+  const wanted = useRef<string[]>([])
+
+  const reset = () => { setPending(null); setSelected([]); setApplyErr(''); wanted.current = [] }
 
   const status = useCachedData('settings:history', () => api.durabilityHistory(), { persist: false })
   const timeline = useCachedData(
@@ -137,44 +149,90 @@ function TimeTravelSection({ cfg, setCfg }: {
 
   const hint = 'A local, continuous history of the things you and the assistant edit — so a bad edit is an undo, not a restore. It stays on this machine: it is never synced, exported, or included in a backup, and it never records secrets.'
 
+  /** Phase one, for a whole root. Also (re)establishes the selectable universe: the file list a
+   *  user picks from is the WHOLE-root diff, captured once here. A narrowed re-preview must not
+   *  replace it, or picking one file would delete the other checkboxes from the screen and the
+   *  choice would be one-way. */
   const takePreview = async (entry: DurabilityHistoryEntry, op: 'rollback' | 'revert') => {
     setBusy(true)
+    setApplyErr('')
+    setSelected([])
     try {
       const r = await api.durabilityHistoryPreview(root, op, entry.sha)
-      setPending({ entry, op, head: r.expected_head, preview: r.preview })
+      setPending({
+        entry, op, head: r.expected_head, preview: r.preview,
+        paths: r.preview.paths ?? [], files: r.preview.files,
+      })
     } catch (e) {
       notify(`Couldn't read what that would change: ${String((e as Error)?.message || e)}`, 'error')
     }
     setBusy(false)
   }
 
+  /** Re-preview after a tick changes, because the server refuses a confirm whose path set differs
+   *  from the previewed one. So narrowing is not a client-side filter of a preview already held: it
+   *  is a NEW phase one, and its answer replaces the head and the frozen `paths` together. */
+  const reprev = async (paths: string[]) => {
+    if (!pending) return
+    const { entry, op } = pending
+    setBusy(true)
+    setApplyErr('')
+    try {
+      const r = await api.durabilityHistoryPreview(root, op, entry.sha, paths)
+      // A newer tick already asked; that answer wins. `finally` still clears `busy`, so a
+      // discarded answer cannot wedge the card.
+      if (wanted.current !== paths) return
+      // `files` is intentionally NOT taken from the narrowed answer — see `takePreview`.
+      setPending((p) => (p ? { ...p, head: r.expected_head, preview: r.preview, paths: r.preview.paths ?? paths } : p))
+    } catch (e) {
+      // An escaping or unknown path is refused by name here, in phase one, before anything is
+      // applied. Surfacing it on the card is what makes the ticks trustworthy.
+      setApplyErr(errorText(e))
+      notify(`Couldn't read what that would change: ${errorText(e)}`, 'error')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const toggleFile = (path: string, ticked: boolean) => {
+    const next = ticked ? [...selected, path] : selected.filter((p) => p !== path)
+    setSelected(next)
+    wanted.current = next
+    void reprev(next)
+  }
+
   const apply = async () => {
     if (!pending) return
-    const { entry, op, head } = pending
-    if (!(await confirm({
-      title: op === 'rollback' ? 'Roll back to this point?' : 'Undo just this change?',
-      body: op === 'rollback'
-        ? `Everything in ${root} goes back to how it was at "${entry.subject}". The ${pending.preview.commits_rolled_away} change(s) made since are set aside — they stay listed here, so you can come forward again. Nothing outside this history is touched, and your saved credentials are untouched.`
-        : `This one change is undone by applying its opposite. Anything edited afterwards is kept. If a later edit touched the same lines, nothing is applied and you will be told which file blocked it.`,
-      confirmLabel: op === 'rollback' ? 'Roll back' : 'Undo it',
-      danger: op === 'rollback',
-    }))) return
+    // 🔑 `pending.paths` — the set the SERVER previewed — never `selected`. They differ while a
+    // re-preview is in flight, and re-deriving from the live ticks here is exactly the mismatch
+    // the server refuses: the user would get a refusal instead of the restore they asked for.
+    const { entry, op, head, paths } = pending
+    if (!(await confirm(confirmCopy(op, root, entry, pending)))) return
     setBusy(true)
+    setApplyErr('')
     try {
-      const r = await api.durabilityHistoryApply(root, op, entry.sha, head)
+      // Whole-root makes the EXACT call it made before subsets existed — four arguments, no
+      // `paths` at all. Passing `[]` would mean the same thing to the server, but "the default
+      // path is untouched" is worth being literally true rather than merely equivalent.
+      const r = await (paths.length
+        ? api.durabilityHistoryApply(root, op, entry.sha, head, paths)
+        : api.durabilityHistoryApply(root, op, entry.sha, head))
       notify(
         r.reload_required
           ? 'Done. Restart PersonalClaw for the change to take effect everywhere.'
           : 'Done.',
         'success',
       )
-      setPending(null)
+      reset()
       timeline.refresh()
       status.refresh()
     } catch (e) {
-      // The server refuses an overlap and a stale preview by name. Neither is "done",
-      // and neither leaves a half-applied tree — say so rather than a generic failure.
-      notify(`Nothing was changed: ${String((e as Error)?.message || e)}`, 'error')
+      // The server refuses an overlap, a stale preview and a path set that does not match the
+      // previewed one — each by name, in the typed envelope. None is "done", and none leaves a
+      // half-applied tree, so the message is shown rather than a generic failure. The code is not
+      // branched on: whatever the server called it, its sentence is what the user needs.
+      setApplyErr(errorText(e))
+      notify(`Nothing was changed: ${errorText(e)}`, 'error')
     }
     setBusy(false)
   }
@@ -210,7 +268,7 @@ function TimeTravelSection({ cfg, setCfg }: {
               <Select
                 value={root}
                 ariaLabel="What to look through"
-                onChange={(v) => { setRoot(v); setPending(null) }}
+                onChange={(v) => { setRoot(v); reset() }}
                 options={roots.map((r) => ({
                   value: r.id,
                   label: `${r.label}${r.exists ? ` — ${r.commits} recorded change${r.commits === 1 ? '' : 's'}` : ' — nothing recorded yet'}`,
@@ -279,7 +337,9 @@ function TimeTravelSection({ cfg, setCfg }: {
 
                   {pending?.entry.sha === entry.sha && (
                     <PreviewCard preview={pending.preview} op={pending.op} busy={busy}
-                      onApply={apply} onCancel={() => setPending(null)} />
+                      files={pending.files} paths={pending.paths} selected={selected}
+                      root={root} error={applyErr} onToggleFile={toggleFile}
+                      onApply={apply} onCancel={reset} />
                   )}
                 </li>
               ))}
@@ -301,27 +361,117 @@ function errorText(e: unknown): string {
   return e instanceof Error ? e.message : typeof e === 'string' ? e : 'unknown error'
 }
 
-function PreviewCard({ preview, op, busy, onApply, onCancel }: {
+/** One held preview — the whole of phase one, kept together so phase two cannot mix parts of two.
+ *
+ *  `head` and `paths` are the two things the server checks a confirming call against, and both
+ *  come from the SAME response, so they cannot drift apart. `files` is the pick-from universe and
+ *  is deliberately not refreshed by a narrowed re-preview. */
+type Pending = {
+  entry: DurabilityHistoryEntry
+  op: 'rollback' | 'revert'
+  head: string
+  preview: DurabilityHistoryPreview
+  /** The subset the SERVER previewed, `[]` for the whole root. Exactly what a confirm must echo. */
+  paths: string[]
+  /** Every file the WHOLE-root operation would touch — what the checkboxes offer. */
+  files: DurabilityHistoryDiffFile[]
+}
+
+/** Name the picked files, but stay a sentence: past a handful a dialog becomes a directory
+ *  listing. The count is stated separately either way, so only the tail is summarized. */
+function namePaths(paths: string[]): string {
+  return paths.length <= 4
+    ? paths.join(', ')
+    : `${paths.slice(0, 3).join(', ')} and ${paths.length - 3} more`
+}
+
+/** The confirmation's words, composed in one place so the subset and the verb cannot drift apart.
+ *
+ *  Two things have to survive here. The VERB distinction this whole section is built on — rollback
+ *  discards later edits, revert keeps them — and the BLAST RADIUS, which a subset makes variable
+ *  for the first time. "Roll back to this point?" over two files out of forty is a lie about what
+ *  is being done, so the count and the names are IN the dialog rather than left implied by the
+ *  ticks on the card behind it. The whole-root wording is unchanged: the default path is the same
+ *  sentence it has always been. */
+function confirmCopy(op: 'rollback' | 'revert', root: string, entry: DurabilityHistoryEntry, pending: Pending) {
+  const { paths, preview, files } = pending
+  const n = paths.length
+  const named = namePaths(paths)
+  if (op === 'rollback') {
+    return {
+      title: n === 0 ? 'Roll back to this point?' : `Roll back ${n} of ${files.length} file(s) to this point?`,
+      body: n === 0
+        ? `Everything in ${root} goes back to how it was at "${entry.subject}". The ${preview.commits_rolled_away} change(s) made since are set aside — they stay listed here, so you can come forward again. Nothing outside this history is touched, and your saved credentials are untouched.`
+        : `Only the ${n} file(s) you picked go back to how they were at "${entry.subject}": ${named}. Every other file in ${root} is left exactly as it is. The ${preview.commits_rolled_away} change(s) made since are set aside for those ${n} file(s) — they stay listed here, so you can come forward again. Your saved credentials are untouched.`,
+      confirmLabel: 'Roll back',
+      danger: true,
+    }
+  }
+  return {
+    title: n === 0 ? 'Undo just this change?' : `Undo just this change in ${n} of ${files.length} file(s)?`,
+    body: n === 0
+      ? `This one change is undone by applying its opposite. Anything edited afterwards is kept. If a later edit touched the same lines, nothing is applied and you will be told which file blocked it.`
+      : `This one change is undone by applying its opposite to the ${n} file(s) you picked: ${named}. Anything edited afterwards is kept, and so is every other file in ${root}. If a later edit touched the same lines, nothing is applied and you will be told which file blocked it.`,
+    confirmLabel: 'Undo it',
+    danger: false,
+  }
+}
+
+function PreviewCard({ preview, op, busy, files, paths, selected, root, error, onToggleFile, onApply, onCancel }: {
   preview: DurabilityHistoryPreview
   op: 'rollback' | 'revert'
   busy: boolean
+  /** The selectable universe — every file the whole-root operation touches. */
+  files: DurabilityHistoryDiffFile[]
+  /** The subset the held preview was taken over, `[]` for whole-root. What an apply will send. */
+  paths: string[]
+  /** What is ticked right now. Equals `paths` except while a re-preview is in flight. */
+  selected: string[]
+  root: string
+  error: string
+  onToggleFile: (path: string, ticked: boolean) => void
   onApply: () => void
   onCancel: () => void
 }) {
+  // The SUMMARY counts the previewed set, not the ticks: it describes the operation that is
+  // actually held and about to be sent. The ticks are the input; this line is the answer to them,
+  // and for the moment they disagree the honest thing is to report the answer.
+  const n = paths.length
   return (
     <div className="mt-2 rounded-md bg-surface px-3 py-2">
       <p className="text-on-surface-low text-[0.75rem]">
         {op === 'rollback'
-          ? `${preview.files.length} file(s) would change, and ${preview.commits_rolled_away} later change(s) would be set aside.`
-          : `${preview.files.length} file(s) would change. Later edits are kept.`}
+          ? n === 0
+            ? `${preview.files.length} file(s) would change, and ${preview.commits_rolled_away} later change(s) would be set aside.`
+            : `${n} of ${files.length} file(s) would change, and ${preview.commits_rolled_away} later change(s) to them would be set aside. The rest of ${root} is left alone.`
+          : n === 0
+            ? `${preview.files.length} file(s) would change. Later edits are kept.`
+            : `${n} of ${files.length} file(s) would change. Later edits are kept, and so is every file you did not pick.`}
       </p>
       {preview.files.length === 0 && (
         <p className="mt-1 text-on-surface-low text-[0.75rem]">Nothing would change.</p>
       )}
+      {/* The subset is opt-IN and says so, because an untouched list has to read as "all of it"
+          rather than as "none of it" — the default here restores the whole root, exactly as it did
+          before individual files could be picked. */}
+      {files.length > 1 && (
+        <p className="mt-1 text-on-surface-low text-[0.75rem]">
+          Tick individual files to {op === 'rollback' ? 'roll back' : 'undo'} only those. With
+          nothing ticked, all {files.length} are.
+        </p>
+      )}
       <ul className="mt-2 flex list-none flex-col gap-2 p-0">
-        {preview.files.map((f) => (
+        {files.map((f) => (
           <li key={f.path}>
-            <div className="truncate text-on-surface text-[0.75rem]" style={fvs(550)}>{f.path}</div>
+            <label className="flex min-w-0 items-center gap-2">
+              {/* Named with the path, so the run of ticks announces as distinct rows rather than
+                  as identical controls told apart only by position. */}
+              <Checkbox
+                checked={selected.includes(f.path)}
+                onChange={(v) => onToggleFile(f.path, v)}
+                ariaLabel={`${op === 'rollback' ? 'Roll back' : 'Undo'} ${f.path}`} />
+              <span className="min-w-0 flex-1 truncate text-on-surface text-[0.75rem]" style={fvs(550)}>{f.path}</span>
+            </label>
             {f.rendered ? (
               <pre className="mt-1 max-h-48 overflow-auto rounded bg-surface-container px-2 py-1 text-[0.6875rem] leading-snug"><code>{f.diff}</code></pre>
             ) : (
@@ -332,6 +482,16 @@ function PreviewCard({ preview, op, busy, onApply, onCancel }: {
           </li>
         ))}
       </ul>
+      {/* A refused restore changed NOTHING, and that is the one outcome a user must not have to
+          infer from a screen that looks the same as before they pressed the button. `role="alert"`
+          because it is the result of an action they just took. */}
+      {error && (
+        <div className="mt-3 flex items-start gap-2 text-[0.75rem]" role="alert"
+          style={{ color: 'var(--color-error)' }}>
+          <AlertTriangle size={14} className="mt-0.5 shrink-0" aria-hidden />
+          <span>Nothing was changed: {error}</span>
+        </div>
+      )}
       <div className="mt-3 flex flex-wrap gap-2">
         <Button variant={op === 'rollback' ? 'danger' : 'primary'} size="sm" disabled={busy}
           onClick={onApply}>

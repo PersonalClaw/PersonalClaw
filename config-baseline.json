@@ -857,6 +857,18 @@
     "type": "bool"
   },
   {
+    "default": true,
+    "path": "local_models.hide_unrunnable_models",
+    "sensitive": false,
+    "type": "bool"
+  },
+  {
+    "default": 3.0,
+    "path": "local_models.memory_reserve_gb",
+    "sensitive": false,
+    "type": "float"
+  },
+  {
     "default": 85,
     "path": "local_models.pressure_warn_pct",
     "sensitive": false,

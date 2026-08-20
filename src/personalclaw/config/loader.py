@@ -991,7 +991,12 @@ class LocalModelsConfig:
     what to close. ``sidecar_restart_max`` bounds how many times in a row a crashed
     sidecar child is respawned before the runner stops trying; without a bound, a provider
     whose venv is genuinely broken becomes a respawn busy-loop instead of one honest
-    error.
+    error. ``memory_reserve_gb`` is how much memory the fit verdict holds back for the OS
+    and the inference runtime before it decides whether a model fits — raising it makes
+    every verdict more conservative, and it is never a limit that blocks a download or a
+    load. ``hide_unrunnable_models`` is the browse filter's default: on a small machine a
+    catalog is mostly models it cannot run, so the filter starts ON and stays one click
+    away.
     """
 
     pressure_warn_pct: int = field(
@@ -1008,6 +1013,23 @@ class LocalModelsConfig:
             "Sidecar restart limit",
             "How many times in a row a crashed model sidecar is respawned before the "
             "runner gives up and reports the failure instead.",
+        ),
+    )
+    memory_reserve_gb: float = field(
+        default=3.0,
+        metadata=_meta(
+            "Memory reserve",
+            "Memory (GB) held back for your OS and the inference runtime, subtracted "
+            "before any model-fit verdict. Raise it if models fit on paper but your "
+            "machine struggles — verdicts get more cautious. It never blocks anything.",
+        ),
+    )
+    hide_unrunnable_models: bool = field(
+        default=True,
+        metadata=_meta(
+            "Hide models this device cannot run",
+            "Keeps models that do not fit this machine's memory out of the browse list. "
+            "On by default; turn it off to see the whole catalog.",
         ),
     )
 
@@ -4575,6 +4597,18 @@ class AppConfig:
                 sidecar_restart_max=max(
                     0, _safe_int(local_models_data.get("sidecar_restart_max"), 3)
                 ),
+                # Clamped to the same 0-64 GB window the PATCH allowlist enforces: a
+                # negative reserve would hand the fit verdict MORE memory than the machine
+                # has, and a reserve larger than any real machine would make every model
+                # read as unrunnable. The PATCH path rejects out-of-range edits outright;
+                # this clamp only exists so a hand-edited config.json still loads.
+                memory_reserve_gb=min(
+                    64.0, max(0.0, _safe_float(local_models_data.get("memory_reserve_gb"), 3.0))
+                ),
+                # The filter default is ON: a plain read, since an unreadable value should
+                # leave the shipped default rather than dumping an unrunnable catalog on a
+                # small machine.
+                hide_unrunnable_models=bool(local_models_data.get("hide_unrunnable_models", True)),
             ),
             sources=SourcesConfig(
                 enabled=bool(sources_data.get("enabled", True)),

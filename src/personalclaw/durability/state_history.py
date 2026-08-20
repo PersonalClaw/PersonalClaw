@@ -26,7 +26,10 @@ Shape of the mechanism:
   into a service-owned ref, so the commits you rolled away stay listable and
   forward travel is possible. ``revert`` is git's inverse commit, so
   non-overlapping later edits survive; an overlap fails loudly naming the
-  blocking files instead of leaving a half-merged tree.
+  blocking files instead of leaving a half-merged tree. Both take an optional
+  ``paths`` subset — "restore just this note", not the whole tree — and the
+  distinction survives the subset: a per-file rollback DISCARDS later edits to
+  the named paths, a per-file revert KEEPS them.
 
 * **Preview first.** Both operations have a ``preview_*`` sibling that returns
   the affected files and per-file diffs, and neither destructive call is reachable
@@ -46,7 +49,7 @@ import os
 import re
 import subprocess
 import time
-from collections.abc import Iterator
+from collections.abc import Iterator, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -392,6 +395,7 @@ def _git(
     *args: str,
     home: Path | None = None,
     check: bool = True,
+    stdin: str | None = None,
 ) -> subprocess.CompletedProcess[str]:
     gd = git_dir(root, home=home)
     _assert_service_git_dir(gd, home=home)
@@ -418,6 +422,11 @@ def _git(
         capture_output=True,
         text=True,
         check=False,
+        # A patch goes in on stdin, never through a temp file: the payload is the
+        # user's memory notes and configuration, and /tmp is the wrong place for
+        # those. `text=True` encodes stdin with the same codec it decodes stdout
+        # with, so the round trip through `git diff` → `git apply` is lossless.
+        input=stdin,
     )
     if check and proc.returncode != 0:
         raise HistoryError(
@@ -587,9 +596,122 @@ def _resolve(root: HistoryRoot, sha: str, *, home: Path | None = None) -> str:
     return resolved
 
 
-def _diff_preview(root: HistoryRoot, frm: str, to: str, *, home: Path | None = None) -> list[dict]:
-    """Per-file name/status plus the patch, with the >1MB render cutoff."""
-    name_status = _git(root, "diff", "--name-status", "-z", frm, to, home=home).stdout
+# ── path subsets ───────────────────────────────────────────────────────────
+#
+# A path subset is a destructive argument, exactly like a commit id, so it goes
+# through the same shape of gate: normalized, then checked against the set of
+# paths the operation actually touches. An unknown path RAISES. It is never
+# quietly dropped, because a dropped path is a restore the user believes
+# happened and did not — the one failure mode a restore surface must not have.
+
+
+def _normalize_paths(paths: Sequence[str | Path] | None) -> list[str]:
+    """Normalize a repo-relative path subset, or refuse it.
+
+    ``None`` and ``[]`` both mean "the whole root" and both normalize to ``[]``,
+    so the whole-root call path is reached by exactly one representation.
+    """
+    if not paths:
+        return []
+    out: set[str] = set()
+    for raw in paths:
+        text = str(raw).replace("\\", "/").strip()
+        if not text:
+            raise HistoryError("empty path in the restore subset")
+        # Both spellings of "absolute": POSIX, and a Windows drive letter that
+        # `Path.is_absolute` does not recognise when running on POSIX.
+        if text.startswith("/") or Path(text).is_absolute() or re.match(r"^[A-Za-z]:", text):
+            raise HistoryError(f"restore path must be repo-relative, not absolute: {text!r}")
+        parts = [p for p in text.split("/") if p and p != "."]
+        if ".." in parts:
+            raise HistoryError(f"restore path escapes the root: {text!r}")
+        if not parts:
+            raise HistoryError(f"restore path names the root itself: {text!r}")
+        out.add("/".join(parts))
+    return sorted(out)
+
+
+def _changed_paths(root: HistoryRoot, frm: str, to: str, *, home: Path | None = None) -> set[str]:
+    """Every path whose content differs between two trees — BOTH sides of a rename.
+
+    Rename detection is off on purpose here: a per-file operation names one path,
+    and a rename collapsed into a single ``R`` row would make the source name look
+    like it was never touched, so selecting it would be refused as unknown.
+    """
+    out = _git(root, "diff", "--name-only", "-z", "--no-renames", frm, to, home=home).stdout
+    return {p for p in out.split("\0") if p}
+
+
+def _require_changed(
+    root: HistoryRoot,
+    selected: Sequence[str],
+    frm: str,
+    to: str,
+    *,
+    operation: str,
+    home: Path | None = None,
+) -> None:
+    """Refuse a subset naming a path the operation would not touch."""
+    if not selected:
+        return
+    changed = _changed_paths(root, frm, to, home=home)
+    unknown = sorted(p for p in selected if p not in changed)
+    if unknown:
+        raise HistoryError(
+            f"{operation} of {to[:8]} in root {root.id} does not change: " + ", ".join(unknown)
+        )
+
+
+def _paths_in_tree(
+    root: HistoryRoot, tree: str, selected: Sequence[str], *, home: Path | None = None
+) -> set[str]:
+    """Which of *selected* exist in *tree*. The rest did not exist at that commit."""
+    if not selected:
+        return set()
+    out = _git(root, "ls-tree", "-r", "-z", "--name-only", tree, "--", *selected, home=home).stdout
+    return {p for p in out.split("\0") if p}
+
+
+def _revert_span(root: HistoryRoot, target: str, *, home: Path | None = None) -> tuple[str, str]:
+    """The ``(from, to)`` pair whose diff IS the inverse patch of *target*.
+
+    The inverse patch of a commit is the diff from that commit back to its
+    parent. The root commit has no parent, so its inverse is the diff to the
+    empty tree — reverting it empties the tracked tree, which is the honest
+    answer rather than an error.
+    """
+    parents = _git(root, "rev-list", "--parents", "-n", "1", target, home=home).stdout.split()
+    if len(parents) < 2:
+        empty = _git(root, "hash-object", "-t", "tree", "/dev/null", home=home).stdout.strip()
+        return target, empty
+    return target, parents[1]
+
+
+def _subject_count(n: int) -> str:
+    return f"{n} file{'s' if n != 1 else ''}"
+
+
+def _diff_preview(
+    root: HistoryRoot,
+    frm: str,
+    to: str,
+    *,
+    paths: Sequence[str] | None = None,
+    home: Path | None = None,
+) -> list[dict]:
+    """Per-file name/status plus the patch, with the >1MB render cutoff.
+
+    With *paths* the listing is restricted to that subset and rename detection is
+    dropped, so the preview shows exactly the per-path rows the subset operation
+    will act on.
+    """
+    args = ["diff", "--name-status", "-z"]
+    if paths:
+        args.append("--no-renames")
+    args += [frm, to]
+    if paths:
+        args += ["--", *paths]
+    name_status = _git(root, *args, home=home).stdout
     fields = [f for f in name_status.split("\0") if f]
     files: list[dict] = []
     i = 0
@@ -617,12 +739,28 @@ def _diff_preview(root: HistoryRoot, frm: str, to: str, *, home: Path | None = N
     return files
 
 
-def preview_rollback(root: HistoryRoot, sha: str, *, home: Path | None = None) -> dict:
-    """What a hard reset to *sha* would change in the work tree."""
+def preview_rollback(
+    root: HistoryRoot,
+    sha: str,
+    *,
+    paths: Sequence[str] | None = None,
+    home: Path | None = None,
+) -> dict:
+    """What a rollback to *sha* would change in the work tree.
+
+    Whole root: what a hard reset would change. With *paths*: only those paths,
+    and ``commits_rolled_away`` is 0 — a subset rollback ADDS a commit instead of
+    resetting HEAD, so no commit leaves the timeline and the panel must not claim
+    one does.
+    """
     target = _resolve(root, sha, home=home)
     head = _git(root, "rev-parse", "HEAD", home=home).stdout.strip()
-    files = _diff_preview(root, head, target, home=home)
-    dropped = _git(root, "rev-list", "--count", f"{target}..{head}", home=home).stdout.strip()
+    selected = _normalize_paths(paths)
+    _require_changed(root, selected, head, target, operation="rollback", home=home)
+    files = _diff_preview(root, head, target, paths=selected, home=home)
+    dropped = "0"
+    if not selected:
+        dropped = _git(root, "rev-list", "--count", f"{target}..{head}", home=home).stdout.strip()
     return {
         "operation": "rollback",
         "root": root.id,
@@ -631,23 +769,28 @@ def preview_rollback(root: HistoryRoot, sha: str, *, home: Path | None = None) -
         "files": files,
         "commits_rolled_away": int(dropped or 0),
         "reversible": True,
+        "paths": selected,
     }
 
 
-def preview_revert(root: HistoryRoot, sha: str, *, home: Path | None = None) -> dict:
+def preview_revert(
+    root: HistoryRoot,
+    sha: str,
+    *,
+    paths: Sequence[str] | None = None,
+    home: Path | None = None,
+) -> dict:
     """What an inverse commit of *sha* would change.
 
     The inverse patch of a commit is the diff from that commit back to its
-    parent, which is exactly what ``git revert`` will try to apply.
+    parent, which is exactly what the revert will try to apply. With *paths* the
+    inverse is restricted to that subset.
     """
     target = _resolve(root, sha, home=home)
-    parents = _git(root, "rev-list", "--parents", "-n", "1", target, home=home).stdout.split()
-    if len(parents) < 2:
-        # The root commit has no parent; reverting it would empty the tree.
-        empty = _git(root, "hash-object", "-t", "tree", "/dev/null", home=home).stdout.strip()
-        files = _diff_preview(root, target, empty, home=home)
-    else:
-        files = _diff_preview(root, target, parents[1], home=home)
+    selected = _normalize_paths(paths)
+    frm, to = _revert_span(root, target, home=home)
+    _require_changed(root, selected, frm, to, operation="revert", home=home)
+    files = _diff_preview(root, frm, to, paths=selected, home=home)
     return {
         "operation": "revert",
         "root": root.id,
@@ -656,53 +799,195 @@ def preview_revert(root: HistoryRoot, sha: str, *, home: Path | None = None) -> 
         "files": files,
         "commits_rolled_away": 0,
         "reversible": True,
+        "paths": selected,
     }
 
 
-def preview(root: HistoryRoot, sha: str, *, operation: str, home: Path | None = None) -> dict:
+def preview(
+    root: HistoryRoot,
+    sha: str,
+    *,
+    operation: str,
+    paths: Sequence[str] | None = None,
+    home: Path | None = None,
+) -> dict:
     if operation == "rollback":
-        return preview_rollback(root, sha, home=home)
+        return preview_rollback(root, sha, paths=paths, home=home)
     if operation == "revert":
-        return preview_revert(root, sha, home=home)
+        return preview_revert(root, sha, paths=paths, home=home)
     raise HistoryError(f"unknown time-travel operation {operation!r}")
 
 
 # ── destructive operations ─────────────────────────────────────────────────
 
 
-def rollback(root: HistoryRoot, sha: str, *, home: Path | None = None) -> dict:
-    """Hard-reset *root* to *sha*, parking the prior HEAD in a service ref.
+def _rollback_paths(
+    root: HistoryRoot, target: str, selected: list[str], *, home: Path | None = None
+) -> str:
+    """Restore *selected* to their content at *target* as a NEW commit. Returns its sha.
+
+    There is no per-file ``reset --hard`` — a reset is whole-tree — so the honest
+    per-file mechanism is to take those paths' content from the target and record
+    it as a commit. Paths that did not exist at the target are removed, because
+    "restore it to how it was" means the file was not there.
+
+    Nothing outside *selected* is touched: the content comes from ``checkout
+    <target> -- <paths>`` and the commit is taken with an explicit pathspec, so
+    the recorded tree is HEAD's tree with only those entries replaced.
+    """
+    in_target = _paths_in_tree(root, target, selected, home=home)
+    restore = [p for p in selected if p in in_target]
+    remove = [p for p in selected if p not in in_target]
+    if restore:
+        _git(root, "checkout", target, "--", *restore, home=home)
+    if remove:
+        # --force: a rollback exists to discard the later edit, so a modified
+        # work-tree copy must not veto the removal.
+        _git(root, "rm", "--quiet", "--force", "--ignore-unmatch", "--", *remove, home=home)
+    subject = f"{root.label}: roll back {_subject_count(len(selected))} to {target[:8]}"
+    body = f"Surface: {current_surface()}\nRoot: {root.id}\nRolled-back-to: {target}\n" + "".join(
+        f"Restored-path: {p}\n" for p in selected
+    )
+    _git(root, "commit", "--quiet", "-m", subject, "-m", body, "--", *selected, home=home)
+    return _git(root, "rev-parse", "HEAD", home=home).stdout.strip()
+
+
+def rollback(
+    root: HistoryRoot,
+    sha: str,
+    *,
+    paths: Sequence[str] | None = None,
+    home: Path | None = None,
+) -> dict:
+    """Roll *root* back to *sha*, parking the prior HEAD in a service ref.
+
+    Whole root (``paths`` empty or omitted): a hard reset. With ``paths``: only
+    those paths are restored to their content at *sha*, recorded as a new commit,
+    and later edits to every OTHER path survive. Either way, later edits to the
+    rolled-back paths are discarded — that is what rollback means, and it is the
+    line that separates it from :func:`revert`.
+
+    The prior HEAD is parked in the same service ref for both shapes, so forward
+    travel works identically whether the user rolled back one note or the tree.
 
     Ignored files — the credential store, ``.env``, anything the allowlist never
-    admitted — are untouched: ``reset --hard`` only rewrites tracked paths, and
-    this module never runs ``git clean``. That is the whole reason secrets can be
-    both gitignored and preserved across a rollback.
+    admitted — are untouched by both shapes: ``reset --hard`` only rewrites
+    tracked paths, a subset can only name a path that appears in a commit (and an
+    ignored file never does), and this module never runs ``git clean``. That is
+    the whole reason secrets can be both gitignored and preserved across a
+    rollback.
     """
     target = _resolve(root, sha, home=home)
     prior = _git(root, "rev-parse", "HEAD", home=home).stdout.strip()
+    selected = _normalize_paths(paths)
+    # Validate BEFORE parking a ref or touching the tree: a refused subset must
+    # leave no trace.
+    _require_changed(root, selected, prior, target, operation="rollback", home=home)
     ref = f"{REF_PREFIX}/rollback-{int(time.time())}-{prior[:8]}"
     _git(root, "update-ref", ref, prior, home=home)
-    _git(root, "reset", "--hard", "--quiet", target, home=home)
-    logger.info(
-        "time-travel: rolled %s back to %s (prior HEAD kept at %s)", root.id, target[:8], ref
-    )
+    if selected:
+        head = _rollback_paths(root, target, selected, home=home)
+        logger.info(
+            "time-travel: rolled %s of %s back to %s (prior HEAD kept at %s)",
+            _subject_count(len(selected)),
+            root.id,
+            target[:8],
+            ref,
+        )
+    else:
+        _git(root, "reset", "--hard", "--quiet", target, home=home)
+        head = target
+        logger.info(
+            "time-travel: rolled %s back to %s (prior HEAD kept at %s)", root.id, target[:8], ref
+        )
     return {
         "operation": "rollback",
         "root": root.id,
-        "head": target,
+        "head": head,
         "prior_head": prior,
         "prior_ref": ref,
+        "paths": selected,
     }
 
 
-def revert(root: HistoryRoot, sha: str, *, home: Path | None = None) -> dict:
+def _revert_paths(
+    root: HistoryRoot, target: str, selected: list[str], *, home: Path | None = None
+) -> dict:
+    """Reverse-apply *target*'s changes to *selected* only, keeping later edits.
+
+    Mechanism: the inverse patch restricted to those paths, checked per path and
+    then applied in one shot. Deliberately NOT "check out the parent commit for
+    those paths" — that discards every later edit to them, which would silently
+    turn revert into rollback while the panel still promises later edits survive.
+
+    Also deliberately not ``git revert -n`` plus a restore of the non-selected
+    paths: a conflict in a path the user did NOT select would then abort work they
+    did ask for, and the abort itself has to reset the work tree. Pre-checking
+    each selected path's patch instead detects an overlap before anything is
+    written, so a failure leaves the work tree byte-identical rather than merely
+    restored. The cost is that this is a strict patch application, not a
+    three-way merge, so it refuses a few overlaps a whole-root revert could have
+    absorbed — loudly, with the whole-root revert still available.
+    """
+    frm, to = _revert_span(root, target, home=home)
+    _require_changed(root, selected, frm, to, operation="revert", home=home)
+    blocking: list[str] = []
+    for path in selected:
+        patch = _git(
+            root, "diff", "--binary", "--no-renames", frm, to, "--", path, home=home
+        ).stdout
+        if not patch.strip():
+            continue
+        check = _git(root, "apply", "--check", "-", home=home, check=False, stdin=patch)
+        if check.returncode != 0:
+            blocking.append(path)
+    if blocking:
+        raise OverlapError(sorted(blocking))
+    combined = _git(
+        root, "diff", "--binary", "--no-renames", frm, to, "--", *selected, home=home
+    ).stdout
+    if not combined.strip():
+        raise HistoryError(f"revert of {target[:8]} in root {root.id} would change nothing")
+    applied = _git(root, "apply", "--index", "-", home=home, check=False, stdin=combined)
+    if applied.returncode != 0:
+        # `git apply` is all-or-nothing, so nothing was written. Reported as an
+        # overlap rather than as a second, unfamiliar error shape.
+        raise OverlapError(sorted(selected))
+    subject = f"{root.label}: revert {_subject_count(len(selected))} of {target[:8]}"
+    body = f"Surface: {current_surface()}\nRoot: {root.id}\nReverted: {target}\n" + "".join(
+        f"Reverted-path: {p}\n" for p in selected
+    )
+    _git(root, "commit", "--quiet", "-m", subject, "-m", body, "--", *selected, home=home)
+    return {
+        "operation": "revert",
+        "root": root.id,
+        "head": _git(root, "rev-parse", "HEAD", home=home).stdout.strip(),
+        "reverted": target,
+        "paths": selected,
+    }
+
+
+def revert(
+    root: HistoryRoot,
+    sha: str,
+    *,
+    paths: Sequence[str] | None = None,
+    home: Path | None = None,
+) -> dict:
     """Apply the inverse of *sha* as a new commit, keeping later edits.
 
+    With ``paths``, only those paths are reverted and later edits to them still
+    survive: a subset narrows WHICH paths are undone, it never converts revert
+    into a discard.
+
     Raises :class:`OverlapError` naming the blocking files when a later edit
-    touched the same lines, after aborting so the work tree is left exactly as it
-    was. Never resolves a conflict on the user's behalf.
+    touched the same lines, leaving the work tree exactly as it was. Never
+    resolves a conflict on the user's behalf.
     """
     target = _resolve(root, sha, home=home)
+    selected = _normalize_paths(paths)
+    if selected:
+        return _revert_paths(root, target, selected, home=home)
     proc = _git(root, "revert", "--no-edit", target, home=home, check=False)
     if proc.returncode != 0:
         conflicted = _git(
@@ -715,6 +1000,7 @@ def revert(root: HistoryRoot, sha: str, *, home: Path | None = None) -> dict:
         "root": root.id,
         "head": _git(root, "rev-parse", "HEAD", home=home).stdout.strip(),
         "reverted": target,
+        "paths": [],
     }
 
 

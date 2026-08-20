@@ -178,13 +178,33 @@ def purpose_for_source(source: str) -> tuple[str, str]:
     return APP_PURPOSE, raw or "(unnamed)"
 
 
+#: Purposes declared in :data:`PURPOSE_BY_SOURCE` that NO turn-ledger writer can currently
+#: produce. Measured from the five live ``record_from_event`` call sites, which pass exactly
+#: ``background`` (gateway heartbeat), ``channel``/``cron`` (announce path), ``subagent``,
+#: ``cli`` (cli_chat) and ``chat``-or-an-app-name (chat_runner, ``session._app or "chat"``):
+#:
+#: * ``eval`` — declared for a first writer that does not exist yet.
+#: * ``loop`` — the loop engine writes NO turn row. Its inferences resolve under the ``loops``
+#:   guard axis into ``model_calls.jsonl`` attempts, which the fold CENSUSES rather than sums,
+#:   so loop spend reaches ``fold["uncounted"]`` and never a ``loop`` cell. (This also means the
+#:   module note's double-count example is aspirational, not current: there is no loop turn row
+#:   to double-count against.)
+#:
+#: Kept as an explicit set rather than derived at runtime because the writers are spread across
+#: five modules and an import-time census of them would be a circular dependency. It cannot go
+#: stale silently: ``test_usage_reachable_purposes`` censuses the real call sites and fails the
+#: moment a writer for one of these appears.
+UNWRITTEN_PURPOSES = frozenset({"eval", "loop"})
+
+
 def reachable_purposes() -> tuple[str, ...]:
     """The purposes the CURRENT writers can actually produce.
 
-    ``eval`` has no writer today, so a surface uses this to avoid rendering a permanent zero row
-    for a bucket nothing can fill.
+    A surface uses this to avoid rendering a permanent zero row for a bucket nothing can fill —
+    "no spend" and "nothing can ever land here" read identically in a chart, and only one of
+    them is information. See :data:`UNWRITTEN_PURPOSES` for which are excluded and why.
     """
-    got = set(PURPOSE_BY_SOURCE.values()) - {"eval"}
+    got = set(PURPOSE_BY_SOURCE.values()) - UNWRITTEN_PURPOSES
     got.add(APP_PURPOSE)
     return tuple(p for p in PURPOSES if p in got)
 
