@@ -2695,9 +2695,11 @@ export interface SavedAgent {
 
 
 // ── Goal Loop — the unified autonomous goal engine.
-export type LoopStatus =
-  | 'intake' | 'planning' | 'review' | 'ready' | 'running' | 'paused'
-  | 'stagnant' | 'needs_input' | 'complete' | 'failed' | 'stopped'
+// Lifecycle status is `UnifiedLoopStatus` below — ONE union for one backend enum. A
+// goal-shaped and a code-shaped copy used to live here and there; the goal one omitted
+// `blocked`, which the backend both emits and accepts a `resume` from, so a comparison
+// against it was a type error and every hand-written affordance guard dropped that state.
+// Railed against `loop.loop:LoopStatus` by `tests/test_loop_status_vocabulary.py`.
 export type GoalType = 'verifiable' | 'open_ended' | 'monitor'
 export type Granularity = 'quick' | 'balanced' | 'exhaustive' | 'forever'
 export interface LoopFinding {
@@ -2741,7 +2743,7 @@ export interface GoalLoop {
   success_criteria: string | null; verify_command?: string
   rubric?: string[]; best_score?: number; last_score?: number | null; ratchet_mode?: string
   marginal_scores?: number[]
-  status: LoopStatus; total_cycles: number; error_message: string | null
+  status: UnifiedLoopStatus; total_cycles: number; error_message: string | null
   created_at: number; started_at: number | null; completed_at: number | null; elapsed_seconds?: number
   findings?: LoopFinding[]; verdicts?: LoopVerdict[]; pending_question?: string | null; nudges?: LoopNudge[]
   feedback_producer?: FeedbackProducer
@@ -2776,13 +2778,9 @@ export interface LoopIntakePhase { id: string; title: string; description: strin
 export interface LoopIntakePlan { phases: LoopIntakePhase[]; current_phase_id?: string; current_step_id?: string }
 
 // ── Code — the SDLC planning/execution engine (mini-IDE). Sibling of GoalLoop. ──
-export type CodeStatus =
-  | 'intake' | 'planning' | 'review' | 'ready' | 'running' | 'paused'
-  | 'blocked' | 'needs_input' | 'complete' | 'failed' | 'stopped'
-  // The unified engine's shared watchdog can stagnate ANY kind (the legacy code engine
-  // couldn't) — a code loop reaches 'stalled — needs direction' too, so the code-shaped
-  // view-model status must include it (resume/stop/steer all valid).
-  | 'stagnant'
+// Code's lifecycle status is `UnifiedLoopStatus` too. The shared watchdog can stagnate
+// ANY kind (the legacy code engine could not), and every kind can block, so a per-kind
+// status union only ever encoded which states its author remembered.
 export type EntryStage =
   | 'ideation' | 'requirements' | 'design' | 'decomposition' | 'implementation'
   | 'verification' | 'review' | 'bugfix' | 'cr_comments' | 'refactor' | 'investigation'
@@ -2851,7 +2849,7 @@ export interface CodeProject {
   files_dir?: string
   max_cycles: number; idle_secs: number
   success_criteria: string | null; verify_command?: string; test_command?: string
-  status: CodeStatus; total_cycles: number; error_message: string | null
+  status: UnifiedLoopStatus; total_cycles: number; error_message: string | null
   created_at: number; started_at: number | null; completed_at: number | null; elapsed_seconds?: number
   project_id?: string; tasks_project_id?: string; task_list_ids?: Record<string, string>; session_key?: string
   findings?: CodeFinding[]; pending_question?: { question: string; why?: string } | null

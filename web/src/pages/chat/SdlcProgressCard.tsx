@@ -4,17 +4,16 @@ import { motion } from 'framer-motion'
 import { Loader2, ArrowUpRight, CircleDot, CheckCircle2, Circle, AlertTriangle, HelpCircle, Clock, Search, Pause, Play, Square, Trash2 } from 'lucide-react'
 import { api, type Loop } from '../../lib/api'
 import { IconButton } from '../../ui/IconButton'
-import { loopStatusLabel, loopStatusTone, effectiveLoopStatus, ACTIVE_LOOP_STATUSES } from '../../lib/loopStatus'
+import { loopStatusLabel, loopStatusTone, effectiveLoopStatus, LOOP_ACTION_SOURCE_STATUSES, type LoopAction } from '../../lib/loopStatus'
 import { loopKindMeta } from '../../lib/loopKind'
 import { foldRunSnapshot } from '../loops/runFold'
 import { RunProgress } from '../loops/RunProgress'
 import { messageEnter } from '../../design/motion'
 
-// Action-gating status sets, keyed on the RAW backend status. Stop is gated by the ONE
-// active set — which is literally the backend's `ACTION_SOURCE_STATES['stop']` — so this
-// card and the Loops list offer the same control for the same state without either one
-// hand-writing the set (the hand-written copy here offered Stop on the four pre-launch
-// statuses, where the action 409s, and withheld it from `blocked`).
+// Terminal statuses, the gate for the two-step DELETE. Delete is not one of the four
+// lifecycle actions, so it has no row in `LOOP_ACTION_SOURCE_STATUSES` — the backend
+// deletes a loop in any state and this set is a product judgement (a live loop is stopped
+// first, not destroyed) rather than a copy of a backend guard.
 const DONE_ST = new Set(['complete', 'failed', 'stopped'])
 
 /** Live in-chat progress widget for a Code project / Goal Loop the agent created
@@ -114,9 +113,16 @@ export function SdlcProgressCard({ refObj, controllable = false, onDeleted }: {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [kind, id])
 
+  // Does the backend accept this action from the loop's CURRENT status? One question, one
+  // source — the mirror of its transition guard. Keyed on the RAW status deliberately: the
+  // effective status below rewrites a budget-exhausted finish for DISPLAY, and gating on a
+  // rewritten status would offer an action the backend never agreed to.
+  const canAct = (action: LoopAction) => !!entity && LOOP_ACTION_SOURCE_STATUSES[action].has(entity.status)
+
   // Lifecycle controls (only rendered when `controllable`). Optimistically refetch so
-  // the pill + gating update without waiting for the next poll tick.
-  async function act(e: React.MouseEvent, action: 'pause' | 'resume' | 'stop') {
+  // the pill + gating update without waiting for the next poll tick. `start` is absent by
+  // design — this card watches a run that already exists, so its actions are a subset.
+  async function act(e: React.MouseEvent, action: Exclude<LoopAction, 'start'>) {
     e.preventDefault(); e.stopPropagation()
     if (busy) return
     setBusy(true)
@@ -205,9 +211,9 @@ export function SdlcProgressCard({ refObj, controllable = false, onDeleted }: {
         {controllable && entity && (
           <span className="shrink-0 inline-flex items-center gap-0.5">
             {busy && <Loader2 size={11} className="animate-spin text-on-surface-low" />}
-            {entity.status === 'running' && <IconButton icon={Pause} label="Pause" size={28} onClick={(e) => act(e, 'pause')} />}
-            {['paused', 'stagnant', 'needs_input'].includes(entity.status) && <IconButton icon={Play} label="Resume" size={28} onClick={(e) => act(e, 'resume')} />}
-            {ACTIVE_LOOP_STATUSES.has(entity.status) && <IconButton icon={Square} label="Stop" size={28} onClick={(e) => act(e, 'stop')} />}
+            {canAct('pause') && <IconButton icon={Pause} label="Pause" size={28} onClick={(e) => act(e, 'pause')} />}
+            {canAct('resume') && <IconButton icon={Play} label="Resume" size={28} onClick={(e) => act(e, 'resume')} />}
+            {canAct('stop') && <IconButton icon={Square} label="Stop" size={28} onClick={(e) => act(e, 'stop')} />}
             {DONE_ST.has(entity.status) && <IconButton icon={Trash2} size={28}
               label={confirmDel ? 'Click again to delete' : 'Delete'} onClick={del}
               className={confirmDel ? 'text-danger' : undefined} />}

@@ -106,3 +106,36 @@ export const ACTIVE_LOOP_STATUSES: ReadonlySet<string> = new Set([
 export const PRELAUNCH_LOOP_STATUSES: ReadonlySet<string> = new Set([
   'intake', 'planning', 'review', 'ready',
 ])
+
+/** The four lifecycle actions `PATCH /api/loops/{id}` accepts. Mirrors the KEYS of the backend
+ *  `loop.loop:ACTION_SOURCE_STATES` (railed by `tests/test_loop_action_guard_mirror.py`). This
+ *  union was retyped inline six times before it had a name — once on `api.ts:uLoopAction` and
+ *  once more inside every surface's own `act()`. */
+export type LoopAction = 'start' | 'pause' | 'resume' | 'stop'
+
+/** Which statuses each action may be invoked FROM — the frontend half of the lifecycle transition
+ *  guard the backend enforces. Mirrors `loop.loop:ACTION_SOURCE_STATES` exactly, railed by
+ *  `tests/test_loop_action_guard_mirror.py`, which asserts EQUALITY per action rather than a
+ *  subset: a subset rail is precisely what let one state go missing from every surface at once.
+ *
+ *  Render an affordance only when its action's set holds the loop's status —
+ *  `LOOP_ACTION_SOURCE_STATUSES.resume.has(loop.status)`. Offering one the backend refuses buys
+ *  the user a 409 (`Cannot resume a loop in 'complete' state`); withholding one it accepts
+ *  strands the loop with no way forward.
+ *
+ *  Six hand-written `resume` guards drifted here: three surfaces offered three states, two
+ *  offered four, and one — written as a chained `===` so no array-literal search found it —
+ *  offered five. Five of the six omitted `blocked`, so a blocked loop could not be resumed
+ *  anywhere in the UI even though the backend accepted it, and the same `failed` loop showed
+ *  Resume on a cockpit and nothing in the list. `start` drifted the same way: one cockpit
+ *  offered `ready` alone while the backend also accepts `review`.
+ *
+ *  `stop` is ACTIVE_LOOP_STATUSES BY REFERENCE, never a second copy of those strings — the
+ *  backend's own `stop` row is literally `ACTIVE_STATUSES`. The rail asserts this row stays a
+ *  reference, so the two cannot drift apart even by one careless edit. */
+export const LOOP_ACTION_SOURCE_STATUSES: Readonly<Record<LoopAction, ReadonlySet<string>>> = {
+  start: new Set(['ready', 'review']),
+  pause: new Set(['running']),
+  resume: new Set(['paused', 'stagnant', 'blocked', 'needs_input', 'failed']),
+  stop: ACTIVE_LOOP_STATUSES,
+}

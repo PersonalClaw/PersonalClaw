@@ -13,7 +13,7 @@ import { HeaderActions, HeaderControl } from '../../ui/HeaderActions'
 import { ReactWidgetFrame } from '../../ui/widget/ReactWidgetFrame'
 import { api, type Loop, type Artifact, type LoopPhase } from '../../lib/api'
 import { downloadText, safeFilename } from '../../lib/download'
-import { ACTIVE_LOOP_STATUSES } from '../../lib/loopStatus'
+import { ACTIVE_LOOP_STATUSES, PRELAUNCH_LOOP_STATUSES, LOOP_ACTION_SOURCE_STATUSES, type LoopAction } from '../../lib/loopStatus'
 import { useRunStream } from './useRunStream'
 import { CockpitPromptBar } from './CockpitPromptBar'
 import type { RouteProps } from '../../app/useQueryState'
@@ -101,22 +101,32 @@ export function DesignCockpitPage({ id, onBack, onDeleted, onOpenProject, onBuil
   })
 
   const status = loop?.status
+  // `active` answers "is this loop in flight?" — it gates the NUDGE affordance and withholds
+  // delete. It is not a lifecycle guard, so it stays on the active set it names.
   const active = !!status && ACTIVE_LOOP_STATUSES.has(status)
+  // Display-only: the feed-liveness dot below. A loop that is running has a stream to lose.
   const running = status === 'running'
-  // The token spec is editable ONLY pre-launch (intake/planning/review/ready) — once the
-  // loop has started, the backend freezes it (store.update_spec returns None → the PUT
-  // 409s). Overrides applied after that silently no-op (updateULoop .catch swallows the
-  // 409, the promptInput modal closes as if it worked). So the token editor must go
-  // read-only for a started/terminal loop — show the resolved system, don't offer edits
-  // that can't persist. Mirrors CodeCockpit's `started` gate + PRELAUNCH_STATUSES.
-  const specFrozen = !!status && !['intake', 'planning', 'review', 'ready'].includes(status)
+  // Does the backend accept this action from the loop's CURRENT status? Every lifecycle
+  // affordance in the header asks exactly this, of exactly one source.
+  const canAct = (action: LoopAction) => !!status && LOOP_ACTION_SOURCE_STATUSES[action].has(status)
+  // The token spec is editable ONLY pre-launch — once the loop has started, the backend
+  // freezes it (store.update_spec returns None → the PUT 409s). Overrides applied after that
+  // silently no-op (updateULoop .catch swallows the 409, the promptInput modal closes as if it
+  // worked). So the token editor must go read-only for a started/terminal loop — show the
+  // resolved system, don't offer edits that can't persist.
+  //
+  // "Pre-launch" is the backend's own `PRELAUNCH_STATUSES`, read from the one mirror rather
+  // than respelled here. This was the fifth hand-written copy of that set, and the same set
+  // whose lifecycle sibling lost `blocked` by exactly this mechanism; it happened to be
+  // correct, which is what makes it worth removing while it still is.
+  const specFrozen = !!status && !PRELAUNCH_LOOP_STATUSES.has(status)
 
   // 🪤 EVERY ACTION ON THIS COCKPIT IS DATA-DRIVEN: nothing flips locally, the header re-renders from
   // `loadLoop()`. So a swallowed rejection left NOTHING — the loop did not pause, no message appeared,
   // and the refetch ran anyway, re-rendering the same status so the click read as "nothing happened,
   // twice". `app/reportingWrite` returns the outcome precisely so the refetch can be skipped. This is
   // the same contract the delete below already honours (see its 🔑 note).
-  async function act(a: 'start' | 'pause' | 'resume' | 'stop') {
+  async function act(a: LoopAction) {
     if (!(await reportingWrite(`${a} this loop`, () => api.uLoopAction(id, a)))) return
     loadLoop()
   }
@@ -241,12 +251,16 @@ export function DesignCockpitPage({ id, onBack, onDeleted, onOpenProject, onBuil
         }
         right={
           <HeaderActions>
-            {/* `review` = the planning walkthrough finished (design's review IS this
-                cockpit); `ready` = created without a walkthrough. Both are launchable. */}
-            {(status === 'ready' || status === 'review') && <HeaderControl icon={Play} label="Start" variant="primary" priority="primary" onClick={() => act('start')} />}
-            {running && <HeaderControl icon={Pause} label="Pause" variant="secondary" priority="primary" onClick={() => act('pause')} />}
-            {['paused', 'stagnant', 'needs_input', 'failed'].includes(status || '') && <HeaderControl icon={Play} label="Resume" variant="primary" priority="primary" onClick={() => act('resume')} />}
-            {active && <HeaderControl icon={Square} label={confirmStop ? 'Stop for good?' : 'Stop'} variant={confirmStop ? 'danger' : 'secondary'} onClick={() => { if (!confirmStop) { setConfirmStop(true); return } setConfirmStop(false); act('stop') }} />}
+            {/* Each of the four asks `canAct` and nothing else, so this cluster cannot disagree
+                with the backend — or with the same four controls on any other surface. Start
+                reaches a loop whose planning walkthrough finished (design's review IS this
+                cockpit) as well as one created without a walkthrough; Resume reaches every
+                parked and every stalled state, `blocked` among them, which no surface offered
+                before the guard was derived. */}
+            {canAct('start') && <HeaderControl icon={Play} label="Start" variant="primary" priority="primary" onClick={() => act('start')} />}
+            {canAct('pause') && <HeaderControl icon={Pause} label="Pause" variant="secondary" priority="primary" onClick={() => act('pause')} />}
+            {canAct('resume') && <HeaderControl icon={Play} label="Resume" variant="primary" priority="primary" onClick={() => act('resume')} />}
+            {canAct('stop') && <HeaderControl icon={Square} label={confirmStop ? 'Stop for good?' : 'Stop'} variant={confirmStop ? 'danger' : 'secondary'} onClick={() => { if (!confirmStop) { setConfirmStop(true); return } setConfirmStop(false); act('stop') }} />}
             {active && <HeaderControl icon={MessageSquarePlus} label="Nudge" variant="secondary" onClick={() => setNudgeOpen((v) => !v)} />}
             {/* Agentic build — open a chat to build/mix components for this design system
                 on the canvas (D4). Loop-aware via the seed regardless of a project. */}

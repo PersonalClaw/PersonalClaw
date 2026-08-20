@@ -41,6 +41,7 @@ from personalclaw.loop.loop import ACTIVE_STATUSES, LoopStatus
 _REPO = Path(__file__).resolve().parent.parent
 _WEB = _REPO / "web" / "src"
 _REGISTRY = _WEB / "lib" / "loopStatus.ts"
+_API = _WEB / "lib" / "api.ts"
 
 # web is optional in some checkouts (backend-only installs); skip cleanly then.
 pytestmark = pytest.mark.skipif(not _WEB.exists(), reason="web sources not present")
@@ -151,3 +152,55 @@ def test_no_surface_rewrites_the_active_status_set_by_hand():
         "ACTIVE_LOOP_STATUSES from lib/loopStatus instead — four copies drifted here once, and the "
         "one that dropped `blocked` made a blocked loop's cockpit read as finished."
     )
+
+
+def _union_members(name: str) -> set[str]:
+    """The string-literal members of an exported TypeScript union, comments blanked first.
+
+    Blanked because these scans are TEXT scans: a docstring listing states would otherwise
+    enrol them, which is how a rail starts certifying prose instead of code.
+    """
+    text = _API.read_text(encoding="utf-8")
+    text = re.sub(r"/\*.*?\*/", "", text, flags=re.S)
+    text = re.sub(r"//[^\n]*", "", text)
+    m = re.search(rf"export type {name}\s*=\s*((?:[^\n]*\n)+?)\s*(?:export|/\*|\Z)", text)
+    assert m, f"could not find `export type {name}` in web/src/lib/api.ts — parser drift?"
+    return set(re.findall(r"'([a-z_]+)'", m.group(1)))
+
+
+def test_the_wire_type_union_covers_the_backend_enum_exactly():
+    """🔴 The gap this rail did NOT have, and the defect it let through.
+
+    The registry test above proves the frontend has a WORD for every status. It says nothing
+    about the TypeScript union that TYPES a status, and those drifted apart: `LoopStatus` in
+    `api.ts` carried eleven members while the backend enum has twelve, omitting `blocked`.
+    A `status === 'blocked'` comparison against that type is a compile error, so every
+    hand-written affordance guard in the app simply left `blocked` out — a blocked loop was
+    unresumable on every surface even though the backend accepts a resume from it. Naming the
+    states in a union is a second vocabulary, so it gets the same equality treatment.
+    """
+    union = _union_members("UnifiedLoopStatus")
+    assert union, "parsed no members out of UnifiedLoopStatus — parser drift?"
+    backend = {s.value for s in LoopStatus}
+    assert backend, "LoopStatus enum is empty — import drift?"
+    assert union == backend, (
+        "web/src/lib/api.ts:UnifiedLoopStatus disagrees with loop.loop:LoopStatus "
+        f"(union-only={sorted(union - backend)}, backend-only={sorted(backend - union)}). "
+        "A member the union omits cannot be compared against without a type error, which is "
+        "how a real state stops being reachable from any affordance."
+    )
+
+
+def test_there_is_exactly_one_wire_status_union():
+    """The retired per-kind copies must not come back. `LoopStatus`/`CodeStatus` were
+    goal-shaped and code-shaped unions of the same enum; one of them omitted `blocked`."""
+    text = _API.read_text(encoding="utf-8")
+    text = re.sub(r"/\*.*?\*/", "", text, flags=re.S)
+    text = re.sub(r"//[^\n]*", "", text)
+    found = set(re.findall(r"export type (\w*(?:Loop|Code)Status)\s*=", text))
+    assert (
+        "UnifiedLoopStatus" in found
+    ), "UnifiedLoopStatus is gone from web/src/lib/api.ts — this rail can prove nothing"
+    assert found == {
+        "UnifiedLoopStatus"
+    }, f"more than one loop-status union is exported from web/src/lib/api.ts: {sorted(found)}"
