@@ -737,6 +737,24 @@
     "type": "int"
   },
   {
+    "default": 32,
+    "path": "knowledge.similarity_degree_cap",
+    "sensitive": false,
+    "type": "int"
+  },
+  {
+    "default": 0.55,
+    "path": "knowledge.similarity_min_score",
+    "sensitive": false,
+    "type": "float"
+  },
+  {
+    "default": 8,
+    "path": "knowledge.similarity_top_k",
+    "sensitive": false,
+    "type": "int"
+  },
+  {
     "default": 20,
     "path": "knowledge.synthesis_window",
     "sensitive": false,

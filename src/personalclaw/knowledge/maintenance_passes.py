@@ -19,12 +19,20 @@ when measured: the only backfills were `chunk_backfill.backfill_item_chunks`,
 nearest linker was a PRIVATE helper inside an action provider. Rather than register a private
 helper across a module boundary, the public pass was built: `knowledge/link_backfill.py`.
 
-**The one pass here that is genuinely RESUMABLE is the linker backfill**, and it is the only
-one registered `batched=True`. The distinction is not cosmetic — see `MaintenancePass.batched`.
-The lint and the consolidation sweep both return a REPORT (findings, clusters), so a host
-reading that as remaining work would re-run them once per allowed sub-batch forever. The
-linker backfill returns ITEMS PROCESSED and 0 when the backlog is drained, which is the
-contract the sub-batch loop is written against.
+**Two of the four passes here are genuinely RESUMABLE** — the linker backfill and the
+similarity-edge pass — and only those two are registered `batched=True`. The distinction is
+not cosmetic — see `MaintenancePass.batched`. The lint and the consolidation sweep both return
+a REPORT (findings, clusters), so a host reading that as remaining work would re-run them once
+per allowed sub-batch forever. The two backfills return ITEMS PROCESSED and 0 when the backlog
+is drained, which is the contract the sub-batch loop is written against.
+
+**KL-13's similarity-edge pass is hosted here for the reason the clause names: "never inline
+on the write path."** Similarity is the most expensive graph work in the store — it compares a
+new item against the library — and it is exactly the shape that tempts an inline call at
+`create_typed_item`. Inline, a bulk import of N items does N passes, each superseded by the
+next, while holding the write lock. Registered here it inherits the watermark's coalescing (N
+writes, one pass) and the sub-batch loop's bounded claims. Nothing in `store.py` calls it; the
+write path's only obligation is the `mark_dirty` it already performs.
 
 **What is still deliberately not done: consolidation does not APPLY.** It runs through the real
 gated executor in dry-run. `_apply` writes a model-authored summary and then archives every
@@ -48,6 +56,7 @@ logger = logging.getLogger(__name__)
 PASS_MEMORY_LINT = "memory_lint"
 PASS_CONSOLIDATION = "knowledge_consolidation"
 PASS_LINK_BACKFILL = "entity_link_backfill"
+PASS_SIMILARITY_EDGES = "similarity_edges"
 
 
 def _memory_lint_pass(*, batch_size: int = 0) -> int:
@@ -108,17 +117,42 @@ def _consolidation_pass(*, batch_size: int = 0) -> int:
 def _link_backfill_pass(*, batch_size: int = 0) -> int:
     """Sweep one bounded batch of never-linked items through the deterministic alias linker.
 
-    The only RESUMABLE pass registered here (`batched=True`): it returns items PROCESSED and 0
-    when the backlog is drained, so the host's sub-batch loop drains it across a tick instead of
-    re-running a whole-store sweep. `link_backfill` keys that backlog on a `mention_sweeps` row
-    rather than on "has no mentions", because an item may legitimately name no known entity —
-    keyed the other way the head of the backlog would absorb every sub-batch forever.
+    RESUMABLE (`batched=True`), like the similarity-edge pass and unlike the two sweeps: it
+    returns items PROCESSED and 0 when the backlog is drained, so the host's sub-batch loop
+    drains it across a tick instead of re-running a whole-store sweep. `link_backfill` keys that
+    backlog on a `mention_sweeps` row rather than on "has no mentions", because an item may
+    legitimately name no known entity — keyed the other way the head of the backlog would
+    absorb every sub-batch forever.
     """
     from personalclaw.knowledge import link_backfill
 
     return link_backfill.link_backfill_pass(
         batch_size=batch_size or link_backfill.BATCH_SIZE,
     )
+
+
+def _similarity_edge_pass(*, batch_size: int = 0) -> int:
+    """Claim one bounded batch of the similarity-edge backlog. Returns items processed.
+
+    RESUMABLE (`batched=True`), for the same reason as the linker backfill and not the lint:
+    `similarity_pass` returns items PROCESSED and 0 when the backlog is drained, so the value
+    is remaining work and the host's sub-batch loop is what finishes the library. Marked
+    `batched=False` this would still import, still register and still look wired while draining
+    exactly ONE batch per tick — a library larger than one batch would never converge and
+    nothing in `MaintenanceResult` would say so.
+
+    This function is the whole reason the pass is not inline: the edge build is the store's most
+    expensive graph work, and hanging it off `create_typed_item` would do it once per imported
+    item while holding the write lock. Here it runs once per watermark, off the write path.
+
+    `batch_size=0` means "the host has no opinion", so `similarity_pass`'s own default binds
+    rather than this module duplicating a constant that belongs to the pass.
+    """
+    from personalclaw.knowledge import similarity_edges
+
+    if batch_size > 0:
+        return similarity_edges.similarity_pass(batch_size=batch_size)
+    return similarity_edges.similarity_pass()
 
 
 def register_all() -> list[str]:
@@ -128,10 +162,10 @@ def register_all() -> list[str]:
     own pass and not the others, because the failure mode this replaces was "nothing had a
     cadence at all".
 
-    `batched` is per pass and NOT a shared default — the linker backfill drains a real backlog
-    while the other two return a report. Getting that wrong in either direction is silent: a
-    sweep marked resumable busy-loops on its own finding count, and a backlog marked
-    single-sweep only ever drains one batch per tick.
+    `batched` is per pass and NOT a shared default — the linker backfill and the similarity-edge
+    pass each drain a real backlog, while the lint and the consolidation sweep return a report.
+    Getting that wrong in either direction is silent: a sweep marked resumable busy-loops on its
+    own finding count, and a backlog marked single-sweep only ever drains one batch per tick.
     """
     from personalclaw.knowledge import maintenance
 
@@ -140,6 +174,7 @@ def register_all() -> list[str]:
         (PASS_MEMORY_LINT, _memory_lint_pass, False),
         (PASS_CONSOLIDATION, _consolidation_pass, False),
         (PASS_LINK_BACKFILL, _link_backfill_pass, True),
+        (PASS_SIMILARITY_EDGES, _similarity_edge_pass, True),
     ):
         try:
             maintenance.register_pass(name, fn, batched=batched)
