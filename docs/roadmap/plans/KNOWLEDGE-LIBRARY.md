@@ -1438,3 +1438,162 @@ Sequence these **independently of S1-S3** — they touch the store's indexing la
   unrelated delta into this atom and mask a real one later.
 
   **`KL-17` remains the only KL atom this unblocks-adjacent work leaves open besides `KL-8`.**
+
+- [2026-08-20][KL-17] **DONE — graph navigation: a projected layout, edge thinning, two-channel
+  weight, an ego view, and a widened contrast census.** Five fenced parallel slices plus assembly.
+  Driven in a real browser, which is where the layout, the colour channel and the label floor are
+  the only place they are decidable.
+
+  **🔴 OWNER RULING, because the atom's own text is internally inconsistent.** Clause 1 says "a 2-D
+  projection of **item** embeddings"; clause 5 says "the edge weight **already on the wire** and
+  drawn nowhere", which is literally `get_full_graph`'s `"weight": d.get("weight")` on **entity**
+  edges that the frontend's `GraphEdge` never declared. Entities have no embeddings of their own, so
+  the readings cannot both be literal. The ruling: **entity nodes stay the graph's nodes, and each is
+  positioned by projecting the embeddings of the ITEMS THAT MENTION IT** — an entity sits at the
+  centroid of its mentioning items' projected points. That is the only reading under which all ten
+  clauses are simultaneously coherent, and it is what shipped.
+
+  **The projection** (`knowledge/projection.py`): PCA by power iteration with **Hotelling deflation**
+  between components, seeded init (`DEFAULT_SEED`), output isotropically scaled to `[-1, 1]`.
+  Isotropic and not per-axis is load-bearing: per-axis fills a viewport more evenly but stretches a
+  low-variance PC2 to the same visual weight as PC1, inventing spread the data does not have.
+  Mixed-dimension vectors land at exactly the origin rather than being dropped — and so do
+  **non-finite** ones, which was added beyond the clause because it is real on this path: embeddings
+  are `struct.unpack`ed from a BLOB, so one truncated blob decodes to NaN and would otherwise poison
+  every other node through the shared mean. numpy is used, and that was checked rather than assumed:
+  it is already an unconditional core dependency, `knowledge/` had zero numpy imports (so house style
+  pointed the other way), and pure Python was **measured at 9.2s for 2000x768** — not something a
+  handler can do. Measured with numpy: **5.3 ms at 500x384, 45.9 ms at 2000x768**.
+
+  A real numerical defect was found and fixed on the way: `matrix @ v` emits
+  `RuntimeWarning: divide by zero / overflow / invalid value` on **every** call under numpy 1.26 —
+  the CPU's accumulated FP status flags from matmul's SIMD kernels, with finite input and finite
+  output. Left alone that is three warnings per graph request. Scoped `np.errstate` around the
+  matmuls only, with the `isfinite` check retained as the backstop. This repo's pytest config has no
+  `filterwarnings = error`, so the gate would never have caught it.
+
+  **The payload** keeps every node and thins EDGES. The node cap is gone (`sorted(...)[:limit]` WAS
+  the cap; `limit` is dropped as a parameter). Thinning is a weight floor plus a **top-K-per-node**
+  keep — per-node and not global, because taken globally a few hub entities eat the whole budget and
+  peripheral nodes ship edgeless. Clusters are the **connected components of the thinned** edge set,
+  so a label never asserts a connection the user cannot see; components at or above a minimum size get
+  a label from their dominant tag, falling through a total, deterministic chain
+  (tag → `entity_type` → first name → id) with the rung reported in `label_source`.
+
+  🔴 **`placed` is a field the clause did not ask for and the code needs.** Driving the real
+  projection showed an entity mentioned by one item in each of two opposed clusters has a centroid of
+  **exactly `(0,0)`** — colliding with the projection's own "origin means unplaceable" sentinel. A
+  canvas that inferred "no embedding yet" from the coordinates would mislabel it, so the answer ships
+  as a flag. Consumers read `placed`, never the coordinates.
+
+  **Measured finding: the weight floor cannot bite on today's data.** The only production writer of
+  `entity_relations` (`pipeline/runner.py:619`) never passes `weight`, so every relation in a real
+  library carries the column default `1.0`. With one distinct value, any floor is either a no-op
+  (<= 1.0) or total data loss (> 1.0). It ships at `0.0` — live, tested against graded weights,
+  honestly not binding until some writer grades them. **Today's real thinning is entirely the top-K
+  keep.** `None` maps to `1.0`, mirroring the column default, so a positive floor cannot silently
+  delete an ungraded graph.
+
+  The memo is keyed on `(db_path, min_weight, top_k)` with a content signature and a 30s debounce —
+  `db_path` in the key because a content-only global cache would serve one home's graph to another
+  and leak across tests. Invalidation is observable through a projection spy and a `stale` flag, not
+  asserted in prose.
+
+  **The canvas** consumes the positions. Two corrections came out of reading the real payload rather
+  than the contract: the domain is `[-1,1]`, not `[0,1]` (a sign-sniffing mapper was written first and
+  would have piled a degenerate all-origin library into the top-left corner), and `degree` is the
+  **full-graph** degree while the payload thins edges — counting drawn lines would shrink exactly the
+  hubs that earned their size. Weight is on **two channels**: colour
+  (`color-mix` from `--color-on-surface-low` to `--color-on-surface`, measured **dark 3.92 → 6.32:1**,
+  **light 3.86 → 5.14:1** at the shipped opacity, monotone and never spending the floor) and width
+  (`1 + f x 1.4`, painted screen pixels because `vectorEffect="non-scaling-stroke"` is retained).
+  Labels are placed by measure-then-filter against a shared placed-rect list, largest node first, with
+  a rendered-size floor. The measurement is an **estimate** rather than `getBBox()` on purpose:
+  `getBBox()` is 0x0 in jsdom, so a measured pass would place every label under test, nothing could
+  ever collide, and the collision rule would ship untested — the estimate is the one code path both
+  the browser and the suite exercise.
+
+  **The ego view reuses rather than reinvents.** `settings/MemoryGraph` was already a generic graph
+  component (parameterised by noun and box height), so it is the canvas; the lit-set BFS was lifted
+  to `lib/litSet.ts` and **both** canvases now call it. The one generalization was necessary because
+  the ego view NARROWS its payload to the neighbourhood rather than dimming the rest to 12% — dimming
+  is right for a full pane you explore, but in a reading rail it draws the whole library as noise
+  around a picture you cannot read, and deriving "within N hops" a second time to do that narrowing is
+  exactly the drift the clause forbids. Depth is a `Segmented` control, which also avoids the
+  `rawButton` ratchet (its baseline has zero slack) and carries state in `aria-selected` rather than
+  colour alone.
+
+  **The contrast census** is derived, not hardcoded: a `.tsx` file renders graph marks iff, **after
+  comments are blanked**, it emits at least one node mark AND at least one edge mark — a graph is
+  nodes plus the connections between them. Measured 3 files, 3 true positives, 0 false. It found
+  **`tasks/DagView.tsx`**, which no one had named, and correctly EXCLUDED `tasks/TaskGraph.tsx`, which
+  is named like a graph and emits **zero** marks (it computes a layout and hands it to `DagView`) — a
+  `*Graph*` filename heuristic would have certified the wrong file. `InfographicView` is excluded and
+  recorded as uncoverable: it hands a DSL string to a third-party engine, so its marks do not exist in
+  source. The vacuity floor was proven by pointing the scan at a nonexistent directory: the floors go
+  red **while both per-file loops pass silently**, which is precisely the failure the clause exists to
+  close.
+
+  🔴 **Widening it found the same defect in two more files.** `--color-outline-variant` measures
+  **2.04:1 dark / 1.17:1 light** against the canvas — the exact token the entity graph was fixed for —
+  and still paints resting mark boundaries in `MemoryGraph.tsx` and `DagView.tsx`. Both are outside
+  this atom's scope, so they are a **shrink-only baseline** compared with `toEqual`: a new violating
+  token or file fails, and *fixing* one also fails until its entry is deleted. The rail also asserts
+  every baseline entry is still censused, so an exemption cannot outlive its file.
+
+  **Assembly work, beyond merging.** The contrast rail pinned the canvas by literal source regex, and
+  two of those literals were the exact expressions this atom replaces — so the canvas slice went red
+  in a rail it was fenced out of. Both assertions were converted to **behavioural** form, which is
+  strictly stronger: `weightStroke(0)` must resolve to the neutral (the ramp's floor, not the text),
+  and `weightWidth(0, false) >= 1` covers every weight rather than one literal. `api.knowledgeGraph()`
+  was added because two callers now need it and `KnowledgeGraph` was raw-`fetch`ing the path — with a
+  stale `?limit=120` the handler no longer honours, which is how two callers drift. The ego view is
+  mounted in KL-16's reading rail **lazily**: the payload is the whole positioned graph and the
+  projection behind it is a whole-library computation, so a collapsed section issues no request at
+  all. An existing copy rail caught `LoadError what="the knowledge graph"` rendering as "your **the**
+  knowledge graph".
+
+  **Driven in Chromium at 1600x950** against a gateway serving this worktree's own bundle, isolated
+  dev home, seeded with two deliberately separated topical clusters (8 entities, 7 relations with
+  graded weights 0.15-0.95, 16 embedded items). Zero console errors in every regime.
+
+  | property | measured |
+  |---|---|
+  | layout carries meaning | one cluster at **x = -0.96..-0.99**, the other at **+0.96..+1.00** — PC1 separated the topics |
+  | not concentric rings | 16 nodes span x = 62..940; only 2 coincidentally sit at a ring radius |
+  | weight on two channels | **7 distinct stroke colours and 7 distinct widths** (1.0 → 2.4) for 7 edges |
+  | labels collision-filtered | 5 of 16 labelled at rest |
+  | rendered-size floor fires | painted label size 6.49 → 5.19 → 4.15 px, then **0 labels** at the 4th zoom-out |
+  | ego view is lazy | 0 graph fetches before opening, 1 after |
+  | hop depth expands | **9 marks at depth 1 → 11 at depth 2**, `aria-selected` on an exclusive control |
+  | shared zoom control | present on both canvases (3 buttons) |
+
+  The label floor took **four** zoom-out steps in the browser where the slice measured two in jsdom —
+  jsdom keeps the CTM at 1:1 while the real viewBox scale is ~0.6, so the painted size differs. The
+  clause is met; the step count is a property of the harness, and a first probe that stopped at three
+  steps read as "the floor never fires". Measure the painted pixels, not the click count.
+
+  **One sub-clause is honestly short, and not through this atom's doing.** "…so it is axe-scanned and
+  **snapshotted**": the route is enrolled in both harness lists and axe genuinely covers it, but
+  **`ci.yml` never runs `visual.spec.ts` at all** — which is why `artifacts` and `learning` also sit in
+  the route list with no committed PNG. Enrolment is what an atom can deliver; creating the visual job
+  is CI-Release's surface, and no snapshot was claimed or seen. Also honest: the harness gateway starts
+  with an empty home and the graph renders behind `!empty`, so axe currently scans the graph tab's
+  **empty state** — the marks themselves are covered from source by the contrast census instead.
+
+  **Gate:** `make lint` clean (mypy 941 files); web **450 files / 4,650 tests**, `typecheck` + `build`
+  clean; Python **23,236 passed, 30 skipped, 12 xfailed**; roadmap sync rails green. Five
+  falsifications re-run independently at assembly, one per slice: deflation bypassed for the second
+  component (`test_deflation_gives_the_two_axes_independent_information`), the node cap restored
+  (`assert 200 == 220`), the colour channel dropped (colour tests red **while the width tests stayed
+  green**, proving the channels are independent), `hopDepth` pinned to 1 (*"depth 2: now in range"*),
+  and the census pointed at a nonexistent directory (*"matched NOTHING — the scan is broken, not the
+  app"*). 🪤 Two mutations had to be re-derived: replacing the deflation call with `pass` produced a
+  `NameError` rather than the semantic red, and a first-occurrence replace hit prose — the projection
+  names "deflation" at four lines with the live one last. A mutation that produces no red, or the wrong
+  red, is a suspect mutation before it is a weak test.
+
+  `docs/design/consistency-audit.json` is left out for the fourth tick running: every full web run
+  rewrites it, main's copy is stale, and folding it in would mix `ProjectionRulesPanel`'s unrelated
+  delta into this atom. **`KL-8` is now the plan's only open atom** (EXT-dependent on AMBIENT-SURFACES'
+  tile registry), so the capability-gap amendment is otherwise complete.

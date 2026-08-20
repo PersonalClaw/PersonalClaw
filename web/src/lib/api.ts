@@ -4454,6 +4454,13 @@ export const api = {
   lexiconReset: () => post<{ ok: boolean }>('/api/lexicon/reset'),
 
   knowledgeItem: (id: string) => get<KnowledgeItem>(`/api/knowledge/items/${encodeURIComponent(id)}`),
+  /** The whole positioned, edge-thinned entity graph (KL-17). One method for both the full
+   *  canvas and the reader's ego view — `KnowledgeGraph` used to raw-`fetch` this path with a
+   *  `limit` the handler no longer honours, which is how two callers drift. */
+  knowledgeGraph: () => get<{
+    nodes: { id: string; name?: string; type?: string; x?: number; y?: number; placed?: boolean; degree?: number; cluster?: number | null }[]
+    edges: { source: string; target: string; type?: string; weight?: number }[]
+  }>('/api/knowledge/graph'),
   knowledgeItemRelated: (id: string) => get<KnowledgeItem[]>(`/api/knowledge/items/${encodeURIComponent(id)}/related`),
   /** Staleness for a synthesized item. 404 for an unknown id; a non-synthesized item
    *  answers `stale: false` rather than erroring, so the caller needs no kind check. */
