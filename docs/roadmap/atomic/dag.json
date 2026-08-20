@@ -472,6 +472,7 @@
           "id": "KL-14",
           "title": "Deferred graph-maintenance host: dirty flag + queue-drained/staleness trigger + watermark snapshot",
           "status": "done",
+          "pr": 1818,
           "scope": "Capability-gap amendment (2026-08-19)",
           "done_when": "index-affecting writes mark a dirty watermark instead of doing graph work inline; a maintenance task registered on the existing heartbeat cadence is due only when dirty AND (in-flight ingest work is zero OR the dirt is older than a configured max-staleness), so a bulk import coalesces into one pass and a busy pipeline can still never starve maintenance; execute snapshots the watermark BEFORE running and clears only up to that snapshot, so a write landing mid-run stays pending rather than being swallowed; work is claimed in bounded batches with the lock released between sub-batches so UI saves are not stalled; the boot-hook chunk-backfill trigger is deleted in the same change (clean break, no dual path) since a hook that only fires at gateway start never runs again; the memory lint, knowledge consolidation and the graph linker backfill are registered on this host so each runs on a cadence instead of only when a human opens a panel; tests assert a bulk import of N items performs ONE edge pass not N, and that a write during a run is not lost; max-staleness round-trips through config",
           "deps": []
