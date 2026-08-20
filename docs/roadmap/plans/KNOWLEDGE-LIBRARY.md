@@ -955,6 +955,8 @@ Sequence these **independently of S1-S3** — they touch the store's indexing la
 
 - [2026-08-20][KL-14] **PARTIAL — the atom stays `todo`.** The host is built, wired and driven; two
   clauses of clause 7 are unmet and named below with their evidence rather than papered over.
+  *(Closed by the [2026-08-19][KL-14] entry at the end of this log — both unmet clauses landed, and
+  the "no linker callable" measurement below turned out to be the smaller half of the problem.)*
 
   **What landed.** `knowledge/maintenance.py` is the deferred graph-maintenance host: a dirty
   watermark, a due rule, a snapshot-bounded clear, a bounded-batch claim loop and a pass registry.
@@ -1129,3 +1131,91 @@ Sequence these **independently of S1-S3** — they touch the store's indexing la
   * A falsification leg produced NO output rather than a red on the first attempt, because a
     regex-based body replacement mangled the function. Redone as a single verified line swap; an
     unrun leg is not a pass.
+
+- [2026-08-19][KL-14] **DONE — clause 7 closed; the atom flips to `done`.** The earlier PARTIAL
+  entry above left two things unmet: the third named job had no callable, and consolidation ran
+  plan-only. Both land here, and the first one's real defect was not the missing function.
+
+  **The linker backfill exists as a public resumable pass** — `knowledge/link_backfill.py`, built on
+  `alias_prepass.link_known_entities` rather than on either private helper inside the action
+  provider. `link_backfill_pass(*, batch_size) -> int` returns items processed, 0 when drained.
+
+  **🔴 The finding that matters: "items with no `mentions` rows" is a NON-TERMINATING backlog.**
+  That was the obvious definition and it cannot drain. An item may legitimately name no known
+  entity, so it never gains a mention, never leaves the backlog, and — because the host re-invokes a
+  `batched` pass until it returns 0 — the head of the backlog absorbs all 20 sub-batches of every
+  tick while the tail is never reached. Measured both ways: keyed on `mentions` the drain sequence is
+  `[2,2,2,2,...]` forever; keyed on sweeps it is `[2,2,1,0]`. The fix is a new
+  `mention_sweeps(item_id PK REFERENCES items(id), swept_at)` table: `mentions` records what the
+  linker FOUND, `mention_sweeps` records that it LOOKED, and only the second fact drains. Resume
+  state stays in the rows (each sweep row commits before the next item), never a cursor, and
+  `delete_item` drops the sweep row so orphans cannot accumulate.
+
+  Two consequences handled rather than met later: an **empty entity graph is a precondition**, not a
+  per-item concern — sweeping one would mint sweep rows for the whole library while linking nothing,
+  and those items could then never be linked once extraction creates entities, so the pass returns 0
+  and writes nothing. And text-less items are EXCLUDED rather than swept, mirroring
+  `count_items_missing_embedding`: nothing to match is not work. The linker is fed
+  title + summary + content, deliberately NOT `compose_item_text` — that is the whole-item VECTOR
+  text (title + summary only; its own docstring says `content` is "accepted for a stable signature
+  but unused" since KL-9), so feeding it would leave the backfill blind to every entity named in a
+  body, which is the main edge it exists to recover. The composition is a strict superset of the
+  ingest path, which passes the bare `content`.
+
+  **Declared limitation, not hidden:** entities created AFTER an item was swept do not pull it back
+  in. The fix is an entity-keyed incremental pass (given one new entity, find items naming it); the
+  alternative — invalidating every sweep when an entity appears — re-sweeps the whole library per
+  ingest, and `link_known_entities` rebuilds its alias index on every call, so that is
+  O(items x entities) index builds per tick. Recorded in the module docstring as its own atom.
+
+  **Consolidation now runs through the real gated executor**, which is the substantive half. The
+  previous pass called `plan_consolidation` directly and therefore bypassed `check_gates` entirely —
+  which is exactly why `knowledge.consolidate_min_hours` and `knowledge.consolidate_min_cluster`
+  were fully round-tripped knobs that **nothing read**, while the provider gated on the module
+  constants. Both now flow through a `_config_gate_defaults()` helper into
+  `check_gates(min_hours=...)` and `plan_consolidation(min_size=...)`, with action config overriding
+  config defaults. `min_new_items` stays on `MIN_NEW_ITEMS` — no knob exists for it.
+
+  **DEVIATION (deliberate, and it is the scope boundary of this atom): consolidation does not
+  APPLY.** The pass is a dry run. `_apply` writes a model-authored summary and then ARCHIVES every
+  input item; no config knob authorises that with no user present, and applying costs one model call
+  per cluster, so an unattended tick would spend unbounded tokens on work nobody asked for. Workspace
+  guidance orders **Autonomy Guardrails before any unattended-execution plan**, and Guardrails is not
+  done. Clause 7 asks that the jobs be "registered on this host so each runs on a cadence instead of
+  only when a human opens a panel" — which is now literally true, and the gates binding on a cadence
+  is the behavioural change. No off-by-default apply flag was added: that would be an inert control,
+  the exact defect class this area keeps producing. Whoever takes the apply path owns the autonomy
+  decision, with a real knob and a user-visible surface.
+
+  **`batched` is now per pass rather than one blanket value.** The linker backfill is the only
+  genuinely resumable job; the lint and the consolidation sweep both return a REPORT, and a host
+  reading a finding count as remaining work would re-run them once per allowed sub-batch forever.
+  Wrong in either direction is silent — a backlog marked single-sweep drains one batch per tick and
+  still looks wired — so both directions are asserted.
+
+  **Tests assert the call site, not the registration.** A registered name proves a dict entry; the
+  new tests drive `execute` and observe `link_backfill_pass` being reached with the host's batch
+  size, and exercise the drain loop across four sub-batches.
+
+  **Gate:** `make lint` clean (mypy 939 files); 78 targeted; full suite **23122 passed, 30 skipped,
+  12 xfailed**, real-home rail clean. Three falsifications re-run independently at assembly, each
+  mutating the LIVE line, confirming it applied, observing the named red and restoring from a file
+  copy: the linker registered as a sweep instead of resumable (both new tests red), the backlog keyed
+  on `mentions` instead of `mention_sweeps` (4 red, drain never reaches 0), and the min-hours default
+  reverted to the module constant (the cadence test red at its own line).
+
+  **A real-home leak, found by a falsification rather than by review.** A test fixture used
+  `monkeypatch.undo()` to restore a patched linker; because the store fixture shared that
+  `monkeypatch` instance, `undo()` also stripped its `PERSONALCLAW_HOME`, and the next pass opened
+  and swept the developer's real library. The rail caught it — note that **16 tests passed while the
+  run exited 1**, so a `tail` on the summary would have hidden it. Fixed at the seam: the fixture
+  owns a private `pytest.MonkeyPatch()` (isolation a test cannot revoke) and the test uses a scoped
+  `MonkeyPatch.context()`. Read-only damage assessment: the real store had 0 items / 0 entities / 0
+  mentions and the only residue is an empty `mention_sweeps` table that schema init creates on any
+  open.
+
+  **Two traps for whoever takes KL-13 (now unblocked and in the ready frontier):**
+  `KnowledgeStore.__init__` PRUNES every mention-less entity on EVERY open (`store.py`, "Prune orphan
+  entities"), so a fixture built on a bare `add_entity()` measures the prune, not the pass — anchor
+  each entity with one already-swept item. And a pass that takes no store argument must open its own,
+  which is what makes that prune reachable from a maintenance tick at all.

@@ -12,23 +12,32 @@ the consolidation planner and an action-provider module. So the host knows nothi
 passes and this module is imported once, at gateway startup, where paying for those imports
 is already the cost of being a gateway.
 
-**What is NOT registered here, and why (KL-14 clause 7 is therefore PARTIAL).** The clause
-names "the graph linker backfill" as the third job. There is no such callable: measured with
-`grep -rn "def .*backfill" src/personalclaw/knowledge/` the only backfills are
-`chunk_backfill.backfill_item_chunks` (KL-12, registered by the boot-hook replacement),
-`store.backfill_entity_description` (a one-entity setter, not a pass) and
-`artifact_ingest.ArtifactIngest.backfill`. The nearest thing to a linker pass is
-`action_providers/knowledge_maintain_provider._reindex` / `_wikilink_mentions`, both PRIVATE
-helpers inside an action provider and neither a resumable whole-library sweep. Registering a
-private helper across a module boundary, or inventing a public linker backfill, would be a
-different atom's design decision made silently here — so the clause is recorded unmet with
-this evidence instead.
+**All three of clause 7's named jobs are now registered.** An earlier revision of this module
+recorded the third one — "the graph linker backfill" — as having no callable, which was true
+when measured: the only backfills were `chunk_backfill.backfill_item_chunks`,
+`store.backfill_entity_description` (a one-entity setter) and `ArtifactIngest.backfill`, and the
+nearest linker was a PRIVATE helper inside an action provider. Rather than register a private
+helper across a module boundary, the public pass was built: `knowledge/link_backfill.py`.
+
+**The one pass here that is genuinely RESUMABLE is the linker backfill**, and it is the only
+one registered `batched=True`. The distinction is not cosmetic — see `MaintenancePass.batched`.
+The lint and the consolidation sweep both return a REPORT (findings, clusters), so a host
+reading that as remaining work would re-run them once per allowed sub-batch forever. The
+linker backfill returns ITEMS PROCESSED and 0 when the backlog is drained, which is the
+contract the sub-batch loop is written against.
+
+**What is still deliberately not done: consolidation does not APPLY.** It runs through the real
+gated executor in dry-run. `_apply` writes a model-authored summary and then archives every
+input item, and putting that on an unattended cadence is an autonomy decision this atom does
+not own — workspace guidance orders Autonomy Guardrails before any unattended-execution work.
+See `run_consolidation_pass` for the full statement; what changed here is that the min-hours
+and min-cluster gates now bind on a cadence instead of only when a human opens a panel.
 """
 
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, cast
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from personalclaw.memory_providers.base import MemoryProvider
@@ -38,6 +47,7 @@ logger = logging.getLogger(__name__)
 #: Names, so the wiring test asserts against one spelling rather than two copies of a string.
 PASS_MEMORY_LINT = "memory_lint"
 PASS_CONSOLIDATION = "knowledge_consolidation"
+PASS_LINK_BACKFILL = "entity_link_backfill"
 
 
 def _memory_lint_pass(*, batch_size: int = 0) -> int:
@@ -77,32 +87,38 @@ def _memory_lint_pass(*, batch_size: int = 0) -> int:
 
 
 def _consolidation_pass(*, batch_size: int = 0) -> int:
-    """Plan consolidation and report how many clusters are worth a pass. PLAN ONLY.
+    """Report how many clusters the gated consolidation pass identified. Still DRY RUN.
 
-    🔴 Deliberately does not EXECUTE. `KnowledgeConsolidateActionProvider.execute` spends
-    model calls and merges items, and moving that onto an unattended cadence is a decision
-    about autonomy — a background pass that rewrites the user's library without being asked
-    is a different thing from one that keeps an index fresh. `plan_consolidation`'s own
-    docstring is "Everything a pass would do, without doing any of it", which is precisely
-    the half that belongs on a maintenance cadence today: it surfaces the work so the Health
-    panel and the digest can offer it.
+    Delegates to `knowledge_maintain_provider.run_consolidation_pass`, which drives the real
+    `KnowledgeConsolidateActionProvider.execute`. That indirection is the substantive part: the
+    gate (`check_gates`) lives inside `execute`, so the user's `consolidate_min_hours` and
+    `consolidate_min_cluster` are honoured on this cadence. The first version of this function
+    called `plan_consolidation` directly and therefore bypassed the gate entirely — two
+    round-tripped config knobs that nothing read.
 
-    Returns the number of clusters planned. `batched=False` for the same reason as the lint.
+    A DECLINED gate returns 0, which is a normal outcome of a frequent cadence rather than an
+    error, and is indistinguishable here from "no clusters" on purpose: both mean "nothing to
+    report this tick". `batched=False` for the same reason as the lint — the count is a report.
     """
     from personalclaw.action_providers import knowledge_maintain_provider as kmp
-    from personalclaw.knowledge import consolidation
 
-    try:
-        store = kmp._open_store()
-    except Exception:  # noqa: BLE001 — an unavailable store is not a tick failure
-        logger.debug("consolidation pass: knowledge store unavailable", exc_info=True)
-        return 0
-    items = [i for i in kmp._load_items(store) if not i.consolidated and not i.is_archived]
-    if not items:
-        return 0
-    plan = consolidation.plan_consolidation(items)
-    clusters = getattr(plan, "clusters", None)
-    return len(clusters) if isinstance(clusters, list) else 0
+    return kmp.run_consolidation_pass(batch_size=batch_size)
+
+
+def _link_backfill_pass(*, batch_size: int = 0) -> int:
+    """Sweep one bounded batch of never-linked items through the deterministic alias linker.
+
+    The only RESUMABLE pass registered here (`batched=True`): it returns items PROCESSED and 0
+    when the backlog is drained, so the host's sub-batch loop drains it across a tick instead of
+    re-running a whole-store sweep. `link_backfill` keys that backlog on a `mention_sweeps` row
+    rather than on "has no mentions", because an item may legitimately name no known entity —
+    keyed the other way the head of the backlog would absorb every sub-batch forever.
+    """
+    from personalclaw.knowledge import link_backfill
+
+    return link_backfill.link_backfill_pass(
+        batch_size=batch_size or link_backfill.BATCH_SIZE,
+    )
 
 
 def register_all() -> list[str]:
@@ -111,29 +127,23 @@ def register_all() -> list[str]:
     Each registration is independently guarded: a module that fails to import must cost its
     own pass and not the others, because the failure mode this replaces was "nothing had a
     cadence at all".
+
+    `batched` is per pass and NOT a shared default — the linker backfill drains a real backlog
+    while the other two return a report. Getting that wrong in either direction is silent: a
+    sweep marked resumable busy-loops on its own finding count, and a backlog marked
+    single-sweep only ever drains one batch per tick.
     """
     from personalclaw.knowledge import maintenance
 
     registered: list[str] = []
-    for name, fn in (
-        (PASS_MEMORY_LINT, _memory_lint_pass),
-        (PASS_CONSOLIDATION, _consolidation_pass),
+    for name, fn, batched in (
+        (PASS_MEMORY_LINT, _memory_lint_pass, False),
+        (PASS_CONSOLIDATION, _consolidation_pass, False),
+        (PASS_LINK_BACKFILL, _link_backfill_pass, True),
     ):
         try:
-            maintenance.register_pass(name, fn, batched=False)
+            maintenance.register_pass(name, fn, batched=batched)
             registered.append(name)
         except Exception:  # noqa: BLE001
             logger.warning("maintenance pass %r not registered", name, exc_info=True)
     return registered
-
-
-def _probe_unregistered_linker_backfill() -> Any:
-    """Intentionally absent. See the module docstring: KL-14's third named job has no callable.
-
-    Kept as a named stub ONLY so a reader grepping for "linker" in this module finds the
-    reason rather than concluding it was forgotten. It is never registered and never called.
-    """
-    raise NotImplementedError(
-        "KL-14 names a 'graph linker backfill' that does not exist as a callable; see this "
-        "module's docstring for the measurement and why inventing one belongs to another atom"
-    )
