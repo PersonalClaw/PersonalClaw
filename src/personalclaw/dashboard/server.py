@@ -1498,19 +1498,14 @@ async def start_dashboard(
 
     app.on_startup.append(_resume_interrupted_reindex_startup)
 
-    async def _backfill_item_chunks_startup(app_: web.Application) -> None:
-        """Chunk the items that predate chunking (KL-12), in the background.
+    # Chunk the items that predate chunking (KL-12) from the graph-maintenance host, NOT a
+    # boot hook. Chunk-level retrieval only reaches items that HAVE chunks, and a hook only
+    # fires at gateway start — so on a gateway that stays up for a week, every item ingested
+    # afterwards would never gain deep-document recall (KL-14). Registering is synchronous
+    # and free; the work itself runs bounded per batch on every due maintenance tick.
+    from personalclaw.dashboard.embedding_reindex import register_chunk_backfill_pass
 
-        Chunk-level retrieval only reaches items that HAVE chunks, and every item ingested
-        before KL-9 has none — so without this an existing library never gains deep-document
-        recall, however good the index is. Runs after _model_providers_startup (it needs the
-        embedder); the work itself is resumable off the rows, bounded per batch, and fully
-        best-effort. See ``embedding_reindex.start_chunk_backfill``."""
-        from personalclaw.dashboard.embedding_reindex import start_chunk_backfill
-
-        await start_chunk_backfill(app_)
-
-    app.on_startup.append(_backfill_item_chunks_startup)
+    register_chunk_backfill_pass()
 
     async def _warm_acp_pool_startup(app_: web.Application) -> None:
         """Start the ACP live-connection pool: one warmed connection per ready

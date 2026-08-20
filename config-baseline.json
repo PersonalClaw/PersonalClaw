@@ -695,6 +695,12 @@
     "type": "int"
   },
   {
+    "default": 900,
+    "path": "knowledge.maintenance_max_staleness_secs",
+    "sensitive": false,
+    "type": "int"
+  },
+  {
     "default": 20,
     "path": "knowledge.max_mentions_per_claim",
     "sensitive": false,

@@ -552,6 +552,36 @@ def _notify_drill(ok: bool, detail: str, notifier=None) -> None:
 # ── the loop ───────────────────────────────────────────────────────────────────
 
 
+def _tick_graph_maintenance() -> None:
+    """One graph-maintenance tick (KL-14). Never raises; logs only when something ran.
+
+    Kept as a named module function rather than a lambda so the tick's own test can call
+    exactly what the loop calls — a lambda would force the test to re-implement the body and
+    then it would be asserting its own copy.
+    """
+    from personalclaw.knowledge import maintenance
+
+    try:
+        result = maintenance.run_maintenance()
+    except Exception:  # noqa: BLE001 — the guard belongs at the SEAM, not only at the caller
+        # `run_maintenance` documents "never raises" and guards itself, so reaching here means
+        # the host's own guard was bypassed (a patched internal, an import-time failure). The
+        # loop below also wraps this call, but a helper that any caller can invoke should not
+        # depend on where it is invoked FROM to be safe — a test calling it directly found
+        # exactly that gap.
+        logger.warning("graph maintenance raised past its own guard", exc_info=True)
+        return
+    if not result.ran:
+        logger.debug("graph maintenance not due: %s", result.reason)
+        return
+    if result.errors:
+        logger.warning(
+            "graph maintenance ran with %d failing pass(es): %s", len(result.errors), result.errors
+        )
+    if result.total:
+        logger.info("graph maintenance processed %d unit(s): %s", result.total, result.per_pass)
+
+
 def run_due_jobs(*, now: float | None = None, force: str = "", notifier=None) -> list[JobResult]:
     """Run whatever is due. Returns one result per job attempted.
 
@@ -745,6 +775,19 @@ class DurabilityService:
                 except asyncio.TimeoutError:
                     pass
             first = False
+            # KL-14: graph maintenance rides THIS tick — the alternative is a second periodic
+            # loop, and `gateway.py`'s own rule is one dispatch path "rather than two that
+            # drift". But it is deliberately OUTSIDE the `enabled()` gate below: that gate is
+            # `durability.auto_backup`, and a user who turns off scheduled backups must not
+            # silently also lose knowledge-graph maintenance. They mitigate unrelated
+            # failures, and coupling them would make one setting quietly disable a subsystem
+            # it does not name. `test_maintenance_runs_with_auto_backup_off` is the proof.
+            try:
+                await asyncio.get_running_loop().run_in_executor(None, _tick_graph_maintenance)
+            except asyncio.CancelledError:
+                raise
+            except Exception:  # noqa: BLE001 — maintenance must never break the backup tick
+                logger.warning("graph maintenance tick failed", exc_info=True)
             if not enabled():
                 continue
             try:

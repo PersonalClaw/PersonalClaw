@@ -2072,6 +2072,55 @@ class GatewayOrchestrator:
         )
         await self.heartbeat_svc.start()
 
+    def _register_graph_maintenance_passes(self) -> None:
+        """Give the standing maintenance jobs their cadence (KL-14).
+
+        Registered HERE rather than at import of `maintenance.py`, because that module is
+        imported by the knowledge write path — `store.py` marks the watermark on every
+        index-affecting write — and pulling the memory service, the consolidation planner and
+        an action-provider module into every write would be a real cost for no benefit.
+        """
+        try:
+            from personalclaw.knowledge import maintenance_passes
+
+            names = maintenance_passes.register_all()
+            logger.info("graph maintenance passes registered: %s", ", ".join(names) or "none")
+        except Exception:  # noqa: BLE001 — no cadence is a degradation, not a startup failure
+            logger.warning("graph maintenance passes not registered", exc_info=True)
+
+    def _install_graph_maintenance_probe(self) -> None:
+        """Tell the graph-maintenance host how to measure in-flight ingest work (KL-14).
+
+        The host defers its pass while an import is still running, so a bulk import costs ONE
+        edge pass instead of one per item. It cannot ask for that depth itself: the queue is a
+        lazy accessor on `DashboardState` that STARTS a worker when none exists, and
+        `knowledge/` importing the dashboard would invert the direction the app-platform
+        boundary sets. So the depth is INJECTED here.
+
+        🔴 Reads the private `_knowledge_ingest_queue` rather than calling the public
+        `knowledge_ingest_queue()` accessor ON PURPOSE: the public one constructs and STARTS a
+        queue as a side effect, so asking "how busy is the queue?" would spin one up on a
+        gateway that never ingested anything. Probing must not create the thing it probes.
+
+        Without this the host still runs — it treats an unknown depth as drained and logs one
+        warning saying so — but the coalescing clause would be inert, which is why the wiring
+        has its own test rather than being assumed from the fact that this line exists.
+        """
+        try:
+            from personalclaw.knowledge import maintenance
+
+            def _depth() -> int:
+                state = self.dashboard_state
+                queue = getattr(state, "_knowledge_ingest_queue", None) if state else None
+                try:
+                    return int(queue.qsize()) if queue is not None else 0
+                except Exception:  # noqa: BLE001 — a depth read must never break a tick
+                    return 0
+
+            maintenance.set_in_flight_probe(_depth)
+        except Exception:  # noqa: BLE001 — a missing probe degrades, it does not fail startup
+            logger.warning("graph-maintenance in-flight probe not installed", exc_info=True)
+
     async def _init_autonudge(self) -> None:
         """Initialize and start the auto-nudge service (feature-flagged)."""
         if not autonudge_enabled():
@@ -3800,6 +3849,8 @@ class GatewayOrchestrator:
 
         await self._init_cron()
         await self._init_heartbeat()
+        self._install_graph_maintenance_probe()
+        self._register_graph_maintenance_passes()
         try:
             await self._init_inbox()
             logger.info("Inbox service initialized successfully")
