@@ -2579,8 +2579,58 @@ export interface AvailableModel {
   matrix?: CapabilityMatrix | null; license?: string; non_commercial?: boolean
   runtime?: string; runtime_contract?: string; context_tokens?: number; output_tokens?: number
   io_mime?: Record<string, unknown>; status?: string; integrity?: string; config_only?: boolean
+  // ── Will it run HERE? (LMMV-8) ──────────────────────────────────────────────────────────
+  // Only rows from a LOCAL provider carry these; a hosted/remote row carries none of them.
+  // So an ABSENT `fit` is not the same as `fit: 'unknown'`: absent means "this is not a
+  // local model, the question does not apply" (no chip), while 'unknown' means "it is local
+  // and we could not decide" (a chip that says so). `fit_reason` is the sentence the backend
+  // composed and the ONLY accessible name for the verdict — a colour is not a state.
+  // 🪤 `quoted_size_mb` IS NOT THE VERDICT'S BASIS. It is the family's MEDIAN variant, while the
+  // verdict is judged against this row's OWN `size_mb` (falling back to the quote only for a row
+  // that publishes no size). Judging every row by the median made a 16 GB variant read yellow on
+  // an 8 GB machine — exactly the promised-fit-that-OOMs this feature exists to prevent. So a
+  // tagged row must state its own size and label the quote as the family's, never print the quote
+  // as if it were this row's bytes.
+  //
+  // `fit_step_down` is the NAME of the largest variant in the family that DOES fit — non-null only
+  // on a `red` row, and null on an unmeasured host. It lives in the payload rather than in the
+  // download handler on purpose: substituting inside the POST would hand back a job whose name,
+  // SSE stream key and byte progress all belong to a model the user never asked for. So the
+  // substitution is an OFFER the UI makes, not a swap the server performs.
+  fit?: ModelFitVerdict; fit_reason?: string; fit_need_mb?: number; quoted_size_mb?: number
+  fit_step_down?: string | null
+  // NOT a wire field — the client denormalizes the response's top-level `fit` onto each row.
+  // See `api.modelsAvailable` for why.
+  host_fit?: HostModelFit
 }
-export interface ProviderModels { name: string; displayName?: string; type: string; models: AvailableModel[]; error?: string; searchable?: boolean; local?: boolean }
+// One local model's headroom verdict against this host. 'unknown' is a first-class answer,
+// not an error: an unmeasurable host must produce it rather than a guessed red.
+export type ModelFitVerdict = 'green' | 'yellow' | 'red' | 'unknown'
+// The HOST's fit budget — a TOP-LEVEL fact of /api/models/available describing the machine,
+// not any one model (LMMV-8, mirrors local_models/fit.py).
+//
+// `budget_mb` is **null** when the host could not be measured — never 0, because 0 would
+// compare as "nothing fits" in every arithmetic reader. `measured` is the same guarantee
+// stated separately. Both exist so a consumer can refuse to spend "we could not tell" as
+// "it does not fit": `hide_unrunnable` (the user's config default for the browse filter)
+// MUST NOT hide a single row while the budget is unknown.
+export interface HostModelFit {
+  budget_mb: number | null
+  total_ram_mb: number
+  unified_memory: boolean
+  gpu_model: string
+  measured: boolean
+  hide_unrunnable: boolean
+}
+export interface ProviderModels {
+  name: string; displayName?: string; type: string; models: AvailableModel[]
+  error?: string; searchable?: boolean; local?: boolean
+  // Denormalized from the response top level, like `AvailableModel.host_fit`.
+  host_fit?: HostModelFit
+}
+// The raw /api/models/available envelope. `fit` is absent on a host that predates LMMV-8's
+// budget probe, which reads as "unknown" everywhere downstream.
+export interface AvailableModelsResponse { providers: ProviderModels[]; fit?: HostModelFit }
 export interface ProviderTestResult { ok: boolean; status?: string; message: string }
 // A local downloadable model (the uniform LocalModel shape from any local provider).
 export interface LocalModel { name: string; id: string; size_mb: number; size: number; description: string; downloaded: boolean; capabilities: string[]; gated: boolean; source: string }
@@ -3698,7 +3748,19 @@ export const api = {
   deleteModelProvider: (name: string) => del(`/api/model-providers/${encodeURIComponent(name)}`),
   testModelProvider: (name: string) => post<ProviderTestResult>(`/api/model-providers/${encodeURIComponent(name)}/test`),
   // discovered models across all backends + the active-per-use-case bindings.
-  modelsAvailable: () => get<{ providers: ProviderModels[] }>('/api/models/available').then((d) => d.providers),
+  // discovered models across all backends + this host's fit budget. The budget arrives ONCE at
+  // the top level, but the surface that renders it (`LocalModelManager`) is handed only the model
+  // rows by its parent card — so rather than restructure every caller's props, the top-level fact
+  // is denormalized onto each provider AND each row as `host_fit`. Absent when the gateway sent no
+  // `fit` at all, which every reader must treat as "unknown", never as "nothing fits".
+  modelsAvailable: () => get<AvailableModelsResponse>('/api/models/available').then((d) => {
+    const hostFit = d.fit
+    if (!hostFit) return d.providers
+    return d.providers.map((p) => ({
+      ...p, host_fit: hostFit,
+      models: p.models ? p.models.map((m) => ({ ...m, host_fit: hostFit })) : p.models,
+    }))
+  }),
   modelsActive: () => get<{ use_cases: Record<string, string[]> }>('/api/models/active').then((d) => d.use_cases),
   // ── Search entity (Settings → Search): registered providers + use-case bindings ──
   searchProviders: () => get<{ providers: SearchProviderInfo[] }>('/api/search/providers').then((d) => d.providers),

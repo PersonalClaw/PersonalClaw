@@ -931,6 +931,13 @@ _EDITABLE_CONFIG: dict[str, dict] = {
     # only decides when the runner stops retrying a genuinely broken install.
     "local_models.pressure_warn_pct": {"type": "int", "min": 1, "max": 100},
     "local_models.sidecar_restart_max": {"type": "int", "min": 0, "max": 20},
+    # LMMV-8: the fit budget's OS/runtime reserve and the browse filter's default. The
+    # reserve is bounded at 64 GB — the same window the loader clamps to — so a UI edit
+    # cannot make every model read as unrunnable; out-of-range values are REJECTED here
+    # rather than clamped, so a PATCH that "succeeded" never means a different number
+    # than the one the user typed. Neither knob blocks a download or a load.
+    "local_models.memory_reserve_gb": {"type": "float", "min": 0.0, "max": 64.0},
+    "local_models.hide_unrunnable_models": {"type": "bool"},
     # Watched sources (WATCHED-SOURCES SC#12) — the poll engine's runtime knobs. The
     # network floor is bounded at 300s (the R1-class rate floor) so a UI edit cannot make
     # the engine poll a third party abusively.

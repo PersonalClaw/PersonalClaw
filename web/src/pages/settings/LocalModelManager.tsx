@@ -6,9 +6,44 @@ import { SearchField } from '../../ui/SearchField'
 import { SquareIconButton } from '../../ui/SquareIconButton'
 import { confirmDelete } from '../../ui/dialog'
 import { WavyProgress } from '../../ui/WavyProgress'
+import { Toggle } from '../../ui/Toggle'
+import { Button } from '../../ui/Button'
 import { useModelDownloads } from './useModelDownloads'
+import {
+  FIT_LABEL, FIT_TONE, budgetKnown, filterByFit, fitDescription, hostFitOf, statedSizeMb, unrunnable,
+} from './modelFit'
 
 const MB = (bytes: number) => (bytes / 1024 / 1024).toFixed(0)
+
+/** Visible text AND accessible name of the browse filter — one string, so the switch cannot
+ *  announce something other than the words beside it (SC 2.5.3). */
+const HIDE_LABEL = "Hide models this device can't run"
+
+/** One row's "will it run here?" chip (LMMV-8), sitting in the same cluster as the downloaded
+ *  check and the gated lock.
+ *
+ *  `role="img"` + `aria-label` is this repo's declared form for a chip whose label carries state
+ *  — `FeedbackPanel`'s accurate/wrong counts and `ModelsPanel`'s breaker dot use it, and
+ *  `design/ariaProhibitedAttr` rails against the `<span aria-label>` alternative because ARIA
+ *  discards a name on a generic. The label leads with the verdict and then carries the backend's
+ *  `fit_reason`, so a screen reader gets the WHY and not just a colour nobody can hear.
+ *
+ *  Renders nothing when the row has no `fit` at all: a hosted model is not a local one, and the
+ *  question does not apply to it. That is NOT the same as the 'unknown' verdict, which is a local
+ *  model we genuinely could not decide and does get a (neutral) chip. */
+function FitChip({ model }: { model: AvailableModel }) {
+  const verdict = model.fit
+  if (!verdict) return null
+  const tone = FIT_TONE[verdict]
+  const described = fitDescription(model)
+  return (
+    <span role="img" aria-label={described} title={described}
+      className="inline-flex shrink-0 items-center rounded-pill px-1.5 text-[0.75rem]"
+      style={{ background: `color-mix(in srgb, ${tone} 16%, transparent)`, color: tone }}>
+      {FIT_LABEL[verdict]}
+    </span>
+  )
+}
 
 /** Download manager for ANY local downloadable model provider — faster-whisper, piper,
  *  sentence-transformers, the diarization backends, ollama. One uniform surface: lists
@@ -16,7 +51,11 @@ const MB = (bytes: number) => (bytes / 1024 / 1024).toFixed(0)
  *  `searchable` provider (ollama) also gets a search box that queries its remote library
  *  and lets you pull any result. Downloaded models become bindable in Models. Downloads
  *  are async jobs (minutes-long) streaming live progress over per-job SSE, surviving a
- *  reload via useModelDownloads. Fully provider-scoped — core hardcodes no provider. */
+ *  reload via useModelDownloads. Fully provider-scoped — core hardcodes no provider.
+ *
+ *  Every row also answers "will it run HERE?" (LMMV-8): a fit chip beside the downloaded/gated
+ *  cluster, and a browse filter that can hide the ones this device cannot run — but ONLY on a host
+ *  whose memory budget was actually measured. See `modelFit.ts`. */
 export function LocalModelManager({
   provider, models, searchable, onChanged,
 }: { provider: string; models: AvailableModel[]; searchable?: boolean; onChanged: () => void }) {
@@ -76,9 +115,31 @@ export function LocalModelManager({
   }, [query, searchable, provider])
 
   const downloaded = models.filter((m) => m.downloaded).length
+
+  // ── The browse filter: hide what this device cannot run (LMMV-8) ─────────────────────────────
+  //
+  // `null` means "still following the backend's `hide_unrunnable` preference"; a click pins the
+  // user's answer. Derived rather than seeded into state with an effect, because the host budget
+  // arrives with the models — a `useState(hide_unrunnable)` initialiser would capture `undefined`
+  // on the first render and never pick the preference up.
+  const [showAll, setShowAll] = useState<boolean | null>(null)
+  const hostFit = hostFitOf(models)
+  // 🔑 An UNKNOWN or UNMEASURED budget hides NOTHING, and does not even offer the control. Every
+  // one of these reads goes through `budgetKnown`, so there is a single place where "we could not
+  // measure this machine" is prevented from being spent as "these models do not fit".
+  const fitFilterable = budgetKnown(hostFit)
+  const hiding = showAll === null ? fitFilterable && !!hostFit?.hide_unrunnable : !showAll
+  const unrunnableCount = unrunnable(models, hostFit).length
   // When searching, show remote results; otherwise the installed/catalog list.
   const showSearch = searchable && query.trim().length > 0
-  const rows: AvailableModel[] = showSearch ? (searchResults ?? []) : models
+  // The filter applies to the CATALOG only. Remote library results come from the search endpoint,
+  // which carries no fit annotation at all — so filtering them could only ever be a no-op, while
+  // leaving `ResultAnnouncement`'s count (which reports `searchResults.length`) honest by
+  // construction rather than by coincidence.
+  const rows: AvailableModel[] = showSearch
+    ? (searchResults ?? [])
+    : filterByFit(models, hostFit, hiding)
+  const hiddenCount = showSearch ? 0 : models.length - rows.length
 
   const renderRow = (m: AvailableModel) => {
     const job = jobs[m.name]
@@ -87,6 +148,16 @@ export function LocalModelManager({
     // Determinate when the total is known (progress 0..1); else indeterminate.
     const frac = job && job.total_bytes > 0 ? job.progress : undefined
     const sizeMb = m.size_mb ?? (m.size ? Math.round(m.size / 1024 / 1024) : 0)
+    // The number this row states is the one its VERDICT was judged on — its own size — with the
+    // family median appended only when it is a different fact, and always labelled as the family's.
+    // See `statedSizeMb`. The progress line keeps `sizeMb`: real bytes arriving, not a catalog fact.
+    const stated = statedSizeMb(m)
+    // A red row is not a dead end: the backend named the largest variant in the family that DOES
+    // fit, so offer it. Deliberately an OFFER and not a swap — the server refuses to substitute
+    // inside the POST because the job's name, stream key and byte progress would then all belong to
+    // a model the user never asked for. The row's own Download stays enabled: the verdict is advice
+    // about this machine, not a licence to block a download the user may want anyway.
+    const stepDown = m.fit === 'red' ? m.fit_step_down : null
     const gatedUndownloaded = m.gated && !m.downloaded
     return (
       <div key={m.name} className="rounded-md px-2.5 py-1.5"
@@ -99,12 +170,19 @@ export function LocalModelManager({
               <span className="truncate text-on-surface text-[0.75rem] font-mono">{m.name}</span>
               {m.downloaded && <Check size={11} style={{ color: 'var(--color-success)' }} />}
               {gatedUndownloaded && <Lock size={10} className="shrink-0 text-on-surface-low" aria-label="Requires a token / license" />}
+              <FitChip model={m} />
             </div>
             <div className="truncate text-on-surface-low text-[0.75rem]">
               {downloading
                 ? `downloading${job.downloaded_bytes ? ` · ${MB(job.downloaded_bytes)}${sizeMb ? ` / ${sizeMb}` : ''} MB` : ''}`
-                : <>{m.description || (m.capabilities?.length ? m.capabilities.join(', ') : '')}{sizeMb ? ` · ${sizeMb} MB` : ''}</>}
+                : <>{m.description || (m.capabilities?.length ? m.capabilities.join(', ') : '')}{stated.mb ? ` · ${stated.mb} MB` : ''}{stated.familyMedianMb ? ` · family median ~${stated.familyMedianMb} MB` : ''}</>}
             </div>
+            {stepDown && !downloading && (
+              <Button variant="ghost-accent" size="xs" className="-ml-m mt-0.5"
+                onClick={() => download(stepDown)}>
+                Download {stepDown} instead — it fits
+              </Button>
+            )}
             {/* Determinate when the byte total is known, and then it must say WHAT is downloading —
                 the bar sits in a list of models, so "progressbar 42%" alone does not identify which.
                 Indeterminate (total unknown) stays unnamed and `aria-hidden`: the line above already
@@ -143,6 +221,25 @@ export function LocalModelManager({
         <HardDrive size={11} /> Models ({downloaded}/{models.length} downloaded)
       </div>
 
+      {/* Hiding has to be VISIBLE. A silently shortened catalog reads as "this provider has no
+          models", which is why the switch states the count it removed and stays next to it: the
+          switch IS the way back to the full list. Rendered only on a measured host — offering a
+          filter that provably cannot hide anything would be a control that lies about its effect. */}
+      {fitFilterable && (
+        <div className="mb-1.5 flex items-center gap-1.5 text-[0.75rem]">
+          <Toggle size="sm" on={hiding} onChange={(v) => setShowAll(!v)} label={HIDE_LABEL} />
+          <span className="text-on-surface-low">{HIDE_LABEL}</span>
+          {hiding && hiddenCount > 0 && (
+            <span style={{ color: 'var(--color-warning)' }}>
+              {hiddenCount} hidden
+            </span>
+          )}
+          {!hiding && unrunnableCount > 0 && (
+            <span className="text-on-surface-low">{`${unrunnableCount} won't fit`}</span>
+          )}
+        </div>
+      )}
+
       {searchable && (
         <div className="mb-1.5">
           <SearchField value={query} onChange={setQuery} size="sm"
@@ -160,7 +257,15 @@ export function LocalModelManager({
         <div className="py-1 text-on-surface-low text-[0.75rem] italic">Searching…</div>
       ) : rows.length === 0 ? (
         <div className="py-1 text-on-surface-low text-[0.75rem] italic">
-          {showSearch ? `No models match “${query.trim()}”.` : 'No downloadable models listed.'}
+          {/* The filter can empty the list completely, and "No downloadable models listed" would
+              then be a flat lie about a provider whose catalog we just hid. The switch above is
+              still on screen, so this states the cause and points at the way back. */}
+          {showSearch ? `No models match “${query.trim()}”.`
+            : hiddenCount === 1
+              ? 'The only listed model is hidden — it will not run on this device.'
+              : hiddenCount > 1
+                ? `All ${hiddenCount} listed models are hidden — none of them will run on this device.`
+                : 'No downloadable models listed.'}
         </div>
       ) : (
         <div className="grid gap-1.5 [grid-template-columns:repeat(auto-fill,minmax(260px,1fr))]">

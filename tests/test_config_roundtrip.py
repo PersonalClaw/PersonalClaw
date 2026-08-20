@@ -91,18 +91,27 @@ def test_save_load_roundtrip_local_models(cfg_file):
     cfg = AppConfig()
     cfg.local_models.pressure_warn_pct = 70
     cfg.local_models.sidecar_restart_max = 5
+    cfg.local_models.memory_reserve_gb = 6.5
+    cfg.local_models.hide_unrunnable_models = False
     cfg.save()
 
     raw = json.loads(cfg_file.read_text(encoding="utf-8"))
-    assert raw["local_models"] == {"pressure_warn_pct": 70, "sidecar_restart_max": 5}
+    assert raw["local_models"] == {
+        "pressure_warn_pct": 70,
+        "sidecar_restart_max": 5,
+        "memory_reserve_gb": 6.5,
+        "hide_unrunnable_models": False,
+    }
 
     loaded = AppConfig.load()
     assert loaded.local_models.pressure_warn_pct == 70
     assert loaded.local_models.sidecar_restart_max == 5
+    assert loaded.local_models.memory_reserve_gb == 6.5
+    assert loaded.local_models.hide_unrunnable_models is False
 
 
 def test_local_models_fields_in_editable_allowlist():
-    """LMMV-5: both knobs are PATCH-editable (the write path of the round-trip)."""
+    """LMMV-5/LMMV-8: every knob is PATCH-editable (the write path of the round-trip)."""
     from personalclaw.dashboard.handlers.core import _EDITABLE_CONFIG
 
     assert _EDITABLE_CONFIG["local_models.pressure_warn_pct"] == {
@@ -111,6 +120,86 @@ def test_local_models_fields_in_editable_allowlist():
         "max": 100,
     }
     assert _EDITABLE_CONFIG["local_models.sidecar_restart_max"]["type"] == "int"
+    assert _EDITABLE_CONFIG["local_models.memory_reserve_gb"] == {
+        "type": "float",
+        "min": 0.0,
+        "max": 64.0,
+    }
+    assert _EDITABLE_CONFIG["local_models.hide_unrunnable_models"] == {"type": "bool"}
+
+
+def test_the_fit_reserve_defaults_to_three_gb_and_the_filter_defaults_on():
+    """LMMV-8: the shipped defaults the fit readers fall back to must be the REAL ones."""
+    cfg = AppConfig()
+    assert cfg.local_models.memory_reserve_gb == 3.0
+    assert cfg.local_models.hide_unrunnable_models is True
+
+
+def test_the_fit_readers_read_the_configured_values_not_their_fallbacks(cfg_file):
+    """LMMV-8's fifth round-trip point: ``fit``'s two readers see a WRITTEN value.
+
+    Both helpers fall back on any exception, so a missing field would make them look
+    healthy while reporting the shipped default forever. Writing a value no fallback
+    could produce is what separates "wired" from "silently defaulting".
+    """
+    from personalclaw.local_models import fit
+
+    assert fit.configured_reserve_gb() == 3.0
+    assert fit.hide_unrunnable_default() is True
+
+    cfg_file.write_text(
+        json.dumps({"local_models": {"memory_reserve_gb": 11.25, "hide_unrunnable_models": False}}),
+        encoding="utf-8",
+    )
+    assert fit.configured_reserve_gb() == 11.25
+    assert fit.hide_unrunnable_default() is False
+
+
+@pytest.mark.asyncio
+async def test_an_out_of_range_reserve_is_rejected_by_patch_not_clamped(cfg_file):
+    """A reserve edit outside 0-64 GB gets the normal typed error, never a quiet clamp.
+
+    A clamp here would be the worst outcome: the PATCH reports success while the stored
+    number differs from the one the user typed, and every later fit verdict is computed
+    from a budget they never chose.
+    """
+    from aiohttp import web
+    from aiohttp.test_utils import TestClient, TestServer
+
+    from personalclaw.dashboard.handlers import api_personalclaw_config_patch
+
+    app = web.Application()
+    app.router.add_patch("/api/config/personalclaw", api_personalclaw_config_patch)
+
+    async with TestClient(TestServer(app)) as client:
+        for bad in (-1.0, 65.0):
+            resp = await client.patch(
+                "/api/config/personalclaw",
+                json={"path": "local_models.memory_reserve_gb", "value": bad},
+            )
+            assert resp.status == 400
+            assert "between 0.0 and 64.0" in json.dumps(await resp.json())
+        # Nothing was written: a rejected edit leaves the shipped default in place.
+        assert AppConfig.load().local_models.memory_reserve_gb == 3.0
+
+        resp = await client.patch(
+            "/api/config/personalclaw",
+            json={"path": "local_models.memory_reserve_gb", "value": 5.5},
+        )
+        assert resp.status == 200
+        assert AppConfig.load().local_models.memory_reserve_gb == 5.5
+
+
+def test_a_nonsense_reserve_in_config_json_is_clamped_to_the_same_window(cfg_file):
+    """A hand-edited config.json still loads: the read path clamps what PATCH refuses."""
+    cfg_file.write_text(
+        json.dumps({"local_models": {"memory_reserve_gb": -9, "hide_unrunnable_models": True}}),
+        encoding="utf-8",
+    )
+    assert AppConfig.load().local_models.memory_reserve_gb == 0.0
+
+    cfg_file.write_text(json.dumps({"local_models": {"memory_reserve_gb": 4096}}), encoding="utf-8")
+    assert AppConfig.load().local_models.memory_reserve_gb == 64.0
 
 
 def test_a_nonsense_pressure_threshold_is_clamped_to_a_real_percentage(cfg_file):
