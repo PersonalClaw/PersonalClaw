@@ -302,7 +302,7 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `GET /api/knowledge/entities/by-name/{name}/items` — - items that MENTION the entity.
 - `GET /api/knowledge/entities/by-name/{name}/related` — - entities directly connected
 - `GET /api/knowledge/entities/{id}/graph` — - D3-compatible subgraph.
-- `GET /api/knowledge/graph` — - full entity graph (top N by connections).
+- `GET /api/knowledge/graph` — - the whole entity graph, positioned and edge-thinned.
 - `POST /api/knowledge/ingest` — - multipart file upload. Each file becomes ONE
 - `GET /api/knowledge/intents` — - natural-language intents (Tier 3) + outcome counts.
 - `POST /api/knowledge/intents` — - create or update an intent.

@@ -11,6 +11,8 @@ import { Markdown } from '../../ui/Markdown'
 import { KnowledgeDetail } from './KnowledgeDetail'
 import { AnnotationList } from './ReadingView'
 import { DuplicateList } from './DuplicateList'
+import { KnowledgeEgoGraph, type KnowledgeGraphPayload } from './KnowledgeEgoGraph'
+import { Button } from '../../ui/Button'
 import { resolveType, typeLabel } from './knowledgeMeta'
 import { api, type KnowledgeAnnotation, type KnowledgeDuplicate, type KnowledgeItem, type ExtractedContent, ApiError } from '../../lib/api'
 import { useQueryParam, type RouteProps } from '../../app/useQueryState'
@@ -418,7 +420,66 @@ export function ReaderInsights({ item, related, annotations, onRemoveAnnotation,
       <HighlightsSection annotations={annotations} onRemove={onRemoveAnnotation} />
       <EntitiesSection entities={item.entities ?? []} />
       <RelatedSection related={related} onOpenItem={onOpenItem} />
+      <EgoGraphSection item={item} onOpenItem={onOpenItem} />
     </>
+  )
+}
+
+/** KL-17's ego view, in the reading rail. Centred on the item's best-connected entity, because
+ *  the graph's nodes ARE entities — an item is not a node in it, so "this document's
+ *  neighbourhood" is honestly "the neighbourhood of what this document is about".
+ *
+ *  🔴 Loads the graph ONLY when opened. The payload is the whole positioned graph (every node,
+ *  edges thinned) and the projection behind it is a whole-library computation; paying for that on
+ *  every reader open would tax the common case to serve the rare one. A collapsed section that
+ *  has never been expanded issues no request at all. */
+function EgoGraphSection({ item, onOpenItem }: {
+  item: KnowledgeItem
+  onOpenItem: (id: string) => void
+}) {
+  const [open, setOpen] = useState(false)
+  const [data, setData] = useState<KnowledgeGraphPayload | null>(null)
+  const [err, setErr] = useState<unknown>(null)
+
+  // The focus: the item's entity with the most connections in the graph once it arrives, and
+  // before that its first entity. Falls back to '' so the view renders its own not-in-the-graph
+  // state rather than this section inventing an empty one.
+  const entities = item.entities ?? []
+  const focusId = (() => {
+    if (!entities.length) return ''
+    if (!data) return String(entities[0].id ?? '')
+    const degree = new Map<string, number>()
+    for (const e of data.edges) {
+      degree.set(e.source, (degree.get(e.source) ?? 0) + 1)
+      degree.set(e.target, (degree.get(e.target) ?? 0) + 1)
+    }
+    const ids = entities.map((e) => String(e.id ?? '')).filter(Boolean)
+    return ids.slice().sort((a, b) => (degree.get(b) ?? 0) - (degree.get(a) ?? 0) || a.localeCompare(b))[0] ?? ''
+  })()
+
+  useEffect(() => {
+    if (!open || data || err) return
+    let alive = true
+    api.knowledgeGraph()
+      .then((d) => { if (alive) setData(d as KnowledgeGraphPayload) })
+      .catch((e) => { if (alive) setErr(e) })
+    return () => { alive = false }
+  }, [open, data, err])
+
+  if (!entities.length) return null
+  return (
+    <Section label="Neighbourhood" icon={Network}>
+      <Button variant="ghost" size="sm" ariaExpanded={open} onClick={() => setOpen((v) => !v)}>
+        {open ? 'Hide the graph' : 'Show this in the graph'}
+      </Button>
+      {open && (
+        err
+          ? <LoadError what="knowledge graph" error={err} onRetry={() => setErr(null)} />
+          : data
+          ? <div className="mt-s"><KnowledgeEgoGraph data={data} focusId={focusId} onSelect={onOpenItem} /></div>
+          : <div data-type="body-s" className="px-s py-m text-on-surface-low">Loading the graph…</div>
+      )}
+    </Section>
   )
 }
 

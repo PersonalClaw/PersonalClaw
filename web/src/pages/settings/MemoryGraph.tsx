@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Loader2 } from 'lucide-react'
 import { api, type MemoryGraphData } from '../../lib/api'
+import { litNeighbourhood } from '../../lib/litSet'
 import { GraphZoomControls } from '../../ui/GraphZoomControls'
 
 /** Memory graph — the auto-linked node graph of the whole memory store (facts +
@@ -10,11 +11,16 @@ import { GraphZoomControls } from '../../ui/GraphZoomControls'
  *
  *  Two modes:
  *   • Standalone (no props) — fetches its own graph, hover-to-highlight, read-only.
- *   • Studio (props given) — the parent (MemoryStudio) owns the fetched data + the
- *     selection, so the graph, list, and inspector are views onto ONE object set.
- *     `focusRef` drives an Obsidian-style LOCAL-GRAPH focus: the node with that ref +
- *     its `hopDepth`-hop neighbourhood stay lit; everything else dims. `onSelectRef`
- *     fires when a node is clicked (→ the parent selects that memory). */
+ *   • Controlled (props given) — the parent owns the fetched data + the selection, so the
+ *     graph, list, and inspector are views onto ONE object set. `focusRef` drives an
+ *     Obsidian-style LOCAL-GRAPH focus: the node with that ref + its `hopDepth`-hop
+ *     neighbourhood stay lit; everything else dims. `onSelectRef` fires when a node is
+ *     clicked (→ the parent selects that memory).
+ *
+ *  Two parents drive the controlled mode today: `MemoryStudio` (records + entities) and the
+ *  knowledge ego view (`pages/knowledge/KnowledgeEgoGraph.tsx`, one document's neighbourhood).
+ *  Nothing below is memory-specific — the noun, the height, the empty hint and the data are all
+ *  props — so a second canvas is an ADAPTER, not a fork. Keep it that way. */
 export function MemoryGraph({ data, focusRef, hopDepth = 1, onSelectRef, boxHeight, nodeNoun = 'fact', nodeNounPlural, emptyHint }: {
   data?: MemoryGraphData | null
   focusRef?: string | null
@@ -87,22 +93,12 @@ export function MemoryGraph({ data, focusRef, hopDepth = 1, onSelectRef, boxHeig
     if (!focusRef || !graph) return null
     return graph.nodes.find((n) => n.ref === focusRef)?.id ?? null
   }, [focusRef, graph])
-  const litSet = useMemo(() => {
-    if (!focusId || !graph) return null  // null = no focus → all lit
-    const adj = new Map<string, string[]>()
-    for (const e of graph.edges) {
-      ;(adj.get(e.from) ?? adj.set(e.from, []).get(e.from)!).push(e.to)
-      ;(adj.get(e.to) ?? adj.set(e.to, []).get(e.to)!).push(e.from)
-    }
-    const lit = new Set<string>([focusId])
-    let frontier = [focusId]
-    for (let hop = 0; hop < Math.max(1, hopDepth); hop++) {
-      const next: string[] = []
-      for (const id of frontier) for (const nb of adj.get(id) ?? []) if (!lit.has(nb)) { lit.add(nb); next.push(nb) }
-      frontier = next
-    }
-    return lit
-  }, [focusId, graph, hopDepth])
+  // The traversal itself lives in `lib/litSet.ts` — the knowledge ego view narrows its payload
+  // to the same N-hop neighbourhood, and two implementations of one question drift.
+  const litSet = useMemo(
+    () => (graph ? litNeighbourhood(graph.edges, focusId, hopDepth) : null),
+    [focusId, graph, hopDepth],
+  )
 
   // Group → hue so related facts read as a cluster. Deterministic per group string.
   const groupColor = (group?: string) => {

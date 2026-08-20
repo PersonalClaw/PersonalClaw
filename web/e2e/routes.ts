@@ -5,10 +5,14 @@
 // #/<route>. Keep in sync with App.tsx NAV.
 
 export interface RouteEntry {
-  /** hash route segment (no leading #/) */
+  /** hash route segment (no leading #/) — may carry a query string */
   route: string
   /** human label for the snapshot / report */
   label: string
+  /** Filesystem-safe artifact name, for the screenshot baseline and the axe
+   *  attachment. Defaults to `route`; REQUIRED when `route` carries a query
+   *  string, because `?` and `=` have no business in a committed filename. */
+  id?: string
   /** routes that need backend data / auth to render meaningfully — the harness
    *  still snapshots their shell (empty/loading state is a valid baseline). */
   needsData?: boolean
@@ -61,6 +65,25 @@ export const SETTINGS_ROUTES: RouteEntry[] = SETTINGS_PANELS.map((id) => ({
   label: `Settings › ${id}`,
   needsData: true,
 }))
+
+// ── Sub-view routes — a nav page's OTHER surfaces (KL-17) ───────────────────
+// Some nav routes host more than one surface, selected by a query param rather
+// than by their own path. Scanning the nav route only ever renders the DEFAULT
+// one, so the alternates were in exactly the blind spot `learning` was in: the
+// knowledge graph is `#/knowledge?view=graph` (KnowledgeListPage's `view` param,
+// default `library`), and it had never been axe-scanned or snapshotted because
+// the harness had no way to name it.
+//
+// Deliberately a SEPARATE list from ROUTES: `routeManifestParity.test.ts` holds
+// ROUTES to an exact mirror of App.tsx's NAV ids, and a query-param view is not
+// a nav id. Same distinction SETTINGS_ROUTES already makes.
+//
+// These are plain hash routes — `useHashRoute` splits the query off the path, so
+// no interaction recipe is needed. `graphRouteCoverage.test.ts` fails if the
+// route stops resolving to the graph.
+export const VIEW_ROUTES: RouteEntry[] = [
+  { route: 'knowledge?view=graph', id: 'knowledge-graph', label: 'Knowledge › Graph', needsData: true },
+]
 
 export const THEMES = ['light', 'dark'] as const
 export type Theme = (typeof THEMES)[number]
