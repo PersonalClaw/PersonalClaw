@@ -6123,6 +6123,7 @@
           "id": "FM-4",
           "title": "Coherence pass: unify Morph/LiquidShape/Disintegrate/Bud into one motion vocabulary",
           "status": "done",
+          "pr": 1820,
           "scope": "Session 2 \u2014 Liquid morphing (T2.3, V2)",
           "done_when": "the morph family shares timing/curves and reads as one system on visual review; documented in motion.md; the card\u2192reading morph + a liquid state transition both stay clean under prefers-reduced-motion and expressiveness=0",
           "deps": [
