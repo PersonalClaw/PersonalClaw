@@ -392,7 +392,12 @@ async def _dispatch_report(report_id: str) -> tuple[bool, str]:
         payload={"report_id": report_id, "manual": True},
     )
     try:
-        result = await provider.execute({"report_id": report_id}, ctx)
+        # `manual: True` in the ACTION CONFIG, not only in `ctx.payload`: the provider's
+        # dueness pre-flight reads its config, because that is the surface a trigger row also
+        # fills — and a trigger row never sets this key, so a scheduled fire cannot skip the
+        # window check by accident. The user clicking Run now is the authority for that fire;
+        # refusing it as "not due" would make the button lie.
+        result = await provider.execute({"report_id": report_id, "manual": True}, ctx)
     except Exception as exc:  # noqa: BLE001 - a failed manual run is REPORTED, not raised
         logger.warning("research report run failed for %s", report_id, exc_info=True)
         return False, f"failed: {type(exc).__name__}: {exc}"

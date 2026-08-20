@@ -342,6 +342,11 @@ def save_report(defn: ReportDefinition) -> ReportDefinition:
     defns = [d for d in load_reports() if d.id != defn.id]
     defns.append(defn)
     _write(defns)
+    # The schedule is attached HERE rather than in the handler, because this is the one home
+    # of the definition store: a second writer (a CLI, an app, a future importer) would
+    # otherwise persist a report that never fires, which is precisely the state this atom
+    # started in. Best-effort by construction — see `report_schedules.sync`.
+    _sync_schedule(defn)
     return defn
 
 
@@ -351,7 +356,38 @@ def delete_report(report_id: str) -> bool:
     if len(kept) == len(defns):
         return False
     _write(kept)
+    # Order matters: the definition is gone first, so a failure to remove the trigger leaves
+    # a row whose provider then refuses ("no report definition") instead of a live schedule
+    # for a report that no longer exists.
+    _remove_schedule(report_id)
     return True
+
+
+def _sync_schedule(defn: ReportDefinition) -> str:
+    """Attach/refresh this report's clock trigger. Imported lazily and never raising.
+
+    Lazy because `triggers/` is a heavier subtree than the definition store needs at import
+    time, and `triggers.web_poll` already imports `knowledge` inside a function for the
+    mirror-image reason — a module-level pair would be a cycle.
+    """
+    try:
+        from personalclaw.knowledge import report_schedules
+
+        return report_schedules.sync(defn)
+    except Exception as exc:  # noqa: BLE001 — a save must not fail on its scheduling
+        logger.warning("research report %s: schedule sync failed (%s)", defn.id, exc)
+        return f"schedule sync failed: {exc}"
+
+
+def _remove_schedule(report_id: str) -> str:
+    """Detach this report's clock trigger. Never raising, for the same reason."""
+    try:
+        from personalclaw.knowledge import report_schedules
+
+        return report_schedules.remove(report_id)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("research report %s: schedule removal failed (%s)", report_id, exc)
+        return f"schedule removal failed: {exc}"
 
 
 # ── Dueness ──

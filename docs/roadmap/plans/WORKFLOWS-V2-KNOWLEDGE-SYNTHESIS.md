@@ -948,3 +948,67 @@ Templates are the plan's proof-of-life — field-tested shapes with real daily c
   run is DEFERRED, not dropped, because the failure advances neither the stamp nor the watermark; and the
   status census names the report's own two-value field so a same-named field on a different entity is a
   decision on the record rather than census drift.
+
+- [2026-08-19][WF2KNO-12] DONE — the atom's recorded UNMET clause is closed: a due report now
+  fires. The previous session shipped the definition store, the runner, the API, the UI, the
+  `research-finding` kind and the delivery path, and left the atom `todo` on one measured
+  clause — nothing called `research_reports.is_due`, so the schedule was attached to nothing.
+  Re-verified against code before starting: `grep -rn 'is_due' src tests` returned this
+  module's own docstrings and `test_research_reports.py`, and no production caller.
+
+  **The mechanism, and why not a sweeper.** A report's schedule is now a `clock` trigger row
+  (`knowledge/report_schedules.py`) whose action is `{provider: "knowledge-report", config:
+  {report_id}}`, synced from `save_report`/`delete_report` — which is the ONE home of the
+  definition store, so a second writer (a CLI, an app, an importer) cannot persist a report
+  that never fires. A second sweeper loop was rejected for the reason `gateway.py`'s
+  `_clock_loop` states outright: a clock fire and a file fire go through ONE dispatch path
+  "rather than two that drift", and a report loop would re-decide arming, overlap, catch-up and
+  audit slightly differently.
+
+  **Two schedules, one authority.** The trigger decides when the runner is INVOKED; `is_due`
+  decides whether that invocation is the report's window, and it is the only place the four
+  hardening rules live (fail-closed parse, `created_ts` anchoring, fifty-skipped-windows-fire-
+  once, a failed run advancing neither stamp nor watermark) — none of which is derivable from a
+  cron expression. So the trigger is allowed to be more eager and the pre-flight absorbs the
+  difference. A not-due fire is a NAMED skip and deliberately does not call `record_run`:
+  stamping a run that did not happen would advance the watermark past material it never read.
+  A manual run skips the check, because the user clicking Run now is the authority for that
+  fire and refusing it as "not due" would make the button lie — the flag rides the action
+  CONFIG, which a trigger row never sets, so a scheduled fire cannot acquire it by accident.
+
+  **Three seams that would each have produced a row that looks scheduled and never fires**,
+  none visible from the definition side:
+  1. **The frozen-capability fence.** `screen.EMPTY_MEANS = "deny"` — "a trigger that declared
+     nothing gets nothing" — and `knowledge-report` is classified write-capable, so a row with
+     no `capabilities` block is refused at fire time. Frozen through
+     `screen.capabilities_for_action` rather than hand-written, so this row gets exactly what
+     the shipped deriver gives every other writer's row.
+  2. **Arming.** A freshly upserted clock row carries `next_fire_at = ""`, which `arm.py`'s own
+     docstring calls "permanently inert … due_ids STILL []". `boot_migrate.arm_unarmed` runs at
+     BOOT only, so a report created on a running gateway would have waited for a restart — the
+     same never-fires defect one step later. The row is armed at sync time.
+  3. **A timezone that means two different things.** `ReportDefinition.tz` documents
+     `"" == host local`; an ABSENT `spec["timezone"]` makes `arm._tz` fall back to **UTC**. On a
+     non-UTC host the row would arm for the UTC hour while `is_due` waited for the local one —
+     the fire arrives, the pre-flight skips it as not-due, and the report runs late or not that
+     day. Resolved through `get_local_tz()[0]`, the same source `_report_tz` falls back to.
+
+  **Two of my own fields were silently defaulted** and the tests caught both: the mapping read
+  `defn.timezone` and `defn.title`, and `ReportDefinition` has `tz` and `name` — so every row
+  was built with an empty zone and a name that fell back to the id, and the fallback looked
+  deliberate. A defaulted field is an unsupplied input.
+
+  **Gate:** `make lint` clean (mypy 935 files); 23 new tests plus 204 in the neighbouring
+  report/trigger/chokepoint/screen suites (227 total, green); full suite green. Eight
+  falsifications, each on the live line and each restored from a file copy: the sync unhooked
+  from `save_report` (0 rows), capabilities emptied (the fence refuses), arming removed (inert
+  row), the pre-flight removed, the pre-flight made to skip EVERYTHING (the over-block
+  direction), the manual flag ignored, the host-local tz fallback dropped, and that fallback
+  made to overwrite an explicit zone.
+
+  **One falsification leg found an UNRUN test rather than a red:** dropping the tz fallback
+  named a test that did not exist — I had fixed the drift without asserting it. Written now,
+  both directions. And `test_is_due_now_has_a_production_caller` proves PRESENCE only: it
+  passed with the pre-flight disabled by `if False:`, because the call site is still in the
+  file. Reachability is the not-due skip test, which reds under that same mutation; the two are
+  a pair and the docstring says so rather than implying the rail is stronger than it is.

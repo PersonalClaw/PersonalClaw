@@ -379,7 +379,11 @@ class TestManualRun:
             assert (await resp.json())["ok"] is True
         assert len(fake_provider.calls) == 1
         config, ctx = fake_provider.calls[0]
-        assert config == {"report_id": rid}
+        # `manual: True` rides the CONFIG as well as the payload now: the provider's dueness
+        # pre-flight reads its config, because that is the surface a trigger row also fills —
+        # and a trigger row never sets this key, so a scheduled fire cannot skip the window
+        # check by accident.
+        assert config == {"report_id": rid, "manual": True}
         assert ctx.payload["report_id"] == rid and ctx.payload["manual"] is True
 
     @pytest.mark.asyncio
