@@ -204,6 +204,81 @@ rather than deferring them past it.
 
 ## Execution log
 
+- **2026-08-20 — `PP-16` slice DONE: one action-guard vocabulary (the backend mirror the
+  2026-08-18 census left "whole rather than half-converged"). Atom stays `todo`.** The status
+  slice unified how a loop's state is *narrated*; this unifies what a state *permits*.
+
+  **The defect, measured.** `loop.loop:ACTION_SOURCE_STATES` is the only thing that decides whether
+  a lifecycle action is accepted or answered with a 409 (`loop_routes.py:534`). Six frontend guards
+  across five files each hand-wrote their own copy, with **three different vocabularies** (three,
+  four and five states). **Five of six omitted `blocked`** — which the backend has always accepted a
+  `resume` from — so **a blocked loop was unresumable from every surface in the app**. `failed` was
+  resumable from two cockpits but not from the list or the in-chat card, so the same loop offered a
+  different action set depending on where you opened it. And `LoopCockpitPage:585` gated Start on
+  `ready` alone, missing `review`, which the sibling design cockpit already offered.
+
+  🔴 **The sixth guard was invisible to the census that found the other five.** It sits in
+  `pages/code/CodeCockpitPage.tsx` written as a chained disjunction
+  (`status === 'paused' || status === 'blocked' || …`) rather than an array literal, so a
+  `[...].includes(status)` search reported the app clean while a guard carrying its own third
+  vocabulary survived. It was also the **only** one that matched the backend exactly. A census must
+  match the shape a developer would write, not the shape the last one happened to use.
+
+  🔴 **And the root cause was one layer down: the wire TYPE.** `api.ts` carried **three** unions for
+  one backend enum — `LoopStatus` (eleven members, **omitting `blocked`**), `CodeStatus` (twelve) and
+  `UnifiedLoopStatus` (twelve). A `status === 'blocked'` comparison against the eleven-member type is
+  a **compile error**, which is the most likely reason every hand-written guard dropped that state:
+  the type made the correct guard un-writable. The two per-kind copies are retired and their fields
+  repointed; each had exactly one consumer, swept across `web/ src/ tests/ harness/` first.
+
+  **What shipped.** `LOOP_ACTION_SOURCE_STATUSES` in `lib/loopStatus.ts` — a map of
+  `ReadonlySet<string>` per action, following the file's own two landed mirrors, with `stop` holding
+  `ACTIVE_LOOP_STATUSES` **by reference** rather than restating its five members. All six guards on
+  five surfaces now read it, plus the `specFrozen` check that was a fifth hand-written copy of
+  `PRELAUNCH_STATUSES` (converted only after eight behaviour legs pinned its semantics as unchanged
+  *before* the change). One copy gap closed too: the cockpit's "Fix the underlying cause, then
+  Resume" hint was gated on `failed`/`stagnant`, so the two states that newly offer Resume would
+  have got the button with no explanation — it now follows the button.
+
+  **Rails, four, each with a vacuity floor.** Per-action **equality** (not subset — a subset
+  assertion is exactly what let `blocked` go missing) between the mirror and the imported backend
+  dict; the surviving union versus the enum; a **both-shape** census for hand-written guards; and an
+  adoption half asserting each of the five lifecycle surfaces actually reaches the mirror, because
+  "no bad guard" is also true of a file whose controls were deleted.
+
+  🪤 **The census was over-broad on its first pass and had to be narrowed.** Matching any membership
+  test over lifecycle states flagged two innocents: an `attention` display flag (which deliberately
+  includes the terminal `stopped`) and a CTA-copy selector keyed on the *effective* status.
+  Converting either would have been wrong. The discriminator is proximity to the `act(...)` dispatch
+  — what the rail is for is a control whose availability disagrees with the backend, so it only
+  counts a shape sitting in front of the call that asks. Both directions are asserted: the shapes
+  match their own samples, and the display flag must NOT count.
+
+  **Driven as a user**, seeded blocked + review loops on an isolated dev home, gateway serving this
+  worktree's own bundle, zero console errors on every surface: the blocked loop's row in
+  `#/loops/history` now offers **Resume and Stop** (it offered neither), and its cockpit shows
+  **Resume with the hint**. An honest nuance found only by driving: a `review` loop's normal product
+  path is the plan **walkthrough**, not the cockpit, so the Start fix is real wherever the cockpit
+  renders but a user in `review` meets the launch flow first. Two probe errors were mine, not the
+  product's — loop ids are `uuid4().hex[:8]` and a full dashed UUID 400s as "Invalid loop id", and
+  the goal list does not show `kind=code` rows.
+
+  **Gate:** `make lint` clean (mypy 940); Python **23,204 passed, 30 skipped, 12 xfailed**; web
+  **449 files / 4,644 tests**, `typecheck` + `build` clean. Falsifications re-run independently at
+  assembly: `blocked` dropped from the mirror (*"disagrees per action … {'resume': …}"*), the old
+  three-state literal restored at the list's icon Resume (site-scoped red — the menu assertion
+  stayed green), the same at the in-chat card (*"the backend accepts resume from blocked"* AND
+  *"from failed"*), the eleven-member union reinstated (*"backend-only=['blocked']"*), the chained
+  guard reintroduced (census red, naming the shape), and a surface stripped of the mirror (adoption
+  red).
+
+  **Still open on PP-16, unchanged by this slice** (the noun change itself, one adoption/reaping
+  path, retiring `LoopKindStrategy`, one projection to tasks) — plus the owner decisions the field
+  map surfaced, of which this slice took only the action-guard half. Reported and not taken here:
+  the union of all four source sets omits `intake` and `planning`, so a loop wedged in either (a
+  dead classifier) has **no available action at all** and `DELETE` is its only exit.
+
+
 - **2026-08-18 — `PP-16` PARTIAL (atom stays `todo`).** The capstone is multi-session; two slices
   landed complete, with no dual path and nothing half-migrated. **What is shipped ALREADY, measured,
   not assumed:** *one ledger* — `loop/journal.py` is the SECOND `personalclaw.ledger` producer

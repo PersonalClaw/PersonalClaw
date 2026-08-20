@@ -26,7 +26,7 @@ import { loopKindMeta } from '../../lib/loopKind'
 import { loopToGoalLoop } from './goalAdapter'
 import { rowSubject } from '../../lib/rowSubject'
 import { activePhaseIndex, phaseMinCycles, phaseForCycle, hasDistinctName } from './loopPhases'
-import { loopStatusLabel, loopStatusColor, loopStatusTone, effectiveLoopStatus, ACTIVE_LOOP_STATUSES, PRELAUNCH_LOOP_STATUSES } from '../../lib/loopStatus'
+import { loopStatusLabel, loopStatusColor, loopStatusTone, effectiveLoopStatus, ACTIVE_LOOP_STATUSES, PRELAUNCH_LOOP_STATUSES, LOOP_ACTION_SOURCE_STATUSES } from '../../lib/loopStatus'
 import { PageTitle } from '../../ui/PageTitle'
 import { notify } from '../../app/appSdk'
 
@@ -224,11 +224,19 @@ export function LoopsListPage({ onOpen, onCreate, query, setQuery }: { onOpen: (
                 // buttons already fire (peek-open, pause/resume/stop, delete), via the
                 // shared ContextMenu primitive. Zero-arg onSelect → the (e,id) handlers
                 // take an optional event, so there's no click to stopPropagation here.
+                //
+                // Every lifecycle gate below asks `lib/loopStatus`'s LOOP_ACTION_SOURCE_STATUSES —
+                // the mirror of the backend guard the action route enforces. These two sites (menu
+                // + hover button) each carried their own resume list, both short of the backend's
+                // by two states, so a blocked loop could not be resumed from this page at all and a
+                // failed one offered Resume in the cockpit and nothing here. Delete is NOT on that
+                // map (it is a different route with its own terminal-only rule), so it keeps its
+                // own condition rather than borrowing an unrelated action's set.
                 const menuItems: ContextMenuItem[] = [
                   { icon: <ExternalLink size={15} />, label: 'Open', onSelect: () => setPeekId(c.id) },
-                  ...(running ? [{ icon: <Pause size={15} />, label: 'Pause', onSelect: () => act(undefined, c.id, 'pause') }] : []),
-                  ...(['paused', 'stagnant', 'needs_input'].includes(c.status) ? [{ icon: <Play size={15} />, label: 'Resume', onSelect: () => act(undefined, c.id, 'resume') }] : []),
-                  ...(ACTIVE_LOOP_STATUSES.has(c.status) ? [{ icon: <Square size={15} />, label: 'Stop', onSelect: () => act(undefined, c.id, 'stop') }] : []),
+                  ...(LOOP_ACTION_SOURCE_STATUSES.pause.has(c.status) ? [{ icon: <Pause size={15} />, label: 'Pause', onSelect: () => act(undefined, c.id, 'pause') }] : []),
+                  ...(LOOP_ACTION_SOURCE_STATUSES.resume.has(c.status) ? [{ icon: <Play size={15} />, label: 'Resume', onSelect: () => act(undefined, c.id, 'resume') }] : []),
+                  ...(LOOP_ACTION_SOURCE_STATUSES.stop.has(c.status) ? [{ icon: <Square size={15} />, label: 'Stop', onSelect: () => act(undefined, c.id, 'stop') }] : []),
                   ...(['complete', 'stopped', 'failed'].includes(c.status) ? [{ icon: <Trash2 size={15} />, label: 'Delete', danger: true, onSelect: () => del(undefined, c.id) }] : []),
                 ]
                 return (
@@ -280,9 +288,9 @@ export function LoopsListPage({ onOpen, onCreate, query, setQuery }: { onOpen: (
 
                     {/* hover quick-actions */}
                     <div className={`flex items-center gap-1 shrink-0 transition-opacity ${confirmDelete === c.id ? 'opacity-100' : 'opacity-0 group-hover:opacity-100 focus-within:opacity-100'}`}>
-                      {running && <IconButton icon={Pause} label="Pause" size={34} onClick={(e) => act(e, c.id, 'pause')} />}
-                      {['paused', 'stagnant', 'needs_input'].includes(c.status) && <IconButton icon={Play} label="Resume" size={34} onClick={(e) => act(e, c.id, 'resume')} />}
-                      {ACTIVE_LOOP_STATUSES.has(c.status) && <IconButton icon={Square} label="Stop" size={34} onClick={(e) => act(e, c.id, 'stop')} />}
+                      {LOOP_ACTION_SOURCE_STATUSES.pause.has(c.status) && <IconButton icon={Pause} label="Pause" size={34} onClick={(e) => act(e, c.id, 'pause')} />}
+                      {LOOP_ACTION_SOURCE_STATUSES.resume.has(c.status) && <IconButton icon={Play} label="Resume" size={34} onClick={(e) => act(e, c.id, 'resume')} />}
+                      {LOOP_ACTION_SOURCE_STATUSES.stop.has(c.status) && <IconButton icon={Square} label="Stop" size={34} onClick={(e) => act(e, c.id, 'stop')} />}
                       {['complete', 'stopped', 'failed'].includes(c.status) && (
                         <IconButton icon={Trash2} size={34}
                           label={confirmDelete === c.id ? 'Click again to delete' : 'Delete loop'}
