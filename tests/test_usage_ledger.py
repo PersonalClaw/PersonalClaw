@@ -277,7 +277,7 @@ class TestSubagentWriteSite:
         assert info.input_tokens == 0 and info.output_tokens == 0 and info.cost_usd == 0.0
 
 
-# ── CATO-4: the shared record_from_event seam + the non-_run_chat sources ──────
+# ── CATO-4: the shared record_from_event seam + the non-run_chat sources ──────
 
 
 class TestRecordFromEvent:

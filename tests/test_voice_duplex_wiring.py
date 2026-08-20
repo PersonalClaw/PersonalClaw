@@ -238,7 +238,7 @@ class TestVoiceOriginTurn:
     @pytest.fixture(autouse=True)
     def _stub_runner(self, monkeypatch):
         monkeypatch.setattr(
-            "personalclaw.dashboard.chat_handlers._run_chat", AsyncMock(return_value=None)
+            "personalclaw.dashboard.chat_handlers.run_chat", AsyncMock(return_value=None)
         )
 
     async def _send(self, client, **body):
@@ -247,9 +247,9 @@ class TestVoiceOriginTurn:
     def _user_turn(self, state, tmp_path):
         # Persist through the product's own writer, then read what landed on disk —
         # the atom's claim is about the session JSONL, not an in-memory list.
-        from personalclaw.dashboard.chat_persistence import _save_session_to_history
+        from personalclaw.dashboard.chat_persistence import save_session_to_history
 
-        _save_session_to_history(state, state.get_or_create_session("s1"))
+        save_session_to_history(state, state.get_or_create_session("s1"))
         matches = list(tmp_path.rglob("*.jsonl"))
         assert matches, f"no session JSONL written under {tmp_path}"
         records = [

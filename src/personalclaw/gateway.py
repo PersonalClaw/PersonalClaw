@@ -47,7 +47,7 @@ from personalclaw.config.loader import (
 from personalclaw.constants import CHAT_TURN_TIMEOUT, DATA_WARNING
 from personalclaw.context import ContextBuilder
 from personalclaw.dashboard import start_dashboard
-from personalclaw.dashboard.chat_runner import _run_chat
+from personalclaw.dashboard.chat_runner import run_chat
 from personalclaw.dashboard.handlers import MAX_PROMPT_BYTES
 from personalclaw.dashboard.handlers.autonudge import render_nudge_message
 from personalclaw.dashboard.origin import (
@@ -2093,7 +2093,7 @@ class GatewayOrchestrator:
             if state is None:
                 return
             from personalclaw.config.loader import AppConfig
-            from personalclaw.dashboard.chat_persistence import _save_session_to_history
+            from personalclaw.dashboard.chat_persistence import save_session_to_history
             from personalclaw.dashboard.session_lifecycle import run_auto_archive
 
             days = int(AppConfig.load().session.auto_archive_days)
@@ -2103,7 +2103,7 @@ class GatewayOrchestrator:
             for key in keys:
                 session = state._sessions.get(key)
                 if session is not None:
-                    _save_session_to_history(state, session, force=True)
+                    save_session_to_history(state, session, force=True)
             if keys:
                 state.push_sessions_update()
 
@@ -2198,7 +2198,7 @@ class GatewayOrchestrator:
             msg = render_nudge_message(loop.message, loop.stop_sentinel_path)
             tagged = f"[auto-nudge cycle {loop.cycle_count + 1}]\n{msg}"
             from personalclaw.dashboard.chat import (  # circular import: gateway -> dashboard.chat -> gateway (chat dispatch references GatewayOrchestrator)  # noqa: E501
-                _run_chat,
+                run_chat,
             )
 
             if session.running:
@@ -2238,7 +2238,7 @@ class GatewayOrchestrator:
 
             async def _run_one(_sess, _msg, turn_timeout: float) -> None:
                 try:
-                    await asyncio.wait_for(_run_chat(dstate, _sess, _msg), timeout=turn_timeout)
+                    await asyncio.wait_for(run_chat(dstate, _sess, _msg), timeout=turn_timeout)
                 except asyncio.TimeoutError:
                     logger.warning(
                         "AutoNudge: turn for %s exceeded %ss — cancelling wedged turn",
@@ -2352,7 +2352,7 @@ class GatewayOrchestrator:
             task.add_done_callback(self.dashboard_state._background_tasks.discard)
             # For loop worker sessions, report the turn outcome to the supervisor
             # so a broken worker fails the loop fast instead of burning cycles
-            # silently. A turn that ends with an `error` message (how _run_chat
+            # silently. A turn that ends with an `error` message (how run_chat
             # records a crash) counts as a failed cycle.
             # The unified watchdog supervises every kind (sessions are app="loop",
             # keyed loop-<id>); report each worker turn's outcome so a broken worker
@@ -2638,7 +2638,7 @@ class GatewayOrchestrator:
                     else:
                         prompt = prefix + result_text
                     # Lazy import avoids circular dependency (chat → gateway)
-                    from personalclaw.dashboard.chat import _run_chat
+                    from personalclaw.dashboard.chat import run_chat
 
                     sel().log_api_access(
                         caller="heartbeat",
@@ -2647,7 +2647,7 @@ class GatewayOrchestrator:
                         source="gateway",
                         resources=f"requested={session_name},resolved={session.key}",
                     )
-                    ran = session.enqueue_or_run_prompt(prompt, _run_chat, self.dashboard_state)
+                    ran = session.enqueue_or_run_prompt(prompt, run_chat, self.dashboard_state)
                     if ran:
                         # Only push UI updates when the prompt actually started —
                         # queued prompts produce no visible change until dequeued.
@@ -2810,7 +2810,7 @@ class GatewayOrchestrator:
                 logger.info("Failed to broadcast subagent %s status", info.id, exc_info=True)
 
         def _retrigger_recovery(session: "_ChatSession", parent_key: str) -> None:
-            """Drain queued failures into a new recovery _run_chat turn.
+            """Drain queued failures into a new recovery run_chat turn.
 
             Called from _on_done callbacks after resetting the guard, so
             failures that arrived while the previous recovery was running
@@ -2832,7 +2832,7 @@ class GatewayOrchestrator:
                 return
             session._recovery_retrigger_count += 1
             session._recovery_chat_triggered = True
-            from personalclaw.dashboard.chat import _run_chat
+            from personalclaw.dashboard.chat import run_chat
 
             failures = session._pending_subagent_failures[:]
             session._pending_subagent_failures.clear()
@@ -2841,7 +2841,7 @@ class GatewayOrchestrator:
             msg, _ = redact_credentials(msg)
             session.append("user", msg, "msg msg-u auto-go")
             logger.info(
-                "Re-triggering recovery _run_chat for %s (%d queued failures)",
+                "Re-triggering recovery run_chat for %s (%d queued failures)",
                 parent_key,
                 len(failures),
             )
@@ -2863,7 +2863,7 @@ class GatewayOrchestrator:
 
             _task = asyncio.create_task(
                 asyncio.wait_for(
-                    _run_chat(self.dashboard_state, session, msg),
+                    run_chat(self.dashboard_state, session, msg),
                     timeout=CHAT_TURN_TIMEOUT,
                 ),
             )
@@ -3042,7 +3042,7 @@ class GatewayOrchestrator:
             # Cron/no parent → dashboard notification only
 
             if parent_key.startswith("dashboard:") and self.dashboard_state:
-                # Dashboard session — route subagent result through _run_chat
+                # Dashboard session — route subagent result through run_chat
                 # for full streaming, tool call visibility, and proper lifecycle.
                 _session_name = parent_key.removeprefix("dashboard:")
                 _injection_session = self.dashboard_state.get_session(_session_name)
@@ -3080,7 +3080,7 @@ class GatewayOrchestrator:
                                 info.id,
                                 _session_name,
                             )
-                            # Bounded by CHAT_TURN_TIMEOUT (~600s): _run_chat's
+                            # Bounded by CHAT_TURN_TIMEOUT (~600s): run_chat's
                             # finally block drains session._queue on any exit path.
                             _injection_session.queue_append(announce)
                             self.dashboard_state.push_sessions_update()
@@ -3093,10 +3093,10 @@ class GatewayOrchestrator:
                             )
                             return
 
-                    # Session is idle — start _run_chat.
+                    # Session is idle — start run_chat.
                     _task = asyncio.create_task(
                         asyncio.wait_for(
-                            _run_chat(self.dashboard_state, _injection_session, announce),
+                            run_chat(self.dashboard_state, _injection_session, announce),
                             timeout=CHAT_TURN_TIMEOUT,
                         )
                     )
@@ -3108,7 +3108,7 @@ class GatewayOrchestrator:
                         if _injection_session.task is t:
                             _injection_session.task = None
                         if not t.cancelled() and t.exception():
-                            logger.error("Subagent injection _run_chat failed: %s", t.exception())
+                            logger.error("Subagent injection run_chat failed: %s", t.exception())
                             _reason = str(t.exception())
                             _reason, _ = redact_exfiltration_urls(_reason)
                             _reason, _ = redact_credentials(_reason)
@@ -3116,7 +3116,7 @@ class GatewayOrchestrator:
 
                     _task.add_done_callback(_on_inject_done)
                     self.dashboard_state.push_sessions_update()
-                    logger.info("Subagent %s → _run_chat in %s", info.id, _session_name)
+                    logger.info("Subagent %s → run_chat in %s", info.id, _session_name)
                 else:
                     logger.info(
                         "Subagent %s: parent session %s gone, notification only",

@@ -1059,7 +1059,7 @@ adding a third shape is the coherence half of it.
    §7.2 canvas is permanently "unclustered" on such an install — a live reader of an unwritten key.
    Louvain itself is fine: called directly against the same live DB it wrote 3 assignments. The fix
    belongs in the cadence's ordering (§2.4), not in the colouring.
-2. **`chat_runner._run_chat` raises `UnboundLocalError: cannot access local variable
+2. **`chat_runner.run_chat` raises `UnboundLocalError: cannot access local variable
    '_turn_tool_call_count'`** when the provider fails to resolve — a crash in the error path,
    surfaced by driving a chat turn with no model bound.
 

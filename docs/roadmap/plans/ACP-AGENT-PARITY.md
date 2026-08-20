@@ -13,7 +13,7 @@ The original design record is kept below — execution logs, measured findings a
 **Created:** 2026-07-14
 **Wave:** 0-eligible — no hard dependencies; standalone architectural cleanup of an existing seam. Phase 1 can start today (all three binaries are on the dev machine).
 **Depends on:** nothing hard. Touches the same approval-gate seams AUTONOMY-GUARDRAILS hardens (coordinate, don't block: this plan extends host gates *across the provider seam*; guardrails deepens them for everyone). EXECUTION-ISOLATION's sandbox wrap already applies to ACP processes (`transport.py:316`) — no interaction.
-**Scope:** a user who binds ONE ACP provider (claude-code, codex, or kiro-cli) should be able to use the ENTIRE platform end to end — chat, tools, approvals, loops, cron, learning, resume — without discovering that half the harness silently only works for the native runtime. The audit's verdict: the seam is cleaner than feared (`chat_runner._run_chat` is provider-neutral; context injection, approvals-when-requested, variants/fork/queue, preference learning all already cross it), but 10 concentrated gaps remain. This plan validates the code-audit predictions at runtime (Phase 1), then closes the closable gaps and *honestly documents* the protocol-limited ones (Phase 2). **No dual paths:** where the ACP protocol genuinely can't carry something, we document the boundary as a known constraint — we do not build a shadow mechanism that pretends it does.
+**Scope:** a user who binds ONE ACP provider (claude-code, codex, or kiro-cli) should be able to use the ENTIRE platform end to end — chat, tools, approvals, loops, cron, learning, resume — without discovering that half the harness silently only works for the native runtime. The audit's verdict: the seam is cleaner than feared (`chat_runner.run_chat` is provider-neutral; context injection, approvals-when-requested, variants/fork/queue, preference learning all already cross it), but 10 concentrated gaps remain. This plan validates the code-audit predictions at runtime (Phase 1), then closes the closable gaps and *honestly documents* the protocol-limited ones (Phase 2). **No dual paths:** where the ACP protocol genuinely can't carry something, we document the boundary as a known constraint — we do not build a shadow mechanism that pretends it does.
 
 ---
 
@@ -2546,7 +2546,7 @@ code — but re-verify before acting, because it is a point-in-time reading like
   → clamped live to `default`; the CLI's own `pwd` returned the cwd we passed, so `G1`'s escape did
   not touch this drive. Turn A (pwd + write + rm): 3 tool calls, **3 gated**. Turn B (todo list +
   write + read): 6 tool calls, **1 gated, 5 ungated**. Replaying those VERBATIM frames through the
-  real `_run_chat` gate with trust ON: under `task_mode=ask` the write and the `rm` are rejected with
+  real `run_chat` gate with trust ON: under `task_mode=ask` the write and the `rm` are rejected with
   the standard "Ask mode — only read-only tools run" message while read-only `pwd` still runs, and
   under `task_mode=agent` the same write approves — the requirement and its inverse floor on real
   frames, with the vacuity floor satisfied inside one turn (the gate fires on the write while five

@@ -916,7 +916,7 @@ class SubagentManager:
 
         Appends a synthetic error to the dashboard session (UI) and queues a
         failure message into ``session._pending_subagent_failures`` so the LLM
-        learns about the failure on the next ``_run_chat`` turn and can read
+        learns about the failure on the next ``run_chat`` turn and can read
         the result from disk if needed.
         """
         try:
@@ -946,7 +946,7 @@ class SubagentManager:
                 f"The agent finished but result delivery timed out.{result_hint}"
             )
 
-            # Queue for LLM context drain on next _run_chat
+            # Queue for LLM context drain on next run_chat
             if self._on_event:
                 _task = asyncio.ensure_future(
                     self._fire_event(

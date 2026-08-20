@@ -4,7 +4,7 @@ import logging
 
 from aiohttp import web
 
-from personalclaw.dashboard.chat_persistence import _save_session_to_history
+from personalclaw.dashboard.chat_persistence import save_session_to_history
 from personalclaw.dashboard.chat_utils import _history_key_for, _sync_dashboard_sessions
 from personalclaw.dashboard.state import DashboardState
 from personalclaw.security import redact_credentials, redact_exfiltration_urls
@@ -111,7 +111,7 @@ async def api_chat_session_fork(request: web.Request) -> web.Response:
             if new_msgs:
                 all_messages.extend(new_msgs)
         if session._dirty:
-            _save_session_to_history(state, session)
+            save_session_to_history(state, session)
             session._resumed_count = len(session.messages)
             session._dirty = False
         if not all_messages:
@@ -162,7 +162,7 @@ async def api_chat_session_fork(request: web.Request) -> web.Response:
             cls = "msg msg-u" if role == "user" else "msg msg-a"
             new_session.append(role, content, cls, ts=m.get("ts", ""), broadcast=False)
         new_session.drain()
-        _save_session_to_history(state, new_session)
+        save_session_to_history(state, new_session)
         new_session._resumed_count = len(new_session.messages)
     except Exception:
         state._sessions.pop(new_session.key, None)
@@ -278,7 +278,7 @@ async def api_chat_session_fork_rewound(request: web.Request) -> web.Response:
                 cls = "msg msg-u" if role == "user" else "msg msg-a"
                 new_session.append(role, content, cls, ts=m.get("ts", ""), broadcast=False)
             new_session.drain()
-            _save_session_to_history(state, new_session)
+            save_session_to_history(state, new_session)
             new_session._resumed_count = len(new_session.messages)
         except Exception:
             state._sessions.pop(new_session.key, None)

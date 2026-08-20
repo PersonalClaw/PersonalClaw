@@ -1859,7 +1859,7 @@ class SessionManager:
           4. hard kill: reset(key) → fire-and-forget respawn → on_hard → "hard"
 
         ``preserve_queue=True`` (the /interrupt verb) skips the queue clear so the
-        _run_chat finally-block dequeue immediately picks up the next queued
+        run_chat finally-block dequeue immediately picks up the next queued
         message. ``/stop`` keeps the default (clears the queue).
         """
         session = self._sessions.get(key)

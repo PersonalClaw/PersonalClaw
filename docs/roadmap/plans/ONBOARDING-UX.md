@@ -408,7 +408,7 @@ Owner rulings, mapped onto the existing sessions honestly:
   establish nothing". Restored → 16/16 green. Also flipped Allow to `tone: 'primary'`: the
   no-advocacy rail "does not make Allow the visual primary" went RED alone; restored → green.
 - [2026-08-13][OU-8] **DISCOVERY (the approval record is memory-only, so a restart erases it).**
-  `_save_session_to_history` deliberately DROPS role `permission` when writing a session's JSONL
+  `save_session_to_history` deliberately DROPS role `permission` when writing a session's JSONL
   (`chat_persistence.py:603`), so an approval row — pending or settled — lives only in the
   in-memory `session.messages`. Verified live in the other direction: the resolution IS stamped
   in memory (`GET /api/chat/sessions/<key>` came back with `resolved: "approved"` on the allowed

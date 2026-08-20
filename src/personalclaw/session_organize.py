@@ -585,7 +585,7 @@ def apply_proposal(state: Any, session: Any, proposal: OrganizeProposal) -> dict
     proposal is indistinguishable from a hand-made one. Persistence and the sessions
     broadcast are the same pair every other session-metadata writer uses.
     """
-    from personalclaw.dashboard.chat_persistence import _save_session_to_history
+    from personalclaw.dashboard.chat_persistence import save_session_to_history
     from personalclaw.dashboard.chat_tags import _auto_color, create_tag, find_tag_by_name
 
     applied: dict[str, Any] = {"folder_id": "", "tags": []}
@@ -608,7 +608,7 @@ def apply_proposal(state: Any, session: Any, proposal: OrganizeProposal) -> dict
         session.tags = assigned
     applied["tags"] = list(assigned)
 
-    _save_session_to_history(state, session, force=True)
+    save_session_to_history(state, session, force=True)
     if hasattr(state, "push_sessions_update"):
         state.push_sessions_update()
     logger.info(

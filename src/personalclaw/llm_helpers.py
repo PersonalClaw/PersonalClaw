@@ -79,7 +79,7 @@ async def stream_and_collect(
         on_tool_approval: Optional async callback for interactive approval.
         on_complete: Optional callback invoked with the terminal ``EVENT_COMPLETE``
             event (which carries the turn's token counts + cost) just before the
-            text is returned — the seam the cost/token ledger's non-``_run_chat``
+            text is returned — the seam the cost/token ledger's non-``run_chat``
             write-sites use (COST-AND-TOKEN-OBSERVABILITY C2). Default ``None``
             leaves the streamed text byte-identical for every other caller. Never
             raises into the turn: a callback fault is swallowed.

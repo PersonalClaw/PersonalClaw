@@ -24,11 +24,11 @@ from personalclaw.dashboard.chat_persistence import (
     _attach_variants,
     _redact_meta,
     _rehydrate_session_from_history,
-    _save_session_to_history,
     _validate_reasoning_effort,
     resolve_session,
+    save_session_to_history,
 )
-from personalclaw.dashboard.chat_runner import _run_chat
+from personalclaw.dashboard.chat_runner import run_chat
 from personalclaw.dashboard.chat_utils import (
     _build_stream_chunk,
     _emit_agent_assignment,
@@ -295,7 +295,7 @@ async def api_chat(request: web.Request) -> web.StreamResponse:
         tracker.reset_after_guidance()
         logger.info("Rounds reset after user guidance for session %s", session.key)
 
-    task = asyncio.create_task(_run_chat(state, session, message))
+    task = asyncio.create_task(run_chat(state, session, message))
     session.task = task
     session._recovery_retrigger_count = 0
     state._background_tasks.add(task)
@@ -1416,7 +1416,7 @@ async def api_chat_session_interrupt(request: web.Request) -> web.Response:
     """POST /api/chat/sessions/{session}/interrupt — stop the turn, KEEP the queue.
 
     Unlike /stop (which clears the queue), /interrupt soft-cancels the current
-    turn and preserves the queue so the _run_chat finally-block dequeue picks up
+    turn and preserves the queue so the run_chat finally-block dequeue picks up
     the next queued message immediately. Optional body ``{"queue_id": ...}``
     promotes a specific queued message to the front first.
 
@@ -1740,7 +1740,7 @@ async def api_chat_sessions_cleanup(request: web.Request) -> web.Response:
         if not removed:
             continue
         try:
-            _save_session_to_history(state, removed, closed=True)
+            save_session_to_history(state, removed, closed=True)
         except Exception:
             logger.error("Cleanup: failed to archive session %s", name, exc_info=True)
             state._sessions[name] = removed

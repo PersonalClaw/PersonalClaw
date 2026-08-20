@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from personalclaw.dashboard.chat import _run_chat
+from personalclaw.dashboard.chat import run_chat
 from personalclaw.dashboard.state import DashboardState, _ChatSession, parse_cls_meta
 from personalclaw.history import ConversationLog
 from personalclaw.hooks import ToolHookResult
@@ -121,7 +121,7 @@ class TestApprovalModes:
         asyncio.get_event_loop().create_task(_auto_approve())
 
         with _patch_stats():
-            await _run_chat(state, session, "hello")
+            await run_chat(state, session, "hello")
 
         msgs = _tool_messages(session)
         assert any(
@@ -137,7 +137,7 @@ class TestApprovalModes:
         _set_stream(client, [_permission_event(), _complete_event()])
 
         with _patch_stats():
-            await _run_chat(state, session, "hello")
+            await run_chat(state, session, "hello")
 
         msgs = _tool_messages(session)
         assert not any(m["role"] == "permission" for m in msgs), "Trust mode should not prompt"
@@ -165,7 +165,7 @@ class TestApprovalModes:
         _set_stream(client, [_permission_event(), _complete_event()])
 
         with _patch_stats():
-            await _run_chat(state, session, "hello")
+            await run_chat(state, session, "hello")
 
         msgs = _tool_messages(session)
         assert not any(m["role"] == "permission" for m in msgs), "YOLO mode should not prompt"
@@ -192,7 +192,7 @@ class TestApprovalModes:
         _set_stream(client, [_permission_event(), _complete_event()])
 
         with _patch_stats():
-            await _run_chat(state, session, "hello")
+            await run_chat(state, session, "hello")
 
         msgs = _tool_messages(session)
         assert any("blocked" in m.get("content", "").lower() for m in msgs)
@@ -208,7 +208,7 @@ class TestApprovalModes:
         _set_stream(client, [_permission_event(), _complete_event()])
 
         with _patch_stats():
-            await _run_chat(state, session, "hello")
+            await run_chat(state, session, "hello")
 
         assert not any(m["role"] == "permission" for m in _tool_messages(session))
         client.approve_tool.assert_called_once()
@@ -230,7 +230,7 @@ class TestApprovalModes:
         asyncio.get_event_loop().create_task(_auto_reject())
 
         with _patch_stats():
-            await _run_chat(state, session, "hello")
+            await run_chat(state, session, "hello")
 
         client.reject_tool.assert_called_once()
 
@@ -250,7 +250,7 @@ class TestApprovalModes:
         asyncio.get_event_loop().create_task(_auto_approve())
 
         with _patch_stats():
-            await _run_chat(state, session, "hello")
+            await run_chat(state, session, "hello")
 
         msgs = _tool_messages(session)
         assert not any(
@@ -264,26 +264,26 @@ class TestTrustYoloPropagation:
 
     @pytest.mark.asyncio
     async def test_run_chat_propagates_trust_to_session(self, tmp_path):
-        """When session has _trust=True, _run_chat sets session approval policy to auto."""
+        """When session has _trust=True, run_chat sets session approval policy to auto."""
         state, client = _make_state(tmp_path, context_builder=_context_builder())
         session = _make_session(trust=True)
         _set_stream(client, [_complete_event()])
 
         with _patch_stats():
-            await _run_chat(state, session, "hello")
+            await run_chat(state, session, "hello")
 
         state.sessions.set_approval_policy.assert_called_with(f"dashboard:{session.key}", "auto")
 
     @pytest.mark.asyncio
     async def test_run_chat_propagates_yolo_to_session(self, tmp_path):
-        """When state._yolo=True, _run_chat sets session approval policy to auto."""
+        """When state._yolo=True, run_chat sets session approval policy to auto."""
         state, client = _make_state(tmp_path, context_builder=_context_builder())
         state.enable_yolo()
         session = _make_session()
         _set_stream(client, [_complete_event()])
 
         with _patch_stats():
-            await _run_chat(state, session, "hello")
+            await run_chat(state, session, "hello")
 
         state.sessions.set_approval_policy.assert_called_with(f"dashboard:{session.key}", "auto")
 
@@ -295,7 +295,7 @@ class TestTrustYoloPropagation:
         _set_stream(client, [_complete_event()])
 
         with _patch_stats():
-            await _run_chat(state, session, "hello")
+            await run_chat(state, session, "hello")
 
         state.sessions.set_approval_policy.assert_called_once_with(f"dashboard:{session.key}", "")
 
@@ -383,7 +383,7 @@ class TestToolCallIdRedaction:
         _set_stream(client, [evt, _complete_event()])
 
         with _patch_stats():
-            await _run_chat(state, session, "hello")
+            await run_chat(state, session, "hello")
 
         # Trust mode broadcasts tool_call via WS with tool_call_id
         state.broadcast_ws.assert_any_call(
@@ -424,7 +424,7 @@ class TestBatchRejection:
         asyncio.get_event_loop().create_task(_reject_first())
 
         with _patch_stats():
-            await _run_chat(state, session, "hello")
+            await run_chat(state, session, "hello")
 
         # First tool rejected interactively, second auto-rejected
         client.reject_tool.assert_any_call("req-1")
@@ -446,7 +446,7 @@ class TestBatchRejection:
 
         with _patch_stats():
             try:
-                await _run_chat(state, session, "hello")
+                await run_chat(state, session, "hello")
             except RuntimeError:
                 pass
 
@@ -466,7 +466,7 @@ class TestToolCompletionTracking:
         _set_stream(client, [evt, _complete_event()])
 
         with _patch_stats():
-            await _run_chat(state, session, "hello")
+            await run_chat(state, session, "hello")
 
         # Verify tool_call broadcast includes tool_call_id
         calls = [c for c in state.broadcast_ws.call_args_list if c[0][0] == "tool_call"]

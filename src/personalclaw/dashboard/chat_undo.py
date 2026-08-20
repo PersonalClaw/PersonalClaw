@@ -15,7 +15,7 @@ import logging
 
 from aiohttp import web
 
-from personalclaw.dashboard.chat_persistence import _save_session_to_history
+from personalclaw.dashboard.chat_persistence import save_session_to_history
 from personalclaw.dashboard.chat_utils import _sync_dashboard_sessions
 from personalclaw.dashboard.state import DashboardState
 from personalclaw.sel import sel
@@ -79,13 +79,13 @@ async def api_chat_session_undo(request: web.Request) -> web.Response:
     removed = min(n, len(starts))
     cut = starts[-removed]
     session.messages = session.messages[:cut]
-    # Persist the rollback: _save_session_to_history rewrites the WHOLE transcript file
+    # Persist the rollback: save_session_to_history rewrites the WHOLE transcript file
     # from session.messages (not append-only), so the truncated list becomes the on-disk
     # state — a reload won't resurrect the undone turns. force=True since the shrunken
     # list is ≤ _resumed_count (the guard at :402 would otherwise skip the write).
     session._resumed_count = 0
     try:
-        _save_session_to_history(state, session, force=True)
+        save_session_to_history(state, session, force=True)
     except Exception:
         logger.warning("undo: failed to persist truncated transcript for %s", name, exc_info=True)
 

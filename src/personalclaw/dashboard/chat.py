@@ -7,7 +7,7 @@ submodule defines ``X``.
 The actual implementation lives in:
 - chat_utils.py       — shared helpers, redaction, model normalization
 - chat_persistence.py — session save/restore, history
-- chat_runner.py      — _run_chat, streaming, prompt expansion
+- chat_runner.py      — run_chat, streaming, prompt expansion
 - chat_handlers.py    — HTTP API endpoints
 - chat_title.py       — title generation, plan metadata
 - chat_regenerate.py  — regenerate, variant switch, edit-resend
@@ -83,9 +83,9 @@ from personalclaw.dashboard.chat_persistence import (  # noqa: F401
     _attach_variants,
     _build_history_prefix,
     _rehydrate_session_from_history,
-    _save_session_to_history,
     restore_recent_sessions,
     save_all_sessions_to_history,
+    save_session_to_history,
 )
 from personalclaw.dashboard.chat_plan import (  # noqa: F401
     api_chat_plan_activate,
@@ -104,7 +104,7 @@ from personalclaw.dashboard.chat_regenerate import (  # noqa: F401
 from personalclaw.dashboard.chat_runner import (  # noqa: F401
     _expand_prompt_mention,
     _flush_segment,
-    _run_chat,
+    run_chat,
 )
 from personalclaw.dashboard.chat_tags import (  # noqa: F401
     api_chat_session_drop,
