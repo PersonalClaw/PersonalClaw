@@ -187,6 +187,56 @@ jobs:
       - name: render smoke (built SPA mounts in a real browser)
         run: npm run smoke:render
 
+  e2e-pwa:
+    # ── The service-worker cache rail, finally EXECUTED ──────────────────────────────────────────
+    # `web/e2e/pwa.spec.ts` is the PROOF for MOBILE-COMPANION T3.1's security clause: a service
+    # worker that caches an authenticated `/api` response is a data leak (a later visitor, or the
+    # same browser after logout, gets the previous session's approvals off disk). `swPolicy.test.ts`
+    # asserts the policy's return values and its call sites; neither can show what a browser
+    # actually does. This spec installs the real worker against the real `dist/`, takes the origin
+    # offline by SHUTTING THE SERVER DOWN, and observes that a navigation still renders the shell
+    # while `fetch('/api/ping')` fails — the contrast is the proof.
+    #
+    # It ran in NO workflow. Wired here rather than folded into `e2e-a11y` so a11y and the security
+    # proof fail independently: one job covering both means a red tells you "the frontend is broken"
+    # instead of which contract broke.
+    #
+    # Platform-neutral by construction — zero snapshot assertions, and it serves its own build on a
+    # private port (PW_PWA_PORT, default 10944) independent of the config's `webServer`. Measured
+    # locally before wiring: 3 passed in 48s. `visual.spec.ts` is deliberately NOT here; its 32
+    # baselines are all `-darwin`, so a Linux runner has nothing to compare against
+    # (tests/test_e2e_specs_are_executed.py declares that exemption and retires it automatically).
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+          cache: npm
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+      # The config's `webServer` starts `../.venv/bin/personalclaw`, so the gateway must import
+      # even though this spec serves `dist/` itself.
+      - name: Install (locked)
+        run: uv sync --locked --extra dev
+      # npm from the REPO ROOT (single-root workspace lockfile — npm/cli#4828).
+      - name: npm ci (root)
+        run: npm ci
+      - name: install chromium
+        run: npx playwright install --with-deps chromium
+      - name: service worker never caches /api (web/e2e/pwa.spec.ts)
+        working-directory: web
+        run: npx playwright test e2e/pwa.spec.ts --project=chromium
+      - name: upload the traces
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: pwa-traces
+          path: web/test-results/
+          if-no-files-found: ignore
+
   e2e-a11y:
     # ── The axe-per-route rail, finally EXECUTED ─────────────────────────────────────────────────
     # `web/e2e/a11y.spec.ts` scans every nav route and every settings panel with axe-core (both
