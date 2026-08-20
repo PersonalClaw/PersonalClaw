@@ -18,7 +18,7 @@ The good news: the harness-side fix is small. What the harness needs is a userna
 
 ## 1. Provider-Pluggable Entities Today (the seam inventory)
 
-The extension registry is `providers/registry.py`: apps declare `provider: {type, implementation}` in their manifest (`apps/manifest.py:453 PROVIDER_TYPES` = {model, agent, task, channel, inbox, skills, knowledge, memory, notification, tool, workflow, search, action, prompt} — guarded by `test_manifest_types_match_handlers` to equal the runtime `_TypeHandler` set). `providers/loader.py` loads each enabled app and registers contributions through typed handlers. Apps are separate OS processes with their own network stacks (`apps/permissions.py`: `network` is declaration-only, unenforced by design) — **an app can already host or call a remote backend today**; what varies is whether the *entity contract* lets that backend own the data.
+The extension registry is `providers/registry.py`: apps declare `provider: {type, implementation}` in their manifest (`apps/manifest.py:914 PROVIDER_TYPES` = {model, agent, task, channel, inbox, skills, knowledge, memory, notification, tool, workflow, search, action, prompt} — guarded by `test_manifest_types_match_handlers` to equal the runtime `_TypeHandler` set). `providers/loader.py` loads each enabled app and registers contributions through typed handlers. Apps are separate OS processes with their own network stacks (`apps/permissions.py`: `network` is declaration-only, unenforced by design) — **an app can already host or call a remote backend today**; what varies is whether the *entity contract* lets that backend own the data.
 
 Seam-by-seam (contract → storage → remote-capability verdict):
 
