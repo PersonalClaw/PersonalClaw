@@ -103,7 +103,7 @@ class SandboxHandle(ABC):          # the 6-method contract
 
 ### 1.2 Where it plugs in (provider fidelity)
 
-- **New provider type `sandbox`:** added to `PROVIDER_TYPES` (apps/manifest.py:453) AND a new `SandboxTypeHandler` in `providers/registry.py` wired in `get_provider_registry()` — the two MUST land in the same commit or `test_manifest_types_match_handlers` fails (the #47 bug class). The handler `create()`s via the standard `providers/loader.py:load_factory` path and registers into `sandbox_providers/registry.py:register_sandbox_provider` (module-level flat dict, the `action_providers/registry.py` shape). Apps can therefore contribute sandbox providers (`podman`, a future `byoi`) exactly like `apps/webhook-action` contributes an action provider.
+- **New provider type `sandbox`:** added to `PROVIDER_TYPES` (apps/manifest.py:914) AND a new `SandboxTypeHandler` in `providers/registry.py` wired in `get_provider_registry()` — the two MUST land in the same commit or `test_manifest_types_match_handlers` fails (the #47 bug class). The handler `create()`s via the standard `providers/loader.py:load_factory` path and registers into `sandbox_providers/registry.py:register_sandbox_provider` (module-level flat dict, the `action_providers/registry.py` shape). Apps can therefore contribute sandbox providers (`podman`, a future `byoi`) exactly like `apps/webhook-action` contributes an action provider.
 - **Built-ins register at boot** like channel transports' webui: a `register_default_sandbox_providers()` call in `dashboard/server.py` startup registers `none` + `docker` — they are core-native, not apps. `lima` ships as a **first-party app** (`apps/lima-sandbox`, §2) because it carries a real external dependency.
 - **SDK:** `sdk/sandbox.py` re-exports `SandboxProvider`/`SandboxHandle`/`SandboxSpec` (the `sdk.net`/`sdk.security` facade precedent) so contributed providers import only the SDK.
 - **NOT an action provider** — nothing here touches `ALLOWED_HOOK_PROVIDERS` (validation.py:555) for §1 (§4 and §7 DO add action providers; see there).
@@ -255,7 +255,7 @@ The store, keychain backing, spawn-time resolution, secret-filtered leaf env, an
 
 | Piece | Plugs in via |
 |---|---|
-| SandboxProvider registry | NEW provider type `sandbox`: `PROVIDER_TYPES` (manifest.py:453) + new `SandboxTypeHandler` (providers/registry.py) in the SAME commit (#47 parity test); domain registry `sandbox_providers/registry.py`; built-ins (`none`, `docker`) boot-registered like `register_default_transports()` |
+| SandboxProvider registry | NEW provider type `sandbox`: `PROVIDER_TYPES` (manifest.py:914) + new `SandboxTypeHandler` (providers/registry.py) in the SAME commit (#47 parity test); domain registry `sandbox_providers/registry.py`; built-ins (`none`, `docker`) boot-registered like `register_default_transports()` |
 | Lima provider | first-party app `apps/lima-sandbox` (`provider: {type: "sandbox", implementation: "provider:create_provider"}`), module-level `availability()` hook for greyed-out UX |
 | SDK surface | `sdk/sandbox.py` facade (SandboxProvider/Handle/Spec) — the `sdk.net`/`sdk.security` precedent |
 | Gemini runner | first-party app `apps/gemini-cli-agent` via `acp_bundles/_register.py` (argv + dialect + env) — the existing claude-code/codex/kiro path, no new registration mechanism |

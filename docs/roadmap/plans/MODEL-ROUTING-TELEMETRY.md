@@ -210,7 +210,7 @@ Policy-table mutations (accept/reject/pin/mode-change) are SEL-logged (`sel.py:S
 
 ## 7. Provider-Fidelity Wiring (where each piece plugs in)
 
-- **No new provider TYPE.** Routing is substrate at the resolution seam, same deliberate stance as guardrails ("no space provider type", `providers/registry.py:555`). Nothing registers through `_TypeHandler`s; `PROVIDER_TYPES` (manifest.py:453) is untouched.
+- **No new provider TYPE.** Routing is substrate at the resolution seam, same deliberate stance as guardrails ("no space provider type", `providers/registry.py:555`). Nothing registers through `_TypeHandler`s; `PROVIDER_TYPES` (manifest.py:914) is untouched.
 - **No new action provider** → no `ALLOWED_HOOK_PROVIDERS` (`validation.py:555`) change. (Rule restated per checklist: any future action provider must be added there or hook create/update rejects it.)
 - **Resolution seam:** one call to `route_refs` inside `resolve_provider_for_use_case` (`provider_bridge.py:477`) step (2); `model_override` (step 1) and the native-agent branch (step 0) bypass it; the `model` build-kwarg convention (`provider_bridge.py:844`) and the pinned-ref-raises rule are preserved verbatim.
 - **Local detection:** `local_models/registry.py` membership (APP-name-keyed — `ollama-models`, not `ollama`; the documented spelling gotcha) is the local/cloud classifier for candidates.
