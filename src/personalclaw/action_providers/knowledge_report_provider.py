@@ -183,6 +183,34 @@ class KnowledgeReportActionProvider(ActionProvider):
                 duration_ms=int((time.monotonic() - started) * 1000),
             )
 
+        # THE PRE-FLIGHT — `is_due`'s only production caller (WF2KNO-12's remainder).
+        #
+        # The clock trigger decides when this runner is INVOKED; `is_due` decides whether this
+        # invocation is the report's window, and it is the only place the four hardening rules
+        # live: an unparseable expression fails CLOSED, a never-run report anchors on
+        # `created_ts` (and refuses to anchor at all without one, rather than on the epoch),
+        # fifty skipped windows fire ONCE, and a failed run advances neither the stamp nor the
+        # watermark. None of that is derivable from a cron expression, so the trigger is
+        # allowed to be more eager than the report and this absorbs the difference.
+        #
+        # A MANUAL run skips it: the user clicking "Run now" is the authority for that fire,
+        # and refusing it as "not due" would make the button lie. The flag comes from the
+        # config the manual route builds, so the scheduled path cannot set it by accident.
+        manual = bool(cfg.get("manual"))
+        if not manual:
+            due, why = rr.is_due(defn, now=time.time())
+            if not due:
+                # A named skip, not a failure: nothing went wrong, and `record_run` is
+                # deliberately NOT called — stamping a run that did not happen would advance
+                # the watermark past material this fire never read.
+                return ActionResult(
+                    success=True,
+                    stdout=json.dumps(
+                        {"report_id": report_id, "skipped": "not_due", "reason": why}
+                    ),
+                    duration_ms=int((time.monotonic() - started) * 1000),
+                )
+
         # THE watermark. Read before the scope is resolved (see the module docstring) and
         # threaded unchanged to `record_run` — never re-read at the end.
         resolution_ts = time.time()

@@ -99,6 +99,15 @@ class FakeReports:
     def get_report(self, report_id: str) -> ReportDefinition | None:
         return self.reports.get(report_id)
 
+    #: The dueness answer this double hands back. Default DUE, so every test in this file keeps
+    #: exercising the run path it was written for — the pre-flight is a gate on WHEN the runner
+    #: is invoked, and this file is about what the run then does. The gate itself is driven in
+    #: `test_research_report_scheduling.py`, against the real module.
+    due: tuple[bool, str] = (True, "due")
+
+    def is_due(self, defn: ReportDefinition, *, now: float) -> tuple[bool, str]:
+        return self.due
+
     def record_run(
         self,
         report_id: str,
