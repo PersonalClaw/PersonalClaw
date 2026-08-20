@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import * as motion from './motion'
 import {
   dragElastic, dragSpring, instant, listItemEnter, overlayEnter, physics,
-  prefersReducedMotion, regionStagger, swipeDismiss, viewTransition,
+  prefersReducedMotion, regionStagger, spring, swipeDismiss, viewTransition,
 } from './motion'
 import { runtime } from './runtime'
 import { TOKENS } from './tokenRegistry'
@@ -135,6 +135,102 @@ describe('physics presets', () => {
   })
 })
 
+// ── The `spring` tiers — the OTHER family, and the one that used to escape ──────
+// `bouncy()` documented itself as "the single place `prefers-reduced-motion` zeroes
+// it". That was true of the four `physics` presets that route through it and FALSE of
+// the module: `spring` was a static object literal, so the app's LARGER transition
+// family (72 non-test importers against 27 for `physics`) ignored the a11y setting
+// outright. `<MotionConfig reducedMotion="user">` at the root was never a substitute —
+// it neutralises framer transforms while continuing to animate non-transform
+// properties, so a spring on opacity/height/color still sprang under it.
+//
+// The two dials are pinned here as OPPOSITE claims on purpose, because the split is a
+// decision and not an accident: reduced motion binds (a11y off-switch), bounciness
+// does NOT (taste dial, owned by `physics`). Both directions are asserted so widening
+// the personality later is a deliberate edit to a red test.
+const SPATIAL = ['spatialDefault', 'spatialFast', 'spatialSlow'] as const
+const SPRING_KEYS = [...SPATIAL, 'effects'] as const
+
+describe('spring tiers — the fixed-damping family', () => {
+  it('is a closed set of four, and every member is a GETTER', () => {
+    expect(Object.keys(spring).sort()).toEqual([...SPRING_KEYS].sort())
+    // The structural half of the fix, and the one worth a rail: a member declared as a
+    // VALUE cannot consult the gate at animation time, which is exactly the shape this
+    // family used to have. A revert to a plain literal fails here even if every
+    // behavioural assertion below were somehow satisfied at import.
+    for (const key of SPRING_KEYS) {
+      const d = Object.getOwnPropertyDescriptor(spring, key)
+      expect(typeof d?.get, `spring.${key} must be a getter, not a value`).toBe('function')
+    }
+  })
+
+  it.each(SPATIAL)('%s collapses to instant under prefers-reduced-motion', (key) => {
+    setReducedMotion(true)
+    const t = spring[key] as { type?: string; duration?: number; stiffness?: number; damping?: number }
+    expect(t).toEqual(instant)
+    expect(t.type).not.toBe('spring')
+    expect(t.stiffness).toBeUndefined()
+    expect(t.damping).toBeUndefined()
+  })
+
+  it('effects collapses too — a 0.2s crossfade is 0.2s of motion', () => {
+    // `effects` is a TWEEN, so it was never a spring and the "zero springs" clause is
+    // satisfied either way. It still collapses because `instant` is this module's ONE
+    // reduced-motion answer (`bouncy`, `swipeDismiss`, `viewTransition` all give it),
+    // and a 200ms fade here would be a second doctrine in the file whose job is to
+    // hold exactly one.
+    expect((spring.effects as { duration?: number }).duration).toBe(0.2)
+    setReducedMotion(true)
+    expect(spring.effects).toEqual(instant)
+  })
+
+  it.each(SPRING_KEYS)('%s reads the gate at ANIMATION time, not once at import', (key) => {
+    const moving = spring[key]
+    setReducedMotion(true)
+    expect(spring[key]).toEqual(instant)
+    setReducedMotion(false)
+    // Back to the tier — a getter that cached its first answer would stay `instant`
+    // for the rest of the session after one mid-session OS change.
+    expect(spring[key]).toEqual(moving)
+  })
+
+  it('is bounciness-INVARIANT, deliberately — the taste dial belongs to physics', () => {
+    // NOT an oversight, and the reason this is a test rather than a comment. `physics`
+    // is the personality family; `spring` is the neutral tier set an author reaches for
+    // when the move carries no character to dial. Widening these to `--bounciness` would
+    // need three calm-damping constants the plan never specified, would move the feel of
+    // ~112 call sites at every slider position below 1, and would leave two families
+    // doing one job under two sets of names. If that widening is ever wanted it is a
+    // taste decision, so it must break this line on the way in.
+    runtime.bounciness = 0
+    const calm = SPRING_KEYS.map((k) => spring[k])
+    runtime.bounciness = 1
+    const playful = SPRING_KEYS.map((k) => spring[k])
+    expect(playful).toEqual(calm)
+    // And the spatial tiers really are springs when motion is allowed, so the equality
+    // above is invariance and not two collapsed values compared to each other.
+    for (const t of calm.slice(0, SPATIAL.length)) {
+      expect((t as { type?: string }).type).toBe('spring')
+    }
+  })
+
+  it('survives the delay-spread that 18 real list call sites use', () => {
+    setReducedMotion(true)
+    // `{ ...spring.spatialDefault, delay: i * 0.03 }` is the literal shape at 18 call
+    // sites (list rows staggering their entrance). `instant` carries an explicit
+    // `type: 'tween'` so the collapse cannot leak back through a spread — the same
+    // property `physics` relies on, now load-bearing for this family too.
+    const spread = { ...spring.spatialDefault, delay: 0.09 }
+    expect(spread.type).toBe('tween')
+    expect(spread.duration).toBe(0)
+    // The call site's own `delay` survives, and that is correct rather than a leak: a
+    // zero-duration swap after 90ms is still zero motion. Removing a call site's delay
+    // is not something this module can do from behind a spread, so it is asserted here
+    // as known behaviour instead of left to be rediscovered as a bug.
+    expect(spread.delay).toBe(0.09)
+  })
+})
+
 describe('preset-bearing variants', () => {
   // A module-level `{ transition: physics.x }` object literal reads the getter ONCE at
   // import: every overlay and list row in the app would then ignore the slider for the
@@ -152,6 +248,142 @@ describe('preset-bearing variants', () => {
       expect(resolveVariant(variants.animate).transition).toEqual(instant)
     },
   )
+
+  it('overlayEnter.exit is a FUNCTION too — the one shape that re-snapshots the gate', () => {
+    // `exit` was an object literal, which was harmless only while `spring.effects` was a
+    // static value. Now that it is a getter, a literal would read the reduced-motion gate
+    // once at import and every overlay in the app would exit on whatever the media query
+    // said then. Same defect class as a frozen `animate`, one variant label over.
+    setReducedMotion(true)
+    expect(resolveVariant(overlayEnter.exit).transition).toEqual(instant)
+    setReducedMotion(false)
+    expect(resolveVariant(overlayEnter.exit).transition).not.toEqual(instant)
+  })
+})
+
+// ── "Zero springs under the off-switch", enumerated (atom FM-7) ──────────────
+// The clause this pins reads: expressiveness=0 and prefers-reduced-motion both proven
+// to yield instant/crossfade with ZERO SPRINGS. Naming three families by hand would
+// prove it about today's module and nothing else — the defect being fixed here is
+// precisely a family that existed and was never named in a test. So the module's own
+// exports are WALKED and every transition-shaped value found is checked, which means a
+// family added later is covered without anyone remembering to cover it.
+//
+// (The expressiveness half of the clause is NOT asserted here, and deliberately: this
+// module's shipped position is that `expr()` is the aesthetic dial and NOT the a11y
+// switch — `REGION_STEP_FLOOR` exists so "refined ≠ dead", and a green test above pins
+// `regionStagger()` at expressiveness 0 as still non-zero. Making expressiveness=0 an
+// off-switch would contradict both; it is an owner taste call, not a rail.)
+
+/** Keys Framer reads off a transition. Structural rather than a name list, so the
+ *  walker recognises a family it has never seen. */
+const TRANSITION_KEYS = new Set([
+  'type', 'duration', 'ease', 'delay', 'stiffness', 'damping', 'mass', 'bounce',
+  'velocity', 'restDelta', 'restSpeed', 'repeat', 'repeatType', 'repeatDelay',
+  'staggerChildren', 'delayChildren', 'staggerDirection', 'times', 'when', 'from',
+  'visualDuration',
+])
+
+/** Fields whose presence makes Framer run a SPRING. `type: 'spring'` is the explicit
+ *  form; the rest are the inference form, which is why `instant` carries an explicit
+ *  `type: 'tween'` — see the spread test above. */
+const SPRING_FIELDS = ['stiffness', 'damping', 'mass', 'bounce', 'restDelta', 'restSpeed'] as const
+
+function looksLikeTransition(v: unknown): v is Record<string, unknown> {
+  if (v === null || typeof v !== 'object' || Array.isArray(v)) return false
+  const keys = Object.keys(v)
+  return keys.length > 0 && keys.every((k) => TRANSITION_KEYS.has(k))
+}
+
+/** Every transition the module hands out, discovered from `import * as motion`.
+ *
+ *  Only ZERO-ARITY functions are invoked — a variant function is called exactly as
+ *  Framer calls it (with an undefined custom), and anything needing real arguments is
+ *  left to the pinned set below rather than called with guesses. */
+function harvestTransitions(): { path: string; t: Record<string, unknown> }[] {
+  const found: { path: string; t: Record<string, unknown> }[] = []
+
+  const consider = (path: string, v: unknown): void => {
+    if (v === null || v === undefined) return
+    if (typeof v === 'function') {
+      if ((v as { length: number }).length !== 0) return
+      consider(`${path}()`, (v as () => unknown)())
+      return
+    }
+    if (typeof v !== 'object') return
+    if (looksLikeTransition(v)) { found.push({ path, t: v }); return }
+    for (const [k, child] of Object.entries(v as Record<string, unknown>)) consider(`${path}.${k}`, child)
+  }
+
+  for (const [name, value] of Object.entries(motion)) consider(name, value)
+  return found
+}
+
+/** Exports the walker reaches no transition through. Pinned, not ignored: a NEW export
+ *  that carries a transition the walker cannot invoke lands in this set and reds the
+ *  coverage assertion until it is either walkable or consciously listed.
+ *   • `swipeDismiss` is the one genuine transition producer here — it needs a velocity,
+ *     and both its branches are pinned by name in `gesture helpers` below.
+ *   • `viewTransition` returns void; `expr`/`exprHeavy`/`dragElastic`/
+ *     `prefersReducedMotion` return scalars; `ease`/`duration` are raw token bags. */
+const NOT_WALKED = [
+  'duration', 'dragElastic', 'ease', 'expr', 'exprHeavy', 'prefersReducedMotion',
+  'swipeDismiss', 'viewTransition',
+]
+
+describe('the reduced-motion off-switch, enumerated over the module', () => {
+  it('finds every family — the vacuity guard on the walk itself', () => {
+    const harvest = harvestTransitions()
+    const families = new Set(harvest.map((h) => h.path.split(/[.(]/)[0]))
+
+    // Without these three, a rename could make every assertion below pass over an empty
+    // set. 16 transitions across 10 exports is the module as it stands.
+    expect(harvest.length, 'the walker found (almost) nothing — check looksLikeTransition')
+      .toBeGreaterThanOrEqual(14)
+    expect(families.size, `only reached: ${[...families].join(', ')}`).toBeGreaterThanOrEqual(8)
+    // And it reaches the family this atom exists for, by name.
+    for (const key of SPRING_KEYS) expect(harvest.map((h) => h.path)).toContain(`spring.${key}`)
+
+    // The set of exports the walk cannot see is a decision, so it is pinned. A new
+    // transition-bearing export shows up here and fails until it is covered on purpose.
+    const walked = new Set([...families])
+    const missed = Object.keys(motion).filter((k) => !walked.has(k)).sort()
+    expect(missed).toEqual([...NOT_WALKED].sort())
+  })
+
+  it('the walk can SEE a spring — so a clean result means something', () => {
+    // The other half of the vacuity guard, and the one that matters most: a detector
+    // that cannot detect a spring would report "zero springs" forever. With motion
+    // allowed, the same walk over the same module must come back full of them.
+    setReducedMotion(false)
+    const springs = harvestTransitions().filter(
+      (h) => h.t.type === 'spring' || SPRING_FIELDS.some((f) => h.t[f] !== undefined),
+    )
+    expect(springs.length, 'the walk found no springs with motion ALLOWED').toBeGreaterThanOrEqual(8)
+    // Both families, so neither can be the only thing keeping this honest.
+    const paths = springs.map((s) => s.path)
+    expect(paths.some((p) => p.startsWith('spring.'))).toBe(true)
+    expect(paths.some((p) => p.startsWith('physics.'))).toBe(true)
+  })
+
+  it('yields ZERO springs under prefers-reduced-motion — every family, no exceptions', () => {
+    setReducedMotion(true)
+    const offenders = harvestTransitions()
+      .filter((h) => h.t.type === 'spring' || SPRING_FIELDS.some((f) => h.t[f] !== undefined))
+      .map((h) => `${h.path} → ${JSON.stringify(h.t)}`)
+    expect(offenders, `springs survived the off-switch:\n  ${offenders.join('\n  ')}`).toEqual([])
+  })
+
+  it('and every transition it yields is instant or a pure tween', () => {
+    // The clause's "instant/crossfade" half. A surviving transition may have a duration
+    // (a call site's `delay`, a token bag's stagger step) but must never be a spring and
+    // must never be a spatial move with time on it.
+    setReducedMotion(true)
+    for (const { path, t } of harvestTransitions()) {
+      expect(t.type === undefined || t.type === 'tween', `${path} type=${String(t.type)}`).toBe(true)
+      for (const f of SPRING_FIELDS) expect(t[f], `${path}.${f}`).toBeUndefined()
+    }
+  })
 })
 
 // ── The surface-entrance choreography (atom FM-6 / plan §S3 T3.2) ───────────
