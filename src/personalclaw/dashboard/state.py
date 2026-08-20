@@ -740,6 +740,25 @@ class _ChatSession:
         }
 
 
+#: The envelope type a `notify()` note arrives as. Named because `_broadcast` and the rail
+#: test that pins its vocabulary must agree on the one string.
+NOTE_TYPE_NOTIFICATION = "notification"
+
+#: Every internal `_type` `_broadcast` knows how to translate. A value outside this set is a
+#: producer bug: it used to be shipped as a raw `notification` blob, and is now dropped with an
+#: ERROR. `tests/test_ws_broadcast_gate.py` asserts every `_type` literal in `src/` is in here.
+BROADCAST_NOTE_TYPES = frozenset(
+    {
+        "sessions",
+        "session_title",
+        "refresh",
+        "update_progress",
+        "chat_message",
+        NOTE_TYPE_NOTIFICATION,
+    }
+)
+
+
 class DashboardState:
     """Shared state injected into all handlers via ``app["state"]``."""
 
@@ -1842,50 +1861,60 @@ class DashboardState:
         # headless recording sees every broadcast. No-op unless PERSONALCLAW_TRACE_DIR set.
         if _trace.is_recording():
             _trace.record("ws", str(note.get("_type", "notification")), "note", note)
-        # WS broadcast — translate internal _type to WS message format
-        if self._ws_clients:
-            msg_type = note.get("_type", "notification")
-            if msg_type == "sessions":
-                sessions_list = note.get("_sessions_list") or json.loads(note["sessions"])
-                ws_msg = json.dumps(
-                    {
-                        "type": "sessions",
-                        "data": sessions_list,
-                        "yolo": note.get("_yolo", False),
-                        "channelTrusted": note.get("channelTrusted", False),
-                    }
-                )
-            elif msg_type == "session_title":
-                ws_msg = json.dumps(
-                    {"type": "session_title", "data": {"key": note["key"], "title": note["title"]}}
-                )
-            elif msg_type == "refresh":
-                ws_msg = json.dumps(
-                    {"type": "refresh", "data": {"kinds": note["kinds"].split(",")}}
-                )
-            elif msg_type == "update_progress":
-                ws_msg = json.dumps(
-                    {
-                        "type": "update_progress",
-                        "data": {"step": note["step"], "detail": note.get("detail", "")},
-                    }
-                )
-            elif msg_type == "chat_message":
-                chat_data: dict[str, Any] = {
-                    "session": note["session"],
-                    "role": note["role"],
-                    "content": note["content"],
-                    "ts": note.get("ts", ""),
-                }
-                # Include cls for messages with metadata (e.g. permission with tool_input)
-                if note.get("cls"):
-                    chat_data["cls"] = note["cls"]
-                if note.get("meta"):
-                    chat_data["meta"] = note["meta"]
-                ws_msg = json.dumps({"type": "chat_message", "data": chat_data})
-            else:
-                ws_msg = json.dumps({"type": "notification", "data": note})
-            self._send_ws_all(ws_msg)
+        # Translate the internal `_type` into the WS envelope, then hand it to the ONE
+        # gated producer. This used to end in `self._send_ws_all(ws_msg)`, which writes to
+        # every socket directly — so every always-on frame reached app-scoped sockets
+        # whatever their manifest declared, while `broadcast_ws` right below it enforced
+        # exactly that. Two producers, one gate.
+        if not self._ws_clients:
+            return
+        msg_type = note.get("_type") or NOTE_TYPE_NOTIFICATION
+        extra: dict[str, Any] | None = None
+        if msg_type == "sessions":
+            data: object = note.get("_sessions_list") or json.loads(note["sessions"])
+            # Envelope keys preserved verbatim. No consumer for either appears in `web/`
+            # today, but dropping a field as a side effect of a permissions fix is not this
+            # change's business — if they are dead, they die in their own commit.
+            extra = {
+                "yolo": note.get("_yolo", False),
+                "channelTrusted": note.get("channelTrusted", False),
+            }
+        elif msg_type == "session_title":
+            data = {"key": note["key"], "title": note["title"]}
+        elif msg_type == "refresh":
+            data = {"kinds": note["kinds"].split(",")}
+        elif msg_type == "update_progress":
+            data = {"step": note["step"], "detail": note.get("detail", "")}
+        elif msg_type == "chat_message":
+            chat_data: dict[str, Any] = {
+                "session": note["session"],
+                "role": note["role"],
+                "content": note["content"],
+                "ts": note.get("ts", ""),
+            }
+            # Include cls for messages with metadata (e.g. permission with tool_input)
+            if note.get("cls"):
+                chat_data["cls"] = note["cls"]
+            if note.get("meta"):
+                chat_data["meta"] = note["meta"]
+            data = chat_data
+        elif msg_type == NOTE_TYPE_NOTIFICATION:
+            # A note with no `_type` IS a notification — the notify() path. Explicit now,
+            # because it used to share a `else:` branch with every unmapped value.
+            data = note
+        else:
+            # 🔴 Dropped, not shipped. The old `else:` sent the raw internal note out as a
+            # `notification`, so a typo'd or retired `_type` reached every client as an
+            # untyped blob the frontend renders as a toast. An unmapped type is a producer
+            # bug; `test_ws_note_types_are_all_mapped` turns it into a failing build rather
+            # than a mystery frame, and this branch keeps the note off the wire meanwhile.
+            logger.error(
+                "dashboard note has an unmapped _type %r — dropped rather than broadcast as a "
+                "raw notification; add it to _broadcast's translation",
+                msg_type,
+            )
+            return
+        self.broadcast_ws(msg_type, data, extra=extra)
 
     def _send_ws_all(self, msg: str) -> None:
         """Send a pre-serialized JSON string to all WS clients.
@@ -1935,16 +1964,30 @@ class DashboardState:
                 pass
             return False
 
-    def broadcast_ws(self, msg_type: str, data: object) -> None:
-        """Send a typed message to all WS clients (not SSE).
+    def broadcast_ws(
+        self, msg_type: str, data: object, *, extra: dict[str, Any] | None = None
+    ) -> None:
+        """Send a typed message to all WS clients (not SSE). THE one WS producer.
 
         Owner/dashboard connections get every event. An app-scoped connection
         (sandbox P1) gets an event ONLY if the app's manifest declares it in
         ``permissions.events`` — server-side enforcement so an untrusted app can't
-        observe events it didn't ask for (the SDK's client-side filter is advisory)."""
+        observe events it didn't ask for (the SDK's client-side filter is advisory).
+
+        ``extra`` merges additional TOP-LEVEL envelope keys, which exists so the
+        dashboard-state translator (`_broadcast`) can route through this filter instead of
+        writing to the sockets itself. It had its own `_send_ws_all` call, so every
+        always-on frame — sessions, titles, refresh hints, chat messages, notifications —
+        reached app-scoped sockets regardless of what the app declared. One producer, one
+        gate; a second write path is a second place for the gate to be missing from."""
         if not self._ws_clients:
             return
-        msg = json.dumps({"type": msg_type, "data": data})
+        envelope: dict[str, Any] = {"type": msg_type, "data": data}
+        if extra:
+            # Envelope keys only — `type`/`data` stay owned by this method so a caller
+            # cannot rename the event out from under the permission check.
+            envelope.update({k: v for k, v in extra.items() if k not in ("type", "data")})
+        msg = json.dumps(envelope)
         # Fast path: no app-scoped connections → everyone gets everything.
         if not self._ws_app:
             self._send_ws_all(msg)
