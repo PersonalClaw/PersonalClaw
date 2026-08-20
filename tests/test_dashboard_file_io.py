@@ -81,7 +81,7 @@ async def _drain_background(state) -> None:
 
     `/api/send-message` triggers the agent turn with `asyncio.create_task` and returns
     without awaiting it (correct: the HTTP caller must not block on a whole turn). A test
-    that patches `_run_chat` therefore has to drain those tasks BEFORE leaving the patch
+    that patches `run_chat` therefore has to drain those tasks BEFORE leaving the patch
     scope, or the task outlives the patch and runs against a partly-restored module.
     Exceptions are swallowed: the task's behavior is asserted via the mock, and a
     teardown drain should not turn an unrelated failure into a confusing one.
@@ -484,7 +484,7 @@ class TestSendMessage:
         app = _make_send_app(state)
         with (
             patch(
-                "personalclaw.dashboard.chat_runner._run_chat", new_callable=AsyncMock
+                "personalclaw.dashboard.chat_runner.run_chat", new_callable=AsyncMock
             ) as mock_run,
             patch(
                 "personalclaw.dashboard.handlers.messaging._rehydrate_session_from_history"
@@ -513,7 +513,7 @@ class TestSendMessage:
                 assert json.loads(call_args[0][2]) == {"cronLabel": "check pipeline"}
                 mock_run.assert_called_once()
                 # Drain the fire-and-forget turn INSIDE the patch scope. The endpoint
-                # spawns `_run_chat` with `create_task` (messaging.py:626) and returns
+                # spawns `run_chat` with `create_task` (messaging.py:626) and returns
                 # immediately; leaving that task pending past the `with` block let it run
                 # against a half-unpatched module, which showed up on CI as
                 # `TestAcpProcessDiedRecovery` dying on `await` with a MagicMock — a
@@ -568,7 +568,7 @@ class TestSendMessage:
         back to owner DM after gateway restart.
 
         Mirrors the coverage of test_send_message_session_origin (happy path) —
-        patches _run_chat, asserts it was invoked on the revived session, and verifies
+        patches run_chat, asserts it was invoked on the revived session, and verifies
         the injected message content matches the cron-notification contract.
 
         This is a focused routing test: it mocks _rehydrate_session_from_history so
@@ -590,7 +590,7 @@ class TestSendMessage:
         app = _make_send_app(state)
         with (
             patch(
-                "personalclaw.dashboard.chat_runner._run_chat", new_callable=AsyncMock
+                "personalclaw.dashboard.chat_runner.run_chat", new_callable=AsyncMock
             ) as mock_run,
             patch(
                 "personalclaw.dashboard.handlers.messaging._rehydrate_session_from_history",

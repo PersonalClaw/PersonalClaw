@@ -21,7 +21,7 @@ import logging
 from aiohttp import web
 
 from personalclaw.config.loader import AppConfig
-from personalclaw.dashboard.chat_persistence import _save_session_to_history, resolve_session
+from personalclaw.dashboard.chat_persistence import resolve_session, save_session_to_history
 from personalclaw.dashboard.session_lifecycle import (
     LIFECYCLE_ACTIVE,
     LIFECYCLE_ARCHIVED,
@@ -134,7 +134,7 @@ async def api_chat_sessions_bulk(request: web.Request) -> web.Response:
                 did = True
 
         if did:
-            _save_session_to_history(state, session, force=True)
+            save_session_to_history(state, session, force=True)
             changed.append(key)
         else:
             unchanged.append(key)
@@ -199,7 +199,7 @@ async def api_chat_sessions_auto_archive(request: web.Request) -> web.Response:
     for key in keys:
         session = state._sessions.get(key)
         if session is not None:
-            _save_session_to_history(state, session, force=True)
+            save_session_to_history(state, session, force=True)
     if keys:
         state.push_sessions_update()
     sel().log_api_access(
@@ -250,7 +250,7 @@ async def api_chat_session_lifecycle(request: web.Request) -> web.Response:
         session.never_archive = bool(body["never_archive"])
         session._dirty = True
 
-    _save_session_to_history(state, session, force=True)
+    save_session_to_history(state, session, force=True)
     state.push_sessions_update()
     sel().log_api_access(
         caller="dashboard",

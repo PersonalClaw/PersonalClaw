@@ -6,7 +6,7 @@ opposite for a genuinely unattended run — and only for one. So every widening 
 here is paired with the INTERACTIVE floor that must stay clamped: that pairing is the
 point, because the way this atom could quietly undo AAP-5 is to widen both.
 
-The breaker half is driven the same way AAP-5's gate tests are: ``_run_chat`` over a
+The breaker half is driven the same way AAP-5's gate tests are: ``run_chat`` over a
 synthetic ACP event stream, not a predicate call. Phase 1's `G6` measured six
 consecutive ACP tool failures producing no warn, no block and no circuit trip, so a
 unit call on the counter would have passed *before* this change too and proved
@@ -26,7 +26,7 @@ from personalclaw.acp.client import AcpClient
 from personalclaw.acp.permission_authority import HOST_AUTHORITY_MODE
 from personalclaw.acp.translate import extract_tool_update_events
 from personalclaw.acp.types import JsonRpcMessage
-from personalclaw.dashboard.chat_runner import _run_chat
+from personalclaw.dashboard.chat_runner import run_chat
 from personalclaw.dashboard.state import DashboardState, _ChatSession
 from personalclaw.guardrails.loop_breaker import (
     BLOCK_THRESHOLD,
@@ -374,7 +374,7 @@ class TestFailureBitIsRuntimeAgnostic:
         assert _ok_bit({"status": "completed", "rawOutput": shallow}) is False
 
 
-# ── the _run_chat harness (same shape as AAP-5's) ────────────────────────────
+# ── the run_chat harness (same shape as AAP-5's) ────────────────────────────
 
 
 async def _async_iter(items):
@@ -424,7 +424,7 @@ def _texts(session):
 
 async def _drive(state, session):
     with patch("personalclaw.dashboard.chat_runner.sel", MagicMock()):
-        await _run_chat(state, session, "hello")
+        await run_chat(state, session, "hello")
 
 
 def _decoded_result(frame: dict, call_id: str) -> LLMEvent:
@@ -606,7 +606,7 @@ class TestUnattendedFailFast:
 
 class TestAcpLoopBreaker:
     """`G6` measured that six consecutive failures produced nothing. Each rung is
-    driven through _run_chat, and the vacuity floor (a passing stream produces no
+    driven through run_chat, and the vacuity floor (a passing stream produces no
     breaker text at all) is asserted so a rail that matches everything can't read as
     a pass."""
 

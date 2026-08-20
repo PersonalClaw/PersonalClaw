@@ -20,7 +20,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from personalclaw.dashboard.chat_runner import _run_chat
+from personalclaw.dashboard.chat_runner import run_chat
 from personalclaw.dashboard.state import DashboardState, _ChatSession
 from personalclaw.history import ConversationLog
 from personalclaw.hooks import ToolHookResult
@@ -149,7 +149,7 @@ async def _one_turn(tmp_path, *, provider_id: str, is_new: bool, resumed: bool) 
     session = _ChatSession("chat-1-g1415")
     session._trust = True
     with patch("personalclaw.dashboard.chat_runner.sel", MagicMock()):
-        await _run_chat(state, session, "hello")
+        await run_chat(state, session, "hello")
     return _session_lines(state)
 
 

@@ -76,7 +76,7 @@ def _no_dispatch(monkeypatch) -> list[str]:
     async def _fake_run_chat(state, session, msg, **kw):
         seen.append(msg)
 
-    monkeypatch.setattr("personalclaw.dashboard.chat_runner._run_chat", _fake_run_chat)
+    monkeypatch.setattr("personalclaw.dashboard.chat_runner.run_chat", _fake_run_chat)
     return seen
 
 

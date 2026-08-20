@@ -129,7 +129,7 @@ simulating an FTS5-less SQLite build in a test. When PLATFORM-REACH lands
 **DEVIATION — a session-grained index, not a turn-grained one.** §C1's `index_turn`
 signature is preserved, but the turn's own text is not what gets stored: the whole
 transcript is re-read and the session's single row replaced. Reason:
-`_save_session_to_history` REWRITES the entire JSONL on every turn, so appending
+`save_session_to_history` REWRITES the entire JSONL on every turn, so appending
 per-turn rows would drift out of sync with the file it's supposed to mirror. One row
 per session also makes `snippet()` return the best-matching passage from the whole
 conversation instead of an arbitrary turn.

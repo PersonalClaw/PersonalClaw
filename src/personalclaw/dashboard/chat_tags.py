@@ -14,7 +14,7 @@ from typing import Any
 
 from aiohttp import web
 
-from personalclaw.dashboard.chat_persistence import _save_session_to_history, resolve_session
+from personalclaw.dashboard.chat_persistence import resolve_session, save_session_to_history
 from personalclaw.dashboard.state import DashboardState
 from personalclaw.sel import sel
 
@@ -168,7 +168,7 @@ async def api_chat_tag_delete(request: web.Request) -> web.Response:
     for session in state._sessions.values():
         if tid in session.tags:
             session.tags = [t for t in session.tags if t != tid]
-            _save_session_to_history(state, session, force=True)
+            save_session_to_history(state, session, force=True)
     # Strip from sidebar columns (flat list of column dicts).
     changed_boards = False
     for col in state._tag_boards:
@@ -214,7 +214,7 @@ async def api_chat_session_tags(request: web.Request) -> web.Response:
         if isinstance(tid, str) and tid in valid_ids and tid not in new_tags:
             new_tags.append(tid)
     session.tags = new_tags
-    _save_session_to_history(state, session, force=True)
+    save_session_to_history(state, session, force=True)
     state.push_sessions_update()
     sel().log_api_access(
         caller="dashboard",
@@ -431,7 +431,7 @@ async def api_chat_session_drop(request: web.Request) -> web.Response:
     target_id = status_tags[0]["id"]
     kept = [t for t in session.tags if t in tag_index and not tag_index[t].get("status")]
     session.tags = kept + [target_id]
-    _save_session_to_history(state, session, force=True)
+    save_session_to_history(state, session, force=True)
     state.push_sessions_update()
     sel().log_api_access(
         caller="dashboard",

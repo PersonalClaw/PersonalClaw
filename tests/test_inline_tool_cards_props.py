@@ -100,7 +100,7 @@ class TestSegmentFlushOnInterrupt:
                     broadcasts: list[tuple[str, dict]] = []
                     state.broadcast_ws = lambda t, d: broadcasts.append((t, d))
 
-                    # Flush segment (simulates what _run_chat does on EVENT_TOOL_CALL)
+                    # Flush segment (simulates what run_chat does on EVENT_TOOL_CALL)
                     assert assistant_text != ""
                     _flush_segment(state, session, assistant_text)
                     assistant_text = ""
@@ -226,7 +226,7 @@ class TestPersistedMessageStructure:
     @settings(deadline=None)
     def test_persisted_structure_after_segments(self, segments, final_text):
         """Generate multi-segment streams (1-5 segments, random text per
-        segment).  Simulate the _run_chat flow: for each segment, accumulate
+        segment).  Simulate the run_chat flow: for each segment, accumulate
         text as chunks, flush on tool call, then append tool message.
         After the final text, do the EVENT_COMPLETE finalization.
         Verify the persisted messages have the correct structure.
@@ -369,7 +369,7 @@ class TestChunkSequenceMonotonicity:
     )
     @settings(deadline=None)
     def test_chunk_seq_monotonic_across_segments(self, segments, final_chunks):
-        """Generate multi-segment streams.  Simulate the _run_chat event
+        """Generate multi-segment streams.  Simulate the run_chat event
         loop: for each segment, emit text chunks (incrementing chunk_seq),
         then flush on tool call (without resetting chunk_seq).
         Collect all seq values from chat_chunk broadcasts and verify
@@ -438,7 +438,7 @@ class TestNoSegmentForToolFreeStreams:
     @settings(deadline=None)
     def test_no_segment_in_text_only_stream(self, text_chunks):
         """Generate text-only streams (no tool calls).  Simulate the
-        _run_chat event loop: emit text chunks, then do EVENT_COMPLETE
+        run_chat event loop: emit text chunks, then do EVENT_COMPLETE
         finalization.  Verify zero chat_segment broadcasts.
         """
         with tempfile.TemporaryDirectory() as config_tmp:

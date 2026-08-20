@@ -12,7 +12,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from personalclaw.dashboard.chat import _expand_prompt_mention, _run_chat
+from personalclaw.dashboard.chat import _expand_prompt_mention, run_chat
 from personalclaw.dashboard.handlers import (
     _list_provider_prompts,
     api_prompt_detail,
@@ -255,26 +255,26 @@ class TestApiPrompts:
         assert resp.status == 200 and "Bare content." in json.loads(resp.body)["content"]
 
 
-# ── _run_chat prompt paths (/prompts) ──
+# ── run_chat prompt paths (/prompts) ──
 
 
 class TestRunChatPrompts:
     def test_slash_list(self, tmp_path, mock_sel):
         _provider_prompt(tmp_path, "review", "Do review.", description="Review code")
         s, sl = _ss()
-        asyncio.run(_run_chat(s, sl, "/prompts"))
+        asyncio.run(run_chat(s, sl, "/prompts"))
         assert "@review" in sl.messages[-1][1]
 
     def test_slash_list_empty(self, tmp_path, mock_sel):
         s, sl = _ss()
-        asyncio.run(_run_chat(s, sl, "/prompts"))
+        asyncio.run(run_chat(s, sl, "/prompts"))
         assert "No prompts found" in sl.messages[-1][1]
 
     def test_slash_get_ok(self, tmp_path, mock_sel, monkeypatch):
         _provider_prompt(tmp_path, "review", "Do review.")
         s, sl = _ss()
         captured = {}
-        original_run_chat = _run_chat
+        original_run_chat = run_chat
 
         async def _mock_run_chat(state, session, msg, **kw):
             if msg.startswith("Execute the following instructions:"):
@@ -282,7 +282,7 @@ class TestRunChatPrompts:
                 return
             await original_run_chat(state, session, msg, **kw)
 
-        monkeypatch.setattr("personalclaw.dashboard.chat_runner._run_chat", _mock_run_chat)
+        monkeypatch.setattr("personalclaw.dashboard.chat_runner.run_chat", _mock_run_chat)
         asyncio.run(_mock_run_chat(s, sl, "/prompts get review"))
         assert any("Loaded prompt" in m[1] for m in sl.messages)
         assert "Do review." in captured.get("expanded", "")
@@ -291,19 +291,19 @@ class TestRunChatPrompts:
         """``/prompts get`` with no name falls through to the list handler."""
         _provider_prompt(tmp_path, "review", "Do review.")
         s, sl = _ss()
-        asyncio.run(_run_chat(s, sl, "/prompts get"))
+        asyncio.run(run_chat(s, sl, "/prompts get"))
         assert "@review" in sl.messages[-1][1]
 
     def test_slash_list_explicit(self, tmp_path, mock_sel):
         """``/prompts list`` works the same as ``/prompts``."""
         _provider_prompt(tmp_path, "review", "Do review.")
         s, sl = _ss()
-        asyncio.run(_run_chat(s, sl, "/prompts list"))
+        asyncio.run(run_chat(s, sl, "/prompts list"))
         assert "@review" in sl.messages[-1][1]
 
     def test_slash_get_not_found(self, tmp_path, mock_sel):
         s, sl = _ss()
-        asyncio.run(_run_chat(s, sl, "/prompts get nonexistent"))
+        asyncio.run(run_chat(s, sl, "/prompts get nonexistent"))
         assert "not found" in sl.messages[-1][1]
 
     def test_slash_get_render_failure_blocked(self, tmp_path, mock_sel):
@@ -315,7 +315,7 @@ class TestRunChatPrompts:
             variables=[{"name": "who", "type": "string", "required": True}],
         )
         s, sl = _ss()
-        asyncio.run(_run_chat(s, sl, "/prompts get needvar"))
+        asyncio.run(run_chat(s, sl, "/prompts get needvar"))
         assert any(
             "could not be rendered" in m[1] or "blocked" in m[1].lower() for m in sl.messages
         )

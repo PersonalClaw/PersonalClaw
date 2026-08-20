@@ -548,9 +548,9 @@ async def api_inbox_send(request: web.Request) -> web.Response:
         target = getattr(item, "reply_target", "") or ""
         session = state.get_session(target) if target else None
         if session is not None:
-            from personalclaw.dashboard.chat_runner import _run_chat
+            from personalclaw.dashboard.chat_runner import run_chat
 
-            session.enqueue_or_run_prompt(text, _run_chat, state)
+            session.enqueue_or_run_prompt(text, run_chat, state)
             delivered = True
         inbox.update(item_id, status=ItemStatus.HANDLED.value, draft=text)
         _record_signal(state, item, "reply")  # replying = a positive engagement signal

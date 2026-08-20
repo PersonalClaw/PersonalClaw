@@ -107,7 +107,7 @@ def test_send_routes_native_reply_to_live_session(state):
     # patch the chat runner import target
     import personalclaw.dashboard.chat_runner as cr
 
-    cr._run_chat = MagicMock()
+    cr.run_chat = MagicMock()
     resp = _run(H.api_inbox_send(_send_req(state, {"id": item.id, "text": "yes, go"})))
     assert resp.status == 200
     body = json.loads(resp.body)

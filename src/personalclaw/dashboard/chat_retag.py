@@ -237,13 +237,13 @@ def _apply_tags(state: DashboardState, cand: _Candidate, new_ids: list[str]) -> 
     if sorted(new_ids) == sorted(cand.tags):
         return False
     if cand.in_memory:
-        from personalclaw.dashboard.chat_persistence import _save_session_to_history
+        from personalclaw.dashboard.chat_persistence import save_session_to_history
 
         session = state._sessions.get(cand.key)
         if session is None:
             return False
         session.tags = list(new_ids)
-        _save_session_to_history(state, session, force=True)
+        save_session_to_history(state, session, force=True)
     else:
         if not state.conversation_log:
             return False

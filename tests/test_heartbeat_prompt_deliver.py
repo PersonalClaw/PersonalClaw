@@ -46,7 +46,7 @@ class TestPromptDashboardDeliver:
 
     @pytest.mark.asyncio()
     async def test_prompt_triggers_enqueue_or_run(self, orchestrator, dashboard_state):
-        from personalclaw.dashboard.chat import _run_chat
+        from personalclaw.dashboard.chat import run_chat
 
         state, session = dashboard_state
         await orchestrator._deliver_result(
@@ -57,7 +57,7 @@ class TestPromptDashboardDeliver:
         prompt = call_args.args[0]
         assert "Fix these comments" in prompt
         # run_chat coro and state are passed through in the documented positional order
-        assert call_args.args[1] is _run_chat
+        assert call_args.args[1] is run_chat
         assert call_args.args[2] is state
 
     @pytest.mark.asyncio()

@@ -2,14 +2,14 @@
 
 **Date:** 2026-07-14 · **Method:** code-level read of `src/personalclaw/agents/native/`, `src/personalclaw/acp/`, `src/personalclaw/llm/acp_agent.py` + `acp_session_provider.py`, `src/personalclaw/dashboard/chat_runner.py`, `src/personalclaw/session.py`, `src/personalclaw/providers/provider_bridge.py`, and the three agent apps in `apps/`. Every verdict cites the file it came from. Runtime behavior NOT executed — cells marked UNKNOWN need the follow-up as-a-user sweep (§6).
 
-**Verdict up front:** the harness is architected so that *most* deep integration lives ABOVE the provider seam (in `chat_runner._run_chat`, which is provider-neutral) or BELOW it (in the model provider). Those features work identically for ACP agents. The real gaps cluster in four places: (1) the native **tool surface** (the in-process registry: knowledge/tasks/loops/inbox/artifacts/workflows/subagents/web tools) reaches an ACP CLI **only via the `personalclaw-core` MCP server, and only if that CLI's own config spawns it** — the host never passes `mcpServers` into `session/new` on the live paths; (2) **per-tool machinery** that lives inside `NativeAgentRuntime` (failure breaker, structural loop detection, tool retrieval, dry-run, unattended stripping, steering); (3) **learning capture** (procedural outcomes drain is native-only); (4) **per-dialect protocol capability differences** (plan mode, permission modes, effort, concurrent sessions, resume).
+**Verdict up front:** the harness is architected so that *most* deep integration lives ABOVE the provider seam (in `chat_runner.run_chat`, which is provider-neutral) or BELOW it (in the model provider). Those features work identically for ACP agents. The real gaps cluster in four places: (1) the native **tool surface** (the in-process registry: knowledge/tasks/loops/inbox/artifacts/workflows/subagents/web tools) reaches an ACP CLI **only via the `personalclaw-core` MCP server, and only if that CLI's own config spawns it** — the host never passes `mcpServers` into `session/new` on the live paths; (2) **per-tool machinery** that lives inside `NativeAgentRuntime` (failure breaker, structural loop detection, tool retrieval, dry-run, unattended stripping, steering); (3) **learning capture** (procedural outcomes drain is native-only); (4) **per-dialect protocol capability differences** (plan mode, permission modes, effort, concurrent sessions, resume).
 
 ---
 
 ## 1. Architecture: where the seam sits
 
 ```
-chat_runner._run_chat  ──────────────  provider-neutral. Consumes AgentEvent stream
+chat_runner.run_chat  ──────────────  provider-neutral. Consumes AgentEvent stream
   │                                    (text/thinking/tool_call/tool_result/permission/
   │                                    complete) from EITHER runtime.
   ├── SessionManager.get_or_create (session.py:788) → provider_bridge
@@ -130,7 +130,7 @@ Legend: **WIRED** (works, evidence cited) · **PARTIAL** (subset; see note) · *
 
 | Feature | native | claude-code | codex | kiro-cli | Evidence |
 |---|---|---|---|---|---|
-| Variants / regenerate (‹n/N› switcher) | WIRED | WIRED | WIRED | WIRED | `_pending_variants` + `regenerate_hint` in `_run_chat` (neutral); `chat_regenerate.py:97` |
+| Variants / regenerate (‹n/N› switcher) | WIRED | WIRED | WIRED | WIRED | `_pending_variants` + `regenerate_hint` in `run_chat` (neutral); `chat_regenerate.py:97` |
 | Edit & resend, branch continuation (fork) | WIRED | WIRED | WIRED | WIRED | `chat_fork.py`/`chat_undo.py` operate on session messages, not the provider |
 | Queued messages (merge/pop + live bubbles) | WIRED | WIRED | WIRED | WIRED | finally-block queue drain, `chat_runner.py:2605-2665` |
 | Empty-turn auto-retry | WIRED | WIRED | WIRED | WIRED | `is_empty_turn`, `chat_runner.py:87-116, 2385` |
@@ -157,7 +157,7 @@ Legend: **WIRED** (works, evidence cited) · **PARTIAL** (subset; see note) · *
 | Inbox AI draft / digest / summarize | Neither — `one_shot_completion(use_case="background")` = a bare ModelProvider, never an agent runtime | `inbox_service.py:287-357` |
 | Auto-title, suggestions, consolidation ("background" session) | Bare ModelProvider (`_model_axis_only` excludes acp_agent entries) | `provider_bridge.py:320-342` |
 | Prompt optimizer | `handlers/optimizer.py` → one-shot completions (model axis) | file present; not an agent-loop consumer |
-| Channel (Slack) sessions | Provider-neutral `_run_chat` (mirroring via `channel_delivery` works for both) | `chat_runner.py:1472-1488, 2466-2475` |
+| Channel (Slack) sessions | Provider-neutral `run_chat` (mirroring via `channel_delivery` works for both) | `chat_runner.py:1472-1488, 2466-2475` |
 | Voice: STT insert / TTS reply | Media providers via composer/`chat_voice.py` — orthogonal to agent runtime (text lands in the composer/message) | `dashboard/chat_voice.py` |
 | Screenshot capture / file panel | Dashboard handlers (`handlers/files.py`) — attach as files → 4a attachment injection (neutral) | `handlers/files.py` |
 | Subagent completions inject-back + pending-context drain | Session-level (neutral) — `_pending_subagent_failures` / `_pending_context`, `chat_runner.py:1286-1309` | |

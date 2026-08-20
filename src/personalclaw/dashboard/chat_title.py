@@ -170,7 +170,7 @@ def _apply_auto_tags(state: DashboardState, session: _ChatSession, names: list[s
     (:func:`personalclaw.dashboard.chat_tags.create_tag`) so they get proper
     ids/colors/order. Returns the assigned tag ids (empty = nothing applied).
     """
-    from personalclaw.dashboard.chat_persistence import _save_session_to_history
+    from personalclaw.dashboard.chat_persistence import save_session_to_history
     from personalclaw.dashboard.chat_tags import _auto_color, create_tag, find_tag_by_name
 
     if not names:
@@ -196,7 +196,7 @@ def _apply_auto_tags(state: DashboardState, session: _ChatSession, names: list[s
     if not assigned:
         return []
     session.tags = assigned
-    _save_session_to_history(state, session, force=True)
+    save_session_to_history(state, session, force=True)
     state.push_sessions_update()
     logger.info(
         "Auto-tagged session %s with %d tag(s) (%d new)", session.key, len(assigned), created

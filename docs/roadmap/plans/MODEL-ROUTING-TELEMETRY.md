@@ -464,7 +464,7 @@ Folded into **Session 1** as its second half (Session 1 was already "telemetry r
   beside two `/api/usage/*` siblings answering the same question from a narrower population.
 
 - **④ A naive union double-counts loop spend, so "fold both" is not a free fix either.** A loop
-  worker's turns run through `_run_chat` (`gateway.py:2137`, with `_app == "loop"` at `:2120`) →
+  worker's turns run through `run_chat` (`gateway.py:2137`, with `_app == "loop"` at `:2120`) →
   `_record_turn_usage` → a `source="loop"` turn row; the SAME session's inner model resolves under
   `inner_axis="loops"` (`provider_bridge.py:379-388`) → guarded → attempt rows in
   `model_calls.jsonl`. The two records therefore overlap on at least loops, and establishing

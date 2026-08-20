@@ -454,7 +454,7 @@ Sessions 1-4 each ship independently; Session 1 alone is a Wave-0 win (the symli
 
 - [2026-07-25][S3] DONE: Mid-turn message handling (§6). New `resilience/active_jobs.py` —
   `ActiveJob{job_id, origin, started_at}` + `ActiveJobTracker` (register at turn start /
-  clear at turn end, both wired into `chat_runner._run_chat` at the semaphore-acquire and
+  clear at turn end, both wired into `chat_runner.run_chat` at the semaphore-acquire and
   the `finally` boundary where `notify_turn_complete` fires), plus `classify_origin` and
   `is_cancellable_origin` (webui/channel = interactive+cancellable; loop-/cron:/subagent:/
   _bg = never). `mid_turn_policy` (enum queue|cancel_and_replace, default queue) +
