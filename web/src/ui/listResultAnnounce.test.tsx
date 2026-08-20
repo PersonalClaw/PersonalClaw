@@ -17,7 +17,8 @@ import { ListControls } from './ListControls'
 //
 // axe reports nothing here, as in cycle 52: a missing announcement is not a rule violation.
 //
-// 🔑 THE CANONICAL FORM ALREADY EXISTED — `pages/chat/FindBar.tsx` announces its match count
+// 🔑 THE CANONICAL FORM ALREADY EXISTED — `ui/FindBar.tsx` (then `pages/chat/FindBar.tsx`, promoted
+// to a shared primitive in KL-16) announces its match count
 // with `aria-live="polite"` on the `n/total` counter. This brings the 13 `ListControls`
 // consumers onto that pattern instead of inventing one.
 //
@@ -440,7 +441,7 @@ describe('the hand-laid bars reach the same idiom', () => {
       'app/CommandPalette.tsx': ['role=listbox with options', /role="listbox"[\s\S]*role="option"/],
       // Already announces — through its own VISIBLE match counter, which is a live region. A second
       // idiom here would read the same number twice.
-      'pages/chat/FindBar.tsx': ['visible aria-live match counter', /aria-live="polite"/],
+      'ui/FindBar.tsx': ['visible aria-live match counter', /aria-live="polite"/],
       // 🪤 THIS ENTRY USED TO LIST THREE FILES AS "arrow-key typeahead, awaiting listbox semantics",
       // AND THAT REASON WAS WRONG FOR TWO OF THEM. The proof pattern was `onKeyDown=`, which any file
       // with any key handler satisfies — so the exemption stayed green while describing something

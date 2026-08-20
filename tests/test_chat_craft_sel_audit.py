@@ -568,8 +568,18 @@ class TestClientOnlyMechanicsAreCorrectlySilent:
     module that implements it."""
 
     def test_find_scans_memory_and_never_calls_the_server(self):
-        for name in ("findMatches.ts", "FindBar.tsx"):
-            src = (_WEB / "pages" / "chat" / name).read_text(encoding="utf-8")
+        # KL-16 promoted the find bar to a shared primitive for the knowledge reader, so the
+        # three modules that implement Find no longer all live under `pages/chat/`: the bar and
+        # the text matcher moved to `ui/`, and only the chat-shaped segment extractor stayed.
+        # The paths are spelled out because `read_text` raises on a stale one — which is how
+        # this test caught the move rather than passing over a file that no longer exists.
+        for parts in (
+            ("ui", "FindBar.tsx"),
+            ("ui", "findText.ts"),
+            ("pages", "chat", "findSegments.ts"),
+        ):
+            name = parts[-1]
+            src = _WEB.joinpath(*parts).read_text(encoding="utf-8")
             assert "api." not in src, f"{name} gained a server call — it now needs SEL cover"
             assert "fetch(" not in src, f"{name} gained a fetch — it now needs SEL cover"
 
