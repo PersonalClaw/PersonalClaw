@@ -10,7 +10,6 @@ from typing import Any
 from aiohttp import web
 
 from personalclaw.atomic_write import atomic_write
-from personalclaw.config.loader import MEMORY_VAULT_MODES
 from personalclaw.dashboard.state import DashboardState
 from personalclaw.security import redact_credentials, redact_exfiltration_urls
 from personalclaw.vector_memory import SemanticRejectCode
@@ -90,18 +89,81 @@ async def api_memory_history(request: web.Request) -> web.Response:
     return web.json_response({"content": mem.read_recent_history()})
 
 
+#: The `memory.*` fields this PUT writes, in the order the panel presents them. Each is
+#: validated through its `_EDITABLE_CONFIG` spec — this endpoint declares WHICH fields it
+#: owns and nothing about what a valid value is, so it cannot drift from the PATCH path the
+#: way the hand-rolled version did (that one ran `bool(body[flag])`, so `"false"` turned a
+#: memory behaviour ON, and clamped an out-of-range confidence instead of refusing it).
+#:
+#: The GET below returns three MORE fields that this PUT deliberately does NOT write —
+#: `graph_topology_in_context`, `holder_attribution`, `slot_size_cap` ride the PATCH. The
+#: panel needs to read them to render its controls; naming one of them in a PUT body is a
+#: 400 here rather than a silent no-op, because "one writer per field" is only true if the
+#: other writer says no out loud.
+_SETTINGS_FIELDS: tuple[str, ...] = (
+    "history_idle_hours",
+    "history_max_days",
+    "migrated",
+    "l1_manifest",
+    "active_recall",
+    "proactive_commitments",
+    "graph_enabled",
+    "push_context",
+    "vault_mode",
+    "vault_path",
+    "push_min_confidence",
+)
+
+
 async def api_memory_settings(request: web.Request) -> web.Response:
     """GET/PUT /api/memory/settings — memory consolidation config."""
     from personalclaw.config.loader import AppConfig, config_path  # noqa: F811
 
     cfg = AppConfig.load()
     if request.method == "PUT":
+        from personalclaw.config.edit_spec import ConfigValueError, coerce_edit_value
+        from personalclaw.dashboard.handlers.core import _EDITABLE_CONFIG
+
+        caller = request.get("user", "dashboard")
+
+        def _deny(error: str, resources: str = "", status: int = 400) -> web.Response:
+            _sel().log_api_access(
+                caller=caller,
+                operation="memory.settings.update",
+                outcome="denied",
+                source="dashboard",
+                resources=resources or error,
+            )
+            return web.json_response({"error": error}, status=status)
+
         try:
             body = await request.json()
         except Exception:
-            return web.json_response({"error": "invalid JSON"}, status=400)
+            return _deny("invalid JSON", "invalid JSON body")
         if not isinstance(body, dict):
-            return web.json_response({"error": "JSON body must be an object"}, status=400)
+            return _deny("JSON body must be an object", "non-dict body")
+
+        # An unrecognised key used to be dropped in silence, so a typo'd field name (or a
+        # PATCH-only one) returned 200 having changed nothing at all.
+        unknown = sorted(k for k in body if k not in _SETTINGS_FIELDS)
+        if unknown:
+            return _deny(
+                f"not writable here: {', '.join(unknown)} "
+                f"(writable: {', '.join(_SETTINGS_FIELDS)})",
+                f"unknown={','.join(unknown)}",
+            )
+        applied: dict[str, Any] = {}
+        for name in _SETTINGS_FIELDS:
+            if name not in body:
+                continue
+            path_key = f"memory.{name}"
+            try:
+                applied[name] = coerce_edit_value(path_key, body[name], _EDITABLE_CONFIG[path_key])
+            except ConfigValueError as exc:
+                return _deny(str(exc), exc.resources, exc.status)
+        if not applied:
+            return _deny("no settings provided")
+
         # Read existing config, update memory section only
         from personalclaw.dashboard.handlers.agents import _get_config_lock  # noqa: F811
 
@@ -112,65 +174,19 @@ async def api_memory_settings(request: web.Request) -> web.Response:
             except Exception:
                 data = {}
             mem = data.setdefault("memory", {})
-            if "history_idle_hours" in body:
-                try:
-                    mem["history_idle_hours"] = max(0.5, float(body["history_idle_hours"]))
-                except (ValueError, TypeError):
-                    return web.json_response(
-                        {"error": "history_idle_hours must be numeric"}, status=400
-                    )
-            if "history_max_days" in body:
-                try:
-                    mem["history_max_days"] = max(7, int(body["history_max_days"]))
-                except (ValueError, TypeError):
-                    return web.json_response(
-                        {"error": "history_max_days must be an integer"}, status=400
-                    )
-            if "migrated" in body:
-                mem["migrated"] = bool(body["migrated"])
-            # Behavior toggles (booleans) — the injection + proactive-memory
-            # controls the agent's memory uses. proactive_commitments is the M5e
-            # opt-in for inferred check-ins (off by default).
-            for flag in (
-                "l1_manifest",
-                "active_recall",
-                "proactive_commitments",
-                "graph_enabled",
-                "push_context",
-            ):
-                if flag in body:
-                    mem[flag] = bool(body[flag])
-            # Vault mode (§5.1) — a closed three-value enum, validated here rather than
-            # coerced. An unrecognized value is a 400, not a silent fall back to "off":
-            # a caller that mistyped `two-way` must be told, or it would look like the
-            # setting saved and quietly stop mirroring. Writing the new key also drops
-            # the retired `vault_enabled` bool so config.json cannot keep two answers.
-            if "vault_mode" in body:
-                mode = str(body["vault_mode"] or "").strip().lower()
-                if mode not in MEMORY_VAULT_MODES:
-                    return web.json_response(
-                        {"error": f"vault_mode must be one of {list(MEMORY_VAULT_MODES)}"},
-                        status=400,
-                    )
-                mem["vault_mode"] = mode
+            mem.update(applied)
+            # Writing the vault mode also drops the retired `vault_enabled` bool, so
+            # config.json cannot keep two answers about the same thing.
+            if "vault_mode" in applied:
                 mem.pop("vault_enabled", None)
-            # The push reflex's confidence gate (§3). Clamped to [0,1] here as well as
-            # in load(): a value outside the range would either volunteer everything or
-            # nothing, and the caller should not be able to reach either by typing.
-            if "push_min_confidence" in body:
-                try:
-                    mem["push_min_confidence"] = max(
-                        0.0, min(1.0, float(body["push_min_confidence"]))
-                    )
-                except (ValueError, TypeError):
-                    return web.json_response(
-                        {"error": "push_min_confidence must be numeric"}, status=400
-                    )
-            # Vault path (string): where the markdown mirror is written. Empty
-            # falls back to the default; strip so a stray space can't misroute it.
-            if "vault_path" in body:
-                mem["vault_path"] = str(body["vault_path"] or "").strip() or "memory-vault"
             atomic_write(path, json.dumps(data, indent=2) + "\n", fsync=True)
+        _sel().log_api_access(
+            caller=caller,
+            operation="memory.settings.update",
+            outcome="success",
+            source="dashboard",
+            resources=",".join(f"memory.{k}={v}" for k, v in applied.items()),
+        )
         # Apply to running consolidator
         state: DashboardState = request.app["state"]
         if state.consolidator:

@@ -74,6 +74,29 @@ def _config_cmd(args: argparse.Namespace) -> None:
             cfg = AppConfig.load()
             d = cfg.to_dict()
             parsed = _parse_value(value)
+            # The dashboard's PATCH allowlist declares a type and bounds for 192 of these
+            # keys. This path used to check only that the dotted key EXISTS, so the CLI
+            # could write `agent.max_subagents 9999` past the 0..16 the API enforces on the
+            # same field, and the next gateway start would read a number no UI could have
+            # produced. Keys the allowlist does not declare keep today's behaviour: the
+            # allowlist is the PATCH surface, not a complete config schema, and refusing
+            # everything absent from it would break `config set` for most of the file.
+            spec = _editable_spec(key)
+            if spec is not None:
+                from personalclaw.config.edit_spec import ConfigValueError, coerce_edit_value
+
+                try:
+                    parsed = coerce_edit_value(key, parsed, spec)
+                except ConfigValueError as exc:
+                    print(f"❌ {key}: {exc}", file=sys.stderr)
+                    sel().log_api_access(
+                        caller="cli",
+                        operation="config_set",
+                        outcome="denied",
+                        source="cli",
+                        resources=exc.resources or f"{key}={value}",
+                    )
+                    sys.exit(1)
             if not _dict_set(d, key, parsed):
                 print(f"❌ Unknown key: {key}", file=sys.stderr)
                 sys.exit(1)
@@ -105,6 +128,23 @@ def _config_cmd(args: argparse.Namespace) -> None:
     else:
         print("Usage: personalclaw config {get,set,edit}", file=sys.stderr)
         sys.exit(1)
+
+
+def _editable_spec(key: str) -> dict | None:
+    """The PATCH allowlist's spec for a dotted key, or None if it declares none.
+
+    Imported lazily: the registry lives in a dashboard handler module (the inert-surface
+    census parses that file for the `_EDITABLE_CONFIG` literal, so it cannot move), and
+    `personalclaw config get` should not pay for importing aiohttp. A failure to import is
+    not a reason to refuse a write — it means no spec is available, which is exactly the
+    "key not declared" case.
+    """
+    try:
+        from personalclaw.dashboard.handlers.core import _EDITABLE_CONFIG
+
+        return _EDITABLE_CONFIG.get(key)
+    except Exception:  # noqa: BLE001 — no spec available is the same as no spec declared
+        return None
 
 
 def _dict_get(d: dict, key: str) -> object:
