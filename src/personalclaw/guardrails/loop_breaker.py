@@ -52,8 +52,107 @@ CIRCUIT_THRESHOLD = 30
 STRUCT_WINDOW = 16
 #: ≥ this many identical triples in a row → no-progress.
 STRUCT_REPEAT = 3
-#: ≥ this many A↔B cycles (2× entries) → ping-pong.
+#: ≥ this many repetitions of a cycle → ping-pong. The cycle PERIODS checked are below;
+#: `STRUCT_WINDOW` must hold `max(period) * cycles` entries (3 × 3 = 9 ≤ 16 ✓).
 STRUCT_PINGPONG_CYCLES = 3
+#: Cycle lengths the structural detector recognises. Period 2 is A↔B; period 3 is
+#: A→B→C→A→B→C, which is the shape of the most common real agent loop — read → edit → test,
+#: repeat — and was undetectable while the span was hardcoded to `cycles * 2`.
+STRUCT_CYCLE_PERIODS = (2, 3)
+#: The no-progress threshold for a tool that is POLLING by nature. An agent waiting on a
+#: service correctly calls the same status probe with the same result until it changes; telling
+#: it at the third identical answer that it is "looping without making progress" is advice to
+#: stop doing the right thing. The multiplier keeps the detector alive for a poll that never
+#: terminates while leaving normal waiting alone.
+STRUCT_POLL_REPEAT = STRUCT_REPEAT * 3
+#: Tool names whose repetition is a wait, not a loop. Matched case-insensitively against the
+#: tool name at the head of the signature.
+POLL_TOOLS = frozenset(
+    {
+        "workflow_status",
+        "workflow_observe",
+        "subagent_status",
+        "subagent_list",
+        "automation_history",
+        "wait",
+        "wait_for",
+    }
+)
+#: Shell-family tools whose repetition is a wait only when the COMMAND is a status probe —
+#: `bash` itself is not pollable, `bash("systemctl is-active x")` is.
+SHELL_TOOLS = frozenset({"bash", "shell", "run-script", "execute_bash", "terminal"})
+#: Substrings that make a shell command a status probe rather than an action.
+_POLL_COMMAND_HINTS = (
+    "is-active",
+    "is-enabled",
+    "systemctl status",
+    "--status",
+    " status",
+    "pgrep",
+    "ps -",
+    "curl -sf",
+    "wait",
+    "tail -f",
+    "docker ps",
+    "git status",
+)
+#: Read-only file tools exempted from the no-progress rule entirely. Re-reading a file is how
+#: an agent CONFIRMS an edit landed, and scanning a tree is ordinary work; the warning told it
+#: that reading was looping. A read cannot make progress by itself, so its repetition is not
+#: evidence of a loop — the tools that act are where a loop shows.
+READ_ONLY_TOOLS = frozenset({"read", "fs_read", "glob", "grep", "code", "view", "cat"})
+
+
+def _tool_of(sig: str) -> str:
+    """The tool name at the head of a signature.
+
+    A signature is ``params_key(tool, args)`` + ``\x1f`` + result digest, and `params_key` is
+    ``f"{tool}:{json}"`` (or the bare tool name when args are not serializable — the ACP shape).
+    So the tool is everything before the first ``:`` of the first field.
+    """
+    head = sig.split("\x1f", 1)[0]
+    return head.split(":", 1)[0].strip().lower()
+
+
+def _is_poll_signature(sig: str) -> bool:
+    """Whether repeating this call is a WAIT rather than a loop.
+
+    Two ways in: the tool is inherently a status read, or it is a shell-family tool whose
+    command reads like a status probe. The second matters because the real-world case is
+    ``bash("systemctl is-active x")`` — the tool name alone cannot tell a poll from an action,
+    which is why a tool-name-only set would have missed exactly the reported example.
+    """
+    tool = _tool_of(sig)
+    if tool in POLL_TOOLS:
+        return True
+    if tool in SHELL_TOOLS:
+        lowered = sig.split("\x1f", 1)[0].lower()
+        return any(hint in lowered for hint in _POLL_COMMAND_HINTS)
+    return False
+
+
+def _repeat_threshold(sig: str) -> int:
+    """How many identical calls in a row count as no-progress for this signature."""
+    return STRUCT_POLL_REPEAT if _is_poll_signature(sig) else STRUCT_REPEAT
+
+
+def _cycle_at(recent: list[str], period: int, cycles: int) -> tuple[str, ...] | None:
+    """The repeating cycle at the tail, or None.
+
+    Generalized from the old ``span = cycles * 2`` so a period-3 rotation (read → edit → test,
+    repeat) is visible. A cycle whose entries are not all distinct is rejected: ``A,A,B`` × 3
+    is the no-progress rule's business, and reporting it here too would double-warn one loop.
+    """
+    span = period * cycles
+    if len(recent) < span:
+        return None
+    tail = recent[-span:]
+    head = tuple(tail[:period])
+    if len(set(head)) != period:
+        return None
+    if all(tail[i] == head[i % period] for i in range(span)):
+        return head
+    return None
 
 
 def params_key(tool_name: str, args: object) -> str:
@@ -210,36 +309,56 @@ class LoopBreaker:
         string when a structural loop is newly detected this run, else ``""``.
 
         Detects (a) no-progress: the same signature :data:`STRUCT_REPEAT` times in a
-        row; (b) ping-pong: an A↔B alternation spanning
-        :data:`STRUCT_PINGPONG_CYCLES` cycles. Each distinct loop is reported once
+        row — longer for a status poll, and never for a read-only tool; (b) a cycle: a
+        rotation of 2 OR 3 distinct calls (:data:`STRUCT_CYCLE_PERIODS`) repeating
+        :data:`STRUCT_PINGPONG_CYCLES` times. Period 3 matters because read → edit → test,
+        repeat is the most common real loop and the old ``cycles * 2`` span could not see it.
+        Warn-only either way, which is a deliberate ruling: the failure breaker hard-blocks
+        error storms, this path only tells a working agent what it looks like from outside.
+        Each distinct loop is reported once
         (dedup via ``_struct_reported``) so the warning fires on the turn the loop
         becomes evident, not every call.
         """
         self._recent.append(sig)
         recent = list(self._recent)
 
-        # (a) no-progress: identical signature repeated at the tail.
-        tail = recent[-STRUCT_REPEAT:]
-        if len(tail) == STRUCT_REPEAT and len(set(tail)) == 1:
-            reason = f"no-progress:{sig}"
-            if reason not in self._struct_reported:
-                self._struct_reported.add(reason)
-                return (
-                    f"the same tool call produced the same result "
-                    f"{STRUCT_REPEAT} times in a row"
-                )
-
-        # (b) ping-pong: A,B,A,B,… alternation at the tail spanning the cycle count.
-        span = STRUCT_PINGPONG_CYCLES * 2
-        tailp = recent[-span:]
-        if len(tailp) == span:
-            a, b = tailp[0], tailp[1]
-            if a != b and all(tailp[i] == (a if i % 2 == 0 else b) for i in range(span)):
-                reason = f"ping-pong:{a}|{b}"
+        # (a) no-progress: identical signature repeated at the tail. A read-only tool is
+        # exempt (a re-read is how an edit is confirmed) and a poll gets a longer rope — see
+        # READ_ONLY_TOOLS / STRUCT_POLL_REPEAT for why each is a decision rather than a
+        # tolerance dial.
+        if _tool_of(sig) not in READ_ONLY_TOOLS:
+            threshold = _repeat_threshold(sig)
+            tail = recent[-threshold:]
+            if len(tail) == threshold and len(set(tail)) == 1:
+                reason = f"no-progress:{sig}"
                 if reason not in self._struct_reported:
                     self._struct_reported.add(reason)
+                    waiting = " (and it looks like a status poll — if you are waiting, say so)"
                     return (
-                        f"two tool calls are alternating without making progress "
-                        f"({STRUCT_PINGPONG_CYCLES}× A↔B with no new state)"
+                        f"the same tool call produced the same result "
+                        f"{threshold} times in a row"
+                        f"{waiting if _is_poll_signature(sig) else ''}"
                     )
+
+        # (b) cycle: a rotation of `period` distinct calls repeating `STRUCT_PINGPONG_CYCLES`
+        # times. Periods are tried SHORTEST first so an A↔B loop is still reported as A↔B
+        # rather than as a degenerate longer cycle.
+        for period in sorted(STRUCT_CYCLE_PERIODS):
+            cycle = _cycle_at(recent, period, STRUCT_PINGPONG_CYCLES)
+            if cycle is None:
+                continue
+            # Dedup key is the CANONICAL rotation, not the tail order. Measured on main: an
+            # A↔B loop warned on two consecutive calls, because at call 6 the tail read
+            # (A,B) and at call 7 it read (B,A) — a different key for one loop. The note is
+            # meant to fire once, on the turn the loop becomes evident.
+            canonical = min(tuple(cycle[i:] + cycle[:i]) for i in range(period))
+            reason = "cycle:" + "|".join(canonical)
+            if reason in self._struct_reported:
+                break
+            self._struct_reported.add(reason)
+            shape = "→".join("ABCDEFGH"[i] for i in range(period))
+            return (
+                f"{period} tool calls are cycling without making progress "
+                f"({STRUCT_PINGPONG_CYCLES}× {shape} with no new state)"
+            )
         return ""
