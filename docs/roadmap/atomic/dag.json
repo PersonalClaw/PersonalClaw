@@ -461,6 +461,7 @@
           "id": "KL-13",
           "title": "Similarity edges: write-time kNN over chunk vectors, item-pair rollup, canonical ordering + chunk-pair provenance",
           "status": "done",
+          "pr": 1822,
           "scope": "Capability-gap amendment (2026-08-19)",
           "done_when": "an item-similarity edge table exists with UNIQUE(source_item_id,target_item_id), ON DELETE CASCADE on both legs so edge cleanup on item delete is schema-enforced, a similarity score, and the winning source/target chunk indices stored as provenance so an edge can explain itself; after an item's chunks embed, a kNN pass over the existing chunk vector index fetches a multiple of top-K candidates per chunk, filters at a configured cosine floor, collapses chunk pairs to item pairs keeping the MAX (the same roll-up rule the vector arm already uses), truncates to top-K per item and upserts with canonical (min,max) id ordering; recomputing one item must NOT delete an edge another item's pass created \u2014 a union or canonical-source-only delete, proven by a test that recomputes A and asserts an edge B-A survives; a GLOBAL per-item degree cap is enforced, not merely a per-pass truncation, so inbound edges cannot accumulate unbounded; the related-items endpoint is served from this table with a real threshold, replacing the unthresholded shared-entity COUNT it uses today; the edge pass runs on the KL-14 maintenance host, never inline on the write path; the cosine floor, top-K and degree cap round-trip through config",
           "deps": [
