@@ -60,6 +60,7 @@ async def test_edit_rejects_ambiguous_match(ws):
     # with a hint to add context or pass replace_all.
     (ws / "dup.txt").write_text("x = 1\ny = 1\nz = 1\n")
     p = NativeBuiltinToolProvider(ws)
+    await p.invoke("read_file", {"path": "dup.txt"})  # AG-14: observe before editing
     r = await p.invoke("edit_file", {"path": "dup.txt", "old_str": "1", "new_str": "2"})
     assert not r.success
     assert "3 times" in r.error and "not unique" in r.error
@@ -72,6 +73,7 @@ async def test_edit_rejects_ambiguous_match(ws):
 async def test_edit_replace_all(ws):
     (ws / "dup.txt").write_text("a = 1\nb = 1\nc = 1\n")
     p = NativeBuiltinToolProvider(ws)
+    await p.invoke("read_file", {"path": "dup.txt"})  # AG-14: observe before editing
     r = await p.invoke(
         "edit_file", {"path": "dup.txt", "old_str": "1", "new_str": "9", "replace_all": True}
     )
@@ -83,6 +85,7 @@ async def test_edit_replace_all(ws):
 async def test_edit_unique_match_still_works(ws):
     # The common case — a unique old_str — edits with no replace_all needed.
     p = NativeBuiltinToolProvider(ws)
+    await p.invoke("read_file", {"path": "a.txt"})  # AG-14: observe before editing
     r = await p.invoke(
         "edit_file", {"path": "a.txt", "old_str": "second line", "new_str": "2nd line"}
     )
@@ -114,6 +117,7 @@ async def test_edit_rejects_empty_old_str(ws):
     # char) — reject it, file untouched.
     before = (ws / "a.txt").read_text()
     p = NativeBuiltinToolProvider(ws)
+    await p.invoke("read_file", {"path": "a.txt"})  # AG-14: observe before editing
     r = await p.invoke(
         "edit_file", {"path": "a.txt", "old_str": "", "new_str": "X", "replace_all": True}
     )
@@ -126,6 +130,7 @@ async def test_edit_rejects_noop_identical(ws):
     # old==new reported "Edited" success while changing nothing — the worker would
     # believe it made an edit it didn't. Reject as a no-op.
     p = NativeBuiltinToolProvider(ws)
+    await p.invoke("read_file", {"path": "a.txt"})  # AG-14: observe before editing
     r = await p.invoke(
         "edit_file", {"path": "a.txt", "old_str": "hello world", "new_str": "hello world"}
     )

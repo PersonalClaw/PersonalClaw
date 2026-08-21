@@ -999,6 +999,19 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
   is only a file copy; create one of each by hand if a screenshot needs them.
 
 ### Changed
+- **The agent can no longer edit a file it has not read.** An edit computed against a stale or
+  imagined version of a file used to succeed silently and revert whatever someone else had just
+  changed. Now a write to an existing file is admitted only if that file's *current* content was
+  actually shown to the agent first, and a write that cannot prove it is refused with the exact read
+  to do instead — so the agent fixes itself in one step rather than clobbering your work. The check is
+  on what was really observed, not on whether a read happened: a read of a *different* file does not
+  count, and neither does one whose output was cut off before the part being edited, because reading
+  the first page of a long file does not tell you what is on the fifth. **Creating a new file needs no
+  read** (there is nothing to lose), but overwriting an existing one is held to the same bar as an
+  edit, and it must have been seen in full — an overwrite replaces everything, including the part you
+  never saw. If a file changed on disk after the agent read it, the write is refused too, and the
+  refusal says so; `bash` is the one exception, since a shell command names no target the check could
+  hold it to.
 - **Rewinding a conversation no longer throws the old ending away — and that history is now
   stored inside your chats.** Editing a message from earlier in a conversation used to delete
   everything after it. It still replays from that point, but the turns that came off are kept on

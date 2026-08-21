@@ -458,11 +458,21 @@ def _provider(cwd: Path):
     return NativeBuiltinToolProvider(cwd=cwd, session_key=SESSION)
 
 
+def _observe(p, *names: str) -> None:
+    """AG-14: the pre-edit read gate refuses a write to a file whose current content was
+    never observed, so these drives must read what they are about to mangle. Reading
+    through the real tool is the point — it is the same seam the agent goes through."""
+    for name in names:
+        r = asyncio.run(p.invoke("read_file", {"path": name}))
+        assert r.success, f"could not observe {name}: {r.error}"
+
+
 def test_the_real_write_file_tool_checkpoints_before_it_writes(ws):
     """Drives the actual tool handler, not the store — proves the seam is wired."""
     tc.begin_turn(SESSION, cwd=ws)
     p = _provider(ws)
     original = _sha(ws / "alpha.py")
+    _observe(p, "alpha.py")
     r = asyncio.run(p.invoke("write_file", {"path": "alpha.py", "content": "WRECKED\n"}))
     assert "Wrote" in str(r) or getattr(r, "success", True)
     assert _sha(ws / "alpha.py") != original
@@ -475,6 +485,7 @@ def test_the_real_edit_file_tool_checkpoints_before_it_writes(ws):
     tc.begin_turn(SESSION, cwd=ws)
     p = _provider(ws)
     original = _sha(ws / "beta.txt")
+    _observe(p, "beta.txt")
     asyncio.run(
         p.invoke("edit_file", {"path": "beta.txt", "old_str": "beta original", "new_str": "RUINED"})
     )
@@ -487,6 +498,7 @@ def test_the_real_edit_file_tool_checkpoints_before_it_writes(ws):
 def test_the_real_write_file_tool_never_stores_a_dotenv_body(ws):
     tc.begin_turn(SESSION, cwd=ws)
     p = _provider(ws)
+    _observe(p, ".env")
     asyncio.run(p.invoke("write_file", {"path": ".env", "content": "API_TOKEN=replaced\n"}))
     assert PLANTED_SECRET.encode() not in _all_store_bytes(tc.store_root())
 
@@ -497,6 +509,7 @@ def test_three_files_mangled_through_the_real_tools_restore_byte_identical(ws):
     tc.begin_turn(SESSION, cwd=ws)
     originals = {str(ws / n): _sha(ws / n) for n in ("alpha.py", "beta.txt", "gamma.json")}
     p = _provider(ws)
+    _observe(p, "alpha.py", "beta.txt", "gamma.json", ".env")
     asyncio.run(p.invoke("write_file", {"path": "alpha.py", "content": "no\n"}))
     asyncio.run(
         p.invoke("edit_file", {"path": "beta.txt", "old_str": "line two", "new_str": "nope"})
