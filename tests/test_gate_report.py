@@ -1,8 +1,8 @@
 """Aggregate-gate report tests (PLATFORM-HARDENING-FLOORS §6 — PHF-11).
 
-``scripts/gate_report.py`` runs the three §3/§6 drift/inert gates (config-baseline,
-inert-surface, docs-lint) and reports EVERY failure in one run — the "aggregate, don't
-short-circuit" ergonomic. These tests prove the contract:
+``scripts/gate_report.py`` runs the six §3/§6 drift/inert gates (config-baseline,
+inert-surface, docs-lint, and PHF-14's three structural ratchets) and reports EVERY failure in
+one run — the "aggregate, don't short-circuit" ergonomic. These tests prove the contract:
 
   * three INDEPENDENT failures all surface in a single ``run_all_gates()`` call — none masked;
   * a gate that RAISES is captured as a failure and does NOT stop the others;
@@ -26,7 +26,16 @@ from scripts import generate_docs_lint_baseline as docs_gen
 from scripts import generate_inert_surface_baseline as inert_gen
 from scripts.gate_report import GateResult, main, render_report, run_all_gates
 
+# The three drift/inert gates this module seeds failures for.
 _GATE_NAMES = ["config-baseline", "inert-surface", "docs-lint"]
+# Every gate the aggregate registers, in order. PHF-14 appended the three structural ratchets;
+# they are asserted by NAME here so a future registration can neither drop one silently nor
+# reorder the table.
+_ALL_GATE_NAMES = _GATE_NAMES + [
+    "structural-size",
+    "structural-import-direction",
+    "structural-duplication",
+]
 
 
 def _write_json(path: Path, obj: object) -> Path:
@@ -99,11 +108,12 @@ def test_three_independent_failures_all_surface_in_one_run(monkeypatch, tmp_path
 
     results = run_all_gates()
 
-    assert [r.name for r in results] == _GATE_NAMES
-    assert all(not r.ok for r in results), results
-    assert all(r.failures for r in results), results
-    # Every gate's failure is real and attributed (not the raise path).
+    assert [r.name for r in results] == _ALL_GATE_NAMES
     by_name = {r.name: r for r in results}
+    seeded = [by_name[n] for n in _GATE_NAMES]
+    assert all(not r.ok for r in seeded), results
+    assert all(r.failures for r in seeded), results
+    # Every seeded gate's failure is real and attributed (not the raise path).
     assert "config-baseline.json is stale" in by_name["config-baseline"].failures[0]
     assert any("synthetic.py" in line for line in by_name["inert-surface"].failures)
     assert any("synthetic.md" in line for line in by_name["docs-lint"].failures)
@@ -135,19 +145,21 @@ def test_a_raising_gate_is_captured_and_does_not_stop_the_others(monkeypatch):
     # The gate BEFORE it and the gate AFTER it both still ran (present, and not the raiser).
     assert by_name["config-baseline"].name == "config-baseline"
     assert by_name["docs-lint"].name == "docs-lint"
-    for name in ("config-baseline", "docs-lint"):
+    for name in _ALL_GATE_NAMES:
+        if name == "inert-surface":
+            continue
         assert not any("raised" in line for line in by_name[name].failures), by_name[name]
-    assert len(results) == 3
+    assert [r.name for r in results] == _ALL_GATE_NAMES
 
 
 def test_all_gates_pass_on_a_clean_tree(capsys):
-    """On the real (clean) tree every gate passes, ``main()`` exits 0, and the table shows
-    three PASS rows."""
+    """On the real (clean) tree every gate passes, ``main()`` exits 0, and the table shows one
+    PASS row per registered gate."""
     assert main() == 0
     out = capsys.readouterr().out
-    assert out.count("PASS") == 3
+    assert out.count("PASS") == len(_ALL_GATE_NAMES)
     assert "FAIL" not in out
-    assert "SUMMARY: all 3 gate(s) passed." in out
+    assert f"SUMMARY: all {len(_ALL_GATE_NAMES)} gate(s) passed." in out
 
 
 def test_report_renders_every_failure_in_one_table():
@@ -186,9 +198,9 @@ def test_report_is_deterministic():
 
 def test_gateresult_ok_matches_emptiness_of_failures():
     """The one normalized shape: a passing gate carries no failures; a failing gate carries
-    at least one. run_all_gates() always returns exactly the three gates."""
+    at least one. run_all_gates() always returns exactly the registered gates, in order."""
     results = run_all_gates()
-    assert len(results) == 3
+    assert [r.name for r in results] == _ALL_GATE_NAMES
     for r in results:
         assert isinstance(r, GateResult)
         assert r.ok == (not r.failures), r

@@ -2,7 +2,9 @@
 """Aggregate report for the platform-hardening drift/inert gates (PLATFORM-HARDENING-FLOORS §6).
 
 The §3/§6 family shipped three independent gates, each a generator + committed baseline +
-shrink/byte-compare ratchet test:
+shrink/byte-compare ratchet test; ``PHF-14`` added three more (the STRUCTURAL ratchets),
+registered here rather than beside here so that one structural red never hides the other
+five — six gates, one table, every failure visible in a single run:
 
   * ``config-baseline`` (PHF-5) — ``scripts/generate_config_baseline.py`` renders the
     ``AppConfig`` schema; drift is a BYTE mismatch between the committed
@@ -12,10 +14,15 @@ shrink/byte-compare ratchet test:
     (``regressions(committed_per_file, current_per_file)`` non-empty).
   * ``docs-lint`` (PHF-10) — ``scripts/generate_docs_lint_baseline.py`` censuses docs drift;
     drift is any per-file finding counter that ROSE (``regressions(...)`` non-empty).
+  * ``structural-size`` / ``structural-import-direction`` / ``structural-duplication``
+    (PHF-14) — ``scripts/generate_structural_baseline.py`` censuses the SHAPE of the tree
+    (per-file size ceiling, declared layer order, re-derived implementation families). Each
+    is a separate gate here, and each reports its own VACUITY failure (a rail that inspected
+    fewer files than the census counted) alongside its backslides.
 
 Each is its own pytest test that fails independently. A dev running them one at a time — or a
 fail-fast runner — fixes one, re-runs, hits the next, fixes, re-runs… This aggregate runs ALL
-THREE, collects EVERY failure, and prints ONE table so all failures are visible in a single
+SIX, collects EVERY failure, and prints ONE table so all failures are visible in a single
 run. That is the §6 "aggregate, don't short-circuit" ergonomic: unlike ``harness/cli.py``'s
 task runner (which stops at the first failing command), this NEVER short-circuits — a gate
 that drifts, or even one that raises, is captured as a structured failure while every other
@@ -52,6 +59,7 @@ for _p in (_REPO_ROOT, _REPO_ROOT / "src"):
 from scripts import generate_config_baseline as config_gen  # noqa: E402
 from scripts import generate_docs_lint_baseline as docs_gen  # noqa: E402
 from scripts import generate_inert_surface_baseline as inert_gen  # noqa: E402
+from scripts import generate_structural_baseline as structural_gen  # noqa: E402
 
 
 @dataclass(frozen=True)
@@ -94,6 +102,21 @@ def _regressions_gate(name: str, gen: object) -> GateResult:
     return GateResult(name, not failures, failures)
 
 
+def _structural_gate(ratchet: str) -> GateResult:
+    """One PHF-14 structural ratchet: ok iff its VACUITY assertion holds AND no counter ROSE.
+
+    Vacuity comes first deliberately. A structural ratchet that inspected fewer files than the
+    census counted would otherwise report a spotless tree it never looked at — the most common
+    way a gate in this repo dies — so "the rail is broken" is a FAILURE of this gate, not a
+    silent pass. ``ratchet_failures()`` (owned by the generator) returns the vacuity lines
+    followed by the shrink-only backslides, already sorted, so the report inherits determinism
+    for free and each of the three ratchets fails INDEPENDENTLY of the other two."""
+    committed = json.loads(structural_gen.baseline_path().read_text(encoding="utf-8"))
+    current = structural_gen.build_inventory()
+    failures = structural_gen.ratchet_failures(ratchet, committed, current)
+    return GateResult(ratchet, not failures, failures)
+
+
 def _guard(name: str, run: object) -> GateResult:
     """Run one gate's body, turning any exception into a structured failure instead of
     letting it propagate. This is the non-short-circuit guarantee: a broken gate reports as a
@@ -105,13 +128,18 @@ def _guard(name: str, run: object) -> GateResult:
 
 
 def run_all_gates() -> list[GateResult]:
-    """Run all three gates in a FIXED order, collecting every failure. Never short-circuits:
+    """Run all six gates in a FIXED order, collecting every failure. Never short-circuits:
     each gate runs even if an earlier one failed or raised. Returns one ``GateResult`` per
-    gate, always length 3, in the order config-baseline, inert-surface, docs-lint."""
+    gate, always length 6 — config-baseline, inert-surface, docs-lint, then PHF-14's three
+    structural ratchets (size, import-direction, duplication)."""
     return [
         _guard("config-baseline", _config_baseline_gate),
         _guard("inert-surface", lambda: _regressions_gate("inert-surface", inert_gen)),
         _guard("docs-lint", lambda: _regressions_gate("docs-lint", docs_gen)),
+        *[
+            _guard(ratchet, lambda r=ratchet: _structural_gate(r))  # type: ignore[misc]
+            for ratchet in structural_gen.RATCHETS
+        ],
     ]
 
 
