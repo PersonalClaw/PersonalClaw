@@ -964,7 +964,6 @@ _EDITABLE_CONFIG: dict[str, dict] = {
 
 async def api_personalclaw_config_patch(request: web.Request) -> web.Response:
     """PATCH /api/config/personalclaw — update a single config field."""
-    from personalclaw.agent import _atomic_json_write  # noqa: F811
     from personalclaw.config.loader import config_path  # noqa: F811
 
     caller = request.get("user")
@@ -1212,7 +1211,14 @@ async def api_personalclaw_config_patch(request: web.Request) -> web.Response:
 
         try:
             cfg_path.parent.mkdir(parents=True, exist_ok=True)
-            _atomic_json_write(cfg_path, data)
+            # Through `atomic_write`, NOT `agent._atomic_json_write`: the latter does its own
+            # mkstemp+rename and so never fires the post-write hook, which is the ONE seam
+            # time-travel's debounced committer subscribes to. With the bypass, every config
+            # change made from Settings — the primary writer of this file — landed on disk
+            # without ever reaching the `config` state-history root, so the root stayed empty
+            # and "roll back my settings" had nothing to roll back to. The PUT path two
+            # hundred lines up already writes this same file this same way.
+            atomic_write(cfg_path, json.dumps(data, indent=2) + "\n", fsync=True)
         except OSError:
             _log_sel("error", f"{path_key}=write_failed")
             return web.json_response({"error": "failed to write config file"}, status=500)

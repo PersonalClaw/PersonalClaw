@@ -259,6 +259,11 @@ export interface DurabilityHistoryPreview {
   files: DurabilityHistoryDiffFile[]
   commits_rolled_away: number
   reversible: boolean
+  /** The NORMALIZED subset this preview was taken over, repo-relative; `[]` means the whole
+   *  root. Echoed back by the server rather than reflected from the request, because it is
+   *  the set a confirming call must match — see `durabilityHistoryApply`. Optional only so a
+   *  server that predates the subset still types: absent and `[]` both mean whole-root. */
+  paths?: string[]
 }
 /** Phase one of the two-phase contract: the preview, plus the `expected_head` a
  *  confirming call must echo. There is no way to apply without first holding this. */
@@ -276,6 +281,9 @@ export interface DurabilityHistoryResult {
   prior_ref?: string
   reverted?: string
   reload_required: boolean
+  /** What was actually operated on, `[]` for the whole root — so a result can be read back as
+   *  "these files moved", not just "something moved". */
+  paths?: string[]
 }
 export interface DurabilityConflicts {
   conflicts: DurabilityConflict[]
@@ -3521,19 +3529,32 @@ export const api = {
       `/api/durability/history/${encodeURIComponent(root)}/timeline${qs ? `?${qs}` : ''}`,
     )
   },
-  /** Phase one. Sends no `confirm`, so the server returns the preview and touches nothing. */
-  durabilityHistoryPreview: (root: string, op: 'rollback' | 'revert', sha: string) =>
+  /** Phase one. Sends no `confirm`, so the server returns the preview and touches nothing.
+   *
+   *  `paths` narrows the operation to a subset of the root (repo-relative). Omitted or empty
+   *  sends NO `paths` key at all rather than `[]`, so the whole-root request stays byte-identical
+   *  to what it was before the subset existed — the default path is not rerouted through a new
+   *  parameter it does not need. */
+  durabilityHistoryPreview: (
+    root: string, op: 'rollback' | 'revert', sha: string, paths?: string[],
+  ) =>
     post<DurabilityHistoryPreviewResponse>(
-      `/api/durability/history/${encodeURIComponent(root)}/${op}`, { sha },
+      `/api/durability/history/${encodeURIComponent(root)}/${op}`,
+      { sha, ...(paths?.length ? { paths } : {}) },
     ),
   /** Phase two. `expected_head` MUST be the value phase one returned — the server refuses a
-   *  preview that went stale rather than applying it to a tree the user never saw. */
+   *  preview that went stale rather than applying it to a tree the user never saw.
+   *
+   *  `paths` carries the SAME rule one step further: the server also refuses a confirm whose path
+   *  set differs from the one it previewed. So callers must pass the set the PREVIEW returned, not
+   *  whatever the UI currently has ticked — otherwise a user who ticks another box after previewing
+   *  gets a refusal instead of the narrowed restore they asked for. */
   durabilityHistoryApply: (
-    root: string, op: 'rollback' | 'revert', sha: string, expectedHead: string,
+    root: string, op: 'rollback' | 'revert', sha: string, expectedHead: string, paths?: string[],
   ) =>
     post<DurabilityHistoryResult>(
       `/api/durability/history/${encodeURIComponent(root)}/${op}`,
-      { sha, confirm: true, expected_head: expectedHead },
+      { sha, confirm: true, expected_head: expectedHead, ...(paths?.length ? { paths } : {}) },
     ),
   /** Writes the chosen version into the live store. `confirm: true` is required for every
    *  choice — the server refuses without it, so this never sends it implicitly. */
