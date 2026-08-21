@@ -227,6 +227,23 @@ const STUDIO_DOCS: { which: 'preferences' | 'projects' | 'history'; label: strin
  *  md5; we only need the same label key). */
 const lessonRef = (rule: string) => `lesson:${rule.slice(0, 80)}`
 
+/** Injection standing as WORDS, in the row's own preview line (WF2LEA-15).
+ *
+ *  "In prompts" / "Held below the gate" is the answer to "why is it still doing that"
+ *  and "why did it stop doing that", so it has to be legible while scanning the list —
+ *  not one click deep. Deliberately text and not a coloured dot: a colour is not a
+ *  state, and this line is already the row's accessible name, so the standing arrives
+ *  in the accessibility tree for free rather than needing a parallel label.
+ *
+ *  A lesson with no `standing` is one served by a backend that predates the gate; it
+ *  falls back to the category alone rather than claiming a standing nobody computed. */
+export function lessonPreview(l: Lesson): string {
+  const kind = l.category || 'lesson'
+  if (!l.standing) return kind
+  const pct = `${Math.round((l.confidence ?? 0) * 100)}%`
+  return `${kind} · ${l.standing === 'injected' ? 'in prompts' : 'held below the gate'} · ${pct} confidence`
+}
+
 function MemoryStudio({ onChanged, initialSel }: { onChanged: () => void; initialSel?: string }) {
   const [kindFilter, setKindFilter] = useState<StudioKind | 'all'>('all')
   const [q, setQ] = useState('')
@@ -299,7 +316,7 @@ function MemoryStudio({ onChanged, initialSel }: { onChanged: () => void; initia
       if (f.key.startsWith('slot.')) continue
       out.push({ uid: `fact:${f.key}`, kind: 'fact', title: f.key, preview: readValue(f.value_json), ref: `sem:${f.key}`, fact: f })
     }
-    for (const l of lessons ?? []) out.push({ uid: `lesson:${l.rule}`, kind: 'lesson', title: l.rule, preview: l.category || 'lesson', ref: lessonRef(l.rule), lesson: l })
+    for (const l of lessons ?? []) out.push({ uid: `lesson:${l.rule}`, kind: 'lesson', title: l.rule, preview: lessonPreview(l), ref: lessonRef(l.rule), lesson: l })
     for (const e of episodics ?? []) out.push({ uid: `epi:${e.id}`, kind: 'episodic', title: e.text.slice(0, 80), preview: e.created_at ? fmtDate(e.created_at) : 'episodic', ref: null, episodic: e })
     return out
   }, [facts, episodics, lessons, entities, slots])
@@ -656,7 +673,27 @@ function StudioInspector({ item, onDelete, onSaved, onSlotChanged }: {
         {item.kind === 'lesson' && item.lesson && (
           <div className="flex flex-col gap-3 text-[0.8125rem]">
             <p className="leading-snug text-on-surface">{item.lesson.rule}</p>
-            <StudioMeta pairs={[['Category', item.lesson.category || '—'], ['Learned', item.lesson.ts ? fmtDate(item.lesson.ts) : '—']]} />
+            {/* The evidence behind the standing (WF2LEA-15). The server's own
+                `confidence_reason` sentence is rendered verbatim: it is composed from
+                the same verdict the injection gate compared, so re-wording it here
+                would let the studio drift from the gate. The counters below it are the
+                DERIVATION's inputs, listed so "why is it still doing that" can be
+                traced rather than taken on trust. Contradictions/reversals appear only
+                when there are any — a permanent "0" on every lesson is noise. */}
+            <StudioMeta pairs={[
+              ['Category', item.lesson.category || '—'],
+              ['Learned', item.lesson.ts ? fmtDate(item.lesson.ts) : '—'],
+              ...(item.lesson.standing
+                ? [
+                  ['In prompts', item.lesson.standing === 'injected' ? 'yes' : 'no — held below the gate'] as [string, string],
+                  ['Confidence', `${Math.round((item.lesson.confidence ?? 0) * 100)}%`] as [string, string],
+                  ['Why', item.lesson.confidence_reason || '—'] as [string, string],
+                  ['Observed', `${item.lesson.observations ?? 0}×`] as [string, string],
+                  ...(item.lesson.contradictions ? [['Contradicted', `${item.lesson.contradictions}×`] as [string, string]] : []),
+                  ...(item.lesson.reversals ? [['Reversed', `${item.lesson.reversals}×`] as [string, string]] : []),
+                ]
+                : []),
+            ]} />
           </div>
         )}
         {item.kind === 'entity' && item.entity && (

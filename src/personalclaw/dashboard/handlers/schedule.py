@@ -267,11 +267,19 @@ async def api_lessons(request: web.Request) -> web.Response:
     else:
         rows = svc.get_lessons()
     data = []
-    for e in rows[-50:]:
+    shown = rows[-50:]
+    # Confidence + standing per row (WF2LEA-15). Read from the SAME derivation the
+    # prompt filter uses, so "why is it still doing that" / "why did it stop doing
+    # that" are answered with the number the gate actually compared rather than a
+    # second estimate computed for the UI.
+    standings = svc.lesson_standings(shown)
+    for e in shown:
         try:
             rule = json.loads(e["value_json"])
         except (json.JSONDecodeError, TypeError):
             continue
+        verdict = standings.get(str(e.get("key") or ""))
+        evidence = getattr(verdict, "evidence", None)
         data.append(
             {
                 "rule": rule,
@@ -279,6 +287,12 @@ async def api_lessons(request: web.Request) -> web.Response:
                 "ts": e.get("updated_at", ""),
                 "scope": e.get("scope") or "global",
                 "workspace": e.get("scope_ref") or "",
+                "standing": getattr(getattr(verdict, "standing", None), "value", "injected"),
+                "confidence": float(getattr(verdict, "confidence", 1.0)),
+                "confidence_reason": str(getattr(verdict, "reason", "")),
+                "observations": int(getattr(evidence, "observations", 0)),
+                "contradictions": int(getattr(evidence, "contradictions", 0)),
+                "reversals": int(getattr(evidence, "reversals", 0)),
             }
         )
     return web.json_response({"lessons": data})

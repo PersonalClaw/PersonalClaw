@@ -19,7 +19,7 @@ from datetime import datetime, timezone
 from enum import Enum
 from fnmatch import fnmatch
 from pathlib import Path
-from typing import TYPE_CHECKING, Callable
+from typing import TYPE_CHECKING, Any, Callable
 from uuid import uuid4
 
 from snowballstemmer import stemmer as _snowball_stemmer
@@ -2715,10 +2715,16 @@ class VectorMemoryStore(MemoryProvider):
             # Substring dedup
             if rule_lower in existing_lower:
                 logger.info("Lesson dedup: %r already covered by %r", rule[:60], existing["key"])
+                # The world produced this rule AGAIN. Recorded against the lesson that
+                # already covers it, because this early return is the exact point where
+                # corroboration used to be destroyed: the repeat vanished, and a rule
+                # observed ten times stayed indistinguishable from one observed once.
+                self._observe_lesson(existing["key"], source)
                 _flush_backfills()
                 return False
             if existing_lower in rule_lower:
                 self.supersede_semantic(existing["key"], new_key, source)
+                self._carry_lesson_evidence(existing["key"], new_key)
                 continue
 
             # Topic overlap dedup
@@ -2735,6 +2741,7 @@ class VectorMemoryStore(MemoryProvider):
                             ratio * 100,
                         )
                         self.supersede_semantic(existing["key"], new_key, source)
+                        self._carry_lesson_evidence(existing["key"], new_key)
                         continue
 
             # Semantic dedup via embeddings (use stored embedding when available)
@@ -2769,7 +2776,11 @@ class VectorMemoryStore(MemoryProvider):
                                 (b, k) for b, k in pending_backfills if k != existing["key"]
                             ]
                             self.supersede_semantic(existing["key"], new_key, source)
+                            self._carry_lesson_evidence(existing["key"], new_key)
                         else:
+                            # Same rule, said no better — a corroborating sighting of the
+                            # one already stored, not a discardable duplicate.
+                            self._observe_lesson(existing["key"], source)
                             _flush_backfills()
                             return False
                     elif (
@@ -2799,6 +2810,14 @@ class VectorMemoryStore(MemoryProvider):
                 (scope.value, scope_ref, key),
             )
             self.db.commit()
+        if err is None:
+            # One sighting of the lesson that was actually written. Recorded HERE rather
+            # than in `set_semantic` because only the lesson writer has an observation to
+            # count — a fact upsert is a restatement of a value, not a repeat sighting of
+            # a rule. The `confidence` argument above is a SOURCE constant for write
+            # conflict resolution; the derived confidence that gates injection comes from
+            # these counters alone (`learning.lesson_confidence`).
+            self._observe_lesson(key, source)
         if err is None and rule_emb:
             emb_blob = struct.pack(f"{len(rule_emb)}f", *rule_emb)
             self.db.execute(
@@ -2814,6 +2833,11 @@ class VectorMemoryStore(MemoryProvider):
             try:
                 if self.contradiction_judge(value, old_val):  # type: ignore[misc]
                     self.supersede_semantic(old_key, key, source)
+                    # A refuted lesson's corroboration does NOT transfer to its refuter —
+                    # so this path records a contradiction against the old key instead of
+                    # calling `_carry_lesson_evidence` like the other supersede paths do.
+                    # See `learning.lesson_confidence`'s precedence rule, step 2.
+                    self._contradict_lesson(old_key)
                     logger.info(
                         "Lesson contradiction: %r superseded %r (sim %.2f)",
                         key,
@@ -2823,6 +2847,93 @@ class VectorMemoryStore(MemoryProvider):
             except Exception:
                 logger.debug("contradiction judge failed — keeping both", exc_info=True)
         return err is None
+
+    # ── Lesson confidence (WF2LEA-15) ──
+    #
+    # The evidence counters live in `learning.db` beside THIS store's `memory.db`, not
+    # in the process-wide home: a test pointing `db_path` at `tmp_path` gets its own
+    # evidence file for free, and can never write into the real `~/.personalclaw`.
+    # Every recording call is best-effort — a counter failing must not cost the user a
+    # lesson write.
+
+    def _lesson_evidence_store(self) -> Any:
+        from personalclaw.learning.lesson_confidence import get_store
+
+        return get_store(self._db_path.parent)
+
+    def _observe_lesson(self, lesson_key: str, source: str) -> None:
+        """Count one sighting of ``lesson_key``, remembering whether a human said it."""
+        try:
+            self._lesson_evidence_store().record_observation(
+                lesson_key, human_authored=source in _HUMAN_AUTHORED_SOURCES
+            )
+        except Exception:
+            logger.debug("lesson observation not recorded for %r", lesson_key, exc_info=True)
+
+    def _contradict_lesson(self, lesson_key: str) -> None:
+        try:
+            self._lesson_evidence_store().record_contradiction(lesson_key)
+        except Exception:
+            logger.debug("lesson contradiction not recorded for %r", lesson_key, exc_info=True)
+
+    def _reverse_lesson(self, lesson_key: str) -> None:
+        try:
+            self._lesson_evidence_store().record_reversal(lesson_key)
+        except Exception:
+            logger.debug("lesson reversal not recorded for %r", lesson_key, exc_info=True)
+
+    def _carry_lesson_evidence(self, old_key: str, new_key: str) -> None:
+        try:
+            self._lesson_evidence_store().carry_forward(old_key, new_key)
+        except Exception:
+            logger.debug("lesson evidence not carried %r → %r", old_key, new_key, exc_info=True)
+
+    def lesson_standings(self, rows: list[dict]) -> dict[str, Any]:
+        """Derive each row's confidence + standing, keyed by lesson key.
+
+        The SINGLE derivation site: the injection filter
+        (:meth:`get_lessons_context`) and the management surface
+        (``/api/lessons``) both read it, so the number a user is shown is
+        necessarily the number the gate compared. Two derivations would be two
+        answers to "is this injected?" and the studio would eventually lie.
+
+        Fails OPEN — every lesson reads as injected at full confidence if the
+        evidence store cannot be reached. An injection filter that fails CLOSED
+        would silently strip the user's own standing rules out of every prompt,
+        which is far worse than an over-permissive one.
+        """
+        keys = [str(r.get("key") or "") for r in rows]
+        try:
+            from personalclaw.learning import lesson_confidence as lc
+
+            store = self._lesson_evidence_store()
+            threshold = lc.configured_threshold()
+            evidence = store.evidence_map(keys)
+            out: dict[str, Any] = {}
+            for key in keys:
+                if not key:
+                    continue
+                ev = evidence.get(key, lc.LessonEvidence())
+                out[key] = lc.classify(
+                    ev,
+                    threshold=threshold,
+                    active_days_idle=store.idle_active_days(ev),
+                )
+            return out
+        except Exception:
+            logger.debug("lesson standings unavailable; failing open", exc_info=True)
+            from personalclaw.learning import lesson_confidence as lc
+
+            return {
+                key: lc.LessonVerdict(
+                    1.0,
+                    lc.LessonStanding.INJECTED,
+                    "confidence unavailable — injected rather than silently dropped",
+                    lc.LessonEvidence(),
+                )
+                for key in keys
+                if key
+            }
 
     @staticmethod
     def _lesson_keywords(text: str) -> set[str]:
@@ -2936,18 +3047,39 @@ class VectorMemoryStore(MemoryProvider):
             val = json.loads(e["value_json"])
             if rule_substring.lower() in str(val).lower():
                 self.delete_semantic(e["key"], "user_explicit")
+                # An explicit forget is the truest "a correction reversed it" signal
+                # there is, so it VOIDS the accumulated observations rather than being
+                # invisible to them (`learning.lesson_confidence`'s precedence rule,
+                # step 1). It matters because the lesson key is deterministic: writing
+                # the same rule again un-tombstones this very row, and without the
+                # reversal it would return at the confidence it had when the user threw
+                # it away.
+                self._reverse_lesson(str(e["key"]))
                 deleted = True
         return deleted
 
     def get_lessons_context(self, workspace: str | None = None) -> str:
-        """Format lessons for prompt injection — scope-filtered.
+        """Format lessons for prompt injection — scope-filtered AND confidence-gated.
 
         Reads through :meth:`lessons_visible_in`, so a caller that does not declare a
-        workspace gets GLOBAL lessons only. Existing behavior is unchanged: every
-        lesson written before this scope carry-through is global, so a no-workspace
-        render is byte-identical to what it produced before.
+        workspace gets GLOBAL lessons only.
+
+        Then the confidence gate (WF2LEA-15). Visibility answers "may this session be
+        shown the lesson"; confidence answers "is the lesson supported well enough to
+        act on". A lesson below the floor is RETAINED — left in the store, still
+        accumulating observations — and simply does not appear in this block. That is
+        the whole point of the atom: injection is gated on evidence rather than on the
+        row existing, so one unrepeated inference cannot steer every future turn.
         """
         lessons = self.lessons_visible_in(workspace, limit=50)
+        if not lessons:
+            return ""
+        standings = self.lesson_standings(lessons)
+        lessons = [
+            row
+            for row in lessons
+            if (v := standings.get(str(row.get("key") or ""))) is None or v.injected
+        ]
         if not lessons:
             return ""
         lines = [
