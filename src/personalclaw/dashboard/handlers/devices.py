@@ -38,6 +38,7 @@ from typing import Any
 
 from aiohttp import web
 
+from personalclaw.dashboard.handlers.page_shell import page_document
 from personalclaw.dashboard.origin import check_origin
 from personalclaw.dashboard.session_store import (
     DeviceInfo,
@@ -331,6 +332,107 @@ def _nonce_of(token: str) -> str:
         return ""
 
 
+# ── /pair — the joining device's redeem screen ──────────────────────────
+
+
+async def pair_page(request: web.Request) -> web.Response:
+    """GET /pair — the screen the URL from ``pair/start`` actually points at.
+
+    Served as a standalone document rather than an SPA route, exactly like ``/login`` and for the
+    identical reason: the browser opening it has **no session**, so every authenticated bundle
+    fetch the SPA makes on boot would 403 before a single field rendered. The `pairing_url` the
+    panel hands out was a dead end in both states without this — 403 without a token, and with
+    one the SPA's hash router simply landed on the dashboard.
+
+    **Why exempting this path from token auth opens nothing.** The document is a CONSTANT: the
+    code is never interpolated into it server-side (the script reads `?code=` out of
+    `location.search` in the browser), so there is no injection surface and no secret on the
+    page. Every grant still happens at ``/api/devices/pair/complete``, which keeps its own
+    guards — origin check, per-IP lockout, single-use hashed short-TTL code. What the exemption
+    buys is that the door is reachable at all.
+
+    A browser that ALREADY holds a valid session is redirected home instead of being offered the
+    form. That is not tidiness: redeeming a code here overwrites this browser's session cookie,
+    so the owner's own laptop would silently become a "device" row while its previous session
+    row stayed behind unreachable — and with ``MAX_CONCURRENT_NONCES`` at 5 a self-pair also
+    spends an eviction slot for nothing.
+    """
+    from personalclaw.dashboard.handlers.auth import has_valid_session
+
+    if has_valid_session(request, int(request.app.get("port") or 0)):
+        raise web.HTTPFound("/")
+    return web.Response(
+        text=_PAIR_HTML,
+        content_type="text/html",
+        headers={"Cache-Control": "no-store"},
+    )
+
+
+# The card body. Shares `/login`'s shell (handlers/page_shell.py) so the two doors into the same
+# gateway are one visual language rather than two hand-written copies of the tokens.
+_PAIR_BODY = """\
+<h1>Pair this device</h1>
+<p>This will sign this device in to the PersonalClaw dashboard on your home network.</p>
+<form id='f' autocomplete='off'>
+<input id='c' name='code' type='text' placeholder='XXXX-XXXX' autocomplete='one-time-code'
+inputmode='latin' autocapitalize='characters' spellcheck='false' aria-label='Pairing code'>
+<input id='n' name='device_name' type='text' placeholder="This device's name (optional)"
+autocomplete='off' spellcheck='false' aria-label="This device's name">
+<button id='b' type='submit'>Pair this device</button>
+</form>
+<div class='err' id='e' role='alert' aria-live='polite'></div>
+<div class='hint'>The code is on the device you started from, under
+<code>Settings &rarr; Devices</code>. It expires five minutes after it is created.</div>"""
+
+# Every error code `pair/complete` can return, mapped to something a person can act on. An
+# unmapped code would render as a raw identifier, so the fallback is a sentence too.
+_PAIR_SCRIPT = """\
+var MESSAGES = {
+  device_pair_code_invalid: 'That code is not valid, or has already been used.',
+  device_pair_expired: 'That code has expired. Start pairing again on the other device.',
+  device_pair_locked_out: 'Too many attempts. Wait a moment and try again.',
+  device_pair_origin_rejected:
+    'This gateway will not accept pairing from this address. On the host, set the dashboard '
+    + 'URL to the address you are using here, then try again.'
+};
+var params = new URLSearchParams(window.location.search);
+var prefilled = (params.get('code') || '').toUpperCase();
+if (prefilled) { document.getElementById('c').value = prefilled; }
+document.getElementById(prefilled ? 'n' : 'c').focus();
+document.getElementById('f').addEventListener('submit', function (ev) {
+  ev.preventDefault();
+  var btn = document.getElementById('b'), err = document.getElementById('e');
+  btn.disabled = true; err.textContent = '';
+  fetch('/api/devices/pair/complete', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    credentials: 'same-origin',
+    body: JSON.stringify({
+      code: document.getElementById('c').value,
+      device_name: document.getElementById('n').value
+    })
+  }).then(function (r) {
+    return r.json().catch(function () { return {}; }).then(function (d) {
+      return { ok: r.ok, data: d };
+    });
+  }).then(function (res) {
+    if (res.ok) { window.location.href = '/'; return; }
+    var code = (res.data && res.data.error && res.data.error.code)
+      || 'device_pair_code_invalid';
+    err.textContent = MESSAGES[code] || 'Pairing failed. Ask for a new code and try again.';
+    btn.disabled = false;
+  }).catch(function () {
+    err.textContent = 'Could not reach the gateway.';
+    btn.disabled = false;
+  });
+});
+"""
+
+_PAIR_HTML = page_document(
+    title="Pair this device — PersonalClaw", body=_PAIR_BODY, script=_PAIR_SCRIPT
+)
+
+
 # ── the registry ────────────────────────────────────────────────────────
 
 
@@ -392,8 +494,12 @@ async def api_devices_revoke(request: web.Request) -> web.Response:
 
 
 def register_device_routes(app: web.Application) -> None:
-    """Wire the four C2 routes."""
+    """Wire C2's four API routes plus the redeem PAGE the pairing URL points at."""
     app.router.add_post("/api/devices/pair/start", api_devices_pair_start)
     app.router.add_post("/api/devices/pair/complete", api_devices_pair_complete)
     app.router.add_get("/api/devices", api_devices_list)
     app.router.add_post("/api/devices/{id}/revoke", api_devices_revoke)
+    # Registered here rather than beside the other pages in server.py: it is the entry point of
+    # `pair/start`'s URL, and splitting the two across files is how the URL came to point at a
+    # route that did not exist.
+    app.router.add_get("/pair", pair_page)

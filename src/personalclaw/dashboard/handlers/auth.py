@@ -30,6 +30,7 @@ from typing import Any
 from aiohttp import web
 
 from personalclaw.auth import credentials as creds
+from personalclaw.dashboard.handlers.page_shell import page_document
 from personalclaw.dashboard.origin import check_origin
 from personalclaw.dashboard.token_auth import (
     DEFAULT_BROWSER_SESSION_TTL_SECS,
@@ -474,66 +475,10 @@ def has_valid_session(request: web.Request, port: int) -> bool:
 
 
 # The form deliberately mirrors the existing 403 gate's visual language (same tokens, same
-# shapes) so it reads as the same product rather than a bolted-on login.
-_LOGIN_HTML = """<!DOCTYPE html><html lang='en'><head><meta charset='UTF-8'>
-<meta name='viewport' content='width=device-width,initial-scale=1'>
-<title>Sign in — PersonalClaw</title><style>
-:root{--canvas:#0f0f0f;--surface:#1e1f20;--surface-high:#282a2c;--ink:#e3e3e3;
---ink-low:#9a9b9c;--outline:#444746;--primary:#9d8bff;--on-primary:#21134f;
---primary-emphasis:#b6bdff;--danger:#f55e57;--radius-card:28px;--radius-field:12px;
---ease:cubic-bezier(0.2,0,0,1);
---font:'Google Sans Flex','Google Sans',system-ui,-apple-system,sans-serif;
---mono:'Google Sans Code',ui-monospace,'SF Mono',monospace}
-*{margin:0;padding:0;box-sizing:border-box}
-body{font-family:var(--font);display:flex;align-items:center;justify-content:center;
-min-height:100vh;background:var(--canvas);color:var(--ink);
--webkit-font-smoothing:antialiased;overflow:hidden}
-body::before{content:'';position:fixed;inset:0;z-index:0;pointer-events:none;
-background:radial-gradient(60% 55% at 50% 38%,
-color-mix(in srgb,var(--primary) 22%,transparent),transparent 70%);filter:blur(8px)}
-.c{position:relative;z-index:1;text-align:center;width:100%;max-width:420px;margin:24px;
-padding:40px 32px;background:var(--surface);border:1px solid var(--outline);
-border-radius:var(--radius-card);box-shadow:0 16px 40px rgb(0 0 0 / 0.42)}
-.logo{margin-bottom:20px}.logo svg{width:60px;height:60px;display:inline-block}
-h1{font-size:26px;line-height:1.15;margin-bottom:10px;
-font-variation-settings:'wght' 360;letter-spacing:-0.01em}
-p{color:var(--ink-low);font-size:14px;line-height:1.6;margin-bottom:24px}
-code{font-family:var(--mono);background:var(--surface-high);padding:2px 7px;
-border-radius:6px;color:var(--primary-emphasis);font-size:13px}
-input{width:100%;padding:13px 15px;border-radius:var(--radius-field);
-border:1px solid var(--outline);background:var(--canvas);color:var(--ink);
-font-family:var(--font);font-size:14px;margin-bottom:12px;outline:none;
-transition:border-color .2s var(--ease),box-shadow .2s var(--ease)}
-input::placeholder{color:var(--ink-low)}
-input:focus{border-color:var(--primary);
-box-shadow:0 0 0 3px color-mix(in srgb,var(--primary) 28%,transparent)}
-button{width:100%;padding:13px 24px;border-radius:9999px;border:none;cursor:pointer;
-background:var(--primary);color:var(--on-primary);font-family:var(--font);font-size:15px;
-font-variation-settings:'wght' 600;transition:background .2s var(--ease),
-transform .1s var(--ease),box-shadow .2s var(--ease)}
-button:hover{background:var(--primary-emphasis);
-box-shadow:0 0 28px -6px color-mix(in srgb,var(--primary) 55%,transparent)}
-button:active{transform:scale(0.985)}
-button[disabled]{opacity:.6;cursor:default}
-.err{color:var(--danger);font-size:13px;margin-top:14px;min-height:18px}
-.hint{margin-top:18px;font-size:12px;color:var(--ink-low)}
-.hint a{color:var(--primary-emphasis);text-decoration:none}
-.hint a:hover{text-decoration:underline}
-@media(prefers-color-scheme:light){:root{--canvas:#f0f4f8;--surface:#ffffff;
---surface-high:#e6eaef;--ink:#1f1f1f;--ink-low:#5f6368;--outline:#e1e3e1;
---primary:#6a4fd0;--on-primary:#ffffff;--primary-emphasis:#563bbf}
-.c{box-shadow:0 16px 40px rgb(96 110 130 / 0.22)}
-input:focus{box-shadow:0 0 0 3px color-mix(in srgb,var(--primary) 18%,transparent)}}
-@media(prefers-reduced-motion:reduce){*{transition-duration:.001ms!important}}
-</style></head><body><div class='c'>
-<div class='logo'><svg viewBox='0 0 512 512' xmlns='http://www.w3.org/2000/svg'
-aria-label='PersonalClaw'><defs><linearGradient id='cg' x1='0' y1='0' x2='512' y2='512'
-gradientUnits='userSpaceOnUse'><stop stop-color='#8e75b2'/>
-<stop offset='0.45' stop-color='#9d8bff'/><stop offset='0.75' stop-color='#c597ff'/>
-<stop offset='1' stop-color='#d8627e'/></linearGradient></defs>
-<path fill='url(#cg)' d='M256 16C106 76 46 226 46 226c0 45 60 90 90 90 90 0 180-195
-135-285l-15-15zm45 15c30 60 0 135 0 135 120 30 120 180 75 330 75-75 90-150 90-210
-0-90-15-225-165-255z'/></svg></div>
+# shapes) so it reads as the same product rather than a bolted-on login. The shell it is
+# composed into is shared with `/pair` (see handlers/page_shell.py) — the tokens live in ONE
+# place because two hand-written copies drift and neither page has a visual-regression test.
+_LOGIN_BODY = """\
 <h1>Sign in</h1>
 <p>Your PersonalClaw dashboard is private. Sign in to continue.</p>
 <form id='f' autocomplete='on'>
@@ -554,8 +499,9 @@ on your home network you can still use <code>personalclaw token</code>.
 <input id='c' name='code' type='text' placeholder='XXXX-XXXX' autocomplete='off'
 autocapitalize='characters' spellcheck='false'>
 <button id='cb' type='submit'>Pair this device</button>
-</form>
-</div><script>
+</form>"""
+
+_LOGIN_SCRIPT = """\
 var NEEDS_TOTP = __TOTP__;
 var MESSAGES = {
   auth_invalid_credentials: 'Wrong username or password.',
@@ -590,7 +536,8 @@ document.getElementById('cf').addEventListener('submit', function (ev) {
     });
   }).then(function (res) {
     if (res.ok) { window.location.href = '/'; return; }
-    var code = (res.data && res.data.error) || 'auth_enroll_code_invalid';
+    var code = (res.data && res.data.error && res.data.error.code)
+      || 'auth_enroll_code_invalid';
     err.textContent = MESSAGES[code] || 'Pairing failed.';
     btn.disabled = false;
   }).catch(function () {
@@ -618,7 +565,11 @@ document.getElementById('f').addEventListener('submit', function (ev) {
     });
   }).then(function (res) {
     if (res.ok) { window.location.href = '/'; return; }
-    var code = (res.data && res.data.error) || 'auth_invalid_credentials';
+    // `json_error` emits {"error": {"code", "message"}} (PL-8's one wire envelope). Reading
+    // `res.data.error` as a bare string made every MESSAGES lookup miss, so this page only ever
+    // said "Sign-in failed." and the auth_totp_required branch below could never fire.
+    var code = (res.data && res.data.error && res.data.error.code)
+      || 'auth_invalid_credentials';
     if (code === 'auth_totp_required') {
       document.getElementById('t').style.display = 'block';
       document.getElementById('t').focus();
@@ -630,4 +581,6 @@ document.getElementById('f').addEventListener('submit', function (ev) {
     btn.disabled = false;
   });
 });
-</script></body></html>"""
+"""
+
+_LOGIN_HTML = page_document(title="Sign in — PersonalClaw", body=_LOGIN_BODY, script=_LOGIN_SCRIPT)
