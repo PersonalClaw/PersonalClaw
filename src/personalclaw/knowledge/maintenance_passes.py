@@ -12,6 +12,12 @@ the consolidation planner and an action-provider module. So the host knows nothi
 passes and this module is imported once, at gateway startup, where paying for those imports
 is already the cost of being a gateway.
 
+**KL-19 added a fifth pass: `derived_refresh`.** The structural editing verbs invalidate the
+chunk layer and the whole-item vector of every item they touch (a split whose halves keep the
+parent's vectors is silently wrong), and something has to rebuild them on a cadence. Before it
+the chunk backfill ran only at gateway boot and nothing at all drained a NULLed item vector, so
+"refreshed through the maintenance host" would have meant "refreshed at the next restart".
+
 **All three of clause 7's named jobs are now registered.** An earlier revision of this module
 recorded the third one — "the graph linker backfill" — as having no callable, which was true
 when measured: the only backfills were `chunk_backfill.backfill_item_chunks`,
@@ -19,12 +25,13 @@ when measured: the only backfills were `chunk_backfill.backfill_item_chunks`,
 nearest linker was a PRIVATE helper inside an action provider. Rather than register a private
 helper across a module boundary, the public pass was built: `knowledge/link_backfill.py`.
 
-**Two of the four passes here are genuinely RESUMABLE** — the linker backfill and the
-similarity-edge pass — and only those two are registered `batched=True`. The distinction is
-not cosmetic — see `MaintenancePass.batched`. The lint and the consolidation sweep both return
-a REPORT (findings, clusters), so a host reading that as remaining work would re-run them once
-per allowed sub-batch forever. The two backfills return ITEMS PROCESSED and 0 when the backlog
-is drained, which is the contract the sub-batch loop is written against.
+**Three of the five passes here are genuinely RESUMABLE** — the linker backfill, the
+similarity-edge pass and KL-19's derived refresh — and only those three are registered
+`batched=True`. The distinction is not cosmetic — see `MaintenancePass.batched`. The lint and
+the consolidation sweep both return a REPORT (findings, clusters), so a host reading that as
+remaining work would re-run them once per allowed sub-batch forever. The three backfills
+return WORK DONE and 0 when the backlog is drained, which is the contract the sub-batch loop
+is written against.
 
 **KL-13's similarity-edge pass is hosted here for the reason the clause names: "never inline
 on the write path."** Similarity is the most expensive graph work in the store — it compares a
@@ -57,6 +64,7 @@ PASS_MEMORY_LINT = "memory_lint"
 PASS_CONSOLIDATION = "knowledge_consolidation"
 PASS_LINK_BACKFILL = "entity_link_backfill"
 PASS_SIMILARITY_EDGES = "similarity_edges"
+PASS_DERIVED_REFRESH = "derived_refresh"
 
 
 def _memory_lint_pass(*, batch_size: int = 0) -> int:
@@ -155,6 +163,48 @@ def _similarity_edge_pass(*, batch_size: int = 0) -> int:
     return similarity_edges.similarity_pass()
 
 
+def _derived_refresh_pass(*, batch_size: int = 0) -> int:
+    """Rebuild the chunk layer and the whole-item vectors that have been INVALIDATED.
+
+    KL-19's structural editing verbs (split, extract, merge, retitle …) rewrite item bodies,
+    and every derived artifact computed from the old text is wrong the instant they do. The
+    verbs therefore INVALIDATE rather than recompute — drop the chunks, NULL the item vector,
+    release the similarity claims, clear the sweep markers — and this pass is what makes that
+    honest instead of merely tidy. Without it the invalidation would be the whole story and a
+    split's halves would sit vector-less until the next gateway boot: the chunk backfill ran
+    only at startup and nothing at all drained a NULLed item vector on a cadence.
+
+    RESUMABLE (`batched=True`), and the return value is PROGRESS, not backlog size. That
+    distinction is load-bearing here in a way it is not for the other backfills: the chunk
+    backfill's `unchanged` bucket holds items it cannot ever chunk (content blank to
+    `str.strip()` but not to SQLite), which stay in the backlog forever. Returning
+    `chunked + reembedded` means those items contribute 0, the host stops claiming, and a
+    library with one unchunkable item still converges. Returning a backlog COUNT here would
+    busy-loop `max_batches` times per tick on an item that can never leave it.
+
+    Embeddings need a live embedder, so with none bound this returns 0 and the backlog waits —
+    the same "the library stays keyword-searchable and resumes once a model is bound" contract
+    `chunk_backfill` states. A refresh that silently wrote no vectors while reporting progress
+    would be worse than one that waits.
+    """
+    from personalclaw.knowledge import chunk_backfill, get_knowledge_embedder, get_knowledge_store
+
+    embedder = get_knowledge_embedder()
+    if embedder is None:
+        return 0
+    store = get_knowledge_store()
+    bounded = batch_size if batch_size > 0 else chunk_backfill.BATCH_SIZE
+    done = 0
+    result = chunk_backfill.backfill_item_chunks(store, embedder, max_items=bounded)
+    done += int(result.get("chunked") or 0)
+    # `only_missing` — never a whole-library re-embed on a maintenance tick. That is
+    # `reembed_all`'s other caller (the model-switch re-index), and running it on a cadence
+    # would re-embed every item the user owns every time any write moved the watermark.
+    embedded = store.reembed_all(embedder, only_missing=True, limit=bounded)
+    done += int(embedded.get("reembedded") or 0)
+    return done
+
+
 def register_all() -> list[str]:
     """Register every standing pass. Idempotent; returns the names registered.
 
@@ -175,6 +225,12 @@ def register_all() -> list[str]:
         (PASS_CONSOLIDATION, _consolidation_pass, False),
         (PASS_LINK_BACKFILL, _link_backfill_pass, True),
         (PASS_SIMILARITY_EDGES, _similarity_edge_pass, True),
+        # Registered BEFORE the similarity pass would want its output, but the host runs
+        # passes in sorted-name order, and `derived_refresh` < `similarity_edges` happens to
+        # put the rebuild first. That ordering is convenient, not relied upon: each pass is
+        # keyed on its own sweep markers, so a refresh landing after the edge pass in one tick
+        # simply re-arms it and the next tick converges.
+        (PASS_DERIVED_REFRESH, _derived_refresh_pass, True),
     ):
         try:
             maintenance.register_pass(name, fn, batched=batched)

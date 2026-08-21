@@ -73,7 +73,9 @@ let merge: MockInstance<typeof api.mergeKnowledgeItems>
 beforeEach(() => {
   merge = vi.spyOn(api, 'mergeKnowledgeItems').mockResolvedValue({
     ok: true, kept: KEEPER.id, merged: 'loser-1',
-    moved: { collections: 2, tags: 1, mentions: 3, annotations: 0 },
+    // `relations` and `citations` joined the report in KL-19: a merge now carries the typed
+    // item edges and the per-marker attributions across instead of dropping them.
+    moved: { collections: 2, tags: 1, mentions: 3, annotations: 0, relations: 1, citations: 2 },
   })
 })
 
