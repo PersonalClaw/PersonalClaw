@@ -27,6 +27,26 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
   **And if the record disagrees with your files, the resume stops.** If it says a file exists and it
   is gone — the branch changed under you, the tree was reverted — the turn refuses and names the
   file, instead of carrying on from a picture that is already wrong.
+- **A big skill can no longer take the conversation.** A matched skill's body used to be pasted
+  into the prompt before anything measured it, so a long skill simply took the window and the
+  conversation got whatever was left — and "why did my skill not take effect?" had no answer
+  anywhere. Skill bodies now compete for the prompt on the same budget as every other injected
+  block, on declared priority rather than on which one was pasted first.
+  **Each skill declares what it may spend.** A new optional `context_tier` in a skill's
+  frontmatter — `light` (1,000 tokens), `standard` (3,000, the default) or `heavy` (8,000) — is
+  that skill's own ceiling, and all the skills in one turn additionally share a 16,000-token
+  aggregate. An omitted or misspelled tier is treated as `standard`, so a typo never quietly
+  shrinks a skill you rely on.
+  **Over its ceiling, a skill loads in a REDUCED form — never cut off mid-sentence.** What goes
+  into the prompt is the skill's own one-line description and its declared `resources:` entry
+  points, complete, plus the call that loads the whole thing on demand. A body sliced at a byte
+  boundary is worse than a shorter complete one: nothing in the text tells the reader it is half,
+  and half a procedure fails at step four. A skill that declares *neither* a description nor
+  resources has nothing to reduce to, so it is refused and named rather than summarized by
+  guesswork.
+  **And you are told, in the turn, which skill was reduced or refused and why** — with the
+  numbers: this body is 42,458 tokens, its tier allows 3,000, call `skill_invoke` for the rest.
+  Three outcomes, no fourth: admitted, reduced, refused.
 - **A turn that will not fit says so before it runs, and says what to do about it.** PersonalClaw
   used to find out a prompt was too big by sending it and reading the provider's error back — after
   you had already waited. The context is now measured against the bound model's real window *before*

@@ -93,7 +93,25 @@ MAX_PER_SOURCE = 3
 #: never meant to ration the user's own corrections, which are the thing the whole
 #: slot policy exists to protect. Lessons are bounded by the budget and the
 #: `lessons` slot, not by a per-source quota.
-UNCAPPED_KINDS = frozenset({"lesson"})
+#:
+#: `skill` joined for the same reason (CE2-9). Once skill BODIES allocate here, the
+#: candidates in a turn are the matched set the user's own triggers selected; a
+#: per-source quota of 3 would drop the 4th before the budget was even consulted —
+#: silently, since `fuse` runs before the allocator can catalogue a near-miss. Skills
+#: are bounded by the aggregate cap and by each skill's DECLARED per-skill cap
+#: (`Candidate.max_tokens`), which are visible decisions rather than a hidden quota.
+UNCAPPED_KINDS = frozenset({"lesson", "skill"})
+
+#: Kinds whose L2 (full body) is the DEFAULT rather than a grant.
+#:
+#: `L2_MAX_ITEMS`/`L2_SCORE_FRACTION` ration L2 because for a lesson or a memory the
+#: full body is an expensive luxury over its summary. For a skill the full body IS the
+#: payload — its steps are the thing the agent is meant to follow — so reduction is the
+#: exception, not the norm. Rationing skill bodies to three per turn would make a
+#: perfectly affordable fourth skill load reduced with budget to spare, which is the
+#: "why did my skill not take effect" complaint wearing a budget costume. What bounds a
+#: skill instead is its declared cap and the aggregate — both stated, both reported.
+FULL_BODY_KINDS = frozenset({"skill"})
 
 
 class Tier(str, Enum):
@@ -124,6 +142,13 @@ class Candidate:
     source_rank: int = 0
     salience: float = 0.0
     tier: Tier = Tier.L1
+    #: The candidate's OWN declared ceiling in tokens, independent of what is left in the
+    #: budget (CE2-9). 0 = uncapped, which is every pre-existing caller. A tier whose
+    #: rendering costs more than this is not offerable even on an empty budget, so a
+    #: 40,000-token skill cannot spend a 200k window's slack just because it is first.
+    #: Honored INSIDE `allocate` on purpose: "the allocator honors a cap per skill and in
+    #: aggregate" is one mechanism enforcing two bounds, not a pre-filter plus a budget.
+    max_tokens: int = 0
     #: WHICH match path produced this candidate (LEARN-R4 / §2.5 — S71). Attribution is what makes
     #: per-arm precision measurable: an exact-name hit and an embedding neighbour that both score
     #: 0.7 are not equally trustworthy, and "a single scalar can't be calibrated per-arm". Empty
@@ -384,6 +409,20 @@ class Allocation:
         return max(0, self.budget_tokens - self.used_tokens)
 
 
+def _tier_fits(cost: int, used: int, budget: int, cap: int) -> bool:
+    """Does one rendered tier fit BOTH bounds the allocator honors?
+
+    Two bounds, one test (CE2-9): what is left of the shared budget (the aggregate), and
+    what the candidate itself DECLARED it may spend (`Candidate.max_tokens`, 0 =
+    uncapped). Separating them would mean two mechanisms deciding what reaches the
+    prompt, which is the defect the allocator exists to remove — so a declared cap is
+    enforced on the same line as the budget and degrades through the same ladder.
+    """
+    if used + cost > budget:
+        return False
+    return not (cap and cost > cap)
+
+
 def allocate(
     sources: dict[str, list[Candidate]],
     *,
@@ -398,6 +437,11 @@ def allocate(
     The order is load-bearing: score, fuse+diversify, assign to slots by priority,
     then degrade tier before dropping anything, and only ever trim the sacrificial
     slot. Reordering these produces a budget that is a token counter again.
+
+    ``budget_tokens`` is the AGGREGATE bound; a candidate may additionally declare its
+    own per-item ceiling in ``Candidate.max_tokens``. Both are checked by the same test
+    (:func:`_tier_fits`) and both degrade through the same tier ladder, so "a cap per
+    item and in aggregate" stays one mechanism (CE2-9).
 
     ``ablate`` names one heuristic to switch off, for `ablation_deltas`. Default "" is
     the live path and pays nothing for the parameter's existence.
@@ -415,7 +459,13 @@ def allocate(
     top = max((c.salience for c in pool), default=0.0)
     l2_granted = 0
     for cand in pool:
-        if (
+        if cand.l2 and cand.kind in FULL_BODY_KINDS:
+            # Full body by default (see FULL_BODY_KINDS) and deliberately NOT counted
+            # against `l2_granted`: sharing the grant budget would let three skills
+            # starve a lesson of its L2, coupling two policies that answer different
+            # questions. This candidate's ceiling is `max_tokens` + the budget.
+            cand.tier = Tier.L2
+        elif (
             cand.l2
             and l2_granted < L2_MAX_ITEMS
             and top > 0
@@ -460,14 +510,21 @@ def allocate(
         for cand in sorted(slot.items, key=lambda c: c.salience, reverse=True):
             text = cand.text(cand.tier)
             cost = count_tokens(text)
-            if used + cost > budget_tokens:
+            if not _tier_fits(cost, used, budget_tokens, cand.max_tokens):
                 # Degrade before dropping: a lower tier may still fit.
                 for lower in (Tier.L1, Tier.L0):
                     if lower is cand.tier:
                         continue
                     text = cand.text(lower)
                     cost = count_tokens(text)
-                    if used + cost <= budget_tokens:
+                    # An EMPTY rendering is not a fit. A candidate that declared no
+                    # lower tier renders "" here, which costs 0 and would "fit" — and
+                    # the slot would gain a blank block that reads as a loaded item
+                    # while carrying nothing. Skip the tier; if none render, the
+                    # for/else below refuses and NAMES it, which is the honest outcome.
+                    if not text:
+                        continue
+                    if _tier_fits(cost, used, budget_tokens, cand.max_tokens):
                         cand.tier = lower
                         allocation.degraded.append(cand.key)
                         break
