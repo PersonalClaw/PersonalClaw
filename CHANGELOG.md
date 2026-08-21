@@ -10,6 +10,25 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Added
 
+- **A turn that will not fit says so before it runs, and says what to do about it.** PersonalClaw
+  used to find out a prompt was too big by sending it and reading the provider's error back — after
+  you had already waited. The context is now measured against the bound model's real window *before*
+  the call, and exactly one of three things happens: it fits; it fits after compression, and you are
+  told which block was compressed and from what size to what; or it cannot fit, and the turn is
+  refused with the specific oversized block named — that tool result, that retrieved document, not a
+  generic "context overflow" — plus a fix: shorten that block, run `/compact`, or switch to a model
+  with a larger window.
+  **Room to answer is part of the budget.** A prompt that fills the window exactly leaves nothing for
+  the reply and fails the same way one that is too long does, so the bound is the window minus the
+  reply reserve — the same number the model is handed as its output limit, not a second guess at it.
+  **You are warned while there is still room to act.** A long session now reports its headroom as it
+  tightens, instead of only once it is gone.
+  **An unmeasurable window hides nothing and blocks nothing.** If neither the model catalog nor the
+  window table names your model, the turn proceeds and the pressure reads as unmeasured: "we could
+  not measure this" and "there is plenty of room" are different answers, and a hardcoded default
+  standing in for either is a guess dressed as a fact. In the same spirit, the one silent drop that
+  was already there — the session-context cap quietly shortening long history and telling only a
+  server log — now tells you.
 - **Know whether a model will actually run on your machine before you download it.** Every model in
   the download lists now carries a fit chip — green, yellow, red — computed from this machine's real
   memory budget: total RAM, minus a reserve held back for the OS and the inference runtime, plus a
