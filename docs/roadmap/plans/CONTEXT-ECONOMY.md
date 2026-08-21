@@ -309,3 +309,106 @@ Sessions 1-3 (NEW-16) and 4-5 (NEW-22) are independent tracks; either alone is a
   **Drift guards caught two real omissions during the gate** (neither a flake): `test_api_manifest_drift` required `TOOL_META` entries with response types + examples for both new tools, and `test_agent_reference` required regenerating the offline reference. Both added. Also wired `code_map_block` into the `task-code_design_brief` prompt TEMPLATE + its `BundledPrompt` variable declaration — the rendered template wins over the inline fallback, so adding the block to only the fallback would have been dead code (caught by driving `build_design_brief` and finding the map absent).
 
   Tests: `tests/test_codegraph.py`, 70 cases. Gate: `make lint` green (mypy 528 files), `make test` **8575 passed** in 40.4s excluding the new file (which costs 3.4s alone — an apparent 59s full-suite reading was contention from a concurrently-running validation gateway, verified by isolating). Validated as-a-user on :10033: both tools appear in `GET /api/tools` with `provider=workflows-tools group=workflows approval=False`, `/api/tools/groups` places them in Workflows, `code_map_overview` returns the real repo's shape, `@`-mention search returns centrality-ranked results, zero errors in the gateway log. **This session completes CONTEXT-ECONOMY — all six sessions are now DONE.**
+
+## Execution log — CE2-8 (a declared headroom contract at the assembly seam)
+
+- **[2026-08-21][CE2-8] DONE.** "Will this prompt fit?" now has one answer computed in one
+  place, in three closed states, before the provider call.
+
+  `src/personalclaw/context_headroom.py` declares `HeadroomState(str, Enum)` — `FITS` /
+  `FITS_AFTER_COMPRESSION` / `CANNOT_FIT` — and decides with `check(components, *, window)`
+  (pure, sync); `check_for_model(..., model_ref=)` resolves the window first. `Headroom.text` is
+  `""` on `CANNOT_FIT`, so a refusal is one `if` away from **nothing** rather than one `if` away
+  from sending the thing it just refused.
+
+- **The seam acts on it** in `context_engine.py` (`check_headroom`, `headroom_components`) and
+  `dashboard/chat_runner.py:2179-2214`, before the provider call: `CANNOT_FIT` → error card +
+  `_last_turn_errored = True` + `return` (the `finally` still runs every finalizer, matching the
+  existing `return`-after-`_emit_error` precedent at `:3572`); `FITS_AFTER_COMPRESSION` → send
+  `verdict.text` and recompute `injected_chars`; any state → broadcast `notice()` when non-empty.
+
+- **Naming which block is too big required making the assembly nameable.** `build_message` now
+  assembles through a `_Parts` collector (`context.py:696-750`) filling a
+  `components_out: list[Component]` — 17 labelled pieces (`system prompt`,
+  `session context (memory · lessons · history)`, `episodic memory`, `skill: <name>`,
+  `hook context`, `the user's request`, …) with `compressible=False` on the pieces that must be
+  refused rather than trimmed.
+
+- **The reserve is `output_budget`'s number, not a second one.** `resolve_window` calls
+  `local_models.budgets.model_budget(ref)` once and takes `.output_tokens` — the value
+  `output_budget` (`budgets.py:181-187`) is the narrow accessor of, and the same number
+  `llm_helpers.py:498` puts in `max_tokens`. One catalog lookup serves window + reserve +
+  source; calling `output_budget` separately would hit `list_models()` twice per turn.
+  `test_the_reserve_is_output_budgets_number_not_a_second_one` asserts
+  `resolve_window(ref).output_reserve_tokens == await output_budget(ref)` across three ref
+  shapes, so the shortcut cannot drift into a second reserve. The bound is
+  `Window.input_tokens`, carried from `ContextBudget` and never recomputed.
+
+- **UNKNOWN is a property of the evidence, not a fourth state.** `model_context_window` answers
+  *every* query with a hardcoded 200k, so `resolve_window` re-asks with `default=0` to tell "the
+  table named this model" from "the table defaulted". Unmeasured yields `FITS` with
+  `pressure is None` and `level == "unmeasured"`: refusing would make a mistyped model id an
+  outage, and claiming headroom would restore the silent failure this atom exists to remove. The
+  state set stays closed at three, asserted. Same `None`-vs-`0` discipline as
+  `local_models/fit.py`. Logged once per ref, not per turn.
+
+- **No `web/` change was needed, and the reason was verified rather than assumed.**
+  `ChatPage.tsx:935` drops only `status`/`session`; `:3539-3541` ledgers only
+  `context`/`learned`/`stats`; `:3563` + `:3685` render any other `activityKind` inline through
+  `ActivityLine` (kind-agnostic, design-system tokens, text as its own accessible name, no
+  colour-only state); `chatTypes.ts:62` types `activityKind?: string`. So compression and
+  pressure go out as `activity_event {kind:"headroom"}` — an inline line in the turn flow at the
+  moment it happens — and the refusal uses the existing error card. Live-only, not persisted;
+  recorded as a tradeoff.
+
+- **A silent drop closed on the way past.** `build_session_context`'s `_MAX_CONTEXT_CHARS` cut
+  previously reached only `logger.warning`; it now reports through `dropped_out`/`notices_out`
+  into the same notice channel.
+
+- **No knob added, deliberately.** `PRESSURE_WARN_FRACTION = 0.75` and
+  `PRESSURE_CRITICAL_FRACTION = 0.9` are named module constants with the reason recorded: the
+  cheap remedies need a turn or two of room, so warning at 0.95 warns after the room to act is
+  gone. The atom does not ask for a knob, so no config baseline regeneration was needed.
+
+- **Falsifications.** Live lines mutated, restored from file copies, each restore verified with
+  an empty `git diff HEAD --stat` before proceeding.
+  1. `limit = window.input_tokens` → `window.tokens` (drop the reserve) → 5 failed / 19 passed,
+     including `test_a_prompt_that_fills_the_window_exactly_does_not_fit`.
+  2. `notice()`'s `FITS_AFTER_COMPRESSION` branch → `return ""` → `assert 'hook context' in ''`.
+  3. `model_context_window(ref, default=0) > 0` → `True` (adopt the 200k default) →
+     `assert 'window-table' == 'unknown'`. **Re-run independently before this PR opened:** 1
+     failed / 23 passed with the mutation, clean without it.
+  4. `build_message` returns `parts.text() + "[UNLABELLED BLOCK]"` → the join guard reds.
+  - **One falsification came back vacuous and taught something real.** Making `_Parts.add`
+    *skip* a piece stayed green, because `_Parts` is the single source of both the joined text
+    and the labels — a skipped piece leaves neither and the join still balances. The guard only
+    catches text reaching `message` from *outside* the labelled set (the recall/push prepends).
+    That limit is now documented in `headroom_components`' docstring rather than left as an
+    over-trusted rail.
+
+- **Gates.** `make lint` clean (mypy 945 files). Targeted **281 passed, 1 xfailed** across
+  headroom + context + context_engine + learning-ambient/surfacing + local-model-budgets +
+  config-roundtrip + thread-context + context-management + mem-adaptive-budget +
+  inert-surface-baseline, every path existence-checked and iterated as a quoted zsh array; an
+  independent re-run of a six-file subset gave 135 passed, 1 xfailed. Full `make test`
+  **23489 passed, 30 skipped, 12 xfailed, 0 failed** in 7m41s, real-home rail clean on every
+  run. No `web/` change → no web gate and no `consistency-audit.json` drift.
+
+- **One clause scoped rather than satisfied.** The clause's "which oversized **tool result**" is
+  representable and tested at the contract level
+  (`test_a_refusal_names_the_specific_oversized_component` uses a `tool result: run_command`
+  component), but a *mid-turn* tool result never passes through the assembly seam — native
+  history carries it and a follow-up assembly injects almost nothing, so it is still bounded
+  where it is produced, by `project_output` at dispatch. Routing the mid-turn dispatch seam
+  through this contract is a wiring change rather than a redesign; it is declared out of scope in
+  the module docstring instead of being left to look like an oversight. Also left alone:
+  `_MAX_CONTEXT_CHARS` itself, now a second model-blind cap beside this contract — a clean-break
+  deletion candidate, but broader behaviour than this atom can validate.
+
+- **Roadmap bookkeeping — no `dag.json` row to flip.** `main`'s
+  `docs/roadmap/atomic/dag.json` carries **CE2-1…CE2-7** for CONTEXT-ECONOMY; CE2-8 arrived with
+  the rev-18 capability-gap set, still on an unmerged branch. No row was invented — a mirrored
+  status surface must not be flipped without the row it mirrors. This entry is the record until
+  that set lands. (The pre-existing "This session completes CONTEXT-ECONOMY — all six sessions
+  are now DONE" line above refers to the plan's original six sessions, not to the rev-18
+  amendment atoms CE2-8/9/10.)
