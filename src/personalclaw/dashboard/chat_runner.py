@@ -1443,6 +1443,15 @@ async def _run_chat(
             turn_checkpoints.begin_turn(session.key, cwd=_file_change_base(session))
         except Exception:  # noqa: BLE001 — a checkpoint failure must never break a turn
             logger.debug("turn checkpoint: begin_turn skipped", exc_info=True)
+        try:
+            # AG-14: the pre-edit read gate's observations are per-TURN. Reset here, at
+            # the site that already declares a turn, so the two turn notions cannot
+            # drift; a nested _run_chat is the same user turn and must keep them.
+            from personalclaw.agents.native import read_gate
+
+            read_gate.begin_turn(session.key)
+        except Exception:  # noqa: BLE001 — never break a turn over the gate's bookkeeping
+            logger.debug("read gate: begin_turn skipped", exc_info=True)
     # Cancel any still-pending follow-up-chip generation from the PRIOR turn (CHAT-CRAFT
     # S3) — the user is sending again, so its chips are moot; the FE hides them on the
     # next stream. Fire-and-forget cancel; the task swallows CancelledError cleanly.

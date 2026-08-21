@@ -1456,3 +1456,60 @@ Wave 3, **after plan 58 S1** (its records feed eligibility). Two new sessions; h
   fail-opens to an empty set — pre-existing, and fixing it changes routing ORDER for structured
   queries, a different subsystem with its own tests. And whether `BrandedProviderSpec` should carry
   `structured_output` explicitly is an apps-repo contract question.
+
+### 2026-08-21 — Atom AG-14 (editing a file the agent has not read stops being possible) — DONE
+
+**No `dag.json` row exists for AG-14** and none was invented here — the atom arrived as an owner
+brief, and minting a status row for an atom the plan never declared would make the mirrored status
+surface lie. This entry is the durable record; the row is the owner's to file.
+
+**The census ran BEFORE the work, as the atom requires** — enforcement over an unsurveyed path is an
+outage, and the survey is what made this safe. Two write paths in `agents/native/builtin_tools.py`
+(`_t_write_file`, `_t_edit_file`); the five other `_t_*_create` handlers create ENTITIES, not files.
+Six modules that mention `write_file`/`edit_file` were each resolved to a verdict: `tool_retrieval.py`
+and `tool_prefs.py` are NAME lists (core-tool sets), `self_model_observer.py` is a docstring example,
+`chat_runner.py`'s `_WRITE_FILE_TOOLS` only READS the target for a diff chip, `turn_checkpoints.py`
+writes checkpoint blobs (never the target), and `handlers/files.py` carries two HUMAN surfaces
+(`api_file_write` from the markdown panel, `_write_file_restricted` for uploads) that are not the
+agent seam. **One raw child the brief did not name was found by the rail, not by reading:** `_t_bash`
+(`sed -i`, `> file`). It cannot be gated on an observed target because it takes a command, not a
+path, so it is a DECLARED exemption (`_UNGATEABLE_WRITE_PATHS`) with its reason asserted — the honest
+statement of the residual hole rather than a silent omission.
+
+**The gate is expressed ONCE**, at `NativeBuiltinToolProvider.invoke` (`_read_gate_refusal` before
+dispatch, `_read_gate_observe_write` after), driven by the `_READ_GATED_WRITE_TOOLS` registry.
+Neither write handler references the gate — a rail asserts that, so a third write path inherits the
+gate by adding a row rather than by re-implementing it.
+
+**Keyed on content OBSERVED, never on "a read tool was called."** `agents/native/read_gate.py` records
+the *projected output string* `read_file` returned — not the file's bytes — plus the sha256 of the
+file's FULL bytes and whether either truncation axis fired (the 256 KB byte cap, the 60 000-char
+projection). Three checks: an observation exists for that resolved path; its digest still equals the
+file's; and the region occurs in a fragment the model was actually shown. Truncation is therefore
+honoured by construction — observing bytes 1-2000 does not license editing byte 5000 — and because a
+projected read already advertises `tool_result_get`, a slice pulled that way is credited as a further
+observed fragment, so the refusal's next action actually works on a file larger than the cap (a slice
+of a SUPERSEDED snapshot is not credited). Create-new is ungated; overwriting an existing file needs a
+COMPLETE observation, since an overwrite's region is the whole file. Fail closed throughout: an
+unreadable target, an expired observation, or an unrecognized operation all refuse.
+
+**DEVIATION (scope, deliberate):** the atom says "observed in this turn". A turn window alone is
+weaker than what shipped — a read taken one tool call ago is already stale if another process wrote
+in between — so currency is enforced by digest equality, with the turn window layered on top
+(`read_gate.begin_turn` is wired at the chat runner's existing `turn_checkpoints.begin_turn` site, so
+the two turn notions cannot drift) and a TTL bounding the sessionless/loop callers that never declare
+a turn. A landed write also re-observes: the agent's own edit carries its observation forward
+(fragments substituted, completeness INHERITED), or consecutive edits would refuse each other while
+blaming a third party.
+
+**Eight pre-existing tests drove a write with no prior read** (5 in `test_native_builtin_tools.py`,
+3 in `test_turn_checkpoints.py`) and were updated to read first — the surveyed cost of switching the
+control on, and incidentally the proof that the gate works through the real tool surface.
+
+**Falsifications (mutate the LIVE line, observe the red, restore from a file copy):** (1) replacing
+the content check with the call-count shape ("any read this turn admits the write") reds exactly the
+four content-dependent legs — different-file, truncated-region, partial-overwrite and
+concurrent-write — while `test_edit_without_reading_is_refused` stays GREEN, which is precisely why a
+call-count gate looks enforced; (2) dropping `edit_file` from the registry reds the bypass rail naming
+`['edit_file']`; (3) drifting the rail's write-call vocabulary reds its VACUITY assertion instead of
+reading clean.
