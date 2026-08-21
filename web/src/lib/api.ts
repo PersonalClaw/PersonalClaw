@@ -2246,7 +2246,19 @@ export interface MemoryObservability {
   context_preview: { semantic_chars: number; episodic_chars: number; lessons_chars: number; total_chars: number; semantic_preview?: string; episodic_preview?: string; lessons_preview?: string }
 }
 // A learned "lesson" rule (from the after-turn review or manual add).
-export interface Lesson { rule: string; category: string; ts?: string }
+//
+// `standing` is the injection gate (WF2LEA-15): `injected` is in the prompt right now,
+// `retained` is stored and still gathering evidence but deliberately kept OUT of it —
+// a declared state, not a deletion. `confidence` is DERIVED from the evidence counters
+// beside it (never assigned), and `confidence_reason` is the server's sentence for why
+// this lesson stands where it does; the frontend must not recompose that reasoning, or
+// the studio and the gate would eventually disagree.
+export type LessonStanding = 'injected' | 'retained'
+export interface Lesson {
+  rule: string; category: string; ts?: string
+  standing?: LessonStanding; confidence?: number; confidence_reason?: string
+  observations?: number; contradictions?: number; reversals?: number
+}
 // The auto-linked memory graph: fact nodes (grouped by key namespace) + relations.
 // `ref` is a stable un-hashed handle onto the source memory (`sem:<key>`, `lesson:<rule>`,
 // …) — the Memory Studio maps a selected list entry to its node by ref, not by re-hashing.
