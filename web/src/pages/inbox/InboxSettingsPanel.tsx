@@ -32,12 +32,16 @@ export function InboxSettingsPanel() {
   }, [])
 
   const patch = (p: Partial<InboxSettings>) => {
+    const prev = s
     setS((prev) => prev && { ...prev, ...p })
     // The drawer copy of the settings panel — same optimistic-then-silent shape, same fix, so the two
     // copies stay in parity (`settings/inboxSettingsParity.test.ts` guards their fields).
     api.saveInboxSettings(p)
       .then(() => { setSaved(true); setTimeout(() => setSaved(false), 1600) })
-      .catch((e) => notify(`Couldn't save your inbox settings: ${String((e as Error)?.message || e)}`, 'error'))
+      .catch((e) => {
+        if (prev) setS(prev)  // revert optimistic value on failure
+        notify(`Couldn't save your inbox settings: ${String((e as Error)?.message || e)}`, 'error')
+      })
   }
 
   const setEngagement = (v: boolean) => {
