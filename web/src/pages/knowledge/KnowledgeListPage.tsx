@@ -6,6 +6,7 @@ import { fvs } from '../../design/fontWeight'
 import { WorkbenchLayout } from '../../ui/WorkbenchLayout'
 import { Button } from '../../ui/Button'
 import { EmptyState, ListRow, ListSkeleton, LoadError } from '../../ui/ListScaffold'
+import { WindowedList } from '../../ui/WindowedList'
 import { Checkbox, FieldError } from '../../ui/forms'
 import { TagManager } from './TagManager'
 import { ConflictPanel } from './ConflictPanel'
@@ -622,8 +623,24 @@ export function KnowledgeListPage({ onCreate, onOpenItem, onOpenSources, onOpenR
                 {(shown?.length ?? 0) === 0 ? (
                   <EmptyState icon={Search} title="No matching items" hint="Try a different search or filter." />
                 ) : (
-                  <div className="flex flex-col gap-s">
-                    {shown!.map((it, i) => {
+                  // DSC-13: the library is the surface the atom names first, and the one
+                  // whose rows were MEASURED variable — 34-76px across a real 5,000-item
+                  // store (median 76), because the badge row and the wrapping meta line are
+                  // both conditional. The list endpoint caps `limit` at 100 server-side and
+                  // this client never asks for page 2, so a full page windows today and a
+                  // future pagination change needs no second thought here.
+                  <WindowedList
+                    items={shown!}
+                    rowKey={(it) => it.id}
+                    rowHeights="variable"
+                    estimateRowHeight={76}
+                    gap={8}
+                    noun="items"
+                    findHint="use the Search knowledge field above, which searches contents as well as titles."
+                    anchorKey={peekId ?? undefined}
+                    className="flex flex-col gap-s"
+                  >
+                    {(it, i, listCtx) => {
                       const tm = resolveType(it)
                       // Right-click / long-press → scoped actions. This surface only
                       // opens an item (no delete/archive is wired here), so it's a
@@ -665,7 +682,8 @@ export function KnowledgeListPage({ onCreate, onOpenItem, onOpenSources, onOpenR
                       ]
                       return (
                         <ContextMenu key={it.id} items={menuItems}>
-                        <ListRow index={i} accent={tm.tone} onClick={() => setItemTok(peekId === it.id ? '' : it.id)} label={it.title || it.url_title || '(untitled)'}>
+                        {/* index=0 while windowed — see ui/WindowedList's ctx.windowed doc. */}
+                        <ListRow index={listCtx.windowed ? 0 : i} accent={tm.tone} onClick={() => setItemTok(peekId === it.id ? '' : it.id)} label={it.title || it.url_title || '(untitled)'}>
                           {/* Selection tick. Hidden until hover or an active selection so
                               the list stays calm when nobody is curating; a wrapper stops
                               the click from also opening the item. */}
@@ -747,8 +765,8 @@ export function KnowledgeListPage({ onCreate, onOpenItem, onOpenSources, onOpenR
                         </ListRow>
                         </ContextMenu>
                       )
-                    })}
-                  </div>
+                    }}
+                  </WindowedList>
                 )}
           </>
         )}

@@ -4,6 +4,7 @@ import { Inbox as InboxIcon, CheckCheck, RotateCcw, Circle, Reply, Settings as S
 import { TopBar } from '../../ui/TopBar'
 import { WorkbenchLayout } from '../../ui/WorkbenchLayout'
 import { EmptyState, ListRow, ListSkeleton, LoadError } from '../../ui/ListScaffold'
+import { WindowedList } from '../../ui/WindowedList'
 import { SidePanel } from '../../ui/SidePanel'
 import { ListControls } from '../../ui/ListControls'
 import { FilterMenu, type FilterSectionDef } from '../../ui/FilterMenu'
@@ -331,8 +332,26 @@ export function InboxPage({ query, setQuery, navigate }: Pick<RouteProps, 'query
                 ? 'Inbox collects messages, questions, and notifications from your agents and connected sources (filesystem and Slack; email coming). Enable a source to begin.'
                 : 'Messages your agents and connected sources surface for triage land here. You’re all caught up.'} />
         ) : (
-          <div className="flex flex-col gap-s">
-            {filtered.map((it, i) => {
+          // DSC-13: uncapped client-side — `filtered` is a pure filter over everything
+          // the endpoint returned, with no slice and no MoreRow. `anchorKey` is the fix
+          // for a defect the windowing survey turned up on the way past: `#/inbox?open=<id>`
+          // opened the panel for a row 400 deep and never scrolled the list to it, so the
+          // deep link landed on a list showing row 1.
+          <WindowedList
+            items={filtered}
+            rowKey={(it) => it.id}
+            // VARIABLE: `ListRow` has no `h-*`, its padding is `calc(16px * --space-scale)`
+            // (a user setting with 0.8 / 0.68 density presets), and the title line carries
+            // 0-4 conditional chips above a truncated preview.
+            rowHeights="variable"
+            estimateRowHeight={76}
+            gap={8}
+            noun="items"
+            findHint="use the Search inbox field above, which searches every item."
+            anchorKey={openId ?? undefined}
+            className="flex flex-col gap-s"
+          >
+            {(it, i, listCtx) => {
               const cm = classMeta(it.classification)
               const cf = confMeta(it.confidence)
               const sm = statusMeta(it.status)
@@ -371,7 +390,10 @@ export function InboxPage({ query, setQuery, navigate }: Pick<RouteProps, 'query
                     is often just "Refine a skill" and 34 rows still collapsed to one name. The visible
                     `<p>` renders those newlines as spaces, so a sighted user reads the whole subject.
                     Collapsing whitespace is what matches what is on screen. */}
-                <ListRow index={i} accent={unread ? accentTone : undefined} onClick={() => setOpenId(it.id)}
+                {/* index=0 while windowed: a windowed row REMOUNTS every time it scrolls
+                    back in, and ListRow's entrance stagger is keyed on the index — so an
+                    index-keyed delay replays the fade on every row, on every scroll. */}
+                <ListRow index={listCtx.windowed ? 0 : i} accent={unread ? accentTone : undefined} onClick={() => setOpenId(it.id)}
                   label={rowSubject([channelBacked ? (it.sender_name || it.sender_id || 'Unknown') : km.label, (it.message ?? '').replace(/\s+/g, ' ')])}>
                   <span className="shrink-0 inline-flex size-10 items-center justify-center rounded-lg" style={{ background: `color-mix(in srgb, ${accentTone} 16%, transparent)` }}>
                     {channelBacked ? <cm.icon size={18} style={{ color: cm.tone }} /> : <km.icon size={18} style={{ color: km.tone }} />}
@@ -395,8 +417,8 @@ export function InboxPage({ query, setQuery, navigate }: Pick<RouteProps, 'query
                 </ListRow>
                 </ContextMenu>
               )
-            })}
-          </div>
+            }}
+          </WindowedList>
         )}
         </div>
         </EntranceRegion>
