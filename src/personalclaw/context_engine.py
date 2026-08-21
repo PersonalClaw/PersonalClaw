@@ -30,6 +30,13 @@ import logging
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
+from personalclaw.context_headroom import (
+    Component,
+    Headroom,
+    HeadroomState,
+    check_for_model,
+)
+
 if TYPE_CHECKING:
     from personalclaw.context import ContextBuilder
     from personalclaw.hooks import HookResult
@@ -46,12 +53,20 @@ class AssembledContext:
     modify / inject) the runner already acts on. ``injected_chars`` is how much
     context was prepended (0 on a follow-up turn) — for the activity ticker and
     the context-transparency window.
+
+    ``components`` is the same prompt as NAMED pieces (CE2-8), in assembly order, so
+    :func:`check_headroom` can refuse by naming the specific block that will not fit.
+    ``notices`` carries assembly-time drops the user must hear about. Both default to
+    empty, and a custom engine that leaves them empty degrades to a single unnamed
+    component rather than to no contract at all.
     """
 
     message: str
     hook_result: "HookResult | None" = None
     injected_chars: int = 0
     metadata: dict[str, Any] = field(default_factory=dict)
+    components: list["Component"] = field(default_factory=list)
+    notices: list[str] = field(default_factory=list)
 
 
 @runtime_checkable
@@ -109,8 +124,18 @@ class DefaultContextEngine:
         # message's meta and the frontend can deep-link each cited token. Filled only on
         # a new session that injects episodic memory; stays [] otherwise.
         memory_citations: list[dict] = []
+        # CE2-8: the named components + assembly-time drop notices ride out with the
+        # message so the headroom contract can be measured against what will really be
+        # sent, and can name the piece that does not fit.
+        components: list[Component] = []
+        notices: list[str] = []
         full_message, hook_result = builder.build_message(
-            text, is_new_session, citations_out=memory_citations, **kwargs
+            text,
+            is_new_session,
+            citations_out=memory_citations,
+            components_out=components,
+            notices_out=notices,
+            **kwargs,
         )
         injected = max(0, len(full_message) - len(text)) if is_new_session else 0
         # Active recall (the assemble hook): on an eligible interactive turn,
@@ -127,6 +152,9 @@ class DefaultContextEngine:
             if recall:
                 full_message = recall + full_message
                 injected += len(recall)
+                # PREPENDED, so the component goes at the FRONT: the component list must
+                # stay in assembly order or a refusal names the wrong neighbour.
+                components.insert(0, Component(name="active recall", text=recall))
         # The push reflex (MEMORY-GRAPH-AND-VAULT §3): EVERY turn, not just the first.
         #
         # Deliberately NOT folded into the branch above. `is_new_session` tracks the
@@ -152,11 +180,14 @@ class DefaultContextEngine:
             if pushed:
                 full_message = pushed + full_message
                 injected += len(pushed)
+                components.insert(0, Component(name="pushed memory", text=pushed))
         return AssembledContext(
             message=full_message,
             hook_result=hook_result,
             injected_chars=injected,
             metadata={"memory_citations": memory_citations} if memory_citations else {},
+            components=components,
+            notices=notices,
         )
 
     def after_turn(self, session_key: str) -> None:
@@ -411,3 +442,69 @@ def assemble_context(
         )
         set_engine(None)  # quarantine: stop using the broken engine this process
         return _DEFAULT.assemble(builder, text, is_new_session=is_new_session, **kwargs)
+
+
+def headroom_components(assembled: AssembledContext) -> list[Component]:
+    """``assembled``'s NAMED components, or one honestly-named fallback.
+
+    The vacuity guard is the join check. If the labelled components do not reconstruct
+    ``message`` byte-for-byte then some piece of the assembly was appended without a label
+    — and measuring the labelled subset would measure a SMALLER prompt than the one about
+    to be sent, which is a headroom contract that reports "fits" for a prompt that does
+    not. So the mismatch degrades to a single component covering the whole message: less
+    specific, never wrong. A custom engine that fills nothing lands here too.
+
+    What it does NOT catch, measured by mutating the code: a piece that ``_Parts.add``
+    skips entirely. ``_Parts`` is the single source of both the joined text and the labels,
+    so a skipped piece leaves neither — the join still balances and the prompt is genuinely
+    smaller. The guard covers text that reaches ``message`` from OUTSIDE the labelled set
+    (the recall/push prepends below, and any future one), which is the direction that can
+    under-report size.
+    """
+    comps = list(assembled.components)
+    if comps and "".join(c.text for c in comps) == assembled.message:
+        return comps
+    if comps:
+        logger.warning(
+            "context headroom: %d labelled components do not reconstruct the assembled "
+            "message (%d labelled chars vs %d assembled) — measuring it as one component",
+            len(comps),
+            sum(len(c.text) for c in comps),
+            len(assembled.message),
+        )
+    return [
+        Component(
+            name="assembled prompt (components unlabelled by this engine)",
+            text=assembled.message,
+            compressible=False,
+        )
+    ]
+
+
+async def check_headroom(assembled: AssembledContext, *, model_ref: str = "") -> Headroom:
+    """The headroom contract for one assembly — computed BEFORE the model call (CE2-8).
+
+    Returns a declared state (``fits`` / ``fits_after_compression`` / ``cannot_fit``); it
+    never raises to signal the answer. On ``fits_after_compression`` the caller must send
+    ``verdict.text`` rather than ``assembled.message``, because the compression is applied
+    to the components, not in place.
+
+    Never raises at all, in fact: a headroom check that broke a turn would be strictly
+    worse than the over-long prompt it exists to prevent, so an internal failure degrades
+    to an unmeasured ``fits`` and the turn proceeds exactly as it did before this landed.
+    """
+    try:
+        return await check_for_model(headroom_components(assembled), model_ref=model_ref)
+    except Exception:  # noqa: BLE001 — a headroom check never costs a turn
+        logger.debug("context headroom check failed; proceeding unmeasured", exc_info=True)
+        from personalclaw.context_headroom import Headroom as _H
+        from personalclaw.context_headroom import Window as _W
+
+        raw = len(assembled.message) // 4
+        return _H(
+            state=HeadroomState.FITS,
+            window=_W(tokens=None, output_reserve_tokens=0, input_tokens=None, source="unknown"),
+            assembled_tokens=raw,
+            raw_tokens=raw,
+            text=assembled.message,
+        )

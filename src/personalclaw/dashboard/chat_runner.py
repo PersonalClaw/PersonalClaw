@@ -21,7 +21,8 @@ from personalclaw.config.loader import (
     resolve_agent_bindings,
 )
 from personalclaw.constants import CHAT_TURN_TIMEOUT
-from personalclaw.context_engine import assemble_context
+from personalclaw.context_engine import assemble_context, check_headroom
+from personalclaw.context_headroom import HeadroomState
 from personalclaw.dashboard.chat_followups import _maybe_followups, maybe_offer_check_work
 from personalclaw.dashboard.chat_persistence import _build_history_prefix, _save_session_to_history
 from personalclaw.dashboard.chat_title import _maybe_auto_title
@@ -2183,6 +2184,45 @@ async def _run_chat(
                 force_skill_ids=_force_skill_ids,
                 force_workflow_ids=_force_workflow_ids,
             )
+            # ── CE2-8: the headroom contract, decided BEFORE the model call ──
+            # The turn no longer discovers the context limit by failing at it: the seam
+            # measures the assembled prompt against the bound model's real window (minus
+            # the reply reserve) and gets back one of three DECLARED states.
+            _headroom = await check_headroom(_assembled, model_ref=model_label)
+            if _headroom.state is HeadroomState.CANNOT_FIT:
+                _refusal = _headroom.notice()
+                logger.warning("context headroom refusal in %s: %s", session.key, _refusal)
+                session.append("error", _refusal, "msg msg-err")
+                state.broadcast_ws(
+                    "chat_message",
+                    {"session": session.key, "role": "error", "content": _refusal},
+                )
+                # A refused turn is an ERRORED turn. The autonudge re-arm and the goal-loop
+                # done-callback both read this flag, and a refusal that read as success
+                # would let a loop advance on an answer it never received.
+                session._last_turn_errored = True
+                return
+            if _headroom.state is HeadroomState.FITS_AFTER_COMPRESSION:
+                # The compression was applied to the COMPONENTS, so the verdict's text is
+                # the thing that fits. Sending `_assembled.message` here would send the
+                # uncompressed prompt and refute the check that just passed.
+                _assembled.message = _headroom.text
+                # …and the transparency ticker below must report the size that was really
+                # injected. Left stale it would announce the pre-compression figure right
+                # beside a notice saying the context shrank.
+                _assembled.injected_chars = max(0, len(_headroom.text) - len(message))
+            # Told at the point it happens, not summarized afterwards: the assembly's own
+            # drop notices first, then whatever the contract compressed, then the
+            # pre-failure pressure signal — `notice()` returns "" when there is nothing to
+            # say, so a healthy turn stays silent.
+            for _note in (*_assembled.notices, _headroom.notice()):
+                if not _note:
+                    continue
+                logger.info("context headroom (%s): %s", session.key, _note)
+                state.broadcast_ws(
+                    "activity_event",
+                    {"session": session.key, "kind": "headroom", "text": _note},
+                )
             full_message = _apply_incognito_prefix(session, _assembled.message)
             # Capture the episodic citation manifest surfaced into this turn's prompt so
             # _flush_segment can stamp it onto the assistant message's meta (§5.4).

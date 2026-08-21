@@ -3,11 +3,13 @@
 import json
 import logging
 import re
+from dataclasses import replace
 from datetime import datetime
 from typing import TYPE_CHECKING, TypedDict, cast
 
 from personalclaw.agent import _shipped_prompt
 from personalclaw.config.loader import AppConfig, memory_dir_for_cwd
+from personalclaw.context_headroom import Component
 from personalclaw.hooks import (
     HOOK_INJECT_CONTEXT,
     HOOK_MODIFY,
@@ -692,6 +694,61 @@ async def compress_thread_history(
             await sessions.recycle_background()
 
 
+class _Parts:
+    """The assembled prompt as NAMED components rather than one opaque string.
+
+    CE2-8's refusal has to say WHICH component does not fit — "episodic memory", "skill:
+    git-review" — and a joined string cannot be asked that question. So the labels are
+    recorded where the assembly happens, which is the only place that knows what each
+    piece IS; deriving them afterwards from the joined text would be guessing.
+
+    ``text()`` is byte-identical to the ``"".join(parts)`` this replaced: an empty piece is
+    skipped, and joining ``""`` contributes nothing either way. ``__len__`` therefore also
+    matches the old ``len(parts)`` at the one place that logs it — every call site up to
+    that log is already guarded by a truthiness check on its own content.
+
+    ``compressible=False`` marks a piece that must be REFUSED rather than trimmed: the
+    system prompt, the user's own request, and the session-context block (which carries the
+    user's lessons and preferences). Quietly cutting the user's rules in half is precisely
+    the silent drop the contract forbids.
+    """
+
+    __slots__ = ("_items",)
+
+    def __init__(self) -> None:
+        self._items: list[Component] = []
+
+    def add(
+        self,
+        text: str,
+        *,
+        name: str,
+        compressible: bool = True,
+        content_type: str = "",
+    ) -> None:
+        if text:
+            self._items.append(
+                Component(
+                    name=name,
+                    text=text,
+                    compressible=compressible,
+                    content_type=content_type,
+                )
+            )
+
+    def __len__(self) -> int:
+        return len(self._items)
+
+    def __bool__(self) -> bool:
+        return bool(self._items)
+
+    def text(self) -> str:
+        return "".join(c.text for c in self._items)
+
+    def components(self) -> list[Component]:
+        return list(self._items)
+
+
 class ContextBuilder:
     """Builds context for injection into ACP prompts.
 
@@ -901,6 +958,9 @@ class ContextBuilder:
         compressed_history: str | None = None,
         mode: str = "",
         blocks_reads: bool = False,
+        # CE2-8: filled with one legible line per assembly-time DROP (today: the
+        # `_MAX_CONTEXT_CHARS` cut, which previously only reached a server log).
+        dropped_out: list[str] | None = None,
     ) -> str:
         """Build context for a new session (memory + skills + history).
 
@@ -1219,6 +1279,15 @@ class ContextBuilder:
                 len(context),
                 _MAX_CONTEXT_CHARS,
             )
+            # CE2-8: this cut used to reach a SERVER LOG only — the user's history was
+            # silently shortened and the reply that followed was indistinguishable from
+            # one built on the whole thing. Report it to the caller so the turn can say so.
+            if dropped_out is not None:
+                dropped_out.append(
+                    f"Session context was over the assembly cap, so "
+                    f"{len(context) - _MAX_CONTEXT_CHARS:,} characters of the oldest "
+                    f"history were dropped ({len(context):,} → {_MAX_CONTEXT_CHARS:,})."
+                )
             context = context[:_MAX_CONTEXT_CHARS]
             # Avoid cutting mid-line
             last_nl = context.rfind("\n")
@@ -1273,6 +1342,16 @@ class ContextBuilder:
         # reply can cite a memory by index and the frontend can deep-link the token.
         # Left None by non-chat callers → the block is byte-identical to before.
         citations_out: list[dict] | None = None,
+        # CE2-8: when a list is supplied it is filled with one NAMED `Component` per piece
+        # of the assembled prompt, in assembly order, so the headroom contract can name
+        # the specific block that does not fit instead of reporting a generic overflow.
+        # Left None by callers that only want the string → behavior is unchanged.
+        components_out: list[Component] | None = None,
+        # CE2-8: assembly-time drops the USER must hear about (today: the session-context
+        # char cap, which previously only reached a server log). Merged into the turn's
+        # headroom notice by the seam, because a drop the user never sees is
+        # indistinguishable from a wrong answer.
+        notices_out: list[str] | None = None,
     ) -> tuple[str, HookResult]:
         """Build the full message with context and hook processing.
 
@@ -1291,7 +1370,7 @@ class ContextBuilder:
         is_custom = agent and agent != "personalclaw"
         hook_result = self.hooks.on_message(text)
 
-        parts: list[str] = []
+        parts = _Parts()
 
         # Session context on first message only
         if is_new_session:
@@ -1328,11 +1407,13 @@ class ContextBuilder:
                 agent_prompt = self._apply_runtime_vars(agent_prompt, session_key or "")
                 from personalclaw.prompt_providers.runtime import render_snippet_block
 
-                parts.append(
+                parts.add(
                     render_snippet_block(
                         "agent-system-prompt-wrapper", {"agent_prompt": agent_prompt}
                     )
-                    + "\n\n"
+                    + "\n\n",
+                    name="system prompt",
+                    compressible=False,
                 )
             session_ctx = self.build_session_context(
                 session_key,
@@ -1343,15 +1424,22 @@ class ContextBuilder:
                 compressed_history=compressed_history,
                 mode=mode,
                 blocks_reads=blocks_reads,
+                dropped_out=notices_out,
             )
             if session_ctx:
                 from personalclaw.prompt_providers.runtime import render_snippet_block
 
-                parts.append(
+                parts.add(
                     render_snippet_block(
                         "session-context-wrapper", {"session_context": session_ctx}
                     )
-                    + "\n\n"
+                    + "\n\n",
+                    # NOT compressible: this block carries the user's lessons, preferences
+                    # and history under the allocator's own budget (§2.4). Blunt-trimming
+                    # it here would cut authoritative content the allocator already ranked
+                    # — the honest outcome is a named refusal and `/compact` as the fix.
+                    name="session context (memory · lessons · history)",
+                    compressible=False,
                 )
 
         # Channel history — inject on every message for group channel context
@@ -1359,7 +1447,7 @@ class ContextBuilder:
         if channel_id and self.channel_history:
             ch_ctx = self.channel_history.context_for(channel_id, thread_ts=thread_ts) or None
             if ch_ctx:
-                parts.append(ch_ctx)
+                parts.add(ch_ctx, name="channel history", content_type="log")
 
         # Thread parent text — inject whenever available, even alongside
         # channel history (they serve different purposes: ch_ctx has recent
@@ -1370,7 +1458,7 @@ class ContextBuilder:
             # snippet; its conditional selects the variant by thread_parent_text.
             from personalclaw.prompt_providers.runtime import render_snippet_block
 
-            parts.append(
+            parts.add(
                 render_snippet_block(
                     "channel-thread-context",
                     {
@@ -1379,7 +1467,8 @@ class ContextBuilder:
                         "thread_parent_text": thread_parent_text or "",
                     },
                 )
-                + "\n\n"
+                + "\n\n",
+                name="thread context",
             )
 
         # Trust ACP native history for follow-up messages — do NOT inject
@@ -1409,7 +1498,7 @@ class ContextBuilder:
                 query_text=text, cap=3000, citations_out=citations_out
             )
             if episodic_ctx:
-                parts.append(episodic_ctx + "\n")
+                parts.add(episodic_ctx + "\n", name="episodic memory")
                 logger.info("🔍 Injected episodic memory (%d chars)", len(episodic_ctx))
                 # Cite-by-index + admit-ignorance clauses (MEMORY-GRAPH-AND-VAULT §5.4).
                 # Placed adjacent to the block so the model reads the fragments and the
@@ -1419,16 +1508,20 @@ class ContextBuilder:
                 # on an injected block: the whole point is to bound the reply to what was
                 # actually recalled.
                 if citations_out:
-                    parts.append(
+                    parts.add(
                         "[Memory citation] When you use a fact from the episodic "
                         "memory above, cite it inline as `[Memory N]` using its number, "
                         "so the user can trace it to the source. Only cite a number that "
-                        "appears above; never invent one.\n"
+                        "appears above; never invent one.\n",
+                        name="memory citation instructions",
+                        compressible=False,
                     )
-                parts.append(
+                parts.add(
                     "[Answer only from memory] If the memory above does not contain "
                     "what the user asked about, say you don't have it in memory rather "
-                    "than guessing — never present an un-recalled fact as remembered.\n"
+                    "than guessing — never present an un-recalled fact as remembered.\n",
+                    name="memory grounding instructions",
+                    compressible=False,
                 )
             else:
                 logger.info("🔍 No episodic memory to inject")
@@ -1451,7 +1544,7 @@ class ContextBuilder:
             # side effects. A run in flight is worth surfacing regardless of project.
             wf_block = active_workflows_block()
             if wf_block:
-                parts.append(wf_block)
+                parts.add(wf_block, name="active workflows")
                 logger.info("Injected [ACTIVE WORKFLOWS] block (%d chars)", len(wf_block))
         except Exception:
             logger.debug("active-workflows block skipped", exc_info=True)
@@ -1466,7 +1559,10 @@ class ContextBuilder:
                 content = self.skills.load_skill(name)
                 if content:
                     stripped = self.skills.strip_frontmatter(content)
-                    parts.append(f"[Skill: {name}]\n{stripped}\n[End of skill]\n\n")
+                    parts.add(
+                        f"[Skill: {name}]\n{stripped}\n[End of skill]\n\n",
+                        name=f"skill: {name}",
+                    )
                     forced_skills.append(name)
             if forced_skills:
                 logger.info("Force-loaded loop skills: %s", ", ".join(forced_skills))
@@ -1505,7 +1601,7 @@ class ContextBuilder:
                     desc = by_key.get(name, {}).get("description") or name
                     index_lines.append(f"- {name}: {desc}")
                 index_lines.append("[End of skill index]")
-                parts.append("\n".join(index_lines) + "\n\n")
+                parts.add("\n".join(index_lines) + "\n\n", name="skill index")
                 # Index-only: nothing loaded yet → no use recorded here (skill_invoke
                 # records the use when the agent actually pulls a body).
             else:
@@ -1513,7 +1609,10 @@ class ContextBuilder:
                     content = self.skills.load_skill(name)
                     if content:
                         stripped = self.skills.strip_frontmatter(content)
-                        parts.append(f"[Skill: {name}]\n{stripped}\n[End of skill]\n\n")
+                        parts.add(
+                            f"[Skill: {name}]\n{stripped}\n[End of skill]\n\n",
+                            name=f"skill: {name}",
+                        )
                         injected.append(name)
             # Turn-time use counter (skill-use-counter): record the skills actually
             # inlined into this turn — the shared signal for semantic-surfacing
@@ -1538,28 +1637,41 @@ class ContextBuilder:
 
         # Hook-injected context — apply to all agents
         if hook_result.action == HOOK_INJECT_CONTEXT:
-            parts.append(f"[Hook context:]\n{hook_result.text}\n[End of hook context]\n\n")
+            parts.add(
+                f"[Hook context:]\n{hook_result.text}\n[End of hook context]\n\n",
+                name="hook context",
+            )
 
         # Action button context — structured payload from inline button click
         if action_context:
-            parts.append(action_context + "\n\n")
+            parts.add(action_context + "\n\n", name="action button context", compressible=False)
 
         # The actual message (possibly modified by transform hook)
         if parts:
             if user_display_name:
-                parts.append(f"[CURRENT USER] {user_display_name}\n")
-            parts.append("[CURRENT USER REQUEST — respond to this]\n")
+                parts.add(
+                    f"[CURRENT USER] {user_display_name}\n",
+                    name="current user",
+                    compressible=False,
+                )
+            parts.add(
+                "[CURRENT USER REQUEST — respond to this]\n",
+                name="request header",
+                compressible=False,
+            )
+        # NEVER compressible: compressing what the user just said is not a compression,
+        # it is answering a different question.
         if hook_result.action == HOOK_MODIFY:
-            parts.append(hook_result.text)
+            parts.add(hook_result.text, name="the user's request", compressible=False)
         else:
-            parts.append(text)
+            parts.add(text, name="the user's request", compressible=False)
 
         # Widget instructions — dashboard only (channel/CLI can't render iframes)
         _is_dashboard = session_key and (
             session_key.startswith("dashboard:") or session_key.startswith("dashboard_")
         )
         if _is_dashboard:
-            parts.append(
+            parts.add(
                 "\n\n[WIDGETS] You can render rich HTML inline using "
                 '<widget title="Title">HTML</widget> tags. Tailwind CSS is available. '
                 "The widget iframe inherits the dashboard's active theme: use "
@@ -1571,7 +1683,17 @@ class ContextBuilder:
                 "cannot express well (e.g. charts with Chart.js, styled cards, color-coded "
                 "tables, or visual previews). "
                 "Keep widgets concise. For larger HTML, save to a file and return "
-                "the path -- you can iterate on it in future turns."
+                "the path -- you can iterate on it in future turns.",
+                name="widget instructions",
+                compressible=False,
             )
 
-        return "".join(parts).translate(_MULTIBYTE_TABLE), hook_result
+        # CE2-8: hand the caller the NAMED components, not just the joined string, so the
+        # headroom contract can refuse by naming a specific block. The multibyte
+        # normalization is applied per component AND to the returned text, so what the
+        # contract measures is byte-for-byte what would be sent.
+        if components_out is not None:
+            components_out.extend(
+                replace(c, text=c.text.translate(_MULTIBYTE_TABLE)) for c in parts.components()
+            )
+        return parts.text().translate(_MULTIBYTE_TABLE), hook_result
