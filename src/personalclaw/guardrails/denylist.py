@@ -128,7 +128,8 @@ def check_action(
 
     Order (first match wins): built-in sensitive-path check on any path-carrying
     config value → operator ``autonomy_denylist`` path globs (unioned with the
-    session's SafetyProfile ``denylist_extra``) → built-in + operator denied-command
+    session's SafetyProfile ``denylist_extra``) → the host-lifecycle self-destruct
+    guard on an unattended run (WF2AUT-14) → built-in + operator denied-command
     patterns against any command string. Returns an ``allowed`` decision when
     nothing matches.
 
@@ -205,8 +206,29 @@ def check_action(
                     matched=f"profile:{pattern}",
                 )
 
-    # 3. Command patterns (built-in self-tamper/destructive + operator regexes).
     commands = _config_commands(action_config)
+
+    # 3. 🔴 HOST-LIFECYCLE EFFECT on an unattended run (WF2AUT-14): an action that would
+    # restart/stop/reinstall/update the gateway EXECUTING it. Placed BEFORE the pattern step
+    # deliberately, so the legible, effect-named refusal wins over the baseline's
+    # `.*personal.?claw restart.*` for the one spelling both catch — and so the shapes that
+    # regex misses (`personalclaw stop`, `personalclaw service uninstall`, `PC=personalclaw;
+    # $PC restart`) are caught at all. Classification is on the EFFECT, never on literal text:
+    # see `guardrails/self_destruct.py` for the measurement and for why this is DISTINCT from
+    # WF2AUT-9's `skip_if_active` liveness guard (`triggers/service.py:547`).
+    for cmd in commands:
+        from personalclaw.guardrails.self_destruct import unattended_host_effect
+
+        effect = unattended_host_effect(cmd, session_key)
+        if effect is not None:
+            return DenyDecision(
+                blocked=True,
+                verdict="block",
+                reason=effect.reason(),
+                matched=f"self_destruct:{effect.kind}",
+            )
+
+    # 4. Command patterns (built-in self-tamper/destructive + operator regexes).
     if commands:
         # Same packaged baseline the native bash screen enforces, re-asserted on read —
         # action-provider dispatch and `execute_bash` can never drift apart.
