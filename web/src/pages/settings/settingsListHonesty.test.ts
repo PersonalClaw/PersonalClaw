@@ -5,7 +5,7 @@ import { join } from 'node:path'
 // ── Five settings lists that answered a 500 with "you have none" ───────────────────────────
 //
 // The `LoadError` family, worked as a COHERENCE family this time: not one surface, but every async
-// list under `#/settings/*`. Census — a `useCachedData` reader whose data is rendered as a list with
+// list under `#/settings/*`. Census — a `useQuery` reader whose data is rendered as a list with
 // an empty branch — found ten, and **five conflated a failed load with an empty collection**, all by
 // the same mechanism: `.catch(() => [])` inside the fetcher, so the rejection never reached the hook
 // and `error` could not be read even if someone tried.
@@ -116,7 +116,7 @@ describe('a settings list distinguishes a failed load from an empty one', () => 
   })
 
   it('the settings HUB does not poison the keys these panels now guard', () => {
-    // 🔴 THE ONE THAT WOULD HAVE SHIPPED INERT. `useCachedData` caches by KEY, and the hub's bento
+    // 🔴 THE ONE THAT WOULD HAVE SHIPPED INERT. `useQuery` caches by KEY, and the hub's bento
     // tiles read the same keys as the panels. While `settingsWidgets` swallowed, opening `#/settings`
     // primed `cache:settings:projection-rules` with `[]`, so the panel's brand-new error branch could
     // never fire on the path a user actually takes (hub → tile → panel). Driving the panel by URL with
@@ -143,7 +143,7 @@ describe('a settings list distinguishes a failed load from an empty one', () => 
     const code = (n: string) => readFileSync(join(HERE, n), 'utf8')
       .replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
     const swallowers = panels.filter((n) =>
-      /useCachedData[\s\S]{0,240}?\.catch\(\(\) =>\s*(\[\]|null|undefined|\{\})/.test(code(n)),
+      /useQuery[\s\S]{0,240}?\.catch\(\(\) =>\s*(\[\]|null|undefined|\{\})/.test(code(n)),
     )
     expect(swallowers, 'the five list bodies must no longer be among them').not.toContain('ArchivePanel.tsx')
     expect(swallowers).not.toContain('AuditPanel.tsx')

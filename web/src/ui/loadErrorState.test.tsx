@@ -6,7 +6,7 @@ import { LoadError, EmptyState } from './ListScaffold'
 
 // ── A failed load is not an empty collection ──────────────────────────────────────────
 //
-// `useCachedData` returns `{ data, loading, error, refresh }`. Measured: **3 of 106 call
+// `useQuery` returns `{ data, loading, error, refresh }`. Measured: **3 of 106 call
 // sites read `error`.** The other 103 branch on `data === undefined` only, so a failed fetch
 // falls through to the same branch as a genuinely empty result — the user is told "you have
 // none" when the truth is "we could not load it", with no retry and nothing announced.
@@ -100,7 +100,7 @@ describe('LoadError announces and offers recovery', () => {
 const SRC = join(process.cwd(), 'src')
 // 🪤 A RAIL MEASURES THE PROGRAM, NOT THE EXPLANATION OF IT — and not the code NEAR the program either.
 // The two scanners below used to read raw source inside a fixed character window after
-// `useCachedData(`, which made them wrong in two compounding ways:
+// `useQuery(`, which made them wrong in two compounding ways:
 //
 //   1. The first adopter to DOCUMENT the swallow it removed tripped them: `ArchivePanel`'s comment
 //      quotes the `.catch(() => [] as SessionArchive[])` it deleted, three lines under the call.
@@ -118,11 +118,11 @@ const codeOf = (abs: string) =>
 
 const SWALLOW = /\.catch\(\(\)\s*=>\s*(\[\]|null|undefined|\{\})/
 
-/** Every `useCachedData('key', …)` call in a file, as `{ key, args, line }` — `args` is the call's own
+/** Every `useQuery('key', …)` call in a file, as `{ key, args, line }` — `args` is the call's own
  *  argument list, paren-matched from the opening paren to its partner. */
 function cachedCalls(src: string): { key: string; args: string; line: number }[] {
   const out: { key: string; args: string; line: number }[] = []
-  for (const m of src.matchAll(/useCachedData(?:<[^>]*>)?\(/g)) {
+  for (const m of src.matchAll(/useQuery(?:<[^>]*>)?\(/g)) {
     const start = (m.index ?? 0) + m[0].length
     let i = start
     let depth = 1
@@ -242,14 +242,14 @@ describe('the migrated surfaces read the error', () => {
     // `role="alert"`**, so the one adopter class this rail exists for was silent on the page a user lands
     // on from every project row.
     //
-    // Its loader is hand-rolled (`useState` + `.catch`), not `useCachedData`, and it CAPTURES: the catch
+    // Its loader is hand-rolled (`useState` + `.catch`), not `useQuery`, and it CAPTURES: the catch
     // routes 404/400 to a permanent `'missing'` state and everything else into `loadErr`, which is now the
     // rejection itself rather than a pre-flattened string, so the server's own message reaches the
     // primitive. Two things worth knowing before trusting this row:
     //   ⚠️ The capture matcher below is FILE-SCOPED, and this file also contains an unrelated
     //      `.catch((e) => { if (alive) setErr(…) })` (the terminal-session error, ~:2990) that satisfies it
     //      on its own. The real capture is `setLoadErr` in `load()`; the rail cannot tell the two apart.
-    //   ⚠️ The `cachedCalls` key scan only matches SINGLE-QUOTED keys, so this file's one `useCachedData`
+    //   ⚠️ The `cachedCalls` key scan only matches SINGLE-QUOTED keys, so this file's one `useQuery`
     //      — `` `code:project:${id}` ``, a template literal — is invisible to both swallow checks. That
     //      call DOES `.catch(() => null)`, deliberately: it is an instant-paint seed (`persist:false`) that
     //      only ever *sets* `project` when it has data, so a failed seed cannot mask `loadErr`. Left as-is
@@ -263,7 +263,7 @@ describe('the migrated surfaces read the error', () => {
       expect(src, 'must render the shared primitive').toMatch(/<LoadError\b/)
       // The property that makes the branch possible is that the rejection is CAPTURED rather than
       // discarded. Two shapes qualify, and both ship here:
-      //   • `useCachedData` consumers destructure it — `error: somethingErr` (the alias is free-form
+      //   • `useQuery` consumers destructure it — `error: somethingErr` (the alias is free-form
       //     because a surface can guard more than one fetch; `#/learning` has two and cannot name both
       //     `loadErr`);
       //   • a hand-rolled loader catches into state — `.catch((e) => { setSomethingErr(e); … })`, which
@@ -307,15 +307,25 @@ describe('the migrated surfaces read the error', () => {
       expect(loadAt, 'the surface must have a loading state at all').toBeLessThan(Number.POSITIVE_INFINITY)
       const errorBranchFirst = errAt < loadAt
       const loadingClearedOnFailure = /finally\s*\{[^}]*setLoading\(false\)/.test(src)
+      // THIRD proof, added by DSC-14. A surface whose `loading` comes from the one data layer does
+      // not own a flag to clear: `useQuery` reports `loading` as "nothing to show AND a request is
+      // in flight", and a rejection ends the flight — so the flag falls false on failure by
+      // construction, and the error branch below it is reachable without a hand-written `finally`.
+      // That is a STRONGER guarantee than the pattern it replaces, and it is asserted directly
+      // rather than inferred from source shape: `lib/data/dataLayerContract.test.tsx` → "the layer
+      // reports a rejection instead of resolving empty" pins `loading === false` on a rejected read.
+      // `#/workflows` is the first surface here to hand-roll nothing at all.
+      const loadingFromDataLayer = /loading(?::\s*\w+)?\s*[,}][^\n]*\n?[\s\S]{0,80}?useQuery\(/.test(src)
+        || /useQuery\([\s\S]{0,400}?\bloading(?::\s*\w+)?\s*[,}]/.test(src)
       expect(
-        errorBranchFirst || loadingClearedOnFailure,
-        'the error branch must be reachable: either it precedes the loading branch, or the loading flag is cleared in a finally so a failure gets past it',
+        errorBranchFirst || loadingClearedOnFailure || loadingFromDataLayer,
+        'the error branch must be reachable: it precedes the loading branch, or the loading flag is cleared in a finally, or `loading` comes from the one data layer (which clears it on a rejection by construction) so a failure gets past it',
       ).toBe(true)
     })
   }
 
   it('no OTHER consumer of an adopter\'s cache key swallows either', () => {
-    // 🔴 THE ONE THAT ACTUALLY BIT. `useCachedData` caches by KEY, so a swallow at ANY call site
+    // 🔴 THE ONE THAT ACTUALLY BIT. `useQuery` caches by KEY, so a swallow at ANY call site
     // resolves with a substitute value that the hook then persists — and every other consumer of that
     // key reads it as a success, making their own `data === undefined && error` branch unreachable.
     // Measured on `#/apps`: the `'apps'` key has FOUR consumers (the shell's nav badge, two settings

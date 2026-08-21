@@ -9,7 +9,7 @@ import { Toggle } from '../../ui/Toggle'
 import { ChipInput, Field, FieldError, TextInput } from '../../ui/forms'
 import { EmptyState, ListRow, ListSkeleton, LoadError } from '../../ui/ListScaffold'
 import { api, type ResearchReport, type ResearchReportInput } from '../../lib/api'
-import { useCachedData, invalidateCache } from '../../lib/useCachedData'
+import { useQuery, invalidateKeys } from '../../lib/data'
 import { notify } from '../../app/appSdk'
 import { relPast } from '../schedule/scheduleMeta'
 import { fvs } from '../../design/fontWeight'
@@ -190,9 +190,9 @@ function CreateForm({ onCreated, onCancel }: { onCreated: () => void; onCancel: 
  *  items, which is why they live here rather than in Settings: the thing they produce is
  *  knowledge, and the thing they consume is this library's tags. */
 export function ReportsPage({ onBack }: { onBack: () => void }) {
-  const { data, loading, error, refresh } = useCachedData(CACHE_KEY, () => api.researchReports())
+  const { data, loading, error, refresh } = useQuery(CACHE_KEY, () => api.researchReports())
   const [creating, setCreating] = useState(false)
-  const reload = () => { invalidateCache(CACHE_KEY); refresh() }
+  const reload = () => { invalidateKeys(CACHE_KEY); refresh() }
   const reports = data?.reports
 
   return (

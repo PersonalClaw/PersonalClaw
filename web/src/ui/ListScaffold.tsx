@@ -34,7 +34,7 @@ export function ListScaffold({ title, right, children, bodyClassName }: {
  *  A failed fetch and a genuinely empty collection are different facts, and every surface
  *  that renders `EmptyState` on `data === undefined` conflates them: the user is told "you
  *  have none" when the truth is "we could not load it", with no way to retry and nothing
- *  announced. `useCachedData` returns an `error` for exactly this — measured: **3 of 106
+ *  announced. `useQuery` returns an `error` for exactly this — measured: **3 of 106
  *  call sites read it.**
  *
  *  `role="alert"` because a load failure is unrequested bad news that changes what the
@@ -53,7 +53,7 @@ export function LoadError({ what, error, onRetry }: {
    *  bare noun — no leading article ("the store catalog" → "Couldn't load your the store catalog").
    *  Singular is fine now that the reassurance no longer reads "Your <what> ARE safe". */
   what: string
-  /** The rejection from `useCachedData`; its `message` is shown when present. */
+  /** The rejection from `useQuery`; its `message` is shown when present. */
   error?: unknown
   /** Re-runs the fetch. Omit only if the surface genuinely cannot retry. */
   onRetry?: () => void
@@ -272,7 +272,7 @@ export function ListSkeleton({ rows = 6, what }: { rows?: number
 /** First-load placeholder for a settings FORM panel: a title block + N sections,
  *  each a heading and a few label/control rows. Shaped like the Section/Row chrome
  *  so the swap to the real form is calm. Use as the loading gate on config panels
- *  fetched via useCachedData (Chat, Voice, Inbox, Notifications, Agent defaults…). */
+ *  fetched via useQuery (Chat, Voice, Inbox, Notifications, Agent defaults…). */
 export function FormSkeleton({ sections = 2, rows = 3, title = true, what }: { sections?: number; rows?: number; title?: boolean
   /** What is loading, for the announcement — "notification settings". Omit for a bare "Loading…". */
   what?: string }) {

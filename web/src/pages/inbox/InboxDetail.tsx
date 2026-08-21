@@ -10,7 +10,7 @@ import { TextArea, Segmented, FieldError } from '../../ui/forms'
 import { api, type InboxItem, type InboxClassification, type SkillProposalDetail } from '../../lib/api'
 import { classMeta, confMeta, statusMeta, kindMeta, channelLabel, sourceLabel, relPast, CLASSIFICATIONS, NON_CHANNEL_ITEM_KINDS, refTarget, refLabel } from './inboxMeta'
 import { WorkflowGateActions } from './WorkflowGateActions'
-import { invalidateCache } from '../../lib/useCachedData'
+import { invalidateKeys } from '../../lib/data'
 
 /** Inbox item triage panel: the full message + thread context, the triage
  *  verdict (classification + confidence), the AI-drafted reply (generate / edit),
@@ -270,7 +270,7 @@ function ProposalActions({ pid, onChanged, navigate }: { pid: string; onChanged:
       // The decision lands here but the COLLECTION is read on two other surfaces — the Skills page's
       // "Proposals (N)" badge and its proposals list. `onChanged()` only refreshes this inbox item, so
       // both of those kept describing a proposal that no longer needs deciding.
-      invalidateCache('skill-proposals', true)
+      invalidateKeys('skill-proposals', true)
       onChanged()
     } catch (e) {
       setErr(e instanceof Error ? e.message : `${kind} failed`)

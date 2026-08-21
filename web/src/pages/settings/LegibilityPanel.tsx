@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { api } from '../../lib/api'
 import { notify } from '../../app/appSdk'
-import { useCachedData } from '../../lib/useCachedData'
+import { useQuery } from '../../lib/data'
 import { PanelHeader, Section, ToggleRow } from './settingsUI'
 import { FormSkeleton, LoadError } from '../../ui/ListScaffold'
 import { AlwaysOnConventions } from './AlwaysOnConventions'
@@ -21,7 +21,7 @@ export function LegibilityPanel() {
 
   // Stale-while-revalidate + persist: paint instantly on revisit, revalidate in
   // the background. Editable form state is seeded/rehydrated from this snapshot.
-  const { data, error: loadErr, refresh } = useCachedData('settings:legibility', () =>
+  const { data, error: loadErr, refresh } = useQuery('settings:legibility', () =>
     api.personalclawConfig().then((c) => (c.legibility ?? {}) as LegibilityCfg),
     { persist: true },
   )

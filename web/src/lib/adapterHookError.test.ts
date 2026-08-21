@@ -2,9 +2,9 @@ import { describe, it, expect } from 'vitest'
 import { readFileSync, readdirSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 
-// ── An adapter over useCachedData must not eat the error it was handed ───────────────────────────
+// ── An adapter over useQuery must not eat the error it was handed ───────────────────────────
 //
-// `useCachedData` returns `{ data, loading, error, refresh }`. A hook that wraps it and re-shapes the
+// `useQuery` returns `{ data, loading, error, refresh }`. A hook that wraps it and re-shapes the
 // result is a fine pattern — but if the new shape omits `error`, every consumer downstream is
 // *structurally* unable to tell a failed read from an empty one. The swallow moves out of the
 // component, where a reviewer would see it, and into an adapter nobody re-reads.
@@ -29,12 +29,12 @@ function walk(dir: string): string[] {
   })
 }
 
-/** Every exported `use*` hook whose body calls `useCachedData`, with that body. */
+/** Every exported `use*` hook whose body calls `useQuery`, with that body. */
 function adapterHooks(): { rel: string; name: string; body: string }[] {
   const out: { rel: string; name: string; body: string }[] = []
   for (const abs of walk(SRC)) {
     const src = readFileSync(abs, 'utf8')
-    if (!src.includes('useCachedData')) continue
+    if (!src.includes('useQuery')) continue
     for (const m of src.matchAll(/export function (use[A-Z]\w*)\s*\([^)]*\)[^{]*\{/g)) {
       let i = m.index! + m[0].length
       let depth = 1
@@ -44,7 +44,7 @@ function adapterHooks(): { rel: string; name: string; body: string }[] {
         i++
       }
       const body = src.slice(m.index! + m[0].length, i - 1)
-      if (!/useCachedData(?:<[\s\S]*?>)?\(/.test(body)) continue
+      if (!/useQuery(?:<[\s\S]*?>)?\(/.test(body)) continue
       out.push({ rel: abs.slice(SRC.length + 1), name: m[1], body })
     }
   }
@@ -60,12 +60,12 @@ const EXEMPT: Record<string, string> = {
   'app/usePlatform.ts:usePlatform': 'fail-closed by design — "" hides OS-gated UI',
 }
 
-describe('an adapter hook re-exposes useCachedData\'s error', () => {
+describe('an adapter hook re-exposes useQuery\'s error', () => {
   const hooks = adapterHooks()
 
   it('finds the population — the scan is not vacuous', () => {
     // 🪤 A rail that matches nothing reads exactly like a clean family. Four adapters today.
-    expect(hooks.length, 'exported use* hooks that wrap useCachedData').toBeGreaterThanOrEqual(4)
+    expect(hooks.length, 'exported use* hooks that wrap useQuery').toBeGreaterThanOrEqual(4)
     expect(hooks.map((h) => h.name), 'the canonical one must be in the census').toContain('useAutonomyLadder')
   })
 
@@ -73,7 +73,7 @@ describe('an adapter hook re-exposes useCachedData\'s error', () => {
   // sailed through. The test has to be that the error is READ from the hook and PASSED ON with a real
   // value; the two hard-coded blanks are the shapes that look compliant and are not.
   const carriesError = (body: string) =>
-    /const \{[^}]*\berror\b[^}]*\} = useCachedData/.test(body)
+    /const \{[^}]*\berror\b[^}]*\} = useQuery/.test(body)
     && /return \{[\s\S]*\berror\b/.test(body)
     && !/\berror:\s*(undefined|null)\b/.test(body)
 
@@ -98,7 +98,7 @@ describe('an adapter hook re-exposes useCachedData\'s error', () => {
 
   it('the canonical adapter is the shape the others copy', () => {
     const ladder = hooks.find((h) => h.name === 'useAutonomyLadder')!
-    expect(ladder.body, 'reads the error from the hook').toMatch(/const \{[^}]*\berror\b[^}]*\} = useCachedData/)
+    expect(ladder.body, 'reads the error from the hook').toMatch(/const \{[^}]*\berror\b[^}]*\} = useQuery/)
     expect(ladder.body, 'and returns it').toMatch(/return \{[\s\S]*\berror\b/)
   })
 })

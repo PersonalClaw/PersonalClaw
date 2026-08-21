@@ -9,7 +9,7 @@ import { FilterMenu, type FilterSectionDef } from '../../ui/FilterMenu'
 import { EmptyState, ListRow, ListSkeleton, LoadError } from '../../ui/ListScaffold'
 import { SidePanel } from '../../ui/SidePanel'
 import { ContextMenu, type ContextMenuItem, Disintegrate } from '../../ui/motion'
-import { useCachedData, invalidateCache } from '../../lib/useCachedData'
+import { useQuery, invalidateKeys } from '../../lib/data'
 import { api, type PromptItem, type PromptSnippet } from '../../lib/api'
 import { promptVars, sourceTone, sourceLabel } from './promptMeta'
 import { PromptDetail } from './PromptDetail'
@@ -80,8 +80,8 @@ export function PromptsListPage({ onCreate, onOpen, navigate, query, setQuery }:
   // said "No user prompts" with a New-prompt CTA to someone whose library is intact. Measured against
   // a 500 with a cold sessionStorage: no error text anywhere on the page, no live region. Letting the
   // rejection through is what makes `error` — and therefore the branch below — exist at all.
-  const { data: items, error: itemsErr, refresh } = useCachedData<PromptItem[]>('prompts', () => api.prompts(), { persist: true })
-  const { data: snippets, error: snipsErr, refresh: refreshSnips } = useCachedData<PromptSnippet[]>('prompt-snippets', () => api.snippets(), { persist: true })
+  const { data: items, error: itemsErr, refresh } = useQuery<PromptItem[]>('prompts', () => api.prompts(), { persist: true })
+  const { data: snippets, error: snipsErr, refresh: refreshSnips } = useQuery<PromptSnippet[]>('prompt-snippets', () => api.snippets(), { persist: true })
   const [q, setQ] = useQueryParam(query, setQuery, 'q', '', { replace: true })
   const [tabRaw, setTabRaw] = useQueryParam(query, setQuery, 'tab', 'user', { replace: true })
   const tab = (TABS.some((t) => t.key === tabRaw) ? tabRaw : 'user') as Tab
@@ -93,7 +93,7 @@ export function PromptsListPage({ onCreate, onOpen, navigate, query, setQuery }:
   const sort = (SORTS.some((s) => s.key === sortRaw) ? sortRaw : 'name') as SortKey
   const [source, setSource] = useQueryParam(query, setQuery, 'src', 'all', { replace: true })
 
-  const load = () => { invalidateCache('prompts'); invalidateCache('prompt-snippets'); refresh(); refreshSnips() }
+  const load = () => { invalidateKeys('prompts'); invalidateKeys('prompt-snippets'); refresh(); refreshSnips() }
   const isSnips = tab === 'snippets'
 
   // A just-deleted record's row DISINTEGRATES in place before the list reloads —

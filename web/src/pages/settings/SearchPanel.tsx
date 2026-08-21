@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { ChevronRight, Check, Globe, Newspaper, LineChart, FileText, Zap, type LucideIcon } from 'lucide-react'
 import { api, type SearchProviderInfo } from '../../lib/api'
-import { useCachedData, invalidateCache } from '../../lib/useCachedData'
+import { useQuery, invalidateKeys } from '../../lib/data'
 import { PanelHeader, Section } from './settingsUI'
 import { ListSkeleton } from '../../ui/ListScaffold'
 import { fvs } from '../../design/fontWeight'
@@ -22,7 +22,7 @@ const USE_CASE_ORDER = ['search-general', 'search-news', 'search-financial', 'fe
  *  (current bindings); writes via PUT /api/search/active/{use_case}. Single-select —
  *  configure providers (endpoint / API key) over in Providers. */
 export function SearchPanel() {
-  const { data, refresh } = useCachedData('settings:search', async () => {
+  const { data, refresh } = useQuery('settings:search', async () => {
     const [providers, active] = await Promise.all([
       api.searchProviders().catch(() => [] as SearchProviderInfo[]),
       api.searchActive().catch(() => ({} as Record<string, string[]>)),
@@ -32,7 +32,7 @@ export function SearchPanel() {
   const providers = data?.providers
   const active = data?.active ?? {}
 
-  const reloadActive = () => { invalidateCache('settings:search'); refresh() }
+  const reloadActive = () => { invalidateKeys('settings:search'); refresh() }
 
   if (!providers) return <ListSkeleton rows={4} />
 

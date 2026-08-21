@@ -7,7 +7,7 @@ import { Toggle } from '../../ui/Toggle'
 import { Markdown } from '../../ui/Markdown'
 import { Skeleton } from '../../ui/ListScaffold'
 import { confirmDelete } from '../../ui/dialog'
-import { useCachedData, invalidateCache } from '../../lib/useCachedData'
+import { useQuery, invalidateKeys } from '../../lib/data'
 import { api, type PromptItem, type PromptVariable } from '../../lib/api'
 import { Field, FieldError } from '../../ui/forms'
 import { isReadOnly, sourceTone, sourceLabel, promptVars, seedRenderValues } from './promptMeta'
@@ -52,7 +52,7 @@ export function PromptDetail({ prompt, onSaved, onDeleted, editing: editingProp,
 
   // The list payload may omit `content`; hydrate the full template on open. When
   // the prop already carries content we skip the fetch (the prop IS the full).
-  const { data: fetched, refresh: refetch } = useCachedData<PromptItem | undefined>(`prompt:${prompt.name}`, () => (prompt.content == null ? api.prompt(prompt.name) : Promise.resolve(undefined)), { persist: true })
+  const { data: fetched, refresh: refetch } = useQuery<PromptItem | undefined>(`prompt:${prompt.name}`, () => (prompt.content == null ? api.prompt(prompt.name) : Promise.resolve(undefined)), { persist: true })
   const full = prompt.content != null ? prompt : fetched
 
   useEffect(() => { if (full) setDraft(toDraft(full)) }, [full])
@@ -60,10 +60,10 @@ export function PromptDetail({ prompt, onSaved, onDeleted, editing: editingProp,
   async function save() {
     if (!draft.name.trim()) { setErr('Name is required'); return }
     setSaving(true); setErr('')
-    // invalidateCache alone is not enough: this component stays mounted after Save
+    // invalidateKeys alone is not enough: this component stays mounted after Save
     // (same list-row key), so the hydration hook never re-runs and the view keeps
     // showing the PRE-save record. Explicitly refetch after invalidating.
-    try { const r = await api.savePrompt(prompt.name, draftToPayload(draft)); invalidateCache(`prompt:${prompt.name}`); refetch(); onSaved(r.prompt?.name ?? prompt.name); setEditing(false) }
+    try { const r = await api.savePrompt(prompt.name, draftToPayload(draft)); invalidateKeys(`prompt:${prompt.name}`); refetch(); onSaved(r.prompt?.name ?? prompt.name); setEditing(false) }
     catch (e) { setErr(e instanceof Error ? e.message : 'Save failed') } finally { setSaving(false) }
   }
   async function del() {

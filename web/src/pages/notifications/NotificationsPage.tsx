@@ -19,7 +19,7 @@ import { spring } from '../../design/motion'
 import { confirm } from '../../ui/dialog'
 import { useChatSocket, type WsMessage } from '../../lib/useChatSocket'
 import { rowSubject } from '../../lib/rowSubject'
-import { useCachedData, invalidateCache } from '../../lib/useCachedData'
+import { useQuery, invalidateKeys } from '../../lib/data'
 import { api, type NotificationItem } from '../../lib/api'
 import { useAutonomyLadder } from '../../lib/rungs'
 import { kindMeta, kindsPresent, bucketOf, BUCKET_ORDER, relTime, clockTime, firstLine, toneChipBg } from './notificationMeta'
@@ -47,9 +47,9 @@ export function NotificationsPage({ query, setQuery, navigate }: Pick<RouteProps
   // 500 the surface rendered "You're all caught up", a reassuring sentence produced by a failed request.
   // The read POLLS every 10s, so the failure belongs in the render (once) rather than in a toast (every
   // tick) — hence `LoadError` below rather than `notify`.
-  const { data: items, error: loadErr, refresh } = useCachedData('notifications', () => api.notifications().then((d) => d.notifications), { persist: false })
+  const { data: items, error: loadErr, refresh } = useQuery('notifications', () => api.notifications().then((d) => d.notifications), { persist: false })
   // A mutation reloads against the changed feed; the WS + interval just revalidate.
-  const load = () => { invalidateCache('notifications'); refresh() }
+  const load = () => { invalidateKeys('notifications'); refresh() }
   useEffect(() => {
     const t = window.setInterval(() => { setNow(Date.now()); refresh() }, 10000)
     return () => clearInterval(t)
@@ -74,7 +74,7 @@ export function NotificationsPage({ query, setQuery, navigate }: Pick<RouteProps
     } catch (e) {
       notify(`Couldn't undo: ${String((e as Error)?.message || e)}`, 'error')
     }
-    invalidateCache('autonomy:ladder'); refreshLadder()
+    invalidateKeys('autonomy:ladder'); refreshLadder()
   }
 
   // newest first (the log is appended chronologically)

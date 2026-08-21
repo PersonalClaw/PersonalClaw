@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { AnimatePresence } from 'framer-motion'
 import { Check, Ban, LayoutDashboard, RefreshCw, ShieldCheck, Clock3, Inbox, Bell, CheckCheck } from 'lucide-react'
 import { api, type PendingApproval } from '../../lib/api'
-import { useCachedData } from '../../lib/useCachedData'
+import { useQuery } from '../../lib/data'
 import { useChatSocket } from '../../lib/useChatSocket'
 import { ApprovalPrompt } from '../../ui/ApprovalPrompt'
 import { EmptyState, ListSkeleton, LoadError } from '../../ui/ListScaffold'
@@ -31,7 +31,7 @@ import type { RouteProps } from '../../app/useQueryState'
 export function CompanionPage({ navigate }: RouteProps) {
   // Live data, never persisted to sessionStorage: a stale approval is a dangerous thing to
   // paint. The queue re-reads on every WS approval event and on manual refresh.
-  const { data, loading, error, refresh } = useCachedData<PendingApproval[]>(
+  const { data, loading, error, refresh } = useQuery<PendingApproval[]>(
     'companion:approvals', () => api.approvals())
   // Optimistically resolved ids — the row leaves immediately, and comes BACK if the POST
   // failed (with the failure announced), because silently dropping a permission prompt would

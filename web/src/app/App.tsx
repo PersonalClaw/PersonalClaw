@@ -27,7 +27,7 @@ import { PersonalityShellElement } from './personality'
 import { UpdateProgressOverlay } from '../ui/UpdateProgressOverlay'
 import { runInTerminal, runInTerminalWhenReady, subscribeTerminal, hasActiveTerminal } from '../pages/terminal/terminalBridge'
 import { LoadingStatus } from '../ui/ListScaffold'
-import { useCachedData } from '../lib/useCachedData'
+import { useQuery } from '../lib/data'
 import { resolveAppIcon } from '../pages/apps/appIcon'
 import { useWidgetActionLauncher } from '../ui/widget/useWidgetActionBridge'
 import { getNavApps, onNavAppsChange } from '../pages/apps/navApps'
@@ -227,9 +227,9 @@ function AppInner() {
   // opts each one in from its detail panel ("Show in navigation"), persisted via
   // navApps. Only enabled, UI-bearing, user-pinned apps get a nav target
   // (id `app/<name>`) beneath the Store tile. Re-read live on pin changes.
-  const { data: installedApps } = useCachedData<AppSummary[]>(
+  const { data: installedApps } = useQuery<AppSummary[]>(
     // 🔴 THE POISONER, and the reason this fix spans four files. This hook lives in the SHELL, so it
-    // runs on every route before any page mounts. `useCachedData` caches by KEY, and `.catch(() => [])`
+    // runs on every route before any page mounts. `useQuery` caches by KEY, and `.catch(() => [])`
     // made a failed fetch RESOLVE with an empty list, which the hook then persisted — so
     // `sessionStorage['cache:apps']` read `"[]"` and every other consumer of `'apps'` saw a successful
     // empty result. Measured: with all `/api/apps*` calls at 500, `#/apps` still rendered "No apps

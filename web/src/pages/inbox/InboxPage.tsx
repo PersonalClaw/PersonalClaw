@@ -13,7 +13,7 @@ import { HeaderActions, HeaderControl } from '../../ui/HeaderActions'
 import { confirm } from '../../ui/dialog'
 import { useQueryParam, useQueryFlag, type RouteProps } from '../../app/useQueryState'
 import { useChatSocket, type WsMessage } from '../../lib/useChatSocket'
-import { useCachedData, invalidateCache } from '../../lib/useCachedData'
+import { useQuery, invalidateKeys } from '../../lib/data'
 import { api, type InboxItem, type InboxStatus } from '../../lib/api'
 import { rowSubject } from '../../lib/rowSubject'
 import { Segmented } from '../../ui/Segmented'
@@ -46,8 +46,8 @@ export function InboxPage({ query, setQuery, navigate }: Pick<RouteProps, 'query
   // empty queue. The most reassuring sentence in the app, produced by a failed request.
   // `status` keeps its catch on purpose — it feeds the header's source-health readout, which has
   // its own "unknown" rendering and must not take the whole list down with it.
-  const { data: items, error: itemsErr, refresh: refreshItems } = useCachedData<InboxItem[]>('inbox:items', () => api.inbox(), { persist: false })
-  const { data: status, refresh: refreshStatus } = useCachedData<InboxStatus | null>('inbox:status', () => api.inboxStatus().catch(() => null), { persist: false })
+  const { data: items, error: itemsErr, stale: itemsStale, refresh: refreshItems } = useQuery<InboxItem[]>('inbox:items', () => api.inbox(), { persist: false })
+  const { data: status, refresh: refreshStatus } = useQuery<InboxStatus | null>('inbox:status', () => api.inboxStatus().catch(() => null), { persist: false })
   const [filter, setFilter] = useQueryParam(query, setQuery, 'filter', 'open', { replace: true })
   const [kind, setKind] = useQueryParam(query, setQuery, 'kind', '', { replace: true })
   const [q, setQ] = useQueryParam(query, setQuery, 'q', '', { replace: true })
@@ -88,7 +88,7 @@ export function InboxPage({ query, setQuery, navigate }: Pick<RouteProps, 'query
     if (!openId) openedRef.current = null
   }, [openId, open])
 
-  const reload = () => { invalidateCache('inbox:items'); invalidateCache('inbox:status'); refreshItems(); refreshStatus() }
+  const reload = () => { invalidateKeys('inbox:items'); invalidateKeys('inbox:status'); refreshItems(); refreshStatus() }
   // Dismiss all sweeps EVERY pending item of every kind (proposals, messages, digests
   // alike) with no undo, so it gets the same danger confirm as the analogous
   // Notifications → "Clear all". The count comes from the same status the header shows,
@@ -228,7 +228,8 @@ export function InboxPage({ query, setQuery, navigate }: Pick<RouteProps, 'query
           // `active` compares against the DEFAULT filter, not 'all': inbox opens on 'open', so
           // `filter !== 'all'` was true on mount and the list announced "39 items" before the user
           // did anything. The announcement is for a query the USER made.
-          results={{ count: (filtered ?? []).length, noun: 'items', active: narrowed }}>
+          results={{ count: (filtered ?? []).length, noun: 'items', active: narrowed }}
+          stale={itemsStale}>
           <FilterMenu sections={filterSections} label="Show" />
         </ListControls>
       }

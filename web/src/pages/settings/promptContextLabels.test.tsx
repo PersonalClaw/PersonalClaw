@@ -66,7 +66,7 @@ const PAYLOAD: PromptBindings = {
 
 describe('every runtime context is named, described and grouped', () => {
   beforeEach(() => {
-    localStorage.clear()   // useCachedData(persist: true) would carry a prior payload
+    localStorage.clear()   // useQuery(persist: true) would carry a prior payload
     vi.clearAllMocks()
     promptBindings.mockResolvedValue(PAYLOAD)
   })

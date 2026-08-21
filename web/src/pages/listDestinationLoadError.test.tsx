@@ -22,7 +22,7 @@ import { join } from 'node:path'
 //
 // The four destinations that already converged (tasks, prompts, loops, notifications) each carry a
 // comment saying why the catch went; these three are the remainder that fetch a primary collection
-// through `useCachedData`. After this cycle every one of them agrees.
+// through `useQuery`. After this cycle every one of them agrees.
 //
 // 🪤 `persist: true` (skills) means a warm cache seeds `data` and the fetch can fail AFTER a paint.
 // That must keep showing the cached rows, so the gate is `data === undefined && error` — never
@@ -154,11 +154,11 @@ describe('#/knowledge distinguishes a failed read from an empty library', () => 
 describe('the sources no longer swallow their own error', () => {
   const read = (p: string) => readFileSync(join(process.cwd(), 'src', p), 'utf8')
 
-  // 🪤 Anchored to the `useCachedData(<key>, …)` REGISTRATION, not a character window off the api
+  // 🪤 Anchored to the `useQuery(<key>, …)` REGISTRATION, not a character window off the api
   // call: last cycle's window landed on a COMMENT naming the same method, so restoring a real catch
   // passed. The region ends at the option object / closing paren that follows the fetcher.
   const registration = (src: string, key: string) => {
-    const m = new RegExp(`useCachedData(?:<[^>]*>)?\\(${key}[\\s\\S]*?\\)\\)?(?:,\\s*\\{[^}]*\\})?\\)`).exec(src)
+    const m = new RegExp(`useQuery(?:<[^>]*>)?\\(${key}[\\s\\S]*?\\)\\)?(?:,\\s*\\{[^}]*\\})?\\)`).exec(src)
     expect(m, `${key} fetcher must be found`).not.toBeNull()
     return m![0]
   }
@@ -225,10 +225,10 @@ describe("the what= values compose LoadError's sentence", () => {
 // ── The convergence census ──────────────────────────────────────────────────────────────────────
 //
 // A family is only converged if the NEXT surface inherits the form. Every top-level list
-// destination that fetches its primary collection through `useCachedData` must import `LoadError`;
+// destination that fetches its primary collection through `useQuery` must import `LoadError`;
 // the exceptions are listed here BY NAME with the reason, and compared for exact equality so
 // neither a regression nor a fix can slip past silently.
-describe('every useCachedData list destination adopts LoadError', () => {
+describe('every useQuery list destination adopts LoadError', () => {
   it('has no un-named holdouts', () => {
     const dir = join(process.cwd(), 'src/pages')
     const files: string[] = []
@@ -241,11 +241,11 @@ describe('every useCachedData list destination adopts LoadError', () => {
     }
     walk(dir)
 
-    // 🪤 `includes('useCachedData(')` MISSED THE GENERIC FORM and the census came back empty —
-    // a rail matching nothing reads exactly like a converged family. `useCachedData<T>(…)` is the
+    // 🪤 `includes('useQuery(')` MISSED THE GENERIC FORM and the census came back empty —
+    // a rail matching nothing reads exactly like a converged family. `useQuery<T>(…)` is the
     // majority spelling on these pages, so the hook has to be matched as a regex, and the
     // vacuity floor below is what would have caught it on the first run.
-    const HOOK = /useCachedData(?:<[\s\S]*?>)?\(/
+    const HOOK = /useQuery(?:<[\s\S]*?>)?\(/
     const usesHook = files.filter((f) => HOOK.test(readFileSync(f, 'utf8')))
     expect(usesHook.length, 'vacuity floor: the hook must be found across the pages tree')
       .toBeGreaterThan(20)

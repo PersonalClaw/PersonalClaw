@@ -12,13 +12,13 @@ import { join } from 'node:path'
 //   api.tasks()        `tasks` (list)              + `tasks-all` (create form, **persist: true**)
 //   api.modelsLoaded() `settings:models-loaded`     + `dashboard:on-this-machine`
 //
-// 🔴 TASKS. All three busts read `invalidateCache('tasks')` — exact-key mode, so `tasks-all` was never
+// 🔴 TASKS. All three busts read `invalidateKeys('tasks')` — exact-key mode, so `tasks-all` was never
 // dropped by anything, ever. That key feeds `DependencyEditor`, the *only* place a task's dependencies
 // are chosen, and it is `persist: true`.
 //
 // 🪤 AND HERE IS WHERE THIS CYCLE ALMOST SHIPPED A FALSE CLAIM. The obvious write-up is "creating a
 // task and then depending on it was impossible". Driven in the browser against the PRE-FIX build, the
-// just-created task **was** offered — because `useCachedData` revalidates on EVERY mount, so a missing
+// just-created task **was** offered — because `useQuery` revalidates on EVERY mount, so a missing
 // bust cannot produce a durably wrong list. It produces a wrong FIRST PAINT, for the length of one
 // refetch, and `persist: true` means a hard reload — the gesture a user makes when a list looks wrong —
 // paints that same wrong list again before correcting itself. That is the real, smaller defect. It is
@@ -61,7 +61,7 @@ describe('the task collection is busted as a collection, not as one key', () => 
 
   it('every bust in the list page is prefix mode', () => {
     const code = list()
-    const busts = code.match(/invalidateCache\('tasks'[^)]*\)/g) ?? []
+    const busts = code.match(/invalidateKeys\('tasks'[^)]*\)/g) ?? []
     expect(busts.length, 'the loader plus both LoadError retries').toBe(3)
     for (const b of busts) expect(b, 'exact-key mode cannot reach `tasks-all`').toMatch(/'tasks', true\)/)
   })
@@ -71,27 +71,27 @@ describe('the task collection is busted as a collection, not as one key', () => 
     const at = code.indexOf('await api.createTask(')
     expect(at, 'the create must still be here').toBeGreaterThan(-1)
     expect(code.slice(at, at + 300), "the task you just made is the one you want to depend on")
-      .toMatch(/invalidateCache\('tasks', true\)/)
+      .toMatch(/invalidateKeys\('tasks', true\)/)
   })
 
   it('the prefix reaches both keys and clears the persisted copy', async () => {
-    const { invalidateCache, writeCache, peekCache } = await import('./useCachedData')
-    writeCache('tasks', ['list'])
-    writeCache('tasks-all', ['dependency picker'])
-    writeCache('triggers', ['untouched'])
+    const { invalidateKeys, writeQuery, peekQuery } = await import('./data')
+    writeQuery('tasks', ['list'])
+    writeQuery('tasks-all', ['dependency picker'])
+    writeQuery('triggers', ['untouched'])
 
-    invalidateCache('tasks', true)
+    invalidateKeys('tasks', true)
 
-    expect(peekCache('tasks')).toBeUndefined()
+    expect(peekQuery('tasks')).toBeUndefined()
     // 🔑 The one nothing in the tree could reach before.
-    expect(peekCache('tasks-all'), "the dependency picker's copy is dropped").toBeUndefined()
-    expect(peekCache('triggers'), 'an unrelated collection must survive').toEqual(['untouched'])
+    expect(peekQuery('tasks-all'), "the dependency picker's copy is dropped").toBeUndefined()
+    expect(peekQuery('triggers'), 'an unrelated collection must survive').toEqual(['untouched'])
   })
 
   it('persist:true means the wrong list is repainted after a reload — so storage is cleared too', async () => {
-    const { invalidateCache, writeCache } = await import('./useCachedData')
-    writeCache('tasks-all', ['stale'])
-    invalidateCache('tasks', true)
+    const { invalidateKeys, writeQuery } = await import('./data')
+    writeQuery('tasks-all', ['stale'])
+    invalidateKeys('tasks', true)
     const leftovers = Object.keys(sessionStorage).filter((k) => k.includes('tasks'))
     expect(leftovers, `sessionStorage still holds ${leftovers.join(', ')}`).toEqual([])
   })
@@ -101,8 +101,8 @@ describe('both readers of the loaded-model set share one key', () => {
   it('neither key is named after its surface any more', () => {
     const panel = codeOf('pages/settings/ModelsPanel.tsx')
     const widget = codeOf('pages/dashboard/widgets/OnThisMachine.tsx')
-    expect(panel).toMatch(/useCachedData\('models:loaded'/)
-    expect(widget).toMatch(/useCachedData\('models:loaded'/)
+    expect(panel).toMatch(/useQuery\('models:loaded'/)
+    expect(widget).toMatch(/useQuery\('models:loaded'/)
     expect(panel + widget, 'the surface-named keys are gone')
       .not.toMatch(/settings:models-loaded|dashboard:on-this-machine/)
   })
@@ -116,7 +116,7 @@ describe('both readers of the loaded-model set share one key', () => {
       // a complete handler. The two surfaces are never mounted together, so nothing can notify the
       // other's hook — the shared key is what makes its next mount correct.
       expect(code.slice(at, at + 420), `${rel}: refresh() only refetches this surface`)
-        .toMatch(/invalidateCache\('models:loaded'\)/)
+        .toMatch(/invalidateKeys\('models:loaded'\)/)
     }
   })
 })
@@ -130,7 +130,7 @@ describe('the general check, so the fifth instance is caught by a test', () => {
     let reads = 0
     for (const abs of walk(SRC)) {
       const code = codeOf(abs.slice(SRC.length + 1))
-      for (const m of code.matchAll(/useCachedData(?:<[^>]*>)?\(\s*'([^']+)'\s*,\s*([\s\S]{0,120}?)\)\s*(?:,|\))/g)) {
+      for (const m of code.matchAll(/useQuery(?:<[^>]*>)?\(\s*'([^']+)'\s*,\s*([\s\S]{0,120}?)\)\s*(?:,|\))/g)) {
         const [, key, body] = m
         const call = body.match(/api\.(\w+)\(/)?.[1]
         if (!call) continue
@@ -191,7 +191,7 @@ describe('the general check, so the fifth instance is caught by a test', () => {
     // deliberately different.
     const code = codeOf('pages/loops/LoopsListPage.tsx')
     expect(code, 'the non-code filter is what makes the two keys disjoint')
-      .toMatch(/useCachedData<GoalLoop\[\]>\('loops'[\s\S]{0,160}?kind !== 'code'/)
+      .toMatch(/useQuery<GoalLoop\[\]>\('loops'[\s\S]{0,160}?kind !== 'code'/)
   })
 })
 
@@ -206,7 +206,7 @@ describe('the sharpest instance in the un-separable pair, fixed ahead of it', ()
     expect(writers.length, 'both dashboard-config writers in this panel').toBe(2)
     for (const w of writers) {
       expect(code.slice(w.index!, w.index! + 420), 'each writer must reach the consumer')
-        .toMatch(/invalidateCache\('chat:stream-reveal'\)/)
+        .toMatch(/invalidateKeys\('chat:stream-reveal'\)/)
     }
   })
 
@@ -214,7 +214,7 @@ describe('the sharpest instance in the un-separable pair, fixed ahead of it', ()
     // Pinned so a later pass does not move this key into one collection's namespace: it reads TWO
     // collections, and naming it after either one makes the other's writers miss it.
     const code = codeOf('pages/settings/ChatPanel.tsx')
-    const at = code.indexOf("useCachedData('settings:chat'")
+    const at = code.indexOf("useQuery('settings:chat'")
     expect(at, 'the composite read must still be here').toBeGreaterThan(-1)
     const seg = code.slice(at, at + 600)
     expect(seg).toMatch(/api\.dashboardConfig\(\)/)

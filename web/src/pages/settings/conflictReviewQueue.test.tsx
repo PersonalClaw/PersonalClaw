@@ -3,7 +3,7 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { DurabilityPanel } from './DurabilityPanel'
 import { DialogHost } from '../../ui/dialog/DialogHost'
 import { closeDialog, subscribeDialogs } from '../../ui/dialog/dialogStore'
-import { invalidateCache } from '../../lib/useCachedData'
+import { invalidateKeys } from '../../lib/data'
 import { api, type DurabilityConflict, type DurabilityConflicts } from '../../lib/api'
 
 // ── The conflict review queue (DURABILITY-AND-SYNC §4.2, DAS-10) ──────────────────────────────
@@ -99,7 +99,7 @@ function mount() {
 beforeEach(() => {
   // 🪤 The panel's read is a PERSISTED cached key, so a previous test's payload would seed the
   // next mount from sessionStorage and every assertion below would measure the wrong fixture.
-  invalidateCache('settings:durability')
+  invalidateKeys('settings:durability')
 })
 
 afterEach(() => {
