@@ -40,6 +40,26 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
   meaning. And when there is genuinely nothing there, it says which fact was missing — no such
   item, no such relation, no such tag — instead of quietly handing back the closest thing it
   could find.
+- **Pair a phone or a second browser with your gateway over your home network.** Settings → Devices
+  already handed you a pairing code and a link; opening that link on the other device now lands on a
+  screen that actually redeems it, instead of a "token required" wall telling you to run a command in
+  a terminal the joining device does not have. The code arrives pre-filled from the link, you can
+  give the device a name, and it signs in. Paired devices are listed with their name, what kind of
+  device they are, when they were last seen and how they got in; revoking one locks it out
+  immediately, on this gateway and on disk, so it stays out across a restart.
+  **The redeem screen is reachable without a session, and that is all it is.** Gating the one page a
+  joining device must open behind the session it exists to create would be circular, so it is exempt
+  from the token check for the same reason the sign-in page is. The page is a fixed document with no
+  secret on it — the code is read out of the link by the browser and never written into the page by
+  the server — and every grant still happens at the pairing endpoint, behind its origin check, its
+  per-address lockout and its single-use short-lived code. A browser that is already signed in is
+  sent home rather than offered the form: redeeming a code there would quietly turn your own laptop
+  into a "device" and strand the session it replaced.
+  **Pairing across the network needs the gateway to know its own address.** The link points at
+  whatever address you are reading the dashboard on, and the gateway only accepts a pairing request
+  from an address it recognises. If you reach the dashboard over your LAN, set the dashboard URL to
+  that address; until you do, a device that opens the link is told so in words rather than being
+  refused without explanation.
 - **Know whether a model will actually run on your machine before you download it.** Every model in
   the download lists now carries a fit chip — green, yellow, red — computed from this machine's real
   memory budget: total RAM, minus a reserve held back for the OS and the inference runtime, plus a
@@ -342,6 +362,11 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Fixed
 
+- **The sign-in page said "Sign-in failed" no matter what went wrong.** It read the error out of the
+  wrong place in the response, so a wrong password, a rate-limited address, a password-sign-in that
+  is switched off and an already-used device code all produced the same unhelpful sentence — and the
+  field for a two-factor code could never appear when the server asked for one, because the branch
+  that reveals it never ran. Each failure now says what it is.
 - **The audit log's "Failed" filter hid most failures.** Settings → Audit log offers outcome filter
   pills, and they were defined in the dashboard as two literal words — `denied` and `failed` — while
   the code that writes the log uses sixty-two different outcome words. So "Failed" matched only the

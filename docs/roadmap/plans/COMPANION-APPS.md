@@ -537,6 +537,113 @@ separate mechanism", and TOTP enrollment sets the no-bundled-QR precedent (`Acco
 falsifications, each restored from a file copy; I independently re-ran the `last_seen`-backfill one
 (`assert device.last_seen == 0.0` reds when an absent stamp falls back to `minted_at`).
 
+- [2026-08-21][CA-2] DONE: the owner scope decision above is taken as **(b) — grow `CA-2`** and the
+  `done_when` is now MET end-to-end. The missing half was never the panel: it was that
+  `pair/start`'s URL pointed at nothing. `GET /pair` now exists (`handlers/devices.py`, registered in
+  `register_device_routes` beside the API routes it is the entry point for, and added to
+  `token_auth._BYPASS_EXACT`), served as a standalone document exactly like `/login` — an SPA route
+  cannot work here because every authenticated bundle fetch the SPA makes on boot 403s before a
+  field renders. **Driven over the LAN, not asserted**: gateway pid 78163 on port 10041 bound
+  `*:10041` via `PERSONALCLAW_BIND_HOST=0.0.0.0`, home self-reported as
+  `/private/tmp/ca2-wt/.dev-home` in its own `PERSONALCLAW_READY` line (a foreign gateway was live
+  on 10698 against the real home throughout, so the home was asserted from the process rather than
+  assumed). Two independent Playwright browser contexts, cookie jars measured empty/`pc_token_10041`
+  before pairing and holding **different** values after:
+  · owner panel at `http://192.168.86.33:10041/#/settings/devices` minted
+    `2XFF-H7HC` → `http://192.168.86.33:10041/pair?code=2XFF-H7HC` — the LAN address, not loopback;
+  · the second context (iPhone UA, no session) opened that URL, got **"Pair this device"** with the
+    code **pre-filled and equal to the panel's**, typed a name, and landed on `/#/dashboard`;
+  · the device's own `GET /api/devices` returned **200**;
+  · the owner's list showed **`Keyur iPhone` · Phone · Last seen just now · Paired with a code`**,
+    i.e. all four columns, over `{"name":"Keyur iPhone","kind":"mobile","last_seen":1787345636.933632,
+    "minted_at":1787345636.91012,"issuer":"pair"}` — `last_seen` and `minted_at` differ by 23ms, so
+    the column is the throttled writer's value and NOT a backfill;
+  · revoke → the device's next request **403 `token superseded`, live, no restart**, and its reload
+    rendered the token gate, while the OWNER's cookie returned 200 through the same revoke (the
+    positive control that rules out "the revoke broke everything").
+  Also observed live: `/pair` with the owner's cookie **302s to `/`** while `/pair` with no cookie is
+  200 (so the redirect is not unconditional), a reused code returns
+  `{"error":{"code":"device_pair_code_invalid"}}`, and `GET /` with no token is **403** — the bypass
+  is scoped to the page, not a blanket disable. Six SEL events landed
+  (`device_pair_started`×4 ok, `device_paired` granted, `device_revoked` ok) and **neither live nonce
+  nor the pairing code appears in `security_events.jsonl`** in either form, so CA-1's assertion is
+  not regressed. Real home untouched: 110509 files before and after, and its `sessions.json` /
+  `security_events.jsonl` mtimes predate the drive window while the dev home's are inside it.
+- [2026-08-21][CA-2] DEVIATION: **exempting a PAGE from token auth is a security-boundary change, and
+  it is bounded deliberately.** The prior session was right to stop here rather than slip it into a
+  panel atom; taken as an owner decision, the compensating design is that the exemption buys
+  *reachability only*. The document is a CONSTANT — the code is read from `location.search` in the
+  browser and never interpolated server-side — so there is no injection surface and no secret on the
+  page, and every grant still happens at `/api/devices/pair/complete` behind its own origin check,
+  per-IP lockout and single-use hashed short-TTL code. Falsified: interpolating `?code=` into the
+  served bytes reds `test_the_redeem_page_never_interpolates_the_query_string`.
+- [2026-08-21][CA-2] DEVIATION: a browser that already holds a valid session is **redirected home**
+  instead of being offered the form, which gives `handlers/auth.has_valid_session` its **first
+  reader** — it had ZERO call sites before this. Not tidiness: redeeming a code in the owner's own
+  browser overwrites its `pc_token_{port}` cookie, so the laptop silently becomes a `device` row
+  while its previous session row stays behind unreachable, and with `MAX_CONCURRENT_NONCES = 5` a
+  self-pair also spends an eviction slot (CA-1's eviction discovery makes that expensive). Falsified
+  by replacing the call with `if False:` — `test_a_browser_that_already_has_a_session_is_sent_home`
+  reds; observed live as a 302 with the owner cookie and 200 without.
+- [2026-08-21][CA-2] DEVIATION: the two standalone pages now share ONE token block
+  (`handlers/page_shell.py`: `PAGE_STYLE`, `LOGO_MARK`, `page_document`). `/login` and `/pair` are the
+  only surfaces in the product that cannot inherit `web/`'s design system, and neither has a
+  visual-regression test, so a second hand-written copy of ~55 lines of tokens would drift silently.
+  The extraction is byte-verified: the recomposed `_LOGIN_HTML` is character-identical to the
+  pre-change literal (8121 bytes both sides), so the login page did not change shape to gain a
+  housemate. `test_the_two_standalone_pages_share_one_token_block` pins it with a vacuity floor.
+- [2026-08-21][CA-2] DISCOVERY (fixed here): **both inline scripts read the error envelope in the
+  wrong shape.** `json_error` emits `{"error": {"code", "message"}}` (PL-8), and the login page read
+  `res.data.error` as a bare string — so every `MESSAGES[code]` lookup missed and the page could only
+  ever say "Sign-in failed." / "Pairing failed.", never "Wrong username or password", "Too many
+  attempts" or "Password sign-in is not enabled". Worse, the branch that reveals the 2FA field on an
+  `auth_totp_required` response could never fire. PL-8 standardized the emitter and passed over two
+  raw children that parse it by hand, which no type checker reads. Both reads now take `error.code`,
+  and `test_the_page_reads_the_error_envelope_the_route_actually_emits` asserts it against a REAL
+  `json_error` body rather than a string, so an envelope reshape reds rather than silently re-breaking
+  the copy.
+- [2026-08-21][CA-2] Decision, restated deliberately: **revoke stays DELETION, no `revoked`
+  tombstone.** CA-1's reasoning holds and the drive confirms its consequence is the one the clause
+  asks for — `is_nonce_valid` authorizes on presence + expiry, so deletion revokes through the check
+  that already exists and the device's next request was refused live. A `revoked: true` flag with no
+  reader inside `is_nonce_valid` would tell the owner a device is locked out while it kept
+  authenticating, which is the inert-control shape this repo has shipped repeatedly. The cost is
+  unchanged and still accepted: a revoked device disappears rather than showing as "Revoked". That is
+  a `revoked` flag PLUS a middleware reader — its own atom, and it must not be taken as a field.
+  Falsified in the direction that matters: leaving the row in place reds
+  `test_clause_4_revoke_locks_the_device_out_across_a_restart` **on its live assertion**
+  (`assert token_auth.validate_token(...)[0] is False`, "the in-memory half bit, with no restart
+  involved"), not merely on the list being empty.
+- [2026-08-21][CA-2] DEVIATION (carried, unchanged): **"shows a QR" is still UNMET for the IMAGE.**
+  Re-measured, not assumed: `qrcode`, `segno` and `pyqrcode` are all absent from the Python
+  environment and nothing in either `package.json` provides an encoder. Adding one is a dependency
+  decision, and hand-rolling Reed-Solomon + masking to render a *wrong* QR would be worse than the
+  labelled placeholder. The clause's substance is met by what the QR would have encoded: the drive's
+  second browser paired from the `pairing_url` the panel shows, which already contains the code.
+- [2026-08-21][CA-2] DISCOVERY (not fixed): **LAN pairing requires `dashboard.url` to name the LAN
+  address**, and that is the only reason CA-1's "blocks CA-2" note needed no code change.
+  `build_allowed_origins` takes a `dashboard_url` argument and adds its origin as-is, so setting
+  `dashboard.url = http://<lan-ip>:<port>` puts the LAN origin in the CSRF set — no new exemption,
+  which is what C2 forbade. Unset, `pair/complete` 403s `device_pair_origin_rejected`; the redeem page
+  now maps that code to a sentence naming the fix rather than failing mutely. Making the gateway
+  learn its own bound LAN address automatically would widen CSRF for every install that binds
+  `0.0.0.0` — REMOTE-USER-AUTH's call, not this atom's.
+- [2026-08-21][CA-2] DISCOVERY (not fixed): the login page's device-code form posts to
+  `/api/auth/enroll/complete`, and `login_page` **redirects to `/` when `login_enabled` is false** —
+  so on a default install that form is unreachable and there was no door at all for a pairing device.
+  `/pair` is deliberately independent of `login_enabled` for exactly that reason. Whether the two
+  code paths should converge on one redeem screen is CA-3's question, not this atom's.
+
+**Gates (2026-08-21):** `make lint` exit 0 · targeted `pytest` over `test_device_pairing`,
+`test_session_store`, `test_token_auth`, `test_auth_login`, `test_auth_exposure` · full `make test` ·
+`python -m personalclaw.manifest_reference` regenerated with `PYTHONPATH` pointed at THIS worktree
+(the venv is an editable install of the main checkout) and produced **no diff** — `/pair` is a UI page,
+so it belongs in `MANIFEST_EXCLUDE`, not the API manifest. **No `web/` source changed**: the panel
+merged complete in this atom's first half; what was missing was the server-side half. Seven
+falsifications, each mutation re-read to confirm it landed and each restored from a file copy — the
+manifest exclusion reds in BOTH directions (dropping it → "Non-/api routes registered but not in
+MANIFEST_EXCLUDE: ['/pair']"; a bogus key → "MANIFEST_EXCLUDE lists paths that no longer register").
+
 **ARCC was not queried (MCP server unavailable).** The `last_seen` writer is the only auth-path change
 here: best-effort, throttled at 60 s, wrapped so a store failure cannot deny a valid session, and a
 no-op for sessions with no device. No new route, exemption or credential surface ships in this atom.

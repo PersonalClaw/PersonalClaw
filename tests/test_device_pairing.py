@@ -727,11 +727,105 @@ async def test_a_broken_sel_does_not_break_the_route(_isolated, monkeypatch) -> 
 # ── The auth exemption ──────────────────────────────────────────────────
 
 
-def test_only_pair_complete_is_bypass_exempt() -> None:
-    """Completion has no session yet; minting a code requires already being the owner."""
+def test_only_the_redeem_path_and_its_page_are_bypass_exempt() -> None:
+    """Redeeming has no session yet; minting a code requires already being the owner."""
     assert "/api/devices/pair/complete" in token_auth._BYPASS_EXACT
+    assert "/pair" in token_auth._BYPASS_EXACT, "the page must be reachable without a session"
     assert "/api/devices/pair/start" not in token_auth._BYPASS_EXACT
     assert "/api/devices" not in token_auth._BYPASS_EXACT
+
+
+# ── /pair — the joining device's redeem screen ──────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_the_pairing_url_points_at_a_route_that_exists(_isolated) -> None:
+    """The whole point of the atom: `pair/start`'s URL must not be a dead end.
+
+    Drives the minted `pairing_url` back at the SAME app, so a route that is registered under a
+    different path than the URL advertises fails here rather than in a user's hands.
+    """
+    async with TestClient(TestServer(_app())) as client:
+        data = await _start(client)
+        path = data["pairing_url"].split(data["pairing_url"].split("/")[2], 1)[1]
+        assert path.startswith("/pair?code=")
+        resp = await client.get(path)
+        assert resp.status == 200, "the URL handed to the device 404'd"
+        assert resp.content_type == "text/html"
+        assert resp.headers["Cache-Control"] == "no-store"
+        html = await resp.text()
+    assert "Pair this device" in html
+    assert "id='c'" in html, "the code field the device types into"
+
+
+@pytest.mark.asyncio
+async def test_the_redeem_page_never_interpolates_the_query_string(_isolated) -> None:
+    """The document is a CONSTANT — which is what makes exempting it from auth open nothing.
+
+    The code is read out of `location.search` in the browser, so nothing caller-controlled
+    reaches the served bytes and there is no injection surface on an unauthenticated route.
+    """
+    hostile = "%3Cscript%3Ealert(1)%3C/script%3E"
+    async with TestClient(TestServer(_app())) as client:
+        with_code = await (await client.get(f"/pair?code={hostile}")).text()
+        bare = await (await client.get("/pair")).text()
+    assert with_code == bare, "the query string changed the served document"
+    assert "alert(1)" not in with_code
+    assert devices_h._PAIR_HTML == bare
+
+
+@pytest.mark.asyncio
+async def test_a_browser_that_already_has_a_session_is_sent_home(_isolated) -> None:
+    """Self-pairing would overwrite this browser's own cookie and spend an eviction slot."""
+    token = token_auth.generate_token("owner")
+    async with TestClient(TestServer(_app())) as client:
+        resp = await client.get(f"/pair?token={token}", allow_redirects=False)
+        assert resp.status == 302
+        assert resp.headers["Location"] == "/"
+        # A browser with no session still gets the form, so the redirect is not unconditional.
+        assert (await client.get("/pair")).status == 200
+
+
+def test_every_refusal_the_redeem_path_can_return_has_copy_on_the_page() -> None:
+    """An unmapped code renders as a raw identifier, which is not a sentence.
+
+    Keyed on the handler's own constants, so adding a refusal without its copy reds here
+    instead of shipping `device_pair_locked_out` to a person.
+    """
+    for code in (
+        devices_h.ERR_CODE_INVALID,
+        devices_h.ERR_CODE_EXPIRED,
+        devices_h.ERR_LOCKED_OUT,
+        devices_h.ERR_ORIGIN,
+    ):
+        assert f"{code}:" in devices_h._PAIR_SCRIPT, f"{code} has no copy on the redeem page"
+
+
+def test_the_page_reads_the_error_envelope_the_route_actually_emits() -> None:
+    """Both standalone pages branch on `error.code`; PL-8's envelope nests it there.
+
+    Asserted against a REAL response body rather than the string, so a change to the envelope
+    shape reds here even though the pages are inline scripts no type checker reads.
+    """
+    from personalclaw.http_errors import json_error
+
+    body = json.loads(json_error(devices_h.ERR_CODE_EXPIRED, status=401).body)
+    assert body["error"]["code"] == devices_h.ERR_CODE_EXPIRED
+    assert "res.data.error.code" in devices_h._PAIR_SCRIPT
+    assert "res.data.error.code" in auth_h._LOGIN_SCRIPT
+
+
+def test_the_two_standalone_pages_share_one_token_block() -> None:
+    """`/login` and `/pair` are the only surfaces that cannot inherit `web/`'s design system.
+
+    A second hand-written copy of the tokens drifts silently — neither page has a
+    visual-regression test that would notice.
+    """
+    from personalclaw.dashboard.handlers.page_shell import PAGE_STYLE
+
+    assert PAGE_STYLE in devices_h._PAIR_HTML
+    assert PAGE_STYLE in auth_h._LOGIN_HTML
+    assert "--primary" in PAGE_STYLE, "vacuity floor: the shared block carries real tokens"
 
 
 @pytest.mark.asyncio

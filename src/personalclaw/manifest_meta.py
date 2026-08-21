@@ -73,6 +73,11 @@ MANIFEST_EXCLUDE: dict[str, str] = {
         "HUMAN browser, UI transport. The agent-callable surface is POST "
         "/api/auth/login, which IS in the manifest"
     ),
+    "/pair": (
+        "the joining device's redeem page (COMPANION-APPS C2) — a rendered HTML form "
+        "for a HUMAN browser that scanned the QR, UI transport. The agent-callable "
+        "surface is POST /api/devices/pair/complete, which IS in the manifest"
+    ),
 }
 
 
