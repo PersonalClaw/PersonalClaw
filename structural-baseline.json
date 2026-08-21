@@ -1,0 +1,520 @@
+{
+  "generated_from": "scripts/generate_structural_baseline.py",
+  "ratchets": [
+    "structural-size",
+    "structural-import-direction",
+    "structural-duplication"
+  ],
+  "structural-duplication": {
+    "families": [
+      {
+        "canonical": null,
+        "name": "http-error-envelope-helper",
+        "rationale": "PL-8 deleted THIRTEEN module-local ``json_error`` clones, one of which had minted a third ``WF_UPPER_SNAKE`` code vocabulary inside the HTTP envelope. Twelve survive under other names (``_err``, ``_bad``, ``_bad_request``, ``_rpc_error``, ``_invalid_path``, …), each a one-statement re-derivation of the ``{\"error\": {\"code\", \"message\"}}`` wire shape. Every clone is a place the envelope drifts silently — a wrong status, an UPPER_SNAKE code where the wire wants lowercase_snake, a missing field — and no round-trip test can see it, because each handler's test asserts against that handler's own clone. There is deliberately NO canonical HTTP helper yet: the two-error-envelope ruling keeps ``AgentError`` and the wire shape apart, and this counter measures the population rather than mandating a merge. The fix for a thirteenth is to PROMOTE one shared helper, never to add another."
+      },
+      {
+        "canonical": "src/personalclaw/workflows/judge_contract.py",
+        "name": "verdict-type",
+        "rationale": "PP-14's thesis: the engine implements verdict semantics several times over because the primitive was never named. WF2LOO-16 deleted ``CycleVerdict`` into ``judge_contract.JudgeVerdict`` and measured that 0 of 4 loop-verdict shapes satisfied ``validate_verdict`` — four dialects, none interoperable. 23 verdict-shaped types still live outside the canonical module, each with its own pass/fail tokens and its own reason field, so no supervisor, ledger or evaluator can read a verdict without knowing which dialect produced it. This is a COUNTER, not a ban: a decision in a genuinely different domain (an IP allow/deny result) is not destined to merge — but then it should not be NAMED a verdict, and that rename shrinks this number too."
+      },
+      {
+        "canonical": "src/personalclaw/atomic_write.py",
+        "name": "durable-write",
+        "rationale": "DAS-9: a handler rolled its own ``mkstemp`` + ``rename`` and so vanished from the history seam — the write landed on disk and no post-write hook ever fired, which is the swallowed-write defect with a green test on both sides. ``atomic_write.py`` is the ONE implementation that keeps that seam (and fsync durability) intact. Five functions across four files still pair a temp-file creation with a rename themselves. Thin wrappers that DELEGATE to ``atomic_write`` are deliberately not counted — three exist and they are the shape we want, not a re-derivation."
+      }
+    ],
+    "per_file": {
+      "src/personalclaw/agent.py": {
+        "count": 1,
+        "sites": [
+          "durable-write:_atomic_json_write"
+        ]
+      },
+      "src/personalclaw/channel_trust.py": {
+        "count": 1,
+        "sites": [
+          "verdict-type:TrustVerdict"
+        ]
+      },
+      "src/personalclaw/dashboard/handlers/durability.py": {
+        "count": 1,
+        "sites": [
+          "http-error-envelope-helper:_invalid_path"
+        ]
+      },
+      "src/personalclaw/dashboard/handlers/feedback.py": {
+        "count": 1,
+        "sites": [
+          "http-error-envelope-helper:_disabled_response"
+        ]
+      },
+      "src/personalclaw/dashboard/handlers/files.py": {
+        "count": 2,
+        "sites": [
+          "durable-write:api_file_upload",
+          "durable-write:api_file_write"
+        ]
+      },
+      "src/personalclaw/dashboard/handlers/routing.py": {
+        "count": 1,
+        "sites": [
+          "http-error-envelope-helper:_bad"
+        ]
+      },
+      "src/personalclaw/eval/judge.py": {
+        "count": 1,
+        "sites": [
+          "verdict-type:JudgeVerdict"
+        ]
+      },
+      "src/personalclaw/guardrails/budgets.py": {
+        "count": 1,
+        "sites": [
+          "verdict-type:BudgetVerdict"
+        ]
+      },
+      "src/personalclaw/inbound/mcp_http.py": {
+        "count": 1,
+        "sites": [
+          "http-error-envelope-helper:_rpc_error"
+        ]
+      },
+      "src/personalclaw/knowledge/dedup.py": {
+        "count": 1,
+        "sites": [
+          "verdict-type:DupVerdict"
+        ]
+      },
+      "src/personalclaw/learning/accountability.py": {
+        "count": 1,
+        "sites": [
+          "verdict-type:Verdict"
+        ]
+      },
+      "src/personalclaw/learning/decay.py": {
+        "count": 1,
+        "sites": [
+          "verdict-type:DecayVerdict"
+        ]
+      },
+      "src/personalclaw/learning/hygiene.py": {
+        "count": 1,
+        "sites": [
+          "verdict-type:HygieneVerdict"
+        ]
+      },
+      "src/personalclaw/learning/lesson_confidence.py": {
+        "count": 1,
+        "sites": [
+          "verdict-type:LessonVerdict"
+        ]
+      },
+      "src/personalclaw/learning/proposals.py": {
+        "count": 1,
+        "sites": [
+          "verdict-type:Verdict"
+        ]
+      },
+      "src/personalclaw/learning/refiner.py": {
+        "count": 2,
+        "sites": [
+          "verdict-type:CriticVerdict",
+          "verdict-type:OpVerdict"
+        ]
+      },
+      "src/personalclaw/mcp_core.py": {
+        "count": 1,
+        "sites": [
+          "durable-write:_call_tool_inner"
+        ]
+      },
+      "src/personalclaw/net/guard.py": {
+        "count": 1,
+        "sites": [
+          "verdict-type:IpVerdict"
+        ]
+      },
+      "src/personalclaw/planning/scratchpad.py": {
+        "count": 1,
+        "sites": [
+          "verdict-type:Verdict"
+        ]
+      },
+      "src/personalclaw/proactive/approval.py": {
+        "count": 1,
+        "sites": [
+          "verdict-type:Verdict"
+        ]
+      },
+      "src/personalclaw/service/macos.py": {
+        "count": 1,
+        "sites": [
+          "durable-write:_write_plist_atomic"
+        ]
+      },
+      "src/personalclaw/supply_chain.py": {
+        "count": 1,
+        "sites": [
+          "verdict-type:Verdict"
+        ]
+      },
+      "src/personalclaw/triggers/calendar.py": {
+        "count": 1,
+        "sites": [
+          "verdict-type:DutyVerdict"
+        ]
+      },
+      "src/personalclaw/triggers/disposition.py": {
+        "count": 1,
+        "sites": [
+          "verdict-type:Verdict"
+        ]
+      },
+      "src/personalclaw/triggers/screen.py": {
+        "count": 1,
+        "sites": [
+          "verdict-type:Verdict"
+        ]
+      },
+      "src/personalclaw/workflows/gate_policy.py": {
+        "count": 2,
+        "sites": [
+          "verdict-type:HoldVerdict",
+          "verdict-type:PolicyVerdict"
+        ]
+      },
+      "src/personalclaw/workflows/judge_calibration.py": {
+        "count": 1,
+        "sites": [
+          "verdict-type:StuckVerdict"
+        ]
+      },
+      "src/personalclaw/workflows/resilience.py": {
+        "count": 2,
+        "sites": [
+          "verdict-type:BreakerVerdict",
+          "verdict-type:BudgetVerdict"
+        ]
+      },
+      "src/personalclaw/workflows/verified_done.py": {
+        "count": 1,
+        "sites": [
+          "verdict-type:Verdict"
+        ]
+      }
+    },
+    "totals": {
+      "by_family": {
+        "durable-write": 5,
+        "http-error-envelope-helper": 4,
+        "verdict-type": 24
+      },
+      "files": 29,
+      "sites": 33
+    }
+  },
+  "structural-import-direction": {
+    "per_file": {
+      "src/personalclaw/acp/mcp_servers.py": {
+        "edges": 1,
+        "violations": [
+          "core-must-not-import-the-http-surface -> personalclaw.dashboard.origin"
+        ]
+      },
+      "src/personalclaw/action_providers/services.py": {
+        "edges": 1,
+        "violations": [
+          "core-must-not-import-the-http-surface -> personalclaw.dashboard.state"
+        ]
+      },
+      "src/personalclaw/agent.py": {
+        "edges": 1,
+        "violations": [
+          "core-must-not-import-the-http-surface -> personalclaw.dashboard.chat_utils"
+        ]
+      },
+      "src/personalclaw/agents/native/sdlc_tools.py": {
+        "edges": 2,
+        "violations": [
+          "core-must-not-import-the-http-surface -> personalclaw.dashboard.handlers.loop_routes",
+          "core-must-not-import-the-http-surface -> personalclaw.dashboard.handlers.loop_routes"
+        ]
+      },
+      "src/personalclaw/app_cli.py": {
+        "edges": 1,
+        "violations": [
+          "core-must-not-import-its-own-published-facade -> personalclaw.sdk.cli"
+        ]
+      },
+      "src/personalclaw/apps/backend_runtime.py": {
+        "edges": 1,
+        "violations": [
+          "core-must-not-import-its-own-published-facade -> personalclaw.sdk.security"
+        ]
+      },
+      "src/personalclaw/apps/native/personalclaw-ui-docs/provider.py": {
+        "edges": 1,
+        "violations": [
+          "core-must-not-import-its-own-published-facade -> personalclaw.sdk.tool"
+        ]
+      },
+      "src/personalclaw/artifacts/handlers.py": {
+        "edges": 2,
+        "violations": [
+          "core-must-not-import-the-http-surface -> personalclaw.dashboard.chat_utils",
+          "core-must-not-import-the-http-surface -> personalclaw.dashboard.handlers._shared"
+        ]
+      },
+      "src/personalclaw/auth/cli.py": {
+        "edges": 1,
+        "violations": [
+          "core-must-not-import-the-http-surface -> personalclaw.dashboard.token_auth"
+        ]
+      },
+      "src/personalclaw/channel_transports/manager.py": {
+        "edges": 1,
+        "violations": [
+          "core-must-not-import-the-http-surface -> personalclaw.dashboard.state"
+        ]
+      },
+      "src/personalclaw/channel_transports/webui.py": {
+        "edges": 1,
+        "violations": [
+          "core-must-not-import-the-http-surface -> personalclaw.dashboard.state"
+        ]
+      },
+      "src/personalclaw/cli_doctor.py": {
+        "edges": 1,
+        "violations": [
+          "core-must-not-import-the-http-surface -> personalclaw.dashboard.origin"
+        ]
+      },
+      "src/personalclaw/cli_server.py": {
+        "edges": 2,
+        "violations": [
+          "core-must-not-import-the-http-surface -> personalclaw.dashboard.origin",
+          "core-must-not-import-the-http-surface -> personalclaw.dashboard.token_auth"
+        ]
+      },
+      "src/personalclaw/companion/discovery.py": {
+        "edges": 2,
+        "violations": [
+          "core-must-not-import-the-http-surface -> personalclaw.dashboard.origin",
+          "core-must-not-import-the-http-surface -> personalclaw.dashboard.origin"
+        ]
+      },
+      "src/personalclaw/dashboard/handlers/apps.py": {
+        "edges": 1,
+        "violations": [
+          "core-must-not-import-its-own-published-facade -> personalclaw.sdk.security"
+        ]
+      },
+      "src/personalclaw/gateway.py": {
+        "edges": 20,
+        "violations": [
+          "core-must-not-import-the-http-surface -> personalclaw.dashboard",
+          "core-must-not-import-the-http-surface -> personalclaw.dashboard",
+          "core-must-not-import-the-http-surface -> personalclaw.dashboard.chat",
+          "core-must-not-import-the-http-surface -> personalclaw.dashboard.chat",
+          "core-must-not-import-the-http-surface -> personalclaw.dashboard.chat",
+          "core-must-not-import-the-http-surface -> personalclaw.dashboard.chat",
+          "core-must-not-import-the-http-surface -> personalclaw.dashboard.chat_persistence",
+          "core-must-not-import-the-http-surface -> personalclaw.dashboard.chat_runner",
+          "core-must-not-import-the-http-surface -> personalclaw.dashboard.chat_utils",
+          "core-must-not-import-the-http-surface -> personalclaw.dashboard.chat_utils",
+          "core-must-not-import-the-http-surface -> personalclaw.dashboard.handlers",
+          "core-must-not-import-the-http-surface -> personalclaw.dashboard.handlers",
+          "core-must-not-import-the-http-surface -> personalclaw.dashboard.handlers",
+          "core-must-not-import-the-http-surface -> personalclaw.dashboard.handlers.autonudge",
+          "core-must-not-import-the-http-surface -> personalclaw.dashboard.handlers.updates",
+          "core-must-not-import-the-http-surface -> personalclaw.dashboard.origin",
+          "core-must-not-import-the-http-surface -> personalclaw.dashboard.session_lifecycle",
+          "core-must-not-import-the-http-surface -> personalclaw.dashboard.state",
+          "core-must-not-import-the-http-surface -> personalclaw.dashboard.state",
+          "core-must-not-import-the-http-surface -> personalclaw.dashboard.token_auth"
+        ]
+      },
+      "src/personalclaw/gateway_services.py": {
+        "edges": 1,
+        "violations": [
+          "core-must-not-import-the-http-surface -> personalclaw.dashboard.state"
+        ]
+      },
+      "src/personalclaw/inbox_providers/native_source.py": {
+        "edges": 1,
+        "violations": [
+          "core-must-not-import-the-http-surface -> personalclaw.dashboard.handlers_inbox"
+        ]
+      },
+      "src/personalclaw/inbox_service.py": {
+        "edges": 1,
+        "violations": [
+          "core-must-not-import-the-http-surface -> personalclaw.dashboard.handlers_inbox"
+        ]
+      },
+      "src/personalclaw/legibility/always_on.py": {
+        "edges": 1,
+        "violations": [
+          "core-must-not-import-the-http-surface -> personalclaw.dashboard.chat_utils"
+        ]
+      },
+      "src/personalclaw/llm/catalog.py": {
+        "edges": 3,
+        "violations": [
+          "core-must-not-import-its-own-published-facade -> personalclaw.sdk.model",
+          "core-must-not-import-its-own-published-facade -> personalclaw.sdk.net",
+          "core-must-not-import-its-own-published-facade -> personalclaw.sdk.provider_helpers"
+        ]
+      },
+      "src/personalclaw/mcp_core.py": {
+        "edges": 2,
+        "violations": [
+          "core-must-not-import-the-http-surface -> personalclaw.dashboard",
+          "core-must-not-import-the-http-surface -> personalclaw.dashboard.origin"
+        ]
+      },
+      "src/personalclaw/mcp_shared.py": {
+        "edges": 1,
+        "violations": [
+          "core-must-not-import-the-http-surface -> personalclaw.dashboard.origin"
+        ]
+      },
+      "src/personalclaw/packs/import_.py": {
+        "edges": 1,
+        "violations": [
+          "core-must-not-import-the-http-surface -> personalclaw.dashboard.handlers.core"
+        ]
+      },
+      "src/personalclaw/providers/loader.py": {
+        "edges": 1,
+        "violations": [
+          "core-must-not-import-its-own-published-facade -> personalclaw.sdk.provider_helpers"
+        ]
+      },
+      "src/personalclaw/providers/routes.py": {
+        "edges": 1,
+        "violations": [
+          "core-must-not-import-the-http-surface -> personalclaw.dashboard.handlers.providers"
+        ]
+      },
+      "src/personalclaw/resilience/doctor.py": {
+        "edges": 1,
+        "violations": [
+          "core-must-not-import-the-http-surface -> personalclaw.dashboard.origin"
+        ]
+      },
+      "src/personalclaw/routing/rates.py": {
+        "edges": 2,
+        "violations": [
+          "core-must-not-import-its-own-published-facade -> personalclaw.sdk.model",
+          "core-must-not-import-its-own-published-facade -> personalclaw.sdk.provider_helpers"
+        ]
+      },
+      "src/personalclaw/sdk/channel.py": {
+        "edges": 4,
+        "violations": [
+          "core-must-not-import-the-http-surface -> personalclaw.dashboard.chat",
+          "core-must-not-import-the-http-surface -> personalclaw.dashboard.handlers",
+          "core-must-not-import-the-http-surface -> personalclaw.dashboard.origin",
+          "core-must-not-import-the-http-surface -> personalclaw.dashboard.token_auth"
+        ]
+      },
+      "src/personalclaw/session_organize.py": {
+        "edges": 3,
+        "violations": [
+          "core-must-not-import-the-http-surface -> personalclaw.dashboard.chat_persistence",
+          "core-must-not-import-the-http-surface -> personalclaw.dashboard.chat_tags",
+          "core-must-not-import-the-http-surface -> personalclaw.dashboard.chat_title"
+        ]
+      },
+      "src/personalclaw/suggestions.py": {
+        "edges": 1,
+        "violations": [
+          "core-must-not-import-the-http-surface -> personalclaw.dashboard.state"
+        ]
+      },
+      "src/personalclaw/tool_providers/app_routes.py": {
+        "edges": 1,
+        "violations": [
+          "core-must-not-import-the-http-surface -> personalclaw.dashboard.token_auth"
+        ]
+      },
+      "src/personalclaw/workflows/handlers.py": {
+        "edges": 2,
+        "violations": [
+          "core-must-not-import-the-http-surface -> personalclaw.dashboard.handlers._shared",
+          "core-must-not-import-the-http-surface -> personalclaw.dashboard.sse"
+        ]
+      }
+    },
+    "rules": [
+      {
+        "lower": [
+          "ledger"
+        ],
+        "name": "ledger-is-a-leaf",
+        "rationale": "PP-4 extracted the run ledger OUT of workflows as a platform primitive; workflows/journal.py is now a 685-line facade OVER it. An import back up into a consumer would silently undo that extraction: the ledger would stop being usable by loops, tasks or evals (PP-5/PP-9 are exactly those consumers) and the extraction would have to be paid for twice. Measured at 0 edges — the extraction is clean today, and this rule is what keeps it that way for the cost of one line.",
+        "upper": [
+          "dashboard",
+          "sdk",
+          "workflows",
+          "loop",
+          "agents",
+          "knowledge",
+          "learning"
+        ]
+      },
+      {
+        "lower": [
+          "*"
+        ],
+        "name": "core-must-not-import-the-http-surface",
+        "rationale": "``dashboard/`` is the aiohttp + SPA surface. Domain code that imports a handler module inverts the dependency: the domain can no longer be exercised without standing up the web app, which is how a feature ends up reachable ONLY through one route and invisible to the CLI, the MCP surface and the harness. Measured 56 edges across 26 files, most of them entry-point composition (gateway, cli_*) that is legitimately downward-facing. Shrink-only GRANDFATHERS those instead of an exemption list — an allowlist is a thing that rots, a measured floor is not.",
+        "upper": [
+          "dashboard"
+        ]
+      },
+      {
+        "lower": [
+          "*"
+        ],
+        "name": "core-must-not-import-its-own-published-facade",
+        "rationale": "``personalclaw.sdk`` is the OUTWARD facade that removable app bundles import; tests/test_apps_import_boundary.py pins the other direction (apps may reach core only through it) and that test SKIPS in a standalone clone, so this direction has never been guarded at all. When core imports its own facade, the facade becomes load-bearing INSIDE core and can no longer be reshaped for apps without breaking core — the provider-boundary tenet inverted. Measured 10 edges across 7 files.",
+        "upper": [
+          "sdk"
+        ]
+      }
+    ],
+    "totals": {
+      "by_rule": {
+        "core-must-not-import-its-own-published-facade": 10,
+        "core-must-not-import-the-http-surface": 56,
+        "ledger-is-a-leaf": 0
+      },
+      "edges": 66,
+      "files": 33
+    }
+  },
+  "structural-size": {
+    "ceiling_lines": 6000,
+    "ceiling_slack_steps": 0,
+    "ceiling_step_lines": 1000,
+    "over_ceiling": {},
+    "rationale": "A module nobody can hold in their head is where every other kind of decay hides: dead branches, a second implementation of something three functions above, a config field read in one place and written in another. Growth is invisible per commit (+40 lines reviews fine) and irreversible in aggregate. TWO rails, and the split between them is the whole design. (1) The CEILING is absolute: no file may reach 6000 lines, so no module can arrive or grow into a step change, and a new worst file reds. It sits one 1000-line step above the measured max of 5447 on purpose — pinned AT the max it would give the repo's most-maintained file zero headroom and turn a boolean config toggle into a mandatory 5,447-line split, which is the gate people route around. (2) The WATCH-BAND POPULATION is the honest decay signal: how MANY files are giant, shrink-only. A file ENTERING the 2800-line band reds (9 -> 10); splitting one is how you go green (9 -> 8). Growth WITHIN the band, below the ceiling, is ordinary maintenance of the files that by construction get maintained most, and is deliberately NOT a violation. Everything below the band is unconstrained except by the ceiling: routine work is untaxed, and the count is what has to come down. WHY 2800 AND NOT A ROUND 2500: the boundary has to sit at a real gap, and this repo proved it within three days — agents/native/builtin_tools.py grew ~233 lines (AG-14 added 122) to 2467, leaving the original 2500 band 33 lines of headroom. 2800 sits in the 225-line gap between engine.py (2583) and chat_handlers.py (2808): 217 lines of headroom, 2.17x the cliff rail's floor. It also leaves engine.py and builtin_tools.py OUTSIDE the band, where crossing 2800 reds them — at 2400 they would be grandfathered members, free to grow to the ceiling unchallenged. The full measured distribution and the accepted 8-line shrink margin on chat_handlers.py are recorded beside SIZE_WATCH_BAND_LINES.",
+    "totals": {
+      "watched_files": 9
+    },
+    "watch_band_lines": 2800,
+    "watch_band_members": [
+      "src/personalclaw/config/loader.py",
+      "src/personalclaw/dashboard/chat_handlers.py",
+      "src/personalclaw/dashboard/chat_runner.py",
+      "src/personalclaw/dashboard/handlers/files.py",
+      "src/personalclaw/dashboard/handlers/knowledge.py",
+      "src/personalclaw/gateway.py",
+      "src/personalclaw/knowledge/store.py",
+      "src/personalclaw/vector_memory.py",
+      "src/personalclaw/workflows/controller.py"
+    ]
+  }
+}

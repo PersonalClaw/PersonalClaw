@@ -964,3 +964,266 @@ Rows 1-4 are roughly one focused session between them.
     `AWS_SECRET_ACCESS_KEY` was still **refused**, logging
     "`sandbox.env_passthrough names AWS_SECRET_ACCESS_KEY, which the credential floor refuses`".
     The floor holds against an operator declaration, observably.
+- [2026-08-21][PHF-14] DONE — three shrink-only STRUCTURAL ratchets ship beside the existing
+  config/inert/docs-lint baselines: `scripts/generate_structural_baseline.py` +
+  `structural-baseline.json` + `tests/test_structural_baseline.py`, all three registered as
+  SEPARATE gates in `scripts/gate_report.py` (PHF-11's aggregate is now six gates, not three).
+  Every number below is a MEASUREMENT of the tree, never an aspiration — `PHF-6`'s
+  ship-at-the-measured-population ruling restated in the generator docstring and railed by
+  `test_every_threshold_shipped_at_the_measured_population_not_at_zero`.
+  * **`structural-size`** — TWO rails, and the split between them is the whole design.
+    (1) an absolute **ceiling of 6000 lines** that no file may reach, set one 1000-line STEP above
+    the measured max of **5427** (`config/loader.py`); (2) the **population** of the **2500-line
+    watch band** — **10 files**, shrink-only. A file ENTERING the band reds (10 -> 11); splitting
+    one is how you go green (10 -> 9). Growth WITHIN the band, below the ceiling, is deliberately
+    NOT a violation. RATIONALE: a module nobody can hold in their head is where every other kind
+    of decay hides, and +40 lines reviews fine every time — but the honest decay signal is HOW
+    MANY files are giant, not whether a giant gained three lines. No raw line count is stored in
+    the baseline at all, so no routine commit can make the byte-compare gate demand a
+    regeneration. The band sits at a real GAP in the distribution, not a round number:
+    next-largest non-member is 2294, so **206 lines of headroom**, computed LIVE by
+    `watch_band_headroom()` and railed at >= 100 by
+    `test_the_watch_band_is_not_sitting_on_a_cliff` (which matters MORE under population counting,
+    because the boundary is now the whole trigger). A band at 2000 would have had 12 lines of
+    headroom (`memory_service.py` at 1988) and would red an innocent session — which is how a
+    ratchet teaches everyone to regenerate baselines.
+  * **`structural-import-direction`** — a declared layer order, **66 upward edges across 33
+    files**: `core-must-not-import-the-http-surface` 56 edges / 26 files,
+    `core-must-not-import-its-own-published-facade` 10 edges / 7 files, `ledger-is-a-leaf` 0
+    (PP-4's extraction is clean and this pins it for one line). Deliberately picks directions
+    `tests/test_apps_import_boundary.py` does NOT cover — INSIDE core, and the REVERSE direction
+    (core importing the facade apps depend on); that test also SKIPS in a standalone clone, so
+    this direction had never been guarded at all. Relative imports are RESOLVED, because
+    `from ..dashboard import x` never contains the string `personalclaw.dashboard` and a
+    grep-shaped rule would be a rail that matches nothing. **Shrink-only replaces the exemption
+    list**: the ~26 legitimate entry-point composers (`gateway.py`, `cli_*.py`) are grandfathered
+    by the measurement instead of an allowlist, because an allowlist rots and a measured floor
+    does not.
+  * **`structural-duplication`** — **40 re-derived sites in 36 files** across three families,
+    censused fresh rather than assumed: **verdict-type 23** (`Verdict`/`*Verdict` outside
+    `workflows/judge_contract.py` — PP-14's un-named primitive), **http-error-envelope-helper
+    12** (PL-8 deleted 13 `json_error` clones; twelve survive as `_err`/`_bad`/`_bad_request`/
+    `_rpc_error`/`_invalid_path`, detected by the `{"error": {"code"}}` SHAPE so a rename cannot
+    dodge the counter), **durable-write 5** (DAS-9's `mkstemp`+`rename` bypass, in 4 files).
+- [2026-08-21][PHF-14] CENSUS SCOPE, stated because a drifting number is not a measurement. The
+  walk is rooted at `src/personalclaw` and NEVER at the repo root — this repo is routinely
+  checked out as ~200 concurrent worktrees (the main checkout carries a `.worktrees/` right now),
+  and a walk that wandered into `.worktrees/`/`node_modules/`/`.venv/`/`build/` would census
+  ANOTHER agent's tree and drift every run. `_EXCLUDED_DIR_NAMES` is a belt-and-suspenders floor
+  and `test_the_walk_cannot_wander_into_a_worktree_or_a_vendor_directory` asserts both the root
+  and every excluded name. Census: **915 production `.py` files, 63 sub-packages**. The live
+  census count is deliberately NOT stored in the baseline: it changes on every module add, so
+  pinning it would make the byte-compare demand a regeneration on routine commits, and a
+  baseline people regenerate routinely is a baseline nobody reads.
+- [2026-08-21][PHF-14] VACUITY, three checks per ratchet, because a rail that matches nothing
+  looks clean and that is how gates die here. (1) the census must see >= `MIN_CENSUS_PY_FILES`
+  (800; measured 915); (2) each ratchet must have inspected EXACTLY as many files as the census
+  counted, and the count comes from the ratchet's OWN scan (`Scan.inspected`) rather than a
+  parallel re-walk that would go stale the moment someone added a filter inside a scan; (3) each
+  ratchet must have touched every sub-package on disk — a file COUNT alone cannot see a whole
+  package leaving the walk, since dropping one of 63 leaves the total comfortably above any
+  floor. The scan memo's cache KEY carries `_parse` and `_src_py_files` so a narrowing
+  invalidates it instead of serving a stale clean result; a cache that outlived its inputs would
+  be its own vacuity bug.
+- [2026-08-21][PHF-14] FALSIFIED, all reds observed live and every mutation re-read to confirm it
+  landed (restores from `cp` copies, never `git checkout`):
+  * **One real violation per ratchet, at the same time** — a NEW 2,600-line
+    `src/personalclaw/phf14_new_giant.py`, a `from personalclaw.dashboard import state` added to
+    `ledger/writer.py`, and a `ProbeVerdict` + `_err` added to `errors.py`. ONE
+    `scripts/gate_report.py` run reported **`SUMMARY: 3 of 6 gate(s) FAILED, 3 failure(s)
+    total`** — three structural gates red BY NAME, the other three still PASS, no red hiding
+    another. Size: "`the 2500-line watch-band population ROSE 10 -> 11; new giant(s):
+    ['src/personalclaw/phf14_new_giant.py']`". Import: fired BOTH applicable rules on the one edge
+    (`ledger-is-a-leaf` AND `core-must-not-import-the-http-surface`). Duplication: named both new
+    sites. The pytest side reds identically: **3 failed**, one per parametrized ratchet.
+  * **The two size rails, separately.** A band member pushed to 6001 lines reds on the CEILING
+    ("`config/loader.py: 6001 lines EXCEEDS the committed per-file ceiling of 6000`") with the
+    other five gates green; the new-giant case above reds on the POPULATION. Two distinct defects,
+    two distinct failure lines.
+  * **A ratchet made to inspect ZERO files reports VACUITY rather than reading clean** — proven
+    in both shapes. Root typo'd to `src/personalclaw_TYPO`: all three gates red with "the census
+    saw only 0 production .py files (floor 800)". Then `_parse` forced to return `None` with the
+    census INTACT: the two AST ratchets red with "inspected 0 of the 915 files the census
+    counted" while `structural-size` — which needs no parse — correctly stayed PASS, proving the
+    checks are per-ratchet and not one shared flag. Without them the ratchets read PASS on an
+    empty walk, which `test_an_empty_walk_fires_the_vacuity_assertion_for_every_ratchet` asserts
+    explicitly so nobody deletes the check as redundant.
+  * **The forbidden-to-raise doc line deleted reds the rail** — rewrote the generator's
+    `FORBIDDEN-TO-RAISE` block into a well-meaning "or to update the baseline"; both markers
+    confirmed gone (`grep -c` 0) and `test_forbidden_to_raise_doc_line_is_present` failed. The
+    phrase is asserted in the generator docstring, in the test module's docstring, AND in the
+    ratchet's own FAILURE MESSAGE (asserted by reading this test file's source) — a doc line
+    nobody sees when the gate reds is a doc line that will be dropped.
+- [2026-08-21][PHF-14] DELIBERATELY NOT RATCHETED, as decisions with reasons (in the generator's
+  `# what this deliberately does NOT ratchet` section, railed by
+  `test_the_deliberate_non_ratchets_are_recorded_as_decisions`): **`tests/` file length** (a
+  3,000-line test module is not the comprehension hazard a 3,000-line production module is —
+  tests are read one function at a time and grow by append, and taxing that taxes the activity we
+  want cheapest); **function length / cyclomatic complexity** (needs a metric everyone agrees on;
+  picking one badly produces a gate people route around — deferred, not rejected); **`web/`** (the
+  design-system ratchets own frontend structure under vitest, and a second Python-side counter
+  over `web/src` would be exactly the duplicate gate `structural-duplication` measures); **the
+  apps -> core direction** (`test_apps_import_boundary.py` owns it); **total lines of `src/`** (a
+  growing project grows; that ratchet reds on every feature and teaches baseline-regeneration);
+  **import CYCLES** (a genuinely different defect — initialization order, not layer inversion —
+  needing an SCC pass rather than a per-edge rule; its own atom). Also NOT counted as duplication:
+  the three `_atomic_write*` wrappers that DELEGATE to `atomic_write` (that is the shape we want,
+  and counting them would teach the next reader that wrapping the canonical helper is the defect),
+  and route handlers that build an envelope inline (a much larger population with no sanctioned
+  alternative yet — the counter is bounded to <=3-statement helpers so the number stays
+  actionable).
+- [2026-08-21][PHF-14] DEVIATION: `tests/test_gate_report.py` had to change — registering three
+  gates necessarily changes the aggregate's arity. Assertions were TIGHTENED, not relaxed: the
+  hard-coded `len(results) == 3` became `[r.name for r in results] == _ALL_GATE_NAMES`, so the six
+  gates are now pinned by NAME and ORDER and a future registration can neither drop one silently
+  nor reorder the table. No CHANGELOG entry — a repo audit tool plus its committed baseline is not
+  a user-visible surface (`PHF-6`'s precedent). No `web/` change.
+- [2026-08-21][PHF-14] DESIGN CHANGE, and the reason belongs on the record because it is the
+  difference between a ratchet and an outage. The size ratchet was FIRST built to freeze each of
+  the 10 watch-band files at its exact measured length, and that was wrong. `config/loader.py`
+  would have been pinned at 5427 — and it is simultaneously the largest file in the repo AND the
+  file the config round-trip contract touches on every new field (dataclass + `_meta` + `load()`
+  are all in it: three of the contract's five points). So the gate as first written would have
+  RED a correct `natural_voice` boolean addition and demanded a 5,427-line split as the price of a
+  toggle. That is the exact "gate people route around" outcome this atom refused to risk for
+  function length and cyclomatic complexity, and it was live: an agent was adding that field
+  concurrently, and two open PRs touch `chat_runner.py` (another band member).
+  **What replaced it:** the band is now a shrink-only POPULATION (count + member identities, no
+  lengths), and the ceiling moved from 5427 to 6000 — one 1000-line step above the max.
+  * The clause is still satisfied: "shrink-only, never at zero" wants a measured quantity that may
+    only decrease, and a count of giants is one. Decay is a new 2,500-line module appearing; +3
+    lines on an existing one is ordinary maintenance of the file that by construction gets
+    maintained most.
+  * **The ceiling had to move, and this is a deliberate deviation from "keep the ceiling at the
+    measured max".** The two requirements are arithmetically incompatible: the ceiling HOLDER is
+    `config/loader.py` at exactly 5427, so a ceiling AT the max gives that file zero headroom and
+    any edit to it reds — including the innocent one the gate is required to pass. Resolved by
+    keeping the rail's stated purpose (nothing may reach a step change; a new worst file reds) and
+    giving it **573 lines of headroom**. It is forbidden to raise, and it comes DOWN in 1000-line
+    steps (`stale_high` emits "lower SIZE_CEILING_LINES to N" via `ceiling_slack_steps` once the
+    max drops a full step). A STEP multiple, not `max + N`, so the rendered value stays stable
+    while the max drifts and the byte-compare gate stays quiet on routine commits.
+  * Two new rails guard the new failure mode:
+    `test_the_ceiling_leaves_the_biggest_file_room_for_ordinary_maintenance` (>= 100 lines of
+    headroom on the ceiling holder, so a future "tighten the ceiling to the max" cleanup cannot
+    ship the outage) and
+    `test_an_ordinary_config_field_addition_to_the_largest_file_stays_green`.
+  * Import-direction and duplication are UNCHANGED — the objection was scoped to size, and so was
+    the fix.
+- [2026-08-21][PHF-14] FALSIFIED — THE INNOCENT EDIT STAYS GREEN. Six lines appended to
+  `src/personalclaw/config/loader.py` in the shape of a real config field (a default, a `_meta`
+  row, a key constant), taking it **5427 -> 5433**: `scripts/gate_report.py` reported
+  **`SUMMARY: all 6 gate(s) passed`**, the size ratchet returned **zero failures**, the committed
+  baseline still **byte-matched** a fresh render (so no regeneration was demanded either), and the
+  live band headroom was unchanged at 206. WHAT IT PROVES: **ordinary maintenance of an existing
+  large file is not a violation; a new large file is.** Under the first design this same edit
+  breached the ceiling AND churned the stored per-file length — two reds for a correct change.
+  The rail that keeps it true is a test, not a one-time observation.
+- [2026-08-21][PHF-14] BAND MOVED 2500 -> 2800 ON REBASE, and the trigger was this atom's own
+  cliff rail. Rebased onto `main` at `0c9a01f7`, `test_the_watch_band_is_not_sitting_on_a_cliff`
+  failed: "only 33 lines of headroom below the 2500-line watch band". Cause, measured:
+  `agents/native/builtin_tools.py` is now **2467** lines — it grew ~233 in three days from merged
+  atoms (`AG-14` alone added 122) and came to rest 33 lines under the boundary. Nothing was
+  violated; the BOUNDARY had stopped sitting at a gap. Incidentally the cleanest possible
+  vindication of dropping the per-file freeze in the entry above: the most-edited large file in the
+  repo gained 233 lines in three days, and under the first design every one of those merges would
+  have red CI.
+  **Distribution measured independently over 921 files** (the recommendation I was handed had one
+  transposition — 2600 gives population 9 with headroom 17, not population 17):
+
+  | band | population | largest non-member | headroom |
+  |---|---|---|---|
+  | 2400 | 11 | 2294 `subagent.py` | 106 |
+  | 2500 | 10 | 2467 `builtin_tools.py` | **33** (the cliff) |
+  | 2600 | 9 | 2583 `workflows/engine.py` | 17 |
+  | **2800** | **9** | 2583 `workflows/engine.py` | **217** |
+  | 2900 | 8 | 2808 `chat_handlers.py` | 92 |
+  | 3000 | 7 | 2992 `handlers/files.py` | 8 |
+
+  **2800 chosen, and the usual reading of the 2400-vs-2800 trade is backwards.** The apparent cost
+  of 2800 is that `engine.py` (2583) and `builtin_tools.py` (2467) are not watched — but a band
+  member's growth is deliberately NOT a violation, so at 2400 those two would be GRANDFATHERED and
+  free to run to the 6000 ceiling unchallenged. At 2800 they sit outside, and crossing 2800 REDS.
+  The higher band therefore puts MORE pressure on the two fastest-growing large files in the repo,
+  not less. Secondary: 106 lines of headroom is well under one feature's growth for this codebase
+  (233 in three days, above), so 2400 would ship a boundary already known to be one merge from
+  redding; 2800 gives 2.17x the rail's own floor.
+  **Known cost, stated rather than discovered later:** the band's smallest member is
+  `chat_handlers.py` at 2808, so it has 8 lines of SHRINK margin — delete nine lines from it and
+  the stale-high check asks for a regeneration. Accepted deliberately: the 225-line gap
+  (2583 -> 2808) cannot give 200+ lines of margin in both directions, and the remedies are not
+  equally priced. A stale-high red is one command in the same commit and is the sanctioned flow for
+  a file leaving the giant population; a cliff red asks for the boundary itself to be re-authored.
+  Optimise the margin against GROWTH — the direction this ratchet exists to measure.
+  **The loophole this opens is closed by protocol, and named as a loophole.** The band is a
+  threshold, not a counter, so forbidden-to-raise does not cover it. The generator's
+  `# moving SIZE_WATCH_BAND_LINES is a re-authoring, not a regeneration` section states the only
+  sanctioned trigger (the cliff rail under 100), requires the measured table in this log, and
+  FORBIDS moving the band in response to a population RISE — widening the band to make a new giant
+  disappear is the same act as regenerating a baseline to bless a higher number. If a red names an
+  entrant, split the entrant.
+- [2026-08-21][PHF-14] REGENERATION AGAINST CURRENT `main` — and the ratchet earned its keep in
+  BOTH directions on its first day, before it had even landed. Census 915 -> **921** files, max
+  5427 -> **5447** (ceiling stays 6000, `ceiling_slack_steps` 0, holder headroom 553).
+  * **`structural-duplication` 40 -> 33 sites** (36 -> 29 files). `http-error-envelope-helper`
+    **12 -> 4** — `PL-8`'s clone deletion has now merged, and eight of the twelve one-statement
+    envelope re-derivations are gone. Only `_bad`, `_disabled_response`, `_invalid_path` and
+    `_rpc_error` survive. This is the counter measuring a real cleanup, unprompted.
+  * **`verdict-type` 23 -> 24.** `WF2LEA-15` landed `LessonVerdict` at
+    `learning/lesson_confidence.py:152` (commit `8529be35`) — a **fifth** verdict dialect, three
+    atoms after `WF2LOO-16` reconciled four of them. Verified by reading the class, not by
+    trusting the delta. Had this ratchet been on `main` a week earlier, that would have red and
+    asked the question at authoring time, which is the entire thesis of `PP-14`.
+  * `structural-import-direction` unchanged at 66 edges / 33 files; `durable-write` unchanged at 5.
+  Both movements are the point: a counter that only ever goes up is a complaint, and a counter that
+  never moves is dead. This one did both within three days.
+- [2026-08-21][PHF-14] RE-FALSIFIED at the new threshold, all reds observed live (mutations re-read
+  to confirm they landed; restores from `cp` copies, never `git checkout`):
+  * **New band entrant** — a fresh 2,900-line `src/personalclaw/phf14_new_giant.py`:
+    "`the 2800-line watch-band population ROSE 9 -> 10; new giant(s):
+    ['src/personalclaw/phf14_new_giant.py']`", other five gates green.
+  * **Ceiling breach** — `config/loader.py` padded to 6001: "`6001 lines EXCEEDS the committed
+    per-file ceiling of 6000`", other five gates green. The two size rails still fail separately.
+  * **Three simultaneous** — the new giant + a `dashboard` import in `ledger/writer.py` + a
+    `ProbeVerdict`/`_err` pair in `errors.py`: **`SUMMARY: 3 of 6 gate(s) FAILED, 3 failure(s)
+    total`**, each gate red by name, the import rule firing BOTH applicable directions on one edge.
+  * The innocent-edit-stays-green falsification was re-verified by the reviewer on the rebased tree
+    (six lines appended to `config/loader.py`, 5447 -> 5452, `structural-size` PASS with the
+    baseline still byte-matching), so it is cited rather than repeated here. Its permanent rail
+    (`test_an_ordinary_config_field_addition_to_the_largest_file_stays_green`) runs on every suite.
+- [2026-08-21][PHF-14] DISCOVERY, caught by the band move and worth the record because it is this
+  plan's own favourite defect class: `test_a_new_giant_file_reds_by_naming_the_band_population`
+  hard-coded a **2,600**-line probe file. At band 2500 that reds correctly; at band 2800 the probe
+  falls BELOW the boundary, so the test would have gone GREEN while asserting nothing — a rail that
+  matches nothing looks clean. It failed loudly here only because it also asserted
+  `len(failures) == 1`. Fixed by deriving the probe size from the constant
+  (`gen.SIZE_WATCH_BAND_LINES + 100`), so the test cannot go vacuous on the next band move. Swept
+  the rest of the suite for band-relative literals in executable code: none remain (every other
+  size probe is already keyed to `SIZE_CEILING_LINES` or sits far below any plausible band). THE
+  GENERAL RULE: a test that probes a threshold must be keyed to the threshold CONSTANT, never to a
+  literal that happened to straddle it when the test was written.
+- [2026-08-21][PHF-14] DISCOVERY (a gap in the gate, NOT fixed here, with the evidence a future
+  atom needs): **`make lint` does not cover `scripts/`.** The target lints `$(PKG) $(TESTS)
+  $(HARNESS)` = `src/personalclaw tests harness` only, so this atom's own generator —
+  `scripts/generate_structural_baseline.py`, the file that produces a committed baseline — is
+  outside the definition-of-done's lint step. An E501 in it passed `make lint` and was caught only
+  by the repo-owned pre-commit hook, which does lint staged Python regardless of path. Deliberately
+  NOT fixed in this atom: `python -m flake8 scripts` currently reports pre-existing violations in
+  `scripts/memory_validate.py` (E127, E501) and `scripts/seed_tasks.py` (six E501s), so adding
+  `scripts` to the lint target reds on files this atom does not own, and doing it while several
+  agents hold concurrent branches would red their trees too. Cheap to close in its own change: fix
+  those two files, then append `SCRIPTS := scripts` to the three lint invocations.
+- [2026-08-21][PHF-14] GATE (rebased onto `main` at `0c9a01f7`): `make lint` rc=0 (black/isort/
+  flake8 over `src`+`tests`+`harness`, mypy clean on **949** source files) and
+  `flake8 scripts/generate_structural_baseline.py` clean too, since `make lint` does not reach it
+  (see the lint-scope DISCOVERY above). `scripts/gate_report.py` **all 6 gates PASS**;
+  `structural-baseline.json` byte-matches a fresh render. Targeted:
+  `tests/test_structural_baseline.py` + `tests/test_gate_report.py` **37 passed**. FULL SUITE
+  **23,654 passed / 30 skipped / 12 xfailed / 0 FAILED** in 328s. Residue sweep
+  `grep -rn "FALSIFICATION\|if False and\|# PROBE\|MUTANT" src/personalclaw tests` = 16 = 13
+  pre-existing + 3 new, all three the FIRST LINE of a test docstring, `src/personalclaw` = zero.
+  `git status --porcelain` empty. One commit, seven files, correct author/committer, DCO sign-off,
+  no agent trailers. Baseline regenerated with the worktree first on `PYTHONPATH`; the only changed
+  file was this worktree's copy and the main checkout stayed clean. No CHANGELOG entry (a repo audit
+  tool plus its baseline is not a user-visible surface — `PHF-6`'s precedent). No `web/` change.
+  `docs/roadmap/atomic/dag.json` deliberately untouched (fenced under concurrent multi-agent edit).
