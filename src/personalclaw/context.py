@@ -1441,6 +1441,39 @@ class ContextBuilder:
                     name="session context (memory · lessons · history)",
                     compressible=False,
                 )
+            # CE2-10: a RESUMED session gets the account of what already happened, DERIVED from
+            # the run's own recorded facts. This is the branch that created the defect: the
+            # `resumed` path above deliberately skips thread history (the agent owns it), which
+            # leaves "step 3 already finished" as something the model has to INFER from surviving
+            # prose — and it infers wrong, re-running yesterday's completed step.
+            #
+            # NOT compressible: an account trimmed in the middle is an account that has silently
+            # dropped a completion, which is the very defect it exists to fix. If it does not fit,
+            # CE2-8's contract must name it and refuse.
+            #
+            # `ResumeStateInconsistent` is deliberately NOT caught here. The record contradicting
+            # the tree is the one case where continuing is worse than stopping, and swallowing it
+            # would leave the turn running on a premise already known to be false. The chat runner
+            # turns it into the user-visible refusal.
+            if resumed and session_key:
+                from personalclaw.resume_account import NOT_CONSULTED, resume_account_block
+
+                _account = resume_account_block(
+                    session_key=session_key,
+                    # NOT_CONSULTED, not []: the assembly seam holds no per-tool outcome record.
+                    # The conversation log persists a tool's TITLE and nothing about whether it
+                    # succeeded, so claiming to have read the tool history here would be a
+                    # confident "nothing happened" about a source nobody read. The compaction
+                    # seam, which DOES hold the tool_calls/tool-result pairs, reads it.
+                    tool_messages=NOT_CONSULTED,
+                    tree_root=cwd,
+                )
+                if _account:
+                    parts.add(
+                        _account + "\n\n",
+                        name="record of already-completed work",
+                        compressible=False,
+                    )
 
         # Channel history — inject on every message for group channel context
         ch_ctx: str | None = None

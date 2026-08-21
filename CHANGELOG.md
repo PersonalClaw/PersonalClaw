@@ -10,6 +10,23 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Added
 
+- **A resumed session no longer redoes yesterday's finished work.** Picking a long task back up used
+  to hand the agent whatever prose survived and leave it to *infer* how far it had got — and it
+  inferred wrong, cheerfully re-running a step that had already completed. A resumed or compacted
+  session now carries a short, explicit record of what actually happened, **read out of the logs the
+  run already wrote** — which steps completed, which failed, which files were touched, which choices
+  were already settled. Nothing in it is written by a model, so it cannot invent a completion: if a
+  fact was not recorded, it is not in there.
+  **A failed step stays failed.** A step that was tried and did not work is reported as failed, and a
+  tool call whose result was never recorded is reported as unfinished — never quietly rounded up to
+  "done". Forgetting that something finished costs one repeated step; believing something finished
+  when it did not silently skips work you asked for, which is worse.
+  **It is a record, not a to-do list**, so the agent reads it as background rather than as
+  instructions, and it is small enough to survive compaction without crowding out what you just
+  asked. Compaction now carries it through instead of folding it into the summary.
+  **And if the record disagrees with your files, the resume stops.** If it says a file exists and it
+  is gone — the branch changed under you, the tree was reverted — the turn refuses and names the
+  file, instead of carrying on from a picture that is already wrong.
 - **A turn that will not fit says so before it runs, and says what to do about it.** PersonalClaw
   used to find out a prompt was too big by sending it and reading the provider's error back — after
   you had already waited. The context is now measured against the bound model's real window *before*

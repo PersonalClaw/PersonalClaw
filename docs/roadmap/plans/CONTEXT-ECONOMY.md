@@ -412,3 +412,100 @@ Sessions 1-3 (NEW-16) and 4-5 (NEW-22) are independent tracks; either alone is a
   that set lands. (The pre-existing "This session completes CONTEXT-ECONOMY — all six sessions
   are now DONE" line above refers to the plan's original six sessions, not to the rev-18
   amendment atoms CE2-8/9/10.)
+
+## Execution log — CE2-10 (a resumed session's derived account of completed work)
+
+- **[2026-08-21][CE2-10] DONE.** A resumed or compacted session now carries a structured account
+  of what already happened, `src/personalclaw/resume_account.py`. Every line is DERIVED from a
+  record some other code wrote; nothing composes it, and there is no `summarize_fn` in the module.
+
+- **Three sources, each with a closed status vocabulary.** (1) The **ledger** —
+  `ledger.reader.read_events(store, run_id, kinds=ACCOUNT_KINDS)` over
+  `step_completed`/`step_failed`/`step_skipped`/`effect`/`decision`, whose live writers are
+  `workflows/controller.py:2961/:2334/:1596/:2292/:3690`. (2) The **tool history** — the native
+  loop's `tool_calls`/`{"role":"tool"}` pairs, classified with the runtime's OWN discriminator
+  (`agents/native/runtime.py:1143`, `failed = result_str.startswith("Error:")`) plus
+  `security.is_denial_observation` for the denied-is-not-failed split (WF2LEA-13), reused rather
+  than re-derived so there is no second answer to "what is a failed tool call". (3) The **turn
+  checkpoints** — a new read-only `turn_checkpoints.recorded_file_entries()` over the pre-edit
+  manifests written by `agents/native/builtin_tools.py:1304`, the only source that PERSISTS which
+  files a session touched and therefore the only one a post-restart resume can use.
+
+- **`SEL` was evaluated as the tool-outcome authority and rejected.** `log_tool_invocation`
+  records an `outcome`, but its vocabulary is OPEN and semantically mixed — the live call sites
+  write `allowed`, `ok`, `hard`, `invoked`, `ungated`, `bypass`, `blocked`, `too_large`,
+  `not_found`, `denied`, `failed`, `refused_low_memory`. Mapping that onto done/failed would have
+  meant inventing a classification (and `allowed`/`invoked` mean *permitted*, not *succeeded*),
+  i.e. minting another dialect over a set nobody closed. Recorded here because it looks like the
+  obvious source and is not one.
+
+- **Five statuses, and only one of them is `done`.** `done` / `failed` / `denied` / `skipped` /
+  `attempted`. `attempted` is the load-bearing one: a recorded tool call with NO recorded result,
+  or an `effect_status=attempted` ("unknown, possibly fired"), is the case a resumed model most
+  wants to call finished. An UNRECOGNISED `effect_status` degrades to `attempted`, never `done`.
+  A retry that later succeeded reads `done` with `retried=True` rather than erasing the failure
+  that made it necessary.
+
+- **Two seams.** `context.py` — inside the `is_new_session` branch, gated on `resumed`, added as a
+  labelled CE2-8 component `record of already-completed work` with `compressible=False` (an
+  account trimmed in the middle has silently dropped a completion). `context_compaction.compact()`
+  — an existing block is CARRIED verbatim (its facts came from messages already folded away, so it
+  cannot be re-derived) and a fresh one is DERIVED for the region being folded, both inserted
+  between the summary and the untouched verbatim tail. `protect_tail` is not changed, which is how
+  "does not evict the live task" is proved: `after[-8:] == before[-8:]` byte-identical.
+
+- **Bounded, measured with the allocator's counter.** `MAX_ACCOUNT_CHARS = 4000`,
+  `MAX_ACCOUNT_TOKENS = 1400`; a pathological 1000-fact ledger with 200-char names renders **4000
+  chars / 1000 tokens** (typical: 731 chars / 183 tokens), counted through
+  `context_headroom.count_tokens` — no second counter, per `context_headroom.py:146-155`. The
+  omitted-fact note is placed ABOVE the fact list, because the post-render cap cuts from the end
+  and a note appended after the facts is the first thing a truncated account loses.
+
+- **The refusal is one concrete claim: a path the record says exists must exist.** Fed by
+  successful write-shaped tool calls and by checkpoint entries with `existed: True` — restricted to
+  `existed is True` (identity, not truthiness) because an `existed: False` capture records a CREATE
+  whose failure legitimately leaves the file absent, and because an absent key is an unrecorded
+  fact rather than a negative one. A recorded DELETE is never presence-checked; a path outside the
+  tree root is skipped, not counted. `verify_resume_state` runs at
+  `dashboard/chat_runner.py` BEFORE `assemble_context`, because `assemble_context` quarantines a
+  raising ENGINE to the default one — a refusal arriving there as an exception would have been
+  logged as an engine fault instead of shown to the user. Refusal shape copies the CE2-8
+  `CANNOT_FIT` block exactly: error card, `_last_turn_errored = True`, `return`.
+
+- **A REAL DEFECT FOUND BY THE END-TO-END TEST — the fence would have been inert.**
+  `build_message` runs the assembled prompt through `context._MULTIBYTE_TABLE`, which rewrites an
+  em dash to `--`. The account's fence originally contained one, so the block that actually shipped
+  read `[RESUME ACCOUNT -- RECORDED FACTS]` while `context_compaction.is_resume_account` matched on
+  the em-dash form: the carry rule would never have fired, while looking perfectly implemented.
+  Fence constants are now ASCII-only and `test_the_fence_survives_prompt_assembly` asserts both the
+  translate-identity and the end-to-end `is_resume_account(assembled_message)`.
+
+- **A VACUOUS TEST CAUGHT BY FALSIFICATION, then fixed.** `test_compaction_reads_the_original_tool
+  _results_not_the_pruned_digests` passed under a mutant that derived from the pruned copy: the
+  fixture had ONE tool result, and `prune_tool_outputs` keeps the newest
+  `_KEEP_RECENT_TOOL_RESULTS` full, so pruned and original were identical. The fixture now pushes
+  the error result out of that window and asserts the digest actually replaced it before compacting.
+  Same lesson on the assembly-seam test: `"FAILED" in text` passed under the fold-failed-into-done
+  mutant because the block's PREAMBLE contains the word — it now asserts on the step's own line.
+
+- **Falsifications (mutate the live line, observe, restore from a file copy).** (a) `STEP_FAILED`
+  → `done`: 3 red incl. both load-bearing negatives. (b) compose facts from message prose: 1 red
+  (`test_nothing_reaches_the_account_that_is_not_in_a_record`). (c) inconsistent tree warns and
+  proceeds: 2 red (checker + seam). (d) account dropped from the carried set: 1 red
+  (`test_the_account_survives_a_compaction_verbatim`). (e) derive from the pruned copy: 1 red
+  (after the vacuity fix; green before it). (f) em-dash fence: 2 red.
+
+- **Tests:** `tests/test_resume_account.py`, 29 cases, 6s. The ledger halves drive the REAL
+  `workflows.journal.Journal` emitters rather than hand-written dicts — a reader of a key nothing
+  emits is the inert-control shape, and a hand-rolled fixture cannot tell the two apart.
+
+- **One clause satisfied narrowly.** "which commands succeeded" is answered with full fidelity for
+  the ledger and for the native tool history. For a resumed **plain dashboard** session the
+  assembly seam passes `NOT_CONSULTED` for tool history and says so in the block, because the
+  conversation log persists a tool's TITLE and nothing about its outcome — the honest answer is
+  "nobody read that source", not a confident "nothing happened". Persisting per-tool outcomes to
+  the conversation log is a separate change with its own storage question.
+
+- **Roadmap bookkeeping — no `dag.json` row to flip**, same as CE2-8: `main`'s
+  `docs/roadmap/atomic/dag.json` carries CE2-1…CE2-7 only; CE2-10 arrived with the rev-18
+  capability-gap set, still unmerged. No row invented. This entry is the record until it lands.
