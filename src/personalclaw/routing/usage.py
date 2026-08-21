@@ -36,8 +36,10 @@ atom's scope.
 **Purpose is the unifying vocabulary.** The ledger's ``source`` maps into the fixed
 ``interactive | background | loop | eval | app`` vocabulary. A source that is none of the known
 literals is an APP NAME (``chat_runner`` sets ``source = session._app or "chat"``), so it maps to
-``app`` and the name is recorded in ``fold["app_sources"]`` — a census, not an error. ``eval`` is
-declared for a first writer and has none today; :func:`reachable_purposes` reports what the current
+``app`` and the name is recorded in ``fold["app_sources"]`` — a census, not an error. An app name
+that IS a known literal is that literal's purpose, not ``app``: the loop engine names its worker
+session ``app="loop"``, which is why ``loop`` has a live writer. ``eval`` is declared for a first
+writer and has none today; :func:`reachable_purposes` reports what the current
 writers can actually produce so a UI never renders a permanent zero row.
 
 **A row that cannot be attributed to a day is counted, never dropped** — ``fold["unmapped"]``
@@ -183,18 +185,26 @@ def purpose_for_source(source: str) -> tuple[str, str]:
 #: ``background`` (gateway heartbeat), ``channel``/``cron`` (announce path), ``subagent``,
 #: ``cli`` (cli_chat) and ``chat``-or-an-app-name (chat_runner, ``session._app or "chat"``):
 #:
-#: * ``eval`` — declared for a first writer that does not exist yet.
-#: * ``loop`` — the loop engine writes NO turn row. Its inferences resolve under the ``loops``
-#:   guard axis into ``model_calls.jsonl`` attempts, which the fold CENSUSES rather than sums,
-#:   so loop spend reaches ``fold["uncounted"]`` and never a ``loop`` cell. (This also means the
-#:   module note's double-count example is aspirational, not current: there is no loop turn row
-#:   to double-count against.)
+#: * ``eval`` — declared for a first writer that does not exist yet. No call site passes the
+#:   literal, and no session is created with ``app="eval"``, so nothing can reach the bucket.
+#:
+#: ``loop`` was listed here until the app-name path was resolved properly, and that was wrong.
+#: An app name is only :data:`APP_PURPOSE` when it is NOT already a key of
+#: :data:`PURPOSE_BY_SOURCE`, and the loop engine names its worker session ``app="loop"``
+#: (``loop/manager.py`` for both the main worker and each parallel task worker), so
+#: ``session._app or "chat"`` passes the string ``"loop"`` and :func:`purpose_for_source` maps it
+#: to the ``loop`` purpose on the FIRST lookup. The writer chain, end to end:
+#: ``loop/manager.py`` ``app="loop"`` -> ``dashboard/state.py`` ``session._app = app`` ->
+#: ``gateway.py``'s autonudge ``_fire`` -> ``_run_one`` -> ``chat_runner._run_chat`` ->
+#: ``_record_turn_usage(source=getattr(session, "_app", "") or "chat")`` ->
+#: :func:`personalclaw.usage_ledger.record_from_event`. Excluding it hid real loop spend from
+#: every surface that filters on :func:`reachable_purposes`.
 #:
 #: Kept as an explicit set rather than derived at runtime because the writers are spread across
 #: five modules and an import-time census of them would be a circular dependency. It cannot go
-#: stale silently: ``test_usage_reachable_purposes`` censuses the real call sites and fails the
-#: moment a writer for one of these appears.
-UNWRITTEN_PURPOSES = frozenset({"eval", "loop"})
+#: stale silently: ``test_usage_reachable_purposes`` censuses the real call sites — including the
+#: ``app=`` literals the chat seam forwards, which is exactly what the ``loop`` miss taught it.
+UNWRITTEN_PURPOSES = frozenset({"eval"})
 
 
 def reachable_purposes() -> tuple[str, ...]:
