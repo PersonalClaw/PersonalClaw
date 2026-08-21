@@ -8,7 +8,8 @@ keeping two implementations in sync by hand.
 Three conventions this file follows from the surrounding code:
 
 * **The HTTP error envelope is `{"error": {"code": ..., "message": ...}}` with a
-  lowercase_snake code** (INTEGRATION-ARCHITECTURE §2.2), which is a DIFFERENT vocabulary
+  lowercase_snake code** (`AGENTS.md` §"Shared conventions"; emitted by
+  `personalclaw.http_errors.json_error`), which is a DIFFERENT vocabulary
   from the service layer's `WF_*` codes — those are for an LLM reading a tool result, these
   are for a browser branching on a status. `_fail` maps one to the other in one place so
   they cannot drift.
@@ -38,8 +39,8 @@ from personalclaw.workflows import service, store
 logger = logging.getLogger(__name__)
 
 #: service `WF_*` code → (HTTP status, wire code). The wire vocabulary is
-#: lowercase_snake per §2.2; the service's codes are the LLM-facing channel. Mapped in ONE
-#: place so a new service code cannot silently become a 500.
+#: lowercase_snake per the shared convention; the service's codes are the LLM-facing
+#: channel. Mapped in ONE place so a new service code cannot silently become a 500.
 _STATUS_MAP: dict[str, tuple[int, str]] = {
     "WF_DEF_NOT_FOUND": (404, "not_found"),
     "WF_RUN_NOT_FOUND": (404, "not_found"),
@@ -103,7 +104,7 @@ _DEFAULT_FAILURE = (400, "bad_request")
 
 
 def _fail(body: dict[str, Any]) -> web.Response:
-    """Render a service failure as the §2.2 HTTP envelope.
+    """Render a service failure as the shared HTTP error envelope.
 
     The service's payload rides along under `detail`: a preflight failure's findings or a
     validation issue list is the actionable half, and dropping it would leave a client with

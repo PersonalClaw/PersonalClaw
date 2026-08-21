@@ -8,13 +8,16 @@ mechanism), and the exact **fix** (the next action) — plus optional
 research this follows measured this shape converting failures into recovery
 loops; the point is that the model reads structure, not prose.
 
-**Distinct from the HTTP error envelope.** INTEGRATION-ARCHITECTURE §2.2 owns the
-*wire* shape for API-route errors — ``{"error": {"code": "<lowercase_snake>",
-"message": ...}}`` — a thing a browser/external client branches on. ``AgentError``
-is the carrier *into an LLM session* (on ``ToolResult``/``ActionResult`` and the
-exceptions that become tool-result text). The two never collide: HTTP codes are
+**Distinct from the HTTP error envelope.** `AGENTS.md` §"Shared conventions" →
+**Error envelope (HTTP)** owns the *wire* shape for API-route errors —
+``{"error": {"code": "<lowercase_snake>", "message": ...}}`` — a thing a
+browser/external client branches on, emitted by the one
+:func:`personalclaw.http_errors.json_error` and registered in
+:data:`personalclaw.http_errors.HTTP_ERROR_CODES`. ``AgentError`` is the carrier
+*into an LLM session* (on ``ToolResult``/``ActionResult`` and the exceptions that
+become tool-result text). The two never collide: HTTP codes are
 ``lowercase_snake``; agent codes are ``ERR_UPPER_SNAKE`` (asserted below). A route
-handler keeps returning §2.2; a tool surfaces an ``AgentError``.
+handler keeps returning the wire envelope; a tool surfaces an ``AgentError``.
 
 The registry :data:`ERROR_CODES` is **append-only** — a shipped code is a stable
 surface an agent (and its saved prompts/SOPs) branch on, so it is never removed or

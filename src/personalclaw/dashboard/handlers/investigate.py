@@ -2,7 +2,7 @@
 
 POST /api/investigate {kind, id, back_link?}
   → 200 {session_key, context}
-  → 400 unknown_kind | 404 unknown_entity (§2.2 envelopes)
+  → 400 unknown_kind | 404 unknown_entity (shared error envelopes)
 
 Server-side effects: fresh dashboard chat session, task mode set to the
 envelope's suggestion (default ``ask`` — read-only; the USER escalates, never the

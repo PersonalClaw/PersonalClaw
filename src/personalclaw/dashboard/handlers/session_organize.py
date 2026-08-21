@@ -4,7 +4,9 @@ Three routes over :mod:`personalclaw.session_organize`: read a suggestion, accep
 decline it. The GET is the chip's data source and is strictly read-only — a user who
 opens a chat and never touches the chip leaves the session exactly as it was.
 
-Uses the INTEGRATION-ARCHITECTURE §2.2 error envelope (``{"error": {"code", "message"}}``).
+Uses the `AGENTS.md` §"Shared conventions" error envelope
+(``{"error": {"code", "message"}}``), emitted by
+:func:`personalclaw.http_errors.json_error`.
 """
 
 from __future__ import annotations
@@ -16,13 +18,10 @@ from aiohttp import web
 from personalclaw import session_organize
 from personalclaw.dashboard.chat_persistence import resolve_session
 from personalclaw.dashboard.state import DashboardState
+from personalclaw.http_errors import json_error
 from personalclaw.sel import sel
 
 logger = logging.getLogger(__name__)
-
-
-def _err(message: str, code: str = "bad_request", status: int = 400) -> web.Response:
-    return web.json_response({"error": {"code": code, "message": message}}, status=status)
 
 
 async def api_session_organize_suggest(request: web.Request) -> web.Response:
@@ -35,7 +34,7 @@ async def api_session_organize_suggest(request: web.Request) -> web.Response:
     state: DashboardState = request.app["state"]
     session = resolve_session(state, request.match_info["session"])
     if not session:
-        return _err("session not found", code="not_found", status=404)
+        return json_error("not_found", message="session not found", status=404)
     allow_llm = request.query.get("llm", "1") not in ("0", "false", "no")
     proposal = await session_organize.propose_for_session(state, session, allow_llm=allow_llm)
     return web.json_response({"proposal": proposal.to_dict() if proposal else None})
@@ -53,13 +52,13 @@ async def _proposal_from_body(
     """
     session = resolve_session(state, request.match_info["session"])
     if not session:
-        return None, None, _err("session not found", code="not_found", status=404)
+        return None, None, json_error("not_found", message="session not found", status=404)
     try:
         body = await request.json()
     except Exception:
-        return None, None, _err("invalid JSON body")
+        return None, None, json_error("bad_request", message="invalid JSON body", status=400)
     if not isinstance(body, dict):
-        return None, None, _err("body must be an object")
+        return None, None, json_error("bad_request", message="body must be an object", status=400)
     raw_tags = body.get("tags")
     tag_names = (
         [str(t) for t in raw_tags if isinstance(t, str) and t] if isinstance(raw_tags, list) else []
@@ -72,7 +71,13 @@ async def _proposal_from_body(
         source=str(body.get("source") or ""),
     )
     if proposal.is_empty:
-        return None, None, _err("proposal must name a folder or at least one tag")
+        return (
+            None,
+            None,
+            json_error(
+                "bad_request", message="proposal must name a folder or at least one tag", status=400
+            ),
+        )
     return session, proposal, None
 
 

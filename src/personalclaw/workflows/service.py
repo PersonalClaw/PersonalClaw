@@ -69,7 +69,19 @@ MAX_OBSERVE_MS = 30_000
 DEFAULT_OBSERVE_MS = 5_000
 
 
-def _err(code: str, message: str, **extra: Any) -> dict[str, Any]:
+def _service_failure(code: str, message: str, **extra: Any) -> dict[str, Any]:
+    """A SERVICE-result failure — deliberately NOT the wire envelope.
+
+    This layer is transport-independent: the same dict is the MCP tool result
+    (``mcp_workflows.py`` returns it verbatim) and the input to
+    ``workflows/handlers.py``'s ``_fail``, which translates ``code`` through
+    ``_STATUS_MAP`` into an HTTP status + a ``lowercase_snake`` wire code and
+    emits it via :func:`personalclaw.http_errors.json_error`. So ``code`` here is
+    the third vocabulary (``WF_UPPER_SNAKE``), not a wire code, and this helper
+    must not return a ``web.Response``. It was named ``_err`` — the same name as
+    twelve Response-returning handler helpers — which made a copy-paste between
+    the two layers a type error waiting to happen (PL-8).
+    """
     return {"ok": False, "code": code, "message": message, **extra}
 
 
@@ -207,7 +219,7 @@ async def get_def(name: str) -> dict[str, Any]:
     turn, and a credential that reaches either is a credential leaked to both (WF2-R14).
     """
     if not name:
-        return _err("WF_DEF_NAME_REQUIRED", "a definition name is required")
+        return _service_failure("WF_DEF_NAME_REQUIRED", "a definition name is required")
     for provider_name in defs_mod.list_providers():
         provider = defs_mod.get_provider(provider_name)
         if provider is None:
@@ -225,7 +237,7 @@ async def get_def(name: str) -> dict[str, Any]:
             provider=provider_name,
             default_eligibility=_default_eligibility(name),
         )
-    return _err("WF_DEF_NOT_FOUND", f"no workflow definition named {name!r}")
+    return _service_failure("WF_DEF_NOT_FOUND", f"no workflow definition named {name!r}")
 
 
 def _default_eligibility(name: str) -> dict[str, Any]:
@@ -277,7 +289,7 @@ async def author_def(
     hand-edited file can use, which is the config round-trip contract's exact failure.
     """
     if not valid_name(name):
-        return _err(
+        return _service_failure(
             "WF_DEF_NAME_INVALID",
             f"{name!r} is not a valid name — use lowercase letters, digits and hyphens "
             "(it becomes a directory)",
@@ -315,7 +327,7 @@ async def author_def(
         # the Finding record), and resolving first would leave those unresolved in the output.
         spec = blocks.resolve_spec(spec)
     except (macros.MacroError, blocks.BlockError) as exc:
-        return _err("WF_DEF_MACRO_INVALID", str(exc), repromptable=True)
+        return _service_failure("WF_DEF_MACRO_INVALID", str(exc), repromptable=True)
     # The EXPANDED root is what gets written, so the stored spec, the validated spec and the
     # spec the engine runs are the same tree.
     expanded_root = spec.get("root")
@@ -325,7 +337,7 @@ async def author_def(
     if inline:
         # Refused, never merely warned: once saved, the value is on disk and every later
         # defence is damage control (WF2-R14).
-        return _err(
+        return _service_failure(
             "WF_DEF_INLINE_SECRET",
             "the spec contains literal credentials — use {{secret:KEY}} instead",
             findings=[f.to_dict() for f in inline],
@@ -343,7 +355,9 @@ async def author_def(
         "lint": template_lint.lint_template(spec).to_dict(),
     }
     if not result.ok:
-        return _err("WF_DEF_INVALID", "the spec did not validate", **body, repromptable=True)
+        return _service_failure(
+            "WF_DEF_INVALID", "the spec did not validate", **body, repromptable=True
+        )
     if not save:
         return _ok(saved=False, dry_run=True, **body)
 
@@ -364,14 +378,14 @@ async def author_def(
         if p is not None and not p.readonly
     ]
     if not writable:
-        return _err(
+        return _service_failure(
             "WF_DEF_NO_WRITABLE_PROVIDER",
             "no writable workflow definition provider is registered",
         )
     try:
         saved = await writable[0].save_def(**spec)
     except Exception as exc:
-        return _err("WF_DEF_SAVE_FAILED", f"could not save the definition: {exc}")
+        return _service_failure("WF_DEF_SAVE_FAILED", f"could not save the definition: {exc}")
     raw = saved if isinstance(saved, dict) else getattr(saved, "to_dict", lambda: {})()
     return _ok(
         saved=True,
@@ -384,7 +398,7 @@ async def author_def(
 
 async def delete_def(name: str) -> dict[str, Any]:
     if not name:
-        return _err("WF_DEF_NAME_REQUIRED", "a definition name is required")
+        return _service_failure("WF_DEF_NAME_REQUIRED", "a definition name is required")
     for provider_name in defs_mod.list_providers():
         provider = defs_mod.get_provider(provider_name)
         if provider is None or provider.readonly:
@@ -393,8 +407,8 @@ async def delete_def(name: str) -> dict[str, Any]:
             if await provider.delete_def(name):
                 return _ok(deleted=True, name=name, provider=provider_name)
         except Exception as exc:
-            return _err("WF_DEF_DELETE_FAILED", f"could not delete {name!r}: {exc}")
-    return _err("WF_DEF_NOT_FOUND", f"no writable definition named {name!r}")
+            return _service_failure("WF_DEF_DELETE_FAILED", f"could not delete {name!r}: {exc}")
+    return _service_failure("WF_DEF_NOT_FOUND", f"no writable definition named {name!r}")
 
 
 # ── runs ─────────────────────────────────────────────────────────────────────
@@ -453,14 +467,14 @@ async def start_run(
     # The STORED def, not the stripped read: a run needs the real credential bindings.
     definition = await _raw_def(name)
     if definition is None:
-        return _err("WF_DEF_NOT_FOUND", f"no workflow definition named {name!r}")
+        return _service_failure("WF_DEF_NOT_FOUND", f"no workflow definition named {name!r}")
 
     spec = definition if isinstance(definition, dict) else definition.to_dict()
     missing = _missing_required_inputs(spec, inputs or {})
     if missing:
         # Refused BEFORE tokens are spent — a run that fails three nodes deep on a missing
         # input has already cost money for nothing.
-        return _err(
+        return _service_failure(
             "WF_RUN_MISSING_INPUTS",
             f"missing required input(s): {', '.join(missing)}",
             missing=missing,
@@ -480,7 +494,7 @@ async def start_run(
 
         checks = run_preflight(spec)
         if not checks.ok:
-            return _err(
+            return _service_failure(
                 "WF_RUN_PREFLIGHT_FAILED",
                 "the run cannot start: " + "; ".join(f.message for f in checks.errors),
                 preflight=checks.to_dict(),
@@ -526,7 +540,7 @@ async def start_run(
         START_DEDUPE.remember(idempotency_key, run.id)
 
     if supervisor is None:
-        return _err(
+        return _service_failure(
             "WF_NO_SUPERVISOR",
             "the workflow supervisor is unavailable, so the run was created but not started",
             run_id=run.id,
@@ -534,7 +548,9 @@ async def start_run(
     try:
         controller = await supervisor.launch(run, spec)
     except Exception as exc:
-        return _err("WF_RUN_LAUNCH_FAILED", f"could not start the run: {exc}", run_id=run.id)
+        return _service_failure(
+            "WF_RUN_LAUNCH_FAILED", f"could not start the run: {exc}", run_id=run.id
+        )
 
     if run.mode == "blocking":
         # `wait_for_terminal`, NOT `run_to_completion`: a blocking caller must also return
@@ -586,7 +602,7 @@ def status(run_id: str) -> dict[str, Any]:
     """Run status plus node-level progress. Pure read — constructs no controller."""
     run = store.get(run_id)
     if run is None:
-        return _err("WF_RUN_NOT_FOUND", f"no run {run_id!r}")
+        return _service_failure("WF_RUN_NOT_FOUND", f"no run {run_id!r}")
     return _ok(
         run_id=run.id,
         workflow=run.workflow_name,
@@ -613,17 +629,17 @@ def output(run_id: str, node_id: str) -> dict[str, Any]:
     """
     run = store.get(run_id)
     if run is None:
-        return _err("WF_RUN_NOT_FOUND", f"no run {run_id!r}")
+        return _service_failure("WF_RUN_NOT_FOUND", f"no run {run_id!r}")
     spec = store.read_spec(run_id)
     if spec is None:
-        return _err("WF_RUN_NO_SPEC", f"run {run_id!r} has no readable spec")
+        return _service_failure("WF_RUN_NO_SPEC", f"run {run_id!r} has no readable spec")
     try:
         root = Node.from_dict(spec.get("root") or {})
     except ValueError as exc:
-        return _err("WF_RUN_BAD_SPEC", f"unreadable spec: {exc}")
+        return _service_failure("WF_RUN_BAD_SPEC", f"unreadable spec: {exc}")
     paths = [p for p, node in walk(root) if node.id == node_id]
     if not paths:
-        return _err("WF_NODE_NOT_FOUND", f"no node {node_id!r} in this run's spec")
+        return _service_failure("WF_NODE_NOT_FOUND", f"no node {node_id!r} in this run's spec")
     instances = store.read_state(run_id)
     matched = [
         p
@@ -631,7 +647,9 @@ def output(run_id: str, node_id: str) -> dict[str, Any]:
         if any(p == b or p.startswith(f"{b}#") or p.startswith(f"{b}@") for b in paths)
     ]
     if not matched:
-        return _err("WF_NODE_NOT_RUN", f"node {node_id!r} has not produced an output yet")
+        return _service_failure(
+            "WF_NODE_NOT_RUN", f"node {node_id!r} has not produced an output yet"
+        )
     target = sorted(matched)[-1]
     return _ok(
         run_id=run_id,
@@ -669,19 +687,19 @@ def inspect_node(run_id: str, node_id: str) -> dict[str, Any]:
 
     run = store.get(run_id)
     if run is None:
-        return _err("WF_RUN_NOT_FOUND", f"no run {run_id!r}")
+        return _service_failure("WF_RUN_NOT_FOUND", f"no run {run_id!r}")
     spec = store.read_spec(run_id)
     if spec is None:
-        return _err("WF_RUN_NO_SPEC", f"run {run_id!r} has no readable spec")
+        return _service_failure("WF_RUN_NO_SPEC", f"run {run_id!r} has no readable spec")
     try:
         root = Node.from_dict(spec.get("root") or {})
     except ValueError as exc:
-        return _err("WF_RUN_BAD_SPEC", f"unreadable spec: {exc}")
+        return _service_failure("WF_RUN_BAD_SPEC", f"unreadable spec: {exc}")
 
     node_by_path = dict(walk(root))
     id_paths = [p for p, node in node_by_path.items() if node.id == node_id]
     if not id_paths:
-        return _err("WF_NODE_NOT_FOUND", f"no node {node_id!r} in this run's spec")
+        return _service_failure("WF_NODE_NOT_FOUND", f"no node {node_id!r} in this run's spec")
 
     instances = store.read_state(run_id)
     matched = [
@@ -690,13 +708,15 @@ def inspect_node(run_id: str, node_id: str) -> dict[str, Any]:
         if any(p == b or p.startswith(f"{b}#") or p.startswith(f"{b}@") for b in id_paths)
     ]
     if not matched:
-        return _err("WF_NODE_NOT_RUN", f"node {node_id!r} has not produced an output yet")
+        return _service_failure(
+            "WF_NODE_NOT_RUN", f"node {node_id!r} has not produced an output yet"
+        )
     # The LAST instance for the id — a `foreach` body produces many, and inspecting item 0
     # for the whole fan-out is the same footgun `output()` documents.
     target = sorted(matched)[-1]
     inst = instances[target]
     if inst.state not in TERMINAL_STATES:
-        return _err(
+        return _service_failure(
             "WF_NODE_NOT_TERMINAL",
             f"node {node_id!r} is {inst.state.value}, not terminal — nothing to reconstruct yet",
         )
@@ -815,7 +835,7 @@ async def observe(run_id: str, duration_ms: int = DEFAULT_OBSERVE_MS) -> dict[st
 
     run = store.get(run_id)
     if run is None:
-        return _err("WF_RUN_NOT_FOUND", f"no run {run_id!r}")
+        return _service_failure("WF_RUN_NOT_FOUND", f"no run {run_id!r}")
     window = max(MIN_OBSERVE_MS, min(int(duration_ms or DEFAULT_OBSERVE_MS), MAX_OBSERVE_MS))
     before = {p: i.state.value for p, i in store.read_state(run_id).items()}
     baseline = len(journal_mod.ledger(run_id))
@@ -870,7 +890,7 @@ def edit_run(
     """
     controller = _live(run_id, supervisor)
     if controller is None:
-        return _err(
+        return _service_failure(
             "WF_RUN_NOT_LIVE",
             f"run {run_id!r} has no live controller — only a running workflow can be edited",
         )
@@ -889,7 +909,7 @@ def preview_edit(run_id: str, ops: list[dict[str, Any]]) -> dict[str, Any]:
     """
     spec = store.read_spec(run_id)
     if spec is None:
-        return _err("WF_RUN_NO_SPEC", f"run {run_id!r} has no readable spec")
+        return _service_failure("WF_RUN_NO_SPEC", f"run {run_id!r} has no readable spec")
     from personalclaw.workflows.effects import effect_history
 
     result = mutations.prepare_batch(
@@ -907,9 +927,9 @@ def cancel_run(run_id: str, *, supervisor: Any = None) -> dict[str, Any]:
     """
     run = store.get(run_id)
     if run is None:
-        return _err("WF_RUN_NOT_FOUND", f"no run {run_id!r}")
+        return _service_failure("WF_RUN_NOT_FOUND", f"no run {run_id!r}")
     if run.status in TERMINAL_RUN_STATUSES:
-        return _err("WF_RUN_ALREADY_TERMINAL", f"run is already {run.status.value}")
+        return _service_failure("WF_RUN_ALREADY_TERMINAL", f"run is already {run.status.value}")
     store.request_cancel(run_id)
     controller = _live(run_id, supervisor)
     if controller is not None:
@@ -943,9 +963,9 @@ async def delete_run(
     """
     run = store.get(run_id)
     if run is None:
-        return _err("WF_RUN_NOT_FOUND", f"no run {run_id!r}")
+        return _service_failure("WF_RUN_NOT_FOUND", f"no run {run_id!r}")
     if run.status not in TERMINAL_RUN_STATUSES:
-        return _err(
+        return _service_failure(
             "WF_RUN_NOT_TERMINAL",
             f"run is {run.status.value}; cancel it before deleting",
             status=run.status.value,
@@ -964,7 +984,9 @@ async def delete_run(
     target = store.run_dir(run_id).resolve()
     root = store.runs_root().resolve()
     if root not in target.parents:
-        return _err("WF_RUN_DELETE_REFUSED", "refusing to delete a path outside the runs root")
+        return _service_failure(
+            "WF_RUN_DELETE_REFUSED", "refusing to delete a path outside the runs root"
+        )
     torn = await teardown_workspace(run, reason="delete", keep_open=keep_open)
     if target.is_dir():
         shutil.rmtree(target, ignore_errors=True)
@@ -1067,7 +1089,7 @@ def drop_status(run_id: str) -> dict[str, Any]:
 
     run = store.get(run_id)
     if run is None:
-        return _err("WF_RUN_NOT_FOUND", f"no run {run_id!r}")
+        return _service_failure("WF_RUN_NOT_FOUND", f"no run {run_id!r}")
     policy = filedrop.parse_policy(store.read_spec(run_id))
     return _ok(
         enabled=policy.enabled,
@@ -1092,13 +1114,15 @@ def accept_dropped_file(
 
     run = store.get(run_id)
     if run is None:
-        return _err("WF_RUN_NOT_FOUND", f"no run {run_id!r}")
+        return _service_failure("WF_RUN_NOT_FOUND", f"no run {run_id!r}")
     policy = filedrop.parse_policy(store.read_spec(run_id))
     if not policy.enabled:
-        return _err("WF_DROP_DISABLED", policy.reason or "this run does not accept dropped files")
+        return _service_failure(
+            "WF_DROP_DISABLED", policy.reason or "this run does not accept dropped files"
+        )
     needs, why = filedrop.approval_required(policy, mime, confirmed=confirmed)
     if needs:
-        return _err(
+        return _service_failure(
             "WF_DROP_APPROVAL_REQUIRED",
             why,
             pending={"filename": filedrop.safe_filename(filename), "size": len(data), "mime": mime},
@@ -1108,14 +1132,14 @@ def accept_dropped_file(
     if len(existing) >= filedrop.MAX_DROPPED_FILES and not any(
         e.get("filename") == safe for e in existing
     ):
-        return _err(
+        return _service_failure(
             "WF_DROP_LIMIT",
             f"this run already holds {filedrop.MAX_DROPPED_FILES} dropped files",
         )
     try:
         entry = filedrop.store_dropped_bytes(run_id, filename, data)
     except (OSError, ValueError) as exc:
-        return _err("WF_DROP_WRITE_FAILED", f"could not store the dropped file: {exc}")
+        return _service_failure("WF_DROP_WRITE_FAILED", f"could not store the dropped file: {exc}")
     entry["mime"] = mime
     entry["approved"] = not needs
     entry["accepted_at"] = _now()
@@ -1134,7 +1158,7 @@ def outbox(run_id: str) -> dict[str, Any]:
 
     run = store.get(run_id)
     if run is None:
-        return _err("WF_RUN_NOT_FOUND", f"no run {run_id!r}")
+        return _service_failure("WF_RUN_NOT_FOUND", f"no run {run_id!r}")
     return _ok(files=filedrop.outbox_entries(run_id))
 
 
@@ -1162,7 +1186,7 @@ def introspect(run_id: str) -> dict[str, Any]:
 
     run = store.get(run_id)
     if run is None:
-        return _err("WF_RUN_NOT_FOUND", f"no run {run_id!r}")
+        return _service_failure("WF_RUN_NOT_FOUND", f"no run {run_id!r}")
 
     events = journal_mod.ledger(run_id)
     stats = introspection.run_stats(run_id, events)
@@ -1534,12 +1558,14 @@ def workspace_review(run_id: str) -> dict[str, Any]:
 
     run = store.get(run_id)
     if run is None:
-        return _err("WF_RUN_NOT_FOUND", f"no run {run_id!r}")
+        return _service_failure("WF_RUN_NOT_FOUND", f"no run {run_id!r}")
     try:
         body = provisioning.reintegration(run, workspace_dir=_run_workspace_dir(run))
     except Exception as exc:
         logger.debug("workspace review failed for %s", run_id, exc_info=True)
-        return _err("WF_WORKSPACE_UNREADABLE", f"could not read the run's workspace: {exc}")
+        return _service_failure(
+            "WF_WORKSPACE_UNREADABLE", f"could not read the run's workspace: {exc}"
+        )
     # `preserved_workspace_path` is recorded HERE because this is where the live alive+dirty state
     # is computed. Reading it costs a git call, so the run record carries the answer for every
     # surface that cannot afford one (the Work board, the export archive) — and the value is only
@@ -1569,9 +1595,9 @@ def pause_run(run_id: str, *, supervisor: Any = None) -> dict[str, Any]:
     """
     run = store.get(run_id)
     if run is None:
-        return _err("WF_RUN_NOT_FOUND", f"no run {run_id!r}")
+        return _service_failure("WF_RUN_NOT_FOUND", f"no run {run_id!r}")
     if run.status in TERMINAL_RUN_STATUSES:
-        return _err("WF_RUN_ALREADY_TERMINAL", f"run is already {run.status.value}")
+        return _service_failure("WF_RUN_ALREADY_TERMINAL", f"run is already {run.status.value}")
     run.extra["pause_requested"] = True
     store.save(run)
     return _ok(run_id=run_id, pause_requested=True)
@@ -1588,14 +1614,14 @@ def steer_run(run_id: str, text: str) -> dict[str, Any]:
     """
     run = store.get(run_id)
     if run is None:
-        return _err("WF_RUN_NOT_FOUND", f"no run {run_id!r}")
+        return _service_failure("WF_RUN_NOT_FOUND", f"no run {run_id!r}")
     if run.status in TERMINAL_RUN_STATUSES:
         # A terminal run cannot act on an instruction, and silently accepting one would
         # leave the user believing they had changed something.
-        return _err("WF_RUN_ALREADY_TERMINAL", f"run is already {run.status.value}")
+        return _service_failure("WF_RUN_ALREADY_TERMINAL", f"run is already {run.status.value}")
     cleaned = (text or "").strip()
     if not cleaned:
-        return _err("WF_STEER_EMPTY", "a steering instruction needs text")
+        return _service_failure("WF_STEER_EMPTY", "a steering instruction needs text")
 
     pending = run.extra.get("steering_queue")
     if not isinstance(pending, list):
@@ -1614,7 +1640,7 @@ def pending_steering(run_id: str) -> dict[str, Any]:
     """
     run = store.get(run_id)
     if run is None:
-        return _err("WF_RUN_NOT_FOUND", f"no run {run_id!r}")
+        return _service_failure("WF_RUN_NOT_FOUND", f"no run {run_id!r}")
     pending = run.extra.get("steering_queue")
     items = pending if isinstance(pending, list) else []
     return _ok(run_id=run_id, pending=items, count=len(items))
@@ -1648,7 +1674,7 @@ def resolve_confirmation(
 
     resolution, error = resolve_verb(verb, note=note)
     if resolution is None:
-        return _err("WF_CONFIRM_VERB_INVALID", error)
+        return _service_failure("WF_CONFIRM_VERB_INVALID", error)
     if not resolution.resumes:
         # Skip/quit are decisions ABOUT the queue, not answers to the gate. Returning ok=True with
         # `resumed=False` says exactly that; consuming the token here would burn a single-use claim
@@ -1698,7 +1724,7 @@ def resume_run(
 
     run = store.get(run_id)
     if run is None:
-        return _err("WF_RUN_NOT_FOUND", f"no run {run_id!r}")
+        return _service_failure("WF_RUN_NOT_FOUND", f"no run {run_id!r}")
 
     if answer is None and not token:
         run.extra.pop("pause_requested", None)
@@ -1707,16 +1733,16 @@ def resume_run(
 
     controller = _live(run_id, supervisor)
     if controller is None:
-        return _err(
+        return _service_failure(
             "WF_RUN_NOT_LIVE",
             f"run {run_id!r} has no live controller to apply the answer to",
         )
     if not token:
         pending = list_continuations(run_id)
         if not pending:
-            return _err("WF_NO_PENDING_GATE", "this run has no gate awaiting an answer")
+            return _service_failure("WF_NO_PENDING_GATE", "this run has no gate awaiting an answer")
         if len(pending) > 1:
-            return _err(
+            return _service_failure(
                 "WF_AMBIGUOUS_GATE",
                 f"{len(pending)} gates are pending — name one with a resume token",
                 pending=[
@@ -1743,7 +1769,7 @@ def _reentry(
 ) -> dict[str, Any]:
     controller = _live(run_id, supervisor)
     if controller is None:
-        return _err(
+        return _service_failure(
             "WF_RUN_NOT_LIVE",
             f"run {run_id!r} has no live controller — resume the run before {op}",
         )
@@ -1765,7 +1791,7 @@ def run_from(run_id: str, node_id: str, **kw: Any) -> dict[str, Any]:
 def skip_nodes(run_id: str, node_ids: list[str], *, supervisor: Any = None) -> dict[str, Any]:
     controller = _live(run_id, supervisor)
     if controller is None:
-        return _err("WF_RUN_NOT_LIVE", f"run {run_id!r} has no live controller")
+        return _service_failure("WF_RUN_NOT_LIVE", f"run {run_id!r} has no live controller")
     return controller.submit_mutation(
         [{"op": "skip", "node_id": n} for n in (node_ids or [])], actor="chat", confirm=True
     )
@@ -1780,10 +1806,10 @@ def fork_run(
 
     run = store.get(run_id)
     if run is None:
-        return _err("WF_RUN_NOT_FOUND", f"no run {run_id!r}")
+        return _service_failure("WF_RUN_NOT_FOUND", f"no run {run_id!r}")
     spec = store.read_spec(run_id)
     if spec is None:
-        return _err("WF_RUN_NO_SPEC", f"run {run_id!r} has no readable spec")
+        return _service_failure("WF_RUN_NO_SPEC", f"run {run_id!r} has no readable spec")
     try:
         result = do_fork(
             run,
@@ -1794,7 +1820,7 @@ def fork_run(
             now=_now(),
         )
     except ValueError as exc:
-        return _err("WF_FORK_FAILED", str(exc))
+        return _service_failure("WF_FORK_FAILED", str(exc))
     return _ok(**result.to_dict())
 
 

@@ -45,12 +45,9 @@ import logging
 
 from aiohttp import web
 
+from personalclaw.http_errors import json_error
+
 logger = logging.getLogger(__name__)
-
-
-def _err(code: str, message: str, status: int) -> web.Response:
-    """The shared error envelope. ``code`` is append-only and never reworded once shipped."""
-    return web.json_response({"error": {"code": code, "message": message}}, status=status)
 
 
 async def api_packs_installed(request: web.Request) -> web.Response:
@@ -110,10 +107,10 @@ async def api_pack_bundled_install(request: web.Request) -> web.Response:
 
     name = request.match_info.get("name", "")
     if get_bundled(name) is None:
-        return _err("pack_not_bundled", f"no bundled pack named {name!r}", 404)
+        return json_error("pack_not_bundled", message=f"no bundled pack named {name!r}", status=404)
     body = await _json_body(request)
     if body is None:
-        return _err("invalid_json", "request body must be a JSON object", 400)
+        return json_error("invalid_json", message="request body must be a JSON object", status=400)
     staging = Path(tempfile.mkdtemp(prefix="pclaw-bundled-"))
     try:
         archive = build_bundled(name, staging / f"{name}.pclaw")
@@ -124,12 +121,12 @@ async def api_pack_bundled_install(request: web.Request) -> web.Response:
         )
     except BundledPackError as exc:
         logger.error("bundled pack %s failed to build: %s", name, exc)
-        return _err("pack_build_failed", str(exc), 500)
+        return json_error("pack_build_failed", message=str(exc), status=500)
     except PackImportRefused as exc:
-        return _err(
+        return json_error(
             f"pack_refused_{exc.reason}",
-            str(exc),
-            409 if exc.reason == "needs_consent" else 400,
+            message=str(exc),
+            status=409 if exc.reason == "needs_consent" else 400,
         )
     finally:
         shutil.rmtree(staging, ignore_errors=True)
@@ -148,10 +145,12 @@ async def api_pack_roster_deploy(request: web.Request) -> web.Response:
 
     name = request.match_info.get("name", "")
     if not any(p.name == name for p in load_installed()):
-        return _err("pack_not_installed", f"pack not installed: {name}", 404)
+        return json_error("pack_not_installed", message=f"pack not installed: {name}", status=404)
     entries, _ = load_roster(name)
     if not entries:
-        return _err("pack_has_no_roster", f"pack {name!r} ships no roster", 404)
+        return json_error(
+            "pack_has_no_roster", message=f"pack {name!r} ships no roster", status=404
+        )
     result = deploy_roster(name)
     return web.json_response({"ok": True, "pack": name, **result})
 
@@ -163,17 +162,17 @@ async def api_pack_bindings(request: web.Request) -> web.Response:
     name = request.match_info.get("name", "")
     body = await _json_body(request)
     if body is None:
-        return _err("invalid_json", "request body must be a JSON object", 400)
+        return json_error("invalid_json", message="request body must be a JSON object", status=400)
     key = str(body.get("key", "") or "")
     value = str(body.get("value", "") or "")
     if not key:
-        return _err("binding_key_required", "a `key` is required", 400)
+        return json_error("binding_key_required", message="a `key` is required", status=400)
     try:
         pack = bind_answer(name, key, value)
     except BindingError as exc:
         message = str(exc)
         status = 404 if message.startswith("pack not installed") else 400
-        return _err("binding_rejected", message, status)
+        return json_error("binding_rejected", message=message, status=status)
     return web.json_response({"ok": True, "pack": pack.name, "unbound": pack.unbound})
 
 
@@ -183,14 +182,14 @@ async def api_pack_prompt_card(request: web.Request) -> web.Response:
 
     body = await _json_body(request)
     if body is None:
-        return _err("invalid_json", "request body must be a JSON object", 400)
+        return json_error("invalid_json", message="request body must be a JSON object", status=400)
     try:
         result = await import_prompt_card(str(body.get("card", "") or ""))
     except PromptCardError as exc:
-        return _err("prompt_card_rejected", str(exc), 400)
+        return json_error("prompt_card_rejected", message=str(exc), status=400)
     except Exception as exc:  # noqa: BLE001 — a model/provider failure is the caller's answer
         logger.warning("prompt-card import failed: %s", exc, exc_info=True)
-        return _err("prompt_card_failed", f"{type(exc).__name__}: {exc}", 502)
+        return json_error("prompt_card_failed", message=f"{type(exc).__name__}: {exc}", status=502)
     return web.json_response({"ok": True, **result})
 
 
@@ -201,10 +200,10 @@ async def api_pack_one_link(request: web.Request) -> web.Response:
 
     body = await _json_body(request)
     if body is None:
-        return _err("invalid_json", "request body must be a JSON object", 400)
+        return json_error("invalid_json", message="request body must be a JSON object", status=400)
     doc = body.get("link")
     if not isinstance(doc, dict):
-        return _err("one_link_required", "a `link` object is required", 400)
+        return json_error("one_link_required", message="a `link` object is required", status=400)
     try:
         plan = import_onelink(
             doc,
@@ -212,12 +211,12 @@ async def api_pack_one_link(request: web.Request) -> web.Response:
             connector_choices=_connector_choices(body),
         )
     except OneLinkError as exc:
-        return _err("one_link_rejected", str(exc), 400)
+        return json_error("one_link_rejected", message=str(exc), status=400)
     except PackImportRefused as exc:
-        return _err(
+        return json_error(
             f"pack_refused_{exc.reason}",
-            str(exc),
-            409 if exc.reason == "needs_consent" else 400,
+            message=str(exc),
+            status=409 if exc.reason == "needs_consent" else 400,
         )
     return web.json_response({"ok": True, "plan": plan.to_dict()})
 
@@ -236,7 +235,7 @@ async def api_pack_proposals(request: web.Request) -> web.Response:
     wanted = str(request.query.get("project_id", "") or "").strip()
     projects = [p for p in HierarchyStore().list_projects() if not wanted or p.id == wanted]
     if wanted and not projects:
-        return _err("project_not_found", f"no project {wanted!r}", 404)
+        return json_error("project_not_found", message=f"no project {wanted!r}", status=404)
     out: list[dict] = []
     for project in projects:
         try:
@@ -252,13 +251,13 @@ async def api_pack_proposal_reject(request: web.Request) -> web.Response:
 
     body = await _json_body(request)
     if body is None:
-        return _err("invalid_json", "request body must be a JSON object", 400)
+        return json_error("invalid_json", message="request body must be a JSON object", status=400)
     project_id = str(body.get("project_id", "") or "").strip()
     pack = str(body.get("pack", "") or "").strip()
     try:
         reject_proposal(project_id, pack)
     except ValueError as exc:
-        return _err("rejection_incomplete", str(exc), 400)
+        return json_error("rejection_incomplete", message=str(exc), status=400)
     return web.json_response({"ok": True, "project_id": project_id, "pack": pack})
 
 
@@ -279,11 +278,13 @@ async def api_pack_update(request: web.Request) -> web.Response:
     name = request.match_info.get("name", "")
     body = await _json_body(request)
     if body is None:
-        return _err("invalid_json", "request body must be a JSON object", 400)
+        return json_error("invalid_json", message="request body must be a JSON object", status=400)
     if get_bundled(name) is None:
         # v1 updates a pack from the version shipped in THIS build — the only archive the
         # gateway can produce on its own. A URL/file source is the export UI's later scope.
-        return _err("pack_not_bundled", f"no bundled pack named {name!r} to update from", 404)
+        return json_error(
+            "pack_not_bundled", message=f"no bundled pack named {name!r} to update from", status=404
+        )
     staging = Path(tempfile.mkdtemp(prefix="pclaw-update-"))
     try:
         archive = build_bundled(name, staging / f"{name}.pclaw")
@@ -294,10 +295,14 @@ async def api_pack_update(request: web.Request) -> web.Response:
         else:
             plan = plan_update(name, archive, tier=TrustTier.BUILTIN)
     except BundledPackError as exc:
-        return _err("pack_build_failed", str(exc), 500)
+        return json_error("pack_build_failed", message=str(exc), status=500)
     except PackUpdateError as exc:
         message = str(exc)
-        return _err("pack_update_refused", message, 404 if "not installed" in message else 400)
+        return json_error(
+            "pack_update_refused",
+            message=message,
+            status=404 if "not installed" in message else 400,
+        )
     finally:
         shutil.rmtree(staging, ignore_errors=True)
     return web.json_response({"ok": True, "update": plan.to_dict()})
