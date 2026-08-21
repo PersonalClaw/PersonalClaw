@@ -27,6 +27,7 @@ import logging
 
 from aiohttp import web
 
+from personalclaw.http_errors import json_error
 from personalclaw.voice import bindings as vb
 from personalclaw.voice import profiles as vp
 
@@ -42,10 +43,6 @@ def _sel():
 
 def _caller(request: web.Request) -> str:
     return str(request.get("user", "dashboard") or "dashboard")
-
-
-def _error(exc: vp.VoiceProfileError) -> web.Response:
-    return web.json_response({"error": exc.message, "reason": exc.reason}, status=exc.status)
 
 
 def _broadcast(request: web.Request, event: str, profile: vp.VoiceProfile | None, **extra) -> None:
@@ -90,7 +87,7 @@ async def api_voice_profile_create(request: web.Request) -> web.Response:
         body = await _body(request)
         profile = vp.create_profile(**body)
     except vp.VoiceProfileError as exc:
-        return _error(exc)
+        return json_error(exc.reason, message=exc.message, status=exc.status)
     _broadcast(request, "voice_profile_created", profile)
     return web.json_response(vp.profile_payload(profile), status=201)
 
@@ -100,7 +97,7 @@ async def api_voice_profile_get(request: web.Request) -> web.Response:
     try:
         profile = vp.require_profile(request.match_info["id"])
     except vp.VoiceProfileError as exc:
-        return _error(exc)
+        return json_error(exc.reason, message=exc.message, status=exc.status)
     return web.json_response(vp.profile_payload(profile))
 
 
@@ -110,7 +107,7 @@ async def api_voice_profile_update(request: web.Request) -> web.Response:
         body = await _body(request)
         profile = vp.update_profile(request.match_info["id"], **body)
     except vp.VoiceProfileError as exc:
-        return _error(exc)
+        return json_error(exc.reason, message=exc.message, status=exc.status)
     _broadcast(request, "voice_profile_updated", profile)
     return web.json_response(vp.profile_payload(profile))
 
@@ -122,7 +119,7 @@ async def api_voice_profile_delete(request: web.Request) -> web.Response:
         existed = vp.delete_profile(pid)
         vb.forget_profile(pid)
     except vp.VoiceProfileError as exc:
-        return _error(exc)
+        return json_error(exc.reason, message=exc.message, status=exc.status)
     if not existed:
         return web.json_response(
             {"error": "no such voice profile", "reason": "not_found"}, status=404
@@ -140,7 +137,7 @@ async def api_voice_profile_lock(request: web.Request) -> web.Response:
         body = await _body(request)
         profile = vp.lock_profile(request.match_info["id"], body.get("history_index", 0))
     except vp.VoiceProfileError as exc:
-        return _error(exc)
+        return json_error(exc.reason, message=exc.message, status=exc.status)
     _broadcast(request, "voice_profile_locked", profile)
     return web.json_response(vp.profile_payload(profile))
 
@@ -150,7 +147,7 @@ async def api_voice_profile_unlock(request: web.Request) -> web.Response:
     try:
         profile = vp.unlock_profile(request.match_info["id"])
     except vp.VoiceProfileError as exc:
-        return _error(exc)
+        return json_error(exc.reason, message=exc.message, status=exc.status)
     _broadcast(request, "voice_profile_updated", profile)
     return web.json_response(vp.profile_payload(profile))
 
@@ -177,7 +174,7 @@ async def api_voice_profile_consent_record(request: web.Request) -> web.Response
             resources=pid,
             error=exc.reason,
         )
-        return _error(exc)
+        return json_error(exc.reason, message=exc.message, status=exc.status)
     _sel().log_api_access(
         caller=_caller(request),
         operation="voice_profile.consent.record",
@@ -194,7 +191,7 @@ async def api_voice_profile_consent_verify(request: web.Request) -> web.Response
     try:
         profile = vp.require_profile(pid)
     except vp.VoiceProfileError as exc:
-        return _error(exc)
+        return json_error(exc.reason, message=exc.message, status=exc.status)
     verified = vp.recompute_verified(profile)
     _sel().log_api_access(
         caller=_caller(request),
@@ -224,7 +221,7 @@ async def api_voice_profile_consent_revoke(request: web.Request) -> web.Response
             resources=pid,
             error=exc.reason,
         )
-        return _error(exc)
+        return json_error(exc.reason, message=exc.message, status=exc.status)
     _sel().log_api_access(
         caller=_caller(request),
         operation="voice_profile.consent.revoke",
@@ -256,7 +253,7 @@ async def api_voice_profile_audio(request: web.Request) -> web.StreamResponse:
             raise vp.VoiceProfileError("no such artifact", 404, "artifact_missing")
         path = vp.artifact_path(pid, rel)
     except vp.VoiceProfileError as exc:
-        return _error(exc)
+        return json_error(exc.reason, message=exc.message, status=exc.status)
     if not path.is_file():
         return web.json_response(
             {"error": "no such artifact", "reason": "artifact_missing"}, status=404
@@ -286,7 +283,7 @@ async def api_voice_bindings_put(request: web.Request) -> web.Response:
         bindings = vb.set_binding(surface, pid)
         profile = vp.require_profile(pid)
     except vp.VoiceProfileError as exc:
-        return _error(exc)
+        return json_error(exc.reason, message=exc.message, status=exc.status)
     return web.json_response(
         {
             "bindings": bindings,
@@ -300,7 +297,7 @@ async def api_voice_bindings_delete(request: web.Request) -> web.Response:
     try:
         bindings = vb.clear_binding(str(request.query.get("surface") or ""))
     except vp.VoiceProfileError as exc:
-        return _error(exc)
+        return json_error(exc.reason, message=exc.message, status=exc.status)
     return web.json_response({"bindings": bindings})
 
 
@@ -317,7 +314,7 @@ async def api_voice_resolve(request: web.Request) -> web.Response:
     try:
         params = active_voice_params(surface=surface, profile_id=explicit)
     except vp.VoiceProfileError as exc:
-        return _error(exc)
+        return json_error(exc.reason, message=exc.message, status=exc.status)
     if params is None:
         return web.json_response({"surface": surface, "resolved": False, "level": vb.LEVEL_BUILTIN})
     provider = params.get("provider")

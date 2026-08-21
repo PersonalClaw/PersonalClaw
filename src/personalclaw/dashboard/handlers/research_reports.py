@@ -46,6 +46,8 @@ from typing import Any
 
 from aiohttp import web
 
+from personalclaw.http_errors import json_error
+
 logger = logging.getLogger(__name__)
 
 #: The claim-id namespace a research report's run holds. A sibling runner MUST build its
@@ -91,14 +93,13 @@ def _reports_module() -> ModuleType | None:
         return None
 
 
-def _err(message: str, status: int = 400) -> web.Response:
-    """The handler-family error envelope: a flat, human-readable ``error`` string."""
-    return web.json_response({"error": message}, status=status)
-
-
 def _unavailable() -> web.Response:
     """503 for a build without the reports module — honest, and never a 500."""
-    return _err("scheduled research reports are not available in this build", 503)
+    return json_error(
+        "research_reports_unavailable",
+        message="scheduled research reports are not available in this build",
+        status=503,
+    )
 
 
 def _sel_log(operation: str, resources: str) -> None:
@@ -122,9 +123,9 @@ async def _body(request: web.Request) -> tuple[dict[str, Any] | None, web.Respon
     try:
         raw = await request.json()
     except Exception:
-        return None, _err("invalid JSON")
+        return None, json_error("invalid_json", message="invalid JSON", status=400)
     if not isinstance(raw, dict):
-        return None, _err("JSON body must be an object")
+        return None, json_error("invalid_json", message="JSON body must be an object", status=400)
     return raw, None
 
 
@@ -142,30 +143,48 @@ def _schedule(raw: Any) -> tuple[dict[str, Any] | None, web.Response | None]:
     from personalclaw.schedule import validate_cron_expr
 
     if not isinstance(raw, dict):
-        return None, _err("schedule must be an object")
+        return None, json_error("invalid_request", message="schedule must be an object", status=400)
     kind = str(raw.get("kind") or "")
     if kind not in _SCHEDULE_KINDS:
-        return None, _err(f"schedule.kind must be one of: {', '.join(_SCHEDULE_KINDS)}")
+        return None, json_error(
+            "invalid_request",
+            message=f"schedule.kind must be one of: {', '.join(_SCHEDULE_KINDS)}",
+            status=400,
+        )
     out: dict[str, Any] = {"kind": kind, "every_secs": None, "at_ts": None, "cron_expr": None}
     if kind == "every":
         every = raw.get("every_secs")
         if not isinstance(every, int) or isinstance(every, bool) or every <= 0:
-            return None, _err("schedule.every_secs must be a positive integer")
+            return None, json_error(
+                "invalid_request",
+                message="schedule.every_secs must be a positive integer",
+                status=400,
+            )
         out["every_secs"] = int(every)
     elif kind == "at":
         at_ts = raw.get("at_ts")
         if isinstance(at_ts, bool) or not isinstance(at_ts, (int, float)) or float(at_ts) <= 0:
-            return None, _err("schedule.at_ts must be a positive epoch timestamp")
+            return None, json_error(
+                "invalid_request",
+                message="schedule.at_ts must be a positive epoch timestamp",
+                status=400,
+            )
         out["at_ts"] = float(at_ts)
     else:
         expr = raw.get("cron_expr")
         if not isinstance(expr, str) or not expr.strip():
-            return None, _err("schedule.cron_expr is required for a cron schedule")
+            return None, json_error(
+                "invalid_request",
+                message="schedule.cron_expr is required for a cron schedule",
+                status=400,
+            )
         expr = expr.strip()
         if not validate_cron_expr(expr):
-            return None, _err(
-                f"invalid cron expression {expr!r} — expected 5 fields "
-                "(minute hour day-of-month month day-of-week)"
+            return None, json_error(
+                "invalid_request",
+                message=f"invalid cron expression {expr!r} — expected 5 fields "
+                "(minute hour day-of-month month day-of-week)",
+                status=400,
             )
         out["cron_expr"] = expr
     return out, None
@@ -174,13 +193,19 @@ def _schedule(raw: Any) -> tuple[dict[str, Any] | None, web.Response | None]:
 def _scope(raw: Any, label: str) -> tuple[dict[str, Any] | None, web.Response | None]:
     """Validate + normalize a source/context scope."""
     if not isinstance(raw, dict):
-        return None, _err(f"{label} must be an object")
+        return None, json_error("invalid_request", message=f"{label} must be an object", status=400)
     tags = raw.get("tags", [])
     if not isinstance(tags, list) or not all(isinstance(t, str) for t in tags):
-        return None, _err(f"{label}.tags must be a list of strings")
+        return None, json_error(
+            "invalid_request", message=f"{label}.tags must be a list of strings", status=400
+        )
     window = raw.get("window_secs", 0)
     if not isinstance(window, int) or isinstance(window, bool) or window < 0:
-        return None, _err(f"{label}.window_secs must be a non-negative integer")
+        return None, json_error(
+            "invalid_request",
+            message=f"{label}.window_secs must be a non-negative integer",
+            status=400,
+        )
     return {"tags": [str(t) for t in tags], "window_secs": int(window)}, None
 
 
@@ -200,10 +225,12 @@ def _fields(
         if key in body:
             value = body.get(key)
             if not isinstance(value, str) or not value.strip():
-                return None, _err(f"{key} must be a non-empty string")
+                return None, json_error(
+                    "invalid_request", message=f"{key} must be a non-empty string", status=400
+                )
             out[key] = value.strip()
         elif required:
-            return None, _err(f"{key} is required")
+            return None, json_error("invalid_request", message=f"{key} is required", status=400)
 
     if "schedule" in body:
         schedule, error = _schedule(body.get("schedule"))
@@ -211,12 +238,12 @@ def _fields(
             return None, error
         out["schedule"] = schedule
     elif required:
-        return None, _err("schedule is required")
+        return None, json_error("invalid_request", message="schedule is required", status=400)
 
     if "tz" in body:
         tz = body.get("tz")
         if not isinstance(tz, str):
-            return None, _err("tz must be a string")
+            return None, json_error("invalid_request", message="tz must be a string", status=400)
         out["tz"] = tz.strip()
 
     if "source" in body:
@@ -238,21 +265,28 @@ def _fields(
     if "citation_policy" in body:
         policy = body.get("citation_policy")
         if not isinstance(policy, str) or policy not in policies:
-            return None, _err(
-                f"unknown citation_policy {policy!r} — must be one of: {', '.join(policies)}"
+            return None, json_error(
+                "invalid_request",
+                message=f"unknown citation_policy {policy!r} — must be one of: "
+                f"{', '.join(policies)}",
+                status=400,
             )
         out["citation_policy"] = policy
 
     if "iteration_cap" in body:
         cap = body.get("iteration_cap")
         if not isinstance(cap, int) or isinstance(cap, bool) or cap < 1:
-            return None, _err("iteration_cap must be an integer >= 1")
+            return None, json_error(
+                "invalid_request", message="iteration_cap must be an integer >= 1", status=400
+            )
         out["iteration_cap"] = int(cap)
 
     if "enabled" in body:
         enabled = body.get("enabled")
         if not isinstance(enabled, bool):
-            return None, _err("enabled must be a boolean")
+            return None, json_error(
+                "invalid_request", message="enabled must be a boolean", status=400
+            )
         out["enabled"] = enabled
 
     return out, None
@@ -278,10 +312,10 @@ async def api_report_create(request: web.Request) -> web.Response:
         return _unavailable()
     body, error = await _body(request)
     if error is not None or body is None:
-        return error or _err("invalid JSON")
+        return error or json_error("invalid_json", message="invalid JSON", status=400)
     fields, error = _fields(body, _policies(rr), required=True)
     if error is not None or fields is None:
-        return error or _err("invalid request")
+        return error or json_error("invalid_request", message="invalid request", status=400)
     saved = rr.save_report(rr.from_dict(fields))
     _sel_log("knowledge_report.create", f"report_id={getattr(saved, 'id', '')}")
     return web.json_response({"report": rr.to_dict(saved)})
@@ -300,13 +334,13 @@ async def api_report_update(request: web.Request) -> web.Response:
     report_id = request.match_info["id"]
     existing = rr.get_report(report_id)
     if existing is None:
-        return _err("not found", 404)
+        return json_error("not_found", message="not found", status=404)
     body, error = await _body(request)
     if error is not None or body is None:
-        return error or _err("invalid JSON")
+        return error or json_error("invalid_json", message="invalid JSON", status=400)
     fields, error = _fields(body, _policies(rr), required=False)
     if error is not None or fields is None:
-        return error or _err("invalid request")
+        return error or json_error("invalid_request", message="invalid request", status=400)
     raw = dict(rr.to_dict(existing))
     raw.update(fields)
     raw["id"] = report_id
@@ -322,7 +356,7 @@ async def api_report_delete(request: web.Request) -> web.Response:
         return _unavailable()
     report_id = request.match_info["id"]
     if not rr.delete_report(report_id):
-        return _err("not found", 404)
+        return json_error("not_found", message="not found", status=404)
     _sel_log("knowledge_report.delete", f"report_id={report_id}")
     return web.json_response({"ok": True})
 
@@ -345,7 +379,7 @@ async def api_report_run(request: web.Request) -> web.Response:
     report_id = request.match_info["id"]
     defn = rr.get_report(report_id)
     if defn is None:
-        return _err("not found", 404)
+        return json_error("not_found", message="not found", status=404)
 
     from personalclaw.triggers import claims as _claims
 

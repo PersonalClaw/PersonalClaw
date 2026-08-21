@@ -60,7 +60,7 @@ describe('errText', () => {
   })
 
   it("uses the platform envelope's message — the shape errors.py declares", async () => {
-    // 🔴 The regression this closes. `errors.py`: "INTEGRATION-ARCHITECTURE §2.2 owns the *wire* shape for
+    // 🔴 The regression this closes. `errors.py`: "`AGENTS.md` §"Shared conventions" owns the *wire* shape for
     // API-route errors — `{"error": {"code": "<lowercase_snake>", "message": ...}}`", returned by 115
     // sites. Because the object is not a string, every one of them used to fall through to the status.
     expect(await errText(res('{"error": {"code": "invalid_request", "message": "invalid JSON body"}}')))
@@ -142,7 +142,7 @@ describe('the envelope this extracts is the one the backend declares', () => {
   const py = (rel: string) => readFileSync(join(PY, rel), 'utf8')
 
   it('errors.py states the wire shape verbatim', () => {
-    // 🔑 The justification for widening the funnel is a written contract, not a guess. If §2.2's shape
+    // 🔑 The justification for widening the funnel is a written contract, not a guess. If the declared shape
     // ever changes, this fails and the extraction has to be re-derived rather than silently mismatching.
     expect(py('errors.py')).toMatch(
       /\{"error": \{"code": "<lowercase_snake>",\s*\n?\s*"message": \.\.\.\}\}/,

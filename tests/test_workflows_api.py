@@ -4,7 +4,7 @@ The load-bearing claims:
 
 * **the routes delegate to the SAME `workflows.service` the chat tools use** — two
   implementations kept in sync by hand is the bug class this design avoids;
-* the HTTP envelope is §2.2's `{"error": {"code": lowercase_snake, …}}`, a DIFFERENT
+* the HTTP envelope is the shared `{"error": {"code": lowercase_snake, …}}`, a DIFFERENT
   vocabulary from the service's LLM-facing `WF_*` codes, mapped in ONE place;
 * **an unmapped service code never becomes a 500** — a 500 tells a client to retry
   something that will never succeed;
@@ -205,7 +205,7 @@ class TestErrorEnvelope:
         assert _body(resp)["error"]["code"] == "not_found"
 
     def test_the_wire_code_is_lowercase_snake_not_the_service_code(self) -> None:
-        """§2.2: HTTP codes are lowercase_snake; agent codes are ERR_/WF_ upper. The two
+        """HTTP codes are lowercase_snake; agent codes are ERR_/WF_ upper. The two
         vocabularies must not bleed."""
         for code in H._STATUS_MAP:
             _status, wire = H._STATUS_MAP[code]

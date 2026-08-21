@@ -1,6 +1,6 @@
 """COST-AND-TOKEN-OBSERVABILITY CATO-5 — the /api/usage read routes.
 
-Read-only rollup + totals over the usage ledger, with the §2.2
+Read-only rollup + totals over the usage ledger, with the shared
 {error:{code,message}} envelope on a bad group_by.
 """
 
