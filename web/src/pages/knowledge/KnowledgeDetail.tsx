@@ -552,7 +552,10 @@ export function KnowledgeDetail({ item, onChanged, onDeleted, onTagClick, onShow
           width by a container query rather than dropped. */}
       {readingMode ? (
         <ReadingView item={full} annotations={annotations}
-          onAnnotationsChanged={onAnnotationsChanged ?? (() => {})} insightRail={insightRail} />
+          onAnnotationsChanged={onAnnotationsChanged ?? (() => {})} insightRail={insightRail}
+          /* A restructure rewrites the body, the title or both, so it needs the ITEM reload and
+             not the highlights-only one — `onChanged` is the same callback edit and delete use. */
+          onRestructured={onChanged} />
       ) : (
         <>
           <Preview item={full} tm={tm} prominent />

@@ -9,9 +9,13 @@ import tempfile
 import time
 from collections import Counter, defaultdict
 from pathlib import Path
+from typing import TYPE_CHECKING
 from uuid import uuid4
 
 from aiohttp import web
+
+if TYPE_CHECKING:  # pragma: no cover - typing only
+    from personalclaw.knowledge.restructure import RestructureError
 
 from personalclaw.dashboard.sse import stream_response
 from personalclaw.knowledge.artifact_ingest import ARTIFACT_ITEM_TYPE, ARTIFACT_SOURCE_PROVIDER
@@ -3225,6 +3229,160 @@ async def preview_watched_source(request: web.Request) -> web.Response:
     )
 
 
+# -- Structural editing verbs (KL-19) --------------------------------------------
+#
+# These four handlers use the platform's NESTED error envelope
+# (`{"error": {"code", "message"}}`) rather than this module's prevailing flat string, and
+# that is deliberate rather than drift. The envelope is the declared contract for NEW routes
+# (AGENTS.md §Shared conventions), and a two-phase flow specifically NEEDS the machine-readable
+# `code`: the frontend has to distinguish "your preview went stale, here is the new one" from
+# "that span is invalid" in order to re-render the preview instead of showing an error, and a
+# flat sentence cannot carry that distinction. The neighbouring flat-string handlers are left
+# exactly as they are — standardizing them retroactively is not this atom's business.
+
+#: Refusals that are not the caller's malformed input. Everything else is a 400.
+_RESTRUCTURE_STATUS = {
+    "item_not_found": 404,
+    "unknown_verb": 404,
+    "preview_stale": 409,
+    "unknown_undo_token": 409,
+}
+
+
+def _restructure_refusal(exc: "RestructureError") -> web.Response:
+    """One refusal → the nested envelope, plus whatever context the verb attached.
+
+    A `preview_stale` carries the FRESH plan alongside the error, copying the durability
+    precedent: the client can re-render the new preview immediately instead of making a second
+    round trip to discover what changed.
+    """
+    body: dict = {"error": {"code": exc.code, "message": exc.message}}
+    body.update(exc.detail)
+    return web.json_response(body, status=_RESTRUCTURE_STATUS.get(exc.code, 400))
+
+
+async def _restructure_body(request: web.Request) -> tuple[dict, web.Response | None]:
+    try:
+        body = await request.json()
+    except Exception:
+        return {}, web.json_response(
+            {"error": {"code": "bad_body", "message": "body must be JSON"}}, status=400
+        )
+    if not isinstance(body, dict):
+        return {}, web.json_response(
+            {"error": {"code": "bad_body", "message": "body must be an object"}}, status=400
+        )
+    return body, None
+
+
+async def get_item_sections(request: web.Request) -> web.Response:
+    """GET /api/knowledge/items/{id}/sections — the section boundaries a split may cut on.
+
+    Served from the same heading rule the chunker sections on, so the outline a reader picks a
+    split point from is the outline the halves will actually be re-chunked along.
+    """
+    from personalclaw.knowledge import restructure
+
+    store = _store(request)
+    item = store.get_item(request.match_info["id"])
+    if not item:
+        return web.json_response(
+            {"error": {"code": "item_not_found", "message": "no such item"}}, status=404
+        )
+    content = str(item.get("content") or "")
+    return web.json_response({"sections": restructure.sections(content), "length": len(content)})
+
+
+async def restructure_item(request: web.Request) -> web.Response:
+    """POST /api/knowledge/items/{id}/restructure/{verb} — preview, then apply, a restructure.
+
+    Without ``confirm`` this returns the PREVIEW and touches nothing: what the verb would do,
+    which inbound references it would break, whether the store can relink them, and the
+    ``token`` a confirm must echo. With ``confirm: true`` it requires that token to still be
+    the one a fresh preview would issue, so a preview the user read cannot be applied to an
+    item that moved underneath it (409 ``preview_stale``, with the new preview attached).
+
+    ``relink: false`` declines the repair the preview offered — the break then simply happens,
+    which is a choice a user may legitimately make and the reason the offer is an offer.
+    Re-submitting the same token is idempotent: it replays the first application's result.
+    """
+    from personalclaw.knowledge import restructure
+
+    store = _store(request)
+    item_id = request.match_info["id"]
+    verb = str(request.match_info.get("verb") or "").strip()
+    body, err = await _restructure_body(request)
+    if err is not None:
+        return err
+    params = body.get("params")
+    if params is None:
+        # The verb's arguments may be sent flat for convenience; `params` is the explicit form.
+        params = {k: v for k, v in body.items() if k not in ("confirm", "token", "relink")}
+    if not isinstance(params, dict):
+        return web.json_response(
+            {"error": {"code": "bad_body", "message": "params must be an object"}}, status=400
+        )
+    try:
+        plan = restructure.plan(store, verb, item_id, params)
+    except restructure.RestructureError as exc:
+        return _restructure_refusal(exc)
+
+    if not body.get("confirm"):
+        return web.json_response({"confirmed": False, "token": plan.token, "plan": plan.to_dict()})
+
+    try:
+        result = restructure.apply(
+            store,
+            verb,
+            item_id,
+            params,
+            token=str(body.get("token") or ""),
+            relink=body.get("relink", True) is not False,
+        )
+    except restructure.RestructureError as exc:
+        _sel_log("restructure", verb=verb, item_id=item_id, outcome="denied")
+        return _restructure_refusal(exc)
+    _sel_log("restructure", verb=verb, item_id=item_id, outcome="completed")
+    return web.json_response({"ok": True, "confirmed": True, **result})
+
+
+async def undo_restructure(request: web.Request) -> web.Response:
+    """POST /api/knowledge/restructure/undo — reverse one applied restructure.
+
+    Restores the prior state of every item the verb touched, RELATIONS INCLUDED, and then
+    re-invalidates the derived layer so the restored bodies are re-chunked and re-embedded
+    rather than keeping vectors computed against text that has just been rolled back.
+    """
+    from personalclaw.knowledge import restructure
+
+    body, err = await _restructure_body(request)
+    if err is not None:
+        return err
+    token = str(body.get("token") or "").strip()
+    if not token:
+        return web.json_response(
+            {"error": {"code": "token_required", "message": "supply the token to undo"}},
+            status=400,
+        )
+    try:
+        result = restructure.undo(_store(request), token)
+    except restructure.RestructureError as exc:
+        _sel_log("restructure_undo", outcome="denied")
+        return _restructure_refusal(exc)
+    _sel_log("restructure_undo", verb=result["verb"], item_id=result["item_id"])
+    return web.json_response(result)
+
+
+async def list_restructure_undo(request: web.Request) -> web.Response:
+    """GET /api/knowledge/restructure/undo — restructures that are still reversible.
+
+    The apply response carries its own undo token, but a reader who navigates away or reloads
+    has nowhere to get it back from — and an undo the user cannot find is not an undo they can
+    rely on before a destructive restructure.
+    """
+    return web.json_response({"undoable": _store(request).list_undo()})
+
+
 def setup_knowledge_routes(app: web.Application) -> None:
     # One ingestion path: the node-graph queue. Every item (typed-create, file
     # upload, bookmark) is created via the native provider and enqueued here;
@@ -3263,6 +3421,14 @@ def setup_knowledge_routes(app: web.Application) -> None:
     app.router.add_get("/api/knowledge/conflicts", list_conflicts)
     app.router.add_get("/api/knowledge/items/{id}/relations", list_item_relations)
     app.router.add_get("/api/knowledge/items/{id}/staleness", get_item_staleness)
+    # KL-19 — the structural editing verbs. Registered BEFORE the `/items/{id}` catch-alls for
+    # readability only; aiohttp matches on the full path, so order does not disambiguate them.
+    # The undo pair is a sibling collection rather than `/items/{id}/undo`, because an undo may
+    # have to resurrect an item the merge deleted — there is no live `{id}` to hang it off.
+    app.router.add_get("/api/knowledge/restructure/undo", list_restructure_undo)
+    app.router.add_post("/api/knowledge/restructure/undo", undo_restructure)
+    app.router.add_get("/api/knowledge/items/{id}/sections", get_item_sections)
+    app.router.add_post("/api/knowledge/items/{id}/restructure/{verb}", restructure_item)
     app.router.add_post("/api/knowledge/items/{id}/regenerate", regenerate_item)
     app.router.add_patch("/api/knowledge/tags/{id}", rename_tag)
     app.router.add_post("/api/knowledge/tags/{id}/merge", merge_tag)

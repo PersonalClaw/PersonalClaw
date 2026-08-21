@@ -753,7 +753,48 @@ export interface KnowledgeDuplicate {
 // user what it actually did ("3 collections, 2 mentions") instead of a bare "Merged".
 export interface KnowledgeMergeResult {
   ok: boolean; kept: string; merged: string
-  moved: { collections: number; tags: number; mentions: number; annotations: number }
+  moved: {
+    collections: number; tags: number; mentions: number; annotations: number
+    relations: number; citations: number
+  }
+}
+// ── Structural editing verbs (KL-19) ──
+// One section boundary a split may cut on. `offset` is a character offset into the item's body,
+// so the caller slices at it without re-deriving headings — and it is the SAME boundary the
+// chunker sections on, which is why a split's halves re-chunk along the seam the reader chose.
+export interface KnowledgeSection {
+  offset: number; line: number; title: string; level: number; chars: number
+}
+// One inbound reference a verb would break. `relinkable` is the whole reason these are reported
+// separately from a refusal: a break the store can repair is an OFFER, one it cannot is a warning
+// the reader weighs. A UI that rendered both the same way would present a decision with no choice
+// in it. `refs` are the ids of the items doing the referring.
+export interface KnowledgeRestructureBreak {
+  kind: 'citation' | 'citation_chunk' | 'wikilink' | 'annotation' | 'kind_contract' | string
+  message: string; relinkable: boolean; refs: string[]
+}
+export interface KnowledgeRestructurePlan {
+  verb: string; item_id: string; summary: string; token: string
+  affected: string[]; breaks: KnowledgeRestructureBreak[]
+  relink_offered: boolean
+  detail: Record<string, unknown>
+}
+export interface KnowledgeRestructurePreview {
+  confirmed: false; token: string; plan: KnowledgeRestructurePlan
+}
+export interface KnowledgeRestructureResult {
+  ok: boolean; confirmed: true; kept: string; created: string[]
+  undo_token: string; summary: string
+  // True when this response REPLAYS an earlier application of the same token rather than
+  // restructuring again — the server's answer to a doubled submit.
+  idempotent: boolean
+  annotations_moved?: number; citations_widened?: number
+  moved?: KnowledgeMergeResult['moved']
+  wikilinks_relinked?: { items: number; links: number }
+  logical_key?: string; title?: string; kind?: string
+}
+export interface KnowledgeUndoEntry {
+  token: string; verb: string; item_id: string; summary: string; created_at: string
 }
 export interface ChatFolder { id: string; name: string; order?: number; collapsed?: boolean; parent_id?: string }
 export interface ChatTag { id: string; name: string; color?: string; order?: number; status?: boolean }
@@ -1755,6 +1796,11 @@ export interface KnowledgeItem {
   read_state?: 'unread' | 'reading' | 'read'; favorited?: boolean
   created_at?: string; updated_at?: string
   _score?: number; _match_type?: string
+  // The SEMANTIC kind (`semantics.KINDS`), distinct from `item_type`/`type` which routes the
+  // ingestion graph. Serialized by every item response but never declared here until KL-19 gave
+  // a surface a reason to read it — the restructure panel's change-kind verb. Nullable because
+  // most items have never been assigned one.
+  kind?: string | null
   // vision fields (may be absent from the PClaw backend today)
   type?: KnowledgeType; gist_language?: string; url?: string; url_title?: string
   mime_type?: string; file_size?: number; thumbnail_path?: string; file_path?: string; word_count?: number
@@ -4683,6 +4729,46 @@ export const api = {
   // gate (a named dialog at the call site), not this flag.
   mergeKnowledgeItems: (keepId: string, mergeId: string) =>
     post<KnowledgeMergeResult>(`/api/knowledge/items/${encodeURIComponent(keepId)}/merge`, { merge_id: mergeId, confirm: true }),
+  // ── Structural editing verbs (KL-19) ──
+  // The boundaries a split may cut on. NO `.catch(() => [])`: an empty list is the normal
+  // answer for a document with no headings, so a swallowed rejection renders as "this item
+  // cannot be split" — indistinguishable from the truth, on the one call that decides whether
+  // the verb is offered at all.
+  knowledgeItemSections: (id: string) =>
+    get<{ sections: KnowledgeSection[]; length: number }>(`/api/knowledge/items/${encodeURIComponent(id)}/sections`),
+  /** Phase one. Sends no `confirm`, so the server returns the preview and touches nothing.
+   *
+   *  The returned `token` is a digest of the verb, its parameters, the affected items' current
+   *  state AND the break list — so it is not a nonce the client may hold indefinitely. Anything
+   *  that moves invalidates it, which is what makes the preview mandatory by construction rather
+   *  than by this client remembering to ask first. */
+  knowledgeRestructurePreview: (id: string, verb: string, params: Record<string, unknown>) =>
+    post<KnowledgeRestructurePreview>(
+      `/api/knowledge/items/${encodeURIComponent(id)}/restructure/${encodeURIComponent(verb)}`,
+      params,
+    ),
+  /** Phase two. `token` MUST be the one phase one returned, and `params` MUST be the params it
+   *  was previewed with — the server refuses a token whose plan no longer matches (409
+   *  `preview_stale`, with the fresh plan attached) rather than applying a preview the user
+   *  never saw. So callers pass what they PREVIEWED, not whatever the form now holds.
+   *
+   *  `relink: false` declines the repair the preview offered; the break then simply happens,
+   *  which is a choice the reader is entitled to make. Re-sending the same token is safe —
+   *  the server replays the first result instead of restructuring twice. */
+  knowledgeRestructureApply: (
+    id: string, verb: string, params: Record<string, unknown>, token: string, relink = true,
+  ) =>
+    post<KnowledgeRestructureResult>(
+      `/api/knowledge/items/${encodeURIComponent(id)}/restructure/${encodeURIComponent(verb)}`,
+      { ...params, confirm: true, token, relink },
+    ),
+  // The undo journal. Listed rather than only handed back by `apply`, because a reader who
+  // navigates away or reloads has nowhere else to get the token from — and an undo the user
+  // cannot find is not one they can rely on before a destructive restructure.
+  knowledgeRestructureUndoable: () =>
+    get<{ undoable: KnowledgeUndoEntry[] }>('/api/knowledge/restructure/undo').then((d) => d.undoable),
+  knowledgeRestructureUndo: (token: string) =>
+    post<{ ok: boolean; verb: string; item_id: string; summary: string }>('/api/knowledge/restructure/undo', { token }),
   // One curation op over many items. Per-item results, because a selection can go
   // stale between the click and the request — the UI reports "38 shelved, 2 not found"
   // rather than treating a partial success as a failure.

@@ -1,8 +1,10 @@
 """KnowledgeStore -- SQLite backed knowledge graph with lightweight in-memory graph."""
 
+import base64
 import json
 import logging
 import pathlib
+import re
 from collections import defaultdict
 from collections.abc import Sequence
 from datetime import datetime
@@ -80,6 +82,44 @@ def _fts_tags(names: list[str]) -> str:
     making it unsearchable. Joined names index the real characters.
     """
     return " ".join(names)
+
+
+#: Marks a base64-wrapped BLOB inside a KL-19 undo snapshot. `items.embedding` and
+#: `chunks.embedding` are `bytes`, which `json.dumps` refuses, and a snapshot that dropped
+#: them would restore an item with NO vector while reporting a complete undo.
+_B64_KEY = "__b64__"
+
+
+def _snapshot_value(value: Any) -> Any:
+    """Make one sqlite column value JSON-safe for an undo snapshot."""
+    if isinstance(value, (bytes, bytearray, memoryview)):
+        return {_B64_KEY: base64.b64encode(bytes(value)).decode("ascii")}
+    return value
+
+
+def _restore_value(value: Any) -> Any:
+    """Inverse of :func:`_snapshot_value`."""
+    if isinstance(value, dict) and _B64_KEY in value:
+        try:
+            return base64.b64decode(str(value[_B64_KEY]))
+        except (ValueError, TypeError):
+            return None
+    return value
+
+
+def _placeholders(items: Sequence[Any]) -> str:
+    """``?, ?, ?`` for *items* — one placeholder per element, never interpolated values."""
+    return ", ".join("?" for _ in items)
+
+
+def _like_escape(text: str) -> str:
+    """Escape LIKE wildcards so a title containing ``%`` or ``_`` matches literally.
+
+    Paired with ``ESCAPE '\\'`` at the call site. Without this a title like "50% faster"
+    would make the prefilter match every item in the library — which is only a performance
+    bug, and a title of just "_" would make it match everything with any character there.
+    """
+    return text.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 
 
 def _sim2(value: float) -> str:
@@ -650,6 +690,37 @@ class KnowledgeStore:
 
             CREATE INDEX IF NOT EXISTS idx_intent_outcomes_intent ON intent_outcomes(intent_id);
             CREATE INDEX IF NOT EXISTS idx_intent_outcomes_item ON intent_outcomes(item_id);
+
+            -- Undo snapshots for the structural editing verbs (KL-19). One row per applied
+            -- restructure, holding the COMPLETE prior state of every item the verb touched:
+            -- the item rows, their tags, collection memberships, mentions, annotations,
+            -- item-level relations and citations. `undo` replays it.
+            --
+            -- 🔴 The snapshot lives in THIS database and NOT in process memory, and that is
+            -- the load-bearing choice. An in-memory undo is lost by the one event most likely
+            -- to follow a restructure the user regrets — a gateway restart (backend changes
+            -- never hot-reload, so a dev restart strands it too) — and "reversible within the
+            -- session" would then mean "reversible until something restarts", which is not a
+            -- promise a user can risk a destructive restructure against. Living in the same
+            -- file as the rows it describes also means the snapshot and the data commit or
+            -- roll back TOGETHER; a sidecar could disagree with the store after a crash
+            -- between the two writes, and a WRONG undo is worse than no undo.
+            --
+            -- Deliberately NO `REFERENCES items(id)`: the snapshot's whole job is to outlive
+            -- the deletion of the items it describes (a merge deletes one). With
+            -- `foreign_keys=ON` an FK here would either refuse the merge or cascade the undo
+            -- away at exactly the moment it becomes the only copy of the prior state.
+            CREATE TABLE IF NOT EXISTS restructure_undo (
+                token TEXT PRIMARY KEY,
+                verb TEXT NOT NULL,
+                item_id TEXT NOT NULL,
+                summary TEXT NOT NULL DEFAULT '',
+                snapshot TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_restructure_undo_created
+                ON restructure_undo(created_at);
 
         """)
         self.db.commit()
@@ -1721,7 +1792,7 @@ class KnowledgeStore:
         scored.sort(key=lambda t: (-t[0], -t[1], t[2]["id"]))
         return [d for _, _, d in scored[: max(1, int(limit))]]
 
-    def merge_items(self, keep_id: str, merge_id: str) -> dict:
+    def merge_items(self, keep_id: str, merge_id: str, *, relink_citations: bool = True) -> dict:
         """Fold *merge_id* into *keep_id*, then delete it. Returns what moved.
 
         The survivor inherits **both** items' collection memberships, tags and entity
@@ -1732,6 +1803,14 @@ class KnowledgeStore:
 
         Refuses to merge an item into itself — a self-merge would run the cascade delete on
         the survivor and destroy the very item it was asked to keep.
+
+        KL-19 extends the inheritance to the two inbound references it previously dropped —
+        typed item relations and per-marker citations — because they are what make this a
+        STORE concern rather than a row swap. *relink_citations* is the "offer to relink"
+        half of the warn-before-apply contract: with it, attributions that named the merged
+        copy are re-pointed at the survivor (whose body now holds the cited text); without
+        it they stay pointed at an id that no longer exists, which the citation table
+        deliberately permits and which a caller may legitimately prefer.
         """
         if not keep_id or not merge_id or keep_id == merge_id:
             raise ValueError("merge_items needs two distinct item ids")
@@ -1739,7 +1818,14 @@ class KnowledgeStore:
             if self.db.execute("SELECT 1 FROM items WHERE id = ?", (iid,)).fetchone() is None:
                 raise ValueError(f"no such item {iid!r}")
 
-        moved = {"collections": 0, "tags": 0, "mentions": 0, "annotations": 0}
+        moved = {
+            "collections": 0,
+            "tags": 0,
+            "mentions": 0,
+            "annotations": 0,
+            "relations": 0,
+            "citations": 0,
+        }
         self.db.execute("BEGIN")
         try:
             # Collections: drop the pairs the survivor already has, then redirect the rest.
@@ -1813,6 +1899,60 @@ class KnowledgeStore:
                 ),
             )
 
+            # Typed ITEM-level edges follow the survivor on BOTH legs (KL-19). Until this
+            # existed the merge could not even complete for a related item: the cascade has
+            # to delete these rows to satisfy the bare FK, so an unredirected merge either
+            # raised or (once the cascade deleted them) silently destroyed the graph edge
+            # that made the two items worth merging. Redirect, then let the cascade sweep
+            # whatever is left.
+            #
+            # The collision rule is the composite PK (source, target, relation_type) plus
+            # one case a PK cannot express: a redirect that would point an edge at itself.
+            # Both legs therefore delete the losers first — the sibling idiom used for
+            # collections/tags/mentions above — and the TARGET leg's `source_item_id = keep`
+            # test is what catches the self-edge the SOURCE leg's update can create when the
+            # two items already related to each other.
+            self.db.execute(
+                "DELETE FROM item_relations WHERE source_item_id = ? AND ("
+                "  target_item_id = ? OR EXISTS ("
+                "    SELECT 1 FROM item_relations r2 WHERE r2.source_item_id = ?"
+                "      AND r2.target_item_id = item_relations.target_item_id"
+                "      AND r2.relation_type = item_relations.relation_type))",
+                (merge_id, keep_id, keep_id),
+            )
+            cur = self.db.execute(
+                "UPDATE item_relations SET source_item_id = ? WHERE source_item_id = ?",
+                (keep_id, merge_id),
+            )
+            moved["relations"] = cur.rowcount or 0
+            self.db.execute(
+                "DELETE FROM item_relations WHERE target_item_id = ? AND ("
+                "  source_item_id = ? OR EXISTS ("
+                "    SELECT 1 FROM item_relations r2 WHERE r2.target_item_id = ?"
+                "      AND r2.source_item_id = item_relations.source_item_id"
+                "      AND r2.relation_type = item_relations.relation_type))",
+                (merge_id, keep_id, keep_id),
+            )
+            cur = self.db.execute(
+                "UPDATE item_relations SET target_item_id = ? WHERE target_item_id = ?",
+                (keep_id, merge_id),
+            )
+            moved["relations"] += cur.rowcount or 0
+
+            if relink_citations:
+                # `chunk_index` is reset to -1 (the whole item) rather than carried across.
+                # The number indexed a chunk of the copy being deleted; the survivor's
+                # chunks are its own and are about to be recomputed, so keeping the integer
+                # would point the attribution at an unrelated passage — a citation that
+                # resolves to the WRONG text, which is worse than one that resolves to the
+                # item and says no more than that.
+                cur = self.db.execute(
+                    "UPDATE item_citations SET source_item_id = ?, chunk_index = -1 "
+                    "WHERE source_item_id = ?",
+                    (keep_id, merge_id),
+                )
+                moved["citations"] = cur.rowcount or 0
+
             # The cascade owns the FTS 'delete' (it must carry exactly the indexed values,
             # read BEFORE item_tags rows go away) — reusing it is why this merge can't rot
             # the search index.
@@ -1829,6 +1969,380 @@ class KnowledgeStore:
         maintenance.mark_dirty(reason="merge items")
         logger.info("merged knowledge item %s into %s: %s", merge_id, keep_id, moved)
         return moved
+
+    # -- Structural restructure support (KL-19) -----------------------------------
+    #
+    # The editing VERBS live in `knowledge/restructure.py`; what lives here is the part
+    # that has to: the row-and-FTS truth. A snapshot/restore that did not own the
+    # external-content FTS sync would desync the search index without raising (see the
+    # `items_fts` comments), and "search still resolves after a restructure" is precisely
+    # what the verbs promise.
+
+    def add_item_relation(
+        self,
+        source_item_id: str,
+        target_item_id: str,
+        relation_type: str,
+        *,
+        confidence: float = 1.0,
+        provenance: str = "extracted",
+    ) -> bool:
+        """Upsert one typed item→item edge. False when the inputs cannot make an edge.
+
+        The store had no writer for `item_relations` at all — the only one was raw SQL
+        inside an action provider — so a verb that wanted to link a split-off child back to
+        its parent had no seam that also validated the vocabulary. Refuses a self-edge and
+        an unknown `relation_type` (`semantics.RELATION_TYPES`) rather than storing a row no
+        reader has a rendering for.
+        """
+        from personalclaw.knowledge import semantics
+
+        if not source_item_id or not target_item_id or source_item_id == target_item_id:
+            return False
+        if relation_type not in semantics.RELATION_TYPES:
+            return False
+        for iid in (source_item_id, target_item_id):
+            if self.db.execute("SELECT 1 FROM items WHERE id = ?", (iid,)).fetchone() is None:
+                return False
+        self.db.execute(
+            "INSERT OR REPLACE INTO item_relations (source_item_id, target_item_id, "
+            "relation_type, confidence, provenance, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+            (
+                source_item_id,
+                target_item_id,
+                relation_type,
+                float(confidence),
+                str(provenance or "extracted"),
+                datetime.now().isoformat(),
+            ),
+        )
+        self.db.commit()
+        return True
+
+    def set_item_identity(self, item_id: str, *, kind: str | None = None) -> dict:
+        """Set an item's `kind` and recompute the derived `logical_key`. Returns both.
+
+        🔴 Neither column is reachable through `update_item`: `_ITEM_COLUMNS` omits them, and
+        that filter drops unknown keys SILENTLY, so `update_item(id, kind=...)` reports
+        success and stores nothing. This is the writer, and it always recomputes
+        `logical_key` from the row's CURRENT (kind, title) — which is why a retitle calls it
+        too. `logical_key` is `{kind}:{normalized_title}` and it is the store's own inbound
+        reference to the title: the persist provider's idempotency lookup keys on it, so a
+        retitle that left it stale would let the next persist of the SAME record be admitted
+        as a second item. "Inbound references follow a retitle" starts here.
+
+        An unknown *kind* raises rather than storing an unrenderable value; the vocabulary is
+        `semantics.KINDS`, whose only other enforcement point is the persist-time check.
+        """
+        from personalclaw.knowledge import semantics
+
+        row = self.db.execute("SELECT title, kind FROM items WHERE id = ?", (item_id,)).fetchone()
+        if row is None:
+            raise ValueError(f"no such item {item_id!r}")
+        if kind is not None:
+            if kind not in semantics.KINDS:
+                raise ValueError(f"unknown kind {kind!r} — one of: {', '.join(semantics.KINDS)}")
+            next_kind = kind
+        else:
+            next_kind = str(row["kind"] or "")
+        key = semantics.logical_key(next_kind, str(row["title"] or ""))
+        self.db.execute(
+            "UPDATE items SET kind = ?, logical_key = ? WHERE id = ?",
+            (next_kind or None, key or None, item_id),
+        )
+        self.db.commit()
+        return {"kind": next_kind, "logical_key": key}
+
+    def items_linking_to_title(self, title: str) -> list[dict]:
+        """Items whose body carries a `[[title]]` wikilink to *title*.
+
+        The wikilink is a REAL inbound reference and the only one that names an item by its
+        TITLE rather than its id — `[[Old Title]]` in another item's prose simply stops
+        resolving after a retitle, with nothing to raise and nothing to notice. The store
+        needs to be able to enumerate them so a retitle can say what it would break before
+        it breaks it. Matching is case-insensitive on the link target and tolerates the
+        `[[Target|alias]]` form, mirroring the reader's own regex.
+        """
+        needle = " ".join(str(title or "").split())
+        if not needle:
+            return []
+        rows = self.db.execute(
+            "SELECT id, title, content FROM items WHERE content LIKE ? ESCAPE '\\'",
+            (f"%[[{_like_escape(needle)}%",),
+        ).fetchall()
+        pattern = re.compile(r"\[\[" + re.escape(needle) + r"(?:\|[^\]]*)?\]\]", re.IGNORECASE)
+        out: list[dict] = []
+        for row in rows:
+            hits = len(pattern.findall(str(row["content"] or "")))
+            if hits:
+                out.append({"id": row["id"], "title": row["title"], "links": hits})
+        return out
+
+    def rewrite_wikilinks(self, old_title: str, new_title: str) -> dict:
+        """Repoint every `[[old_title]]` body reference at *new_title*. Returns what changed.
+
+        Goes through `update_item` per item rather than one bulk UPDATE, because each rewrite
+        changes indexed text and the FTS sync is per row. `touch=False`: the referring item's
+        prose was corrected by someone else's retitle, and stamping it as user-edited would
+        make a relink masquerade as the reader having just revised the note.
+        """
+        old = " ".join(str(old_title or "").split())
+        new = " ".join(str(new_title or "").split())
+        changed: list[str] = []
+        if not old or not new or old == new:
+            return {"items": 0, "links": 0, "item_ids": changed}
+        pattern = re.compile(r"\[\[" + re.escape(old) + r"(\|[^\]]*)?\]\]", re.IGNORECASE)
+        links = 0
+        for ref in self.items_linking_to_title(old):
+            row = self.db.execute("SELECT content FROM items WHERE id = ?", (ref["id"],)).fetchone()
+            if row is None:
+                continue
+            body = str(row["content"] or "")
+            # The alias half of `[[Target|alias]]` is the author's chosen display text and is
+            # preserved verbatim — rewriting it would silently edit their prose, not the link.
+            updated, count = pattern.subn(lambda m: f"[[{new}{m.group(1) or ''}]]", body)
+            if not count:
+                continue
+            self.update_item(ref["id"], content=updated, touch=False)
+            links += count
+            changed.append(str(ref["id"]))
+        return {"items": len(changed), "links": links, "item_ids": changed}
+
+    def inbound_references(self, item_id: str) -> dict:
+        """Everything that points AT *item_id*, for a warn-before-apply preview.
+
+        Enumerated from the tables rather than from a hardcoded list of "the important ones":
+        citations naming it as a source, typed relations on either leg, collection
+        memberships, its own highlights, and title-keyed wikilinks. What a verb reports as
+        BREAKABLE is a per-verb judgement (`restructure.py`); this is the raw inventory.
+        """
+        row = self.db.execute("SELECT title FROM items WHERE id = ?", (item_id,)).fetchone()
+        title = str(row["title"] or "") if row is not None else ""
+        cites = self.db.execute(
+            "SELECT c.item_id AS item_id, c.marker AS marker, c.chunk_index AS chunk_index, "
+            "i.title AS title FROM item_citations c LEFT JOIN items i ON i.id = c.item_id "
+            "WHERE c.source_item_id = ? ORDER BY c.item_id, c.marker",
+            (item_id,),
+        ).fetchall()
+        rels = self.db.execute(
+            "SELECT source_item_id, target_item_id, relation_type FROM item_relations "
+            "WHERE source_item_id = ? OR target_item_id = ? "
+            "ORDER BY source_item_id, target_item_id, relation_type",
+            (item_id, item_id),
+        ).fetchall()
+        return {
+            "citations": [dict(r) for r in cites],
+            "relations": [dict(r) for r in rels],
+            "collections": self.collections_for_item(item_id),
+            "annotations": len(self.list_annotations(item_id)),
+            "wikilinks": self.items_linking_to_title(title),
+        }
+
+    #: Child tables a snapshot carries, as (table, predicate-column(s)). Kept as data so
+    #: `snapshot_items` and `restore_items_snapshot` cannot drift apart — the failure mode
+    #: of two hand-written lists is an undo that restores four of five tables and reports
+    #: success, which is a WRONG undo and worse than none.
+    _SNAPSHOT_TABLES: tuple[tuple[str, tuple[str, ...]], ...] = (
+        ("collection_items", ("item_id",)),
+        ("mentions", ("item_id",)),
+        ("annotations", ("item_id",)),
+        # Both legs / both sides: a merge rewrites rows belonging to items OUTSIDE the
+        # affected set (a third item's attribution is re-pointed at the survivor), so a
+        # snapshot keyed only on the citing item would not carry the row it changed.
+        ("item_relations", ("source_item_id", "target_item_id")),
+        ("item_citations", ("item_id", "source_item_id")),
+    )
+
+    def snapshot_items(self, item_ids: Sequence[str]) -> dict:
+        """The COMPLETE prior state of *item_ids*, as JSON-ready data.
+
+        `existing` records which ids were real when the snapshot was taken, so a restore can
+        tell "put this row back" from "this row is something the verb created and must go".
+        Chunks and the ANN index are deliberately NOT captured: the restore re-derives them
+        through KL-14's maintenance host exactly as the forward verb does, and a restored
+        vector computed against text that has since changed is the same silent staleness the
+        forward path exists to avoid.
+        """
+        ids = [str(i) for i in item_ids if i]
+        rows: list[dict] = []
+        existing: list[str] = []
+        tags: dict[str, list[str]] = {}
+        for iid in ids:
+            row = self.db.execute("SELECT * FROM items WHERE id = ?", (iid,)).fetchone()
+            if row is None:
+                continue
+            existing.append(iid)
+            rows.append({k: _snapshot_value(row[k]) for k in row.keys()})
+            tags[iid] = self._tags_for_item(iid)
+        children: dict[str, list[dict]] = {}
+        for table, columns in self._SNAPSHOT_TABLES:
+            where = " OR ".join(f"{col} IN ({_placeholders(ids)})" for col in columns)
+            params = tuple(ids) * len(columns)
+            found = self.db.execute(
+                f"SELECT * FROM {table} WHERE {where}", params
+            ).fetchall()  # noqa: S608
+            children[table] = [{k: _snapshot_value(r[k]) for k in r.keys()} for r in found]
+        return {"ids": ids, "existing": existing, "items": rows, "tags": tags, "children": children}
+
+    def restore_items_snapshot(self, snapshot: dict) -> dict:
+        """Replay a :meth:`snapshot_items` payload. Returns what it put back.
+
+        One transaction, so a half-applied undo cannot exist. Items the verb CREATED (present
+        now, absent from `existing`) are deleted through the same cascade a delete uses, so
+        the reverse direction cannot orphan what the forward direction was careful about.
+        """
+        ids = [str(i) for i in snapshot.get("ids") or []]
+        if not ids:
+            return {"items": 0, "created_removed": 0, "children": {}}
+        existing = {str(i) for i in snapshot.get("existing") or []}
+        rows = list(snapshot.get("items") or [])
+        tags = dict(snapshot.get("tags") or {})
+        children = dict(snapshot.get("children") or {})
+        result: dict = {"items": 0, "created_removed": 0, "children": {}}
+        self.db.execute("BEGIN")
+        try:
+            # Anything the verb minted goes first, so its child rows are gone before the
+            # snapshot's own rows are re-inserted and cannot collide on a composite PK.
+            for iid in ids:
+                if iid in existing:
+                    continue
+                if self.db.execute("SELECT 1 FROM items WHERE id = ?", (iid,)).fetchone():
+                    self._delete_item_cascade(iid)
+                    result["created_removed"] += 1
+            for row in rows:
+                self._restore_item_row(row, tags.get(str(row.get("id")), []))
+                result["items"] += 1
+            for table, columns in self._SNAPSHOT_TABLES:
+                where = " OR ".join(f"{col} IN ({_placeholders(ids)})" for col in columns)
+                self.db.execute(
+                    f"DELETE FROM {table} WHERE {where}", tuple(ids) * len(columns)
+                )  # noqa: S608
+                restored = 0
+                for child in children.get(table, []):
+                    cols = list(child)
+                    placeholders = _placeholders(cols)
+                    try:
+                        self.db.execute(
+                            f"INSERT OR REPLACE INTO {table} ({', '.join(cols)}) "  # noqa: S608
+                            f"VALUES ({placeholders})",
+                            tuple(_restore_value(child[c]) for c in cols),
+                        )
+                    except sqlite3.IntegrityError:
+                        # A row whose OTHER endpoint has since been deleted by something
+                        # outside this snapshot. Skipped rather than aborting the whole undo:
+                        # restoring four of five relations beats refusing to restore the item.
+                        logger.debug("undo skipped a %s row: %r", table, child, exc_info=True)
+                        continue
+                    restored += 1
+                result["children"][table] = restored
+            self.db.execute("COMMIT")
+        except Exception:
+            self.db.execute("ROLLBACK")
+            raise
+        self._load_graph()
+        return result
+
+    def _restore_item_row(self, row: dict, tag_names: list[str]) -> None:
+        """Put one snapshotted `items` row back, FTS included. Caller owns the transaction."""
+        item_id = str(row.get("id") or "")
+        if not item_id:
+            return
+        cols = [c for c in row if c != "rowid"]
+        values = [_restore_value(row[c]) for c in cols]
+        current = self.db.execute(
+            "SELECT rowid, title, content FROM items WHERE id = ?", (item_id,)
+        ).fetchone()
+        if current is not None:
+            # The 'delete' side must carry EXACTLY the indexed values, read before the tag
+            # rows move — the same rule `update_item` and the cascade follow. A mismatch
+            # corrupts the posting list silently and integrity-check does not see it.
+            self.db.execute(
+                "INSERT INTO items_fts (items_fts, rowid, title, content, tags) "
+                "VALUES ('delete', ?, ?, ?, ?)",
+                (
+                    current["rowid"],
+                    current["title"],
+                    current["content"],
+                    _fts_tags(self._tags_for_item(item_id)),
+                ),
+            )
+            assignments = ", ".join(f"{c} = ?" for c in cols)
+            self.db.execute(
+                f"UPDATE items SET {assignments} WHERE id = ?",  # noqa: S608
+                (*values, item_id),
+            )
+        else:
+            columns = ", ".join(cols)
+            self.db.execute(
+                f"INSERT INTO items ({columns}) VALUES ({_placeholders(cols)})",  # noqa: S608
+                tuple(values),
+            )
+        self._write_item_tags(item_id, list(tag_names), source="user")
+        rowid = self.db.execute("SELECT rowid FROM items WHERE id = ?", (item_id,)).fetchone()[0]
+        fresh = self.db.execute(
+            "SELECT title, content FROM items WHERE id = ?", (item_id,)
+        ).fetchone()
+        self.db.execute(
+            "INSERT INTO items_fts (rowid, title, content, tags) VALUES (?, ?, ?, ?)",
+            (rowid, fresh["title"], fresh["content"], _fts_tags(self._tags_for_item(item_id))),
+        )
+
+    # -- The undo journal (KL-19) -------------------------------------------------
+
+    #: How many undo records survive. A restructure is undoable "within the session", and an
+    #: unbounded journal would keep a full copy of every item a user has ever split for the
+    #: life of the library — the snapshot holds item BODIES, so the cost is real.
+    UNDO_KEEP = 25
+
+    def save_undo(
+        self, token: str, *, verb: str, item_id: str, summary: str, snapshot: dict
+    ) -> None:
+        """Record one undo point and prune the journal to :data:`UNDO_KEEP`."""
+        self.db.execute(
+            "INSERT OR REPLACE INTO restructure_undo "
+            "(token, verb, item_id, summary, snapshot, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+            (
+                token,
+                verb,
+                item_id,
+                summary,
+                json.dumps(snapshot),
+                datetime.now().isoformat(),
+            ),
+        )
+        self.db.execute(
+            "DELETE FROM restructure_undo WHERE token NOT IN ("
+            "  SELECT token FROM restructure_undo ORDER BY created_at DESC, rowid DESC LIMIT ?)",
+            (int(self.UNDO_KEEP),),
+        )
+        self.db.commit()
+
+    def load_undo(self, token: str) -> dict | None:
+        """One undo record with its snapshot parsed, or None."""
+        row = self.db.execute("SELECT * FROM restructure_undo WHERE token = ?", (token,)).fetchone()
+        if row is None:
+            return None
+        out = dict(row)
+        try:
+            out["snapshot"] = json.loads(out["snapshot"] or "{}")
+        except (json.JSONDecodeError, ValueError):
+            return None
+        return out
+
+    def delete_undo(self, token: str) -> bool:
+        """Drop one undo record. True when a row went away."""
+        cur = self.db.execute("DELETE FROM restructure_undo WHERE token = ?", (token,))
+        self.db.commit()
+        return bool(cur.rowcount)
+
+    def list_undo(self, *, limit: int = 25) -> list[dict]:
+        """The journal, newest first, WITHOUT the snapshot bodies."""
+        rows = self.db.execute(
+            "SELECT token, verb, item_id, summary, created_at FROM restructure_undo "
+            "ORDER BY created_at DESC, rowid DESC LIMIT ?",
+            (max(1, int(limit)),),
+        ).fetchall()
+        return [dict(r) for r in rows]
 
     # ── Extracted-content pool (node-graph engine, #30) ──
 
@@ -2390,6 +2904,35 @@ class KnowledgeStore:
         # accumulate for the life of the library.
         self.db.execute("DELETE FROM mention_sweeps WHERE item_id = ?", (item_id,))
         self.db.execute("DELETE FROM entity_relations WHERE source_item_id = ?", (item_id,))
+        # 🔴 KL-19 — typed ITEM-level edges, on BOTH legs. This was the one inbound reference
+        # nothing cleaned: `item_relations` declares `REFERENCES items(id)` with no
+        # `ON DELETE`, `foreign_keys=ON` is set at open, and no `DELETE FROM item_relations`
+        # existed anywhere in the package. Measured consequence: any item a synthesis had
+        # written a typed relation for was UNDELETABLE and UNMERGEABLE — both `delete_item`
+        # and `merge_items` raised `IntegrityError: FOREIGN KEY constraint failed`, because
+        # the merge finishes through this same cascade. The failure was loud rather than
+        # silent, which is why it survived: a store that refuses is not a store that rots.
+        #
+        # Deleted here rather than made `ON DELETE CASCADE` in the DDL because an existing
+        # database's table is already created and a cascade added to the schema text would
+        # bind only for stores created afterwards — the two would then disagree about
+        # whether a delete is legal. `merge_items` REDIRECTS these rows before it reaches
+        # this cascade, so a merge preserves the edge instead of dropping it.
+        self.db.execute(
+            "DELETE FROM item_relations WHERE source_item_id = ? OR target_item_id = ?",
+            (item_id, item_id),
+        )
+        # Membership rows: `collection_items` has a FK on `collection_id` only, so nothing
+        # — neither a cascade nor application code — removed the row when the ITEM went
+        # away. `add_to_collection` refuses to create one for a missing item, so the orphan
+        # was invisible to every writer and outlived the library.
+        self.db.execute("DELETE FROM collection_items WHERE item_id = ?", (item_id,))
+        # The item's OWN attributions (it is the citing side) die with it. The rows where it
+        # is the CITED side (`source_item_id`) are deliberately left dangling — see the
+        # `item_citations` DDL comment: an attribution must stay readable as "this claim
+        # cited an item that is gone" rather than vanish. `merge_items` offers to relink
+        # those to the survivor instead, which is the honest repair when the text moved.
+        self.db.execute("DELETE FROM item_citations WHERE item_id = ?", (item_id,))
         self.db.execute("DELETE FROM extracted_contents WHERE item_id = ?", (item_id,))
         self.vec_index.drop_item(item_id)  # before the chunk ids go away
         self.db.execute("DELETE FROM chunks WHERE item_id = ?", (item_id,))
@@ -2994,9 +3537,24 @@ class KnowledgeStore:
         ).fetchone()
         return int(row["n"]) if row else 0
 
-    def reembed_all(self, embedder, on_progress=None) -> dict:
+    def reembed_all(
+        self,
+        embedder,
+        on_progress=None,
+        *,
+        only_missing: bool = False,
+        limit: int | None = None,
+    ) -> dict:
         """Re-embed every active knowledge item with ``embedder`` (which exposes
         ``embed_for_item(title, summary)``, matching the ingestion pipeline).
+
+        *only_missing* narrows the scope to items with NO vector, and *limit* bounds one
+        invocation. Together they make this the bounded, RESUMABLE drainer KL-19's derived
+        refresh needs: a restructure NULLs the affected items' vectors (a split's halves must
+        not keep the parent's), and the maintenance pass then drains that backlog a batch at a
+        time. Deliberately the same method rather than a second embedder — one WHERE clause,
+        so the vectors a refresh writes are identical to the ones a full re-index writes, and
+        there is no chance of two loops drifting on grouping, retry or text composition.
 
         Embeds in GROUPS through ``knowledge.embed_batch.embed_texts`` (KL-15) — one provider
         call per group instead of one per item, with bounded retry and adaptive bisection. On
@@ -3010,9 +3568,18 @@ class KnowledgeStore:
         embedding fails are left vector-less and fall back to keyword/FTS retrieval; they are
         never corrupted and never deleted. Returns counts.
         """
-        rows = self.db.execute(
-            "SELECT id, title, summary, content FROM items WHERE status = 'active'"
-        ).fetchall()
+        # The same "text-bearing" test `count_items_missing_embedding` uses, so the backlog a
+        # pass drains is exactly the backlog the counters report. Without it a genuinely empty
+        # item would be selected every batch, fail to embed, and hold the pass open forever.
+        sql = "SELECT id, title, summary, content FROM items WHERE status = 'active'"
+        params: tuple[Any, ...] = ()
+        if only_missing:
+            sql += " AND embedding IS NULL AND (COALESCE(title,'') != '' OR COALESCE(content,'') != '')"  # noqa: E501
+        sql += " ORDER BY id"
+        if limit is not None:
+            sql += " LIMIT ?"
+            params = (max(1, int(limit)),)
+        rows = self.db.execute(sql, params).fetchall()
         total = len(rows)
         done = reembedded = failed = 0
         from personalclaw.knowledge.embed_batch import batch_size_from_config, embed_texts

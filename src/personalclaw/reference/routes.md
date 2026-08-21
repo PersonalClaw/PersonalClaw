@@ -331,6 +331,8 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `POST /api/knowledge/items/{id}/regenerate` — the one action the staleness banner offers.
 - `GET /api/knowledge/items/{id}/related` — - nearest neighbours by embedding similarity.
 - `GET /api/knowledge/items/{id}/relations` — the typed edges into and out of one item.
+- `POST /api/knowledge/items/{id}/restructure/{verb}` — preview, then apply, a restructure.
+- `GET /api/knowledge/items/{id}/sections` — the section boundaries a split may cut on.
 - `GET /api/knowledge/items/{id}/staleness` — has the corpus moved under this synthesis?
 - `GET /api/knowledge/items/{id}/thumbnail` — - serve a generated thumbnail (image/webp).
 - `GET /api/knowledge/providers` — _(no summary)_
@@ -340,6 +342,8 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `DELETE /api/knowledge/reports/{id}` — remove one definition.
 - `PUT /api/knowledge/reports/{id}` — update one definition.
 - `POST /api/knowledge/reports/{id}/run` — run one report NOW, by hand.
+- `GET /api/knowledge/restructure/undo` — restructures that are still reversible.
+- `POST /api/knowledge/restructure/undo` — reverse one applied restructure.
 - `GET /api/knowledge/search-for-context` — _(no summary)_
 - `GET /api/knowledge/source-recipes` — - the bundled source-recipe directory.
 - `GET /api/knowledge/sources` — the watched sources, with health, plus the kind catalog.
