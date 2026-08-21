@@ -2149,6 +2149,49 @@ async def _run_chat(
                             message = f"{_pd}\n\n{message}"
                 except Exception:
                     logger.debug("loop capability lookup skipped", exc_info=True)
+            # ── CE2-10: the resumed session's recorded state, checked BEFORE assembly ──
+            # A resume carries an account of what the record says already happened. If that
+            # record contradicts the working tree — a file it says exists is gone — the turn
+            # STOPS instead of proceeding on a false premise: continuing would hand the model an
+            # account it has already been shown to be wrong about, which is worse than the
+            # re-run defect the account exists to fix.
+            #
+            # Checked here rather than only inside `build_message` because `assemble_context`
+            # quarantines a raising ENGINE to the default one; a refusal that arrived as an
+            # exception through that path would be logged as an engine fault. Refusing first
+            # makes the stop the user-visible thing it has to be.
+            if resumed:
+                from personalclaw.resume_account import (
+                    NOT_CONSULTED,
+                    ResumeStateInconsistent,
+                    verify_resume_state,
+                )
+
+                try:
+                    verify_resume_state(
+                        session_key=session_key,
+                        tree_root=session.workspace_dir or None,
+                        tool_messages=NOT_CONSULTED,
+                    )
+                except ResumeStateInconsistent as _rsi:
+                    _stop = (
+                        "Resume stopped: what this session recorded doing no longer matches "
+                        "the working tree, so continuing would repeat or skip work on a false "
+                        "premise. " + " ".join(_rsi.reasons) + " Start a new session, or restore "
+                        "the tree, to continue."
+                    )
+                    logger.warning("resume refusal in %s: %s", session.key, _stop)
+                    session.append("error", _stop, "msg msg-err")
+                    state.broadcast_ws(
+                        "chat_message",
+                        {"session": session.key, "role": "error", "content": _stop},
+                    )
+                    # A refused turn is an ERRORED turn — same contract as the headroom
+                    # refusal below: the autonudge re-arm and the goal-loop done-callback
+                    # both read this flag, and a refusal that read as success would let a
+                    # loop advance on an answer it never received.
+                    session._last_turn_errored = True
+                    return
             # Assemble via the pluggable context engine (default = the monolithic
             # build_message; a custom engine that raises is quarantined to default
             # so the turn still gets context). Active-recall + structured-
