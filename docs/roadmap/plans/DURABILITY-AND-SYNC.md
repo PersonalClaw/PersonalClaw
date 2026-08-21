@@ -2165,3 +2165,62 @@ half) is live and safe today; only cross-machine DELETE convergence waits on thi
   (`tests/test_atomic_write.py`) and once because zsh does not word-split an unquoted `$PATHS` — an
   unrun leg wearing a pass's clothes. Every path is now verified individually with `ls` before the
   run.
+
+- [2026-08-20][DAS-9] **DONE — the five items recorded UNMET on 2026-08-18 are resolved.** Two were
+  never work: (1) `plan_memory/` still returns **0 hits** in `src/`, so declaring it a root would be
+  dead code, and (4) `state-history` living at `<home>/state-history/` stands as the recorded
+  DEVIATION — confirmed live, the running gateway creates exactly that directory. The other three
+  were built or driven this session.
+
+- [2026-08-20][DAS-9] **(2) `SURFACE_BACKGROUND` has a producer.** Before: the only
+  `writing_surface(...)` call in the tree was `state_history.py:772`, the hourly job setting
+  `SCHEDULED`, so an unattended write was recorded with no surface and the panel's "what changed
+  while I slept" filter could not distinguish it. The unattended dispatch in `gateway.py` now wraps
+  in `writing_surface(SURFACE_BACKGROUND)`, reusing the existing unattendedness decision rather than
+  minting a second notion of it. Railed by a census with a vacuity floor (it must also find the known
+  `SCHEDULED` producer) plus an attended-path counterexample, so "everything is background" cannot
+  pass.
+
+- [2026-08-20][DAS-9] **(3) Per-file restore.** `preview_rollback`/`preview_revert`/`preview`/
+  `rollback`/`revert` take `paths=None|[]` (whole root, byte-identical to before) or a repo-relative
+  subset; previews and results carry the normalized `paths`. The rollback/revert distinction holds
+  per file — per-file rollback restores those paths as of the target and discards later edits to
+  them, per-file revert reverse-applies only that commit and KEEPS later edits — because the panel's
+  copy promises exactly that, and collapsing them would make the copy false. An escaping or unknown
+  path raises rather than being silently dropped: a dropped path is a restore the user believes
+  happened.
+  **The two-phase contract was extended to the path set.** `expected_head` alone no longer binds a
+  subset operation to what the user saw, so a confirm must also echo `expected_paths`; a mismatch is
+  refused with `preview_paths_mismatch` (409). Falsified by disabling that comparison: 4 red across
+  widening, substituting, narrowing-a-whole-root-preview, and omitting the token.
+
+- [2026-08-20][DAS-9] **(5) Driven through a live gateway — and it found a bug the rails could not.**
+  On a real gateway over an isolated home: five roots declared; the timeline renders with
+  `surface: "interactive"`; a per-file preview returns a real diff and changes nothing; a mismatched
+  confirm is refused 409 `preview_paths_mismatch` with the value on disk unchanged; a matched confirm
+  applies, returns `paths: ["config.json"]`, parks the prior HEAD in a service ref, and the setting
+  reverts. (It reverts to the value at the first flush, not the first PATCH — the debounce coalesces
+  writes inside its window, which is what "adaptive" means.) A bogus path is refused 400
+  `invalid_path` naming it.
+  **The bug:** three real config PATCHes left the `config` root at `exists=False, commits=0`.
+  `PATCH /api/config/personalclaw` wrote through `agent._atomic_json_write`, whose own mkstemp+rename
+  never fires the post-write hook — while the PUT path in the same file already used `atomic_write`.
+  Routed through the seam, the identical drive yields `exists=True, commits=1`. Reproduced both ways
+  on a fresh home.
+
+- [2026-08-20][DAS-9] **A limit worth recording, because two falsifications found it and a future
+  reader would otherwise over-trust the test.** Neither counting post-write hook invocations nor
+  asserting that a commit lands discriminates the seam fix in-harness: another writer in the PATCH
+  flow already notifies the seam once for that path (measured: bypass 1, `atomic_write` 2), and that
+  notification creates a pending entry which both `flush()` and `run_pending()` drain. So a commit
+  appears under either writer in a unit test. The pin for the specific regression is a source rail
+  naming the bypassing writer; the evidence for the change is the live A/B. The test file says so
+  rather than implying a stronger guarantee.
+
+- [2026-08-20][DAS-9] **Gates:** `make lint` clean (mypy, 941 source files) · 236 passed across the
+  durability/state-history/route suites, plus 189 on the seam-fix pass · web `typecheck` clean,
+  **455 files / 4735 tests**, `build` ok · probe sweep 13 (the benign baseline).
+  **Process note:** all four implementation subagents died mid-flight on an API auth error
+  (403 "Please run /login"), one of them mid-falsification. No live mutation was left behind — the
+  sweep was clean and every source file was already committed — and their final uncommitted test
+  hardening was recovered, verified (45 passed) and committed before the gate.

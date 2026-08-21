@@ -15,6 +15,7 @@ gateway runs dashboard-only.
 """
 
 import asyncio
+import functools
 import json
 import logging
 import os
@@ -259,6 +260,48 @@ def injection_approval_policy(parent_key: str) -> "ToolApprovalPolicy":
     if is_unattended_session(parent_key):
         return approval_policy_for_session(parent_key)
     return ToolApprovalPolicy.AUTO_APPROVE
+
+
+def _background_write_surface(fn: Callable[..., Any]) -> Callable[..., Any]:
+    """Label every state write an unattended trigger dispatch causes ``background`` (DAS-9).
+
+    `state_history` declares three writing surfaces and the time-travel panel's "what changed
+    while I slept" filter reads them — but `SURFACE_BACKGROUND` had ZERO producers. Measured: the
+    only `writing_surface` call in the whole tree was `state_history.py`'s own hourly maintenance
+    job, which sets `SURFACE_SCHEDULED`. So a commit caused by a clock / file / webhook / chained
+    fire was recorded on the DEFAULT `interactive` surface, and the filter could not tell an
+    automation's edit from something the user did at the keyboard — the one distinction the whole
+    surface field exists to make.
+
+    A decorator rather than a `with` inside the method, for SCOPE. The surface is read by the
+    post-write hook in the WRITER's context (`history_debounce.notify` calls
+    `sh.current_surface()`), so it has to be live for every write the dispatch causes: the
+    injection-screen refusal row, the denylist and rung refusal rows, the provider's own writes,
+    the outcome record, and the chained fires in the `finally`. A context wrapped around only
+    `provider.execute` would leave the rest unlabelled — the same bug in a smaller box.
+
+    Unconditionally `background` because unattendedness is NOT a second decision taken here: this
+    seam resolves its guardrail identity as `unattended_dispatch_key("trigger:<id>")`, which
+    `is_unattended_session` classifies as unattended BY CONSTRUCTION — a store-trigger fire has no
+    chat session by definition, which is exactly why the denylist and the rung ladder below already
+    judge it under the HEADLESS posture. Branching on that key here would add a second, parallel
+    notion of "unattended" whose else-arm is unreachable. The ATTENDED counterpart is a different
+    function — `dashboard.handlers.triggers._dispatch_store_action`, the hand-driven "run now" —
+    which keeps the default `interactive` surface and is untouched by this.
+
+    The surface travels on a ContextVar, so it survives the `await`s inside the dispatch. It does
+    not cross a `run_in_executor` boundary; that is a property of the seam `state_history` chose,
+    shared with the `SURFACE_SCHEDULED` producer, and not something this wrap changes.
+    """
+
+    @functools.wraps(fn)
+    async def _wrapped(*args: Any, **kwargs: Any) -> Any:
+        from personalclaw.durability.state_history import SURFACE_BACKGROUND, writing_surface
+
+        with writing_surface(SURFACE_BACKGROUND):
+            return await fn(*args, **kwargs)
+
+    return _wrapped
 
 
 class GatewayOrchestrator:
@@ -854,6 +897,7 @@ class GatewayOrchestrator:
         store = TriggerStore(base_dir=config_dir())
         await reaper.run_forever(store=store, base_dir=store.base_dir)
 
+    @_background_write_surface
     async def _fire_store_trigger(
         self, trigger: Any, payload: dict[str, Any], *, event: str = "trigger.fired"
     ) -> None:
