@@ -1012,3 +1012,60 @@ Templates are the plan's proof-of-life — field-tested shapes with real daily c
   passed with the pre-flight disabled by `if False:`, because the call site is still in the
   file. Reachability is the not-due skip test, which reds under that same mutation; the two are
   a pair and the docstring says so rather than implying the rail is stronger than it is.
+
+- [2026-08-20][WF2KNO-9] **BLOCKED — verified against code, and the blocker has no atom to carry it.**
+  The atom's own clause already states the reason ("blocked because `net.fetch` is a library egress
+  function, not a dispatchable action provider") and its single EXT dep points at
+  WORKFLOWS-V2-AUTOMATION-SUBSTRATE for the HTTP-egress chokepoint. Re-verified today rather than
+  taken on the clause's word: `src/personalclaw/action_providers/` holds **20 providers**
+  (`artifact_inspect`, `artifact_update`, `bash`, `call_app_route`, `create_task`, `digest`,
+  `invoke_agent`, five `knowledge_*`, `notify`, `run_prompt`, `run_script`, `run_workflow`,
+  `send_message`, `usage_recap`, plus `base`/`registry`/`services`/`template`) and **none of them is
+  a network fetch**. The egress code lives in `net/client.py` as a library function, with in-tree
+  callers in `triggers/web_poll.py` and the guardrails write/model-call paths — none of which a
+  workflow action node can dispatch.
+
+  **The part worth an owner decision: no READY atom builds that provider.** A search across all 648
+  atoms for a clause naming a dispatchable net/HTTP-egress provider returns only `EA-8` ("A2A gateway
+  + a2a-call outbound provider"), which is `todo` behind `EA-1` inside External-Access — a capstone
+  deliberately scheduled last. So the chokepoint is pure engineering with no atom carrying it, and
+  WF2KNO-9 cannot be started by choosing a different atom first. Recorded here rather than invented as
+  a new atom, because the roadmap is owner-maintained.
+
+- [2026-08-20][WF2KNO-9] **Frontier context for whoever picks next.** This entry exists because the
+  whole no-EXT ready frontier was examined in one pass and came back empty, so the next tick should
+  not re-derive it. All four owner-priority areas hold nothing startable: `DIST-11`/`DIST-12`/`CRE-7`
+  are owner-executed walkthroughs and post-launch convenience channels; `CE-9` waits on the owner
+  approving its risk-policy paragraph plus public issues; `WF2AUT-12` states "owner clears E4" in its
+  own clause; `WF2UNI-12` still has **4 of its 7 deletion targets imported** (`planning.session` 8,
+  `plan_walkthrough` 4, `_plan_briefs` 16, `code_classify` 8 = 36 importer lines) behind an EXT
+  loop-drain dep; `WF2WOR-12` needs a container runtime and this host has none (`docker`, `podman`,
+  `nerdctl`, `lima`, `limactl`, `colima` all absent — the same measurement blocks `EI-7`'s SC7);
+  `RUA`/`SM` have no ready atom at all. Of the 23 no-EXT fallthrough candidates, the highest-unblock
+  one (`ET-4`, marg=1) is blocked because `https://github.com/PersonalClaw/registry.git` returns
+  **404 "Repository not found"** and creating it is an owner action; the rest are owner-executed,
+  owner-approval-gated, credential-gated (`LMMV-7`'s six-provider matrix includes
+  `diarization-pyannote`, which is `gated=True` and needs a token + license acceptance), cross-repo
+  (`PCS-8` needs a PersonalClawApps change, so its atom could not flip from a core PR alone), or
+  multi-session by measurement (`PP-16`'s remainder is 9,045 lines across 43 importing files).
+
+- [2026-08-20][frontier] **CORRECTION to the census above — `SH-2` is not blocked, it is unauthorized.**
+  The entry above bundles it with the owner-approval-gated candidates, which understates the
+  difference and hides an option. Verified: `SH-1` is `done`, `SH-2` has no unmet non-EXT dep, and
+  every clause it names is locally testable — the migration fixture is a **fake keyring**, the
+  rollback and the headless `.env` fallback need no cloud, no second device and no Linux, and
+  `pyproject.toml:164` already declares `keychain = ["keyring>=24"]` as an optional extra whose own
+  comment says tests stub keyring "so the suite is identical with or without this extra". So the
+  fixture pattern the clause asks for is the one the repo already uses. No environment, credential or
+  cross-repo obstacle exists.
+
+  Two owner-level facts hold it instead, and both are decisions rather than blockers. (1) The
+  workspace execution order places Security Hardening **deliberately last** — "its keychain slice is
+  class-B, so it carries the most state-shape cost as the regime binds" — so starting it now inverts
+  the owner's stated ordering, and ordering is the owner's call, not a tick's. (2) The atom is a
+  secrets migration that moves `.env` secrets into the OS keychain **and removes the keys**; that is a
+  security-control change over the credential store, where the standing rule is to escalate rather
+  than improvise, and where a mistake destroys secret material rather than merely failing a test.
+
+  Recorded so the option is visible: authorizing `SH-2` out of order is a **sixth** way to end the
+  no-op streak, and unlike the other five it needs no infrastructure from the owner — only a decision.
