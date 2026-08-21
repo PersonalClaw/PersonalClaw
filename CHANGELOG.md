@@ -120,6 +120,17 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
   from an address it recognises. If you reach the dashboard over your LAN, set the dashboard URL to
   that address; until you do, a device that opens the link is told so in words rather than being
   refused without explanation.
+- **Ask for plainer prose without editing a prompt.** A new **Natural voice** control in the chat
+  composer asks for writing that reads like a person wrote it: answer in the first sentence, no
+  "Great question" opener, no summary paragraph repeating what you just read, no "let me know if
+  you'd like me to" when nothing was asked, and the shortest accurate word instead of "leverage" or
+  "delve". It names the patterns to avoid, because "sound natural" measurably does nothing.
+  The same switch lives on an agent definition, so a preference travels with that agent into every
+  chat that uses it — and a single conversation can override that agent for itself, without editing
+  the agent. **It changes only how the reply reads.** Every fact, number, path, unit and caveat
+  stays; a refusal stays a refusal, stated as fully and directly as before, because plainer prose is
+  not softer prose. The state shows on the pill (including when an agent is what turned it on), so
+  when the writing changes you can see what changed it.
 - **Know whether a model will actually run on your machine before you download it.** Every model in
   the download lists now carries a fit chip — green, yellow, red — computed from this machine's real
   memory budget: total RAM, minus a reserve held back for the OS and the inference runtime, plus a

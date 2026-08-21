@@ -457,6 +457,12 @@ def restore_recent_sessions(
             session.color_index = meta["color_index"]
         if meta.get("color_theme"):
             session.color_theme = meta["color_theme"]
+        # Natural voice (PT-7), per-conversation scope. Re-normalized on read so a
+        # hand-edited meta line can only ever yield a member of the closed tri-state.
+        if meta.get("natural_voice"):
+            from personalclaw.natural_voice import normalize_conversation_choice
+
+            session.natural_voice = normalize_conversation_choice(meta["natural_voice"])
         raw_tags = meta.get("tags")
         if isinstance(raw_tags, list):
             session.tags = [str(t) for t in raw_tags if isinstance(t, str) and t]
@@ -567,6 +573,10 @@ def _save_session_to_history(
             meta_line["color_index"] = session.color_index
         if session.color_theme:
             meta_line["color_theme"] = session.color_theme
+        # Written only when the conversation actually states something ("on"/"off"),
+        # matching every field above — an inheriting session adds no key.
+        if session.natural_voice:
+            meta_line["natural_voice"] = session.natural_voice
         if session.tags:
             meta_line["tags"] = list(session.tags)
         # Lifecycle (S2). Written only when non-default, matching every field above —

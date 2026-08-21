@@ -1815,6 +1815,17 @@ class AgentProfile:
             "personality survives long prompts.",
         ),
     )
+    natural_voice: bool = field(
+        default=False,
+        metadata=_meta(
+            "Natural Voice",
+            "Ask this agent for plainer, less machine-sounding prose — a named set "
+            "of patterns to avoid, not a persona. Travels with the agent into every "
+            "conversation that binds it; a conversation can override it for itself "
+            "from the composer. Distinct from Voice (WHO the agent is) and from "
+            "voice profiles (speech). Never changes facts, caveats or refusals.",
+        ),
+    )
     model: str = field(
         default="",
         metadata=_meta("Model", "Default model for this agent. Overridable per-chat."),
@@ -4387,6 +4398,11 @@ class AppConfig:
                         # Voice layer (#42) — MUST be read here (S6 loader-allowlist
                         # gotcha) or it's dropped on every config reload.
                         voice=entry.get("voice", ""),
+                        # Natural voice (PT-7) — the same loader-allowlist gotcha:
+                        # unread here it would be dropped on every config reload,
+                        # so the agent's plainer-prose preference would silently
+                        # stop travelling with it after the first save.
+                        natural_voice=bool(entry.get("natural_voice", False)),
                         model=entry.get("model", ""),
                         approval_mode=entry.get("approval_mode", ""),
                         skills=entry.get("skills", []),

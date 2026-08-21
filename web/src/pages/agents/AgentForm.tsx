@@ -6,10 +6,13 @@ import { api } from '../../lib/api'
 import { useActiveChatModelOptions } from '../../lib/agents'
 import { Combobox } from '../../ui/Combobox'
 import { Field, TextInput, TextArea, Segmented } from '../../ui/forms'
+import { Toggle } from '../../ui/Toggle'
 import { APPROVAL_MODES } from './agentMeta'
 
 export interface AgentDraft {
   name: string; description: string; model: string; system_prompt: string; voice: string
+  /** Plainer PROSE (PT-7) — distinct from `voice` (WHO the agent is). */
+  natural_voice: boolean
   approval_mode: string; skills: string[]; tools: string[]; triggers: string[]
   default_dir: string; memory_store: string
   // Agent routing (AGENT-ROUTING) — suggest-first specialist routing metadata.
@@ -17,11 +20,12 @@ export interface AgentDraft {
 }
 
 export function emptyDraft(): AgentDraft {
-  return { name: '', description: '', model: '', system_prompt: '', voice: '', approval_mode: '', skills: [], tools: [], triggers: [], default_dir: '', memory_store: '', specialty: '', route_hints: '' }
+  return { name: '', description: '', model: '', system_prompt: '', voice: '', natural_voice: false, approval_mode: '', skills: [], tools: [], triggers: [], default_dir: '', memory_store: '', specialty: '', route_hints: '' }
 }
 export function toDraft(a: SavedAgent): AgentDraft {
   return {
     name: a.name, description: a.description ?? '', model: a.model ?? '', system_prompt: a.system_prompt ?? '', voice: a.voice ?? '',
+    natural_voice: !!a.natural_voice,
     approval_mode: a.approval_mode ?? '', skills: a.skills ?? [], tools: a.tools ?? [], triggers: a.triggers ?? [],
     default_dir: a.default_dir ?? '', memory_store: a.memory_store ?? '',
     specialty: a.specialty ?? '', route_hints: a.route_hints ?? '',
@@ -33,7 +37,7 @@ export function draftToPayload(d: AgentDraft): Record<string, unknown> {
   // agent side — eligibility is resolved by that scope_ref match at surfacing.
   return {
     name: d.name.trim().replace(/^-+|-+$/g, ''), description: d.description.trim(), provider: 'native', model: d.model,
-    system_prompt: d.system_prompt, voice: d.voice, approval_mode: d.approval_mode,
+    system_prompt: d.system_prompt, voice: d.voice, natural_voice: d.natural_voice, approval_mode: d.approval_mode,
     skills: d.skills, tools: d.tools, triggers: d.triggers,
     default_dir: d.default_dir.trim(), memory_store: d.memory_store.trim(),
     specialty: d.specialty.trim(), route_hints: d.route_hints.trim(),
@@ -81,6 +85,12 @@ export function AgentForm({ draft, onChange, nameLocked, compact }: { draft: Age
       </Field>
       <Field label="Voice" hint="WHO it is — tone, opinions, bluntness, persona. Kept separate from the rules and injected high-priority so personality survives long prompts.">
         <TextArea value={draft.voice} onChange={(v) => set('voice', v)} rows={compact ? 3 : 4} placeholder="Blunt and witty. Has strong opinions and states them. No hedging or filler." />
+      </Field>
+      {/* Natural voice (PT-7) — the PER-AGENT scope, so the preference travels with this
+          agent into every conversation that binds it. A conversation can override it for
+          itself from the composer; doing so never edits this value. */}
+      <Field label="Natural voice" hint="Ask for plainer PROSE — answer first, no filler openers, no summary close, the shortest accurate word. A named set of patterns to avoid, not a persona: it never changes a fact, a caveat or a refusal. Any chat can override this for itself from the composer.">
+        <Toggle on={draft.natural_voice} onChange={(v) => set('natural_voice', v)} label="Natural voice" />
       </Field>
 
       <Field label="Approval mode" hint="How tool calls are approved during this agent's runs.">
