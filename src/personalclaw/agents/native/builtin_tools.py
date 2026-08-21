@@ -129,6 +129,7 @@ _CATEGORY_OF: dict[str, str] = {
     "tool_result_get": "core",
     # knowledge (installable app)
     "knowledge_search": "knowledge",
+    "knowledge_structural": "knowledge",
     "knowledge_create": "knowledge",
     "knowledge_get": "knowledge",
     "knowledge_update": "knowledge",
@@ -432,6 +433,19 @@ class NativeBuiltinToolProvider(ToolProvider):
             t.provider = self._provider_name
         return out
 
+    @staticmethod
+    def _structural_verbs() -> list[str]:
+        """The structural-retrieval verb vocabulary, read from the module that OWNS it.
+
+        Copying the five strings into this schema would let the tool advertise a verb the
+        retriever no longer accepts (or hide one it gained). Imported lazily because the
+        registry is built on every session start and the knowledge package need not be
+        touched until a knowledge tool is actually described.
+        """
+        from personalclaw.knowledge.structural import STRUCTURAL_VERBS
+
+        return list(STRUCTURAL_VERBS)
+
     def _all_tool_defs(self, s: dict) -> list[ToolDefinition]:
         return [
             ToolDefinition(
@@ -648,6 +662,42 @@ class NativeBuiltinToolProvider(ToolProvider):
                         "is_archived": {"type": "boolean"},
                     },
                     "required": ["id"],
+                },
+            ),
+            ToolDefinition(
+                name="knowledge_structural",
+                provider=self.name,
+                requires_approval=False,
+                risk_level=RiskLevel.SAFE,
+                description=(
+                    "Ask a STRUCTURAL question about the knowledge library and get the answer "
+                    "by traversing stored links — not by semantic similarity. Use this instead "
+                    "of knowledge_search whenever the question is about relations rather than "
+                    "topic; a similarity search answers 'what links to this' only by accident. "
+                    "Args: verb (str, required) — one of 'links_to' (what points AT an item: "
+                    "typed relations + citations), 'depends_on' (the outbound dependency chain), "
+                    "'tag_subtree' (everything under a tag and its child tags), 'changed_since' "
+                    "(what was updated after a timestamp), 'contradictions' (items recorded as "
+                    "contradicting each other); origin (str) — item id for links_to/depends_on, "
+                    "tag name for tag_subtree, optional item id to scope contradictions; since "
+                    "(str, ISO timestamp) for changed_since; depth (int, default 1, max 6) — how "
+                    "many hops to follow; limit (int, default 25); rank_query (str, optional) — "
+                    "orders the structural result by closeness to this text WITHOUT changing "
+                    "which items are in it. Every result carries the exact link path that "
+                    "reached it, so you can cite why. An empty answer states which relation is "
+                    "missing; it never silently degrades to a similarity guess."
+                ),
+                parameters={
+                    **s,
+                    "properties": {
+                        "verb": {"type": "string", "enum": self._structural_verbs()},
+                        "origin": {"type": "string"},
+                        "since": {"type": "string"},
+                        "depth": {"type": "integer"},
+                        "limit": {"type": "integer"},
+                        "rank_query": {"type": "string"},
+                    },
+                    "required": ["verb"],
                 },
             ),
             ToolDefinition(
@@ -1913,6 +1963,77 @@ class NativeBuiltinToolProvider(ToolProvider):
             )
         return ToolResult(
             success=True, output=f"updated knowledge item {item_id} ({', '.join(applied)})"
+        )
+
+    async def _t_knowledge_structural(self, a: dict) -> ToolResult:
+        """Answer a structural question by traversal. Never falls back to a similarity guess.
+
+        The output is the traversal, one hit per two lines: the item, then the exact link
+        chain that reached it. That second line is the point — the model can quote *why* an
+        item is in the answer instead of asserting a relation it inferred from proximity.
+        """
+        verb = str(a.get("verb", "")).strip()
+        if not verb:
+            return ToolResult(
+                success=False,
+                error="knowledge_structural requires 'verb'",
+                recovery_hints=[f"One of: {', '.join(self._structural_verbs())}."],
+            )
+        if verb not in self._structural_verbs():
+            return ToolResult(
+                success=False,
+                error=f"knowledge_structural: unknown verb {verb!r}",
+                recovery_hints=[f"One of: {', '.join(self._structural_verbs())}."],
+            )
+        origin = str(a.get("origin", "") or "").strip()
+        since = str(a.get("since", "") or "").strip()
+        rank_query = str(a.get("rank_query", "") or "").strip()
+        try:
+            depth = int(a.get("depth", 1) or 1)
+        except (ValueError, TypeError):
+            depth = 1
+        try:
+            limit = int(a.get("limit", 25) or 25)
+        except (ValueError, TypeError):
+            limit = 25
+
+        # Refuse the request the verb cannot answer rather than running it against an empty
+        # origin and reporting "no such relation" — an unanswerable request and a genuinely
+        # absent relation are different facts, and conflating them is the same defect as
+        # falling back to similarity.
+        needs_origin = {"links_to", "depends_on", "tag_subtree"}
+        if verb in needs_origin and not origin:
+            what = "a tag name" if verb == "tag_subtree" else "an item id"
+            return ToolResult(
+                success=False,
+                error=f"knowledge_structural: verb {verb!r} requires 'origin' ({what})",
+                recovery_hints=["Use knowledge_search to find the item id, then retry."],
+            )
+        if verb == "changed_since" and not since:
+            return ToolResult(
+                success=False,
+                error="knowledge_structural: verb 'changed_since' requires 'since' (ISO timestamp)",
+            )
+
+        def _run() -> str:
+            from personalclaw.knowledge import get_knowledge_embedder, get_knowledge_store
+            from personalclaw.knowledge.structural import StructuralRetriever, render_answer
+
+            emb = get_knowledge_embedder()
+            embed_fn = emb.embed if emb and emb.is_available() else None
+            answer = StructuralRetriever(get_knowledge_store(), embedder=embed_fn).query(
+                verb,
+                origin=origin,
+                since=since,
+                depth=depth,
+                limit=limit,
+                rank_query=rank_query,
+            )
+            return _kn_redact(render_answer(answer, limit=limit))
+
+        return _ok_capped(
+            await asyncio.get_event_loop().run_in_executor(None, _run),
+            session_key=self._session_key,
         )
 
     async def _t_knowledge_stats(self, a: dict) -> ToolResult:

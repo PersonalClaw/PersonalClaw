@@ -10,6 +10,17 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Added
 
+- **Ask your library a question about structure and get a traversal, not a guess.** "What links to
+  this note", "what does it depend on", "what is under this tag", "what changed since Friday",
+  "which of my claims contradict each other" are graph questions, and answering them by semantic
+  similarity got them right only by coincidence. The agent now has a `knowledge_structural` tool
+  that walks the relations your library already holds — typed links, citations, the tag tree, edit
+  times, recorded contradictions — and every answer **carries the chain that reached it**, so you
+  can see *why* an item came back instead of taking it on faith. Structural and semantic retrieval
+  compose rather than competing: restrict to a tag subtree first, then rank what is inside it by
+  meaning. And when there is genuinely nothing there, it says which fact was missing — no such
+  item, no such relation, no such tag — instead of quietly handing back the closest thing it
+  could find.
 - **Know whether a model will actually run on your machine before you download it.** Every model in
   the download lists now carries a fit chip — green, yellow, red — computed from this machine's real
   memory budget: total RAM, minus a reserve held back for the OS and the inference runtime, plus a
