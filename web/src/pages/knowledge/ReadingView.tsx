@@ -15,6 +15,7 @@ import { api, type KnowledgeAnnotation, type KnowledgeItem } from '../../lib/api
 import { anchorFromSelection, clearMarks, markAnchors, scrollProgress } from './readingAnchors'
 import { parseOutline, type OutlineEntry } from './readingOutline'
 import { DocumentOutline } from './DocumentOutline'
+import { RestructureControl } from './RestructureControl'
 
 /** Words per minute used for the "N min read" estimate. The common editorial figure for
  *  adult prose; it is a rough orientation cue, not a measurement, and being off by 20%
@@ -148,7 +149,9 @@ export function bodyOpensWithTitle(content: string, title: string): boolean {
  *  It no longer does — `insightRail` rides beside the article when the reader PANE is wide
  *  enough for two columns, and folds under a disclosure when it is not.
  */
-export function ReadingView({ item, annotations, onAnnotationsChanged, insightRail }: {
+export function ReadingView({
+  item, annotations, onAnnotationsChanged, insightRail, onRestructured,
+}: {
   item: KnowledgeItem
   annotations: KnowledgeAnnotation[]
   /** Re-read the item's highlights after a write. */
@@ -157,6 +160,11 @@ export function ReadingView({ item, annotations, onAnnotationsChanged, insightRa
    *  owning page. Absent when the item has none of the three — an empty column beside the
    *  article is worse than no column, and only the page can know. */
   insightRail?: React.ReactNode
+  /** Re-read the ITEM after a structural restructure (KL-19). Separate from
+   *  `onAnnotationsChanged` because a split or a retitle changes the body and the title, not
+   *  just the highlight rows — reloading only the highlights would leave the reader looking at
+   *  the pre-split article with the post-split marks on it. */
+  onRestructured?: () => void
 }) {
   const scrollRef = useRef<HTMLDivElement | null>(null)
   const articleRef = useRef<HTMLDivElement | null>(null)
@@ -433,6 +441,13 @@ export function ReadingView({ item, annotations, onAnnotationsChanged, insightRa
             disabled={!pending} disabledReason={highlightHint}>
             <Highlighter size={14} /> Highlight selection
           </Button>
+          {/* KL-19 — the structural editing verbs, HERE rather than only on a management screen.
+              A reader notices that one note is really three while reading it, and the selection
+              this rail already tracks for Highlight is the same passage Extract needs, so the two
+              verbs share one gesture. `onRestructured` reloads the item because every verb here
+              changes the body, the title or the highlights under the reader. */}
+          <RestructureControl item={item} selection={pending?.quote}
+            onDone={() => { onRestructured?.(); onAnnotationsChanged() }} />
           {/* The narrow-pane fold-out for the rail. Wrapped rather than classed directly so
               the container variant lands on a plain div instead of racing Button's own
               display utility. Hidden — not merely redundant — above the threshold, where
