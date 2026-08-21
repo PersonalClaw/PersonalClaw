@@ -412,3 +412,156 @@ Sessions 1-3 (NEW-16) and 4-5 (NEW-22) are independent tracks; either alone is a
   that set lands. (The pre-existing "This session completes CONTEXT-ECONOMY — all six sessions
   are now DONE" line above refers to the plan's original six sessions, not to the rev-18
   amendment atoms CE2-8/9/10.)
+
+## Execution log — CE2-9 (skill bodies allocate on the one budget)
+
+- **[2026-08-21][CE2-9] DONE.** A loaded skill can no longer crowd out the conversation, because
+  skill bodies stopped being concatenated ahead of the budget and became candidates inside it.
+
+- **Where the bodies were.** `context.py:1562-1565` (forced, goal-loop `skill_ids`) and
+  `context.py:1611-1615` (surfaced) each did
+  `parts.add(f"[Skill: {name}]\n{stripped}\n[End of skill]\n\n")` with nothing measuring the
+  result. The allocator already declared a `skills` slot (`learning/surfacing.py:165`) and had
+  never seen a body — only the skill *index*, via `learning/ambient.sources_for(skill_index=…)`.
+  Both sites now GATHER `SkillRequest`s and hand them to one `allocate_skills(...)` call, whose
+  blocks land in the same `skills` slot at priority 3, non-sacrificial (so an oversized item
+  skips rather than truncates — the slot policy already said the right thing).
+
+- **Two caps, one mechanism — enforced inside `allocate`, not beside it.** `Candidate.max_tokens`
+  is the candidate's own declared ceiling, and `surfacing._tier_fits(cost, used, budget, cap)` is
+  the single test both bounds go through, feeding the SAME degrade ladder. A per-skill pre-filter
+  next to the budget would have been the two-budget defect this atom exists to delete.
+  `test_the_per_skill_cap_binds_even_with_the_whole_budget_free` drives a 500,000-token budget so
+  only the declared cap can explain the reduction.
+
+- **The tier is declared, and the key is NOT called `resource_tier` — DEVIATION, recorded.** The
+  atom's wording is "resource tier", but `resources:` frontmatter is *already* "the skill RESOURCE
+  tier" (WF2LEA-10, `loader.py`'s own section header, `tests/test_skill_resource_tier.py`, and
+  `docs/reference/skill-format.md`'s interoperability table). Shipping a second meaning of the
+  phrase in the same frontmatter block is a coherence defect, so the key is **`context_tier`**
+  with the concept still named "resource tier" in prose. Values and caps, MEASURED against the
+  17 bundled skills (median 1,183 tokens, largest 4,202, total 23,025): `light` 1,000,
+  `standard` 3,000 (the default — clears 16 of 17), `heavy` 8,000. Unknown or absent → `standard`,
+  logged: a frontmatter typo must not silently shrink a skill. **Aggregate 16,000** — 8 is the
+  progressive-disclosure threshold, so 8 bodies is the most a turn ever carries; at the median all
+  8 cost 9,464 and nothing reduces, while at the `standard` cap they would want 24,000. So the
+  aggregate binds exactly when several skills sit near their own ceilings, and never otherwise.
+  Deliberately model-BLIND: CE2-8 already measures the assembled prompt against the real window,
+  and re-deriving that here would be the second budget again.
+
+- **`visual-output` now declares `context_tier: heavy`,** because the census found it is the one
+  bundled skill (4,093 tokens by `count_tokens`) over the default cap — discovered by measuring
+  the shipped library rather than by trusting the number.
+  `test_every_bundled_skill_fits_the_cap_its_declared_tier_grants` is the ratchet, with a
+  ≥15-file vacuity floor so an empty glob cannot read as a pass.
+
+- **REDUCED = the DECLARED summary, and the classification reads the TEXT not the tier.**
+  `reduced_block` renders `description` + the `resources:` entry points + the `skill_invoke` call,
+  complete. Nothing slices a body. Classification keys off the string that really reached the
+  prompt, because `Candidate.text` falls back down the chain (`l1 or l0`): a skill with no
+  declared summary is *labelled* tier L1 while rendering the L0 pointer, so trusting the tier
+  label would have reported a REDUCED load of content that is not there.
+
+- **No declared summary ⇒ REFUSED, and that is a decision not an omission.** There is nothing to
+  reduce *to*, and manufacturing a summary from the body's first N characters is exactly the
+  byte-boundary cut the clause forbids. What loads is a one-line pointer naming the skill and
+  `skill_invoke{name}` — reported REFUSED because no part of the skill's content reached the
+  prompt.
+
+- **Continued cost is re-evaluated at `build_message`, which runs EVERY turn.** Verified rather
+  than assumed: `chat_runner.py:2041` is `elif state.context_builder:`, not an `is_new` branch, and
+  the skill block sits at method-body indent outside `build_message`'s `if is_new_session:`. Nothing
+  caches an admission. `test_a_skill_admitted_on_one_turn_is_re_fitted_on_the_next` admits a
+  midsize body on turn 1, shrinks only the room, and gets REDUCED on turn 2 from the same file.
+
+- **Visible through CE2-8's channel, not a new one.** Per-skill notices go out via
+  `notices_out` → `AssembledContext.notices` → `chat_runner:2218` →
+  `activity_event {kind:"headroom"}` → `ActivityLine`. The structured triple rides
+  `AssembledContext.metadata["skill_decisions"]`, and `logger.info` reports
+  `N admitted, N reduced, N refused — used/budget` every turn a skill was considered — including
+  the all-admitted turn, since a report that only appears on a problem cannot answer "did it
+  load?". `SkillAllocation.counts` keeps all three keys present at zero for the same reason. **No
+  `web/` change**, and the reason was checked rather than assumed: CE2-8 verified `ActivityLine`
+  renders any unknown `activityKind` inline, so a new kind was unnecessary and a new component
+  would have been a second channel.
+
+- **A REAL MEASUREMENT CHANGED THE DESIGN TWICE.**
+  1. **Rank decay let load order beat priority one layer down.** With a confirmed (1.0) skill
+     passed *after* a surfaced (0.9) one, `fuse` stamps `source_rank` by list position and
+     `score_candidate` decays 0.85 per rank — measured salience **0.405 for the rank-0 guess vs
+     0.383 for the rank-1 confirmation**. The guess won. `allocate_skills` now sorts by declared
+     score before the pool sees anything, making rank decay a tie-breaker among equal declarations
+     instead of a second ranking. Found by a test that deliberately passed them in the wrong
+     order; `test_a_forced_skill_outranks_a_surfaced_one_at_the_same_overlap` is the rail.
+  2. **A catalogue block would have shipped INERT, and the proof is arithmetic.** The first cut
+     emitted the allocator's near-miss catalogue as its own component. It can never render for a
+     skill: the catalogue is only appended when `used + tokens(catalogue) <= budget` while the
+     item's own L0 already failed `used + tokens(l0) <= budget`, and the catalogue *is* L0 plus a
+     header — measured 57 tokens against 43 for the line it would carry. Both conditions cannot
+     hold. The block and the `Allocation.catalogue` field it needed were deleted rather than
+     shipped as a control nothing can reach; the per-skill pointer lands where the skill would
+     have been and says more.
+
+- **Two allocator changes beyond the cap, both with a reason.** `FULL_BODY_KINDS = {"skill"}` —
+  L2 is the default for a skill instead of a grant, because `L2_MAX_ITEMS=3` would have made a
+  perfectly affordable fourth skill load reduced with budget to spare (and it does not consume the
+  grant budget, so three skills cannot starve a lesson's L2). `UNCAPPED_KINDS` gained `"skill"` —
+  `MAX_PER_SOURCE=3` runs inside `fuse`, BEFORE the allocator can catalogue a near-miss, so a
+  quota there is a drop nobody can see; skills are bounded by their declared cap and the
+  aggregate, which are reported. `test_learning_surfacing.py`'s two diversification tests used
+  `skill` as their capped EXAMPLE and were re-pointed at `memory` (still capped) with the
+  exemption pinned by name — the policy change is explicit, not absorbed.
+  Also fixed on the way: the degrade ladder treated an **empty rendering as a fit** (cost 0), which
+  would have added a blank block reading as a loaded item. Guarded, and
+  `test_a_tier_that_renders_empty_is_not_a_fit` reds without it.
+
+- **MEASURED end to end** (`build_message`, isolated home): a skill with a **42,458-token** body
+  against the shipped caps loaded REDUCED at **89 tokens**; the whole assembled prompt came to
+  **307 tokens** with the user's request intact, and neither the body's first line nor its last
+  reached the prompt.
+
+- **Falsifications** — each mutation applied to the LIVE line, `grep`-confirmed present before the
+  run, restored from a `cp` file copy (never `git checkout --`), with `git status --porcelain`
+  empty afterwards.
+  1. **Restored the pre-CE2-9 concatenation** in `context.py` (bodies pasted straight into
+     `parts`) → `test_an_oversized_skill_loads_reduced_and_the_conversation_survives` RED:
+     `'Step 2000. Do the 2000th thing…' is contained here:` — the full 42k body back in the
+     prompt, the conversation crowded out. 1 failed / 1 passed.
+  2. **Replaced reduction with a byte-boundary cut** (`l1=full_block(...)[: cap * 4]`) →
+     `test_a_reduced_skill_carries_its_declared_summary_not_a_slice_of_its_body` RED, and the
+     failure output shows the exact pathology the clause names — the block ends mid-sentence at
+     `Step 146.`.
+  3. **Made the reduction silent** (dropped the `notices_out.extend`) →
+     `test_the_notice_names_the_skill_and_the_reason` RED (`assert 0 == 1`) and
+     `test_the_decisions_ride_out_in_the_assembled_metadata` RED on the notice assertion.
+  4. **Collapsed three states to two** (`REDUCED` → `REFUSED` at the classification site) →
+     `test_one_turn_can_produce_all_three_states_and_they_are_distinct` RED and
+     `test_the_per_turn_report_counts_every_state_including_the_empty_ones` RED
+     (`{'reduced': 0} != {'reduced': 1}`).
+  - Residue sweep after restoring: `grep -rn "FALSIFICATION\|if False and\|# PROBE\|MUTANT"` = 13
+    (the pre-existing benign count), tree clean.
+
+- **Gates.** `make lint` clean (mypy 952 files). Targeted **413 passed, 1 xfailed** across the new
+  suite + context / context-headroom / context-engine / learning-surfacing / learning-ambient /
+  skills / skill-resource-tier / skill-progressive-disclosure / skill-format-compat /
+  bundled-skills-catalog / skill-surfacing / skill-usage / skill-agent-local-tier /
+  thread-context / inert-surface-baseline / config-roundtrip, every path existence-checked as a
+  quoted zsh array; real-home rail reported clean. Full `make test` **23,717 passed, 30 skipped,
+  12 xfailed, 0 failed** in 8m49s, real-home rail clean on that run too
+  (`/Users/golani/.personalclaw unchanged by this run.`). No `web/` change → no web gate and no
+  `consistency-audit.json` drift. No config field added, so no baseline regeneration.
+
+- **Clauses scoped rather than satisfied.** (a) The **progressive-disclosure index path** (above 8
+  matched skills) still bypasses the allocator, and correctly: it injects no bodies, so there is
+  nothing to allocate — but it means the index block itself is unbudgeted, bounded only by the
+  match count. Left as is; budgeting a name-and-description list is a different, smaller problem.
+  (b) `skill_invoke`'s on-demand body is **not** allocated: it is a tool RESULT, bounded by
+  `project_output` at dispatch, which is the same seam CE2-8 declared out of its own scope.
+  So the agent can still pull a full body past this budget deliberately, which is the point of an
+  explicit call — but it is not a second silent path, and saying so is better than implying the
+  budget covers it.
+
+- **Roadmap bookkeeping — still no `dag.json` row.** `origin/main`'s
+  `docs/roadmap/atomic/dag.json` carries CE2-1…CE2-7 only; CE2-8/9/10 arrived with the rev-18
+  capability-gap set, which has not landed. No row invented, same as CE2-8's entry — a mirrored
+  status surface must not be flipped without the row it mirrors. This entry is the record.
