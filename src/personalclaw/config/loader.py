@@ -2304,6 +2304,28 @@ class KnowledgeConfig:
             "already indexed.",
         ),
     )
+    vault_mode: str = field(
+        default="off",
+        metadata=_meta(
+            "Knowledge Vault (Obsidian)",
+            "off = knowledge lives only in the database. mirror = also write every item out "
+            "as a plain markdown file you can read, grep and back up without PersonalClaw "
+            "(YAML frontmatter carrying identity and relations + [[wikilinks]]), regenerated "
+            "from the store and never read back. two_way = also read your edits back: a file "
+            "you change in a text editor wins, a file you delete is not re-created, and a "
+            "file changed on BOTH sides is left exactly as you wrote it and reported instead "
+            "of being overwritten. Uses the same projector, page format and conflict rules as "
+            "the memory vault.",
+        ),
+    )
+    vault_path: str = field(
+        default="knowledge-vault",
+        metadata=_meta(
+            "Knowledge Vault Path",
+            "Where the markdown projection is written. Relative paths resolve under the "
+            "PersonalClaw config dir (~/.personalclaw); absolute paths are used as-is.",
+        ),
+    )
 
 
 @dataclass
@@ -4909,6 +4931,18 @@ class AppConfig:
                 ),
                 conflict_model_pass=bool(knowledge_data.get("conflict_model_pass", True)),
                 auto_ingest_artifacts=bool(knowledge_data.get("auto_ingest_artifacts", True)),
+                # KL-20. Same three-valued vocabulary as `memory.vault_mode` (one tuple,
+                # `MEMORY_VAULT_MODES`, not a second spelling), and it fails to `off` rather
+                # than to the legacy back-read `_vault_mode` does: there is no retired flag to
+                # inherit here, and an unreadable value must never START writing a projection
+                # of the user's library to a path nobody confirmed.
+                vault_mode=(
+                    str(knowledge_data.get("vault_mode", "") or "").strip().lower()
+                    if str(knowledge_data.get("vault_mode", "") or "").strip().lower()
+                    in MEMORY_VAULT_MODES
+                    else "off"
+                ),
+                vault_path=str(knowledge_data.get("vault_path", "") or "knowledge-vault"),
             ),
             security=SecurityConfig(
                 denied_commands=[
