@@ -14,6 +14,7 @@ from personalclaw.learning.surfacing import (
     L2_MAX_ITEMS,
     MAX_PER_SOURCE,
     THRESHOLD_PROFILES,
+    UNCAPPED_KINDS,
     Candidate,
     Tier,
     allocate,
@@ -124,36 +125,50 @@ def test_debug_intent_weights_overlap_more_heavily():
 
 def test_one_source_cannot_exceed_the_diversification_cap():
     """Applied BEFORE trimming: trimming first lets a rich source fill every slot and
-    the cap then has nothing left to spread."""
+    the cap then has nothing left to spread.
+
+    Demonstrated on `memory`, not `skill`: CE2-9 exempted skills (see
+    `test_the_uncapped_kinds_are_the_ones_a_quota_would_silently_ration`), so a capped
+    kind is the right subject for the capped behaviour.
+    """
     sources = {
-        "skills": [cand("skill", f"s{i}", 0.9, f"skill {i} parsing") for i in range(10)],
+        "memories": [cand("memory", f"m{i}", 0.9, f"memory {i} parsing") for i in range(10)],
         "lessons": [cand("lesson", "l1", 0.5, "one lesson about parsing")],
     }
     for items in sources.values():
         for item in items:
             item.salience = score_candidate(item, "parsing")
     fused = fuse(sources)
-    skills = [c for c in fused if c.kind == "skill"]
-    assert len(skills) == MAX_PER_SOURCE
+    memories = [c for c in fused if c.kind == "memory"]
+    assert len(memories) == MAX_PER_SOURCE
     assert any(c.kind == "lesson" for c in fused)
 
 
-def test_lessons_are_exempt_from_the_diversification_cap():
+def test_the_uncapped_kinds_are_the_ones_a_quota_would_silently_ration():
     """Found by driving the real dev home: the cap silently dropped a 4th lesson
     while 3588 of 4000 tokens sat unused.
 
     Diversification exists to stop a RICH source crowding out a sparse one. It was
     never meant to ration the user's own corrections — the thing the whole slot
     policy exists to protect. Lessons are bounded by the budget, not by a quota.
+
+    `skill` joined the exemption with CE2-9, when skill BODIES started allocating here: the
+    candidates in a turn are the matched set the user's own triggers selected, and `fuse`
+    runs BEFORE the allocator can catalogue a near-miss, so a quota there is a drop nobody
+    can see. Skills are bounded instead by their declared per-skill cap and the aggregate,
+    which are reported decisions. `memory` stays capped and is the control here.
     """
     lessons = [cand("lesson", f"l{i}", 0.9, f"lesson {i} about the gate") for i in range(6)]
     skills = [cand("skill", f"s{i}", 0.9, f"skill {i} about the gate") for i in range(6)]
-    for items in (lessons, skills):
+    memories = [cand("memory", f"m{i}", 0.9, f"memory {i} about the gate") for i in range(6)]
+    for items in (lessons, skills, memories):
         for item in items:
             item.salience = score_candidate(item, "gate")
-    fused = fuse({"lessons": lessons, "skills": skills})
+    fused = fuse({"lessons": lessons, "skills": skills, "memories": memories})
     assert len([c for c in fused if c.kind == "lesson"]) == 6
-    assert len([c for c in fused if c.kind == "skill"]) == MAX_PER_SOURCE
+    assert len([c for c in fused if c.kind == "skill"]) == 6
+    assert len([c for c in fused if c.kind == "memory"]) == MAX_PER_SOURCE
+    assert UNCAPPED_KINDS == frozenset({"lesson", "skill"})
 
 
 def test_every_lesson_reaches_the_prompt_when_the_budget_allows():

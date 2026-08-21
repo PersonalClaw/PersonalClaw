@@ -40,6 +40,7 @@ from personalclaw.context_headroom import (
 if TYPE_CHECKING:
     from personalclaw.context import ContextBuilder
     from personalclaw.hooks import HookResult
+    from personalclaw.skills.allocation import SkillDecision
 
 logger = logging.getLogger(__name__)
 
@@ -129,12 +130,17 @@ class DefaultContextEngine:
         # sent, and can name the piece that does not fit.
         components: list[Component] = []
         notices: list[str] = []
+        # CE2-9: the per-turn skill allocation (admitted / reduced / refused). Rides out in
+        # metadata so "why did my skill not take effect" is answerable structurally and not
+        # only from the prose notice a user may have scrolled past.
+        skill_decisions: list[SkillDecision] = []
         full_message, hook_result = builder.build_message(
             text,
             is_new_session,
             citations_out=memory_citations,
             components_out=components,
             notices_out=notices,
+            skill_decisions_out=skill_decisions,
             **kwargs,
         )
         injected = max(0, len(full_message) - len(text)) if is_new_session else 0
@@ -181,11 +187,16 @@ class DefaultContextEngine:
                 full_message = pushed + full_message
                 injected += len(pushed)
                 components.insert(0, Component(name="pushed memory", text=pushed))
+        metadata: dict[str, Any] = {}
+        if memory_citations:
+            metadata["memory_citations"] = memory_citations
+        if skill_decisions:
+            metadata["skill_decisions"] = [d.to_dict() for d in skill_decisions]
         return AssembledContext(
             message=full_message,
             hook_result=hook_result,
             injected_chars=injected,
-            metadata={"memory_citations": memory_citations} if memory_citations else {},
+            metadata=metadata,
             components=components,
             notices=notices,
         )
