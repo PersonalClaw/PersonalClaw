@@ -725,3 +725,84 @@ swept up `dashboard`/`gateway` from unrelated calls and would have counted `watc
 `emit_attention_item(source="loop")` — an INBOX source — as a turn-ledger writer, inverting the very
 finding above. It is now scoped per CALL by paren balance, with a test asserting the innocent line
 does not count.
+
+## Execution log — MRT-3, session 4 (the `loop` exclusion was hiding real spend)
+
+**The finding: `loop` HAS a live turn-ledger writer, and sessions 2 and 3 both recorded the
+opposite.** Session 3 concluded *"the turn ledger has no loop rows at all"* and *"NOTHING ties model
+spend to a specific loop, in either record"*, and shipped `UNWRITTEN_PURPOSES = {"eval", "loop"}`
+on that basis. `reachable_purposes()` subtracts that set, so the rail written to prevent a hidden
+row was itself hiding one: every dollar a loop worker spends lands in a `loop` cell that no surface
+filtering on `reachable_purposes()` would render.
+
+**The writer, every hop verified in this session's tree:**
+
+- `loop/manager.py:161` creates the loop's worker session with `app="loop"` (and `:429` does the
+  same for each parallel task worker) — so it is two call sites, not one.
+- `dashboard/state.py:1595` `session._app = app` is the ONLY assignment of that field in
+  `src/personalclaw` (grepped: one hit).
+- `gateway.py:2399` wires the autonudge `on_fire=_fire`; `_fire` drives the loop's cycle through
+  `gateway.py:2241` `_run_one` → `await _run_chat(dstate, _sess, _msg)`.
+- `chat_runner.py:3567` (inside `_run_chat`) passes
+  `source=getattr(session, "_app", "") or "chat"` to `_record_turn_usage` →
+  `usage_ledger.record_from_event`.
+- `routing/usage.py::purpose_for_source` checks `PURPOSE_BY_SOURCE` **first**, and that map declares
+  `"loop": "loop"` — so the string never reaches the app fallback.
+
+**Why the census could not see it, stated precisely.** `tests/test_usage_reachable_purposes.py`
+resolved `source=` per call by paren balance — correct — but the loop's spelling is a RUNTIME value,
+so the only thing to resolve was the expression `source`, and `_RESOLVED_EXPRESSIONS` hand-resolved
+it as `("chat",)` with the comment *"plus an app name → APP_PURPOSE, asserted separately"*. **That
+hand-resolution is the bug.** An app name reaches `APP_PURPOSE` only when it is NOT already a key of
+`PURPOSE_BY_SOURCE`, and `loop` is a key. Measured on the real tree, the old census yields exactly
+`{background, channel, chat, cli, cron, subagent}`; `loop` is absent, so
+`test_every_unwritten_purpose_really_has_no_writer` computed `wrongly_excluded == set()` and passed
+while the writer existed. A corrected set with an uncorrected census would silently re-break on the
+next app name that collides.
+
+**So the fix is the census, not only the set.** `_app_names()` censuses every `app=` string literal
+in `src/personalclaw` (comment lines stripped first — `gateway.py` and `chat_runner.py` mention
+`app="loop"` in prose three times, and a text scanner that counted those would look like it had
+measured the call sites after they moved), and `_writer_sources()` merges them wherever the chat
+seam's `source` expression reaches the ledger. Three new rails carry it: the chain above asserted
+hop by hop; a vacuity floor for the app census (non-empty, and it must contain `loops` — the
+plan-walkthrough planner session, a real app name that is NOT a source key, so the collision filter
+below is discriminating rather than total); and
+`test_the_app_names_that_collide_with_the_source_vocabulary_are_exactly_these`, pinning the
+colliding set to `{"loop"}` so a future app named `cron` or `subagent` is a decision instead of a
+silent re-bucketing.
+
+**FALSIFIED, three ways, mutating the live line and restoring from a file copy.**
+
+- `UNWRITTEN_PURPOSES` back to `{"eval", "loop"}` → **3 red**, the load-bearing one reading
+  `['loop'] now HAS a turn-ledger writer but is still listed as unwritten, so reachable_purposes()
+  hides a row that has real spend. Writer sources found: ['background', 'channel', 'chat', 'cli',
+  'cron', 'loop', 'loops', 'subagent']`.
+- `found.update(_app_names())` → `pass` in `_writer_sources` → **1 red**, and the reported set
+  collapses to exactly the six the old census found — so the app census is what carries the writer,
+  not an incidental match.
+- `chat_runner.py:3567` → `source="chat"` → **1 red** on the chain hop, so that assertion observes
+  the seam rather than restating it.
+
+Restored from `/tmp/*.bak` copies (never `git checkout --`); `git status --porcelain` clean after
+each.
+
+**What this does NOT close, and what it changes about the remaining clause.** The loop detail's
+`~$X this run` is still unbuilt, but session 3's stated reason for deferring it is now falsified:
+loop spend IS attributable, because a turn row carries `session_key` and a loop's worker keys are
+`loop-<id>` (`manager.session_key`) and `loop-<id>-<task_id>` (`manager.task_session_key`), so a
+prefix-scoped read of `usage/turns.jsonl` yields a loop's exact spend. What remains genuinely open
+is the *shape*: `ledger.run_totals` sums `tokens`/`cost_usd` off `step_completed`, and
+`loop/journal.py::cycle()` writes neither, so "via `run_totals`" as the clause spells it requires
+copying turn dollars into the loop ledger — a SECOND record of one dollar, in a module whose own
+docstring argues that a money surface which can double-count is worse than one that admits a gap,
+and one that `learning/mining` also reads. The cheaper and more accurate alternative (the loop
+detail reading the turn ledger by session-key prefix) is exact and duplicates nothing but is not
+`run_totals`. That is an owner shape decision, recorded here rather than guessed. **MRT-3 stays
+PARTIAL on that one clause.**
+
+**Not in scope but measured while here:** `loop/plan_walkthrough.py:145` names the planner session
+`app="loops"` (plural), which is NOT a `PURPOSE_BY_SOURCE` key, so loop-planning spend is censused
+under `app_sources` as `loops` rather than folded into the `loop` purpose. One engine, two spellings,
+two buckets. Left alone deliberately — renaming it moves money between buckets, which is a product
+call, and the new collision ratchet makes the pair visible instead of invisible.
