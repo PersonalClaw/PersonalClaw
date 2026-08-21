@@ -5,7 +5,7 @@ import { TopBar } from '../../ui/TopBar'
 import { IconButton } from '../../ui/IconButton'
 import { Button } from '../../ui/Button'
 import { api, type EventPattern } from '../../lib/api'
-import { useCachedData } from '../../lib/useCachedData'
+import { useQuery } from '../../lib/data'
 import { qget, useQueryParam, type RouteProps } from '../../app/useQueryState'
 import { Field, TextInput, Segmented } from '../../ui/forms'
 import { Combobox } from '../../ui/Combobox'
@@ -44,7 +44,7 @@ export function TriggerCreatePage({ onBack, onCreated, query, setQuery }: {
   // a provider" — a closed loop with no exit and nothing anywhere naming a failed request. Driven
   // with `/api/action-providers` at 500: picker empty, reason "Pick a provider", zero alerts.
   const { data: providers = [], error: providersErr, refresh: reloadProviders } =
-    useCachedData('triggers:action-providers', () => api.actionProviders(), { persist: true })
+    useQuery('triggers:action-providers', () => api.actionProviders(), { persist: true })
   const [saving, setSaving] = useState(false)
   const [err, setErr] = useState('')
   // A failed create used to render its message at the BOTTOM OF THE SCROLLING BODY while the Create
@@ -111,7 +111,7 @@ export function TriggerCreatePage({ onBack, onCreated, query, setQuery }: {
   // the name and the cadence: the config defaults come from the chosen provider's own
   // settingsSchema, and the provider list is FETCHED — so on first render there is
   // nothing to seed from. This runs on the render the list lands, exactly once
-  // (`seededRef`), so the background revalidation `useCachedData` does five seconds
+  // (`seededRef`), so the background revalidation `useQuery` does five seconds
   // later cannot stomp what the user has since typed. `seedActionConfig` first, then
   // the preset's own values, so the optional fields keep their declared defaults
   // (`notify`'s `kind: 'info'`) instead of being blanked.

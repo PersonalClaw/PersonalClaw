@@ -31,7 +31,7 @@
 
 import { render, act, screen, fireEvent } from '@testing-library/react'
 import { describe, it, expect, vi, beforeAll, beforeEach, afterEach } from 'vitest'
-import { invalidateCache } from '../../lib/useCachedData'
+import { invalidateKeys } from '../../lib/data'
 import { runtime } from '../../design/runtime'
 
 // ── The OS preference, live and flippable ───────────────────────────────────────────────
@@ -172,11 +172,11 @@ beforeEach(() => {
   // first paint stays in its loading state until the test asks for the flip.
   refreshTile.mockResolvedValue({ refreshed: false, reason: 'within_ttl', ok: true, row: OK_ROW })
   localStorage.clear()
-  // `useCachedData` holds a MODULE-LEVEL cache as well as the persisted one, so clearing
+  // `useQuery` holds a MODULE-LEVEL cache as well as the persisted one, so clearing
   // localStorage alone would serve the previous test's loaded artifact synchronously and every
   // tile would paint already-settled.
-  invalidateCache('dashboard:views')
-  invalidateCache('dashboard:tile:sales')
+  invalidateKeys('dashboard:views')
+  invalidateKeys('dashboard:tile:sales')
   setReducedMotion(false)
   runtime.expressiveness = 0.8
 })

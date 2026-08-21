@@ -18,7 +18,7 @@ import { FieldError } from '../../ui/forms'
 import { Centered } from '../../ui/Centered'
 import { confirm } from '../../ui/dialog'
 import { api, type CodeProject, type CodeStage, type CodeFinding, type FsEntry, type TaskItem, type Loop } from '../../lib/api'
-import { useCachedData } from '../../lib/useCachedData'
+import { useQuery } from '../../lib/data'
 import { useChatSocket, type WsMessage } from '../../lib/useChatSocket'
 import { useVisiblePoll } from '../../lib/useVisiblePoll'
 import { cleanSay, toolDetail } from '../../lib/agentFeed'
@@ -239,7 +239,7 @@ export function CodeCockpitPage({ id, onBack, onDeleted, onNewTarget, onOpenProj
   // the live SSE still own all subsequent state — this only fills the FIRST paint
   // while `project` is still null. In-memory only (persist:false): the SSE/poll
   // re-pulls fresh on mount anyway, so we never want a stale snapshot across reload.
-  const { data: cachedProject } = useCachedData(`code:project:${id}`, () => api.uLoop(id).then(loopToCodeProject).catch(() => null), { persist: false })
+  const { data: cachedProject } = useQuery(`code:project:${id}`, () => api.uLoop(id).then(loopToCodeProject).catch(() => null), { persist: false })
   useEffect(() => {
     if (project === null && cachedProject) setProject(cachedProject)
   }, [cachedProject, project])

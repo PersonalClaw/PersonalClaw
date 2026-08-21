@@ -1,5 +1,6 @@
 import { type ReactNode } from 'react'
 import { Segmented, type SegOption } from './Segmented'
+import { StaleNotice } from './StaleNotice'
 import { SearchField } from './SearchField'
 
 /** The canonical on-PAGE controls bar for a list section — search + an optional
@@ -9,7 +10,7 @@ import { SearchField } from './SearchField'
  *  primary action). Mirrors the chat-history layout so every list page reads the
  *  same. Render via WorkbenchLayout's `controls` slot, or inline above a body. */
 export function ListControls({
-  search, filter, results, children,
+  search, filter, results, stale, children,
 }: {
   /** Optional search box config — omit for a filter-only bar. */
   search?: { value: string; onChange: (v: string) => void; placeholder?: string; label?: string; autoFocus?: boolean }
@@ -28,6 +29,15 @@ export function ListControls({
    *  on mount would be noise. `FindBar`'s match counter is the same pattern; this brings
    *  the 13 `ListControls` consumers onto it. */
   results?: { count: number; noun: string; active: boolean }
+  /** The rows on screen came from the cache and are past their freshness window — pass
+   *  `useQuery`'s `stale` straight through. Renders the shared `StaleNotice` in this bar, next to
+   *  the count, which is where a claim about the data belongs.
+   *
+   *  🔑 THE NOUN IS ALREADY DECLARED, in `results.noun`. Same reasoning as the loading-noun rail:
+   *  a surface that says its rows are "triggers" when it COUNTS them has already told us what to
+   *  call them while they are being re-read, so nothing here is invented. Needs `results` for
+   *  that reason; without it there is no noun and the label is suppressed rather than guessed. */
+  stale?: boolean
   /** Extra controls (sort dropdown, filter chips) rendered after search + filter. */
   children?: ReactNode
 }) {
@@ -47,6 +57,7 @@ export function ListControls({
           <Segmented ariaLabel={filter.ariaLabel ?? 'Filter'} value={filter.value} onChange={filter.onChange} options={filter.options} />
         )}
         {children}
+        {results && <StaleNotice stale={!!stale} what={results.noun} className="ml-auto" />}
       </div>
       <ResultAnnouncement {...(results ?? { count: 0, noun: '', active: false })} />
     </div>

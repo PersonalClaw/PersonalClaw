@@ -3,7 +3,7 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { DevicesPanel } from './DevicesPanel'
 import { DialogHost } from '../../ui/dialog/DialogHost'
 import { closeDialog, subscribeDialogs } from '../../ui/dialog/dialogStore'
-import { invalidateCache } from '../../lib/useCachedData'
+import { invalidateKeys } from '../../lib/data'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { api, type DeviceRec, type DevicePairStart } from '../../lib/api'
@@ -62,7 +62,7 @@ const mount = () => render(<><DevicesPanel /><DialogHost /></>)
 beforeEach(() => {
   // 🪤 The list rides a cached key, so a previous test's payload would seed the next mount and
   // every assertion below would measure the wrong fixture.
-  invalidateCache('settings:devices')
+  invalidateKeys('settings:devices')
 })
 
 afterEach(() => {

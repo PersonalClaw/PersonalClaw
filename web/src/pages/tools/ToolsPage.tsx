@@ -17,7 +17,7 @@ import { confirm } from '../../ui/dialog'
 import { reportingWrite } from '../../app/reportingWrite'
 import { notify } from '../../app/appSdk'
 import { useQueryParam, useQueryFlag, type RouteProps } from '../../app/useQueryState'
-import { useCachedData, invalidateCache } from '../../lib/useCachedData'
+import { useQuery, invalidateKeys } from '../../lib/data'
 import { api, type ToolItem, type McpServer, type ImportableMcpServer, type ToolLoadFailure, type McpPoolStats, type ToolGroupsData } from '../../lib/api'
 import { schemaProps } from './schema'
 import { ToolInspector } from './ToolInspector'
@@ -62,7 +62,7 @@ interface ToolsIndexData {
 }
 
 export function ToolsPage({ query, setQuery }: Pick<RouteProps, 'query' | 'setQuery'>) {
-  const { data, error: loadErr, refresh } = useCachedData<ToolsIndexData>('tools:index', async () => {
+  const { data, error: loadErr, refresh } = useQuery<ToolsIndexData>('tools:index', async () => {
     const [idx, servers, importable, poolStats, groups] = await Promise.all([
       // 🔴 The four reads below are tolerated on purpose — a dead MCP server or an unreachable pool
       // must not hide the built-in tools, and `load_failures` makes per-tool breakage first-class on
@@ -94,7 +94,7 @@ export function ToolsPage({ query, setQuery }: Pick<RouteProps, 'query' | 'setQu
 
   const [probing, setProbing] = useState(false)
   const [addOpen, setAddOpen] = useQueryFlag(query, setQuery, 'add')
-  const load = () => { invalidateCache('tools:index'); refresh() }
+  const load = () => { invalidateKeys('tools:index'); refresh() }
 
   async function reprobe() {
     setProbing(true)

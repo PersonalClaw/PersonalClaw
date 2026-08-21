@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { api, type NotificationSettings, type NotificationRulesDoc } from '../../lib/api'
-import { useCachedData, invalidateCache } from '../../lib/useCachedData'
+import { useQuery, invalidateKeys } from '../../lib/data'
 import { PanelHeader, Section, Row, Field, Toggle, SegPills, SavedToast } from './settingsUI'
 import { FormSkeleton, LoadError } from '../../ui/ListScaffold'
 import { NotificationRulesMatrix, DigestSchedule } from './NotificationRulesMatrix'
@@ -24,7 +24,7 @@ export function NotificationsPanel() {
   // below, so a failed read left this panel shimmering FOREVER with nothing said — measured on
   // `#/settings/notifications` with the GET at 500: 0 controls, one `aria-busy` skeleton, no alert. Same
   // shape cycle 117 found on the inbox panel and cycle 124 on three config panels.
-  const { data: settingsData, error: loadErr, refresh } = useCachedData(
+  const { data: settingsData, error: loadErr, refresh } = useQuery(
     'settings:notification-settings', () => api.notificationSettings(), { persist: true },
   )
   useEffect(() => { if (settingsData) setS(settingsData) }, [settingsData])
@@ -34,10 +34,10 @@ export function NotificationsPanel() {
   // changed back to its old value.
   // The rules matrix keeps its own fallback: it DECORATES this panel (a per-kind policy table below the
   // settings), so losing it degrades one section rather than fabricating the switches above.
-  const { data: rules, refresh: refreshRules } = useCachedData<NotificationRulesDoc | null>(
+  const { data: rules, refresh: refreshRules } = useQuery<NotificationRulesDoc | null>(
     'settings:notification-rules', () => api.notificationRules().catch(() => null), { persist: false },
   )
-  const reloadRules = () => { invalidateCache('settings:notification-rules'); refreshRules() }
+  const reloadRules = () => { invalidateKeys('settings:notification-rules'); refreshRules() }
 
   const patch = (p: Partial<NotificationSettings>) => {
     setS((prev) => prev && { ...prev, ...p })

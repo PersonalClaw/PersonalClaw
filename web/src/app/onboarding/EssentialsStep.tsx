@@ -6,7 +6,7 @@ import { Button } from '../../ui/Button'
 import { LoadError, LoadingStatus } from '../../ui/ListScaffold'
 import { TextLink } from '../../ui/TextLink'
 import { listItemEnter, stagger, spring } from '../../design/motion'
-import { useCachedData } from '../../lib/useCachedData'
+import { useQuery } from '../../lib/data'
 import { useGuardedInstall, guardedFromApp } from '../../lib/useGuardedInstall'
 import { ConsentModal, PermissionList, CronConsentList } from '../../pages/apps/installConsent'
 import { SchemaField } from '../../pages/settings/ModelBackends'
@@ -120,7 +120,7 @@ export function EssentialsStep({ readiness, onDone, onSkip, onProgress }: {
 }) {
   // NOT persisted: a first run must read the live catalog, and a warm sessionStorage
   // cache would hide the load-failure branch below on every reload after the first.
-  const { data: catalog, error: catalogError, refresh } = useCachedData(
+  const { data: catalog, error: catalogError, refresh } = useQuery(
     'onboarding:essentials-catalog', () => api.appCatalog())
 
   const lanes = useMemo(() => candidatesByLane(catalog), [catalog])
@@ -338,7 +338,7 @@ function ModelSubFlow({ app, phase, boundLabel, onConfigured, onBound }: {
  *  should not have to invent an instance name — and a re-entry updates the existing
  *  instance rather than dead-ending on the create endpoint's 409. */
 function ConfigureProvider({ app, onConfigured }: { app: string; onConfigured: () => void }) {
-  const { data: types, error: typesError, refresh } = useCachedData(
+  const { data: types, error: typesError, refresh } = useQuery(
     'onboarding:provider-types', () => api.modelProviderTypes())
   const [values, setValues] = useState<Record<string, string>>({})
   const [error, setError] = useState('')
@@ -438,7 +438,7 @@ function ConfigureProvider({ app, onConfigured }: { app: string; onConfigured: (
  *  `provider:model` refs (what the Models panel writes), NOT the display `name`,
  *  which the discovery fallback builds as `provider/model`. */
 function BindModel({ onBound }: { onBound: (label: string) => void }) {
-  const { data: models, error, refresh } = useCachedData('onboarding:chat-models', () => api.chatModels())
+  const { data: models, error, refresh } = useQuery('onboarding:chat-models', () => api.chatModels())
   const [binding, setBinding] = useState('')
   const [failed, setFailed] = useState('')
 

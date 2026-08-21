@@ -1,4 +1,4 @@
-import { invalidateCache } from '../../lib/useCachedData'
+import { invalidateKeys } from '../../lib/data'
 
 // ── The Learning page's two cached reads, and what a decision does to them ────
 //
@@ -37,7 +37,7 @@ export function proposalsKey(kind: string): string {
  *  memory, and the inbox item. A refetch would be a request that provably cannot return anything
  *  new. */
 export function refreshAfterDecision(refreshProposals: () => void): void {
-  invalidateCache(PROPOSALS_KEY_PREFIX, true)
+  invalidateKeys(PROPOSALS_KEY_PREFIX, true)
   refreshProposals()
 }
 
@@ -55,13 +55,13 @@ export function refreshEverything(
   refreshHealth: () => void = () => {},
   refreshJudgeBench: () => void = () => {},
 ): void {
-  invalidateCache(PROPOSALS_KEY_PREFIX, true)
-  invalidateCache(WEEK_KEY)
-  invalidateCache(HEALTH_KEY)
+  invalidateKeys(PROPOSALS_KEY_PREFIX, true)
+  invalidateKeys(WEEK_KEY)
+  invalidateKeys(HEALTH_KEY)
   // The judge table moves only when `personalclaw judge-bench` runs, which the user does from a
   // terminal — so it is the one read on this page whose staleness the PAGE cannot detect, and an
   // explicit Refresh is exactly when re-asking is worth a request.
-  invalidateCache(JUDGE_BENCH_KEY)
+  invalidateKeys(JUDGE_BENCH_KEY)
   refreshProposals()
   refreshWeek()
   refreshHealth()

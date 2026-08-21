@@ -4,7 +4,7 @@ import {
   BookOpen, Database, FileText, Workflow, Search, RefreshCw, type LucideIcon,
 } from 'lucide-react'
 import { api, type SettingsProvider, type AgentRuntime, type ChannelRuntime } from '../../lib/api'
-import { useCachedData, invalidateCache } from '../../lib/useCachedData'
+import { useQuery, invalidateKeys } from '../../lib/data'
 import { requestRunInTerminal } from '../terminal/terminalBridge'
 import { useQueryParam, type RouteProps } from '../../app/useQueryState'
 import { Section, PanelHeader } from './settingsUI'
@@ -67,15 +67,15 @@ export function ProvidersPanel({ query, setQuery }: Pick<RouteProps, 'query' | '
   // paints instantly from cache and revalidates in the background — no long
   // "Loading…". The two fetches are independent: the provider list renders as soon
   // as IT lands, without waiting on the slower agent-runtime readiness probe.
-  const { data: providers, refresh: refreshProviders } = useCachedData(
+  const { data: providers, refresh: refreshProviders } = useQuery(
     'settings:providers', () => api.settingsProviders().catch(() => [] as SettingsProvider[]), { persist: true },
   )
-  const { data: runtimesData, refresh: refreshRuntimes } = useCachedData(
+  const { data: runtimesData, refresh: refreshRuntimes } = useQuery(
     'settings:agent-runtimes', () => api.agentRuntimes().catch(() => [] as AgentRuntime[]), { persist: true },
   )
   // Available models per provider — feeds each local-model provider's download card
   // (catalog + downloaded state + `searchable`). One fetch, revalidated on mutation.
-  const { data: availableData, refresh: refreshAvailable } = useCachedData(
+  const { data: availableData, refresh: refreshAvailable } = useQuery(
     'settings:models-available', () => api.modelsAvailable().catch(() => [] as ProviderModels[]), { persist: true },
   )
   const availableByProvider = useMemo(() => {
@@ -85,7 +85,7 @@ export function ProvidersPanel({ query, setQuery }: Pick<RouteProps, 'query' | '
   }, [availableData])
   // Live channel runtime (connection health) — folded onto the matching channel
   // provider card so the enable/config surface also shows whether it's connected now.
-  const { data: channelsData, refresh: refreshChannels } = useCachedData(
+  const { data: channelsData, refresh: refreshChannels } = useQuery(
     'settings:channels', () => api.channels().catch(() => [] as ChannelRuntime[]), { persist: true },
   )
   const channelByName = useMemo(() => {
@@ -104,7 +104,7 @@ export function ProvidersPanel({ query, setQuery }: Pick<RouteProps, 'query' | '
 
   // A mutation (enable/disable/config) invalidates the cached catalog so the next
   // read revalidates against the changed state instead of a stale snapshot.
-  const reload = () => { invalidateCache('settings:providers'); invalidateCache('settings:models-available'); refreshProviders(); refreshRuntimes(); refreshAvailable() }
+  const reload = () => { invalidateKeys('settings:providers'); invalidateKeys('settings:models-available'); refreshProviders(); refreshRuntimes(); refreshAvailable() }
 
   // Re-probe agent-runtime readiness, forcing a fresh probe (bypassing the 5-min
   // readiness cache). Used by the manual "Check availability" action + post-sign-in.

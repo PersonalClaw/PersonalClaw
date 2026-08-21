@@ -3,7 +3,7 @@ import { CalendarDays, ChevronLeft, ChevronRight, AlertTriangle } from 'lucide-r
 import { fvs } from '../../design/fontWeight'
 import { EmptyState } from '../../ui/ListScaffold'
 import { Button } from '../../ui/Button'
-import { useCachedData } from '../../lib/useCachedData'
+import { useQuery } from '../../lib/data'
 import { api, type WeekProjection } from '../../lib/api'
 import { buildWeekGrid, cellLabel, visibleHours, weekSummary, startOfDay, type CellState, type WeekCell } from './weekGrid'
 
@@ -50,7 +50,7 @@ export function WeekGridView({ onOpenTrigger }: { onOpenTrigger?: (triggerId: st
   // Keyed by the week so paging fetches rather than reusing the previous week's cells. persist:false
   // — a projection is only true relative to `now`, so a cached week restored after a hard reload
   // would show a forecast that has already partly happened.
-  const { data: week } = useCachedData<WeekProjection>(
+  const { data: week } = useQuery<WeekProjection>(
     `triggers:week:${start.toISOString().slice(0, 10)}`,
     () => api.triggersWeek(localIso(start), 7),
     { persist: false },

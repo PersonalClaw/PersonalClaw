@@ -1,6 +1,6 @@
 import { api, type SavedAgent, type AgentProvider, type DiscoveredAgent } from '../../lib/api'
 import { loadAcpDiscovered } from '../../lib/agents'
-import { useCachedData, invalidateCache } from '../../lib/useCachedData'
+import { useQuery, invalidateKeys } from '../../lib/data'
 
 /** A provider group for the Agents list. Native agents are PClaw-owned and fully
  *  editable; discovered agents come from an ACP runtime (e.g. claude-code, codex),
@@ -64,9 +64,9 @@ export function useAgentsData(): AgentsData {
   // 🪤 `error` used to be DROPPED here, and `data ?? []` erased the difference between "not loaded"
   // and "none" before any consumer could see it — so `#/agents` answered a failed read with its
   // newcomer empty state ("No native agents · Create an agent to define its model…"). The adapter
-  // was the swallow: `useCachedData` had the error all along. Re-exposed, matching `useAutonomyLadder`,
+  // was the swallow: `useQuery` had the error all along. Re-exposed, matching `useAutonomyLadder`,
   // the one adapter in the tree that already did this.
-  const { data, error, loading, refresh } = useCachedData('agents:groups', fetchAgentGroups, { persist: true })
+  const { data, error, loading, refresh } = useQuery('agents:groups', fetchAgentGroups, { persist: true })
   return { groups: data ?? [], error, loaded: data !== undefined, loading,
-    reload: () => { invalidateCache('agents:groups'); refresh() } }
+    reload: () => { invalidateKeys('agents:groups'); refresh() } }
 }

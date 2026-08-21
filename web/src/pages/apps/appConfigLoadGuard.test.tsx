@@ -5,7 +5,7 @@ import { join } from 'node:path'
 
 // ── A form that never loaded must not be allowed to save ────────────────────────────────────────
 //
-// `useAppConfig` reads `api.appConfig(name)` through `useCachedData` and DISCARDED the hook's
+// `useAppConfig` reads `api.appConfig(name)` through `useQuery` and DISCARDED the hook's
 // `error`. Two consequences, and the second one writes:
 //
 //   1. `loading` is `data === undefined`, which stays true forever on a failed read — the Configure

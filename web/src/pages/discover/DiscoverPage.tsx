@@ -8,7 +8,7 @@ import { WorkbenchLayout } from '../../ui/WorkbenchLayout'
 import { EmptyState, ListSkeleton, LoadError } from '../../ui/ListScaffold'
 import { spring } from '../../design/motion'
 import { EntranceGroup, EntranceRegion } from '../../ui/motion'
-import { useCachedData } from '../../lib/useCachedData'
+import { useQuery } from '../../lib/data'
 import { api, type DiscoverTip, type DiscoverTryIt } from '../../lib/api'
 import type { RouteProps } from '../../app/useQueryState'
 import { PageTitle } from '../../ui/PageTitle'
@@ -31,7 +31,7 @@ export function DiscoverPage({ navigate }: Pick<RouteProps, 'navigate'>) {
   // SETTING and offered a CTA to "turn them back on in Settings › Legibility", a setting that is
   // already on. Measured against a 500 on `/api/legibility/discover` with a cold sessionStorage.
   // Letting the rejection through is what makes `error` — and the branch below — exist at all.
-  const { data, error, refresh } = useCachedData(
+  const { data, error, refresh } = useQuery(
     'discover', () => api.discover(), { persist: false },
   )
 
@@ -96,7 +96,7 @@ export function DiscoverPage({ navigate }: Pick<RouteProps, 'navigate'>) {
           // surface the regions ARE the data, so the group sits on the loaded column
           // rather than above the branch (the replay rule in `ui/motion/Entrance`);
           // that is safe because a dismiss goes through `refresh()` on an unchanged
-          // key, and `useCachedData` holds the last value on a same-key revalidation
+          // key, and `useQuery` holds the last value on a same-key revalidation
           // instead of dropping back to `undefined` — so the branch never flips through
           // the skeleton and the group is never remounted. Areas are keyed by name,
           // never by index or count, so re-fetching cannot remount a surviving band.

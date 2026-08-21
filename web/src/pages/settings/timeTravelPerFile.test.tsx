@@ -3,7 +3,7 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { DurabilityPanel } from './DurabilityPanel'
 import { DialogHost } from '../../ui/dialog/DialogHost'
 import { closeDialog, subscribeDialogs } from '../../ui/dialog/dialogStore'
-import { invalidateCache } from '../../lib/useCachedData'
+import { invalidateKeys } from '../../lib/data'
 import {
   api,
   type DurabilityHistoryDiffFile,
@@ -193,10 +193,10 @@ async function confirmApply(verb: 'rollback' | 'revert' = 'rollback') {
 }
 
 beforeEach(() => {
-  invalidateCache('settings:durability')
-  invalidateCache('settings:history')
-  invalidateCache('settings:history:config:all')
-  invalidateCache('settings:history:config:slept')
+  invalidateKeys('settings:durability')
+  invalidateKeys('settings:history')
+  invalidateKeys('settings:history:config:all')
+  invalidateKeys('settings:history:config:slept')
 })
 
 afterEach(() => {

@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { render, screen, waitFor } from '@testing-library/react'
 import { ReportRow, ReportsPage } from './ReportsPage'
 import { api, type ResearchReport } from '../../lib/api'
-import { invalidateCache } from '../../lib/useCachedData'
+import { invalidateKeys } from '../../lib/data'
 
 // ── The scheduled-reports destination (WF2KNO-12) ────────────────────────────────
 // Three things here have a way of looking done while being absent:
@@ -39,10 +39,10 @@ function report(over: Partial<ResearchReport> = {}): ResearchReport {
   }
 }
 
-// `useCachedData` keeps a MODULE-GLOBAL cache, so a list fetched by one test is served to the
+// `useQuery` keeps a MODULE-GLOBAL cache, so a list fetched by one test is served to the
 // next one — which made the failed-load case render the previous test's empty list and pass for
 // the wrong reason. Clearing the key is what keeps each case measuring its own fetch.
-afterEach(() => { vi.restoreAllMocks(); invalidateCache('knowledge:reports') })
+afterEach(() => { vi.restoreAllMocks(); invalidateKeys('knowledge:reports') })
 
 describe('a report row states its scoping decisions', () => {
   it('names the schedule, what it watches, and that it cites new material only', () => {

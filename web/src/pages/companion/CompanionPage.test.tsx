@@ -4,7 +4,7 @@ import userEvent from '@testing-library/user-event'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { CompanionPage } from './CompanionPage'
-import { invalidateCache } from '../../lib/useCachedData'
+import { invalidateKeys } from '../../lib/data'
 import type { PendingApproval } from '../../lib/api'
 
 // ── `#/companion` — the phone approvals surface (MOBILE-COMPANION MC-3) ──────────────────
@@ -14,7 +14,7 @@ import type { PendingApproval } from '../../lib/api'
 //
 //  1. approve/reject reach the backend — the resolve call goes to
 //     POST /api/approvals/{id}/{action}, the queue's own resolver, NOT the chat route.
-//  2. a FAILED fetch tells the user. `useCachedData` hands back an `error`; most fetchers in
+//  2. a FAILED fetch tells the user. `useQuery` hands back an `error`; most fetchers in
 //     this app `.catch(() => [])`, and on an approvals surface that reads as "nothing is
 //     waiting on you" — the most dangerous possible lie. The error branch must announce.
 //  3. every control is reachable by keyboard and has an unambiguous accessible NAME, read
@@ -45,7 +45,7 @@ beforeEach(() => {
   resolveApproval.mockReset()
   // COLD cache per test. A warm entry paints instantly and would mask the error branch
   // entirely — `data === undefined && error` is only reachable when nothing is cached.
-  invalidateCache('companion:approvals')
+  invalidateKeys('companion:approvals')
   sessionStorage.clear()
 })
 afterEach(cleanup)

@@ -9,7 +9,7 @@ import { Toggle } from '../../ui/Toggle'
 import { TextInput } from '../../ui/forms'
 import { EmptyState, ListRow, ListSkeleton, LoadError } from '../../ui/ListScaffold'
 import { api, type WatchedSource } from '../../lib/api'
-import { useCachedData, invalidateCache } from '../../lib/useCachedData'
+import { useQuery, invalidateKeys } from '../../lib/data'
 import { notify } from '../../app/appSdk'
 import { relFuture, relPast } from '../schedule/scheduleMeta'
 import { fvs } from '../../design/fontWeight'
@@ -215,8 +215,8 @@ export function SourceRow({ source, index, kinds, onChanged }: {
  *  deliberately the whole loop — see what you watch, how healthy it is, what the last poll
  *  cost, what to do about a failing one, and add another. */
 export function SourcesPage({ onBack, onCreate }: { onBack: () => void; onCreate: () => void }) {
-  const { data, loading, error, refresh } = useCachedData('knowledge:sources', () => api.knowledgeSources())
-  const reload = () => { invalidateCache('knowledge:sources'); refresh() }
+  const { data, loading, error, refresh } = useQuery('knowledge:sources', () => api.knowledgeSources())
+  const reload = () => { invalidateKeys('knowledge:sources'); refresh() }
 
   const kinds: KindIndex = Object.fromEntries(
     (data?.kinds ?? []).map((k) => [k.provider, { display_name: k.display_name, form: k.form }]),

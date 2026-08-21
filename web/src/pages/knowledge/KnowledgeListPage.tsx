@@ -20,7 +20,7 @@ import { listKnowledge, knowledgeStats, getKnowledge } from './knowledgeStore'
 import { KnowledgeDetail, OutcomeFieldValue } from './KnowledgeDetail'
 import { KnowledgeGraph } from './KnowledgeGraph'
 import { useQueryParam, type RouteProps } from '../../app/useQueryState'
-import { useCachedData, invalidateCache } from '../../lib/useCachedData'
+import { useQuery, invalidateKeys } from '../../lib/data'
 import { rowSubject } from '../../lib/rowSubject'
 import { confirm, confirmDelete, promptInput } from '../../ui/dialog'
 import { PageTitle } from '../../ui/PageTitle'
@@ -172,7 +172,7 @@ export function KnowledgeListPage({ onCreate, onOpenItem, onOpenSources, onOpenR
   // Collections (KNOWLEDGE-LIBRARY S1). URL-backed so a shelf is deep-linkable.
   const [collectionTok, setCollectionTok] = useQueryParam(query, setQuery, 'collection', '', { replace: true })
   const { data: collectionsData, refresh: refreshCollections } =
-    useCachedData<KnowledgeCollection[]>('knowledge:collections', () => api.knowledgeCollections().catch(() => []))
+    useQuery<KnowledgeCollection[]>('knowledge:collections', () => api.knowledgeCollections().catch(() => []))
   const collections = collectionsData ?? []
   const activeCollection = collectionTok ? collections.find((c) => c.id === collectionTok) ?? null : null
 
@@ -187,11 +187,11 @@ export function KnowledgeListPage({ onCreate, onOpenItem, onOpenSources, onOpenR
   // search branch, which never caught, had the opposite half of the same bug: its failure fell to
   // `items === null` with `itemsLoading` false and rendered a BLANK region, no error text anywhere.
   // One `error` read answers both: the library says the read failed, and offers a retry.
-  const { data: itemsData, error: itemsErr, loading: itemsLoading, refresh: refreshItems } =
-    useCachedData(itemsKey, () => (collectionTok
+  const { data: itemsData, error: itemsErr, loading: itemsLoading, stale: itemsStale, refresh: refreshItems } =
+    useQuery(itemsKey, () => (collectionTok
       ? api.knowledgeCollectionItems(collectionTok, 200).then((r) => r.items)
       : listKnowledge({ q: submitted || undefined, includeArchived: showArchived })))
-  const { data: statsData, refresh: refreshStats } = useCachedData('knowledge:stats', () => knowledgeStats())
+  const { data: statsData, refresh: refreshStats } = useQuery('knowledge:stats', () => knowledgeStats())
   const items = itemsData ?? null
   const stats = statsData ?? null
   const load = () => { refreshItems(); refreshStats(); refreshCollections() }
@@ -237,7 +237,7 @@ export function KnowledgeListPage({ onCreate, onOpenItem, onOpenSources, onOpenR
     })
     try {
       const res = await api.createKnowledgeCollection(q ? { name, kind: 'smart', query: q } : { name })
-      invalidateCache('knowledge:collections')
+      invalidateKeys('knowledge:collections')
       refreshCollections()
       setCollectionTok(res.collection.id)
     } catch { /* the rail just doesn't gain a shelf */ }
@@ -253,7 +253,7 @@ export function KnowledgeListPage({ onCreate, onOpenItem, onOpenSources, onOpenR
     const ok = await reportingWrite(`add "${it.title || 'this item'}" to "${c.name}"`,
       () => api.addToKnowledgeCollection(c.id, [it.id]))
     if (!ok) return
-    invalidateCache('knowledge:collections')
+    invalidateKeys('knowledge:collections')
     refreshCollections()
   }
 
@@ -261,8 +261,8 @@ export function KnowledgeListPage({ onCreate, onOpenItem, onOpenSources, onOpenR
     const ok = await reportingWrite(`remove "${it.title || 'this item'}" from "${c.name}"`,
       () => api.removeFromKnowledgeCollection(c.id, it.id))
     if (!ok) return
-    invalidateCache(itemsKey)
-    invalidateCache('knowledge:collections')
+    invalidateKeys(itemsKey)
+    invalidateKeys('knowledge:collections')
     refreshItems(); refreshCollections()
   }
 
@@ -271,7 +271,7 @@ export function KnowledgeListPage({ onCreate, onOpenItem, onOpenSources, onOpenR
     const ok = await reportingWrite(`mark "${it.title || 'this item'}" as ${next}`,
       () => api.setKnowledgeReadState(it.id, next))
     if (!ok) return
-    invalidateCache(itemsKey)
+    invalidateKeys(itemsKey)
     refreshItems()
   }
 
@@ -280,7 +280,7 @@ export function KnowledgeListPage({ onCreate, onOpenItem, onOpenSources, onOpenR
       `${it.favorited ? 'unfavourite' : 'favourite'} "${it.title || 'this item'}"`,
       () => api.setKnowledgeFavorited(it.id, !it.favorited))
     if (!ok) return
-    invalidateCache(itemsKey)
+    invalidateKeys(itemsKey)
     refreshItems()
   }
 
@@ -290,7 +290,7 @@ export function KnowledgeListPage({ onCreate, onOpenItem, onOpenSources, onOpenR
     const ok = await reportingWrite(`rename "${c.name}"`,
       () => api.updateKnowledgeCollection(c.id, { name }))
     if (!ok) return
-    invalidateCache('knowledge:collections')
+    invalidateKeys('knowledge:collections')
     refreshCollections()
   }
 
@@ -310,10 +310,10 @@ export function KnowledgeListPage({ onCreate, onOpenItem, onOpenSources, onOpenR
     try { await api.deleteKnowledgeCollection(c.id) }
     catch (e) {
       notify(`Couldn't delete the shelf "${c.name}": ${String((e as Error)?.message || e)}`, 'error')
-      invalidateCache('knowledge:collections'); refreshCollections()
+      invalidateKeys('knowledge:collections'); refreshCollections()
       return
     }
-    invalidateCache('knowledge:collections')
+    invalidateKeys('knowledge:collections')
     refreshCollections()
     setCollectionTok('')
   }
@@ -395,7 +395,8 @@ export function KnowledgeListPage({ onCreate, onOpenItem, onOpenSources, onOpenR
       scroll={view !== 'graph'}
       controls={view === 'library'
         ? <ListControls search={{ value: q, onChange: setQ, placeholder: 'Search knowledge', label: 'Search knowledge' }}
-            results={{ count: (items ?? []).length, noun: 'items', active: !!submitted }} />
+            results={{ count: (items ?? []).length, noun: 'items', active: !!submitted }}
+            stale={itemsStale} />
         : undefined}
       topBar={
         <TopBar
@@ -1000,8 +1001,8 @@ function IntentDetail({ intent, onChanged, onClose, onOpenItem }: {
 
 /** Graph-tab sidebar: an entity + the knowledge items that mention it (clickable). */
 function EntityDetail({ name, onOpenItem, onSelectEntity }: { name: string; onOpenItem: (id: string) => void; onSelectEntity?: (name: string) => void }) {
-  const { data: items, loading } = useCachedData(`knowledge:entity-items:${name}`, () => api.knowledgeEntityItems(name))
-  const { data: related } = useCachedData(`knowledge:entity-related:${name}`, () => api.knowledgeEntityRelated(name).then((r) => r.related))
+  const { data: items, loading } = useQuery(`knowledge:entity-items:${name}`, () => api.knowledgeEntityItems(name))
+  const { data: related } = useQuery(`knowledge:entity-related:${name}`, () => api.knowledgeEntityRelated(name).then((r) => r.related))
   return (
     <div className="flex flex-col gap-l p-l">
       {(related?.length ?? 0) > 0 && (

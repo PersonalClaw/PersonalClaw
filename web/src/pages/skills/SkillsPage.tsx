@@ -14,7 +14,7 @@ import { EmptyState, ListRow, ListSkeleton, LoadError } from '../../ui/ListScaff
 import { ContextMenu, type ContextMenuItem } from '../../ui/motion'
 import { SidePanel } from '../../ui/SidePanel'
 import { TextInput, TextArea, FieldError } from '../../ui/forms'
-import { useCachedData, invalidateCache } from '../../lib/useCachedData'
+import { useQuery, invalidateKeys } from '../../lib/data'
 import { api, type SkillItem, type SkillSearchResult, type SkillMarketplace } from '../../lib/api'
 import { SOURCE_TONE, sourceLabel, fmtInstalls } from './skillMeta'
 import { toneChipSkin } from '../../design/accent'
@@ -85,8 +85,8 @@ function Installed({ onBrowse, onProposals, query, setQuery }: { onBrowse: () =>
   // LIST, so a user whose library is intact was told "No skills installed" under a coral CTA to go
   // install some — measured against a 500 with native skills present on disk. The proposals read
   // keeps its catch: it only feeds a count on a header button, and a missing badge is not a lie.
-  const { data: items, error: itemsErr, refresh } = useCachedData<SkillItem[]>('skills', () => api.skills(), { persist: true })
-  const { data: proposals } = useCachedData('skill-proposals-count', () => api.skillProposals().catch(() => []))
+  const { data: items, error: itemsErr, refresh } = useQuery<SkillItem[]>('skills', () => api.skills(), { persist: true })
+  const { data: proposals } = useQuery('skill-proposals-count', () => api.skillProposals().catch(() => []))
   const proposalCount = proposals?.length ?? 0
   const [q, setQ] = useQueryParam(query, setQuery, 'q', '', { replace: true })
   const [openKeyRaw, setOpenKey] = useQueryParam(query, setQuery, 'open', '')
@@ -95,7 +95,7 @@ function Installed({ onBrowse, onProposals, query, setQuery }: { onBrowse: () =>
   const creating = creatingRaw === '1'
   const setCreating = (v: boolean) => setCreating2(v ? '1' : '')
 
-  const load = () => { invalidateCache('skills'); refresh() }
+  const load = () => { invalidateKeys('skills'); refresh() }
 
   const filtered = useMemo(() => {
     if (!items) return null
@@ -217,7 +217,7 @@ function SkillCreateModal({ onClose, onCreated }: { onClose: () => void; onCreat
 
 // ── Browse (marketplace) ──────────────────────────────────────────────────────
 function Browse({ onBack, query, setQuery }: { onInstalled: () => void; onBack: () => void } & Pick<RouteProps, 'query' | 'setQuery'>) {
-  const { data: marketplaces = [] } = useCachedData<SkillMarketplace[]>(
+  const { data: marketplaces = [] } = useQuery<SkillMarketplace[]>(
     'skills:marketplaces',
     () => api.skillMarketplaces().then((m) => m.filter((x) => x.name !== 'installed' && x.name !== 'native')).catch(() => []),
     { persist: true },

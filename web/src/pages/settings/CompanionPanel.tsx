@@ -2,7 +2,7 @@ import { Fragment, useEffect, useState } from 'react'
 import { Check, Radio, RadioTower, ShieldCheck, ShieldAlert } from 'lucide-react'
 import { api } from '../../lib/api'
 import { notify } from '../../app/appSdk'
-import { useCachedData } from '../../lib/useCachedData'
+import { useQuery } from '../../lib/data'
 import { PanelHeader, Section, ToggleRow, Field, Row } from './settingsUI'
 import { TextInput } from '../../ui/forms'
 import { Button } from '../../ui/Button'
@@ -22,7 +22,7 @@ export function CompanionPanel() {
   const [nameDraft, setNameDraft] = useState('')
   const [nameSaved, setNameSaved] = useState(false)
 
-  const { data, error: loadErr, refresh } = useCachedData('settings:companion', () =>
+  const { data, error: loadErr, refresh } = useQuery('settings:companion', () =>
     api.personalclawConfig().then((c) => (c.companion ?? {}) as CompanionCfg),
     { persist: true },
   )
@@ -30,7 +30,7 @@ export function CompanionPanel() {
   // The LIVE advertiser, read separately from the flag that requests it. These two
   // legitimately disagree — a loopback-only gateway advertises nothing by design — and a
   // panel that showed only the toggle would render that disagreement as success.
-  const { data: discovery, refresh: refreshDiscovery } = useCachedData(
+  const { data: discovery, refresh: refreshDiscovery } = useQuery(
     'settings:companion:discovery', () => api.companionDiscovery(),
   )
 

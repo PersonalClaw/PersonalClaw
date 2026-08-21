@@ -10,6 +10,25 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Added
 
+- **The app stops showing you an old number and then quietly changing it.** Every screen used to
+  read its data through a hand-rolled cache — 124 files reached for the same helper, and a few
+  surfaces kept private caches of their own beside it. A cached page painted instantly, which is
+  good, but it painted with total confidence whether the value had landed forty milliseconds or
+  forty minutes ago, and then swapped it for a different one a moment later. That repaint reads as a
+  bug even when both numbers were once true. There is now one data layer, and a cached first paint
+  is either **fresh** or **says "Updating…"** while it is being re-read. Measured on the old build:
+  the Settings → Inbox card painted "30 day retention" after a reload when the server already said
+  7, with nothing on screen to indicate it, and then became 7.
+  **A change is reflected everywhere, immediately, without a reload.** Accept a proposal on one
+  screen and the badge counting it on another updates itself; delete something in one list and a
+  picker elsewhere stops offering it. Each write now declares which data it affects, so nothing has
+  to be refreshed by hand and no surface is left describing something that has already changed.
+  **A screen that could not load its data says so, instead of saying you have nothing.** "We
+  couldn't load your items" with a Retry is a different message from "you have no items yet", and
+  they are no longer interchangeable.
+  **And opening a page asks the server once.** Several cards reading the same thing used to make the
+  same request several times over; they now share one.
+
 - **A turn that will not fit says so before it runs, and says what to do about it.** PersonalClaw
   used to find out a prompt was too big by sending it and reading the provider's error back — after
   you had already waited. The context is now measured against the bound model's real window *before*

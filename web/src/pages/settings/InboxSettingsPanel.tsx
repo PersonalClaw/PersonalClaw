@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { api, type InboxSettings } from '../../lib/api'
-import { useCachedData } from '../../lib/useCachedData'
+import { useQuery } from '../../lib/data'
 import { PanelHeader, Section, Row, Toggle, SavedToast } from './settingsUI'
 import { NumberField } from '../../ui/forms'
 import { FormSkeleton, LoadError } from '../../ui/ListScaffold'
@@ -29,7 +29,7 @@ export function InboxSettingsPanel() {
   // the resolved `null` was PERSISTED: `sessionStorage['cache:settings:inbox'] === "null"`, so the next
   // mount seeded null from cache and could not tell "failed" from "loaded". Same cache-key poisoning as
   // the `'apps'` key, with `null` instead of `[]` — and this key has THREE consumers.
-  const { data, error: loadErr, refresh } = useCachedData('settings:inbox', () => api.inboxSettings(), { persist: true })
+  const { data, error: loadErr, refresh } = useQuery('settings:inbox', () => api.inboxSettings(), { persist: true })
   useEffect(() => { if (data) setS(data) }, [data])
 
   useEffect(() => {

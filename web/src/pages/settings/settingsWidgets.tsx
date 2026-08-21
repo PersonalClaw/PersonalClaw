@@ -12,7 +12,7 @@ import {
   type SearchProviderInfo,
   type ToolsSavings, type DeviceRec,
 } from '../../lib/api'
-import { useCachedData, invalidateCache } from '../../lib/useCachedData'
+import { useQuery, invalidateSpecs, type CacheKeySpec } from '../../lib/data'
 import { useIdentity } from '../../app/identity'
 import { useAppearance } from '../../app/appearance'
 import { useMode } from '../../app/theme'
@@ -44,15 +44,15 @@ const shortModel = (ref: string) => { const i = ref.indexOf(':'); return i >= 0 
 // ─────────────────────────────────────────────────────────────────────────────
 // Per-subpage data hooks (cache keys mirror each panel so paint is shared/instant)
 // ─────────────────────────────────────────────────────────────────────────────
-const useSecurity = () => useCachedData('settings:security', () => api.securityStats().catch(() => null as SecurityStats | null), { persist: true })
-const useMemoryStats = () => useCachedData('settings:memory-stats', () => api.memoryStats().catch(() => null as MemoryStats | null), { persist: true })
+const useSecurity = () => useQuery('settings:security', () => api.securityStats().catch(() => null as SecurityStats | null), { persist: true })
+const useMemoryStats = () => useQuery('settings:memory-stats', () => api.memoryStats().catch(() => null as MemoryStats | null), { persist: true })
 // Today's spend for the Usage bento tile (COST-AND-TOKEN-OBSERVABILITY). Midnight-UTC
 // window matches the Usage panel's "Today"; a null means the ledger read failed.
-const useUsageToday = () => useCachedData('settings:usage-today', () => {
+const useUsageToday = () => useQuery('settings:usage-today', () => {
   const since = `${new Date().toISOString().slice(0, 10)}T00:00:00+00:00`
   return api.usageTotals({ since }).then((d) => d.totals).catch(() => null)
 }, { persist: false })
-const useModelsActive = () => useCachedData('settings:models-active', () => api.modelsActive().catch(() => null as Record<string, string[]> | null), { persist: true })
+const useModelsActive = () => useQuery('settings:models-active', () => api.modelsActive().catch(() => null as Record<string, string[]> | null), { persist: true })
 // Routing efficiency for the default (chat, short_chat) bucket — the card's headline
 // is how many models are on the Pareto frontier there; deep-links into the subpage,
 // which lets the user pick any bucket. null on read failure (distinct from []=no data).
@@ -68,32 +68,32 @@ const useModelsActive = () => useCachedData('settings:models-active', () => api.
 // DEFAULT tab, and this card's own description says "for each kind of request" — plural — while it
 // queried exactly one kind that has no data. So it now asks for the axis the panel itself maps to
 // (`reasoning` → `long_reasoning`), which is a measured one, and the empty copy says what is measured.
-const useRoutingTelemetry = () => useCachedData('settings:routing-telemetry:reasoning:long_reasoning',
+const useRoutingTelemetry = () => useQuery('settings:routing-telemetry:reasoning:long_reasoning',
   () => api.modelsTelemetry({ use_case: 'reasoning', query_class: 'long_reasoning' }).then((d) => d.rows).catch(() => null), { persist: false })
-const useSearchEntity = () => useCachedData('settings:search', async () => {
+const useSearchEntity = () => useQuery('settings:search', async () => {
   const [providers, active] = await Promise.all([
     api.searchProviders().catch(() => [] as SearchProviderInfo[]),
     api.searchActive().catch(() => ({} as Record<string, string[]>)),
   ])
   return { providers, active }
 }, { persist: true })
-const useRuntimes = () => useCachedData('settings:agent-runtimes', () => api.agentRuntimes().catch(() => null as AgentRuntime[] | null), { persist: true })
-const useProviders = () => useCachedData('settings:providers', () => api.settingsProviders().catch(() => [] as SettingsProvider[]), { persist: true })
-const useDashCfg = () => useCachedData('settings:dashboard-config', () => api.dashboardConfig().catch(() => null as DashboardConfig | null), { persist: true })
+const useRuntimes = () => useQuery('settings:agent-runtimes', () => api.agentRuntimes().catch(() => null as AgentRuntime[] | null), { persist: true })
+const useProviders = () => useQuery('settings:providers', () => api.settingsProviders().catch(() => [] as SettingsProvider[]), { persist: true })
+const useDashCfg = () => useQuery('settings:dashboard-config', () => api.dashboardConfig().catch(() => null as DashboardConfig | null), { persist: true })
 // The swallow here is what POISONED the shared `'settings:inbox'` key: it resolved with `null`, which the
 // hook then persisted, so both inbox-settings panels seeded `null` from cache and read it as loaded.
-const useInbox = () => useCachedData('settings:inbox', () => api.inboxSettings(), { persist: true })
+const useInbox = () => useQuery('settings:inbox', () => api.inboxSettings(), { persist: true })
 // 🔴 NO `.catch(() => [])` HERE EITHER, and the reason is subtler than one surface's empty state:
-// `useCachedData` caches by KEY, and this hook shares the `'apps'` key with `#/apps`. Swallowing the
+// `useQuery` caches by KEY, and this hook shares the `'apps'` key with `#/apps`. Swallowing the
 // rejection made this call RESOLVE with `[]`, which the hook then persisted to sessionStorage — so
 // `#/apps` read `[]` as a successful value and its `data === undefined && error` branch could never
 // fire, even after that surface stopped swallowing. Measured: `{appsUndef: false, appsErr: ApiError,
 // n: 0}` on the failing render. One swallowing caller defeats every other consumer of the same key.
-const useApps = () => useCachedData('apps', () => api.apps(), { persist: true })
-const useNotif = () => useCachedData('settings:notification-settings', () => api.notificationSettings().catch(() => null as NotificationSettings | null), { persist: true })
-const useUpdates = () => useCachedData('settings:update-check', () => api.updateCheck().catch(() => null as UpdateCheck | null), { persist: true })
-const usePromptBindings = () => useCachedData('settings:prompt-bindings', () => api.promptBindings().catch(() => null as PromptBindings | null), { persist: true })
-const useDurability = () => useCachedData('settings:durability-card', async () => {
+const useApps = () => useQuery('apps', () => api.apps(), { persist: true })
+const useNotif = () => useQuery('settings:notification-settings', () => api.notificationSettings().catch(() => null as NotificationSettings | null), { persist: true })
+const useUpdates = () => useQuery('settings:update-check', () => api.updateCheck().catch(() => null as UpdateCheck | null), { persist: true })
+const usePromptBindings = () => useQuery('settings:prompt-bindings', () => api.promptBindings().catch(() => null as PromptBindings | null), { persist: true })
+const useDurability = () => useQuery('settings:durability-card', async () => {
   const [status, snaps] = await Promise.all([
     api.durabilityStatus().catch(() => null),
     api.durabilityArchive().catch(() => null),
@@ -108,10 +108,10 @@ const useDurability = () => useCachedData('settings:durability-card', async () =
 // Consequence, stated: on failure this tile now stays in its `loading` shimmer instead of claiming
 // "0 archived sessions". Every hub tile turns a failure into a permanent shimmer — one idiom, ~30
 // tiles, logged as its own family rather than fixed inside this change.
-const useArchives = () => useCachedData('settings:archives', () => api.sessionArchives(), { persist: true })
-const useAudit = () => useCachedData('settings:audit-verify', () => api.auditVerify().catch(() => null as SelVerify | null), { persist: false })
-const useLogLevel = () => useCachedData('settings:log-level', () => api.logLevel().catch(() => null as string | null), { persist: true }).data
-const useVoice = () => useCachedData('settings:voice', async () => {
+const useArchives = () => useQuery('settings:archives', () => api.sessionArchives(), { persist: true })
+const useAudit = () => useQuery('settings:audit-verify', () => api.auditVerify().catch(() => null as SelVerify | null), { persist: false })
+const useLogLevel = () => useQuery('settings:log-level', () => api.logLevel().catch(() => null as string | null), { persist: true }).data
+const useVoice = () => useQuery('settings:voice', async () => {
   const [active, stt, tts] = await Promise.all([
     api.modelsActive().catch(() => ({} as Record<string, string[]>)),
     api.useCaseSettings('stt').catch(() => ({} as Record<string, unknown>)),
@@ -127,28 +127,28 @@ const useVoice = () => useCachedData('settings:voice', async () => {
 //   hub → the panel       cache="{}"   → **2 switches, no alert**                🔴 its fix was inert
 //
 // The tile can now fail, so it carries the failure line the other four tiles got in #1194.
-const useLegibility = () => useCachedData('settings:legibility', () =>
+const useLegibility = () => useQuery('settings:legibility', () =>
   api.personalclawConfig().then((c) => (c.legibility ?? {}) as Record<string, unknown>), { persist: true })
 // The `.catch(() => null)` here resolved the fetcher, so `loading` (`d === undefined`) went false
 // and the card rendered `{d && …}` = NOTHING: a blank health card, which on a health surface reads
 // as "nothing to report". Let the rejection through and say we could not check.
-const useDoctor = () => useCachedData('settings:doctor', () => api.doctor(), { persist: false })
+const useDoctor = () => useQuery('settings:doctor', () => api.doctor(), { persist: false })
 // Same shape as the doctor tile above, on a SAFETY control: the swallowed rejection resolved to
 // `null`, so the card stopped "loading" and rendered nothing at all — no "Normal operation", no
 // incident pill. On the one card that says whether unattended work is suspended, blank is not an
 // answer. (`toolsSavings` below keeps its catch: a missing SAVINGS number is genuinely "no data".)
-const useIncident = () => useCachedData('settings:incident', () => api.incident(), { persist: true })
+const useIncident = () => useQuery('settings:incident', () => api.incident(), { persist: true })
 // A SEPARATE key from the panel's `settings:devices` (like `settings:durability-card`): this one
 // swallows a read failure into `null` so the card can say "couldn't check", while the panel needs
 // the raw error to render `LoadError`. One key with two fetchers would make which behaviour you get
 // depend on which surface mounted first.
-const useDevices = () => useCachedData('settings:devices-card',
+const useDevices = () => useQuery('settings:devices-card',
   () => api.devices().catch(() => null as DeviceRec[] | null), { persist: true })
 // Same story: `#/settings/tool-output` reads the error now, and this tile shares its key.
-const useProjectionRules = () => useCachedData('settings:projection-rules', () => api.projectionRules(), { persist: true })
-const useToolsSavings = () => useCachedData('settings:tools-savings', () => api.toolsSavings().catch(() => null as ToolsSavings | null), { persist: true })
-const useFeedbackProducers = () => useCachedData('settings:feedback-producers', () => api.feedbackProducers().catch(() => null), { persist: false })
-const useAgentDefaults = () => useCachedData('settings:agent-defaults', async () => {
+const useProjectionRules = () => useQuery('settings:projection-rules', () => api.projectionRules(), { persist: true })
+const useToolsSavings = () => useQuery('settings:tools-savings', () => api.toolsSavings().catch(() => null as ToolsSavings | null), { persist: true })
+const useFeedbackProducers = () => useQuery('settings:feedback-producers', () => api.feedbackProducers().catch(() => null), { persist: false })
+const useAgentDefaults = () => useQuery('settings:agent-defaults', async () => {
   const [cfg, agents] = await Promise.all([
     api.personalclawConfig().then((c) => (c.agent ?? {}) as Record<string, unknown>).catch(() => ({} as Record<string, unknown>)),
     api.agents().then((a) => a.default_agent).catch(() => ''),
@@ -164,14 +164,19 @@ const useAgentDefaults = () => useCachedData('settings:agent-defaults', async ()
  *  rather than as a write the server refused. Reconciling is not the same as reporting. The
  *  server's own message carries the reason (it usually names the field), so no per-tile copy is
  *  invented here — the same funnel every other failed action in the app uses. */
-async function mutate(fn: () => Promise<unknown>, ...invalidateKeys: string[]) {
+async function mutate(fn: () => Promise<unknown>, ...affects: CacheKeySpec[]) {
   try {
     await fn()
   } catch (e) {
     notify(`Couldn't save that change: ${String((e as Error)?.message || e)}`, 'error')
   }
   // Runs on both paths on purpose: after a failure the re-read is what makes the control honest.
-  for (const k of invalidateKeys) invalidateCache(k)
+  //
+  // `invalidateSpecs` is the one data layer's entry point, so the busted keys reach every
+  // MOUNTED reader — not just the widget that saved. Before the layer existed each tile called
+  // its own `refresh()` beside its bust, so a second surface reading the same config kept
+  // painting the pre-save value until its own next mount.
+  invalidateSpecs(affects)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -231,12 +236,12 @@ export const SETTINGS_WIDGETS: SettingsWidget[] = [
     description: 'Message behavior, history, and session preferences.',
     useSearchText() { const { data } = useDashCfg(); const c = data; return `chat message session restore history send enter timestamps ${c ? `restore ${c.restore_sessions} send-on-enter ${c.send_on_enter} timestamps ${c.show_timestamps} density ${c.widget_density}` : ''}` },
     render(query, go) {
-      const { data: c, refresh } = useDashCfg()
+      const { data: c, refresh, stale: cStale } = useDashCfg()
       const save = (patch: Record<string, unknown>) => mutate(
         () => api.saveDashboardConfig(patch).then(refresh), 'settings:dashboard-config',
       )
       return (
-        <BentoCard icon={MessageSquare} title="Chat" query={query} onClick={() => go('chat')} loading={c === undefined} rows={4}>
+        <BentoCard icon={MessageSquare} title="Chat" query={query} onClick={() => go('chat')} loading={c === undefined} rows={4} stale={cStale}>
           {c && <KVList query={query} rows={[
             { k: 'Restore sessions', control: true, v: <Switch on={c.restore_sessions} label="Restore sessions" onToggle={(v) => save({ restore_sessions: v })} /> },
             { k: 'Send on Enter', control: true, v: <Switch on={c.send_on_enter} label="Send on Enter" onToggle={(v) => save({ send_on_enter: v })} /> },
@@ -259,11 +264,11 @@ export const SETTINGS_WIDGETS: SettingsWidget[] = [
       return `providers backends credentials runtimes enabled ${enabled} ${runtimes}`
     },
     render(query, go) {
-      const { data: provs } = useProviders(); const { data: rt } = useRuntimes()
+      const { data: provs, stale: provsStale } = useProviders(); const { data: rt } = useRuntimes()
       const enabled = (provs ?? []).filter((p) => p.enabled)
       const ready = (rt ?? []).filter((r) => r.ready).length
       return (
-        <BentoCard icon={Plug} title="Providers" query={query} onClick={() => go('providers')} loading={provs === undefined}>
+        <BentoCard icon={Plug} title="Providers" query={query} onClick={() => go('providers')} loading={provs === undefined} stale={provsStale}>
           <div className="flex items-start justify-between gap-3">
             <BigStat value={enabled.length} caption="enabled" />
             {rt && <BigStat value={`${ready}/${rt.length}`} caption="runtimes ready" tone={ready ? 'var(--color-ok)' : undefined} />}
@@ -286,10 +291,10 @@ export const SETTINGS_WIDGETS: SettingsWidget[] = [
       return `models bindings use case ${parts.join(' ')}`
     },
     render(query, go) {
-      const { data: active } = useModelsActive()
+      const { data: active, stale: activeStale } = useModelsActive()
       const CORE = [['chat', 'Chat'], ['embedding', 'Embed'], ['stt', 'STT'], ['tts', 'TTS']] as const
       return (
-        <BentoCard icon={Cpu} title="Models" query={query} onClick={() => go('models')} loading={active === undefined}>
+        <BentoCard icon={Cpu} title="Models" query={query} onClick={() => go('models')} loading={active === undefined} stale={activeStale}>
           {active && <KVList query={query} rows={CORE.map(([uc, label]) => {
             const bound = (active[uc] ?? [])[0]
             return { k: label, mono: true, vText: bound ? shortModel(bound) : '—', v: bound
@@ -309,10 +314,10 @@ export const SETTINGS_WIDGETS: SettingsWidget[] = [
       return `routing efficiency telemetry pareto frontier model latency cost success p50 p95 ${data ? `${data.length} models ${frontier} frontier` : ''}`
     },
     render(query, go) {
-      const { data } = useRoutingTelemetry()
+      const { data, stale: isStalePaint } = useRoutingTelemetry()
       const frontier = (data ?? []).filter((r) => r.on_frontier).length
       return (
-        <BentoCard icon={Route} title="Routing & Efficiency" query={query} onClick={() => go('routing')} loading={data === undefined}>
+        <BentoCard icon={Route} title="Routing & Efficiency" query={query} onClick={() => go('routing')} loading={data === undefined} stale={isStalePaint}>
           {data === null || (data && data.length === 0)
             ? <div className="text-on-surface-low text-[0.8125rem]">Per-model success, latency, and cost land here as unattended work runs — reasoning, background, loops and orchestration — showing which is most efficient.</div>
             : data && <><BigStat value={data.length} caption={data.length === 1 ? 'model measured' : 'models measured'} />
@@ -333,11 +338,11 @@ export const SETTINGS_WIDGETS: SettingsWidget[] = [
       return `search web provider use case duckduckgo tavily searxng exa perplexity brave ${provs} ${binds}`
     },
     render(query, go) {
-      const { data } = useSearchEntity()
+      const { data, stale: isStalePaint } = useSearchEntity()
       const USE_CASES = [['search-general', 'General'], ['search-news', 'News'], ['fetch-article', 'Fetch']] as const
       const active = data?.active
       return (
-        <BentoCard icon={Search} title="Search" query={query} onClick={() => go('search')} loading={data === undefined}>
+        <BentoCard icon={Search} title="Search" query={query} onClick={() => go('search')} loading={data === undefined} stale={isStalePaint}>
           {data && (data.providers.length === 0
             ? <div className="text-on-surface-low text-[0.8125rem]">DuckDuckGo (keyless) is the default; add a provider in Providers to upgrade.</div>
             : <KVList query={query} rows={USE_CASES.map(([uc, label]) => {
@@ -359,13 +364,13 @@ export const SETTINGS_WIDGETS: SettingsWidget[] = [
       return `prompts system prompt context binding ${names}`
     },
     render(query, go) {
-      const { data: b } = usePromptBindings()
+      const { data: b, stale: bStale } = usePromptBindings()
       const rows = (b?.bindings ?? []).slice(0, 4).map((x) => {
         const name = (x.ref || x.effective_ref || 'Default').replace(/\.md$/, '')
         return { k: x.use_case.replace(/_/g, ' '), v: name, vText: name, mono: false }
       })
       return (
-        <BentoCard icon={FileText} title="Prompts" query={query} onClick={() => go('prompts')} loading={b === undefined}>
+        <BentoCard icon={FileText} title="Prompts" query={query} onClick={() => go('prompts')} loading={b === undefined} stale={bStale}>
           {b && (rows.length ? <KVList query={query} rows={rows} /> : <div className="text-on-surface-low text-[0.8125rem]">All contexts use the default prompt.</div>)}
         </BentoCard>
       )
@@ -376,10 +381,10 @@ export const SETTINGS_WIDGETS: SettingsWidget[] = [
     description: 'Semantic + episodic memory, consolidation, and retention.',
     useSearchText() { const { data: m } = useMemoryStats(); return `memory semantic episodic events embedded retention ${m ? `${m.semantic_active} semantic ${m.episodic_active} episodic ${m.embedding_provider ?? ''}` : ''}` },
     render(query, go) {
-      const { data: m } = useMemoryStats()
+      const { data: m, stale: mStale } = useMemoryStats()
       return (
         <BentoCard icon={Database} title="Memory" query={query} onClick={() => go('memory')} loading={m === undefined}
-          footer={m?.embedding_provider ? <>Embedder: <span className="font-mono text-on-surface-var">{m.embedding_provider}</span></> : undefined}>
+          footer={m?.embedding_provider ? <>Embedder: <span className="font-mono text-on-surface-var">{m.embedding_provider}</span></> : undefined} stale={mStale}>
           {m && <div className="flex flex-wrap items-end gap-x-5 gap-y-2">
             <BigStat value={m.semantic_active} caption="semantic" />
             <BigStat value={m.episodic_active} caption="episodic" />
@@ -394,14 +399,14 @@ export const SETTINGS_WIDGETS: SettingsWidget[] = [
     description: 'Default agent, approval mode, and execution settings.',
     useSearchText() { const { data } = useAgentDefaults(); const c = data?.cfg ?? {}; return `agent defaults default agent approval sandbox subagents ${data?.defaultAgent ?? ''} ${String(c.approval_mode ?? '')} ${c.yolo ? 'yolo' : ''}` },
     render(query, go) {
-      const { data, refresh } = useAgentDefaults()
+      const { data, refresh, stale: isStalePaint } = useAgentDefaults()
       const c = (data?.cfg ?? {}) as Record<string, unknown>
       const approval = String(c.approval_mode ?? 'interactive')
       const setCfg = (key: string, value: unknown) => mutate(
         () => api.patchConfig(`agent.${key}`, value).then(refresh), 'settings:agent-defaults',
       )
       return (
-        <BentoCard icon={Bot} title="Agent defaults" query={query} onClick={() => go('agent')} loading={data === undefined} rows={3}>
+        <BentoCard icon={Bot} title="Agent defaults" query={query} onClick={() => go('agent')} loading={data === undefined} rows={3} stale={isStalePaint}>
           {data && <KVList query={query} rows={[
             { k: 'Default agent', v: data.defaultAgent || '—', vText: data.defaultAgent || '—' },
             { k: 'Approval', control: true, v: <InlineSelect value={approval} ariaLabel="Approval mode" onPick={(v) => setCfg('approval_mode', v)}
@@ -417,7 +422,7 @@ export const SETTINGS_WIDGETS: SettingsWidget[] = [
     description: 'Speech-to-text, text-to-speech, and the vocabulary that biases all transcription.',
     useSearchText() { const { data } = useVoice(); const stt = !!data?.stt?.enabled; const tts = !!data?.tts?.enabled; return `voice speech text stt tts streaming speaking speed transcription vocabulary lexicon corrections terms ${stt ? 'stt on' : 'stt off'} ${tts ? 'tts on' : 'tts off'}` },
     render(query, go) {
-      const { data, refresh } = useVoice()
+      const { data, refresh, stale: isStalePaint } = useVoice()
       // Enabling needs a bound model (same gate as the subpage). Without one, the
       // toggle is disabled and the card nudges the user into Speech & Transcription → Models.
       const toggle = (uc: 'stt' | 'tts', settings: Record<string, unknown>, next: boolean) => mutate(
@@ -426,7 +431,7 @@ export const SETTINGS_WIDGETS: SettingsWidget[] = [
       const sttBound = !!(data?.active?.['stt'] ?? [])[0]
       const ttsBound = !!(data?.active?.['tts'] ?? [])[0]
       return (
-        <BentoCard icon={AudioLines} title="Speech & Transcription" query={query} onClick={() => go('voice')} loading={data === undefined} rows={2}>
+        <BentoCard icon={AudioLines} title="Speech & Transcription" query={query} onClick={() => go('voice')} loading={data === undefined} rows={2} stale={isStalePaint}>
           {/* 🔴 THE COMMENT ABOVE PROMISED A NUDGE THE MARKUP NEVER RENDERED. With no bound model these
               two rows showed a DISABLED switch and nothing else — `Switch` takes no reason prop, so a
               user (and a screen reader) got "Speech-to-text, dimmed" with no way to learn that a model
@@ -455,9 +460,9 @@ export const SETTINGS_WIDGETS: SettingsWidget[] = [
     render(query, go) {
       // Alert keywords moved to the notification rules matrix (plan 42 S3), so this card
       // now surfaces what the inbox itself still owns: how long items are kept.
-      const { data: s, error: inboxErr, refresh } = useInbox()
+      const { data: s, error: inboxErr, stale: inboxStale, refresh } = useInbox()
       return (
-        <BentoCard icon={Inbox} title="Inbox" query={query} onClick={() => go('inbox')} loading={s === undefined && !inboxErr} rows={2}>
+        <BentoCard icon={Inbox} title="Inbox" query={query} onClick={() => go('inbox')} loading={s === undefined && !inboxErr} stale={inboxStale} rows={2}>
           {/* A tile that shimmers forever is the same lie in miniature — say it failed instead. */}
           {!s && Boolean(inboxErr) && <div className="text-on-surface-low text-[0.75rem]">Couldn&rsquo;t load inbox settings.</div>}
           {s && <>
@@ -479,12 +484,12 @@ export const SETTINGS_WIDGETS: SettingsWidget[] = [
     description: 'Mute, quiet hours, and severity filtering.',
     useSearchText() { const { data: s } = useNotif(); return `notifications quiet hours severity mute ${s ? `${s.min_severity} ${s.mute_all ? 'muted' : ''} ${s.quiet_hours_enabled ? 'quiet hours' : ''}` : ''}` },
     render(query, go) {
-      const { data: s, refresh } = useNotif()
+      const { data: s, refresh, stale: sStale } = useNotif()
       const save = (patch: Record<string, unknown>) => mutate(
         () => api.saveNotificationSettings(patch).then(refresh), 'settings:notification-settings',
       )
       return (
-        <BentoCard icon={Bell} title="Notifications" query={query} onClick={() => go('notifications')} loading={s === undefined} rows={3}>
+        <BentoCard icon={Bell} title="Notifications" query={query} onClick={() => go('notifications')} loading={s === undefined} rows={3} stale={sStale}>
           {s && <KVList query={query} rows={[
             { k: 'Delivery', control: true, v: <Switch on={!s.mute_all} label="Deliver notifications" onToggle={(v) => save({ mute_all: !v })} /> },
             { k: 'Min severity', control: true, v: <SegToggle value={s.min_severity} onPick={(v) => save({ min_severity: v })} ariaLabel="Min severity"
@@ -504,11 +509,11 @@ export const SETTINGS_WIDGETS: SettingsWidget[] = [
       return `apps installed extensions settings configure ${nonProvider.map((a) => a.displayName).join(' ')}`
     },
     render(query, go) {
-      const { data, error: appsErr } = useApps()
+      const { data, error: appsErr, stale: isStalePaint } = useApps()
       const nonProvider = (data ?? []).filter((a) => !a.isProvider)
       const configurable = nonProvider.filter((a) => a.hasConfig).length
       return (
-        <BentoCard icon={Blocks} title="Apps" query={query} onClick={() => go('apps')} loading={data === undefined && !appsErr}>
+        <BentoCard icon={Blocks} title="Apps" query={query} onClick={() => go('apps')} loading={data === undefined && !appsErr} stale={isStalePaint}>
           {/* Same shape as the Inbox tile: a tile that shimmers forever is the same lie in miniature. */}
           {!data && Boolean(appsErr) && <div className="text-on-surface-low text-[0.75rem]">Couldn&rsquo;t load your apps.</div>}
           {data && <>
@@ -527,9 +532,9 @@ export const SETTINGS_WIDGETS: SettingsWidget[] = [
     description: 'Enforcement posture and defense layers.',
     useSearchText() { const { data: s } = useSecurity(); return `security enforcement denied commands suspicious patterns redaction tool schemas ${s ? `${s.denied_commands} denied ${s.suspicious_patterns} suspicious` : ''}` },
     render(query, go) {
-      const { data: s } = useSecurity()
+      const { data: s, stale: sStale } = useSecurity()
       return (
-        <BentoCard icon={Shield} title="Security" query={query} onClick={() => go('security')} loading={s === undefined}>
+        <BentoCard icon={Shield} title="Security" query={query} onClick={() => go('security')} loading={s === undefined} stale={sStale}>
           {s && <>
             <BigStat value={s.denied_commands} caption="denied-command rules" />
             <div className="mt-2"><KVList query={query} rows={[
@@ -547,9 +552,9 @@ export const SETTINGS_WIDGETS: SettingsWidget[] = [
     description: 'The live security-event log stream.',
     useSearchText() { return 'audit log security event chain tamper evident verify' },
     render(query, go) {
-      const { data: v } = useAudit()
+      const { data: v, stale: vStale } = useAudit()
       return (
-        <BentoCard icon={ScrollText} title="Audit log" query={query} onClick={() => go('audit')} loading={v === undefined}>
+        <BentoCard icon={ScrollText} title="Audit log" query={query} onClick={() => go('audit')} loading={v === undefined} stale={vStale}>
           {v && (v.ok
             ? <><StatusPill label="Chain intact" tone="ok" />{typeof v.checked === 'number' && <div className="mt-1.5 text-on-surface-low text-[0.75rem]">{v.checked} events verified</div>}</>
             : <><StatusPill label="Chain broken" tone="warn" />{(v.error || v.tampered) && <div className="mt-1.5 text-on-surface-low text-[0.75rem]">{v.error || `${v.tampered} altered`}</div>}</>)}
@@ -580,9 +585,9 @@ export const SETTINGS_WIDGETS: SettingsWidget[] = [
       return `doctor health probes diagnostics memory channels local models apps serving symlink breakers ${d ? (d.ok ? 'healthy ok' : `degraded ${failed}`) : ''}`
     },
     render(query, go) {
-      const { data: d, error: dErr } = useDoctor()
+      const { data: d, error: dErr, stale: dStale } = useDoctor()
       return (
-        <BentoCard icon={Stethoscope} title="Doctor" query={query} onClick={() => go('doctor')} loading={d === undefined && !dErr}>
+        <BentoCard icon={Stethoscope} title="Doctor" query={query} onClick={() => go('doctor')} loading={d === undefined && !dErr} stale={dStale}>
           {!d && dErr
             ? <StatusPill label="Couldn't check" tone="warn" />
             : d && (d.ok
@@ -606,9 +611,9 @@ export const SETTINGS_WIDGETS: SettingsWidget[] = [
       return `devices paired device phone tablet browser desktop pairing code qr revoke lock out last seen session ${d ? `${d.length} paired ${d.map((x) => x.name).join(' ')}` : ''}`
     },
     render(query, go) {
-      const { data: d, error: dErr } = useDevices()
+      const { data: d, error: dErr, stale: dStale } = useDevices()
       return (
-        <BentoCard icon={MonitorSmartphone} title="Devices" query={query} onClick={() => go('devices')} loading={d === undefined && !dErr}>
+        <BentoCard icon={MonitorSmartphone} title="Devices" query={query} onClick={() => go('devices')} loading={d === undefined && !dErr} stale={dStale}>
           {!d
             ? <StatusPill label="Couldn't check" tone="warn" />
             : d.length === 0
@@ -627,9 +632,9 @@ export const SETTINGS_WIDGETS: SettingsWidget[] = [
     description: 'Autonomy safety floor — incident kill switch, spend budgets, and outbound scanning.',
     useSearchText() { const { data: i } = useIncident(); return `guardrails autonomy safety incident kill switch budgets spend scan denylist ${i ? (i.active ? 'incident active suspended' : 'normal') : ''}` },
     render(query, go) {
-      const { data: i, error: iErr } = useIncident()
+      const { data: i, error: iErr, stale: iStale } = useIncident()
       return (
-        <BentoCard icon={ShieldAlert} title="Guardrails" query={query} onClick={() => go('guardrails')} loading={i === undefined && !iErr}>
+        <BentoCard icon={ShieldAlert} title="Guardrails" query={query} onClick={() => go('guardrails')} loading={i === undefined && !iErr} stale={iStale}>
           {!i && iErr
             ? <StatusPill label="Couldn't check" tone="warn" />
             : i && (i.active
@@ -648,12 +653,12 @@ export const SETTINGS_WIDGETS: SettingsWidget[] = [
     // rather than as its own tile; a surface nobody can search for is one nobody finds.
     useSearchText() { const { data: c } = useLegibility(); return `legibility always-on conventions always on rules injected every session project instructions overview provenance discover tips tour features context adapters claude.md agents.md cursorrules ${c ? `tips ${!!c.discover_tips} context ${!!c.context_adapters}` : ''}` },
     render(query, go) {
-      const { data: c, error: legErr, refresh } = useLegibility()
+      const { data: c, error: legErr, refresh, stale: cStale } = useLegibility()
       const save = (key: string, value: boolean) => mutate(
         () => api.patchConfig(`legibility.${key}`, value).then(refresh), 'settings:legibility',
       )
       return (
-        <BentoCard icon={Compass} title="Legibility" query={query} onClick={() => go('legibility')} loading={c === undefined && !legErr} rows={2}>
+        <BentoCard icon={Compass} title="Legibility" query={query} onClick={() => go('legibility')} loading={c === undefined && !legErr} rows={2} stale={cStale}>
           {/* This tile carries live SWITCHES, so a fabricated `{}` did more than mis-state a count — it
               offered two toggles whose "off" position was invented. #1194's line, fifth adopter. */}
           {!c && Boolean(legErr) && <div className="text-on-surface-low text-[0.75rem]">Couldn&rsquo;t load your legibility settings.</div>}
@@ -675,12 +680,12 @@ export const SETTINGS_WIDGETS: SettingsWidget[] = [
       return `tool output projection rules trim shrink token juice tokenjuice savings saved tokens compressor regex marker strategy ${saved} ${(r ?? []).map((x) => `${x.name} ${x.strategy}`).join(' ')}`
     },
     render(query, go) {
-      const { data: rules, error: rulesErr } = useProjectionRules()
+      const { data: rules, error: rulesErr, stale: rulesStale } = useProjectionRules()
       const { data: savings } = useToolsSavings()
       const list = rules ?? []
       const savedTokens = savings?.saved_tokens_estimated ?? 0
       return (
-        <BentoCard icon={Scissors} title="Tool output" query={query} onClick={() => go('tool-output')} loading={rules === undefined && !rulesErr}>
+        <BentoCard icon={Scissors} title="Tool output" query={query} onClick={() => go('tool-output')} loading={rules === undefined && !rulesErr} stale={rulesStale}>
           {/* The savings meter is a SEPARATE read that keeps its own fallback, so it can still headline
               here while the rules read has failed — the failure line only speaks for the rules. */}
           {!rules && Boolean(rulesErr) && savedTokens === 0 && <div className="text-on-surface-low text-[0.75rem]">Couldn&rsquo;t load your projection rules.</div>}
@@ -710,12 +715,12 @@ export const SETTINGS_WIDGETS: SettingsWidget[] = [
       return `feedback thumbs accuracy judgment verdict up down retire suppress ${rows.map((r) => r.producer_id).join(' ')}`
     },
     render(query, go) {
-      const { data } = useFeedbackProducers()
+      const { data, stale: isStalePaint } = useFeedbackProducers()
       const rows = data?.producers ?? []
       const rated = rows.filter((r) => !r.collecting)
       const suppressed = rows.filter((r) => r.suppressed).length
       return (
-        <BentoCard icon={ThumbsUp} title="AI feedback" query={query} onClick={() => go('feedback')} loading={data === undefined}>
+        <BentoCard icon={ThumbsUp} title="AI feedback" query={query} onClick={() => go('feedback')} loading={data === undefined} stale={isStalePaint}>
           {rows.length === 0
             ? <div className="text-on-surface-low text-[0.8125rem]">👍/👎 on inbox triage, drafts, digests, and loop findings collect here per judgment source. A source that keeps missing stops surfacing.</div>
             : <><BigStat value={rows.length} caption={rows.length === 1 ? 'judgment source' : 'judgment sources'} />
@@ -735,10 +740,10 @@ export const SETTINGS_WIDGETS: SettingsWidget[] = [
       return `usage cost tokens spend dollars price budget model source ${data ? `${data.cost_usd} ${data.turns} turns` : ''}`
     },
     render(query, go) {
-      const { data } = useUsageToday()
+      const { data, stale: isStalePaint } = useUsageToday()
       const tokens = data ? (data.input_tokens || 0) + (data.output_tokens || 0) : 0
       return (
-        <BentoCard icon={Coins} title="Usage" query={query} onClick={() => go('usage')} loading={data === undefined}>
+        <BentoCard icon={Coins} title="Usage" query={query} onClick={() => go('usage')} loading={data === undefined} stale={isStalePaint}>
           {!data || data.turns === 0
             ? <div className="text-on-surface-low text-[0.8125rem]">Real cost + tokens for every turn — chat, subagents, loops, automations — land here once usage is recorded.</div>
             : <><BigStat value={data.priced ? (data.cost_usd >= 1 ? `$${data.cost_usd.toFixed(2)}` : `$${data.cost_usd.toFixed(4)}`) : 'unpriced'} caption="today" />
@@ -754,9 +759,9 @@ export const SETTINGS_WIDGETS: SettingsWidget[] = [
     description: 'Browse and inspect archived chat sessions.',
     useSearchText() { return 'archive archived chat sessions transcripts browse' },
     render(query, go) {
-      const { data: a, error: archErr } = useArchives()
+      const { data: a, error: archErr, stale: aStale } = useArchives()
       return (
-        <BentoCard icon={Archive} title="Archive" query={query} onClick={() => go('archive')} loading={a === undefined && !archErr}>
+        <BentoCard icon={Archive} title="Archive" query={query} onClick={() => go('archive')} loading={a === undefined && !archErr} stale={aStale}>
           {!a && Boolean(archErr) && <div className="text-on-surface-low text-[0.75rem]">Couldn&rsquo;t load your archives.</div>}
           {a && <BigStat value={a.length} caption={a.length === 1 ? 'archived session' : 'archived sessions'} />}
         </BentoCard>
@@ -786,10 +791,10 @@ export const SETTINGS_WIDGETS: SettingsWidget[] = [
       } ${s?.snaps ? `${s.snaps.archives.length} snapshots` : ''}`
     },
     render(query, go) {
-      const { data: s } = useDurability()
+      const { data: s, stale: sStale } = useDurability()
       const count = s?.snaps?.archives.length
       return (
-        <BentoCard icon={HardDriveDownload} title="Backups" query={query} onClick={() => go('durability')} loading={s === undefined}>
+        <BentoCard icon={HardDriveDownload} title="Backups" query={query} onClick={() => go('durability')} loading={s === undefined} stale={sStale}>
           {s && (count === undefined
             ? <div className="text-on-surface-var text-[0.8125rem]">Snapshot schedule and retention.</div>
             : <>
@@ -807,9 +812,9 @@ export const SETTINGS_WIDGETS: SettingsWidget[] = [
     description: 'Version, changelog, and update controls.',
     useSearchText() { const { data: u } = useUpdates(); return `updates version changelog upgrade ${u ? `${u.version ?? ''} ${u.available ? `update available ${u.latest ?? ''}` : 'up to date'} ${u.auto_update ? 'auto-update' : ''}` : ''}` },
     render(query, go) {
-      const { data: u, refresh } = useUpdates()
+      const { data: u, refresh, stale: uStale } = useUpdates()
       return (
-        <BentoCard icon={DownloadCloud} title="Updates" query={query} onClick={() => go('updates')} loading={u === undefined} rows={2}>
+        <BentoCard icon={DownloadCloud} title="Updates" query={query} onClick={() => go('updates')} loading={u === undefined} rows={2} stale={uStale}>
           {u && <>
             <div className="text-on-surface text-[0.9375rem] font-mono">{u.version || '—'}</div>
             <div className="mt-1.5">

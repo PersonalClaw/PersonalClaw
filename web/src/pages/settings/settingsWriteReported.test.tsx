@@ -92,7 +92,10 @@ describe('the shared settings mutation reports as well as reconciles', () => {
     // 🪤 The reconcile is the half that was already RIGHT: the invalidate must run after a failure
     // too, or the control keeps the value the server refused. Asserted by position, not by presence.
     const notifyAt = fn.indexOf('notify(')
-    const invalidateAt = fn.indexOf('invalidateCache(')
+    // DSC-14: the helper applies its callers' declared key list through the one data layer
+    // (`invalidateSpecs`) instead of looping `invalidateCache` itself, so the busted keys reach
+    // every MOUNTED reader of that config rather than only the tile that saved.
+    const invalidateAt = fn.indexOf('invalidateSpecs(')
     expect(invalidateAt, 'invalidate must come AFTER the catch block, i.e. on both paths')
       .toBeGreaterThan(notifyAt)
   })

@@ -15,7 +15,7 @@ import { IconButton } from '../../ui/IconButton'
 import { Button } from '../../ui/Button'
 import { Meter } from '../../ui/Meter'
 import { SearchField } from '../../ui/SearchField'
-import { useCachedData, invalidateCache } from '../../lib/useCachedData'
+import { useQuery, invalidateKeys } from '../../lib/data'
 import { confirm } from '../../ui/dialog'
 import { PanelHeader, Section, ToggleRow } from './settingsUI'
 import { notify } from '../../app/appSdk'
@@ -200,7 +200,7 @@ export function ModelsPanel() {
   // catalog and use-case bindings barely change, so on revisit (and after a full
   // reload) the page paints instantly from cache and revalidates in the background
   // — no "Loading…" flash. Both fetches batch into one cache key.
-  const { data, refresh } = useCachedData('settings:models', async () => {
+  const { data, refresh } = useQuery('settings:models', async () => {
     const [rows, active] = await Promise.all([
       api.modelsAvailable().catch(() => [] as { name: string; models?: AvailableModel[] }[]),
       api.modelsActive().catch(() => ({} as Record<string, string[]>)),
@@ -209,14 +209,14 @@ export function ModelsPanel() {
   }, { persist: true })
   // Per-provider breaker health for the chain-entry dots — refreshed on panel
   // mount (persist:false so a broken provider isn't shown green from cache).
-  const { data: health } = useCachedData('settings:models-health', () =>
+  const { data: health } = useQuery('settings:models-health', () =>
     api.modelsHealth().then((h) => h.providers).catch(() => [] as ProviderHealth[]), { persist: false })
   // The judge benchmark's tier recommendations (ES-4), so rebinding a judge to the cheapest
   // adequate tier is ONE action here rather than a hand-translation from a table on another
   // page. A failure or a 404 collapses to "no recommendation, no chip" — which is an honest
   // absence rather than a swallowed error, because the Learning page's Judge tiers panel is
   // the surface that owns reporting WHY there is none.
-  const { data: judgeRecs } = useCachedData('settings:judge-bench-recs', () =>
+  const { data: judgeRecs } = useQuery('settings:judge-bench-recs', () =>
     api.judgeBench().then((v) => v.recommendations).catch(() => [] as JudgeBenchRecommendation[]),
     { persist: false })
   const allModels = data?.allModels
@@ -224,7 +224,7 @@ export function ModelsPanel() {
 
   // A binding mutation invalidates the cached catalog so the next read revalidates
   // against the changed state instead of a stale snapshot.
-  const reloadActive = () => { invalidateCache('settings:models'); refresh() }
+  const reloadActive = () => { invalidateKeys('settings:models'); refresh() }
 
   if (!allModels) return <ListSkeleton rows={6} />
 
@@ -273,7 +273,7 @@ export function ModelsPanel() {
  *  reply carries a fresh pressure snapshot, so the bar moves as proof rather than the UI
  *  claiming the memory went. */
 function LoadedModelsSection() {
-  const { data, error: loadErr, refresh } = useCachedData('models:loaded', () =>
+  const { data, error: loadErr, refresh } = useQuery('models:loaded', () =>
     api.modelsLoaded(), { persist: false },
   )
   const [busy, setBusy] = useState('')
@@ -304,7 +304,7 @@ function LoadedModelsSection() {
       // byte-identical read and can also unload, so each left the other's cached copy describing memory
       // that is no longer held — visible on its next mount until the revalidation lands. One shared key
       // means there is only one answer to be wrong.
-      invalidateCache('models:loaded')
+      invalidateKeys('models:loaded')
       refresh()
     } catch (e) {
       notify(`Couldn't unload ${provider}: ${String((e as Error)?.message || e)}`, 'error')
@@ -384,7 +384,7 @@ function LoadedModelsSection() {
  *  no-op. Off is the diagnosis position — it stops the cache marker, and deliberately does
  *  NOT change the served prompt's ORDERING, which is an unconditional repair. */
 function PromptCacheSection() {
-  const { data, error: loadErr, refresh } = useCachedData('settings:models-prompt-cache', () =>
+  const { data, error: loadErr, refresh } = useQuery('settings:models-prompt-cache', () =>
     api.personalclawConfig().then((c) => (c.agent ?? {}) as Record<string, unknown>),
     { persist: true },
   )

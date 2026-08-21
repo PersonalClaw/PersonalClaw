@@ -6,7 +6,7 @@
 import { render, act, screen } from '@testing-library/react'
 import { describe, it, expect, vi, beforeAll, beforeEach } from 'vitest'
 import { PinnedTiles } from './PinnedTiles'
-import { invalidateCache } from '../../lib/useCachedData'
+import { invalidateKeys } from '../../lib/data'
 
 const BODY = '<div>sales: 42</div>'
 
@@ -71,12 +71,12 @@ beforeAll(() => {
 beforeEach(() => {
   refreshTile.mockReset()
   localStorage.clear()
-  // `useCachedData` holds a MODULE-LEVEL cache as well as the persisted one, so clearing
+  // `useQuery` holds a MODULE-LEVEL cache as well as the persisted one, so clearing
   // localStorage alone leaves the previous test's views/artifact served synchronously — which
   // made the manual-tile case render the live tile from two tests earlier and call the very
   // endpoint it asserts is never called.
-  invalidateCache('dashboard:views')
-  invalidateCache('dashboard:tile:sales')
+  invalidateKeys('dashboard:views')
+  invalidateKeys('dashboard:tile:sales')
 })
 
 async function paint() {

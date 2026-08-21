@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { api, type AutonomyLadder, type AutonomyReversal, type AutonomyType, type ProviderHealth } from '../../lib/api'
 import { notify } from '../../app/appSdk'
-import { useCachedData, invalidateCache } from '../../lib/useCachedData'
+import { useQuery, invalidateKeys } from '../../lib/data'
 import { PanelHeader, Section, Row, Field, SegPills, Toggle, SavedToast } from './settingsUI'
 import { NumberField } from '../../ui/forms'
 import { Button } from '../../ui/Button'
@@ -23,7 +23,7 @@ type GuardrailsCfg = {
 export function GuardrailsPanel() {
   const [cfg, setCfg] = useState<GuardrailsCfg | null>(null)
 
-  const { data, error: loadErr, refresh } = useCachedData('settings:guardrails', () =>
+  const { data, error: loadErr, refresh } = useQuery('settings:guardrails', () =>
     api.personalclawConfig().then((c) => (c.guardrails ?? {}) as GuardrailsCfg),
     { persist: true },
   )
@@ -104,9 +104,9 @@ export function GuardrailsPanel() {
  *  ladder would say "no automation has any autonomy" — a reassuring claim about a safety
  *  control, produced by a failed request. */
 function AutonomyLadderSection() {
-  const { data: ladder, error: loadErr, refresh } = useCachedData('autonomy:ladder', () => api.autonomyLadder(), { persist: true })
+  const { data: ladder, error: loadErr, refresh } = useQuery('autonomy:ladder', () => api.autonomyLadder(), { persist: true })
   const [busy, setBusy] = useState('')
-  const reload = () => { invalidateCache('autonomy:ladder'); refresh() }
+  const reload = () => { invalidateKeys('autonomy:ladder'); refresh() }
 
   // Eligible first (the only rows with a decision to make), then least autonomy first — a
   // type that drafts or asks is one the user may want to promote, while a row that already

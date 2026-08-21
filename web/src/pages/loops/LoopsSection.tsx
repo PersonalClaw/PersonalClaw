@@ -7,7 +7,7 @@ import { LoopCockpitPage } from './LoopCockpitPage'
 import { DesignCockpitPage } from './DesignCockpitPage'
 import type { RouteProps } from '../../app/useQueryState'
 import { api, type Loop } from '../../lib/api'
-import { invalidateCache } from '../../lib/useCachedData'
+import { invalidateKeys } from '../../lib/data'
 
 /** Goal navigation — URL-driven so loops are deep-linkable, shareable, and
  *  survive refresh (the user can re-open a loop by its link):
@@ -89,12 +89,12 @@ export function LoopsSection({ sub, navigate, query, setQuery }: RouteProps) {
   const reviewDraft = review || (resume?.status === 'review' && resume.loop.kind !== 'design' ? draftFromLoop(resume.loop) : null)
   if (reviewDraft) {
     // Invalidate the SWR list cache on both exits — the draft was persisted at create
-    // and launch flips ready→running, so the list (useCachedData('loops')) would else
+    // and launch flips ready→running, so the list (useQuery('loops')) would else
     // paint a stale snapshot (missing the draft / still 'ready') until its next poll.
     // Mirrors the Code section's fix + the list's own in-place mutations.
     return <LoopPlanReview draft={reviewDraft}
-      onBack={() => { setReview(null); setResume(null); invalidateCache('loops'); navigate('loops/history') }}
-      onLaunched={(id) => { setReview(null); setResume(null); invalidateCache('loops'); navigate(`loops/${id}`) }} />
+      onBack={() => { setReview(null); setResume(null); invalidateKeys('loops'); navigate('loops/history') }}
+      onLaunched={(id) => { setReview(null); setResume(null); invalidateKeys('loops'); navigate(`loops/${id}`) }} />
   }
 
   // #/loops/history → the goal list (history). A "new goal" button sits on top.
@@ -144,7 +144,7 @@ function CockpitRouter({ id, navigate, query, setQuery }: { id: string } & Pick<
   if (kind === 'design') {
     return <DesignCockpitPage id={id}
       onBack={() => navigate('loops/history')}
-      onDeleted={() => { invalidateCache('loops'); navigate('loops/history') }}
+      onDeleted={() => { invalidateKeys('loops'); navigate('loops/history') }}
       onOpenProject={(pid) => navigate(`projects/${pid}`)}
       // D4 agentic build: open a project-bound chat seeded to build/mix components for
       // THIS design system on the canvas. The seed hands the agent the loop id (so its
@@ -170,7 +170,7 @@ function CockpitRouter({ id, navigate, query, setQuery }: { id: string } & Pick<
     onBack={() => navigate('loops/history')}
     // Invalidate the cached list before navigating so the deleted loop doesn't ghost
     // in the list (SWR paints the stale snapshot on mount). Matches the Code fix.
-    onDeleted={() => { invalidateCache('loops'); navigate('loops/history') }}
+    onDeleted={() => { invalidateKeys('loops'); navigate('loops/history') }}
     onOpenArtifact={(slug) => navigate(`artifacts/${slug}`)}
     onOpenTask={(taskId) => navigate(`tasks?open=${encodeURIComponent(taskId)}`)}
     onOpenProject={(pid) => navigate(`projects/${pid}`)}
