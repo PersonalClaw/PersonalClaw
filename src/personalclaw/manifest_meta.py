@@ -747,6 +747,25 @@ TOOL_META: dict[str, dict[str, Any]] = {
             }
         ],
     },
+    "knowledge_structural": {
+        "response_type": "knowledge.structural.results",
+        "error_codes": [],
+        "examples": [
+            {
+                "summary": "What links to this item (traversal, not similarity)",
+                "args": {"verb": "links_to", "origin": "kn_abc123", "depth": 2},
+            },
+            {
+                "summary": "Everything under a tag subtree, ranked semantically within it",
+                "args": {
+                    "verb": "tag_subtree",
+                    "origin": "infrastructure",
+                    "depth": 3,
+                    "rank_query": "rollback procedure",
+                },
+            },
+        ],
+    },
     "knowledge_create": {
         "response_type": "knowledge.detail",
         "error_codes": [],
