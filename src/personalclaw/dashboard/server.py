@@ -1851,9 +1851,20 @@ async def start_dashboard(
                     request["app"] = a_app
         return await handler(request)  # type: ignore[operator]
 
+    # PL-9: the ONE place a client's declared API version is compared against the
+    # supported window. Placed immediately after no_cache and BEFORE csrf/token auth
+    # deliberately: a stale cached bundle whose session cookie is still valid should
+    # read "your build is too old, reload" rather than a 403 from a layer it would
+    # actually pass. It publishes nothing to a caller who declares nothing — the
+    # refusal only fires on an explicit out-of-window declaration — and its exemption
+    # list (healthz, the manifest, the pre-session front door, WS upgrades, and
+    # everything outside /api/) is enumerated with reasons in api_version_gate.py.
+    from personalclaw.dashboard.api_version_gate import api_version_middleware
+
     # Explicit middleware ordering — self-documenting and immune to future insertions
     app.middlewares[:] = [
         no_cache_middleware,
+        api_version_middleware(),
         *(
             [_dev_user_middleware]
             if _no_auth

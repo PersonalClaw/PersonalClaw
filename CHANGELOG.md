@@ -47,6 +47,20 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
   **And you are told, in the turn, which skill was reduced or refused and why** — with the
   numbers: this body is 42,458 tokens, its tier allows 3,000, call `skill_invoke` for the rest.
   Three outcomes, no fourth: admitted, reduced, refused.
+- **A stale browser tab now says it is stale instead of going blank.** The gateway has always
+  published an API version; nothing ever checked it, so a page left open across an upgrade — or a
+  cached bundle a service worker held onto — kept calling the new server with the old client's
+  assumptions and broke somewhere deep, on whichever field had quietly changed shape. The dashboard
+  now tells the gateway which version it was built for, the gateway compares it in one place, and a
+  version it cannot speak is refused with a sentence that names both versions and which side is out
+  of date: "this client was built for API version 1; this gateway speaks 2-3. Upgrade the client —
+  reload the page to fetch the current build." Every accepted request also comes back stamped with
+  the version it was treated as, so `curl -sD-` can answer "which contract am I on?" without
+  guessing. Nothing you rely on to *recover* is gated — the page itself, its assets, the login door,
+  the health probe and the manifest that publishes the version all answer as before — and a caller
+  that declares no version at all (a script, a `curl`) is treated as the oldest version still
+  supported rather than assumed current, so it keeps working today and is told plainly, rather than
+  breaking silently, on the day support for it ends.
 - **A turn that will not fit says so before it runs, and says what to do about it.** PersonalClaw
   used to find out a prompt was too big by sending it and reading the provider's error back — after
   you had already waited. The context is now measured against the bound model's real window *before*
