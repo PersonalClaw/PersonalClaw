@@ -21,6 +21,7 @@ import logging
 from pathlib import Path
 from typing import Any, cast
 
+from personalclaw import cancellation
 from personalclaw.agents.native import read_gate
 from personalclaw.tool_providers import result_store
 from personalclaw.tool_providers.base import (
@@ -1677,25 +1678,40 @@ class NativeBuiltinToolProvider(ToolProvider):
                 cwd=str(self._cwd),
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.STDOUT,
+                # Its own process group (PR2-12). Two reasons, both load-bearing:
+                # a stop (or a timeout) can then kill the WHOLE tree — `bash -lc` is
+                # a shell, and killing only the shell leaves its children running,
+                # holding the lock or the file handle the user pressed stop to release;
+                # and `os.killpg` is only SAFE on a child that leads its own group,
+                # since a child sharing our group would mean signalling the gateway.
+                # Implemented in C between fork and exec, so it is not the
+                # preexec_fn-in-a-threaded-process hazard.
+                start_new_session=True,
             )
-            try:
-                out, _ = await asyncio.wait_for(proc.communicate(), timeout=timeout)
-            except asyncio.TimeoutError:
-                proc.kill()
-                # Reap the killed child so it doesn't linger as a zombie (and asyncio
-                # doesn't warn about a still-pending transport) — matches the watchdog's
-                # _run_check / _commit_stage timeout handling.
+            # Track the child for the duration of the call, so a stop arriving mid-command
+            # reaps it. Unregistered on the way out (including on error), so a stop that
+            # arrives after the command finished finds nothing to kill.
+            with cancellation.track_child(proc):
                 try:
-                    await proc.wait()
-                except Exception:
-                    pass
-                return ToolResult(
-                    success=False,
-                    error=f"command timed out after {timeout:.0f}s",
-                    recovery_hints=[
-                        "The command exceeded the time limit. Narrow its scope or run it in the background."  # noqa: E501
-                    ],
-                )
+                    out, _ = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+                except asyncio.TimeoutError:
+                    # Same terminate-AND-reap path a stop uses — one kill mechanism, so
+                    # the timeout path cannot drift from the cancel path (and it now
+                    # reaps the shell's children too, which `proc.kill()` never did).
+                    await cancellation.terminate_and_reap(proc)
+                    return ToolResult(
+                        success=False,
+                        error=f"command timed out after {timeout:.0f}s",
+                        recovery_hints=[
+                            "The command exceeded the time limit. Narrow its scope or run it in the background."  # noqa: E501
+                        ],
+                    )
+                except asyncio.CancelledError:
+                    # The awaiting TASK was cancelled (a hard kill, a shutdown). The
+                    # child is not the task's to abandon: reap it before propagating,
+                    # or the command outlives the turn that started it.
+                    await cancellation.terminate_and_reap(proc)
+                    raise
         finally:
             if cleanup:
                 try:

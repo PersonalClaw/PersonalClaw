@@ -184,6 +184,17 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
   stays; a refusal stays a refusal, stated as fully and directly as before, because plainer prose is
   not softer prose. The state shows on the pill (including when an agent is what turned it on), so
   when the writing changes you can see what changed it.
+- **Stop actually stops.** Pressing stop mid-turn used to acknowledge the request and then let the
+  work carry on: the model request already in flight was awaited and its answer discarded, tool
+  calls already queued for that turn all ran anyway, a shell command kept going, and a spawned
+  subagent finished its whole task. Stop now reaches every one of those — the in-flight request is
+  cancelled at the provider, remaining queued calls are dropped without executing, a running
+  command's **whole process tree** is terminated and reaped (a shell's children were the ones most
+  likely to survive and keep holding a lock or a file handle), and spawned subagents are stopped
+  with it. A cancelled turn also keeps the tokens it spent instead of dropping them from your usage,
+  and the transcript distinguishes **you stopped this** from **this was cancelled**, because those
+  are different things to read a week later. Pressing stop when nothing is running remains a no-op
+  rather than corrupting the next turn.
 - **Know whether a model will actually run on your machine before you download it.** Every model in
   the download lists now carries a fit chip — green, yellow, red — computed from this machine's real
   memory budget: total RAM, minus a reserve held back for the OS and the inference runtime, plus a

@@ -803,3 +803,159 @@ Sessions 1-4 each ship independently; Session 1 alone is a Wave-0 win (the symli
   generators re-run byte-identical. No `web/` change (the new deficit rides the existing
   deficit list the panel already renders). CHANGELOG entry added — this changes WHEN
   maintenance runs, which is user-visible.
+
+## Execution log — PR2-12 (stop means stop: one propagated signal, reaped children)
+
+- **[2026-08-21][PR2-12] DONE.** Stop now reaches every layer a turn can be spending in.
+  The census below was taken on `origin/main` @ `df8cdb5e` *before* any change, and it is the
+  substance of this atom: four of the five layers the clause enumerates were **not reached at
+  all**, and the fifth only partly.
+
+  | layer | reached before? | evidence |
+  |---|---|---|
+  | mid-turn cancel path | partly | `chat_handlers.py:1030` set `session._stop_state` and `session.py:1829` called `provider.cancel`, but `_stop_state` had **no reader in `chat_runner.py`** — the running turn never learned a stop had happened. |
+  | in-flight model request | no | `runtime.py:1287` set a flag and returned `"acked"`; it never called `self._model.cancel()`, though every provider implements one (`openai.py:565`, `anthropic.py:788`, `acp_agent.py:605`). The loop at `:670` only noticed the flag when the *next* event arrived — awaited and discarded. |
+  | dispatched tool subprocess | no | `builtin_tools.py:1512` was reachable only by its own timeout, and that timeout's `proc.kill()` signalled one pid, so `bash -lc`'s children survived. |
+  | spawned subagent | no | `subagent.py` already had `_force_reap` (:768), `cancel`/`cancel_fanout` (:2246/:2263) and a parent-keyed enumeration (:987) — and **nothing called any of it on a stop**. |
+  | queued-but-unstarted calls | no | `runtime.py:740` iterated `tool_calls` with no cancel check in the body, so a mid-batch stop ran every remaining call. |
+
+  Two further defects the same reading turned up: **cancelled turns dropped their spend**
+  (`runtime.py:632` omitted tokens/cost while the sibling exit at `:723` carried them), and a
+  **stop after completion corrupted the next turn** (an unconditional `"acked"` set
+  `prev_turn_cancelled`, producing a bogus cancelled-turn preamble at `chat_runner.py:2056`).
+
+- **The primitive, and why it is not a second one.** `cancellation.CancelScope` extends the
+  **existing** provider seam (`async def cancel(*, wait_ack_timeout) -> CancelOutcome`) rather
+  than adding a parallel protocol, because a second notion of "cancelled" is precisely the
+  defect this atom is written against. `NativeAgentRuntime._cancelled` became a **read-only
+  property** over the scope, so all 12 existing readers work unchanged while every writer must
+  now name a cause. `CANCEL_USER` vs `CANCEL_INTERNAL` selects
+  `STOP_REASON_STOPPED_BY_USER` vs `STOP_REASON_CANCELLED` — one vocabulary in `acp/types.py`
+  with one membership predicate (`is_cancelled_stop`), re-exported through the SDK;
+  `chat_runner`'s four comparison sites use it instead of re-deriving the set.
+
+- **Reaping.** `bash` spawns with `start_new_session=True` so the child leads its own group,
+  then SIGTERM → grace → SIGKILL → **awaited `wait()`**. `killpg` fires only when
+  `os.getpgid(pid) == pid`, and never for pid ≤ 1 — that check is the rail that keeps a kill
+  out of the gateway's own process group. The timeout path now uses the same mechanism, so the
+  two cannot drift apart.
+
+- **Spawn census.** `tests/test_spawn_ceiling_audit.py`'s allowlists were used as the census of
+  what a stop must reach: exactly two per-turn agent-influenced async spawns (the bash tool,
+  and `sandbox_providers/none.py::_NoneHandle.exec`, which it funnels through). Everything else
+  in that file is a long-lived server, a sibling runtime, or operator-exempt.
+
+- **Proof that no child survives.** A real `bash -lc "sleep 300 & echo $! > pidfile; sleep 300"`
+  under a real runtime, driven in a task. The pid is taken from the scope's own registry (so it
+  is provably one we spawned), asserted `> 1` and neither our pid nor our group, both child and
+  grandchild confirmed alive, then stop, then `os.kill(pid, 0)` polled to `ProcessLookupError`
+  for both. A zombie still answers signal 0, so the probe does not forgive an unreaped child.
+  "No further dispatch" is a **count** on a real tool provider frozen at 0, not a flag.
+
+- **Falsifications (9).** Each mutated the live line, confirmed the mutation applied, observed
+  the red, and restored from a file copy. F1 remove the reap → "timed out waiting for the child
+  to be reaped". F2a/b drop the per-call cancel check → "queued calls must be dropped WITHOUT
+  executing". **F3 drop `start_new_session=True` → "timed out waiting for the grandchild to be
+  reaped"**, which is what makes the group kill load-bearing rather than decorative. F4 always
+  return `STOP_REASON_CANCELLED` → `'cancelled' == 'stopped_by_user'`. F5 restore the
+  token-less cancelled event → "both cycles' input tokens must be attributed". F6 restore the
+  unconditional `"acked"` → `'acked' == 'no_turn'`. F7 unwire `_stop_spawned_children` →
+  "stop_turn must reach the spawned children". F8 stop propagating to the inner model →
+  "cancel() must propagate to the model provider". F9 allow `killpg` on a non-leader → "a
+  non-leader must not be killpg'd".
+
+- **Gates.** `make lint` clean (mypy 944 files). Targeted 722 passed across
+  chat/native/subagent/session/spawn-audit/interrupt/dashboard, every path existence-checked
+  first. Full `make test` run **three times** on this tree: 23438/0 · 23437/1 · 23438/1.
+  Run 2's failure was ours — an idempotence test pinned `"acked"` on a second press, but once
+  the child dies the turn can legitimately finish, making `"no_turn"` correct; the invariant
+  test now accepts either and asserts no double-record and no re-abort, and a new deterministic
+  test pins the turn inside a blocking tool to cover the `"acked"` repeat branch
+  (stress-verified 4× concurrently, 39 passed each). Run 3's failure is the documented
+  `test_loop_worktree_sparse::TestPoolBound::test_batch_creates_every_worktree` sparse-cone
+  flake. **Real-home rail:** it failed on run 1 with 13 entries, so a throwaway `df8cdb5e`
+  worktree was run for control — base **also** fails the rail, with a **disjoint** 3-entry set,
+  and base additionally had 3 `test_subagent.py` failures that pass 66/66 in isolation. Runs 2
+  and 3 then reported "unchanged by this run". The residue is concurrent-agent contention
+  (~200 live worktrees), not this diff. No `web/` change: nothing in `web/src` reads
+  `stop_reason`, and the stop card's `state`/`outcome` are untouched;
+  `python -m personalclaw.manifest_reference` produced zero drift.
+
+- **Clause boundaries drawn deliberately, recorded rather than omitted.**
+  1. **The prior turn's follow-up-chip generation** is background spend, but it belongs to the
+     turn that already *completed* — it fires after the terminal event and is cancelled by the
+     next dispatch. Killing it would remove chips still on the user's screen to save ~200
+     tokens, and it is not one of the five enumerated layers.
+  2. **An ACP-backed session reports `cancelled`, not `stopped_by_user`.** Its stop reason
+     arrives on the wire, and deriving the distinction locally would mean a second bookkeeping
+     flag — the exact defect this atom targets. The ACP path satisfies the rest: `no_turn` when
+     idle, `session/cancel` aborts rather than awaits, and the hard-kill path reaches the
+     agent's whole process group. It cannot register the external agent's *own* tool
+     subprocesses, and no in-process mechanism could.
+  3. **Surfacing the `reached` report in the UI is left to PR2-13**, per this clause's own
+     wording ("the shape PR2-13 consumes"). `_resolve_stop_event` writes it onto the
+     `stop_event` message; `NativeAgentRuntime.last_stop_report()` is the accessor.
+
+- **Roadmap bookkeeping — no `dag.json` row to flip.** `main`'s
+  `docs/roadmap/atomic/dag.json` carries **11** `PLATFORM-RESILIENCE` atoms and PR2-12 is not
+  among them; the atom arrived with the rev-18 capability-gap set, which is still on an
+  unmerged branch. No row was invented — a mirrored status surface must not be flipped without
+  the row it mirrors. This entry is the record until that set lands.
+
+- **[2026-08-21][PR2-12] DEVIATION — re-homed onto HC-6's wave dispatcher.** HC-6 (concurrent
+  tool dispatch) merged while this atom's PR was open and **deleted `_execute_tool` outright**,
+  replacing the per-call `for call in tool_calls:` loop with a wave-based batch dispatcher
+  (`_execute_tool_batch` → `_execute_wave` → `_prefetch`/`_run_tool`, planned by the new
+  `agents/native/dispatch_plan.py`). The work was re-homed onto current `main` in a fresh branch
+  rather than rescued from the conflicted rebase. **The two PRs turned out to be compatible, and
+  the composition is not a compromise — it is stricter than either half alone.**
+
+  HC-6 groups calls whose resource reservations are provably disjoint into ordered *waves*,
+  overlaps only `_guard_and_invoke` within a wave, and replays the tail (breaker verdicts,
+  result card, history append) in the order the model asked for, so `self._messages` stays
+  byte-identical to a serial turn. PR2-12 needs a per-call check that drops a queued call
+  **without executing it**. The check therefore belongs **inside `_execute_wave`, at the
+  dispatch decision** — not around `_execute_tool_batch`:
+
+  * `_execute_wave` is entered once *per wave* and owns every site that can hand a call to an
+    invocation, so one check there covers the whole batch. A check one level up would fire once
+    for the batch and let waves 2..n run after the stop — the same shape as the original defect,
+    just at a coarser grain.
+  * It is decided **before the wave's cards are emitted**, so a call that never ran never claims
+    on screen that it did.
+  * It sits **beside `_poison_result`**, which HC-6 already wrote for "this call must not run,
+    and here is the observation that says why". Cancellation is the second instance of exactly
+    that shape, so it reuses the mechanism instead of minting a parallel one.
+  * A dropped call is answered by a dedicated `_drop_queued_call`, **not** by handing a
+    synthetic result to `_run_tool`. Going through `_run_tool` would feed the failure breaker,
+    the structural-loop detector and the procedural-memory outcome list: a cancellation is not
+    evidence about the tool, and three dropped calls sharing a breaker key would have started
+    appending warn notes and could trip the run-wide circuit.
+  * The same rule fires a second time in the tail replay for the one intra-wave case that can
+    still dispatch after an await: a call the breaker classified as not-to-be-invoked whose
+    streak a successful sibling has since cleared, which `_run_tool` would otherwise invoke
+    there and then.
+
+  Ordering is untouched — the check yields nothing, and a stop is monotone within a wave's
+  synchronous classification loop, so dropped calls are always a suffix and requested order
+  holds. HC-6's `test_native_concurrent_dispatch.py` byte-identical-history test passes
+  unchanged, and `python -m harness dispatch-bench` still reports `improved`.
+
+  **Test changes.** `test_the_batch_loop_checks_the_signal_before_each_call` became
+  `test_the_wave_loop_checks_the_signal_before_each_call`: it now asserts on
+  `_execute_wave`'s source (check precedes the first dispatch site) *and* that the check was not
+  hoisted into `_execute_tool_batch`. One test was added —
+  `test_a_stop_in_one_wave_drops_the_calls_in_every_later_wave` — because the original
+  behavioural test uses *unclassified* tools, which `dispatch_plan` serializes into waves of
+  one, so it cannot tell a per-call check from a per-wave one. The new test makes the plan
+  genuinely wide (an unclassified blocker alone in wave 1, then three `read_file` calls on three
+  different paths sharing wave 2), reads HC-6's own shipped timing line to prove `waves=2
+  widest=3` rather than keeping a second stopwatch, and asserts the whole wide wave was dropped
+  with zero dispatches and zero cards. Nothing was deleted. F2 (drop the per-call check) and F3
+  (drop `start_new_session=True`) were re-run on the new shape: F2 reds both the serial and the
+  wide-wave test, F3 still times out on the grandchild-reap assertion.
+
+  **Also carried across HC-6's own changes:** HC-6 removed the shared `_last_result_meta`
+  instance slot in favour of a caller-owned sink threaded through `_prefetch`/`_guard_and_invoke`
+  /`_invoke`. Nothing was reinstated; the drop path needs no meta. The timeout path still shares
+  the single kill mechanism, so the two cannot drift.
