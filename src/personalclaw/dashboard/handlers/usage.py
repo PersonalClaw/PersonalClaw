@@ -17,7 +17,8 @@ capped), the rollup is the recent per-session detail. Neither derives from the o
 fold claims to cover both axes.
 
 Read-only throughout — this is observation, never enforcement, so there is no write/mutate route
-here. Errors use the §2.2 ``{error:{code,message}}`` envelope.
+here. Errors use the shared ``{error:{code,message}}`` envelope
+(:func:`personalclaw.http_errors.json_error`).
 """
 
 from __future__ import annotations
@@ -27,6 +28,7 @@ import logging
 from aiohttp import web
 
 from personalclaw import usage_ledger as ul
+from personalclaw.http_errors import json_error
 from personalclaw.routing import usage as usage_fold
 
 logger = logging.getLogger(__name__)
@@ -34,10 +36,6 @@ logger = logging.getLogger(__name__)
 # The rollup grouping keys the ledger supports (mirrors usage_ledger._GROUP_KEYS);
 # validated at the route boundary so a bad ?group_by= is a clean 400, not a 500.
 _GROUP_KEYS = ("model", "source", "agent", "provider", "day")
-
-
-def _bad_request(message: str) -> web.Response:
-    return web.json_response({"error": {"code": "bad_request", "message": message}}, status=400)
 
 
 async def api_usage_rollup(request: web.Request) -> web.Response:
@@ -48,7 +46,11 @@ async def api_usage_rollup(request: web.Request) -> web.Response:
     restricts to one session key (empty = all)."""
     group_by = request.query.get("group_by", "model")
     if group_by not in _GROUP_KEYS:
-        return _bad_request(f"group_by must be one of {list(_GROUP_KEYS)}, got {group_by!r}")
+        return json_error(
+            "bad_request",
+            message=f"group_by must be one of {list(_GROUP_KEYS)}, got {group_by!r}",
+            status=400,
+        )
     since = request.query.get("since", "")
     until = request.query.get("until", "")
     session = request.query.get("session", "")
@@ -97,10 +99,18 @@ async def api_usage(request: web.Request) -> web.Response:
     """
     window = request.query.get("window", "day")
     if window not in usage_fold.WINDOW_DAYS:
-        return _bad_request(f"window must be one of {list(usage_fold.WINDOW_DAYS)}, got {window!r}")
+        return json_error(
+            "bad_request",
+            message=f"window must be one of {list(usage_fold.WINDOW_DAYS)}, got {window!r}",
+            status=400,
+        )
     group = request.query.get("group", "model")
     if group not in usage_fold.GROUPS:
-        return _bad_request(f"group must be one of {list(usage_fold.GROUPS)}, got {group!r}")
+        return json_error(
+            "bad_request",
+            message=f"group must be one of {list(usage_fold.GROUPS)}, got {group!r}",
+            status=400,
+        )
     try:
         from personalclaw.config.loader import config_dir
 

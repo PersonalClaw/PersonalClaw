@@ -38,6 +38,7 @@ from personalclaw.dashboard.token_auth import (
     secure_cookies,
     validate_token,
 )
+from personalclaw.http_errors import json_error
 
 logger = logging.getLogger(__name__)
 
@@ -122,15 +123,6 @@ def reset_lockouts() -> None:
     _FAILURES.clear()
 
 
-def _err(code: str, status: int, *, headers: dict[str, str] | None = None) -> web.Response:
-    """An error envelope carrying a stable code and nothing else.
-
-    No "unknown user" / "bad password" distinction, no echo of the submitted username: the
-    response body is one of four fixed strings, so it cannot be used to enumerate.
-    """
-    return web.json_response({"error": code}, status=status, headers=headers or {})
-
-
 async def api_auth_login(request: web.Request) -> web.Response:
     """POST /api/auth/login — verify the owner credential and mint a session cookie.
 
@@ -148,13 +140,13 @@ async def api_auth_login(request: web.Request) -> web.Response:
             source="auth",
             error="origin rejected",
         )
-        return _err(ERR_INVALID, 403)
+        return json_error(ERR_INVALID, status=403)
 
     if not bool(cfg.login_enabled):
         # Explicitly distinct from bad credentials: "this door does not exist here" is not
         # secret (the config is the owner's own), and conflating it would make a
         # misconfiguration indistinguishable from a typo.
-        return _err(ERR_NOT_ENABLED, 403)
+        return json_error(ERR_NOT_ENABLED, status=403)
 
     remaining = _lockout_remaining(ip, cfg)
     if remaining:
@@ -165,7 +157,7 @@ async def api_auth_login(request: web.Request) -> web.Response:
             source="auth",
             error=f"retry_after={remaining}s",
         )
-        return _err(ERR_LOCKED_OUT, 429, headers={"Retry-After": str(remaining)})
+        return json_error(ERR_LOCKED_OUT, status=429, headers={"Retry-After": str(remaining)})
 
     try:
         body = await request.json()
@@ -180,7 +172,7 @@ async def api_auth_login(request: web.Request) -> web.Response:
     if not creds.verify_password(username, password):
         _record_failure(ip)
         _sel().log_api_access(caller=ip, operation="login_failed", outcome="denied", source="auth")
-        return _err(ERR_INVALID, 401)
+        return json_error(ERR_INVALID, status=401)
 
     # Password is right. The second factor is checked AFTER, so a valid password with a
     # missing code cannot be distinguished from an invalid one by timing alone.
@@ -199,9 +191,9 @@ async def api_auth_login(request: web.Request) -> web.Response:
                 source="auth",
                 error="require_totp set but no secret enrolled",
             )
-            return _err(ERR_TOTP_REQUIRED, 401)
+            return json_error(ERR_TOTP_REQUIRED, status=401)
         if not code:
-            return _err(ERR_TOTP_REQUIRED, 401)
+            return json_error(ERR_TOTP_REQUIRED, status=401)
         if not totp_mod.verify_code(secret, code):
             _record_failure(ip)
             _sel().log_api_access(
@@ -211,7 +203,7 @@ async def api_auth_login(request: web.Request) -> web.Response:
                 source="auth",
                 error="invalid totp code",
             )
-            return _err(ERR_INVALID, 401)
+            return json_error(ERR_INVALID, status=401)
 
     ttl = parse_config_duration(cfg.session_ttl, default_secs=DEFAULT_BROWSER_SESSION_TTL_SECS)
     token = generate_token(username.strip() or "owner", ttl_seconds=ttl)
@@ -269,7 +261,7 @@ async def api_auth_logout(request: web.Request) -> web.Response:
     it stays revoked across a restart.
     """
     if not check_origin(request):
-        return _err(ERR_INVALID, 403)
+        return json_error(ERR_INVALID, status=403)
 
     port = _cookie_port(request)
     token = request.cookies.get(f"pc_token_{port}", "") or request.query.get("token", "")
@@ -346,7 +338,7 @@ async def api_auth_set_password(request: web.Request) -> web.Response:
     be reached WITHOUT a session — it is behind the normal middleware, unlike `login`.
     """
     if not check_origin(request):
-        return _err(ERR_INVALID, 403)
+        return json_error(ERR_INVALID, status=403)
     try:
         body = await request.json()
     except Exception:
@@ -387,7 +379,7 @@ async def api_auth_enroll_start(request: web.Request) -> web.Response:
     back, because the store holds only its hash.
     """
     if not check_origin(request):
-        return _err(ERR_INVALID, 403)
+        return json_error(ERR_INVALID, status=403)
 
     from personalclaw.auth import enrollment
 
@@ -417,7 +409,7 @@ async def api_auth_enroll_complete(request: web.Request) -> web.Response:
     ip = _client_ip(request)
     cfg = _auth_cfg()
     if not check_origin(request):
-        return _err(ERR_ENROLL_INVALID, 403)
+        return json_error(ERR_ENROLL_INVALID, status=403)
 
     remaining = _lockout_remaining(ip, cfg)
     if remaining:
@@ -428,7 +420,7 @@ async def api_auth_enroll_complete(request: web.Request) -> web.Response:
             source="auth",
             error=f"enroll retry_after={remaining}s",
         )
-        return _err(ERR_LOCKED_OUT, 429, headers={"Retry-After": str(remaining)})
+        return json_error(ERR_LOCKED_OUT, status=429, headers={"Retry-After": str(remaining)})
 
     from personalclaw.auth import enrollment
 
@@ -440,7 +432,7 @@ async def api_auth_enroll_complete(request: web.Request) -> web.Response:
 
     if not enrollment.redeem_code(code):
         _record_failure(ip)
-        return _err(ERR_ENROLL_INVALID, 401)
+        return json_error(ERR_ENROLL_INVALID, status=401)
 
     # A device session, deliberately at the same TTL as a browser login rather than the
     # 1-year cap: a phone in a drawer should not hold a live session for a year.

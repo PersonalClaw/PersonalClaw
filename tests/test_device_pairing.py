@@ -488,7 +488,7 @@ async def test_clause_3_a_reused_code_is_refused_as_invalid(_isolated) -> None:
         assert (await _complete(client, data["code"])).status == 200
         resp = await _complete(client, data["code"])
         assert resp.status == 401
-        assert (await resp.json())["error"] == devices_h.ERR_CODE_INVALID
+        assert (await resp.json())["error"]["code"] == devices_h.ERR_CODE_INVALID
     assert len(ss.load_session_records()) == 1, "the second attempt minted nothing"
 
 
@@ -500,7 +500,7 @@ async def test_clause_3_an_expired_code_is_refused_as_expired(_isolated) -> None
         _expire_stored_codes(_isolated)
         resp = await _complete(client, data["code"])
         assert resp.status == 401
-        assert (await resp.json())["error"] == devices_h.ERR_CODE_EXPIRED
+        assert (await resp.json())["error"]["code"] == devices_h.ERR_CODE_EXPIRED
     assert ss.load_session_records() == {}
 
 
@@ -585,7 +585,7 @@ async def test_revoking_an_unknown_device_is_a_404(_isolated) -> None:
     async with TestClient(TestServer(_app())) as client:
         resp = await client.post("/api/devices/nope/revoke", json={})
         assert resp.status == 404
-        assert (await resp.json())["error"] == devices_h.ERR_UNKNOWN_DEVICE
+        assert (await resp.json())["error"]["code"] == devices_h.ERR_UNKNOWN_DEVICE
 
 
 @pytest.mark.asyncio
@@ -669,7 +669,7 @@ async def test_pair_complete_is_rate_limited(_isolated) -> None:
             assert (await _complete(client, "ABCDEFGH")).status == 401
         resp = await _complete(client, "ABCDEFGH")
         assert resp.status == 429
-        assert (await resp.json())["error"] == devices_h.ERR_LOCKED_OUT
+        assert (await resp.json())["error"]["code"] == devices_h.ERR_LOCKED_OUT
         assert resp.headers["Retry-After"]
 
 
@@ -741,7 +741,7 @@ async def test_a_wrong_origin_is_refused_on_both_pair_routes(_isolated, monkeypa
         for path in ("/api/devices/pair/start", "/api/devices/pair/complete"):
             resp = await client.post(path, json={"code": "ABCDEFGH"})
             assert resp.status == 403
-            assert (await resp.json())["error"] == devices_h.ERR_ORIGIN
+            assert (await resp.json())["error"]["code"] == devices_h.ERR_ORIGIN
 
 
 @pytest.mark.asyncio

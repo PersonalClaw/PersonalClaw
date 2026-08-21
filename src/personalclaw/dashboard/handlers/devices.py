@@ -54,6 +54,7 @@ from personalclaw.dashboard.token_auth import (
     parse_config_duration,
     revoke_nonce,
 )
+from personalclaw.http_errors import json_error
 
 logger = logging.getLogger(__name__)
 
@@ -118,11 +119,6 @@ def _audit(
         logger.debug("SEL audit failed for %s", operation, exc_info=True)
 
 
-def _err(code: str, status: int, *, headers: dict[str, str] | None = None) -> web.Response:
-    """An error envelope carrying a stable code and nothing else."""
-    return web.json_response({"error": code}, status=status, headers=headers or {})
-
-
 async def _body(request: web.Request) -> dict[str, Any]:
     try:
         body = await request.json()
@@ -168,7 +164,7 @@ async def api_devices_pair_start(request: web.Request) -> web.Response:
     """
     if not check_origin(request):
         _audit("device_pair_started", "denied", error="origin rejected")
-        return _err(ERR_ORIGIN, 403)
+        return json_error(ERR_ORIGIN, status=403)
 
     from personalclaw.auth import pairing
 
@@ -247,12 +243,12 @@ async def api_devices_pair_complete(request: web.Request) -> web.Response:
 
     if not check_origin(request):
         _audit("device_paired", "denied", caller=ip, error="origin rejected")
-        return _err(ERR_ORIGIN, 403)
+        return json_error(ERR_ORIGIN, status=403)
 
     remaining = _lockout_remaining(ip, cfg)
     if remaining:
         _audit("device_paired", "denied", caller=ip, error=f"locked out retry_after={remaining}s")
-        return _err(ERR_LOCKED_OUT, 429, headers={"Retry-After": str(remaining)})
+        return json_error(ERR_LOCKED_OUT, status=429, headers={"Retry-After": str(remaining)})
 
     from personalclaw.auth import pairing
 
@@ -270,7 +266,7 @@ async def api_devices_pair_complete(request: web.Request) -> web.Response:
         _record_failure(ip)
         _audit("device_paired", "denied", caller=ip, error=f"code {outcome.result}")
         err = ERR_CODE_EXPIRED if outcome.result == pairing.RESULT_EXPIRED else ERR_CODE_INVALID
-        return _err(err, 401)
+        return json_error(err, status=401)
 
     # A device session at the same TTL as a browser login rather than the 1-year cap: a phone
     # in a drawer should not hold a live session for a year.
@@ -296,7 +292,7 @@ async def api_devices_pair_complete(request: web.Request) -> web.Response:
             revoke_nonce(nonce)
             forget_session(nonce)
         _audit("device_paired", "denied", caller=ip, error="could not persist the device session")
-        return _err(ERR_CODE_INVALID, 503)
+        return json_error(ERR_CODE_INVALID, status=503)
 
     _clear_failures(ip)
     _audit(
@@ -379,13 +375,13 @@ async def api_devices_revoke(request: web.Request) -> web.Response:
     """
     if not check_origin(request):
         _audit("device_revoked", "denied", error="origin rejected")
-        return _err(ERR_ORIGIN, 403)
+        return json_error(ERR_ORIGIN, status=403)
 
     device_id = request.match_info.get("id", "")
     nonces = nonces_for_device(device_id)
     if not nonces:
         _audit("device_revoked", "denied", error="unknown device", resources=f"device={device_id}")
-        return _err(ERR_UNKNOWN_DEVICE, 404)
+        return json_error(ERR_UNKNOWN_DEVICE, status=404)
 
     for nonce in nonces:
         revoke_nonce(nonce)

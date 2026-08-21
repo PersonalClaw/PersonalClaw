@@ -38,7 +38,7 @@ export async function errText(r: Response): Promise<string> {
         const v = (parsed as Record<string, unknown>)[key]
         if (typeof v === 'string' && v.trim()) return v.trim()
         // 🔴 THE ENVELOPE THE PLATFORM DECLARES WAS THE ONE SHAPE THIS DROPPED. `errors.py` states the
-        // wire contract — "INTEGRATION-ARCHITECTURE §2.2 owns the *wire* shape for API-route errors —
+        // wire contract — "`AGENTS.md` §"Shared conventions" owns the *wire* shape for API-route errors —
         // `{"error": {"code": "<lowercase_snake>", "message": ...}}`" — and 115 sites return it. Because
         // the object is not a string, every one of them fell through to `HTTP <status>`: a user saving a
         // malformed workflow got "HTTP 400" while the backend had written "invalid JSON body", and a

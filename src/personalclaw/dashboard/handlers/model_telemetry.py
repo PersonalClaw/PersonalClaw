@@ -3,7 +3,8 @@
 One GET over the routing fold + a bounded ``model_calls.jsonl`` tail: per-model efficiency rows
 for a (use_case, query_class), each flagged ``on_frontier`` (not dominated on quality/latency/cost).
 Read-only — this plan is observation, never a routing decision here (that's the Session-3 router).
-Errors use the §2.2 ``{error:{code,message}}`` envelope. The Routing & Efficiency FE tab (MRT-1e)
+Errors use the shared ``{error:{code,message}}`` envelope
+(:func:`personalclaw.http_errors.json_error`). The Routing & Efficiency FE tab (MRT-1e)
 renders this; this is the data it reads.
 """
 
@@ -12,6 +13,8 @@ from __future__ import annotations
 import logging
 
 from aiohttp import web
+
+from personalclaw.http_errors import json_error
 
 logger = logging.getLogger(__name__)
 
@@ -24,10 +27,6 @@ _AUDIT_TAIL = 2000
 _ROUTED_USE_CASES = ("reasoning", "background", "loops", "orchestration")
 
 
-def _bad_request(message: str) -> web.Response:
-    return web.json_response({"error": {"code": "bad_request", "message": message}}, status=400)
-
-
 async def api_models_telemetry(request: web.Request) -> web.Response:
     """GET /api/models/telemetry?use_case=&query_class= — per-model efficiency rows.
 
@@ -38,9 +37,9 @@ async def api_models_telemetry(request: web.Request) -> web.Response:
     use_case = request.query.get("use_case", "")
     query_class = request.query.get("query_class", "")
     if not use_case:
-        return _bad_request("use_case is required")
+        return json_error("bad_request", message="use_case is required", status=400)
     if not query_class:
-        return _bad_request("query_class is required")
+        return json_error("bad_request", message="query_class is required", status=400)
     try:
         from personalclaw.config.loader import config_dir
         from personalclaw.guardrails.audit import read_recent
@@ -102,19 +101,21 @@ async def api_routing_policy_put(request: web.Request) -> web.Response:
     try:
         body = await request.json()
     except Exception:  # noqa: BLE001
-        return _bad_request("a JSON body is required")
+        return json_error("bad_request", message="a JSON body is required", status=400)
     if not isinstance(body, dict):
-        return _bad_request("a JSON object is required")
+        return json_error("bad_request", message="a JSON object is required", status=400)
     use_case = str(body.get("use_case", "") or "")
     if use_case not in VALID_USE_CASES:
-        return _bad_request(f"unknown use_case {use_case!r}")
+        return json_error("bad_request", message=f"unknown use_case {use_case!r}", status=400)
 
     applied: list[str] = []
     try:
         if "mode" in body:
             mode = str(body.get("mode", "") or "")
             if mode not in MODES:
-                return _bad_request(f"mode must be one of {list(MODES)}")
+                return json_error(
+                    "bad_request", message=f"mode must be one of {list(MODES)}", status=400
+                )
             set_mode(use_case, mode)
             applied.append("mode")
         if "pin" in body:
@@ -123,14 +124,18 @@ async def api_routing_policy_put(request: web.Request) -> web.Response:
         if "order" in body:
             order = body.get("order")
             if not isinstance(order, list) or not all(isinstance(r, str) for r in order):
-                return _bad_request("order must be a list of refs")
+                return json_error("bad_request", message="order must be a list of refs", status=400)
             query_class = str(body.get("query_class", "") or "")
             if not query_class:
-                return _bad_request("query_class is required when setting an order")
+                return json_error(
+                    "bad_request",
+                    message="query_class is required when setting an order",
+                    status=400,
+                )
             set_order(use_case, query_class, order)
             applied.append("order")
     except ValueError as exc:
-        return _bad_request(str(exc))
+        return json_error("bad_request", message=str(exc), status=400)
     except Exception:  # noqa: BLE001
         logger.debug("routing policy write failed", exc_info=True)
         return web.json_response(
@@ -138,7 +143,9 @@ async def api_routing_policy_put(request: web.Request) -> web.Response:
             status=500,
         )
     if not applied:
-        return _bad_request("nothing to change: send mode, pin, and/or order")
+        return json_error(
+            "bad_request", message="nothing to change: send mode, pin, and/or order", status=400
+        )
     return web.json_response({"ok": True, "use_case": use_case, "applied": applied})
 
 
