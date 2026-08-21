@@ -20,12 +20,16 @@ firing is an injected callable so the package stays free of any
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
+import time
 from collections.abc import AsyncIterator, Awaitable, Callable
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from personalclaw.agents.native import dispatch_plan
 from personalclaw.agents.native.approval import REJECT, ApprovalGate
 from personalclaw.agents.native.tools import (
     format_tool_result,
@@ -96,8 +100,26 @@ HookFire = Callable[[str, str | None], Awaitable[list[str]]]
 _MAX_STEERS_PER_TURN = 4
 
 # Sentinel: the tool passed deny-list + hooks but needs interactive approval,
-# so the generator path (_execute_tool) must run the gated branch.
+# so the generator path (_run_tool) must run the gated branch.
 _NEEDS_APPROVAL: Any = object()
+
+
+@dataclass(frozen=True, slots=True)
+class _PreparedCall:
+    """A requested tool call resolved far enough to be PLANNED but not yet run (HC-6).
+
+    Exists because the concurrency decision needs every call's resource set before any
+    of them executes, and the name/argument resolution that produces it must therefore
+    happen once, up front, and be reused by whichever path ends up running the call.
+    """
+
+    call: AgentEvent
+    tool_name: str
+    args: dict
+    card: AgentEvent
+    reservations: tuple[dispatch_plan.Reservation, ...]
+    bkey: str
+
 
 # Graduated failure/loop thresholds + the standard notices live in the
 # runtime-agnostic observer imported above (ACP-AGENT-PARITY §2.3 gap 5): the ACP
@@ -125,6 +147,7 @@ class NativeAgentRuntime(AgentProvider):
         project_id: str = "",
         tool_groups: list[str] | None = None,
         surface: str = "",
+        max_tool_concurrency: int = dispatch_plan.MAX_CONCURRENT_CALLS,
     ) -> None:
         self._definition = definition
         self._model = model_provider
@@ -210,7 +233,9 @@ class NativeAgentRuntime(AgentProvider):
         # Groups whose declared capability doesn't resolve (§5.5): not activatable,
         # not stub-listed. Recomputed on every schema assembly.
         self._unofferable: set[str] = set()
-        self._last_result_meta: dict = {}  # typed meta of the last tool result (for TOOL_RESULT)
+        # Ceiling on one wave's concurrent dispatch (HC-6). 1 = the pre-HC-6 behaviour,
+        # every call in its own wave; it is what the dispatch benchmark's baseline arm uses.
+        self._max_tool_concurrency = max(1, int(max_tool_concurrency or 1))
         self._approval = ApprovalGate()
         # Approval policy: "" / "default" prompt; "auto"/"yolo" auto-approve.
         self._approval_policy = ""
@@ -737,10 +762,11 @@ class NativeAgentRuntime(AgentProvider):
             # 3) TOOL EXECUTION — each call is a sub-generator that yields its
             #    UI card, (maybe) a permission request it parks on, the result
             #    card, and appends the tool-result message to history itself.
-            for call in tool_calls:
-                async for ev in self._execute_tool(call):
-                    agg_events += 1
-                    yield ev
+            #    Calls whose resource sets are disjoint run CONCURRENTLY (HC-6);
+            #    everything else keeps the order the model asked for.
+            async for ev in self._execute_tool_batch(tool_calls):
+                agg_events += 1
+                yield ev
 
             # 3b) STEER — drain any messages the user sent mid-turn (queue-steering
             #     #37). They land HERE, at the model boundary AFTER the tool batch
@@ -853,37 +879,207 @@ class NativeAgentRuntime(AgentProvider):
             )
         return tools_kwarg, "\n\n".join(notes)
 
-    async def _execute_tool(self, call: AgentEvent) -> AsyncIterator[AgentEvent]:
-        """Run one tool call: deny-list → PreToolUse hook → approval → invoke.
+    # ── concurrent dispatch under resource reservations (HC-6) ──
 
-        Yields the tool-call card, an ``EVENT_PERMISSION_REQUEST`` when approval
-        is needed (parking on the gate until ``approve_tool``/``reject_tool``
-        resolves it), then the tool-result card; appends the tool-result message
-        to history so the next inference sees it.
+    def _prepare_call(self, call: AgentEvent) -> "_PreparedCall":
+        """Resolve a requested call's name, arguments, UI card and reservations.
+
+        Pure and cheap — no I/O, no gate, no side effect — because the planner needs
+        every call's resource set BEFORE any of them runs, and a planning step that
+        could itself execute something would defeat the point.
+
+        A call that needs interactive approval reserves EVERYTHING, i.e. it is planned
+        as if it touched every resource and therefore runs alone. Not a resource claim:
+        the gate is a round trip to a human, and two prompts racing each other would
+        change the order the user is asked in — the one piece of a turn whose ordering
+        is a promise to a person rather than to a file. This is also what keeps
+        reservations and ADMISSION composable: any gate at the write seam (approval, a
+        pre-write read gate) sees exactly the serial world it was written against,
+        because a gated call never has a concurrent sibling.
         """
-        from personalclaw import security
-
         tool_name = self._resolve_name(call.title or "")
         args = parse_tool_arguments(call.tool_input)
-
-        # UI card for the call. Carry the tool's declared risk so the chat runner's
-        # invoked-log records the authoritative risk (this event fires for EVERY tool
-        # that runs, incl. runtime auto-approved ones that never reach the gate).
-        yield AgentEvent(
+        card = AgentEvent(
+            # UI card for the call. Carry the tool's declared risk so the chat runner's
+            # invoked-log records the authoritative risk (this event fires for EVERY tool
+            # that runs, incl. runtime auto-approved ones that never reach the gate).
             kind=EVENT_TOOL_CALL,
             tool_call_id=call.tool_call_id,
             title=tool_name,
             tool_input=args,
             risk_level=self._tool_risk.get(tool_name, RiskLevel.SAFE).value,
         )
+        if self._requires_approval(tool_name):
+            reservations: tuple[dispatch_plan.Reservation, ...] = (dispatch_plan.EVERYTHING,)
+        else:
+            reservations = dispatch_plan.reservations_for(
+                tool_name, args, cwd=str(self._cwd) if self._cwd else None
+            )
+        return _PreparedCall(
+            call=call,
+            tool_name=tool_name,
+            args=args,
+            card=card,
+            reservations=reservations,
+            bkey=params_key(tool_name, args),
+        )
+
+    async def _execute_tool_batch(self, tool_calls: list[AgentEvent]) -> AsyncIterator[AgentEvent]:
+        """Run one turn's requested calls, overlapping the ones that cannot collide.
+
+        Partitions into ordered waves (:mod:`dispatch_plan`) and runs wave *k* only
+        after wave *k-1*, so the relative order of every non-disjoint pair is the order
+        the model asked for. A wave of one is dispatched through the ordinary serial
+        path, byte-for-byte the pre-HC-6 behaviour — which is what makes
+        ``max_tool_concurrency=1`` an exact baseline rather than an approximation of one.
+
+        Failure semantics the atom names: a call that RAISES does not cancel its
+        concurrent siblings (they are disjoint from it by construction, so their results
+        are still valid and still reported), but it POISONS its own resource set — any
+        later call that conflicts with it is not run, because "the file I was about to
+        read was being written by something that blew up" is not a state to guess at.
+        """
+        t0 = time.perf_counter()
+        prepped = [self._prepare_call(c) for c in tool_calls]
+        plan = dispatch_plan.plan(
+            [p.reservations for p in prepped], max_width=self._max_tool_concurrency
+        )
+        poisoned: list[tuple[dispatch_plan.Reservation, ...]] = []
+        try:
+            for wave in plan.waves:
+                async for ev in self._execute_wave([prepped[i] for i in wave], poisoned):
+                    yield ev
+        finally:
+            # HC-1's rule: the instrumentation ships regardless of what it measures, and
+            # the benchmark reads THIS line rather than keeping its own stopwatch.
+            logger.info(
+                "%s mode=%s calls=%d waves=%d widest=%d ms=%d",
+                dispatch_plan.TIMING_LOG_PREFIX,
+                plan.mode,
+                plan.call_count,
+                len(plan.waves),
+                plan.widest,
+                round((time.perf_counter() - t0) * 1000),
+            )
+
+    async def _execute_wave(
+        self,
+        wave: list["_PreparedCall"],
+        poisoned: list[tuple[dispatch_plan.Reservation, ...]],
+    ) -> AsyncIterator[AgentEvent]:
+        """Run one wave: the invocations overlap, everything observable stays in order.
+
+        The split is deliberate. Only ``_guard_and_invoke`` — the part that actually
+        touches the resource — runs concurrently; the tail (breaker verdicts, the result
+        card, the history append) replays strictly in the order the model listed the
+        calls. So a concurrent turn's audit trail carries the same events as the serial
+        one, and ``self._messages`` ends up in the same order, which is the only reason
+        the next inference sees an identical history.
+
+        Cards for the whole wave are emitted up front, before anything runs: they are
+        the UI's statement of intent, and a wave of six lookups appearing at once is
+        both truthful and the visible difference from six calls trickling out serially.
+        """
+        if len(wave) == 1:
+            async for ev in self._run_tool(
+                wave[0], prefetched=self._poison_result(wave[0], poisoned)
+            ):
+                yield ev
+            return
+        for prep in wave:
+            yield prep.card
+        results: list[Any] = [None] * len(wave)
+        pending: list[int] = []
+        for i, prep in enumerate(wave):
+            stopped = self._poison_result(prep, poisoned)
+            if stopped is not None:
+                results[i] = stopped
+            elif self._breaker.count(prep.bkey) >= BLOCK_THRESHOLD:
+                # Left for _run_tool's own refusal path — the breaker is a reason NOT to
+                # invoke, so prefetching it would be the one thing it exists to prevent.
+                results[i] = None
+            else:
+                pending.append(i)
+        if pending:
+            # return_exceptions: a raising sibling must not cancel the others (the atom's
+            # "does not cancel its independent siblings"), which is exactly what a bare
+            # gather would do.
+            done = await asyncio.gather(
+                *(self._prefetch(wave[i]) for i in pending), return_exceptions=True
+            )
+            for i, outcome in zip(pending, done):
+                if isinstance(outcome, BaseException):
+                    poisoned.append(wave[i].reservations)
+                    results[i] = (
+                        f"Error: {wave[i].tool_name} raised "
+                        f"{type(outcome).__name__}: {outcome}",
+                        {},
+                    )
+                else:
+                    results[i] = outcome
+        for prep, prefetched in zip(wave, results):
+            async for ev in self._run_tool(prep, prefetched=prefetched, card_emitted=True):
+                yield ev
+
+    @staticmethod
+    def _poison_result(
+        prep: "_PreparedCall", poisoned: list[tuple[dispatch_plan.Reservation, ...]]
+    ) -> tuple[str, dict] | None:
+        """The observation for a call a failed predecessor makes unsafe to run, or None."""
+        if not any(dispatch_plan.conflicts(prep.reservations, p) for p in poisoned):
+            return None
+        return (
+            f"Error: {prep.tool_name} was not run — an earlier call in this turn that "
+            "touches the same resource failed, so the resource's state is unknown. "
+            "Re-check that state before retrying.",
+            {},
+        )
+
+    async def _prefetch(self, prep: "_PreparedCall") -> tuple[Any, dict]:
+        """Run one call's guarded invocation, returning its result AND its typed meta.
+
+        The meta travels back as a return value rather than through an instance slot.
+        That was a single shared field read immediately after the invoke — correct while
+        exactly one call could be in flight, and a silent cross-contamination the moment
+        two are, with call A's ``truncated``/``recovery_hints`` rendering on call B's
+        card. Threading it makes the value belong to the dispatch that produced it.
+        """
+        meta: dict = {}
+        result = await self._guard_and_invoke(prep.call, prep.tool_name, prep.args, meta=meta)
+        return result, meta
+
+    async def _run_tool(
+        self,
+        prep: "_PreparedCall",
+        *,
+        prefetched: tuple[Any, dict] | None,
+        card_emitted: bool = False,
+    ) -> AsyncIterator[AgentEvent]:
+        """Run one tool call: deny-list → PreToolUse hook → approval → invoke.
+
+        Yields the tool-call card, an ``EVENT_PERMISSION_REQUEST`` when approval is needed
+        (parking on the gate until ``approve_tool``/``reject_tool`` resolves it), then the
+        tool-result card; appends the tool-result message to history so the next inference
+        sees it. ONE implementation for the serial and the concurrent paths.
+
+        ``prefetched`` is ``(result, meta)`` when the invocation already ran (concurrently,
+        in this call's wave) or when a predecessor's failure means it must not run at all;
+        ``None`` means invoke here and now, which is the single-call path and the only one
+        that can park on the approval gate.
+        """
+        from personalclaw import security
+
+        call, tool_name, args = prep.call, prep.tool_name, prep.args
+        if not card_emitted:
+            yield prep.card
 
         # Consecutive-failure breaker: refuse a call that has already failed the
         # same way ≥ BLOCK_THRESHOLD times this run, before wasting another invoke.
         # Pre-execution refusal is the NATIVE half of the breaker: this runtime owns
         # dispatch. The ACP host consumes the same counter but can only steer/abort
         # between protocol frames (§2.3's stated boundary).
-        _bkey = params_key(tool_name, args)
-        if self._breaker.count(_bkey) >= BLOCK_THRESHOLD:
+        _bkey = prep.bkey
+        if prefetched is None and self._breaker.count(_bkey) >= BLOCK_THRESHOLD:
             blocked_str = blocked_message(tool_name, self._breaker.count(_bkey))
             yield AgentEvent(
                 kind=EVENT_TOOL_RESULT,
@@ -894,7 +1090,11 @@ class NativeAgentRuntime(AgentProvider):
             self._messages.append(self._tool_result_msg(call, blocked_str))
             return
 
-        result_str = await self._guard_and_invoke(call, tool_name, args)
+        if prefetched is None:
+            meta: dict = {}
+            result_str = await self._guard_and_invoke(call, tool_name, args, meta=meta)
+        else:
+            result_str, meta = prefetched
         # If the tool needs approval, _guard_and_invoke returns a sentinel and we
         # do the gated path here so we can yield the permission request.
         if result_str is _NEEDS_APPROVAL:
@@ -936,7 +1136,7 @@ class NativeAgentRuntime(AgentProvider):
                         security.DENY_KIND_USER, "the user declined this tool call", tool_name
                     )
                 else:
-                    result_str = await self._invoke(tool_name, args)
+                    result_str = await self._invoke(tool_name, args, meta_sink=meta)
 
         # Record the outcome and apply graduated breaker verdicts. A failure is a
         # result the model reads as an error; a success clears this key's streak.
@@ -979,9 +1179,8 @@ class NativeAgentRuntime(AgentProvider):
             tool_call_id=call.tool_call_id,
             title=tool_name,
             tool_output=result_str,
-            tool_meta=self._last_result_meta or {},
+            tool_meta=meta or {},
         )
-        self._last_result_meta = {}  # consumed; reset for the next dispatch
         self._messages.append(self._tool_result_msg(call, result_str))
 
         # Run-wide circuit breaker: a turn drowning in failures (across all tools)
@@ -990,9 +1189,12 @@ class NativeAgentRuntime(AgentProvider):
             logger.warning("native: %s", circuit_message(self._breaker.total_failures))
             self._cancelled = True
 
-    async def _guard_and_invoke(self, call: AgentEvent, tool_name: str, args: dict):
+    async def _guard_and_invoke(self, call: AgentEvent, tool_name: str, args: dict, *, meta: dict):
         """Deny-list + PreToolUse hook; return a result string, or the
-        ``_NEEDS_APPROVAL`` sentinel when the caller must run the gated path."""
+        ``_NEEDS_APPROVAL`` sentinel when the caller must run the gated path.
+
+        ``meta`` is the caller's sink for the result's typed metadata — see
+        :meth:`_prefetch` on why it is threaded rather than parked on the instance."""
         from personalclaw import security
 
         # Dry-run observe-mode (T9): a write-capable (non-SAFE) tool is NOT
@@ -1040,7 +1242,7 @@ class NativeAgentRuntime(AgentProvider):
 
         if self._requires_approval(tool_name):
             return _NEEDS_APPROVAL
-        return await self._invoke(tool_name, args)
+        return await self._invoke(tool_name, args, meta_sink=meta)
 
     def _resolve_name(self, name: str) -> str:
         """Map an incoming tool name to a real tool id, healing a provider's
@@ -1052,7 +1254,7 @@ class NativeAgentRuntime(AgentProvider):
             return name
         return self._tool_sanitized_index.get(name, name)
 
-    async def _invoke(self, tool_name: str, args: dict) -> str:
+    async def _invoke(self, tool_name: str, args: dict, *, meta_sink: dict) -> str:
         # tool_search (TR escape hatch): the retriever owns the full catalog, so
         # the runtime answers this directly rather than a provider. Lets the agent
         # discover any tool retrieval didn't surface this turn.
@@ -1146,8 +1348,9 @@ class NativeAgentRuntime(AgentProvider):
             mcp_core.reset_current_agent_id(agent_token)
             _bt.reset_tool_context(ctx_tokens)
         # Capture the result's typed metadata (content_type / raw_ref / truncated)
-        # for the TOOL_RESULT event — the string return loses it otherwise. Single
-        # slot, read+cleared at the emit site keyed to this dispatch.
+        # for the TOOL_RESULT event — the string return loses it otherwise. Filled into
+        # the CALLER's sink so the value belongs to this dispatch and cannot be read by a
+        # concurrent sibling's result card (HC-6).
         meta = dict(getattr(result, "metadata", {}) or {})
         if getattr(result, "truncated", False):
             meta["truncated"] = True
@@ -1169,7 +1372,7 @@ class NativeAgentRuntime(AgentProvider):
             agent_error = getattr(result, "agent_error", None)
             if agent_error is not None:
                 meta["agent_error"] = agent_error.to_dict()
-        self._last_result_meta = meta
+        meta_sink.update(meta)
         return format_tool_result(result)
 
     # Synthetic runtime meta-tools (not in _tool_defs): pure, side-effect-free
