@@ -306,6 +306,12 @@ class SessionManager:
         # so a consumer (the consolidator) can extract skills from the ending
         # session. Wired at gateway startup to consolidator.consolidate_session.
         self._on_session_expire: Callable[[str], Awaitable[object]] | None = None
+        # Stop a session's spawned children (PR2-12). Registered by SubagentManager at
+        # construction. A callback rather than a hard reference because the subagent
+        # manager already depends on this class — the arrow cannot point both ways, and
+        # a stop that cannot reach a spawned subagent is a stop that only looks like one.
+        # Returns how many were stopped.
+        self._stop_children: Callable[[str], Awaitable[int]] | None = None
         self._pool_started = False
         self._session_map = SessionMap()
         self._active_dashboard_sessions: set[str] | None = (
@@ -1793,6 +1799,35 @@ class SessionManager:
         logger.info("Cancelled in-flight operation for %s: %s", key, outcome)
         return outcome
 
+    def register_child_stopper(self, stopper: Callable[[str], Awaitable[int]]) -> None:
+        """Register the callback :meth:`stop_turn` uses to stop a session's subagents."""
+        self._stop_children = stopper
+
+    async def _stop_spawned_children(self, key: str) -> int:
+        """Stop every subagent spawned by *key*. Returns how many were stopped.
+
+        Fail-open: a child that will not die must not prevent the parent's own turn
+        from stopping — the user pressed stop on the parent.
+        """
+        if self._stop_children is None:
+            return 0
+        try:
+            stopped = await self._stop_children(key)
+        except Exception:
+            logger.warning("stop_turn: stopping spawned children failed for %s", key, exc_info=True)
+            return 0
+        # Report the count inward so it lands on the turn's stop record: this sweep is
+        # the one part of a stop the provider cannot observe for itself.
+        if stopped:
+            session = self._sessions.get(key)
+            note = getattr(getattr(session, "provider", None), "note_subagents_stopped", None)
+            if note is not None:
+                try:
+                    note(stopped)
+                except Exception:
+                    logger.debug("stop_turn: recording subagent count failed", exc_info=True)
+        return stopped
+
     async def stop_turn(
         self,
         key: str,
@@ -1823,6 +1858,13 @@ class SessionManager:
 
         if not preserve_queue:
             self.clear_queue(key)
+        # Spawned subagents are WORK this turn started, so a stop reaches them too
+        # (PR2-12). Before this, stopping a turn that had fanned out left every child
+        # running: they kept burning tokens, kept holding their worktrees, and later
+        # delivered results into a session the user had already stopped. Runs BEFORE
+        # provider.cancel so the children are dying while the parent's soft-stop budget
+        # is spending, not after it.
+        await self._stop_spawned_children(key)
         budget: float = self._cfg.agent.soft_stop_budget_secs
 
         if not force:

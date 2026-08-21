@@ -20,6 +20,7 @@ import pytest
 from personalclaw.agents.native.approval import APPROVE, REJECT, ApprovalGate
 from personalclaw.agents.native.runtime import NativeAgentRuntime
 from personalclaw.agents.provider import AgentRuntimeDefinition
+from personalclaw.cancellation import CANCEL_INTERNAL
 from personalclaw.llm.events import (
     EVENT_COMPLETE,
     EVENT_PERMISSION_REQUEST,
@@ -308,8 +309,10 @@ async def test_cancel_midturn_pairs_pending_tool_calls():
             self.seen_messages.append(list(messages))
             self.calls += 1
             yield AgentEvent(kind=EVENT_TOOL_CALL, tool_call_id="c1", title="echo", tool_input="{}")
-            # Simulate the watchdog cancelling the turn before the tool runs.
-            self._rt_box[0]._cancelled = True
+            # Simulate the watchdog cancelling the turn before the tool runs. INTERNAL,
+            # not user: a watchdog trip is "we gave up", so the turn must still end
+            # "cancelled" rather than "stopped_by_user" (PR2-12).
+            self._rt_box[0]._cancel.request(reason=CANCEL_INTERNAL)
             yield AgentEvent(kind=EVENT_COMPLETE)
 
     box: list = [None]
