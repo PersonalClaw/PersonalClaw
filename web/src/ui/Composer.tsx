@@ -3,7 +3,7 @@ import { motion, AnimatePresence } from 'framer-motion'
 import { ArrowUp, Square, CornerDownLeft, Sparkles, Mic, Ear, Loader2, Paperclip, Check, MonitorUp } from 'lucide-react'
 import { IconButton } from './IconButton'
 import { spring, physics, expr } from '../design/motion'
-import { AgentPill, ModelPill, ApprovalPill, ReasoningPill, effortsForAgent, PlusMenu } from './composer/controls'
+import { AgentPill, ModelPill, ApprovalPill, ReasoningPill, NaturalVoicePill, effortsForAgent, PlusMenu } from './composer/controls'
 import { MarkdownInput, type MarkdownInputHandle } from './composer/MarkdownInput'
 import { resolveSendButton } from './composer/sendButtonState'
 import { useMicRecorder } from './composer/useMicRecorder'
@@ -29,6 +29,7 @@ export function Composer({
   mentionProject, onMentionFile, onMentionKnowledge, onLargePaste,
   onOptimize, optimizing, history, onTranscribe, onMicError, canQueue, contextPct, minChars = 1,
   openModelSignal, openAgentSignal, openReasoningSignal, handsFree, onHandsFreeSubmit, screenShare,
+  naturalVoice,
 }: ComposerProps) {
   const [focused, setFocused] = useState(false)
   const [dragOver, setDragOver] = useState(false)
@@ -130,6 +131,11 @@ export function Composer({
       {controls.model && <ModelPill data={data} agent={sel?.agent ?? ''} value={sel?.model ?? ''} contextPct={contextPct} openSignal={openModelSignal} onSelect={(m) => onSelect?.({ model: m })} />}
       {controls.approval && <ApprovalPill value={sel?.approval ?? 'normal'} onSelect={(m) => onSelect?.({ approval: m })} />}
       {controls.reasoning && <ReasoningPill value={sel?.reasoning ?? ''} efforts={effortsForAgent(data, sel?.agent ?? '')} openSignal={openReasoningSignal} onSelect={(e) => onSelect?.({ reasoning: e })} />}
+      {/* Natural voice (PT-7) — feature-detected on the prop, not a `controls` flag:
+          it needs a conversation to scope itself to, and the goal composer has none.
+          Always rendered when present, including in its off state, so a prose change
+          is attributable to a control the owner can see. */}
+      {naturalVoice && <NaturalVoicePill {...naturalVoice} />}
     </div>
   )
 

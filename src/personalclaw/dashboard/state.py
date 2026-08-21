@@ -244,6 +244,7 @@ class _ChatSession:
         "_batch_rejected",
         "color_index",
         "color_theme",
+        "natural_voice",
         "memory_mode",
         "_ephemeral",
         "_pending_context",
@@ -400,6 +401,12 @@ class _ChatSession:
         self._batch_rejected: bool = False
         self.color_index: int | None = None
         self.color_theme: str = ""
+        # Natural voice (PT-7), per-conversation scope: a TRI-state
+        # ("" | "on" | "off"), not a bool. "" means this conversation states
+        # nothing and inherits the bound agent's preference; "off" is a deliberate
+        # override of an agent that asks for it. Overriding here never edits the
+        # agent — see personalclaw/natural_voice.py for the resolution order.
+        self.natural_voice: str = ""
         if memory_mode not in VALID_MEMORY_MODES:
             raise ValueError(
                 f"invalid memory_mode {memory_mode!r}, must be one of {VALID_MEMORY_MODES}"
@@ -718,6 +725,12 @@ class _ChatSession:
             "never_archive": self.never_archive,
             "color_index": self.color_index,
             "color_theme": self.color_theme,
+            # The per-conversation tri-state only. The RESOLVED pair
+            # (natural_voice_effective / natural_voice_source) is added by the
+            # session-detail and natural-voice handlers, not here: resolving needs
+            # the bound agent's definition, and this method runs once per row of
+            # the session list — one uncached AppConfig.load() per row.
+            "natural_voice": self.natural_voice,
             "memory_mode": self.memory_mode,
             "forked_from": self.forked_from,
             # Owning-app tag. Non-empty for hidden worker sessions (e.g.

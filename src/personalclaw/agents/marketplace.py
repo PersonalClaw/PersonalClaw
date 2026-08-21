@@ -61,6 +61,10 @@ class AgentDefinition:
     # — kept SEPARATE from system_prompt (the operating rules / what it does), and
     # injected high-priority so personality survives long operating-rule prompts.
     voice: str = ""
+    # Natural voice (PT-7): plainer, less machine-sounding PROSE — a named set of
+    # patterns to avoid. Orthogonal to ``voice`` (WHO the agent is) and to the
+    # ``voice_profiles`` speech surface; see personalclaw/natural_voice.py.
+    natural_voice: bool = False
     skills: list[str] = field(default_factory=list)
     provider_entry: str = ""
     mcp_servers: dict[str, Any] = field(default_factory=dict)
@@ -92,6 +96,9 @@ class AgentDefinition:
             # Voice layer (#42) — MUST be read here (the S6 loader-allowlist gotcha)
             # or it's silently dropped on every reload/round-trip.
             voice=str(d.get("voice", "")),
+            # Natural voice (PT-7) — same gotcha: unread here the preference is
+            # dropped on every round-trip and stops travelling with the agent.
+            natural_voice=bool(d.get("natural_voice", False)),
             skills=list(d.get("skills") or []),
             provider_entry=str(d.get("provider_entry", "")),
             mcp_servers=dict(d.get("mcp_servers") or {}),
@@ -242,6 +249,7 @@ class LocalAgentMarketplace(AgentMarketplace):
             "model",
             "system_prompt",
             "voice",
+            "natural_voice",
             "skills",
             "provider_entry",
             "mcp_servers",
@@ -260,6 +268,11 @@ class LocalAgentMarketplace(AgentMarketplace):
                 existing.skills = [str(s) for s in (value or [])]
             elif key == "mcp_servers":
                 existing.mcp_servers = dict(value or {})
+            elif key == "natural_voice":
+                # The ONLY boolean field here, and it needs its own branch: the
+                # else-arm below stringifies, and `str(False)` is the TRUTHY
+                # string "False" — so turning natural voice off would wedge it on.
+                existing.natural_voice = bool(value)
             else:
                 setattr(existing, key, str(value) if value is not None else "")
         existing.updated_at = time.time()

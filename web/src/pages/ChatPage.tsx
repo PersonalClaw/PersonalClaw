@@ -698,6 +698,12 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
   // restore effect when a new session's binding arrives.
   const sessionBindingRef = useRef<{ agent: string; model: string; acp_provider: string; acp_provider_agent: string; reasoning_effort: string } | null>(null)
   const [bindingNonce, setBindingNonce] = useState(0)
+  // Natural voice (PT-7): the per-conversation scope. `choice` is what this
+  // conversation states; `effective`/`source` are the backend's resolution against
+  // the bound agent's definition — never recomputed here. `source: ''` means "no
+  // conversation yet" (a brand-new chat), where the pill shows the choice instead.
+  const [naturalVoice, setNaturalVoice] = useState<{ choice: '' | 'on' | 'off'; effective: boolean; source: string; agentDefault: boolean }>(
+    { choice: '', effective: false, source: '', agentDefault: false })
   const [statusText, setStatusText] = useState('')
   const [latestActivity, setLatestActivity] = useState<string | null>(null)
   // The docked open-file peek panel. URL-backed (?file=<path>, push → Back closes;
@@ -830,6 +836,15 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
       // which the backend refuses on a non-persistent session) reflect the real
       // posture of a reopened chat instead of the 'persistent' default.
       setMemoryMode((d.memory_mode || 'persistent') as MemoryMode)
+      // Natural voice (PT-7) — restore the composer pill from the RESOLVED state the
+      // backend sent, so a reopened chat shows what actually takes effect (including
+      // an agent-supplied default) rather than reverting to "agent default, off".
+      setNaturalVoice({
+        choice: ((d.natural_voice || '') as '' | 'on' | 'off'),
+        effective: !!d.natural_voice_effective,
+        source: d.natural_voice_source || '',
+        agentDefault: !!d.natural_voice_agent_default,
+      })
       // Branch lineage (CC-7) — restore the "Branched from" breadcrumb on every open,
       // including a plain browser reload, because it comes from persisted state rather
       // than from whatever navigation happened to land us here.
@@ -1442,6 +1457,10 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
       // Persist a pre-start reasoning-effort pick (applySelection couldn't, since the
       // session didn't exist yet).
       if (selection.reasoning) await persistSelection('this reasoning effort', api.setReasoningEffort(created.key, selection.reasoning))
+      // Natural voice (PT-7): a pre-start pick lands here for the same reason — without
+      // it the pill would read "Plain" while turn 1 ran without the instruction, which
+      // is the exact "reports itself on while doing nothing" shape.
+      if (naturalVoice.choice) await persistSelection('this natural-voice setting', api.setSessionNaturalVoice(created.key, naturalVoice.choice))
       return created.key
     })()
     ensureInFlightRef.current = p
@@ -2124,6 +2143,27 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
   const persistSelection = <T,>(what: string, p: Promise<T>): Promise<T | void> =>
     p.catch((e) => { notify(`Couldn't apply ${what} to this session: ${String((e as Error)?.message || e)}`, 'error') })
 
+  /** Natural voice (PT-7): set the per-conversation scope, then adopt the backend's
+   *  RE-RESOLVED answer rather than assuming the click won. The resolution order lives
+   *  once, server-side (`natural_voice.NATURAL_VOICE_PRECEDENCE`), so the pill can only
+   *  stay honest by displaying what came back — a locally-computed label would be a
+   *  second copy of that order, free to drift from the one the turn uses.
+   *
+   *  Before the session exists there is nothing to PATCH, so the choice is held locally
+   *  with `source: ''` (the pill then shows the choice, not an effect) and persisted by
+   *  `ensureSession` at create — the same shape as a pre-start reasoning-effort pick. */
+  async function selectNaturalVoice(choice: '' | 'on' | 'off') {
+    const s = sessionRef.current
+    if (!s) { setNaturalVoice((v) => ({ ...v, choice, source: '' })); return }
+    const r = await persistSelection('this natural-voice setting', api.setSessionNaturalVoice(s, choice))
+    if (r) setNaturalVoice({
+      choice: (r.natural_voice || '') as '' | 'on' | 'off',
+      effective: !!r.natural_voice_effective,
+      source: r.natural_voice_source || '',
+      agentDefault: !!r.natural_voice_agent_default,
+    })
+  }
+
   function applySelection(patch: Partial<ComposerValue>) {
     const nextSel = { ...selection, ...patch }
     setSelection(nextSel)
@@ -2546,6 +2586,7 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
         <ComposerStage ref={composerRef} value={input} onChange={(v) => { setInput(v); if (preOptimize !== null) setPreOptimize(null); if (followups.length && v.trim().length >= 3) setFollowups([]) }} onSend={() => send()}
           streaming={streaming} onStop={stop} controls={CHAT_CONTROLS} data={data}
           selection={selection} onSelect={applySelection} onAttach={attach} onFocusChange={setComposerFocused}
+          naturalVoice={{ ...naturalVoice, onSelect: (c) => void selectNaturalVoice(c) }}
           onOpenPrompts={() => setPromptPaletteOpen(true)}
           plusMenuExtra={(close) => (
             <>

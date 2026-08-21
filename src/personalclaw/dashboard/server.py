@@ -885,6 +885,9 @@ async def start_dashboard(
     )
     app.router.add_get("/api/recent-projects", chat.api_recent_projects)
     app.router.add_patch("/api/chat/sessions/{session}/color", chat.api_chat_session_color)
+    app.router.add_patch(
+        "/api/chat/sessions/{session}/natural-voice", chat.api_chat_session_natural_voice
+    )
     # Context injection (App Kit — silent background context)
     app.router.add_post("/api/chat/sessions/{session}/context", chat.api_chat_session_context)
     app.router.add_post("/api/chat/sessions/{session}/fork", chat.api_chat_session_fork)

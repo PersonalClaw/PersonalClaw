@@ -66,6 +66,7 @@ from personalclaw.dashboard.chat_handlers import (  # noqa: F401
     api_chat_session_detail,
     api_chat_session_interrupt,
     api_chat_session_model,
+    api_chat_session_natural_voice,
     api_chat_session_queue_cancel,
     api_chat_session_reasoning_effort,
     api_chat_session_resume,
