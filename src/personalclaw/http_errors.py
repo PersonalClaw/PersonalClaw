@@ -65,6 +65,13 @@ HTTP_ERROR_CODES: dict[str, str] = {
     "not_found": "The addressed resource does not exist.",
     "forbidden": "The caller is not permitted to touch this resource.",
     "confirmation_required": "The operation is destructive and needs an explicit confirm.",
+    # ── API version negotiation (dashboard/api_version_gate.py) ──
+    # The `error` object additionally carries client_version, server_version,
+    # min_supported_version and upgrade ("client"|"server") — a refusal that named
+    # neither number nor a direction would be no more actionable than a 500.
+    "api_version_unsupported": (
+        "The client's declared API version is outside the window this gateway supports."
+    ),
     # ── auth (handlers/auth.py) — fixed message per code, never request-derived ──
     "auth_not_enabled": "Owner authentication is not enabled on this instance.",
     "auth_invalid_credentials": "The submitted credential did not verify.",

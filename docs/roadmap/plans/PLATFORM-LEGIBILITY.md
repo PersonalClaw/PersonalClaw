@@ -634,3 +634,102 @@ tests/test_config_roundtrip.py tests/test_agent_reference.py` 51 passed. `make l
 test` as the final DoD gate. No E1–E6 blocker. Clean break under the pre-1.0 banner (the renamed
 dismissal set is a re-derivable hide list — no migration-bearing state; the deleted `tool_usage.json`
 counter is regenerable and now unused). Local branch `feature-discover-hub`, unpushed.
+
+---
+
+### `PL-9` — DONE (2026-08-21) — the API version becomes a negotiated contract
+
+**Premise verified before implementing.** `API_VERSION` had exactly **five** occurrences in
+`src/personalclaw`, and **zero** of them were a comparison: the definition (`manifest.py:32`), the
+emission into the manifest document (`manifest.py:154`), one import, and two f-string emissions into
+the generated reference docs (`manifest_reference.py:208`, `:331`). The SPA typed it
+(`web/src/lib/api.ts` `interface Manifest { apiVersion: number }`) and never sent it. The clause's
+premise — write-only — was exact.
+
+**Shipped.**
+* `src/personalclaw/api_version.py` — the ONE origin. `API_VERSION = 1`,
+  `MIN_SUPPORTED_API_VERSION = 1` (a DECLARED floor, not an emergent tolerance), `VERSION_HEADER`,
+  `supported_window()`, `ApiVersionRefusal`, `ApiVersionOutcome`, and `negotiate()` — the single
+  comparison. The **bump rule** lives in this module's docstring and nowhere else: seven "bump for"
+  clauses (field removed/renamed, type or units changed, meaning changed under a stable name, a
+  required request parameter added, an enum member removed, a route moved/deleted) and six
+  "do NOT bump for" clauses (new route, new optional field, new optional parameter, appended enum
+  member, new tool/provider in a generated section, prose). `manifest.py` now RE-EXPORTS the constant
+  (`manifest.API_VERSION is api_version.API_VERSION`) rather than declaring a literal.
+* `src/personalclaw/dashboard/api_version_gate.py` — the ONE chokepoint, installed in
+  `server.py`'s explicit `app.middlewares[:]` list immediately after `no_cache_middleware` and
+  **before** csrf/token-auth: a stale bundle whose cookie is still valid should read "your build is
+  too old" rather than a 403 from a layer it would actually pass, and the gate publishes nothing to
+  a caller who declares nothing (the refusal fires only on an explicit out-of-window declaration).
+* **The refusal** goes through PL-8's envelope only — new registered code
+  `api_version_unsupported` (400), `error_extra` carrying `client_version`, `server_version`,
+  `min_supported_version` and `upgrade` (`"client"`|`"server"`). No second error shape; the two raw
+  children at `handlers/auth.py:593`/`:621` were left to #1854.
+* **Absent ⇒ oldest supported**, with the reason stated in code. To make that rule *load-bearing*
+  rather than cosmetic (with a one-version-wide window, "absent ⇒ floor" and "absent ⇒ current" are
+  indistinguishable on accept/reject), the gate ECHOES the negotiated version back in the same
+  header on every accepted response. So the resolution is a fact on the wire — `curl -sD-` with no
+  declaration reports the floor — and it has a consumer instead of being a second write-only value.
+* **SPA declares once.** `web/src/lib/apiVersion.ts` holds `CLIENT_API_VERSION` +
+  `API_VERSION_HEADER` + `apiVersionHeaders`; `api.ts` spreads it into the shared `SK` header object
+  every request helper already used, so no call site carries the number. The refusal needs no new FE
+  code: `errText.ts` already lifts `error.message` out of PL-8's envelope into the `ApiError` every
+  helper throws.
+
+**Exemptions, each deliberate** (`api_version_gate.py`'s docstring carries the reasons): everything
+outside `/api/` and `/mcp` (the SPA document and `/assets/**` ARE the recovery path — gating them
+means a refused client can never fetch the bundle that would fix it); `GET /api/healthz` (a non-200
+reads as "gateway down" to a supervisor and can trigger a restart loop); `GET /api/manifest` (it
+PUBLISHES `apiVersion` — refusing it is circular); the pre-session front door (`/api/token/local`,
+`/api/logout`, `/api/auth/status`, `/api/auth/login`, `/api/auth/enroll/complete`,
+`/api/devices/pair/complete` — a version wall in front of login turns "reload the page" into "you
+cannot authenticate far enough to see why you were refused"); `/mcp` (negotiates its own protocol
+version per the MCP spec); and WebSocket upgrades (`/api/ws**` — a browser `WebSocket` cannot set a
+request header, so the only carrier would be a query parameter at each of four socket sites, i.e.
+four declaration sites instead of one, and a socket is only opened by an already-mounted SPA whose
+HTTP calls the chokepoint has necessarily already judged). A rail asserts every EXACT exemption names
+a path the gate would otherwise have caught, so no row can be a dead decision.
+
+**Tests.** `tests/test_api_version_negotiation.py` (21 — the resolution rule at the function, driven
+over a WIDER window because the shipped one-version window hides it; the chokepoint end to end,
+including a deliberately mismatched client in both directions and the echoed negotiated version) and
+`tests/test_api_version_one_origin.py` (14 — the anti-drift rail).
+
+**The rail is non-vacuous — seven falsifications, each observed RED, each restored from a file copy
+(never `git checkout --`):** (a) `if False and client > srv` → 3 red incl. the e2e (`200 != 400`);
+(b) absent resolved to `srv` instead of `floor` → 5 red, incl. the end-to-end
+"an undeclared client was credited with the current version instead of the oldest supported one";
+(c1) `LEGACY_API_VERSION = 1` added to `manifest.py` → the Python one-origin rail red; (c2) the same
+literal appended to `api.ts` → the TypeScript one-origin rail red; (d1) `upgrade` stripped from
+`as_error_extra` → `KeyError: 'upgrade'` on both refusal tests; (d2) `server_version` stripped →
+`KeyError: 'server_version'`; (e) a second `negotiate()` call added to `api_healthz` → the
+one-chokepoint rail red naming both callers; (f) `api_version_middleware()` removed from
+`server.py`'s middleware list → "the negotiation would never run"; (g) `...apiVersionHeaders` dropped
+from `SK` → "every request would go out undeclared". Post-sweep
+`grep -rn "FALSIFICATION\|if False and\|# PROBE\|MUTANT" src/personalclaw tests` = 13 (the benign
+baseline) and the tree clean apart from `docs/design/consistency-audit.json`, which drifts on `main`.
+
+**Gate.** `make lint` (black/isort/flake8/mypy, 953 files) clean; `npm run typecheck:web` clean;
+full `npm run test:web` 4805 passed (460 files — the global design/a11y ratchets included);
+`npm run build --workspace web` green; `python -m personalclaw.manifest_reference` re-run with
+`PYTHONPATH` pinned to this worktree produced **no** diff (no route added, version unchanged) and the
+main checkout stayed clean; targeted `pytest` + full `make test`. No E1–E6 blocker. Clean break under
+the pre-1.0 banner — no state shape changed; the only wire addition is a request/response header and
+one appended error code, both additive, so `API_VERSION` stays at 1 by its own bump rule.
+
+**Live drive (found and fixed one thing the tests could not).** Driven against a real gateway on an
+isolated dev home (`PYTHONPATH` pinned to this worktree — the venv is an editable install of the MAIN
+checkout, so the naive invocation runs main's code and silently proves nothing): an undeclared
+`GET /api/status` answered `200` + `X-PersonalClaw-API-Version: 1`; `2` was refused
+`upgrade=server`, `0` refused `upgrade=client`, `banana-…` refused with the value truncated to 32
+chars; and every exemption answered non-400 (`healthz` 200, `manifest` 200 with `apiVersion:1`,
+`token/local` 403 from its OWN secret check, the POST-only front-door routes 405 from routing, `/`
+200 HTML, `/login` 302, and a real WS upgrade to `/api/ws` returned **101** with version `99`).
+The drive exposed copy the tests had accepted: with the shipped one-version window the message read
+"this gateway speaks 1-1" — machine-shaped phrasing on the one surface this plan exists to make
+legible, and the ONLY phrasing anyone would ever see. `_window_phrase()` now renders
+"speaks version 1" for a one-wide window and "speaks versions 2-5" for a wider one, with three tests
+covering both widths and the shipped window whatever its width.
+
+**Left for its owner:** `handlers/auth.py:593`/`:621` read PL-8's `{code, message}` object as a
+string inside a JS string literal; #1854 owns that fix and nothing here copies the pattern.
