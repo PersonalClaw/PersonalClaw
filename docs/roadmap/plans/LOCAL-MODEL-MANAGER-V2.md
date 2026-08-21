@@ -317,6 +317,154 @@ Where each piece plugs into the pluggable-provider architecture (recon: provider
 
 ## Execution log
 
+- 2026-08-21 — **PARTIAL (LMMV-7 / Session 5b, second pass). Both hardening rails made
+  DERIVED instead of hand-listed; the six-provider matrix DRIVEN (the 2026-08-18 entry's
+  "no local-model provider exists" was an unwired-apps-dir artifact, corrected below).
+  Three clauses remain unmet, each with evidence.**
+
+  **Clause audit first — most of this atom was already built.** Verified against
+  `origin/main` (`addbc332`, #1628) before writing anything: the §2.2 budget helper
+  (`local_models/budgets.py` — `catalog_window`/`model_budget`/`output_budget`) is
+  consumed by **every** resolution branch of `one_shot_completion` through one seam,
+  `_entry_kw` (`llm_helpers.py:456`), which puts the derived number in `max_tokens` at
+  `:498`. The reasoning axis specifically is covered: `resolved_uc` is either the caller's
+  real axis (`:443`) or collapses to `"reasoning"` (`:447`), and both reach the helper via
+  the pin (`:535`), chain-advance (`:556`) and plain (`:588`) call sites. The named live
+  callers carry no hardcoded cap to supersede — `nl_to_cron.py:54-57` and
+  `inbox_service.py:375/395/416/438/459` pass only `use_case="background"` and inherit the
+  derivation. `workflows/compaction.py` is still byte-identical: **no compaction logic
+  rewritten**, the atom's explicit boundary.
+
+  **What was actually missing: both regression rails were ONE-SIDED inventories.** Each
+  proved every *listed* item was covered and said nothing about an item nobody listed —
+  which is the only case a rail like this exists to catch.
+
+  * **SC-10 (the model-root rail).** `test_every_guarded_entry_point_is_wrapped`
+    parametrizes over `GUARDED_FUNCTIONS`, and its own docstring claimed it caught
+    *"adding a new cache-root function to `layouts` and forgetting to list it"*. It cannot:
+    an unlisted function is never iterated. Added
+    `test_the_guarded_set_covers_every_cache_root_entry_point`, which **derives** the
+    population by AST-parsing `layouts.py` for public functions whose first parameter is
+    `cache_root` and reconciles it against `GUARDED_FUNCTIONS` in both directions. Parsed
+    from SOURCE deliberately, not via `inspect.signature`: the autouse fixture has already
+    replaced each guarded attribute with `_guarded(cache_root, ...)`, so a signature-based
+    derivation would report `cache_root` first for anything already wrapped and confirm
+    itself. **Falsified** by appending a `sweep_stale_layouts(cache_root, model)` to
+    `layouts.py`: the new rail reds naming `['sweep_stale_layouts']` — and on the *same
+    run* the pre-existing wrapping test **passed**, which is the hole measured directly.
+  * **SC-9 (the two-population invariant).** The structural test iterated a hardcoded
+    four-entry map, so a fifth registry growing a `refresh_providers` would inherit nothing.
+    Now `_modules_defining_refresh_providers()` discovers the population from the package
+    (text prefilter, then AST confirmation so a docstring mention or call site is not
+    mistaken for a definition) and reconciles both directions. **Falsified** by adding a
+    `refresh_providers()` that does `_providers.clear()` to `diarization/registry.py`: reds
+    naming `['personalclaw.diarization.registry']`. Census: exactly four modules define
+    `refresh_providers` today (stt, tts, image_gen, video_gen), and all seven public
+    `cache_root` functions in `layouts.py` are guarded — both rails are complete *now*, and
+    now stay complete.
+
+  **The three locks re-falsified on this base, not assumed.** (a) restoring the untargeted
+  `_providers.clear()` in `stt/registry.refresh_providers` → **2 reds** (the two-population
+  case + the sidecar-survival gate); (b) `name=ext.name` → `name=provider.name` in
+  `ModelTypeHandler.register` → **2 reds**; dropping `"stt"` from `_DOWNLOADABLE_CAPS` →
+  **3 reds** (all three drift gates). (c) driven with a deliberately-offending probe file of
+  three shapes, none using `pytest.raises` — a real HF-cache delete, a `~/.personalclaw`
+  probe, **and an import-bound alias captured at module import before the fixture runs**.
+  All three were caught. **DISCOVERY — why the import-bound shape is caught, and how
+  fragile that is:** `delete_all_layouts` (`layouts.py:195`) resolves `candidate_paths` as a
+  **module global**, so the patched wrapper intercepts it transitively *before* `shutil.rmtree`
+  — the rail's depth is a consequence of that one call being a module-global lookup, not of
+  the fixture's reach. An entry point that did its own fs work without calling another
+  guarded function could still be reached through an import-bound alias.
+
+  **The matrix — DRIVEN, and the previous entry's blocker was wrong.** The 2026-08-18 note
+  recorded `{"providers": []}` and concluded *"no local-model provider exists to drive"*.
+  The cause was not absence: the six apps live in the sibling `PersonalClawApps` clone and
+  the gateway had no source pointing at it. With
+  `PERSONALCLAW_FIRST_PARTY_APPS_DIR=<workspace>/PersonalClawApps`, `/api/apps/catalog`
+  returns **45 local apps** and all six installed and enabled through the real endpoints
+  (`POST /api/apps` then `POST /api/apps/{name}/enable`). Isolated home
+  `<worktree>/.dev-home`, port 10778, `AUTH_MODE=none`; attribution asserted by the gateway
+  writing `<worktree>/.dev-home/gateway.log` itself, and the port confirmed owned by the PID
+  we started (a foreign gateway was live on 10698 throughout and was never touched).
+
+  **DISCOVERY — an isolated `PERSONALCLAW_HOME` does NOT isolate model weights.**
+  In the sibling `PersonalClawApps` repo, the `faster-whisper` provider module (line 45) and
+  the `diarization-onnx` one (line 26) root their caches at `XDG_CACHE_HOME`/`~/.cache`
+  (HF hub / `personalclaw/diarization-onnx`); only `piper-tts` and `sentence-transformers`
+  honor `PERSONALCLAW_HOME`. The real `~/.cache/huggingface`
+  holds genuinely downloaded weights, so a download or delete driven from a dev gateway
+  targets them. The sweep therefore also set `XDG_CACHE_HOME`/`HF_HOME` inside the dev home,
+  and a before/after `ls` of the real hub dir was kept as a control: **byte-identical across
+  the whole sweep.** This is the production-side analogue of the incident SC-10 closed in
+  tests — the test rail is structural, the dev-runtime one is a convention nobody sets.
+
+  **Matrix results, per cell.** download/bind/delete were driven through
+  `POST /api/models/downloads`, `PUT /api/models/active/{use_case}` and
+  `DELETE /api/models/local/{provider}/{model}`; 355 MB of real weights landed in the dev
+  home and every `downloaded` flag flipped true, then back to false after the deletes
+  (`models/` 235M → 4.0K, `xdg-cache/` 120M → 136K, no file >1 MB left).
+
+  | provider | download | bind | RUN | delete |
+  |---|---|---|---|---|
+  | faster-whisper (stt) | ✅ 75 MB | ✅ | ❌ no surface | ✅ |
+  | piper-tts (tts) | ✅ | ✅ | ❌ no surface | ✅ |
+  | sentence-transformers (embedding) | ✅ | ✅ | ✅ real inference | ✅ |
+  | diarization-onnx (diarization) | ✅ 47 MB | ✅ | ❌ no surface | ✅ |
+  | diarization-pyannote (diarization) | ❌ credential-gated | — | — | — |
+  | ollama (chat+embedding) | ❌ not exercised | ✅ | ✅ real completion | ❌ not exercised |
+
+  The embedding RUN leg is the one cell proven end to end: a reindex against an **empty**
+  store first returned `done` with `total: 0` — a green that measures nothing — so a
+  knowledge item was created and the reindex re-driven, returning `done=1, knowledge=1`
+  through the bound local `all-MiniLM-L6-v2`. The ollama cell's RUN is a real chat
+  completion, which also validates §2.2's consumer as a user: it goes through
+  `one_shot_completion(use_case="background")` with `ollama:gemma4:12b` bound, i.e. the
+  derived `max_tokens` reached a real local model and the call returned.
+
+  **UNMET clause 1 — `diarization-pyannote` is credential-gated and cannot be exercised
+  here.** Recorded rather than skipped: the model surfaces with `gated: true`, the download
+  starts (`dl-5`) and ends `state: error`. **DISCOVERY (Success Criterion 3, not this
+  atom's):** the failure is *unclassified* — `reason: ""` and a generic
+  `"Failed to download model 'pyannote/speaker-diarization-3.1' from
+  diarization-pyannote"`, where SC-3 requires the exact two-step accept-license / add-token
+  instruction with deep links. The gate works; its legibility does not.
+
+  **UNMET clause 2 — the ollama cell's download/delete legs were deliberately not driven.**
+  Ollama stores models in the daemon's own `~/.ollama`, which `PERSONALCLAW_HOME` cannot
+  redirect (it would need `OLLAMA_MODELS` on the already-running daemon). A delete there
+  would remove a model the owner really pulled — the incident this plan exists to prevent —
+  so bind + RUN were driven against the already-present `gemma4:12b` and the two write legs
+  were left alone. Also worth noting for the card itself: the sixth provider only appears
+  once a **config.json** ollama entry exists (`register_config_model_managers()` reads
+  `registry.list_entries()`); installing and enabling the app is not sufficient. Creating one
+  via `POST /api/model-providers` took the surface from 5 providers to **6**.
+
+  **UNMET clause 3 / DISCOVERY — `POST /api/model-providers/{name}/selftest` is
+  provider-blind, so Success Criterion 5 is UNMET.** `api_provider_selftest`
+  (`dashboard/handlers/doctor.py:214`) reads `{name}` at `:224` and hands it to
+  `_run_selftest(name)` at `:225`, which **never reads the parameter** (`:229` onward): it
+  probes whatever is bound to the chat/embedding use cases and labels the answer with the
+  caller's provider name. Measured: `faster-whisper`, `piper-tts` and `diarization-onnx` all
+  returned `chat: ok, embedding: 384 dims` *after their weights had been deleted*, and
+  `.../this-provider-does-not-exist-zzz/selftest` returns `ok: true` for both capabilities.
+  SC-5 asks for a real inference per provider returning **honestly**; this returns a false
+  green for every name including nonexistent ones. Left unfixed on purpose — the selftest is
+  Session 3's deliverable (§7), and rewriting it here is scope this atom does not own.
+
+  **Not done, and why:** the RUN leg for stt / tts / diarization has no user-reachable
+  surface in this build — there is no voice/transcribe/synthesize handler in
+  `dashboard/handlers/` and no `/api/models/local/{provider}/selftest` route, only `search`
+  and the delete. That is a more precise statement of the earlier entry's "the RUN leg needs
+  real weights": the weights were downloaded and bound here, and the gap is the missing
+  surface, not the missing model.
+
+  Gate: `make lint` clean. 44 passed across `test_local_model_root_guard`,
+  `test_local_model_refresh_invariants`, `test_local_model_budgets`; full `make test` green.
+  No config field added, so the five-point round-trip contract does not apply. The real HF
+  cache was verified untouched by before/after control, and the falsification sweep
+  (`FALSIFICATION|if False and|# PROBE|MUTANT`) is back to its benign baseline of 13.
+
 - 2026-08-18 — **PARTIAL (LMMV-7 / Session 5b). The per-model context-budget helper +
   all three hardening regressions are DONE; the full-matrix as-a-user sweep is
   NOT EXERCISED (reason below).**
