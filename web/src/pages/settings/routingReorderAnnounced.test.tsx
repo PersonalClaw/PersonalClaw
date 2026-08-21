@@ -44,8 +44,8 @@ vi.mock('../../lib/api', () => ({
     modelsTelemetry: () => Promise.resolve({ rows: [] }),
   },
 }))
-vi.mock('../../lib/useCachedData', () => ({
-  useCachedData: (_k: string, fn: () => Promise<unknown>) => {
+vi.mock('../../lib/data', () => ({
+  useQuery: (_k: string, fn: () => Promise<unknown>) => {
     const [d, setD] = require('react').useState(undefined)
     require('react').useEffect(() => { void fn().then(setD) }, [])
     return { data: d, refresh: () => {} }

@@ -22,7 +22,7 @@ import { FieldLabelProvider, TextArea, TextInput } from '../../ui/forms'
 import { InlineError } from '../../ui/InlineError'
 import { WorkspacePicker } from '../code/WorkspacePicker'
 import { api, ApiError, type ProjectItem, type TaskListItem, type LoopKind, type TaskItem, type FsEntry, type WorkRow, type WorkState, type WorkBoard, type ProjectKnowledgeItem, type SharingPolicy } from '../../lib/api'
-import { useCachedData, invalidateCache } from '../../lib/useCachedData'
+import { useQuery, invalidateKeys } from '../../lib/data'
 import { getActiveProject, setActiveProject } from '../../lib/activeProject'
 import { notify } from '../../app/appSdk'
 import { PageTitle } from '../../ui/PageTitle'
@@ -39,7 +39,7 @@ export function ProjectsSection({ sub, navigate, query, setQuery }: RouteProps) 
 }
 
 function ProjectListPage({ onOpen, query, setQuery }: { onOpen: (id: string) => void } & Pick<RouteProps, 'query' | 'setQuery'>) {
-  const { data: projects, loading, error: loadErr, refresh } = useCachedData('projects:list', () => api.projects(), { persist: true })
+  const { data: projects, loading, error: loadErr, refresh } = useQuery('projects:list', () => api.projects(), { persist: true })
   // List search is URL-backed (?q, replace) — shareable + refresh-stable, no
   // per-keystroke history. (Was local useState.)
   const [q, setQ] = useQueryParam(query, setQuery, 'q', '', { replace: true })
@@ -72,7 +72,7 @@ function ProjectListPage({ onOpen, query, setQuery }: { onOpen: (id: string) => 
       })
       if (form.setActive) setActiveProject(p.id)
       setCreating(false)
-      invalidateCache('projects:list'); refresh()
+      invalidateKeys('projects:list'); refresh()
       onOpen(p.id)
     } catch (e) { setErr((e as Error).message || 'Could not create the project') }
     finally { setBusy(false) }
@@ -119,7 +119,7 @@ function ProjectListPage({ onOpen, query, setQuery }: { onOpen: (id: string) => 
         setErr(`Couldn't delete that project: ${(e as Error).message || 'unknown error'}`)
       }
     }
-    invalidateCache('projects:list'); refresh()
+    invalidateKeys('projects:list'); refresh()
   }
 
   const needle = q.trim().toLowerCase()
@@ -153,7 +153,7 @@ function ProjectListPage({ onOpen, query, setQuery }: { onOpen: (id: string) => 
             "No projects yet" — measured: the API returned 500 and the page said the user had
             none, with no retry and nothing announced. The error branch must come FIRST,
             because `projects === undefined` also satisfies the skeleton and empty conditions. */}
-        {projects === undefined && loadErr ? <LoadError what="projects" error={loadErr} onRetry={() => { invalidateCache('projects:list'); refresh() }} />
+        {projects === undefined && loadErr ? <LoadError what="projects" error={loadErr} onRetry={() => { invalidateKeys('projects:list'); refresh() }} />
           : loading && !projects ? <ListSkeleton rows={5} what="projects" />
           : !shown.length ? (
             needle
@@ -496,17 +496,17 @@ function Field({ label, hint, children }: { label: string; hint?: string; childr
 function ProjectDetailPage({ id, onBack, navigate, query, setQuery }: { id: string; onBack: () => void; navigate: (to: string) => void } & Pick<RouteProps, 'query' | 'setQuery'>) {
   // `error` was previously discarded, so a 500 fell through to `!project` and the page claimed the
   // project was deleted. A failed read is not a deletion.
-  const { data: project, loading, error: detailErr, refresh } = useCachedData(`projects:detail:${id}`, () => api.project(id))
-  const { data: lists } = useCachedData(`projects:lists:${id}`, () => api.taskLists(id))
+  const { data: project, loading, error: detailErr, refresh } = useQuery(`projects:detail:${id}`, () => api.project(id))
+  const { data: lists } = useQuery(`projects:lists:${id}`, () => api.taskLists(id))
   // The Work board (WORK-CONTAINERS §1/§5.2/§6.1): runs + legacy loops + tasks in one
   // state-grouped board. Local-first (persist) + stale-while-revalidate, the same seam
   // the rest of the detail page uses — the board paints from cache, then swaps in the
   // fresh projection when it lands.
-  const { data: work, loading: workLoading } = useCachedData(`projects:work:${id}`, () => api.projectWork(id), { persist: true })
+  const { data: work, loading: workLoading } = useQuery(`projects:work:${id}`, () => api.projectWork(id), { persist: true })
   // Legibility §7 — whether context adapters are enabled (Settings › Legibility). The
   // "Refresh context files" action only makes sense when this is on AND a workspace is
   // bound, so the button appears only then (server still re-checks + 403s if stale).
-  const { data: pcfg } = useCachedData('config:personalclaw', () => api.personalclawConfig())
+  const { data: pcfg } = useQuery('config:personalclaw', () => api.personalclawConfig())
   const adaptersEnabled = Boolean((pcfg as { legibility?: { context_adapters?: boolean } } | undefined)?.legibility?.context_adapters)
   const [renaming, setRenaming] = useState(false)
   const [nameDraft, setNameDraft] = useState('')
@@ -550,7 +550,7 @@ function ProjectDetailPage({ id, onBack, navigate, query, setQuery }: { id: stri
 
   async function patch(body: Record<string, unknown>) {
     setErr(null)
-    try { await api.updateProject(id, body); invalidateCache(`projects:detail:${id}`); invalidateCache('projects:list'); refresh() }
+    try { await api.updateProject(id, body); invalidateKeys(`projects:detail:${id}`); invalidateKeys('projects:list'); refresh() }
     catch (e) { setErr((e as Error).message || 'Could not update the project') }
   }
 
@@ -907,7 +907,7 @@ function TaskListRow({ list, active, onOpen }: { list: TaskListItem; active: boo
 /** Side-panel body: the tasks under a list, grouped nothing-fancy, each opening the
  *  full task in the Tasks page. Lazy-fetched (panel only mounts when opened). */
 function TaskListPanel({ list, onOpenTask }: { list: TaskListItem; onOpenTask: (taskId: string) => void }) {
-  const { data: tasks, loading } = useCachedData<TaskItem[]>(`tasklist:tasks:${list.id}`,
+  const { data: tasks, loading } = useQuery<TaskItem[]>(`tasklist:tasks:${list.id}`,
     () => api.tasks({ task_list: list.id, limit: 200 }).then((d) => d.tasks))
   if (loading && !tasks) return <div className="flex justify-center py-l"><Loader2 size={16} className="animate-spin text-on-surface-low" /></div>
   if (!tasks?.length) return <p className="text-on-surface-low text-[0.8125rem]">No tasks in this list yet.</p>
@@ -945,7 +945,7 @@ function dirErrorMessage(error: unknown): string {
 
 function DirTreePanel({ path, onOpenInFiles }: { path: string; onOpenInFiles: () => void }) {
   const [cur, setCur] = useState(path)
-  const { data, loading, error } = useCachedData(`dirtree:${cur}`, () => api.fileList(cur))
+  const { data, loading, error } = useQuery(`dirtree:${cur}`, () => api.fileList(cur))
   // Breadcrumb segments relative to the panel's root `path` (don't walk above it).
   const rel = cur.startsWith(path) ? cur.slice(path.length).replace(/^\//, '') : ''
   const crumbs = rel ? rel.split('/') : []

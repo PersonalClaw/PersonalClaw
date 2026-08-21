@@ -6,7 +6,7 @@ import { FormFooter } from '../../ui/FormFooter'
 import { Markdown } from '../../ui/Markdown'
 import { Field, FieldError } from '../../ui/forms'
 import { confirmDelete } from '../../ui/dialog'
-import { useCachedData, invalidateCache } from '../../lib/useCachedData'
+import { useQuery, invalidateKeys } from '../../lib/data'
 import { api, type PromptSnippet, type PromptVariable } from '../../lib/api'
 import { isReadOnly, sourceTone, sourceLabel, promptVars, seedRenderValues, detectIncludes } from './promptMeta'
 import { SnippetForm, toSnippetDraft, snippetDraftToPayload, type SnippetDraft } from './SnippetForm'
@@ -29,7 +29,7 @@ export function SnippetDetail({ snippet, onSaved, onDeleted, editing: editingPro
   const [saving, setSaving] = useState(false)
   const [err, setErr] = useState('')
 
-  const { data: fetched, refresh: refetch } = useCachedData<PromptSnippet | undefined>(`snippet:${snippet.name}`, () => (snippet.content == null ? api.snippet(snippet.name) : Promise.resolve(undefined)), { persist: true })
+  const { data: fetched, refresh: refetch } = useQuery<PromptSnippet | undefined>(`snippet:${snippet.name}`, () => (snippet.content == null ? api.snippet(snippet.name) : Promise.resolve(undefined)), { persist: true })
   const full = snippet.content != null ? snippet : fetched
 
   useEffect(() => { if (full) setDraft(toSnippetDraft(full)) }, [full])
@@ -37,10 +37,10 @@ export function SnippetDetail({ snippet, onSaved, onDeleted, editing: editingPro
   async function save() {
     if (!draft.name.trim()) { setErr('Name is required'); return }
     setSaving(true); setErr('')
-    // invalidateCache alone is not enough: this component stays mounted after Save
+    // invalidateKeys alone is not enough: this component stays mounted after Save
     // (same list-row key), so the hydration hook never re-runs and the view keeps
     // showing the PRE-save record. Explicitly refetch after invalidating.
-    try { const r = await api.saveSnippet(snippet.name, snippetDraftToPayload(draft)); invalidateCache(`snippet:${snippet.name}`); refetch(); onSaved(r.snippet?.name ?? snippet.name); setEditing(false) }
+    try { const r = await api.saveSnippet(snippet.name, snippetDraftToPayload(draft)); invalidateKeys(`snippet:${snippet.name}`); refetch(); onSaved(r.snippet?.name ?? snippet.name); setEditing(false) }
     catch (e) { setErr(e instanceof Error ? e.message : 'Save failed') } finally { setSaving(false) }
   }
   async function del() {

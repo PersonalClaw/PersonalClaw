@@ -52,7 +52,7 @@ describe('every reader of the chat-session collection shares its namespace', () 
     for (const abs of walk(SRC)) {
       const code = codeOf(abs.slice(SRC.length + 1))
       if (!code.includes('api.chatSessions(')) continue
-      for (const m of code.matchAll(/useCachedData(?:<[^>]*>)?\(\s*([^,]+),/g)) {
+      for (const m of code.matchAll(/useQuery(?:<[^>]*>)?\(\s*([^,]+),/g)) {
         const keyExpr = m[1]
         if (!/chatSessions/.test(code.slice(m.index!, m.index! + 240))) continue
         if (!/'chat:sessions/.test(keyExpr)) strays.push(`${abs.slice(SRC.length + 1)}: ${keyExpr.trim().slice(0, 60)}`)
@@ -62,30 +62,30 @@ describe('every reader of the chat-session collection shares its namespace', () 
   })
 
   it('the prefix bust reaches all three keys and nothing else', async () => {
-    const { invalidateCache, writeCache, peekCache } = await import('../../lib/useCachedData')
-    writeCache('chat:sessions', ['sidebar'])
-    writeCache('chat:sessions:archived', ['history'])
-    writeCache('chat:sessions:recent', ['dashboard'])
-    writeCache('chat:suggestions', ['keep me'])
-    writeCache('chat:folders', ['keep me too'])
+    const { invalidateKeys, writeQuery, peekQuery } = await import('../../lib/data')
+    writeQuery('chat:sessions', ['sidebar'])
+    writeQuery('chat:sessions:archived', ['history'])
+    writeQuery('chat:sessions:recent', ['dashboard'])
+    writeQuery('chat:suggestions', ['keep me'])
+    writeQuery('chat:folders', ['keep me too'])
 
-    invalidateCache('chat:sessions', true)
+    invalidateKeys('chat:sessions', true)
 
-    expect(peekCache('chat:sessions')).toBeUndefined()
-    expect(peekCache('chat:sessions:archived')).toBeUndefined()
+    expect(peekQuery('chat:sessions')).toBeUndefined()
+    expect(peekQuery('chat:sessions:archived')).toBeUndefined()
     // 🔑 The one that used to survive — and used to survive a reload, too.
-    expect(peekCache('chat:sessions:recent'), "the dashboard's list is dropped").toBeUndefined()
+    expect(peekQuery('chat:sessions:recent'), "the dashboard's list is dropped").toBeUndefined()
     // The prefix is the COLLECTION, not the namespace: siblings in `chat:` must be untouched.
-    expect(peekCache('chat:suggestions'), 'a namespace sibling must survive').toEqual(['keep me'])
-    expect(peekCache('chat:folders')).toEqual(['keep me too'])
+    expect(peekQuery('chat:suggestions'), 'a namespace sibling must survive').toEqual(['keep me'])
+    expect(peekQuery('chat:folders')).toEqual(['keep me too'])
   })
 
   it('persist:true means the stale row survived a reload — so the bust clears storage too', async () => {
-    const { invalidateCache, writeCache } = await import('../../lib/useCachedData')
-    writeCache('chat:sessions:recent', ['dashboard'])
-    // `writeCache` mirrors persisted keys into sessionStorage; the bust must remove that copy or the
+    const { invalidateKeys, writeQuery } = await import('../../lib/data')
+    writeQuery('chat:sessions:recent', ['dashboard'])
+    // `writeQuery` mirrors persisted keys into sessionStorage; the bust must remove that copy or the
     // next mount rehydrates exactly the row we just deleted.
-    invalidateCache('chat:sessions', true)
+    invalidateKeys('chat:sessions', true)
     const leftovers = Object.keys(sessionStorage).filter((k) => k.includes('chat:sessions'))
     expect(leftovers, `sessionStorage still holds ${leftovers.join(', ')}`).toEqual([])
   })
@@ -98,7 +98,7 @@ describe('both session mutations bust the collection', () => {
     const code = chat()
     const at = code.indexOf('const load = useCallback(')
     expect(at, 'the loader must still exist').toBeGreaterThan(-1)
-    expect(code.slice(at, at + 400)).toMatch(/invalidateCache\('chat:sessions', true\)/)
+    expect(code.slice(at, at + 400)).toMatch(/invalidateKeys\('chat:sessions', true\)/)
   })
 
   it('rename busts it — it used to bust nothing at all', () => {
@@ -107,14 +107,14 @@ describe('both session mutations bust the collection', () => {
     expect(at, 'commitRename must still exist').toBeGreaterThan(-1)
     const fn = code.slice(at, at + 700)
     expect(fn, 'the optimistic header update is not enough for three other readers')
-      .toMatch(/invalidateCache\('chat:sessions', true\)/)
+      .toMatch(/invalidateKeys\('chat:sessions', true\)/)
   })
 
   it('the two per-key busts collapsed into one prefix call', () => {
     const code = chat()
     // Not a style preference: the explicit pair could only ever name the keys its author knew about.
-    expect(code, 'the archived key no longer needs naming').not.toMatch(/invalidateCache\('chat:sessions:archived'\)/)
-    expect((code.match(/invalidateCache\('chat:sessions', true\)/g) ?? []).length,
+    expect(code, 'the archived key no longer needs naming').not.toMatch(/invalidateKeys\('chat:sessions:archived'\)/)
+    expect((code.match(/invalidateKeys\('chat:sessions', true\)/g) ?? []).length,
       'delete and rename both bust it').toBeGreaterThanOrEqual(2)
   })
 })

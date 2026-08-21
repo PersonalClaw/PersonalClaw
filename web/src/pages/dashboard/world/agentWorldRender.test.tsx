@@ -52,7 +52,7 @@ describe('the world reaches no endpoint of its own', () => {
     const body = code('AgentWorld.tsx')
     expect(body).toContain('useAgentActivity()')
     // No sibling data source may sneak in beside it.
-    for (const banned of ['useDashboardLive', 'useCachedData', 'useChatSocket', 'useVisiblePoll']) {
+    for (const banned of ['useDashboardLive', 'useQuery', 'useChatSocket', 'useVisiblePoll']) {
       expect(body, `the world must not call ${banned} — it consumes ONE contract`).not.toContain(banned)
     }
   })

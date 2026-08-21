@@ -24,7 +24,7 @@ import { spring, physics, messageEnter } from '../../design/motion'
 import { ContentSurface } from '../../ui/content/ContentSurface'
 import { resolveContentType } from '../../ui/content/contentTypes'
 import { api, type GoalLoop, type LoopFinding, type LoopNudge, type LoopVerdict, type Artifact, type TaskItem } from '../../lib/api'
-import { peekCache, writeCache } from '../../lib/useCachedData'
+import { peekQuery, writeQuery } from '../../lib/data'
 import { downloadText, safeFilename } from '../../lib/download'
 import { useRunStream } from './useRunStream'
 import { loopToGoalLoop } from './goalAdapter'
@@ -273,7 +273,7 @@ export function LoopCockpitPage({ id, onBack, onDeleted, onOpenArtifact, onOpenT
       const gl = raw ? loopToGoalLoop(raw) : null
       if (!alive) return
       if (gl) {
-        everLoaded.current = true; setC(gl); setNotFound(false); writeCache(`loop:${id}`, gl); loadOutputs(); loadTasks(gl.linked_task_ids ?? [])
+        everLoaded.current = true; setC(gl); setNotFound(false); writeQuery(`loop:${id}`, gl); loadOutputs(); loadTasks(gl.linked_task_ids ?? [])
         // A TERMINAL loop never changes again — stop the 30s fallback poll so a finished
         // cockpit tab doesn't spam GET /api/loops/<id> forever. SSE still delivers the
         // (rare) post-terminal event; reopening / an action re-pulls fresh. Mirrors the
@@ -300,16 +300,16 @@ export function LoopCockpitPage({ id, onBack, onDeleted, onOpenArtifact, onOpenT
 
   // Instant-paint seed: re-opening a loop should show its last snapshot
   // immediately instead of a cold spinner. This PEEKS the shared cache (which
-  // load() above warms via writeCache) — a synchronous read, NO fetch — so the
+  // load() above warms via writeQuery) — a synchronous read, NO fetch — so the
   // first paint is instant on a same-session re-nav while load() revalidates. We
-  // deliberately do NOT use useCachedData here: it always fires its own fetch,
+  // deliberately do NOT use useQuery here: it always fires its own fetch,
   // which duplicated load()'s GET /api/loops/<id> on every mount (3 identical
   // mount requests → now 1 authoritative + SSE). In-memory only: a hard reload
   // has an empty cache, so load()'s fetch owns the first paint then (correct —
   // never a stale cross-reload snapshot).
   useEffect(() => {
     if (c === null) {
-      const seed = peekCache<GoalLoop>(`loop:${id}`)
+      const seed = peekQuery<GoalLoop>(`loop:${id}`)
       if (seed) setC(seed)
     }
   }, [id, c])

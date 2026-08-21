@@ -9,7 +9,7 @@ import { join } from 'node:path'
 // system prompt, skills, tools, triggers, and workflows" — the newcomer empty state, over a network
 // failure. Two layers had to be fixed, and finding the second one is the point:
 //
-//   1. `useAgentsData` called `useCachedData(...)` and DROPPED its `error`, returning `data ?? []`.
+//   1. `useAgentsData` called `useQuery(...)` and DROPPED its `error`, returning `data ?? []`.
 //      The page could not have told a failure from an empty catalog even if it wanted to.
 //   2. 🔑 Fixing only that would have shipped an INERT control: `fetchAgentGroups` awaits
 //      `Promise.allSettled([api.agents(), api.agentProviders()])`, which NEVER rejects — a failed

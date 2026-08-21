@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { Field, Select, TextArea } from '../../ui/forms'
 import { api } from '../../lib/api'
-import { useCachedData, invalidateCache } from '../../lib/useCachedData'
+import { useQuery, invalidateKeys } from '../../lib/data'
 
 /** Serialize a structured config value for the JSON editor's text buffer. */
 export function serializeJsonField(value: unknown, expected: 'array' | 'object'): string {
@@ -143,12 +143,12 @@ export function AppConfigFields({ appName, props, cur, set, secretSet = [] }: {
  *  used to DISCARD it, which made `loading` true forever on a failed read); `hasSchema` is false
  *  for a schema-less app. */
 export function useAppConfig(name: string) {
-  const { data, error: loadErr, refresh } = useCachedData(`app-config:${name}`, () => api.appConfig(name), { persist: false })
+  const { data, error: loadErr, refresh } = useQuery(`app-config:${name}`, () => api.appConfig(name), { persist: false })
   const [values, setValues] = useState<Record<string, unknown> | null>(null)
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState<string | null>(null)
   const [savedAt, setSavedAt] = useState(0)
-  const reload = () => { invalidateCache(`app-config:${name}`); refresh() }
+  const reload = () => { invalidateKeys(`app-config:${name}`); refresh() }
 
   const schema = (data?.schema ?? {}) as AppConfigSchema
   const props = schema.properties ?? {}
@@ -184,7 +184,7 @@ export function useAppConfig(name: string) {
     setBusy(true); setErr(null)
     try {
       await api.saveAppConfig(name, cur)
-      invalidateCache(`app-config:${name}`)
+      invalidateKeys(`app-config:${name}`)
       setValues(null)
       setSavedAt(Date.now())
       onDone?.()

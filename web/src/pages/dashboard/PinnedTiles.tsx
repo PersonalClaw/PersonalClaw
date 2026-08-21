@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { reportActionFailure } from '../../app/reportingWrite'
 import { Check, X, RefreshCw, Sparkles } from 'lucide-react'
 import { api, type DashboardView, type DashboardTile, type Artifact, type TileRefreshRow } from '../../lib/api'
-import { useCachedData, invalidateCache } from '../../lib/useCachedData'
+import { useQuery, invalidateKeys } from '../../lib/data'
 import { useVisiblePoll } from '../../lib/useVisiblePoll'
 import { relPast } from '../schedule/scheduleMeta'
 import { WidgetFrame } from '../../ui/widget/WidgetFrame'
@@ -37,14 +37,14 @@ export function artifactTiles(views: DashboardView[] | undefined): DashboardTile
 export function PinnedTiles() {
   // SWR paint through the shared cache (clause 5): the band paints its last-known
   // tiles instantly on revisit, no blank flash, and revalidates in the background.
-  const { data: views, refresh } = useCachedData<DashboardView[]>(
+  const { data: views, refresh } = useQuery<DashboardView[]>(
     VIEWS_CACHE_KEY, () => api.dashboardViews().catch(() => [] as DashboardView[]), { persist: true },
   )
   const tiles = useMemo(() => artifactTiles(views), [views])
 
   const resolve = useCallback((ref: string, keep: boolean) => {
     api.resolveTile('overview', { ref, keep }).then(() => {
-      invalidateCache(VIEWS_CACHE_KEY)
+      invalidateKeys(VIEWS_CACHE_KEY)
       refresh()
     }).catch(() => {})
   }, [refresh])
@@ -138,7 +138,7 @@ function PinnedTile({ tile, onResolve }: { tile: DashboardTile; onResolve: (ref:
   // would be a shape that is always already settled. Revalidation keeps the cached body
   // painted while it is true, so the two together read as "settled, and not
   // currently being re-read".
-  const { data: artifact, refresh, revalidating: reReading } = useCachedData<Artifact | null>(
+  const { data: artifact, refresh, revalidating: reReading } = useQuery<Artifact | null>(
     `dashboard:tile:${slug}`, () => api.artifact(slug).catch(() => null), { persist: true },
   )
   const [reloadKey, setReloadKey] = useState(0)

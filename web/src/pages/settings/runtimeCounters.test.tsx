@@ -103,7 +103,7 @@ describe('the rendered rows', () => {
     }))
     const { UsagePanel } = await import('./UsagePanel')
     let r!: ReturnType<typeof render>
-    // useCachedData resolves async, so the render AND the flush both have to sit inside act() —
+    // useQuery resolves async, so the render AND the flush both have to sit inside act() —
     // otherwise the state updates land outside it and React warns while the assertions still pass.
     await act(async () => {
       r = render(<UsagePanel query={{}} setQuery={() => {}} />)

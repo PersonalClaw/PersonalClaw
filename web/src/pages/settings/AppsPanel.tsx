@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { Check, ExternalLink, Loader2 } from 'lucide-react'
 import { api, type AppSummary } from '../../lib/api'
 import { notify } from '../../app/appSdk'
-import { useCachedData } from '../../lib/useCachedData'
+import { useQuery } from '../../lib/data'
 import { PanelHeader, Section, ToggleRow } from './settingsUI'
 import { Skeleton, LoadingStatus, LoadError, FormSkeleton } from '../../ui/ListScaffold'
 import { Button } from '../../ui/Button'
@@ -17,9 +17,9 @@ import { fvs } from '../../design/fontWeight'
  *  a plain (non-provider) installed app exposes via `setup.configSchema` is
  *  aggregated here so a user reaches every app's settings in one place. */
 export function AppsPanel({ navigate }: { navigate?: (p: string) => void }) {
-  const { data: apps } = useCachedData<AppSummary[]>(
+  const { data: apps } = useQuery<AppSummary[]>(
     // Shares the `'apps'` cache key with `#/apps` and the settings widget. A `.catch(() => [])` here
-    // resolves with an empty list, which `useCachedData` persists — so every OTHER consumer reads `[]`
+    // resolves with an empty list, which `useQuery` persists — so every OTHER consumer reads `[]`
     // as a success and can never reach its own error branch. Measured: with all `/api/apps*` calls at
     // 500, `sessionStorage['cache:apps']` was `"[]"` and `#/apps` still said "No apps installed".
     'apps', () => api.apps(), { persist: true },
@@ -70,7 +70,7 @@ export function AppsPanel({ navigate }: { navigate?: (p: string) => void }) {
  *  on/off but only gates seeding is exactly the control users mis-trust. */
 function StoreSourcesSection() {
   const [cfg, setCfg] = useState<Record<string, unknown> | null>(null)
-  const { data, error, refresh } = useCachedData('settings:apps-config', () =>
+  const { data, error, refresh } = useQuery('settings:apps-config', () =>
     api.personalclawConfig().then((c) => (c.apps ?? {}) as Record<string, unknown>),
     { persist: true },
   )

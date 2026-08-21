@@ -7,7 +7,7 @@ import { api } from '../../lib/api'
 import type { DeviceRec, DevicePairStart } from '../../lib/api'
 import { notify } from '../../app/appSdk'
 import { confirm } from '../../ui/dialog'
-import { useCachedData } from '../../lib/useCachedData'
+import { useQuery } from '../../lib/data'
 import { PanelHeader, Section } from './settingsUI'
 import { Button } from '../../ui/Button'
 import { EmptyState, FormSkeleton, LoadError } from '../../ui/ListScaffold'
@@ -84,7 +84,7 @@ function CopyButton({ value, label }: { value: string; label: string }) {
  *  where the image belongs; adding an encoder is a dependency decision, and the repo's own
  *  precedent is that TOTP enrollment ships no QR either (AccountPanel sends you to the CLI). */
 export function DevicesPanel() {
-  const { data, error: loadErr, refresh } = useCachedData('settings:devices', () => api.devices())
+  const { data, error: loadErr, refresh } = useQuery('settings:devices', () => api.devices())
   const [pairing, setPairing] = useState<DevicePairStart | null>(null)
   const [starting, setStarting] = useState(false)
   const [left, setLeft] = useState(0)

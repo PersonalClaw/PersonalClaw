@@ -21,7 +21,7 @@ import { SystemHealth } from './widgets/SystemHealth'
 import { TopBar } from '../../ui/TopBar'
 import { useIdentity, firstNameOf } from '../../app/identity'
 import { api, type ChatSessionSummary } from '../../lib/api'
-import { useCachedData } from '../../lib/useCachedData'
+import { useQuery } from '../../lib/data'
 import { sessionRecencyMs } from '../../lib/epoch'
 import { spring, expr } from '../../design/motion'
 import { EntranceGroup, EntranceRegion } from '../../ui/motion'
@@ -233,7 +233,7 @@ function Launcher({ navigate }: RouteProps) {
   // shortcut, not the record, and the dashboard has no slot-level error idiom — inventing one
   // for a single adopter would be speculative API. The authoritative surface (chat history)
   // announces the failure, which is where a user goes to look for their chats.
-  const { data: sessions } = useCachedData<ChatSessionSummary[]>(
+  const { data: sessions } = useQuery<ChatSessionSummary[]>(
     // 🔴 Named `dashboard:recent-sessions` — after the SURFACE, not the collection — so no bust of
     // the chat-session keys could ever reach it. Deleting or renaming a chat left this list showing
     // the old row, and `persist: true` means that survived a hard reload. Same namespace as

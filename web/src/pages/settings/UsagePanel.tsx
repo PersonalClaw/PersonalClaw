@@ -1,7 +1,7 @@
 import { useMemo } from 'react'
 import { Coins } from 'lucide-react'
 import { api, type UsageAgg, type UsageFold } from '../../lib/api'
-import { useCachedData } from '../../lib/useCachedData'
+import { useQuery } from '../../lib/data'
 import { useQueryParam, type RouteProps } from '../../app/useQueryState'
 import { Segmented } from '../../ui/Segmented'
 import { Meter } from '../../ui/Meter'
@@ -82,28 +82,28 @@ export function UsagePanel({ query, setQuery }: Pick<RouteProps, 'query' | 'setQ
   const days = (PERIODS.find((p) => p.id === period) ?? PERIODS[0]).days
   const since = useMemo(() => _sinceIso(days), [days])
 
-  const { data: totals } = useCachedData(
+  const { data: totals } = useQuery(
     `settings:usage-totals:${period}`,
     () => api.usageTotals({ since }).then((d) => d.totals).catch(() => null),
     { persist: false },
   )
-  const { data: byModel } = useCachedData(
+  const { data: byModel } = useQuery(
     `settings:usage-rollup:model:${period}`,
     () => api.usageRollup({ group_by: 'model', since }).then((d) => d.rows).catch(() => []),
     { persist: false },
   )
-  const { data: bySource } = useCachedData(
+  const { data: bySource } = useQuery(
     `settings:usage-rollup:source:${period}`,
     () => api.usageRollup({ group_by: 'source', since }).then((d) => d.rows).catch(() => []),
     { persist: false },
   )
   // The configured daily $ cap (read-only; SpendMeter owns enforcement). 0 = unlimited.
-  const { data: cfg } = useCachedData(
+  const { data: cfg } = useQuery(
     'settings:guardrails-config',
     () => api.personalclawConfig().then((c) => c?.guardrails?.budgets ?? null).catch(() => null),
     { persist: false },
   )
-  const { data: todayTotals } = useCachedData(
+  const { data: todayTotals } = useQuery(
     'settings:usage-totals:today',
     () => api.usageTotals({ since: _sinceIso(1) }).then((d) => d.totals).catch(() => null),
     { persist: false },
@@ -111,14 +111,14 @@ export function UsagePanel({ query, setQuery }: Pick<RouteProps, 'query' | 'setQ
   // Wire the in-memory SystemAgentStats token counters (SystemInfo.stats) — process-
   // lifetime totals, distinct from the durable ledger above, rendered so the typed-
   // but-orphaned field finally has a reader (no parallel type added).
-  const { data: sys } = useCachedData(
+  const { data: sys } = useQuery(
     'settings:usage-system-stats',
     () => api.system().then((s) => s.stats ?? null).catch(() => null),
     { persist: false },
   )
   // The durable per-day fold of the same ledger (MRT-3): purpose grouping, daily shape, and the
   // size of the unattended spend that is deliberately excluded from every figure on this page.
-  const { data: fold } = useCachedData(
+  const { data: fold } = useQuery(
     `settings:usage-fold:${period}`,
     () => api.usageFold({ window: FOLD_WINDOW[period] ?? 'day', group: 'purpose' }).catch(() => null),
     { persist: false },

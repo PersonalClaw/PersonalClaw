@@ -15,7 +15,7 @@ import { WeekGridView } from './WeekGridView'
 import { FilterMenu, type FilterSectionDef } from '../../ui/FilterMenu'
 import { ContextMenu, type ContextMenuItem } from '../../ui/motion'
 import { useQueryParam, useEditFlag, type RouteProps } from '../../app/useQueryState'
-import { useCachedData, invalidateCache } from '../../lib/useCachedData'
+import { useQuery, invalidateKeys } from '../../lib/data'
 import { api, type ActionProvider } from '../../lib/api'
 import { ScheduleDetail } from '../schedule/ScheduleDetail'
 import { LifecycleDetail } from './LifecycleDetail'
@@ -70,17 +70,17 @@ export function TriggersListPage({ onCreate, query, setQuery }: {
   // Schedules carry live next-run/running state → persist:false (instant in-app
   // revisit, but never stale across a hard reload). Hooks + action providers are
   // lifecycle config that rarely changes → persist:true so they survive a reload.
-  const { data: schedules, error: schedulesErr, refresh: refreshSchedules } = useCachedData('triggers:schedules', () => api.schedules().then((d) => d.jobs), { persist: false })
-  const { data: hooks, error: hooksErr, refresh: refreshHooks } = useCachedData('triggers:hooks', () => api.hooks(), { persist: true })
+  const { data: schedules, error: schedulesErr, refresh: refreshSchedules } = useQuery('triggers:schedules', () => api.schedules().then((d) => d.jobs), { persist: false })
+  const { data: hooks, error: hooksErr, refresh: refreshHooks } = useQuery('triggers:hooks', () => api.hooks(), { persist: true })
   // Store triggers (file/web_watch/idle/…) carry live enabled/health state → persist:false, like
   // schedules: instant in-app revisit but never stale across a hard reload.
-  const { data: stores, error: storesErr, refresh: refreshStores } = useCachedData('triggers:store', () => api.storeTriggers(), { persist: false })
+  const { data: stores, error: storesErr, refresh: refreshStores } = useQuery('triggers:store', () => api.storeTriggers(), { persist: false })
   // Data-event triggers (EIAT). `GET /api/triggers` serves FOUR kinds — schedule, lifecycle,
   // event, store — and this page fetched only three, so an event trigger created through the
   // create form (`trigger_type: 'event'`) existed, fired, and was never listed anywhere. It
   // carries live enabled/fire-count state → persist:false, like schedules and stores.
-  const { data: events, error: eventsErr } = useCachedData('triggers:events', () => api.eventTriggers(), { persist: false })
-  const { data: providers = [] } = useCachedData('triggers:action-providers', () => api.actionProviders().catch(() => [] as ActionProvider[]), { persist: true })
+  const { data: events, error: eventsErr } = useQuery('triggers:events', () => api.eventTriggers(), { persist: false })
+  const { data: providers = [] } = useQuery('triggers:action-providers', () => api.actionProviders().catch(() => [] as ActionProvider[]), { persist: true })
   // How much each row's action may do UNATTENDED (AUTONOMY-GUARDRAILS §6.1). The ladder is
   // keyed on the action-provider name — the same identity the backend dispatch seams hold —
   // so this page annotates a row without knowing anything about action types. A failed read
@@ -90,9 +90,9 @@ export function TriggersListPage({ onCreate, query, setQuery }: {
   const { ladder } = useAutonomyLadder()
   const rungByProvider = useMemo(() => providerRungIndex(ladder), [ladder])
 
-  const loadSchedules = () => { invalidateCache('triggers:schedules'); refreshSchedules() }
-  const loadHooks = () => { invalidateCache('triggers:hooks'); refreshHooks() }
-  const loadStores = () => { invalidateCache('triggers:store'); refreshStores() }
+  const loadSchedules = () => { invalidateKeys('triggers:schedules'); refreshSchedules() }
+  const loadHooks = () => { invalidateKeys('triggers:hooks'); refreshHooks() }
+  const loadStores = () => { invalidateKeys('triggers:store'); refreshStores() }
   useEffect(() => {
     const t = window.setInterval(refreshSchedules, 10000)  // keep schedule next-run/running fresh
     return () => clearInterval(t)
@@ -186,7 +186,7 @@ export function TriggersListPage({ onCreate, query, setQuery }: {
       <div className="mx-auto px-l py-l" style={{ maxWidth: 'var(--content-width)' }}>
         {loadFailed ? (
           <LoadError what="triggers" error={schedulesErr || hooksErr || storesErr || eventsErr}
-            onRetry={() => { loadSchedules(); refreshHooks(); loadStores(); invalidateCache('triggers:events'); }} />
+            onRetry={() => { loadSchedules(); refreshHooks(); loadStores(); invalidateKeys('triggers:events'); }} />
         ) : triggers === null ? <ListSkeleton rows={6} what="triggers" /> : triggers.length === 0 ? (
               !q && filter === 'all' ? (
                 // GENUINELY EMPTY — the one moment a newcomer has no model of what a trigger is.

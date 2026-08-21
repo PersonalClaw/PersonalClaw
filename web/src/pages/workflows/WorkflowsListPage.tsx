@@ -8,8 +8,9 @@ import { HeaderActions, HeaderControl, HeaderSegmented } from '../../ui/HeaderAc
 import { QuietButton } from '../../ui/QuietButton'
 import { Button } from '../../ui/Button'
 import { PresetEmptyState } from '../../ui/PresetEmptyState'
-import { api, type WorkflowDef, type WorkflowDefSummary, type WorkflowRunSummary, type WorkflowSurfacingFinding, type WorkflowSurfacingRow } from '../../lib/api'
+import { api, type WorkflowDef, type WorkflowSurfacingFinding, type WorkflowSurfacingRow } from '../../lib/api'
 import { useQueryParam, type RouteProps } from '../../app/useQueryState'
+import { useQuery, invalidateKeys } from '../../lib/data'
 import { confirmDelete, promptForm, promptInput } from '../../ui/dialog'
 import { notify } from '../../app/appSdk'
 import { fmtElapsed, isTerminal, runLook } from './workflowMeta'
@@ -36,43 +37,47 @@ export function WorkflowsListPage({ navigate, query: routeQuery, setQuery }: Rou
   const [tab, setTab] = useQueryParam(routeQuery, setQuery, 'tab', 'runs', { replace: true })
   const [q, setQ] = useQueryParam(routeQuery, setQuery, 'q', '', { replace: true })
 
-  const [defs, setDefs] = useState<WorkflowDefSummary[]>([])
-  // Surfacing state rides ALONGSIDE the thin def list rather than replacing it: the thin list is
-  // what the picker needs, and a surfacing read costs a run-history lookup per def. A failed
-  // surfacing read degrades to a plain list rather than an empty page — the templates are still
-  // startable without their freshness column.
-  const [surfacing, setSurfacing] = useState<Record<string, WorkflowSurfacingRow>>({})
-  const [findings, setFindings] = useState<WorkflowSurfacingFinding[]>([])
-  const [runs, setRuns] = useState<WorkflowRunSummary[]>([])
-  const [loading, setLoading] = useState(true)
-  // Per-read failure, so the tab a user is looking at reports its OWN fetch: a definitions failure must
-  // not be announced on the Runs tab, and neither is the optional surfacing read's business.
-  const [defsErr, setDefsErr] = useState<unknown>(null)
-  const [runsErr, setRunsErr] = useState<unknown>(null)
+  // ── DSC-14: three reads through the ONE data layer ──────────────────────────────────────────
+  //
+  // This page hand-rolled its own fetch-and-cache: four `useState`s, a `Promise.all` in a
+  // `useCallback`, a mount effect, and its own `loading` flag. It therefore had NO cache at all —
+  // every visit to `#/workflows` paid a cold three-request load and flashed a skeleton, while the
+  // rest of the app read through a shared cache. That is the other half of the atom's "two caches
+  // over one endpoint": one surface with a cache and one without, over the same collections,
+  // disagreeing about what is current. It was never a `useCachedData` call site, so no census of
+  // that helper could see it.
+  //
+  // The per-read error split is PRESERVED, deliberately: a definitions failure must not be
+  // announced on the Runs tab. Three keys means three independent `error`s, which is what the old
+  // hand-rolled pair of `useState`s was emulating.
+  const { data: defsData, error: defsErr, loading: defsLoading, stale: defsStale } =
+    useQuery('workflows:defs', () => api.workflowDefs().then((d) => d.defs))
+  const { data: runsData, error: runsErr, loading: runsLoading, stale: runsStale } =
+    useQuery('workflows:runs', () => api.workflowRuns({ limit: 100 }).then((r) => r.runs))
+  // The surfacing read keeps its fallback on purpose (see the note above): it is a freshness
+  // column, and a plain startable list is a better answer than an error for it.
+  const surfacingQ = useQuery('workflows:surfacing', () => api.workflowSurfacing()
+    .catch(() => ({ defs: [] as WorkflowSurfacingRow[], total: 0, findings: [] as WorkflowSurfacingFinding[] })))
 
-  const load = useCallback(async () => {
-    setLoading(true)
-    try {
-      // The two PRIMARY reads capture their rejection instead of swallowing it. Substituting an empty
-      // list for a failed request made this page say "No workflow runs yet — start one from the
-      // Definitions tab" to someone whose runs exist and whose server just answered 500: measured with
-      // all three endpoints failing, the page carried no error text and no live region at all.
-      // The THIRD read keeps its fallback deliberately — see the comment above: surfacing is a
-      // freshness column, and a plain startable list is a better answer than an error for it.
-      const [d, r, s] = await Promise.all([
-        api.workflowDefs().then((v) => { setDefsErr(null); return v }).catch((e) => { setDefsErr(e); return null }),
-        api.workflowRuns({ limit: 100 }).then((v) => { setRunsErr(null); return v }).catch((e) => { setRunsErr(e); return null }),
-        api.workflowSurfacing().catch(() => ({ defs: [], total: 0, findings: [] })),
-      ])
-      if (d) setDefs(d.defs)
-      if (r) setRuns(r.runs)
-      setSurfacing(Object.fromEntries(s.defs.map((row) => [row.name, row])))
-      setFindings(s.findings)
-    } finally {
-      setLoading(false)
-    }
+  const defs = defsData ?? []
+  const runs = runsData ?? []
+  const findings = surfacingQ.data?.findings ?? []
+  const surfacing = useMemo(
+    () => Object.fromEntries((surfacingQ.data?.defs ?? []).map((row) => [row.name, row])),
+    [surfacingQ.data],
+  ) as Record<string, WorkflowSurfacingRow>
+  // `loading` is the layer's: nothing cached for the tab's own read yet. Not `revalidating` — a
+  // revalidation over rows already on screen must not flash this page back to a skeleton.
+  const loading = tab === 'defs' ? defsLoading : runsLoading
+  // The tab's rows are cached and past their window. `workflows` is a LIVE namespace, so this
+  // fires on a revisit more than a second or two old — which is honest: a run list ages fast.
+  const stale = tab === 'defs' ? defsStale : runsStale
+
+  const load = useCallback(() => {
+    // Bust all three keys rather than calling three `refresh()`es: the layer then re-reads them
+    // for every mounted reader, so the run-detail panel beside this list moves too.
+    invalidateKeys('workflows:', true)
   }, [])
-  useEffect(() => { load() }, [load])
 
   const filteredRuns = useMemo(() => {
     const needle = q.trim().toLowerCase()
@@ -235,7 +240,8 @@ export function WorkflowsListPage({ navigate, query: routeQuery, setQuery }: Rou
         </HeaderActions>}
       />
       <ListControls search={{ value: q, onChange: setQ, placeholder: 'Search runs and definitions', label: 'Search workflows' }}
-        results={{ count: tab === 'defs' ? filteredDefs.length : filteredRuns.length, noun: tab === 'defs' ? 'definitions' : 'runs', active: !!q.trim() }} />
+        results={{ count: tab === 'defs' ? filteredDefs.length : filteredRuns.length, noun: tab === 'defs' ? 'definitions' : 'runs', active: !!q.trim() }}
+        stale={stale} />
       <div className="min-h-0 flex-1 overflow-y-auto p-l">
         {loading ? <Loading what="workflows" /> : tab === 'defs' ? (
           defsErr ? (

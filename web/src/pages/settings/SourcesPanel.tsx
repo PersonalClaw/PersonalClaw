@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { api } from '../../lib/api'
 import { notify } from '../../app/appSdk'
-import { useCachedData } from '../../lib/useCachedData'
+import { useQuery } from '../../lib/data'
 import { PanelHeader, Section, ToggleRow, NumberRow, Field } from './settingsUI'
 import { TextInput } from '../../ui/forms'
 import { Button } from '../../ui/Button'
@@ -22,7 +22,7 @@ export function SourcesPanel() {
   const [knowledgeCfg, setKnowledgeCfg] = useState<SourcesCfg | null>(null)
   const [scratchpad, setScratchpad] = useState<string | null>(null)
 
-  const { data } = useCachedData('settings:sources', () =>
+  const { data } = useQuery('settings:sources', () =>
     api.personalclawConfig().then((c) => ({
       sources: (c.sources ?? {}) as SourcesCfg,
       // planning.* and knowledge.* are sibling sections, not part of sources.*, so they are

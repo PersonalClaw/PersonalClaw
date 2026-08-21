@@ -19,7 +19,7 @@ import { useQueryParam, type RouteProps } from '../../app/useQueryState'
 import { ProgressRing } from '../../ui/ProgressRing'
 import { ContextMenu, type ContextMenuItem } from '../../ui/motion'
 import { spring, expr } from '../../design/motion'
-import { useCachedData, invalidateCache } from '../../lib/useCachedData'
+import { useQuery, invalidateKeys } from '../../lib/data'
 import { useVisiblePoll } from '../../lib/useVisiblePoll'
 import { api, type GoalLoop } from '../../lib/api'
 import { loopKindMeta } from '../../lib/loopKind'
@@ -60,11 +60,11 @@ export function LoopsListPage({ onOpen, onCreate, query, setQuery }: { onOpen: (
   // a General or Design loop from the only list that links to it. The goalAdapter is
   // kind-agnostic (defaults for missing fields), so general/design rows render fine.
   // No `.catch(() => [])` here, deliberately. Swallowing the rejection into an empty
-  // array made `useCachedData`'s `error` permanently null, so a failed `GET /api/loops`
+  // array made `useQuery`'s `error` permanently null, so a failed `GET /api/loops`
   // was indistinguishable from having none and the page said "No loops yet — Start a
   // loop" to a user whose loops were merely unreachable. The rejection propagates so the
   // one condition below (`error` with no data) can tell the two facts apart.
-  const { data: loops, error: loopsErr, refresh } = useCachedData<GoalLoop[]>('loops', () => api.uLoops().then((ls) => ls.filter((l) => l.kind !== 'code').map(loopToGoalLoop).sort(order)), { persist: false })
+  const { data: loops, error: loopsErr, refresh } = useQuery<GoalLoop[]>('loops', () => api.uLoops().then((ls) => ls.filter((l) => l.kind !== 'code').map(loopToGoalLoop).sort(order)), { persist: false })
   // Row whose delete is armed (first click), cleared on a second click or timeout.
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null)
   // Peek: a row click opens a quick-glance side panel (URL-backed ?peek=<id>);
@@ -88,7 +88,7 @@ export function LoopsListPage({ onOpen, onCreate, query, setQuery }: { onOpen: (
     // left the row exactly as it was with nothing said — and a silent "stop" is the shape whose
     // failure a user ACTS on, because the next assumption is that the loop is no longer running.
     if (!(await reportingWrite(`${action} this loop`, () => api.uLoopAction(id, action)))) return
-    invalidateCache('loops'); refresh()
+    invalidateKeys('loops'); refresh()
   }
 
   // Delete a terminal loop from the list — two-step (arm, then confirm) like the
@@ -100,7 +100,7 @@ export function LoopsListPage({ onOpen, onCreate, query, setQuery }: { onOpen: (
     // Swallowing this made the row vanish and then come back on the refetch, unexplained. Say why.
     try { await api.deleteULoop(id) }
     catch (e) { notify(`Couldn't delete this loop: ${String((e as Error)?.message || e)}`, 'error') }
-    invalidateCache('loops'); refresh()
+    invalidateKeys('loops'); refresh()
   }
 
   // "Active" must include the PRE-LAUNCH / planning states (intake/planning/review/

@@ -1,7 +1,7 @@
 import { FileText, ShieldQuestion, Undo2, Zap } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { api, type AutonomyLadder, type AutonomyType } from './api'
-import { useCachedData } from './useCachedData'
+import { useQuery } from './data'
 
 /** The earned-autonomy ladder, frontend side (AUTONOMY-GUARDRAILS §6.1).
  *
@@ -68,6 +68,6 @@ export function providerRungIndex(ladder: AutonomyLadder | null): Map<string, Au
  *  must never do is fall back to a rung, because "runs on its own" is a claim about what
  *  your automation may do unattended. */
 export function useAutonomyLadder() {
-  const { data, error, refresh } = useCachedData('autonomy:ladder', () => api.autonomyLadder(), { persist: true })
+  const { data, error, refresh } = useQuery('autonomy:ladder', () => api.autonomyLadder(), { persist: true })
   return { ladder: data ?? null, error, refresh }
 }

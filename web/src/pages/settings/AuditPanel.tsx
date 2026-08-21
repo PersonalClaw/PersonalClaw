@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Search, RefreshCw, ShieldCheck, ShieldAlert, KeyRound, Loader2, Download, SlidersHorizontal } from 'lucide-react'
 import { api, type AuditFilters, type AuditPage, type SelEvent, type SelVerify } from '../../lib/api'
-import { invalidateCache } from '../../lib/useCachedData'
+import { invalidateKeys } from '../../lib/data'
 import { confirm } from '../../ui/dialog'
 import { InvestigateButton } from '../../ui/InvestigateButton'
 import { PanelHeader } from './settingsUI'
@@ -139,7 +139,7 @@ export function AuditPanel() {
       notify(`Couldn't rotate the signing key: ${msg}`, 'error')
       return   // nothing rotated, so there is nothing to invalidate or reload
     }
-    invalidateCache('settings:audit-verify')
+    invalidateKeys('settings:audit-verify')
     reload()
   }
 

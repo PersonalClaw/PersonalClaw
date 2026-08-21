@@ -18,7 +18,7 @@ import { resolveContentType } from '../../ui/content/contentTypes'
 import { ArtifactCompare } from './ArtifactCompare'
 import { ArtifactDeploy } from './ArtifactDeploy'
 import type { CommentTarget } from '../../ui/content/commentTarget'
-import { invalidateCache } from '../../lib/useCachedData'
+import { invalidateKeys } from '../../lib/data'
 
 interface ViewerProps {
   slug: string
@@ -189,7 +189,7 @@ export function ArtifactViewer({ slug, onChanged, onDeleted, onOpenSourceFile, c
       // collection under its own cache key, so a deleted artifact stayed on offer there — and
       // attaching it fails. Prefix mode busts every key in the `artifacts:` namespace at once,
       // which is why the picker's key was moved into it.
-      invalidateCache('artifacts:', true)
+      invalidateKeys('artifacts:', true)
       onDeleted()
     }
     catch (e) { notify(`Could not delete artifact: ${(e as Error).message}`, 'error') }

@@ -6,7 +6,7 @@ import { Markdown } from '../../ui/Markdown'
 import { Skeleton } from '../../ui/ListScaffold'
 import { confirmDelete } from '../../ui/dialog'
 import { TextArea, FieldError } from '../../ui/forms'
-import { useCachedData, invalidateCache } from '../../lib/useCachedData'
+import { useQuery, invalidateKeys } from '../../lib/data'
 import { api, type SkillItem, type SkillFile, type SkillIntegrity } from '../../lib/api'
 import { SOURCE_TONE } from './skillMeta'
 import { toneChipSkin } from '../../design/accent'
@@ -21,7 +21,7 @@ export function SkillInspector({ skill, onDeleted, onSaved }: { skill: SkillItem
   const tone = SOURCE_TONE[skill.source] ?? 'var(--color-on-surface-low)'
   const editable = skill.source !== 'bundled'
 
-  const { data: files } = useCachedData<SkillFile[]>(`skill:files:${skill.name}`, () => api.skillFiles(skill.name).then((d) => d.files ?? []).catch(() => []), { persist: true })
+  const { data: files } = useQuery<SkillFile[]>(`skill:files:${skill.name}`, () => api.skillFiles(skill.name).then((d) => d.files ?? []).catch(() => []), { persist: true })
 
   // Reset the sub-views when switching to a different skill.
   useEffect(() => { setOpenFile(null); setEditing(false) }, [skill.name])
@@ -127,7 +127,7 @@ function IntegritySection({ skill }: { skill: SkillItem }) {
 function SkillEditor({ name, onBack, onSaved }: { name: string; onBack: () => void; onSaved: () => void }) {
   // Cache the fetched SKILL.md so reopening the editor paints instantly; local
   // `content` is the editable copy, seeded from the cache when it lands.
-  const { data: fetched } = useCachedData<string>(`skill:content:${name}:SKILL.md`, () => api.skillContent(name).catch(() => ''), { persist: true })
+  const { data: fetched } = useQuery<string>(`skill:content:${name}:SKILL.md`, () => api.skillContent(name).catch(() => ''), { persist: true })
   const [content, setContent] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState('')
@@ -138,7 +138,7 @@ function SkillEditor({ name, onBack, onSaved }: { name: string; onBack: () => vo
     setBusy(true); setErr('')
     try {
       await api.updateSkill(name, content)
-      invalidateCache(`skill:content:${name}:SKILL.md`); invalidateCache(`skill:files:${name}`)
+      invalidateKeys(`skill:content:${name}:SKILL.md`); invalidateKeys(`skill:files:${name}`)
       onSaved()
     }
     catch (e) { setErr((e as Error).message || 'Save failed'); setBusy(false) }
@@ -161,7 +161,7 @@ function SkillEditor({ name, onBack, onSaved }: { name: string; onBack: () => vo
 }
 
 function FileView({ name, path, onBack }: { name: string; path: string; onBack: () => void }) {
-  const { data: content, error } = useCachedData<string>(`skill:content:${name}:${path}`, () => api.skillFiles(name, path).then((d) => d.content ?? ''), { persist: true })
+  const { data: content, error } = useQuery<string>(`skill:content:${name}:${path}`, () => api.skillFiles(name, path).then((d) => d.content ?? ''), { persist: true })
   const err = error ? (error instanceof Error ? error.message : 'failed to load') : ''
 
   const isMd = path.toLowerCase().endsWith('.md')

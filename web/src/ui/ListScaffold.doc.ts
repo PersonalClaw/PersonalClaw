@@ -27,11 +27,11 @@ const docs: UiDoc[] = [
     name: 'LoadError',
     keywords: ['error', 'load', 'failed', 'fetch', 'retry', 'alert', 'empty', 'first-load'],
     description:
-      "First-load FAILURE for a list/collection surface — the sibling of EmptyState. A failed fetch and a genuinely empty collection are different facts, and a surface that branches only on `data === undefined` conflates them: the user is told \"you have none\" when the truth is \"we could not load it\", with no way to retry and nothing announced. `useCachedData` returns an `error` for exactly this (measured: 3 of 106 call sites read it). Renders as role=alert, so a load failure interrupts — EmptyState deliberately does not, because \"you have none\" is a normal answer.",
+      "First-load FAILURE for a list/collection surface — the sibling of EmptyState. A failed fetch and a genuinely empty collection are different facts, and a surface that branches only on `data === undefined` conflates them: the user is told \"you have none\" when the truth is \"we could not load it\", with no way to retry and nothing announced. `useQuery` returns an `error` for exactly this (measured: 3 of 106 call sites read it). Renders as role=alert, so a load failure interrupts — EmptyState deliberately does not, because \"you have none\" is a normal answer.",
     props: [
       { name: 'what', description: 'The thing that failed to load, lowercase — fills "Couldn\'t load your <what>" and the fallback body copy.' },
-      { name: 'error', description: "The rejection from useCachedData; its `message` is shown when present, so the server's own words reach the user instead of a generic apology." },
-      { name: 'onRetry', description: 'Re-runs the fetch (typically `invalidateCache(key); refresh()`). Omit only if the surface genuinely cannot retry — the button disappears.' },
+      { name: 'error', description: "The rejection from useQuery; its `message` is shown when present, so the server's own words reach the user instead of a generic apology." },
+      { name: 'onRetry', description: 'Re-runs the fetch (typically `invalidateKeys(key); refresh()`). Omit only if the surface genuinely cannot retry — the button disappears.' },
     ],
     bestPractices: [
       { guidance: true, description: 'Branch on the error FIRST: `data === undefined` is also true for the loading and empty branches, so an error test placed after them never runs.' },
@@ -110,7 +110,7 @@ const docs: UiDoc[] = [
     name: 'FormSkeleton',
     keywords: ['skeleton', 'loading', 'placeholder', 'form', 'settings', 'config', 'sections', 'panel'],
     description:
-      'A first-load placeholder for a settings FORM panel — a title block plus N sections, each a heading and a few label/control rows, shaped like the Section/Row chrome so the swap to the real form is calm. Use it as the loading gate on config panels fetched via useCachedData (Chat, Voice, Inbox, Notifications, Agent defaults…).',
+      'A first-load placeholder for a settings FORM panel — a title block plus N sections, each a heading and a few label/control rows, shaped like the Section/Row chrome so the swap to the real form is calm. Use it as the loading gate on config panels fetched via useQuery (Chat, Voice, Inbox, Notifications, Agent defaults…).',
     props: [
       { name: 'what', description: 'What is loading, for the sr-only announcement — "tasks", "notification settings". Omit for a bare "Loading…". Measured before it existed: the region was marked `role=status aria-busy` with an `aria-label`, and announced NOTHING at any point in a cold load, because a live region is announced by its content and the content was styled divs.' },
       { name: 'rows', description: 'Label/control rows per section (default 3).' },

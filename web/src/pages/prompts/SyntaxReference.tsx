@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
 import { BookOpen, ChevronRight, Braces, GitBranch, Repeat, FunctionSquare, Puzzle, Hash, Minus } from 'lucide-react'
-import { useCachedData } from '../../lib/useCachedData'
+import { useQuery } from '../../lib/data'
 import { api, type PromptSyntax, type PromptSyntaxFn } from '../../lib/api'
 
 /** The template-language reference, rendered as a categorized, collapsible,
@@ -16,7 +16,7 @@ const CONSTRUCT_ICON: Record<string, typeof Braces> = {
 const FN_CATEGORY_ORDER = ['string', 'array', 'object', 'math', 'logic', 'type', 'util']
 
 export function SyntaxReference({ onInsert }: { onInsert?: (snippet: string) => void }) {
-  const { data } = useCachedData<PromptSyntax>('prompts:syntax', () => api.promptSyntax())
+  const { data } = useQuery<PromptSyntax>('prompts:syntax', () => api.promptSyntax())
   const [openCat, setOpenCat] = useState<string | null>('string')
 
   const fnsByCat = useMemo(() => {
