@@ -22,6 +22,15 @@ Design properties:
   so only the live tail wins over stale state.
 - **No-LLM safe:** ``summarize_fn=None`` produces a structured deterministic
   digest, so compaction always works (and is testable) without a model call.
+- **The resume account survives (CE2-10):** a compacted session carries an explicit
+  structured account of what already happened, DERIVED from the folded region's own
+  tool_calls/tool-result pairs rather than left to the summary. A block already in the
+  history is carried through VERBATIM (its facts came from messages that are already
+  gone, so re-deriving it is impossible), and a fresh one is derived for the region this
+  pass is about to fold. Both sit immediately before the verbatim tail — beside the live
+  task, never in place of it: ``protect_tail`` is untouched, so the account cannot evict
+  the messages the turn is actually acting on. Two blocks is the ceiling, so the carried
+  weight is bounded at ``2 × MAX_ACCOUNT_CHARS``.
 """
 
 from __future__ import annotations
@@ -190,6 +199,54 @@ def _drop_orphan_tool_results(messages: list[dict]) -> list[dict]:
     return out
 
 
+def is_resume_account(msg: dict) -> bool:
+    """True for a message carrying a CE2-10 resume account.
+
+    Keyed on the fence constant the account module owns, not a literal copied here: two copies of
+    the fence would let the writer and the carrier drift, and the failure mode is silent — the
+    account would be folded into the summary exactly as if this rule did not exist.
+    """
+    from personalclaw.resume_account import FENCE_START
+
+    return FENCE_START in str(msg.get("content", ""))
+
+
+def _account_message(body: str) -> dict:
+    """The account as a history message. ``role: user`` matches the summary message's role — the
+    provider must accept it in any position, and an assistant-authored record would read as
+    something the model itself claimed rather than something the log recorded."""
+    return {"role": "user", "content": body}
+
+
+def _derive_account_for(folded: list[dict]) -> str:
+    """The account of what the region about to be folded actually did, or ``""``.
+
+    Derived from the ORIGINAL messages, never the pruned copy: ``prune_tool_outputs`` rewrites a
+    long tool result to ``[pruned tool result — …]``, and that digest does not start with
+    ``Error:``, so a FAILED call read from the pruned list would classify as done — a false
+    completion manufactured by the compressor itself.
+
+    ``ledger_events``/``checkpoint_entries`` are ``NOT_CONSULTED``: compaction runs on a message
+    list and has no session key, so it cannot reach a run ledger or a checkpoint store. Saying so
+    is the honest answer; passing ``[]`` would assert those stores recorded nothing.
+    """
+    try:
+        from personalclaw.resume_account import NOT_CONSULTED, derive_account, render_account
+
+        return render_account(
+            derive_account(
+                ledger_events=NOT_CONSULTED,
+                tool_messages=folded,
+                checkpoint_entries=NOT_CONSULTED,
+            )
+        )
+    except Exception:
+        # Compaction must never break a turn. No account is a forgotten completion; a raised
+        # exception here is a dead session.
+        logger.warning("resume account derivation skipped during compaction", exc_info=True)
+        return ""
+
+
 def compact(
     messages: list[dict],
     *,
@@ -228,5 +285,20 @@ def compact(
             + "\n[END CONTEXT COMPACTION]"
         ),
     }
-    result = head + [summary_msg] + tail
+    # CE2-10. Two distinct jobs, in this order:
+    #  1. CARRY an account already in the history verbatim. Its facts came from messages this
+    #     pass (or an earlier one) has already folded away, so it cannot be re-derived — the most
+    #     recent one wins, which bounds the carried weight at one block.
+    #  2. DERIVE one for the region being folded NOW, from the ORIGINAL slice rather than the
+    #     pruned one (see `_derive_account_for`).
+    # Both land between the summary and the tail: adjacent to the live task, never displacing it.
+    # Sliced to the MIDDLE only: a block already inside head or tail survives verbatim on its own,
+    # and re-inserting it would put the same account in the history twice.
+    folding = messages[protect_head : n - protect_tail]
+    carried = [m for m in folding if is_resume_account(m)]
+    accounts: list[dict] = [carried[-1]] if carried else []
+    fresh = _derive_account_for([m for m in folding if not is_resume_account(m)])
+    if fresh:
+        accounts.append(_account_message(fresh))
+    result = head + [summary_msg] + accounts + tail
     return _drop_orphan_tool_results(result)
