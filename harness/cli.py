@@ -20,6 +20,8 @@ The agent-facing surface of the self-development harness:
   ``inconclusive``; only a malformed observation file fails.
 - ``worktree-bench`` — fan-out worktree hydration baseline + HARNESS-CRAFT §1.1's
   measure-first gate (HC-1). Exits 0 for any honest verdict, ``unresolved`` included.
+- ``dispatch-bench`` — serial-vs-concurrent tool-dispatch before/after + HC-6's gate that
+  the improvement is real on the benchmark rather than assumed. Same exit convention.
 
 Exit codes: 0 == clean/pass, 1 == validation errors or a failed command, 2 == usage error
 (unknown task id, no spec set). Warnings print but do not change the exit code.
@@ -489,6 +491,45 @@ def cmd_worktree_bench(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_dispatch_bench(args: argparse.Namespace) -> int:
+    """Serial-vs-concurrent tool dispatch + HC-6's before/after gate (HARNESS-CRAFT HC-6).
+
+    Exit 0 for every honest verdict, ``unresolved`` and ``no_improvement`` included — same
+    reasoning as ``worktree-bench``: a non-zero exit on "the measurement cannot separate
+    these" would make the honest answer look like a broken run, and "concurrency did not
+    pay here" is a finding the gate exists to be able to report.
+    """
+    from harness import tool_dispatch_bench as tdb
+
+    try:
+        baseline = tdb.run_benchmark(
+            repo=args.repo,
+            files=args.files or tdb.DEFAULT_FILES,
+            trials=args.trials or tdb.DEFAULT_TRIALS,
+            contended=args.contended,
+        )
+    except tdb.BenchmarkError as exc:
+        print(f"{_FAIL} {exc}", file=sys.stderr)
+        return 2
+
+    verdict = baseline.gate()
+    print(f"repo: {baseline.repo}")
+    print(f"  calls={baseline.calls} trials={baseline.trials}")
+    print(f"  serial     ms={baseline.serial_ms}")
+    print(f"  concurrent ms={baseline.concurrent_ms}")
+    print(
+        f"  waves={sorted({r.waves for r in baseline.concurrent_rows})} "
+        f"widest={sorted({r.widest for r in baseline.concurrent_rows})} "
+        f"speedup={baseline.speedup:.2f}x"
+    )
+    print(f"{_OK if verdict.conclusive else _WARN} verdict: {verdict.verdict}")
+    for note in verdict.notes:
+        print(f"    - {note}")
+    if args.json:
+        print(json.dumps(baseline.to_dict(), indent=2, sort_keys=True))
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="python -m harness",
@@ -575,6 +616,35 @@ def build_parser() -> argparse.ArgumentParser:
         "--json", action="store_true", help="Also print the machine-readable dict."
     )
     p_wt_bench.set_defaults(func=cmd_worktree_bench)
+
+    p_disp = sub.add_parser(
+        "dispatch-bench",
+        help="Serial-vs-concurrent tool dispatch before/after + HC-6's gate that the "
+        "improvement is real (overlapping arms == unresolved).",
+    )
+    p_disp.add_argument(
+        "--repo",
+        default=None,
+        help="Existing directory to run the lookup turn against. Default: synthesize one.",
+    )
+    # Defaults resolve in the command, not here — same reason as worktree-bench: reading
+    # them off the module would force the import of core onto every `harness validate` run.
+    p_disp.add_argument(
+        "--files",
+        type=int,
+        default=None,
+        help="Files in the synthesized repo (default 1200; ignored with --repo).",
+    )
+    p_disp.add_argument(
+        "--trials", type=int, default=None, help="Turns measured per arm (default 7)."
+    )
+    p_disp.add_argument(
+        "--contended",
+        action="store_true",
+        help="Record that the machine was under concurrent load (both arms pessimistic).",
+    )
+    p_disp.add_argument("--json", action="store_true", help="Also print the machine-readable dict.")
+    p_disp.set_defaults(func=cmd_dispatch_bench)
 
     return parser
 

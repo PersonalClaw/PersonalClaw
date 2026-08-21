@@ -137,6 +137,53 @@ Session 1 is fully independent (Wave 2, or whenever fan-out slowness is observed
 
 ## Execution log
 
+- **[2026-08-21] HC-6 DONE — independent tool calls dispatch concurrently under reader/writer
+  path reservations.** `src/personalclaw/agents/native/dispatch_plan.py` owns the reservations and
+  the wave partition; `runtime.py`'s `_execute_tool_batch`/`_execute_wave` dispatch them.
+
+  **BEFORE (required first, and measured on unmodified `origin/main` @ `0c64e9dc`).** A
+  representative multi-lookup turn — 8 independent read-only lookups (3 greps, 2 globs, a
+  `repo_map`, 2 `read_file`s) over a 1200-file synthetic repo, timed from the first
+  `EVENT_TOOL_CALL` to the last `EVENT_TOOL_RESULT`, 7 trials after one warm turn:
+  `[2044.9, 2010.7, 1593.3, 1413.7, 1699.4, 3180.1, 3593.6] ms` — mean **2219.4 ms**, min 1413.7,
+  spread **2179.9 ms**. (Machine under concurrent load from four other agents' suites, so
+  pessimistic.)
+
+  **AFTER, same script, same repo size, same machine:**
+  `[920.6, 953.6, 929.6, 918.9, 909.6, 970.9, 993.3] ms` — mean **942.4 ms**, max 993.3, spread
+  **83.7 ms**. **2.35× on the means, and unanimous**: the WORST concurrent sample beat the BEST
+  serial one by 420 ms, so no amount of tail noise moves the verdict. The spread collapsing from
+  2180 ms to 84 ms is the same finding from the other side — the baseline's tail *was* serial
+  accumulation.
+
+  The shipped mechanism is `python -m harness dispatch-bench` (`harness/tool_dispatch_bench.py`),
+  which reproduces both arms from the SHIPPED `tool batch mode=… calls=… waves=… widest=… ms=…`
+  log line, exactly as HC-1's `worktree-bench` reads its own. Its baseline arm is the real runtime
+  at `max_tool_concurrency=1`, not a simulation of serial dispatch. Recorded run (contended):
+  serial `[833, 762, 771, 792, 1411, 1283, 763]` vs concurrent `[483, 501, 494, 521, 485, 480, 492]`,
+  `waves=[1] widest=[8]`, verdict **`improved`** — 241 ms of daylight against a 119 ms band.
+
+  **DEVIATION — the gate's band is keyed to the baseline's MEDIAN, not its mean.** The first
+  recorded run reported `unresolved` on arms that did not overlap at all: one 10168 ms
+  contention-hit serial sample in a ~1.3 s arm pulled the mean to 2795 ms and inflated a
+  mean-keyed band to 419 ms, past the whole effect. That is noise in the baseline's *tail*
+  deciding a question about its *floor* — the exact failure HC-1's own `evaluate_gate` docstring
+  refuses ("a mean with a spread larger than itself looks like pure noise"). Pinned by
+  `test_an_outlier_in_the_baselines_tail_cannot_widen_the_band_away_from_a_verdict` with that
+  run's real numbers.
+
+  **DISCOVERY — `_last_result_meta` was a latent cross-contamination, not just a refactor
+  target.** The runtime parked each tool result's typed metadata (`truncated`,
+  `recovery_hints`, `agent_error`) in ONE instance slot written by `_invoke` and read at the
+  emit site. Correct while exactly one call could be in flight; with two, call A's metadata
+  renders on call B's card. Removed rather than locked: `_invoke`/`_guard_and_invoke` now fill a
+  caller-owned sink, so the value belongs to the dispatch that produced it.
+
+  **Composition with AG-14 (concurrent, separate branch).** A reservation decides ordering; a gate
+  decides admission. A call that needs interactive approval reserves EVERYTHING and therefore runs
+  alone, so any pre-write read gate at the write seam sees exactly the serial world it was written
+  against and the two never contend.
+
 - **[2026-08-16][S3] HC-2 DONE — sparse + pooled + reused worktree hydration.**
   Built on HC-1's `loop/worktree.py` (the premise held: `add_worktree` is the one creator, and
   `sdlc._schedule_parallel` its fan-out). Nothing named `sparse` existed anywhere under `src/`, so

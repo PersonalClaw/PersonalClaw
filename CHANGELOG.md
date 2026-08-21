@@ -10,6 +10,16 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Added
 
+- **Independent lookups in one turn now run at the same time.** When the agent asked for several
+  things it could have looked up simultaneously — a few greps, a couple of file reads, a repo map —
+  it did them strictly one after another, and you waited for the sum. A representative
+  eight-lookup turn over a 1,200-file repo took **2,219 ms on average and swung between 1.4 and
+  3.6 seconds**; it now takes **942 ms and never exceeds 993 ms**. That is 2.35× faster on the
+  average, and the *worst* new sample beats the *best* old one — the old spread was the serial
+  accumulation showing through. Calls that could interfere still take turns: a write to a file
+  waits for the reads of that file, a call needing your approval runs by itself, and anything the
+  system cannot classify runs alone rather than optimistically. Results come back in the order
+  they were requested, so nothing you see is reordered.
 - **Know whether a model will actually run on your machine before you download it.** Every model in
   the download lists now carries a fit chip — green, yellow, red — computed from this machine's real
   memory budget: total RAM, minus a reserve held back for the OS and the inference runtime, plus a
