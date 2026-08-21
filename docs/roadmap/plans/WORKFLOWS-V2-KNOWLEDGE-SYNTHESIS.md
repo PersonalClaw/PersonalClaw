@@ -1048,3 +1048,33 @@ Templates are the plan's proof-of-life — field-tested shapes with real daily c
   `diarization-pyannote`, which is `gated=True` and needs a token + license acceptance), cross-repo
   (`PCS-8` needs a PersonalClawApps change, so its atom could not flip from a core PR alone), or
   multi-session by measurement (`PP-16`'s remainder is 9,045 lines across 43 importing files).
+
+- [2026-08-20][frontier] **CORRECTION to the census above — `SH-2` is not blocked, it is unauthorized.**
+  The entry above bundles it with the owner-approval-gated candidates, which understates the
+  difference and hides an option. Verified: `SH-1` is `done`, `SH-2` has no unmet non-EXT dep, and
+  every clause it names is locally testable — the migration fixture is a **fake keyring**, the
+  rollback and the headless `.env` fallback need no cloud, no second device and no Linux, and
+  `pyproject.toml:164` already declares `keychain = ["keyring>=24"]` as an optional extra whose own
+  comment says tests stub keyring "so the suite is identical with or without this extra". So the
+  fixture pattern the clause asks for is the one the repo already uses. No environment, credential or
+  cross-repo obstacle exists.
+
+  Two owner-level facts hold it instead, and both are decisions rather than blockers. (1) The
+  workspace execution order places Security Hardening **deliberately last** — "its keychain slice is
+  class-B, so it carries the most state-shape cost as the regime binds" — so starting it now inverts
+  the owner's stated ordering, and ordering is the owner's call, not a tick's. (2) The atom is a
+  secrets migration that moves `.env` secrets into the OS keychain **and removes the keys**; that is a
+  security-control change over the credential store, where the standing rule is to escalate rather
+  than improvise, and where a mistake destroys secret material rather than merely failing a test.
+
+  Recorded so the option is visible: authorizing `SH-2` out of order is a **sixth** way to end the
+  no-op streak, and unlike the other five it needs no infrastructure from the owner — only a decision.
+
+- [2026-08-20][process] **A late amendment to an already-cherry-picked PR lands nowhere.** This
+  correction was written once already and lost. The merge train cherry-picks a PR's commits and then
+  CLOSES the PR without a merge commit (`mergedAt` stays empty, which is why "merged?" must be judged
+  by content, not by state). PR #1835 was picked at its first commit (`ecd3f06e`); the amendment adding
+  this section came afterwards, so the train had nothing left to take and the closed PR could not carry
+  it. Verified by content: the original blocked record IS on main, this section was NOT. Rule for next
+  time — once a PR's content appears on main, treat that branch as spent and open a FRESH branch for
+  any addition, rather than amending and force-pushing into a PR the train has already drained.
