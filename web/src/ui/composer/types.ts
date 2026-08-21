@@ -101,6 +101,17 @@ export interface ComposerProps {
     disabledReason?: string
     onToggle: () => void
   }
+  /** Natural voice (PT-7) — plainer, less machine-sounding prose, per conversation.
+   *  Absent → no control (the goal composer has no conversation to scope one to).
+   *  `effective`/`source` are the BACKEND's resolution; the composer displays them and
+   *  never re-derives the order. */
+  naturalVoice?: {
+    choice: '' | 'on' | 'off'
+    effective: boolean
+    source: string
+    agentDefault: boolean
+    onSelect: (choice: '' | 'on' | 'off') => void
+  }
   /** When true, the send button becomes a "queue" affordance — the host runs the
    *  message after the in-flight turn finishes instead of dropping it. */
   canQueue?: boolean

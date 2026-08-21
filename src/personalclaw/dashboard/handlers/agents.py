@@ -716,6 +716,7 @@ async def api_personalclaw_agents_create(request: web.Request) -> web.Response:
             description=body.get("description", ""),
             system_prompt=body.get("system_prompt", ""),
             voice=body.get("voice", ""),  # soul/voice layer (#42)
+            natural_voice=bool(body.get("natural_voice", False)),  # plainer prose (PT-7)
             model=body.get("model", ""),
             approval_mode=body.get("approval_mode", ""),
             skills=body.get("skills", []) if isinstance(body.get("skills"), list) else [],
@@ -796,6 +797,9 @@ async def api_personalclaw_agent_update(request: web.Request) -> web.Response:
         if "voice" in body:  # soul/voice layer (#42)
             agent.voice = body["voice"]
             changed.append("voice")
+        if "natural_voice" in body:  # plainer prose (PT-7)
+            agent.natural_voice = bool(body["natural_voice"])
+            changed.append("natural_voice")
         if "model" in body:
             agent.model = body["model"]
             changed.append("model")

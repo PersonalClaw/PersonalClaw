@@ -36,6 +36,10 @@ const CODE = SRC.replace(/\{\/\*[\s\S]*?\*\/\}/g, '').replace(/\/\*[\s\S]*?\*\//
 const SELECTION_WRITES = [
   'setSessionAcpAgent', 'setSessionAgent', 'setSessionModel',
   'setApprovalMode', 'setTaskMode', 'setReasoningEffort',
+  // Natural voice (PT-7) — a composer pick like the rest, and one whose failure is
+  // exactly this rail's shape: the pill would read "Plain" while the turn ran without
+  // the instruction. Two sites (the pill's own PATCH + the pre-start pick at create).
+  'setSessionNaturalVoice',
 ]
 
 describe('a selection that fails to persist tells the user', () => {
@@ -63,12 +67,12 @@ describe('a selection that fails to persist tells the user', () => {
       expect(SELECTION_WRITES, `unexpected call routed: ${m[2]}`).toContain(m[2])
       routed++
     }
-    expect(routed, 'selection writes routed through persistSelection').toBe(11)
+    expect(routed, 'selection writes routed through persistSelection').toBe(13)
   })
 
   it('each report names WHICH pick failed', () => {
     // "Couldn't apply this session" would be useless when five things can fail independently.
-    for (const what of ['this agent', 'this model', 'this approval mode', 'this task mode', 'this reasoning effort'])
+    for (const what of ['this agent', 'this model', 'this approval mode', 'this task mode', 'this reasoning effort', 'this natural-voice setting'])
       expect(CODE, `missing a report for ${what}`).toContain(`persistSelection('${what}'`)
   })
 

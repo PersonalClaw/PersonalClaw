@@ -1,7 +1,7 @@
 import { useState, type ReactNode } from 'react'
 import { fvs } from '../../design/fontWeight'
 import { motion } from 'framer-motion'
-import { Bot, Cpu, ShieldCheck, Gauge, ChevronDown, Plus, Search, Paperclip, BookText } from 'lucide-react'
+import { Bot, Cpu, ShieldCheck, Gauge, ChevronDown, Plus, Search, Paperclip, BookText, Feather } from 'lucide-react'
 import { Popover, MenuRow } from '../Popover'
 import { spring, physics, expr } from '../../design/motion'
 import { cx } from '../cx'
@@ -196,6 +196,59 @@ export function ReasoningPill({ value, efforts, onSelect, openSignal }: {
       {(close) => rows.map((e) => (
         <MenuRow key={e.value || 'default'} label={e.label} selected={e.value === value} onClick={() => { onSelect(e.value as ReasoningEffort); close() }} />
       ))}
+    </Popover>
+  )
+}
+
+/** Natural-voice selector (PT-7) — plainer, less machine-sounding prose.
+ *
+ *  Three rows because the control is a TRI-state: a conversation can inherit the bound
+ *  agent's preference, or state its own "on", or state its own "off". Without the third,
+ *  a conversation could never turn plainer prose OFF for an agent whose definition asks
+ *  for it.
+ *
+ *  This component RESOLVES NOTHING. `effective` and `source` arrive already decided by
+ *  the backend, which owns the one statement of the resolution order
+ *  (`natural_voice.NATURAL_VOICE_PRECEDENCE`); a label computed here from `choice` and
+ *  the agent default would be a second statement of that order, free to drift from the
+ *  one the turn actually uses.
+ *
+ *  The pill always shows the EFFECTIVE state, including when it comes from the agent —
+ *  that is the whole point of it being a pill and not a hidden setting. When the prose
+ *  changes, the owner can see which control changed it. */
+export function NaturalVoicePill({ choice, effective, source, agentDefault, onSelect }: {
+  choice: '' | 'on' | 'off'
+  effective: boolean
+  /** Which scope decided — a member of the backend's precedence tuple, or `''` before
+   *  a conversation exists to resolve against (a brand-new chat). In that state the
+   *  pill shows the CHOICE rather than an effect, because the only honest way to show
+   *  an effect would be to resolve the order here. */
+  source: string
+  /** What the bound agent's definition carries, for the inherit row's hint. */
+  agentDefault: boolean
+  onSelect: (choice: '' | 'on' | 'off') => void
+}) {
+  const label = source === ''
+    ? (choice === 'on' ? 'Plain' : choice === 'off' ? 'Off' : 'Agent default')
+    : effective ? (source === 'agent' ? 'Plain (agent)' : 'Plain') : 'Default'
+  return (
+    <Popover portal width={280} trigger={(open, toggle) => (
+      <PillButton icon={<Feather size={16} strokeWidth={2} />} label={label} dimension="Natural voice" open={open} toggle={toggle} />
+    )}>
+      {(close) => (
+        <div className="flex flex-col">
+          <MenuRow label="Agent default"
+            hint={agentDefault ? 'This agent asks for plainer prose' : 'This agent states no preference — plainer prose off'}
+            selected={choice === ''} onClick={() => { onSelect(''); close() }} />
+          <MenuRow label="Plainer prose" hint="Answer first, no filler openers, no summary close, shortest accurate word"
+            selected={choice === 'on'} onClick={() => { onSelect('on'); close() }} />
+          <MenuRow label="Off" hint="Standard prose here, even if the agent asks for plainer"
+            selected={choice === 'off'} onClick={() => { onSelect('off'); close() }} />
+          <div className="border-t border-outline-variant/30 px-m py-2 text-[0.75rem] text-on-surface-low">
+            Changes style only — never a fact, a caveat or a refusal. A choice here applies to this conversation and does not edit the agent.
+          </div>
+        </div>
+      )}
     </Popover>
   )
 }

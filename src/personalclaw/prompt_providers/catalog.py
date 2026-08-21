@@ -1292,6 +1292,11 @@ BUNDLED_SNIPPETS: tuple[BundledSnippet, ...] = (
         ),
     ),
     BundledSnippet(
+        name="natural-voice",
+        filename="natural-voice.md",
+        description="The plainer-prose instruction appended to a turn when natural voice resolves on (per-conversation or per-agent). Names the patterns to avoid; changes style only, never facts or refusals.",  # noqa: E501
+    ),
+    BundledSnippet(
         name="persona-lumon",
         filename="persona-lumon.md",
         description="The Lumon persona, appended on first turn for the 'lumon' dashboard theme.",

@@ -197,6 +197,10 @@ async def api_agent_marketplace_activate(request: web.Request) -> web.Response:
         provider_agent="",
         description=defn.description,
         model=defn.model,
+        # Natural voice (PT-7) must cross into the config profile here or an agent
+        # activated from the marketplace loses the preference its definition carries —
+        # the field exists so it TRAVELS with the agent.
+        natural_voice=defn.natural_voice,
         source="local",
     )
     cfg.save()

@@ -2108,6 +2108,19 @@ async def _run_chat(
             # Lumon persona injection — prepend to message so build_message
             # accounts for it in context budget calculations.
             message = _maybe_inject_persona(message, getattr(session, "color_theme", ""), is_new)
+            # Natural voice (PT-7) — plainer prose, resolved from the conversation's
+            # own tri-state over the bound agent's definition (the order lives in
+            # natural_voice.NATURAL_VOICE_PRECEDENCE). Same seam as the persona
+            # above (a bundled snippet appended to the turn), NOT a second model
+            # call over the reply; see natural_voice.py for why that was rejected.
+            # Every turn, not just the first: the toggle is flippable mid-chat.
+            from personalclaw import natural_voice as _nv
+
+            message = _nv.maybe_inject(
+                message,
+                getattr(session, "natural_voice", ""),
+                _nv.agent_default(session.agent or ""),
+            )
             # Project-bound chat (Slice 6 D2): on the first turn, prepend the project's
             # context — workspace, loop history, context-dir — so the session operates
             # with the project's cohesive shared context. First turn only (is_new); the
