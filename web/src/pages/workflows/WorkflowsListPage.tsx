@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Play, Search, Sparkles, Trash2, Workflow } from 'lucide-react'
 import { TopBar } from '../../ui/TopBar'
 import { EmptyState, ListRow, Loading, LoadError } from '../../ui/ListScaffold'
+import { WindowedList } from '../../ui/WindowedList'
 import { ListControls } from '../../ui/ListControls'
 import { HeaderActions, HeaderControl, HeaderSegmented } from '../../ui/HeaderActions'
 import { QuietButton } from '../../ui/QuietButton'
@@ -363,13 +364,30 @@ export function WorkflowsListPage({ navigate, query: routeQuery, setQuery }: Rou
             />
           )
         ) : (
-          <div className="flex flex-col gap-xs">
-            {filteredRuns.map((r, i) => {
+          // DSC-13: the run ledger is the list that grows on its own — every workflow
+          // execution adds a row and nothing removes one. The client asks for 100 today
+          // (`api.workflowRuns({ limit: 100 })`, and the handler caps there too), so the
+          // window engages on a full first page rather than waiting for a cap change.
+          <WindowedList
+            items={filteredRuns}
+            rowKey={(r) => r.id}
+            // VARIABLE: `ListRow`'s padding rides `--space-scale`. This is the most nearly
+            // uniform of the five (both text lines are `truncate`), but "nearly" is not a
+            // constraint worth declaring — measured 34-76px on the sibling knowledge list.
+            rowHeights="variable"
+            estimateRowHeight={64}
+            gap={4}
+            noun="runs"
+            findHint="use the Search runs and definitions field above."
+            className="flex flex-col gap-xs"
+          >
+            {(r, i, listCtx) => {
               const look = runLook(r.status)
               const Icon = look.icon
               const elapsed = fmtElapsed(r.elapsed_seconds)
+              // index=0 while windowed — see ui/WindowedList's ctx.windowed doc.
               return (
-                <ListRow key={r.id} index={i} onClick={() => navigate(`workflows/runs/${r.id}`)} label={`${r.workflow_name} — run ${r.id}`}>
+                <ListRow key={r.id} index={listCtx.windowed ? 0 : i} onClick={() => navigate(`workflows/runs/${r.id}`)} label={`${r.workflow_name} — run ${r.id}`}>
                   <div className="flex min-w-0 flex-1 items-center gap-m">
                     <Icon size={15} className={`shrink-0 ${look.tone}${look.spin ? ' animate-spin' : ''}`} />
                     <div className="min-w-0 flex-1">
@@ -402,8 +420,8 @@ export function WorkflowsListPage({ navigate, query: routeQuery, setQuery }: Rou
                   </div>
                 </ListRow>
               )
-            })}
-          </div>
+            }}
+          </WindowedList>
         )}
       </div>
     </div>

@@ -1,0 +1,156 @@
+{
+  "_comment": "Windowing-adoption ratchet baseline (DSC-13, resuming SM-3). The INVERSE of primitiveAdoption.baseline.json: that one counts bespoke chrome and may only shrink, this one counts surfaces that have ADOPTED ui/WindowedList and may only GROW. A surface that drops the primitive and goes back to rendering every row turns CI red, so the improvement cannot quietly leak back out. Add a surface here in the same commit that adopts it. See windowedListAdoption.test.ts.",
+  "adopters": 5,
+  "surfaces": [
+    "pages/ChatPage.tsx",
+    "pages/inbox/InboxPage.tsx",
+    "pages/knowledge/KnowledgeListPage.tsx",
+    "pages/settings/DiagnosticsPanel.tsx",
+    "pages/workflows/WorkflowsListPage.tsx"
+  ],
+  "_measurement": "The before/after this ratchet holds the line on. Real gateway (port 10777, home /private/tmp/dsc13-wt/.dev-home, both asserted from its READY line) over a real populated store: 5,000 chat-session .jsonl files + 5,000 knowledge rows. The SPA is served from THIS worktree's web/dist by the measurement harness, NOT by the gateway -- the gateway resolves its bundle from the venv's editable install, which is the MAIN checkout, so the first 'after' run measured the wrong tree and came back byte-identical to the before. The harness now asserts the windowing marker is PRESENT/ABSENT as expected before it will measure. Headless Chromium, 1280x900. Row count N is the independent variable, varied by re-limiting the gateway's own 2.3 MB response (every row is real data). frameWorst/frameMedian are the worst and median gap between frames during a sustained 30-frame scroll -- 16.7ms is one frame at 60Hz. An earlier wheel-to-next-two-frames metric was DISCARDED as wrong: it is nearly free for an un-windowed list (no scroll handler runs) and always costs one extra frame for a windowed one (coalescing to the next frame is the design), so it reported windowing as a regression while the windowed list rendered 18 rows instead of 5,000.",
+  "before": {
+    "note": "No windowing anywhere in web/src -- every row rendered. Marker asserted ABSENT. Sustained scrolling stops holding 60Hz at 500 rows (median frame 21.4ms > 16.7ms) and collapses past 2,000 (73.6ms = 13fps, then 188ms = 5fps at 5,000). Keystroke latency in the list's own search field crosses the 100ms 'instant' bound at 5,000. DOM nodes are linear at ~35/row, so nothing self-limits.",
+    "cpuThrottle": 4,
+    "samples": [
+      {
+        "rows": 100,
+        "domRows": 100,
+        "domNodes": 4188,
+        "keystrokeMs": 13.1,
+        "frameWorstMs": 10.4,
+        "frameMedianMs": 8.4,
+        "mountMs": 1434
+      },
+      {
+        "rows": 250,
+        "domRows": 250,
+        "domNodes": 9438,
+        "keystrokeMs": 12.8,
+        "frameWorstMs": 16.7,
+        "frameMedianMs": 11.0,
+        "mountMs": 1551
+      },
+      {
+        "rows": 500,
+        "domRows": 500,
+        "domNodes": 18188,
+        "keystrokeMs": 21.4,
+        "frameWorstMs": 29.2,
+        "frameMedianMs": 21.4,
+        "mountMs": 2007
+      },
+      {
+        "rows": 1000,
+        "domRows": 1000,
+        "domNodes": 35688,
+        "keystrokeMs": 36.6,
+        "frameWorstMs": 45.8,
+        "frameMedianMs": 19.2,
+        "mountMs": 3008
+      },
+      {
+        "rows": 2000,
+        "domRows": 2000,
+        "domNodes": 70688,
+        "keystrokeMs": 58.1,
+        "frameWorstMs": 85.9,
+        "frameMedianMs": 73.6,
+        "mountMs": 5277
+      },
+      {
+        "rows": 5000,
+        "domRows": 5000,
+        "domNodes": 175688,
+        "keystrokeMs": 137.0,
+        "frameWorstMs": 325.0,
+        "frameMedianMs": 188.2,
+        "mountMs": 12240
+      }
+    ]
+  },
+  "after": {
+    "note": "Same fixture, same harness, marker asserted PRESENT. Every column is FLAT in N: 18 rows and 1,337 nodes whatever the collection holds. Time-to-last-row at 5,000 rows goes 12,240ms -> 1,335ms, and keystroke latency 137ms -> 13.3ms. THE HONEST TRADE: the windowed frame cost is flat at ~27ms median under the 4x throttle, which is WORSE than the un-windowed list below ~500 rows (8.4ms at 100) and better above it -- the crossover sits between 500 and 1,000. Unthrottled it costs nothing measurable: 8.3ms median flat, identical to the un-windowed 100-row baseline (see after1x). The threshold stays at 64 rather than 500 because a threshold above the 100-row server page size at knowledge and runs would make those two adoptions inert controls, and because the cost being BOUNDED is the property that matters.",
+    "cpuThrottle": 4,
+    "samples": [
+      {
+        "rows": 100,
+        "domRows": 18,
+        "domNodes": 1337,
+        "keystrokeMs": 12.7,
+        "frameWorstMs": 39.8,
+        "frameMedianMs": 23.6,
+        "mountMs": 1321
+      },
+      {
+        "rows": 250,
+        "domRows": 18,
+        "domNodes": 1337,
+        "keystrokeMs": 12.7,
+        "frameWorstMs": 37.2,
+        "frameMedianMs": 26.8,
+        "mountMs": 1272
+      },
+      {
+        "rows": 500,
+        "domRows": 18,
+        "domNodes": 1337,
+        "keystrokeMs": 12.3,
+        "frameWorstMs": 33.3,
+        "frameMedianMs": 26.9,
+        "mountMs": 1295
+      },
+      {
+        "rows": 1000,
+        "domRows": 18,
+        "domNodes": 1337,
+        "keystrokeMs": 12.7,
+        "frameWorstMs": 34.1,
+        "frameMedianMs": 27.2,
+        "mountMs": 1276
+      },
+      {
+        "rows": 2000,
+        "domRows": 18,
+        "domNodes": 1337,
+        "keystrokeMs": 12.3,
+        "frameWorstMs": 34.5,
+        "frameMedianMs": 27.3,
+        "mountMs": 1285
+      },
+      {
+        "rows": 5000,
+        "domRows": 18,
+        "domNodes": 1337,
+        "keystrokeMs": 13.3,
+        "frameWorstMs": 35.4,
+        "frameMedianMs": 27.0,
+        "mountMs": 1335
+      }
+    ]
+  },
+  "after1x": {
+    "note": "The same windowed build with NO CPU throttle, which is what settles whether the flat 27ms above is real work or the throttle multiplying it. Flat 8.3ms median at every N, identical to the un-windowed 100-row baseline.",
+    "cpuThrottle": 1,
+    "samples": [
+      {
+        "rows": 100,
+        "domRows": 18,
+        "domNodes": 1337,
+        "keystrokeMs": 13.8,
+        "frameWorstMs": 10.3,
+        "frameMedianMs": 8.3,
+        "mountMs": 646
+      },
+      {
+        "rows": 5000,
+        "domRows": 18,
+        "domNodes": 1337,
+        "keystrokeMs": 13.9,
+        "frameWorstMs": 10.4,
+        "frameMedianMs": 8.4,
+        "mountMs": 599
+      }
+    ]
+  }
+}

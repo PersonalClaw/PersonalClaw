@@ -3,6 +3,7 @@ import { ResultAnnouncement } from '../../ui/ListControls'
 import { Pause, Play, Trash2, ArrowDownToLine } from 'lucide-react'
 import { Surface } from '../../ui/Surface'
 import { SearchField } from '../../ui/SearchField'
+import { WindowedList } from '../../ui/WindowedList'
 import { withWeight } from '../../design/fontWeight'
 import { api } from '../../lib/api'
 import { accentChip } from '../../design/accent'
@@ -208,12 +209,33 @@ export function DiagnosticsPanel() {
                 {paused ? 'Paused — resume to see live logs.' : entries.length === 0 ? 'Waiting for log entries…' : 'No lines match the current filter.'}
               </div>
             ) : (
-              visible.map((e) => (
-                <div key={e.key} className="whitespace-pre-wrap break-words border-b border-outline-variant/20 py-0.5">
-                  <span style={withWeight({ color: LEVEL_TONE[e.level] ?? 'var(--color-on-surface-low)' }, 600)}>{e.level.padEnd(7)}</span>
-                  <span className="text-on-surface-var"> {e.msg}</span>
-                </div>
-              ))
+              // DSC-13: the log tail is the surface that gets long WITHOUT a user doing
+              // anything — MAX_ENTRIES is a 2,000-line ring buffer, so this renders up to
+              // 2,000 wrapped mono lines while new ones arrive several times a second.
+              // `enableRowKeyboard={false}` on purpose: a log line is not focusable and this
+              // region is deliberately ONE tab stop (the `tabIndex/role=group/aria-label`
+              // trio above, pinned by design/scrollRegionNamed.test.tsx) so the browser
+              // scrolls it — owning the arrow keys here would take that away.
+              <WindowedList
+                items={visible}
+                rowKey={(e) => String(e.key)}
+                // VARIABLE and unavoidably so: `whitespace-pre-wrap break-words` means one
+                // entry is as many visual lines as its message needs at the current width.
+                // 24px is a single unwrapped line (0.75rem x leading-relaxed + py-0.5 + rule).
+                rowHeights="variable"
+                estimateRowHeight={24}
+                gap={0}
+                noun="lines"
+                findHint="use the Filter log lines field above, which filters every buffered line."
+                enableRowKeyboard={false}
+              >
+                {(e) => (
+                  <div className="whitespace-pre-wrap break-words border-b border-outline-variant/20 py-0.5">
+                    <span style={withWeight({ color: LEVEL_TONE[e.level] ?? 'var(--color-on-surface-low)' }, 600)}>{e.level.padEnd(7)}</span>
+                    <span className="text-on-surface-var"> {e.msg}</span>
+                  </div>
+                )}
+              </WindowedList>
             )}
           </div>
         </Surface>
