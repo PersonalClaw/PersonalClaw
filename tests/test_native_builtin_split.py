@@ -63,6 +63,7 @@ def test_platform_owns_filesystem_shell_and_affordance():
 def test_app_categories_are_the_installable_entities():
     assert _names(BT.create_knowledge_tools_provider()) == {
         "knowledge_search",
+        "knowledge_structural",
         "knowledge_create",
         "knowledge_get",
         "knowledge_update",

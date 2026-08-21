@@ -1597,3 +1597,109 @@ Sequence these **independently of S1-S3** — they touch the store's indexing la
   rewrites it, main's copy is stale, and folding it in would mix `ProjectionRulesPanel`'s unrelated
   delta into this atom. **`KL-8` is now the plan's only open atom** (EXT-dependent on AMBIENT-SURFACES'
   tile registry), so the capability-gap amendment is otherwise complete.
+
+## Execution log — KL-18 (structural retrieval: traversal, not a similarity guess)
+
+- **[2026-08-21][KL-18] DONE.** `src/personalclaw/knowledge/structural.py` —
+  `StructuralRetriever(store, embedder=None)`, mirroring `HybridRetriever`'s construction. It
+  reads `store.db` directly, the precedent `retrieval._graph_search` already sets, so
+  **`store.py` is untouched** — zero overlap with KL-19's diff.
+
+- **All five query classes the clause names are answerable. There is no gap to declare.**
+
+  | verb | traverses | not answerable by |
+  |---|---|---|
+  | `links_to` | `item_relations` inbound (5 typed verbs) **+ `item_citations` inbound** | — |
+  | `depends_on` | `item_relations.depends_on`, **transitively** | the one-hop `/relations` read |
+  | `tag_subtree` | `tags.parent_id` adjacency descent, then `item_tags` membership | — |
+  | `changed_since` | `items.updated_at` | — |
+  | `contradictions` | `item_relations.relation_type='contradicts'` | — |
+
+  Both traversal sources were verified to have live writers rather than assumed:
+  `knowledge_persist_provider._write_edges` → `item_relations`; `store.py:1997` →
+  `item_citations`. `contradicts` rows come from `contradiction.edges_from_conflicts`.
+
+- **One deliberate exclusion, documented in code.** The per-item `insights.conflicts` prose that
+  `/api/knowledge/conflicts` serves is **not** merged into `contradictions`. It is narrative
+  about one item, not a relation between two — `edges_from_conflicts` is what promotes the
+  subset carrying both item ids into rows. Traversing the narrative would mean inventing the
+  edge it declined to assert.
+
+- **The return shape carries its own justification.** `StructuralAnswer(verb, origin,
+  composition, rank_mode, hits, empty_reason, truncated)`, each
+  `StructuralHit(item_id, title, depth, path, score)` where `path` is a tuple of
+  `PathStep(from_ref, edge, to_ref, direction, detail)`; `to_dict()` adds a rendered `"why"`.
+  Refs are namespaced (`item:` / `tag:` / `date:`) because a tag-subtree path legitimately runs
+  through two node kinds. BFS, so the recorded path is a **shortest** one, and
+  `depth == len(path)` for every verb — that invariant cost a real fix, since `tag_subtree`
+  initially counted one hop more than `links_to`.
+
+- **Composition is one declared order: `RESTRICT_THEN_RANK`.** Traversal decides membership;
+  `rank_query` only reorders. Guarantees, each asserted: the ranked hit set **equals** the
+  structural set (a permutation, never a filter); an unembeddable item scores `0.0` rather than
+  being dropped; the sort is total (`-score, depth, item_id`); `composition` and `rank_mode`
+  (`vector` | `lexical`) are on the answer, so a result is reproducible from what it reports. An
+  empty structural result **stays empty** with `composition` still `structure_only` and
+  `empty_reason` set — there is no similarity arm to fall into. The reasons are distinct facts:
+  `no_such_item` ≠ `no_such_relation` ≠ `no_such_tag` ≠ `bad_request`.
+
+- **Agent-facing surface.** `knowledge_structural` in `agents/native/builtin_tools.py` (plus
+  `_CATEGORY_OF`, `manifest_meta.py`, and a regenerated `reference/tools.md` + `index.md`). The
+  `verb` enum is read from `STRUCTURAL_VERBS` through a lazy import rather than hand-copied, so
+  the schema cannot drift from the implementation. The handler **refuses** a verb missing its
+  required origin/`since` instead of running it and reporting "no such relation" — that would be
+  the same defect class as a similarity fall-back. Output is one line per hit plus a `why:` line,
+  capped: sharper retrievals, not a bigger context. **No HTTP route added** — the atom names the
+  agent tool surface as the consumer, and a route with no frontend reader would have been an
+  inert control (KL-17 already owns the graph UI).
+
+- **Falsifications.** Each mutation was pattern-asserted (`assert src.count(old) == 1`) and
+  re-grepped to confirm it landed before running; each restore came from
+  `/tmp/kl18_structural.bak`, never `git checkout`.
+  1. **Structural query falls back to similarity** on an empty result → 2 red, including
+     `test_no_inbound_link_is_a_named_reason_not_a_similarity_fallback`. **Re-run independently
+     before this PR opened** with a different mutant (fabricate one hit and clear
+     `empty_reason` on *every* empty result): **5 red**, adding
+     `assert '' == 'no_such_item'` and `assert '' == 'no_such_relation'` — so the property is
+     enforced more broadly than one test, and the distinct-reason vocabulary is enforced too.
+  2. **Path reduced to just the endpoint** (`path=paths[neighbour][-1:]`) → 1 red,
+     `test_every_hit_carries_the_chain_that_reached_it`, diffing the two-hop chain against the
+     single retained step. `[-1:]` was chosen over `()` deliberately: it proves the test asserts
+     the *full ordered chain*, not merely a non-empty path.
+  3. **Rank decides membership** (drop hits scoring `0.0` in `_rank_within`) → 1 red,
+     `assert _ids(composed) == _ids(structural), "ranking is a permutation, never a filter"`.
+
+- **A flake this session created and fixed.**
+  `test_a_subtree_restriction_applies_before_the_semantic_rank` originally proved "the rank
+  reordered" by comparing against the structure-only order. Structure-only sorts by `item_id` — a
+  random UUID — so the two orders coincided about half the time; it passed alone and failed in the
+  605-test run. Replaced with a real invariant: the **same** structural set under a **second** rank
+  query must flip to the opposite order. Non-vacuous regardless of id luck, and it also kills a
+  no-op ranker.
+
+- **KL-19 dependency noted, not duplicated.** `item_relations` has no `ON DELETE CASCADE` on this
+  base (KL-19 adds it), so traversal treats an unresolvable neighbour as a dead end — dropped,
+  never a titleless hit. That is asserted via `item_citations`, which carries no FK *by design*,
+  so the assertion stays reachable after KL-19 lands. Nothing was re-fixed here.
+
+- **Gates.** `make lint` green (black/isort/flake8 + mypy over 945 files). Targeted: 14 files,
+  existence-checked with a quoted zsh array (`missing=0 count=14`) — **605 passed**, plus three
+  consecutive green runs of the new file with `test_native_builtin_split.py`; an independent
+  four-file re-run gave 38 passed. Full `make test` **23481 passed, 30 skipped, 12 xfailed, 2
+  failed**; both failures are `tests/test_subagent.py::TestOnDoneTimeout` blowing the 120s cap
+  under concurrent-agent contention, which passes 6/6 in 343s when re-run alone with
+  `-p no:xdist -o addopts="" --timeout=400`. Real-home rail: unchanged by the run. Every test uses
+  a private `pytest.MonkeyPatch()` rather than the shared fixture, so home isolation is not
+  revocable mid-test.
+
+- **⚠️ Regen hazard worth recording for every worktree agent.**
+  `python -m personalclaw.manifest_reference` run from a worktree wrote into
+  **the MAIN checkout's** `src/personalclaw/reference/`: the venv's editable `.pth` points at the
+  main repo, and `-m` puts cwd (not `cwd/src`) on the path. Output happened to be byte-identical
+  so nothing was damaged (verified clean there before and after), but `PYTHONPATH=<worktree>/src`
+  is required. The same hazard applies to `scripts/generate_config_baseline.py`.
+
+- **Roadmap bookkeeping — no `dag.json` row to flip.** `KL-18` appears **0 times** in
+  `origin/main`'s `docs/roadmap/atomic/dag.json`; the clause lives only on the unmerged
+  `improvement-wave2-adoption-atoms` branch. No row was invented — a mirrored status surface must
+  not be flipped without the row it mirrors. This entry is the record until that set lands.
