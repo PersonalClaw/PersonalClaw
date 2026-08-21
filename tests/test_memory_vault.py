@@ -17,9 +17,9 @@ from personalclaw.memory_record import MemoryKind, MemoryRecord, MemoryScope
 from personalclaw.memory_service import MemoryService
 from personalclaw.memory_vault import (
     MemoryVault,
-    _slug,
     _yaml_scalar,
     render_record,
+    slug,
 )
 from personalclaw.vector_memory import VectorMemoryStore
 
@@ -62,9 +62,9 @@ def test_scalar_types_roundtrip():
 
 
 def test_slug_is_stable_and_safe():
-    assert _slug("pref.editor") == "pref.editor"
-    a = _slug("weird/id:with spaces")
-    b = _slug("weird/id:with spaces")
+    assert slug("pref.editor") == "pref.editor"
+    a = slug("weird/id:with spaces")
+    b = slug("weird/id:with spaces")
     assert a == b  # deterministic
     assert "/" not in a and ":" not in a and " " not in a
 
@@ -128,7 +128,7 @@ def test_sync_writes_then_noop(vault, service):
     # Files actually exist on disk.
     assert (vault.path / "facts" / "pref.editor.md").is_file()
     assert (vault.path / "MEMORY.md").is_file()
-    assert (vault.path / "tags" / f"{_slug('tag-ship')}.md").is_file()
+    assert (vault.path / "tags" / f"{slug('tag-ship')}.md").is_file()
 
 
 def test_sync_prunes_deleted_record(vault, service):

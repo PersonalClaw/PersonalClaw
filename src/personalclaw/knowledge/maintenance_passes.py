@@ -65,6 +65,7 @@ PASS_CONSOLIDATION = "knowledge_consolidation"
 PASS_LINK_BACKFILL = "entity_link_backfill"
 PASS_SIMILARITY_EDGES = "similarity_edges"
 PASS_DERIVED_REFRESH = "derived_refresh"
+PASS_VAULT_PROJECTION = "knowledge_vault_projection"
 
 
 def _memory_lint_pass(*, batch_size: int = 0) -> int:
@@ -205,6 +206,28 @@ def _derived_refresh_pass(*, batch_size: int = 0) -> int:
     return done
 
 
+def _vault_projection_pass(*, batch_size: int = 0) -> int:
+    """Reconcile the markdown projection of the library against the store (KL-20).
+
+    Hosted HERE rather than on a cadence of its own, which is what the atom asks for: the
+    projection is idempotent, set-shaped, watermark-triggered work — the exact shape KL-14
+    exists for — and a second loop writing the owner's files would be the second projector
+    this atom was written to avoid, arriving as a scheduler instead of as a module.
+
+    RESUMABLE (`batched=True`) and the return value is PROGRESS, not backlog size, for the
+    reason `_derived_refresh_pass` states: every refusal (a two-sided conflict, a page the
+    owner deleted, an item too large to project) records a durable ledger state so it
+    contributes 0 on the next sub-batch. Returning a backlog COUNT here would busy-loop
+    `max_batches` times per tick on a page only the owner can resolve.
+
+    Mode `off` — the shipped default — returns 0 having touched nothing, so an unconfigured
+    install pays one config read per tick and writes no files at all.
+    """
+    from personalclaw.knowledge import vault
+
+    return vault.projection_pass(batch_size=batch_size)
+
+
 def register_all() -> list[str]:
     """Register every standing pass. Idempotent; returns the names registered.
 
@@ -231,6 +254,12 @@ def register_all() -> list[str]:
         # keyed on its own sweep markers, so a refresh landing after the edge pass in one tick
         # simply re-arms it and the next tick converges.
         (PASS_DERIVED_REFRESH, _derived_refresh_pass, True),
+        # KL-20. Sorted-name order puts it after `derived_refresh` and before
+        # `memory_lint`/`similarity_edges`, which is convenient (an absorbed vault edit has
+        # already invalidated its derived layer by then) and, like every other ordering here,
+        # not relied upon: the projection is keyed on its own ledger, so landing in any order
+        # converges on the next tick.
+        (PASS_VAULT_PROJECTION, _vault_projection_pass, True),
     ):
         try:
             maintenance.register_pass(name, fn, batched=batched)

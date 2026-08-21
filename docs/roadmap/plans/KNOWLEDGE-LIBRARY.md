@@ -1703,3 +1703,156 @@ Sequence these **independently of S1-S3** — they touch the store's indexing la
   `origin/main`'s `docs/roadmap/atomic/dag.json`; the clause lives only on the unmerged
   `improvement-wave2-adoption-atoms` branch. No row was invented — a mirrored status surface must
   not be flipped without the row it mirrors. This entry is the record until that set lands.
+
+## Execution log — KL-20 (knowledge as plain files the owner owns)
+
+- **[2026-08-21][KL-20] DONE.** `src/personalclaw/knowledge/vault.py` —
+  `KnowledgeVault(store, dir, mode=…)` with `sync_batch(max_items)`, `lint_flags()`, `status()`,
+  plus the `projection_pass` registered on KL-14's host as `knowledge_vault_projection`
+  (`batched=True`).
+
+- **MGAV-6's four mechanics are REUSED by import, not re-derived.** The atom names two vaults
+  writing the owner's files as the swallowed-write family's worst shape, so nothing is
+  reimplemented: **mode config** (`MEMORY_VAULT_MODES`, same three values, same fail-to-`off`
+  resolution), **the page format + wikilink projection** (`slug`, `compose_page`, `split_page`,
+  `parse_frontmatter`, `frontmatter`, `GENERATED_MARKER`, `WIKILINK_RE`), **the sync pass**
+  (`absorb → project → collect deletions`, in that order and for the reason MGAV-6 documents),
+  and **its verification** (the `(check, key, detail)` triple shape, the `sync_conflict`
+  front-matter stamp written with `frontmatter` rather than `compose_page`, and the broken-link /
+  orphan-page checks).
+
+- **Five names were PROMOTED in `memory_vault.py` rather than importing privates across a module
+  boundary:** `_slug`→`slug`, `_frontmatter`→`frontmatter`, `_HASH_KEY`→`HASH_KEY`,
+  `_CONFLICT_KEY`→`CONFLICT_KEY`, `_GENERATED_MARKER`→`GENERATED_MARKER`,
+  `_WIKILINK_RE`→`WIKILINK_RE`. Pure renames plus two local `slug = slug(...)` shadows fixed
+  (flake8 F823 caught those); one test reference updated.
+
+- **`body_hash` (`memory_vault.py:267`) ALREADY excludes the field being written — clause
+  satisfied, not rebuilt.** It hashes the BODY only and `source_hash` lives in the front-matter,
+  which the module docstring states at `:32-39` as the reason. `compose_page:285` appends
+  `(HASH_KEY, body_hash(body))`, so writing the hash cannot change its own input.
+
+- **DISCOVERY — the retrigger clause is guarded THREE times, and the obvious test does not measure
+  the hash.** Mutating the ledger hash to cover the front-matter left
+  `test_projection_does_not_retrigger_itself` GREEN, because `seen_mtime` (a stat) short-circuits
+  before the hash is consulted, and `_apply_page_edit`'s content-equality check catches the rest.
+  Added `test_the_ledger_hash_excludes_the_frontmatter_it_writes`, which asserts the hash SCOPE
+  structurally and does red under that mutation, plus
+  `test_touching_a_page_without_changing_it_writes_nothing` for the stat layer on its own.
+
+- **`extract_edited_value` gained `stop_at_headings` (default True — memory unchanged).** Its `## `
+  stop is right for a one-sentence memory value and catastrophic for a knowledge document: left on,
+  absorbing an edited article truncates it at its first subheading and writes the truncation back to
+  the store. One extractor with a named parameter, not a second copy.
+
+- **A LEDGER (`vault_projections`) replaces MGAV-6's whole-library manifest scan.** Keyed backlog
+  (`items_needing_vault_projection`) so a pass returns rows only when there is real work and 0
+  exactly when the vault is settled — the contract KL-14's sub-batch loop is written against. A
+  cursor-and-scan design examines one window per TICK, so an edit to the ten-thousandth item waits
+  hours behind items with nothing to say. **No foreign key, deliberately:** `ON DELETE CASCADE`
+  would take the row away with the item and strand its file, making "a removed item leaves no
+  orphan file" unenforceable.
+
+- **A two-sided change SURFACES in three places** — `sync_conflict` in the page the owner was just
+  editing (body written back byte-for-byte, so the page keeps reporting itself unresolved),
+  `lint_flags()`' `knowledge_vault_conflict`, and a new tier-3 Doctor probe `knowledge.vault` under
+  the existing `knowledge` capability. The probe was chosen over minting a notification kind because
+  `DoctorPanel` is capability-generic (no frontend change needed) and because
+  `notification_kinds`' one knowledge kind, `research_finding`, has **zero emit sites** — copying
+  an inert channel would have shipped an inert control.
+
+- **Deletion is explicit both ways.** Owner-deleted page → `owner_deleted` tombstone, never
+  re-created, item NOT deleted (a missing file is ambiguous: a moved directory, a half-restored
+  backup). Item deleted in the app → `orphan_vault_projections()` unlinks the file and forgets the
+  row.
+
+- **DISCOVERY — the deletion test was measuring nothing until it was strengthened.** Removing the
+  tombstone left the original "re-run the pass three times" loop GREEN, because the backlog is keyed
+  on `updated_at` and a deleted file is simply not noticed. The defect only appears on a LATER
+  app-side edit, so `test_deleted_page_is_not_recreated` now renames the item and asserts the page
+  stays gone. That mutation reds it.
+
+- **DISCOVERY — a join-table change is invisible to an `updated_at`-keyed backlog.**
+  `add_item_relation` / `add_to_collection` / `remove_from_collection` change what a page must say
+  while leaving the item row byte-identical, so `relations:`/`collections:` would have gone stale
+  until something else edited the item. Added `store.rearm_vault_projection(*ids)` and called it
+  from all three — BOTH ends for a relation, since each page carries the edge. Not by bumping
+  `updated_at`: that column means "the user changed this" and powers the recency tie-break.
+
+- **DISCOVERY (found by DRIVING the real host, not by reading code) — a delete left an orphan
+  LINK.** Deleting an item takes its typed edges with it and leaves every neighbour's
+  `items.updated_at` untouched, so a sibling's page kept `[[Eviction-1d51c992]]` pointing at a file
+  that no longer existed. `delete_item` and `merge_items` now read `_vault_neighbours(id)` BEFORE
+  the cascade (both legs of `item_relations` AND `item_citations`, the same both-sides reason
+  `_SNAPSHOT_TABLES` gives) and re-arm them after the commit.
+
+- **DISCOVERY (same drive) — tag hubs were written but never pruned.** A hub whose last member was
+  deleted kept linking a gone page: the one-sided-inventory shape. `_ensure_static` now computes the
+  expected hub set and unlinks the rest. Both of these were reported by the new
+  `knowledge_vault_broken_link` check, which is the argument for having added it.
+
+- **DISCOVERY — the projection was linking pages it had not created.** `_relation_names` keyed on
+  "the item exists", so a bounded batch emitted `[[Beta-…]]` while Beta was still in the backlog.
+  Fixed to key on "has a ledger row", threading the current sub-batch's `cohort` so two items
+  projected together still link each other, and the new `knowledge_vault_broken_link` check is what
+  keeps that honest rather than a comment. That check in turn caught the README's own literal
+  `[[wikilinks]]` example — reworded, and the link scan scoped to pages whose links the projection
+  derives from rows.
+
+- **Bounded.** Per sub-batch: at most `max_items` candidate files read, `max_items` pages written,
+  `max_items` orphans collected. The candidate scan is one `stat` per ledger row and no reads — the
+  cheap half is deliberately NOT row-bounded, because bounding it is what would make an edit wait
+  hours. Tag hubs come from ONE query (`vault_tag_membership`) and are re-asserted only when the
+  pass moved something. An item over `MAX_ITEM_BYTES` (1 MiB) is REFUSED and recorded, never
+  truncated — truncating and then reading the file back would write the truncation into the store.
+
+- **Gated off by default** (`knowledge.vault_mode`, `knowledge.vault_path`), full round trip:
+  dataclass + `_meta` → `load()` (an unrecognised value resolves to `off`, no legacy back-read) →
+  `to_dict()` via `asdict` → `_EDITABLE_CONFIG` PATCH (`enum` + `str`) → read by
+  `vault_mode_from_config()`. `config-baseline.json` regenerated with
+  `PYTHONPATH=<worktree>/src`; the main checkout was verified clean afterwards.
+
+- **NOT DONE, stated rather than implied: there is no settings PANEL for the mode.** The entire
+  `knowledge.*` config family (similarity knobs, embed batching, maintenance staleness, lint
+  cadence) rides `_EDITABLE_CONFIG` with no panel, and there is no `KnowledgePanel.tsx` to add a
+  section to. Building the first one is a separate concern from this atom. The attention half IS
+  reachable with no frontend change — the Doctor page renders the new probe row, its detail line and
+  its remedy, because `DoctorPanel` groups by capability generically.
+
+- **Falsifications, with the reds observed.** (a) `if not self.two_way:` → `if True:` (overwrite the
+  owner's edit): **5 red**, incl. `test_owner_edit_is_read_back_not_overwritten` and
+  `test_read_back_keeps_the_owners_own_subheadings`. (b) ledger hash over the whole page instead of
+  the body: **1 red** on the structural hash-scope test (and see the DISCOVERY above for why the
+  behavioural one stays green). (c) two-sided branch → `(False, "")`, letting the database win
+  silently: **4 red**, incl. the surfacing test and the Doctor-probe test. (d) tombstone removed:
+  **1 red** on the strengthened deletion test. (e) `load()`'s `else "off"` → `else "mirror"`:
+  **2 red** (`test_off_is_the_default`, `test_an_invalid_mode_in_the_file_resolves_to_off`); the
+  same mutation applied to `vault_mode_from_config`'s `or "off"` stayed green, because the dataclass
+  default already supplies a truthy `"off"` — the real gate is the `load()` resolution. Every
+  mutation was re-read after applying, restored from a `cp` backup (never `git checkout`), and the
+  probe sweep returns the expected 13 benign hits with a clean `git status`.
+
+- **Validated by DRIVING the real entry point, not by calling `sync_batch`.** With the passes
+  registered on KL-14's host and `run_maintenance(force=True)` ticking it: 2 pages + 1 tag hub +
+  README written; an edit made in a text editor read back (`'W-TinyLFU wins harder'`) with
+  `relations` and `tags` intact in the front-matter and the `[[…]]` link still in the body; an item
+  deleted in the app left no file and no stale link; a two-sided change left the store at
+  `'APP SIDE'`, the file at `'OWNER SIDE'`, `sync_conflict:` stamped, one
+  `knowledge_vault_conflict` flag, and three further ticks reported **0** units without touching
+  the page; a page deleted in a file manager was not re-created even after the app renamed its
+  item.
+
+- **Gate.** `make lint` clean (black / isort / flake8 / mypy over 952 sources). Targeted:
+  `test_knowledge_vault.py` (38) + `test_memory_vault.py` + `test_memory_vault_two_way.py` +
+  `test_knowledge_maintenance{,_host}.py` + `test_knowledge_restructure.py` +
+  `test_knowledge_collections.py` + `test_knowledge_dedup.py` + `test_knowledge.py` +
+  `test_config_baseline.py` + `test_config_roundtrip.py` + `test_resilience_doctor.py` +
+  `test_knowledge_contradiction.py`, plus `test_inert_surface_baseline.py` /
+  `test_docs_lint_baseline.py` / `test_wire_error_envelope_census.py` — all green. Full `make test`:
+  **23733 passed, 30 skipped, 12 xfailed, 0 failed** — no flakes at all, including the two
+  documented ones. Real-home rail: unchanged by every run.
+
+- **Roadmap bookkeeping — no `dag.json` row to flip.** `KL-20` appears **0 times** in
+  `origin/main`'s `docs/roadmap/atomic/dag.json`; the clause lives only on the unmerged
+  `improvement-wave2-adoption-atoms` branch. No row was invented. This entry is the record until
+  that set lands.

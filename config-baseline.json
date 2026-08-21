@@ -761,6 +761,18 @@
     "type": "int"
   },
   {
+    "default": "off",
+    "path": "knowledge.vault_mode",
+    "sensitive": false,
+    "type": "str"
+  },
+  {
+    "default": "knowledge-vault",
+    "path": "knowledge.vault_path",
+    "sensitive": false,
+    "type": "str"
+  },
+  {
     "default": true,
     "path": "learning.attribution_enabled",
     "sensitive": false,
