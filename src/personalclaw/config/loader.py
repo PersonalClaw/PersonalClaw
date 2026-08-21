@@ -2016,6 +2016,22 @@ class LearningConfig:
             "proposals, so they cannot disagree about what counts as evidence.",
         ),
     )
+    min_lesson_confidence: float = field(
+        default=0.5,
+        metadata=_meta(
+            "Lesson Injection Confidence",
+            "How well supported a learned lesson must be before it is injected into "
+            "a prompt. Every lesson carries a confidence DERIVED from its evidence — "
+            "how often it was observed, how recently, whether anything contradicted "
+            "it, whether a correction reversed it. Below this floor a lesson is "
+            "RETAINED: still stored, still accumulating evidence, but kept out of the "
+            "prompt. The default 0.5 is not a picked number — it is exactly the "
+            "confidence a lesson reaches at the third corroborating observation, "
+            "which is the same evidence floor Minimum Evidence already sets for every "
+            "other learning path (one is an anecdote and two a coincidence). Raise it "
+            "to demand more corroboration; 0 injects anything that exists.",
+        ),
+    )
     staging_enabled: bool = field(
         default=True,
         metadata=_meta(
@@ -4841,6 +4857,10 @@ class AppConfig:
                 surface_chip=bool(learning_data.get("surface_chip", True)),
                 skill_ladder=bool(learning_data.get("skill_ladder", True)),
                 min_evidence=int(learning_data.get("min_evidence", 3) or 3),
+                # 0.0 is a MEANINGFUL value here (inject anything that exists), so this
+                # one cannot use the `or default` idiom its integer siblings share —
+                # that would silently rewrite a deliberate "no gate" into the default.
+                min_lesson_confidence=_safe_float(learning_data.get("min_lesson_confidence"), 0.5),
                 staging_enabled=bool(learning_data.get("staging_enabled", True)),
                 self_model_enabled=bool(learning_data.get("self_model_enabled", True)),
                 min_session_score=float(learning_data.get("min_session_score", 0.0) or 0.0),

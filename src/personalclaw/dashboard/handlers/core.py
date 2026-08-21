@@ -836,6 +836,11 @@ _EDITABLE_CONFIG: dict[str, dict] = {
     # eagerly the system learns, and staging can be turned off if the log is
     # unwanted — so all three are live-editable.
     "learning.min_evidence": {"type": "int", "min": 1, "max": 20},
+    # WF2LEA-15: the lesson injection floor. Live-editable for the same reason as the
+    # evidence floor beside it — this is the knob for "why is it still doing that" /
+    # "why did it stop doing that", and a user chasing either answer should be able to
+    # move the gate and re-read the Memory studio without restarting the gateway.
+    "learning.min_lesson_confidence": {"type": "float", "min": 0.0, "max": 1.0},
     "learning.staging_enabled": {"type": "bool"},
     # LEARN-R21 (S72): the self-model gate. Live-editable because it is the one learning path
     # that acts on what WORKED rather than on corrections — a user who finds that presumptuous

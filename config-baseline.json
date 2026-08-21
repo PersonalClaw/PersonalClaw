@@ -797,6 +797,12 @@
     "type": "int"
   },
   {
+    "default": 0.5,
+    "path": "learning.min_lesson_confidence",
+    "sensitive": false,
+    "type": "float"
+  },
+  {
     "default": 0.0,
     "path": "learning.min_session_score",
     "sensitive": false,
