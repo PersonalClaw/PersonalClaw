@@ -20,6 +20,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any
 
+from personalclaw.api_version import API_VERSION
 from personalclaw.manifest_meta import TOOL_META, is_excluded_route
 
 if TYPE_CHECKING:
@@ -27,9 +28,12 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# Bump when the manifest's SHAPE changes (a field added/removed/renamed), so a
-# consuming agent can branch on it. Content changes (a new tool) don't bump it.
-API_VERSION = 1
+# `API_VERSION` is re-exported from :mod:`personalclaw.api_version`, which is its ONE
+# origin: the same number the version gate negotiates against and the SPA declares.
+# It used to be defined here as a literal and only ever emitted, so nothing compared
+# it. The bump rule — what counts as a breaking wire change — is stated there and
+# nowhere else; do not restate it here, and do not re-declare the literal.
+__all__ = ["API_VERSION", "build_manifest"]
 
 
 async def _tools_section() -> list[dict[str, Any]]:

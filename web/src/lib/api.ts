@@ -3,9 +3,15 @@
 // (cookie pc_token_<port> rides along via the dev proxy). See the composer
 // API contract in docs.
 
+import { apiVersionHeaders } from './apiVersion'
 import { errText } from './errText'
 
-const SK = { 'X-Session-Key': 'dashboard:ui' }
+// Every request helper below spreads `SK`, so folding the API-version declaration
+// into it is the SPA's ONE declaration site (PL-9): the number lives only in
+// `apiVersion.ts`, no call site carries it, and a gateway outside this bundle's
+// supported window answers `400 api_version_unsupported` instead of failing later
+// at a field that quietly changed shape.
+const SK = { 'X-Session-Key': 'dashboard:ui', ...apiVersionHeaders }
 
 /** An Error that carries the HTTP status, so callers can distinguish a genuine 404
  *  (resource gone) from a transient network/5xx blip. `.message` is unchanged (the
