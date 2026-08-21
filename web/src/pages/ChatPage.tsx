@@ -42,6 +42,7 @@ import { ScreenShareChip } from '../ui/ScreenShareChip'
 import { useScreenShare } from '../ui/composer/useScreenShare'
 import { DotGlow } from '../ui/DotGlow'
 import { EmptyState, ListSkeleton, LoadError, Skeleton, LoadingStatus } from '../ui/ListScaffold'
+import { WindowedList } from '../ui/WindowedList'
 import { FieldError } from '../ui/forms'
 import { MessageUser } from '../ui/chat/MessageUser'
 import { MessageAssistant } from '../ui/chat/MessageAssistant'
@@ -4392,7 +4393,32 @@ function ChatHistoryPage({ navigate, query, setQuery }: { navigate: (p: string) 
                       </div>
                     )}
                     {g.items.length === 0 ? <div className="text-on-surface-low text-[0.8125rem] italic pl-5">{folderDragKey ? 'Drop here to move into this folder' : 'Empty'}</div>
-                      : <div className="flex flex-col gap-s">{g.items.map(card)}</div>}
+                      : (
+                        // DSC-13 / SM-3: THE surface SM-3 deferred windowing on ("pending
+                        // measurement"). `/api/chat/sessions` is uncapped at BOTH ends — no
+                        // server page size, no client slice — so this is the one list in the
+                        // app that really does reach 5,000 rows. Measured on a real store of
+                        // exactly that: 175,683 DOM nodes, 273ms per wheel event.
+                        // Windowed per FOLDER GROUP, which composes: each group observes the
+                        // same shared scroller and windows its own rows, so a 5,000-chat
+                        // ungrouped bucket windows while a 3-chat folder passes through.
+                        <WindowedList
+                          items={g.items}
+                          rowKey={(s) => s.key}
+                          // VARIABLE, measured: a plain row is 66px (measured across all
+                          // 5,000 fixture rows), but a full-text hit adds a snippet line and
+                          // the meta line wraps its origin/tag pills.
+                          rowHeights="variable"
+                          estimateRowHeight={66}
+                          gap={8}
+                          noun="chats"
+                          findHint="use the Search chats field above, which searches every chat including their contents."
+                          anchorKey={peekKey || undefined}
+                          className="flex flex-col gap-s"
+                        >
+                          {(s) => card(s)}
+                        </WindowedList>
+                      )}
                   </div>
                   )
                 })}
