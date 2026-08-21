@@ -449,6 +449,12 @@ class SubagentManager:
         # (C1.4 breaker trip, C1.5 run-budget exceeded, kill-fan-out). A queued or
         # new spawn for one of these is refused with that reason rather than started.
         self._fanout_stops: dict[str, str] = {}
+        # Make this manager reachable from a stop (PR2-12). The SessionManager owns the
+        # stop verb but cannot import upward to us, so we hand it the one callback it
+        # needs. Guarded by hasattr so an older/stub SessionManager in a test still
+        # constructs — the registration is a capability, not a requirement.
+        if hasattr(sessions, "register_child_stopper"):
+            sessions.register_child_stopper(self.stop_children_of)
         self.hook_store: Any = None  # Optional ScriptHookStore, set by server.py
         self._agents: dict[str, SubagentInfo] = {}
         self._tasks: dict[str, asyncio.Task] = {}  # type: ignore[type-arg]
@@ -2253,6 +2259,48 @@ class SubagentManager:
         info.error = "Cancelled by user"
         await self._force_reap(agent_id, info, time.time() - info.started)
         return True
+
+    async def stop_children_of(self, parent_key: str) -> int:
+        """Stop every subagent — running OR still queued — spawned by *parent_key*.
+
+        The subagent half of "stop means stop" (PR2-12): a stop on a parent turn is a
+        stop on the work that turn started. Registered with the SessionManager at
+        construction and called from ``stop_turn``. Before this, a stopped fan-out kept
+        running — burning tokens, holding its worktrees, and eventually delivering
+        results into a session the user had already stopped.
+
+        Keyed on ``parent_session_key``, NOT ``_fanout_key``, deliberately: a chat turn
+        that spawned into a workflow run has a fan-out key of ``workflow:<run_id>``, so
+        a fan-out-keyed sweep walks straight past the children this parent started.
+        Each victim's own fan-out is still marked stopped, so a spawn already in flight
+        toward the queue is refused rather than starting after the signal.
+
+        Reuses :meth:`cancel` for the kill so there is exactly ONE way a subagent dies
+        (session reset → SIGKILL fallback → reap → tombstone → audit). Idempotent: a
+        second call finds every child already done and returns 0.
+        """
+        if not parent_key:
+            return 0
+        victims = [
+            info
+            for info in list(self._agents.values())
+            if not info.done and info.parent_session_key == parent_key
+        ]
+        if not victims:
+            return 0
+        for info in victims:
+            info.cancelled = True  # an intentional stop is not a child failure (C1.4)
+            fkey = _fanout_key(info)
+            if fkey:
+                self._fanout_stops.setdefault(fkey, "parent turn stopped by user")
+        results = await asyncio.gather(
+            *(self.cancel(info.id) for info in victims), return_exceptions=True
+        )
+        stopped = sum(1 for r in results if r is True)
+        logger.info(
+            "Stop: stopped %d/%d subagent(s) spawned by %s", stopped, len(victims), parent_key
+        )
+        return stopped
 
     async def cancel_fanout(self, fanout_key: str, *, reason: str = "") -> int:
         """Kill EVERY child (running + queued) of one parent/run — "stop this

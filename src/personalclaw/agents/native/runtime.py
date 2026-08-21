@@ -29,6 +29,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from personalclaw import cancellation
+from personalclaw.acp.types import STOP_REASON_CANCELLED, STOP_REASON_STOPPED_BY_USER
 from personalclaw.agents.native import dispatch_plan
 from personalclaw.agents.native.approval import REJECT, ApprovalGate
 from personalclaw.agents.native.tools import (
@@ -37,6 +39,13 @@ from personalclaw.agents.native.tools import (
     tool_definitions_to_openai_schema,
 )
 from personalclaw.agents.provider import AgentProvider
+from personalclaw.cancellation import (
+    CANCEL_INTERNAL,
+    CANCEL_USER,
+    REQUEST_NO_TURN,
+    REQUEST_REPEAT,
+    CancelScope,
+)
 from personalclaw.guardrails.loop_breaker import (
     BLOCK_THRESHOLD,
     WARN_THRESHOLD,
@@ -102,6 +111,18 @@ _MAX_STEERS_PER_TURN = 4
 # Sentinel: the tool passed deny-list + hooks but needs interactive approval,
 # so the generator path (_run_tool) must run the gated branch.
 _NEEDS_APPROVAL: Any = object()
+
+#: The observation a queued-but-unstarted call is answered with when a stop reaches it
+#: before it was dispatched (PR2-12). One spelling, because two exits pair a dropped call
+#: with a result — the pre-batch exit in :meth:`NativeAgentRuntime.stream` and the per-call
+#: drop in :meth:`NativeAgentRuntime._execute_wave` — and a model reading the history back
+#: must not see two different accounts of the same thing.
+CANCELLED_BEFORE_RUN = "Error: cancelled before this tool ran"
+
+# Sentinel: this call was dropped by a stop, so it must not be dispatched and must not
+# reach _run_tool's accounting tail. A unique object rather than a string or None, both of
+# which a legitimate result already occupies in the wave's `results` list.
+_DROPPED: Any = object()
 
 
 @dataclass(frozen=True, slots=True)
@@ -243,7 +264,11 @@ class NativeAgentRuntime(AgentProvider):
         # tools may run, enforced in _guard_and_invoke before approval is consulted
         # so a Trust/YOLO auto-approve can never bypass an ask/plan/build restriction.
         self._task_mode = "agent"
-        self._cancelled = False
+        # The turn's ONE stop signal (PR2-12). Not a bool: cancellation has to carry a
+        # cause (user vs internal), a live child-process registry a stop can reap, and
+        # idempotence — so it is an object, and `self._cancelled` below is a read-only
+        # view of it rather than a second place the truth can live.
+        self._cancel = CancelScope()
         self._last_context_pct = 0.0
         # Per-run consecutive-failure breaker (reset each stream() turn).
         self._breaker = LoopBreaker()
@@ -599,8 +624,47 @@ class NativeAgentRuntime(AgentProvider):
         )
         return note
 
+    @property
+    def _cancelled(self) -> bool:
+        """This turn's stop signal — a VIEW of :attr:`_cancel`, never its own state.
+
+        Read-only on purpose. Every writer has to name a cause
+        (``self._cancel.request(...)``), because a bare ``= True`` is how the tree
+        ended up unable to tell a user's stop from a circuit-breaker trip.
+        """
+        return self._cancel.cancelled
+
+    def _stop_reason_for_cancel(self) -> str:
+        """The turn's terminal stop reason for a cancelled turn.
+
+        ``stopped_by_user`` when the user pressed stop, ``cancelled`` when something
+        internal gave up (breaker, watchdog, shutdown). Distinct values, one family —
+        see :func:`personalclaw.acp.types.is_cancelled_stop`.
+        """
+        if self._cancel.stopped_by_user:
+            return STOP_REASON_STOPPED_BY_USER
+        return STOP_REASON_CANCELLED
+
+    def last_stop_report(self) -> dict:
+        """What the last stop actually reached — the shape PR2-13 consumes.
+
+        Keys: ``reason``, ``model_request_aborted``, ``children_reaped``,
+        ``children_escaped``, ``tool_calls_dropped``, ``subagents_stopped``.
+        Read by the dashboard stop handler so the stop card can state what happened
+        instead of implying it.
+        """
+        return self._cancel.report.to_dict()
+
+    def note_subagents_stopped(self, count: int) -> None:
+        """Record how many spawned subagents a stop reached (see above).
+
+        The SessionManager owns that sweep — it holds the subagent stopper — so it
+        reports the count inward rather than the scope guessing at it.
+        """
+        self._cancel.note_subagents_stopped(count)
+
     async def shutdown(self) -> None:
-        self._cancelled = True
+        self._cancel.request(reason=CANCEL_INTERNAL)
         self._approval.cancel_all()
 
     def _prompt_cache_enabled(self) -> bool:
@@ -627,7 +691,7 @@ class NativeAgentRuntime(AgentProvider):
     async def stream(self, message: str) -> AsyncIterator[AgentEvent]:
         """Run the ReAct loop for one user turn (``message`` is the full,
         context-built turn-0 prompt the chat runner already assembled)."""
-        self._cancelled = False
+        self._cancel.begin_turn()
         self._breaker.reset()
         self._steers_injected = 0
         self._messages.append({"role": "user", "content": message})
@@ -653,145 +717,165 @@ class NativeAgentRuntime(AgentProvider):
         agg_events = 0
         agg_tool_calls = 0
 
-        while turns < self._max_turns:
-            if self._cancelled:
-                yield AgentEvent(
-                    kind=EVENT_COMPLETE,
-                    stop_reason="cancelled",
-                    num_turns=turns,
-                    event_count=agg_events,
-                    tool_call_count=agg_tool_calls,
-                )
-                return
-            turns += 1
-
-            # 0) COMPACT — when context crosses the threshold, run structured
-            # compaction (no-LLM tool-output pruning pre-pass → 4-region →
-            # structured summary). Anti-thrashing skips it if recent passes
-            # barely helped. ACP backends own their own compaction; this is the
-            # native loop's.
-            self._maybe_compact()
-
-            assistant_text = ""
-            tool_calls: list[AgentEvent] = []
-            usage: AgentEvent | None = None
-
-            # 1) INFERENCE — stream a stateless completion over full history.
-            # Prompt-cache middleware (PROMPT-CACHE-SUBSTRATE): resolve the provider's
-            # graded cache mode off the instance (mirrors the supports_tools getattr) and
-            # mark a cacheable prefix. NONE → the same object is handed back (byte-identical
-            # for an undeclared provider); AUTOMATIC → also unchanged (no marker needed);
-            # EXPLICIT → a NEW list with one neutrally-hinted message, its own adapter
-            # translating the hint (a later atom). self._messages itself is never mutated.
-            # The user's switch folds into the SAME value the provider declares
-            # (effective_cache_mode): off → NONE, which is already the untouched-list
-            # path. No second code path, and no branch that skips the call.
-            mode = effective_cache_mode(
-                getattr(self._model, "prompt_cache", PromptCache.NONE),
-                enabled=self._prompt_cache_enabled(),
-            )
-            logger.debug("native: prompt-cache mode %s", getattr(mode, "value", mode))
-            msgs = mark_cacheable_prefix(self._messages, mode, generation=self._cache_generation)
-            async for ev in self._model.complete(
-                msgs,
-                tools=tools_kwarg,
-                model=self._definition.model or None,
-                reasoning_effort=self._reasoning_effort,
-            ):
+        # end_turn() in a finally, not at each return: a stop arriving in the window
+        # between a turn ending and the next beginning must answer "no_turn", and an
+        # exception-terminated turn is exactly the case a per-return-site reset misses.
+        try:
+            while turns < self._max_turns:
                 if self._cancelled:
-                    break
-                agg_events += 1
-                if ev.kind == EVENT_TEXT_CHUNK:
-                    assistant_text += ev.text
-                    yield ev
-                elif ev.kind == EVENT_THINKING_CHUNK:
-                    yield ev
-                elif ev.kind == EVENT_TOOL_CALL:
-                    tool_calls.append(ev)
-                elif ev.kind == EVENT_COMPLETE:
-                    usage = ev
+                    yield AgentEvent(
+                        kind=EVENT_COMPLETE,
+                        stop_reason=self._stop_reason_for_cancel(),
+                        # Attribute what was ALREADY SPENT before the stop. These three
+                        # were omitted here, so a stop between ReAct cycles silently threw
+                        # away every token the earlier cycles burned — and a stop that
+                        # hides spend is why users distrust the button.
+                        input_tokens=agg_in,
+                        output_tokens=agg_out,
+                        cost_usd=agg_cost,
+                        num_turns=turns,
+                        context_usage_pct=self._last_context_pct,
+                        event_count=agg_events,
+                        tool_call_count=agg_tool_calls,
+                    )
+                    return
+                turns += 1
 
-            if usage is not None:
-                agg_in += usage.input_tokens or 0
-                agg_out += usage.output_tokens or 0
-                agg_cost += usage.cost_usd or 0.0
-                if usage.context_usage_pct:
-                    self._last_context_pct = usage.context_usage_pct
+                # 0) COMPACT — when context crosses the threshold, run structured
+                # compaction (no-LLM tool-output pruning pre-pass → 4-region →
+                # structured summary). Anti-thrashing skips it if recent passes
+                # barely helped. ACP backends own their own compaction; this is the
+                # native loop's.
+                self._maybe_compact()
 
-            agg_tool_calls += len(tool_calls)
+                assistant_text = ""
+                tool_calls: list[AgentEvent] = []
+                usage: AgentEvent | None = None
 
-            # Record the assistant turn (text + any tool calls) into history.
-            self._messages.append(self._assistant_msg(assistant_text, tool_calls))
-
-            # 2) STOP — a model turn with no tool calls ends the agent turn…
-            #    …UNLESS the user steered while that text was streaming. The steer
-            #    drain used to live only at 3b (after the tool batch), so a turn that
-            #    called NO tools — plain prose, the most common shape — returned here
-            #    and the steer was silently discarded even though the API had already
-            #    answered {"steered": true}. Draining here keeps the turn alive for one
-            #    more inference so the steer lands inside the SAME answer, which is the
-            #    entire promise of steering (PLATFORM-RESILIENCE S6.1).
-            if tool_calls == [] and not self._cancelled and self._drain_steers_into_history():
-                continue
-            if not tool_calls or self._cancelled:
-                # If we're stopping with tool calls still pending (cancelled
-                # mid-turn — watchdog wedged-turn recovery / circuit-breaker),
-                # the assistant message above carries unanswered tool_calls. Leave
-                # them unpaired and the NEXT turn's history replay breaks every
-                # tool-using provider (Bedrock Converse rejects an unanswered
-                # toolUse outright). Pair each with a synthetic result so history
-                # stays well-formed across cycles.
-                if tool_calls and self._cancelled:
-                    for call in tool_calls:
-                        self._messages.append(
-                            self._tool_result_msg(call, "Error: cancelled before this tool ran")
-                        )
-                yield AgentEvent(
-                    kind=EVENT_COMPLETE,
-                    stop_reason="cancelled" if self._cancelled else "end_turn",
-                    input_tokens=agg_in,
-                    output_tokens=agg_out,
-                    cost_usd=agg_cost,
-                    num_turns=turns,
-                    context_usage_pct=self._last_context_pct,
-                    event_count=agg_events,
-                    tool_call_count=agg_tool_calls,
+                # 1) INFERENCE — stream a stateless completion over full history.
+                # Prompt-cache middleware (PROMPT-CACHE-SUBSTRATE): resolve the provider's
+                # graded cache mode off the instance (mirrors the supports_tools getattr) and
+                # mark a cacheable prefix. NONE → the same object is handed back (byte-identical
+                # for an undeclared provider); AUTOMATIC → also unchanged (no marker needed);
+                # EXPLICIT → a NEW list with one neutrally-hinted message, its own adapter
+                # translating the hint (a later atom). self._messages itself is never mutated.
+                # The user's switch folds into the SAME value the provider declares
+                # (effective_cache_mode): off → NONE, which is already the untouched-list
+                # path. No second code path, and no branch that skips the call.
+                mode = effective_cache_mode(
+                    getattr(self._model, "prompt_cache", PromptCache.NONE),
+                    enabled=self._prompt_cache_enabled(),
                 )
-                return
+                logger.debug("native: prompt-cache mode %s", getattr(mode, "value", mode))
+                msgs = mark_cacheable_prefix(
+                    self._messages, mode, generation=self._cache_generation
+                )
+                async for ev in self._model.complete(
+                    msgs,
+                    tools=tools_kwarg,
+                    model=self._definition.model or None,
+                    reasoning_effort=self._reasoning_effort,
+                ):
+                    if self._cancelled:
+                        break
+                    agg_events += 1
+                    if ev.kind == EVENT_TEXT_CHUNK:
+                        assistant_text += ev.text
+                        yield ev
+                    elif ev.kind == EVENT_THINKING_CHUNK:
+                        yield ev
+                    elif ev.kind == EVENT_TOOL_CALL:
+                        tool_calls.append(ev)
+                    elif ev.kind == EVENT_COMPLETE:
+                        usage = ev
 
-            # 3) TOOL EXECUTION — each call is a sub-generator that yields its
-            #    UI card, (maybe) a permission request it parks on, the result
-            #    card, and appends the tool-result message to history itself.
-            #    Calls whose resource sets are disjoint run CONCURRENTLY (HC-6);
-            #    everything else keeps the order the model asked for.
-            async for ev in self._execute_tool_batch(tool_calls):
-                agg_events += 1
-                yield ev
+                if usage is not None:
+                    agg_in += usage.input_tokens or 0
+                    agg_out += usage.output_tokens or 0
+                    agg_cost += usage.cost_usd or 0.0
+                    if usage.context_usage_pct:
+                        self._last_context_pct = usage.context_usage_pct
 
-            # 3b) STEER — drain any messages the user sent mid-turn (queue-steering
-            #     #37). They land HERE, at the model boundary AFTER the tool batch
-            #     (so tool-result pairing is intact), as fresh user input the next
-            #     inference sees. Capped per turn so a flood can't extend one turn
-            #     forever. Steer mode only; followup/collect/interrupt are handled
-            #     by the runner before the turn even reaches the loop.
-            if self._drain_steers_into_history():
-                yield AgentEvent(
-                    kind=EVENT_TEXT_CHUNK, text=""
-                )  # keep stream warm; UI shows the steer via activity
-            # 4) REPEAT — re-infer with tool results now in context.
+                agg_tool_calls += len(tool_calls)
 
-        # max_turns exhausted
-        yield AgentEvent(
-            kind=EVENT_COMPLETE,
-            stop_reason="max_turns",
-            input_tokens=agg_in,
-            output_tokens=agg_out,
-            cost_usd=agg_cost,
-            num_turns=turns,
-            context_usage_pct=self._last_context_pct,
-            event_count=agg_events,
-            tool_call_count=agg_tool_calls,
-        )
+                # Record the assistant turn (text + any tool calls) into history.
+                self._messages.append(self._assistant_msg(assistant_text, tool_calls))
+
+                # 2) STOP — a model turn with no tool calls ends the agent turn…
+                #    …UNLESS the user steered while that text was streaming. The steer
+                #    drain used to live only at 3b (after the tool batch), so a turn that
+                #    called NO tools — plain prose, the most common shape — returned here
+                #    and the steer was silently discarded even though the API had already
+                #    answered {"steered": true}. Draining here keeps the turn alive for one
+                #    more inference so the steer lands inside the SAME answer, which is the
+                #    entire promise of steering (PLATFORM-RESILIENCE S6.1).
+                if tool_calls == [] and not self._cancelled and self._drain_steers_into_history():
+                    continue
+                if not tool_calls or self._cancelled:
+                    # If we're stopping with tool calls still pending (cancelled
+                    # mid-turn — watchdog wedged-turn recovery / circuit-breaker),
+                    # the assistant message above carries unanswered tool_calls. Leave
+                    # them unpaired and the NEXT turn's history replay breaks every
+                    # tool-using provider (Bedrock Converse rejects an unanswered
+                    # toolUse outright). Pair each with a synthetic result so history
+                    # stays well-formed across cycles.
+                    if tool_calls and self._cancelled:
+                        for call in tool_calls:
+                            self._messages.append(self._tool_result_msg(call, CANCELLED_BEFORE_RUN))
+                    yield AgentEvent(
+                        kind=EVENT_COMPLETE,
+                        stop_reason=(
+                            self._stop_reason_for_cancel() if self._cancelled else "end_turn"
+                        ),
+                        input_tokens=agg_in,
+                        output_tokens=agg_out,
+                        cost_usd=agg_cost,
+                        num_turns=turns,
+                        context_usage_pct=self._last_context_pct,
+                        event_count=agg_events,
+                        tool_call_count=agg_tool_calls,
+                    )
+                    return
+
+                # 3) TOOL EXECUTION — each call is a sub-generator that yields its
+                #    UI card, (maybe) a permission request it parks on, the result
+                #    card, and appends the tool-result message to history itself.
+                #    Calls whose resource sets are disjoint run CONCURRENTLY (HC-6);
+                #    everything else keeps the order the model asked for.
+                #    The QUEUED-BUT-UNSTARTED drop (PR2-12) lives one level down, in
+                #    `_execute_wave` at the per-call dispatch decision — see that
+                #    method. It cannot live here: a check around this call would only
+                #    fire between BATCHES, which is exactly the hole PR2-12 closed.
+                async for ev in self._execute_tool_batch(tool_calls):
+                    agg_events += 1
+                    yield ev
+
+                # 3b) STEER — drain any messages the user sent mid-turn (queue-steering
+                #     #37). They land HERE, at the model boundary AFTER the tool batch
+                #     (so tool-result pairing is intact), as fresh user input the next
+                #     inference sees. Capped per turn so a flood can't extend one turn
+                #     forever. Steer mode only; followup/collect/interrupt are handled
+                #     by the runner before the turn even reaches the loop.
+                if self._drain_steers_into_history():
+                    yield AgentEvent(
+                        kind=EVENT_TEXT_CHUNK, text=""
+                    )  # keep stream warm; UI shows the steer via activity
+                # 4) REPEAT — re-infer with tool results now in context.
+
+            # max_turns exhausted
+            yield AgentEvent(
+                kind=EVENT_COMPLETE,
+                stop_reason="max_turns",
+                input_tokens=agg_in,
+                output_tokens=agg_out,
+                cost_usd=agg_cost,
+                num_turns=turns,
+                context_usage_pct=self._last_context_pct,
+                event_count=agg_events,
+                tool_call_count=agg_tool_calls,
+            )
+        finally:
+            self._cancel.end_turn()
 
     def _prepare_turn_tools(self, message: str) -> tuple[list[dict] | None, str]:
         """Decide this turn's ``tools`` kwarg + any runtime note to inject.
@@ -979,18 +1063,37 @@ class NativeAgentRuntime(AgentProvider):
         Cards for the whole wave are emitted up front, before anything runs: they are
         the UI's statement of intent, and a wave of six lookups appearing at once is
         both truthful and the visible difference from six calls trickling out serially.
+
+        **The stop check lives here, at every dispatch decision** (PR2-12). This method is
+        entered once per wave and decides, per call, whether that call is handed to an
+        invocation at all — so a stop that lands anywhere in the batch drops every call it
+        has not yet dispatched, in THIS wave and in every wave after it. Checking one level
+        up (around ``_execute_tool_batch``, or around the wave loop inside it) would only
+        fire between batches, and checking before the wave loop would leave the remaining
+        waves to run; both are the hole the atom was written against. A dropped call is
+        answered by :meth:`_drop_queued_call` rather than by ``_run_tool``, because it must
+        NOT feed the failure breaker, the structural-loop detector or the procedural-memory
+        outcome list: a cancellation is not evidence about the tool.
         """
         if len(wave) == 1:
+            # The serial path — a wave of one is not a special case for cancellation.
+            if self._cancelled:
+                async for ev in self._drop_queued_call(wave[0]):
+                    yield ev
+                return
             async for ev in self._run_tool(
                 wave[0], prefetched=self._poison_result(wave[0], poisoned)
             ):
                 yield ev
             return
-        for prep in wave:
-            yield prep.card
         results: list[Any] = [None] * len(wave)
         pending: list[int] = []
         for i, prep in enumerate(wave):
+            if self._cancelled:
+                # QUEUED-BUT-UNSTARTED — dropped without executing. Decided BEFORE the
+                # card, so a call that never ran never claims on screen that it did.
+                results[i] = _DROPPED
+                continue
             stopped = self._poison_result(prep, poisoned)
             if stopped is not None:
                 results[i] = stopped
@@ -1000,6 +1103,9 @@ class NativeAgentRuntime(AgentProvider):
                 results[i] = None
             else:
                 pending.append(i)
+        for prep, decided in zip(wave, results):
+            if decided is not _DROPPED:
+                yield prep.card
         if pending:
             # return_exceptions: a raising sibling must not cancel the others (the atom's
             # "does not cancel its independent siblings"), which is exactly what a bare
@@ -1018,8 +1124,34 @@ class NativeAgentRuntime(AgentProvider):
                 else:
                     results[i] = outcome
         for prep, prefetched in zip(wave, results):
+            if prefetched is _DROPPED or (prefetched is None and self._cancelled):
+                # Second half of the same per-call rule. `prefetched is None` means the
+                # breaker classified this call as not-to-be-invoked; if the streak has
+                # since been cleared by a successful sibling, `_run_tool` would INVOKE it
+                # right here — after this wave's awaits, and so possibly after a stop.
+                async for ev in self._drop_queued_call(prep):
+                    yield ev
+                continue
             async for ev in self._run_tool(prep, prefetched=prefetched, card_emitted=True):
                 yield ev
+
+    async def _drop_queued_call(self, prep: "_PreparedCall") -> AsyncIterator[AgentEvent]:
+        """Answer a call a stop reached before it was dispatched, without running it.
+
+        The drop is still PAIRED with a synthetic result: the assistant message carries
+        every ``tool_call`` the model emitted, and an unanswered one breaks the next turn's
+        history replay on every tool-using provider (Bedrock Converse rejects an unanswered
+        ``toolUse`` outright). Same wording as the pre-batch drop in :meth:`stream`, and
+        deliberately none of ``_run_tool``'s accounting tail.
+        """
+        self._cancel.note_tool_call_dropped()
+        yield AgentEvent(
+            kind=EVENT_TOOL_RESULT,
+            tool_call_id=prep.call.tool_call_id,
+            title=prep.tool_name,
+            tool_output=CANCELLED_BEFORE_RUN,
+        )
+        self._messages.append(self._tool_result_msg(prep.call, CANCELLED_BEFORE_RUN))
 
     @staticmethod
     def _poison_result(
@@ -1187,7 +1319,9 @@ class NativeAgentRuntime(AgentProvider):
         # is pathological — abort it rather than burn the whole budget.
         if self._breaker.circuit_tripped():
             logger.warning("native: %s", circuit_message(self._breaker.total_failures))
-            self._cancelled = True
+            # INTERNAL, not user: the turn ends "cancelled", not "stopped_by_user" —
+            # nobody pressed anything, we gave up.
+            self._cancel.request(reason=CANCEL_INTERNAL)
 
     async def _guard_and_invoke(self, call: AgentEvent, tool_name: str, args: dict, *, meta: dict):
         """Deny-list + PreToolUse hook; return a result string, or the
@@ -1341,9 +1475,15 @@ class NativeAgentRuntime(AgentProvider):
         ctx_tokens = _bt.bind_tool_context(
             cwd=self._cwd, agent=self._agent_id, project_id=self._project_id
         )
+        # Bind this turn's stop signal for the dispatch (PR2-12), so a spawn site deep
+        # inside a tool registers its child without every layer between here and there
+        # growing a cancellation parameter. `cancel()` reaches the SAME scope object
+        # directly off the instance — the contextvar only carries it downward.
+        cancel_token = cancellation.bind_scope(self._cancel)
         try:
             result = await prov.invoke(tool_name, args)
         finally:
+            cancellation.reset_scope(cancel_token)
             mcp_core.reset_current_session_key(token)
             mcp_core.reset_current_agent_id(agent_token)
             _bt.reset_tool_context(ctx_tokens)
@@ -1487,8 +1627,45 @@ class NativeAgentRuntime(AgentProvider):
         return self._last_context_pct
 
     async def cancel(self, *, wait_ack_timeout: float = 0.0) -> str:
-        self._cancelled = True
+        """Stop the WORK, not just the stream (PR2-12).
+
+        The one seam a user's stop arrives on. It used to set a flag and return
+        "acked" — which was true of the flag and false of everything the turn was
+        doing: the model request was awaited-and-discarded, a bash child kept running
+        to completion, and the tool calls already queued behind it all executed.
+
+        Order matters. Approvals are released first so a turn parked on a permission
+        prompt unblocks; then the provider request is ABORTED (the provider seam owns
+        how — an HTTP disconnect, an ACP ``session/cancel``); then every child process
+        this turn started is terminated AND reaped. Dropping the still-queued calls is
+        the loop's job and happens as it observes the signal.
+        """
+        answer = self._cancel.request(reason=CANCEL_USER)
+        if answer == REQUEST_NO_TURN:
+            # Nothing in flight — a stop arriving after the turn already finished is a
+            # NO-OP, not a failure. Reporting "acked" here would be a lie the caller
+            # acts on: stop_turn would set prev_turn_cancelled and the NEXT turn would
+            # open with a bogus "your previous turn was cancelled" preamble.
+            return "no_turn"
+        if answer == REQUEST_REPEAT:
+            # Idempotent: the side effects below already ran on the first press. Still
+            # "acked" — the turn IS stopping — but nothing is killed or recorded twice.
+            return "acked"
+
         self._approval.cancel_all()
+
+        inner_cancel = getattr(self._model, "cancel", None)
+        if inner_cancel is not None:
+            try:
+                await inner_cancel(wait_ack_timeout=wait_ack_timeout)
+                self._cancel.note_model_request_aborted()
+            except Exception:
+                logger.warning("native: aborting the in-flight model request failed", exc_info=True)
+
+        try:
+            await self._cancel.reap_children()
+        except Exception:
+            logger.warning("native: reaping tool children on stop failed", exc_info=True)
         return "acked"
 
     def is_alive(self) -> bool:

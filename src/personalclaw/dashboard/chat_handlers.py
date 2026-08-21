@@ -961,6 +961,29 @@ async def api_chat_session_create(request: web.Request) -> web.Response:
     return web.json_response({**session.to_dict(), **_natural_voice_payload(session)})
 
 
+def _stop_reach_report(session: _ChatSession) -> dict:
+    """What the stop actually REACHED, off the provider's cancel scope (PR2-12).
+
+    The stop card used to say only "stopped", which is a claim about the button rather
+    than about the work. This is the evidence behind it — whether the model request was
+    aborted, how many child processes were reaped, how many queued tool calls were
+    dropped, how many subagents were stopped — and it is the shape PR2-13 consumes.
+
+    ``getattr`` because only a provider that OWNS a turn's cancellation can report on
+    it: an ACP-backed session delegates the turn to an external agent process, so it
+    has no scope and legitimately reports nothing. Absent → ``{}``, never a guess.
+    """
+    reporter = getattr(getattr(session, "provider", None), "last_stop_report", None)
+    if reporter is None:
+        return {}
+    try:
+        report = reporter()
+    except Exception:
+        logger.debug("stop report unavailable", exc_info=True)
+        return {}
+    return report if isinstance(report, dict) else {}
+
+
 def _resolve_stop_event(session: _ChatSession, outcome: str) -> None:
     """Update the in-flight stop_event message in place with final state."""
     stop_id = session._stop_event_id
@@ -969,6 +992,7 @@ def _resolve_stop_event(session: _ChatSession, outcome: str) -> None:
         return
     now_ts = datetime.now(tz=timezone.utc).isoformat()
     final_state = "stopped" if outcome == "soft" else "stop_failed_reset"
+    reached = _stop_reach_report(session)
     found = False
     for msg in reversed(session.messages):
         cls_val = msg.get("cls", "")
@@ -985,6 +1009,8 @@ def _resolve_stop_event(session: _ChatSession, outcome: str) -> None:
         cls_data["state"] = final_state
         cls_data["outcome"] = outcome
         cls_data["ts_end"] = now_ts
+        if reached:
+            cls_data["reached"] = reached
         serialized = json.dumps(cls_data)
         msg["cls"] = serialized
         msg["content"] = serialized

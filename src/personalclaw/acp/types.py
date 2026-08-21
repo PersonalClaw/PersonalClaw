@@ -79,6 +79,23 @@ OPTION_ALLOW_ALWAYS = "allow_always"
 
 STOP_REASON_CANCELLED = "cancelled"
 STOP_REASON_END_TURN = "end_turn"
+# The user pressed stop (PR2-12). A member of the cancelled FAMILY — every consumer
+# that treats a turn as "not an error, not a completion" must accept it — but a
+# distinct VALUE, because "you stopped this" and "we gave up on this" (a circuit
+# breaker, a watchdog, a shutdown → STOP_REASON_CANCELLED) are different facts about a
+# turn. One vocabulary, one membership test below; no consumer re-derives the set.
+STOP_REASON_STOPPED_BY_USER = "stopped_by_user"
+
+# Every stop reason that means "the turn was cut short deliberately". Neither an error
+# nor a normal completion, so a consumer must not warn on it, retry it, or count it as
+# an empty answer.
+CANCELLED_STOP_REASONS = (STOP_REASON_CANCELLED, STOP_REASON_STOPPED_BY_USER)
+
+
+def is_cancelled_stop(reason: str | None) -> bool:
+    """True when *reason* belongs to the cancelled family (see above)."""
+    return reason in CANCELLED_STOP_REASONS
+
 
 # ── Approval Modes ──
 

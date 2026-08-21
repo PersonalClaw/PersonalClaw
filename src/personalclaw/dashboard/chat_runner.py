@@ -12,8 +12,8 @@ from personalclaw.acp.types import (
     EVENT_AGENT_SWITCHED,
     EVENT_CLEAR_STATUS,
     EVENT_COMPACTION_STATUS,
-    STOP_REASON_CANCELLED,
     STOP_REASON_END_TURN,
+    is_cancelled_stop,
 )
 from personalclaw.config.loader import (
     AppConfig,
@@ -119,7 +119,7 @@ def is_empty_turn(
     if assistant_text.strip():
         return False
     benign = (
-        stop_reason == STOP_REASON_CANCELLED
+        is_cancelled_stop(stop_reason)
         or saw_compaction
         or needs_session_reset
         or is_slash
@@ -3642,7 +3642,7 @@ async def _run_chat(
                 if (
                     _stop_reason
                     and _stop_reason != STOP_REASON_END_TURN
-                    and _stop_reason != STOP_REASON_CANCELLED
+                    and not is_cancelled_stop(_stop_reason)
                 ):
                     logger.warning(
                         "Unexpected stop_reason %r for session %s",
@@ -3768,8 +3768,8 @@ async def _run_chat(
         session._prompt_busy_retries = 0
         session._acp_pipe_death_retries = 0
 
-        if _stop_reason == STOP_REASON_CANCELLED:
-            logger.info("Turn cancelled by user for session %s", session.key)
+        if is_cancelled_stop(_stop_reason):
+            logger.info("Turn ended %s for session %s", _stop_reason, session.key)
         else:
             _maybe_consolidate(state, session)
             # Continuous learning: after a learning-worthy turn, capture a durable
@@ -3811,7 +3811,7 @@ async def _run_chat(
         state.sessions.check_context_usage(session_key, client)
         pct = client.context_usage_pct()
         state.broadcast_ws("context_usage", {"session": session.key, "pct": round(pct, 1)})
-        if _stop_reason != STOP_REASON_CANCELLED:
+        if not is_cancelled_stop(_stop_reason):
             state.sessions.record_success(session_key)
         # Broadcast prompt stats for the activity viewer (the live-only "Turn
         # complete" line). Reads the provider-neutral counts carried on the
