@@ -1361,7 +1361,7 @@
         {
           "id": "DAS-9",
           "title": "Workspace time-travel \u2014 adaptive-debounce git + rollback/revert/preview + panel (Session 5, \u00a75)",
-          "status": "todo",
+          "status": "done",
           "scope": "\u00a75 Workspace Time-Travel (NEW-4.a); \u00a73 deferred hourly git commit of the memory tree; Implementation Order Session 5 (time-travel half)",
           "done_when": "state-history git repos cover config.json/entity_settings, skills/, the memory markdown tree (workspace/memory, _ext, plan_memory), prompts/+prompt_snippets, projects/<id>/context; adaptive-debounce commits (10s\u21920, serialized per root) hooked at the atomic_write post-write seam; hourly git commit of the memory tree/shards lands (the deferred \u00a73 piece); rollback (hard reset, prior HEAD preserved in service refs) vs revert (reverse-merge, loud overlap failure) with a mandatory preview; secrets gitignored yet preserved across rollbacks; Settings \u2192 Durability \u2192 Time Travel panel (timeline, diff preview, rollback/revert, what-changed-while-I-slept filter); criterion 6 met; time-travel never syncs",
           "deps": []
@@ -7562,11 +7562,6 @@
         "plan": "DAS"
       },
       {
-        "id": "DAS-9",
-        "title": "Workspace time-travel \u2014 adaptive-debounce git + rollback/revert/preview + panel (Session 5, \u00a75)",
-        "plan": "DAS"
-      },
-      {
         "id": "DC-1",
         "title": "S1: Rebuild + signing + notarization + electron-updater + install-kind",
         "plan": "DC"
@@ -9668,9 +9663,9 @@
         "code": "DAS",
         "plan": "DURABILITY-AND-SYNC",
         "total_atoms": 10,
-        "done": 8,
+        "done": 9,
         "in_progress": 0,
-        "todo": 2,
+        "todo": 1,
         "blocked": 0
       },
       {

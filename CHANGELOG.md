@@ -27,6 +27,21 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
   largest variant that does fit. A download with nowhere to land is refused with both numbers named
   — what it needs and what is free — but when the filesystem cannot be measured at all, the check is
   skipped with a warning instead of blocking a download that would have been fine.
+- **Put back one file, not your whole configuration.** Time Travel could already roll a whole area
+  of your state back to an earlier point; now you can pick individual files out of a change and
+  restore just those. Rollback and revert keep their distinct meanings per file — rolling back a file
+  discards the later edits to it, reverting undoes only that one change and keeps everything after —
+  and the confirmation names which files it is about to touch, because a dialog that says "roll back
+  to this point" while applying to two files out of forty is describing the wrong blast radius.
+  The preview stays mandatory by construction: a confirmation now has to match the exact file set it
+  was shown, so a selection that changed after you previewed is refused rather than quietly applied.
+  **Changes made while you were away are labelled as such.** Writes from unattended work now record
+  themselves as background, so the panel's "what changed while I slept" filter has something real to
+  separate from your own edits.
+  **A settings change now actually reaches your history.** Saving a setting wrote the file in a way
+  the history recorder never saw, so the configuration area stayed empty and "roll back my settings"
+  had nothing to roll back to. Found by driving the real thing rather than trusting the tests.
+
 - **See every device paired with your gateway, and cut one off.** Settings gains a **Devices** page:
   each paired phone, tablet or browser with its name, what kind of device it is, when it was last
   actually seen, how it got in, when it paired and when its session runs out. "Pair a device" gives
@@ -1643,8 +1658,6 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
   desktop shell is described as an experimental macOS-only build, not a shipped platform — matching
   what CI actually releases. Documentation only; every change narrows a claim rather than widening
   one.
-
-### Added
 
 - **The desktop app can now tell the dashboard what it is actually allowed to do.** The macOS shell
   gained a typed capability bridge — `window.pclawDesktop.capabilities` — covering the microphone,
