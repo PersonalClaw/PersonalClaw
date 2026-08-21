@@ -8,7 +8,7 @@ import { Combobox } from '../../ui/Combobox'
 import { Markdown } from '../../ui/Markdown'
 import { confirmDelete } from '../../ui/dialog'
 import { Skeleton } from '../../ui/ListScaffold'
-import { useCachedData } from '../../lib/useCachedData'
+import { useQuery } from '../../lib/data'
 import { api, type SavedAgent, type DiscoveredAgent, type McpActiveServer, type AgentHook } from '../../lib/api'
 import { useActiveChatModelOptions } from '../../lib/agents'
 import { providerMeta, isReservedAgent } from './agentMeta'
@@ -199,7 +199,7 @@ function RoutingStatusView({ agentName }: { agentName: string }) {
 
 /** Read-only view of the MCP servers this agent is scoped to. */
 function AgentMcpView({ agentName }: { agentName: string }) {
-  const { data: servers } = useCachedData<McpActiveServer[]>(`agent:mcp:${agentName}`, () => api.mcpActive(agentName).catch(() => [] as McpActiveServer[]), { persist: false })
+  const { data: servers } = useQuery<McpActiveServer[]>(`agent:mcp:${agentName}`, () => api.mcpActive(agentName).catch(() => [] as McpActiveServer[]), { persist: false })
   if (servers === undefined) return <Section label="MCP servers"><Skeleton className="h-6 w-40 rounded-pill" /></Section>
   return (
     <Section label={`MCP servers · ${servers.length}`}>
@@ -218,7 +218,7 @@ function AgentMcpView({ agentName }: { agentName: string }) {
 
 /** Read-only lifecycle hooks in effect (redacted commands), grouped by event. */
 function AgentHooksView() {
-  const { data: hooks } = useCachedData<Record<string, AgentHook[]>>('agent:hooks', () => api.agentHooks().catch(() => ({} as Record<string, AgentHook[]>)), { persist: false })
+  const { data: hooks } = useQuery<Record<string, AgentHook[]>>('agent:hooks', () => api.agentHooks().catch(() => ({} as Record<string, AgentHook[]>)), { persist: false })
   if (hooks === undefined) return <Section label="Lifecycle hooks"><Skeleton className="h-6 w-40 rounded-md" /></Section>
   const events = Object.entries(hooks).filter(([, hs]) => hs.length > 0)
   return (

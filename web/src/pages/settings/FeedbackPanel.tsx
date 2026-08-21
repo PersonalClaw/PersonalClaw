@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { ThumbsUp, ThumbsDown, BellOff, RotateCcw } from 'lucide-react'
 import { api, type FeedbackProducerRow } from '../../lib/api'
-import { useCachedData, invalidateCache } from '../../lib/useCachedData'
+import { useQuery, invalidateKeys } from '../../lib/data'
 import { Button } from '../../ui/Button'
 import { PanelHeader, Section } from './settingsUI'
 
@@ -15,7 +15,7 @@ import { PanelHeader, Section } from './settingsUI'
  *  Rich "is it learning?" analytics belong to LEARNING-VISIBILITY — this is the
  *  raw table. */
 export function FeedbackPanel() {
-  const { data, refresh } = useCachedData(
+  const { data, refresh } = useQuery(
     'settings:feedback-producers',
     () => api.feedbackProducers().catch(() => null),
     { persist: false },
@@ -24,7 +24,7 @@ export function FeedbackPanel() {
 
   const act = async (fn: () => Promise<unknown>, tag: string) => {
     setBusy(tag)
-    try { await fn(); invalidateCache('settings:feedback-producers'); refresh() }
+    try { await fn(); invalidateKeys('settings:feedback-producers'); refresh() }
     catch { /* the table re-reads; a failed action leaves it unchanged */ }
     finally { setBusy('') }
   }

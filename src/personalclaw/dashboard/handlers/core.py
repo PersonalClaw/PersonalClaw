@@ -836,6 +836,11 @@ _EDITABLE_CONFIG: dict[str, dict] = {
     # eagerly the system learns, and staging can be turned off if the log is
     # unwanted — so all three are live-editable.
     "learning.min_evidence": {"type": "int", "min": 1, "max": 20},
+    # The lesson injection floor. Live-editable for the same reason as the
+    # evidence floor beside it — this is the knob for "why is it still doing that" /
+    # "why did it stop doing that", and a user chasing either answer should be able to
+    # move the gate and re-read the Memory studio without restarting the gateway.
+    "learning.min_lesson_confidence": {"type": "float", "min": 0.0, "max": 1.0},
     "learning.staging_enabled": {"type": "bool"},
     # LEARN-R21: the self-model gate. Live-editable because it is the one learning path
     # that acts on what WORKED rather than on corrections — a user who finds that presumptuous
@@ -870,6 +875,17 @@ _EDITABLE_CONFIG: dict[str, dict] = {
     # the watermark exists for. `maintenance.max_staleness_secs()` enforces its own floor
     # too, because config.json is hand-editable and this bound only guards the PATCH path.
     "knowledge.maintenance_max_staleness_secs": {"type": "int", "min": 60, "max": 86400},
+    # The projection gate. PATCH-editable rather than a dedicated PUT (which is what
+    # `memory.vault_mode` has) because there is nothing to do at the moment of the flip: the
+    # projection is a maintenance pass, so turning the mode on arms the pass and the next tick
+    # writes the vault. `off` is the shipped default and stays reachable, so a user who
+    # changes their mind stops the writer with the same control that started it.
+    #
+    # `two_way` is a strictly larger grant than `mirror` — it is what makes an edited file
+    # win over the database — and both are refused by anything except this validated write,
+    # because a mode outside the tuple resolves to `off` in `load()`.
+    "knowledge.vault_mode": {"type": "enum", "values": ["off", "mirror", "two_way"]},
+    "knowledge.vault_path": {"type": "str", "max_len": 512},
     # The similarity-edge shape. Runtime-editable because the right floor depends on the
     # embedding model and on what a store holds, and finding it means changing the value and
     # LOOKING at the edges it produced — a restart per attempt means nobody tunes it at all.

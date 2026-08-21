@@ -2,6 +2,7 @@
 name: visual-output
 description: Emit rich visual output in chat via <widget> tags — styled HTML cards, charts, tables, interactive tools, and drawn SVG/canvas diagrams, illustrations, and animations — theme-aware, centered, and responsive instead of clashing or cramped.
 triggers: widget, widget iframe, chart, table, visual, dashboard, render widget, illustration, diagram, draw, svg, animation, animate, graph, schematic, visualize, visual explanation, figure
+context_tier: heavy
 ---
 
 # Visual Output

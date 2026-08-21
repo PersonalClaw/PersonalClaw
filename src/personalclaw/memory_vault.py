@@ -127,13 +127,13 @@ _EDITABLE_KINDS = frozenset({"semantic", "preference", "note", "slot"})
 
 #: Everything below this line on a page is machine-owned. It is the parse-back
 #: boundary: the human's value is what sits between the H1 and this marker.
-_GENERATED_MARKER = "<!-- personalclaw:generated (replaced on every sync) -->"
+GENERATED_MARKER = "<!-- personalclaw:generated (replaced on every sync) -->"
 
 #: Frontmatter key carrying the body hash at write time — the whole edit-detection
 #: mechanism. See the module docstring for why it excludes the frontmatter.
-_HASH_KEY = "source_hash"
+HASH_KEY = "source_hash"
 #: Frontmatter key set on a page the sync refused to touch, and the lint check name.
-_CONFLICT_KEY = "sync_conflict"
+CONFLICT_KEY = "sync_conflict"
 
 # Frontmatter fields emitted in this deterministic order (only when non-empty),
 # so a re-render of an unchanged record produces byte-identical output.
@@ -167,10 +167,10 @@ _MAX_BODY = 20_000  # cap a single note body so a runaway record can't bloat the
 #: API's default 100: a truncated backlink list would make the symmetry lint report a
 #: gap that only the page limit created.
 _MAX_BACKLINKS = 1_000
-_WIKILINK_RE = re.compile(r"\[\[([^\[\]|#]+)")
+WIKILINK_RE = re.compile(r"\[\[([^\[\]|#]+)")
 
 
-def _slug(raw: str, *, fallback: str = "record") -> str:
+def slug(raw: str, *, fallback: str = "record") -> str:
     """Sanitize an id/tag into a stable, filesystem- and wikilink-safe basename.
 
     Collisions are theoretically possible (``a/b`` and ``a-b`` both → ``a-b``), so
@@ -198,7 +198,7 @@ def _yaml_scalar(value: object) -> str:
     return json.dumps(str(value), ensure_ascii=False)
 
 
-def _frontmatter(fields: list[tuple[str, object]]) -> str:
+def frontmatter(fields: list[tuple[str, object]]) -> str:
     lines = ["---"]
     for key, value in fields:
         if isinstance(value, list):
@@ -282,8 +282,8 @@ def compose_page(fields: list[tuple[str, object]], body: str) -> str:
     wrong bytes at one call site and the right ones at another.
     """
     body = body.rstrip() + "\n"
-    fm = [*fields, (_HASH_KEY, body_hash(body))]
-    return _frontmatter(fm) + "\n\n" + body
+    fm = [*fields, (HASH_KEY, body_hash(body))]
+    return frontmatter(fm) + "\n\n" + body
 
 
 class RenderedNote:
@@ -302,7 +302,7 @@ class RenderedNote:
 
 
 def _record_basename(rec: "MemoryRecord") -> str:
-    return _slug(rec.id, fallback=rec.kind.value)
+    return slug(rec.id, fallback=rec.kind.value)
 
 
 def _record_title(rec: "MemoryRecord") -> str:
@@ -390,14 +390,14 @@ def render_record(rec: "MemoryRecord", *, entities: "list[Entity] | None" = None
 
     # Supersession chain — a real, first-class relation.
     if rec.superseded_by:
-        target = _slug(rec.superseded_by)
+        target = slug(rec.superseded_by)
         links.add(target)
         generated.append(f"**Superseded by:** [[{target}]]")
         generated.append("")
 
     # Session grouping for episodic fragments.
     if rec.kind == MemoryKind.EPISODIC and rec.conversation_id:
-        sess = _slug(f"session-{rec.conversation_id}")
+        sess = slug(f"session-{rec.conversation_id}")
         links.add(sess)
         generated.append(f"**Session:** [[{sess}]]")
         generated.append("")
@@ -411,14 +411,14 @@ def render_record(rec: "MemoryRecord", *, entities: "list[Entity] | None" = None
         generated.append("")
 
     # Tag hubs — the primary graph-clustering signal.
-    tag_links = [_slug(f"tag-{t}") for t in rec.tags]
+    tag_links = [slug(f"tag-{t}") for t in rec.tags]
     if tag_links:
         links.update(tag_links)
         generated.append("**Tags:** " + " ".join(f"[[{t}]]" for t in tag_links))
         generated.append("")
 
     if generated:
-        parts.append(_GENERATED_MARKER)
+        parts.append(GENERATED_MARKER)
         parts.append("")
         parts.extend(generated)
 
@@ -441,15 +441,15 @@ def _entity_basename(entity: "Entity") -> str:
     Obsidian resolves ``[[wikilinks]]`` by basename, so ``[[Ana]]`` is what a human
     types and what the graph view labels. The id lives in frontmatter for the sync
     pass to key on."""
-    return _slug(entity.name, fallback=entity.id)
+    return slug(entity.name, fallback=entity.id)
 
 
 def render_tag_hub(tag: str, members: list[tuple[str, str]]) -> RenderedNote:
     """A tag-hub note that forward-links every record carrying the tag, so the
     graph clusters by tag even in non-Obsidian viewers (Obsidian also shows the
     reverse backlinks automatically). ``members`` = [(basename, title), ...]."""
-    slug = _slug(f"tag-{tag}")
-    relpath = f"{_TAGS_DIR}/{slug}.md"
+    base = slug(f"tag-{tag}")
+    relpath = f"{_TAGS_DIR}/{base}.md"
     fm: list[tuple[str, object]] = [
         ("type", "tag"),
         ("kind", "tag"),
@@ -461,7 +461,7 @@ def render_tag_hub(tag: str, members: list[tuple[str, str]]) -> RenderedNote:
         "",
         f"{len(members)} memor" + ("y" if len(members) == 1 else "ies") + " with this tag:",
         "",
-        _GENERATED_MARKER,
+        GENERATED_MARKER,
         "",
     ]
     links: set[str] = set()
@@ -483,8 +483,8 @@ def render_session_hub(conversation_id: str, members: list[tuple[str, str]]) -> 
     Generating the hub is the honest fix: the link resolves, the lint means what it
     says, and the session actually becomes browsable.
     """
-    slug = _slug(f"session-{conversation_id}")
-    relpath = f"sessions/{slug}.md"
+    base = slug(f"session-{conversation_id}")
+    relpath = f"sessions/{base}.md"
     fm: list[tuple[str, object]] = [
         # Its own `type`, NOT `synthesis`: an episodic RECORD page is `synthesis`, and
         # a record page's entity link is what creates a backlink-symmetry obligation.
@@ -499,7 +499,7 @@ def render_session_hub(conversation_id: str, members: list[tuple[str, str]]) -> 
         "",
         f"{len(members)} episodic fragment" + ("" if len(members) == 1 else "s") + ":",
         "",
-        _GENERATED_MARKER,
+        GENERATED_MARKER,
         "",
     ]
     links: set[str] = set()
@@ -552,7 +552,7 @@ def render_index(
     lines.append("")
 
     links: set[str] = set()
-    lines.append(_GENERATED_MARKER)
+    lines.append(GENERATED_MARKER)
     lines.append("")
 
     roster = sorted(entities or [], key=lambda e: e.name)
@@ -649,7 +649,7 @@ def render_entity_page(
     fm.append(("source", entity.source))
     fm.append(("sources", ["memory.db:mem_entities", "memory.db:mem_links"]))
 
-    lines = [f"# {entity.name}", "", _GENERATED_MARKER, "", _COMPILED_HEADING, ""]
+    lines = [f"# {entity.name}", "", GENERATED_MARKER, "", _COMPILED_HEADING, ""]
     links: set[str] = set()
     if compiled:
         for target, summary in compiled:
@@ -1015,7 +1015,7 @@ class MemoryVault:
                 continue  # the projection below will re-create it
             block, body = split_page(text)
             fm = parse_frontmatter(block)
-            claimed = str(fm.get(_HASH_KEY) or "")
+            claimed = str(fm.get(HASH_KEY) or "")
             if not claimed:
                 continue  # pre-hash page (or hand-made) — the projection rewrites it
             if claimed == body_hash(body):
@@ -1082,13 +1082,13 @@ class MemoryVault:
         unresolved instead of quietly becoming "clean" because we touched it.
         """
         fm = parse_frontmatter(block)
-        if str(fm.get(_CONFLICT_KEY) or "") == reason:
+        if str(fm.get(CONFLICT_KEY) or "") == reason:
             return  # already flagged with this reason — don't churn the file
-        fields = [(k, v) for k, v in fm.items() if k not in (_CONFLICT_KEY, _HASH_KEY)]
-        fields.append((_CONFLICT_KEY, reason))
-        fields.append((_HASH_KEY, str(fm.get(_HASH_KEY) or "")))
+        fields = [(k, v) for k, v in fm.items() if k not in (CONFLICT_KEY, HASH_KEY)]
+        fields.append((CONFLICT_KEY, reason))
+        fields.append((HASH_KEY, str(fm.get(HASH_KEY) or "")))
         try:
-            atomic_write(page, _frontmatter(fields) + "\n\n" + body.rstrip() + "\n", fsync=False)
+            atomic_write(page, frontmatter(fields) + "\n\n" + body.rstrip() + "\n", fsync=False)
         except OSError:
             logger.debug("vault: could not flag conflict on %s", page, exc_info=True)
 
@@ -1178,7 +1178,7 @@ class MemoryVault:
                 existing = ""
             if existing:
                 block, body = split_page(existing)
-                claimed = str(parse_frontmatter(block).get(_HASH_KEY) or "")
+                claimed = str(parse_frontmatter(block).get(HASH_KEY) or "")
                 if not claimed or claimed != body_hash(body):
                     out["kept"] += 1  # hand-edited (or unhashed) — never clobber it
                     continue
@@ -1224,15 +1224,15 @@ class MemoryVault:
         for rel, (fm, body) in pages.items():
             stem = Path(rel).stem
             page_type = str(fm.get("type") or "")
-            conflict = str(fm.get(_CONFLICT_KEY) or "")
+            conflict = str(fm.get(CONFLICT_KEY) or "")
             if conflict:
                 flags.append(("vault_conflict", rel, f"{conflict} — edit not applied"))
-            claimed = str(fm.get(_HASH_KEY) or "")
+            claimed = str(fm.get(HASH_KEY) or "")
             if claimed and claimed != body_hash(body) and not conflict:
                 flags.append(
                     ("vault_stale_hash", rel, "edited since the last sync — not yet read back")
                 )
-            for target in _WIKILINK_RE.findall(body):
+            for target in WIKILINK_RE.findall(body):
                 target = target.strip()
                 if not target:
                     continue
@@ -1257,7 +1257,7 @@ class MemoryVault:
             if str(fm.get("type") or "") != "entity":
                 continue
             stem = Path(rel).stem
-            listed = {t.strip() for t in _WIKILINK_RE.findall(body)}
+            listed = {t.strip() for t in WIKILINK_RE.findall(body)}
             for source in sorted(inbound.get(stem, set())):
                 if source not in listed:
                     flags.append(
@@ -1322,14 +1322,25 @@ def starter_seeds(mode: str) -> dict[str, str]:
     }
 
 
-def extract_edited_value(body: str) -> str | None:
-    """The human-editable region of a record page, or ``None`` if it cannot be found.
+def extract_edited_value(body: str, *, stop_at_headings: bool = True) -> str | None:
+    """The human-editable region of a projected page, or ``None`` if it cannot be found.
 
     The region is everything between the ``# H1`` heading and the generated marker (or
     the end of the body when a page has no generated section). ``None`` — not ``""`` —
     when the H1 is gone, because a page whose structure the human dismantled is a page
     we must not guess about: returning empty text would read as "the user cleared this
     fact" and delete something they meant to keep.
+
+    ``stop_at_headings`` also ends the region at the first ``## `` heading. That is right
+    for a MEMORY record page, whose editable value is a sentence and whose ``##``
+    sections are all machine-owned, and it is WRONG for KL-20's knowledge pages, whose
+    editable region is a whole document that legitimately contains its own ``##``
+    headings — left on, absorbing an edited article would silently truncate it at its
+    first subheading and write the truncation back to the store. Every page this module
+    renders emits :data:`GENERATED_MARKER`, so the heading stop is defensive in the
+    memory case and load-bearing to switch off in the knowledge one. One extractor with
+    a named parameter rather than two copies that drift: the marker boundary, the hash
+    and the refusal semantics are shared, and only where the region ENDS differs.
     """
     lines = body.replace("\r\n", "\n").split("\n")
     start = next((i for i, ln in enumerate(lines) if ln.startswith("# ")), None)
@@ -1337,7 +1348,9 @@ def extract_edited_value(body: str) -> str | None:
         return None
     end = len(lines)
     for i in range(start + 1, len(lines)):
-        if lines[i].strip() == _GENERATED_MARKER or lines[i].startswith("## "):
+        if lines[i].strip() == GENERATED_MARKER or (
+            stop_at_headings and lines[i].startswith("## ")
+        ):
             end = i
             break
     return "\n".join(lines[start + 1 : end]).strip()

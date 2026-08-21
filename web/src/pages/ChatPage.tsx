@@ -42,6 +42,7 @@ import { ScreenShareChip } from '../ui/ScreenShareChip'
 import { useScreenShare } from '../ui/composer/useScreenShare'
 import { DotGlow } from '../ui/DotGlow'
 import { EmptyState, ListSkeleton, LoadError, Skeleton, LoadingStatus } from '../ui/ListScaffold'
+import { WindowedList } from '../ui/WindowedList'
 import { FieldError } from '../ui/forms'
 import { MessageUser } from '../ui/chat/MessageUser'
 import { MessageAssistant } from '../ui/chat/MessageAssistant'
@@ -81,33 +82,41 @@ import { findSegments } from './chat/findSegments'
 import { FollowupChips, followupAnnouncement } from './chat/FollowupChips'
 import { CheckWorkChip } from './chat/CheckWorkChip'
 import { applyCoalescedFlush, insertActivity } from './chat/coalesceReducers'
-import { useCachedData, invalidateCache } from '../lib/useCachedData'
+import { useQuery, invalidateKeys, peekQuery, writeQuery } from '../lib/data'
 import { sessionRecencyMs, sessionActivitySeconds, epochSeconds } from '../lib/epoch'
 import { useComposerData } from '../lib/useComposerData'
 import type { ComposerControls, ComposerValue } from '../ui/composer/types'
 import { Popover, MenuRow } from '../ui/Popover'
 import { useQueryFlag, useQueryParam, type RouteProps } from '../app/useQueryState'
 
-// Instant-paint cache for opened chat sessions. The transcript load is bespoke
-// (hydrates the full segment model + restores selection/queue/side chat), so it
-// can't use useCachedData directly — but we still want a revisited chat to paint
-// its messages INSTANTLY instead of skeleton-then-fetch. We cache the last detail
-// response per session id in sessionStorage; on mount we seed turns/title from it
-// synchronously (no skeleton), then the normal load revalidates and overwrites.
-// Keyed off the same detail the effect already fetches, so it's always consistent.
+// Instant-paint cache for opened chat sessions, held in the ONE data layer.
+//
+// 🔴 THIS WAS A SECOND CACHE. It was a private `sessionStorage` store under its own
+// `chat-detail:` prefix, with its own reader and writer and NO age on the record — the exact
+// hand-rolled fetch-and-cache shape DSC-14 converges, and invisible to any census of the shared
+// helper because it never called it. Two caches over one endpoint is what produces the flicker:
+// this one seeded the transcript, the shared `chat:sessions*` keys held the list, and a mutation
+// that busted one could not reach the other.
+//
+// Now it is `chat:detail:<key>` in the shared store (`persist: true`, so it still survives a full
+// reload), which means `invalidateKeys('chat:', true)` reaches it like every other chat key.
+//
+// 🔑 THE SEED READS `peekQuery`, WHICH IS FRESH-ONLY, AND THAT IS THE FIX. The transcript load is
+// bespoke (it hydrates the full segment model and restores selection/queue/side chat), so it
+// cannot be a `useQuery` call — but it must not paint an unlabelled stale transcript either, and
+// there is no sane place to hang an "updating" label on a transcript. So the paint is gated on
+// FRESHNESS instead: within the `chat` window a revisit paints instantly, and anything older —
+// including everything seeded from a previous page load, which the store deliberately treats as
+// not-current — falls through to the normal loading state. Fresh, or explicitly loading; never a
+// confident old transcript that is silently replaced.
 type ChatDetail = Awaited<ReturnType<typeof api.chatSessionDetail>>
-const _CHAT_DETAIL_SS = 'chat-detail:'
-function readCachedDetail(key: string): ChatDetail | null {
-  try {
-    const raw = sessionStorage.getItem(_CHAT_DETAIL_SS + key)
-    return raw == null ? null : (JSON.parse(raw) as ChatDetail)
-  } catch { return null }
-}
+const detailKey = (key: string) => `chat:detail:${key}`
+const readCachedDetail = (key: string): ChatDetail | null => peekQuery<ChatDetail>(detailKey(key)) ?? null
 function writeCachedDetail(key: string, d: ChatDetail): void {
   // Never cache a running turn's partial transcript — it would paint a stale,
   // mid-stream snapshot on revisit. Only settled sessions are safe to seed from.
   if (d.running) return
-  try { sessionStorage.setItem(_CHAT_DETAIL_SS + key, JSON.stringify(d)) } catch { /* quota/serialize — skip cache */ }
+  writeQuery(detailKey(key), d, true)
 }
 
 // The approval-card scope picker's one vocabulary (resolved with the user): a per-
@@ -173,7 +182,7 @@ function SuggestionChips({ onPick }: { onPick: (s: string) => void }) {
   // sessionStorage as though it were an answer, and the next visit painted "no suggestions" from
   // cache. Without it the rejection leaves `data` undefined and nothing is cached. The strip still
   // hides on failure, which is honest — a decoration that quietly does not appear claims nothing.
-  const { data } = useCachedData('chat:suggestions', () => api.suggestions().then((r) => r.suggestions), { persist: true })
+  const { data } = useQuery('chat:suggestions', () => api.suggestions().then((r) => r.suggestions), { persist: true })
   const items = (data ?? []).slice(0, 6)
   if (!items.length) return null
   return (
@@ -200,7 +209,7 @@ function SuggestionChips({ onPick }: { onPick: (s: string) => void }) {
  *  costs nothing. */
 function StarterChips({ onPick }: { onPick: (t: SessionTemplate) => void }) {
   // Same as the suggestion strip: persisted key, so the swallow cached a fabricated empty list.
-  const { data } = useCachedData('chat:starters', () => api.sessionTemplates(), { persist: true })
+  const { data } = useQuery('chat:starters', () => api.sessionTemplates(), { persist: true })
   const items = (data ?? []).slice(0, 6)
   if (!items.length) return null
   return (
@@ -252,7 +261,7 @@ function ChatHistorySidePanelBody({ navigate, onOpen }: { navigate: (p: string) 
   // No `.catch(() => [])`: swallowing the rejection makes a 500 indistinguishable from
   // "you have no chats", and this panel then says exactly that. The error rides through so
   // the ladder below can tell the two apart.
-  const { data, error: sessionsError, refresh: refreshSessions } = useCachedData<ChatSessionSummary[]>('chat:sessions', () => api.chatSessions(), { persist: false })
+  const { data, error: sessionsError, refresh: refreshSessions } = useQuery<ChatSessionSummary[]>('chat:sessions', () => api.chatSessions(), { persist: false })
   const recent = useMemo(() => {
     const all = data ?? []
     return all
@@ -623,7 +632,9 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
   // AbortController for the in-flight attach upload, so the user can cancel it.
   const uploadAbortRef = useRef<AbortController | null>(null)
   const [promptHistory, setPromptHistory] = useState<string[]>([])
-  const [contextPct, setContextPct] = useState(0)
+  // `undefined` until the backend reports a measurement (it sends `pct: null` when it
+  // has none) — an unmeasured context must show no percentage, not 0%.
+  const [contextPct, setContextPct] = useState<number | undefined>(undefined)
   const [optimizing, setOptimizing] = useState(false)
   // the draft as it was just before an optimize-prompt rewrite, so the user can
   // revert if they don't like the optimized version (otherwise it's lost).
@@ -697,6 +708,12 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
   // restore effect when a new session's binding arrives.
   const sessionBindingRef = useRef<{ agent: string; model: string; acp_provider: string; acp_provider_agent: string; reasoning_effort: string } | null>(null)
   const [bindingNonce, setBindingNonce] = useState(0)
+  // Natural voice: the per-conversation scope. `choice` is what this
+  // conversation states; `effective`/`source` are the backend's resolution against
+  // the bound agent's definition — never recomputed here. `source: ''` means "no
+  // conversation yet" (a brand-new chat), where the pill shows the choice instead.
+  const [naturalVoice, setNaturalVoice] = useState<{ choice: '' | 'on' | 'off'; effective: boolean; source: string; agentDefault: boolean }>(
+    { choice: '', effective: false, source: '', agentDefault: false })
   const [statusText, setStatusText] = useState('')
   const [latestActivity, setLatestActivity] = useState<string | null>(null)
   // The docked open-file peek panel. URL-backed (?file=<path>, push → Back closes;
@@ -729,7 +746,7 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
   // "smooth" as if the user had chosen it, so the transcript animated one way and the cache kept
   // saying so. The fallback belongs at the USE SITE (below), where it is a default rather than a
   // stored answer.
-  const { data: streamRevealCfg } = useCachedData('chat:stream-reveal', () => api.dashboardConfig().then((c) => c.stream_reveal), { persist: true })
+  const { data: streamRevealCfg } = useQuery('chat:stream-reveal', () => api.dashboardConfig().then((c) => c.stream_reveal), { persist: true })
   const coalescer = useStreamCoalescer((revealed) => {
     patchLastAssistant((segs) => {
       const r = applyCoalescedFlush(segs, revealed, coalescing.current)
@@ -829,6 +846,15 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
       // which the backend refuses on a non-persistent session) reflect the real
       // posture of a reopened chat instead of the 'persistent' default.
       setMemoryMode((d.memory_mode || 'persistent') as MemoryMode)
+      // Natural voice — restore the composer pill from the RESOLVED state the
+      // backend sent, so a reopened chat shows what actually takes effect (including
+      // an agent-supplied default) rather than reverting to "agent default, off".
+      setNaturalVoice({
+        choice: ((d.natural_voice || '') as '' | 'on' | 'off'),
+        effective: !!d.natural_voice_effective,
+        source: d.natural_voice_source || '',
+        agentDefault: !!d.natural_voice_agent_default,
+      })
       // Branch lineage — restore the "Branched from" breadcrumb on every open,
       // including a plain browser reload, because it comes from persisted state rather
       // than from whatever navigation happened to land us here.
@@ -1019,7 +1045,9 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
         break
       }
       case 'context_usage':
-        if (d.session === sessionRef.current && typeof d.pct === 'number') setContextPct(d.pct as number)
+        // A non-number `pct` (null) is the backend saying "not measured" — clear the
+        // ring rather than leaving a stale or fabricated percentage on screen.
+        if (d.session === sessionRef.current) setContextPct(typeof d.pct === 'number' ? d.pct : undefined)
         break
       // A title resolved server-side (auto-titled after the first turn, or renamed
       // from elsewhere). Reflect it live in the header of the open session, so the
@@ -1441,6 +1469,10 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
       // Persist a pre-start reasoning-effort pick (applySelection couldn't, since the
       // session didn't exist yet).
       if (selection.reasoning) await persistSelection('this reasoning effort', api.setReasoningEffort(created.key, selection.reasoning))
+      // Natural voice: a pre-start pick lands here for the same reason — without
+      // it the pill would read "Plain" while turn 1 ran without the instruction, which
+      // is the exact "reports itself on while doing nothing" shape.
+      if (naturalVoice.choice) await persistSelection('this natural-voice setting', api.setSessionNaturalVoice(created.key, naturalVoice.choice))
       return created.key
     })()
     ensureInFlightRef.current = p
@@ -1939,7 +1971,7 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
   // Hands-free voice knobs. Cached + persisted like the other
   // config reads: a failed read falls back to the shipped phrase defaults so the
   // toggle still works rather than becoming deaf to every confirmation.
-  const { data: voiceCfgRaw } = useCachedData('chat:voice-config', () => api.personalclawConfig().then((c) => c.voice as VoiceLoopConfig), { persist: true })
+  const { data: voiceCfgRaw } = useQuery('chat:voice-config', () => api.personalclawConfig().then((c) => c.voice as VoiceLoopConfig), { persist: true })
   const voiceCfg: VoiceLoopConfig = {
     confirmation_phrases: voiceCfgRaw?.confirmation_phrases?.length ? voiceCfgRaw.confirmation_phrases : DEFAULT_CONFIRMATION_PHRASES,
     exit_phrases: voiceCfgRaw?.exit_phrases?.length ? voiceCfgRaw.exit_phrases : DEFAULT_EXIT_PHRASES,
@@ -2123,6 +2155,27 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
   const persistSelection = <T,>(what: string, p: Promise<T>): Promise<T | void> =>
     p.catch((e) => { notify(`Couldn't apply ${what} to this session: ${String((e as Error)?.message || e)}`, 'error') })
 
+  /** Natural voice: set the per-conversation scope, then adopt the backend's
+   *  RE-RESOLVED answer rather than assuming the click won. The resolution order lives
+   *  once, server-side (`natural_voice.NATURAL_VOICE_PRECEDENCE`), so the pill can only
+   *  stay honest by displaying what came back — a locally-computed label would be a
+   *  second copy of that order, free to drift from the one the turn uses.
+   *
+   *  Before the session exists there is nothing to PATCH, so the choice is held locally
+   *  with `source: ''` (the pill then shows the choice, not an effect) and persisted by
+   *  `ensureSession` at create — the same shape as a pre-start reasoning-effort pick. */
+  async function selectNaturalVoice(choice: '' | 'on' | 'off') {
+    const s = sessionRef.current
+    if (!s) { setNaturalVoice((v) => ({ ...v, choice, source: '' })); return }
+    const r = await persistSelection('this natural-voice setting', api.setSessionNaturalVoice(s, choice))
+    if (r) setNaturalVoice({
+      choice: (r.natural_voice || '') as '' | 'on' | 'off',
+      effective: !!r.natural_voice_effective,
+      source: r.natural_voice_source || '',
+      agentDefault: !!r.natural_voice_agent_default,
+    })
+  }
+
   function applySelection(patch: Partial<ComposerValue>) {
     const nextSel = { ...selection, ...patch }
     setSelection(nextSel)
@@ -2182,7 +2235,7 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
         reasoning_effort: selection.reasoning || '',
         first_prompt: '',
       })
-      invalidateCache('chat:starters')
+      invalidateKeys('chat:starters')
       notify(`Saved "${name}" — it'll appear on the new-chat screen.`, 'success')
     } catch (e) {
       notify(`Couldn't save this starter: ${String((e as Error)?.message || e)}`, 'error')
@@ -2232,7 +2285,7 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
     // in fact (the sidebar, the history page, and the dashboard's recent-sessions). Nothing here
     // busted any of them, so a renamed chat kept its old title everywhere but the header it was
     // renamed from, and on the dashboard that survived a reload (`persist: true`).
-    invalidateCache('chat:sessions', true)
+    invalidateKeys('chat:sessions', true)
   }
   async function regenTitle() {
     const s = sessionRef.current
@@ -2545,6 +2598,7 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
         <ComposerStage ref={composerRef} value={input} onChange={(v) => { setInput(v); if (preOptimize !== null) setPreOptimize(null); if (followups.length && v.trim().length >= 3) setFollowups([]) }} onSend={() => send()}
           streaming={streaming} onStop={stop} controls={CHAT_CONTROLS} data={data}
           selection={selection} onSelect={applySelection} onAttach={attach} onFocusChange={setComposerFocused}
+          naturalVoice={{ ...naturalVoice, onSelect: (c) => void selectNaturalVoice(c) }}
           onOpenPrompts={() => setPromptPaletteOpen(true)}
           plusMenuExtra={(close) => (
             <>
@@ -3066,7 +3120,7 @@ function ArtifactContextPicker({ attached, onPick, onRemove, onClose }: {
   // The swallow made a failed read indistinguishable from an empty library, and this picker's
   // empty state TEACHES ("Ask in chat for a widget…") — so a 500 told a user with artifacts to go
   // make their first one. Same shape as #1162's chat history, one surface down.
-  const { data, loading, error: artifactsError } = useCachedData('artifacts:chat-picker', () => api.artifacts())
+  const { data, loading, error: artifactsError } = useQuery('artifacts:chat-picker', () => api.artifacts())
   const all = data ?? []
   const attachedSlugs = new Set(attached.map((a) => a.slug))
   const n = q.trim().toLowerCase()
@@ -3790,15 +3844,15 @@ function ChatHistoryPage({ navigate, query, setQuery }: { navigate: (p: string) 
   // 500 and a cold cache: `.catch(() => [])` made `sessions` an empty array, so this page told
   // an account with 31 sessions "No chats yet" and offered to start its first — with nothing in
   // a live region. An empty list and a failed load are different facts and now render as such.
-  const { data: cachedSessions, error: sessionsError, refresh: refreshSessions } = useCachedData<ChatSessionSummary[]>(
+  const { data: cachedSessions, error: sessionsError, refresh: refreshSessions } = useQuery<ChatSessionSummary[]>(
     archivedView ? 'chat:sessions:archived' : 'chat:sessions',
     () => api.chatSessions(archivedView),
     { persist: false },
   )
   // Both persisted, and both feed a menu whose empty state says "Create a folder or tag first" —
   // an instruction, not just a blank. A swallowed rejection cached that claim.
-  const { data: foldersData, error: foldersError, refresh: refreshFolders } = useCachedData<ChatFolder[]>('chat:folders', () => api.chatFolders(), { persist: true })
-  const { data: tagsData, error: tagsError, refresh: refreshTags } = useCachedData<ChatTag[]>('chat:tags', () => api.chatTags(), { persist: true })
+  const { data: foldersData, error: foldersError, refresh: refreshFolders } = useQuery<ChatFolder[]>('chat:folders', () => api.chatFolders(), { persist: true })
+  const { data: tagsData, error: tagsError, refresh: refreshTags } = useQuery<ChatTag[]>('chat:tags', () => api.chatTags(), { persist: true })
   const folders = foldersData ?? []
   const tags = tagsData ?? []
   // Local optimistic overlay so pin/folder/tag mutations paint instantly; it
@@ -3886,7 +3940,7 @@ function ChatHistoryPage({ navigate, query, setQuery }: { navigate: (p: string) 
     // list reads the same collection under `chat:sessions:recent`. Prefix mode covers a reader added
     // later, which is exactly how the dashboard's was missed. It does NOT touch `chat:suggestions`
     // and friends — the prefix is the collection, not the namespace.
-    invalidateCache('chat:sessions', true)
+    invalidateKeys('chat:sessions', true)
     refreshSessions(); refreshFolders(); refreshTags()
   }, [refreshSessions, refreshFolders, refreshTags])
 
@@ -4010,7 +4064,7 @@ function ChatHistoryPage({ navigate, query, setQuery }: { navigate: (p: string) 
       notify(`Couldn't delete this chat: ${String((e as Error)?.message || e)}`, 'error')
       return
     }
-    try { sessionStorage.removeItem(_CHAT_DETAIL_SS + s.key) } catch { /* ignore */ }
+    invalidateKeys(detailKey(s.key))
     load()
   }
   /** Download a transcript. Uses a real link click rather than fetch+blob so the
@@ -4392,7 +4446,32 @@ function ChatHistoryPage({ navigate, query, setQuery }: { navigate: (p: string) 
                       </div>
                     )}
                     {g.items.length === 0 ? <div className="text-on-surface-low text-[0.8125rem] italic pl-5">{folderDragKey ? 'Drop here to move into this folder' : 'Empty'}</div>
-                      : <div className="flex flex-col gap-s">{g.items.map(card)}</div>}
+                      : (
+                        // DSC-13 / SM-3: THE surface SM-3 deferred windowing on ("pending
+                        // measurement"). `/api/chat/sessions` is uncapped at BOTH ends — no
+                        // server page size, no client slice — so this is the one list in the
+                        // app that really does reach 5,000 rows. Measured on a real store of
+                        // exactly that: 175,683 DOM nodes, 273ms per wheel event.
+                        // Windowed per FOLDER GROUP, which composes: each group observes the
+                        // same shared scroller and windows its own rows, so a 5,000-chat
+                        // ungrouped bucket windows while a 3-chat folder passes through.
+                        <WindowedList
+                          items={g.items}
+                          rowKey={(s) => s.key}
+                          // VARIABLE, measured: a plain row is 66px (measured across all
+                          // 5,000 fixture rows), but a full-text hit adds a snippet line and
+                          // the meta line wraps its origin/tag pills.
+                          rowHeights="variable"
+                          estimateRowHeight={66}
+                          gap={8}
+                          noun="chats"
+                          findHint="use the Search chats field above, which searches every chat including their contents."
+                          anchorKey={peekKey || undefined}
+                          className="flex flex-col gap-s"
+                        >
+                          {(s) => card(s)}
+                        </WindowedList>
+                      )}
                   </div>
                   )
                 })}

@@ -12,8 +12,8 @@ from personalclaw.acp.types import (
     EVENT_AGENT_SWITCHED,
     EVENT_CLEAR_STATUS,
     EVENT_COMPACTION_STATUS,
-    STOP_REASON_CANCELLED,
     STOP_REASON_END_TURN,
+    is_cancelled_stop,
 )
 from personalclaw.config.loader import (
     AppConfig,
@@ -21,13 +21,15 @@ from personalclaw.config.loader import (
     resolve_agent_bindings,
 )
 from personalclaw.constants import CHAT_TURN_TIMEOUT
-from personalclaw.context_engine import assemble_context
+from personalclaw.context_engine import assemble_context, check_headroom
+from personalclaw.context_headroom import HeadroomState
 from personalclaw.dashboard.chat_followups import _maybe_followups, maybe_offer_check_work
 from personalclaw.dashboard.chat_persistence import _build_history_prefix, _save_session_to_history
 from personalclaw.dashboard.chat_title import _maybe_auto_title
 from personalclaw.dashboard.chat_utils import (
     _BLOCKED_SLASH_COMMANDS,
     _SLASH_COMMANDS,
+    SLASH_FALLBACK_ACTIVITY_KIND,
     _apply_incognito_prefix,
     _broadcast_auto_tool,
     _broadcast_compaction_result,
@@ -40,6 +42,7 @@ from personalclaw.dashboard.chat_utils import (
     _project_context_preamble,
     _redact_for_display,
     _validate_tool_name,
+    stream_slash_command,
     strip_status_sentinel,
     task_mode_denies,
     task_mode_framing,
@@ -118,7 +121,7 @@ def is_empty_turn(
     if assistant_text.strip():
         return False
     benign = (
-        stop_reason == STOP_REASON_CANCELLED
+        is_cancelled_stop(stop_reason)
         or saw_compaction
         or needs_session_reset
         or is_slash
@@ -487,7 +490,7 @@ def _turn_complete_line(
     *,
     events: int,
     tool_calls: int,
-    context_pct: float,
+    context_pct: float | None,
     input_tokens: int,
     output_tokens: int,
     cache_tokens: int,
@@ -501,8 +504,16 @@ def _turn_complete_line(
     NEVER ``$0.00`` — so a missing price is never mistaken for a free turn. The cache
     fragment is present only when cache tokens are non-zero (absent until
     PROMPT-CACHE-SUBSTRATE lands and a provider actually reports them).
+
+    Honest-unmeasured (G8): ``context_pct=None`` OMITS the context fragment entirely.
+    It used to be a bare float, so a provider that reported nothing printed
+    ``context 0%`` — a number the backend never supplied, which is worse than a
+    missing chip. A measured ``0.0`` still renders ``context 0%``, because an empty
+    context is a real answer.
     """
-    line = f"Turn complete: {events} events, {tool_calls} tool calls, context {round(context_pct)}%"
+    line = f"Turn complete: {events} events, {tool_calls} tool calls"
+    if context_pct is not None:
+        line += f", context {round(context_pct)}%"
     if input_tokens or output_tokens:
         cost_str = f"${cost_usd:.4f}" if priced else "unpriced"
         line += f" · {cost_str} · {input_tokens:,} in / {output_tokens:,} out tokens"
@@ -1443,6 +1454,15 @@ async def _run_chat(
             turn_checkpoints.begin_turn(session.key, cwd=_file_change_base(session))
         except Exception:  # noqa: BLE001 — a checkpoint failure must never break a turn
             logger.debug("turn checkpoint: begin_turn skipped", exc_info=True)
+        try:
+            # The pre-edit read gate's observations are per-TURN. Reset here, at
+            # the site that already declares a turn, so the two turn notions cannot
+            # drift; a nested _run_chat is the same user turn and must keep them.
+            from personalclaw.agents.native import read_gate
+
+            read_gate.begin_turn(session.key)
+        except Exception:  # noqa: BLE001 — never break a turn over the gate's bookkeeping
+            logger.debug("read gate: begin_turn skipped", exc_info=True)
     # Cancel any still-pending follow-up-chip generation from the PRIOR turn (CHAT-CRAFT
     # S3) — the user is sending again, so its chips are moot; the FE hides them on the
     # next stream. Fire-and-forget cancel; the task swallows CancelledError cleanly.
@@ -2098,6 +2118,19 @@ async def _run_chat(
             # Lumon persona injection — prepend to message so build_message
             # accounts for it in context budget calculations.
             message = _maybe_inject_persona(message, getattr(session, "color_theme", ""), is_new)
+            # Natural voice — plainer prose, resolved from the conversation's
+            # own tri-state over the bound agent's definition (the order lives in
+            # natural_voice.NATURAL_VOICE_PRECEDENCE). Same seam as the persona
+            # above (a bundled snippet appended to the turn), NOT a second model
+            # call over the reply; see natural_voice.py for why that was rejected.
+            # Every turn, not just the first: the toggle is flippable mid-chat.
+            from personalclaw import natural_voice as _nv
+
+            message = _nv.maybe_inject(
+                message,
+                getattr(session, "natural_voice", ""),
+                _nv.agent_default(session.agent or ""),
+            )
             # Project-bound chat (Slice 6 D2): on the first turn, prepend the project's
             # context — workspace, loop history, context-dir — so the session operates
             # with the project's cohesive shared context. First turn only (is_new); the
@@ -2139,6 +2172,49 @@ async def _run_chat(
                             message = f"{_pd}\n\n{message}"
                 except Exception:
                     logger.debug("loop capability lookup skipped", exc_info=True)
+            # ── The resumed session's recorded state, checked BEFORE assembly ──
+            # A resume carries an account of what the record says already happened. If that
+            # record contradicts the working tree — a file it says exists is gone — the turn
+            # STOPS instead of proceeding on a false premise: continuing would hand the model an
+            # account it has already been shown to be wrong about, which is worse than the
+            # re-run defect the account exists to fix.
+            #
+            # Checked here rather than only inside `build_message` because `assemble_context`
+            # quarantines a raising ENGINE to the default one; a refusal that arrived as an
+            # exception through that path would be logged as an engine fault. Refusing first
+            # makes the stop the user-visible thing it has to be.
+            if resumed:
+                from personalclaw.resume_account import (
+                    NOT_CONSULTED,
+                    ResumeStateInconsistent,
+                    verify_resume_state,
+                )
+
+                try:
+                    verify_resume_state(
+                        session_key=session_key,
+                        tree_root=session.workspace_dir or None,
+                        tool_messages=NOT_CONSULTED,
+                    )
+                except ResumeStateInconsistent as _rsi:
+                    _stop = (
+                        "Resume stopped: what this session recorded doing no longer matches "
+                        "the working tree, so continuing would repeat or skip work on a false "
+                        "premise. " + " ".join(_rsi.reasons) + " Start a new session, or restore "
+                        "the tree, to continue."
+                    )
+                    logger.warning("resume refusal in %s: %s", session.key, _stop)
+                    session.append("error", _stop, "msg msg-err")
+                    state.broadcast_ws(
+                        "chat_message",
+                        {"session": session.key, "role": "error", "content": _stop},
+                    )
+                    # A refused turn is an ERRORED turn — same contract as the headroom
+                    # refusal below: the autonudge re-arm and the goal-loop done-callback
+                    # both read this flag, and a refusal that read as success would let a
+                    # loop advance on an answer it never received.
+                    session._last_turn_errored = True
+                    return
             # Assemble via the pluggable context engine (default = the monolithic
             # build_message; a custom engine that raises is quarantined to default
             # so the turn still gets context). Active-recall + structured-
@@ -2174,6 +2250,45 @@ async def _run_chat(
                 force_skill_ids=_force_skill_ids,
                 force_workflow_ids=_force_workflow_ids,
             )
+            # ── The headroom contract, decided BEFORE the model call ──
+            # The turn no longer discovers the context limit by failing at it: the seam
+            # measures the assembled prompt against the bound model's real window (minus
+            # the reply reserve) and gets back one of three DECLARED states.
+            _headroom = await check_headroom(_assembled, model_ref=model_label)
+            if _headroom.state is HeadroomState.CANNOT_FIT:
+                _refusal = _headroom.notice()
+                logger.warning("context headroom refusal in %s: %s", session.key, _refusal)
+                session.append("error", _refusal, "msg msg-err")
+                state.broadcast_ws(
+                    "chat_message",
+                    {"session": session.key, "role": "error", "content": _refusal},
+                )
+                # A refused turn is an ERRORED turn. The autonudge re-arm and the goal-loop
+                # done-callback both read this flag, and a refusal that read as success
+                # would let a loop advance on an answer it never received.
+                session._last_turn_errored = True
+                return
+            if _headroom.state is HeadroomState.FITS_AFTER_COMPRESSION:
+                # The compression was applied to the COMPONENTS, so the verdict's text is
+                # the thing that fits. Sending `_assembled.message` here would send the
+                # uncompressed prompt and refute the check that just passed.
+                _assembled.message = _headroom.text
+                # …and the transparency ticker below must report the size that was really
+                # injected. Left stale it would announce the pre-compression figure right
+                # beside a notice saying the context shrank.
+                _assembled.injected_chars = max(0, len(_headroom.text) - len(message))
+            # Told at the point it happens, not summarized afterwards: the assembly's own
+            # drop notices first, then whatever the contract compressed, then the
+            # pre-failure pressure signal — `notice()` returns "" when there is nothing to
+            # say, so a healthy turn stays silent.
+            for _note in (*_assembled.notices, _headroom.notice()):
+                if not _note:
+                    continue
+                logger.info("context headroom (%s): %s", session.key, _note)
+                state.broadcast_ws(
+                    "activity_event",
+                    {"session": session.key, "kind": "headroom", "text": _note},
+                )
             full_message = _apply_incognito_prefix(session, _assembled.message)
             # Capture the episodic citation manifest surfaced into this turn's prompt so
             # _flush_segment can stamp it onto the assistant message's meta.
@@ -2301,9 +2416,39 @@ async def _run_chat(
             except Exception:
                 logger.warning("screen-frame delivery failed", exc_info=True)
 
-        # Slash commands use _vendor.dev/commands/execute for full native output;
-        # regular messages use session/prompt.
-        event_stream = client.stream_command(message) if is_slash else client.stream(full_message)
+        # Slash commands use _vendor.dev/commands/execute for full native output — but ONLY
+        # when the bound provider says it speaks that extension. Sending it blind is what
+        # `G4` measured: claude-code answers `-32601` and the WHOLE TURN hard-errors, so the
+        # user's `/compact` produced an error card instead of an answer. `stream_slash_command`
+        # owns all three outcomes (gate → substitute, `-32601`-before-output → substitute,
+        # `-32601`-after-output → refuse and say why) and reports the substitution here so a
+        # user is never handed a plain-prompt answer while believing a command ran.
+        # Set the moment a substitution is announced. Read by the deferred-compaction
+        # branch after the loop: waiting on `wait_for_compaction` is only meaningful when
+        # a real `/compact` COMMAND was dispatched. A substituted turn has no compaction
+        # coming, and that branch discards the streamed answer before waiting — so left
+        # ungated it would trade `O23`'s error card for a 120 s stall ending in
+        # "Compaction timed out.", with the answer we just produced thrown away.
+        slash_substituted = False
+
+        def _slash_notice(text: str) -> None:
+            nonlocal slash_substituted
+            slash_substituted = True
+            logger.info("slash fallback (%s): %s", session.key, text)
+            state.broadcast_ws(
+                "activity_event",
+                {
+                    "session": session.key,
+                    "kind": SLASH_FALLBACK_ACTIVITY_KIND,
+                    "text": text,
+                },
+            )
+
+        event_stream = (
+            stream_slash_command(client, message, prompt=full_message, notify=_slash_notice)
+            if is_slash
+            else client.stream(full_message)
+        )
         state.broadcast_ws("chat_status", {"session": session.key, "status": "Thinking…"})
         state.broadcast_ws(
             "activity_event", {"session": session.key, "kind": "status", "text": "Thinking…"}
@@ -3537,7 +3682,7 @@ async def _run_chat(
                 if (
                     _stop_reason
                     and _stop_reason != STOP_REASON_END_TURN
-                    and _stop_reason != STOP_REASON_CANCELLED
+                    and not is_cancelled_stop(_stop_reason)
                 ):
                     logger.warning(
                         "Unexpected stop_reason %r for session %s",
@@ -3574,9 +3719,12 @@ async def _run_chat(
         # /compact acknowledged but compaction deferred — send a lightweight
         # follow-up to trigger the actual compaction so the user doesn't have to.
         logger.debug(
-            "Compaction check: first_word=%r saw_compaction=%s", first_word, saw_compaction
+            "Compaction check: first_word=%r saw_compaction=%s slash_substituted=%s",
+            first_word,
+            saw_compaction,
+            slash_substituted,
         )
-        if first_word == "/compact" and not saw_compaction:
+        if first_word == "/compact" and not saw_compaction and not slash_substituted:
             # Clear ACP agent's streamed "Compacting conversation..." text
             session.messages = [m for m in session.messages if m.get("role") != "chunk"]
             assistant_text = ""
@@ -3606,7 +3754,10 @@ async def _run_chat(
             )
             # Update context usage after compaction
             pct = client.context_usage_pct()
-            state.broadcast_ws("context_usage", {"session": session.key, "pct": round(pct, 1)})
+            state.broadcast_ws(
+                "context_usage",
+                {"session": session.key, "pct": None if pct is None else round(pct, 1)},
+            )
 
         # ── Empty-response auto-retry ───────────────────────────────────────
         # A genuinely empty assistant turn (no text AND no tool calls) that is
@@ -3663,8 +3814,8 @@ async def _run_chat(
         session._prompt_busy_retries = 0
         session._acp_pipe_death_retries = 0
 
-        if _stop_reason == STOP_REASON_CANCELLED:
-            logger.info("Turn cancelled by user for session %s", session.key)
+        if is_cancelled_stop(_stop_reason):
+            logger.info("Turn ended %s for session %s", _stop_reason, session.key)
         else:
             _maybe_consolidate(state, session)
             # Continuous learning: after a learning-worthy turn, capture a durable
@@ -3705,8 +3856,13 @@ async def _run_chat(
                 logger.debug("skill-ladder review scheduling failed", exc_info=True)
         state.sessions.check_context_usage(session_key, client)
         pct = client.context_usage_pct()
-        state.broadcast_ws("context_usage", {"session": session.key, "pct": round(pct, 1)})
-        if _stop_reason != STOP_REASON_CANCELLED:
+        # ``None`` when the provider measured nothing — the composer ring reads that as
+        # "no measurement" and shows no percentage, instead of a fabricated 0%.
+        state.broadcast_ws(
+            "context_usage",
+            {"session": session.key, "pct": None if pct is None else round(pct, 1)},
+        )
+        if not is_cancelled_stop(_stop_reason):
             state.sessions.record_success(session_key)
         # Broadcast prompt stats for the activity viewer (the live-only "Turn
         # complete" line). Reads the provider-neutral counts carried on the

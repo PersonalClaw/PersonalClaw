@@ -1851,6 +1851,16 @@ class MemoryService:
             return []
         return vs.lessons_visible_in(normalize_workspace_ref(workspace) or None, limit=limit)
 
+    def lesson_standings(self, rows: list[dict]) -> dict[str, Any]:
+        """Each row's derived confidence + injection standing, keyed by lesson key.
+
+        A passthrough on purpose: the derivation has exactly one home
+        (:meth:`VectorMemoryStore.lesson_standings`), so the management surface and
+        the prompt filter cannot report different answers about the same lesson.
+        """
+        vs = self._vs
+        return vs.lesson_standings(rows) if vs else {}
+
     def delete_lesson(self, rule_substring: str) -> bool:
         vs = self._vs
         return vs.delete_lesson(rule_substring) if vs else False

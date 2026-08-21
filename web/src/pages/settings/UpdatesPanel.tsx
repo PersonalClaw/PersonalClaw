@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { DownloadCloud, CheckCircle2, RefreshCw } from 'lucide-react'
 import { api, type UpdateCheck } from '../../lib/api'
-import { useCachedData, invalidateCache } from '../../lib/useCachedData'
+import { useQuery, invalidateKeys } from '../../lib/data'
 import { PanelHeader, Section, Row, Toggle, SavedToast } from './settingsUI'
 import { Button } from '../../ui/Button'
 import { FormSkeleton, LoadError } from '../../ui/ListScaffold'
@@ -55,7 +55,7 @@ export function UpdatesPanel() {
   const [saved, setSaved] = useState(false)
 
   // Version + changelog change slowly — one persisted snapshot, instant on revisit.
-  const { data, loading: checking, error: loadErr, refresh } = useCachedData('settings:updates', async () => {
+  const { data, loading: checking, error: loadErr, refresh } = useQuery('settings:updates', async () => {
     const [info, changelog] = await Promise.all([
       // 🔴 The version check IS the panel — a substituted null read as "still loading" and left it
       // shimmering forever (measured: 0 controls, one `aria-busy` skeleton, no alert). The changelog
@@ -72,7 +72,7 @@ export function UpdatesPanel() {
   useEffect(() => { setInfo(data?.info ?? null) }, [data?.info])
   const changelog = data?.changelog ?? ''
 
-  const check = () => { invalidateCache('settings:updates'); refresh() }
+  const check = () => { invalidateKeys('settings:updates'); refresh() }
 
   const apply = async () => {
     if (!(await confirm({ title: 'Apply the available update?', body: 'The backend will update and may restart.', confirmLabel: 'Apply update' }))) return

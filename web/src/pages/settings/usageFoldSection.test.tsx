@@ -74,7 +74,7 @@ const mount = async (fold: unknown = FOLD) => {
   }))
   const { UsagePanel } = await import('./UsagePanel')
   let r!: ReturnType<typeof render>
-  // useCachedData resolves async, so render AND flush both sit inside act().
+  // useQuery resolves async, so render AND flush both sit inside act().
   await act(async () => {
     r = render(<UsagePanel query={{ period: '7d' }} setQuery={() => {}} />)
     await new Promise((res) => setTimeout(res, 0))

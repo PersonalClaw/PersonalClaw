@@ -19,8 +19,10 @@ import asyncio
 import contextvars
 import logging
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
+from personalclaw import cancellation
+from personalclaw.agents.native import read_gate
 from personalclaw.tool_providers import result_store
 from personalclaw.tool_providers.base import (
     RiskLevel,
@@ -31,6 +33,19 @@ from personalclaw.tool_providers.base import (
 from personalclaw.tool_providers.projection import project_and_retain, project_output
 
 logger = logging.getLogger(__name__)
+
+# ── the write seam's registry ─────────────────────────────────────────────────
+# Native tools that MODIFY a file, and how each names the region it changes.
+# ``invoke`` consults :mod:`personalclaw.agents.native.read_gate` for every entry, so a
+# tool inherits the pre-edit read gate by being LISTED here — it never implements the
+# gate itself. That is the point: one expression at the seam, so a new write path cannot
+# quietly ship without it. ``tests/test_pre_edit_read_gate.py`` scans this module for
+# filesystem writes and fails if a handler performs one without appearing here.
+#   value = (operation, arg naming the text being REPLACED or None, arg naming the new text)
+_READ_GATED_WRITE_TOOLS: dict[str, tuple[str, str | None, str]] = {
+    "write_file": ("overwrite", None, "content"),
+    "edit_file": ("edit", "old_str", "new_str"),
+}
 
 # Per-invoke workspace context for the native tools. The category providers
 # (Filesystem/Shell/Knowledge/…) are now REGISTRY SINGLETONS (one instance,
@@ -129,6 +144,7 @@ _CATEGORY_OF: dict[str, str] = {
     "tool_result_get": "core",
     # knowledge (installable app)
     "knowledge_search": "knowledge",
+    "knowledge_structural": "knowledge",
     "knowledge_create": "knowledge",
     "knowledge_get": "knowledge",
     "knowledge_update": "knowledge",
@@ -432,6 +448,19 @@ class NativeBuiltinToolProvider(ToolProvider):
             t.provider = self._provider_name
         return out
 
+    @staticmethod
+    def _structural_verbs() -> list[str]:
+        """The structural-retrieval verb vocabulary, read from the module that OWNS it.
+
+        Copying the five strings into this schema would let the tool advertise a verb the
+        retriever no longer accepts (or hide one it gained). Imported lazily because the
+        registry is built on every session start and the knowledge package need not be
+        touched until a knowledge tool is actually described.
+        """
+        from personalclaw.knowledge.structural import STRUCTURAL_VERBS
+
+        return list(STRUCTURAL_VERBS)
+
     def _all_tool_defs(self, s: dict) -> list[ToolDefinition]:
         return [
             ToolDefinition(
@@ -648,6 +677,42 @@ class NativeBuiltinToolProvider(ToolProvider):
                         "is_archived": {"type": "boolean"},
                     },
                     "required": ["id"],
+                },
+            ),
+            ToolDefinition(
+                name="knowledge_structural",
+                provider=self.name,
+                requires_approval=False,
+                risk_level=RiskLevel.SAFE,
+                description=(
+                    "Ask a STRUCTURAL question about the knowledge library and get the answer "
+                    "by traversing stored links — not by semantic similarity. Use this instead "
+                    "of knowledge_search whenever the question is about relations rather than "
+                    "topic; a similarity search answers 'what links to this' only by accident. "
+                    "Args: verb (str, required) — one of 'links_to' (what points AT an item: "
+                    "typed relations + citations), 'depends_on' (the outbound dependency chain), "
+                    "'tag_subtree' (everything under a tag and its child tags), 'changed_since' "
+                    "(what was updated after a timestamp), 'contradictions' (items recorded as "
+                    "contradicting each other); origin (str) — item id for links_to/depends_on, "
+                    "tag name for tag_subtree, optional item id to scope contradictions; since "
+                    "(str, ISO timestamp) for changed_since; depth (int, default 1, max 6) — how "
+                    "many hops to follow; limit (int, default 25); rank_query (str, optional) — "
+                    "orders the structural result by closeness to this text WITHOUT changing "
+                    "which items are in it. Every result carries the exact link path that "
+                    "reached it, so you can cite why. An empty answer states which relation is "
+                    "missing; it never silently degrades to a similarity guess."
+                ),
+                parameters={
+                    **s,
+                    "properties": {
+                        "verb": {"type": "string", "enum": self._structural_verbs()},
+                        "origin": {"type": "string"},
+                        "since": {"type": "string"},
+                        "depth": {"type": "integer"},
+                        "limit": {"type": "integer"},
+                        "rank_query": {"type": "string"},
+                    },
+                    "required": ["verb"],
                 },
             ),
             ToolDefinition(
@@ -971,12 +1036,78 @@ class NativeBuiltinToolProvider(ToolProvider):
             ),
         ]
 
+    def _read_gate_refusal(self, tool_name: str, a: dict[str, Any]) -> ToolResult | None:
+        """The ONE expression of the pre-edit read gate (AG-14); None admits the call.
+
+        Lives at the dispatch seam rather than inside each handler so every write path
+        inherits it: adding a row to ``_READ_GATED_WRITE_TOOLS`` is the whole wiring, and
+        a write handler that forgets to register is what the rail test catches. Runs
+        AFTER ``_resolve`` so path confinement still speaks first (its ``ValueError``
+        propagates to :meth:`invoke`'s handler, unchanged).
+        """
+        spec = _READ_GATED_WRITE_TOOLS.get(tool_name)
+        if spec is None:
+            return None
+        operation, region_arg, _new_arg = spec
+        display = str(a["path"])
+        path = self._resolve(display)
+        required = str(a.get(region_arg) or "") if region_arg else None
+        refusal = read_gate.admit_write(
+            self._session_key,
+            path,
+            operation=operation,
+            display_path=display,
+            required_text=required,
+        )
+        if refusal is None:
+            return None
+        logger.debug("read gate refused %s on %s (%s)", tool_name, path, refusal.reason)
+        return ToolResult(
+            success=False,
+            error=refusal.error,
+            recovery_hints=[refusal.hint],
+            metadata={"read_gate": refusal.reason},
+        )
+
+    def _read_gate_observe_write(
+        self, tool_name: str, a: dict[str, Any], result: ToolResult
+    ) -> None:
+        """Second half of the same one expression: a landed write IS an observation.
+
+        Also at the seam, not in the handlers — otherwise each write path would have to
+        remember to update the ledger, which is the duplication the gate exists to avoid.
+        Never raises: bookkeeping must not fail a write that already succeeded.
+        """
+        spec = _READ_GATED_WRITE_TOOLS.get(tool_name)
+        if spec is None or not result.success:
+            return
+        operation, old_arg, new_arg = spec
+        try:
+            path = self._resolve(str(a["path"]))
+            if operation == "overwrite":
+                read_gate.record_overwrite(self._session_key, path, content=str(a.get(new_arg, "")))
+            elif operation == "edit" and old_arg:
+                read_gate.record_edit(
+                    self._session_key,
+                    path,
+                    old=str(a.get(old_arg) or ""),
+                    new=str(a.get(new_arg) or ""),
+                    replace_all=bool(a.get("replace_all")),
+                )
+        except Exception:  # noqa: BLE001
+            logger.debug("read gate: post-write observation skipped", exc_info=True)
+
     async def invoke(self, tool_name: str, arguments: dict[str, Any]) -> ToolResult:
         try:
             handler = getattr(self, f"_t_{tool_name}", None)
             if handler is None:
                 return ToolResult(success=False, error=f"unknown builtin tool {tool_name!r}")
-            return await handler(arguments)
+            gated = self._read_gate_refusal(tool_name, arguments)
+            if gated is not None:
+                return gated
+            result = await handler(arguments)
+            self._read_gate_observe_write(tool_name, arguments, result)
+            return result
         except ValueError as exc:  # confinement / arg errors → surface to model
             msg = str(exc)
             hints: list[str] = []
@@ -1061,6 +1192,11 @@ class NativeBuiltinToolProvider(ToolProvider):
             if res.get("mode") in ("range", "lines")
             else "generic"
         )
+        # A projected read names tool_result_get as the way to pull the dropped slice, so
+        # a slice pulled that way HAS been observed — credit it to the file's observation
+        # (AG-14). Without this the read gate's refusal for a truncated read would name a
+        # next action that cannot succeed on a file larger than the output cap.
+        read_gate.record_retrieval(self._session_key, rid, observed_text=str(res["content"]))
         return ToolResult(
             success=True, output=f"{note}\n{res['content']}", metadata={"content_type": ctype}
         )
@@ -1098,7 +1234,8 @@ class NativeBuiltinToolProvider(ToolProvider):
         def _read() -> object:
             if not path.is_file():
                 return None
-            raw = path.read_bytes()[:cap]
+            full = path.read_bytes()
+            raw = full[:cap]
             # A NUL byte in the head means binary (image/compiled artifact/etc.) —
             # decoding it with errors='replace' would hand the model a wall of mojibake
             # it can't use and might act on as if it were source. Flag it honestly.
@@ -1106,7 +1243,15 @@ class NativeBuiltinToolProvider(ToolProvider):
             # FE file-read handler (api_file_read) so both read paths agree.
             if b"\x00" in raw[:8192]:
                 return _BINARY
-            return raw.decode("utf-8", "replace")
+            # The digest is over the FULL bytes, not the capped slice, so the read gate
+            # invalidates the observation when ANY part of the file changes — including a
+            # part this read never showed. (No extra I/O: the whole file was already
+            # read; the cap only bounds what is decoded and returned.)
+            return (
+                raw.decode("utf-8", "replace"),
+                read_gate.sha256_bytes(full),
+                len(full) <= cap,
+            )
 
         data = await asyncio.get_event_loop().run_in_executor(None, _read)
         if data is None:
@@ -1125,7 +1270,25 @@ class NativeBuiltinToolProvider(ToolProvider):
                     "This is a binary file — read_file only handles text. Use list_dir/glob to inspect it, or a bash tool if you need its bytes."  # noqa: E501
                 ],
             )
-        return _ok_capped(data, session_key=self._session_key)  # type: ignore[arg-type]
+        # (decoded text, digest of the FULL bytes, whether the byte cap left it whole) —
+        # the sentinel-vs-tuple return keeps `_read`'s signature `object`, so name the
+        # shape here rather than leaving it inferred.
+        text, sha, byte_complete = cast(tuple[str, str, bool], data)
+        res = _ok_capped(text, session_key=self._session_key)
+        # Record what the model is ACTUALLY shown (``res.output`` — the PROJECTED text),
+        # not the file's bytes. A gate keyed on "read_file was called" admits an edit to
+        # byte 5000 of a file whose bytes 1-2000 were shown; keyed on the observed text,
+        # it cannot. ``complete`` is False if EITHER truncation axis fired (the byte cap
+        # or the output projection), so an overwrite of a partly-seen file is refused.
+        read_gate.record_read(
+            self._session_key,
+            path,
+            observed_text=res.output,
+            content_sha256=sha,
+            complete=bool(byte_complete) and not res.truncated,
+            raw_ref=str((res.metadata or {}).get("raw_ref") or ""),
+        )
+        return res
 
     def _checkpoint_pre_edit(self, path: Path) -> None:
         """Phase 2 of the turn checkpoint (EXECUTION-ISOLATION §6): back up *path*'s current
@@ -1515,25 +1678,40 @@ class NativeBuiltinToolProvider(ToolProvider):
                 cwd=str(self._cwd),
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.STDOUT,
+                # Its own process group. Two reasons, both load-bearing:
+                # a stop (or a timeout) can then kill the WHOLE tree — `bash -lc` is
+                # a shell, and killing only the shell leaves its children running,
+                # holding the lock or the file handle the user pressed stop to release;
+                # and `os.killpg` is only SAFE on a child that leads its own group,
+                # since a child sharing our group would mean signalling the gateway.
+                # Implemented in C between fork and exec, so it is not the
+                # preexec_fn-in-a-threaded-process hazard.
+                start_new_session=True,
             )
-            try:
-                out, _ = await asyncio.wait_for(proc.communicate(), timeout=timeout)
-            except asyncio.TimeoutError:
-                proc.kill()
-                # Reap the killed child so it doesn't linger as a zombie (and asyncio
-                # doesn't warn about a still-pending transport) — matches the watchdog's
-                # _run_check / _commit_stage timeout handling.
+            # Track the child for the duration of the call, so a stop arriving mid-command
+            # reaps it. Unregistered on the way out (including on error), so a stop that
+            # arrives after the command finished finds nothing to kill.
+            with cancellation.track_child(proc):
                 try:
-                    await proc.wait()
-                except Exception:
-                    pass
-                return ToolResult(
-                    success=False,
-                    error=f"command timed out after {timeout:.0f}s",
-                    recovery_hints=[
-                        "The command exceeded the time limit. Narrow its scope or run it in the background."  # noqa: E501
-                    ],
-                )
+                    out, _ = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+                except asyncio.TimeoutError:
+                    # Same terminate-AND-reap path a stop uses — one kill mechanism, so
+                    # the timeout path cannot drift from the cancel path (and it now
+                    # reaps the shell's children too, which `proc.kill()` never did).
+                    await cancellation.terminate_and_reap(proc)
+                    return ToolResult(
+                        success=False,
+                        error=f"command timed out after {timeout:.0f}s",
+                        recovery_hints=[
+                            "The command exceeded the time limit. Narrow its scope or run it in the background."  # noqa: E501
+                        ],
+                    )
+                except asyncio.CancelledError:
+                    # The awaiting TASK was cancelled (a hard kill, a shutdown). The
+                    # child is not the task's to abandon: reap it before propagating,
+                    # or the command outlives the turn that started it.
+                    await cancellation.terminate_and_reap(proc)
+                    raise
         finally:
             if cleanup:
                 try:
@@ -1913,6 +2091,77 @@ class NativeBuiltinToolProvider(ToolProvider):
             )
         return ToolResult(
             success=True, output=f"updated knowledge item {item_id} ({', '.join(applied)})"
+        )
+
+    async def _t_knowledge_structural(self, a: dict) -> ToolResult:
+        """Answer a structural question by traversal. Never falls back to a similarity guess.
+
+        The output is the traversal, one hit per two lines: the item, then the exact link
+        chain that reached it. That second line is the point — the model can quote *why* an
+        item is in the answer instead of asserting a relation it inferred from proximity.
+        """
+        verb = str(a.get("verb", "")).strip()
+        if not verb:
+            return ToolResult(
+                success=False,
+                error="knowledge_structural requires 'verb'",
+                recovery_hints=[f"One of: {', '.join(self._structural_verbs())}."],
+            )
+        if verb not in self._structural_verbs():
+            return ToolResult(
+                success=False,
+                error=f"knowledge_structural: unknown verb {verb!r}",
+                recovery_hints=[f"One of: {', '.join(self._structural_verbs())}."],
+            )
+        origin = str(a.get("origin", "") or "").strip()
+        since = str(a.get("since", "") or "").strip()
+        rank_query = str(a.get("rank_query", "") or "").strip()
+        try:
+            depth = int(a.get("depth", 1) or 1)
+        except (ValueError, TypeError):
+            depth = 1
+        try:
+            limit = int(a.get("limit", 25) or 25)
+        except (ValueError, TypeError):
+            limit = 25
+
+        # Refuse the request the verb cannot answer rather than running it against an empty
+        # origin and reporting "no such relation" — an unanswerable request and a genuinely
+        # absent relation are different facts, and conflating them is the same defect as
+        # falling back to similarity.
+        needs_origin = {"links_to", "depends_on", "tag_subtree"}
+        if verb in needs_origin and not origin:
+            what = "a tag name" if verb == "tag_subtree" else "an item id"
+            return ToolResult(
+                success=False,
+                error=f"knowledge_structural: verb {verb!r} requires 'origin' ({what})",
+                recovery_hints=["Use knowledge_search to find the item id, then retry."],
+            )
+        if verb == "changed_since" and not since:
+            return ToolResult(
+                success=False,
+                error="knowledge_structural: verb 'changed_since' requires 'since' (ISO timestamp)",
+            )
+
+        def _run() -> str:
+            from personalclaw.knowledge import get_knowledge_embedder, get_knowledge_store
+            from personalclaw.knowledge.structural import StructuralRetriever, render_answer
+
+            emb = get_knowledge_embedder()
+            embed_fn = emb.embed if emb and emb.is_available() else None
+            answer = StructuralRetriever(get_knowledge_store(), embedder=embed_fn).query(
+                verb,
+                origin=origin,
+                since=since,
+                depth=depth,
+                limit=limit,
+                rank_query=rank_query,
+            )
+            return _kn_redact(render_answer(answer, limit=limit))
+
+        return _ok_capped(
+            await asyncio.get_event_loop().run_in_executor(None, _run),
+            session_key=self._session_key,
         )
 
     async def _t_knowledge_stats(self, a: dict) -> ToolResult:

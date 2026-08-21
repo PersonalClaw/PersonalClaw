@@ -618,9 +618,9 @@ class TestPageShapeHelpers:
         assert block == "" and body.startswith("---")
 
     def test_extract_edited_value_stops_at_the_generated_marker(self):
-        from personalclaw.memory_vault import _GENERATED_MARKER
+        from personalclaw.memory_vault import GENERATED_MARKER
 
-        body = f"# t\n\nmy value\n\n{_GENERATED_MARKER}\n\n**Tags:** [[tag-x]]\n"
+        body = f"# t\n\nmy value\n\n{GENERATED_MARKER}\n\n**Tags:** [[tag-x]]\n"
         assert extract_edited_value(body) == "my value"
 
     def test_extract_edited_value_is_none_without_a_heading(self):

@@ -33,7 +33,7 @@ vi.mock('../../lib/api', () => ({
     selRotate: (...a: unknown[]) => selRotate(...a),
   },
 }))
-vi.mock('../../lib/useCachedData', () => ({ invalidateCache: vi.fn() }))
+vi.mock('../../lib/data', () => ({ invalidateKeys: vi.fn() }))
 vi.mock('../../app/appSdk', () => ({ notify: vi.fn() }))
 
 const FAMILIES: AuditPage['outcome_families'] = [

@@ -28,14 +28,10 @@ from aiohttp import web
 
 from personalclaw import turn_checkpoints
 from personalclaw.dashboard.state import DashboardState
+from personalclaw.http_errors import json_error
 from personalclaw.sel import sel
 
 logger = logging.getLogger(__name__)
-
-
-def _err(code: str, message: str, status: int, **extra) -> web.Response:
-    """The shared HTTP error envelope (AGENTS.md §Shared conventions). ``code`` is stable."""
-    return web.json_response({"error": {"code": code, "message": message}, **extra}, status=status)
 
 
 def _resolve_session(request: web.Request, operation: str):
@@ -45,7 +41,7 @@ def _resolve_session(request: web.Request, operation: str):
     session = state._sessions.get(name)
     request_app = request.get("app", "")
     if not session:
-        return None, _err("not_found", f"no such session: {name}", 404)
+        return None, json_error("not_found", message=f"no such session: {name}", status=404)
     if request_app and session._app != request_app:
         sel().log_api_access(
             caller=request_app,
@@ -55,23 +51,25 @@ def _resolve_session(request: web.Request, operation: str):
             resources=f"session={name}",
             error="app does not own this session",
         )
-        return None, _err("forbidden", "app does not own this session", 403)
+        return None, json_error("forbidden", message="app does not own this session", status=403)
     return session, None
 
 
 def _turn_arg(raw: object) -> tuple[int, web.Response | None]:
     if raw is None or raw == "":
-        return 0, _err("invalid_turn", "turn is required (an integer >= 0)", 400)
+        return 0, json_error(
+            "invalid_turn", message="turn is required (an integer >= 0)", status=400
+        )
     # `True` is an int in Python; a JSON `true` for a turn number is a client bug, not
     # turn 1, so it is refused rather than coerced.
     if isinstance(raw, bool) or not isinstance(raw, (int, str)):
-        return 0, _err("invalid_turn", "turn must be an integer", 400)
+        return 0, json_error("invalid_turn", message="turn must be an integer", status=400)
     try:
         turn = int(raw)
     except (TypeError, ValueError):
-        return 0, _err("invalid_turn", "turn must be an integer", 400)
+        return 0, json_error("invalid_turn", message="turn must be an integer", status=400)
     if turn < 0:
-        return 0, _err("invalid_turn", "turn must be an integer >= 0", 400)
+        return 0, json_error("invalid_turn", message="turn must be an integer >= 0", status=400)
     return turn, None
 
 
@@ -112,7 +110,7 @@ async def api_chat_session_rewind(request: web.Request) -> web.Response:
         try:
             parsed = await request.json()
         except Exception:
-            return _err("invalid_body", "invalid JSON body", 400)
+            return json_error("invalid_body", message="invalid JSON body", status=400)
         if isinstance(parsed, dict):
             body = parsed
     turn, terr = _turn_arg(body.get("turn"))
@@ -122,15 +120,17 @@ async def api_chat_session_rewind(request: web.Request) -> web.Response:
     # Never rewind under a live turn: the agent may be mid-write, and replacing a file it
     # is about to read produces a state neither side asked for.
     if getattr(session, "running", False):
-        return _err("turn_running", "cannot rewind while a turn is running", 409)
+        return json_error(
+            "turn_running", message="cannot rewind while a turn is running", status=409
+        )
 
     turn_checkpoints.resume_incomplete_rewind(session.key)
     pv = turn_checkpoints.preview_rewind(session.key, turn)
     if body.get("confirm") is not True:
-        return _err(
+        return json_error(
             "confirmation_required",
-            "a rewind overwrites files on disk — resend with confirm: true",
-            409,
+            message="a rewind overwrites files on disk — resend with confirm: true",
+            status=409,
             preview=pv.to_dict(),
         )
 

@@ -16,7 +16,7 @@ import { SidePanel } from '../../ui/SidePanel'
 import { WorkbenchLayout } from '../../ui/WorkbenchLayout'
 import { ContextMenu, type ContextMenuItem } from '../../ui/motion'
 import { spring, expr } from '../../design/motion'
-import { useCachedData, invalidateCache } from '../../lib/useCachedData'
+import { useQuery, invalidateKeys } from '../../lib/data'
 import { api, type TaskItem, type ProjectItem, type TaskListItem, type Loop } from '../../lib/api'
 import { statusMeta, signalPriority, dueMeta, parseDueDate, TERMINAL, ListChecksLike, exitDoneCount } from './taskMeta'
 import { TaskDetail } from './TaskDetail'
@@ -88,7 +88,7 @@ export function TasksListPage({ onCreate, view: viewProp, filter, openId, setVie
 }) {
   // The list is cache-backed for instant paint on revisit (persist:false — task
   // status is live, must not be stale across a reload), but a LOCAL mirror is kept
-  // so the optimistic moveTask/patchLocal updates still apply (useCachedData has no
+  // so the optimistic moveTask/patchLocal updates still apply (useQuery has no
   // setter). The mirror hydrates from the cached data, and a post-mutation load()
   // invalidates + revalidates the cache.
   // NO `.catch(() => [])` here. It used to swallow the rejection, so `error` could never be read
@@ -96,7 +96,7 @@ export function TasksListPage({ onCreate, view: viewProp, filter, openId, setVie
   // below then presented as "No tasks" with a create-a-task CTA. Measured with `/api/tasks` at 500
   // and a cold sessionStorage: "No tasks — Break a goal into tracked work…" plus the New-task
   // button, no alert, no retry, told to a user who may have a hundred tasks.
-  const { data: cachedTasks, refresh, error: loadErr } = useCachedData('tasks', () => api.tasks().then((d) => d.tasks), { persist: false })
+  const { data: cachedTasks, refresh, error: loadErr } = useQuery('tasks', () => api.tasks().then((d) => d.tasks), { persist: false })
   const [tasks, setTasks] = useState<TaskItem[] | null>(null)
   // The configured username, so a row can say whether it's mine or someone else's.
   // Only meaningful once a shared provider actually returns other people's work, so
@@ -152,14 +152,14 @@ export function TasksListPage({ onCreate, view: viewProp, filter, openId, setVie
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [bulkBusy, setBulkBusy] = useState(false)
 
-  // 🔴 `invalidateCache('tasks')` drops exactly that key. `TaskCreatePage` reads the SAME unfiltered
+  // 🔴 `invalidateKeys('tasks')` drops exactly that key. `TaskCreatePage` reads the SAME unfiltered
   // collection under `tasks-all` for its dependency picker, with `persist: true` — so a task created
   // or deleted here left that picker's FIRST PAINT showing the old list, and because the copy is
   // persisted, a hard reload replayed the same wrong list. (Measured, not assumed: the hook
   // revalidates on every mount, so the wrong list is replaced when the refetch lands — the cost is a
   // stale paint, not a durably wrong picker.) Prefix mode covers both keys, and any later reader of
   // the same collection that follows the `tasks*` naming.
-  const load = () => { invalidateCache('tasks', true); refresh() }
+  const load = () => { invalidateKeys('tasks', true); refresh() }
   const toggleSelect = (id: string) => setSelected((prev) => {
     const next = new Set(prev); next.has(id) ? next.delete(id) : next.add(id); return next
   })
@@ -411,7 +411,7 @@ export function TasksListPage({ onCreate, view: viewProp, filter, openId, setVie
             {/* Error FIRST: `tasks === null` also satisfies the skeleton and the empty branch, so a
                 later test would be unreachable. Removing the swallow above is only half the fix —
                 without this branch a failed load would hang on the skeleton forever instead. */}
-            {tasks === null && loadErr ? <LoadError what="tasks" error={loadErr} onRetry={() => { invalidateCache('tasks', true); refresh() }} />
+            {tasks === null && loadErr ? <LoadError what="tasks" error={loadErr} onRetry={() => { invalidateKeys('tasks', true); refresh() }} />
               : filtered === null ? <ListSkeleton rows={6} what="tasks" /> : (tasks?.length ?? 0) === 0 ? (
               <EmptyState icon={ListChecksLike} title="No tasks" hint="Break a goal into tracked work. Create a task, or let an agent plan from a chat." action={{ label: 'New task', onClick: onCreate, icon: Plus }} />
             ) : scopedTasks.length === 0 ? (
@@ -439,7 +439,7 @@ export function TasksListPage({ onCreate, view: viewProp, filter, openId, setVie
                 onPick={(l) => setListFilter(listFilter?.id === l.id ? null : { id: l.id, name: l.name })}
                 onReset={resetList} />
             )}
-            {tasks === null && loadErr ? <LoadError what="tasks" error={loadErr} onRetry={() => { invalidateCache('tasks', true); refresh() }} />
+            {tasks === null && loadErr ? <LoadError what="tasks" error={loadErr} onRetry={() => { invalidateKeys('tasks', true); refresh() }} />
               : filtered === null ? <ListSkeleton rows={6} what="tasks" /> : (tasks?.length ?? 0) === 0 ? (
               <EmptyState icon={ListChecksLike} title="No tasks" hint="Break a goal into tracked work. Create a task, or let an agent plan from a chat." action={{ label: 'New task', onClick: onCreate, icon: Plus }} />
             ) : view === 'dag' ? (

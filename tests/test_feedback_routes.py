@@ -1,6 +1,6 @@
 """The /api/feedback route surface.
 
-The envelope on errors, the kill-switch 404, and the app-namespace forcing
+The shared error envelope, the kill-switch 404, and the app-namespace forcing
 (an app-scoped token can never impersonate a core producer).
 """
 

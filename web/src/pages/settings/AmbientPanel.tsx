@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { api } from '../../lib/api'
 import { notify } from '../../app/appSdk'
-import { useCachedData } from '../../lib/useCachedData'
+import { useQuery } from '../../lib/data'
 import { PanelHeader, Section, ToggleRow, NumberRow } from './settingsUI'
 import { FormSkeleton, LoadError } from '../../ui/ListScaffold'
 
@@ -18,7 +18,7 @@ type AmbientCfg = Record<string, unknown>
 export function AmbientPanel() {
   const [cfg, setCfg] = useState<AmbientCfg | null>(null)
 
-  const { data, error: loadErr, refresh } = useCachedData('settings:ambient', () =>
+  const { data, error: loadErr, refresh } = useQuery('settings:ambient', () =>
     api.personalclawConfig().then((c) => (c.ambient ?? {}) as AmbientCfg),
     { persist: true },
   )

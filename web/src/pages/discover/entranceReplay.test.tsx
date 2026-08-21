@@ -10,7 +10,7 @@ import { DiscoverPage } from './DiscoverPage'
 // is a group placed under a data-dependent branch, which the primitive can never notice
 // because it is the SURFACE that chooses the placement. On a data surface the regions ARE the
 // data (Discover's areas), so the group sits on the loaded column — and the only thing
-// stopping every dismiss from re-running the whole cascade is that `useCachedData` HOLDS the
+// stopping every dismiss from re-running the whole cascade is that `useQuery` HOLDS the
 // last value on a same-key revalidation instead of dropping back to `undefined`.
 //
 // That is a property of a collaborator, not of this file, so it is asserted here against the

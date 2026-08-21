@@ -22,6 +22,7 @@ from aiohttp.test_utils import TestClient, TestServer
 from personalclaw.auth import credentials as creds
 from personalclaw.dashboard import token_auth
 from personalclaw.dashboard.handlers import auth as auth_h
+from personalclaw.http_errors import HTTP_ERROR_CODES
 
 GOOD_PASSWORD = "correct-horse-battery-staple"
 PORT = 10000
@@ -148,7 +149,14 @@ async def test_bad_credentials_all_return_the_same_code(_isolated, username, pas
             "/api/auth/login", json={"username": username, "password": password}
         )
         assert resp.status == 401
-        assert await resp.json() == {"error": "auth_invalid_credentials"}
+        assert await resp.json() == {
+            "error": {
+                "code": "auth_invalid_credentials",
+                # The message comes from the REGISTRY, never from the request — that is
+                # what makes every rejection byte-identical and unusable to enumerate.
+                "message": HTTP_ERROR_CODES["auth_invalid_credentials"],
+            }
+        }
         assert f"pc_token_{PORT}" not in resp.cookies
 
 
@@ -160,7 +168,7 @@ async def test_login_refused_when_not_enabled(_isolated) -> None:
             "/api/auth/login", json={"username": "jordan", "password": GOOD_PASSWORD}
         )
         assert resp.status == 403
-        assert (await resp.json())["error"] == "auth_not_enabled"
+        assert (await resp.json())["error"]["code"] == "auth_not_enabled"
 
 
 @pytest.mark.asyncio
@@ -172,7 +180,7 @@ async def test_login_refused_when_no_credential_is_configured(_isolated) -> None
             "/api/auth/login", json={"username": "jordan", "password": GOOD_PASSWORD}
         )
         assert resp.status == 401
-        assert (await resp.json())["error"] == "auth_invalid_credentials"
+        assert (await resp.json())["error"]["code"] == "auth_invalid_credentials"
 
 
 @pytest.mark.asyncio
@@ -233,7 +241,7 @@ async def test_lockout_after_the_threshold_with_retry_after(_isolated) -> None:
             "/api/auth/login", json={"username": "jordan", "password": "nope-nope-nope"}
         )
         assert resp.status == 429
-        assert (await resp.json())["error"] == "auth_locked_out"
+        assert (await resp.json())["error"]["code"] == "auth_locked_out"
         assert int(resp.headers["Retry-After"]) > 0
 
 
@@ -335,7 +343,7 @@ async def test_totp_required_but_missing_returns_its_own_code(_isolated, monkeyp
             "/api/auth/login", json={"username": "jordan", "password": GOOD_PASSWORD}
         )
         assert resp.status == 401
-        assert (await resp.json())["error"] == "auth_totp_required"
+        assert (await resp.json())["error"]["code"] == "auth_totp_required"
         assert f"pc_token_{PORT}" not in resp.cookies
 
 
@@ -381,7 +389,7 @@ async def test_a_wrong_totp_code_is_refused_and_counted(_isolated, monkeypatch) 
                 json={"username": "jordan", "password": GOOD_PASSWORD, "totp": "000000"},
             )
             assert resp.status == 401
-            assert (await resp.json())["error"] == "auth_invalid_credentials"
+            assert (await resp.json())["error"]["code"] == "auth_invalid_credentials"
         # A wrong code counts toward lockout — otherwise the second factor is brute-forceable.
         resp = await client.post(
             "/api/auth/login",
@@ -401,7 +409,7 @@ async def test_totp_required_with_no_secret_enrolled_refuses(_isolated, monkeypa
             "/api/auth/login", json={"username": "jordan", "password": GOOD_PASSWORD}
         )
         assert resp.status == 401
-        assert (await resp.json())["error"] == "auth_totp_required"
+        assert (await resp.json())["error"]["code"] == "auth_totp_required"
 
 
 # ── Logout revokes ────────────────────────────────────────────────────────

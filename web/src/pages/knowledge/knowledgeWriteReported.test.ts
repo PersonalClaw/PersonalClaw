@@ -8,7 +8,7 @@ import { join } from 'node:path'
 // DATA-DRIVEN — nothing flips locally; the row re-renders from a refetch:
 //
 //     await api.setKnowledgeReadState(it.id, next).catch(() => {})   // swallowed
-//     invalidateCache(itemsKey)
+//     invalidateKeys(itemsKey)
 //     refreshItems()                                                // ran REGARDLESS
 //
 // So a failure left **nothing**: the shelf did not gain the item, the read-state pill did not move,
@@ -83,7 +83,7 @@ describe('a failed knowledge write says so, and does not refetch', () => {
       const after = CODE.slice(m.index!, m.index! + 420)
       expect(after, 'the outcome must gate what follows').toMatch(/if \(!ok\) return/)
       const guard = after.indexOf('if (!ok) return')
-      const refresh = after.search(/invalidateCache\(|refreshItems\(|refreshCollections\(/)
+      const refresh = after.search(/invalidateKeys\(|refreshItems\(|refreshCollections\(/)
       expect(refresh, 'the write is followed by a refetch').toBeGreaterThan(-1)
       expect(guard, 'and the guard comes BEFORE it').toBeLessThan(refresh)
     }

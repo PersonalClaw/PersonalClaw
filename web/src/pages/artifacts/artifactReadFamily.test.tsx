@@ -8,7 +8,7 @@ import { join } from 'node:path'
 // `api.artifacts()` is read from four places, and each had invented its own way to lose the failure.
 // The canonical reader already existed, which is what makes this convergence rather than design:
 //
-//   pages/ChatPage.tsx                    useCachedData + `error: artifactsError`   ✅ canonical
+//   pages/ChatPage.tsx                    useQuery + `error: artifactsError`   ✅ canonical
 //   pages/artifacts/ArtifactsSection.tsx  try/catch { setArtifacts([]) }            🔴 the library
 //   pages/dashboard/…/PinnedArtifacts.tsx .catch(() => [])                          🔴 every pin
 //   pages/files/FilesSection.tsx          try/catch { setArtifacts([]) }            🔴 the markers

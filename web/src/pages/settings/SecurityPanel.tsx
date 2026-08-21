@@ -10,7 +10,7 @@ import {
 } from '../../lib/api'
 import { requestDesktopCapability } from '../../lib/desktopBridge'
 import { Button } from '../../ui/Button'
-import { useCachedData } from '../../lib/useCachedData'
+import { useQuery } from '../../lib/data'
 import { PanelHeader, Section } from './settingsUI'
 import { CardGridSkeleton, LoadError } from '../../ui/ListScaffold'
 import { fvs } from '../../design/fontWeight'
@@ -27,10 +27,10 @@ import { fvs } from '../../design/fontWeight'
 export function SecurityPanel() {
   // Posture stats change slowly — persist so a revisit (and a full reload) paints
   // instantly from cache and revalidates in the background.
-  const { data: s, error: loadErr, refresh: refreshStats } = useCachedData(
+  const { data: s, error: loadErr, refresh: refreshStats } = useQuery(
     'settings:security', () => api.securityStats(), { persist: true },
   )
-  const { data: denied, error: deniedErr, refresh: refreshDenied } = useCachedData(
+  const { data: denied, error: deniedErr, refresh: refreshDenied } = useQuery(
     'settings:denied-commands', () => api.deniedCommands(), { persist: true },
   )
   // Adding/removing a user pattern changes the denied-commands COUNT too —
@@ -122,7 +122,7 @@ const GRANT_PRESENTATION: Record<DesktopCapabilityWire['granted'], { label: stri
  *  notification authorization) the row states where to grant it instead of offering a
  *  control that would do nothing. */
 function DesktopCapabilitiesPanel() {
-  const { data: ds, refresh } = useCachedData(
+  const { data: ds, refresh } = useQuery(
     'settings:desktop-state', () => api.desktopState().catch(() => null),
   )
   const [busyCap, setBusyCap] = useState('')
@@ -203,7 +203,7 @@ function DesktopCapabilitiesPanel() {
  *  THEIR network here (a homelab LAN service) without weakening the default. A deny wins
  *  over an allow. */
 function EgressPolicyEditor() {
-  const { data: eg, refresh } = useCachedData(
+  const { data: eg, refresh } = useQuery(
     'settings:egress', () => api.securityEgress().catch(() => null), { persist: true },
   )
   const [busy, setBusy] = useState(false)

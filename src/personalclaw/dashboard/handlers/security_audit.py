@@ -22,6 +22,7 @@ import re
 
 from aiohttp import web
 
+from personalclaw.http_errors import json_error
 from personalclaw.sel import (
     _VERIFY_WINDOW,
     AUDIT_FILTER_FIELDS,
@@ -58,11 +59,6 @@ _DATE_ONLY = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 _ISO_PREFIX = re.compile(r"^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}")
 
 
-def _err(code: str, message: str, status: int = 400) -> web.Response:
-    """The §"Shared conventions" error envelope. ``code`` is append-only — never reworded."""
-    return web.json_response({"error": {"code": code, "message": message}}, status=status)
-
-
 def _refuse_app(request: web.Request) -> web.Response | None:
     """Refuse an app-scoped token, or ``None`` when the caller is the owner.
 
@@ -96,9 +92,9 @@ def _refuse_app(request: web.Request) -> web.Response | None:
         )
     except Exception:
         pass
-    return _err(
+    return json_error(
         "audit_owner_only",
-        "the security audit trail is readable by the owner only, not by an app",
+        message="the security audit trail is readable by the owner only, not by an app",
         status=403,
     )
 
@@ -128,15 +124,25 @@ async def api_security_audit(request: web.Request) -> web.Response:
     if unknown:
         # Fail closed. A typo'd filter that is ignored returns the WHOLE log while the
         # caller believes it was narrowed.
-        return _err("unknown_filter", f"unsupported query parameter(s): {', '.join(unknown)}")
+        return json_error(
+            "unknown_filter",
+            message=f"unsupported query parameter(s): {', '.join(unknown)}",
+            status=400,
+        )
 
     raw_limit = request.query.get("limit", str(_DEFAULT_LIMIT))
     try:
         limit = int(raw_limit)
     except (TypeError, ValueError):
-        return _err("invalid_limit", f"limit must be an integer, got {raw_limit!r}")
+        return json_error(
+            "invalid_limit", message=f"limit must be an integer, got {raw_limit!r}", status=400
+        )
     if not 1 <= limit <= _MAX_LIMIT:
-        return _err("invalid_limit", f"limit must be between 1 and {_MAX_LIMIT}, got {limit}")
+        return json_error(
+            "invalid_limit",
+            message=f"limit must be between 1 and {_MAX_LIMIT}, got {limit}",
+            status=400,
+        )
 
     bounds: dict[str, str] = {}
     for name, end_of_day in (("since", False), ("until", True)):
@@ -145,8 +151,10 @@ async def api_security_audit(request: web.Request) -> web.Response:
             continue
         normalized = _time_bound(raw, end_of_day=end_of_day)
         if normalized is None:
-            return _err(
-                "invalid_time_filter", f"{name} must be YYYY-MM-DD or ISO-8601, got {raw!r}"
+            return json_error(
+                "invalid_time_filter",
+                message=f"{name} must be YYYY-MM-DD or ISO-8601, got {raw!r}",
+                status=400,
             )
         bounds[name] = normalized
 
@@ -166,7 +174,11 @@ async def api_security_audit(request: web.Request) -> web.Response:
     if not page["cursor_found"]:
         # The anchor aged out of the log. Refuse rather than restart from the newest
         # record, which would silently re-serve the whole trail as a fresh page.
-        return _err("invalid_cursor", "cursor is no longer in the log; restart from the first page")
+        return json_error(
+            "invalid_cursor",
+            message="cursor is no longer in the log; restart from the first page",
+            status=400,
+        )
 
     return web.json_response(
         {

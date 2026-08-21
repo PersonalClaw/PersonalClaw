@@ -480,6 +480,27 @@ def _turn_numbers(session_key: str) -> list[int]:
     return sorted(out)
 
 
+def recorded_file_entries(session_key: str, *, max_turns: int = 20) -> list[dict]:
+    """This session's recorded pre-edit file entries, oldest turn first (CE2-10).
+
+    A read-only projection of the turn manifests, exposed because the resume account needs the one
+    fact only this store holds: which files this session's own turns were about to mutate, and
+    whether each ALREADY EXISTED at that moment. Bounded to the newest ``max_turns`` manifests —
+    a months-old session must not make a resume walk its whole store.
+
+    Each entry is the manifest's own dict (``path``, ``existed``, ``skipped``, ``sha256``, …),
+    returned unchanged rather than reshaped: the account derives from recorded facts, and a
+    reshaping pass here would be the first place to quietly reinterpret one.
+    """
+    out: list[dict] = []
+    for t in _turn_numbers(session_key)[-max(1, max_turns) :]:
+        man = _read_json(_turn_dir(session_key, t) / "manifest.json", {})
+        for f in man.get("files") or []:
+            if isinstance(f, dict) and f.get("path"):
+                out.append({**f, "turn": t})
+    return out
+
+
 def store_bytes(session_key: str) -> int:
     """Total blob bytes held for *session_key* (the quantity the cap bounds)."""
     bd = _blob_dir(session_key)

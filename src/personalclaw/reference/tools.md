@@ -1071,6 +1071,41 @@ Get an overview of the knowledge library for gap detection: total item count, a 
 {}
 ```
 
+### `knowledge_structural`
+
+Ask a STRUCTURAL question about the knowledge library and get the answer by traversing stored links — not by semantic similarity. Use this instead of knowledge_search whenever the question is about relations rather than topic; a similarity search answers 'what links to this' only by accident. Args: verb (str, required) — one of 'links_to' (what points AT an item: typed relations + citations), 'depends_on' (the outbound dependency chain), 'tag_subtree' (everything under a tag and its child tags), 'changed_since' (what was updated after a timestamp), 'contradictions' (items recorded as contradicting each other); origin (str) — item id for links_to/depends_on, tag name for tag_subtree, optional item id to scope contradictions; since (str, ISO timestamp) for changed_since; depth (int, default 1, max 6) — how many hops to follow; limit (int, default 25); rank_query (str, optional) — orders the structural result by closeness to this text WITHOUT changing which items are in it. Every result carries the exact link path that reached it, so you can cite why. An empty answer states which relation is missing; it never silently degrades to a similarity guess.
+
+**Response type:** `knowledge.structural.results`
+
+**Parameters:**
+- `depth` (integer, optional)
+- `limit` (integer, optional)
+- `origin` (string, optional)
+- `rank_query` (string, optional)
+- `since` (string, optional)
+- `verb` (string, required)
+
+**Example — What links to this item (traversal, not similarity):**
+
+```json
+{
+  "depth": 2,
+  "origin": "kn_abc123",
+  "verb": "links_to"
+}
+```
+
+**Example — Everything under a tag subtree, ranked semantically within it:**
+
+```json
+{
+  "depth": 3,
+  "origin": "infrastructure",
+  "rank_query": "rollback procedure",
+  "verb": "tag_subtree"
+}
+```
+
 ### `knowledge_update`
 
 Update an existing knowledge item and re-enrich it. Args: id (str, required), and any of title (str), content (str), tags (list of str), url (str), gist_language (str — only for gist items; sets the code language for syntax highlighting), is_pinned (bool), is_archived (bool). Editing content/url re-runs extraction.

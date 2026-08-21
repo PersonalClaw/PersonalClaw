@@ -41,6 +41,7 @@ ecosystem, which is the point.
 | `always` | no | `true` loads the skill on every turn, bypassing trigger matching. |
 | `status` | no | `active` (default) or a lifecycle value the curator sets. |
 | `resources` | no | Files beside `SKILL.md` an agent may load on demand. See below. |
+| `context_tier` | no | `light` / `standard` (default) / `heavy` — how much prompt this skill may spend. See below. |
 
 Unknown fields are read and kept, not rejected — a foreign harness's extra
 frontmatter is preserved rather than treated as an error, though PersonalClaw
@@ -120,6 +121,36 @@ because a resource that violates one fails visibly rather than silently:
   the ordinary command path's job, with the screening that path applies.
 - Resource content is treated as untrusted data (it is third-party authored), so
   it arrives fenced: the model reads it, it does not obey it.
+
+### `context_tier` — what this skill may spend
+
+A loaded skill competes for the prompt with everything else in it, on one budget.
+`context_tier` is how a skill **declares** its share:
+
+| Tier | Per-skill ceiling | For |
+|---|---|---|
+| `light` | 1,000 tokens | A skill that states one rule or one output format. |
+| `standard` | 3,000 tokens | The default. Clears 16 of the 17 skills PersonalClaw ships. |
+| `heavy` | 8,000 tokens | Nearly twice the largest bundled skill. Spend this only by saying so. |
+
+All the skills in one turn additionally share a **16,000-token aggregate**, so no
+combination of skills can take the window from the conversation.
+
+**Over its ceiling, a skill loads REDUCED — never truncated.** What goes into the
+prompt is the skill's own `description` and its declared `resources:` entry points,
+complete, plus the call that loads the full body (`skill_invoke{name}`). A body cut
+at a byte boundary is worse than a shorter complete one: the reader cannot tell it
+is half, and half a procedure fails at step four.
+
+**A skill that declares neither a `description` nor `resources:` is refused, not
+reduced** — there is nothing to reduce *to*, and manufacturing a summary from the
+first N characters of the body is the byte-boundary cut this rule exists to avoid.
+What loads instead is a one-line pointer naming the skill and the tool that loads
+it. So a long skill should always carry a `description`.
+
+Every reduction and refusal is reported in the turn — naming which skill and why —
+so "my skill did not take effect" has an answer. An omitted or unrecognized
+`context_tier` is treated as `standard`: a typo reduces nothing.
 
 ## Interoperability
 

@@ -16,9 +16,13 @@ Method names fall into two strata:
   notifications. These are properly-namespaced JSON-RPC extensions
   that ACP-compliant agents may opt in to. The client treats them as
   optional: extension notifications from agents that don't speak them
-  simply never arrive; requests sent to such agents fail gracefully
-  (timeout or JSON-RPC error). Keeping them here lets the same client
-  code drive both vendor-neutral agents and vendor-extended ones.
+  simply never arrive. Extension *requests* are NOT graceful, though —
+  an agent that doesn't implement one answers JSON-RPC ``-32601`` on the
+  turn's terminal frame, which fails the whole turn (`O23`). So every
+  extension request is gated on a declared capability (``CAP_*`` below)
+  and the caller degrades to a core-ACP path instead. Keeping them here
+  lets the same client code drive both vendor-neutral agents and
+  vendor-extended ones.
 """
 
 from dataclasses import dataclass, field
@@ -59,6 +63,19 @@ METHOD_COMPACTION_STATUS = "_vendor.dev/compaction/status"
 METHOD_CLEAR_STATUS = "_vendor.dev/clear/status"
 METHOD_AGENT_SWITCHED = "_vendor.dev/agent/switched"
 
+# ── Agent capability keys (``initialize`` → ``agentCapabilities``) ──
+#
+# ``CAP_COMMANDS`` gates :data:`METHOD_COMMANDS_EXECUTE`. It is an ALLOWLIST: absent means
+# "do not send", never "try and see". That direction is measured, not assumed — the
+# claude-code adapter 0.60.0 advertises exactly
+# ``_meta, auth, loadSession, mcpCapabilities, promptCapabilities, providers,
+# sessionCapabilities`` and answers ``commands/execute`` with JSON-RPC ``-32601``, which
+# ends the whole turn (ACP-AGENT-PARITY `O23`/`G4`). The module docstring above used to
+# claim such requests "fail gracefully"; they do not, so the client refuses to send one
+# an agent never claimed to understand and the caller substitutes a plain prompt.
+CAP_COMMANDS = "_vendor.dev/commands"
+CAP_LOAD_SESSION = "loadSession"
+
 # ── ACP Session Update Types ──
 
 UPDATE_AGENT_MESSAGE_CHUNK = "agent_message_chunk"
@@ -79,6 +96,23 @@ OPTION_ALLOW_ALWAYS = "allow_always"
 
 STOP_REASON_CANCELLED = "cancelled"
 STOP_REASON_END_TURN = "end_turn"
+# The user pressed stop. A member of the cancelled FAMILY — every consumer
+# that treats a turn as "not an error, not a completion" must accept it — but a
+# distinct VALUE, because "you stopped this" and "we gave up on this" (a circuit
+# breaker, a watchdog, a shutdown → STOP_REASON_CANCELLED) are different facts about a
+# turn. One vocabulary, one membership test below; no consumer re-derives the set.
+STOP_REASON_STOPPED_BY_USER = "stopped_by_user"
+
+# Every stop reason that means "the turn was cut short deliberately". Neither an error
+# nor a normal completion, so a consumer must not warn on it, retry it, or count it as
+# an empty answer.
+CANCELLED_STOP_REASONS = (STOP_REASON_CANCELLED, STOP_REASON_STOPPED_BY_USER)
+
+
+def is_cancelled_stop(reason: str | None) -> bool:
+    """True when *reason* belongs to the cancelled family (see above)."""
+    return reason in CANCELLED_STOP_REASONS
+
 
 # ── Approval Modes ──
 
@@ -131,7 +165,10 @@ class AcpEvent:
     title: str = ""
     tool_kind: str = ""
     tool_purpose: str = ""
-    context_usage_pct: float = 0.0
+    #: Context-window usage the BACKEND reported, or ``None`` when it reported
+    #: nothing. Never a stand-in zero: a fabricated 0% is worse than an absent
+    #: chip, because the UI then states a number the backend never supplied.
+    context_usage_pct: float | None = None
     stop_reason: str = ""
     request_id: str | int = ""
     options: list[dict[str, str]] = field(default_factory=list)
@@ -160,4 +197,7 @@ class AcpPromptStats:
     event_count: int = 0
     text_chunks: int = 0
     tool_calls: list[tuple[str, str]] = field(default_factory=list)
-    context_pct: float = 0.0
+    #: ``None`` until a metadata frame actually carries ``contextUsagePercentage``.
+    #: An adapter that never sends one leaves this unknown for the whole session;
+    #: 0.0 means a MEASURED empty context, which is a different answer.
+    context_pct: float | None = None

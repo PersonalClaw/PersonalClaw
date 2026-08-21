@@ -48,6 +48,7 @@ from personalclaw.config.loader import config_dir
 from personalclaw.dashboard.chat_utils import _history_key_for, apply_task_mode
 from personalclaw.dashboard.state import DashboardState, _ChatSession
 from personalclaw.history import _safe_key
+from personalclaw.http_errors import json_error
 from personalclaw.planning import session as PS
 from personalclaw.planning.session import PlanSession, PlanStep, StepStatus
 from personalclaw.sel import sel
@@ -60,12 +61,6 @@ logger = logging.getLogger(__name__)
 PLAN_STEP_KIND = "chat_plan"
 
 _DIR_NAME = "chat_plans"
-
-
-def _err(code: str, message: str, status: int) -> web.Response:
-    """The structured error envelope required of new routes (AGENTS.md §Shared
-    conventions). ``code`` is append-only and never reworded once shipped."""
-    return web.json_response({"error": {"code": code, "message": message}}, status=status)
 
 
 # ── persistence (chat-owned sidecar for the shared PlanSession) ──
@@ -249,9 +244,9 @@ async def _body(request: web.Request) -> dict | web.Response:
     try:
         data = await request.json()
     except Exception:  # noqa: BLE001
-        return _err("invalid_json", "Request body must be JSON", 400)
+        return json_error("invalid_json", message="Request body must be JSON", status=400)
     if not isinstance(data, dict):
-        return _err("invalid_json", "JSON body must be an object", 400)
+        return json_error("invalid_json", message="JSON body must be an object", status=400)
     return data
 
 
@@ -260,7 +255,7 @@ def _resolve(request: web.Request) -> tuple[DashboardState, _ChatSession] | web.
     name = request.match_info["session"]
     chat = state._sessions.get(name)
     if chat is None:
-        return _err("session_not_found", "No such chat session", 404)
+        return json_error("session_not_found", message="No such chat session", status=404)
     return state, chat
 
 
@@ -344,14 +339,18 @@ async def api_chat_plan_edit(request: web.Request) -> web.Response:
         return body
     step_id = str(body.get("step_id", "")).strip()
     if not step_id:
-        return _err("step_id_required", "step_id is required", 400)
+        return json_error("step_id_required", message="step_id is required", status=400)
     if "markdown" not in body:
-        return _err("markdown_required", "markdown is required", 400)
+        return json_error("markdown_required", message="markdown is required", status=400)
     sess, binding = read(chat.key)
     if sess is None:
-        return _err("plan_session_missing", "This chat has no plan session", 404)
+        return json_error(
+            "plan_session_missing", message="This chat has no plan session", status=404
+        )
     if not PS.edit_artifact(sess, step_id, str(body["markdown"])):
-        return _err("step_not_awaiting_review", "That step is not awaiting review", 409)
+        return json_error(
+            "step_not_awaiting_review", message="That step is not awaiting review", status=409
+        )
     write(sess, binding)
     return web.json_response({"ok": True, "session": sess.to_dict()})
 
@@ -371,15 +370,19 @@ async def api_chat_plan_comment(request: web.Request) -> web.Response:
         return body
     step_id = str(body.get("step_id", "")).strip()
     if not step_id:
-        return _err("step_id_required", "step_id is required", 400)
+        return json_error("step_id_required", message="step_id is required", status=400)
     text = str(body.get("text", "")).strip()
     if not text:
-        return _err("comment_text_required", "Comment text is required", 400)
+        return json_error("comment_text_required", message="Comment text is required", status=400)
     sess, binding = read(chat.key)
     if sess is None:
-        return _err("plan_session_missing", "This chat has no plan session", 404)
+        return json_error(
+            "plan_session_missing", message="This chat has no plan session", status=404
+        )
     if not PS.comment_step(sess, step_id, text, at=time.time()):
-        return _err("step_not_awaiting_review", "That step is not awaiting review", 409)
+        return json_error(
+            "step_not_awaiting_review", message="That step is not awaiting review", status=409
+        )
     write(sess, binding)
     _dispatch(state, chat, f"Revise the plan with this feedback:\n\n{text}")
     return web.json_response({"ok": True, "session": sess.to_dict()})
@@ -402,12 +405,16 @@ async def api_chat_plan_approve(request: web.Request) -> web.Response:
         return body
     step_id = str(body.get("step_id", "")).strip()
     if not step_id:
-        return _err("step_id_required", "step_id is required", 400)
+        return json_error("step_id_required", message="step_id is required", status=400)
     sess, binding = read(chat.key)
     if sess is None:
-        return _err("plan_session_missing", "This chat has no plan session", 404)
+        return json_error(
+            "plan_session_missing", message="This chat has no plan session", status=404
+        )
     if not PS.approve_step(sess, step_id):
-        return _err("step_not_awaiting_review", "That step is not awaiting review", 409)
+        return json_error(
+            "step_not_awaiting_review", message="That step is not awaiting review", status=409
+        )
     approved = next((s for s in sess.steps if s.id == step_id), None)
     markdown = str((approved.artifact or {}).get("markdown", "")) if approved else ""
     complete = PS.is_complete(sess)

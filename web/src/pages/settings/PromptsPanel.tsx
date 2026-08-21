@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { api, type PromptBinding, type PromptItem, type PromptBindings } from '../../lib/api'
-import { useCachedData } from '../../lib/useCachedData'
+import { useQuery } from '../../lib/data'
 import { PanelHeader, Section } from './settingsUI'
 import { ListSkeleton } from '../../ui/ListScaffold'
 
@@ -21,7 +21,7 @@ import { ListSkeleton } from '../../ui/ListScaffold'
  *  `category`, whose docstring says it "groups it for the Settings UI" — and the UI
  *  had simply never been sent it. */
 export function PromptsPanel() {
-  const { data, refresh } = useCachedData<PromptBindings | null>(
+  const { data, refresh } = useQuery<PromptBindings | null>(
     'settings:prompt-bindings', () => api.promptBindings().catch(() => null), { persist: true },
   )
   const [saving, setSaving] = useState('')

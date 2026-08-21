@@ -167,7 +167,7 @@ class TestCrud:
         async with TestClient(TestServer(_app(home, tmp_path, monkeypatch))) as client:
             r = await client.get("/api/voice/profiles/vp-deadbeef")
             assert r.status == 404
-            assert (await r.json())["reason"] == "not_found"
+            assert (await r.json())["error"]["code"] == "not_found"
 
 
 # ── rail 1: verified_own_voice is recomputed, never believed ────────────────
@@ -312,7 +312,7 @@ class TestConsentRevocationBlocks:
             # Unverified clone: the bytes do not leave the store.
             r = await client.get(f"/api/voice/profiles/{profile.id}/audio")
             assert r.status == 403
-            assert (await r.json())["reason"] == "consent_required"
+            assert (await r.json())["error"]["code"] == "consent_required"
 
             r = await client.post(
                 f"/api/voice/profiles/{profile.id}/consent",
@@ -326,7 +326,7 @@ class TestConsentRevocationBlocks:
             assert (await r.json())["verified_own_voice"] is False
             r = await client.get(f"/api/voice/profiles/{profile.id}/audio")
             assert r.status == 403
-            assert (await r.json())["reason"] == "consent_required"
+            assert (await r.json())["error"]["code"] == "consent_required"
 
         assert not vp.artifact_path(profile.id, "consent.wav").exists()
         ops = [c["operation"] for c in sel_recorder.calls]

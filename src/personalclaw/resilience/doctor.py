@@ -1036,6 +1036,93 @@ async def _probe_credential_backend(_ctx: DoctorContext) -> ProbeResult:
     )
 
 
+async def _probe_knowledge_vault(ctx: DoctorContext) -> ProbeResult:
+    """knowledge — is any markdown projection waiting on the OWNER? (KL-20)
+
+    The projection is two-way, so it has exactly two states only a human can clear: a page
+    that changed HERE and in the app since the last sync (nothing was written on either side,
+    the file is untouched) and a page the owner deleted while its item is still in the library
+    (never re-created, never silently resurrected). Both are recorded in
+    ``vault_projections``; this is the surface that makes them visible instead of a row in a
+    table nobody reads.
+
+    **Reports degraded, not failed.** A conflict is the projection working as designed — the
+    alternative to surfacing it is resolving it silently toward the database, which is the one
+    outcome the atom forbids. Failing the capability would make correct behaviour look like an
+    outage, and Doctor's own doctrine is that a tier-3 row never justifies a restart.
+
+    Read-only: opens ``knowledge.db`` with ``mode=ro`` and ``create=False``, so a health check
+    on an install that has never used knowledge creates nothing and reports "no projection".
+    """
+    from personalclaw.knowledge.store import knowledge_db_path
+    from personalclaw.sqlite_compat import sqlite3 as store_sqlite3
+
+    db_path = knowledge_db_path(ctx.home, create=False)
+
+    def _read() -> dict[str, Any]:
+        ev: dict[str, Any] = {"db_present": db_path.exists()}
+        if not db_path.exists():
+            return ev
+        conn = store_sqlite3.connect(f"file:{db_path}?mode=ro", uri=True, timeout=2.0)
+        try:
+            has = conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='vault_projections'"
+            ).fetchone()
+            if not has:
+                # The table is created by the store's schema block, so its absence means this
+                # install has never opened the knowledge store — not that the projection broke.
+                ev["projected"] = 0
+                return ev
+            row = conn.execute(
+                "SELECT COUNT(*) AS n, "
+                "SUM(CASE WHEN COALESCE(conflict,'') != '' THEN 1 ELSE 0 END) AS conflicts, "
+                "SUM(CASE WHEN COALESCE(owner_deleted,0) != 0 THEN 1 ELSE 0 END) AS deleted "
+                "FROM vault_projections"
+            ).fetchone()
+            ev["projected"] = int(row[0] or 0)
+            ev["conflicts"] = int(row[1] or 0)
+            ev["owner_deleted"] = int(row[2] or 0)
+            ev["pages"] = [
+                str(r[0] or r[1] or "")
+                for r in conn.execute(
+                    "SELECT relpath, item_id FROM vault_projections "
+                    "WHERE COALESCE(conflict,'') != '' OR COALESCE(owner_deleted,0) != 0 "
+                    "ORDER BY item_id LIMIT 20"
+                ).fetchall()
+            ]
+        finally:
+            conn.close()
+        return ev
+
+    try:
+        ev = await asyncio.to_thread(_read)
+    except Exception as exc:  # noqa: BLE001 — a probe must never raise
+        return ProbeResult(ok=False, detail=f"knowledge vault probe failed: {exc}", evidence={})
+
+    waiting = int(ev.get("conflicts") or 0) + int(ev.get("owner_deleted") or 0)
+    if not ev.get("db_present") or not ev.get("projected"):
+        return ProbeResult(ok=True, detail="no markdown projection on disk", evidence=ev)
+    if waiting:
+        ev["degraded"] = True
+        ev["remedy"] = (
+            "Open each page listed under `pages` in the vault: resolve the text you want, "
+            "then delete the `sync_conflict:` line from its frontmatter. A page you meant to "
+            "remove is removed by deleting its item in the app."
+        )
+        return ProbeResult(
+            ok=True,
+            detail=(
+                f"{ev.get('projected')} page(s) projected; {waiting} waiting on you "
+                f"({ev.get('conflicts')} changed on both sides, "
+                f"{ev.get('owner_deleted')} deleted here but still in the library)"
+            ),
+            evidence=ev,
+        )
+    return ProbeResult(
+        ok=True, detail=f"{ev.get('projected')} page(s) projected, none in conflict", evidence=ev
+    )
+
+
 def _register_builtin_probes() -> None:
     register_probe(
         Probe(
@@ -1153,6 +1240,15 @@ def _register_builtin_probes() -> None:
             Tier.CAPABILITY,
             _probe_knowledge_vector_index,
             "Knowledge chunk ANN index (sqlite-vec)",
+        )
+    )
+    register_probe(
+        Probe(
+            "knowledge.vault",
+            "knowledge",
+            Tier.CAPABILITY,
+            _probe_knowledge_vault,
+            "Markdown projection: pages waiting on you",
         )
     )
     register_probe(

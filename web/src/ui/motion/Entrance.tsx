@@ -32,7 +32,7 @@ import { listItemEnter, regionStagger } from '../../design/motion'
 //     (the dashboard's bands, the inbox's body), or ON the loaded column when the
 //     regions ARE the data (Discover's areas);
 //   • never give a group or a region a key derived from data.
-// `lib/useCachedData` is what makes the first rule sufficient: a same-key
+// `lib/data`'s cache is what makes the first rule sufficient: a same-key
 // revalidation HOLDS the last value rather than dropping to `undefined`, so a
 // refresh cannot flip a surface back through its skeleton branch and remount the
 // group underneath. A surface that re-parents its own blocks after layout

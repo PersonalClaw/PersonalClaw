@@ -76,8 +76,13 @@ class ModelProvider(ABC):
         """Reject a pending tool permission request."""
 
     @abstractmethod
-    def context_usage_pct(self) -> float:
-        """Return last known context usage percentage."""
+    def context_usage_pct(self) -> float | None:
+        """Last known context usage percentage, or ``None`` if never measured.
+
+        ``None`` and ``0.0`` are different answers: ``None`` means this provider
+        was never told, ``0.0`` means it was told the context is empty. Consumers
+        must OMIT the number for ``None`` rather than render zero.
+        """
 
     @property
     def session_id(self) -> str:
@@ -100,11 +105,25 @@ class ModelProvider(ABC):
         the cleanup task only needs the session_id string, not a live process.
         """
 
+    @property
+    def supports_native_commands(self) -> bool:
+        """Whether this provider can execute a slash command as a COMMAND.
+
+        False by default, and the default is the honest answer for every provider that
+        has no command axis at all (the native loop, every HTTP model provider): for
+        those, :meth:`stream_command` below is a plain prompt wearing a command's name.
+        A caller that must tell the user which of the two it got — because "the agent ran
+        /compact" and "the agent was asked about the text /compact" are different
+        answers — reads THIS, not the method's success (`G4`).
+        """
+        return False
+
     async def stream_command(self, command: str) -> AsyncIterator[LLMEvent]:
         """Execute a slash command and yield streaming events.
 
         Default falls back to :meth:`stream` for providers without native
-        command support.
+        command support. That fallback is silent by design at this layer — it is the
+        caller's job to say so, because only the caller owns a user-visible surface.
         """
         async for event in self.stream(command):
             yield event

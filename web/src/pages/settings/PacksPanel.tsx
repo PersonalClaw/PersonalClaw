@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { api, type BundledPackRec, type InstalledPackRec, type PackProposalRec, type PackUpdateRec } from '../../lib/api'
 import { notify } from '../../app/appSdk'
-import { invalidateCache, useCachedData } from '../../lib/useCachedData'
+import { invalidateKeys, useQuery } from '../../lib/data'
 import { PanelHeader, Section, Row, Field, SavedToast, ToggleRow } from './settingsUI'
 import { TextInput } from '../../ui/forms'
 import { Button } from '../../ui/Button'
@@ -22,11 +22,11 @@ type PacksCfg = Record<string, unknown>
 export function PacksPanel() {
   const [cfg, setCfg] = useState<PacksCfg | null>(null)
 
-  const { data, error: loadErr, refresh } = useCachedData('settings:packs', () =>
+  const { data, error: loadErr, refresh } = useQuery('settings:packs', () =>
     api.personalclawConfig().then((c) => (c.packs ?? {}) as PacksCfg),
     { persist: true },
   )
-  const { data: installed, refresh: refreshInstalled } = useCachedData('settings:packs:installed', () =>
+  const { data: installed, refresh: refreshInstalled } = useQuery('settings:packs:installed', () =>
     api.packsInstalled().catch(() => [] as InstalledPackRec[]),
     { persist: true },
   )
@@ -34,12 +34,12 @@ export function PacksPanel() {
   useEffect(() => { if (data) setCfg(data) }, [data])
 
   // ONE owner of the installed-ledger read, passed down to both surfaces that can install.
-  // Two components each holding their own `useCachedData('settings:packs:installed')` looked
+  // Two components each holding their own `useQuery('settings:packs:installed')` looked
   // fine and wasn't: installing from a proposal card refreshed only that component's copy, so
   // "Installed packs" kept saying "No packs installed yet" and the store row kept offering
   // Install until a full reload. A cached read is not shared state.
   const onInstalled = useCallback(() => {
-    invalidateCache('settings:packs:installed')
+    invalidateKeys('settings:packs:installed')
     refreshInstalled()
   }, [refreshInstalled])
 
@@ -238,7 +238,7 @@ export function PackStoreSection({ installed, onInstalled }: {
   onInstalled: () => void
 }) {
   const [busy, setBusy] = useState('')
-  const { data: bundled, error, refresh } = useCachedData('settings:packs:bundled', () =>
+  const { data: bundled, error, refresh } = useQuery('settings:packs:bundled', () =>
     api.packsBundled().catch(() => [] as BundledPackRec[]),
     { persist: true },
   )

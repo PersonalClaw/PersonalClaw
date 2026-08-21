@@ -91,9 +91,9 @@ describe('the settings health and safety cards say when they could not check', (
   const src = () => readFileSync(join(process.cwd(), 'src/pages/settings/settingsWidgets.tsx'), 'utf8')
   const code = () => src().replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
 
-  /** The whole `useCachedData(<key>, …)` call, paren-matched — not a prefix. */
+  /** The whole `useQuery(<key>, …)` call, paren-matched — not a prefix. */
   const registration = (c: string, key: string) => {
-    const at = c.indexOf(`useCachedData('${key}'`)
+    const at = c.indexOf(`useQuery('${key}'`)
     expect(at, `${key} must be registered`).toBeGreaterThan(-1)
     let i = c.indexOf('(', at) + 1
     let depth = 1

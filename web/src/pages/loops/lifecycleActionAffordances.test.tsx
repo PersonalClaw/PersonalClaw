@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
-import { invalidateCache } from '../../lib/useCachedData'
+import { invalidateKeys } from '../../lib/data'
 import type { Loop } from '../../lib/api'
 
 // ── Who may press Start / Pause / Resume / Stop, decided in ONE place ─────────────────────────────
@@ -122,8 +122,8 @@ async function mountCockpit(status: string): Promise<HTMLElement> {
 const headerControls = (label: string) => screen.queryAllByRole('button', { name: label }).length
 
 beforeEach(() => {
-  invalidateCache('loops')
-  invalidateCache('loop:', true)
+  invalidateKeys('loops')
+  invalidateKeys('loop:', true)
   STORE.loops = []
 })
 

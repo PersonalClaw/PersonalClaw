@@ -61,9 +61,11 @@ test:
 harness-validate:
 	$(PYTHON) -m harness validate
 
-## gates: run the platform-hardening drift/inert gates (config-baseline, inert-surface,
-## docs-lint) and print ONE aggregate table — every failure in a single run (never
-## short-circuits). Exit 0 iff all gates pass. Each gate also has its own pytest ratchet.
+## gates: run the platform-hardening drift/inert/structural gates (config-baseline,
+## inert-surface, docs-lint, structural-size, structural-import-direction,
+## structural-duplication) and print ONE aggregate table — every failure in a single run
+## (never short-circuits). Exit 0 iff all gates pass. Each gate also has its own pytest
+## ratchet, and every baseline is shrink-only and FORBIDDEN to raise.
 gates:
 	$(PYTHON) scripts/gate_report.py
 

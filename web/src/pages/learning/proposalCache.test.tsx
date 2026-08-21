@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { render, renderHook, act, waitFor } from '@testing-library/react'
-import { useCachedData, invalidateCache, peekCache } from '../../lib/useCachedData'
+import { useQuery, invalidateKeys, peekQuery } from '../../lib/data'
 import { PROPOSALS_KEY_PREFIX, WEEK_KEY, proposalsKey, refreshAfterDecision, refreshEverything } from './proposalCache'
 import { LearningPage } from './LearningPage'
 import type { LearningInbox, LearningRow, StagingWeek } from '../../lib/api'
@@ -66,7 +66,7 @@ vi.mock('../../lib/api', () => ({
 
 describe('LearningPage drops a decided row from the screen (#676)', () => {
   beforeEach(() => {
-    invalidateCache('', true)
+    invalidateKeys('', true)
     sessionStorage.clear()
     vi.clearAllMocks()
     learningStagingWeek.mockResolvedValue(WEEK)
@@ -151,16 +151,16 @@ describe('LearningPage drops a decided row from the screen (#676)', () => {
 
 describe('refreshAfterDecision sweeps every facet, not just the active one', () => {
   beforeEach(() => {
-    invalidateCache('', true)
+    invalidateKeys('', true)
     sessionStorage.clear()
   })
 
   it('refetches the live view instead of only arming the next mount', async () => {
-    // The bug, isolated: `invalidateCache` alone leaves `data` exactly as it was.
+    // The bug, isolated: `invalidateKeys` alone leaves `data` exactly as it was.
     const fetcher = vi.fn()
       .mockResolvedValueOnce(inboxOf([row()]))
       .mockResolvedValue(inboxOf([]))
-    const { result } = renderHook(() => useCachedData<LearningInbox>(proposalsKey('skill'), fetcher))
+    const { result } = renderHook(() => useQuery<LearningInbox>(proposalsKey('skill'), fetcher))
     await waitFor(() => expect(result.current.data?.total).toBe(1))
 
     act(() => { refreshAfterDecision(result.current.refresh) })
@@ -178,30 +178,35 @@ describe('refreshAfterDecision sweeps every facet, not just the active one', () 
     // survive the sweep, so it has to be genuinely warm first. Settling inside act also keeps each
     // initial fetch from resolving into the tree after the assertions have run.
     const skill = await act(async () => {
-      const active = renderHook(() => useCachedData<LearningInbox>(proposalsKey('skill'), skillFetch))
-      renderHook(() => useCachedData<LearningInbox>(proposalsKey(''), allFetch))
+      const active = renderHook(() => useQuery<LearningInbox>(proposalsKey('skill'), skillFetch))
+      renderHook(() => useQuery<LearningInbox>(proposalsKey(''), allFetch))
       return active
     })
-    expect(peekCache(proposalsKey('skill'))).toBeTruthy()
-    expect(peekCache(proposalsKey(''))).toBeTruthy()
+    expect(peekQuery(proposalsKey('skill'))).toBeTruthy()
+    expect(peekQuery(proposalsKey(''))).toBeTruthy()
 
+    expect(allFetch, 'the All facet fetched once on mount').toHaveBeenCalledTimes(1)
     await act(async () => { refreshAfterDecision(skill.result.current.refresh) })
-    // The inactive facet's entry is GONE — its next mount refetches rather than seeding the ghost.
-    // Checked AFTER the active facet's own refetch has landed, so this is the settled state and not
-    // a window that the in-flight request closes.
-    expect(peekCache(proposalsKey(''))).toBeUndefined()
-    expect(peekCache(proposalsKey('skill'))).toBeTruthy()
+    // DSC-14 STRENGTHENED THIS. The old assertion was `peekCache(proposalsKey('')) ===
+    // undefined` — "the entry is gone, so its NEXT MOUNT refetches rather than seeding the
+    // ghost". Under one data layer the sweep reaches every MOUNTED reader of a swept key, so the
+    // inactive facet does not wait for a next mount: it re-reads now. Which is the stronger
+    // property, and the one the user feels — the ghost row cannot be painted on tab select
+    // because it is already gone from the tab that is not on screen.
+    expect(allFetch, 'the swept facet re-read itself, unprompted').toHaveBeenCalledTimes(2)
+    expect(peekQuery(proposalsKey('')), 'and holds a FRESH value, not a stale one').toBeTruthy()
+    expect(peekQuery(proposalsKey('skill'))).toBeTruthy()
   })
 
   it('leaves the capture week cached, and refreshEverything does not', async () => {
     const weekFetch = vi.fn().mockResolvedValue(WEEK)
     const listFetch = vi.fn().mockResolvedValue(inboxOf([]))
-    const { result } = renderHook(() => useCachedData(WEEK_KEY, weekFetch))
-    const list = renderHook(() => useCachedData(proposalsKey(''), listFetch))
-    await waitFor(() => expect(peekCache(WEEK_KEY)).toBeTruthy())
+    const { result } = renderHook(() => useQuery(WEEK_KEY, weekFetch))
+    const list = renderHook(() => useQuery(proposalsKey(''), listFetch))
+    await waitFor(() => expect(peekQuery(WEEK_KEY)).toBeTruthy())
 
     act(() => { refreshAfterDecision(list.result.current.refresh) })
-    expect(peekCache(WEEK_KEY)).toBeTruthy()
+    expect(peekQuery(WEEK_KEY)).toBeTruthy()
 
     act(() => { refreshEverything(list.result.current.refresh, result.current.refresh) })
     await waitFor(() => expect(weekFetch).toHaveBeenCalledTimes(2))

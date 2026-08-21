@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { ResultAnnouncement } from '../../ui/ListControls'
 import { Archive, Search, FileText, Loader2 } from 'lucide-react'
 import { api, type SessionArchive } from '../../lib/api'
-import { useCachedData } from '../../lib/useCachedData'
+import { useQuery } from '../../lib/data'
 import { PanelHeader } from './settingsUI'
 import { ListSkeleton, LoadError } from '../../ui/ListScaffold'
 import { TextInput } from '../../ui/forms'
@@ -15,7 +15,7 @@ export function ArchivePanel() {
   const [open, setOpen] = useState<string | null>(null)
 
   // Archives change slowly — persist for instant paint on revisit + reload.
-  const { data: archives, error, refresh } = useCachedData(
+  const { data: archives, error, refresh } = useQuery(
     'settings:archives', () => api.sessionArchives(), { persist: true },
   )
   // The fetcher used to carry `.catch(() => [] as SessionArchive[])`, so a 500 resolved as an empty

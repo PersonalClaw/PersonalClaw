@@ -2,6 +2,7 @@ import { type ReactNode, useState } from 'react'
 import { motion } from 'framer-motion'
 import { ArrowRight, Loader2, type LucideIcon } from 'lucide-react'
 import { Toggle } from '../../ui/Toggle'
+import { StaleNotice } from '../../ui/StaleNotice'
 import { spring, expr } from '../../design/motion'
 import { fvs, withWeight } from '../../design/fontWeight'
 
@@ -44,12 +45,19 @@ export function Highlight({ text, query }: { text: string; query: string }) {
  *  explicit "open" affordance.
  *
  *  `loading` shows a skeleton mirroring the card shape so it paints instantly. */
-export function BentoCard({ icon: Icon, title, query, onClick, loading, accent, footer, rows, children }: {
+export function BentoCard({ icon: Icon, title, query, onClick, loading, stale, accent, footer, rows, children }: {
   icon: LucideIcon
   title: string
   query?: string
   onClick: () => void
   loading?: boolean
+  /** The tile is showing a CACHED value that is past its freshness window, from `useQuery`'s
+   *  `stale`. Renders the shared `StaleNotice` in the header, unannounced — see the note on the
+   *  nav overlay below for why 22 live regions on one page is not an option. A tile that paints a
+   *  stale number with no indication and then swaps it is the defect DSC-14 exists to remove; it
+   *  was measured on THIS component (Inbox tile, retention 30 → 7 out of band, hard reload with
+   *  the revalidation held: first paint 30, no marker anywhere, then 7). */
+  stale?: boolean
   /** Tint the icon chip (defaults to primary). */
   accent?: string
   /** Optional muted footer line (e.g. a hint or secondary count). */
@@ -96,6 +104,7 @@ export function BentoCard({ icon: Icon, title, query, onClick, loading, accent, 
           <span className="flex-1 truncate text-on-surface text-[0.9375rem]" style={fvs(600)}>
             {query ? <Highlight text={title} query={query} /> : title}
           </span>
+          <StaleNotice stale={!loading && !!stale} what={title.toLowerCase()} announce={false} className="shrink-0" />
           <ArrowRight size={14} className="shrink-0 text-on-surface-low transition-transform group-hover:translate-x-0.5" />
         </div>
         {loading

@@ -10,7 +10,7 @@ import { join } from 'node:path'
 //                      connection and a real 404 arrive identically as `null`. The page set
 //                      `missing` and rendered "This knowledge item no longer exists." — and titled
 //                      the header "Not found".
-//   projects-detail    `useCachedData(...)` returns `data: undefined` on error, and this call site
+//   projects-detail    `useQuery(...)` returns `data: undefined` on error, and this call site
 //                      destructured only `{ data, loading, refresh }`. A 500 fell through to
 //                      `!project` → "This project no longer exists."
 //
@@ -58,7 +58,7 @@ describe('a failed read is not a deletion', () => {
   it('projects-detail stops discarding the load error', () => {
     const code = read('pages/projects/ProjectsSection.tsx')
     expect(code, 'the error must be destructured to be checkable')
-      .toMatch(/const \{ data: project, loading, error: detailErr, refresh \} = useCachedData/)
+      .toMatch(/const \{ data: project, loading, error: detailErr, refresh \} = useQuery/)
     expect(code, 'and a failed read renders the retry, before the deletion branch')
       .toMatch(/if \(!project && detailErr\) \{[\s\S]{0,220}?<LoadError what="project" error=\{detailErr\} onRetry=\{refresh\} \/>/)
   })

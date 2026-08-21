@@ -85,11 +85,11 @@ describe('the source no longer swallows its own error', () => {
     // 🔑 The whole fix in one line: a `.catch(() => [])` on a list fetcher swallows the error, and it
     // must not come back. `providers` is exempt — it feeds the action column and is tolerated empty.
     //
-    // 🪤 Scoped to the useCachedData REGISTRATION LINE, not a char window off `api.schedules()` — the
+    // 🪤 Scoped to the useQuery REGISTRATION LINE, not a char window off `api.schedules()` — the
     // first draft's `.slice(idx, idx+80)` landed on a COMMENT that names `api.schedules()`, so restoring
-    // one catch passed. Take the whole `useCachedData('triggers:<key>', …)` call for each list source.
+    // one catch passed. Take the whole `useQuery('triggers:<key>', …)` call for each list source.
     for (const key of ['triggers:schedules', 'triggers:hooks', 'triggers:store', 'triggers:events']) {
-      const m = new RegExp(`useCachedData\\('${key}'[\\s\\S]*?\\{ persist:`).exec(src)
+      const m = new RegExp(`useQuery\\('${key}'[\\s\\S]*?\\{ persist:`).exec(src)
       expect(m, `${key} fetcher must be found`).not.toBeNull()
       expect(m![0], `${key} must not catch its rejection to []`).not.toMatch(/\.catch\(\(\)\s*=>\s*\[\]/)
     }

@@ -10,6 +10,20 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Added
 
+- **A resumed session no longer redoes yesterday's finished work.**
+- **A big skill can no longer take the conversation.**
+- **A stale browser tab now says it is stale instead of going blank.**
+- **The app stops showing you an old number and then quietly changing it.**
+- **Your knowledge library can live as plain markdown files you own, and you can edit them.**
+- **A loop now tells you what it cost.**
+
+- **A turn that will not fit says so before it runs, and says what to do about it.**
+- **Ask your library a question about structure and get a traversal, not a guess.**
+- **Independent lookups in one turn now run at the same time.**
+- **Long lists stay fast however long they get.**
+- **Pair a phone or a second browser with your gateway over your home network.**
+- **Ask for plainer prose without editing a prompt.**
+- **Stop actually stops.**
 - **Know whether a model will actually run on your machine before you download it.**
 - **Put back one file, not your whole configuration.**
 
@@ -50,6 +64,9 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Fixed
 
+- **The context gauge said "0%" on turns that were nearly full.**
+- **Typing `/compact` at a coding-CLI agent killed the whole turn.**
+- **The sign-in page said "Sign-in failed" no matter what went wrong.**
 - **The audit log's "Failed" filter hid most failures.**
 
 - **Setting a chat's working directory with a mistyped field no longer silently unbinds it.**
@@ -133,6 +150,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **A second starter home, for looking around before you commit anything.**
 
 ### Changed
+- **The agent can no longer edit a file it has not read.**
 - **Rewinding a conversation no longer throws the old ending away — and that history is now stored inside your chats.**
 - **Finding something in a long conversation now works properly with a keyboard and a screen reader.**
 - **The Optimize button now knows who said what, and leaves an already-good prompt alone.**

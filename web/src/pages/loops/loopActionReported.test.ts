@@ -9,7 +9,7 @@ import { join } from 'node:path'
 // swallowed, and every one of them re-renders from a refetch rather than a local flip:
 //
 //     await api.uLoopAction(id, action).catch(() => {})     // swallowed
-//     invalidateCache('loops'); refresh()                   // ran REGARDLESS
+//     invalidateKeys('loops'); refresh()                   // ran REGARDLESS
 //
 // So a failure left NOTHING: the loop did not pause, no message appeared, and the refetch re-rendered
 // the same status — the click read as "nothing happened, twice". A silent `stop` is the shape whose
@@ -104,7 +104,7 @@ describe('a loop action that fails tells the user', () => {
         const after = src.slice(m.index!, m.index! + 460)
         expect(after, `${name}: the guard must return`).toMatch(/\)\)\) return/)
         const guard = after.indexOf(')) return')
-        const refetch = after.search(/loadLoop\(|loadTokens\(|invalidateCache\(|refresh\(/)
+        const refetch = after.search(/loadLoop\(|loadTokens\(|invalidateKeys\(|refresh\(/)
         if (refetch > -1) expect(guard, `${name}: guard must precede the refetch`).toBeLessThan(refetch)
       }
     }

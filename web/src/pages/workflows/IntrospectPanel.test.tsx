@@ -1,7 +1,8 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import type { WorkflowIntrospection } from '../../lib/api'
-import { IntrospectPanel, riskyText, rowSummary, runCostText } from './IntrospectPanel'
+import { IntrospectPanel, riskyText, rowSummary } from './IntrospectPanel'
+import { runCostText } from '../../lib/runCost'
 
 // ── WF2WOR-7 criteria 6 & 8: the nine questions are answerable from the cockpit ──
 //

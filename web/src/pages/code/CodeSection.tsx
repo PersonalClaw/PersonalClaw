@@ -16,7 +16,7 @@ import { WorkspacePicker } from './WorkspacePicker'
 import { api, sdlcStageLabel, type Loop, type LoopPhase } from '../../lib/api'
 import { loopStatusLabel, effectiveLoopStatus, loopStatusTone, ACTIVE_LOOP_STATUSES } from '../../lib/loopStatus'
 import { useVisiblePoll } from '../../lib/useVisiblePoll'
-import { useCachedData, invalidateCache } from '../../lib/useCachedData'
+import { useQuery, invalidateKeys } from '../../lib/data'
 import type { RouteProps } from '../../app/useQueryState'
 
 /** Code navigation — URL-driven, mirroring the Goal section:
@@ -106,8 +106,8 @@ export function CodeSection({ sub, navigate, query, setQuery }: RouteProps) {
     // stale snapshot (missing the draft, or showing it still 'ready'). Matches the
     // delete path; the list's mount-revalidate alone would lag a poll behind.
     return <CodePlanReview draft={reviewDraft}
-      onBack={() => { setReview(null); setResume(null); invalidateCache('code:projects'); navigate('code/history') }}
-      onLaunched={(id) => { setReview(null); setResume(null); invalidateCache('code:projects'); navigate(`code/${id}`) }} />
+      onBack={() => { setReview(null); setResume(null); invalidateKeys('code:projects'); navigate('code/history') }}
+      onLaunched={(id) => { setReview(null); setResume(null); invalidateKeys('code:projects'); navigate(`code/${id}`) }} />
   }
 
   if (seg === 'history') {
@@ -124,7 +124,7 @@ export function CodeSection({ sub, navigate, query, setQuery }: RouteProps) {
       // paints the just-deleted project as a ghost row (clickable → "no longer exists")
       // until the next 6s poll. The list's own delete already does this via load(); the
       // cockpit-delete path didn't.
-      onDeleted={() => { invalidateCache('code:projects'); navigate('code/history') }}
+      onDeleted={() => { invalidateKeys('code:projects'); navigate('code/history') }}
       // "New target" reuses this project's codebase → the unified composer, pre-set to
       // Code with the workspace pre-bound (the reuse-workspace flow, folded into #/loop).
       onNewTarget={(ws) => navigate(`loop?kind=code&ws=${encodeURIComponent(ws)}`)}
@@ -200,12 +200,12 @@ function CodeListPage({ onCreate, onOpen }: { onCreate: () => void; onOpen: (id:
   // Don't swallow a failed list load into [] — that rendered the "No code projects
   // yet" empty state on a transient 5xx / gateway blip / network drop, a FALSE-empty
   // that hid the user's real projects (and could prompt them to recreate work they
-  // already have). Let useCachedData capture the error; render a distinct, retryable
+  // already have). Let useQuery capture the error; render a distinct, retryable
   // error state below. data stays undefined on a first-load failure (→ the error
   // branch), and a prior successful list stays shown if a later poll fails.
-  const { data: projects, error: loadErr, refresh } = useCachedData('code:projects', () => api.uLoops({ kind: 'code' }), { persist: false })
+  const { data: projects, error: loadErr, refresh } = useQuery('code:projects', () => api.uLoops({ kind: 'code' }), { persist: false })
   // After a mutation, revalidate against the changed list.
-  const load = () => { invalidateCache('code:projects'); refresh() }
+  const load = () => { invalidateKeys('code:projects'); refresh() }
   // The project we're choosing a workspace for (from the 'needs workspace' pill) —
   // lets the user resolve the brownfield blocker without opening the cockpit.
   const [pickFor, setPickFor] = useState<Loop | null>(null)
@@ -321,7 +321,7 @@ function CodeListPage({ onCreate, onOpen }: { onCreate: () => void; onOpen: (id:
         <div className="mx-auto w-full" style={{ maxWidth: 'var(--content-width)' }}>
           {projects === undefined && loadErr ? (
             // First-load failure — distinct from a genuine empty list. This surface WROTE the
-            // pattern; it now uses the shared primitive so the other 100+ useCachedData
+            // pattern; it now uses the shared primitive so the other 100+ useQuery
             // consumers can adopt one form instead of re-deriving it.
             <LoadError what="projects" error={loadErr} onRetry={load} />
           ) : projects === undefined ? (

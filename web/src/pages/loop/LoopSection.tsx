@@ -1,7 +1,7 @@
 import { LoopComposer } from './LoopComposer'
 import { reportingWrite } from '../../app/reportingWrite'
 import { api } from '../../lib/api'
-import { invalidateCache } from '../../lib/useCachedData'
+import { invalidateKeys } from '../../lib/data'
 import type { RouteProps } from '../../app/useQueryState'
 import type { LoopKind } from '../../lib/api'
 
@@ -18,7 +18,7 @@ import type { LoopKind } from '../../lib/api'
 export function LoopSection({ navigate, query }: RouteProps) {
   const routeCreated = async (loopId: string, kind: LoopKind, planning: boolean) => {
     // Invalidate the cached lists so the new loop appears immediately on its list.
-    invalidateCache('loops')
+    invalidateKeys('loops')
     // MINIMAL rigor (planning=false) is the magic path: there's no Plan Review, so
     // start the loop now and drop straight into its cockpit. (Suggested skills/
     // workflows were already persisted into the create body by the composer.)

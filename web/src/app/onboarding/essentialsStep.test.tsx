@@ -47,7 +47,7 @@ vi.mock('../../lib/api', () => ({
 vi.mock('../../app/appSdk', () => ({ launchChat: vi.fn(), notify: vi.fn() }))
 
 import { EssentialsStep, laneOf, candidatesByLane } from './EssentialsStep'
-import { invalidateCache } from '../../lib/useCachedData'
+import { invalidateKeys } from '../../lib/data'
 
 function entry(over: Partial<AppCatalogEntry> & { name: string }): AppCatalogEntry {
   return {
@@ -94,9 +94,9 @@ async function openCard(which: keyof typeof CARD) {
 
 beforeEach(() => {
   vi.clearAllMocks()
-  // A COLD cache per test: `useCachedData` memoizes module-globally, and a warm entry
+  // A COLD cache per test: `useQuery` memoizes module-globally, and a warm entry
   // would hide both the loading and the load-FAILURE branch on every test after the first.
-  for (const k of ['onboarding:essentials-catalog', 'onboarding:provider-types', 'onboarding:chat-models']) invalidateCache(k)
+  for (const k of ['onboarding:essentials-catalog', 'onboarding:provider-types', 'onboarding:chat-models']) invalidateKeys(k)
   try { sessionStorage.clear() } catch { /* jsdom always has it */ }
   appCatalog.mockResolvedValue(CATALOG)
   modelProviderTypes.mockResolvedValue([{

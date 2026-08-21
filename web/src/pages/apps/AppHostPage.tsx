@@ -1,5 +1,5 @@
 import { Loader2, Blocks } from 'lucide-react'
-import { useCachedData } from '../../lib/useCachedData'
+import { useQuery } from '../../lib/data'
 import { api } from '../../lib/api'
 import type { RouteProps } from '../../app/useQueryState'
 import { LoadingStatus } from '../../ui/ListScaffold'
@@ -14,7 +14,7 @@ interface UIPageDecl { route?: string; label?: string; entryPoint?: string; moun
  *  via the SDK host. */
 export function AppHostPage({ sub }: Pick<RouteProps, 'sub'>) {
   const name = sub.split('/')[0]
-  const { data, error } = useCachedData(`app-host:${name}`, () => api.app(name), { persist: false })
+  const { data, error } = useQuery(`app-host:${name}`, () => api.app(name), { persist: false })
 
   if (!name) return <Center>No app specified</Center>
   if (error) return <Center>App “{name}” is not available</Center>

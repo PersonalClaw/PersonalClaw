@@ -5,7 +5,7 @@ import { IconButton } from '../../ui/IconButton'
 import { Button } from '../../ui/Button'
 import { PageTitle } from '../../ui/PageTitle'
 import { api, type TaskItem } from '../../lib/api'
-import { useCachedData, invalidateCache } from '../../lib/useCachedData'
+import { useQuery, invalidateKeys } from '../../lib/data'
 import { TaskForm, emptyDraft, draftToPayload, type TaskDraft } from './TaskForm'
 
 /** Dedicated full-page create flow (not the sidebar, per the directive). The
@@ -15,7 +15,7 @@ export function TaskCreatePage({ onBack, onCreated }: { onBack: () => void; onCr
   const [draft, setDraft] = useState<TaskDraft>(emptyDraft)
   // A cheap cached snapshot for the dependency picker — NOT the list page's 'tasks'
   // key (that's persist:false for live status); a separate persisted key is fine here.
-  const { data: allTasks = [] } = useCachedData<TaskItem[]>('tasks-all', () => api.tasks().then((d) => d.tasks).catch(() => []), { persist: true })
+  const { data: allTasks = [] } = useQuery<TaskItem[]>('tasks-all', () => api.tasks().then((d) => d.tasks).catch(() => []), { persist: true })
   const [saving, setSaving] = useState(false)
   const [err, setErr] = useState('')
   // A failed create used to render its message at the BOTTOM OF THE SCROLLING BODY while the Create
@@ -33,7 +33,7 @@ export function TaskCreatePage({ onBack, onCreated }: { onBack: () => void; onCr
       const t = await api.createTask(draftToPayload(draft))
       // This page's own picker reads a persisted `tasks-all`, so without this the next visit paints
       // the pre-create list before its revalidation lands — and a hard reload paints it again.
-      invalidateCache('tasks', true)
+      invalidateKeys('tasks', true)
       onCreated(t)
     } catch (e) { setErr(e instanceof Error ? e.message : 'Create failed') } finally { setSaving(false) }
   }

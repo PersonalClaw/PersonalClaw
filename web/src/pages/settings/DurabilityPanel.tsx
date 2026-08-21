@@ -15,7 +15,7 @@ import {
   type SettingsProvider,
 } from '../../lib/api'
 import { notify } from '../../app/appSdk'
-import { useCachedData } from '../../lib/useCachedData'
+import { useQuery } from '../../lib/data'
 import { PanelHeader, Section, Row, Toggle, ToggleRow, SavedToast } from './settingsUI'
 import { Checkbox, NumberField, Select } from '../../ui/forms'
 import { Button } from '../../ui/Button'
@@ -39,7 +39,7 @@ import { FormSkeleton, LoadError } from '../../ui/ListScaffold'
 export function DurabilityPanel() {
   const [cfg, setCfg] = useState<Record<string, unknown> | null>(null)
 
-  const { data, error: loadErr, refresh } = useCachedData('settings:durability', async () => {
+  const { data, error: loadErr, refresh } = useQuery('settings:durability', async () => {
     const [plaw, status, snaps, conflicts, transports] = await Promise.all([
       // The five `durability.*` controls come from here, so a fabricated `{}` would show a retention
       // schedule nobody configured. Status and snapshots keep their fallbacks: they DECORATE the panel
@@ -140,8 +140,8 @@ function TimeTravelSection({ cfg, setCfg }: {
 
   const reset = () => { setPending(null); setSelected([]); setApplyErr(''); wanted.current = [] }
 
-  const status = useCachedData('settings:history', () => api.durabilityHistory(), { persist: false })
-  const timeline = useCachedData(
+  const status = useQuery('settings:history', () => api.durabilityHistory(), { persist: false })
+  const timeline = useQuery(
     `settings:history:${root}:${sleptOnly ? 'slept' : 'all'}`,
     () => api.durabilityHistoryTimeline(root, { limit: 30, unattended: sleptOnly }),
     { persist: false },

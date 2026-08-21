@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { api, type DashboardConfig, type SessionTemplate } from '../../lib/api'
 import { notify } from '../../app/appSdk'
 import { useAgentCatalog, ensureBindableAgentName } from '../../lib/agents'
-import { useCachedData, invalidateCache } from '../../lib/useCachedData'
+import { useQuery, invalidateKeys } from '../../lib/data'
 import { PanelHeader, Section, Row, Toggle, SegPills, SavedToast } from './settingsUI'
 import { Combobox } from '../../ui/Combobox'
 import { NumberField } from '../../ui/forms'
@@ -31,7 +31,7 @@ export function ChatPanel() {
   // Stale-while-revalidate + persist: paint instantly on revisit/reload from a
   // single cached snapshot of both fetches, revalidating in the background. The
   // editable form state below is seeded/rehydrated from this read-only `data`.
-  const { data, error: loadErr, refresh } = useCachedData('settings:chat', async () => {
+  const { data, error: loadErr, refresh } = useQuery('settings:chat', async () => {
     const [dash, plaw] = await Promise.all([
       // The dashboard read KEEPS its fallback: it only feeds the starter list further down, and a
       // missing starter list degrades one section rather than fabricating your chat settings.
@@ -107,7 +107,7 @@ function StartersSection() {
     setItems((prev) => (prev ?? []).filter((x) => x.id !== t.id))
     // The chat page caches the starter list for instant paint; drop it so the picker
     // doesn't keep offering something that no longer exists.
-    invalidateCache('chat:starters')
+    invalidateKeys('chat:starters')
   }
 
   return (
@@ -217,7 +217,7 @@ function SessionsSection({ cfg, setCfg }: { cfg: DashboardConfig; setCfg: (c: Da
     // `aria-pressed` false to true and STAYED true, with no toast, no live-region text, and the "Saved"
     // confirmation simply never appearing. Reported the way the eight sibling panels already report it
     // (`AccountPanel`, `AmbientPanel`, `AgentDefaultsPanel`, ...).
-    api.saveDashboardConfig(patch).then(() => { invalidateCache('chat:stream-reveal'); flash() }).catch((e) => {
+    api.saveDashboardConfig(patch).then(() => { invalidateKeys('chat:stream-reveal'); flash() }).catch((e) => {
       notify(`Couldn't save this chat setting: ${String((e as Error)?.message || e)}`, 'error')
     })
   }
@@ -259,7 +259,7 @@ function MessagesSection({ cfg, setCfg }: { cfg: DashboardConfig; setCfg: (c: Da
     // `aria-pressed` false to true and STAYED true, with no toast, no live-region text, and the "Saved"
     // confirmation simply never appearing. Reported the way the eight sibling panels already report it
     // (`AccountPanel`, `AmbientPanel`, `AgentDefaultsPanel`, ...).
-    api.saveDashboardConfig(patch).then(() => { invalidateCache('chat:stream-reveal'); flash() }).catch((e) => {
+    api.saveDashboardConfig(patch).then(() => { invalidateKeys('chat:stream-reveal'); flash() }).catch((e) => {
       notify(`Couldn't save this chat setting: ${String((e as Error)?.message || e)}`, 'error')
     })
   }

@@ -46,6 +46,7 @@ from personalclaw.dashboard.state import (
     _ChatSession,
     _mark_permission_resolved,
 )
+from personalclaw.http_errors import json_error
 from personalclaw.security import is_sensitive_path, redact_credentials, redact_exfiltration_urls
 from personalclaw.sel import SecurityEvent, sel
 from personalclaw.validation import _AGENT_NAME_RE
@@ -163,6 +164,13 @@ async def api_chat(request: web.Request) -> web.StreamResponse:
 
     if "color_theme" in body:
         session.color_theme = color_theme
+    # Natural voice, per-conversation scope. Accepted on the send body as
+    # well as on its own PATCH so a choice made in the composer BEFORE the first
+    # send lands with that first turn (the session does not exist yet to PATCH).
+    if "natural_voice" in body:
+        from personalclaw.natural_voice import normalize_conversation_choice
+
+        session.natural_voice = normalize_conversation_choice(body.get("natural_voice"))
 
     if session.running:
         # Cancel-and-replace: when the resolved mid-turn
@@ -845,6 +853,11 @@ async def api_chat_session_detail(request: web.Request) -> web.Response:
             # fork temporary/incognito). The session-list endpoint already returns
             # this; the detail endpoint must too, or a reopened chat looks persistent.
             "memory_mode": getattr(session, "memory_mode", "persistent") or "persistent",
+            # Natural voice — the RESOLVED pair, for the same reason as
+            # memory_mode: the composer pill must restore to what actually takes
+            # effect (including an agent-supplied default), and it must not
+            # re-derive the resolution order to work that out.
+            **_natural_voice_payload(session),
             # Branch lineage — see the resolution block above the return.
             "forked_from": forked_from,
             "forked_from_title": forked_from_title,
@@ -942,7 +955,33 @@ async def api_chat_session_create(request: web.Request) -> web.Response:
     if not session.workspace_dir:
         session.workspace_dir = default_workspace_dir()
     _sync_dashboard_sessions(state)
-    return web.json_response(session.to_dict())
+    # Natural voice: the list-row `to_dict()` carries only the conversation's
+    # own tri-state, so the composer gets the RESOLVED pair here — one config read
+    # for the one session actually open, not one per row of the session list.
+    return web.json_response({**session.to_dict(), **_natural_voice_payload(session)})
+
+
+def _stop_reach_report(session: _ChatSession) -> dict:
+    """What the stop actually REACHED, off the provider's cancel scope (PR2-12).
+
+    The stop card used to say only "stopped", which is a claim about the button rather
+    than about the work. This is the evidence behind it — whether the model request was
+    aborted, how many child processes were reaped, how many queued tool calls were
+    dropped, how many subagents were stopped — and it is the shape PR2-13 consumes.
+
+    ``getattr`` because only a provider that OWNS a turn's cancellation can report on
+    it: an ACP-backed session delegates the turn to an external agent process, so it
+    has no scope and legitimately reports nothing. Absent → ``{}``, never a guess.
+    """
+    reporter = getattr(getattr(session, "provider", None), "last_stop_report", None)
+    if reporter is None:
+        return {}
+    try:
+        report = reporter()
+    except Exception:
+        logger.debug("stop report unavailable", exc_info=True)
+        return {}
+    return report if isinstance(report, dict) else {}
 
 
 def _resolve_stop_event(session: _ChatSession, outcome: str) -> None:
@@ -953,6 +992,7 @@ def _resolve_stop_event(session: _ChatSession, outcome: str) -> None:
         return
     now_ts = datetime.now(tz=timezone.utc).isoformat()
     final_state = "stopped" if outcome == "soft" else "stop_failed_reset"
+    reached = _stop_reach_report(session)
     found = False
     for msg in reversed(session.messages):
         cls_val = msg.get("cls", "")
@@ -969,6 +1009,8 @@ def _resolve_stop_event(session: _ChatSession, outcome: str) -> None:
         cls_data["state"] = final_state
         cls_data["outcome"] = outcome
         cls_data["ts_end"] = now_ts
+        if reached:
+            cls_data["reached"] = reached
         serialized = json.dumps(cls_data)
         msg["cls"] = serialized
         msg["content"] = serialized
@@ -2155,6 +2197,13 @@ async def api_chat_session_resume(request: web.Request) -> web.Response:
         session.color_index = meta["color_index"]
     if meta.get("color_theme"):
         session.color_theme = meta["color_theme"]
+    # Natural voice — the SECOND restore path for a session's meta line
+    # (chat_persistence.py has the other). Both have to read it or a reopened
+    # conversation silently reverts to inheriting the agent's preference.
+    if meta.get("natural_voice"):
+        from personalclaw.natural_voice import normalize_conversation_choice
+
+        session.natural_voice = normalize_conversation_choice(meta["natural_voice"])
     mm = meta.get("memory_mode", "persistent")
     session.memory_mode = mm
     if mm != "persistent":
@@ -2593,6 +2642,64 @@ async def api_chat_session_color(request: web.Request) -> web.Response:
     session._dirty = True
     state.push_sessions_update()
     return web.json_response({"ok": True, "color_index": ci})
+
+
+def _natural_voice_payload(session: _ChatSession) -> dict[str, object]:
+    """The composer's natural-voice state for *session*, resolved server-side.
+
+    Carries what this conversation states, what the bound agent's definition
+    carries, and the RESOLVED pair (effective + which scope decided). Resolved
+    here rather than in the frontend on purpose: the resolution order exists
+    exactly once, in ``natural_voice.NATURAL_VOICE_PRECEDENCE``, and a frontend
+    that re-derived it would be a second statement of it, free to drift.
+    """
+    from personalclaw import natural_voice as nv
+
+    agent_on = nv.agent_default(session.agent or "")
+    resolved = nv.resolve(session.natural_voice, agent_on)
+    return {
+        "natural_voice": session.natural_voice,
+        "natural_voice_agent_default": agent_on,
+        "natural_voice_effective": resolved.enabled,
+        "natural_voice_source": resolved.source,
+    }
+
+
+async def api_chat_session_natural_voice(request: web.Request) -> web.Response:
+    """PATCH /api/chat/sessions/{session}/natural-voice — set the per-conversation scope.
+
+    Body ``{"natural_voice": "" | "on" | "off"}``. ``""`` clears the override so
+    the conversation inherits the bound agent's preference again. Responds with
+    the re-resolved state so the composer shows what actually takes effect
+    instead of assuming its own click won.
+    """
+    state: DashboardState = request.app["state"]
+    name = request.match_info["session"]
+    session = resolve_session(state, name)
+    if not session:
+        return json_error("not_found", status=404)
+    try:
+        body = await request.json()
+    except Exception:
+        return json_error("invalid_json", status=400)
+    if not isinstance(body, dict):
+        return json_error("invalid_body", status=400)
+    from personalclaw.natural_voice import normalize_conversation_choice
+
+    raw = body.get("natural_voice", "")
+    choice = normalize_conversation_choice(raw)
+    # A value outside the closed set is a client bug, not "inherit" — reject it
+    # rather than silently clearing an override the user set earlier.
+    if choice == "" and str(raw or "").strip() != "":
+        return json_error(
+            "bad_request",
+            message='natural_voice must be "", "on" or "off"',
+            status=400,
+        )
+    session.natural_voice = choice
+    session._dirty = True
+    state.push_sessions_update()
+    return web.json_response({"ok": True, **_natural_voice_payload(session)})
 
 
 _MAX_CONTEXT_PER_SOURCE = 10

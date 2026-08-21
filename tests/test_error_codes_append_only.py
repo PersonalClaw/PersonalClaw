@@ -15,7 +15,8 @@ the whole point. When a genuinely new batch of codes is *released* (not merely
 merged), they graduate into this baseline in the same change.
 
 Also asserts the convention that keeps this registry from colliding with the
-INTEGRATION-ARCHITECTURE §2.2 HTTP error envelope: agent codes are
+`AGENTS.md` §"Shared conventions" HTTP error envelope (registry:
+:data:`personalclaw.http_errors.HTTP_ERROR_CODES`): agent codes are
 ``ERR_UPPER_SNAKE``; HTTP codes are ``lowercase_snake``. The two never overlap by
 construction, so a consumer always knows which surface a code belongs to.
 """
@@ -65,7 +66,7 @@ def test_released_meanings_are_unchanged():
 
 
 def test_all_codes_follow_the_err_upper_snake_convention():
-    """ERR_UPPER_SNAKE keeps agent codes disjoint from §2.2 HTTP lowercase_snake."""
+    """ERR_UPPER_SNAKE keeps agent codes disjoint from the HTTP lowercase_snake space."""
     bad = [c for c in ERROR_CODES if not _CODE_RE.match(c)]
     assert not bad, f"codes violate the ERR_UPPER_SNAKE convention: {bad}"
 

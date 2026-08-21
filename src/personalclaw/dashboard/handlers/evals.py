@@ -19,12 +19,9 @@ import logging
 
 from aiohttp import web
 
+from personalclaw.http_errors import json_error
+
 logger = logging.getLogger(__name__)
-
-
-def _error(code: str, message: str, status: int) -> web.Response:
-    """The shared error envelope. `code` is a stable snake token an agent may branch on."""
-    return web.json_response({"error": {"code": code, "message": message}}, status=status)
 
 
 def _enabled() -> bool:
@@ -52,10 +49,11 @@ async def api_evals_judge_bench(request: web.Request) -> web.Response:
     harness, and the copy shipping the permissive answer would be the UI.
     """
     if not _enabled():
-        return _error(
+        return json_error(
             "evals_disabled",
-            "The eval substrate is off. Turn on `evals.enabled` to publish benchmark results.",
-            404,
+            message="The eval substrate is off. Turn on `evals.enabled` to publish "
+            "benchmark results.",
+            status=404,
         )
     from personalclaw.evals.judge_bench import latest_bench_view
 
@@ -63,12 +61,17 @@ async def api_evals_judge_bench(request: web.Request) -> web.Response:
         view = latest_bench_view()
     except Exception:
         logger.warning("judge bench view failed", exc_info=True)
-        return _error("judge_bench_unreadable", "The benchmark artifacts could not be read.", 500)
+        return json_error(
+            "judge_bench_unreadable",
+            message="The benchmark artifacts could not be read.",
+            status=500,
+        )
     if view is None:
-        return _error(
+        return json_error(
             "judge_bench_absent",
-            "No judge benchmark has run yet. Run `personalclaw judge-bench` to produce one.",
-            404,
+            message="No judge benchmark has run yet. Run `personalclaw judge-bench` "
+            "to produce one.",
+            status=404,
         )
     _audit(request, "evals_judge_bench", "read", f"bench_id={view.get('bench_id')}")
     return web.json_response(view)

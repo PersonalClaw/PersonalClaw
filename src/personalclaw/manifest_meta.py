@@ -73,6 +73,11 @@ MANIFEST_EXCLUDE: dict[str, str] = {
         "HUMAN browser, UI transport. The agent-callable surface is POST "
         "/api/auth/login, which IS in the manifest"
     ),
+    "/pair": (
+        "the joining device's redeem page (COMPANION-APPS C2) — a rendered HTML form "
+        "for a HUMAN browser that scanned the QR, UI transport. The agent-callable "
+        "surface is POST /api/devices/pair/complete, which IS in the manifest"
+    ),
 }
 
 
@@ -745,6 +750,25 @@ TOOL_META: dict[str, dict[str, Any]] = {
                 "summary": "Search the knowledge base",
                 "args": {"query": "deployment runbook", "limit": 5},
             }
+        ],
+    },
+    "knowledge_structural": {
+        "response_type": "knowledge.structural.results",
+        "error_codes": [],
+        "examples": [
+            {
+                "summary": "What links to this item (traversal, not similarity)",
+                "args": {"verb": "links_to", "origin": "kn_abc123", "depth": 2},
+            },
+            {
+                "summary": "Everything under a tag subtree, ranked semantically within it",
+                "args": {
+                    "verb": "tag_subtree",
+                    "origin": "infrastructure",
+                    "depth": 3,
+                    "rank_query": "rollback procedure",
+                },
+            },
         ],
     },
     "knowledge_create": {

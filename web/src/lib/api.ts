@@ -3,9 +3,15 @@
 // (cookie pc_token_<port> rides along via the dev proxy). See the composer
 // API contract in docs.
 
+import { apiVersionHeaders } from './apiVersion'
 import { errText } from './errText'
 
-const SK = { 'X-Session-Key': 'dashboard:ui' }
+// Every request helper below spreads `SK`, so folding the API-version declaration
+// into it is the SPA's ONE declaration site: the number lives only in
+// `apiVersion.ts`, no call site carries it, and a gateway outside this bundle's
+// supported window answers `400 api_version_unsupported` instead of failing later
+// at a field that quietly changed shape.
+const SK = { 'X-Session-Key': 'dashboard:ui', ...apiVersionHeaders }
 
 /** An Error that carries the HTTP status, so callers can distinguish a genuine 404
  *  (resource gone) from a transient network/5xx blip. `.message` is unchanged (the
@@ -80,6 +86,24 @@ export interface ProviderHealth {
   p99_ms: number
   failure_modes: Record<string, number>
   degraded: boolean
+}
+
+// The SAME model-call audit regrouped by the SUBSYSTEM that asked.
+// The per-provider rows above cannot answer "is my expensive background pass alive?": four
+// unattended subsystems share one provider and one `background` use case, so a learning pass
+// that dies every time is invisible inside a healthy provider's aggregate. `name` is one of
+// the closed caller vocabulary (`guardrails/audit.CALLERS`) or `(unattributed)`.
+export interface CallerHealth {
+  name: string
+  calls: number
+  passed: number
+  failed: number
+  pass_rate: number | null
+  p50_ms: number
+  p90_ms: number
+  p99_ms: number
+  failure_modes: Record<string, number>
+  dollars_est: number
 }
 
 // The earned-autonomy ladder (AUTONOMY-GUARDRAILS §5-§6). One row per DECLARED action
@@ -753,7 +777,48 @@ export interface KnowledgeDuplicate {
 // user what it actually did ("3 collections, 2 mentions") instead of a bare "Merged".
 export interface KnowledgeMergeResult {
   ok: boolean; kept: string; merged: string
-  moved: { collections: number; tags: number; mentions: number; annotations: number }
+  moved: {
+    collections: number; tags: number; mentions: number; annotations: number
+    relations: number; citations: number
+  }
+}
+// ── Structural editing verbs ──
+// One section boundary a split may cut on. `offset` is a character offset into the item's body,
+// so the caller slices at it without re-deriving headings — and it is the SAME boundary the
+// chunker sections on, which is why a split's halves re-chunk along the seam the reader chose.
+export interface KnowledgeSection {
+  offset: number; line: number; title: string; level: number; chars: number
+}
+// One inbound reference a verb would break. `relinkable` is the whole reason these are reported
+// separately from a refusal: a break the store can repair is an OFFER, one it cannot is a warning
+// the reader weighs. A UI that rendered both the same way would present a decision with no choice
+// in it. `refs` are the ids of the items doing the referring.
+export interface KnowledgeRestructureBreak {
+  kind: 'citation' | 'citation_chunk' | 'wikilink' | 'annotation' | 'kind_contract' | string
+  message: string; relinkable: boolean; refs: string[]
+}
+export interface KnowledgeRestructurePlan {
+  verb: string; item_id: string; summary: string; token: string
+  affected: string[]; breaks: KnowledgeRestructureBreak[]
+  relink_offered: boolean
+  detail: Record<string, unknown>
+}
+export interface KnowledgeRestructurePreview {
+  confirmed: false; token: string; plan: KnowledgeRestructurePlan
+}
+export interface KnowledgeRestructureResult {
+  ok: boolean; confirmed: true; kept: string; created: string[]
+  undo_token: string; summary: string
+  // True when this response REPLAYS an earlier application of the same token rather than
+  // restructuring again — the server's answer to a doubled submit.
+  idempotent: boolean
+  annotations_moved?: number; citations_widened?: number
+  moved?: KnowledgeMergeResult['moved']
+  wikilinks_relinked?: { items: number; links: number }
+  logical_key?: string; title?: string; kind?: string
+}
+export interface KnowledgeUndoEntry {
+  token: string; verb: string; item_id: string; summary: string; created_at: string
 }
 export interface ChatFolder { id: string; name: string; order?: number; collapsed?: boolean; parent_id?: string }
 export interface ChatTag { id: string; name: string; color?: string; order?: number; status?: boolean }
@@ -1755,6 +1820,11 @@ export interface KnowledgeItem {
   read_state?: 'unread' | 'reading' | 'read'; favorited?: boolean
   created_at?: string; updated_at?: string
   _score?: number; _match_type?: string
+  // The SEMANTIC kind (`semantics.KINDS`), distinct from `item_type`/`type` which routes the
+  // ingestion graph. Serialized by every item response but never declared here until KL-19 gave
+  // a surface a reason to read it — the restructure panel's change-kind verb. Nullable because
+  // most items have never been assigned one.
+  kind?: string | null
   // vision fields (may be absent from the PClaw backend today)
   type?: KnowledgeType; gist_language?: string; url?: string; url_title?: string
   mime_type?: string; file_size?: number; thumbnail_path?: string; file_path?: string; word_count?: number
@@ -2246,7 +2316,19 @@ export interface MemoryObservability {
   context_preview: { semantic_chars: number; episodic_chars: number; lessons_chars: number; total_chars: number; semantic_preview?: string; episodic_preview?: string; lessons_preview?: string }
 }
 // A learned "lesson" rule (from the after-turn review or manual add).
-export interface Lesson { rule: string; category: string; ts?: string }
+//
+// `standing` is the injection gate: `injected` is in the prompt right now,
+// `retained` is stored and still gathering evidence but deliberately kept OUT of it —
+// a declared state, not a deletion. `confidence` is DERIVED from the evidence counters
+// beside it (never assigned), and `confidence_reason` is the server's sentence for why
+// this lesson stands where it does; the frontend must not recompose that reasoning, or
+// the studio and the gate would eventually disagree.
+export type LessonStanding = 'injected' | 'retained'
+export interface Lesson {
+  rule: string; category: string; ts?: string
+  standing?: LessonStanding; confidence?: number; confidence_reason?: string
+  observations?: number; contradictions?: number; reversals?: number
+}
 // The auto-linked memory graph: fact nodes (grouped by key namespace) + relations.
 // `ref` is a stable un-hashed handle onto the source memory (`sem:<key>`, `lesson:<rule>`,
 // …) — the Memory Studio maps a selected list entry to its node by ref, not by re-hashing.
@@ -2746,6 +2828,10 @@ export interface ChatModelOption { name: string; model_id: string; provider: str
 export interface SavedAgent {
   name: string; provider: string; provider_agent?: string; acp_mode?: string; model?: string; approval_mode?: string
   description?: string; system_prompt?: string; voice?: string; skills?: string[]; tools?: string[]; triggers?: string[]; source?: string; default_dir?: string; memory_store?: string
+  /** Plainer, less machine-sounding PROSE — a named set of patterns to avoid.
+   *  Distinct from `voice` (WHO the agent is) and from the voice-profile speech
+   *  surface. Travels with the agent; a conversation can override it for itself. */
+  natural_voice?: boolean
   // Agent routing — suggest-first specialist routing metadata.
   specialty?: string; route_hints?: string
   reserved?: boolean; editable?: boolean
@@ -2945,8 +3031,28 @@ export interface LoopPhase {
   deliverable?: string; tasks?: Record<string, unknown>[]
   [k: string]: unknown
 }
+/** What one loop cost, read from the per-turn ledger (`loop.manager.loop_spend`).
+ *
+ *  `dollars_est` spans the loop's worker session AND every task-worker session under it, so a
+ *  fan-out loop is one figure. `planning` is the planner session (`loop-plan-<id>`), which is NOT
+ *  under that prefix and is therefore reported separately rather than summed — the two are
+ *  different money and a single total would overstate "this run".
+ *
+ *  `priced` is False when ANY constituent turn had no price row, which makes the figure a FLOOR.
+ *  Present on the loop DETAIL only (`GET /api/loops/{id}`) — never on the list, and never on the
+ *  SSE snapshot, so a consumer must not store it inside the loop entity it re-derives from a
+ *  snapshot or it will vanish on the first lifecycle event. */
+export interface LoopSpend {
+  dollars_est: number
+  turns: number
+  tokens: number
+  priced: boolean
+  planning: { dollars_est: number; turns: number }
+}
 export interface Loop {
   id: string; kind: LoopKind; name: string; task: string; summary?: string
+  /** Detail-only (see `LoopSpend`). Absent on the list and on the SSE snapshot. */
+  spend?: LoopSpend
   intake_rigor?: string
   plan?: LoopPhase[]; phase_status?: Record<string, string>
   execution: 'solo' | 'multi_agent'; roster?: RosterMember[]; strategy_id?: string
@@ -3457,7 +3563,9 @@ export const api = {
     post<{ active: boolean; reason: string; started_at: string }>('/api/incident', { reason }),
   incidentResume: () => post<{ active: boolean }>('/api/incident/resume', { confirm: true }),
   modelsHealth: () =>
-    get<{ providers: ProviderHealth[]; generated_from: number }>('/api/models/health'),
+    get<{ providers: ProviderHealth[]; callers?: CallerHealth[]; generated_from: number }>(
+      '/api/models/health',
+    ),
 
   // ── The earned-autonomy ladder (§5-§6.1). Read, then three writes — and only `grant`
   //    increases what an automation may do on its own, which is why it is the only one
@@ -3946,8 +4054,20 @@ export const api = {
      *  this session was branched, plus the parent's title resolved at read time. Served
      *  here — not carried in navigation state — so the breadcrumb survives a reload.
      *  `forked_from_title: ''` with a non-empty `forked_from` = the origin is gone. */
-    forked_from?: string; forked_from_title?: string }>(`/api/chat/sessions/${encodeURIComponent(key)}`),
+    forked_from?: string; forked_from_title?: string
+    /** Natural voice. `natural_voice` is what THIS conversation states
+     *  (`'' | 'on' | 'off'`); the other three are resolved by the backend, which owns
+     *  the order — the composer displays `natural_voice_source`, it never derives it. */
+    natural_voice?: string; natural_voice_agent_default?: boolean
+    natural_voice_effective?: boolean; natural_voice_source?: string }>(`/api/chat/sessions/${encodeURIComponent(key)}`),
   deleteChatSession: (key: string) => del(`/api/chat/sessions/${encodeURIComponent(key)}`),
+  /** Set the per-conversation natural-voice scope. `''` clears the override so
+   *  the conversation inherits the bound agent's preference again. The response is the
+   *  RE-RESOLVED state, not an echo — the backend owns the resolution order, so the
+   *  composer shows what actually took effect rather than assuming its click won. */
+  setSessionNaturalVoice: (session: string, choice: '' | 'on' | 'off') =>
+    patch<{ ok: boolean; natural_voice: string; natural_voice_agent_default: boolean; natural_voice_effective: boolean; natural_voice_source: string }>(
+      `/api/chat/sessions/${encodeURIComponent(session)}/natural-voice`, { natural_voice: choice }),
   // ── session lifecycle + bulk ──
   setSessionLifecycle: (session: string, body: { lifecycle?: 'active' | 'archived'; never_archive?: boolean }) =>
     patch<{ ok: boolean; lifecycle: string; never_archive: boolean }>(`/api/chat/sessions/${encodeURIComponent(session)}/lifecycle`, body),
@@ -4683,6 +4803,46 @@ export const api = {
   // gate (a named dialog at the call site), not this flag.
   mergeKnowledgeItems: (keepId: string, mergeId: string) =>
     post<KnowledgeMergeResult>(`/api/knowledge/items/${encodeURIComponent(keepId)}/merge`, { merge_id: mergeId, confirm: true }),
+  // ── Structural editing verbs ──
+  // The boundaries a split may cut on. NO `.catch(() => [])`: an empty list is the normal
+  // answer for a document with no headings, so a swallowed rejection renders as "this item
+  // cannot be split" — indistinguishable from the truth, on the one call that decides whether
+  // the verb is offered at all.
+  knowledgeItemSections: (id: string) =>
+    get<{ sections: KnowledgeSection[]; length: number }>(`/api/knowledge/items/${encodeURIComponent(id)}/sections`),
+  /** Phase one. Sends no `confirm`, so the server returns the preview and touches nothing.
+   *
+   *  The returned `token` is a digest of the verb, its parameters, the affected items' current
+   *  state AND the break list — so it is not a nonce the client may hold indefinitely. Anything
+   *  that moves invalidates it, which is what makes the preview mandatory by construction rather
+   *  than by this client remembering to ask first. */
+  knowledgeRestructurePreview: (id: string, verb: string, params: Record<string, unknown>) =>
+    post<KnowledgeRestructurePreview>(
+      `/api/knowledge/items/${encodeURIComponent(id)}/restructure/${encodeURIComponent(verb)}`,
+      params,
+    ),
+  /** Phase two. `token` MUST be the one phase one returned, and `params` MUST be the params it
+   *  was previewed with — the server refuses a token whose plan no longer matches (409
+   *  `preview_stale`, with the fresh plan attached) rather than applying a preview the user
+   *  never saw. So callers pass what they PREVIEWED, not whatever the form now holds.
+   *
+   *  `relink: false` declines the repair the preview offered; the break then simply happens,
+   *  which is a choice the reader is entitled to make. Re-sending the same token is safe —
+   *  the server replays the first result instead of restructuring twice. */
+  knowledgeRestructureApply: (
+    id: string, verb: string, params: Record<string, unknown>, token: string, relink = true,
+  ) =>
+    post<KnowledgeRestructureResult>(
+      `/api/knowledge/items/${encodeURIComponent(id)}/restructure/${encodeURIComponent(verb)}`,
+      { ...params, confirm: true, token, relink },
+    ),
+  // The undo journal. Listed rather than only handed back by `apply`, because a reader who
+  // navigates away or reloads has nowhere else to get the token from — and an undo the user
+  // cannot find is not one they can rely on before a destructive restructure.
+  knowledgeRestructureUndoable: () =>
+    get<{ undoable: KnowledgeUndoEntry[] }>('/api/knowledge/restructure/undo').then((d) => d.undoable),
+  knowledgeRestructureUndo: (token: string) =>
+    post<{ ok: boolean; verb: string; item_id: string; summary: string }>('/api/knowledge/restructure/undo', { token }),
   // One curation op over many items. Per-item results, because a selection can go
   // stale between the click and the request — the UI reports "38 shelved, 2 not found"
   // rather than treating a partial success as a failure.

@@ -16,7 +16,7 @@ import {
   type SourceRecipe,
   type SourceRecipesResponse,
 } from '../../lib/api'
-import { useCachedData, invalidateCache } from '../../lib/useCachedData'
+import { useQuery, invalidateKeys } from '../../lib/data'
 import { notify } from '../../app/appSdk'
 import { fvs } from '../../design/fontWeight'
 import { accentChip } from '../../design/accent'
@@ -29,7 +29,7 @@ import { HEALTH_NEEDS_RENDER, INTERVAL_CHOICES, fmtInterval, formIcon } from './
  *  is a measured fact per provider and this page says plainly where no dry run exists rather
  *  than faking one by half-polling a feed. */
 export function SourceCreatePage({ onBack, onCreated }: { onBack: () => void; onCreated: () => void }) {
-  const { data, loading, error, refresh } = useCachedData('knowledge:sources', () => api.knowledgeSources())
+  const { data, loading, error, refresh } = useQuery('knowledge:sources', () => api.knowledgeSources())
   const [chosen, setChosen] = useState<string>('')
   const [seed, setSeed] = useState<RecipeSeed | null>(null)
   const kinds = data?.kinds
@@ -308,7 +308,7 @@ function SourceForm({ kind, seed, onBack, onClose, onCreated }: {
       })
       // The list caches under this key; leaving it stale would show the new source only
       // after a reload, which reads as "the save didn't work".
-      invalidateCache('knowledge:sources')
+      invalidateKeys('knowledge:sources')
       notify(`Now watching ${name.trim()}`, 'success')
       onCreated()
     } catch (e) {

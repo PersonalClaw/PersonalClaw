@@ -19,7 +19,7 @@ import { join } from 'node:path'
 //   • "read-only" — asserted as the ABSENCE of any control inside the baseline region, measured
 //     by role, not by reading the JSX.
 //
-// 🪤 COLD sessionStorage per test. `useCachedData(..., { persist: true })` seeds from
+// 🪤 COLD sessionStorage per test. `useQuery(..., { persist: true })` seeds from
 // sessionStorage, and the settings hub writes a substituted `null` under the SAME
 // `settings:security` key — a warm cache masks both the failure branch and the fresh payload.
 //

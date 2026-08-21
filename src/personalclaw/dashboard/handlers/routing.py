@@ -1,7 +1,7 @@
 """Agent-routing suppression endpoints.
 
 The dismiss/unmute/status routes over the ``entity_settings/agent_routing.json``
-suppression store. New routes use the error envelope
+suppression store. New routes use the `AGENTS.md` §"Shared conventions" error envelope
 (``{"error": {"code", "message"}}``); the suggestion itself is a WS-push, not a route.
 """
 

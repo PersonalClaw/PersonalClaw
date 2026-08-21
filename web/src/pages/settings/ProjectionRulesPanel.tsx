@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { unavailableWhen } from '../../ui/unavailable'
 import { Scissors, Plus, X, AlertTriangle, Gauge, RotateCcw } from 'lucide-react'
 import { api, type ProjectionRule, type ProjectionStrategy, type ToolsSavings } from '../../lib/api'
-import { useCachedData } from '../../lib/useCachedData'
+import { useQuery } from '../../lib/data'
 import { Button } from '../../ui/Button'
 import { InlineError } from '../../ui/InlineError'
 import { ListSkeleton } from '../../ui/ListScaffold'
@@ -28,7 +28,7 @@ const STRATEGIES: { id: ProjectionStrategy; label: string; blurb: string }[] = [
  *  maps a regex marker (matched against the output head) to a builtin strategy —
  *  declarative, so no user code runs, and a bad regex is rejected on save. */
 export function ProjectionRulesPanel() {
-  const { data: rules, error: loadErr, refresh } = useCachedData(
+  const { data: rules, error: loadErr, refresh } = useQuery(
     'settings:projection-rules', () => api.projectionRules(),
     { persist: true },
   )
@@ -92,7 +92,7 @@ export function ProjectionRulesPanel() {
  *  more-than-one gate, chars→tokens conversion) are only observable by rendering the card against a
  *  stubbed summary — jsdom reports every box as 0, so none of it is measurable from layout. */
 export function SavingsCard() {
-  const { data } = useCachedData<ToolsSavings>(
+  const { data } = useQuery<ToolsSavings>(
     'settings:tools-savings', () => api.toolsSavings(), { persist: true },
   )
   if (!data || data.saved_chars <= 0) return null

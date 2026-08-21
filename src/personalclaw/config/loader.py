@@ -1815,6 +1815,17 @@ class AgentProfile:
             "personality survives long prompts.",
         ),
     )
+    natural_voice: bool = field(
+        default=False,
+        metadata=_meta(
+            "Natural Voice",
+            "Ask this agent for plainer, less machine-sounding prose — a named set "
+            "of patterns to avoid, not a persona. Travels with the agent into every "
+            "conversation that binds it; a conversation can override it for itself "
+            "from the composer. Distinct from Voice (WHO the agent is) and from "
+            "voice profiles (speech). Never changes facts, caveats or refusals.",
+        ),
+    )
     model: str = field(
         default="",
         metadata=_meta("Model", "Default model for this agent. Overridable per-chat."),
@@ -2014,6 +2025,22 @@ class LearningConfig:
             "as durable learning. One is an anecdote and two a coincidence; this same "
             "floor is shared by the promotion ladder, pattern synthesis, and inferred "
             "proposals, so they cannot disagree about what counts as evidence.",
+        ),
+    )
+    min_lesson_confidence: float = field(
+        default=0.5,
+        metadata=_meta(
+            "Lesson Injection Confidence",
+            "How well supported a learned lesson must be before it is injected into "
+            "a prompt. Every lesson carries a confidence DERIVED from its evidence — "
+            "how often it was observed, how recently, whether anything contradicted "
+            "it, whether a correction reversed it. Below this floor a lesson is "
+            "RETAINED: still stored, still accumulating evidence, but kept out of the "
+            "prompt. The default 0.5 is not a picked number — it is exactly the "
+            "confidence a lesson reaches at the third corroborating observation, "
+            "which is the same evidence floor Minimum Evidence already sets for every "
+            "other learning path (one is an anecdote and two a coincidence). Raise it "
+            "to demand more corroboration; 0 injects anything that exists.",
         ),
     )
     staging_enabled: bool = field(
@@ -2286,6 +2313,28 @@ class KnowledgeConfig:
             "knowledge items, only found by a search. Indexing is local: a mirrored artifact "
             "never reaches a model. Off stops new artifacts being indexed and removes nothing "
             "already indexed.",
+        ),
+    )
+    vault_mode: str = field(
+        default="off",
+        metadata=_meta(
+            "Knowledge Vault (Obsidian)",
+            "off = knowledge lives only in the database. mirror = also write every item out "
+            "as a plain markdown file you can read, grep and back up without PersonalClaw "
+            "(YAML frontmatter carrying identity and relations + [[wikilinks]]), regenerated "
+            "from the store and never read back. two_way = also read your edits back: a file "
+            "you change in a text editor wins, a file you delete is not re-created, and a "
+            "file changed on BOTH sides is left exactly as you wrote it and reported instead "
+            "of being overwritten. Uses the same projector, page format and conflict rules as "
+            "the memory vault.",
+        ),
+    )
+    vault_path: str = field(
+        default="knowledge-vault",
+        metadata=_meta(
+            "Knowledge Vault Path",
+            "Where the markdown projection is written. Relative paths resolve under the "
+            "PersonalClaw config dir (~/.personalclaw); absolute paths are used as-is.",
         ),
     )
 
@@ -4371,6 +4420,11 @@ class AppConfig:
                         # Voice layer (#42) — MUST be read here (S6 loader-allowlist
                         # gotcha) or it's dropped on every config reload.
                         voice=entry.get("voice", ""),
+                        # Natural voice — the same loader-allowlist gotcha:
+                        # unread here it would be dropped on every config reload,
+                        # so the agent's plainer-prose preference would silently
+                        # stop travelling with it after the first save.
+                        natural_voice=bool(entry.get("natural_voice", False)),
                         model=entry.get("model", ""),
                         approval_mode=entry.get("approval_mode", ""),
                         skills=entry.get("skills", []),
@@ -4841,6 +4895,10 @@ class AppConfig:
                 surface_chip=bool(learning_data.get("surface_chip", True)),
                 skill_ladder=bool(learning_data.get("skill_ladder", True)),
                 min_evidence=int(learning_data.get("min_evidence", 3) or 3),
+                # 0.0 is a MEANINGFUL value here (inject anything that exists), so this
+                # one cannot use the `or default` idiom its integer siblings share —
+                # that would silently rewrite a deliberate "no gate" into the default.
+                min_lesson_confidence=_safe_float(learning_data.get("min_lesson_confidence"), 0.5),
                 staging_enabled=bool(learning_data.get("staging_enabled", True)),
                 self_model_enabled=bool(learning_data.get("self_model_enabled", True)),
                 min_session_score=float(learning_data.get("min_session_score", 0.0) or 0.0),
@@ -4889,6 +4947,18 @@ class AppConfig:
                 ),
                 conflict_model_pass=bool(knowledge_data.get("conflict_model_pass", True)),
                 auto_ingest_artifacts=bool(knowledge_data.get("auto_ingest_artifacts", True)),
+                # Same three-valued vocabulary as `memory.vault_mode` (one tuple,
+                # `MEMORY_VAULT_MODES`, not a second spelling), and it fails to `off` rather
+                # than to the legacy back-read `_vault_mode` does: there is no retired flag to
+                # inherit here, and an unreadable value must never START writing a projection
+                # of the user's library to a path nobody confirmed.
+                vault_mode=(
+                    str(knowledge_data.get("vault_mode", "") or "").strip().lower()
+                    if str(knowledge_data.get("vault_mode", "") or "").strip().lower()
+                    in MEMORY_VAULT_MODES
+                    else "off"
+                ),
+                vault_path=str(knowledge_data.get("vault_path", "") or "knowledge-vault"),
             ),
             security=SecurityConfig(
                 denied_commands=[

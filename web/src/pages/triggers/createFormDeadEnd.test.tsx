@@ -108,7 +108,7 @@ describe('the create paths keep their failures visible', () => {
 
   it('the providers read no longer substitutes an empty list', () => {
     const code = codeOf('pages/triggers/TriggerCreatePage.tsx')
-    const at = code.indexOf("useCachedData('triggers:action-providers'")
+    const at = code.indexOf("useQuery('triggers:action-providers'")
     expect(at, 'the read must still be here').toBeGreaterThan(-1)
     // Paren-matched, not a prefix: appending `.catch(() => [])` again must fail this.
     let i = code.indexOf('(', at) + 1

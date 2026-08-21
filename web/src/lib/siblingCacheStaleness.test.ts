@@ -4,7 +4,7 @@ import { join } from 'node:path'
 
 // ── One collection, two cache keys, one invalidated ──────────────────────────────────────────────
 //
-// The last un-swept axis: what a surface claims about work it does not own. `useCachedData` is keyed,
+// The last un-swept axis: what a surface claims about work it does not own. `useQuery` is keyed,
 // so a collection read under TWO keys has two independent caches — and a mutation that busts only its
 // own key leaves the sibling describing a collection that has already changed.
 //
@@ -18,15 +18,15 @@ import { join } from 'node:path'
 //                     deletes happen on `#/artifacts` and inside chat itself (`WidgetFrame`). The
 //                     picker kept offering a deleted artifact, and attaching it fails.
 //
-// 🔑 THE PRIMITIVE ALREADY EXISTED AND NOTHING USED IT. `invalidateCache(keyOrPrefix, prefix = true)`
+// 🔑 THE PRIMITIVE ALREADY EXISTED AND NOTHING USED IT. `invalidateKeys(keyOrPrefix, prefix = true)`
 // has had prefix mode all along, with zero callers. The proposals keys already shared a prefix, so one
 // call keeps every key on that collection in step — including a key added later. The picker's key was
 // `chat:artifact-picker`, in the CHAT namespace rather than its collection's, so it could never be
-// caught that way; renaming it to `artifacts:chat-picker` is what makes `invalidateCache('artifacts:',
+// caught that way; renaming it to `artifacts:chat-picker` is what makes `invalidateKeys('artifacts:',
 // true)` cover it. **Name a cache key after the COLLECTION it reads, not the surface that reads it.**
 //
 // 🪤 The naive census that found this was wrong twice before it was right: a literal
-// `invalidateCache('k')` scan called 92 of 138 keys "never invalidated" because
+// `invalidateKeys('k')` scan called 92 of 138 keys "never invalidated" because
 // `settingsWidgets.mutate(fn, ...keys)` invalidates through a VARIABLE, and a `delete*`-then-reload
 // scan flagged detail panels whose PARENT reloads via `onDeleted`. Follow the indirection first.
 
@@ -51,40 +51,40 @@ beforeEach(() => { vi.resetModules(); sessionStorage.clear() })
 describe('a decision on one surface does not leave a sibling count stale', () => {
   it('busts every key on the proposals collection, not just its own', async () => {
     mockApi()
-    const { invalidateCache, writeCache, peekCache } = await import('./useCachedData')
+    const { invalidateKeys, writeQuery, peekQuery } = await import('./data')
     // Both keys warm, as they would be after visiting the Skills page.
-    writeCache('skill-proposals', proposals)
-    writeCache('skill-proposals-count', proposals)
-    expect(peekCache('skill-proposals-count'), 'the badge cache starts warm').toBeTruthy()
+    writeQuery('skill-proposals', proposals)
+    writeQuery('skill-proposals-count', proposals)
+    expect(peekQuery('skill-proposals-count'), 'the badge cache starts warm').toBeTruthy()
 
     // What the fixed reload does.
-    invalidateCache('skill-proposals', true)
+    invalidateKeys('skill-proposals', true)
 
-    expect(peekCache('skill-proposals'), 'the list cache is dropped').toBeUndefined()
+    expect(peekQuery('skill-proposals'), 'the list cache is dropped').toBeUndefined()
     // 🔑 The whole defect: this is the one that used to survive.
-    expect(peekCache('skill-proposals-count'), "the badge's cache is dropped too").toBeUndefined()
+    expect(peekQuery('skill-proposals-count'), "the badge's cache is dropped too").toBeUndefined()
   })
 
   it('prefix mode leaves unrelated collections alone', async () => {
     mockApi()
-    const { invalidateCache, writeCache, peekCache } = await import('./useCachedData')
-    writeCache('skill-proposals-count', proposals)
-    writeCache('skills', ['a'])
-    writeCache('artifacts:chat-picker', ['b'])
-    invalidateCache('skill-proposals', true)
-    expect(peekCache('skill-proposals-count')).toBeUndefined()
-    expect(peekCache('skills'), 'a neighbouring key must survive').toEqual(['a'])
-    expect(peekCache('artifacts:chat-picker'), 'another collection must survive').toEqual(['b'])
+    const { invalidateKeys, writeQuery, peekQuery } = await import('./data')
+    writeQuery('skill-proposals-count', proposals)
+    writeQuery('skills', ['a'])
+    writeQuery('artifacts:chat-picker', ['b'])
+    invalidateKeys('skill-proposals', true)
+    expect(peekQuery('skill-proposals-count')).toBeUndefined()
+    expect(peekQuery('skills'), 'a neighbouring key must survive').toEqual(['a'])
+    expect(peekQuery('artifacts:chat-picker'), 'another collection must survive').toEqual(['b'])
   })
 
   it('the artifacts namespace covers the chat picker', async () => {
     mockApi()
-    const { invalidateCache, writeCache, peekCache } = await import('./useCachedData')
-    writeCache('artifacts:chat-picker', ['b'])
-    writeCache('chat:suggestions', ['keep me'])
-    invalidateCache('artifacts:', true)
-    expect(peekCache('artifacts:chat-picker'), 'the picker cache is dropped').toBeUndefined()
-    expect(peekCache('chat:suggestions'), 'the chat namespace is untouched').toEqual(['keep me'])
+    const { invalidateKeys, writeQuery, peekQuery } = await import('./data')
+    writeQuery('artifacts:chat-picker', ['b'])
+    writeQuery('chat:suggestions', ['keep me'])
+    invalidateKeys('artifacts:', true)
+    expect(peekQuery('artifacts:chat-picker'), 'the picker cache is dropped').toBeUndefined()
+    expect(peekQuery('chat:suggestions'), 'the chat namespace is untouched').toEqual(['keep me'])
   })
 })
 
@@ -101,14 +101,14 @@ describe('every mutation site busts the collection it changed', () => {
       'pages/dashboard/widgets/ActionCenter.tsx',
     ]) {
       expect(codeOf(rel), `${rel} must bust the whole collection`)
-        .toMatch(/invalidateCache\('skill-proposals', true\)/)
+        .toMatch(/invalidateKeys\('skill-proposals', true\)/)
     }
   })
 
   it('both artifact mutation sites bust the artifacts namespace', () => {
     for (const rel of ['pages/artifacts/ArtifactViewer.tsx', 'ui/widget/WidgetFrame.tsx']) {
       expect(codeOf(rel), `${rel} must bust the artifacts namespace`)
-        .toMatch(/invalidateCache\('artifacts:', true\)/)
+        .toMatch(/invalidateKeys\('artifacts:', true\)/)
     }
   })
 
@@ -116,20 +116,20 @@ describe('every mutation site busts the collection it changed', () => {
     // 🪤 The rename is load-bearing: `chat:artifact-picker` could never be caught by an
     // artifacts-prefix bust, so the naming was the defect's other half.
     const chat = codeOf('pages/ChatPage.tsx')
-    expect(chat).toMatch(/useCachedData\('artifacts:chat-picker'/)
+    expect(chat).toMatch(/useQuery\('artifacts:chat-picker'/)
     expect(chat, 'the old surface-namespaced key must be gone').not.toMatch(/chat:artifact-picker/)
   })
 
   it('prefix mode is actually reachable — it was dead code before this change', () => {
-    const cache = codeOf('lib/useCachedData.ts')
-    expect(cache, 'the primitive must still take the flag').toMatch(/invalidateCache\(keyOrPrefix: string, prefix = false\)/)
+    const cache = codeOf('lib/data/store.ts')
+    expect(cache, 'the primitive must still take the flag').toMatch(/invalidateKeys\(keyOrPrefix: string, prefix = false\)/)
     // At least the five call sites this cycle added; a regression to per-key busting drops the count.
     const walk = (d: string): string[] => readdirSync(d).flatMap((n) => {
       const p = join(d, n)
       if (statSync(p).isDirectory()) return walk(p)
       return /\.tsx?$/.test(n) && !/\.(test|doc)\./.test(n) ? [p] : []
     })
-    const users = walk(SRC).filter((f) => /invalidateCache\([^)]*,\s*true\)/.test(codeOf(f.slice(SRC.length + 1))))
+    const users = walk(SRC).filter((f) => /invalidateKeys\([^)]*,\s*true\)/.test(codeOf(f.slice(SRC.length + 1))))
     expect(users.length, 'prefix-mode call sites').toBeGreaterThanOrEqual(5)
   })
 })

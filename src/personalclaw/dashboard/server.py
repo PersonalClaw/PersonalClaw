@@ -885,6 +885,9 @@ async def start_dashboard(
     )
     app.router.add_get("/api/recent-projects", chat.api_recent_projects)
     app.router.add_patch("/api/chat/sessions/{session}/color", chat.api_chat_session_color)
+    app.router.add_patch(
+        "/api/chat/sessions/{session}/natural-voice", chat.api_chat_session_natural_voice
+    )
     # Context injection (App Kit — silent background context)
     app.router.add_post("/api/chat/sessions/{session}/context", chat.api_chat_session_context)
     app.router.add_post("/api/chat/sessions/{session}/fork", chat.api_chat_session_fork)
@@ -1848,9 +1851,20 @@ async def start_dashboard(
                     request["app"] = a_app
         return await handler(request)  # type: ignore[operator]
 
+    # The ONE place a client's declared API version is compared against the
+    # supported window. Placed immediately after no_cache and BEFORE csrf/token auth
+    # deliberately: a stale cached bundle whose session cookie is still valid should
+    # read "your build is too old, reload" rather than a 403 from a layer it would
+    # actually pass. It publishes nothing to a caller who declares nothing — the
+    # refusal only fires on an explicit out-of-window declaration — and its exemption
+    # list (healthz, the manifest, the pre-session front door, WS upgrades, and
+    # everything outside /api/) is enumerated with reasons in api_version_gate.py.
+    from personalclaw.dashboard.api_version_gate import api_version_middleware
+
     # Explicit middleware ordering — self-documenting and immune to future insertions
     app.middlewares[:] = [
         no_cache_middleware,
+        api_version_middleware(),
         *(
             [_dev_user_middleware]
             if _no_auth

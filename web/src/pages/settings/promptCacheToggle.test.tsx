@@ -42,14 +42,14 @@ vi.mock('../../lib/api', () => ({
   },
 }))
 vi.mock('../../app/appSdk', () => ({ notify: vi.fn() }))
-vi.mock('../../lib/useCachedData', () => ({
-  useCachedData: (_k: string, fn: () => Promise<unknown>) => {
+vi.mock('../../lib/data', () => ({
+  useQuery: (_k: string, fn: () => Promise<unknown>) => {
     const [data, setData] = useState<unknown>(null)
     const [error, setError] = useState<unknown>(null)
     useEffect(() => { fn().then(setData).catch(setError) }, [])
     return { data, error, refresh: () => {} }
   },
-  invalidateCache: () => {},
+  invalidateKeys: () => {},
 }))
 
 describe('the prompt-cache switch in the Models panel', () => {

@@ -1,4 +1,4 @@
-import { useCachedData } from '../lib/useCachedData'
+import { useQuery } from '../lib/data'
 import { api } from '../lib/api'
 
 /** The gateway's OS platform token (sys.platform: 'darwin' | 'linux' | 'win32' | '').
@@ -7,7 +7,7 @@ import { api } from '../lib/api'
  *  gate. Cached + persisted since it never changes for a running gateway. '' while
  *  loading (so callers hide OS-gated UI until it resolves). */
 export function usePlatform(): string {
-  const { data } = useCachedData('system:platform', () => api.system().then((s) => s.platform || '').catch(() => ''), { persist: true })
+  const { data } = useQuery('system:platform', () => api.system().then((s) => s.platform || '').catch(() => ''), { persist: true })
   return data ?? ''
 }
 

@@ -267,7 +267,7 @@ class TestValidation:
             body = dict(BODY, schedule={"kind": "cron", "cron_expr": "0 99 * * *"})
             resp = await c.post("/api/knowledge/reports", json=body)
             assert resp.status == 400
-            assert "'0 99 * * *'" in (await resp.json())["error"]
+            assert "'0 99 * * *'" in (await resp.json())["error"]["message"]
             # Nothing was stored.
             assert (await (await c.get("/api/knowledge/reports")).json())["reports"] == []
 
@@ -280,7 +280,7 @@ class TestValidation:
                 json={"schedule": {"kind": "cron", "cron_expr": "not a cron"}},
             )
             assert resp.status == 400
-            assert "'not a cron'" in (await resp.json())["error"]
+            assert "'not a cron'" in (await resp.json())["error"]["message"]
             after = (await (await c.get("/api/knowledge/reports")).json())["reports"][0]
             assert after["schedule"]["cron_expr"] == "0 9 * * 1"
 
@@ -290,7 +290,7 @@ class TestValidation:
             body = dict(BODY, citation_policy="cite-anything")
             resp = await c.post("/api/knowledge/reports", json=body)
             assert resp.status == 400
-            message = (await resp.json())["error"]
+            message = (await resp.json())["error"]["message"]
             assert "cite-anything" in message
             for policy in CITATION_POLICIES:
                 assert policy in message
@@ -321,14 +321,17 @@ class TestValidation:
             ):
                 resp = await c.post("/api/knowledge/reports", json=body)
                 assert resp.status == 400, fragment
-                assert fragment in (await resp.json())["error"]
+                assert fragment in (await resp.json())["error"]["message"]
 
     @pytest.mark.asyncio
     async def test_non_object_body_is_400(self):
         async with TestClient(TestServer(_app())) as c:
             resp = await c.post("/api/knowledge/reports", json=[1, 2])
             assert resp.status == 400
-            assert (await resp.json())["error"] == "JSON body must be an object"
+            assert (await resp.json())["error"] == {
+                "code": "invalid_json",
+                "message": "JSON body must be an object",
+            }
 
 
 class TestNotFound:
@@ -449,4 +452,4 @@ class TestModuleAbsent:
                 await c.post("/api/knowledge/reports/x/run"),
             ):
                 assert resp.status == 503
-                assert "not available" in (await resp.json())["error"]
+                assert "not available" in (await resp.json())["error"]["message"]

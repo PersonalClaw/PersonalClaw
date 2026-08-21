@@ -39,7 +39,7 @@ async function openRow(name: RegExp) {
 
 describe('the search bind list announces which provider is bound, and to what', () => {
   beforeEach(() => {
-    localStorage.clear()   // `useCachedData(persist: true)` would otherwise carry a prior test's data
+    localStorage.clear()   // `useQuery(persist: true)` would otherwise carry a prior test's data
     vi.clearAllMocks()
     searchProviders.mockResolvedValue([
       { name: 'searxng', display_name: 'SearXNG', capabilities: CAPS, available: true },

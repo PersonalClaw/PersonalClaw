@@ -26,7 +26,7 @@ import { TextInput } from '../../ui/forms'
 import { SquareIconButton } from '../../ui/SquareIconButton'
 import { Segmented } from '../../ui/Segmented'
 import { useQueryParam, type RouteProps } from '../../app/useQueryState'
-import { useCachedData, invalidateCache } from '../../lib/useCachedData'
+import { useQuery, invalidateKeys } from '../../lib/data'
 import {
   api, type AppSummary, type AppDepClassification, type AppCatalogEntry,
 } from '../../lib/api'
@@ -322,13 +322,13 @@ export function AppsSection({ query, setQuery, navigate }: Pick<RouteProps, 'que
   // out loud: measured against a 500 on `/api/apps*` with a cold sessionStorage, the Library rendered
   // "No apps installed — Browse the Store to add apps" plus a Browse Store CTA, with no error text
   // anywhere and no live region. Letting the rejection through is what makes `error` exist.
-  const { data: apps, error: appsErr, refresh } = useCachedData<AppSummary[]>(
+  const { data: apps, error: appsErr, refresh } = useQuery<AppSummary[]>(
     'apps', () => api.apps(), { persist: true },
   )
   // Store catalog is lifted here (was inside StoreView) so the shared, pinned
   // controls bar can host the Store's search + Filter&sort too — same idiom as
   // the Library, instead of a second control bar that scrolls with the body.
-  const { data: catalog, error: catalogErr, refresh: refreshCatalog } = useCachedData(
+  const { data: catalog, error: catalogErr, refresh: refreshCatalog } = useQuery(
     'app-catalog', () => api.appCatalog(), { persist: true },
   )
   const [search, setSearch] = useQueryParam(q, sq, 'q', '', { replace: true })
@@ -353,8 +353,8 @@ export function AppsSection({ query, setQuery, navigate }: Pick<RouteProps, 'que
   const [storeEntity, setStoreEntity] = useQueryParam(q, sq, 'sentity', 'all', { replace: true })
   const [storeTag, setStoreTag] = useQueryParam(q, sq, 'stag', 'all', { replace: true })
 
-  const reload = () => { invalidateCache('apps'); invalidateCache('app-catalog'); refresh(); refreshCatalog() }
-  const reloadCatalog = () => { invalidateCache('app-catalog'); refreshCatalog() }
+  const reload = () => { invalidateKeys('apps'); invalidateKeys('app-catalog'); refresh(); refreshCatalog() }
+  const reloadCatalog = () => { invalidateKeys('app-catalog'); refreshCatalog() }
   const isStore = view === 'store'
   const isNative = view === 'native'
 
@@ -1423,7 +1423,7 @@ function ConfigModal({ name, onClose }: { name: string; onClose: () => void }) {
 }
 
 function UninstallModal({ name, onClose, onDone }: { name: string; onClose: () => void; onDone: () => void }) {
-  const { data } = useCachedData(`app-uninstall:${name}`, () => api.appUninstallPreview(name), { persist: false })
+  const { data } = useQuery(`app-uninstall:${name}`, () => api.appUninstallPreview(name), { persist: false })
   const [busy, setBusy] = useState(false)
   const deps: AppDepClassification[] = data?.dependencies ?? []
   const kept = deps.filter((d) => d.disposition !== 'removable')

@@ -26,7 +26,7 @@ import { SearchField } from '../../ui/SearchField'
 import { SquareIconButton } from '../../ui/SquareIconButton'
 import { InvestigateButton } from '../../ui/InvestigateButton'
 import { TextLink } from '../../ui/TextLink'
-import { useCachedData, invalidateCache } from '../../lib/useCachedData'
+import { useQuery, invalidateKeys } from '../../lib/data'
 import { useQueryParam, type RouteProps } from '../../app/useQueryState'
 import { fvs } from '../../design/fontWeight'
 import { accentChip } from '../../design/accent'
@@ -73,10 +73,10 @@ export function MemoryPanel({ query, setQuery }: Pick<RouteProps, 'query' | 'set
   // panel does not keep.
   const setTab = (t: Tab) => setTabRaw(t)
   const onTabKey = tabListKeys((i) => setTab(TOP_TABS[i].id))
-  const { data: stats, refresh: refreshStats } = useCachedData(
+  const { data: stats, refresh: refreshStats } = useQuery(
     'settings:memory-stats', () => api.memoryStats().catch(() => null), { persist: true },
   )
-  const reloadStats = () => { invalidateCache('settings:memory-stats'); refreshStats() }
+  const reloadStats = () => { invalidateKeys('settings:memory-stats'); refreshStats() }
 
   return (
     <div className="flex flex-col" style={{ minHeight: 0 }}>
@@ -227,6 +227,23 @@ const STUDIO_DOCS: { which: 'preferences' | 'projects' | 'history'; label: strin
  *  md5; we only need the same label key). */
 const lessonRef = (rule: string) => `lesson:${rule.slice(0, 80)}`
 
+/** Injection standing as WORDS, in the row's own preview line.
+ *
+ *  "In prompts" / "Held below the gate" is the answer to "why is it still doing that"
+ *  and "why did it stop doing that", so it has to be legible while scanning the list —
+ *  not one click deep. Deliberately text and not a coloured dot: a colour is not a
+ *  state, and this line is already the row's accessible name, so the standing arrives
+ *  in the accessibility tree for free rather than needing a parallel label.
+ *
+ *  A lesson with no `standing` is one served by a backend that predates the gate; it
+ *  falls back to the category alone rather than claiming a standing nobody computed. */
+export function lessonPreview(l: Lesson): string {
+  const kind = l.category || 'lesson'
+  if (!l.standing) return kind
+  const pct = `${Math.round((l.confidence ?? 0) * 100)}%`
+  return `${kind} · ${l.standing === 'injected' ? 'in prompts' : 'held below the gate'} · ${pct} confidence`
+}
+
 function MemoryStudio({ onChanged, initialSel }: { onChanged: () => void; initialSel?: string }) {
   const [kindFilter, setKindFilter] = useState<StudioKind | 'all'>('all')
   const [q, setQ] = useState('')
@@ -246,39 +263,39 @@ function MemoryStudio({ onChanged, initialSel }: { onChanged: () => void; initia
   // These feed a LIST BODY, so the rejections reach the hook rather than being substituted
   // with `[]` — a failed read used to render "No memories yet" to someone whose memories
   // merely failed to load. See `settingsListHonesty.test.ts`.
-  const { data: facts, error: factsErr, refresh: refreshFacts } = useCachedData(
+  const { data: facts, error: factsErr, refresh: refreshFacts } = useQuery(
     'settings:memory-semantic', () => api.memorySemantic(),
   )
-  const { data: episodics, error: epiErr, refresh: refreshEpi } = useCachedData(
+  const { data: episodics, error: epiErr, refresh: refreshEpi } = useQuery(
     'settings:memory-episodic:all', () => api.memoryEpisodic({ limit: 100 }),
   )
-  const { data: lessons, error: lessonsErr, refresh: refreshLessons } = useCachedData(
+  const { data: lessons, error: lessonsErr, refresh: refreshLessons } = useQuery(
     'settings:lessons', () => api.lessons(), { persist: false },
   )
-  const { data: graph, refresh: refreshGraph } = useCachedData(
+  const { data: graph, refresh: refreshGraph } = useQuery(
     'settings:memory-graph', () => api.memoryGraph(), { persist: false },
   )
-  const { data: entityGraph, refresh: refreshEntityGraph } = useCachedData('settings:memory-entity-graph', () => api.memoryEntityGraph(), { persist: false })
-  const { data: entityData, error: entitiesErr, refresh: refreshEntities } = useCachedData(
+  const { data: entityGraph, refresh: refreshEntityGraph } = useQuery('settings:memory-entity-graph', () => api.memoryEntityGraph(), { persist: false })
+  const { data: entityData, error: entitiesErr, refresh: refreshEntities } = useQuery(
     'settings:memory-entities', () => api.memoryEntities(), { persist: false },
   )
-  const { data: slotData, error: slotsErr, refresh: refreshSlots } = useCachedData(
+  const { data: slotData, error: slotsErr, refresh: refreshSlots } = useQuery(
     'settings:memory-slots', () => api.memorySlots(), { persist: false },
   )
-  const { data: proposalData, refresh: refreshProposals } = useCachedData('settings:memory-proposals', () => api.memoryEntityProposals(), { persist: false })
+  const { data: proposalData, refresh: refreshProposals } = useQuery('settings:memory-proposals', () => api.memoryEntityProposals(), { persist: false })
   const reloadAll = () => {
     for (const k of ['settings:memory-semantic', 'settings:lessons', 'settings:memory-graph',
       'settings:memory-entity-graph', 'settings:memory-entities', 'settings:memory-slots',
-      'settings:memory-proposals']) invalidateCache(k)
-    invalidateCache('settings:memory-episodic', true)
+      'settings:memory-proposals']) invalidateKeys(k)
+    invalidateKeys('settings:memory-episodic', true)
     refreshFacts(); refreshEpi(); refreshLessons(); refreshGraph()
     refreshEntityGraph(); refreshEntities(); refreshSlots(); refreshProposals(); onChanged()
   }
   const reloadGraphSide = () => {
-    for (const k of ['settings:memory-entity-graph', 'settings:memory-entities', 'settings:memory-proposals']) invalidateCache(k)
+    for (const k of ['settings:memory-entity-graph', 'settings:memory-entities', 'settings:memory-proposals']) invalidateKeys(k)
     refreshEntityGraph(); refreshEntities(); refreshProposals(); onChanged()
   }
-  const reloadSlots = () => { invalidateCache('settings:memory-slots'); refreshSlots() }
+  const reloadSlots = () => { invalidateKeys('settings:memory-slots'); refreshSlots() }
 
   const entities = entityData?.entities ?? []
   const slots = slotData?.slots ?? []
@@ -299,7 +316,7 @@ function MemoryStudio({ onChanged, initialSel }: { onChanged: () => void; initia
       if (f.key.startsWith('slot.')) continue
       out.push({ uid: `fact:${f.key}`, kind: 'fact', title: f.key, preview: readValue(f.value_json), ref: `sem:${f.key}`, fact: f })
     }
-    for (const l of lessons ?? []) out.push({ uid: `lesson:${l.rule}`, kind: 'lesson', title: l.rule, preview: l.category || 'lesson', ref: lessonRef(l.rule), lesson: l })
+    for (const l of lessons ?? []) out.push({ uid: `lesson:${l.rule}`, kind: 'lesson', title: l.rule, preview: lessonPreview(l), ref: lessonRef(l.rule), lesson: l })
     for (const e of episodics ?? []) out.push({ uid: `epi:${e.id}`, kind: 'episodic', title: e.text.slice(0, 80), preview: e.created_at ? fmtDate(e.created_at) : 'episodic', ref: null, episodic: e })
     return out
   }, [facts, episodics, lessons, entities, slots])
@@ -656,7 +673,27 @@ function StudioInspector({ item, onDelete, onSaved, onSlotChanged }: {
         {item.kind === 'lesson' && item.lesson && (
           <div className="flex flex-col gap-3 text-[0.8125rem]">
             <p className="leading-snug text-on-surface">{item.lesson.rule}</p>
-            <StudioMeta pairs={[['Category', item.lesson.category || '—'], ['Learned', item.lesson.ts ? fmtDate(item.lesson.ts) : '—']]} />
+            {/* The evidence behind the standing. The server's own
+                `confidence_reason` sentence is rendered verbatim: it is composed from
+                the same verdict the injection gate compared, so re-wording it here
+                would let the studio drift from the gate. The counters below it are the
+                DERIVATION's inputs, listed so "why is it still doing that" can be
+                traced rather than taken on trust. Contradictions/reversals appear only
+                when there are any — a permanent "0" on every lesson is noise. */}
+            <StudioMeta pairs={[
+              ['Category', item.lesson.category || '—'],
+              ['Learned', item.lesson.ts ? fmtDate(item.lesson.ts) : '—'],
+              ...(item.lesson.standing
+                ? [
+                  ['In prompts', item.lesson.standing === 'injected' ? 'yes' : 'no — held below the gate'] as [string, string],
+                  ['Confidence', `${Math.round((item.lesson.confidence ?? 0) * 100)}%`] as [string, string],
+                  ['Why', item.lesson.confidence_reason || '—'] as [string, string],
+                  ['Observed', `${item.lesson.observations ?? 0}×`] as [string, string],
+                  ...(item.lesson.contradictions ? [['Contradicted', `${item.lesson.contradictions}×`] as [string, string]] : []),
+                  ...(item.lesson.reversals ? [['Reversed', `${item.lesson.reversals}×`] as [string, string]] : []),
+                ]
+                : []),
+            ]} />
           </div>
         )}
         {item.kind === 'entity' && item.entity && (
@@ -701,7 +738,7 @@ function StudioInspector({ item, onDelete, onSaved, onSlotChanged }: {
  *  a scary red box for "nothing links here" would be wrong. */
 function RecordLinks({ item }: { item: StudioItem }) {
   const ref = item.kind === 'fact' ? `sem:${item.fact?.key ?? ''}` : `epi:${item.episodic?.id ?? ''}`
-  const { data, error } = useCachedData(
+  const { data, error } = useQuery(
     `settings:memory-record-links:${ref}`, () => api.memoryRecordLinks(ref), { persist: false },
   )
   if (error) {
@@ -850,11 +887,11 @@ function AddSemanticForm({ onDone }: { onDone: (created: boolean) => void }) {
 
 // ── Audit ────────────────────────────────────────────────────────────────────
 function AuditTab() {
-  const { data: events, error, refresh } = useCachedData(
+  const { data: events, error, refresh } = useQuery(
     'settings:memory-events', () => api.memoryEvents({ limit: 100 }),
   )
   const [filter, setFilter] = useState('')
-  const reload = () => { invalidateCache('settings:memory-events'); refresh() }
+  const reload = () => { invalidateKeys('settings:memory-events'); refresh() }
 
   // Was `.catch(() => [] as MemoryEvent[])`: a failed read of the memory audit log rendered
   // "No matching events." — indistinguishable from a memory that has genuinely recorded nothing.
@@ -1003,8 +1040,8 @@ function RecallTab() {
  *  what auto-purged), the observability dashboard (injection-rejection reasons +
  *  injected-context byte budget), and a manual episodic→durable promote trigger. */
 function HealthTab({ onChanged }: { onChanged: () => void }) {
-  const { data: lint, refresh: refreshLint } = useCachedData<MemoryLint | null>('settings:memory-lint', () => api.memoryLint().catch(() => null), { persist: false })
-  const { data: obs, refresh: refreshObs } = useCachedData<MemoryObservability | null>('settings:memory-obs', () => api.memoryObservability().catch(() => null), { persist: false })
+  const { data: lint, refresh: refreshLint } = useQuery<MemoryLint | null>('settings:memory-lint', () => api.memoryLint().catch(() => null), { persist: false })
+  const { data: obs, refresh: refreshObs } = useQuery<MemoryObservability | null>('settings:memory-obs', () => api.memoryObservability().catch(() => null), { persist: false })
   const [promoting, setPromoting] = useState(false)
   const [dreamResult, setDreamResult] = useState<string | null>(null)
   const promote = async () => {
@@ -1016,9 +1053,9 @@ function HealthTab({ onChanged }: { onChanged: () => void }) {
       window.setTimeout(() => setDreamResult(null), 4000)
     } catch { /* surfaced by no change */ }
     setPromoting(false)
-    invalidateCache('settings:memory-lint'); invalidateCache('settings:memory-obs'); refreshLint(); refreshObs(); onChanged()
+    invalidateKeys('settings:memory-lint'); invalidateKeys('settings:memory-obs'); refreshLint(); refreshObs(); onChanged()
   }
-  const reload = () => { invalidateCache('settings:memory-lint'); invalidateCache('settings:memory-obs'); refreshLint(); refreshObs() }
+  const reload = () => { invalidateKeys('settings:memory-lint'); invalidateKeys('settings:memory-obs'); refreshLint(); refreshObs() }
   if (lint === undefined || obs === undefined) return <ListSkeleton rows={5} />
   const autoFixed = lint ? Object.entries(lint.auto_fixed).filter(([, n]) => n > 0) : []
   return (
@@ -1107,7 +1144,7 @@ function HealthTab({ onChanged }: { onChanged: () => void }) {
 const VOLUNTEER_MIN_N = 10
 
 function VolunteerPrecisionSection() {
-  const { data } = useCachedData('settings:memory-volunteer', () => api.memoryVolunteerStats(), { persist: true })
+  const { data } = useQuery('settings:memory-volunteer', () => api.memoryVolunteerStats(), { persist: true })
   if (!data) return null
   // Nothing to report and the feature is off: stay silent rather than adding an
   // empty panel about a feature the user hasn't enabled.
@@ -1193,13 +1230,13 @@ const ENTITY_TYPE_OPTIONS: { value: MemoryEntityType; label: string }[] = [
 ]
 
 function EntityGraphSection({ onChanged }: { onChanged: () => void }) {
-  const { data, error, refresh } = useCachedData<MemoryEntitiesResponse>(
+  const { data, error, refresh } = useQuery<MemoryEntitiesResponse>(
     'settings:memory-entities', () => api.memoryEntities(), { persist: false },
   )
   const [busy, setBusy] = useState('')
   const [msg, setMsg] = useState('')
 
-  const reload = () => { invalidateCache('settings:memory-entities'); refresh(); onChanged() }
+  const reload = () => { invalidateKeys('settings:memory-entities'); refresh(); onChanged() }
 
   const rebuild = async () => {
     setBusy('rebuild'); setMsg('')
@@ -1544,7 +1581,7 @@ function MemoryMaintenance({ stats, onChanged }: { stats: MemoryStats | null | u
 
 // ── Settings (retention + consolidate) ───────────────────────────────────────
 function SettingsTab({ stats, onConsolidated }: { stats: MemoryStats | null | undefined; onConsolidated: () => void }) {
-  const { data } = useCachedData(
+  const { data } = useQuery(
     'settings:memory-settings', () => api.memorySettings().catch(() => null), { persist: true },
   )
   const [s, setS] = useState<MemorySettings | null>(null)

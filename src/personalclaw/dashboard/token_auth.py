@@ -338,6 +338,14 @@ _BYPASS_EXACT.add("/api/auth/enroll/complete")
 # (origin check, per-IP lockout, single-use hashed short-TTL code). `pair/start` is NOT exempt:
 # minting a pairing code requires already being the owner. See handlers/devices.py.
 _BYPASS_EXACT.add("/api/devices/pair/complete")
+# The pairing device's PAGE, exempt for the same reason `/login` the page is exempt alongside
+# `/api/auth/login`: the browser that must open it has no session, so gating it behind one is
+# circular — and without it the URL `pair/start` hands out 403s and tells the joining device to
+# run `personalclaw token` in a terminal it does not have. Exempting it opens nothing: the
+# document is a CONSTANT with no secret on it (the code is read from `location.search` in the
+# browser, never interpolated server-side), and every grant still happens at
+# `/api/devices/pair/complete` behind that route's own guards. See handlers/devices.py.
+_BYPASS_EXACT.add("/pair")
 
 # Link click window — URL must be opened within this time.
 # 24 hours for local installs; the URL only works on loopback anyway.

@@ -95,10 +95,11 @@ async def _interactive(provider: ModelProvider, cfg: AppConfig) -> None:
         await _send_and_print(provider, message)
 
         # Check context usage — compact and restart if needed
+        # ``None`` = the provider measured nothing. Neither compact nor print a
+        # percentage in that case; there is no percentage to print.
         pct = provider.context_usage_pct()
-        needs_compact = pct >= cfg.session.autocompact_pct
 
-        if needs_compact:
+        if pct is not None and pct >= cfg.session.autocompact_pct:
             reason = f"context at {pct:.0f}%"
             print(f"\n🔄 Compacting — {reason}", file=sys.stderr)
             try:
@@ -107,7 +108,7 @@ async def _interactive(provider: ModelProvider, cfg: AppConfig) -> None:
                 pass
             await provider.shutdown()
             await provider.start()
-        elif pct >= 75.0:
+        elif pct is not None and pct >= 75.0:
             print(f"\n⚠️  Context at {pct:.0f}%", file=sys.stderr)
 
         print()

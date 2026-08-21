@@ -13,6 +13,8 @@ from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    from collections.abc import AsyncIterator
+
     from personalclaw.llm.base import LLMEvent
 
 from personalclaw import task_modes
@@ -252,6 +254,66 @@ _SLASH_COMMANDS = frozenset(
 _BLOCKED_SLASH_COMMANDS = frozenset(
     {"/quit", "/exit", "/q", "/chat", "/paste", "/reply", "/editor"}
 )
+
+#: The kind stamped on the substitution notice's ``activity_event``. Reuses the attention
+#: channel CE2-8 established for headroom notices — ``ActivityLine`` renders any kind's
+#: text inline, so this needs no frontend counterpart, only a truthful sentence.
+SLASH_FALLBACK_ACTIVITY_KIND = "slash_fallback"
+
+
+async def stream_slash_command(
+    client, command: str, *, prompt: str, notify
+) -> "AsyncIterator[LLMEvent]":
+    """Run *command* natively if the provider can, else answer *prompt* as plain text.
+
+    THE slash-command dispatch decision (`G4`). Three outcomes, all deliberate:
+
+    1. **Provider declares no command axis** → nothing is sent as a command; *prompt* is
+       streamed as an ordinary turn and ``notify`` says so. Covers the measured
+       claude-code case (adapter 0.60.0 advertises no command capability) and every
+       native/HTTP provider, whose ``stream_command`` was always a plain prompt wearing a
+       command's name.
+    2. **Declared, but the agent answers ``-32601`` before yielding anything** → the turn
+       is still untouched, so the same substitution runs. This is the version-drift case:
+       the capability said yes and the method wasn't there.
+    3. **Declared, and ``-32601`` arrives AFTER events have been yielded** → NO
+       substitution. Re-issuing would append a second answer to the same assistant
+       message, re-run any tool call that already ran, and bill the turn twice. The turn
+       stops with :class:`AcpCommandFailedAfterOutput`, whose message explains that to the
+       user, and the partial output is preserved by the caller's error handling.
+
+    Any OTHER JSON-RPC error is not caught here at all: only "method not found" means the
+    agent *cannot*, and a substitution triggered by anything else would silently swallow a
+    real failure.
+
+    ``notify`` takes the user-visible sentence; the caller owns the surface it lands on.
+    """
+    from personalclaw.acp.errors import (
+        AcpCommandFailedAfterOutput,
+        AcpCommandsUnsupported,
+        AcpMethodNotFound,
+    )
+
+    if not bool(getattr(client, "supports_native_commands", False)):
+        notify(f"`{command}` isn't a command this agent can run — sent as a plain message.")
+        async for event in client.stream(prompt):
+            yield event
+        return
+
+    produced = 0
+    try:
+        async for event in client.stream_command(command):
+            produced += 1
+            yield event
+        return
+    except (AcpCommandsUnsupported, AcpMethodNotFound) as exc:
+        if produced:
+            raise AcpCommandFailedAfterOutput(command) from exc
+        logger.info("slash command %s unsupported (%s) — substituting a plain prompt", command, exc)
+        notify(f"`{command}` was rejected as an unknown command — re-sent as a plain message.")
+    async for event in client.stream(prompt):
+        yield event
+
 
 # The slash commands the DASHBOARD handles directly — the only ones the composer
 # "/" menu advertises. Each maps to a deterministic action (an instant GUI action

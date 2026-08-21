@@ -31,7 +31,7 @@ import uuid
 from collections.abc import AsyncIterator
 from pathlib import Path
 
-from personalclaw.guardrails.audit import AttemptRecord, now_ms, record_attempt
+from personalclaw.guardrails.audit import AttemptRecord, current_caller, now_ms, record_attempt
 from personalclaw.guardrails.breaker import CircuitBreaker, get_breaker
 from personalclaw.guardrails.budgets import (
     Budget,
@@ -193,6 +193,15 @@ class ModelCallGuard(ModelProvider):
         )
         async for event in self._guarded(inner, strategy="direct"):
             yield event
+
+    @property
+    def supports_native_commands(self) -> bool:
+        """Explicit pass-through, NOT ``__getattr__``. ``ModelProvider`` declares this
+        property with a False default, so normal lookup finds the ABC's answer on the
+        wrapper and the transparent-fallback hook below never fires — the guard would
+        report "no commands" for an agent that has them, and every slash command would
+        silently degrade to text (`G4`)."""
+        return bool(getattr(self._inner, "supports_native_commands", False))
 
     async def stream_command(self, command: str) -> AsyncIterator[LLMEvent]:
         command = self._prescan(command)
@@ -466,6 +475,10 @@ class ModelCallGuard(ModelProvider):
             query_class=self._query_class,
             routed=self._routed,
             routed_fallback=self._routed_fallback,
+            # WHICH SUBSYSTEM asked. Read from a ContextVar for the same reason
+            # `current_run_key()` above is: this guard is built by `provider_bridge` from
+            # provider config and never sees its caller. "" when nothing bound one.
+            caller=current_caller(),
         )
         record_attempt(rec)
         # Fold the same attempt into the rolling routing stats (MODEL-ROUTING-TELEMETRY
@@ -503,7 +516,7 @@ class ModelCallGuard(ModelProvider):
     async def reject_tool(self, request_id: str | int) -> None:
         await self._inner.reject_tool(request_id)
 
-    def context_usage_pct(self) -> float:
+    def context_usage_pct(self) -> float | None:
         return self._inner.context_usage_pct()
 
     @property

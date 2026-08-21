@@ -3,7 +3,7 @@ import { X, Plus } from 'lucide-react'
 import { api, type RunnerRow } from '../../lib/api'
 import { notify } from '../../app/appSdk'
 import { useAgentCatalog, ensureBindableAgentName, type AgentOption } from '../../lib/agents'
-import { useCachedData } from '../../lib/useCachedData'
+import { useQuery } from '../../lib/data'
 import { PanelHeader, Section, Row, Field, SegPills, SavedToast, ToggleRow } from './settingsUI'
 import { Combobox } from '../../ui/Combobox'
 import { FieldError, NumberField } from '../../ui/forms'
@@ -28,7 +28,7 @@ export function AgentDefaultsPanel() {
   // Stale-while-revalidate + persist: paint instantly on revisit/reload from one
   // cached snapshot. The editable form state (cfg/defaultAgent) is seeded and
   // rehydrated from this read-only `data`; mutations stay optimistic below.
-  const { data, error: loadErr, refresh } = useCachedData('settings:agent-defaults', async () => {
+  const { data, error: loadErr, refresh } = useQuery('settings:agent-defaults', async () => {
     const [plaw, agents] = await Promise.all([
       api.personalclawConfig().then((c) => (c.agent ?? {}) as AgentCfg),
       api.agents().then((d) => d.default_agent).catch(() => ''),

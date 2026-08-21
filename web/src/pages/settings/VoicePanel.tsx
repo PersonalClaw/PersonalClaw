@@ -3,7 +3,7 @@ import { notify } from '../../app/appSdk'
 import { unavailableWhen } from '../../ui/unavailable'
 import { CheckCircle2, AlertTriangle, ArrowRight, Plus, Trash2, RefreshCw, Check, X, Wand2 } from 'lucide-react'
 import { api, type LexiconTerm, type LexiconCorrection } from '../../lib/api'
-import { useCachedData, invalidateCache } from '../../lib/useCachedData'
+import { useQuery, invalidateKeys } from '../../lib/data'
 import { PanelHeader, Section, Row, Field, Toggle, SavedToast, ToggleRow } from './settingsUI'
 import { FormSkeleton, ListSkeleton, LoadError } from '../../ui/ListScaffold'
 import { ChipInput } from '../../ui/forms'
@@ -32,7 +32,7 @@ export function VoicePanel({ go, query }: { go?: (id: string) => void; query?: R
   // Stale-while-revalidate + persist: paint instantly on revisit/reload from one
   // cached snapshot. `active` is read-only (the bound model is owned by Models);
   // the stt/tts settings are seeded into local state and mutated optimistically.
-  const { data, error: loadErr, refresh } = useCachedData('settings:voice', async () => {
+  const { data, error: loadErr, refresh } = useQuery('settings:voice', async () => {
     const [active, stt, tts] = await Promise.all([
       // `modelsActive` KEEPS its fallback: it only shows readiness ("model bound" / "no model"), so losing
       // it degrades a chip rather than inventing your settings.
@@ -120,7 +120,7 @@ export function VoicePanel({ go, query }: { go?: (id: string) => void; query?: R
  *  hands-free toggle gates on, so an empty list would make the mode deaf — the backend
  *  falls back to the shipped defaults rather than accepting one. */
 function HandsFreeSection() {
-  const { data, error, refresh } = useCachedData('settings:voice-loop', async () => {
+  const { data, error, refresh } = useQuery('settings:voice-loop', async () => {
     const cfg = await api.personalclawConfig()
     return (cfg.voice ?? {}) as Record<string, unknown>
   }, { persist: true })
@@ -396,7 +396,7 @@ const SOURCE_BADGE: Record<string, { label: string; cls: string }> = {
  *  mis-heard terms. `scrollTo` (from the legacy #/settings/vocabulary redirect)
  *  scrolls the section into view once its data has painted. */
 function VocabularySection({ scrollTo }: { scrollTo: boolean }) {
-  const { data, refresh } = useCachedData('settings:lexicon', async () => {
+  const { data, refresh } = useQuery('settings:lexicon', async () => {
     const [terms, corrections] = await Promise.all([
       api.lexiconTerms().catch(() => ({ terms: [] as LexiconTerm[], total: 0 })),
       api.lexiconCorrections().catch(() => ({ corrections: [] as LexiconCorrection[] })),
@@ -406,7 +406,7 @@ function VocabularySection({ scrollTo }: { scrollTo: boolean }) {
 
   const [adding, setAdding] = useState('')
   const [busy, setBusy] = useState(false)
-  const reload = () => { invalidateCache('settings:lexicon'); refresh() }
+  const reload = () => { invalidateKeys('settings:lexicon'); refresh() }
 
   // Legacy #/settings/vocabulary deep-link → scroll here once (after first paint
   // with data, so the sections above have their final height).

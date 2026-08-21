@@ -403,6 +403,18 @@ def parse_resources(content: str) -> list[SkillResource]:
     return out
 
 
+def parse_frontmatter(content: str) -> dict[str, str]:
+    """The flat ``key: value`` frontmatter of already-read SKILL.md *content*.
+
+    A module-level public reader beside :func:`parse_resources`, for callers that hold
+    the text and need one declared field (CE2-9 reads ``context_tier`` and
+    ``description``). It delegates to :meth:`SkillsLoader._parse_frontmatter_text` rather
+    than re-implementing the line parser: a second parser would disagree about BOMs,
+    block scalars and block lists exactly where the first one was carefully fixed.
+    """
+    return SkillsLoader._parse_frontmatter_text(content)
+
+
 class SkillsLoader:
     """Load skill markdown files from ~/.personalclaw/skills/.
 

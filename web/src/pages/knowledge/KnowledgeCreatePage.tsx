@@ -8,7 +8,7 @@ import { Button } from '../../ui/Button'
 import { ChipInput } from '../../ui/forms'
 import { PageTitle } from '../../ui/PageTitle'
 import { api, type KnowledgeType } from '../../lib/api'
-import { useCachedData } from '../../lib/useCachedData'
+import { useQuery } from '../../lib/data'
 import { TYPES, typeMeta, createKind, ACCEPTED_MIMES, GIST_LANGUAGES, fmtBytes } from './knowledgeMeta'
 import { GistEditor } from './GistEditor'
 import { createKnowledge, updateKnowledge, uploadKnowledgeFile } from './knowledgeStore'
@@ -58,7 +58,7 @@ function CreateForm({ type, onBack, onClose, onCreated }: { type: KnowledgeType;
   const [language, setLanguage] = useState('typescript')
   const [tags, setTags] = useState<string[]>([])
   // Tag autocomplete catalog — cached + persisted so the picker is instant on reopen.
-  const { data: knownTags } = useCachedData('knowledge:tags', () => api.knowledgeTags().catch(() => [] as string[]), { persist: true })
+  const { data: knownTags } = useQuery('knowledge:tags', () => api.knowledgeTags().catch(() => [] as string[]), { persist: true })
   const [file, setFile] = useState<File | null>(null)
   // Set when the selected file exceeds its per-type cap — disables Add + shows the reason.
   const [fileTooBig, setFileTooBig] = useState(false)

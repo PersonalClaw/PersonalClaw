@@ -371,7 +371,7 @@ async def test_dispatch_of_inactive_group_tool_still_works():
     )
     await rt.start()
     assert "artifact_save" not in {getattr(d, "name", "") for d in rt._active_defs}
-    assert await rt._invoke("artifact_save", {}) == "ran artifact_save"
+    assert await rt._invoke("artifact_save", {}, meta_sink={}) == "ran artifact_save"
     assert "artifact_save" in provs[3].invoked
 
 
@@ -387,7 +387,7 @@ async def test_tool_search_reaches_across_inactive_groups():
         tool_groups=[],
     )
     await rt.start()
-    out = await rt._invoke("tool_search", {"query": "artifact_save"})
+    out = await rt._invoke("tool_search", {"query": "artifact_save"}, meta_sink={})
     assert "artifact_save" in out
     assert "INACTIVE group 'artifacts'" in out
     assert 'reset_tools({"artifacts": true})' in out
@@ -437,7 +437,7 @@ async def test_tool_schema_expands_an_inactive_group_tool():
         tool_groups=[],
     )
     await rt.start()
-    out = json.loads(await rt._invoke("tool_schema", {"tool_name": "artifact_save"}))
+    out = json.loads(await rt._invoke("tool_schema", {"tool_name": "artifact_save"}, meta_sink={}))
     assert out["name"] == "artifact_save"
 
 

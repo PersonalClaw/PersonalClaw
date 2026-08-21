@@ -47,6 +47,54 @@ class Chunk:
     embedding: bytes | None = None
 
 
+@dataclass(frozen=True)
+class Boundary:
+    """One section boundary in a document: where it starts and what heading opens it.
+
+    ``offset`` is a 0-based CHARACTER offset into the exact string that was passed in, so a
+    caller can slice the document at it without re-deriving anything. ``line`` is 1-based to
+    match `Chunk`'s spans and what an editor shows.
+    """
+
+    offset: int
+    line: int
+    title: str
+    level: int
+
+
+def section_boundaries(content: str) -> list[Boundary]:
+    """Every heading-opened section boundary in *content*, in document order.
+
+    🔴 This exists so KL-19's split verb cuts on the SAME rule the chunker sections on. A
+    split whose "section boundary" came from a second heading regex would hand the chunk layer
+    a document whose sections it does not agree with — the halves would re-chunk along
+    different seams than the UI drew, and the outline a reader chose from would not be the
+    thing that moved. One rule, one owner, two readers.
+
+    The offset of a boundary is the start of its heading LINE, not the line after it: the
+    heading is part of the section it opens (the same choice `_split_into_sections` makes),
+    which is what lets a split give each half its own title.
+    """
+    if not content:
+        return []
+    out: list[Boundary] = []
+    offset = 0
+    for index, text in enumerate(content.split("\n"), start=1):
+        if _HEADING.match(text):
+            stripped = text.lstrip()
+            hashes = len(stripped) - len(stripped.lstrip("#"))
+            out.append(
+                Boundary(
+                    offset=offset,
+                    line=index,
+                    title=stripped[hashes:].strip(),
+                    level=hashes,
+                )
+            )
+        offset += len(text) + 1  # +1 for the "\n" that `split` consumed
+    return out
+
+
 def chunk_text(content: str, *, max_chars: int = MAX_CHARS, overlap: int = OVERLAP) -> list[Chunk]:
     """Chunk *content* on structural boundaries, size-splitting oversized sections.
 

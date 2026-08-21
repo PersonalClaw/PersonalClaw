@@ -79,7 +79,7 @@ describe('the two chat-history surfaces', () => {
   const src = readFileSync(join(SRC, 'pages/ChatPage.tsx'), 'utf8')
 
   it('capture the error from the hook', () => {
-    // `useCachedData` hands back `{ data, loading, error, refresh }`; the branch is impossible
+    // `useQuery` hands back `{ data, loading, error, refresh }`; the branch is impossible
     // unless the rejection is destructured. Both session readers alias it the same way.
     expect((src.match(/error: sessionsError/g) ?? []).length, 'both readers must capture the error').toBe(2)
   })

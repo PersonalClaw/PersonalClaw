@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { Plug, Plus, Wifi, Pencil, Trash2, X, Loader2, CheckCircle2, AlertTriangle } from 'lucide-react'
 import { api, type SettingsProvider, type ProviderInstance, type ProviderSchema, type ProviderTestResult } from '../../lib/api'
-import { useCachedData, invalidateCache } from '../../lib/useCachedData'
+import { useQuery, invalidateKeys } from '../../lib/data'
 import { confirmDelete } from '../../ui/dialog'
 import { Button } from '../../ui/Button'
 import { SquareIconButton } from '../../ui/SquareIconButton'
@@ -24,17 +24,17 @@ export function MultiInstanceCard({ ext, onChanged }: { ext: SettingsProvider; o
   // The provider's config schema barely changes — cache + persist it so the form
   // is ready instantly on revisit. Instances are mutable but still cached for an
   // instant paint, then revalidated; an empty list when disabled (no fetch).
-  const { data: schema } = useCachedData(
+  const { data: schema } = useQuery(
     `settings:provider-schema:${ext.name}`,
     () => api.providerSchema(ext.name).catch(() => ({ properties: {} } as ProviderSchema)),
     { persist: true },
   )
-  const { data: instances, refresh: refreshInstances } = useCachedData(
+  const { data: instances, refresh: refreshInstances } = useQuery(
     `settings:provider-instances:${ext.name}:${ext.enabled ? 'on' : 'off'}`,
     () => ext.enabled ? api.providerInstances(ext.name).catch(() => [] as ProviderInstance[]) : Promise.resolve([] as ProviderInstance[]),
     { persist: true },
   )
-  const reloadInstances = () => { invalidateCache(`settings:provider-instances:${ext.name}`, true); refreshInstances() }
+  const reloadInstances = () => { invalidateKeys(`settings:provider-instances:${ext.name}`, true); refreshInstances() }
 
   const toggle = async () => {
     setBusyToggle(true)

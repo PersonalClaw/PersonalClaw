@@ -4,7 +4,7 @@ The load-bearing claims:
 
 * **the routes delegate to the SAME `workflows.service` the chat tools use** — two
   implementations kept in sync by hand is the bug class this design avoids;
-* the HTTP envelope is the `{"error": {"code": lowercase_snake, …}}`, a DIFFERENT
+* the HTTP envelope is the shared `{"error": {"code": lowercase_snake, …}}`, a DIFFERENT
   vocabulary from the service's LLM-facing `WF_*` codes, mapped in ONE place;
 * **an unmapped service code never becomes a 500** — a 500 tells a client to retry
   something that will never succeed;

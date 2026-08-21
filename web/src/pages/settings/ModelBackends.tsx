@@ -5,7 +5,7 @@ import {
   CheckCircle2, AlertTriangle, ChevronRight, RotateCcw,
 } from 'lucide-react'
 import { api, type ModelProvider, type AvailableModel, type ProviderTestResult, type ModelProviderTypeField } from '../../lib/api'
-import { useCachedData, invalidateCache } from '../../lib/useCachedData'
+import { useQuery, invalidateKeys } from '../../lib/data'
 import { confirmDelete } from '../../ui/dialog'
 import { Button } from '../../ui/Button'
 import { SquareIconButton } from '../../ui/SquareIconButton'
@@ -48,7 +48,7 @@ export function RemoteModelProviders() {
   // Cached + session-persisted: revisiting Providers (or reloading) paints the
   // remote-provider list instantly from cache and revalidates in the background,
   // instead of re-flashing "Loading…" on every open.
-  const { data, error, refresh } = useCachedData('settings:remote-model-providers', async () => {
+  const { data, error, refresh } = useQuery('settings:remote-model-providers', async () => {
     const [provs, rows] = await Promise.all([
       // NOT `.catch(() => [])` — this list IS the panel, so a failed read has to reach the hook or
       // "No remote model providers yet." becomes the app's answer to a 500 (and `{ persist: true }`
@@ -65,7 +65,7 @@ export function RemoteModelProviders() {
     for (const r of rows) map[r.name] = [...(map[r.name] ?? []), ...(r.models ?? [])]
     return { providers: provs, available: map }
   }, { persist: true })
-  const reload = () => { invalidateCache('settings:remote-model-providers'); refresh() }
+  const reload = () => { invalidateKeys('settings:remote-model-providers'); refresh() }
   const available = data?.available ?? {}
 
   // A region inside the Providers panel, not a page body — so the failure is the canonical
@@ -246,7 +246,7 @@ export function SchemaField({ field, name, value, onChange }: {
  *  isn't installed never appears; each type's settingsSchema renders its own
  *  fields (api_key / region / endpoint enum / …). */
 function AddInstanceForm({ onDone }: { onDone: (created: boolean) => void }) {
-  const { data: types } = useCachedData('settings:model-provider-types', () => api.modelProviderTypes(), { persist: true })
+  const { data: types } = useQuery('settings:model-provider-types', () => api.modelProviderTypes(), { persist: true })
   const [typeIdx, setTypeIdx] = useState(0)
   const [name, setName] = useState('')
   const [values, setValues] = useState<Record<string, string>>({})

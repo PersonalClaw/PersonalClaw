@@ -1,7 +1,7 @@
 import { ArrowDown, ArrowUp, Trophy } from 'lucide-react'
 import { useCallback, useEffect, useState } from 'react'
 import { api, type RoutingPolicyRow, type TelemetryRow } from '../../lib/api'
-import { useCachedData } from '../../lib/useCachedData'
+import { useQuery } from '../../lib/data'
 import { useQueryParam, type RouteProps } from '../../app/useQueryState'
 import { Segmented } from '../../ui/Segmented'
 import { Field, FieldError, Select } from '../../ui/forms'
@@ -101,7 +101,7 @@ export function RoutingPanel({ query, setQuery }: Pick<RouteProps, 'query' | 'se
   // Keyed by both params so switching bucket revalidates against the right view;
   // persist:false (live telemetry, not slow config). A read failure resolves to
   // null (distinct from undefined=loading and an empty rows array=no telemetry).
-  const { data } = useCachedData(
+  const { data } = useQuery(
     `settings:routing-telemetry:${useCase}:${queryClass}`,
     () => api.modelsTelemetry({ use_case: useCase, query_class: queryClass })
       .then((d) => ({ rows: d.rows }))

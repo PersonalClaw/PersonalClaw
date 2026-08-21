@@ -436,7 +436,7 @@ async def test_a_reused_code_is_refused_by_the_endpoint(_isolated) -> None:
         assert (await client.post("/api/auth/enroll/complete", json={"code": code})).status == 200
         second = await client.post("/api/auth/enroll/complete", json={"code": code})
         assert second.status == 401
-        assert (await second.json())["error"] == "auth_enroll_code_invalid"
+        assert (await second.json())["error"]["code"] == "auth_enroll_code_invalid"
 
 
 @pytest.mark.asyncio
