@@ -875,6 +875,17 @@ _EDITABLE_CONFIG: dict[str, dict] = {
     # the watermark exists for. `maintenance.max_staleness_secs()` enforces its own floor
     # too, because config.json is hand-editable and this bound only guards the PATCH path.
     "knowledge.maintenance_max_staleness_secs": {"type": "int", "min": 60, "max": 86400},
+    # KL-20's projection gate. PATCH-editable rather than a dedicated PUT (which is what
+    # `memory.vault_mode` has) because there is nothing to do at the moment of the flip: the
+    # projection is a maintenance pass, so turning the mode on arms the pass and the next tick
+    # writes the vault. `off` is the shipped default and stays reachable, so a user who
+    # changes their mind stops the writer with the same control that started it.
+    #
+    # `two_way` is a strictly larger grant than `mirror` — it is what makes an edited file
+    # win over the database — and both are refused by anything except this validated write,
+    # because a mode outside the tuple resolves to `off` in `load()`.
+    "knowledge.vault_mode": {"type": "enum", "values": ["off", "mirror", "two_way"]},
+    "knowledge.vault_path": {"type": "str", "max_len": 512},
     # KL-13's similarity-edge shape. Runtime-editable because the right floor depends on the
     # embedding model and on what a store holds, and finding it means changing the value and
     # LOOKING at the edges it produced — a restart per attempt means nobody tunes it at all.

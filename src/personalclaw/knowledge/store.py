@@ -672,6 +672,46 @@ class KnowledgeStore:
                 swept_at TEXT NOT NULL
             );
 
+            -- The markdown-projection ledger (KL-20). One row per item that has a file in
+            -- the knowledge vault, carrying everything the two-way sync needs to tell four
+            -- states apart without asking the file system twice: which file it is, which
+            -- `items.updated_at` it was rendered from, and the `body_hash` of the bytes we
+            -- last wrote. Diffing those two against reality gives (a) unchanged, (b) the
+            -- store moved, (c) the OWNER edited the file, (d) BOTH moved — and only (d) is
+            -- a conflict. Without the stored hash, (c) and (d) are indistinguishable and
+            -- every projection resolves silently toward the database.
+            --
+            -- 🔴 DELIBERATELY NO FOREIGN KEY, unlike `similarity_sweeps` right above. The
+            -- row's second job is to be the only record that a file EXISTS: `ON DELETE
+            -- CASCADE` would take the row away with the item and strand its file forever,
+            -- which is precisely the "a removed item leaves no orphan file" clause. So the
+            -- row outlives the item on purpose and `orphan_vault_projections()` is what
+            -- collects it — a deliberate soft reference, the same call `intent_outcomes`
+            -- makes and for a related reason.
+            --
+            -- `owner_deleted` is the OTHER direction, and it is a tombstone rather than an
+            -- absence: a file the owner deleted must not be re-created on the next pass, and
+            -- "no row" would mean exactly "project it again". A tombstone keeps the deletion
+            -- explicit and reversible (clear the flag, the page comes back) instead of
+            -- silently losing an argument with the projector every fifteen minutes.
+            -- `seen_mtime` is the ONLY reason the absorb half is affordable: it lets a pass
+            -- decide "did the owner touch this file?" from one `stat` instead of a read, and
+            -- it is updated on every EXAMINATION rather than only on a write. Keyed the other
+            -- way — "is the file newer than the projection?" — a page we looked at and
+            -- refused (a conflict, an unparseable edit) would stay a candidate forever, and
+            -- because the maintenance host re-invokes a batched pass until it returns 0, one
+            -- unresolved page would burn every sub-batch of every tick.
+            CREATE TABLE IF NOT EXISTS vault_projections (
+                item_id TEXT PRIMARY KEY,
+                relpath TEXT NOT NULL,
+                projected_updated_at TEXT NOT NULL DEFAULT '',
+                projected_body_hash TEXT NOT NULL DEFAULT '',
+                projected_at TEXT NOT NULL DEFAULT '',
+                owner_deleted INTEGER NOT NULL DEFAULT 0,
+                seen_mtime REAL NOT NULL DEFAULT 0,
+                conflict TEXT NOT NULL DEFAULT ''
+            );
+
             -- Intent outcomes (Tier-3, redesign). A natural-language intent's match
             -- against one item, stored BY VALUE: the takeaway + typed fields + a
             -- denormalized item title are copied in. item_id is a SOFT back-reference
@@ -1826,6 +1866,8 @@ class KnowledgeStore:
             "relations": 0,
             "citations": 0,
         }
+        # KL-20: read before the rows move — see `delete_item`.
+        neighbours = self._vault_neighbours(merge_id) + self._vault_neighbours(keep_id)
         self.db.execute("BEGIN")
         try:
             # Collections: drop the pairs the survivor already has, then redirect the rest.
@@ -1967,6 +2009,9 @@ class KnowledgeStore:
         from personalclaw.knowledge import maintenance
 
         maintenance.mark_dirty(reason="merge items")
+        # KL-20, as in `delete_item`: a merge re-points a third item's attribution and moves
+        # edges onto the survivor, so every neighbour of either side has a page to re-render.
+        self.rearm_vault_projection(keep_id, *neighbours)
         logger.info("merged knowledge item %s into %s: %s", merge_id, keep_id, moved)
         return moved
 
@@ -2017,6 +2062,10 @@ class KnowledgeStore:
             ),
         )
         self.db.commit()
+        # KL-20: BOTH ends. The edge shows up in each page's `relations:` block and in the
+        # other's as the reverse leg, and re-arming only the source would leave the target's
+        # page silently one edge short — the one-sided-inventory shape.
+        self.rearm_vault_projection(source_item_id, target_item_id)
         return True
 
     def set_item_identity(self, item_id: str, *, kind: str | None = None) -> dict:
@@ -2942,6 +2991,14 @@ class KnowledgeStore:
         self.db.execute("DELETE FROM items WHERE id = ?", (item_id,))
 
     def delete_item(self, item_id):
+        # KL-20: collect the pages that will need re-rendering BEFORE the cascade takes the
+        # rows away. Deleting an item removes its typed edges and its citations, which changes
+        # what the NEIGHBOURS' pages must say while leaving their `items.updated_at` untouched
+        # — so a projection keyed only on `updated_at` would leave every neighbour linking a
+        # page that no longer exists. Measured, not theorised: driving the real maintenance host
+        # left `[[Eviction-1d51c992]]` in a sibling's body after its item was deleted, and the
+        # broken-link check is what reported it.
+        neighbours = self._vault_neighbours(item_id)
         self.db.execute("BEGIN")
         try:
             self._delete_item_cascade(item_id)
@@ -2962,6 +3019,28 @@ class KnowledgeStore:
         from personalclaw.knowledge import maintenance
 
         maintenance.mark_dirty(reason="delete item")
+        self.rearm_vault_projection(*neighbours)
+
+    def _vault_neighbours(self, item_id: str) -> list[str]:
+        """Every OTHER item whose projected page mentions *item_id* — relations and citations.
+
+        Read before a delete or a merge, applied after the commit. Both legs of
+        `item_relations` and both legs of `item_citations`, for the reason `_SNAPSHOT_TABLES`
+        lists both: a one-sided read leaves the other side's page silently one edge short.
+        """
+        rows = self.db.execute(
+            "SELECT source_item_id AS a, target_item_id AS b FROM item_relations "
+            "WHERE source_item_id = ? OR target_item_id = ? "
+            "UNION SELECT item_id AS a, source_item_id AS b FROM item_citations "
+            "WHERE item_id = ? OR source_item_id = ?",
+            (item_id, item_id, item_id, item_id),
+        ).fetchall()
+        out: set[str] = set()
+        for row in rows:
+            out.update({str(row["a"] or ""), str(row["b"] or "")})
+        out.discard(item_id)
+        out.discard("")
+        return sorted(out)
 
     def clear_item_entities(self, item_id):
         """Drop this item's mention/relation rows + any now-orphan entities, WITHOUT
@@ -3252,6 +3331,226 @@ class KnowledgeStore:
         sweep is once-per-item.
         """
         self.db.execute("DELETE FROM similarity_sweeps WHERE item_id = ?", (item_id,))
+
+    # ── KL-20: the markdown-projection ledger ────────────────────────────────
+    #
+    # A BACKLOG, not a scan. The projection could have compared every item against a
+    # manifest on every pass, and that shape has a defect the sweep-marker idiom does not:
+    # the maintenance host stops re-invoking a batched pass the moment it returns 0, so a
+    # cursor-and-scan design would examine one bounded window per TICK and a change to the
+    # ten-thousandth item would wait hours behind items that had nothing to say. Keyed on
+    # "what disagrees with its ledger row" the query returns rows only when there is real
+    # work, returns 0 exactly when the vault is settled, and converges inside one tick.
+
+    #: The two ledger states that take an item OUT of the projection backlog, spelled once
+    #: so the batch query and the count cannot disagree about what "waiting" means — the
+    #: shape that makes a status number quietly stop matching the work.
+    _VAULT_PROJECTABLE = "COALESCE(v.owner_deleted, 0) = 0 AND COALESCE(v.conflict, '') = ''"
+
+    def items_needing_vault_projection(self, limit: int, after_id: str | None = None) -> list[dict]:
+        """One bounded batch of items whose markdown projection is out of date.
+
+        An item qualifies when it has no ledger row at all (never projected) or when its
+        ``updated_at`` no longer matches the value the last projection was rendered from.
+        A row carrying ``owner_deleted`` or a standing ``conflict`` is EXCLUDED regardless of
+        either. The tombstone is the whole "a removed file is not silently re-created"
+        clause; the conflict exclusion is the "never the loser of an unwitnessed conflict"
+        one — a backlog that ignored it would overwrite the very page the sync refused to
+        touch, on the very next tick, and call it a projection.
+
+        Keyset cursor on ``items.id``, like :meth:`items_missing_chunks`, so peak memory is
+        bounded and an item the renderer declines cannot absorb every sub-batch.
+        """
+        params: list[object] = []
+        cursor = ""
+        if after_id:
+            cursor = "AND i.id > ? "
+            params.append(after_id)
+        params.append(int(limit))
+        rows = self.db.execute(
+            "SELECT i.id AS id, i.updated_at AS updated_at "
+            "FROM items i LEFT JOIN vault_projections v ON v.item_id = i.id "
+            f"WHERE {self._VAULT_PROJECTABLE} "
+            "AND (v.item_id IS NULL OR COALESCE(v.projected_updated_at, '') "
+            "     IS NOT COALESCE(i.updated_at, '')) "
+            f"{cursor}"
+            "ORDER BY i.id ASC LIMIT ?",
+            tuple(params),
+        ).fetchall()
+        return [{"id": r["id"], "updated_at": r["updated_at"] or ""} for r in rows]
+
+    def count_items_needing_vault_projection(self) -> int:
+        """How many items are waiting to be projected — the status/probe number."""
+        row = self.db.execute(
+            "SELECT COUNT(*) AS n FROM items i "
+            "LEFT JOIN vault_projections v ON v.item_id = i.id "
+            f"WHERE {self._VAULT_PROJECTABLE} "
+            "AND (v.item_id IS NULL OR COALESCE(v.projected_updated_at, '') "
+            "     IS NOT COALESCE(i.updated_at, ''))"
+        ).fetchone()
+        return int(row["n"] or 0) if row is not None else 0
+
+    def record_vault_projection(
+        self,
+        item_id: str,
+        *,
+        relpath: str,
+        updated_at: str,
+        body_hash: str,
+        projected_at: str,
+        seen_mtime: float,
+    ) -> None:
+        """Record that *item_id* now has a file on disk with exactly these bytes.
+
+        Written AFTER the file lands, never before: a row claiming a projection that failed
+        to write would take the item out of the backlog and the page would never appear.
+        Clears ``owner_deleted`` and ``conflict`` because writing the page is the resolution
+        of both.
+        """
+        self.db.execute(
+            "INSERT INTO vault_projections "
+            "(item_id, relpath, projected_updated_at, projected_body_hash, projected_at, "
+            " owner_deleted, seen_mtime, conflict) VALUES (?, ?, ?, ?, ?, 0, ?, '') "
+            "ON CONFLICT(item_id) DO UPDATE SET relpath = excluded.relpath, "
+            "projected_updated_at = excluded.projected_updated_at, "
+            "projected_body_hash = excluded.projected_body_hash, "
+            "projected_at = excluded.projected_at, seen_mtime = excluded.seen_mtime, "
+            "owner_deleted = 0, conflict = ''",
+            (item_id, relpath, updated_at, body_hash, projected_at, float(seen_mtime)),
+        )
+        self.db.commit()
+
+    def record_vault_examination(
+        self, item_id: str, *, seen_mtime: float, conflict: str = ""
+    ) -> None:
+        """Record that the sync LOOKED at *item_id*'s file, and what it concluded.
+
+        Separate from :meth:`record_vault_projection` because the projected bytes did not
+        change: this is how a refusal (a two-sided conflict, an unparseable edit, an item
+        too large to project) leaves a durable trace instead of being re-discovered and
+        re-refused on every sub-batch forever.
+        """
+        self.db.execute(
+            "INSERT INTO vault_projections (item_id, relpath, seen_mtime, conflict) "
+            "VALUES (?, '', ?, ?) "
+            "ON CONFLICT(item_id) DO UPDATE SET seen_mtime = excluded.seen_mtime, "
+            "conflict = excluded.conflict",
+            (item_id, float(seen_mtime), conflict),
+        )
+        self.db.commit()
+
+    def vault_projection_flags(self) -> list[dict]:
+        """Every ledger row that is waiting on the OWNER: a conflict or a deleted page.
+
+        The verification surface's input. Ordered so a probe's evidence and a lint's flag
+        list are stable across runs rather than in whatever order SQLite felt like.
+        """
+        rows = self.db.execute(
+            "SELECT * FROM vault_projections "
+            "WHERE COALESCE(conflict, '') != '' OR COALESCE(owner_deleted, 0) != 0 "
+            "ORDER BY item_id ASC"
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def vault_projection(self, item_id: str) -> dict | None:
+        """One ledger row, or None when the item has never been projected."""
+        row = self.db.execute(
+            "SELECT * FROM vault_projections WHERE item_id = ?", (item_id,)
+        ).fetchone()
+        return dict(row) if row is not None else None
+
+    def vault_projections(self, *, limit: int = 0, after_item_id: str = "") -> list[dict]:
+        """Ledger rows in item-id order, optionally one bounded page at a time.
+
+        The absorb half of the sync walks these, so it needs the same keyset bound the
+        projection half has: reading every page of a large vault on every sub-batch would
+        make "bounded" true of the writes and false of the work.
+        """
+        params: list[object] = []
+        where = ""
+        if after_item_id:
+            where = "WHERE item_id > ? "
+            params.append(after_item_id)
+        tail = ""
+        if limit > 0:
+            tail = "LIMIT ?"
+            params.append(int(limit))
+        rows = self.db.execute(
+            f"SELECT * FROM vault_projections {where}ORDER BY item_id ASC {tail}",  # noqa: S608
+            tuple(params),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def vault_tag_membership(self) -> list[dict]:
+        """``(tag, item_id, title)`` for every live projected page — the tag hubs' input.
+
+        ONE query rather than a `get_item` per ledger row. The hubs exist so a ``[[tag-x]]``
+        link in an item page resolves to something, and building them from N round trips would
+        make a cheap navigation aid the most expensive thing in the pass.
+        """
+        rows = self.db.execute(
+            "SELECT t.name AS tag, i.id AS item_id, i.title AS title "
+            "FROM vault_projections v "
+            "JOIN items i ON i.id = v.item_id "
+            "JOIN item_tags it ON it.item_id = v.item_id "
+            "JOIN tags t ON t.id = it.tag_id "
+            "WHERE COALESCE(v.owner_deleted, 0) = 0 "
+            "ORDER BY t.name, i.id"
+        ).fetchall()
+        return [{"tag": r["tag"], "id": r["item_id"], "title": r["title"] or ""} for r in rows]
+
+    def orphan_vault_projections(self, *, limit: int = 0) -> list[dict]:
+        """Ledger rows whose item is GONE — the files a deletion must collect.
+
+        This query is the reason the table carries no foreign key: with `ON DELETE CASCADE`
+        the row would vanish with the item and nothing would remember that a file existed,
+        so "a removed item leaves no orphan file" would be unenforceable.
+        """
+        tail = "LIMIT ?" if limit > 0 else ""
+        params = (int(limit),) if limit > 0 else ()
+        rows = self.db.execute(
+            "SELECT v.* FROM vault_projections v LEFT JOIN items i ON i.id = v.item_id "
+            f"WHERE i.id IS NULL ORDER BY v.item_id ASC {tail}",  # noqa: S608
+            params,
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def forget_vault_projection(self, item_id: str) -> None:
+        """Drop a ledger row — used once its file has been deleted."""
+        self.db.execute("DELETE FROM vault_projections WHERE item_id = ?", (item_id,))
+        self.db.commit()
+
+    def rearm_vault_projection(self, *item_ids: str) -> None:
+        """Put *item_ids* back in the projection backlog without touching ``updated_at``.
+
+        The backlog is keyed on ``items.updated_at``, which covers a title/content/tag edit
+        because `update_item` touches it. It does NOT cover a change that belongs to a JOIN
+        TABLE: adding a typed relation or a collection membership changes what the page must
+        say while leaving the item row byte-identical, so a projection keyed only on
+        `updated_at` would keep serving a page whose ``relations:`` block is stale — for as
+        long as nobody happens to edit the item.
+
+        Re-arming rather than bumping `updated_at`: that column means "the USER changed this"
+        and powers an honest "Last updated" and the recency tie-break, so writing to it from a
+        relation insert would make every graph edge look like an edit the user made. A
+        ``owner_deleted`` tombstone is deliberately NOT cleared — the owner deleting a page
+        outranks a relation being added to its item.
+        """
+        for item_id in item_ids:
+            if not item_id:
+                continue
+            self.db.execute(
+                "UPDATE vault_projections SET projected_updated_at = '' WHERE item_id = ?",
+                (item_id,),
+            )
+        self.db.commit()
+
+    def mark_vault_page_deleted(self, item_id: str) -> None:
+        """Tombstone: the OWNER deleted this page, so the projection must not re-create it."""
+        self.db.execute(
+            "UPDATE vault_projections SET owner_deleted = 1 WHERE item_id = ?", (item_id,)
+        )
+        self.db.commit()
 
     @staticmethod
     def _canonical_edge(a_id: str, b_id: str, a_chunk, b_chunk) -> tuple:
@@ -4216,6 +4515,9 @@ class KnowledgeStore:
             (collection_id, item_id, datetime.now().isoformat()),
         )
         self.db.commit()
+        # KL-20: the page's `collections:` block changed while the item row did not, so the
+        # projection has to be told. See `rearm_vault_projection` for why not `updated_at`.
+        self.rearm_vault_projection(item_id)
         return True
 
     def remove_from_collection(self, collection_id: str, item_id: str) -> bool:
@@ -4224,6 +4526,8 @@ class KnowledgeStore:
             (collection_id, item_id),
         )
         self.db.commit()
+        if cur.rowcount > 0:
+            self.rearm_vault_projection(item_id)  # KL-20, as in `add_to_collection`
         return cur.rowcount > 0
 
     def collections_for_item(self, item_id: str) -> list[dict]:

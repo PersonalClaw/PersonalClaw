@@ -79,6 +79,26 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
   they are no longer interchangeable.
   **And opening a page asks the server once.** Several cards reading the same thing used to make the
   same request several times over; they now share one.
+- **Your knowledge library can live as plain markdown files you own, and you can edit them.** A
+  knowledge item used to be reachable only through PersonalClaw's database. Turn
+  `knowledge.vault_mode` on and every item is also written out as a human-readable markdown file
+  under your home — YAML front-matter carrying its identity and its relations, wikilinks you can
+  follow, readable in Obsidian or `grep` or any text editor, with or without PersonalClaw running.
+  **`two_way` means an edit you make in a text editor is read back, not overwritten** — which is the
+  whole difference between an export and ownership. It reuses the memory vault's projector rather
+  than adding a second one, so both vaults are the same artifact in two directories.
+  **Nothing is silently resolved.** A page that changed in your editor *and* in the app since the
+  last sync is not merged, not overwritten, and not quietly filed toward the database: nothing is
+  written on either side, your text is left exactly as you typed it, `sync_conflict:` appears in the
+  page's front-matter, and the Doctor reports it as a page waiting on you.
+  **Deletion means deletion, in both directions.** Delete a page in your file manager and it stays
+  deleted — it is not re-created on the next sync, and your item is not deleted either (a missing
+  file is an ambiguous signal, not an instruction). Delete an item in the app and its file goes with
+  it, leaving no stale page behind.
+  **Off by default, and it cannot run away with your files.** The projection is opt-in, an
+  unreadable config resolves to off, it runs in bounded batches on the existing maintenance cadence
+  rather than a loop of its own, and an item too large to project is refused and reported rather
+  than truncated.
 
 - **A turn that will not fit says so before it runs, and says what to do about it.** PersonalClaw
   used to find out a prompt was too big by sending it and reading the provider's error back — after
