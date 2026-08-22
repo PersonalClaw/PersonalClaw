@@ -96,10 +96,12 @@ def test_structural_distinct_results_not_flagged():
 
 
 def test_structural_ping_pong_detected():
+    # Wording follows the detector's generalization from A<->B-only to a rotation of 2 OR 3
+    # distinct calls: one message ("cycling") now covers both periods, and it names the shape.
     b = LoopBreaker()
     a, c = "t\x1fA", "t\x1fB"
     reasons = [b.record_structural(a if i % 2 == 0 else c) for i in range(6)]
-    assert any(r and "alternating" in r for r in reasons)
+    assert any(r and "cycling" in r and "A→B" in r for r in reasons), reasons
 
 
 def test_structural_reset_rearms():

@@ -944,7 +944,7 @@ async def api_mcp_server_detail(request: web.Request) -> web.Response:
         # so a delete fully removes a server regardless of where it was written.
         async with _get_mcp_lock():
             removed = False
-            for store in (_PERSONALCLAW_MCP_JSON, _GLOBAL_MCP_JSON):
+            for store in (_canonical_mcp_json(), _GLOBAL_MCP_JSON):
                 try:
                     data = json.loads(store.read_text(encoding="utf-8"))
                 except (FileNotFoundError, json.JSONDecodeError):
@@ -991,9 +991,9 @@ async def api_mcp_server_detail(request: web.Request) -> web.Response:
     # list but expose ZERO tools, since the live registry never reads that file.
     # Full upsert (overwrite an existing spec) + enabled (drop any disabled flag).
     async with _get_mcp_lock():
-        data = _load_json_or_empty(_PERSONALCLAW_MCP_JSON)
+        data = _load_json_or_empty(_canonical_mcp_json())
         data.setdefault("mcpServers", {})[name] = entry
-        _atomic_write(_PERSONALCLAW_MCP_JSON, data)
+        _atomic_write(_canonical_mcp_json(), data)
 
     # Mirror into personalclaw.json (enable by default)
     _sync_mcp_to_agent(name, True)
@@ -1010,7 +1010,10 @@ async def api_mcp_server_detail(request: web.Request) -> web.Response:
 
 # ─── Batched scope apply ────────────────────────────────────────────────
 
-_PERSONALCLAW_MCP_JSON = Path.home() / ".personalclaw" / "mcp.json"
+# NO `_canonical_mcp_json()` constant here: it was `Path.home() / ".personalclaw" /
+# "mcp.json"`, computed at import time, so it ignored PERSONALCLAW_HOME exactly as the
+# comment on `_canonical_mcp_json()` (above) says the old hardcode did — the same bug, fixed
+# in one function and left in three siblings. Call `_canonical_mcp_json()` instead.
 # The claude-code CLI's own global config; PersonalClaw reads/writes MCP server
 # specs here so servers stay in sync when that ACP backend is in use.
 _CC_GLOBAL_JSON = Path.home() / ".claude.json"
@@ -1050,7 +1053,7 @@ def _find_server_spec_anywhere(name: str) -> dict | None:
     """
     candidates = [
         Path.home() / ".personalclaw" / "agents" / "personalclaw.json",
-        _PERSONALCLAW_MCP_JSON,
+        _canonical_mcp_json(),
         _GLOBAL_MCP_JSON,
         _CC_GLOBAL_JSON,
     ]
@@ -1076,7 +1079,7 @@ def _set_personalclaw_entry(name: str, *, enabled: bool, spec: dict | None = Non
     Returns a short label describing what happened: ``"added"``, ``"enabled"``,
     ``"disabled"``, or ``"noop"``.
     """
-    data = _load_json_or_empty(_PERSONALCLAW_MCP_JSON)
+    data = _load_json_or_empty(_canonical_mcp_json())
     servers = data.setdefault("mcpServers", {})
     existing = servers.get(name)
     existing = existing if isinstance(existing, dict) else None
@@ -1107,18 +1110,18 @@ def _set_personalclaw_entry(name: str, *, enabled: bool, spec: dict | None = Non
             existing["disabled"] = True
             action = "disabled"
 
-    _atomic_write(_PERSONALCLAW_MCP_JSON, data)
+    _atomic_write(_canonical_mcp_json(), data)
     return action
 
 
 def _remove_personalclaw_entry(name: str) -> bool:
     """Delete the server from ``~/.personalclaw/mcp.json`` entirely.  Returns True on change."""
-    data = _load_json_or_empty(_PERSONALCLAW_MCP_JSON)
+    data = _load_json_or_empty(_canonical_mcp_json())
     servers = data.get("mcpServers", {})
     if name not in servers:
         return False
     del servers[name]
-    _atomic_write(_PERSONALCLAW_MCP_JSON, data)
+    _atomic_write(_canonical_mcp_json(), data)
     return True
 
 
@@ -1190,7 +1193,7 @@ def _set_tool_overrides(name: str, tool_overrides: dict[str, bool]) -> list[str]
     """
     if not tool_overrides:
         return []
-    data = _load_json_or_empty(_PERSONALCLAW_MCP_JSON)
+    data = _load_json_or_empty(_canonical_mcp_json())
     servers = data.setdefault("mcpServers", {})
     entry = servers.get(name)
     if not isinstance(entry, dict):
@@ -1215,7 +1218,7 @@ def _set_tool_overrides(name: str, tool_overrides: dict[str, bool]) -> list[str]
         entry.pop("disabledTools", None)
 
     if changed:
-        _atomic_write(_PERSONALCLAW_MCP_JSON, data)
+        _atomic_write(_canonical_mcp_json(), data)
     return changed
 
 
@@ -1350,7 +1353,7 @@ async def api_mcp_apply(request: web.Request) -> web.Response:
             # ccGlobal on). Without this, importing a Claude-Code-only server
             # would be a no-op (nothing to enable in the PClaw scope).
             preserved_spec: dict | None = None
-            if desired_mc and not _scope_has_entry(name, _PERSONALCLAW_MCP_JSON):
+            if desired_mc and not _scope_has_entry(name, _canonical_mcp_json()):
                 preserved_spec = _find_server_spec_anywhere(name)
 
             # Apply PersonalClaw first — flipping PersonalClaw green needs the entry to exist or

@@ -7,7 +7,10 @@ for gateway↔mcp self-calls) instead of re-implementing checks. The guard
 enforces the byte/timeout/redirect caps.
 """
 
+import logging
 from dataclasses import dataclass
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -225,6 +228,12 @@ def get_policy(name: str) -> EgressPolicy:
     return _PROFILES.get(name, STRICT)
 
 
+#: The last `security.egress.deny_hosts` a successful config read observed. Held at module
+#: scope so a LATER read failure cannot un-deny a host the operator explicitly denied — see
+#: :func:`egress_policy_for`. Only ever grows a policy's denials, never its allowances.
+_LAST_DENY_HOSTS: tuple[str, ...] = ()
+
+
 def egress_policy_for(base: EgressPolicy) -> EgressPolicy:
     """Layer the operator's ``security.egress`` config onto a base profile.
 
@@ -232,13 +241,39 @@ def egress_policy_for(base: EgressPolicy) -> EgressPolicy:
     opt the whole instance into private-network egress. The guard's built-in public-only
     default is unchanged when no config is set. Operator ``allow_hosts``/``deny_hosts``
     are UNIONed with the profile's own; ``allow_private`` ORs in. Config read is lazy +
-    best-effort so ``net`` stays importable without a loaded config (tests, early boot)."""
+    best-effort so ``net`` stays importable without a loaded config (tests, early boot).
+
+    🔴 The best-effort catch is deliberate and stays. What it must NOT do is fail open in one
+    direction. Dropping the operator's ``allow_hosts``/``allow_private`` on an error is safe —
+    the result is narrower than they asked for. Dropping their ``deny_hosts`` is not: a host
+    they explicitly denied becomes reachable, so a transient config-read error silently
+    UN-DENIES it. The last successfully-observed deny list is therefore remembered and reused
+    on a later failure, and the failure is logged at WARNING rather than swallowed — a control
+    that stops applying should be visible, which is exactly what a bare ``return base`` was not.
+    Deliberately NOT a hard fail: refusing all egress on a transient read would take the
+    machine offline over a control that only ever ADDS denials."""
+    global _LAST_DENY_HOSTS
     try:
         from personalclaw.config.loader import AppConfig
 
         eg = AppConfig.load().security.egress
-    except Exception:
-        return base
+    except Exception as exc:
+        remembered = _LAST_DENY_HOSTS
+        if not remembered:
+            # Nothing observed yet, so there is no operator denial to preserve — the original
+            # behaviour, and honestly narrower than the config would have made it.
+            logger.warning("egress config unreadable (%s); using the base profile", exc)
+            return base
+        logger.warning(
+            "egress config unreadable (%s); keeping the last known deny list (%d host(s)) "
+            "so an explicitly denied host does not become reachable",
+            exc,
+            len(remembered),
+        )
+        return base.with_overrides(
+            deny_hosts=tuple(dict.fromkeys([*base.deny_hosts, *remembered])),
+        )
+    _LAST_DENY_HOSTS = tuple(eg.deny_hosts or ())
     return base.with_overrides(
         allow_hosts=tuple(dict.fromkeys([*base.allow_hosts, *eg.allow_hosts])),
         deny_hosts=tuple(dict.fromkeys([*base.deny_hosts, *eg.deny_hosts])),

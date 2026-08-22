@@ -17,18 +17,18 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal
 
+# A HARD dependency (pyproject `[project] dependencies`), imported plainly. It used to sit
+# behind a try/except that set `_HAS_JSONSCHEMA = False`, and `_validate_config_data` returned
+# at its first line when that was False — so on any install without the optional [mcp] extra
+# the whole validation pass (enums, types, unknown-key warning, retired-field pruning) was a
+# no-op that nothing reported.
+import jsonschema
+
 from personalclaw.voice.duplex import (
     DEFAULT_CONFIRMATION_PHRASES,
     DEFAULT_EXIT_PHRASES,
     DEFAULT_PUSH_TO_TALK_CHORD,
 )
-
-try:
-    import jsonschema
-
-    _HAS_JSONSCHEMA = True
-except ImportError:  # pragma: no cover
-    _HAS_JSONSCHEMA = False
 
 logger = logging.getLogger(__name__)
 
@@ -500,11 +500,22 @@ def _dotenv_save_credential(key: str, value: str) -> None:
             lines.append(line)
     if not found:
         lines.append(f"{key}={value}")
-    ep.write_text("\n".join(lines) + "\n")
-    try:
-        ep.chmod(0o600)
-    except OSError:
-        logger.warning("Cannot enforce permissions on %s", ep)
+    # `atomic_write(mode=0o600)`, not write_text-then-chmod. Two defects in that pair:
+    #
+    #  • A CREATION WINDOW. `write_text` creates the file at the umask default (0644 under the
+    #    common 022), and the `chmod` narrowed it only AFTER the secret was already on disk. On
+    #    first creation the credential was world-readable for that window.
+    #  • NO ATOMICITY. A crash or a full disk mid-write left the credential file TRUNCATED —
+    #    every other key in it lost — because the target was written in place.
+    #
+    # `atomic_write` closes both: mkstemp creates the temp at 0600, fchmod pins the mode before
+    # any content is visible, and `os.replace` swaps it in one step, so a reader sees either the
+    # old file or the new one. `fsync=True` because losing a credential to a post-rename crash is
+    # the same outage as never having written it. Same shape as apps/app_secret.py::_write_0600,
+    # which names the umask hazard, plus the atomicity that one does not need and this one does.
+    from personalclaw.atomic_write import atomic_write
+
+    atomic_write(ep, "\n".join(lines) + "\n", mode=0o600, fsync=True)
 
 
 def _dotenv_credentials() -> dict[str, str]:
@@ -3164,9 +3175,6 @@ def _validate_config_data(data: dict) -> dict:
     remove invalid values (so the loader falls back to field defaults).
     Always returns *data* — never raises.
     """
-    if not _HAS_JSONSCHEMA:
-        return data
-
     # Lazy import to avoid circular import at module level
     from personalclaw.config.schema import JSON_SCHEMA, SCHEMA_REGISTRY
 
