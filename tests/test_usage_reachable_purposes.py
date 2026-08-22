@@ -37,12 +37,20 @@ _SOURCE_ARG = re.compile(r"source\s*=\s*(?:\"([a-z_]+)\"|'([a-z_]+)'|([A-Za-z_][
 #: Expressions (not literals) that reach the seam, resolved by reading the code once:
 #:   gateway.py       `source=_src`                                → "channel" | "cron"
 #:   chat_runner.py   `source=source` ← `session._app or "chat"`    → "chat" | an app name
-#: An app name is not a literal purpose — it maps to APP_PURPOSE by design, so it is recorded
-#: here as that purpose rather than as a source spelling.
+#: The app-name half is NOT resolvable to a fixed purpose by hand — see :func:`_app_names`. It
+#: used to be hand-resolved here as "an app name → APP_PURPOSE", which was wrong and hid a real
+#: writer for a whole purpose; the app names are now censused out of the source instead.
 _RESOLVED_EXPRESSIONS = {
     "_src": ("channel", "cron"),
-    "source": ("chat",),  # plus an app name → APP_PURPOSE, asserted separately
+    "source": ("chat",),  # plus every `app=` literal — see `_app_names`
 }
+
+#: A non-empty ``app=`` string literal. ``dashboard/state.py``'s ``session._app = app`` is the
+#: ONE assignment of the field the chat seam forwards, so every ``app=`` literal in the tree is a
+#: value ``source`` can take. Comment lines are stripped first: three comments in `gateway.py` /
+#: `chat_runner.py` describe `app="loop"` in prose, and a text scan that counted those would look
+#: like it had measured something when the real call sites had moved.
+_APP_ARG = re.compile(r"""app\s*=\s*["']([a-z][a-z0-9_-]*)["']""")
 
 
 def _call_arguments(text: str, open_paren: int) -> str:
@@ -64,6 +72,30 @@ def _call_arguments(text: str, open_paren: int) -> str:
     return ""
 
 
+def _code_lines(text: str) -> str:
+    """``text`` with whole-line comments dropped, so a scanner cannot read prose as a call site."""
+    return "\n".join(ln for ln in text.splitlines() if not ln.lstrip().startswith("#"))
+
+
+def _app_names() -> set[str]:
+    """Every ``app=`` literal in the tree — i.e. every value ``session._app`` can hold.
+
+    ``chat_runner`` passes ``session._app or "chat"`` as the turn ``source``, and
+    ``dashboard/state.py:session._app = app`` is the only assignment of that field, so an
+    ``app=`` literal IS a turn-ledger source. This is censused rather than hand-resolved because
+    hand-resolving it as "an app name, therefore APP_PURPOSE" is precisely the mistake that let
+    the loop engine write ``loop`` turn rows for releases while ``UNWRITTEN_PURPOSES`` claimed
+    nothing could: an app name only reaches APP_PURPOSE when it is NOT already a key of
+    ``PURPOSE_BY_SOURCE`` (``purpose_for_source`` checks that map FIRST).
+    """
+    found: set[str] = set()
+    for path in _SRC.rglob("*.py"):
+        if "__pycache__" in str(path):
+            continue
+        found.update(_APP_ARG.findall(_code_lines(path.read_text(encoding="utf-8"))))
+    return found
+
+
 def _writer_sources() -> set[str]:
     """Every ``source`` value the live turn-ledger call sites can pass."""
     found: set[str] = set()
@@ -79,6 +111,9 @@ def _writer_sources() -> set[str]:
                     found.add(name)
                 elif expression in _RESOLVED_EXPRESSIONS:
                     found.update(_RESOLVED_EXPRESSIONS[expression])
+                    if expression == "source":
+                        # The chat seam forwards `session._app`, so every app name is a source.
+                        found.update(_app_names())
     return found
 
 
@@ -125,16 +160,45 @@ def test_every_unwritten_purpose_really_has_no_writer() -> None:
     )
 
 
-def test_loop_has_no_turn_ledger_writer_today() -> None:
-    """The measurement behind excluding ``loop`` — stated so its basis is visible.
+def test_the_app_name_census_is_not_vacuous() -> None:
+    """The floor for the app half: an empty app census re-hides the writer it exists to find."""
+    apps = _app_names()
+    assert apps, "no `app=` literal found — the regex or the worker-session call sites moved"
+    # `loops` is plan_walkthrough's planner session: a real app name that is NOT a source key, so
+    # it proves the census sees BOTH kinds and the collision test below is discriminating.
+    assert "loops" in apps, apps
+    # Comments must not be readable as call sites. `gateway.py` mentions `app="loop"` in prose and
+    # creates no session with it, so it is the live proof that the stripping discriminates: the raw
+    # text matches and the code-only text must not.
+    gw = (_SRC / "gateway.py").read_text(encoding="utf-8")
+    assert _APP_ARG.findall(gw), "gateway.py no longer mentions an app name; re-derive this guard"
+    assert not _APP_ARG.findall(
+        _code_lines(gw)
+    ), "comment stripping is broken — gateway.py's prose is counting as a writer"
 
-    The loop engine records nothing to the turn ledger: its inferences resolve under the
-    ``loops`` guard axis into ``model_calls.jsonl``, which the fold censuses into
-    ``uncounted`` rather than summing. If this test fails, loop spend became summable and the
-    cockpit's "~$X this run" clause is unblocked — see MODEL-ROUTING-TELEMETRY's MRT-3 log.
+
+def test_loop_has_a_turn_ledger_writer_via_the_worker_session_app() -> None:
+    """The loop engine IS a turn-ledger writer, through its worker session's ``app``.
+
+    Two prior MRT-3 sessions recorded the opposite ("the turn ledger has no loop rows at all")
+    because the census only resolved LITERAL ``source=`` arguments and the loop's spelling is a
+    runtime value. The chain, each hop asserted below: ``loop/manager.py`` names the worker
+    session ``app="loop"`` -> ``state.py`` stores it as ``session._app`` -> ``chat_runner``
+    passes ``session._app or "chat"`` as the turn ``source``. ``purpose_for_source`` then hits
+    ``PURPOSE_BY_SOURCE["loop"]`` on the first lookup, so it is the ``loop`` purpose and not
+    ``app``.
     """
-    assert "loop" not in _writer_sources()
-    assert "loop" in UNWRITTEN_PURPOSES
+    manager = (_SRC / "loop" / "manager.py").read_text(encoding="utf-8")
+    assert manager.count('app="loop"') >= 2, "the main worker + task worker app names moved"
+    state = (_SRC / "dashboard" / "state.py").read_text(encoding="utf-8")
+    assert "session._app = app" in state, "the _app assignment moved; re-derive this chain"
+    runner = (_SRC / "dashboard" / "chat_runner.py").read_text(encoding="utf-8")
+    assert 'source=getattr(session, "_app", "") or "chat"' in runner, "the chat seam moved"
+
+    assert "loop" in _writer_sources()
+    assert PURPOSE_BY_SOURCE["loop"] == "loop"
+    assert "loop" not in UNWRITTEN_PURPOSES, "loop has a writer — it cannot be excluded"
+    assert "loop" in reachable_purposes()
 
 
 def test_reachable_purposes_omits_the_unwritten_and_keeps_the_rest() -> None:
@@ -143,6 +207,26 @@ def test_reachable_purposes_omits_the_unwritten_and_keeps_the_rest() -> None:
     # The ones with live writers are all present, so the exclusion is narrow, not a blanket.
     assert {"interactive", "background", APP_PURPOSE} <= got, got
     assert got, "reachable_purposes() must never be empty — a chart with no rows at all"
+
+
+def test_the_app_names_that_collide_with_the_source_vocabulary_are_exactly_these() -> None:
+    """A ratchet, because a colliding app name silently RE-BUCKETS spend.
+
+    An ``app=`` literal that is also a ``PURPOSE_BY_SOURCE`` key does not land in ``app`` — it
+    lands in that key's purpose, and ``app_sources`` never censuses its name. That is correct for
+    ``loop`` (the loop engine really is loop spend) and would be wrong for, say, an installed app
+    named ``cron``. Pinning the set makes each new collision a decision rather than a silent
+    reassignment; the fix for a red is to rename the app or to accept the bucket here, never to
+    delete this test.
+    """
+    colliding = {a for a in _app_names() if a in PURPOSE_BY_SOURCE}
+    assert colliding == {"loop"}, (
+        f"app name(s) {sorted(colliding)} collide with the turn `source` vocabulary, so their "
+        f"spend is bucketed as {sorted(PURPOSE_BY_SOURCE[a] for a in colliding)} rather than "
+        f"censused under `app`. Confirm that is intended."
+    )
+    # The complement is non-empty, so the collision filter is discriminating rather than total.
+    assert _app_names() - colliding, "every app name collides — the filter is measuring nothing"
 
 
 def test_an_app_source_still_reaches_the_app_purpose() -> None:
