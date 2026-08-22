@@ -86,7 +86,9 @@ def test_procedural_capture_fires_from_passed_provider(svc, monkeypatch):
 
 
 def test_no_provider_is_safe_noop(svc, monkeypatch):
-    """When no provider is threaded (ACP / missing), capture is a clean no-op."""
+    """When no provider is threaded at all, capture is a clean no-op. (Not the ACP case
+    any more — ACP providers accumulate outcomes too since `G7`; see
+    tests/test_acp_procedural_outcomes.py.)"""
     monkeypatch.setattr("personalclaw.memory_service.service_for", lambda _m: svc)
     _maybe_after_turn_review(
         _state_for(svc),
