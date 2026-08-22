@@ -306,7 +306,7 @@ function HostList({ label, hint, hosts, disabled, onChange }: {
             onChange={(e) => { setDraft(e.target.value); if (refused) setRefused('') }}
             onKeyDown={(e) => { if (e.key === 'Enter') add() }}
             placeholder="e.g. nas.local"
-            className="min-w-0 flex-1 rounded-lg bg-surface-container px-3 py-2 text-on-surface text-[0.8125rem] outline-none placeholder:text-on-surface-low" />
+            className="min-w-0 flex-1 rounded-lg bg-surface-container px-3 py-2 text-on-surface text-[0.8125rem] outline-none placeholder:text-on-surface-low focus:ring-2 focus:ring-inset focus:ring-primary/50" />
           <button type="button" onClick={add}
             {...unavailableWhen(!draft.trim(), 'Enter a host first', { busy: disabled })}
             className="inline-flex shrink-0 items-center gap-1 rounded-lg bg-primary px-3 py-2 text-on-primary text-[0.8125rem] disabled:opacity-50 aria-disabled:opacity-50 aria-disabled:cursor-not-allowed">
@@ -446,7 +446,7 @@ function DeniedCommandsEditor({ builtin, user, baseline, userAdditions, onChange
                 onChange={(e) => { setDraft(e.target.value); setErr('') }}
                 onKeyDown={(e) => { if (e.key === 'Enter') add() }}
                 placeholder="e.g. my-secret-tool .*"
-                className="min-w-0 flex-1 rounded-lg bg-surface-container px-3 py-2 text-on-surface text-[0.8125rem] outline-none placeholder:text-on-surface-low"
+                className="min-w-0 flex-1 rounded-lg bg-surface-container px-3 py-2 text-on-surface text-[0.8125rem] outline-none placeholder:text-on-surface-low focus:ring-2 focus:ring-inset focus:ring-primary/50"
               />
               <button type="button" onClick={add}
                 {...unavailableWhen(!draft.trim(), 'Enter a pattern first', { busy })}
