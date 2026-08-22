@@ -28,7 +28,7 @@ WEB_DIR         := web
 DESKTOP_DIR     := desktop
 PYI_BUNDLE_DIR  := dist/personalclaw-backend
 
-.PHONY: help format lint test build clean harness-validate gates \
+.PHONY: help format lint test test-e2e test-visual build clean harness-validate gates \
         serve serve-fresh serve-web \
         web-build backend-build pyinstaller \
         desktop desktop-dist \
@@ -56,6 +56,36 @@ lint:
 ## test: run pytest
 test:
 	$(PYTHON) -m pytest
+
+## test-e2e: run the BROWSER gate against an isolated gateway (axe-per-route a11y, PWA,
+## visual regression). Deliberately NOT part of `make test`: a bare pytest must stay a fast,
+## offline, browser-free unit run, and this needs a built SPA plus a booted gateway.
+##
+## Offline and credential-free by construction, which is the property worth stating: playwright's
+## own webServer boots the gateway with PERSONALCLAW_HOME under $$TMPDIR (never a real home) and a
+## config carrying only a user name, so no provider credential is present and nothing reaches the
+## network. Readiness is the PERSONALCLAW_READY line, not a port probe, so the run cannot proceed
+## against a bound-but-unauthenticated gateway.
+##
+## One-time per machine: `npm ci` (from the REPO ROOT — never inside web/, see web-build) and
+## `npx playwright install chromium`. No spec list here on purpose: a new spec joins the gate the
+## moment it lands.
+## Screenshot assertions are IGNORED here, deliberately, and `test-visual` below owns them.
+## Measured on an untouched `main` checkout in this Darwin dev environment: e2e/visual.spec.ts is
+## 28 failed / 11 passed. The baselines are platform-qualified (see snapshotPathTemplate) and have
+## drifted from what this machine renders, which is a real thing to fix but has nothing to do with
+## whether the app is accessible, installable or functional. Folding an always-red suite into the
+## default browser gate would make the gate mean nothing — the failure mode every rail in this repo
+## is written to avoid.
+test-e2e:
+	cd $(WEB_DIR) && npx playwright test --project=chromium --ignore-snapshots
+
+## test-visual: the visual-regression suite with screenshot assertions ENFORCED. Split out of
+## test-e2e because its baselines are environment-sensitive (28/39 red on a clean main checkout on
+## this dev machine) — run it when you intend to inspect or refresh them (`-u` updates), not as a
+## precondition for every other browser check.
+test-visual:
+	cd $(WEB_DIR) && npx playwright test e2e/visual.spec.ts --project=chromium
 
 ## harness-validate: shape-validate + reference-resolve the self-dev harness specs
 harness-validate:

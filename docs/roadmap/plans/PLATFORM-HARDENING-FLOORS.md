@@ -1227,3 +1227,107 @@ Rows 1-4 are roughly one focused session between them.
   file was this worktree's copy and the main checkout stayed clean. No CHANGELOG entry (a repo audit
   tool plus its baseline is not a user-visible surface — `PHF-6`'s precedent). No `web/` change.
   `docs/roadmap/atomic/dag.json` deliberately untouched (fenced under concurrent multi-agent edit).
+
+### 2026-08-22 — `PHF-7` PARTIAL: clauses 2 and 4 shipped, clause 3 was already met, 1+5 recorded unmet
+
+**`PHF-7` stays `todo`.** Its `done_when` carries five clauses; three are now satisfied and two are
+not, and the two that are not are the *same* piece of work. Recorded clause by clause with evidence
+rather than flipped.
+
+| # | clause | state |
+|---|---|---|
+| 1 | a gateway boots on the **fake provider** and completes a scripted chat turn with no credentials | **UNMET** — no fake provider exists |
+| 2 | `make test-e2e` runs the browser gate offline; a bare `pytest` does not run it | **DONE** this session |
+| 3 | every authenticated route is axe-scanned in CI | **already MET on main**, unrecorded |
+| 4 | a deliberately raw call that skips the enforced helper reds the gate | **DONE** this session |
+| 5 | validated with network off and no provider credentials, runtime recorded | **UNMET** — depends on (1) |
+
+**Why 1+5 were not attempted, measured rather than assumed.** A model provider is registered through
+`PROVIDER_TYPES`, and `providers/registry.py` states the constraint twice: a manifest "lands in the
+SAME commit as its `PROVIDER_TYPES` entry (the #47 rule)". Vendor model providers live in app bundles
+(`bedrock-models`, `openai-compatible`, `ollama-models` …), so a bootable fake provider is either a
+new core provider type or a first-party app — a **cross-repo, architecture-shaped decision**, and
+clause 5 is just clause 1 validated. Starting it inside this tick would have produced a half-built
+provider, which the workspace's own completability amendment exists to prevent. Left for a session
+scoped to it.
+
+**Clause 3 was already true and nobody had said so.** `e2e/a11y.spec.ts` runs as the `e2e-a11y` job
+in `ci.yml` — a real job, no `continue-on-error`, auth ON — over `ROUTES + SETTINGS_ROUTES +
+VIEW_ROUTES`, i.e. every authenticated route plus all 32 settings panels. The atom's `EXT` dep on
+`DESIGN-SYSTEM-CONSISTENCY`'s deferred axe tail is satisfied in code by `web/e2e/auth.setup.ts`.
+
+**Clause 4 — `tests/test_model_call_chokepoint_rail.py`.** An unwrapped `ModelProvider` works
+perfectly and spends money with no `model_calls.jsonl` audit row, no spend-meter charge and no
+budget/breaker policy: silent, and indistinguishable from correct behaviour at runtime. Measured
+first — the invariant **already holds**, so the rail ships at zero because zero is the measured
+population:
+
+* `wrap_model_call_guard` has exactly **one** call site in `src/`, `provider_bridge:1158`, inside
+  `_resolve_from_config_registry`, which wraps "at the single point where the entry name + model are
+  known" (its own comment).
+* `resolve_provider_for_use_case` has **five** provider-returning paths. Four flow from
+  `_resolve_from_config_registry`. The fifth is `_build_native_runtime`, whose docstring records that
+  its inference provider "is resolved through the SAME active-model" path — the resolver's own SCOPE
+  comment says the same of the ACP CLI branch. So `ALLOWED_BUILDERS` has two entries.
+
+**AST, not regex, and that is load-bearing.** The property is structural — "does this return value
+come from a guarded builder" — and four of the five real paths are `x = f(); … ; return x`, which no
+text scan can follow. A regex rail here would either miss every real bypass or flag every correct
+path. The rail also **refuses to trust its own allowlist by name**: a separate test asserts the wrap
+call is really inside `_resolve_from_config_registry`, because an allowlist keyed on a name would keep
+passing if that function stopped wrapping.
+
+**Clause 2 — `make test-e2e` (+ `make test-visual`).** The second half was already true by
+construction: the browser gate is Playwright, not pytest, and `tests/test_web_render.py:9` states
+outright that "the browser itself is never launched". So the work was the target, which runs
+`npx playwright test --project=chromium` against playwright's own `webServer` — a gateway with
+`PERSONALCLAW_HOME` under `$TMPDIR`, a config carrying only a user name, and readiness taken from the
+`PERSONALCLAW_READY` line rather than a port probe. **Verified by running it: 149 passed, 4 skipped.**
+
+**🪤 The visual suite is split out, and the reason is a measurement.** On an **untouched `main`
+checkout** in this Darwin dev environment `e2e/visual.spec.ts` is **28 failed / 11 passed** — the
+committed platform-qualified baselines have drifted from what this machine renders. Folding an
+always-red suite into the default browser gate would make the gate mean nothing, so `test-e2e` passes
+`--ignore-snapshots` and `test-visual` owns the screenshot assertions. That drift is real and worth
+fixing; it is not this atom's clause and is not silently absorbed either.
+
+**🪤 CORRECTION to this entry's own first draft, and the real finding underneath it.** This entry
+originally claimed `visual.spec.ts` "MINTS a baseline for a route that has none, instead of failing",
+reported as a silent pass. **That is wrong, and it was published before it was tested.** Measured
+directly afterwards by deleting a committed baseline (`terminal-light-darwin.png`) and running that one
+test: Playwright writes the actual image and **FAILS** — `Expected:
+e2e/__screenshots__/.../terminal-light-darwin.png`, `1 failed`. The six PNGs that appeared during the
+enforced run were written by six FAILING tests, not by silent passes. The inference "files appeared,
+therefore the gate passed while minting them" skipped the one cheap check that settles it, and
+`git clean` removing the strays is what made it look like a pass.
+
+**What is actually true, and it matters more.** Three routes (`artifacts`, `learning`,
+`knowledge-graph`) were added to `routes.ts` without capturing baselines, so 6 visual tests fail on a
+missing file and 22 more on render drift — that is the 28-failed / 11-passed split measured on an
+untouched `main`. The reason nobody noticed: **no CI job runs `visual.spec.ts` at all.** The only
+`playwright test` invocation under `.github/workflows/` is `e2e/a11y.spec.ts` (`ci.yml:228`), and there
+are **zero `-linux` baselines** — all 32 committed goldens are `-darwin`, so the suite could not pass on
+a Linux runner even if it were wired. `DSC-2`'s visual-regression harness is a shipped mechanism with no
+gate executing it, which is precisely why its baselines were free to drift; `pwa.spec.ts` is in the same
+position. The fix (Linux baselines + a CI job) needs a Linux runner and is not this atom's clause.
+
+**Falsification (3, each on a live line, applied-count confirmed, restored from a file copy).**
+(1) Inject `return _SomeVendorProvider(model='x')` into `resolve_provider_for_use_case` → red naming
+the AST node at line 864. (2) Make `_resolve_from_config_registry` stop calling the chokepoint → the
+"allowlist is not trusted by name" test reds, *and* the never-called floor fires too. (3) Append a
+second `wrap_model_call_guard(...)` call site → red reporting **2 call sites** with both paths named.
+The rail's own detector is additionally asserted against synthetic modules in both directions, so
+"a raw call reds the gate" is a property of the file rather than a claim about one hand-run.
+
+**🪤 A falsification whose anchor does not match is not a falsification.** The first attempt at (1)
+inserted after `            return fallback` (12 spaces); the real line is 8. The script printed
+`anchor not found`, the mutation applied to nothing, and the suite stayed green at 8/8 — which would
+have been reported as "absorbed by a complementary guard" without the applied-count check. Also worth
+recording: the first `git commit` was **aborted** by the pre-commit hook (5 × `E501`) and printed why;
+a hand-rewrap then created two NEW overlong lines, so the prose was reflowed programmatically and
+`flake8` confirmed clean before the commit was retried.
+
+**Gate.** `tests/test_model_call_chokepoint_rail.py` 8 passed (path confirmed to exist first) ·
+`make test-e2e` 149 passed / 4 skipped · `make lint` clean · `make -n test` shows plain `pytest`, so
+the browser gate stays out of the unit run. `docs/roadmap/atomic/dag.json` deliberately **untouched**:
+`PHF-7` is PARTIAL and must stay `todo`.
