@@ -1958,3 +1958,158 @@ which is 19 commits behind — so a local-only install still silently loses ever
 longer than 60 s. And `POST /api/model-providers` accepted a body with `settings` (the route reads
 `options`) with `{"ok": true}` and dropped it: an unknown key on a config-writing route should be a
 400, not a silent no-op.
+
+### 2026-08-21 — `AAP-1` READ-ONLY AUDIT: the atom is SHORT by 13 cells, and the "zero UNKNOWN" half is MET
+
+A repository-only audit of `AAP-1` against its own `done_when`, run without driving any CLI (the atom
+is owner-gated on authenticated CLIs; spawning `claude` spends the owner's authentication). No code was
+read for the purpose of *predicting* a cell — every claim below is a file:line or a commit. Audited at
+`origin/main` = `e25a6ffa`.
+
+**Verdict: the atom does NOT close. Its clause splits, and the two halves disagree.**
+
+| `done_when` clause | status | evidence |
+|---|---|---|
+| "zero UNKNOWN cells" | **MET** | zero rows in the claude-code matrix carry `UNKNOWN` in the *mark* column; all 25 `UNKNOWN` string hits in this file are prior-column values, prose, or legend (table below) |
+| "every audit cell re-marked CONFIRMED or DIVERGED at runtime" | **UNMET** | 13 of 63 rows are `NOT-EXERCISED`, a third mark the legend at line 198 defines and the clause does not admit |
+| "checked-in verified matrix column for `claude-code`" | **MET** | §"Phase 1 results — claude-code verified matrix" line 179; 63 rows across §4a-4e |
+| "findings entered in the severity-ranked (P0/P1/P2/P3) gap inventory" | **MET** | §"Gap inventory — severity-ranked (claude-code findings)" line 383; all four tiers present; `G1`-`G16` filed |
+| "incidental in-session bugs fixed per campaign doctrine" | **MET (vacuously)** | line 478 declares **None**, and both AAP-1 commits are docs-only — nothing was claimed, so nothing can be missing |
+
+This is not a new finding so much as a confirmation: the 2026-08-19 residual entry above already wrote
+**"The atom does not close on 13 cells"**. The audit's contribution is that the count and the marks are
+now verified mechanically rather than read, and that the *reason* the atom reads as "maybe done" is
+identified — the `done_when` names two bars and only the narrower one is satisfied.
+
+**1. The 25 `UNKNOWN` hits, classified per line.** A count alone cannot separate a live cell from prose,
+and the matrix header is `| Feature | audit said | mark | runtime verdict | evidence |` — so `UNKNOWN`
+in a row is the *pre-runtime prediction*, never the mark. The legend at line 198 says so explicitly:
+"For the audit's `UNKNOWN` cells the prediction is the §5 gap text and the mark records the now-definite
+verdict."
+
+| line | classification |
+|---|---|
+| 46 | methodology prose — Phase 1's validation-first directive |
+| 66 | methodology prose — the deliverable definition ("UNKNOWN cells … become definite") |
+| 169 | methodology prose — Success Criteria §1 |
+| 198 | **legend** — the Marks vocabulary |
+| 286, 294, 295 | **claude-code**, prior "audit said" column (registry / AskUserQuestion / subagents); marks are `CONFIRMED` |
+| 319 | **claude-code**, prior column as a parenthetical (`PARTIAL (UNKNOWN which backends emit)`); mark is `DIVERGED` |
+| 343, 346 | prose — the claude-code self-assessment ("All four … are now definite"; "PARTIAL against `AAP-1`'s …") |
+| 595, 603, 604, 628 | **codex (`AAP-2`)**, prior column — a different provider's atom |
+| 649 | prose — codex self-assessment |
+| 794 | prose — a codex-inventory methodology note addressed to `AAP-3` |
+| 932, 940, 941, 965 | **kiro-cli (`AAP-3`)**, prior column — a different provider's atom |
+| 1007 | prose — kiro self-assessment |
+| 1239 | prose — kiro inventory, harness-need note |
+| 1355, 1369, 1397 | prose — the `AAP-1` / `AAP-2` / `AAP-3` execution-log entries |
+
+**Live `UNKNOWN` cells in the claude-code column: 0.** Live `UNKNOWN` cells in any provider's column: 0.
+Twelve of the 25 are other atoms' rows or other atoms' prose; thirteen are this file's own methodology.
+
+**2. The column is complete in shape, and honest.** Counted mechanically off the rows (not from the
+prose beside them): **63 rows, 43 `CONFIRMED` / 7 `DIVERGED` / 13 `NOT-EXERCISED`** — exactly the
+"after the re-drive" column of the mark-counts table at line 332, so that table is derived, not
+maintained. Every `CONFIRMED`/`DIVERGED` row cites at least one `O`-id; **zero bare marks**. The ledger
+defines `O1`-`O34` (lines 205-242) and the matrix cites 32 of them with **zero dangling citations**.
+The 13 `NOT-EXERCISED` rows each state a reason and are grouped 1 + 4 + 5 + 3 at line 349.
+
+**3. The gap inventory holds the claude-code findings.** Line 383, tiers at `**P0 — safety**` /
+`**P1 — capability-dead**` / `**P2 — fidelity**` / `**P3 — cosmetic / legibility**`, carrying `G1`-`G16`.
+One placement defect: **`G45` (two persona injection sites, `O33`) is filed under the
+"Incidental bugs fixed in-session" heading at line 487, not under `**P3**`**, though its own text
+declares "Severity **P3**". It is a claude-code finding from the re-drive appended to the wrong section.
+A reader scanning the P3 tier does not see it. Cheap to move; does not change the verdict either way.
+
+**4. No recorded incidental fix is missing from `main`, because none was recorded.** Line 478 says
+**"None."** and names why (every defect landed outside the atom's fence). Verified against history
+rather than the claim: `a29fcef9` ("AAP-1 claude-code end-to-end validation sweep") is
+**+298 lines, this file only**; `19c97db2` ("AAP-1 residual 22 -> 13") touches only this file,
+`docs/agents/acp-parity.md` and `docs/roadmap/atomic/dag.json`. Zero source files in either. So the
+clause is satisfied vacuously — there is no recorded-but-unlanded fix, which is the failure mode that
+would have mattered most.
+
+Two bookkeeping notes found while checking this. (a) `19c97db2`'s log line says "`dag.json` stays
+untouched", but the commit *does* edit it — it flips the **plan-level** `ACP-AGENT-PARITY` status
+`todo` → `in_progress`, not the `AAP-1` atom row. The claim is true of the atom and false of the file.
+(b) `AAP-1`'s atom row in `docs/roadmap/atomic/dag.json` reads `status: "todo"` on `e25a6ffa` today, so
+the mirrored surface already agrees with this audit; nothing needs flipping, and this audit touches
+neither the file nor the row.
+
+**5. Staleness: the column is NOT wholesale stale, but seven merges land inside it — and one is a
+provenance defect, not a staleness one.**
+
+The header at line 183 declares a single host SHA, `b01cb76e`. That is accurate for `O1`-`O26` and
+**wrong for `O27`-`O34`**: those eight observations are the 2026-08-19 re-drive, and `O27` measures
+`provider_bridge.py` re-injecting `unattended` for the ACP branch — which is `8091f285`
+("AAP-6 thread unattended sessions"), merged 2026-08-18, *after* `b01cb76e`. The re-drive commit did not
+update the header (verified: `git show 19c97db2` touches no `Host:`/`Swept:` line). **So this is a
+mixed-SHA column presented as a single-SHA one.** Fixing the header is a one-line edit and would make
+the rest of this section unnecessary for future readers.
+
+Seven commits in `b01cb76e..e25a6ffa` touch the ACP surface: `56696462` (`AAP-5` host permission
+authority), `7be677fb` (`AAP-4` MCP reachability), `8091f285` (`AAP-6` unattended + loop breaker),
+`b6d54e28` (`G39` profile-bound session spawned in the real home), `6c54c4c1` (refuse a concurrent spawn
+with no workspace), `ada342f6` (the gateway port never reached its MCP children), plus `ddc5eb20`
+(`fix(chat)`: a mistyped workspace-dir key silently unbound the session).
+
+**Re-verification candidates, named and reasoned — not "the column is stale".**
+
+- **The nine rows whose evidence is `O4`** ("no `mcp__personalclaw*` server"). `O4`'s finding was a
+  *reachability* finding, and `AAP-4` landed `src/personalclaw/acp/mcp_servers.py`, whose own docstring
+  says "Before this module every live `session/new` sent `"mcpServers": []`, so an ACP session had none
+  of it — the single largest capability cliff in the ACP parity audit (gap 1)". Highest-confidence
+  flips: **full native tool registry** (line 286, `ABSENT`) and **subagents** (line 295, `ABSENT` — both
+  halves are addressed, the tool by the server and the inject-back by the explicitly-declared
+  `PERSONALCLAW_SESSION_KEY`, `mcp_servers.py:34-40`). Also **skills index / `skill_invoke`**,
+  **`skill_remember`**, **`project_id` → artifact stamping** (`artifact_save` was "not reachable"),
+  **`tool_search`/`tool_schema`**, and **MCP tools (external servers)**, whose verdict text — "the
+  subset is the OPERATOR'S, not PersonalClaw's" — is the exact sentence `AAP-4` was written to falsify.
+  **AskUserQuestion** (line 294) is a weaker candidate: one of its two prongs (the CLI's own tool list)
+  is untouched, so it flips only if `personalclaw-core` supplies such a tool.
+- **Tool-disable prefs** (`O30`, `{"error": "server 'personalclaw-core' not found"}`). The named reason
+  was that `personalclaw-core` is not a configured server; `AAP-4` makes it one for ACP sessions. Note
+  this row was decided in the *re-drive*, and still on the pre-`ada342f6` tree.
+- **The §4b approvals rows.** `56696462` added `src/personalclaw/acp/permission_authority.py` (+307)
+  and +203 in `dashboard/chat_runner.py`. `AAP-1`'s own log says "`AAP-5`'s job is to make that coverage
+  structural rather than to build a new gate" — so `G2` (host gate contingent on the operator's
+  `~/.claude`) and the `tool_kind: ""` observation (`O5`, and `translate.py` +11 in the same commit) are
+  candidates. `G2` in particular was filed as *contingent*; it should now be re-scored as structural.
+- **The cwd rows** (`O8`/`O17`, "NOT cwd-confined"), i.e. the P0 `G1`. **`G1`'s code defect is fixed on
+  `main`** and the inventory text saying "**Not fixed here — outside this atom's fence**" now reads as
+  open when it is not: `src/personalclaw/llm/acp_agent.py:826` reads
+  `str(kwargs.get("cwd") or "").strip() or options.get("cwd")` — the per-call kwarg the audit found
+  dropped — and `src/personalclaw/acp/client.py:137` records that the hardcoded
+  `Path.home()/".personalclaw"/"workspace"` fallback was replaced. `b6d54e28` and `6c54c4c1` are the
+  landings. This is the most misleading row in the file today.
+- **`S2`-cited observations.** `S2` is defined at line 204 as "workspace-dir set *before* binding", and
+  `ddc5eb20` fixed a mistyped workspace-dir key that "silently unbound the session". Any `S2` row is
+  suspect for the mechanical reason that the binding it was exercising may not have taken.
+- **Explicitly NOT a candidate: context-% accounting** (line 319, `DIVERGED`, fabricated `0%`). The
+  *consumer* churned — `dashboard/chat_runner.py:3713` and `:3812` are inside `AAP-5`/`AAP-6`'s diffs —
+  but the *producer* did not: `src/personalclaw/acp/session.py:418` still returns
+  `self.last_prompt_stats.context_pct`, and `git log b01cb76e..origin/main -- src/personalclaw/acp/session.py`
+  is **empty**. The number's ACP source is untouched, so the `DIVERGED` mark stands. Recording this
+  because the naive read (chat_runner churned, therefore the chip is stale) is wrong.
+- **Also not candidates: the 13 `NOT-EXERCISED` rows.** Staleness does not apply to a cell that was
+  never marked; they are simply open. Likewise `O27`-`O34` were driven post-`AAP-6` and are the
+  *freshest* rows in the column despite the header's SHA.
+
+**What actually remains, and what needs the owner.** 13 cells, composed 1 + 4 + 5 + 3 at line 349:
+skill-ladder review (instrumentation, `G44` — provider-independent); per-agent approval floor,
+PreToolUse hooks, the other five hook kinds, incognito no-write (fixtures, and **all four have a proven
+recipe** — `K36`/`K39`/`K40`/`K33`); queued messages, queue-steering, cancelled-turn preamble,
+empty-turn auto-retry, pipe-death auto-retry (timing/failure injection); dry-run replay, OS sandbox
+confinement, trust/YOLO auto-approve (no as-a-user entry point).
+
+**Of these, 12 cannot be settled from the repository — they require a live authenticated `claude`
+drive, which is the owner gate.** Reporting that as a finding rather than performing it. The one
+exception is **skill-ladder review**: its blocker is a missing forced-run surface (`O31` —
+`{"proposals": []}`, no forced-run route in the census), so it is closed by *building instrumentation*,
+not by driving a CLI — and it is provider-independent, so closing it also serves `AAP-3`'s identical
+residual cell. **Two zero-drive edits are also available now and would remove the two most misleading
+statements in the column:** correct the line-183 host SHA to name the re-drive's tree for `O27`-`O34`,
+and move `G45` from line 487 into the `**P3**` tier.
+
+**No `dag.json` change, no code change, no push.** The atom stays `todo` on the record that already
+said so; this entry only makes the reason auditable.
