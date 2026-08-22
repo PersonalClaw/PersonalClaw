@@ -13,10 +13,12 @@ from personalclaw.dashboard.chat_utils import (
     _history_key_for,
     _normalize_model,
     _sync_dashboard_sessions,
+    apply_task_mode,
     resolve_history_key,
 )
 from personalclaw.dashboard.state import DashboardState, _ChatSession
 from personalclaw.security import redact_credentials, redact_exfiltration_urls
+from personalclaw.task_modes import VALID_TASK_MODES
 
 
 def _load_providers_raw() -> list[dict]:
@@ -228,6 +230,41 @@ def _attach_rewound(session: _ChatSession, m: dict) -> None:
         session.messages[-1]["rewound"] = out
 
 
+def _restore_runtime_binding(state: DashboardState, session: _ChatSession, meta: dict) -> None:
+    """Restore a session's RUNTIME binding from its persisted metadata line.
+
+    One helper for both restore paths — the bulk startup restore
+    (``restore_recent_sessions``) and the targeted single-session rehydrate — because
+    they had silently drifted: only the targeted path read ``acp_provider``, so a
+    gateway restart, which goes through the BULK path, always brought the session back
+    on the native axis. Two independent readers of one contract is how a restore ends
+    up half-implemented; there is now one.
+
+    ``_acp_meta_binding`` records what the meta line ASKED the runtime to be, whether
+    or not the binding was honoured, so the first turn after a restore can say so
+    rather than resolving on a different axis in silence. The task mode goes through
+    ``apply_task_mode`` (never a bare attribute write) because the mode is TWO writes —
+    the session's posture and the runtime's tool gate — and restoring only the first
+    would bring back a "plan" session whose tools still run.
+    """
+    _acp_prov = meta.get("acp_provider")
+    if isinstance(_acp_prov, str) and _acp_prov:
+        session._acp_meta_binding = _acp_prov
+        if _acp_prov.startswith("acp:"):
+            session.acp_provider = _acp_prov
+            _acp_pa = meta.get("acp_provider_agent")
+            session.acp_provider_agent = _acp_pa if isinstance(_acp_pa, str) else ""
+    if meta.get("workspace_dir"):
+        session.workspace_dir = meta["workspace_dir"]
+    if meta.get("mode"):
+        session.mode = meta["mode"]
+    # Re-normalized against the closed set on read, so a hand-edited meta line can
+    # only ever yield a real mode (and never a silently un-gated one).
+    _tm = meta.get("task_mode")
+    if isinstance(_tm, str) and _tm in VALID_TASK_MODES:
+        apply_task_mode(state, session, _tm)
+
+
 def _rehydrate_session_from_history(
     state: DashboardState, session_name: str
 ) -> _ChatSession | None:
@@ -305,16 +342,10 @@ def _rehydrate_session_from_history(
             )
     if meta.get("reasoning_effort"):
         session.reasoning_effort = _validate_reasoning_effort(meta["reasoning_effort"])
-    # Ephemeral discovered-ACP-agent override (per-session, never in config).
-    _acp_prov = meta.get("acp_provider")
-    if isinstance(_acp_prov, str) and _acp_prov.startswith("acp:"):
-        session.acp_provider = _acp_prov
-        _acp_pa = meta.get("acp_provider_agent")
-        session.acp_provider_agent = _acp_pa if isinstance(_acp_pa, str) else ""
-    if meta.get("workspace_dir"):
-        session.workspace_dir = meta["workspace_dir"]
-    if meta.get("mode"):
-        session.mode = meta["mode"]
+    # Runtime binding: the ephemeral discovered-ACP override (per-session, never in
+    # config), the workspace, the session mode and the task mode. Shared with the bulk
+    # startup restore so the two paths cannot drift again.
+    _restore_runtime_binding(state, session, meta)
     if meta.get("folder_id"):
         session.folder_id = meta["folder_id"]
     if meta.get("pinned"):
@@ -445,10 +476,11 @@ def restore_recent_sessions(
                 )
         if meta.get("reasoning_effort"):
             session.reasoning_effort = _validate_reasoning_effort(meta["reasoning_effort"])
-        if meta.get("workspace_dir"):
-            session.workspace_dir = meta["workspace_dir"]
-        if meta.get("mode"):
-            session.mode = meta["mode"]
+        # Runtime binding (ACP override / workspace / session mode / task mode). This is
+        # THE path a gateway restart takes, and it used to skip ``acp_provider`` and
+        # ``task_mode`` entirely — so every restart resolved the next turn on the native
+        # axis with a default-Agent tool gate. Shared with the targeted rehydrate above.
+        _restore_runtime_binding(state, session, meta)
         if meta.get("folder_id"):
             session.folder_id = meta["folder_id"]
         if meta.get("pinned"):
@@ -565,6 +597,21 @@ def _save_session_to_history(
             meta_line["mode"] = session.mode
         if session.workspace_dir:
             meta_line["workspace_dir"] = session.workspace_dir
+        # Runtime binding (G5). The chat picker's bind endpoint already persists the
+        # ephemeral ACP override with ``update_metadata`` — but this function REBUILDS
+        # the whole meta line from the in-memory session on every turn, so omitting the
+        # keys here CLOBBERED that write at the end of the very next turn. The binding
+        # then read as "never set" and the session came back on the native axis after a
+        # restart: different tools, different confinement, looking normal. Task mode is
+        # written only when non-default, matching every field above, so an Agent-mode
+        # session's meta line stays byte-identical.
+        if session.acp_provider:
+            meta_line["acp_provider"] = session.acp_provider
+            if session.acp_provider_agent:
+                meta_line["acp_provider_agent"] = session.acp_provider_agent
+        _task_mode = getattr(session, "_task_mode", "agent") or "agent"
+        if _task_mode != "agent":
+            meta_line["task_mode"] = _task_mode
         if session.folder_id:
             meta_line["folder_id"] = session.folder_id
         if session.pinned:

@@ -196,6 +196,7 @@ class _ChatSession:
         "reasoning_effort",
         "acp_provider",
         "acp_provider_agent",
+        "_acp_meta_binding",
         "acp_mode",
         "mode",
         "workspace_dir",
@@ -299,6 +300,14 @@ class _ChatSession:
         # never persist these to config — they live only on the session.
         self.acp_provider: str = ""
         self.acp_provider_agent: str = ""
+        # What the session's PERSISTED meta line asked its runtime to be, recorded on
+        # restore whether or not the binding was honoured, and consumed by the first
+        # turn after a restore. A lost ACP binding is not a cosmetic loss: the turn
+        # then runs on the native axis with different tools and different confinement
+        # while looking completely normal, so the turn says so instead (G5). Empty
+        # once consumed, and cleared outright when the user picks a runtime by hand —
+        # an explicit choice is not a silent fallback.
+        self._acp_meta_binding: str = ""
         # ACP permission-mode override for this session (Zed dialect: acceptEdits
         # / bypassPermissions / plan …). Empty = adapter default ("default",
         # which PROMPTS for writes). Set for unattended goal-loop workers so an
