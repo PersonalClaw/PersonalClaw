@@ -507,6 +507,20 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Fixed
 
+- **The assistant learned nothing from turns run through an external coding CLI.** PersonalClaw keeps
+  a quiet record of which tools actually work for which kind of job, and leans on it later. That
+  record was only ever written by the built-in agent. Run the same work through an external CLI
+  (Claude Code, Codex, kiro and friends) and **nothing was written at all** — a turn with six tool
+  calls in it, three of them failing, left no trace. All the learning that comes from watching your
+  own tools succeed and fail was silently switched off for anyone using an external agent, which is
+  most people. Those turns are now recorded on exactly the same footing as the built-in agent's.
+  **A failing tool is now reported as failing.** Underneath, the reason for the silence was that the
+  "this call failed" mark was being dropped in translation, one step after it was written. Two other
+  things were quietly relying on it, and both start working again: a failed tool call in the
+  transcript is now coloured as failed rather than looking like a success, and the brake that stops
+  the agent hammering the same broken command over and over can finally see the failures it counts.
+  Before this, an external agent could fail the identical call six times in a row and get no warning
+  and no stop.
 - **The context gauge said "0%" on turns that were nearly full.** The little ring on the model pill,
   and the "Turn complete" line under a finished turn, both printed a context percentage on every
   turn — including turns where the agent behind the chat had never reported one. The number they

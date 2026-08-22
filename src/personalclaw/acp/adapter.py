@@ -35,4 +35,12 @@ def acp_event_to_agent_event(e: AcpEvent) -> AgentEvent:
         duration_ms=e.duration_ms,
         event_count=e.event_count,
         tool_call_count=e.tool_call_count,
+        # The tool-result FAILURE bit (`G6`/`G7`). `acp/translate.py` stamps
+        # `tool_meta = {"ok": False}` on a failed tool result, but this mapping used to
+        # omit the field — so every downstream consumer got the dataclass default `{}`
+        # and the bit died one line after it was authored. Measured consequence: the
+        # tool card could not colour a failure, and `chat_runner`'s ACP loop breaker
+        # (`_acp_failed = _tool_ok is False`) could never be True, leaving a fully
+        # implemented warn/block/circuit path inert. Field-for-field means all fields.
+        tool_meta=e.tool_meta,
     )
