@@ -164,8 +164,14 @@ class AcpSession:
         await self._send_response(request_id, self._dialect.approve_outcome(resolved))
 
     async def reject_tool(self, request_id: str | int) -> None:
-        self._offered_options.pop(str(request_id), None)
-        await self._send_response(request_id, self._dialect.reject_outcome())
+        """Deny a pending tool permission for THIS session, echoing the agent's own reject
+        option when it offered one (`G19`). READ the offered options before popping them —
+        the pre-fix order discarded them first and then had nothing to resolve, which is how
+        every denial came to be sent as ``cancelled``."""
+        rid = str(request_id)
+        resolved = self._dialect.select_reject_option_id(self._offered_options.get(rid, []))
+        self._offered_options.pop(rid, None)
+        await self._send_response(request_id, self._dialect.reject_outcome(resolved))
 
     async def _drain_turn(
         self, req_id: int, response_future: "asyncio.Future[JsonRpcMessage]", timeout: float
