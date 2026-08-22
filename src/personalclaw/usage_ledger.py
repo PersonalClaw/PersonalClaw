@@ -205,17 +205,48 @@ def _fold(agg: dict, row: dict) -> None:
         agg["priced"] = False
 
 
-def _row_selected(row: dict, since: str, until: str, session_key: str) -> bool:
-    """Whether a ledger row is in the query window AND (if given) its session."""
-    if not _in_window(str(row.get("ts", "")), since, until):
+#: Separator between a session key and the sub-key a fan-out worker appends. `loop.manager` spells
+#: a task worker `f"{session_key(loop_id)}-{task_id}"`, so this is the boundary a prefix query must
+#: respect.
+_SESSION_KEY_SEP = "-"
+
+
+def _session_matches(key: str, session_key: str, session_prefix: str) -> bool:
+    """Whether ``key`` satisfies the exact-session and prefix-session filters.
+
+    ``session_prefix`` matches the key ITSELF or any key that extends it **at a separator**, never
+    a bare ``startswith``. A bare prefix test would make ``loop-abc123`` swallow
+    ``loop-abc1234``'s rows and report a plausible, silently-too-large number — the failure shape
+    that is worse than an obviously broken one. The guard deliberately does NOT lean on
+    ``loop.store._LOOP_ID_RE`` making same-length ids collision-free today: this ledger accepts any
+    ``session_key`` string a writer hands it, so the selection has to be unambiguous on its own
+    terms rather than borrow safety from a regex in another module.
+    """
+    if session_key and key != session_key:
         return False
-    if session_key and str(row.get("session_key", "")) != session_key:
+    if session_prefix and not (
+        key == session_prefix or key.startswith(session_prefix + _SESSION_KEY_SEP)
+    ):
         return False
     return True
 
 
+def _row_selected(
+    row: dict, since: str, until: str, session_key: str, session_prefix: str = ""
+) -> bool:
+    """Whether a ledger row is in the query window AND (if given) its session."""
+    if not _in_window(str(row.get("ts", "")), since, until):
+        return False
+    return _session_matches(str(row.get("session_key", "")), session_key, session_prefix)
+
+
 def rollup(
-    *, since: str = "", until: str = "", group_by: str = "model", session_key: str = ""
+    *,
+    since: str = "",
+    until: str = "",
+    group_by: str = "model",
+    session_key: str = "",
+    session_prefix: str = "",
 ) -> list[dict]:
     """Aggregate the ledger, grouped by one of ``model|source|agent|provider|day``.
 
@@ -223,12 +254,14 @@ def rollup(
     constituent row was unpriced (so a partially-unpriced group can't look complete).
     Sorted by descending cost then the group key, for a stable, useful default order.
     ``session_key`` (when given) restricts to one session — the session-total surface.
+    ``session_prefix`` restricts to a session AND its separator-delimited children — the
+    fan-out surface, where one logical unit of work spans several session keys.
     """
     if group_by not in _GROUP_KEYS:
         raise ValueError(f"group_by must be one of {_GROUP_KEYS}, got {group_by!r}")
     groups: dict[str, dict] = {}
     for row in _iter_rows():
-        if not _row_selected(row, since, until, session_key):
+        if not _row_selected(row, since, until, session_key, session_prefix):
             continue
         ts = str(row.get("ts", ""))
         key = _day_of(ts) if group_by == "day" else str(row.get(group_by, ""))
@@ -239,11 +272,15 @@ def rollup(
     return out
 
 
-def totals(*, since: str = "", until: str = "", session_key: str = "") -> dict:
+def totals(
+    *, since: str = "", until: str = "", session_key: str = "", session_prefix: str = ""
+) -> dict:
     """Grand total over the window — the same agg shape, ungrouped. ``session_key``
-    (when given) restricts to one session, answering "what did this chat cost?"."""
+    (when given) restricts to one session, answering "what did this chat cost?".
+    ``session_prefix`` widens that to a session and its separator-delimited children,
+    answering "what did this loop cost?" for a loop that fanned out into task workers."""
     agg = _blank_agg()
     for row in _iter_rows():
-        if _row_selected(row, since, until, session_key):
+        if _row_selected(row, since, until, session_key, session_prefix):
             _fold(agg, row)
     return agg
