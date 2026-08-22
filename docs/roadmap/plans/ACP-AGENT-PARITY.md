@@ -2982,3 +2982,58 @@ cited above.
   full run on the pre-amendment tree had **1 red**, `test_loop_worktree_sparse.py::TestPoolBound::
   test_batch_creates_every_worktree` — the documented sparse-cone flake; **47/47 in isolation** and
   absent from the final run (run count: 2 full, 1 red). Nothing in this diff touches worktrees.
+- **2026-08-22 — `G21` host half CLOSED: the API stops accepting a reasoning effort the runtime
+  reported it cannot honor.** Measured on codex (`C2`: `supported_efforts: []`; `C12`: a bind with
+  `reasoning_effort: "low"` accepted, persisted and echoed back). The FE half was ALREADY closed —
+  `web/src/ui/composer/controls.tsx`'s `effortsForAgent` returns `[]` for an ACP agent declaring none
+  and the pill is hidden — so the open half was the API disagreeing with its own UI.
+  **`supported_efforts` had exactly ONE occurrence under `src/personalclaw/dashboard/`** on
+  `origin/main` (`handlers/providers.py:459`, the emit site), verified with `git grep` against
+  `origin/main`. Zero readers on any write path: the declaration was published to the composer and
+  then never consulted again.
+  **Two write paths, and they disagreed with each other.** `POST …/acp-agent` enforced a hardcoded
+  `("low","medium","high","max")` ladder; `POST …/reasoning-effort` states "No fixed scale — each
+  backend declares its own effort values" and applies `_validate_reasoning_effort` (a FORMAT bar). So
+  a backend-declared `xhigh` was refused at bind and accepted per-turn. Both now apply the same two
+  bars — format, then the declared set — and name the runtime plus the options it does offer.
+  **The load-bearing distinction is `[]` vs `None`.** New `providers.declared_efforts(runtime_id)` is
+  cache-only (discovery opens a live ACP session, ~15-20 s — a write path must never trigger it) and
+  returns `None` for unknown, `[]` for "asked and reported no axis". Unknown FAILS OPEN: refusing a
+  bind we cannot judge would break the picker whenever discovery has not warmed. A cached-but-empty
+  agent list and a payload predating the field both read unknown, not empty.
+  **A defect in my own first cut, caught by reading the shape instead of assuming it:**
+  `supported_efforts` rows are the backend's VERBATIM option dicts (`{"value","label"}`), the shape
+  the composer renders and `record_capabilities` reads `value` from. Stringifying a row would have
+  compared an effort against `"{'value': 'low', …}"` and refused every legitimate bind.
+  **A second one, caught by my own test:** the refusal message sorted the declared set, rendering a
+  low→high ladder as "high, low" to the one person who reads that sentence. It now preserves the
+  backend's declared order.
+  **A THIRD hardcoded ladder was found inert and deleted in the same change.**
+  `chat_persistence._REASONING_EFFORT_VALUES = frozenset({"", "low", "medium", "high", "max"})` had
+  **zero readers** — its comment claimed it was "kept as a name for callers that want the native
+  ladder (composer fallback)", but that fallback is the FE's `NATIVE_EFFORTS` in `controls.tsx`, and
+  `_validate_reasoning_effort` uses `_REASONING_EFFORT_RE`, not the set. A dead constant asserting a
+  fixed scale, in the module whose own comment says there isn't one. Runtime import sweep for the
+  deletion (mypy's `ignore_missing_imports` cannot catch a stranded first-party import): occurrences
+  **1 → 0** across `src`/`tests`/`harness`/`web`, then five affected modules re-imported clean
+  (`chat_persistence`, `chat_handlers`, `chat`, `handlers.providers`, `server`).
+  **The append-only wire-code ratchet caught a miss my targeted legs did not.** Both new refusals
+  go through `json_error` (the flat census sits at exactly `FLAT_BASELINE = 1507` with zero slack, so
+  a new `{"error": "<prose>"}` would red the suite), but a `json_error` code is a stable wire surface
+  and `test_http_error_codes_append_only.py` requires an `HTTP_ERROR_CODES` row in the same change.
+  The full suite found it; the targeted run had not included that path. `invalid_reasoning_effort` and
+  `reasoning_effort_not_declared` are now registered with their one-line meanings, and the flat census
+  is unchanged at 1507.
+  **Falsifications** (AST-confirmed, restored from file copies): · **M1** collapse `None` into `[]` →
+  2 red (the fail-open test and the accessor's `[]`-vs-`None` test). · **M2** drop the per-turn
+  declaration check → 2 red. · **M3** restore the hardcoded ladder on the bind path → 2 red (the
+  `xhigh` acceptance and the declaring-none refusal). **Blind spot measured:** under M2 the
+  pre-existing suites (`test_chat_session_reasoning_effort.py`, `test_dashboard_chat.py`) were
+  **316 passed, 0 failed** — nothing existing consulted the declaration, which is what the 12 new
+  tests close. They drive the endpoints over a seeded discovery cache rather than calling the
+  validator directly, because the defect was never in a validator: no write path consulted the
+  declaration at all.
+  **Still a CLI constraint, and the doc says so:** nothing the host does makes codex reason at a
+  chosen effort. `acp-parity.md`'s `G21` row now records the host half closed and the axis still
+  absent, marked **not re-driven** (unit-proven, not a measured cell). No matrix cell flipped and
+  `dag.json` is untouched.

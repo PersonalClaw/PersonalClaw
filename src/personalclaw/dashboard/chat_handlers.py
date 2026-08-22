@@ -1842,6 +1842,47 @@ async def api_chat_session_agent(request: web.Request) -> web.Response:
     )
 
 
+def _effort_not_honorable(provider: str, effort: str) -> str | None:
+    """Why *effort* cannot be honored on ACP runtime *provider*, or None if it can (`G21`).
+
+    The composer already hides its effort pill when the bound agent declares no options
+    (``effortsForAgent`` → ``[]``), but the API accepted, PERSISTED and echoed back an
+    effort regardless — so the axis existed on the wire for a runtime that had reported it
+    does not exist, and the value rode into the session metadata where a later read treats
+    it as a real pin. A control the provider cannot honor is worse than a missing one: it
+    is a setting the user is told took effect.
+
+    Judges only what the runtime DECLARED, never a guess:
+      * ``None`` from :func:`declared_efforts` → unknown (discovery cold/stale/failed).
+        Fail OPEN: refusing a bind we cannot judge would make the picker unusable whenever
+        discovery has not warmed, and the format check still applies.
+      * ``[]`` → the backend was asked and reported no effort axis. Refuse.
+      * a non-empty set → the effort must be one of the backend's own verbatim values.
+        This is also why the bind path can no longer use a hardcoded ``low/medium/high/max``
+        ladder: a backend declaring ``xhigh`` or ``minimal`` was being refused a value it
+        had itself offered.
+    """
+    if not effort or not provider:
+        return None
+    from personalclaw.dashboard.handlers.providers import declared_efforts
+
+    declared = declared_efforts(provider)
+    if declared is None:
+        return None
+    if not declared:
+        return (
+            f"{provider} declares no reasoning-effort options, so an effort cannot be pinned on it"
+        )
+    if effort not in declared:
+        # DECLARED order, not sorted: a backend lists its ladder low→high, and
+        # alphabetising it renders "high, low" to the one person who reads this sentence.
+        return (
+            f"{provider} declares reasoning efforts "
+            f"{', '.join(declared)} — {effort!r} is not one of them"
+        )
+    return None
+
+
 async def api_chat_session_acp_agent(request: web.Request) -> web.Response:
     """POST /api/chat/sessions/{session}/acp-agent — bind a DISCOVERED ACP agent.
 
@@ -1872,9 +1913,22 @@ async def api_chat_session_acp_agent(request: web.Request) -> web.Response:
     provider_agent = str(body.get("provider_agent", "") or "").strip()
     if provider_agent and not _AGENT_NAME_RE.match(provider_agent):
         return web.json_response({"error": "invalid provider_agent"}, status=400)
-    effort = str(body.get("reasoning_effort", "") or "").strip()
-    if effort and effort not in ("low", "medium", "high", "max"):
-        return web.json_response({"error": "invalid reasoning_effort"}, status=400)
+    # No fixed scale — each backend declares its own values, so enforce the FORMAT here
+    # (the same bar `/reasoning-effort` applies) and the DECLARED SET below. The old
+    # hardcoded low/medium/high/max ladder disagreed with that endpoint: a value the
+    # per-turn path accepted could be refused at bind, and a backend-declared `xhigh` was
+    # refused outright.
+    raw_effort = str(body.get("reasoning_effort", "") or "").strip()
+    effort = _validate_reasoning_effort(raw_effort)
+    if raw_effort and not effort:
+        return json_error(
+            "invalid_reasoning_effort",
+            message="reasoning_effort must be a short lowercase token (a-z0-9_-) or ''",
+            status=400,
+        )
+    _refusal = _effort_not_honorable(provider, effort)
+    if _refusal:
+        return json_error("reasoning_effort_not_declared", message=_refusal, status=400)
 
     session.acp_provider = provider
     session.acp_provider_agent = provider_agent if provider else ""
@@ -1976,6 +2030,14 @@ async def api_chat_session_reasoning_effort(request: web.Request) -> web.Respons
             {"error": "reasoning_effort must be a short lowercase token (a-z0-9_-) or ''"},
             status=400,
         )
+    # `G21`: the same declared-set bar the bind path applies. Checked against the session's
+    # CURRENTLY bound runtime, because that is the backend that would have to honor it —
+    # this endpoint does not change the binding. A no-op set (already this value) short-
+    # circuits below without re-judging, so an effort pinned while a permissive runtime was
+    # bound cannot be re-refused by a later identical call.
+    _refusal = _effort_not_honorable(str(getattr(session, "acp_provider", "") or ""), effort)
+    if _refusal:
+        return json_error("reasoning_effort_not_declared", message=_refusal, status=400)
     if session.reasoning_effort == effort:
         return web.json_response({"ok": True, "reasoning_effort": effort})
     session.reasoning_effort = effort
