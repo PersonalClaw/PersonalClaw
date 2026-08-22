@@ -71,7 +71,29 @@ class AcpAgentProvider(AcpToolOutcomesMixin, ModelProvider, AgentProvider):
 
     @property
     def provider_id(self) -> str:
-        """Runtime id: ``acp:<cli>`` keyed off the launch command basename."""
+        """Runtime id: the CONFIGURED ``acp:<cli>`` entry name; basename as fallback.
+
+        The configured entry name is the runtime the USER picked
+        (``acp:claude-code``). The launch-command basename is an inference that
+        names the *adapter* instead (``acp:claude-agent-acp``, or ``acp:npx``
+        under the npx fallback — see
+        :func:`personalclaw.acp_bundles._register.register_acp_cli_entry`, which
+        already notes that basename inference is untrustworthy), so it is only
+        the fallback for a provider constructed without a runtime id.
+
+        This is the same value :attr:`AcpSessionProvider.provider_id` returns and
+        the same entry-name-with-basename-fallback rule
+        :meth:`discover_agents` applies to ``options["runtime_id"]`` — one
+        runtime id, three call sites in agreement.
+
+        The ``acp:`` prefix is an invariant, not decoration: consumers split on
+        it (the not-gateable registry lookup in
+        ``dashboard/chat_runner.py``, ``agents.registry``'s family resolver), so
+        a configured name missing it is prefixed rather than passed through.
+        """
+        configured = self._runtime_id.strip()
+        if configured:
+            return configured if configured.startswith("acp:") else f"acp:{configured}"
         cli = Path(self._command[0]).name if self._command else "agent"
         return f"acp:{cli}"
 
@@ -419,10 +441,15 @@ class AcpAgentProvider(AcpToolOutcomesMixin, ModelProvider, AgentProvider):
         mode: str = "",
         reasoning_effort: str = "",
         unattended: bool = False,
+        runtime_id: str = "",
     ) -> None:
         if not command:
             raise ValueError("AcpAgentProvider requires a non-empty command list")
         self._command: list[str] = list(command)
+        # The CONFIGURED runtime id (the ``acp:<cli>`` ProviderEntry name) this
+        # provider was built for. Read by ``provider_id``; empty falls back to
+        # basename inference. See that property for why the configured value wins.
+        self._runtime_id: str = runtime_id or ""
         # Per-CLI ACP protocol dialect, selected by the bundle (the ``<cli>`` of
         # ``acp:<cli>``). Resolved to a strategy object the vendor-neutral client
         # delegates its handshake/permission divergences to. None → default
@@ -948,6 +975,12 @@ def _factory(
         mode=mode,
         reasoning_effort=reasoning_effort,
         unattended=unattended,
+        # The CONFIGURED runtime id, so ``provider_id`` names the runtime the user
+        # picked (``acp:claude-code``) instead of inferring it from the launch
+        # command's basename (``acp:claude-agent-acp``, or ``acp:npx`` under the npx
+        # fallback). GET /api/agent-providers already reports ``entry.name`` as the
+        # row's provider_id; this brings the built provider into agreement.
+        runtime_id=entry.name,
     )
 
 

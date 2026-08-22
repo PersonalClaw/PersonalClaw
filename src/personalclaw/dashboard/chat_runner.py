@@ -1936,24 +1936,36 @@ async def _run_chat(
         # running its own tools. Derive from the live provider: NativeAgentRuntime
         # reports provider_id "native"; ACP reports "acp:<cli>".
         _runtime_label = getattr(client, "provider_id", "") or provider_kind or "native"
-        if resumed:
-            state.broadcast_ws(
-                "activity_event",
-                {
-                    "session": session.key,
-                    "kind": "session",
-                    "text": f"Session resumed · {agent_label} · {model_label} · via {_runtime_label}",  # noqa: E501
-                },
-            )
+        # WHICH of three things actually happened this turn. ``get_or_create``
+        # returns a pair of flags that distinguishes them, and the sentence must
+        # not collapse them:
+        #   is_new and resumed     → a runner was started and LOADED a persisted
+        #                            session (ACP session/load) → "resumed"
+        #   is_new and not resumed → a runner was started with a fresh
+        #                            conversation → "created"
+        #   not is_new             → the SAME live in-process session served this
+        #                            turn; nothing was created or loaded →
+        #                            "continued"
+        # ``resumed`` alone was the gate, and the reuse path returns
+        # ``resumed=False`` unconditionally (``session.py`` "return provider,
+        # was_new, False"), so every turn of a long-lived session claimed "Session
+        # created". Gating on ``is_new`` alone inverts the same lie — a reused
+        # session would read "resumed". So: ``is_new`` says whether a runner was
+        # started at all, ``resumed`` picks the verb when one was.
+        if not is_new:
+            _session_verb = "continued"
+        elif resumed:
+            _session_verb = "resumed"
         else:
-            state.broadcast_ws(
-                "activity_event",
-                {
-                    "session": session.key,
-                    "kind": "session",
-                    "text": f"Session created · {agent_label} · {model_label} · via {_runtime_label}",  # noqa: E501
-                },
-            )
+            _session_verb = "created"
+        state.broadcast_ws(
+            "activity_event",
+            {
+                "session": session.key,
+                "kind": "session",
+                "text": f"Session {_session_verb} · {agent_label} · {model_label} · via {_runtime_label}",  # noqa: E501
+            },
+        )
 
         # Seed this session's trust from the bound agent's persistent approval floor
         # ("Always allow for this agent" = AgentProfile.approval_mode "auto"). This is

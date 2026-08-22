@@ -534,11 +534,33 @@ found zero warn/block/circuit output after six failures in one turn (`G6`).
   `AcpAgentProvider.provider_id` is `f"acp:{Path(self._command[0]).name}"`
   (`src/personalclaw/llm/acp_agent.py:72-75`). The bundle deliberately passes the dialect
   explicitly to avoid basename inference; the label was missed. Under the npx fallback the same
-  line would read `acp:npx`.
-- **`G15` "Session created" prints on EVERY turn** — the line is gated on `resumed`, never on
-  `is_new` (`src/personalclaw/dashboard/chat_runner.py:1731-1748`), so a long ACP conversation
-  repeats "Session created" and never says "resumed". `AAP-7`'s accurate-labelling acceptance
-  criterion needs this row too.
+  line would read `acp:npx`. **FIXED** (`fix-g14-g15-session-line`): `provider_id` now returns the
+  configured `acp:<cli>` entry name (threaded as `runtime_id` through `_factory`), basename only as
+  the fallback — the same rule `AcpSessionProvider.provider_id` and `discover_agents`'
+  `options["runtime_id"]` already followed.
+  **CORRECTION — `G14` was misfiled as P3/cosmetic.** The same basename value is *also* the
+  not-gateable/SEL provider key: `chat_runner.py:2497-2499` derives `_acp_cli = provider_id[4:]`
+  and feeds it to `acp_permission_authority.not_gateable_entry()` (`:1367`) plus two SEL audit rows
+  (`:1414` `"provider": acp_cli`, `:2914`). `normalize_provider` maps `claude-agent-acp` →
+  `claude-code` via `_PROVIDER_ALIASES`, but **`npx` resolves to no coverage row at all** — so under
+  the npx fallback a *declared* not-gateable tool read as an undeclared hole, and every ungated-tool
+  audit row named the adapter rather than the runtime. The label was the visible symptom of a
+  security-legibility defect, not the whole of it.
+- **`G15` "Session created" prints on EVERY turn** — the SYMPTOM is real and now fixed; the filed
+  mechanism and recommendation were both wrong. **CORRECTED:** (a) the line cite was stale — the real
+  sites were `chat_runner.py:1912-1930` on `origin/main` at `05bba66e`; (b) a `resumed` branch *did*
+  exist (`:1913`), so "never says resumed" was an overstatement — it said "resumed" on the rare
+  cold-reload path only; (c) the actual cause is that `SessionManager.get_or_create`'s **reuse path
+  returns `resumed=False` unconditionally** (`session.py:1065`, `return provider, was_new, False`),
+  so every later turn of one live session took the `else` branch; (d) **the recommendation "gate on
+  `is_new`" would have inverted the same lie** — `is_new` is True only when a runner was *started*
+  this turn (creation path returns `(provider, True, resumed)` at `session.py:1281`; reuse returns
+  `was_new`, which is False except right after `mark_new()`), so gating the verb on it alone makes a
+  reused session read "resumed". **FIXED** by splitting the two questions the one flag was being
+  asked to answer: `is_new` says whether a runner was started at all, `resumed` picks the verb when
+  one was — `is_new and resumed` → "resumed", `is_new and not resumed` → "created", `not is_new` →
+  **"continued"** (a third, previously unsayable state). One broadcast, one format string.
+  `AAP-7`'s accurate-labelling acceptance criterion needs this row too.
 - **`G16` The preference-facet extractor learned the fragment "never more"** from
   "…in exactly one sentence from now on, never more." (`O22`) — the capture path is live
   (that is the CONFIRMED part) but the extraction is poor.
@@ -2760,3 +2782,84 @@ cited above.
   re-derived to six. Both are marked **not re-driven** — the fix is unit-proven, so the doc states a
   landed mechanism, not a measured cell. `G18`'s inventory bullet is the record; no matrix cell
   flipped and `dag.json` is untouched.
+
+- **2026-08-22 — `G14` + `G15` DONE (P3 legibility, ad-hoc off `origin/main` `05bba66e`).** One
+  sentence, two lies, fixed together because correcting the verb while the runtime label still named
+  the adapter would have left the line lying.
+  **`G15` verdict: the recommendation was WRONG, and `resumed` was only half the right gate.** The
+  audit the task asked for changed the fix. Read `session.py`: `get_or_create` returns
+  `(provider, is_new, resumed)`, and the **reuse path returns `resumed=False` unconditionally**
+  (`:1065` `return provider, was_new, False`) while the creation path returns `(provider, True,
+  resumed)` (`:1281`). So `is_new` means "a runner was STARTED this turn" — exactly what
+  `chat_runner.py`'s floor-seeding comment says — and `resumed` means "that runner LOADED a persisted
+  session". Gating the verb on `resumed` alone made every later turn of one live session say
+  "created" (the filed symptom, real); gating it on `is_new` alone would have made every reused turn
+  say "resumed" (the filed recommendation, worse). The two flags answer two different questions, so
+  the fix uses both: `is_new` decides whether a runner was started, `resumed` picks the verb when one
+  was, and `not is_new` gets a third word the line could not previously say — **"continued"**. Two
+  divergent `broadcast_ws` branches collapsed into one call with one format string, since two
+  branches is precisely how `G14` shipped a stale label.
+  **`G14`: the label now names the runtime the user PICKED.** `AcpAgentProvider.provider_id` returns
+  the configured `acp:<cli>` `ProviderEntry` name, threaded in as a `runtime_id` kwarg by `_factory`
+  (`entry.name`); basename inference survives only as the fallback for a provider built without one
+  (`test_agent_provider.py:30`'s existing assertions still pass unchanged). This is **convergence,
+  not invention** — `AcpSessionProvider.provider_id` already returned `self._runtime_id`,
+  `discover_agents` already applied entry-name-with-basename-fallback to `options["runtime_id"]`
+  (`acp_agent.py:284`), and `GET /api/agent-providers` already reported `entry.name` as the row's
+  `provider_id` with `test_agent_providers_endpoint.py:341-346` locking `"acp:claude-agent-acp" not
+  in rows`. `AcpAgentProvider` was the last of the four disagreeing. The `acp:` prefix is enforced as
+  an invariant rather than passed through, because `chat_runner.py:2498` derives the not-gateable/SEL
+  key as `provider_id[4:]` behind a `startswith("acp:")` test — a bare entry name would have silently
+  disabled the ungated-tool report.
+  **`provider_id` consumers checked BEFORE touching it** (the census is why the change is safe):
+  four definitions (`NativeAgentRuntime` → `"native"`; `AcpAgentProvider`; `AcpSessionProvider` →
+  `self._runtime_id`; the `AgentProvider` ABC). Only TWO sites read the property off an instance —
+  `chat_runner.py:1912` (this label) and `:2497` (the `_acp_cli` derivation). `agents/registry.py`'s
+  `provider_id` parameter is fed from config/`entry.name`, never from the property. Nothing persists
+  it to disk or JSON, and nothing in `src` compares it to a literal. The one identity consumer,
+  `acp/permission_authority.py:272-286` `normalize_provider`, is **explicitly documented as
+  accepting "the bundle name, the `acp:<cli>` runtime id, or the raw launch-command basename … since
+  the three disagree"** — so it tolerates both the old and new value. `runtime_label` /
+  `_runtime_label_for` (`handlers/providers.py:345`) was deliberately NOT reused for this line: it
+  title-cases to `"Claude Code"`, which reads like an agent name and loses the external-CLI signal
+  the line exists to carry. It stays the providers-list display form.
+  **Not fixed, named rather than hidden:** the `"Creating session…"` status broadcast at
+  `chat_runner.py:1850` fires before `get_or_create`, so it also over-claims on the reuse path. It is
+  a transient `kind: "status"` progress line and the truth genuinely is not knowable before the call,
+  so it is left alone rather than half-fixed. **Also measured:** `ChatPage.tsx:961` drops
+  `kind === 'session'` outright, so this sentence is user-visible on the **Loop** and **Code**
+  cockpits (`LoopCockpitPage.tsx:368-373` — whose comment literally says "session created" —
+  and `CodeCockpitPage.tsx:459-460`), not in the main chat transcript. No frontend change needed;
+  no `web/` file touched.
+  **Falsifications (mutate the LIVE line, re-read, AST-probe the enclosing function, restore from a
+  file copy).** (a) `provider_id`'s configured branch neutered → **6 red**, including the rendered
+  sentence: `['Session created · default · auto · via acp:claude-agent-acp']` and
+  `['Session created · … · via acp:npx']` — the adapter binary and the npx degradation both named on
+  the wire. (b) verb re-gated on `resumed` alone (the filed bug restored) → **3 red** on the wrong
+  word: `"Session created"` for a reused session, `"Session continued"` for a loaded one. (c) the
+  settled gate inverted (`not is_new` → `is_new`) → **6 red**. AST probes confirmed each mutation sat
+  in real code inside the intended function (`provider_id` [72-97] as an `Assign`; `_run_chat`
+  [1435-4197] as an `If` testing `resumed`/`is_new`) — not in a docstring.
+  **BLIND SPOT (worth having): nothing pre-existing noticed either mutation.** Ten suites / **430
+  passed, 1 skipped** under mutation (a); twelve suites / **458 passed, 1 skipped** under mutation
+  (b) — including `test_dashboard_approval.py` and `test_chat_rewind.py`, which drive `_run_chat`
+  heavily, and `test_agent_provider.py`, which asserts `provider_id` directly. The reason is that
+  **zero tests asserted this sentence before this change** (`grep -rn "Session created"` over `src`,
+  `tests` and `web/src` matched only the two producing f-strings), and the suites that drive
+  `_run_chat` assert decoder output and approval outcomes over hand-built mocks. Both gaps were
+  invisible to the entire suite by construction, which is why the new rails assert the broadcast
+  sentence and not the flags.
+  **Gates.** `make lint` clean (mypy 959 source files). Targeted pytest: 12 new + 458 pre-existing
+  across `test_agent_provider` / `test_acp_permission_authority` / `test_agent_providers_endpoint` /
+  `test_acp_bundles` / `test_dashboard_chat` / `test_acp_session_provider` /
+  `test_session_acp_pool_claim` / `test_acp_unattended_and_loop_breaker` / `test_chat_plan_mode` /
+  `test_acp_slash_command_fallback` / `test_dashboard_approval` / `test_chat_rewind` — **470 passed,
+  1 skipped**. `make test` full suite **green on the first run: 24,017 passed / 30 skipped / 12
+  xfailed / 0 failed in 271s** — neither known item appeared (no `test_loop_worktree_sparse` sparse-
+  cone flake, no `test_subagent.py` isolation red). `gate_report.py` **6/6**; flat wire-error census
+  **1507/1507, delta 0** (this change adds no error path). No `web/` file touched, so the frontend
+  gates do not apply. `git status --porcelain` clean.
+  No matrix cell flipped to CONFIRMED; `dag.json` untouched. Depends on nothing in flight, but
+  **note for `#1876`** (`G5`, a runtime-binding rail around `chat_runner.py:1798-1818`): it lands
+  next to these sites and a textual conflict is expected — the two changes are independent
+  (`#1876` fixes *which* runtime is bound, this fixes what the line *says* about it).
