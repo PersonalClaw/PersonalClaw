@@ -5,7 +5,7 @@ import {
   ArrowLeft, Pause, Play, Square, X, Check, MessageSquarePlus,
   Play as Start, Trash2, HelpCircle, Search, ChevronRight, CornerDownRight,
   Maximize2, PanelRight, ScrollText, Download, FileText, Bot, Cpu, BarChart3, ExternalLink, ListChecks, Link2, AlertTriangle, Copy,
-  FolderKanban, FolderOpen, Clock, ShieldCheck,
+  FolderKanban, FolderOpen, Clock, ShieldCheck, DollarSign,
 } from 'lucide-react'
 import { TopBar } from '../../ui/TopBar'
 import { IconButton } from '../../ui/IconButton'
@@ -23,7 +23,8 @@ import { thinkingGlow } from '../../design/gradients'
 import { spring, physics, messageEnter } from '../../design/motion'
 import { ContentSurface } from '../../ui/content/ContentSurface'
 import { resolveContentType } from '../../ui/content/contentTypes'
-import { api, type GoalLoop, type LoopFinding, type LoopNudge, type LoopVerdict, type Artifact, type TaskItem } from '../../lib/api'
+import { api, type GoalLoop, type LoopFinding, type LoopNudge, type LoopVerdict, type Artifact, type TaskItem, type LoopSpend } from '../../lib/api'
+import { loopSpendPill, loopSpendTitle } from '../../lib/runCost'
 import { peekQuery, writeQuery } from '../../lib/data'
 import { downloadText, safeFilename } from '../../lib/download'
 import { useRunStream } from './useRunStream'
@@ -177,6 +178,11 @@ export function LoopCockpitPage({ id, onBack, onDeleted, onOpenArtifact, onOpenT
   const sq = setQuery
   const [c, setC] = useState<GoalLoop | null>(null)
   const [notFound, setNotFound] = useState(false)
+  // What this loop cost (MRT-3). Held OUTSIDE `c` deliberately: `spend` rides the loop DETAIL
+  // response only, and the SSE snapshot is `store.get_redacted` without it — so folding it into
+  // `c` would make the figure vanish the moment the first lifecycle event re-derived `c` from a
+  // snapshot. Its own state means SSE cannot clobber it and the 30s poll refreshes it.
+  const [spend, setSpend] = useState<LoopSpend | null>(null)
   const [report, setReport] = useState('')
   const [log, setLog] = useState('')
   // Outputs: the loop's artifacts (the general outcome channel) + linked Tasks.
@@ -274,6 +280,7 @@ export function LoopCockpitPage({ id, onBack, onDeleted, onOpenArtifact, onOpenT
       if (!alive) return
       if (gl) {
         everLoaded.current = true; setC(gl); setNotFound(false); writeQuery(`loop:${id}`, gl); loadOutputs(); loadTasks(gl.linked_task_ids ?? [])
+        setSpend(raw?.spend ?? null)
         // A TERMINAL loop never changes again — stop the 30s fallback poll so a finished
         // cockpit tab doesn't spam GET /api/loops/<id> forever. SSE still delivers the
         // (rare) post-terminal event; reopening / an action re-pulls fresh. Mirrors the
@@ -526,6 +533,14 @@ export function LoopCockpitPage({ id, onBack, onDeleted, onOpenArtifact, onOpenT
         ? <RunPhaseTrail plan={execPlan} activePhase={activePhase} active={active} complete={c.status === 'complete'} findings={findings} compact />
         : <span className="text-on-surface-var text-[0.75rem] tabular-nums">{cycleLabel}</span>}
       {c.started_at != null && <MetaPill icon={<Clock size={11} />} text={fmt(totalElapsed)} title="Elapsed (running time)" />}
+      {/* What this loop cost (MRT-3). Rendered only once the detail response has arrived — a
+          money pill that appears as "~$0.0000" while loading would read as "this was free",
+          and zero cannot distinguish free-and-local from not-yet-known. Planning spend is in
+          the VISIBLE text, not just the tooltip, because it is money the headline figure
+          deliberately excludes: the planner runs as its own session outside the worker prefix
+          this figure sums. `loopSpendTitle` states the rest — turn count, and the FLOOR caveat
+          when some model had no price row. */}
+      {spend !== null && <MetaPill icon={<DollarSign size={11} />} text={loopSpendPill(spend)} title={loopSpendTitle(spend)} />}
       <span className="flex-1" />
       {/* scope: containing project (clickable) + bound workspace */}
       {projId && projName && (onOpenProject
