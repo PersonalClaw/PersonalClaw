@@ -443,7 +443,7 @@ export function KnowledgeDetail({ item, onChanged, onDeleted, onTagClick, onShow
         )}
         {/* Bookmark → its URL is the editable field (the page is re-scraped on save). */}
         {tm.key === 'bookmark' && (
-          <div className="shrink-0 flex items-center gap-s rounded-md bg-surface-container px-m h-10">
+          <div className="shrink-0 flex items-center gap-s rounded-md bg-surface-container px-m h-10 focus-within:ring-2 focus-within:ring-inset focus-within:ring-primary/50">
             <ExternalLink size={15} className="shrink-0 text-on-surface-low" />
             <input value={draft.url} onChange={(e) => setDraft({ ...draft, url: e.target.value })} placeholder="https://…"
               className="flex-1 bg-transparent text-on-surface text-[0.9375rem] outline-none placeholder:text-on-surface-low" />
@@ -463,7 +463,7 @@ export function KnowledgeDetail({ item, onChanged, onDeleted, onTagClick, onShow
             <GistEditor value={draft.content} onChange={(v) => setDraft({ ...draft, content: v })} language={draft.gist_language} />
           </div>
         ) : tm.group === 'text' ? (
-          <div className="min-h-0 flex-1 overflow-hidden rounded-lg border border-outline-variant/40 bg-surface-container">
+          <div className="min-h-0 flex-1 overflow-hidden rounded-lg border border-outline-variant/40 bg-surface-container focus-within:ring-2 focus-within:ring-inset focus-within:ring-primary/50">
             <textarea value={draft.content} onChange={(e) => setDraft({ ...draft, content: e.target.value })} readOnly={journalLocked}
               placeholder="Markdown supported…"
               className={`h-full w-full resize-none bg-transparent px-m py-2 text-on-surface text-[0.8125rem] leading-relaxed outline-none ${journalLocked ? 'opacity-60 cursor-not-allowed' : ''}`} />
