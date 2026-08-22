@@ -30,7 +30,9 @@ from __future__ import annotations
 
 import logging
 import re
+import time
 
+from personalclaw.guardrails.audit import caller_scope
 from personalclaw.security import fence_untrusted
 
 logger = logging.getLogger(__name__)
@@ -447,6 +449,63 @@ async def _review_template_candidate(decision: dict, *, session_key: str) -> str
     return f"Proposed template: {slug}"
 
 
+#: Every verdict one ladder pass can end on, mapped to the level its ONE terminal line is
+#: emitted at (ACP-AGENT-PARITY `G47`). This dict IS the enumeration — the verdicts and the
+#: severity decision live in one place rather than in a second enum plus a lookup.
+#:
+#: 🔴 WHY WARNING AND NOT ALL-INFO, WHICH IS WHAT `G47` ASKED FOR. Measured: the shipped
+#: default log level is **WARNING**, not INFO — ``AgentConfig.log_level`` defaults to
+#: ``"WARNING"`` (``config/loader.py``) and ``cli.py`` applies it when ``--verbose`` is
+#: absent. So an INFO line would have been an INERT fix: still invisible on a default
+#: install, which is the exact property `G47` reports. The verdicts that mean THE PASS
+#: PRODUCED NOTHING AND COST MONEY are therefore WARNING (visible as shipped), and the
+#: verdicts that mean the pass worked — including ``no_action``, the common one — are INFO.
+#:
+#: 🔴 WHY THIS IS NOT SPAM. Exactly one line per pass, and a pass only happens on a
+#: learning-worthy turn (``learning_decision_for_turn`` plus the ``skill_ladder`` cadence
+#: flag), so the WARNING rate is bounded by *failing* gated turns. A provider that is down
+#: warns once per gated turn, which is the alarm the operator wants; a healthy install emits
+#: nothing at the default level.
+#:
+#: An UNMAPPED verdict logs at WARNING, deliberately: an unrecognised outcome should get
+#: louder, never quieter (a default branch that swallows into DEBUG is how this defect class
+#: reappears).
+_LADDER_VERDICT_LEVEL: dict[str, int] = {
+    # the pass produced nothing and the money is spent
+    "provider_error": logging.WARNING,
+    "unparsable": logging.WARNING,
+    "incomplete_decision": logging.WARNING,
+    "enqueue_failed": logging.WARNING,
+    "internal_error": logging.WARNING,
+    # the pass worked (including deciding there was nothing to learn)
+    "env_failure_claim": logging.INFO,
+    "no_action": logging.INFO,
+    "enqueue_skipped": logging.INFO,
+    "filed": logging.INFO,
+    "template_filed": logging.INFO,
+    "template_declined": logging.INFO,
+}
+
+
+def _log_ladder_verdict(verdict: str, elapsed_ms: float, session_key: str, detail: str) -> None:
+    """Emit EXACTLY ONE line per ladder pass, carrying its verdict (`G47`).
+
+    Before this, a pass had eight silent exits: the failure path was ``logger.debug`` and the
+    ``action == "none"`` path — the common one — logged nothing at all, so a ladder pass that
+    died as ``provider_error`` at 60,010 ms and a ladder pass that ran fine were the same
+    observation (namely, none). The elapsed time is on the line because "expensive and dead"
+    and "cheap and idle" need opposite responses.
+    """
+    logger.log(
+        _LADDER_VERDICT_LEVEL.get(verdict, logging.WARNING),
+        "skill-ladder review: %s in %d ms (session=%s)%s",
+        verdict,
+        int(elapsed_ms),
+        session_key or "-",
+        f" — {detail}" if detail else "",
+    )
+
+
 async def run_skill_ladder_review(
     *,
     session_key: str,
@@ -458,6 +517,46 @@ async def run_skill_ladder_review(
     """Forked-LLM skill-axis review (5-tier ladder). Enqueues at most one skill or
     template PROPOSAL (never writes live) and returns a short summary for the chip, or None.
 
+    Attributed and LOGGED (`G47`): the pass runs inside ``audit.caller_scope("skill_ladder")``
+    so every model attempt it makes carries its subsystem on the ledger row, and it emits
+    exactly one terminal line naming its verdict and its elapsed time. Both halves are the
+    same defect — an expensive unattended pass that can be dead in production with no surface
+    saying so — and neither half alone closes it: the log line says the pass died, the ledger
+    row says what it spent dying.
+    """
+    started = time.monotonic()
+    verdict, detail, summary = "internal_error", "", None
+    try:
+        with caller_scope("skill_ladder"):
+            verdict, detail, summary = await _ladder_pass(
+                session_key=session_key,
+                user_message=user_message,
+                assistant_text=assistant_text,
+                loaded_skills=loaded_skills,
+                completion=completion,
+            )
+    finally:
+        # In a `finally` so an exception escaping the pass is still reported as a verdict
+        # rather than vanishing — the invisibility this exists to fix.
+        _log_ladder_verdict(verdict, (time.monotonic() - started) * 1000.0, session_key, detail)
+    return summary
+
+
+async def _ladder_pass(
+    *,
+    session_key: str,
+    user_message: str,
+    assistant_text: str,
+    loaded_skills: list[str],
+    completion=None,
+) -> tuple[str, str, str | None]:
+    """One ladder pass → ``(verdict, detail, summary)``.
+
+    Split out from :func:`run_skill_ladder_review` so every exit names its verdict: the
+    wrapper owns the single log line, and a `return` that named nothing is what made a dead
+    pass unobservable. ``verdict`` is a key of :data:`_LADDER_VERDICT_LEVEL`; ``summary`` is
+    the chip text (or None), unchanged.
+
     The fifth tier is the ad-hoc→template branch: it routes a procedure-shaped turn through
     ``learning.template_gate`` instead of the skill queue, because a repeatable plan and a how-to
     are different artifacts and the gate that judges plans is deterministic.
@@ -467,7 +566,7 @@ async def run_skill_ladder_review(
     never raises into the turn."""
     # Guardrail up front: an env-failure turn can't teach a skill.
     if is_environment_failure_claim(user_message) or is_environment_failure_claim(assistant_text):
-        return None
+        return "env_failure_claim", "", None
     if completion is None:
         from personalclaw.llm_helpers import one_shot_completion
 
@@ -481,17 +580,20 @@ async def run_skill_ladder_review(
     )
     try:
         raw = await completion(prompt)
-    except Exception:
+    except Exception as exc:
+        # Stays DEBUG for the traceback; the WARNING that says the pass died is the
+        # wrapper's single verdict line, so a failure is not reported twice.
         logger.debug("skill-ladder review: completion failed", exc_info=True)
-        return None
+        return "provider_error", type(exc).__name__, None
     decision = _parse_ladder_json(raw)
     if not decision:
-        return None
+        return "unparsable", f"{len(raw or '')} chars returned", None
     action = str(decision.get("action", "none")).strip().lower()
     if action == "template":
-        return await _review_template_candidate(decision, session_key=session_key)
+        summary = await _review_template_candidate(decision, session_key=session_key)
+        return ("template_filed" if summary else "template_declined"), "", summary
     if action not in ("refine", "support_file", "create"):
-        return None  # 'none' or garbage → nothing to learn
+        return "no_action", f"action={action or '-'}", None  # nothing to learn
 
     slug = str(decision.get("slug", "")).strip()
     description = str(decision.get("description", "")).strip()
@@ -499,7 +601,7 @@ async def run_skill_ladder_review(
     triggers = str(decision.get("triggers", "")).strip()
     target = str(decision.get("target", "")).strip()
     if not slug or not description or not procedure_md:
-        return None
+        return "incomplete_decision", f"action={action}", None
     # Redact before it touches the queue (same posture as consolidation).
     try:
         from personalclaw.security import redact_credentials, redact_exfiltration_urls
@@ -526,11 +628,10 @@ async def run_skill_ladder_review(
             refine_target=target if action in ("refine", "support_file") else "",
             source_excerpt=f"[after-turn skill-ladder: {action}] {assistant_text}",
         )
-    except Exception:
+    except Exception as exc:
         logger.debug("skill-ladder review: enqueue failed", exc_info=True)
-        return None
+        return "enqueue_failed", type(exc).__name__, None
     if prop is None:
-        return None
-    logger.info("skill-ladder review: proposed %s (%s)", prop.slug, action)
+        return "enqueue_skipped", f"{action} {slug}", None
     verb = {"refine": "refine", "support_file": "add file to", "create": "new skill"}[action]
-    return f"Proposed skill ({verb}): {slug}"
+    return "filed", f"{action} {prop.slug}", f"Proposed skill ({verb}): {slug}"

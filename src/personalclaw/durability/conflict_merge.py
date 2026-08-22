@@ -34,6 +34,7 @@ from personalclaw.durability.conflicts import (
     ConflictQueue,
     ConflictRecord,
 )
+from personalclaw.guardrails.audit import caller_scope
 from personalclaw.llm_helpers import one_shot_completion
 
 logger = logging.getLogger(__name__)
@@ -142,7 +143,10 @@ async def draft_proposals(home: Path, *, limit: int = DEFAULT_LIMIT, now: str = 
             remote=json.dumps(rec.remote_row, indent=2, sort_keys=True, ensure_ascii=False),
         )
         try:
-            text = await one_shot_completion(prompt, use_case="background")
+            # Attributed on the attempt ledger (`G47`): a sync-conflict merge is an
+            # unattended pass whose cost should be separable from the other three.
+            with caller_scope("conflict_merge"):
+                text = await one_shot_completion(prompt, use_case="background")
         except Exception as exc:  # noqa: BLE001 — fail-open: keep the conflict, lose the draft
             logger.warning(
                 "conflict merge: no proposal for %s/%s (%s)", rec.entry_id, rec.entity_id, exc
