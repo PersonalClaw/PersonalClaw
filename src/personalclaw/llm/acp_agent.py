@@ -584,7 +584,7 @@ class AcpAgentProvider(ModelProvider, AgentProvider):
         """Start a fresh agent session on the live process (see AcpClient)."""
         await self._client.start_fresh_turn_session()
 
-    def context_usage_pct(self) -> float:
+    def context_usage_pct(self) -> float | None:
         return self._client.last_prompt_stats.context_pct
 
     async def compact(self, context: str = "") -> None:

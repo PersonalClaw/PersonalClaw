@@ -148,7 +148,10 @@ class AcpEvent:
     title: str = ""
     tool_kind: str = ""
     tool_purpose: str = ""
-    context_usage_pct: float = 0.0
+    #: Context-window usage the BACKEND reported, or ``None`` when it reported
+    #: nothing. Never a stand-in zero: a fabricated 0% is worse than an absent
+    #: chip, because the UI then states a number the backend never supplied.
+    context_usage_pct: float | None = None
     stop_reason: str = ""
     request_id: str | int = ""
     options: list[dict[str, str]] = field(default_factory=list)
@@ -177,4 +180,7 @@ class AcpPromptStats:
     event_count: int = 0
     text_chunks: int = 0
     tool_calls: list[tuple[str, str]] = field(default_factory=list)
-    context_pct: float = 0.0
+    #: ``None`` until a metadata frame actually carries ``contextUsagePercentage``.
+    #: An adapter that never sends one leaves this unknown for the whole session;
+    #: 0.0 means a MEASURED empty context, which is a different answer.
+    context_pct: float | None = None

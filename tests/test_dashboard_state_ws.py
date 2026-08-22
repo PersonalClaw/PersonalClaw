@@ -281,7 +281,10 @@ class TestCompactCallbackWiring:
         payloads = [json.loads(c.args[0]) for c in ws.send_str.call_args_list]
         context = [p for p in payloads if p.get("type") == "context_usage"]
         assert len(context) == 1
-        assert context[0]["data"] == {"session": "chat-1", "pct": 0.0}
+        # ``pct: None``, not 0.0 (G8). A compaction shrank the window but nothing has
+        # re-measured it, so the honest chip is ABSENT until the next turn reports —
+        # 0.0 would have the UI state "0% used", a number no backend supplied.
+        assert context[0]["data"] == {"session": "chat-1", "pct": None}
 
     @pytest.mark.asyncio
     async def test_callback_broadcast_runs_even_if_append_fails(

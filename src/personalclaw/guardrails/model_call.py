@@ -507,7 +507,7 @@ class ModelCallGuard(ModelProvider):
     async def reject_tool(self, request_id: str | int) -> None:
         await self._inner.reject_tool(request_id)
 
-    def context_usage_pct(self) -> float:
+    def context_usage_pct(self) -> float | None:
         return self._inner.context_usage_pct()
 
     @property

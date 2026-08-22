@@ -269,7 +269,10 @@ class NativeAgentRuntime(AgentProvider):
         # idempotence — so it is an object, and `self._cancelled` below is a read-only
         # view of it rather than a second place the truth can live.
         self._cancel = CancelScope()
-        self._last_context_pct = 0.0
+        # ``None`` = no provider usage report seen yet. NOT 0.0: an unmeasured
+        # context and a measured-empty one are different answers, and only one of
+        # them may be rendered as a number (llm/base.context_usage_pct contract).
+        self._last_context_pct: float | None = None
         # Per-run consecutive-failure breaker (reset each stream() turn).
         self._breaker = LoopBreaker()
         # Compaction save fractions (anti-thrashing across the session).
@@ -793,7 +796,9 @@ class NativeAgentRuntime(AgentProvider):
                     agg_in += usage.input_tokens or 0
                     agg_out += usage.output_tokens or 0
                     agg_cost += usage.cost_usd or 0.0
-                    if usage.context_usage_pct:
+                    # ``is not None``, not truthiness: a provider reporting a real
+                    # 0% must update the gauge, and only an absent report must not.
+                    if usage.context_usage_pct is not None:
                         self._last_context_pct = usage.context_usage_pct
 
                 agg_tool_calls += len(tool_calls)
@@ -1545,7 +1550,10 @@ class NativeAgentRuntime(AgentProvider):
         and synchronous; an LLM-summarized middle can layer on later. Records the
         save fraction for the anti-thrashing guard.
         """
-        if self._last_context_pct < self._COMPACT_THRESHOLD_PCT:
+        measured_pct = self._last_context_pct
+        # Unmeasured context cannot cross a threshold — an unknown gauge must not
+        # trigger compaction any more than it may print a percentage.
+        if measured_pct is None or measured_pct < self._COMPACT_THRESHOLD_PCT:
             return
         from personalclaw import context_compaction as cc
 
@@ -1565,7 +1573,7 @@ class NativeAgentRuntime(AgentProvider):
             logger.debug("native: cache prefix invalidated → generation %d", self._cache_generation)
             # A compaction shrank context; the next provider turn re-measures, so
             # reset our gauge optimistically to avoid re-triggering immediately.
-            self._last_context_pct = self._last_context_pct * (after / before)
+            self._last_context_pct = measured_pct * (after / before)
             # Post-compaction guard (E3.1): re-arm structural detection so a loop
             # that resumes identically after the history was compacted is caught
             # fresh, instead of its pre-compaction signatures aging out silently.
@@ -1623,7 +1631,7 @@ class NativeAgentRuntime(AgentProvider):
         self._approval.reject(str(request_id))
 
     # ── status / control ──
-    def context_usage_pct(self) -> float:
+    def context_usage_pct(self) -> float | None:
         return self._last_context_pct
 
     async def cancel(self, *, wait_ack_timeout: float = 0.0) -> str:

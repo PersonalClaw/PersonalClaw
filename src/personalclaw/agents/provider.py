@@ -160,8 +160,9 @@ class AgentProvider(ABC):
     async def reject_tool(self, request_id: str | int) -> None: ...
 
     # ── status / control (default no-ops; ACP + native override) ──
-    def context_usage_pct(self) -> float:
-        return 0.0
+    def context_usage_pct(self) -> float | None:
+        """Unknown by default — a provider that measures nothing reports nothing."""
+        return None
 
     async def cancel(self, *, wait_ack_timeout: float = 0.0) -> str:
         return "no_turn"

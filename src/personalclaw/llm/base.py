@@ -76,8 +76,13 @@ class ModelProvider(ABC):
         """Reject a pending tool permission request."""
 
     @abstractmethod
-    def context_usage_pct(self) -> float:
-        """Return last known context usage percentage."""
+    def context_usage_pct(self) -> float | None:
+        """Last known context usage percentage, or ``None`` if never measured.
+
+        ``None`` and ``0.0`` are different answers: ``None`` means this provider
+        was never told, ``0.0`` means it was told the context is empty. Consumers
+        must OMIT the number for ``None`` rather than render zero.
+        """
 
     @property
     def session_id(self) -> str:

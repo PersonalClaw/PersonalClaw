@@ -488,7 +488,7 @@ def _turn_complete_line(
     *,
     events: int,
     tool_calls: int,
-    context_pct: float,
+    context_pct: float | None,
     input_tokens: int,
     output_tokens: int,
     cache_tokens: int,
@@ -502,8 +502,16 @@ def _turn_complete_line(
     NEVER ``$0.00`` — so a missing price is never mistaken for a free turn. The cache
     fragment is present only when cache tokens are non-zero (absent until
     PROMPT-CACHE-SUBSTRATE lands and a provider actually reports them).
+
+    Honest-unmeasured (G8): ``context_pct=None`` OMITS the context fragment entirely.
+    It used to be a bare float, so a provider that reported nothing printed
+    ``context 0%`` — a number the backend never supplied, which is worse than a
+    missing chip. A measured ``0.0`` still renders ``context 0%``, because an empty
+    context is a real answer.
     """
-    line = f"Turn complete: {events} events, {tool_calls} tool calls, context {round(context_pct)}%"
+    line = f"Turn complete: {events} events, {tool_calls} tool calls"
+    if context_pct is not None:
+        line += f", context {round(context_pct)}%"
     if input_tokens or output_tokens:
         cost_str = f"${cost_usd:.4f}" if priced else "unpriced"
         line += f" · {cost_str} · {input_tokens:,} in / {output_tokens:,} out tokens"
@@ -3711,7 +3719,10 @@ async def _run_chat(
             )
             # Update context usage after compaction
             pct = client.context_usage_pct()
-            state.broadcast_ws("context_usage", {"session": session.key, "pct": round(pct, 1)})
+            state.broadcast_ws(
+                "context_usage",
+                {"session": session.key, "pct": None if pct is None else round(pct, 1)},
+            )
 
         # ── Empty-response auto-retry ───────────────────────────────────────
         # A genuinely empty assistant turn (no text AND no tool calls) that is
@@ -3810,7 +3821,12 @@ async def _run_chat(
                 logger.debug("skill-ladder review scheduling failed", exc_info=True)
         state.sessions.check_context_usage(session_key, client)
         pct = client.context_usage_pct()
-        state.broadcast_ws("context_usage", {"session": session.key, "pct": round(pct, 1)})
+        # ``None`` when the provider measured nothing — the composer ring reads that as
+        # "no measurement" and shows no percentage, instead of a fabricated 0%.
+        state.broadcast_ws(
+            "context_usage",
+            {"session": session.key, "pct": None if pct is None else round(pct, 1)},
+        )
         if not is_cancelled_stop(_stop_reason):
             state.sessions.record_success(session_key)
         # Broadcast prompt stats for the activity viewer (the live-only "Turn

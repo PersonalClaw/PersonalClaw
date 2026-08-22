@@ -415,7 +415,8 @@ class AcpSession:
     def has_active_turn(self) -> bool:
         return self._turn_lock.locked() and not self._turn_done.is_set()
 
-    def context_usage_pct(self) -> float:
+    def context_usage_pct(self) -> float | None:
+        """Last reported context usage, or ``None`` when the adapter reported none."""
         return self.last_prompt_stats.context_pct
 
     def _read_new_tool_results(self) -> list[AcpEvent]:
