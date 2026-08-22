@@ -570,6 +570,12 @@ class AcpAgentProvider(ModelProvider, AgentProvider):
         async for e in self._client.stream_events(message):
             yield self._to_llm_event(e)
 
+    @property
+    def supports_native_commands(self) -> bool:
+        """Read off the ACP handshake (see ``AcpConnection.supports_native_commands``) —
+        NOT assumed from the fact that this provider implements ``stream_command``."""
+        return bool(getattr(self._client, "supports_native_commands", False))
+
     async def stream_command(self, command: str) -> AsyncIterator[LLMEvent]:
         async for e in self._client.stream_command(command):
             yield self._to_llm_event(e)

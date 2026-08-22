@@ -520,6 +520,17 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
   zero: the background session was recycled as "no readings ever arrived" when it had in fact
   measured an empty window, and the automatic-compaction check no longer treats an unknown gauge as
   a low one.
+- **Typing `/compact` at a coding-CLI agent killed the whole turn.** Any message starting with a
+  slash was sent as a *command* to whichever agent was bound, without ever asking whether that agent
+  understands commands. None of the three CLIs we drive does, so the answer came back "Method not
+  found" and the turn died on an error card — you got no reply at all, and `/compact` compacted
+  nothing. A slash command now goes out as a command only to an agent that says it can run one;
+  otherwise your message is answered as an ordinary question and an inline line tells you the
+  command was not run natively, so you are never handed a plain answer while believing a command
+  executed. If a command does fail as unknown *after* the agent has already started replying, the
+  turn stops and says why rather than silently starting a second one — re-asking would duplicate the
+  reply you can already see and bill the work twice. Any other command failure still surfaces as the
+  failure it is.
 - **The sign-in page said "Sign-in failed" no matter what went wrong.** It read the error out of the
   wrong place in the response, so a wrong password, a rate-limited address, a password-sign-in that
   is switched off and an already-used device code all produced the same unhelpful sentence — and the

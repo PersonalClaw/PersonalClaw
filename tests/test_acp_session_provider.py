@@ -58,6 +58,10 @@ class _FakeConn:
         self._alive = alive
         self._transport = type("T", (), {"pid": 4242})()
         self.agent_capabilities = {"loadSession": True, "promptCapabilities": {"image": True}}
+        # This fake stands in for an agent that DID advertise the command extension —
+        # ``stream_command`` is now gated on it (`G4`), so a fake that stayed silent would
+        # be testing the refusal path, not the translation path.
+        self.supports_native_commands = True
         self.closed_sessions: list = []
 
     def is_process_alive(self):

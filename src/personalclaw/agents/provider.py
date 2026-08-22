@@ -149,6 +149,16 @@ class AgentProvider(ABC):
     @abstractmethod
     def stream(self, message: str) -> AsyncIterator[AgentEvent]: ...
 
+    @property
+    def supports_native_commands(self) -> bool:
+        """Can this provider run a slash command AS a command? False by default, and the
+        default matches the method below: it re-sends the command text as an ordinary
+        prompt. A caller that must tell the user which of the two happened reads this,
+        not the method's success (`G4`) — an unadvertised command must not go on the wire,
+        because an agent that doesn't implement it answers JSON-RPC ``-32601`` on the
+        turn's terminal frame and kills the whole turn."""
+        return False
+
     async def stream_command(self, command: str) -> AsyncIterator[AgentEvent]:
         async for ev in self.stream(command):
             yield ev

@@ -194,6 +194,15 @@ class ModelCallGuard(ModelProvider):
         async for event in self._guarded(inner, strategy="direct"):
             yield event
 
+    @property
+    def supports_native_commands(self) -> bool:
+        """Explicit pass-through, NOT ``__getattr__``. ``ModelProvider`` declares this
+        property with a False default, so normal lookup finds the ABC's answer on the
+        wrapper and the transparent-fallback hook below never fires — the guard would
+        report "no commands" for an agent that has them, and every slash command would
+        silently degrade to text (`G4`)."""
+        return bool(getattr(self._inner, "supports_native_commands", False))
+
     async def stream_command(self, command: str) -> AsyncIterator[LLMEvent]:
         command = self._prescan(command)
         self._classify(command)

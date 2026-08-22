@@ -2326,3 +2326,75 @@ scheduling), so the most likely reading is a pre-existing order-dependent isolat
 change's timing shift exposes — but **3-of-3 green on the base is not enough runs to prove that at a
 ~40 % failure rate**, so it is NOT claimed as a known flake. Nothing was skipped, weakened, or
 xfail-ed. Wants its own session with a deterministic ordering harness.
+
+- 2026-08-21 — `AAP-9` **DONE** for `G4` (the slash-command half). Code-only; no CLI driven, no
+  authenticated session, so nothing here flips a cell to CONFIRMED.
+  **The defect was two unconditional lines, not a missing feature.** `chat_runner.py:2411` chose
+  `client.stream_command(message)` for any `first_word in _SLASH_COMMANDS` with no capability check,
+  and `acp/session.py` sent `_vendor.dev/commands/execute` with no guard. `acp/types.py`'s module
+  docstring claimed such requests "fail gracefully (timeout or JSON-RPC error)" — `O23`/`C8`/`K11`
+  falsify that: the error arrives on the turn's TERMINAL frame, so it fails the whole turn. That
+  sentence is now corrected in place.
+  **The gate follows the `loadSession` pattern, one key, one derivation.** `CAP_COMMANDS`
+  (`_vendor.dev/commands`) is read off the `initialize` handshake by
+  `AcpConnection.supports_native_commands`; `AcpClient` mirrors it into `_can_execute_commands`
+  beside the existing `_can_load_session` line, and `AcpSessionProvider` reads the same connection
+  property, so the N=1 and concurrent paths cannot disagree about one process. It is an ALLOWLIST:
+  `O1`'s measured seven capability keys contain no command capability, so claude-code closes the
+  gate and no frame is written. `ModelProvider.supports_native_commands` defaults False (the honest
+  answer for every provider with no command axis), and `ModelCallGuard` needs an EXPLICIT
+  pass-through — its `__getattr__` proxy only fires on a lookup miss, and the ABC property is not a
+  miss, so without it the guard would answer False for a command-capable agent. The SDK-facing
+  `agents/provider.py` `AgentProvider` declares the same defaulted property, so
+  `AcpSessionProvider`'s answer is an OVERRIDE of a stated contract rather than an attribute one
+  subclass happens to carry (additive and non-abstract, so `test_app_scaffold.py`'s
+  `__abstractmethods__` rail is unaffected).
+  **`-32601` before output and after output are different situations, and both are implemented.**
+  `AcpMethodNotFound` is raised only for that code (reusing ONE definition —
+  `constants.JSONRPC_METHOD_NOT_FOUND`, which `inbound/mcp_http.py` now re-exports and
+  `mcp_shared.py` imports instead of a second literal). `stream_slash_command` substitutes a plain
+  prompt only while the turn has yielded NOTHING; after any event it refuses with
+  `AcpCommandFailedAfterOutput`, whose message is written for the chat bubble. Re-issuing there
+  would append a second answer to the same assistant message, re-run any tool call that already
+  ran, and bill the turn twice — a refusal that says so is the correct answer, not a papered one.
+  Every other JSON-RPC error is untouched and still surfaces.
+  **DISCOVERY — fixing the dispatch alone would have made `/compact` worse, not better.**
+  `chat_runner.py:3719` has a post-turn deferred-compaction branch that fires for `first_word ==
+  "/compact"`, WIPES the streamed chunks, and waits up to 120 s on `wait_for_compaction`. On a
+  substituted turn there is no compaction coming, so ungated it traded `O23`'s error card for a
+  stall ending in "Compaction timed out." with the answer just produced thrown away. It is now
+  gated on the substitution signal, and the turn-level test reds on "no answer reached the user"
+  when that gate is removed.
+  **Visibility reuses CE2-8's channel, not a new one:** `activity_event {kind: "slash_fallback"}`,
+  which `ActivityLine` renders inline with no frontend change (`web/` untouched, so no web gate).
+  **Matrix mark corrected, with the row cited:**
+  `docs/roadmap/research/acp-agent-parity-audit.md:140` (§4e, columns
+  `Feature | native | claude-code | codex | kiro-cli | Evidence`) — the **claude-code** cell said
+  `WIRED (protocol commands/execute)`, which was a code reading rather than a measurement; it now
+  reads **ABSENT** with `O23` cited and the host's degrade named. The codex and kiro-cli cells in
+  that same row stay `UNKNOWN` **deliberately**: `C8`/`K11` measured them, but they are outside this
+  atom's claude-code fence — correcting them is one line of follow-up for whoever owns those
+  columns. `docs/agents/acp-parity.md`'s shared row is updated too: the host half is DONE, the
+  command still does not EXECUTE anywhere (that is upstream). No cell flipped to CONFIRMED;
+  `dag.json` untouched.
+  **NOT done, named rather than hidden:** the SEL row for a slash command is still written at
+  `chat_runner.py:2030` as `slash_command` / `outcome: "bypass"` — before the provider is known, so
+  it cannot tell a native command from a substitution. Fixing it means minting a new outcome word,
+  and `sel.py:89`'s `AUDIT_OUTCOME_FAMILIES` + `test_audit_outcome_families.py` own that closed
+  vocabulary, so it is a separate change rather than a silent widening here.
+  **Gates.** `make lint` clean (mypy 959 files); targeted pytest 538 green across the new
+  slash-fallback suite plus acp session / client / types / turn-scenarios / session-provider,
+  dashboard chat + hooks, guardrails query-class and the MCP inbound/shared/core suites; `make test`
+  full suite **run three times: green, green apart from ONE unrelated red, green** — run 2 failed
+  `test_subagent.py::TestSpawnWithApprovalCallback::test_rejected_spawn_logs_sel_rejection`
+  ("Expected 'log_tool_invocation' to be called once. Called 0 times"). Reported as a run count, not
+  as a flake: it is a THIRD test in the same file with the same signature as the branch's open
+  DISCOVERY (a `patch("personalclaw.subagent.sel")` that does not affect the executing lookup), it
+  did not reproduce in 2 of 3 full runs here, and `test_subagent.py` alone is 66/66. Nothing in this
+  change touches `subagent` or `sel`. `gate_report.py` **6/6**; flat wire-error census
+  **1507/1507** (this change adds no error path — the two new errors are exceptions rendered through
+  the existing chat error bubble).
+  Two pre-existing harnesses updated, not weakened: `test_acp_turn_scenarios.py` and
+  `test_acp_session_provider.py`'s `_FakeConn` now DECLARE the command capability their real
+  counterparts would have captured — a fake that stayed silent would have been testing the refusal
+  path while claiming to test the command turn.
