@@ -181,6 +181,10 @@ Phase 2 order is severity order and each step is independently shippable; if Pha
 **Swept:** 2026-08-17 · **Adapter:** `@agentclientprotocol/claude-agent-acp` 0.60.0 ·
 **CLI:** `claude` 2.1.233.669 (ASBX Claude Code, channel stable) · **Node** v24.18.0 ·
 **Host:** this repo at `b01cb76e`, isolated `PERSONALCLAW_HOME`, gateway on `:10421`,
+⚠️ **This header is single-SHA but the column is MIXED-SHA:** `b01cb76e` is correct for `O1`-`O26`
+only. `O27`-`O34` come from the 2026-08-19 re-drive, and `O27` measures `provider_bridge.py`
+re-injecting `unattended` — which is `8091f285` (AAP-6), merged *after* `b01cb76e`. The re-drive
+never updated this line. Cite the per-observation ledger, not this SHA, when judging staleness.
 `PERSONALCLAW_AUTH_MODE=none`, `PERSONALCLAW_CC_ISOLATE` **unset** (the bundle default).
 
 **Method.** The `claude-code-agent` bundle was installed from the first-party apps dir into
@@ -394,7 +398,13 @@ found zero warn/block/circuit output after six failures in one turn (`G6`).
   `Path.home() / ".personalclaw" / "workspace"` that ignores `config_dir()`. Consequences: a
   bound Project's cwd is not honored for ACP; the CLI's file/bash tools operate inside the
   harness's own state dir; and any isolated-home deployment (dev, test, a second entity) is
-  silently escaped. **Not fixed here — outside this atom's fence.** Owner: core seam, and it
+  silently escaped. **Not fixed here — outside this atom's fence.** ⚠️ **SUPERSEDED as of the
+  2026-08-22 audit below: the mechanism this row describes has since changed on `main` —
+  `llm/acp_agent.py:826` now reads `str(kwargs.get("cwd") or "").strip() or options.get("cwd")`
+  (the dropped kwarg), and `acp/client.py:137` records that the hardcoded
+  `Path.home()/".personalclaw"/"workspace"` fallback was replaced. Whether that closes G1's full
+  clause is a re-verification question, not a reading — it is listed as a candidate in the audit
+  entry. Do not treat this paragraph as current.** Owner: core seam, and it
   should front-run `AAP-9`'s `project_id` work since both are the same "session scope doesn't
   cross the seam" defect.
 - **`G2` Host gate coverage is contingent on the operator's own `~/.claude`, not structural.**
@@ -2104,10 +2114,24 @@ confinement, trust/YOLO auto-approve (no as-a-user entry point).
 
 **Of these, 12 cannot be settled from the repository — they require a live authenticated `claude`
 drive, which is the owner gate.** Reporting that as a finding rather than performing it. The one
-exception is **skill-ladder review**: its blocker is a missing forced-run surface (`O31` —
-`{"proposals": []}`, no forced-run route in the census), so it is closed by *building instrumentation*,
-not by driving a CLI — and it is provider-independent, so closing it also serves `AAP-3`'s identical
-residual cell. **Two zero-drive edits are also available now and would remove the two most misleading
+exception is **skill-ladder review** — but ⚠️ **this paragraph's original diagnosis was itself stale
+and is corrected here.** It read "its blocker is a missing forced-run surface (`O31`)". That is `G44`,
+and **`G44` is already superseded by `G47` at line 694 of this same file** (`K56`, the 2026-08-19
+re-drive): the gate is in fact a documented pair of drivable conditions (a correction signal OR >= 4
+tool calls), the ladder DOES run, and `skill_promotion.promote()` — the forced-run surface — has existed
+all along, reachable as the `_skill_promote` MCP tool (`mcp_core.py:1666`), which AAP-4's
+`acp/mcp_servers.py` now renders into every `session/new` where the pre-AAP-4 wire sent
+`"mcpServers": []`. Verified against `origin/main`, not read. **The real blocker is ATTRIBUTION**
+(`G47`, P2): `model_calls.jsonl` and `/api/models/telemetry` key on `(use_case, query_class)`, the
+ladder's success path broadcasts a transient WS chip and logs nothing, and its failure path is
+`logger.debug` — so a pass that timed out at exactly 60,010 ms was invisible at the default log level,
+and a completed pass cannot be distinguished from any other `background` caller. `G47` names the close:
+a caller/subsystem field on the ledger row, and an INFO line carrying the ladder's verdict. Still
+zero-drive and still provider-independent, so it also serves `AAP-3`'s identical residual cell — but it
+is a telemetry fix, not the instrumentation-build this paragraph first described.
+
+This correction is itself an instance of the defect this audit exists to catch: an earlier statement in
+a long document, contradicted by a later entry in the same document, repeated forward as current. **Two zero-drive edits are also available now and would remove the two most misleading
 statements in the column:** correct the line-183 host SHA to name the re-drive's tree for `O27`-`O34`,
 and move `G45` from line 487 into the `**P3**` tier.
 
