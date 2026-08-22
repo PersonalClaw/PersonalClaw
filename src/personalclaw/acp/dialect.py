@@ -247,12 +247,56 @@ class ACPDialect:
                 return o["id"]
         return ""
 
+    def select_reject_option_id(self, offered: list[dict[str, str]]) -> str:
+        """Pick the ``optionId`` to echo back when DENYING, from the options the agent
+        actually offered. Mirror of :meth:`select_allow_option_id`, and the reason `G19`
+        existed: approval resolved the agent's own id while denial threw the offered
+        options away and sent ``cancelled``.
+
+        ``cancelled`` is not "no" — in ACP it means *the prompt turn was cancelled before
+        the user responded*. Sending it for a POLICY denial tells the agent its turn is
+        over, which is why an ``apply_patch`` refused by task mode ended codex's turn with
+        ``*Conversation interrupted*`` and produced no ``tool_result`` (`C6`, `C7`, `C17`),
+        while the same payload on an ``exec_command`` happened to be survivable (`C11`).
+        The host was misdescribing a denial in both cases; only the agent's tolerance
+        differed.
+
+        **Prefers ``reject_once`` over ``reject_always``.** A task-mode or policy denial is
+        about THIS call; echoing an "always" option would ask the agent to remember a
+        permanent rule the host never decided. ``cancel``-kinded options are deliberately
+        NOT treated as reject options — selecting one says the same thing as the
+        ``cancelled`` fallback, so it is left to that fallback rather than dressed up as a
+        choice. Returns ``""`` when the agent offered no reject option at all, which is the
+        only case where ``cancelled`` remains correct.
+        """
+
+        def _is_reject(opt: dict[str, str]) -> bool:
+            k = (opt.get("kind") or "").lower()
+            i = (opt.get("id") or "").lower()
+            return k.startswith("reject") or i.startswith("reject") or "deny" in f"{k} {i}"
+
+        reject_any = [o for o in offered if _is_reject(o)]
+        once = [o for o in reject_any if "once" in (o.get("kind") or o.get("id") or "").lower()]
+        always = [o for o in reject_any if "always" in (o.get("kind") or o.get("id") or "").lower()]
+        for bucket in (once, always, reject_any):
+            if bucket:
+                return str(bucket[0].get("id") or "")
+        return ""
+
     def approve_outcome(self, option_id: str) -> dict:
         """The ``outcome`` payload for an approved tool (selected option)."""
         return {"outcome": {"outcome": OUTCOME_SELECTED, "optionId": option_id}}
 
-    def reject_outcome(self) -> dict:
-        """The ``outcome`` payload for a rejected tool."""
+    def reject_outcome(self, option_id: str = "") -> dict:
+        """The ``outcome`` payload for a DENIED tool.
+
+        ``selected`` + the agent's own reject option when it offered one (see
+        :meth:`select_reject_option_id`); ``cancelled`` only when it offered none, because
+        ``cancelled`` claims the whole turn was abandoned rather than that one tool was
+        refused.
+        """
+        if option_id:
+            return {"outcome": {"outcome": OUTCOME_SELECTED, "optionId": option_id}}
         return {"outcome": {"outcome": OUTCOME_CANCELLED}}
 
     # ── process hygiene ──

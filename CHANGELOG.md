@@ -608,6 +608,14 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
   default effort while everything on screen still said otherwise. It is re-applied now. The same
   path also skipped draining the tool-server startup messages before beginning the turn, which is now
   done too.
+- **A tool blocked by Ask or Plan mode no longer ends the whole conversation.** When one of these
+  modes refused a tool on an external coding CLI, the turn could stop dead — the assistant's reply
+  became "*Conversation interrupted*", the model never learned its tool had been refused, and you
+  never got the short "(Ask mode — only read-only tools run)" explanation. The cause was the message
+  sent back: refusing a tool reported *the whole turn was cancelled* rather than *this one tool was
+  declined*, so the CLI reasonably stopped. A refusal now says exactly that, using the CLI's own
+  "reject" choice, so the assistant can acknowledge it and carry on — which is already how it behaves
+  when you press Reject on an approval card yourself.
 
 - **The context gauge said "0%" on turns that were nearly full.** The little ring on the model pill,
   and the "Turn complete" line under a finished turn, both printed a context percentage on every
