@@ -585,12 +585,12 @@ function StageCard({ index, count, stage, onPatch, onRemove, onMove }: {
                 <div className="flex min-w-0 flex-1 flex-col">
                   <input value={t.title} onChange={(e) => patchTask(ti, { title: e.target.value })}
                     placeholder="Task…"
-                    className="min-w-0 flex-1 bg-transparent text-on-surface-var outline-none placeholder:text-on-surface-low" />
+                    className="min-w-0 flex-1 bg-transparent text-on-surface-var outline-none placeholder:text-on-surface-low focus:ring-2 focus:ring-inset focus:ring-primary/50" />
                   {/* the task's substance — visible + editable, not hidden in a hover
                       tooltip, so the user reviews WHAT each task does, not just its name. */}
                   <input value={t.description ?? ''} onChange={(e) => patchTask(ti, { description: e.target.value })}
                     placeholder="how / details (optional)…"
-                    className="min-w-0 flex-1 bg-transparent text-on-surface-low text-[0.75rem] outline-none placeholder:text-on-surface-low/60" />
+                    className="min-w-0 flex-1 bg-transparent text-on-surface-low text-[0.75rem] outline-none placeholder:text-on-surface-low/60 focus:ring-2 focus:ring-inset focus:ring-primary/50" />
                 </div>
                 <button type="button" onClick={() => removeTask(ti)} aria-label="Remove task" className="mt-1 shrink-0 text-on-surface-low hover:text-danger"><X size={12} /></button>
               </div>
@@ -600,7 +600,7 @@ function StageCard({ index, count, stage, onPatch, onRemove, onMove }: {
               <input value={taskTitle} onChange={(e) => setTaskTitle(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addTask() } }}
                 onBlur={addTask}
                 placeholder="Add a task…"
-                className="min-w-0 flex-1 bg-transparent text-[0.8125rem] text-on-surface outline-none placeholder:text-on-surface-low" />
+                className="min-w-0 flex-1 bg-transparent text-[0.8125rem] text-on-surface outline-none placeholder:text-on-surface-low focus:ring-2 focus:ring-inset focus:ring-primary/50" />
             </div>
           </div>
         </div>
