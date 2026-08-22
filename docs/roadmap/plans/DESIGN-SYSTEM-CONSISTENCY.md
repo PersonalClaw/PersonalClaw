@@ -1112,3 +1112,56 @@ afterwards.
 
 `installProbes` and `tabWalk` were extracted to module scope so the route tier and the opened tier
 cannot drift apart on the credit rules.
+### 2026-08-22 — two of this harness's three specs ran in NO gate; one is now mounted
+
+**No atom flipped** — `dag.json` untouched. This is a defect fix on `DSC-2`'s shipped deliverable
+(the Playwright visual/axe harness), found while verifying a claim from another plan's session.
+
+**The finding, measured.** `.github/workflows/` contains exactly ONE `playwright test` invocation:
+`e2e/a11y.spec.ts` (`ci.yml:228`). The harness ships three specs. So `e2e/pwa.spec.ts` and
+`e2e/visual.spec.ts` were both complete, in-tree and executed by nothing — the same shape the axe rail
+was in before it was mounted, and the reason the visual baselines were free to rot unnoticed.
+
+**`pwa.spec.ts` is now a blocking CI step.** It needs nothing the `e2e-a11y` job does not already
+have: no baselines (it asserts BEHAVIOUR — the service worker serves the shell offline and NEVER
+serves `/api` from cache; the manifest is installable and the worker is scoped to the origin root) and
+the same self-contained gateway + preview. **Verified stable before wiring: 3/3 passed on three
+consecutive runs, ~18s each**, then again on the committed tree. Enforcing a control without first
+measuring that it passes is how a gate becomes an outage.
+
+**`visual.spec.ts` is deliberately NOT mounted, and the reason is a measurement.** All 32 committed
+goldens are `-darwin` and playwright's snapshot path is platform-qualified, so on an ubuntu runner
+every comparison would be a missing baseline. That FAILS — playwright writes the actual image and
+fails; it does not skip. Verified directly by deleting `terminal-light-darwin.png` and running that one
+test: `Expected: e2e/__screenshots__/…/terminal-light-darwin.png`, `1 failed`. Mounting it needs
+`-linux` goldens captured on a matching runner, which this dev machine cannot produce.
+
+**`web/src/design/visualBaselineCoverage.test.ts` — the manifest and the goldens can no longer drift
+apart.** Four assertions, in vitest rather than in the Playwright suite *because* the Playwright suite
+is the thing that does not run:
+
+1. every platform with ANY golden has a COMPLETE set — the failure that actually happened is a
+   PARTIAL capture, where someone snapshots the routes they touched and the manifest outgrows the
+   goldens;
+2. every recorded `UNCAPTURED` surface is still uncaptured (self-clearing — capturing one turns this
+   red and names the entry to delete, where a count baseline would absorb it);
+3. no golden is ORPHANED — a route removed from `routes.ts` leaves a ~400KB PNG nothing asserts;
+4. a vacuity floor on both sides, since an empty manifest expects nothing and an empty directory
+   would report everything missing.
+
+**Six surfaces are recorded `UNCAPTURED`, not fixed.** `artifacts`, `learning` and `knowledge-graph`
+(× both themes) are in the manifest with no goldens — 6 of the 28 failures measured on an untouched
+`main`; the other 22 are render drift. They are NOT captured here on purpose: this dev machine's render
+disagrees with the committed set, so baselines taken here would be inconsistent with their 32
+neighbours and would read as a mass regression to whoever owns them. Capturing belongs on a matching
+machine, or as a wholesale recapture.
+
+**Falsification (3, each restored from a file copy, tree confirmed clean after).** (1) Remove
+`tasks-dark-darwin.png` → `darwin: 1 missing → tasks-dark`. (2) Create a golden for an `UNCAPTURED`
+entry (`learning-dark`) → *"a baseline now exists for it … DELETE the entry"*. (3) Add
+`ghostroute-light-darwin.png` → the orphan assertion names it. Restored → 4 passed.
+
+**Gate.** `npm run typecheck` clean · `npx vitest run` **466 files / 4875 passed** · `npm run build`
+clean · `e2e/pwa.spec.ts` 3 passed on the committed tree · `ci.yml` YAML parsed with the new step
+confirmed `continue-on-error: False`. `docs/design/consistency-audit.json` excluded (the build
+regenerates it; stale from 2026-08-19).
