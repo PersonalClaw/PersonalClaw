@@ -23,8 +23,13 @@ describe('consistency-audit: drift reporter (measure only, never fails on drift)
     // web/ package dir is process.cwd(); repo root is one up.
     const outDir = join(process.cwd(), '..', 'docs', 'design')
     mkdirSync(outDir, { recursive: true })
+    // NO timestamp. This artifact is COMMITTED, so it must be a pure function of the tree it
+    // scans: a `generatedAt` made every suite run rewrite the file, which meant a real data
+    // refresh could never be told apart from noise. The consequence is in the plan logs — the
+    // diff was discarded as "pure timestamp churn" at least eight times across weeks, and the
+    // committed copy went stale as a direct result (filesScanned drifted 310 → 442 → 518 → 523
+    // → 527 while nobody committed a refresh). Git already records when a file changed.
     const payload = {
-      generatedAt: new Date().toISOString(),
       totals: res.totals,
       byCategory: res.byCategory,
       ranked: ranked.slice(0, 40),
