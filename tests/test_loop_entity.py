@@ -11,6 +11,7 @@ from personalclaw.loop import (
     ACTIVE_STATUSES,
     KINDS,
     PRELAUNCH_STATUSES,
+    STOPPABLE_STATUSES,
     TERMINAL_STATUSES,
     Loop,
     LoopKind,
@@ -63,8 +64,13 @@ class TestLoopEntity:
         assert LoopStatus.READY in ACTION_SOURCE_STATES["start"]
         # resume comes from the attention/paused states, never from running/terminal
         assert ACTION_SOURCE_STATES["resume"].isdisjoint({LoopStatus.RUNNING, *TERMINAL_STATUSES})
-        # stop is valid from every active state
-        assert ACTION_SOURCE_STATES["stop"] == ACTIVE_STATUSES
+        # stop is valid from every active state, PLUS the two pre-launch states that would
+        # otherwise have no action at all (`PP-16`): a loop whose classifier or planner died
+        # sat in `intake`/`planning` with DELETE as its only exit. Asserted as the exact
+        # relationship rather than a bare superset so a careless widening still reds.
+        assert ACTION_SOURCE_STATES["stop"] == STOPPABLE_STATUSES
+        assert STOPPABLE_STATUSES - ACTIVE_STATUSES == {LoopStatus.INTAKE, LoopStatus.PLANNING}
+        assert ACTIVE_STATUSES < STOPPABLE_STATUSES
 
 
 class TestKindRegistry:

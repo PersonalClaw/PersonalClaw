@@ -74,6 +74,11 @@ _NAMED_SET = re.compile(
 #: A single-quoted member inside a parsed set literal.
 _MEMBER = re.compile(r"'([a-z_]+)'")
 
+#: A `...OTHER_SET` spread inside a set literal. A composed set (`new Set([...ACTIVE, 'x'])`) is how
+#: this file avoids restating members, so the parser has to expand one — reading only the quoted
+#: members would silently under-count and make the equality assertion pass on a subset.
+_SPREAD = re.compile(r"\.\.\.([A-Za-z_]\w*)")
+
 #: An action-guard MAP declaring a `resume` row, in either shape the map could take. Scoped to what
 #: it can actually see: this catches a second action→states TABLE reappearing, which is the
 #: unification this slice performs. It deliberately does NOT catch a bare inline guard (an
@@ -122,7 +127,31 @@ def _parse_action_sources(text: str) -> tuple[dict[str, set[str]], dict[str, str
     assert len(body) == 2, f"{_DECL} has no closing brace — parser drift?"
     table = body[0]
 
-    named = {name: set(_MEMBER.findall(members)) for name, members in _NAMED_SET.findall(text)}
+    raw = {name: members for name, members in _NAMED_SET.findall(text)}
+    named = {name: set(_MEMBER.findall(members)) for name, members in raw.items()}
+    # Expand `...OTHER_SET` spreads, innermost first. Bounded by the number of sets so a cyclic
+    # spread cannot hang the suite, and asserted rather than silently left partial.
+    for _ in range(len(raw) + 1):
+        changed = False
+        for name, members in raw.items():
+            for ref in _SPREAD.findall(members):
+                assert ref in named, (
+                    f"`{name}` spreads `{ref}`, which is not an exported ReadonlySet<string> in "
+                    f"{_REGISTRY} — parser drift, or a broken reference"
+                )
+                if not named[ref] <= named[name]:
+                    named[name] |= named[ref]
+                    changed = True
+        if not changed:
+            break
+    else:  # pragma: no cover — a cyclic spread
+        raise AssertionError(f"spreads in {_REGISTRY} did not converge — a cycle?")
+    for name, members in raw.items():
+        for ref in _SPREAD.findall(members):
+            assert named[ref] <= named[name], (
+                f"the `{ref}` spread inside `{name}` did not expand — the parser would compare a "
+                "SUBSET and pass on a mirror that is missing members"
+            )
     rows = _ROW.findall(table)
     assert rows, f"parsed no rows out of {_DECL} — parser drift?"
 
@@ -175,11 +204,35 @@ def test_each_action_mirrors_the_backend_source_states_exactly():
 
 def test_the_stop_row_reuses_the_active_status_set_by_reference():
     _, refs = _parse_action_sources(_registry_text())
-    assert refs.get("stop") == "ACTIVE_LOOP_STATUSES", (
-        "the `stop` row of LOOP_ACTION_SOURCE_STATUSES must reference ACTIVE_LOOP_STATUSES, not "
+    assert refs.get("stop") == "STOPPABLE_LOOP_STATUSES", (
+        "the `stop` row of LOOP_ACTION_SOURCE_STATUSES must reference STOPPABLE_LOOP_STATUSES, not "
         f"restate its members (found: {refs.get('stop') or 'an inline literal'}). The backend's "
-        "own `stop` row IS ACTIVE_STATUSES; a second copy of those strings in the same file is a "
-        "new drift seam of exactly the kind this slice closes."
+        "own `stop` row IS STOPPABLE_STATUSES; a second copy of those strings in the same "
+        "file is a new drift seam of exactly the kind this slice closes."
+    )
+
+
+def test_no_non_terminal_status_is_actionless():
+    """`PP-16`: the union of the action rows must cover every non-terminal status.
+
+    The specific gap this closes: `intake` and `planning` were in NO row, so a loop whose classifier
+    or planner died offered no action on any surface and `DELETE` was its only exit — which discards
+    the record instead of terminating it. Asserted as the general property rather than as
+    "intake and planning are in stop", because the next status added to the enum should fail
+    this too rather than quietly inheriting the same hole.
+    """
+    from personalclaw.loop.loop import TERMINAL_STATUSES, LoopStatus
+
+    union: set[LoopStatus] = set().union(*ACTION_SOURCE_STATES.values())
+    assert union, "ACTION_SOURCE_STATES is empty — import drift?"
+    non_terminal = set(LoopStatus) - set(TERMINAL_STATUSES)
+    assert non_terminal, "every status reads as terminal — import drift?"
+    stranded = sorted(s.value for s in non_terminal - union)
+    assert not stranded, (
+        f"these non-terminal statuses have NO available lifecycle action: {stranded}. A loop "
+        "that reaches one can only be DELETED, losing its record. Give it a home in "
+        "ACTION_SOURCE_STATES (and mirror it in web/src/lib/loopStatus.ts) rather than "
+        "leaving the state actionless."
     )
 
 
@@ -195,7 +248,7 @@ def test_the_parse_floors_fire():
         "no rows": f"{_DECL}: Readonly<Record<LoopAction, ReadonlySet<string>>> = {{\n}}\n",
         "an empty set literal": real.replace("new Set(['running'])", "new Set([])"),
         "an unresolvable reference": real.replace(
-            "stop: ACTIVE_LOOP_STATUSES,", "stop: NO_SUCH_EXPORTED_SET,"
+            "stop: STOPPABLE_LOOP_STATUSES,", "stop: NO_SUCH_EXPORTED_SET,"
         ),
     }
     for label, stub in stubs.items():

@@ -13,6 +13,7 @@ from personalclaw.loop.loop import (
     ACTIVE_STATUSES,
     KINDS,
     PRELAUNCH_STATUSES,
+    STOPPABLE_STATUSES,
     TERMINAL_STATUSES,
     Loop,
     LoopKind,
@@ -26,6 +27,7 @@ __all__ = [
     "KINDS",
     "TERMINAL_STATUSES",
     "ACTIVE_STATUSES",
+    "STOPPABLE_STATUSES",
     "PRELAUNCH_STATUSES",
     "ACTION_SOURCE_STATES",
 ]
