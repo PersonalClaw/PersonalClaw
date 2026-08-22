@@ -507,6 +507,20 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Fixed
 
+- **The assistant learned "never more" as a permanent rule.** Ask it to answer in one sentence "from
+  now on, never more" and it wrote itself a standing rule reading `Never: never more`, showed you
+  `Learned: never more`, and kept the row forever. The word "never" was enough on its own: whatever
+  followed it up to the next full stop became the prohibition, so an intensifier ("never more"), an
+  idiom ("never mind the tests"), and a proverb ("better late than never") all read as hard rules.
+  This was the loosest thing the assistant learned and also the most permanent one, because a "never"
+  rule is stored as a lesson — the place standing always/never rules live — while an ordinary style
+  preference is stored as a preference that fades unless you repeat it.
+  **A "never" is now only learned when it prohibits an action** — the words after it have to name
+  something to not do. Real rules are unaffected: "never force-push to main", "don't ever delete my
+  notes", "never commit secrets to the repo" are all still learned, and a genuine rule stated after a
+  false one in the same message is now picked up where before the fragment won and stopped the search.
+  Quantity phrasings like "never more than one sentence" are deliberately not treated as
+  prohibitions; say it as a preference ("keep responses short") and it is learned as one.
 - **The context gauge said "0%" on turns that were nearly full.** The little ring on the model pill,
   and the "Turn complete" line under a finished turn, both printed a context percentage on every
   turn — including turns where the agent behind the chat had never reported one. The number they
