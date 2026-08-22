@@ -507,6 +507,14 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Fixed
 
+- **A reasoning-effort setting no longer quietly lapses partway through long-running work.**
+  Some external coding CLIs treat a session as finished after one turn, so for long jobs the app
+  opens a fresh session per cycle. It re-applied the agent, the model and the permission mode on each
+  one but not the reasoning effort — so from the second cycle onward the work continued at the CLI's
+  default effort while everything on screen still said otherwise. It is re-applied now. The same
+  path also skipped draining the tool-server startup messages before beginning the turn, which is now
+  done too.
+
 - **The context gauge said "0%" on turns that were nearly full.** The little ring on the model pill,
   and the "Turn complete" line under a finished turn, both printed a context percentage on every
   turn — including turns where the agent behind the chat had never reported one. The number they
