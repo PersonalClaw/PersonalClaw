@@ -428,13 +428,20 @@ found zero warn/block/circuit output after six failures in one turn (`G6`).
   **hard-errors**; the plain-prompt fallback the audit assumed does not run. The audit marked
   this cell WIRED for claude-code; it is not. Owner: core seam (capability-gate `stream_command`
   and fall back to text), `AAP-9`.
-- **`G5` A gateway restart silently changes the runtime** (`O16`) — the session's `acp_provider`,
-  `task_mode` and `workspace_dir` are all cleared, `resume_sid` is `None` (no `session/load`
+- **`G5` A gateway restart silently changes the runtime** (`O16`) — the session's `acp_provider`
+  and `task_mode` are cleared, `resume_sid` is `None` (no `session/load`
   attempted even though the adapter advertises `loadSession`, `O1`), and the next turn resolves
   on the native axis. On this provider-less home that surfaced as an error; on a machine with a
   native model provider it would silently run a *different* runtime with different tools and
   different confinement. Strictly worse than the audit's "falls to compressed history". Owner
   `AAP-7`, and the binding-persistence half is new scope for it.
+  *Corrected 2026-08-21 (audit-first pass, see the execution log):* this bullet originally named
+  `workspace_dir` as a third cleared field. It is not — `workspace_dir` has always had both a
+  writer (`chat_persistence._save_session_to_history`) and a reader in **both** restore paths,
+  and a measured save→restart→restore round-trip returns it unchanged. `O16`'s observation of
+  `workspace_dir: ""` stands as recorded; the inference that the restart cleared it does not,
+  because S3 was never given one (`O8`/`O17` set it on S2/S4). The same caution applies to `K20`'s
+  `reasoning_effort: null`: that field round-trips too. Two fields were lost, not four.
 - **`G6` No host-side brake on a failing ACP loop** (`O24`) — six consecutive tool failures in
   one turn produced no warn, no block, no circuit abort and no steering injection. Confirms
   audit gap 5; owner `AAP-6`.
@@ -2398,3 +2405,104 @@ xfail-ed. Wants its own session with a deterministic ordering harness.
   `test_acp_session_provider.py`'s `_FakeConn` now DECLARE the command capability their real
   counterparts would have captured — a fake that stayed silent would have been testing the refusal
   path while claiming to test the command turn.
+### 2026-08-21 — `G5` audited claim-by-claim, then closed: two of four claims were open
+
+**DONE (code-only; no CLI drive, no authenticated session, no owner authentication).** `G5`/`O16`
+asked whether a gateway restart silently changes a session's runtime. The gap named four things; an
+audit-first pass measured each one on `origin/main` before writing any code, and the result was
+**two open, one already shipped, one open for a reason the gap had not identified**.
+
+**Claim 1 — `acp_provider` cleared: OPEN, and the "already fixed" reading was the inert-reader trap.**
+`chat_persistence.py:309-313` really does restore `acp_provider`/`acp_provider_agent` from the meta
+line, which is what makes it look closed. Two independent defects sat under that read:
+1. **The reader lived in the wrong path.** Line 309 is inside `_rehydrate_session_from_history`, the
+   *targeted* single-session resume. A gateway restart goes through `restore_recent_sessions`
+   (`dashboard/server.py:2060`), which read `reasoning_effort`, `workspace_dir` and `mode` and **never
+   read `acp_provider` at all**. Two independent readers of one contract, one of them missing a field.
+2. **The writer was clobbered on the next turn.** There IS a writer — the bind endpoint persists the
+   binding with `ConversationLog.update_metadata` at `chat_handlers.py:1891-1902`, comment and all
+   ("Persist so the ephemeral binding survives a gateway restart"). But `_save_session_to_history`
+   **rebuilds the whole metadata line from the in-memory session** on every turn, carrying over only
+   `created_at`/`last_consolidated`/`side` — and it did not write `acp_provider`. So the bind endpoint's
+   write survived exactly until the end of the next turn and then vanished. `workflows/service.py:584`
+   already documents this rewrite hazard in a comment; nothing had connected it to the ACP binding.
+   Measured: after a real bind → turn → save, `meta` keys were
+   `[created_at, last_consolidated, memory_mode, mode, model, reasoning_effort, tab_id, workspace_dir]`
+   — no `acp_provider`. That is also why the bind endpoint's own `update_metadata` is a no-op for a
+   session with no turns yet: `history.py:632` returns early when the JSONL does not exist.
+
+**Claim 2 — `workspace_dir` cleared: ALREADY SHIPPED, and the gap's premise was wrong.** The writer
+(`chat_persistence.py:566-567`) and readers in **both** restore paths (`:314`, `:448`) all date from
+the initial public commit `1b4a2bdd`. A measured save→restart→restore round-trip returns it unchanged.
+`O16`'s observation of `workspace_dir: ""` stands; the inference that the restart cleared it does not —
+S3 was never given one. The `G5` bullet in P1 has been corrected to name two fields, not three, and the
+same caution flagged for `K20`'s `reasoning_effort: null` (that field round-trips too). Railed anyway so
+it cannot regress silently.
+
+**Claim 3 — `task_mode` cleared: OPEN, exactly as suspected.** Neither writer nor reader existed
+anywhere. `task_mode` lives on the private `session._task_mode` (`state.py:351`), not on the public
+`session.mode` that the meta line already carried — so a grep for `mode` found the wrong field. A
+restored session came back `agent` regardless of the posture it was in. Worth naming: the mode is **two**
+writes (`chat_utils.apply_task_mode` — the session posture *and* `SessionManager.set_task_mode`, the
+runtime's `_guard_and_invoke` gate), so restoring only the attribute would have produced a session the
+UI labels "Plan" whose tools still run. The restore goes through `apply_task_mode`.
+
+**Claim 4 — `resume_sid is None`: OPEN, for a reason the gap had not identified.** The load path is real
+and correctly gated (`acp/client.py:502` under `_can_load_session` from `agentCapabilities.loadSession`),
+and `SessionMap` really does persist to `session_map.json`. The failure is one level up, in
+`SessionMap.get` (`session_map.py:160`): it returns a sid **only if
+`$PERSONALCLAW_HOME/sessions/<sid>.json` exists**, and otherwise `_remove_entry`s the mapping and
+returns `None`. Nothing in core ever writes that file — `subagent_persistence.py:258` only *deletes*
+the pair, `session_workspace.py` uses `sessions/<id>/` as a directory, and the adapter writes it only
+when the provider was built with `session_files_dir`, an **opt-in the app bundle has to pass**
+(`llm/acp_agent.py:895`; provisioning it is already owned by the `dag.json` atom "§2.4 Resume — live
+`session/load` via bundle `session_files_dir` (gap 6)"). Measured directly: `set()` then `get()` with no
+session file returns `None` and leaves `session_map.json` as `{}`. That also resolves `O16`'s
+contradiction — the sid it found (`2cb03780-…`) was a **fresh** one minted by `session.py:1262` after the
+subsequent `session/new`, not the one the resume tried to use. So `resume_sid=None` was structurally
+guaranteed on that home, and **unexplainable from the logs**, because that branch pruned in total
+silence while its sibling (the empty-JSONL branch, `:167`) logged. It now logs the reason and the
+directory it looked in. **Not otherwise fixed here** — provisioning `session_files_dir` is gap 6's scope,
+not this atom's, and inventing a second writer would have been the wrong shape.
+
+**The requirement that actually mattered.** Even with all three fields persisted, the residual harm in
+`G5` is not the lost binding — it is a turn that runs with a **different tool set and different
+confinement while looking completely normal**. So `_ChatSession` now carries `_acp_meta_binding`: what
+the persisted meta line *asked* the runtime to be, recorded on restore whether or not the binding was
+honoured, and consumed by the first turn after a restore. If that turn is not resolving on an `acp`
+axis, it emits an `activity_event` naming the runtime it could not restore and saying the built-in agent
+has different tools and different confinement. No new channel — `ActivityLine` renders any
+`activityKind` outside `context`/`learned`/`stats` as an inline process step (`ChatPage.tsx:3632`), so
+there is no `web/` change, following `G8`'s precedent of making the unmeasured case *representable*
+rather than fabricated. It fires once, not per turn, and an explicit pick or clear through either
+provider endpoint drops it — a user choosing an axis by hand is not a silent substitution.
+
+**Coherence.** Both restore paths now call one `_restore_runtime_binding(state, session, meta)` helper,
+because "two readers of one contract, one missing a field" is precisely how claim 1 shipped half-done.
+A new test asserts the two paths return the same binding.
+
+**FALSIFICATIONS — four mutants, each applied to the LIVE line, confirmed by re-read plus an AST probe
+of the enclosing function, and restored from a file copy (never `git checkout`).**
+1. Dropped `meta_line["acp_provider"]` in `_save_session_to_history` (AST: line 609 in
+   `_save_session_to_history`, a `Call` statement). Red: `assert '' == 'acp:claude-agent-acp'` — the
+   **restored binding being wrong after a simulated restart**, not a dict key being absent.
+2. Replaced the `_restore_runtime_binding` call in `restore_recent_sessions` with `pass` (AST: line 483
+   in `restore_recent_sessions`, a `Pass`). **5 red**, every one on restored state:
+   `'' == 'acp:claude-agent-acp'`, `'agent' == 'plan'`, `'' == '/tmp/g5-ws'`, and the two-path agreement.
+3. Made the un-restorable case silent (`if False:` over the broadcast; AST: line 1807 in `_run_chat`, an
+   `If`). Red on the **silence**: "an un-restorable runtime binding resolved on the native axis in
+   silence", plus the fires-once rail at `0 == 1`.
+4. Vacuity floors: removing the reason from the `session_map` log reds the legibility assertion; making
+   `get` return `None` with both session files present reds the floor test — so neither is vacuous.
+
+**GATE.** `make lint` clean (black/isort/flake8 + mypy, 959 source files). Targeted: 14 suites, all
+paths existence-checked first, **670 passed** (`test_acp_restart_binding.py` 13/13 plus the existing
+acp-client / session-map / session-restore / dashboard-chat / task-modes / ephemeral-session suites).
+`scripts/gate_report.py` **6/6**. Flat wire-error census **1507 = `FLAT_BASELINE`, zero slack,
+unchanged** — this change adds no error path. No config field, so no round-trip and no baseline regen.
+Nothing under the real `~/.personalclaw` was touched: every test uses `tmp_path` or a monkeypatched
+`config_dir`/`PERSONALCLAW_HOME`.
+
+**No matrix cell flipped and `dag.json` untouched** — re-marking the resume row needs an owner-gated live
+drive. The one documentation change is the `G5` bullet's own factual correction (four fields → two),
+cited above.

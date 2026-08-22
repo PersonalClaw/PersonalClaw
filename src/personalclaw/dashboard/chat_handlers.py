@@ -1795,9 +1795,12 @@ async def api_chat_session_agent(request: web.Request) -> web.Response:
         return web.json_response({"error": "invalid agent name"}, status=400)
     session.agent = agent_name
     # Selecting a saved/native agent clears any ephemeral discovered-ACP override
-    # so the new selection isn't shadowed by a stale runtime binding.
+    # so the new selection isn't shadowed by a stale runtime binding. The pending
+    # "could not restore your ACP runtime" notice goes with it: the user just chose
+    # this axis by hand, and an explicit choice is not a silent fallback to report.
     session.acp_provider = ""
     session.acp_provider_agent = ""
+    session._acp_meta_binding = ""
 
     # Resolve the new agent's default working directory from its bindings.
     try:
@@ -1875,6 +1878,9 @@ async def api_chat_session_acp_agent(request: web.Request) -> web.Response:
 
     session.acp_provider = provider
     session.acp_provider_agent = provider_agent if provider else ""
+    # An explicit pick (or an explicit clear) settles the runtime axis, so there is no
+    # unreported fallback left to announce on the next turn.
+    session._acp_meta_binding = ""
     if "model" in body:
         session.model = str(body.get("model", "") or "")
     session.reasoning_effort = effort

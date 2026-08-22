@@ -1797,6 +1797,29 @@ async def _run_chat(
             provider_kind = _acp_provider
             provider_agent = getattr(session, "acp_provider_agent", "") or ""
 
+        # G5 honesty rail. ``_acp_meta_binding`` is what this session's persisted meta
+        # line asked its runtime to be, recorded on restore whether or not the binding
+        # was honoured. If the turn is NOT resolving on that axis, SAY SO: the harm in a
+        # lost ACP binding is never the binding itself, it is a turn that runs with a
+        # different tool set and different confinement while looking completely normal.
+        # One-shot — consumed here so a restored session says it once, not every turn.
+        _meta_binding = getattr(session, "_acp_meta_binding", "") or ""
+        if _meta_binding:
+            session._acp_meta_binding = ""
+            if not provider_kind.startswith("acp"):
+                state.broadcast_ws(
+                    "activity_event",
+                    {
+                        "session": session.key,
+                        "kind": "session",
+                        "text": (
+                            f"Could not restore this session's {_meta_binding} runtime — "
+                            "running on the built-in agent instead, which has different "
+                            "tools and different confinement"
+                        ),
+                    },
+                )
+
         # Per-session ACP permission-mode override (e.g. an unattended goal loop
         # worker sets bypassPermissions so an ACP agent freely executes file
         # writes instead of avoiding them in the default "prompts for writes"
