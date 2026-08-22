@@ -152,6 +152,46 @@ def _home_call_lines(path: Path) -> list[int]:
     ]
 
 
+def test_the_agent_bind_path_resolves_the_workspace_through_the_contract():
+    """`G39`'s CALL SITE, not just its resolver.
+
+    The three contract tests above drive ``resolve_session_workspace`` directly, so they stay green
+    even if a caller stops using it — measured: replacing the agent-bind assignment with
+    ``resolve_agent_bindings(cfg, matched).workspace_dir`` — which IS the G39 bug: it collapses
+    "inherit" to a concrete path and relocates a session the user bound elsewhere — leaves this
+    file at 6 passed. A fix whose USE is unrailed can be reverted silently, which is how G39 got
+    written in the first place.
+
+    Asserted at source level because the alternative is standing up a live chat session and a
+    profile just to read one assignment back; the string this checks IS the seam.
+    """
+    src = Path(personalclaw.__file__).resolve().parent
+    handlers = src / "dashboard" / "chat_handlers.py"
+    assert handlers.is_file(), "chat_handlers.py moved — this rail no longer covers the bind path"
+    text = handlers.read_text(encoding="utf8")
+
+    # Vacuity floor: the module must still contain the seam this rail is about.
+    assert "resolve_session_workspace" in text, (
+        "chat_handlers no longer references resolve_session_workspace at all — either the bind "
+        "path moved (re-point this rail) or G39's fix was removed"
+    )
+
+    # Every assignment to a session's workspace_dir on the bind path must go through the contract.
+    offenders = [
+        (i + 1, line.strip())
+        for i, line in enumerate(text.splitlines())
+        if "workspace_dir" in line
+        and "=" in line
+        and "resolve_session_workspace" not in line
+        and "resolve_agent_bindings" in line
+    ]
+    assert not offenders, (
+        f"chat_handlers assigns a session workspace from resolve_agent_bindings at {offenders} — "
+        "that collapses default_dir's INHERIT case to a concrete path and relocates a session the "
+        "user bound elsewhere (`G39`). Use resolve_session_workspace(cfg, agent, current)."
+    )
+
+
 def test_no_acp_spawn_site_anchors_its_cwd_to_the_real_home():
     """An ACP spawn site must resolve its cwd through ``workspace_root()``, never
     ``Path.home()``. ``AcpConnection.spawn``/``AcpProcess.spawn`` MKDIR the cwd, so a

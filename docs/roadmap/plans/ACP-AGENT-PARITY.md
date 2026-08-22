@@ -1452,6 +1452,57 @@ unblocked the four "needs a model provider" cells (`K29`).
 | `K59` | the artifact and subagent halves the calls exposed, read from the store rather than the reply | **two attribution losses.** (a) The artifact saved by the CLI on a session bound to project `p-14b92d4c` persisted with **`project_id: ""`** *and* `events[0].session_id: ""` — so the ABSENT verdict for `project_id → artifact stamping` is right, but for the opposite reason to the one recorded (`G48`). (b) The spawned subagent produced **no `[Subagent completion event]` injection** in ~4 minutes, and the gateway logged `_spawn_session_resolver: rid=spawn:6c6039b3 … session=` — an **empty** originating session, which is exactly the inject-back's precondition (`G49`) |
 | `K49` | two cross-checks worth keeping: the lesson extractor on an injected-context turn, and one turn's vendor error | **`G16` is worse than "bad extraction":** the lesson row written for `K30`'s turn is `User correction to honor: The user referenced the following item(s) from their knowledge library. Their content is included below …` — the extractor swallowed the *injected knowledge block* as if it were the user's correction, alongside a second row `Never: never violate these):` clipped from prompt boilerplate. Separately, one turn failed with kiro's `-32603` `MODEL_TEMPORARILY_UNAVAILABLE` ("unexpectedly high load"); that is recorded as **ENV** and no cell rests on it |
 
+## Gap closure index (status as of 2026-08-22, verified against `origin/main` = `05bba66e`)
+
+**Why this exists.** The `G*` bullets in the inventories below are written as defect statements and are
+deliberately NOT rewritten when a gap closes — closure is recorded in the `## Execution log`. That is a
+reasonable convention for an append-only record, but it means a reader cannot tell an open gap from a
+closed one without reading ~1,000 log lines. **Four separate sessions on 2026-08-22 each re-derived a
+closure that had already landed** (`audit_home`, the `view` trigger kind, `G11`, `G39`), so this index
+exists to make the re-derivation unnecessary. It carries only gaps whose status was checked against code
+or a commit on `origin/main`; it is NOT a complete audit of all 49.
+
+**Verification rule used here, and it matters:** a gap counts as CLOSED only when its fix is on
+`origin/main`. A gap whose fix sits in an open PR is listed as OPEN with the PR named, because a merge
+train can close a PR without landing every commit — the entry says what is *on main*, not what was
+written.
+
+### Closed on `origin/main`
+
+| gap | what closed it | evidence |
+|---|---|---|
+| `G4` | slash commands are capability-gated and the `-32601` reply is typed | `05bba66e` (current `main` tip) |
+| `G8` | the context chip is omitted when no backend measured one | `0a02456d` |
+| `G47` | a model call is attributed to its calling subsystem | `70660460` |
+| `G39` | `AgentProfile.default_dir`'s inherit contract — an EMPTY `default_dir` no longer displaces a session's explicit `workspace_dir` | `config/loader.py:5473` `resolve_session_workspace()`, whose docstring names "the G39 real-home escape"; **wired** at `dashboard/chat_handlers.py:900` and `:1816`; the resolver's three contract cases are covered by `tests/test_acp_spawn_cwd_containment.py`, and the CALL SITE is railed as of 2026-08-22 (it was not — see the log entry below) |
+| `G11` | closed as a DOCUMENTED honest boundary rather than by code — the host genuinely cannot see a refusal the CLI never reports | `docs/agents/acp-parity.md:114` carries it with its measurement (`O21`), the codex mirror (`C9`/`G25`), the reason, and the upstream watch item ("Adapters would have to emit a refusal frame") |
+
+### Fix written, NOT closed — the PR is open, so `main` is unchanged
+
+| gap | PR |
+|---|---|
+| `G5` (runtime binding across a restart) | `#1876` |
+| `G6` + `G7` (procedural outcomes; the adapter dropped `tool_meta`) | `#1877` |
+| `G10` + `G18` (the permission frame names what it gates, and which tool) | `#1878` |
+| `G14` + `G15` (the session line names the configured runtime) | `#1879` |
+| `G16` (a veto needs a prohibited action) | `#1880` |
+| `G21` (refuse an effort the runtime declared it cannot honor) | `#1882` |
+| `G19` (a denial echoes the agent's reject option instead of cancelling the turn) | `#1883` |
+| `G20` **partial only** — the fresh-turn session re-applies the effort pin and the drain | `#1884` |
+
+### Still open, with the reason
+
+| gap | why it is not startable |
+|---|---|
+| `G9` | its "empty result meta" is most likely the `tool_meta` drop `#1877` fixes; auditing it against `main` would measure the unfixed seam |
+| `G13` | same ephemeral-binding root as `G5`; depends on `#1876` |
+| `G12` | owner `AAP-9`, and the mechanism is not isolated — needs a live CLI drive, which is owner-gated |
+| `G20` (model clause) | `G20` as written blames the MODEL pin, and the fresh-turn path DOES re-send `set_model`. `C13`'s `auto (from agent config)` comes from the full-start else-branch printing `self._model or "auto"`, so `_model` was empty on a full start — `G5`'s root, not a per-turn lapse. Localizing needs a codex drive |
+
+**Keeping this current is cheap and worth it:** when a gap's fix lands on `main`, move its row up and cite
+the commit. When a row here disagrees with a bullet below, this index is the one that was checked against
+code — but re-verify before acting, because it is a point-in-time reading like everything else here.
+
 ## Execution log
 
 - 2026-08-17 — `AAP-1` **PARTIAL**. Ran the audit §6 checklist against `acp:claude-code`
@@ -3072,3 +3123,38 @@ cited above.
   conn.sent or True`. Grounding the assertions meant first printing what the dialects actually emit
   (codex: three `set_config_option` calls; default dialect: `session/set_model` and no mode/effort
   verb at all).
+
+- **2026-08-22 — added a `## Gap closure index`, because four ticks in one day each re-derived a closure
+  that had already landed.** The `G*` bullets are defect statements and are deliberately not rewritten
+  when a gap closes; closure lives in this log. That is fine for an append-only record and expensive for
+  a reader: you cannot tell an open gap from a closed one without reading ~1,000 log lines.
+  **The four re-derivations, named so the cost is on the record:** `durability.audit_home()` (flagged as
+  inert in the workspace `CLAUDE.md`; actually wired at `resilience/doctor.py:743`), the `view` trigger
+  kind (same list; wired at `handlers/triggers.py:1538`, whose comment literally says "THE WIRING THIS
+  CLOSES"), `G11` (already carried as a documented honest boundary at `acp-parity.md:114`), and `G39`
+  (fixed AND wired — `config/loader.py:5473` `resolve_session_workspace()`, called from
+  `chat_handlers.py:900` and `:1816`, with `tests/test_acp_spawn_cwd_containment.py` covering all three
+  contract cases). Each cost a tick's recon to conclude "already done".
+  **The index's rule is the part worth keeping:** a gap counts CLOSED only when its fix is on
+  `origin/main`. Eight gaps have a written fix sitting in an OPEN PR (`#1876`-`#1884`) and are listed as
+  OPEN with the PR named — because a merge train can close a PR without landing every commit, so "a PR
+  exists" is not evidence and the index says what is on `main`.
+  **Scope, stated rather than implied:** it covers the gaps whose status was checked against a commit or
+  against code in this session. It is NOT an audit of all 49, and it says so in its own header.
+
+- **2026-08-22 — `G39`'s fix was correct and its USE was unrailed. Added the call-site rail.** Verifying
+  the closure-index entry above turned up the gap: `tests/test_acp_spawn_cwd_containment.py` drove
+  `resolve_session_workspace` **directly**, so replacing the agent-bind assignment with
+  `resolve_agent_bindings(cfg, matched).workspace_dir` — which IS the G39 bug, collapsing the INHERIT
+  case to a concrete path and relocating a session the user bound elsewhere — left the file at
+  **6 passed**. Measured, not supposed: that mutation was applied to the live line and the suite stayed
+  green. A fix whose use is unrailed can be reverted silently, which is how `G39` came to exist.
+  `test_the_agent_bind_path_resolves_the_workspace_through_the_contract` now asserts at source level
+  that no `workspace_dir` assignment on that path comes from `resolve_agent_bindings`. Falsified: the
+  same mutation now reds and names the offender —
+  *"chat_handlers assigns a session workspace from resolve_agent_bindings at [(1816, …)]"*.
+  **An honest limit on its vacuity floor.** The floor asserts the module still references
+  `resolve_session_workspace`, to catch the seam moving. Its trigger cannot be simulated by renaming the
+  symbol: the import fails first, so the test reds as an **ImportError (a collection error)** rather than
+  through that assertion. Still a red, but a different signal — worth knowing before treating the floor
+  as proven.
