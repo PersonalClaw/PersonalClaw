@@ -805,3 +805,31 @@ Canonical usage of each shared primitive + each interaction pattern (selection, 
   drift. Refreshing it would re-drift on the next test run, so the file is deliberately left at `HEAD`
   here; the real fix is a design change to the artifact (drop the timestamp, or write only under an
   explicit flag), which is a separate call.
+- **2026-08-22 — `consistency-audit.json` is now DETERMINISTIC, so the artifact can finally be kept
+  current.** The committed audit carried a `generatedAt: new Date().toISOString()`, so **every**
+  `npm run test:web` rewrote it. The consequence is written across three plans in this repo's own logs:
+  the diff was discarded as noise at least **seven** times — `PERSONALITY-THEMES` ×3 (*"regenerated to
+  a `generatedAt`-only delta and reverted rather than committed as noise"*, *"pure timestamp churn,
+  discarded, and still stale on `main`"*), this plan ×3 (*"timestamp-only … reverted, kept out of the
+  commit"*), and `SESSION-MANAGEMENT` ×1 — plus three more restores in the 2026-08-22 session before
+  the cause was traced.
+  **That churn is why the file went stale, and the staleness compounded.** Nobody commits a refresh
+  when a real data delta cannot be told apart from a timestamp, so `filesScanned` drifted
+  **310 → 442 → 518 → 520 → 523 → 527** across the logs while the tree grew to **547**. The record
+  meant to expose drift was itself the most drifted file.
+  **Fix: drop the timestamp.** Nothing read it — the only occurrence was the line that wrote it, and
+  `consistency-audit.md` cites the *generator*, not a date. Git already records when a file changed. A
+  committed generated artifact has to be a pure function of the tree it scans, or it cannot be
+  committed at all.
+  **Verified by running it three times:** with the timestamp gone, runs 2 and 3 produce a
+  **byte-identical** file (`cmp` clean), so a suite run now leaves the tree clean.
+  **Falsified:** with `generatedAt` put back, two consecutive runs differ by exactly that one line
+  (`"generatedAt": "…12:52:38.345Z"` vs `"…12:53:26.704Z"`) and nothing else — the timestamp was the
+  whole cause, not a symptom.
+  **The refresh rides along, now that it is meaningful:** `filesScanned` 527 → 547,
+  `ProjectionRulesPanel.tsx` `5 raw-input` → `6` (score 9 → 10), `outlineNoneCount` 141 → 142 over
+  67 files, `reducedMotionFiles` 12 → 13, `animatedFiles` 167 → 168. `totals.driftHits` stays 8 and
+  `filesWithDrift` stays 7 — the tree grew by 20 files without adding a NEW drifting file.
+  **Related, shipped separately (#1889):** that same regenerated data is what exposed the
+  `primitiveAdoption` ratchet's two units of `rawInput` slack. The two changes are independent; this
+  one is why the measurement was available to make.
