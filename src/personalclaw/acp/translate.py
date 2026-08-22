@@ -7,8 +7,9 @@ ONE place so the two turn loops can never drift — a ``tool_call`` frame become
 event whether it arrived on the inline client reader or a router-demuxed session queue.
 
 Every function here is pure: no ``self``, no I/O, no process. The small per-turn caches
-the decoders read/write (``tool_call_inputs`` keyed by ``toolCallId``, ``offered_options``
-keyed by request id) are threaded in as explicit dict params — the caller owns them.
+the decoders read/write (``tool_call_inputs`` and ``tool_call_seen`` keyed by
+``toolCallId``, ``offered_options`` keyed by request id) are threaded in as explicit dict
+params — the caller owns them.
 Dependencies are the leaf ``types`` module + the ``security`` redactors + stdlib, so both
 the client and the session import from here with no import cycle.
 """
@@ -20,6 +21,7 @@ import difflib
 import json
 import logging
 import re
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 from personalclaw.acp.types import (
@@ -86,16 +88,42 @@ def extract_text_chunk(msg: JsonRpcMessage) -> tuple[str | None, bool]:
     return None, False
 
 
+@dataclass(frozen=True)
+class SeenToolCall:
+    """What the ``tool_call`` frame that OPENED a call declared about it.
+
+    Correlation state, not a wire type. The ``session/request_permission`` frame that
+    follows shares only ``toolCallId`` with that opening frame, and on some adapters the
+    opening frame is the ONLY one that ever names the tool — so what it declared has to
+    outlive it for the duration of the turn.
+
+    Both fields hold the decoder's post-redaction values, and both may be empty: an
+    absence must stay representable. ``kind`` may be the decoder's own ``unknown``
+    placeholder, which means "declared nothing" and must never resolve permissive
+    (`G10`); an empty ``title`` means the frame did not name the tool, and is what stops
+    a filled-in title from being invented (`G18`).
+    """
+
+    kind: str = ""
+    title: str = ""
+
+
 def extract_tool_event(
     msg: JsonRpcMessage,
     tool_call_inputs: dict[str, str],
+    tool_call_seen: dict[str, SeenToolCall],
     tool_calls_sink: list[tuple[str, str]],
 ) -> AcpEvent | None:
     """Decode a ``tool_call`` frame into an ``EVENT_TOOL_CALL`` (or None).
 
     Caches the resolved, redacted tool input under ``toolCallId`` in
     ``tool_call_inputs`` so a following permission request can echo the full input,
-    and appends ``(kind, title)`` to ``tool_calls_sink`` (the turn's prompt stats)."""
+    caches the frame's declared ``kind`` AND ``title`` under the same key in
+    ``tool_call_seen`` so that request can name both what kind of tool it is gating
+    (`G10` — claude's ``session/request_permission`` payload carries no ``kind``) and
+    WHICH tool (`G18` — codex's carries no ``title``), and appends ``(kind, title)``
+    to ``tool_calls_sink`` (the turn's prompt stats).
+    """
     params = msg.params or {}
     update = params.get("update", {})
     if update.get("sessionUpdate") == UPDATE_TOOL_CALL:
@@ -159,6 +187,16 @@ def extract_tool_event(
         if kind:
             kind, _ = redact_exfiltration_urls(kind)
             kind, _ = redact_credentials(kind)
+        # Correlate what this frame declared onto the permission frame that follows
+        # (keyed on toolCallId, the only id both frames share). ``unknown`` is the
+        # decoder's own placeholder for "this frame declared none" — cache it too rather
+        # than dropping it, so the permission path can tell an unmeasured kind apart from
+        # one that measured as unclassifiable (`G10` requirement: absence stays
+        # representable and must never resolve permissive). The title rides the same
+        # correlation because the two gaps are one seam: a permission frame that cannot
+        # say WHAT it is gating (`G10`) usually cannot say WHICH tool either (`G18`).
+        if tool_call_id:
+            tool_call_seen[tool_call_id] = SeenToolCall(kind=kind, title=title)
         tool_calls_sink.append((kind, title))
         return AcpEvent(
             kind=EVENT_TOOL_CALL,
@@ -174,6 +212,7 @@ def extract_tool_event(
 def extract_tool_update_events(
     msg: JsonRpcMessage,
     tool_call_inputs: dict[str, str],
+    tool_call_seen: dict[str, SeenToolCall],
 ) -> list[AcpEvent]:
     """Handle a ``tool_call_update`` frame.
 
@@ -211,6 +250,22 @@ def extract_tool_update_events(
     if title:
         title, _ = redact_exfiltration_urls(title)
         title, _ = redact_credentials(title)
+    # An update MAY refine either declared field (ACP's ToolCallUpdate carries an
+    # optional `kind` and `title`). Only a POSITIVE declaration overwrites the correlated
+    # value, and each field is refined independently — an update that names the tool but
+    # omits the kind must not erase the kind the opening `tool_call` frame declared, and
+    # vice versa. `replace` on the frozen record is what keeps the untouched field.
+    _upd_kind = str(update.get("kind") or "")
+    if _upd_kind:
+        _upd_kind, _ = redact_exfiltration_urls(_upd_kind)
+        _upd_kind, _ = redact_credentials(_upd_kind)
+    if tool_call_id and (_upd_kind or title):
+        _seen = tool_call_seen.get(tool_call_id, SeenToolCall())
+        if _upd_kind:
+            _seen = replace(_seen, kind=_upd_kind)
+        if title:
+            _seen = replace(_seen, title=title)
+        tool_call_seen[tool_call_id] = _seen
     if input_str or title:
         events.append(
             AcpEvent(
@@ -261,23 +316,38 @@ def build_permission_event(
     msg: JsonRpcMessage,
     dialect,
     tool_call_inputs: dict[str, str],
+    tool_call_seen: dict[str, SeenToolCall],
     offered_options: dict[str, list[dict[str, str]]],
 ) -> AcpEvent:
     """Decode a ``session/request_permission`` frame into an ``EVENT_PERMISSION_REQUEST``.
 
     Records the options the agent offered under the request id in ``offered_options``
-    (so a later approve can echo a real optionId) and resolves the full tool input from
-    the ``tool_call_inputs`` cache populated by the preceding ``tool_call`` frame."""
+    (so a later approve can echo a real optionId) and resolves the full tool input, the
+    declared kind and the tool's title from the ``tool_call_inputs``/``tool_call_seen``
+    caches populated by the preceding ``tool_call`` frame."""
     request_id = msg.id if msg.id is not None else ""
     params = msg.params or {}
     tool_call = params.get("toolCall", {})
-    title = tool_call.get("title", "unknown")
-    # The frame's own declared kind (read/edit/execute/delete/…). Carried so the
-    # approval card, the SEL row and the not-gateable residue check can NAME the
-    # tool even when the adapter sends no title (codex sends `kind` but no
-    # `title`, which is why the card said "unknown" — G18). Deliberately NOT fed
-    # to the task-mode gate: a CLI-declared "read" must not be able to turn that
-    # gate's deny-by-default into an allow (§2.2 fails closed).
+    # The frame's OWN title, when it sends one. A MISSING key and an EMPTY string are
+    # the same fact — "this adapter did not name the tool" — so both must fall through to
+    # the correlation below. `.get(..., "unknown")` alone treated only the missing key as
+    # absent and let an empty title through, which still renders a nameless card.
+    title = str(tool_call.get("title") or "")
+    # The declared kind (read/edit/execute/delete/…). Carried so the approval card,
+    # the SEL row and the not-gateable residue check can NAME the tool even when the
+    # adapter sends no title (codex sends `kind` but no `title`, which is why the card
+    # said "unknown" — G18). Deliberately NOT fed to the task-mode gate: a CLI-declared
+    # "read" must not be able to turn that gate's deny-by-default into an allow (§2.2
+    # fails closed).
+    #
+    # `G10`: the frame's OWN kind is only present on some adapters — codex declares it,
+    # claude-code-acp sends `{toolCallId, title}` and nothing else, which is why every
+    # claude permission request arrived with `tool_kind: ""` and the kind→risk mapping
+    # in `task_modes` had nothing to read on the approval path. The kind IS on the wire,
+    # one frame earlier, on the `tool_call` that opened this call. Correlate on
+    # `toolCallId` — the same key the input cache above already uses, and the only
+    # identifier the two frames share. The frame's own declaration always wins; the
+    # correlated value only fills an absence.
     kind = str(tool_call.get("kind") or "")
     if kind:
         kind, _ = redact_exfiltration_urls(kind)
@@ -295,13 +365,39 @@ def build_permission_event(
     tool_input = ""
     tool_call_id = tool_call.get("toolCallId", "")
 
-    # 1. Look up cached input from the ToolCall notification
-    if tool_call_id and tool_call_id in tool_call_inputs:
-        tool_input = tool_call_inputs.pop(tool_call_id)
+    # Fill an absent kind AND an absent title from the correlated `tool_call` frame
+    # (see above). `G18`: codex's permission payload is `{toolCallId, kind, status}` — the
+    # human title lives one frame earlier, which is why every codex approval card and
+    # every SEL decision row read `tool: "unknown"` while the tool's real name sat in the
+    # cache. The frame's own declaration always wins; the correlated value only fills an
+    # absence, and `unknown` survives only when NEITHER frame named the tool — so the card
+    # never shows a name that was invented rather than declared.
+    seen = tool_call_seen.get(tool_call_id) if tool_call_id else None
+    if not kind and seen is not None:
+        kind = seen.kind
+    if not title and seen is not None:
+        title = seen.title
+    if not title:
+        title = "unknown"
 
-    # 2. Fallback: check if toolCall itself carries input/params
+    # 1. Look up cached input from the ToolCall notification. READ, never pop: a call
+    #    can reach this gate more than once (a re-requested permission after an
+    #    interrupt), and a popped cache makes the second request look like a tool whose
+    #    command the host cannot see — which is exactly the state that used to mint a
+    #    risk verdict out of nothing (`G10`). The cache is per-turn and cleared at turn
+    #    start (`AcpSession._stream_turn`), so keeping the entry costs one turn.
+    if tool_call_id and tool_call_id in tool_call_inputs:
+        tool_input = tool_call_inputs[tool_call_id]
+
+    # 2. Fallback: check if toolCall itself carries the input inline. ACP types the
+    #    permission frame's `toolCall` as a ToolCallUpdate, whose input field is named
+    #    `rawInput` — the SAME key `extract_tool_event` reads above. Reading only
+    #    `input`/`params` here meant a frame that carried the command inline still
+    #    reached the gate with an empty input (`G10`, the ask-mode half: a read-only
+    #    `ls` is indistinguishable from an unreadable command, and the title-hint
+    #    fallback denies it).
     if not tool_input:
-        raw_input = tool_call.get("input") or tool_call.get("params")
+        raw_input = tool_call.get("rawInput") or tool_call.get("input") or tool_call.get("params")
         if raw_input:
             tool_input = (
                 json.dumps(raw_input, indent=2)

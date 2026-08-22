@@ -60,7 +60,7 @@ class TestExtractToolEvent:
                 "rawInput": {"path": "/x"},
             }
         )
-        ev = translate.extract_tool_event(msg, {}, [])
+        ev = translate.extract_tool_event(msg, {}, {}, [])
         assert ev is not None and ev.kind == EVENT_TOOL_CALL
         assert ev.tool_call_id == "t1" and ev.title == "Read file"
 
@@ -68,7 +68,7 @@ class TestExtractToolEvent:
         msg = _update(
             {"sessionUpdate": "agent_message_chunk", "content": {"type": "text", "text": "hi"}}
         )
-        assert translate.extract_tool_event(msg, {}, []) is None
+        assert translate.extract_tool_event(msg, {}, {}, []) is None
 
 
 # ── extract_tool_update_events (completed + failed both surface results) ─────────
@@ -82,7 +82,7 @@ class TestExtractToolUpdateEvents:
                 "content": [{"type": "content", "content": {"type": "text", "text": "done"}}],
             }
         )
-        events = translate.extract_tool_update_events(msg, {})
+        events = translate.extract_tool_update_events(msg, {}, {})
         results = [e for e in events if e.kind == EVENT_TOOL_RESULT]
         assert len(results) == 1 and "done" in results[0].tool_output
 
@@ -100,7 +100,7 @@ class TestExtractToolUpdateEvents:
                 ],
             }
         )
-        events = translate.extract_tool_update_events(msg, {})
+        events = translate.extract_tool_update_events(msg, {}, {})
         results = [e for e in events if e.kind == EVENT_TOOL_RESULT]
         assert len(results) == 1 and "No such file" in results[0].tool_output
 
@@ -116,9 +116,93 @@ class TestBuildPermissionEvent:
             params={"toolCall": {"title": "Write", "toolCallId": "t9"}, "options": []},
         )
         offered: dict = {}
-        ev = translate.build_permission_event(msg, DefaultDialect(), {}, offered)
+        ev = translate.build_permission_event(msg, DefaultDialect(), {}, {}, offered)
         assert ev.kind == EVENT_PERMISSION_REQUEST
         assert ev.title == "Write" and ev.request_id == 55
+
+    # ── G18: the card must NAME the tool it is gating ───────────────────────────
+    #
+    # codex's `session/request_permission` payload is `{toolCallId, kind, status}` — the
+    # human title lives on the PRECEDING `tool_call` frame. Every assertion below drives
+    # the real two-frame sequence rather than hand-building the correlation cache: a test
+    # that seeds `tool_call_seen` itself cannot catch a producer that stops filling it.
+    def _seen_from_tool_call(self, *, title="Read file 'notes.md'", kind="read", call_id="c1"):
+        seen: dict = {}
+        inputs: dict = {}
+        translate.extract_tool_event(
+            _update(
+                {
+                    "sessionUpdate": "tool_call",
+                    "toolCallId": call_id,
+                    "title": title,
+                    "kind": kind,
+                    "rawInput": {"path": "notes.md"},
+                }
+            ),
+            inputs,
+            seen,
+            [],
+        )
+        return inputs, seen
+
+    def _permission(self, tool_call: dict, inputs: dict, seen: dict, req="r1"):
+        from personalclaw.acp.dialect import DefaultDialect
+
+        msg = JsonRpcMessage(
+            id=req,
+            method="session/request_permission",
+            params={"toolCall": tool_call, "options": []},
+        )
+        return translate.build_permission_event(msg, DefaultDialect(), inputs, seen, {})
+
+    def test_titleless_permission_frame_is_named_from_the_preceding_tool_call(self):
+        """G18 — the defect: a codex-shaped payload rendered `tool: "unknown"`."""
+        inputs, seen = self._seen_from_tool_call()
+        ev = self._permission(
+            {"toolCallId": "c1", "kind": "read", "status": "pending"}, inputs, seen
+        )
+        assert ev.title == "Read file 'notes.md'", "the card cannot name the tool it gates"
+
+    def test_an_empty_title_is_an_absence_not_a_name(self):
+        """`.get("title", "unknown")` only saw a MISSING key, so `title: ""` shipped a
+        nameless card even when the correlation had the real name."""
+        inputs, seen = self._seen_from_tool_call()
+        ev = self._permission({"toolCallId": "c1", "title": "", "status": "pending"}, inputs, seen)
+        assert ev.title == "Read file 'notes.md'"
+
+    def test_the_frames_own_title_wins_over_the_correlated_one(self):
+        inputs, seen = self._seen_from_tool_call()
+        ev = self._permission(
+            {"toolCallId": "c1", "title": "Frame's own", "status": "pending"}, inputs, seen
+        )
+        assert ev.title == "Frame's own"
+
+    def test_a_title_is_never_invented_when_no_frame_named_the_tool(self):
+        """The vacuity floor for the fill: an uncorrelated id must stay `unknown` rather
+        than borrow some other call's name."""
+        inputs, seen = self._seen_from_tool_call()
+        ev = self._permission({"toolCallId": "no-such-call", "status": "pending"}, inputs, seen)
+        assert ev.title == "unknown"
+
+    def test_an_update_refines_one_field_without_erasing_the_other(self):
+        """A `tool_call_update` that names the tool but omits `kind` must keep the kind the
+        opening frame declared — the two fields are refined independently."""
+        inputs, seen = self._seen_from_tool_call()
+        translate.extract_tool_update_events(
+            _update(
+                {
+                    "sessionUpdate": "tool_call_update",
+                    "toolCallId": "c1",
+                    "title": "Read file 'renamed.md'",
+                }
+            ),
+            inputs,
+            seen,
+        )
+        assert seen["c1"].title == "Read file 'renamed.md'"
+        assert seen["c1"].kind == "read", "the update erased a kind it never declared"
+        ev = self._permission({"toolCallId": "c1", "status": "pending"}, inputs, seen)
+        assert ev.title == "Read file 'renamed.md'" and ev.tool_kind == "read"
 
 
 # ── format_command_result ────────────────────────────────────────────────────────

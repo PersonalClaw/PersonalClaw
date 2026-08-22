@@ -458,6 +458,48 @@ found zero warn/block/circuit output after six failures in one turn (`G6`).
   arrived with `tool_kind: ""` (`O5`), so even the kind→floor mapping has nothing to read on the
   approval path — the `kind` lives on the `tool_call` frame, not the permission frame. Owner
   `AAP-8`; that asymmetry is a design input for §2.5.
+  **FIXED 2026-08-21 (`AAP-8`, code-only). Three of this bullet's claims were wrong — corrected
+  here, with the rows they misread cited:**
+  1. **"the `kind` lives on the `tool_call` frame, not the permission frame" is false as a
+     protocol statement.** ACP types the permission frame's `toolCall` as a `ToolCallUpdate`, so
+     `kind` *and* `rawInput` are both legal fields there; codex populates `kind` (`C5`, and `G18`
+     above already noted this correction), claude-code-acp populates neither (`O5`). The true
+     statement is narrower and is what the fix keys on: **the kind is always on the `tool_call`
+     frame and only sometimes on the permission frame**, and both frames carry the same
+     `toolCallId`, so the correlation the input cache already performed was available for the kind
+     too.
+  2. **The `destructive` label and the empty `tool_kind` are two different defects with two
+     different symptoms** — this bullet folded them into one cause. `O10`'s row is written from the
+     **`tool_call`** frame (`chat_runner.py:2649`), where the kind IS present as `execute`; what was
+     missing there is the *command text*, because ACP agents open a call with `rawInput: {}` +
+     `status: pending` and fill the input in a later `tool_call_update`
+     (`translate.extract_tool_update_events`' own docstring says so). `resolve_effective_risk`
+     returned the **literal** `"destructive"` for that state — a verdict about the command minted
+     from the command's absence. The empty permission-frame `tool_kind` (`O5`) caused something
+     else entirely: a wire-declared `kind: "read"|"search"|"fetch"` reached the resolver as `""` and
+     floored at `caution`, and since trust-reads auto-approves only `safe`, **a plain file read
+     raised a card forever even with trust-reads on** — which is the real mechanism behind the
+     `trust_reads` row's PARTIAL verdict, not the coarseness that row's prose blames.
+  3. **`O7`'s attribution of the `destructive` notification to `pwd; ls` is unresolved and probably
+     wrong.** The notification body is composed at `chat_runner.py:570` from the **permission**
+     event's risk, where `tool_kind` was `""`; measured against the real decoder, that state
+     resolves `safe` when the command is readable and `caution` when it is not — it cannot reach
+     `destructive` for a title with no destructive verb. The `O5`/`O7` turn raised **two** cards
+     both titled `Terminal` (the bash and the `rm -f doomed.txt`), and the body names only the
+     title, so the observed row cannot be attributed to either from the body alone. The `rm` is
+     genuinely destructive and labelled correctly. Left as recorded rather than rewritten: `O7` is
+     an observation, and re-attributing it needs an owner-gated live drive.
+  **What the fix does** (one commit): the declared kind is correlated onto the permission event by
+  `toolCallId` (`acp/translate.py`, a `tool_call_kinds` cache alongside the existing
+  `tool_call_inputs` one, owned per-turn by `AcpSession`); the permission decoder's inline-input
+  fallback now reads `rawInput` as well as `input`/`params`; the input cache is read rather than
+  popped; and `task_modes.py` gains **one** tri-state vocabulary, `classify_invocation` →
+  `READ_ONLY`/`MUTATING`/`UNCLASSIFIED`, which `_is_read_only_tool`, `task_mode_denies` and
+  `resolve_effective_risk` all derive from. `UNCLASSIFIED` fails **closed at the gate** (an
+  unreadable command does not run under ask/plan/build) and **honest at the label** (`caution` —
+  never `safe`, so a card still appears; never `destructive`, which asserted what nobody measured).
+  The kind is still **not** fed to `task_mode_denies` — §2.2's recorded choice, now pinned by a
+  structural test.
 - **`G11` A CLI-side denial is invisible to the audit trail** (`O21`) — `git push --dry-run` was
   denied by the CLI's own deny list; no `approval` frame reached the host and
   `security_events.jsonl` has zero rows for it. The host's SEL therefore under-reports what the
@@ -2398,3 +2440,118 @@ xfail-ed. Wants its own session with a deterministic ordering harness.
   `test_acp_session_provider.py`'s `_FakeConn` now DECLARE the command capability their real
   counterparts would have captured — a fake that stayed silent would have been testing the refusal
   path while claiming to test the command turn.
+
+- 2026-08-21 — `AAP-8` **`G10` DONE (code-only; no CLI drive, no authenticated session).** Effective
+  risk was mis-calibrated in both directions, and the two directions turned out to have **different
+  causes** — the inventory bullet had folded them into one. Corrected in place above (three claims,
+  each with the row it misread); the observation rows themselves are untouched.
+  **Direction 1, over-labelling.** `resolve_effective_risk` returned the LITERAL `"destructive"`
+  whenever `tool_kind` was `execute`/`command` and no command text was available. ACP agents open a
+  tool call with `rawInput: {}` + `status: pending` and supply the input in a later
+  `tool_call_update` — `extract_tool_update_events`' own docstring states this — and the SEL
+  `invoked` row is written from the OPENING frame (`chat_runner.py:2649`). So a read-only `pwd; ls`
+  was audited `destructive` from the *absence* of its command. Absence now has its own value and
+  floors at `caution`.
+  **Direction 1b, the empty kind (`O5`).** A wire-declared `kind: "read"|"search"|"fetch"` reached
+  the permission path as `""` and floored at `caution`; trust-reads auto-approves only `safe`, so a
+  plain **Read**/**Search**/**Fetch** raised a card forever even with trust-reads on. Measured
+  before/after, kind carried vs not: `caution` → `safe`. This — not "name/kind-based and coarse" —
+  is the mechanism behind the `trust_reads` row's PARTIAL verdict. That row is left as-is: flipping
+  it needs an owner-gated live drive.
+  **Direction 2, over-denying (`O13`).** ACP types the permission frame's `toolCall` as a
+  `ToolCallUpdate`, whose input field is named `rawInput` — the same key `extract_tool_event` reads.
+  `build_permission_event` read only `input`/`params`, so a frame carrying the command **inline**
+  reached the task-mode gate with an empty input and the gate fell back to the display name; a title
+  of the `Running: …` form (the shape `chat_runner.py:2663` strips) trips the `run` mutating hint, so
+  a read-only `ls` was refused in the mode that exists to let you look around.
+  **Correlation key: `toolCallId`** — the only identifier the two frames share, and the same key
+  `tool_call_inputs` already used. New per-turn `tool_call_kinds` cache, written by
+  `extract_tool_event` and by `extract_tool_update_events` when an update declares a kind, read
+  (never popped) by `build_permission_event` as a **fallback only** — the frame's own declaration
+  always wins, so codex's real `kind` is never overwritten. Owned and cleared per turn by
+  `AcpSession` next to the inputs cache. The input cache is now read rather than popped: a popped
+  cache made a second permission request for one call look like a tool whose command the host cannot
+  see, reaching the fabricating state with no adapter misbehaving.
+  **ONE risk vocabulary.** `task_modes.classify_invocation` → `READ_ONLY`/`MUTATING`/`UNCLASSIFIED`
+  is the single classifier; `_is_read_only_tool` is now a projection of it, and `task_mode_denies`
+  and `resolve_effective_risk` both derive from it. No second vocabulary was minted and
+  `AUDIT_OUTCOME_FAMILIES` was not widened (no new SEL outcome; `metadata.risk` keeps its three
+  existing values). **Polarity, stated because the two consumers want opposite things:**
+  `UNCLASSIFIED` fails **closed** at the gate (still denied in ask/plan/build — honest labelling is
+  not permission) and **honest** at the label (`caution`: never `safe`, so trust-reads cannot
+  auto-approve a command nobody read; never `destructive`, which asserted an unmeasured fact).
+  §2.2's recorded choice — the declared kind informs the label, never the gate, so a CLI that calls
+  its own mutation "read" cannot turn a deny-by-default into an allow — is **preserved and now
+  pinned** by a structural test on the `task_mode_denies` call site.
+  **`adapter.py` DOES map `tool_kind`** (`acp/adapter.py:21`), so unlike `#1877`'s `tool_meta` this
+  fix has one link, not two, and needs nothing from that branch. Asserted through the real
+  `acp_event_to_agent_event` anyway: every new test starts at a JSON-RPC frame and ends at the risk
+  verdict or the gate answer, never at the layer that authors the kind.
+  **FALSIFIED, four live-line mutations (each re-read after applying and its enclosing function
+  confirmed by AST probe; restored from a `cp` backup, never `git checkout`):**
+  · **M1** drop the correlation read in `build_permission_event` → 3 red, and the load-bearing one
+  reds on the VERDICT, not on an empty field: `test_a_declared_read_kind_reaches_the_risk_decision`
+  → `assert 'caution' == 'safe'`.
+  · **M2** revert the `UNCLASSIFIED` branch to `return declared_str or "destructive"` → 2 red,
+  `test_pending_shell_frame_is_not_audited_as_destructive` → *"absence of a command is not evidence
+  of destruction"*, `assert 'destructive' != 'destructive'`.
+  · **M3** drop the `rawInput` fallback → 1 red, on the DENIAL:
+  `test_command_carried_inline_on_the_permission_frame` → *"a read-only ls RUNS in ask mode"*,
+  `assert 'Ask mode — o…make changes)' == ''`.
+  · **M4** make `UNCLASSIFIED` resolve `READ_ONLY` (unknown → permissive) → 3 red, including
+  `test_unclassified_is_denied_by_the_task_mode_gate` → `assert '' != ''`.
+  **BLIND SPOT MEASURED: not one pre-existing test noticed any of the four.** 516 / 345 / 266 / 266
+  green respectively across acp translate·session·client·permission-authority·turn-scenarios·
+  unattended, task-modes, tool-risk, chat-plan-mode, dashboard-approval, approval-threading,
+  chat-craft-sel-audit, sel and security. The old suite's blind spot is exactly the one `#1877`
+  found: it asserted the decoder's output and drove the consumer over hand-built objects, so a
+  field that never reached the consumer read as fine.
+  **Not done, named rather than hidden.** (a) The SEL `invoked` row is still written from the opening
+  `tool_call` frame, so a shell call whose input arrives in the following `tool_call_update` is
+  audited `caution` and never re-scored once the command lands — honest now, but less precise than
+  the card beside it. Re-scoring means either deferring the row (losing the "every executed tool is
+  audited" guarantee) or emitting a second row (a new outcome word, and `sel.py`'s
+  `AUDIT_OUTCOME_FAMILIES` is a closed vocabulary owned by `test_audit_outcome_families.py`) — a
+  separate change, not a silent widening. (b) `O7`'s notification could not be attributed to a
+  specific card from the recorded body; see the corrected bullet.
+  **Gates.** `make lint` clean; targeted pytest **598 green** over the new suite plus acp
+  translate·session·permission-authority·unattended·turn-scenarios·agent-event-mapping·client·types,
+  task-modes, tool-risk, chat-plan-mode, audit-outcome-families, sel, security, dashboard-approval,
+  approval-threading, approval-timeout-policy, chat-craft-sel-audit, inert-surface-baseline and
+  structural-baseline; `make test` full suite; `gate_report.py` **6/6**; flat wire-error census
+  **1507/1507** (this change adds no error path). **No matrix cell flipped to CONFIRMED and
+  `dag.json` untouched** — a live drive is owner-gated.
+
+- **2026-08-22 — `G18` closed on the same seam, and the correlation now carries BOTH halves.**
+  `G10` above correlated the declared `kind` onto the permission frame; the title was left at
+  `tool_call.get("title", "unknown")`, which is `G18` — codex's `session/request_permission` payload
+  is `{toolCallId, kind, status}` and the human title lives one frame earlier, so every codex
+  approval card and every SEL decision row read `tool: "unknown"` **while the real name sat in the
+  cache one lookup away**. The parity doc had already localised it exactly ("the same function
+  already correlates the input across those two frames, so the title is one cache lookup away").
+  **Rather than thread a third sibling dict**, `tool_call_kinds` became `tool_call_seen:
+  dict[str, SeenToolCall]` carrying `kind` + `title` — the signature arity of all three decoders is
+  UNCHANGED (so the existing positional `{}` call sites still hold), and the per-turn cache count
+  stays at two instead of three. A `tool_call_update` refines the two fields **independently**
+  (`dataclasses.replace`): an update that names the tool but omits the kind must not erase the kind
+  the opening frame declared, and vice versa.
+  **A second defect the fix exposed:** `.get("title", "unknown")` only treated a MISSING key as
+  absent, so a frame sending `title: ""` shipped a nameless card even when the correlation held the
+  real name. Both a missing key and an empty string are now the same fact.
+  **The vacuity floor is deliberate and asserted:** an uncorrelated `toolCallId` still resolves to
+  `unknown` rather than borrowing another call's name — a guessed name is worse than a missing one,
+  and `test_a_title_is_never_invented_when_no_frame_named_the_tool` pins it.
+  **Falsifications** (AST-confirmed inside `build_permission_event`, restored from a file copy):
+  · **M1** title fill removed (`if False and seen is not None`) → **3 of the 5 new tests red**
+  (the titleless frame, the empty title, and the update-refinement); the other two do not depend on
+  the fill and correctly stayed green. · **M2** the old `.get("title", "unknown")` restored →
+  **2 red**. **Blind spot measured:** under M1 the pre-existing ACP suites
+  (permission-authority · effective-risk-correlation · unattended-and-loop-breaker) were
+  **90 passed, 0 failed** — nothing existing caught this, which is what the new tests close. The new
+  tests drive the real two-frame sequence rather than seeding `tool_call_seen` by hand, because a
+  test that builds the correlation itself cannot catch a producer that stops filling it.
+  **Doc truth moved with the fix:** `docs/agents/acp-parity.md`'s codex row is struck from
+  "Protocol or CLI constraint" and a compensation row added, with the "five mechanisms" count
+  re-derived to six. Both are marked **not re-driven** — the fix is unit-proven, so the doc states a
+  landed mechanism, not a measured cell. `G18`'s inventory bullet is the record; no matrix cell
+  flipped and `dag.json` is untouched.

@@ -145,6 +145,10 @@ VALID_TASK_MODES: tuple[str, ...] = ("agent", "ask", "plan", "build")
 # kinds always pass.
 _MUTATING_TOOL_KINDS = {"edit", "delete", "move"}
 _READONLY_TOOL_KINDS = {"read", "fetch", "search", "think"}
+# Kinds that mean "this call runs a shell command". Neither mutating nor read-only by
+# itself: the command TEXT decides, so a call of this kind with no readable command is
+# UNCLASSIFIED, not safe and not destructive (see :func:`classify_invocation`).
+_COMMAND_TOOL_KINDS = {"command", "execute"}
 
 # Name fragments that signal a mutating/effectful tool when the kind is ambiguous.
 # ``generate`` covers media producers (image_generate, future audio/video_generate):
@@ -207,20 +211,67 @@ _READ_VERB_HINTS = (
 )
 
 
-def _is_read_only_tool(title: str, tool_kind: str, tool_input: object) -> bool:
-    """Classify a tool call as read-only (no side effects) or not."""
+# ── The one invocation vocabulary ──
+#
+# Three answers, not two. Everything that asks "what kind of thing is this call"
+# — the task-mode gate, the effective-risk resolver, the approval card's chip and
+# the SEL row's ``risk`` — derives from :func:`classify_invocation`, so a shell
+# command is never classified one way for the gate and another for the label.
+#
+# UNCLASSIFIED is the third answer and it is the point: a shell/command tool whose
+# command TEXT never reached the host cannot be classified at all. ACP agents open a
+# tool call with ``rawInput: {}`` + ``status: pending`` and fill the input in a later
+# ``tool_call_update`` (see ``acp.translate.extract_tool_update_events``), so the host
+# routinely holds a ``kind: "execute"`` frame with no command. Before this existed, that
+# state resolved to the literal ``"destructive"`` — a verdict about the command, minted
+# from the command's ABSENCE, which is how a read-only ``pwd; ls`` was audited as
+# destructive (`G10`/`O10`). Absence now has its own value, and each consumer decides
+# what to do with it explicitly: the gate DENIES it (fails closed — an unreadable
+# command must not run under a read-only posture) while the label floors it at CAUTION
+# (fails honest — never ``safe``, so it still raises a card, and never ``destructive``,
+# which would assert something nobody measured).
+READ_ONLY = "read_only"
+MUTATING = "mutating"
+UNCLASSIFIED = "unclassified"
+
+
+def classify_invocation(title: str, tool_kind: str, tool_input: object) -> str:
+    """Classify ONE tool call → ``READ_ONLY`` | ``MUTATING`` | ``UNCLASSIFIED``.
+
+    The single source of truth for the read-only/mutating question. Resolution order,
+    most-evidence-first: a readable shell command is decided by
+    :func:`is_read_only_bash`; a shell-kind call with no readable command is
+    ``UNCLASSIFIED``; otherwise the declared ACP kind decides; otherwise the tool's
+    name. Deny-by-default at every step — only a positive read signal yields
+    ``READ_ONLY``.
+    """
     name = (title or "").lower()
     kind = (tool_kind or "").lower()
     cmd = extract_bash_command(tool_input) if tool_input else ""
-    # A bash/command tool is read-only iff is_read_only_bash says so.
-    if cmd or kind in ("command", "execute"):
-        return bool(cmd) and is_read_only_bash(cmd)
-    # Non-bash: read-only by ACP kind, or by name (no mutating verb hint).
+    # 1. A readable shell command: the text decides, not the kind or the name.
+    if cmd:
+        return READ_ONLY if is_read_only_bash(cmd) else MUTATING
+    # 2. A shell call whose command the host cannot see. Not read-only (nothing
+    #    positively says so) and not knowably mutating either.
+    if kind in _COMMAND_TOOL_KINDS:
+        return UNCLASSIFIED
+    # 3. Non-shell: the declared ACP kind.
     if kind in _MUTATING_TOOL_KINDS:
-        return False
+        return MUTATING
     if kind in _READONLY_TOOL_KINDS:
-        return True
-    return not any(h in name for h in _MUTATING_NAME_HINTS)
+        return READ_ONLY
+    # 4. Nothing declared: the tool's name.
+    return MUTATING if any(h in name for h in _MUTATING_NAME_HINTS) else READ_ONLY
+
+
+def _is_read_only_tool(title: str, tool_kind: str, tool_input: object) -> bool:
+    """Classify a tool call as read-only (no side effects) or not.
+
+    Thin projection of :func:`classify_invocation` onto a bool: ONLY a positive
+    ``READ_ONLY`` passes, so ``UNCLASSIFIED`` reads as not-read-only here and the
+    task-mode gate keeps failing closed on a command it cannot see.
+    """
+    return classify_invocation(title, tool_kind, tool_input) == READ_ONLY
 
 
 # ── Effective risk resolver (tool risk taxonomy) ──
@@ -263,8 +314,21 @@ def resolve_effective_risk(
     #    old read-only-bash trust-reads path.
     cmd = extract_bash_command(tool_input) if tool_input else ""
     kind = (tool_kind or "").lower()
-    if cmd or kind in ("command", "execute"):
-        return "safe" if (cmd and is_read_only_bash(cmd)) else (declared_str or "destructive")
+    verdict = classify_invocation(title, tool_kind, tool_input)
+    if cmd:
+        return "safe" if verdict == READ_ONLY else (declared_str or "destructive")
+
+    # 1b. A shell/command call whose command text the host never received
+    #     (UNCLASSIFIED). There is nothing here to classify, so a verdict about the
+    #     command would be fabricated. Honor a real declaration if the tool carries
+    #     one — that is a fact about the TOOL, not a guess about this call — and
+    #     otherwise floor at CAUTION: never `safe` (trust-reads must not auto-approve
+    #     a command nobody read, so the user still sees a card) and never the old
+    #     literal `destructive` (which audited a read-only `pwd; ls` as destructive —
+    #     `G10`/`O10` — because the absence of the command, not the command, was what
+    #     got measured).
+    if verdict == UNCLASSIFIED:
+        return declared_str if declared_str in _RISK_ORDER else "caution"
 
     # 2. Honor a declared risk (native tools set this per tool).
     if declared_str in _RISK_ORDER:
