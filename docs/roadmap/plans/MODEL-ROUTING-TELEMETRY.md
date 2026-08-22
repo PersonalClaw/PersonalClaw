@@ -892,3 +892,52 @@ shim; `IntrospectPanel` and its test import from the new home.
 and drifted (`filesScanned` 527 → 540, plus a new `pages/settings/ProjectionRulesPanel.tsx` row)
 from atoms that landed without a regen. `driftHits` (8) and `filesWithDrift` (7) are unchanged and
 this change's two new `web/` files add no drift, so the artifact was discarded rather than committed.
+
+## Execution log — MRT-3 status reconciliation (2026-08-22)
+
+**DONE — `MRT-3` flips `todo` → `done`.** No code changed. Session 5 above already concluded *"the
+last unmet clause is CLOSED; MRT-3's `done_when` is now satisfied end to end"*, but the atom was
+never flipped in `docs/roadmap/atomic/MRT.md` or `dag.json`, so the roadmap kept reporting a shipped
+capability as unstarted. This session verified the whole contract against `origin/main` (`05bba66e`)
+rather than trusting that claim, clause by clause:
+
+| clause | as-built evidence on `origin/main` |
+|---|---|
+| fold `usage_stats.json`, per-day `date→provider:model→purpose`, 5-purpose vocab | `routing/usage.py:92` `PURPOSES = ("interactive","background","loop","eval","app")`; `_USAGE_FILE = "usage_stats.json"`; `fold_turn_row`, `purpose_for_source`, `reachable_purposes` |
+| matches a hand-computed fixture over **50** audit lines, reproducible after delete | `tests/test_routing_usage.py::test_fold_matches_hand_computed_fixture` asserts `len(_fixture_turns()) == 50` (20+12+10+5+3) against hand-computed cells, via `U.rebuild` |
+| `GET /api/usage?window=&group=` → `rows` + `total` + `estimated_share` | `dashboard/handlers/usage.py:118` registers `/api/usage`; the handler validates `window ∈ WINDOW_DAYS` / `group ∈ GROUPS` and returns `{rows, total, estimated_share, series, unmapped}` — the clause's exact spelling, not the `/rollup` variant |
+| Usage section on Settings→Models, daily/weekly charts | `web/src/pages/settings/UsagePanel.tsx` (417 lines) |
+| run/loop detail shows `~$X this run` | `LoopCockpitPage.tsx:543` renders `<MetaPill … text={loopSpendPill(spend)} title={loopSpendTitle(spend)} />` off `api_loop_get`'s `spend` (`loop_routes.py:388`) |
+| `usage_recap(month)` verbatim-predictable + one digest notification honoring quiet hours/mute via the rules engine + system cron | `action_providers/usage_recap_provider.py` (deterministic, no model call; `system/usage_recap` defaults to `digest`; monthly cron with `reconcile_usage_recap_cron` re-arm; quiet-hours suppression) |
+
+**The `run_totals` deviation stands as session 5 recorded it** and is not re-litigated here: the loop
+money line is a prefix-scoped read of the turn ledger, because `run_totals` sums `step_completed`
+which `loop/journal.py::cycle()` never writes, so it returns `0.0` over a loop store. Copying turn
+dollars into the loop ledger would put one dollar in two records, feed a minted figure to
+`learning/mining`, and still undercount the tail. Recorded as a DEVIATION on the mechanism, with the
+clause's user-visible promise (`~$X this run` on the loop detail) met.
+
+**Verified by execution, not by reading.** `tests/test_routing_usage.py`, `test_usage_routes.py`,
+`test_usage_recap_delivery.py`, `test_loop_spend.py`, `test_usage_reachable_purposes.py`,
+`test_usage_ledger.py` → **115 passed** (each path confirmed to exist first, since a mistyped path
+yields "no tests ran" — an unrun leg, not a pass).
+
+**Falsification — three mutations, to prove the suite covers the CLAUSES rather than passing
+vacuously.** Each applied to the live line, confirmed applied by grep, restored from a `/tmp/*.bak`
+copy (never `git checkout --`):
+
+1. **Prefix match reduced to equality only** (`key == session_prefix`, dropping the separator-extend
+   branch) → 7 red, including `assert 0.25 == 1.25` — *exactly* the 80% fan-out understatement
+   session 5 predicted, reproduced as arithmetic rather than argued.
+2. **Prefix match widened to a bare `startswith`** → 4 red with `assert 12.0 == 3.0` and
+   `6.0 == 1.0`, the over-count direction. Both directions matter: an over-correction that demanded
+   the separator even for the key itself would report `$0.00` for the main worker.
+3. **Dropped `loop` from `PURPOSES`** → 3 red across `test_routing_usage.py` and
+   `test_usage_reachable_purposes.py`, pinning the 5-value vocab the fold clause names.
+
+**🪤 A falsification that does not apply is not a falsification.** The first attempt at (1) targeted
+a single-line `return key == prefix or key.startswith(prefix + "-")` that does not exist — the real
+guard is a multi-line negated condition using `_SESSION_KEY_SEP`. The mutation silently applied to
+nothing and the suite stayed green at 15/15, which would have been reported as "the mutation was
+absorbed" if the applied-count check had not printed `0`. Grep the mutated form and assert the count
+before trusting any red *or* green. See [[a-mutation-that-lands-can-still-be-off-the-property-path]].
