@@ -99,10 +99,22 @@ export const ACTIVE_LOOP_STATUSES: ReadonlySet<string> = new Set([
   'running', 'paused', 'stagnant', 'blocked', 'needs_input',
 ])
 
+/** What `stop` may be called FROM — ACTIVE plus the two pre-launch states that otherwise had no
+ *  action at all. Mirrors the backend `loop.loop:STOPPABLE_STATUSES`, and is a separate set rather
+ *  than a widened ACTIVE_LOOP_STATUSES because that one also drives the "active loop" filters and
+ *  badge counts, where a loop still in intake is not yet active. */
+export const STOPPABLE_LOOP_STATUSES: ReadonlySet<string> = new Set([
+  ...ACTIVE_LOOP_STATUSES, 'intake', 'planning',
+])
+
 /** The pre-launch statuses whose spec is still editable — no worker has run yet. Mirrors the
  *  backend `loop.loop:PRELAUNCH_STATUSES` (railed alongside the active set). A list filter that
- *  means "work I am shepherding" is ACTIVE ∪ PRELAUNCH; a lifecycle affordance is not — the
- *  backend refuses `stop` on a pre-launch loop with a 409. */
+ *  means "work I am shepherding" is ACTIVE ∪ PRELAUNCH; a lifecycle affordance is not — this set
+ *  is about spec-editability, not about what may be acted on. Since `PP-16` the backend accepts
+ *  `stop` from `intake` and `planning` (see STOPPABLE_LOOP_STATUSES); `review` and `ready` are the
+ *  two pre-launch states it still refuses it from, and they need no exit because `start` is
+ *  available there. This comment previously said the backend refuses `stop` on any pre-launch
+ *  loop — true when written, and it is what made the actionless-loop gap read as intentional. */
 export const PRELAUNCH_LOOP_STATUSES: ReadonlySet<string> = new Set([
   'intake', 'planning', 'review', 'ready',
 ])
@@ -130,12 +142,19 @@ export type LoopAction = 'start' | 'pause' | 'resume' | 'stop'
  *  Resume on a cockpit and nothing in the list. `start` drifted the same way: one cockpit
  *  offered `ready` alone while the backend also accepts `review`.
  *
- *  `stop` is ACTIVE_LOOP_STATUSES BY REFERENCE, never a second copy of those strings — the
- *  backend's own `stop` row is literally `ACTIVE_STATUSES`. The rail asserts this row stays a
- *  reference, so the two cannot drift apart even by one careless edit. */
+ *  `stop` is STOPPABLE_LOOP_STATUSES BY REFERENCE, never a second copy of those strings — the
+ *  backend's own `stop` row is literally `STOPPABLE_STATUSES`. The rail asserts this row stays a
+ *  reference, so the two cannot drift apart even by one careless edit.
+ *
+ *  That row was ACTIVE_LOOP_STATUSES until `PP-16` found the gap it left: the union of all four
+ *  rows omitted `intake` and `planning`, so a loop whose classifier or planner died offered NO
+ *  action anywhere and Delete was its only exit — discarding the record rather than terminating
+ *  it. `stop` is the right home (`stopped` is terminal and needs no worker), and it is a distinct
+ *  exported set rather than a widened ACTIVE_LOOP_STATUSES because that set also drives the
+ *  "active loop" filters and badge counts, where a loop still in intake is not yet active. */
 export const LOOP_ACTION_SOURCE_STATUSES: Readonly<Record<LoopAction, ReadonlySet<string>>> = {
   start: new Set(['ready', 'review']),
   pause: new Set(['running']),
   resume: new Set(['paused', 'stagnant', 'blocked', 'needs_input', 'failed']),
-  stop: ACTIVE_LOOP_STATUSES,
+  stop: STOPPABLE_LOOP_STATUSES,
 }

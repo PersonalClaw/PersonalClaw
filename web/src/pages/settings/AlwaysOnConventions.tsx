@@ -124,7 +124,7 @@ export function AlwaysOnConventions() {
             value={projectId}
             onChange={(e) => setProjectId(e.target.value)}
             aria-label="Show project instructions for"
-            className="rounded-md bg-surface-high px-2 py-1.5 text-on-surface text-[0.8125rem] outline-none"
+            className="rounded-md bg-surface-high px-2 py-1.5 text-on-surface text-[0.8125rem] outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50"
           >
             <option value="">Choose a project…</option>
             {projects.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
@@ -158,7 +158,7 @@ export function AlwaysOnConventions() {
                           onChange={(e) => setDraft(e.target.value)}
                           rows={10}
                           spellCheck={false}
-                          className="w-full rounded-md bg-surface-high px-3 py-2 font-mono text-on-surface text-[0.8125rem] outline-none"
+                          className="w-full rounded-md bg-surface-high px-3 py-2 font-mono text-on-surface text-[0.8125rem] outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50"
                         />
                         <div className="mt-2 flex items-center gap-2">
                           <Button size="sm" loading={saving} disabled={saving} onClick={() => save(item)}>

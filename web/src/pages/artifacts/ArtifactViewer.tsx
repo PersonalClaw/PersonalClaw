@@ -351,7 +351,7 @@ export function ArtifactViewer({ slug, onChanged, onDeleted, onOpenSourceFile, c
               ) : (
               <select value={selVersion ?? 'current'} onChange={(e) => setSelVersion(e.target.value === 'current' ? null : Number(e.target.value))}
                 aria-label="Version"
-                className="mt-1.5 h-8 w-full rounded-md bg-surface-high px-2 text-[0.8125rem] text-on-surface outline-none">
+                className="mt-1.5 h-8 w-full rounded-md bg-surface-high px-2 text-[0.8125rem] text-on-surface outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50">
                 <option value="current">Current · v{art.version}</option>
                 {versions.slice().reverse().filter((v) => v !== art.version).map((v) => <option key={v} value={v}>v{v}</option>)}
               </select>

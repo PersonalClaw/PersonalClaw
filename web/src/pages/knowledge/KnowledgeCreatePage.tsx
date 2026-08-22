@@ -152,7 +152,7 @@ function CreateForm({ type, onBack, onClose, onCreated }: { type: KnowledgeType;
           {/* Bookmark → its URL is the PRIMARY field (required; the page is scraped on
               save), so it leads — above the optional title — and gets autofocus. */}
           {kind === 'bookmark' && (
-            <div className="shrink-0 flex items-center gap-s rounded-md bg-surface-container px-m h-10">
+            <div className="shrink-0 flex items-center gap-s rounded-md bg-surface-container px-m h-10 focus-within:ring-2 focus-within:ring-inset focus-within:ring-primary/50">
               <Link2 size={15} className="text-on-surface-low shrink-0" />
               <input value={url} onChange={(e) => setUrl(e.target.value)} placeholder="https://…" autoFocus aria-label="Bookmark URL" className="flex-1 bg-transparent text-on-surface text-[0.9375rem] outline-none placeholder:text-on-surface-low" />
             </div>
@@ -189,7 +189,7 @@ function CreateForm({ type, onBack, onClose, onCreated }: { type: KnowledgeType;
             </div>
           )}
           {kind === 'text' && (
-            <div className="min-h-0 flex-1 overflow-hidden rounded-lg border border-outline-variant/40 bg-surface-container">
+            <div className="min-h-0 flex-1 overflow-hidden rounded-lg border border-outline-variant/40 bg-surface-container focus-within:ring-2 focus-within:ring-inset focus-within:ring-primary/50">
               {/* Focus the body when there's no title field (fleeting/journal) — it's the
                   primary input, so the cursor should land here rather than nowhere. */}
               <textarea value={content} onChange={(e) => setContent(e.target.value)} placeholder="Markdown supported…" autoFocus={!titleEditable} aria-label="Note content"

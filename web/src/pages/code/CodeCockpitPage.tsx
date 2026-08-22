@@ -2015,7 +2015,7 @@ function TaskDetailView({ project, task, doneIds, stageOpen, knownIds, findings,
                 {lastSteer.failed && <span className="ml-1.5 text-[0.75rem] text-danger">· failed to send</span>}
               </div>
             )}
-            <div className="flex items-end gap-1.5 rounded-xl bg-surface-container px-2.5 py-1.5">
+            <div className="flex items-end gap-1.5 rounded-xl bg-surface-container px-2.5 py-1.5 focus-within:ring-2 focus-within:ring-inset focus-within:ring-primary/50">
               <textarea ref={steerRef} value={text} onChange={(e) => setText(e.target.value)} rows={1}
                 placeholder={project.status === 'needs_input' ? 'Answer for this task…' : `Steer “${task.title.slice(0, 24)}${task.title.length > 24 ? '…' : ''}”…`}
                 onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); steer() } }}
@@ -3327,7 +3327,7 @@ function ProjectFooter({ project, gateFail, stalled, onNudged, onStartNew }: { p
       {/* steer box — only while the worker can ACT on it. */}
       <div className="p-2">
         {STEERABLE.has(project.status) ? (
-          <div className="flex items-end gap-1.5 rounded-xl bg-surface-container px-2.5 py-1.5">
+          <div className="flex items-end gap-1.5 rounded-xl bg-surface-container px-2.5 py-1.5 focus-within:ring-2 focus-within:ring-inset focus-within:ring-primary/50">
             <textarea ref={steerRef} value={text} onChange={(e) => setText(e.target.value)} rows={1}
               placeholder={project.status === 'needs_input' ? 'Answer the worker…' : 'Steer the worker…'}
               onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); steer() } }}

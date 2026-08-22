@@ -169,6 +169,21 @@ class SessionMap:
                 return None
             return sid
         if sid:
+            # The sibling branch above logs when it prunes; this one did not, and it is
+            # the branch that actually fires: nothing in core writes
+            # ``sessions/<sid>.json`` — the adapter writes it only when the provider was
+            # built with ``session_files_dir``, an opt-in the bundle has to pass. So a
+            # resume read as "no mapping" AND took the entry with it, leaving the next
+            # ``set()`` to mint a fresh sid over the top. From the outside that is
+            # indistinguishable from never having had a mapping at all, which is exactly
+            # why "resume_sid=None" was unexplainable from the logs (G5/O16).
+            logger.info(
+                "Session %s has no session file in %s — pruning stale entry for %s "
+                "(no session/load will be attempted)",
+                sid,
+                sessions_dir,
+                key,
+            )
             self._remove_entry(matched_key)
         return None
 

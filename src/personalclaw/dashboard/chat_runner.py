@@ -226,11 +226,14 @@ def _maybe_after_turn_review(
 
         record_denial(decision)
         return
-    # Procedural memory (M5d): drain this turn's tool outcomes (native runtime
-    # only — ACP providers don't accumulate them) into how-to-work priors. The
-    # provider is the ModelProvider returned by get_or_create (threaded in by the
-    # caller) — the dashboard session has no `.provider` attribute, so reading it
-    # off the session silently no-oped this whole class.
+    # Procedural memory (M5d): drain this turn's tool outcomes into how-to-work priors.
+    # BOTH runtimes accumulate them now — the native ReAct loop from inside its own
+    # dispatch, and the ACP providers from the translated event stream (`G7`, see
+    # acp/outcomes.py). Before that, `getattr` missed on every ACP provider and a
+    # six-tool-call ACP turn produced zero procedural rows. The provider is the
+    # ModelProvider returned by get_or_create (threaded in by the caller) — the
+    # dashboard session has no `.provider` attribute, so reading it off the session
+    # silently no-oped this whole class.
     #
     # Drained ONCE and shared: `drain_tool_outcomes` clears the accumulator, so a second reader
     # would see an empty list. Procedural memory and the self-model observer both need this turn's
@@ -1797,6 +1800,29 @@ async def _run_chat(
             provider_kind = _acp_provider
             provider_agent = getattr(session, "acp_provider_agent", "") or ""
 
+        # G5 honesty rail. ``_acp_meta_binding`` is what this session's persisted meta
+        # line asked its runtime to be, recorded on restore whether or not the binding
+        # was honoured. If the turn is NOT resolving on that axis, SAY SO: the harm in a
+        # lost ACP binding is never the binding itself, it is a turn that runs with a
+        # different tool set and different confinement while looking completely normal.
+        # One-shot — consumed here so a restored session says it once, not every turn.
+        _meta_binding = getattr(session, "_acp_meta_binding", "") or ""
+        if _meta_binding:
+            session._acp_meta_binding = ""
+            if not provider_kind.startswith("acp"):
+                state.broadcast_ws(
+                    "activity_event",
+                    {
+                        "session": session.key,
+                        "kind": "session",
+                        "text": (
+                            f"Could not restore this session's {_meta_binding} runtime — "
+                            "running on the built-in agent instead, which has different "
+                            "tools and different confinement"
+                        ),
+                    },
+                )
+
         # Per-session ACP permission-mode override (e.g. an unattended goal loop
         # worker sets bypassPermissions so an ACP agent freely executes file
         # writes instead of avoiding them in the default "prompts for writes"
@@ -1910,24 +1936,36 @@ async def _run_chat(
         # running its own tools. Derive from the live provider: NativeAgentRuntime
         # reports provider_id "native"; ACP reports "acp:<cli>".
         _runtime_label = getattr(client, "provider_id", "") or provider_kind or "native"
-        if resumed:
-            state.broadcast_ws(
-                "activity_event",
-                {
-                    "session": session.key,
-                    "kind": "session",
-                    "text": f"Session resumed · {agent_label} · {model_label} · via {_runtime_label}",  # noqa: E501
-                },
-            )
+        # WHICH of three things actually happened this turn. ``get_or_create``
+        # returns a pair of flags that distinguishes them, and the sentence must
+        # not collapse them:
+        #   is_new and resumed     → a runner was started and LOADED a persisted
+        #                            session (ACP session/load) → "resumed"
+        #   is_new and not resumed → a runner was started with a fresh
+        #                            conversation → "created"
+        #   not is_new             → the SAME live in-process session served this
+        #                            turn; nothing was created or loaded →
+        #                            "continued"
+        # ``resumed`` alone was the gate, and the reuse path returns
+        # ``resumed=False`` unconditionally (``session.py`` "return provider,
+        # was_new, False"), so every turn of a long-lived session claimed "Session
+        # created". Gating on ``is_new`` alone inverts the same lie — a reused
+        # session would read "resumed". So: ``is_new`` says whether a runner was
+        # started at all, ``resumed`` picks the verb when one was.
+        if not is_new:
+            _session_verb = "continued"
+        elif resumed:
+            _session_verb = "resumed"
         else:
-            state.broadcast_ws(
-                "activity_event",
-                {
-                    "session": session.key,
-                    "kind": "session",
-                    "text": f"Session created · {agent_label} · {model_label} · via {_runtime_label}",  # noqa: E501
-                },
-            )
+            _session_verb = "created"
+        state.broadcast_ws(
+            "activity_event",
+            {
+                "session": session.key,
+                "kind": "session",
+                "text": f"Session {_session_verb} · {agent_label} · {model_label} · via {_runtime_label}",  # noqa: E501
+            },
+        )
 
         # Seed this session's trust from the bound agent's persistent approval floor
         # ("Always allow for this agent" = AgentProfile.approval_mode "auto"). This is

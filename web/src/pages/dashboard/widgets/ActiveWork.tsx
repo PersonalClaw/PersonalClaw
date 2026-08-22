@@ -116,7 +116,7 @@ function ActiveRow({ loop, navigate }: { loop: Loop; navigate: RouteProps['navig
                 placeholder={loop.status === 'needs_input' ? 'Answer…' : 'Nudge the loop…'}
                 aria-label={loop.status === 'needs_input' ? 'Answer the loop' : 'Nudge the loop'}
                 rows={2}
-                className="min-h-0 flex-1 resize-none rounded-md bg-surface px-m py-s text-on-surface outline-none placeholder:text-on-surface-low"
+                className="min-h-0 flex-1 resize-none rounded-md bg-surface px-m py-s text-on-surface outline-none placeholder:text-on-surface-low focus:ring-2 focus:ring-inset focus:ring-primary/50"
                 data-type="body-m"
               />
               <RowAction tone="primary" onClick={send} title="Send (⌘↵)">{busy ? '…' : <><Send size={14} /> Send</>}</RowAction>

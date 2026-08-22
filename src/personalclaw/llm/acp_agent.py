@@ -23,6 +23,7 @@ from typing import TYPE_CHECKING, Any
 
 from personalclaw.acp.client import AcpClient
 from personalclaw.acp.errors import AcpError
+from personalclaw.acp.outcomes import AcpToolOutcomesMixin
 from personalclaw.acp.types import STOP_REASON_CANCELLED, STOP_REASON_END_TURN
 from personalclaw.agents.provider import AgentProvider
 from personalclaw.llm.base import (
@@ -50,7 +51,7 @@ logger = logging.getLogger(__name__)
 # activation). There is deliberately no fabricated default agent name.
 
 
-class AcpAgentProvider(ModelProvider, AgentProvider):
+class AcpAgentProvider(AcpToolOutcomesMixin, ModelProvider, AgentProvider):
     """Generic ACP-over-stdio agent runtime.
 
     Spawns the configured ``command`` as a subprocess, completes the open
@@ -70,7 +71,29 @@ class AcpAgentProvider(ModelProvider, AgentProvider):
 
     @property
     def provider_id(self) -> str:
-        """Runtime id: ``acp:<cli>`` keyed off the launch command basename."""
+        """Runtime id: the CONFIGURED ``acp:<cli>`` entry name; basename as fallback.
+
+        The configured entry name is the runtime the USER picked
+        (``acp:claude-code``). The launch-command basename is an inference that
+        names the *adapter* instead (``acp:claude-agent-acp``, or ``acp:npx``
+        under the npx fallback — see
+        :func:`personalclaw.acp_bundles._register.register_acp_cli_entry`, which
+        already notes that basename inference is untrustworthy), so it is only
+        the fallback for a provider constructed without a runtime id.
+
+        This is the same value :attr:`AcpSessionProvider.provider_id` returns and
+        the same entry-name-with-basename-fallback rule
+        :meth:`discover_agents` applies to ``options["runtime_id"]`` — one
+        runtime id, three call sites in agreement.
+
+        The ``acp:`` prefix is an invariant, not decoration: consumers split on
+        it (the not-gateable registry lookup in
+        ``dashboard/chat_runner.py``, ``agents.registry``'s family resolver), so
+        a configured name missing it is prefixed rather than passed through.
+        """
+        configured = self._runtime_id.strip()
+        if configured:
+            return configured if configured.startswith("acp:") else f"acp:{configured}"
         cli = Path(self._command[0]).name if self._command else "agent"
         return f"acp:{cli}"
 
@@ -418,10 +441,15 @@ class AcpAgentProvider(ModelProvider, AgentProvider):
         mode: str = "",
         reasoning_effort: str = "",
         unattended: bool = False,
+        runtime_id: str = "",
     ) -> None:
         if not command:
             raise ValueError("AcpAgentProvider requires a non-empty command list")
         self._command: list[str] = list(command)
+        # The CONFIGURED runtime id (the ``acp:<cli>`` ProviderEntry name) this
+        # provider was built for. Read by ``provider_id``; empty falls back to
+        # basename inference. See that property for why the configured value wins.
+        self._runtime_id: str = runtime_id or ""
         # Per-CLI ACP protocol dialect, selected by the bundle (the ``<cli>`` of
         # ``acp:<cli>``). Resolved to a strategy object the vendor-neutral client
         # delegates its handshake/permission divergences to. None → default
@@ -567,8 +595,13 @@ class AcpAgentProvider(ModelProvider, AgentProvider):
         return acp_event_to_agent_event(e)
 
     async def stream(self, message: str) -> AsyncIterator[LLMEvent]:
+        # Procedural-memory signal: a new turn starts with a clean accumulator,
+        # then every event is folded in. See acp/outcomes.py for why the reset is here.
+        self._outcome_accumulator.begin_turn()
         async for e in self._client.stream_events(message):
-            yield self._to_llm_event(e)
+            event = self._to_llm_event(e)
+            self._outcome_accumulator.observe(event)
+            yield event
 
     @property
     def supports_native_commands(self) -> bool:
@@ -577,8 +610,11 @@ class AcpAgentProvider(ModelProvider, AgentProvider):
         return bool(getattr(self._client, "supports_native_commands", False))
 
     async def stream_command(self, command: str) -> AsyncIterator[LLMEvent]:
+        self._outcome_accumulator.begin_turn()
         async for e in self._client.stream_command(command):
-            yield self._to_llm_event(e)
+            event = self._to_llm_event(e)
+            self._outcome_accumulator.observe(event)
+            yield event
 
     async def approve_tool(self, request_id: str | int) -> None:
         await self._client.approve_tool(request_id)
@@ -939,6 +975,12 @@ def _factory(
         mode=mode,
         reasoning_effort=reasoning_effort,
         unattended=unattended,
+        # The CONFIGURED runtime id, so ``provider_id`` names the runtime the user
+        # picked (``acp:claude-code``) instead of inferring it from the launch
+        # command's basename (``acp:claude-agent-acp``, or ``acp:npx`` under the npx
+        # fallback). GET /api/agent-providers already reports ``entry.name`` as the
+        # row's provider_id; this brings the built provider into agreement.
+        runtime_id=entry.name,
     )
 
 

@@ -138,7 +138,7 @@ export function Combobox({ options, value, onChange, placeholder = 'Select…', 
               <input ref={inputRef} value={q} onChange={(e) => { setQ(e.target.value); setActive(0) }} onKeyDown={onKey}
                 role="combobox" aria-expanded aria-controls={listId} aria-autocomplete="list"
                 aria-activedescendant={flat[active] ? optId(active) : undefined}
-                placeholder="Search…" className="w-full h-8 rounded-md bg-surface pl-8 pr-2 text-on-surface text-[0.8125rem] placeholder:text-on-surface-low outline-none" />
+                placeholder="Search…" className="w-full h-8 rounded-md bg-surface pl-8 pr-2 text-on-surface text-[0.8125rem] placeholder:text-on-surface-low outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50" />
             </div>
             {/* `role="listbox"` only while it HOLDS options: a container that claims the role and
                 contains one line of prose is the exact lie `popupItemRoles` was written about. When the

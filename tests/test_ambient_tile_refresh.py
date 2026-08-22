@@ -270,19 +270,36 @@ class TestTheLedgerRow:
 class TestTheTTLBoundary:
     @pytest.mark.asyncio
     async def test_a_refresh_is_refused_before_the_ttl_and_taken_after(self, home):
-        import time
-
         ref = _live_tile(ttl_secs=600)
         first = await tile_refresh.refresh_tile("overview", ref)
         assert first.refreshed is True
 
+        # Anchor the injected clock to the stamp `due()` actually subtracts, NOT to a live
+        # `time.time()` read taken after the refresh returned. Two separate errors used to
+        # ride that read, both in the same direction, against a ONE-second margin:
+        #   1. `time.time()` was evaluated AFTER `first` completed, so the offset was
+        #      `T_return + 599` while the code ages from the stamp written mid-call — the
+        #      elapsed it saw was `599 + (T_return - T_stamp)`, i.e. every millisecond the
+        #      first refresh took ate into the margin.
+        #   2. the ledger `ts` is whole-second (`%Y-%m-%dT%H:%M:%SZ`), so the parsed stamp is
+        #      TRUNCATED — up to another second of apparent age on top.
+        # Together those routinely reached 600s on a loaded xdist worker and turned the
+        # refusal this test exists to assert into a refresh (seen on PR #1610, whose diff
+        # contained zero .py files, and again on #1879).
+        #
+        # This is a TIGHTENING, not a widened margin: offsetting from the recorded stamp makes
+        # `age` exactly 599 and exactly 601, so each side of the boundary is now pinned to the
+        # second instead of drifting with how long the call before it took.
+        stamp = tile_refresh._epoch(str(tile_refresh.last_row("overview", ref).get("ts", "")))
+        assert stamp > 0, "no stamp to age from — the first refresh wrote no ledger row"
+
         # A second read seconds later must NOT re-fetch (a cadence, not a fetch-per-paint).
-        early = await tile_refresh.refresh_tile("overview", ref, now=time.time() + 599)
+        early = await tile_refresh.refresh_tile("overview", ref, now=stamp + 599)
         assert early.refreshed is False
         assert early.reason == "within_ttl"
 
         # One second past the boundary it fires.
-        late = await tile_refresh.refresh_tile("overview", ref, now=time.time() + 601)
+        late = await tile_refresh.refresh_tile("overview", ref, now=stamp + 601)
         assert late.refreshed is True, late.reason
 
     @pytest.mark.asyncio
@@ -308,6 +325,27 @@ class TestTheTTLBoundary:
         # No prior row ⇒ due, and the fallback is what a later comparison would use.
         assert tile_refresh.due("overview", tile, 0.0) == (True, 0.0)
         assert tile_refresh._default_ttl() == 1234
+
+    @pytest.mark.asyncio
+    async def test_the_boundary_itself_is_pinned_without_any_live_clock(self, home):
+        """`due()` is the scheduling decision, so assert it AT the boundary with a stamp read
+        back from the ledger and no live `time.time()` anywhere.
+
+        The end-to-end test above can only reach `due()` through a refresh, which is what let a
+        one-second timing margin hide in it. This one has no margin to have: every `now` is
+        computed from the recorded stamp, so 599/600/601 mean exactly that.
+        """
+        ref = _live_tile(ttl_secs=600)
+        assert (await tile_refresh.refresh_tile("overview", ref)).refreshed is True
+        tile = views_store.find_tile("overview", ref)
+        assert tile is not None
+        stamp = tile_refresh._epoch(str(tile_refresh.last_row("overview", ref).get("ts", "")))
+        assert stamp > 0, "no stamp to age from"
+
+        # `due` is `age >= ttl`, so 600 is INSIDE the fire half — the boundary is inclusive.
+        assert tile_refresh.due("overview", tile, stamp + 599) == (False, 599.0)
+        assert tile_refresh.due("overview", tile, stamp + 600) == (True, 600.0)
+        assert tile_refresh.due("overview", tile, stamp + 601) == (True, 601.0)
 
 
 # ── 5. a failed refresh keeps the last-good paint ────────────────────────────

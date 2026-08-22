@@ -209,6 +209,53 @@ def test_facet_capture_veto_routes_to_lesson(vs, svc):
     assert any("force-push" in v for v in vals)
 
 
+def test_facet_capture_does_not_learn_a_never_fragment_as_a_lesson(vs, svc):
+    """G16: "…in exactly one sentence from now on, never more." used to write the
+    durable lesson ``Never: never more`` — the word 'never' as a degree adverb read as
+    a prohibition. The assertion is on what reaches the STORE, not on a regex."""
+    atr.run_after_turn_review(
+        service=svc,
+        user_message="Answer in exactly one sentence from now on, never more.",
+        assistant_text="Understood.",
+        correction=False,
+    )
+    vals = [json.loads(le["value_json"]) for le in vs.get_lessons()]
+    assert not any("never more" in v.lower() for v in vals), vals
+    assert not any(v.startswith("Never:") for v in vals), vals
+
+
+def test_veto_is_durable_while_a_style_nudge_decays(vs, svc):
+    """The routing asymmetry, asserted rather than assumed: a veto goes to the lesson
+    store (one home for always/never rules, non-decaying) and creates NO facet row,
+    while a style nudge becomes a decaying facet and writes NO lesson. The veto matcher
+    is therefore the one whose looseness is expensive — hence its higher bar."""
+    from personalclaw import preference_facets as pf
+
+    atr.run_after_turn_review(
+        service=svc,
+        user_message="never force-push to main",
+        assistant_text="Understood.",
+        correction=False,
+    )
+    veto_lessons = [json.loads(le["value_json"]) for le in vs.get_lessons()]
+    assert any("force-push" in v for v in veto_lessons)
+    assert pf.load_facets(vs) == []  # durable side only — no parallel decaying model
+
+    atr.run_after_turn_review(
+        service=svc,
+        user_message="please keep responses concise",
+        assistant_text="Will do.",
+        correction=False,
+    )
+    facets = [f for _k, f in pf.load_facets(vs)]
+    assert [f.cls for f in facets] == ["style"]
+    assert len(vs.get_lessons()) == len(veto_lessons)  # the style nudge wrote no lesson
+    # …and the style facet really is the decaying kind.
+    fresh = pf.decayed_stability(facets[0])
+    aged = pf.decay(facets[0].stability, 60.0, 30.0)
+    assert aged < fresh
+
+
 def test_facet_capture_noop_on_plain_message(vs, svc):
     """A plain task message produces no facet (conservative detector)."""
     from personalclaw.preference_facets import render_profile_block

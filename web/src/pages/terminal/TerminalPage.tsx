@@ -254,7 +254,7 @@ function TermTabChip({ tab, active, inSplit, onSelect, onClose, onRename }: {
           onClick={(e) => e.stopPropagation()}
           onBlur={() => { setEditing(false); if (v.trim()) onRename(v.trim()) }}
           onKeyDown={(e) => { e.stopPropagation(); if (e.key === 'Enter') { setEditing(false); if (v.trim()) onRename(v.trim()) } if (e.key === 'Escape') { setEditing(false); setV(tab.label) } }}
-          className="w-24 bg-transparent text-on-surface outline-none" />
+          className="w-24 rounded bg-transparent text-on-surface outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50" />
       ) : (
         <span className="mr-1" onDoubleClick={(e) => { e.stopPropagation(); setV(tab.label); setEditing(true) }}>{tab.label}</span>
       )}

@@ -404,6 +404,44 @@ def _cached_discovery(runtime_id: str) -> dict[str, Any] | None:
     return None
 
 
+def declared_efforts(runtime_id: str) -> list[str] | None:
+    """The reasoning-effort values *runtime_id* DECLARED, or ``None`` when unknown.
+
+    Cache-only by design: discovery opens a live ACP session (~15-20 s), so a write path
+    validating against this must never be the thing that triggers it. Reads the same
+    payload :func:`api_agent_provider_agents` already served to the composer, so the set
+    checked on the write path is exactly the set the pill was drawn from.
+
+    **An empty list and ``None`` are different facts and must not be collapsed.**
+    ``[]`` is a *declaration* — the backend was asked and reported no effort axis (codex:
+    ``supported_efforts: []``), so pinning an effort is refusable. ``None`` is an
+    *absence of information* — discovery has not run, is stale, or failed — and a caller
+    must fall back to a format check rather than refuse a bind it cannot judge.
+    ``supported_efforts`` is computed once per runtime and attached identically to every
+    agent (``AcpAgentProvider.discover_agents``), so this is a runtime-level question and
+    needs no per-agent disambiguation.
+    """
+    payload = _cached_discovery(runtime_id)
+    if payload is None:
+        return None
+    agents = payload.get("agents") or []
+    if not agents:
+        return None  # cached but empty: discovery failed, not "declared none"
+    first = agents[0] if isinstance(agents[0], dict) else {}
+    if "supported_efforts" not in first:
+        return None  # a payload shape that predates the field — unknown, not empty
+    # The rows are the backend's VERBATIM option dicts (``{"value", "label", …}``), the
+    # same shape the composer's pill renders and `record_capabilities` reads `value` from.
+    # Stringifying a row instead of reading `value` would compare an effort against
+    # "{'value': 'low', …}" and refuse every legitimate bind.
+    out: list[str] = []
+    for row in first.get("supported_efforts") or []:
+        value = str(row.get("value") or "") if isinstance(row, dict) else str(row or "")
+        if value:
+            out.append(value)
+    return out
+
+
 async def _compute_discovery(runtime_id: str, entry: Any) -> dict[str, Any] | None:
     """Run discovery for one ACP runtime entry, write the cache, return payload.
 

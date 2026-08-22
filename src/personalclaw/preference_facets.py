@@ -188,28 +188,113 @@ _STYLE_HINT_RE = re.compile(
 )
 
 
+# ── The veto rule (stated once, here) ──
+#
+# A negative trigger word is NOT a prohibition on its own. "never" is also a degree
+# adverb ("reply in exactly one sentence from now on, never more") and it heads fixed
+# idioms ("never mind", "better late than never"). Matching the trigger plus
+# anything-until-punctuation therefore learned the FRAGMENT "never more" as a durable
+# veto. So a veto is recognized only when the trigger is followed by a
+# **prohibited-action clause**, which requires all three of:
+#
+#   1. a head token that can open a verb phrase — i.e. NOT a closed-class function
+#      word, degree adverb, comparative, pronoun, preposition, conjunction, copula or
+#      modal auxiliary (:data:`_NON_ACTION_HEADS`);
+#   2. at least one further token (the action's object/complement) after any
+#      emphatic doubling ("never, ever …") is stripped, so a bare
+#      intensifier or a trailing "…, never" can never qualify; and
+#   3. a clause that is not one of the enumerated non-prohibitive idioms
+#      (:data:`_VETO_IDIOM_HEADS` / :data:`_VETO_IDIOM_CLAUSES`).
+#
+# Precision over recall, deliberately: this detector's output is the one that reaches
+# the DURABLE lesson store (a veto routes to ``write_lesson``, where the always/never
+# rules and the contradiction judge live), while a missed veto is cheap — the existing
+# after-turn summarizer still produces the richer set. No LLM call is added.
+#
+# Deliberately REJECTED by this rule: "never more", "never more than one sentence"
+# (a quantity nudge, not a prohibition), "never again", "never mind (the tests)",
+# "better late than never", "now or never", "never say never", "would never have
+# guessed", "never to be repeated", and any trigger with no complement at all.
+_VETO_TRIGGER_RE = re.compile(
+    r"\b(?:never|do ?n'?t ever|do not ever|always avoid)\b",
+    re.IGNORECASE,
+)
+
+#: Tokens that cannot head a prohibited action. Closed-class words plus the degree
+#: adverbs/comparatives that make ``never`` read as an intensifier. ``do``/``get``/
+#: ``let`` are absent on purpose — they are main verbs in real vetoes ("never do that
+#: again"); ``have``/``had`` ARE excluded because "would never have guessed" is far
+#: more common than "never have X".
+_NON_ACTION_HEADS = frozenset("""
+    more less again ever too so very quite enough than as then only just also
+    the a an any some this that these those it its me my mine you your yours
+    he him his she her hers they them their we us our ours i
+    in on at for with without from by of about into onto over under near
+    before after since during until while because if unless though although
+    and but or nor
+    is are was were be been being am s
+    will would shall should can could may might must have has had having to
+    """.split())
+
+#: Emphatic doubling of the trigger ("never, ever do that again"). Stripped from the
+#: front of a clause before the head is judged, so an emphatic veto is not mistaken for
+#: an adverbial one. ``ever`` is in :data:`_NON_ACTION_HEADS` too — it cannot head an
+#: action — but leading it must not condemn the clause behind it.
+_EMPHATIC_CLAUSE_HEADS = frozenset({"ever"})
+
+#: A clause head that is a verb but whose phrase is not a prohibition.
+_VETO_IDIOM_HEADS = frozenset({"mind"})  # "never mind …" is a discourse marker
+
+#: Whole normalized clauses that are proverbs rather than prohibitions.
+_VETO_IDIOM_CLAUSES = frozenset({"say never"})
+
+_CLAUSE_TOKEN_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9'’\-_/]*")
+
+
+def veto_clause(user_message: str) -> str | None:
+    """The prohibited-action clause of a veto in ``user_message``, or None.
+
+    Implements the veto rule stated above: trigger + verb-phrase head + at least one
+    complement token, minus the enumerated idioms. Every trigger occurrence is tried,
+    so a non-prohibitive first "never" does not mask a genuine veto later in the
+    message. The returned text is the DISTILLED clause (trigger + its clause, stopping
+    at sentence punctuation), never the whole raw message.
+    """
+    msg = user_message or ""
+    for m in _VETO_TRIGGER_RE.finditer(msg):
+        clause = re.split(r"[.!?\n]", msg[m.end() :], maxsplit=1)[0]
+        tokens = _CLAUSE_TOKEN_RE.findall(clause.lower())
+        while tokens and tokens[0] in _EMPHATIC_CLAUSE_HEADS:
+            tokens = tokens[1:]  # "never, ever do that" → judge "do that"
+        if len(tokens) < 2:
+            continue  # bare trigger / bare intensifier ("never more", "…, never")
+        if tokens[0] in _NON_ACTION_HEADS or tokens[0] in _VETO_IDIOM_HEADS:
+            continue  # adverbial or idiomatic, not a prohibited action
+        if " ".join(tokens) in _VETO_IDIOM_CLAUSES:
+            continue
+        return (m.group(0) + clause).strip()
+    return None
+
+
 def detect_facet_candidate(user_message: str) -> tuple[str, str, str] | None:
     """Cheap heuristic → ``(cls, text, cue)`` candidate, or None.
 
-    A 'never/don't' → a **veto** (which the caller routes to a lesson); a style
-    nudge → a ``style`` facet. Deliberately conservative — the existing
+    A 'never/don't' PROHIBITING AN ACTION → a **veto** (which the caller routes to a
+    lesson); a style nudge → a ``style`` facet. Deliberately conservative — the existing
     summarizer produces the richer set; this catches the obvious in-the-moment ones.
 
     The facet ``text`` is the DISTILLED hint (the matched style span / veto clause),
     not the whole raw message — a durable "stable learned preference" must not carry
     a one-off task instruction into the always-on USER PROFILE (that would pollute it
-    and read as a prompt-injection artifact).
+    and read as a prompt-injection artifact). A bare fragment is the same failure from
+    the other side: see the veto rule above for what a veto must contain to qualify.
     """
     msg = (user_message or "").strip()
     if not msg:
         return None
-    veto = re.search(
-        r"\b((?:never|do ?n'?t ever|do not ever|always avoid)\b[^.!?\n]*)",
-        msg,
-        re.IGNORECASE,
-    )
+    veto = veto_clause(msg)
     if veto:
-        return ("veto", veto.group(1).strip()[:120], "explicit")
+        return ("veto", veto[:120], "explicit")
     style = _STYLE_HINT_RE.search(msg)
     if style:
         return ("style", style.group(1).strip().lower()[:120], "explicit")

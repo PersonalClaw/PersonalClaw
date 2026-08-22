@@ -211,7 +211,12 @@ function SchemeTile({ scheme, dark, active, custom, onPick, onDelete }: { scheme
           twelve tiles heard "Coral, button … Honey, button" with no way to tell which one is on.
           `aria-pressed` is what the Mode row in this same panel already does. */}
       <button type="button" onClick={onPick} aria-pressed={active}
-        className="w-full flex flex-col gap-2 rounded-xl p-2.5 transition-all text-left"
+        // The selection state is drawn with an INLINE `outline` below, and an inline style beats
+        // `tokens.css`'s `:focus-visible { outline: … }` outright — so these twelve tiles took
+        // keyboard focus with no indicator at all, and no `outline-none` class was involved for a
+        // source scan to find. A `ring` is a box-shadow, orthogonal to `outline`, so it coexists
+        // with the selection outline instead of fighting it.
+        className="w-full flex flex-col gap-2 rounded-xl p-2.5 transition-all text-left focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary/50"
         style={{ background: 'var(--color-surface-container)', outline: active ? '2px solid var(--color-primary)' : '1px solid var(--color-outline-variant)', outlineOffset: active ? '0' : '-1px' }}>
         <div className="h-12 w-full rounded-lg grid place-items-center text-[1.5rem]" style={{ background: `linear-gradient(135deg, ${sw} 55%, ${swAlt} 55%)` }}>
           {emoji && <span aria-hidden>{emoji}</span>}

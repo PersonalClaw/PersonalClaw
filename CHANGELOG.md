@@ -64,6 +64,17 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Fixed
 
+- **Restarting PersonalClaw quietly moved a chat onto a different agent.**
+
+- **The assistant learned nothing from turns run through an external coding CLI.**
+- **A read-only command is no longer called "destructive", and read-only tools no longer wait on you.**
+- **The approval card now tells you which tool it is asking about.**
+- **Ask mode no longer refuses a read-only `ls`.**
+- **The session line said "Session created" on every single turn, and named the wrong runtime.**
+- **The assistant learned "never more" as a permanent rule.**
+- **A reasoning-effort setting that the coding CLI cannot honor is now refused instead of silently stored.**
+- **A reasoning-effort setting no longer quietly lapses partway through long-running work.**
+
 - **The context gauge said "0%" on turns that were nearly full.**
 - **Typing `/compact` at a coding-CLI agent killed the whole turn.**
 - **The sign-in page said "Sign-in failed" no matter what went wrong.**

@@ -94,6 +94,11 @@ HTTP_ERROR_CODES: dict[str, str] = {
     "step_not_awaiting_review": "That plan step is not awaiting review.",
     "markdown_required": "A non-empty markdown body is required.",
     "comment_text_required": "A non-empty comment body is required.",
+    # ── reasoning effort (dashboard/chat_handlers.py) ──
+    "invalid_reasoning_effort": "The reasoning effort is not a short lowercase token.",
+    "reasoning_effort_not_declared": (
+        "The bound runtime did not declare that reasoning effort, so it cannot be honored."
+    ),
     # ── security audit (handlers/security_audit.py) ──
     "audit_owner_only": "The audit trail is owner-only; an app-scoped token may not read it.",
     "invalid_cursor": "The pagination cursor is malformed.",

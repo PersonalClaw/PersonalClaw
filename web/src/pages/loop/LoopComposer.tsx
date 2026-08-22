@@ -297,7 +297,7 @@ export function LoopComposer({ onCreated, onHistory, initialProjectId, initialKi
                 brownfield loop at minimal rigor (Plan Review skipped) has no way to bind a
                 workspace and can't do file work. */}
             {kind === 'code' && projectKind === 'brownfield' && !inheritedWs && (
-              <div className="flex w-full items-center gap-2 rounded-lg bg-surface-high/50 px-3 h-9 max-w-[480px]">
+              <div className="flex w-full items-center gap-2 rounded-lg bg-surface-high/50 px-3 h-9 max-w-[480px] focus-within:ring-2 focus-within:ring-inset focus-within:ring-primary/50">
                 <FolderGit2 size={13} className="shrink-0 text-on-surface-low" />
                 <input type="text" value={brownfieldWs} onChange={(e) => setBrownfieldWs(e.target.value)}
                   disabled={busy} placeholder="Codebase path (e.g. /Users/you/projects/app) — the repo to work in"
@@ -309,7 +309,7 @@ export function LoopComposer({ onCreated, onHistory, initialProjectId, initialKi
                 default-system preview. */}
             {kind === 'design' && (
               <div className="flex w-full flex-col gap-2 max-w-[480px]">
-                <div className="flex items-center gap-2 rounded-lg bg-surface-high/50 px-3 h-9">
+                <div className="flex items-center gap-2 rounded-lg bg-surface-high/50 px-3 h-9 focus-within:ring-2 focus-within:ring-inset focus-within:ring-primary/50">
                   <LinkIcon size={13} className="shrink-0 text-on-surface-low" />
                   <input type="url" value={designUrl} onChange={(e) => setDesignUrl(e.target.value)}
                     disabled={busy} placeholder="Reference a site to mimic (https://…) — optional"
