@@ -775,3 +775,66 @@ Canonical usage of each shared primitive + each interaction pattern (selection, 
 - **🪤 A JSX opening tag cannot be found by scanning to the first `>`.** The scripted pass that wired `stale` through 23 bento tiles inserted the prop at the first `>` after `<BentoCard`, which lands **inside** `onClick={() => go('inbox')}`. Ten `TS1109`s. Re-run with a brace/quote-depth scan; the file was restored from a `cp` copy first, not patched forward.
 - **🪤 An identifier codemod rewrites PATH STRINGS too.** `useCachedData` → `useQuery` turned `codeOf('lib/useCachedData.ts')` into `codeOf('lib/useQuery.ts')` (a test then failed on ENOENT rather than on its assertion) and rewrote a prose reference in `ui/motion/Entrance.tsx`. Both swept afterwards by grepping the new name in string position.
 - **Gate (from the worktree root, main checkout's venv on PATH).** `npm ci` · `npm run typecheck:web` clean · **FULL `npm run test:web`: 462 files / 4,840 tests, 0 failures** · `npm run build --workspace web` clean · `make lint` (Python) exit 0 · **`make test` SKIPPED, with the reason: this change touches zero Python files** (`git show --stat HEAD` has no `.py`, no `Makefile`, no `pyproject.toml`). `ui/disabledReasonCensus.test.ts` went red on its own and was re-keyed in the same commit — it pins sites by `file:line` and the knowledge `stale` prop shifted `KnowledgeListPage.tsx:917` → `:918`, exactly as DSC-13 predicted. **No baseline needed regenerating:** `primitiveAdoption.baseline.json` and `windowedListAdoption.baseline.json` both stayed green (the migration moved imports and destructures, not raw controls or windowing adoption), and regenerating either without a red would have been a blind edit. `docs/design/consistency-audit.json` regenerates on every full web run and drifts on `main` independently; left uncommitted.
+
+### 2026-08-22 — the per-element half of `outline-none` (17 controls ringed)
+
+**DONE.** `focusRingSurvival` (shipped in the focus-ring session, PR #1891) credits a file that
+provides ANY focus treatment anywhere. That credit is correct for the property it guards — a file
+composing its ring in a constant or on a wrapper is not broken — and it is necessarily blind to a
+control that kills its own outline in a file where *other* controls are ringed. Seventeen such
+controls existed: bare `<input>`/`<textarea>` elements whose own class string **and** whose
+enclosing container provided no replacement, so keyboard focus landed on them with no visible
+indicator. Fixed across `ChatPage` (4), `CodePlanReview` (3), `CodeCockpitPage` (2), `LoopComposer`
+(2), `KnowledgeCreatePage` (2), `KnowledgeDetail` (2), `ChatActivityPanel` (1), `ui/Combobox` (1).
+
+**The treatment split follows the box, not the element.** `focus:ring-2 focus:ring-inset` on the
+control where the CONTROL is the visible box (its own `rounded-*` + background — the idiom already in
+45 files); `focus-within:` on the container where the CONTAINER draws the box and the control is
+`bg-transparent` inside it, matching `Onboarding`/`bento`/`ui/forms`. Ringing a transparent child
+inside a bordered field paints a rectangle floating inside the field. `CodePlanReview`'s title and
+description share ONE box, so those two are element-ringed deliberately: a container ring could not
+say which of the two has focus.
+
+**🪤 DISCOVERY — an ancestor-crediting scan is not buildable with a regex, and two attempts proved
+it.** The natural design is to derive the population (find every `outline-none`, credit ringed
+ancestors, ratchet the remainder). Both attempts were wrong on cases verified by eye:
+a ±14-line window credited 1 of the 3 container-ringed controls, missing `settings/bento.tsx` and
+`ui/forms.tsx` whose ringed ancestors sit 15–16 lines up past an intervening comment block; an
+indentation-based walk (Prettier makes indentation the JSX nesting) still misclassified
+`settings/bento.tsx`. Resolving "does an ancestor ring this control" needs a parse, not a pattern.
+Per this repo's own baseline doctrine a ratchet on a population known to be wrong is worse than
+none, so the rail ships as an **explicit hand-verified inventory** of the 17 sites plus the 5
+correctly ancestor-ringed ones, each recorded with the ancestor that rings it. It cannot discover a
+NEW unringed control — `e2e:a11y`'s Tab-walk is what does that — but it stops these 17 from silently
+losing their treatment. See [[a-character-window-is-not-a-scope]].
+
+**🪤 Keying a source rail on the CONTAINER's classes cannot distinguish two identical containers.**
+The first draft anchored container entries on the container's own class string, and
+`KnowledgeCreatePage`/`KnowledgeDetail` each render **two** boxes with byte-identical chrome — one
+holding the textarea, one holding `<GistEditor>` (Monaco, which draws its own cursor and focus
+border, so there is no defect to fix there). The rail red immediately with `1 of 2`, which is how the
+duplication surfaced. Every entry now keys on the CONTROL (unique) and resolves its container
+positionally as the nearest preceding class string carrying a `rounded-*` — not the immediately
+preceding one, because a lucide icon sits between container and input in three of these files, making
+the immediate predecessor the icon's `text-on-surface-low shrink-0`.
+
+**Falsification (4, each mutating a live line, restored from a file copy).** (1) Strip the element
+ring from `ui/Combobox` → red. (2) Strip the container ring from ONE of `LoopComposer`'s two
+identical boxes → red reporting **`1 of 2`**, which is the proof that both call sites are asserted
+and not just the first. (3) Strip the ancestor ring `bento` depends on → the ancestor-reliance test
+reds (nothing else in the suite would have noticed). (4) Break an anchor → the vacuity floor fires
+("anchor no longer matches any class string") rather than passing green over an empty match list.
+Restored → 17/17.
+
+**Gate.** `npm ci` from the repo root · `npm run typecheck` clean · **full `npx vitest run`: 466
+files / 4888 tests, 0 failures** · `npm run build` clean · `make lint` (black/isort/flake8/mypy)
+clean over 959 source files. No Python changed.
+
+**🪤 `docs/design/consistency-audit.json` was deliberately EXCLUDED from the commit.** The build
+regenerates it, and the regenerated file carried `filesScanned` 527 → 547 and
+`ProjectionRulesPanel` 9 → 10 — twenty files and a score change belonging to other landed work,
+because the committed artifact is stale from 2026-08-19. Committing it would attribute that drift to
+this change and could mask a real regression inside it. Worth a follow-up: the audit's
+`outlineNoneCount` counts occurrences in COMMENTS, so this change's own rail (whose header explains
+`outline-none`) adds +1 to the count — the same blind spot `focusRingSurvival` fixed internally with
+`withoutComments()`.
