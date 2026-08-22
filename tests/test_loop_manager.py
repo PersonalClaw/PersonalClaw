@@ -111,6 +111,37 @@ def _goal(**over):
     return store.create(Loop(**base))
 
 
+class TestStopFromAPreLaunchState:
+    """`PP-16`: a loop wedged in `intake` or `planning` must have an exit that is not DELETE.
+
+    A dead classifier leaves a loop in `intake`; a dead planner leaves it in `planning`.
+    Neither appeared in any `ACTION_SOURCE_STATES` row, so the route answered every
+    lifecycle call with a 409 and the only way out was deleting the record. The store
+    never forbade the transition — it refuses only moves OUT of a terminal state — so the
+    guard was the whole obstacle. These drive the real `manager.stop`, not the guard
+    alone: a guard admitting a state is worthless if the teardown it calls raises on a
+    loop that never armed a worker.
+    """
+
+    @pytest.mark.parametrize("status", [LoopStatus.INTAKE, LoopStatus.PLANNING])
+    def test_stop_terminates_a_pre_launch_loop(self, status):
+        g = _goal(status=status.value)
+        assert store.get(g.id).status == status.value
+        state, svc = _FakeState(), _FakeSvc()
+        out = _run(manager.stop(state, svc, g.id))
+        assert out.status == LoopStatus.STOPPED.value, f"stop from {status.value} did not terminate"
+        assert store.get(g.id).status == LoopStatus.STOPPED.value
+
+    @pytest.mark.parametrize("status", [LoopStatus.INTAKE, LoopStatus.PLANNING])
+    def test_the_guard_admits_stop_from_it(self, status):
+        from personalclaw.loop.loop import ACTION_SOURCE_STATES
+
+        assert status in ACTION_SOURCE_STATES["stop"], (
+            f"{status.value} is not a source state for stop, so loop_routes answers 409 and the "
+            "loop stays wedged with DELETE as its only exit"
+        )
+
+
 class TestStartArmsWorker:
     def test_start_writes_brief_arms_session_and_nudge(self):
         g = _goal()

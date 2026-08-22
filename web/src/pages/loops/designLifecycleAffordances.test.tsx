@@ -94,11 +94,21 @@ describe('the design cockpit offers exactly the lifecycle actions the backend ac
     expect(control('Start')).not.toBeNull()
   })
 
-  it('an INTAKE loop is launchable from nowhere yet', async () => {
+  it('an INTAKE loop is not launchable yet, but IS stoppable', async () => {
     await mountIn('intake')
     expect(control('Start'), 'the backend accepts start only from ready/review').toBeNull()
     expect(control('Resume')).toBeNull()
-    expect(control('Stop'), 'stop 409s on a pre-launch loop').toBeNull()
+    // PP-16: this asserted `Stop` was absent, with the reason "stop 409s on a pre-launch loop" —
+    // true when written, and it is what made the actionless-loop gap look intentional. `intake` and
+    // `planning` were in NO action row, so a loop whose classifier died had no action anywhere and
+    // Delete was its only exit. The backend now accepts `stop` from both.
+    expect(control('Stop'), 'a wedged intake loop needs an exit that is not Delete').not.toBeNull()
+  })
+
+  it('a PLANNING loop is stoppable too', async () => {
+    await mountIn('planning')
+    expect(control('Start'), 'start is ready/review only').toBeNull()
+    expect(control('Stop'), 'a dead planner must not strand the loop').not.toBeNull()
   })
 
   it('a COMPLETE loop offers no lifecycle action at all', async () => {

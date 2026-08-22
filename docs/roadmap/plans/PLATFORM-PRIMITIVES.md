@@ -1175,3 +1175,50 @@ discipline in [`AGENTS.md`](../../../AGENTS.md))*
   **Four tests were re-contracted, none weakened:** three asserted bounds that encoded the binary
   failure (`<= 4`, `< 20`, an exact iteration count) and now assert the STRONGER property — the run
   surfaces through the ladder rather than drifting into its cap, with the nudge tier tried first.
+
+- **2026-08-22 — `PP-16` slice DONE: no non-terminal status is actionless. Atom stays `todo`.** The
+  2026-08-20 slice reported this and did not take it: *"the union of all four source sets omits
+  `intake` and `planning`, so a loop wedged in either (a dead classifier) has no available action at
+  all and `DELETE` is its only exit."* This closes it.
+  **Why the guard was the whole obstacle, measured.** `store.update_status` refuses only transitions
+  **out of** a terminal state (`store.py:437`) — there is no per-state table — so `intake → stopped`
+  and `planning → stopped` were always legal. `manager.stop` tears down whatever is armed and
+  `_teardown` no-ops when nothing is (`main = svc.get_by_session(...)`; `if main is not None`). So the
+  backend could always service it and only `ACTION_SOURCE_STATES` (read by `loop_routes.py:534`) said
+  no. Losing the record to `DELETE` was the user's only exit from a dead classifier.
+  **`STOPPABLE_STATUSES`, deliberately its own name.** `ACTIVE_STATUSES` also drives the "active loop"
+  list filters and badge counts, where a loop still in intake is **not** active — widening it would
+  have silently changed those counts. The FE mirrors it as `STOPPABLE_LOOP_STATUSES`, composed as
+  `new Set([...ACTIVE_LOOP_STATUSES, 'intake', 'planning'])` so the seven shared members are still
+  never restated.
+  **The rail is asserted as the general property, not as a two-state patch:**
+  `test_no_non_terminal_status_is_actionless` fails for ANY non-terminal status missing from every
+  row, so the next enum member added inherits the check instead of the hole.
+  **Two shipped tests pinned the defect as intended behaviour, and both were corrected, not
+  weakened.** `designLifecycleAffordances.test.tsx` asserted `Stop` was ABSENT on an intake loop with
+  the reason *"stop 409s on a pre-launch loop"*, and `PRELAUNCH_LOOP_STATUSES`' doc comment in
+  `loopStatus.ts` said *"the backend refuses `stop` on a pre-launch loop with a 409"* — both true when
+  written, and together they are why the gap read as a decision rather than an oversight. Each now
+  states the current contract and says what it used to say. `test_loop_entity`'s
+  `stop == ACTIVE_STATUSES` became the exact relationship (`== STOPPABLE_STATUSES`, difference is
+  exactly `{intake, planning}`, and a strict-superset check) rather than a bare superset assertion.
+  **The mirror rail needed a real extension, not a loosened assertion.** Its parser resolved a
+  referenced set by name but could not expand a `...SPREAD`, so the composed FE set read as only its
+  two literal members and the per-action **equality** check failed. It now expands spreads innermost
+  first, bounded by the set count so a cycle cannot hang the suite, with a post-pass assertion that
+  each spread actually expanded — a parser that silently under-counts would make the equality check
+  pass on a subset, which is the precise failure mode the equality (not subset) choice exists to
+  prevent.
+  **Falsification:** restoring `"stop": ACTIVE_STATUSES` reds **4** — the invariant, both guard
+  parameters, and the mirror equality. **Blind spot measured:** under that mutation the pre-existing
+  loop suites (loop-http, loop-entity, loop-gates, loop-code-stages) were **171 passed, 0 failed** —
+  nothing asserted that every non-terminal state has a way out.
+  **Still open on `PP-16`** (unchanged by this slice): the noun change itself, one adoption/reaping
+  path (`loop/manager.reap_orphaned_loops`, 73 lines, called from `gateway.py:2417`, vs
+  `workflows/watchdog._boot_sweep`+`_adopt`), retiring `LoopKindStrategy`, one projection to tasks,
+  and the two status vocabularies (`LoopStatus` 13 members vs `RunStatus` 8; `stopped`≡`cancelled`,
+  and `FAILED` is terminal for a run but not for a loop).
+  **Unrelated drift found and NOT swept in:** `docs/design/consistency-audit.json` regenerates on
+  `npm run build` and its committed copy is stale — `filesScanned` 527 → 547 with a new
+  `pages/settings/ProjectionRulesPanel.tsx` row, a file this slice never touched (`driftHits` stays
+  8). Restored from `HEAD` and reported here instead of riding along.

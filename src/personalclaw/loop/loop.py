@@ -91,6 +91,22 @@ PRELAUNCH_STATUSES: frozenset[LoopStatus] = frozenset(
 # Which action a status can be the SOURCE of (the lifecycle transition guard the
 # HTTP action handler enforces). resume is allowed from any attention/paused state;
 # stop from anything not already terminal; pause only while running.
+#: What ``stop`` may be called FROM. A superset of :data:`ACTIVE_STATUSES` by exactly the two
+#: pre-launch states, and deliberately its own name rather than a widened ``ACTIVE_STATUSES``:
+#: that set also drives "active loop" list filters and badge counts, where a loop still in intake
+#: is not yet active and must not be counted as one.
+#:
+#: `PP-16`: the union of the four action rows omitted ``INTAKE`` and ``PLANNING``, so a loop whose
+#: classifier or planner died had **no available action at all** and ``DELETE`` was its only exit —
+#: which discards the record instead of terminating it. ``stop`` is the right home because
+#: ``STOPPED`` is terminal and needs no worker to reach: ``manager.stop`` tears down whatever is
+#: armed (``_teardown`` no-ops when nothing is) and ``store.update_status`` refuses only
+#: transitions OUT of a terminal state, so both pre-launch states could always reach it — the guard
+#: was the only thing in the way.
+STOPPABLE_STATUSES: frozenset[LoopStatus] = ACTIVE_STATUSES | frozenset(
+    {LoopStatus.INTAKE, LoopStatus.PLANNING}
+)
+
 ACTION_SOURCE_STATES: dict[str, frozenset[LoopStatus]] = {
     "start": frozenset({LoopStatus.READY, LoopStatus.REVIEW}),
     "pause": frozenset({LoopStatus.RUNNING}),
@@ -103,7 +119,7 @@ ACTION_SOURCE_STATES: dict[str, frozenset[LoopStatus]] = {
             LoopStatus.FAILED,
         }
     ),
-    "stop": ACTIVE_STATUSES,
+    "stop": STOPPABLE_STATUSES,
 }
 
 
