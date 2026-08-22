@@ -39,8 +39,13 @@ vi.mock('../../lib/api', () => ({
 }))
 vi.mock('../../app/appSdk', () => ({ notify: vi.fn() }))
 
+// `prompt` is NOT an enforced-suppression kind (`feedback.ENFORCED_SUPPRESSION_KINDS` is
+// `skill_synthesis` alone), so the route can no longer return `suppressed: true` for it — it returns
+// `proposal_only`. This fixture used to carry the impossible shape, which is how the false claim
+// stayed invisible: the panel's own test documented it. Chip count is unchanged (one extra pill
+// either way), so the wrapping assertion below still measures what it measured.
 const ROWS: FeedbackProducerRow[] = [
-  { producer_kind: 'prompt', producer_id: 'task-inbox-classify', ups: 3, downs: 6, n: 9, accuracy: 0.333, suppressed: true },
+  { producer_kind: 'prompt', producer_id: 'task-inbox-classify', ups: 3, downs: 6, n: 9, accuracy: 0.333, proposal_only: true },
   { producer_kind: 'prompt', producer_id: 'task-inbox-draft', ups: 7, downs: 0, n: 7, accuracy: 1, suppressed: false },
 ]
 

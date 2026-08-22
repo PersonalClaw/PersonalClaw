@@ -57,6 +57,22 @@ PRODUCER_KINDS = (
     "app",
 )
 
+#: The producer kinds for which falling below the retire threshold actually WITHHOLDS output.
+#:
+#: Suppression is computed for every kind in :data:`PRODUCER_KINDS`, but only a kind with a real
+#: surfacing gate can act on it. Today exactly one does: ``skills.surfacing.surface_skills``
+#: withholds a matched skill whose identity ``("skill_synthesis", <key>)`` is in the set. For the
+#: other five, a below-threshold producer keeps surfacing normally and gets the retire PROPOSAL only
+#: — which is the design (see :func:`check_retire_candidates`), not an oversight.
+#:
+#: This exists because the distinction was invisible at the API boundary:
+#: ``GET /api/feedback/producers`` reported ``suppressed: true`` for any below-threshold producer of
+#: ANY kind, and the Settings panel renders that as a pill titled "Stopped surfacing". For five of
+#: six kinds that was simply untrue — the panel's own docstring even used a ``prompt``-kind row as
+#: its worked example. Callers must consult this set before claiming an effect.
+#: ``tests/test_feedback_suppression_enforcement.py`` asserts it matches the code.
+ENFORCED_SUPPRESSION_KINDS = ("skill_synthesis",)
+
 _MAX_REASON_CHARS = 500
 # Append-only cap discipline (§2.4, the notifications/SEL pattern): trim to the
 # newest _CAP records when the file exceeds 2×.
@@ -309,8 +325,15 @@ def suppressed_producers(
     *, threshold: float | None = None, min_n: int | None = None
 ) -> set[tuple[str, str]]:
     """Producers whose accuracy fell below the retire threshold with enough
-    verdicts — minus snoozed/user-cleared ones. Consulted by workflow/skill
-    surfacing as one membership check; everything else gets the proposal only.
+    verdicts — minus snoozed/user-cleared ones.
+
+    Consulted by SKILL surfacing as one membership check (``skills.surfacing`` withholds a
+    matched skill whose ``("skill_synthesis", <key>)`` identity is in the set); everything
+    else gets the proposal only. This docstring used to say "workflow/skill surfacing" —
+    no workflow path consults this function, and nothing under ``workflows/`` ever did.
+    Membership therefore does NOT imply an effect: see
+    :data:`ENFORCED_SUPPRESSION_KINDS` before reporting one to a user.
+
     Fail-open: any error returns the empty set (never suppress on a fault)."""
     try:
         cfg = _config()

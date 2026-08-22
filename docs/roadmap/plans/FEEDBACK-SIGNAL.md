@@ -205,3 +205,67 @@ class FeedbackConfig:
   lint` clean (692 files); `test_feedback_app_path.py` (4) + `test_app_permissions.py` +
   `test_feedback.py` = 35 passed.
 - [2026-08-08][FS-6] DONE: re-enforce feedback suppression at a LIVE surfacing gate (Contract C2). `suppressed_producers()` had had no live withholding consumer since WF2 Phase 1 deleted `workflows.surfacing.eligible_workflows` (its only gated consumer) — the control was inert. Wired the `in suppressed_producers()` membership check into `skills/surfacing.py::surface_skills`, the turn-time gate reached via `SkillsLoader.get_surfaced_skills` → `context.py:1370` on every non-custom-agent message. DEVIATION (host-choice forced): NOT the atom's nominated `workflows/surfacing.py::may_suggest`/`veto_reasons` path — verified those are themselves inert (zero runtime callers in `src/`; the only live workflow-surfacing consumer, `service.list_defs_surfacing`, calls cadence/freshness/doctor helpers, never the suggestion-veto functions), so hosting suppression there would have re-created the exact inert-control defect FS-6 exists to fix. A surfaced skill's producer identity is `("skill_synthesis", <key>)` — the gated skill member of `PRODUCER_KINDS`, exact-tuple membership like every other consumer. A matched skill in the suppressed set is WITHHELD from ranking; in Doctor `explain` mode it surfaces as an excluded row with a suppression reason (never dropped silently). Fail-open in depth: `feedback.suppressed_producers()` fail-opens internally, the loader's `_suppressed_producers()` wrapper adds a second belt, and `get_surfaced_skills`'s outer except still falls back to keyword surfacing — every failure surfaces MORE, never less; withholding only on an explicit healthy hit. No config/SDK-export change (existing `feedback.enabled` kill-switch already zeroes the set), so no round-trip contract or inert-surface-baseline regeneration. Tests: 4 unit (withhold-a-match / default-suppresses-nothing / explain-shows-withheld / suppression-only-bites-matches) + 2 end-to-end through the live `get_surfaced_skills` gate (suppressed withheld while healthy surfaces + clear-restores; lookup-raises ⇒ fails open). Gate: `make lint` exit 0 (748 files); `pytest tests/test_feedback.py tests/test_skill_surfacing.py` 42 passed; inert-surface ratchet + 125 adjacent tests + doctor explain green. PR #928 off `main`.
+
+### 2026-08-22 — `suppressed` was reported for five kinds nothing suppresses
+
+**No atom flipped** — `dag.json` untouched. A user-visible correctness fix in shipped Feedback-Signal
+behaviour, found by asking which of this plan's controls are actually LIVE rather than merely wired.
+
+**The defect.** `suppressed_producers()` computes a withholding set over all six
+`PRODUCER_KINDS`, but a membership result can only *do* something where a surfacing path consults it.
+Exactly one does: `skills.surfacing.surface_skills` withholds a matched skill whose identity is
+`("skill_synthesis", <key>)`. The other five — `prompt`, `loop_judge`, `workflow_surfacing`,
+`routing_pair`, `app` — keep surfacing and get the retire proposal only, which is this plan's design
+(`check_retire_candidates`), not an oversight.
+
+`GET /api/feedback/producers` nonetheless set `suppressed: true` for ANY below-threshold producer of
+ANY kind, and `FeedbackPanel` renders that as a red pill titled **"Stopped surfacing"**. So for five
+of six kinds the panel asserted an effect that never happened. The panel header said it too — *"A
+suppressed source stopped surfacing"* — and `feedbackCountsNamed.test.tsx`'s fixture used a
+`prompt`-kind row with `suppressed: true` as its worked example, so **the false claim was written down
+in three places and tested in a fourth.**
+
+**The fix is honesty, not new enforcement.** Suppressing a prompt or a routing pair would change
+behaviour and is a product decision; nothing here does that. Instead:
+
+* `feedback.ENFORCED_SUPPRESSION_KINDS = ("skill_synthesis",)` — one declared source of truth for
+  "which kinds have a gate", with the reason and the rail that checks it named in the docstring.
+* the route reports `suppressed` only for an enforced kind; a below-threshold producer of any other
+  kind gets `proposal_only`, which is the module's own language for what actually happens.
+* the panel renders a warning-toned **"retire proposed"** pill for those, titled with WHY it still
+  runs ("This kind of source has no surfacing gate, so it still runs — you get a retire proposal to
+  act on"). The `suppressed` pill and its "Stopped surfacing" title are unchanged for the one kind
+  where they are true.
+* `suppressed_producers`'s own docstring claimed it was *"Consulted by workflow/skill surfacing"*.
+  **No workflow path consults it and none ever did** — corrected, since that sentence is what made
+  the over-reporting look intentional.
+
+**🪤 A test that re-implements the code it guards passes when the code is reverted.** The route
+assertions were first written against a local copy of the handler's branch. With the handler reverted
+to the old one-flag-for-every-kind line, **all 13 passed** — the rail measured a shape, not the
+behaviour, which is the same failure mode as the defect. Rewritten to drive `api_feedback_producers`
+through an aiohttp test client; the same revert now reds with *"a `prompt` producer was reported as
+suppressed"*. See [[test-exercises-mechanism-not-use]].
+
+**Rails (13 python + 5 vitest).** The constant cannot drift from the code: every enforced kind must be
+a real `PRODUCER_KIND`; the withholding set must still be consumed under `skills/`; a NEW consumer
+outside a named reader allowlist fails with instructions (add the kind if it is a gate, or the module
+if it only displays); and `skills/surfacing.py` must still mention each enforced kind. Consumers are
+found by **AST call analysis, not grep** — `workflows/` uses the word "suppressed" freely for
+unrelated attention-indicator logic, and a text scan reports those as gates.
+
+**Falsification (4, each on a live line, applied-count confirmed, restored from a file copy).**
+(1) Revert the handler to `entry["suppressed"] = below` → red naming the `prompt` producer.
+(2) Neutralize the panel's new pill (`{false && row.proposal_only && …}`) → 3 vitest failures, from a
+5-passed baseline. (3) Append a new `suppressed_producers()` caller to `inbox_service.py` → red naming
+it. (4) Add `routing_pair` to `ENFORCED_SUPPRESSION_KINDS` → red because `skills/surfacing.py` never
+mentions it.
+
+**🪤 Two aborted commits and one unrun leg, recorded because each looked like success.** The first
+`git commit` died on `pre-commit: 'isort' not found` (the venv was not on PATH) and the second on
+`flake8`; in both cases `HEAD` was unchanged, so "committed" would have been wrong. And F-2's first
+attempt sliced the JSX block out by string index, which broke the file — vitest reported **"Tests no
+tests"**, an UNRUN leg that reads like a pass. Re-run as a minimal valid mutation instead.
+
+**Gate.** `tests/test_feedback_suppression_enforcement.py` 13 passed · vitest `feedbackSuppressionHonesty`
++ `feedbackCountsNamed` 10 passed · full `npx vitest run` and `npm run build` below · `make lint` clean.
