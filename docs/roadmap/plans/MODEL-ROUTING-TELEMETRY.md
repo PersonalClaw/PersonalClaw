@@ -806,3 +806,89 @@ PARTIAL on that one clause.**
 under `app_sources` as `loops` rather than folded into the `loop` purpose. One engine, two spellings,
 two buckets. Left alone deliberately — renaming it moves money between buckets, which is a product
 call, and the new collision ratchet makes the pair visible instead of invisible.
+## Execution log — MRT-3, session 5 (the loop money line, and why it is not `run_totals`)
+
+**The last unmet clause is CLOSED. MRT-3's `done_when` is now satisfied end to end**, with one
+recorded deviation on the mechanism.
+
+**DEVIATION — "via `run_totals`" is deliberately NOT how this reads. It is a prefix-scoped read of
+the turn ledger.** `ledger.reader.run_totals` sums `tokens`/`cost_usd` off `step_completed`, and
+`loop/journal.py::cycle()` writes neither, so `run_totals` over a loop store returns `0.0`. Making
+it return money requires copying turn dollars into the loop ledger, and three measured facts make
+that the WRONG shape rather than merely the more expensive one:
+
+1. **One dollar would live in two records.** `routing/usage.py`'s module docstring argues exactly
+   this case — "a money surface that silently double-counts is worse than one that admits a gap" —
+   and there is still no join key between the two stores.
+2. **`learning/mining` reads the loop ledger too**, so a dollar minted there becomes an input to
+   the flywheel as well as to the cockpit.
+3. **It would undercount the tail.** `record_cycle_findings` (`loop/store.py:938`) is the only
+   cycle write and it only fires when a NEW finding file appears, so a loop that stops without one
+   never gets its last spend attributed. An understated money number is the same defect class as an
+   invented one — the reason session 3 refused a half-measure.
+
+Session 3's stated reason for deferring this clause — *"NOTHING ties model spend to a specific
+loop, in either record"* — is **falsified**. A turn row carries `session_key`, and `loop/manager.py`
+owns both spellings: `session_key` (`:25`, `loop-<id>`) and `task_session_key` (`:342`,
+`loop-<id>-<task_id>`). That is the attribution seam, and it was there the whole time.
+
+**Built.** `usage_ledger` gained a `session_prefix` filter (`_session_matches`, threaded through
+`_row_selected`/`rollup`/`totals`); `loop.manager.loop_spend(loop_id)` reads it; `api_loop_get`
+carries it as `spend` on the loop DETAIL only; the cockpit renders a `MetaPill` beside Elapsed.
+Tests: `tests/test_loop_spend.py` (15), `web/src/lib/runCost.test.ts` (16).
+
+- **Both worker key shapes are summed.** A fan-out loop is one figure across the main worker and
+  every task worker. Asserted as an exact total ($0.25 + $0.50 + $0.50 = $1.25), because the
+  failure is arithmetic: a read matching only `session_key` returns $0.25 and understates the loop
+  by 80% while rendering perfectly.
+- **The prefix is separator-aware, not a bare `startswith`.** A key matches when it EQUALS the
+  prefix or extends it at `-`. `loop.store._LOOP_ID_RE` is `^[a-f0-9]{8}$`, so two real ids cannot
+  collide today — but this ledger accepts whatever `session_key` a writer hands it, and borrowing
+  safety from a regex in another module is how a widened id shape becomes a silent money bug later.
+  Covered by two loops whose keys share a prefix (`loop-abc123` / `loop-abc1234`) in both
+  directions, since an over-correction that demanded the separator even for the key itself would
+  report $0.00 for the main worker — also plausible, also wrong.
+- **DETAIL-only, deliberately.** It is one JSONL scan per loop, so putting it on `api_loop_list`
+  would be N scans per poll. Best-effort: a money read must never turn a working cockpit into a 500.
+- **The figure is held OUTSIDE the loop entity in the frontend.** `GET /api/loops/{id}` carries
+  `spend`; the per-loop SSE snapshot is `store.get_redacted` WITHOUT it (`loop_routes.py:689`), and
+  `loopToGoalLoop` spreads the raw loop — so folding `spend` into `c` would make the pill vanish on
+  the first lifecycle event, a money figure that disappears while the loop is still spending. Its
+  own `useState` means SSE cannot clobber it and the 30s poll refreshes it. Railed by a source
+  assertion, because the defect is structural rather than arithmetic.
+
+**The `app="loops"` planning gap is surfaced AT the number, not just recorded here.** The planner
+session is keyed `loop-plan-<id>` (`plan_walkthrough.py:107`) — outside the worker prefix — and is
+named `app="loops"` (plural, `:145`), so it lands in a different purpose bucket too. It is reported
+as a SEPARATE `planning` figure and rendered in the pill's VISIBLE text (`~$1.25 + ~$0.4000
+planning`), not hidden in a tooltip. Summing them would overstate "this run"; omitting them would
+imply a completeness the number lacks. `loopSpendTitle` states the rest — the turn count, that the
+figure spans the task workers, and (when `priced` is False) that the total is a FLOOR rather than a
+total. Renaming `loops` → `loop` stays a product call: it would move money between buckets.
+
+**FALSIFIED four ways, each red on a WRONG FIGURE rather than a missing element** — the specific
+hazard here, since `~$0.00` renders fine and means something false. Mutations applied to the live
+line, re-read, enclosing function confirmed, restored from `/tmp/*.bak` (never `git checkout --`):
+
+| mutation | observed red |
+|---|---|
+| prefix matches the key only (task workers dropped) | `assert 0.25 == 1.25`, `assert 110 == 330`, `assert 0.0 == 5.0` — the too-LOW shape |
+| bare `key.startswith(prefix)` | `assert 3.0 == 1.0`, `assert 6.0 == 1.0` — the too-HIGH shape, one loop swallowing another |
+| planning folded into `dollars_est` | `planning must not inflate the run figure`, `assert 1.4 == 1.0` |
+| prefix read matches NOTHING | `assert 0.0 == 1.25`, `assert 0 == 330` |
+
+The fourth is the one that proves the test design: under it `loop_spend` returns `0.0`, so the pill
+renders cleanly as `no spend recorded` and every presence-only assertion passes. Only the figure
+assertions catch it.
+
+**Also moved while here — one rounding rule, two sentences.** `runCostText` left
+`IntrospectPanel.tsx` for `web/src/lib/runCost.ts` alongside `runUsd`, `loopSpendPill` and
+`loopSpendTitle`. Two surfaces re-deciding how to round a dollar is how `$0.00` and `~$0.0001` come
+to mean the same thing in one product, so the 2dp-above/4dp-below rule (`routing/usage.py::_usd`'s)
+now lives once and each surface composes its own disclosure on top. A clean break — no re-export
+shim; `IntrospectPanel` and its test import from the new home.
+
+**Not swept in:** `docs/design/consistency-audit.json` regenerates as a side effect of the web build
+and drifted (`filesScanned` 527 → 540, plus a new `pages/settings/ProjectionRulesPanel.tsx` row)
+from atoms that landed without a regen. `driftHits` (8) and `filesWithDrift` (7) are unchanged and
+this change's two new `web/` files add no drift, so the artifact was discarded rather than committed.

@@ -99,6 +99,16 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
   unreadable config resolves to off, it runs in bounded batches on the existing maintenance cadence
   rather than a loop of its own, and an item too large to project is refused and reported rather
   than truncated.
+- **A loop now tells you what it cost.** The loop cockpit carries a spend pill beside the elapsed
+  time, reading the same per-turn ledger the Usage panel reads. It covers the loop's worker *and*
+  every parallel task worker it fanned out into, so a loop that split into five workers reports one
+  figure rather than a fifth of the truth.
+  **What the number does not include is written next to it, not buried.** Planning is a separate
+  session doing separate work, so planning spend is shown as its own amount (`~$1.25 + ~$0.4000
+  planning`) instead of being folded into the run total or quietly dropped. If any model involved had
+  no price row, the tooltip says the figure is a floor and the real total is higher — and a loop with
+  nothing recorded says exactly that, rather than showing a confident `$0.00` that cannot tell
+  free-and-local apart from not-yet-known.
 
 - **A turn that will not fit says so before it runs, and says what to do about it.** PersonalClaw
   used to find out a prompt was too big by sending it and reading the provider's error back — after
