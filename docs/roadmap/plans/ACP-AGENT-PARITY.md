@@ -563,7 +563,22 @@ found zero warn/block/circuit output after six failures in one turn (`G6`).
   `AAP-7`'s accurate-labelling acceptance criterion needs this row too.
 - **`G16` The preference-facet extractor learned the fragment "never more"** from
   "…in exactly one sentence from now on, never more." (`O22`) — the capture path is live
-  (that is the CONFIRMED part) but the extraction is poor.
+  (that is the CONFIRMED part) but the extraction is poor. **FIXED 2026-08-22** (see the
+  execution log). Mechanism, since the bullet as filed was imprecise about it in three ways:
+  (1) the writer is `preference_facets.detect_facet_candidate`'s veto branch, whose regex was
+  the trigger word plus `[^.!?\n]*` — so `never` matched as a *degree adverb* and the clause
+  took `" more"`; (2) the fragment reached TWO surfaces from that one detector — the
+  `Learned: never more` chip (`dashboard/chat_runner.py:211-217`, which prints the returned
+  text bare) and the durable lesson row `Never: never more`
+  (`after_turn_review.capture_preference_facet`, which prefixes it) — so one fix closes both;
+  (3) `K16`'s turn produced **two** `learned` events from **two different writers** — this one
+  and `is_correction_signal` → "User correction to honor: …" — and only the first is the facet
+  extractor. **`K49`'s second veto artifact is NOT closed by this fix and is a different
+  defect:** `Never: never violate these):` was clipped from *injected prompt boilerplate*, so
+  its root cause is provenance (capture ran over injected context that arrived inside the user
+  message), not grammar — "never violate these" is a well-formed prohibition and the tightened
+  rule accepts it, correctly by its own terms. That row needs the capture path to distinguish
+  the user's own words from injected content; filed here rather than half-fixed.
 
 ### Incidental bugs fixed in-session
 
@@ -2863,3 +2878,107 @@ cited above.
   **note for `#1876`** (`G5`, a runtime-binding rail around `chat_runner.py:1798-1818`): it lands
   next to these sites and a textual conflict is expected — the two changes are independent
   (`#1876` fixes *which* runtime is bound, this fixes what the line *says* about it).
+- 2026-08-22 — **`G16` FIXED** (code-only; no CLI driving, no owner authentication). The reported
+  mechanism reproduced exactly: `detect_facet_candidate`'s veto branch searched
+  `\b((?:never|do ?n'?t ever|do not ever|always avoid)\b[^.!?\n]*)`, so against
+  "Answer in exactly one sentence from now on, never more." it matched `never` as a **degree
+  adverb**, `[^.!?\n]*` took `" more"`, and `capture_preference_facet` wrote the durable lesson
+  `Never: never more`.
+  **The rule now, stated once in `preference_facets.py` and implemented once in the new
+  `veto_clause()`:** a veto is recognized only when a negative trigger is followed by a
+  **prohibited-action clause** — (1) a head token that can open a verb phrase, i.e. NOT a
+  closed-class function word / degree adverb / comparative / pronoun / preposition / conjunction /
+  copula / modal (`_NON_ACTION_HEADS`), (2) at least one further token for the action's
+  object-or-complement, and (3) not one of the enumerated non-prohibitive idioms
+  (`_VETO_IDIOM_HEADS` = "never mind …", `_VETO_IDIOM_CLAUSES` = "never say never").
+  **Deliberately rejected:** "never more", "never more than one sentence" (a quantity nudge — the
+  style detector and the after-turn summarizer own preferences of that shape), "never again",
+  "never mind the tests", "better late than never", "now or never", "I would never have guessed"
+  (`have`/`had` are excluded as heads on purpose: the counterfactual is commoner than "never have
+  X"), and any trigger with no complement. Precision over recall, as the docstring already
+  promised: this is the ONE candidate class that reaches the durable lesson store, so a missed
+  veto is cheap and a false one is not. **No LLM call added** (C15's constraint) — the fix is
+  strictly cheaper than the regex it replaced plus a frozenset lookup.
+  **Recall went UP, not down, in one respect:** every trigger occurrence is now tried, so
+  "In one sentence, never more. Also never use emoji." yields `never use emoji`, where the old
+  single-`re.search` returned the fragment and stopped.
+  **Routing NOT changed, deliberately.** The asymmetry the gap notes is real — the loosest matcher
+  produced the least reversible record — but splitting heuristic vetoes off into a decaying facet
+  would rebuild the parallel always/never model this module's docstring (`:13-15`) exists to
+  prevent, and `upsert_facet` returns None for `veto` specifically to enforce the single home. The
+  proportionality dial already exists on the READ side: `learning/lesson_confidence.derive` gives a
+  single-sighting non-human-authored lesson `corroboration(1) = 0.0` against a `0.5` threshold, so
+  a junk row is RETAINED-not-INJECTED until three sightings. That is a mitigation, not the fix, for
+  three measured reasons: the row is still written and still consumes contradiction judging; the
+  standings computation **fails OPEN** (`vector_memory.py:2925-2934` — an unreachable evidence store
+  injects everything at 1.0); and a habitual phrasing crosses the threshold on the third repeat, at
+  which point the junk rule *is* injected. So the fix is at the writer, and confidence composes
+  underneath it as a second line.
+  **Falsifications (each mutation applied to the LIVE line, re-read, and its enclosing function
+  confirmed by an `ast` probe; each restored from a `cp` file copy, never `git checkout`):**
+  · **M1 — old regex restored** inside `veto_clause` (AST: `veto_clause`, line 257). Red observed on
+  the STORED TEXT, not on a regex: `AssertionError: ['Never: never more']` from
+  `test_facet_capture_does_not_learn_a_never_fragment_as_a_lesson`, plus 13 more (11 rejection cases,
+  the multi-trigger recovery, the `veto_clause` unit) = **14 failed / 66 passed**.
+  **Blind spot: the pre-existing suites did not notice at all — 147 passed, 0 failed** across
+  preference-facets / after-turn-review / lesson-confidence / lesson-contradiction / lesson-scope /
+  lessons-memory-reroute / memory-service / temporary-chat with the new tests deselected. The defect
+  had zero coverage; that measurement is the finding.
+  · **M2 — precision collapsed to "detect nothing"** (`len(tokens) < 2` → `< 99`; AST: `veto_clause`,
+  line 260). Pre-existing suites **DID** notice: 3 reds including the store-level
+  `test_facet_capture_veto_routes_to_lesson`. The new direction-(b) tests red too (8, one per genuine
+  veto), so they are not vacuous.
+  · **M3 — veto→lesson routing flipped** to `upsert_facet(vs, "style", …)` (AST:
+  `capture_preference_facet`, line 179). Pre-existing suites noticed with 1 red; the new
+  `test_veto_is_durable_while_a_style_nudge_decays` red at its `force-push`-in-the-lesson-store
+  assertion, so the durable-vs-decaying distinction is now **asserted, not assumed**.
+  **DISCOVERY — `K49`'s second veto artifact is a DIFFERENT defect and stays open.**
+  `Never: never violate these):` was clipped from *injected prompt boilerplate*, so its root cause
+  is provenance (capture ran over injected context that had arrived inside the user message), not
+  grammar: "never violate these" is a well-formed prohibition and the tightened rule accepts it,
+  correctly by its own terms. Closing it means teaching the capture path to separate the user's own
+  words from injected content — filed on the `G16` bullet rather than half-fixed here. The same
+  `K16` turn's *other* row ("User correction to honor: …") comes from `is_correction_signal`, a
+  different writer, and is likewise untouched.
+  **Gates.** `make lint` clean (mypy 959 files); targeted pytest **168 green** across
+  preference-facets, after-turn-review, lesson-confidence, lesson-contradiction, lesson-scope,
+  lessons-memory-reroute, memory-service and temporary-chat (paths existence-checked first);
+  `make test` full suite **green on the first run — 24026 passed, 30 skipped, 12 xfailed**, with
+  neither the documented `test_loop_worktree_sparse` sparse-cone flake nor the open `test_subagent.py`
+  isolation red appearing (run count: 1). `gate_report.py` **6/6**; flat wire-error census
+  **1507/1507, zero slack** (this change adds no error path). No cell flipped to CONFIRMED;
+  `dag.json` untouched.
+  **INDEPENDENT VERIFICATION found a false NEGATIVE on the same axis, fixed here.** Probing the
+  shipped `veto_clause` over 18 phrasings (9 per direction) rather than re-reading its regex,
+  **"never, ever do that again" was silently dropped** — emphatic doubling puts the intensifier in
+  the clause-head position, `ever` is (correctly) a `_NON_ACTION_HEADS` member, and `ever` alone is
+  not a trigger, so no later occurrence rescued it. An emphatic veto is the *most* emphatic kind, so
+  this is the atom's own property failing, not a recall trade-off: added `_EMPHATIC_CLAUSE_HEADS`
+  and a leading-emphatic strip before the head is judged, +2 positive and +2 negative cases
+  ("never, ever", "never ever more" must still be refused — stripping must not manufacture a veto
+  out of nothing). Falsified: `while False and …` (AST-confirmed, real `While`, inside
+  `veto_clause`) reds **exactly the 2 new positive cases**, 43 passed.
+  **A wrong-target mutation of my own is worth recording.** Re-running M1 as `len(tokens) < 2` →
+  `< 1` gave **41 passed, zero red** — not a hole in the property but a *weaker* mutation than the
+  agent's "old regex restored": for "never more" the token count is 1, so the count guard passes and
+  the **next** guard (`more` ∈ `_NON_ACTION_HEADS`) still refuses it. Mutating that head check
+  instead reds 3 (`I would never have guessed`, `never mind the tests…`, `never more than one
+  sentence please`). So the two guards are **complementary, neither redundant** — the count guard
+  alone catches "never more", the head guard alone catches "never have guessed" — which the agent's
+  single-mutation account did not show. Untouched suites saw **37 passed** under the head mutation:
+  the blind spot the new tests close.
+  **Two claims re-verified against code, one citation corrected.** The fail-open confidence path is
+  verbatim at `vector_memory.py:2927-2934` (`LessonStanding.INJECTED`, "confidence unavailable —
+  injected rather than silently dropped"), so a veto that reaches the store is *injected* even when
+  confidence is unavailable — which is why precision, not recall, is the right bar here. And
+  `_HUMAN_AUTHORED_SOURCES` is `frozenset({"user_explicit", "vault_edit"})` at `vector_memory.py:126`,
+  so `facet_veto` is **not** human-authored (the agent cited `lesson_confidence.py` — wrong file,
+  right substance).
+  **Final gate, re-run independently on the amended tree:** `make lint` clean (mypy **959** files);
+  targeted **115 green** across preference-facets, after-turn-review, lesson-confidence,
+  lesson-contradiction and the wire-error census, every path existence-checked first;
+  `gate_report.py` **6/6**; flat census **1507/1507**; probe sweep **16** (the PHF-14 baseline) and
+  `git status` empty; full `make test` **24030 passed, 30 skipped, 12 xfailed, exit 0**. An earlier
+  full run on the pre-amendment tree had **1 red**, `test_loop_worktree_sparse.py::TestPoolBound::
+  test_batch_creates_every_worktree` — the documented sparse-cone flake; **47/47 in isolation** and
+  absent from the final run (run count: 2 full, 1 red). Nothing in this diff touches worktrees.
