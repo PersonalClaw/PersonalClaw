@@ -226,6 +226,21 @@ jobs:
       - name: axe per route, both themes (web/e2e/a11y.spec.ts)
         working-directory: web
         run: npx playwright test e2e/a11y.spec.ts --project=chromium
+      # `e2e/pwa.spec.ts` has been in the tree, complete and passing, running in NO automated gate —
+      # the same shape the axe rail was in before it was mounted above. It needs nothing this job
+      # does not already have: no baselines (it asserts BEHAVIOUR, not pixels), and the same
+      # self-contained gateway + preview the axe step uses. Three tests: the service worker serves
+      # the shell offline and NEVER serves /api from cache, and the manifest is installable with the
+      # worker scoped to the origin root. Verified stable before wiring — 3/3 passed on three
+      # consecutive local runs, ~18s each.
+      #
+      # `e2e/visual.spec.ts` is deliberately NOT mounted here. All 32 committed goldens are
+      # `-darwin` and playwright's snapshot path is platform-qualified, so on this ubuntu runner
+      # every comparison would be a missing baseline — which FAILS (playwright writes the actual and
+      # fails; it does not skip). Mounting it needs `-linux` goldens captured on a matching runner.
+      - name: PWA offline shell + installability (web/e2e/pwa.spec.ts)
+        working-directory: web
+        run: npx playwright test e2e/pwa.spec.ts --project=chromium
       - name: upload the axe reports
         if: always()
         uses: actions/upload-artifact@v7
