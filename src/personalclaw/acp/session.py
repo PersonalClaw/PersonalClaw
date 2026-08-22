@@ -125,6 +125,11 @@ class AcpSession:
         # Per-turn caches (owned here, threaded into the shared translate.* decoders)
         # + the cross-turn context-usage % the client also carries between turns.
         self._tool_call_inputs: dict[str, str] = {}
+        # toolCallId -> the kind the `tool_call` frame declared, so the permission
+        # frame that follows can name what it is gating even when the adapter omits
+        # `kind` from its own payload (`G10`). Same key, same lifetime as the inputs
+        # cache above.
+        self._tool_call_seen: dict[str, translate.SeenToolCall] = {}
         self._offered_options: dict[str, list[dict[str, str]]] = {}
         self.last_prompt_stats = AcpPromptStats()
         self._last_stop_reason: str = ""
@@ -314,6 +319,7 @@ class AcpSession:
         prev_pct = self.last_prompt_stats.context_pct
         self.last_prompt_stats = AcpPromptStats(context_pct=prev_pct)
         self._tool_call_inputs.clear()
+        self._tool_call_seen.clear()
         self._offered_options.clear()
         stale_eligible = False
         got_complete = False
@@ -355,7 +361,11 @@ class AcpSession:
                 raise AcpError(f"Prompt error: {msg.error}")
             if action == "permission":
                 yield translate.build_permission_event(
-                    msg, self._dialect, self._tool_call_inputs, self._offered_options
+                    msg,
+                    self._dialect,
+                    self._tool_call_inputs,
+                    self._tool_call_seen,
+                    self._offered_options,
                 )
             elif action == "update":
                 chunk, is_thinking = translate.extract_text_chunk(msg)
@@ -377,13 +387,18 @@ class AcpSession:
                         yield AcpEvent(kind=EVENT_COMPLETE)
                         return
                 tool_event = translate.extract_tool_event(
-                    msg, self._tool_call_inputs, self.last_prompt_stats.tool_calls
+                    msg,
+                    self._tool_call_inputs,
+                    self._tool_call_seen,
+                    self.last_prompt_stats.tool_calls,
                 )
                 if tool_event:
                     for tr in self._read_new_tool_results():  # prior tool's results first
                         yield tr
                     yield tool_event
-                for upd_event in translate.extract_tool_update_events(msg, self._tool_call_inputs):
+                for upd_event in translate.extract_tool_update_events(
+                    msg, self._tool_call_inputs, self._tool_call_seen
+                ):
                     yield upd_event
             elif action == "metadata":
                 pct = translate.extract_context_pct(msg)

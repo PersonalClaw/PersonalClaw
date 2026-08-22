@@ -216,7 +216,7 @@ class TestPermissionFrameCarriesKind:
         )
         dialect = MagicMock()
         dialect.parse_permission_options.return_value = [{"id": "allow", "label": "Allow"}]
-        event = build_permission_event(msg, dialect, {}, {})
+        event = build_permission_event(msg, dialect, {}, {}, {})
         assert event.tool_kind == "edit"
         assert event.title == "unknown"  # the adapter sent none — unchanged
 
