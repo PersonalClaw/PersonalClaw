@@ -3037,3 +3037,38 @@ cited above.
   chosen effort. `acp-parity.md`'s `G21` row now records the host half closed and the axis still
   absent, marked **not re-driven** (unit-proven, not a measured cell). No matrix cell flipped and
   `dag.json` is untouched.
+- **2026-08-22 — a per-turn pin loss found while investigating `G20`, fixed. `G20`'s own model
+  clause stays OPEN with the mechanism narrowed.** `AcpClient.start_fresh_turn_session`'s docstring
+  promises it re-runs the handshake tail — *"session/new + activate/model/mode/effort + drain"* — and
+  the code ran only `activate`, `model` and `mode`. **Effort and the drain were both named in the
+  contract and never executed.** It has live callers: `gateway.py:2306` reopens a session per cycle
+  for a long-lived driver (claude-code finishes a session after its first turn), and
+  `acp_agent.py:589` forwards to it. So from cycle 2 onward the agent/model/mode kept the session
+  looking correctly specialized while the EFFORT silently reverted to the adapter default — and MCP
+  init notifications stayed queued to interleave into the turn, on the very path `AAP-4` exists to
+  keep core reachable.
+  **`G20` as written says the MODEL pin lapses, and the code does not support that.** The fresh-turn
+  path DOES re-send `set_model` (verified: `client.py`'s block re-runs `set_model_request` with
+  `self._model`, which the method never clears). The `ACP model: auto (from agent config)` line
+  `C13` recorded comes from the FULL-start else-branch (`client.py:566`,
+  `self._model or "auto"`), so it printed "auto" because `self._model` was **empty on a full start**
+  — a provider rebuilt without the model kwarg, which is `G5`'s ephemeral-binding root, not a
+  per-turn lapse. Localizing that needs a live codex drive (owner-gated), so **`G20` is NOT closed
+  and no matrix cell flipped**; what is closed is the provable sibling on the same "pin stops
+  applying after turn 1" axis.
+  **Falsifications** (restored from a file copy): · **M1** drop the effort re-application →
+  **2 red** (the effort assertion and the vacuity floor that compares a pinned run against an
+  unpinned one). · **M2** drop the drain → **1 red**. **Blind spot measured:** under M2 the
+  pre-existing suites (acp-client, acp-session, acp-unattended-and-loop-breaker) were **67 passed,
+  0 failed** — nothing asserted what the fresh-turn path re-applies.
+  **The tests read PARAMS, not method names.** codex sends model, mode and effort all as
+  `session/set_config_option`, distinguished only by `configId`, so an assertion on the method name
+  cannot tell them apart — it would pass on a path that re-sent the model twice and no effort at all.
+  They also drive the real method through the file's own `_client` helper: `_work_dir` is a property
+  that writes through to the transport, so a hand-assembled client raises before the method runs,
+  which would look like a passing test that never executed the path. My first attempt did exactly
+  that.
+  **One assertion of mine was a tautology and was removed:** `assert METHOD_SET_MODEL not in
+  conn.sent or True`. Grounding the assertions meant first printing what the dialects actually emit
+  (codex: three `set_config_option` calls; default dialect: `session/set_model` and no mode/effort
+  verb at all).
