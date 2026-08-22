@@ -12,11 +12,18 @@ The original design record is kept below — execution logs, measured findings a
 **Status:** PROPOSED (created 2026-07-13 from research synthesis, promoted from backlog). Not started —
 verified 2026-08-04: no `SandboxProvider`/`AgentRunner` seam, no `sandbox/` package (only the
 pre-existing single-file `sandbox.py`, unchanged since v0.1.0), no lima/docker tier.
-⚠️ **The rev-14 amendment's D0 row was marked "land first" and has NOT landed.** It is docs-only and
-dependency-free, and the amendment's own words are that "an inaccurate security claim is a live
-defect": `docs/architecture/security.md` still lacks the what-the-sandbox-does-and-does-not-do
-section, and `personalclaw.dev`'s security page still says "Bounded capabilities" with no
-credential-hiding-vs-confinement qualification. The amendment's other rows are DONE: **D1** (app env
+⚠️ **D0 was HALF landed while its atom read `done` — corrected 2026-08-22.** This header previously
+said D0 "has NOT landed" and that `docs/architecture/security.md` "still lacks the
+what-the-sandbox-does-and-does-not-do section". **The security.md half was wrong**: that section exists
+at `docs/architecture/security.md:94`, with the "credential-hiding sandbox, not a confinement sandbox"
+framing and a two-column does/does-not table. The **website half was right** — `personalclaw.dev`'s
+boundary diagram still labelled the untrusted zone "Bounded capabilities" with no
+credential-hiding-vs-confinement qualification, and the amendment's own words are that "an inaccurate
+security claim is a live defect". So atom `EI-11` (D0) was flipped `done` while one of its two named
+surfaces was still unmet — the shape a mirrored status is supposed to prevent. Closed by
+`personalclaw.dev` PR #29 (label → "Gated by host policy", plus a paragraph naming the boundary as an
+approval/policy gate and hidden credential paths rather than an OS jail). `EI-11` is genuinely complete
+once that merges; it is left `done` rather than churned back, with this note as the record. The amendment's other rows are DONE: **D1** (app env
 inheritance) and **D2** (the declaration-only `network` permission's advisory marking) landed
 2026-08-13; **D3** and **VD** landed 2026-08-16, closing atom `EI-12`. D3 shipped **re-scoped** — an
 admission refusal (an app may not re-pin a dependency core owns) rather than the app-scoped isolation
@@ -720,7 +727,8 @@ D0 is documentation and should land immediately — an inaccurate security claim
   (test + live `ps eww`), consent-UI network claim matches re-measured enforcement, a conflicting core pin
   cannot affect the gateway (test + live HTTP, numpy unchanged), every first-party app still boots (all 20
   dep declarations pass the guard by test; 24 declare no deps; `minutes` booted healthy live), VD holds as
-  scoped above. D0 (the website/security.md docs row) is a SEPARATE row and remains open — untouched here.
+  scoped above. D0 (the website/security.md docs row) is a SEPARATE row: its security.md half was
+  already present, and its website half is closed by `personalclaw.dev` PR #29 (2026-08-22).
 - [2026-08-17][EI-8] **PARTIAL — `EI-8` stays `todo`.** §6 landed whole; **§6.2 (localhost web preview,
   the fourth done-when clause) is NOT built**, so the atom is not flipped. Shipped:
   `src/personalclaw/turn_checkpoints.py` (the store), `dashboard/chat_file_rewind.py` (GET preview +
@@ -993,3 +1001,28 @@ D0 is documentation and should land immediately — an inaccurate security claim
   `EI-6`'s scope — adding it here would ship a knob with no reader), and the bundle has not been driven
   in a live gateway, so nobody has *seen* Settings → Agents render the Gemini row; `gemini` is not on
   this machine's PATH, so no real ACP handshake was exercised. Evidence stops at the join contract.
+
+- **2026-08-22 — `D0` / atom `EI-11`: the claim was corrected on the public surface, and this plan's own
+  header was wrong about the other half.** Two findings, both verified rather than read:
+  1. **`docs/architecture/security.md` already had** the "What the sandbox does and does not do" section
+     (`:94`), with the credential-hiding-vs-confinement framing and a does/does-not table. This plan's
+     header asserted it was missing. Corrected in place.
+  2. **The website claim was genuinely still live.** `personalclaw.dev`'s trust-boundary diagram labelled
+     the untrusted zone "Bounded capabilities". Fixed in `personalclaw.dev` PR #29.
+  **So `EI-11` read `done` in `dag.json` while one of its two named surfaces was unmet** — exactly what a
+  mirrored status is meant to prevent. Left `done` rather than churned back, with this entry as the record;
+  it is genuinely complete when #29 merges.
+  **The characterization was re-verified against code before publishing it**, because the audit behind it
+  dates to 2026-07-28: `sandbox.py:686-687` is `(version 1)` / `(allow default)` with appended denies;
+  `grep -c "deny network"` → **0**; `grep -c "deny process"` → **0**; exactly **one** `deny file-write*`
+  and it is `~/.ssh` (`:737`); Linux is `unshare(CLONE_NEWUSER)` → `CLONE_NEWNS` → bind-mounted empty dirs
+  with no network or pid namespace. The plan's wording held.
+  **D0's other two named claims were already correct.** The guardrails claim is already scoped to
+  unattended work (`product.astro:368`, "Before you hand the system unattended work…"), and there is **no**
+  desktop-platform claim in any website page to bring in line with CI reality. The security page's seven
+  control cards were read in full and none claims confinement. Nothing was invented to have something to fix.
+  **Visual baselines** followed the repo's documented off-Darwin flow (`.github/workflows/visual-baselines.yml`):
+  dispatch → artifact → inspect → commit only the intentional updates. The artifact was diffed file by file
+  against every committed baseline and **exactly two differed** (`security-page-{desktop,mobile}-linux.png`),
+  so no unrelated drift was swept in. Website gate: **94 Playwright tests, Lighthouse `/security` 100/100/100/100,
+  exit 0.**
