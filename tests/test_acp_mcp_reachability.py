@@ -198,6 +198,91 @@ def test_fresh_turn_session_carries_core(home):
     assert [s["name"] for s in conn.new_params[0]["mcpServers"]] == [CORE_SERVER_NAME]
 
 
+class _RecordingConn(_FakeConn):
+    """``_FakeConn`` plus the two things the fresh-turn contract is about: which verbs went
+    out, and whether the MCP init notifications were drained."""
+
+    def __init__(self):
+        super().__init__()
+        self.sent: list[str] = []
+        self.drains = 0
+
+    async def send_request(self, method, params):
+        self.sent.append((method, dict(params or {})))
+        return {}
+
+    async def drain_init_notifications(self, duration=0.0):
+        self.drains += 1
+        return None
+
+
+def _fresh_turn(home, *, effort="xhigh", model="openai.gpt-5.4", mode="default"):
+    """Drive the real ``start_fresh_turn_session`` on a live client object.
+
+    Built through ``_client`` rather than by hand because ``_work_dir`` is a property that
+    writes through to the transport — a hand-assembled client raises before the method runs,
+    which would look like a passing test that never executed the path.
+    """
+    from personalclaw.acp.dialect import CodexDialect
+
+    c = _client(home)
+    c._dialect = CodexDialect()
+    conn = _RecordingConn()
+    c._connection = conn
+    c._session = _FakeSession("OLD")
+    c._session_id = "OLD"
+    c._agent = "codex"
+    c._model = model
+    c._mode = mode
+    c._reasoning_effort = effort
+    c._transport._process = object()
+    c._transport.is_alive = lambda: True  # type: ignore[method-assign]
+    asyncio.run(c.start_fresh_turn_session())
+    return conn
+
+
+def _config_ids(sent: list) -> list[str]:
+    """The ``configId`` sequence, in order. codex sends model, mode AND effort as
+    ``session/set_config_option`` — asserting on the METHOD name alone cannot tell them
+    apart, so every assertion here reads the params."""
+    return [p.get("configId", "") for _m, p in sent if p.get("configId")]
+
+
+def test_fresh_turn_session_reapplies_the_effort_pin(home):
+    """`G20` — the pin that silently stopped applying after the first turn.
+
+    ``start_fresh_turn_session``'s own docstring promises it re-runs
+    "activate/model/mode/effort + drain"; it ran only the first three. A driver that reopens a
+    session per cycle (``gateway.py``, one prompt per cycle) therefore kept the agent, model
+    and mode looking correctly specialized while the EFFORT silently reverted to the adapter
+    default from turn 2 on.
+    """
+    conn = _fresh_turn(home, effort="xhigh")
+    ids = _config_ids(conn.sent)
+    assert "effort" in ids, f"the effort pin was not re-applied: {ids}"
+    effort_params = [p for _m, p in conn.sent if p.get("configId") == "effort"]
+    assert effort_params[0]["value"] == "xhigh", effort_params
+    # Effort must follow the model, the ordering the full handshake documents (granularity
+    # can be model-dependent).
+    assert ids.index("effort") > ids.index("model"), f"effort preceded model: {ids}"
+
+
+def test_fresh_turn_session_drains_mcp_init_notifications(home):
+    """The other half of the same docstring. Skipping the drain leaves MCP server init
+    notifications queued to interleave into the turn — on the very path `AAP-4` exists to keep
+    core reachable."""
+    conn = _fresh_turn(home)
+    assert conn.drains == 1, f"init notifications were not drained (drains={conn.drains})"
+
+
+def test_fresh_turn_session_sends_no_effort_verb_when_none_is_pinned(home):
+    """The vacuity floor: with no effort pinned the dialect returns None and nothing extra
+    goes out, so the fix cannot be "always send something"."""
+    pinned = _config_ids(_fresh_turn(home, effort="xhigh").sent)
+    unpinned = _config_ids(_fresh_turn(home, effort="").sent)
+    assert "effort" in pinned and "effort" not in unpinned, f"pinned={pinned} unpinned={unpinned}"
+
+
 @pytest.mark.asyncio
 async def test_pooled_path_defaults_to_core(home):
     """The pooled ``mcp_servers`` parameter had no supplier — it does now.

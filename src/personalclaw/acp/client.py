@@ -619,6 +619,21 @@ class AcpClient:
         _set_mode = self._dialect.set_mode_request(session_id=self._session_id, mode=self._mode)
         if _set_mode is not None:
             await conn.send_request(_set_mode.method, _set_mode.params)
+        # 7 + drain — this method's own docstring promised "activate/model/mode/effort +
+        # drain" and ran only the first three (`G20`). Two consequences, both silent:
+        #   * a driver that reopens a session per cycle (``gateway.py``, one prompt per
+        #     cycle) lost the session's EFFORT pin from turn 2 on, while the agent/model/mode
+        #     it re-sent kept the session looking correctly specialized;
+        #   * MCP init notifications stayed queued and interleaved into the turn instead of
+        #     being drained before it, on the very path `AAP-4` exists to keep core reachable.
+        # Effort follows model here for the same reason it does in the full handshake:
+        # granularity can be model-dependent.
+        _set_effort = self._dialect.set_effort_request(
+            session_id=self._session_id, effort=self._reasoning_effort
+        )
+        if _set_effort is not None:
+            await conn.send_request(_set_effort.method, _set_effort.params)
+        await conn.drain_init_notifications(duration=_DRAIN_DURATION)
         logger.info("ACP fresh turn session: %s", self._session_id)
 
     async def _reset(self) -> None:
