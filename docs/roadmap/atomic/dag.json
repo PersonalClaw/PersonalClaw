@@ -3215,7 +3215,7 @@
         {
           "id": "MRT-3",
           "title": "Usage/spend read model \u2014 fold, /api/usage, Usage UI, monthly recap",
-          "status": "todo",
+          "status": "done",
           "scope": "Amendment (2026-07-26) \u2014 the usage story: T-U1 (usage fold + route), T-U2 (usage UI + per-run cost), T-U3 (monthly recap)",
           "done_when": "routing/usage.py folds usage_stats.json (per-day keyed date->provider:model->purpose with interactive|background|loop|eval|app mapping) matching a hand-computed fixture over 50 audit lines and reproducible after delete via the shared \u00a71.3 rebuild; GET /api/usage?window=&group= returns rows+total+estimated_share; Usage section on Settings->Models renders daily/weekly charts and a run/loop detail shows '~$X this run' via run_totals; usage_recap(month) template renders verbatim-predictable and delivers one digest-mode notification honoring quiet hours/mute via the rules engine + system cron",
           "deps": [
@@ -7743,11 +7743,6 @@
         "plan": "MI"
       },
       {
-        "id": "MRT-3",
-        "title": "Usage/spend read model \u2014 fold, /api/usage, Usage UI, monthly recap",
-        "plan": "MRT"
-      },
-      {
         "id": "MRT-5",
         "title": "Learned policy + cost-aware ordering + propose-don't-write proposals",
         "plan": "MRT"
@@ -9817,9 +9812,9 @@
         "code": "MRT",
         "plan": "MODEL-ROUTING-TELEMETRY",
         "total_atoms": 5,
-        "done": 3,
+        "done": 4,
         "in_progress": 0,
-        "todo": 2,
+        "todo": 1,
         "blocked": 0
       },
       {
