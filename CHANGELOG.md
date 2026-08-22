@@ -507,6 +507,18 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Fixed
 
+- **Restarting PersonalClaw quietly moved a chat onto a different agent.** If you had pointed a chat
+  at an external coding CLI, or put it in Ask or Plan mode, a restart threw both away and the next
+  message you sent ran on the built-in agent instead — with a different set of tools and a different
+  idea of what it was allowed to touch, and nothing on screen to say so. A chat you had deliberately
+  put in Plan mode came back in Agent mode, free to make changes. The binding was in fact being
+  written to disk when you picked it; the very next turn then overwrote the file without it.
+  **A chat now keeps the agent and the mode you gave it across a restart.** And if the agent you
+  chose genuinely cannot be brought back, the chat says which one it could not restore and that the
+  built-in agent has different tools and different limits — once, in the turn's activity, rather than
+  looking like an ordinary reply. Being moved onto another agent without being told is the part that
+  actually costs you something.
+
 - **The context gauge said "0%" on turns that were nearly full.** The little ring on the model pill,
   and the "Turn complete" line under a finished turn, both printed a context percentage on every
   turn — including turns where the agent behind the chat had never reported one. The number they
