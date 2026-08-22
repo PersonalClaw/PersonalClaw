@@ -158,7 +158,8 @@ def test_egress_policy_for_tier():
 def test_health_empty(monkeypatch, tmp_path):
     monkeypatch.setattr("personalclaw.config.loader.config_dir", lambda: tmp_path)
     h = provider_health()
-    assert h == {"providers": [], "generated_from": 0}
+    # `callers` is the same population regrouped by subsystem (G47) — empty in, empty out.
+    assert h == {"providers": [], "callers": [], "generated_from": 0}
 
 
 def test_health_derives_from_audit(monkeypatch, tmp_path):

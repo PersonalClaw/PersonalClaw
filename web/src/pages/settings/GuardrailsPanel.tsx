@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { api, type AutonomyLadder, type AutonomyReversal, type AutonomyType, type ProviderHealth } from '../../lib/api'
+import { api, type AutonomyLadder, type AutonomyReversal, type AutonomyType, type CallerHealth, type ProviderHealth } from '../../lib/api'
 import { notify } from '../../app/appSdk'
 import { useQuery, invalidateKeys } from '../../lib/data'
 import { PanelHeader, Section, Row, Field, SegPills, Toggle, SavedToast } from './settingsUI'
@@ -288,11 +288,15 @@ function IncidentSection() {
 // ── Provider health (derived) ───────────────────────────────────────────────
 function ProviderHealthSection() {
   const [rows, setRows] = useState<ProviderHealth[] | null>(null)
+  // The same audit regrouped by the SUBSYSTEM that asked (G47). A provider row averages four
+  // unattended callers together, so a learning pass that fails every time reads as a small dent
+  // in a healthy provider — measured on a skill-ladder pass dying at 60,010 ms every turn.
+  const [callers, setCallers] = useState<CallerHealth[]>([])
   // Same shape as the incident read above: `.catch(() => setRows([]))` turned "we could not check" into
   // "no background model calls recorded yet" — a reassuring sentence about a health surface, produced by
   // a failed request. The rows stay `null` and the failure is stated.
   const [loadErr, setLoadErr] = useState<unknown>(null)
-  const refresh = () => api.modelsHealth().then((r) => { setRows(r.providers); setLoadErr(null) }).catch(setLoadErr)
+  const refresh = () => api.modelsHealth().then((r) => { setRows(r.providers); setCallers(r.callers ?? []); setLoadErr(null) }).catch(setLoadErr)
   useEffect(() => { refresh() }, [])
 
   return (
@@ -311,8 +315,40 @@ function ProviderHealthSection() {
             {rows.map((p) => <HealthRow key={p.name} p={p} />)}
           </div>
         )}
+        {callers.length > 0 && (
+          <div className="mt-3 border-t border-outline-variant/30 pt-3">
+            <div className="text-on-surface-low text-[0.75rem]">By background caller</div>
+            <div className="mt-1 flex flex-col gap-1">
+              {callers.map((c) => <CallerRow key={c.name} c={c} />)}
+            </div>
+          </div>
+        )}
       </div>
     </Section>
+  )
+}
+
+/** Exported for test: one line per SUBSYSTEM that asked for a model call (G47).
+ *  Answers the question the provider rows cannot — "is my expensive background pass alive?" */
+export function CallerRow({ c }: { c: CallerHealth }) {
+  const dead = c.calls > 0 && c.passed === 0
+  // The dominant failure mode only. This is a summary line under the provider rows, not a second
+  // failure table: naming why it is dead is what makes it actionable, listing every mode is not.
+  const worstMode = Object.entries(c.failure_modes ?? {}).sort((a, b) => b[1] - a[1])[0]
+  return (
+    <div className="flex items-baseline justify-between gap-l text-[0.75rem]">
+      <span className="min-w-0 truncate text-on-surface">{c.name.replace(/_/g, ' ')}</span>
+      <span className="text-on-surface-low tabular-nums">
+        {c.calls} calls · <span style={dead ? { color: 'var(--color-error)' } : undefined}>
+          {c.pass_rate === null ? '—' : `${Math.round(c.pass_rate * 100)}% ok`}
+        </span>
+        {c.p90_ms > 0 && ` · p90 ${Math.round(c.p90_ms)}ms`}
+        {/* The mode, only when the pass is producing nothing at all. A caller with a few
+            scattered failures is noise; one at 0% is a subsystem that is dead in production,
+            and that is the case this row exists to make visible. */}
+        {dead && worstMode && ` · ${worstMode[0].replace(/_/g, ' ')}`}
+      </span>
+    </div>
   )
 }
 

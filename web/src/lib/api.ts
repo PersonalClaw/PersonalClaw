@@ -88,6 +88,24 @@ export interface ProviderHealth {
   degraded: boolean
 }
 
+// The SAME model-call audit regrouped by the SUBSYSTEM that asked (ACP-AGENT-PARITY G47).
+// The per-provider rows above cannot answer "is my expensive background pass alive?": four
+// unattended subsystems share one provider and one `background` use case, so a learning pass
+// that dies every time is invisible inside a healthy provider's aggregate. `name` is one of
+// the closed caller vocabulary (`guardrails/audit.CALLERS`) or `(unattributed)`.
+export interface CallerHealth {
+  name: string
+  calls: number
+  passed: number
+  failed: number
+  pass_rate: number | null
+  p50_ms: number
+  p90_ms: number
+  p99_ms: number
+  failure_modes: Record<string, number>
+  dollars_est: number
+}
+
 // The earned-autonomy ladder (AUTONOMY-GUARDRAILS §5-§6). One row per DECLARED action
 // type: the rung it resolves at, where that rung came from (`authority`), the recomputed
 // track record, and whether the next rung has been earned. Nothing here is editable in
@@ -3545,7 +3563,9 @@ export const api = {
     post<{ active: boolean; reason: string; started_at: string }>('/api/incident', { reason }),
   incidentResume: () => post<{ active: boolean }>('/api/incident/resume', { confirm: true }),
   modelsHealth: () =>
-    get<{ providers: ProviderHealth[]; generated_from: number }>('/api/models/health'),
+    get<{ providers: ProviderHealth[]; callers?: CallerHealth[]; generated_from: number }>(
+      '/api/models/health',
+    ),
 
   // ── The earned-autonomy ladder (§5-§6.1). Read, then three writes — and only `grant`
   //    increases what an automation may do on its own, which is why it is the only one

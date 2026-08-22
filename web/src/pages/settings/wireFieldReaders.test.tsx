@@ -2,8 +2,8 @@ import { describe, expect, it } from 'vitest'
 import { render } from '@testing-library/react'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { HealthRow } from './GuardrailsPanel'
-import type { ProviderHealth } from '../../lib/api'
+import { CallerRow, HealthRow } from './GuardrailsPanel'
+import type { CallerHealth, ProviderHealth } from '../../lib/api'
 
 // ── Wire fields the backend computes and the UI dropped ────────────────────────
 //
@@ -112,5 +112,47 @@ describe('MemoryLink.from_kind reaches the backlinks row', () => {
     const src = read('MemoryPanel.tsx')
     expect(src).not.toMatch(/\{l\.to_entity\}/)
     expect(src).not.toMatch(/\{l\.to_ref\}/)
+  })
+})
+
+// ── CallerHealth: the SUBSYSTEM axis of the same audit (ACP-AGENT-PARITY G47) ──────────
+//
+// A provider row averages every unattended caller together, so a learning pass that fails on
+// every turn reads as a small dent in a healthy provider — measured on a skill-ladder pass dying
+// as provider_error at 60,010 ms. These assert the caller axis actually reaches a rendered row:
+// a wire field the backend computes and nothing shows is the defect this file exists to catch.
+const deadCaller: CallerHealth = {
+  name: 'skill_ladder',
+  calls: 6,
+  passed: 0,
+  failed: 6,
+  pass_rate: 0,
+  p50_ms: 0,
+  p90_ms: 0,
+  p99_ms: 0,
+  failure_modes: { provider_error: 6 },
+  dollars_est: 0.12,
+}
+
+describe('CallerHealth reaches a rendered row', () => {
+  it('names the dead subsystem, its rate, and why', () => {
+    const { container } = render(<CallerRow c={deadCaller} />)
+    const text = container.textContent ?? ''
+    expect(text).toContain('skill ladder')
+    expect(text).toContain('6 calls')
+    expect(text).toContain('0% ok')
+    // The mode is what makes it actionable — "dead" and "dead because the provider errors" are
+    // different next steps for the operator.
+    expect(text).toContain('provider error')
+  })
+
+  it('a healthy caller stays a one-line summary, no failure mode', () => {
+    // The counterpart. Every caller printing its dominant mode would turn a summary block into a
+    // second failure table; the mode appears only when the pass is producing nothing at all.
+    const healthy: CallerHealth = { ...deadCaller, passed: 6, failed: 0, pass_rate: 1, p90_ms: 800 }
+    const text = render(<CallerRow c={healthy} />).container.textContent ?? ''
+    expect(text).toContain('100% ok')
+    expect(text).toContain('p90 800ms')
+    expect(text).not.toContain('provider error')
   })
 })
