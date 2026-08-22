@@ -130,9 +130,6 @@ _MAX_HISTORY_CHARS = 8000
 # injection. "" = default. Re-exported by chat_handlers for the API validator.
 _REASONING_EFFORT_RE = re.compile(r"^[a-z][a-z0-9_-]{0,23}$")
 
-# Kept as a name for callers that want the native ladder (composer fallback).
-_REASONING_EFFORT_VALUES = frozenset({"", "low", "medium", "high", "max"})
-
 
 def _validate_reasoning_effort(raw: object) -> str:
     """Return *raw* if it's a safe reasoning_effort token, else "".
