@@ -226,6 +226,13 @@ jobs:
       - name: axe per route, both themes (web/e2e/a11y.spec.ts)
         working-directory: web
         run: npx playwright test e2e/a11y.spec.ts --project=chromium
+      # DSC-11's OTHER half. axe cannot express any of these three: whether a focus stop is
+      # VISIBLE (it checks name/role, not "was the user told"), what a user with
+      # prefers-reduced-motion actually gets, or whether the page pans sideways on a phone.
+      # A separate step so a failure names which property broke rather than "the a11y job".
+      - name: V3 walkthrough — keyboard / reduced-motion / phone (web/e2e/walkthrough.spec.ts)
+        working-directory: web
+        run: npx playwright test e2e/walkthrough.spec.ts --project=chromium
       - name: upload the axe reports
         if: always()
         uses: actions/upload-artifact@v7

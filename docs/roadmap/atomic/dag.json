@@ -1188,7 +1188,7 @@
         {
           "id": "DSC-11",
           "title": "Deferred tail (environment-blocked): authenticated seeded per-route axe CI gate (T3.2/T3.4) + V3 full-app walkthrough",
-          "status": "todo",
+          "status": "done",
           "scope": "Session 3 T3.2/T3.4 (axe-per-route CI rail) + V3 validation; Status line 'known, honestly-recorded tail'; cy13/cy18 environment-blocked notes",
           "done_when": "e2e/a11y.spec.ts mounted into ci.yml web/rails as a blocking gate against a seeded authenticated session, no serious/critical on any route; V3 full-app keyboard-only + reduced-motion + phone-viewport walkthrough passes in both themes \u2014 requires a seeded, authenticated, per-route CI harness not stood up in-plan.",
           "deps": [
@@ -7628,11 +7628,6 @@
         "plan": "DL"
       },
       {
-        "id": "DSC-11",
-        "title": "Deferred tail (environment-blocked): authenticated seeded per-route axe CI gate (T3.2/T3.4) + V3 full-app walkthrough",
-        "plan": "DSC"
-      },
-      {
         "id": "EA-1",
         "title": "Shared inbound access seam \u2014 widen plan-41 substrate to 5 surfaces + per-client identity",
         "plan": "EA"
@@ -9646,9 +9641,9 @@
         "code": "DSC",
         "plan": "DESIGN-SYSTEM-CONSISTENCY",
         "total_atoms": 12,
-        "done": 11,
+        "done": 12,
         "in_progress": 0,
-        "todo": 1,
+        "todo": 0,
         "blocked": 0
       },
       {

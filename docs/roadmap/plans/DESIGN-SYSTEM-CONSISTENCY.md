@@ -775,3 +775,141 @@ Canonical usage of each shared primitive + each interaction pattern (selection, 
 - **🪤 A JSX opening tag cannot be found by scanning to the first `>`.** The scripted pass that wired `stale` through 23 bento tiles inserted the prop at the first `>` after `<BentoCard`, which lands **inside** `onClick={() => go('inbox')}`. Ten `TS1109`s. Re-run with a brace/quote-depth scan; the file was restored from a `cp` copy first, not patched forward.
 - **🪤 An identifier codemod rewrites PATH STRINGS too.** `useCachedData` → `useQuery` turned `codeOf('lib/useCachedData.ts')` into `codeOf('lib/useQuery.ts')` (a test then failed on ENOENT rather than on its assertion) and rewrote a prose reference in `ui/motion/Entrance.tsx`. Both swept afterwards by grepping the new name in string position.
 - **Gate (from the worktree root, main checkout's venv on PATH).** `npm ci` · `npm run typecheck:web` clean · **FULL `npm run test:web`: 462 files / 4,840 tests, 0 failures** · `npm run build --workspace web` clean · `make lint` (Python) exit 0 · **`make test` SKIPPED, with the reason: this change touches zero Python files** (`git show --stat HEAD` has no `.py`, no `Makefile`, no `pyproject.toml`). `ui/disabledReasonCensus.test.ts` went red on its own and was re-keyed in the same commit — it pins sites by `file:line` and the knowledge `stale` prop shifted `KnowledgeListPage.tsx:917` → `:918`, exactly as DSC-13 predicted. **No baseline needed regenerating:** `primitiveAdoption.baseline.json` and `windowedListAdoption.baseline.json` both stayed green (the migration moved imports and destructures, not raw controls or windowing adoption), and regenerating either without a red would have been a blind edit. `docs/design/consistency-audit.json` regenerates on every full web run and drifts on `main` independently; left uncommitted.
+
+### 2026-08-22 — `DSC-11` DONE: the V3 walkthrough, and three detector bugs it took to get right
+
+**DONE.** `DSC-11`'s two clauses are now both met.
+
+**Clause 1 was ALREADY met on main and unrecorded.** `e2e/a11y.spec.ts` is mounted as the `e2e-a11y`
+job in `ci.yml` — a real job, no `continue-on-error`, auth ON (no `PERSONALCLAW_AUTH_MODE=none`,
+which would swap in the dev middleware and describe a user who does not exist). Its own comment
+records the measurement that preceded wiring: 107 passed, 4 skipped. The atom's `EXT` dep — *"seeded
+authenticated per-route axe CI harness"* — is satisfied by `web/e2e/auth.setup.ts`, which performs
+the gateway's real token handshake. So the blocker recorded when this atom was deferred has cleared.
+
+**Clause 2 is this session's build:** `web/e2e/walkthrough.spec.ts`, 18 routes × 2 themes × 3 legs =
+**109 tests, all passing**, mounted as its own blocking step in the same job so a failure names the
+property rather than "the a11y job". It exists because axe cannot express any of the three:
+
+| leg | what axe cannot ask | measured on `origin/main` |
+|---|---|---|
+| keyboard-only | "once focus lands here, is the user TOLD?" — axe checks name/role | 1 real defect (see DEVIATION) |
+| reduced motion | what a user with the preference actually GETS (a static scan counts files declaring a block: 12 of 167) | elements declaring >50ms motion: 55–102 per route without the preference, **0** with it |
+| phone viewport | horizontal overflow is a layout fact, not a markup fact | no page-level pan on any route |
+
+This is the runtime Tab-walk that `design/focusRingSurvival.test.ts` and
+`design/focusRingPerElement.test.ts` both explicitly defer to: their headers say a source scan cannot
+resolve whether an ANCESTOR draws the ring because that needs a JSX parse. A browser can just ask.
+**It independently converged on a control the source rail had flagged** — `PathBar`'s "Go to path"
+input — which is the strongest available evidence that both are measuring the real thing.
+
+**DEVIATION — leg A carries exactly ONE allowance, and it is self-clearing.** `PathBar`'s path input
+has no visible focus indicator on main. Its fix (`focus-within:` on the box-drawing container) is in
+the open focus-ring PR, which owns `web/src/pages/files/browse/PathBar.tsx`; fixing it here would
+conflict. So `KNOWN_UNANNOUNCED` names that one stop — and the leg additionally asserts the entry
+still MATCHES a real unannounced stop, so the moment the fix lands the gate goes RED telling you to
+delete the entry. That is the opposite of a count baseline, which would absorb the fix and leave
+permanent slack.
+
+**🪤 Three detector bugs, each found by falsification rather than review. All three made the gate
+report CLEAN.**
+
+1. **A raw computed-style diff is not a VISIBLE diff.** The first signature compared
+   `outlineWidth`/`outlineStyle` verbatim. Tailwind's `outline-none` sets only
+   `outline-style: none`, while `tokens.css`'s `:focus-visible { outline: 2px solid … }` still sets
+   the WIDTH — so a control with `outline-none` reports `2px` focused and `medium` at rest: a
+   difference, for a ring that is never painted. Stripping the ring from every `NavRail` row (which
+   has no focus treatment of its own) left the leg **37/37 green**, and the mutated class string was
+   confirmed present in the SERVED bundle, so the run was honest and the detector was wrong. With an
+   effective-indicator signature the same mutation flags **19 stops per route**.
+2. **The indicator can live on a DESCENDANT.** `ui/SidePanel.tsx:196`'s window splitter is
+   `outline-none group` and its seam is a child with `group-focus-visible:bg-primary`. Reading the
+   element and its ancestors only reported that correct control as a defect on `#/files` in both
+   themes — and a gate that flags correct code teaches people to "fix" it. All three legitimate
+   patterns are now read: element, ancestor (`focus-within:` / `has-[…]`), descendant (`group-*`).
+3. **`getComputedStyle` returns the value a transition is animating AWAY from.** Focus treatments
+   here are routinely painted through `transition-colors`, so an immediate read makes a working
+   indicator look identical. A direct probe proved it: the splitter matched `:focus-visible` while
+   its child's background was byte-identical focused vs resting. Only suspected misses now pay a
+   260ms settle and re-check, so the fast path stays fast.
+
+**Two calibrations on leg C, both measured, neither a loosened assertion.** An element inside an
+ancestor that scrolls horizontally is REACHABLE, not overflowing — 25 nodes on `#/artifacts` were the
+contents of a deliberately scrollable control row while `scrollWidth === clientWidth === 390`. And an
+element the user cannot SEE cannot overflow for the user: `#/tasks` reported 8 nodes rooted at a
+`pointer-events-none invisible absolute` measuring ghost at `right=476px`, again with no page pan.
+The page-level assertion (`scrollWidth <= clientWidth`) is the load-bearing one and passes untouched.
+
+**🪤 `seedTheme`'s `emulateMedia({ colorScheme })` CLEARS the context's `reducedMotion`.** The first
+reduced-motion leg measured `matchMedia('(prefers-reduced-motion: reduce)').matches === false` on
+every route — a user with no preference, reported as one who has it — while otherwise "passing". Only
+the vacuity floor caught it. Any spec combining a theme with a media preference must re-assert the
+preference after seeding the theme.
+
+**Falsification (4, each mutating a live line, applied-count confirmed, restored from a file copy).**
+(1) `outline-none` on every `NavRail` row → 19 unannounced stops per route (37/37 green before the
+signature fix — the before/after on one mutation is the proof). (2) Neutralize `tokens.css:479`'s
+universal `animation-duration/transition-duration: .001ms !important` → 38–82 elements per route
+declare motion under `reduce`, from 0. (3) Disable the horizontal-scroller credit → 25 offscreen on
+`#/artifacts`, 3 on `#/files`. (4) "Fix" `PathBar` → the self-clearing allowance reds on both Files
+tests, forcing its own deletion.
+
+**Gate.** `npm run typecheck` clean · full `npx playwright test e2e/walkthrough.spec.ts`: **109
+passed** · `ci.yml` YAML parsed and the new step confirmed `continue-on-error: False` ·
+`make lint` clean · roadmap status-sync + dag-derived tests green. Probes deleted; tree clean.
+
+#### Same session, second pass — "full-app" made true (18 → 51 surfaces + the opened tier)
+
+The first pass walked the **18 nav routes** and called itself a full-app walkthrough. That is 18 of
+51 surfaces, and it is the exact hole `a11y.spec.ts` documents on the route axis: each settings panel
+is a `#/settings/<id>` route that mounts only when visited, so "settings" covers 1 of 33. Keyboard
+focus is at least as panel-local as axe's findings were. All three legs now walk
+`[...ROUTES, ...SETTINGS_ROUTES, ...VIEW_ROUTES]` — the same set the axe gate scans — plus a fourth
+tier for `OPENERS` (modals, docks, menus) on the keyboard leg. **313 passed, 4 skipped** (the two
+peek docks have no rows in a fresh home, × 2 themes) in ~3 minutes.
+
+**The extension immediately paid for itself: 18 routes found 1 defect; 51 surfaces + openers found
+47.** They reduce to FIVE root causes, not 47 — three of them one source line rendered many times:
+
+| surface | stops | root cause |
+|---|---|---|
+| `settings/prompts` | ~28 | ONE line, `PromptsPanel.tsx:87` — the "Prompt for X" `<select>`, rendered once per use-case |
+| `settings/design` | 12 | ONE line, `DesignPanel.tsx:214` — the scheme tile |
+| `settings/security` | 2 | `SecurityPanel`'s denylist + allowed-hosts inputs |
+| `settings/legibility` | 1 | `AlwaysOnConventions.tsx:126`'s select |
+| command palette | 1 | `ui/SearchField`'s inline variant |
+
+**🪤 A NEW defect class the source rails cannot see: an inline `style` that sets `outline`.**
+`DesignPanel.tsx:214`'s scheme tile carries **no `outline-none` class at all**. It expresses selection
+state as `style={{ outline: active ? '2px solid var(--color-primary)' : '1px solid …' }}`, and an
+inline style beats `tokens.css`'s `:focus-visible { outline: … }` outright — so all twelve tiles took
+keyboard focus with no indicator. Both `focusRingSurvival` and `focusRingPerElement` scan for the
+`outline-none` UTILITY and would never have found this; only a runtime walk can. **Fixed here** with
+`focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary/50`: a ring is a
+box-shadow, orthogonal to `outline`, so it coexists with the selection outline instead of fighting
+it. That is the one product fix in this pass — the only root cause no open PR already covers.
+
+**The other four are allowances, and they are two different KINDS, kept distinct on purpose.**
+- **Fix in flight (4 entries).** `prompts`, `security` ×2, `legibility` and `files`/PathBar are all
+  ringed by the open focus-ring PR, which owns every one of those files — fixing them here would
+  conflict. Verified against that PR's actual diff, not its description.
+- **A written product decision (1 entry).** `ui/SearchField`'s inline variant keeps `outline-none`
+  with no ring *deliberately*: the palette row's focus is carried by the modal context, and an inset
+  rectangle inside a round row would redesign a hero surface. The reason is written in
+  `SearchField.tsx` beside `OVERLAY_FOCUS`. Kept as a named allowance rather than a credit rule —
+  a credit for "inputs inside modals" would silently excuse the next real one.
+
+Every entry is **self-clearing**: each leg asserts its allowances still MATCH a real unannounced
+stop, so a fix turns this file red and names the entry to delete. A count baseline would have
+absorbed all 31 in-flight fixes and left permanent slack.
+
+**Falsification for this pass (2 more, same discipline — live line, applied-count confirmed, restored
+from a file copy).** (1) Strip the ring from the `DesignPanel` tile → **12** unannounced stops on
+`#/settings/design`, both themes, the exact count fixed. (2) Give `SearchField`'s inline variant
+`OVERLAY_FOCUS` → the palette allowance reds with *"that stop now announces its focus. DELETE the
+entry"*, both themes — the self-clearing mechanism demonstrated end to end. `SearchField.tsx` and
+`DesignPanel.tsx` confirmed byte-identical to `origin/main` and to the committed fix respectively
+afterwards.
+
+`installProbes` and `tabWalk` were extracted to module scope so the route tier and the opened tier
+cannot drift apart on the credit rules.
