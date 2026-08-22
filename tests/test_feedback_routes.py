@@ -120,7 +120,16 @@ class TestProducersRoute:
         assert row["collecting"] is True and "accuracy" not in row
 
     @pytest.mark.asyncio
-    async def test_accuracy_and_suppressed_flag(self):
+    async def test_accuracy_and_the_below_threshold_state(self):
+        """``workflow_surfacing`` has no surfacing gate, so falling below the retire
+        threshold proposes retirement and withholds NOTHING.
+
+        This test used to assert ``suppressed is True`` here, which was the untrue claim
+        `ENFORCED_SUPPRESSION_KINDS` exists to correct: only ``skill_synthesis`` can act on
+        membership, and the Settings panel renders ``suppressed`` as "Stopped surfacing".
+        The per-kind branches are covered in test_feedback_suppression_enforcement.py; what
+        this route-level test owns is that ``accuracy`` is reported once ``min_n`` is met.
+        """
         for i in range(5):
             fb.record_feedback(
                 target_kind="proposal_content",
@@ -132,7 +141,9 @@ class TestProducersRoute:
         async with TestClient(TestServer(_make_app())) as c:
             got = await (await c.get("/api/feedback/producers")).json()
         row = next(r for r in got["producers"] if r["producer_id"] == "wf_x")
-        assert row["accuracy"] == 0.0 and row["suppressed"] is True
+        assert row["accuracy"] == 0.0
+        assert row.get("proposal_only") is True, "below threshold must report the honest state"
+        assert "suppressed" not in row, "an unenforced kind must not claim it stopped surfacing"
 
     @pytest.mark.asyncio
     async def test_snooze_and_clear_round_trip(self):
