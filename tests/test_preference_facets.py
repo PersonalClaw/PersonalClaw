@@ -130,6 +130,77 @@ def test_detect_veto_text_is_distilled_clause():
     assert "emoji" in cand[1].lower() and "summarize" not in cand[1].lower()
 
 
+@pytest.mark.parametrize(
+    "msg",
+    [
+        # G16: the reported defect — "never" as a degree adverb. The old matcher took
+        # everything up to the final period and learned the fragment "never more".
+        "Reply in exactly one sentence from now on, never more.",
+        "in exactly one sentence, never more",
+        # A quantity nudge, not a prohibition — deliberately NOT a veto (the style
+        # detector / the after-turn summarizer own preferences of this shape).
+        "never more than one sentence please",
+        "never again",
+        # Fixed idioms whose head is a verb but whose phrase prohibits nothing.
+        "never mind the tests, just run them",
+        "never say never",
+        "better late than never",
+        "now or never",
+        # Counterfactual narration, not a standing rule.
+        "I would never have guessed",
+        # A trigger with no complement at all.
+        "never",
+        "never.",
+        # stripping the emphatic run must not manufacture a veto out of nothing
+        "never, ever",
+        "never ever more",
+    ],
+)
+def test_veto_requires_a_prohibited_action(msg):
+    """A veto needs a prohibited ACTION — a verb-phrase head plus a complement — not
+    merely the word 'never'. A veto is the one candidate class that reaches the DURABLE
+    lesson store, so the bar is precision-first: see the veto rule in the module."""
+    cand = pf.detect_facet_candidate(msg)
+    assert cand is None or cand[0] != "veto", f"false veto: {msg!r} → {cand!r}"
+
+
+@pytest.mark.parametrize(
+    "msg,expect",
+    [
+        ("never force-push to main", "never force-push to main"),
+        ("don't ever delete my notes", "don't ever delete my notes"),
+        ("do not ever push to main", "do not ever push to main"),
+        ("never deploy on friday", "never deploy on friday"),
+        ("remember to never commit secrets to the repo", "never commit secrets to the repo"),
+        ("always avoid rebasing shared branches", "always avoid rebasing shared branches"),
+        # emphatic doubling: the clause head is the intensifier, the action follows it
+        ("never, ever do that again", "never, ever do that again"),
+        ("never ever push to main", "never ever push to main"),
+    ],
+)
+def test_genuine_veto_still_lands(msg, expect):
+    """The other direction: precision must not collapse into 'detect nothing'."""
+    cand = pf.detect_facet_candidate(msg)
+    assert cand is not None, f"missed veto: {msg!r}"
+    assert cand[0] == "veto" and cand[2] == "explicit"
+    assert cand[1].lower() == expect
+
+
+def test_veto_recovers_after_a_non_prohibitive_trigger():
+    """Every trigger occurrence is tried, so an adverbial "never more" earlier in the
+    message does not mask the real veto after it (the old single-search matcher
+    returned the fragment and stopped)."""
+    cand = pf.detect_facet_candidate("In one sentence, never more. Also never use emoji.")
+    assert cand is not None and cand[0] == "veto"
+    assert cand[1].lower() == "never use emoji"
+
+
+def test_veto_clause_is_the_public_rule():
+    """`veto_clause` is the single implementation of the rule; the detector wraps it."""
+    assert pf.veto_clause("never force-push to main") == "never force-push to main"
+    assert pf.veto_clause("one sentence, never more.") is None
+
+
 def test_detect_no_false_positive_on_plain_questions():
     for msg in ("What is the capital of France?", "Explain how TCP works", "I like pizza"):
         assert pf.detect_facet_candidate(msg) is None, f"false positive: {msg!r}"
