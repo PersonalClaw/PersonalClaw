@@ -211,6 +211,12 @@ export function DevicesPanel() {
                 {/* The programmatic focus target: `tabIndex={-1}` + `role="group"` + a name, so landing
                     here announces what it is rather than a bare container. It is NOT in the tab order
                     (−1), so nothing changes for a user tabbing through the card. */}
+                {/* Suppressing the focus ring is correct here, and this is the one site
+                    `focusRingSurvival` still counts: it is a PROGRAMMATIC focus target
+                    (`tabIndex={-1}`, focused via `codeRef` so a screen reader announces the pairing
+                    code), not a keyboard stop. A ring would draw around the whole block for a focus
+                    the user never initiated. (Worded without the utility's literal name on purpose —
+                    that scanner reads comments as well as code.) */}
                 <div ref={codeRef} tabIndex={-1} role="group" aria-label="Pairing code and link"
                   className="min-w-0 flex-1 flex flex-col gap-l outline-none">
                   <div>

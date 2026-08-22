@@ -84,7 +84,7 @@ function BindingRow({ binding, available, saving, onPick }: {
         disabled={saving}
         onChange={(e) => onPick(binding.use_case, e.target.value)}
         aria-label={`Prompt for ${binding.label}`}
-        className="shrink-0 max-w-[55%] rounded-md bg-surface-high px-2 py-1.5 text-on-surface text-[0.8125rem] outline-none"
+        className="shrink-0 max-w-[55%] rounded-md bg-surface-high px-2 py-1.5 text-on-surface text-[0.8125rem] outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50"
       >
         <option value="">Default ({defName})</option>
         {/* Only system-kind prompts are bindable to a use-case — a user
