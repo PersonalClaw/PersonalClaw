@@ -1,8 +1,7 @@
 {
-  "generatedAt": "2026-08-19T09:39:18.309Z",
   "totals": {
     "driftHits": 8,
-    "filesScanned": 527,
+    "filesScanned": 547,
     "filesWithDrift": 7
   },
   "byCategory": {
@@ -114,6 +113,11 @@
       "detail": "5 raw-button"
     },
     {
+      "file": "pages/settings/ProjectionRulesPanel.tsx",
+      "score": 10,
+      "detail": "2 raw-button, 6 raw-input"
+    },
+    {
       "file": "pages/tasks/TasksListPage.tsx",
       "score": 10,
       "detail": "5 raw-button"
@@ -125,11 +129,6 @@
     },
     {
       "file": "pages/knowledge/KnowledgeCreatePage.tsx",
-      "score": 9,
-      "detail": "2 raw-button, 5 raw-input"
-    },
-    {
-      "file": "pages/settings/ProjectionRulesPanel.tsx",
       "score": 9,
       "detail": "2 raw-button, 5 raw-input"
     },
@@ -215,11 +214,11 @@
     }
   ],
   "a11y": {
-    "outlineNoneCount": 141,
-    "outlineNoneFiles": 66,
+    "outlineNoneCount": 142,
+    "outlineNoneFiles": 67,
     "localFocusVisibleFiles": 33,
-    "reducedMotionFiles": 12,
-    "animatedFiles": 167,
+    "reducedMotionFiles": 13,
+    "animatedFiles": 168,
     "hasGlobalReducedMotion": true,
     "hasGlobalFocusRing": true
   },
@@ -642,7 +641,7 @@
     },
     "pages/settings/ProjectionRulesPanel.tsx": {
       "raw-button": 2,
-      "raw-input": 5,
+      "raw-input": 6,
       "raw-dialog": 0
     },
     "pages/settings/PromptsPanel.tsx": {
@@ -790,25 +789,25 @@
     },
     {
       "file": "pages/knowledge/KnowledgeGraph.tsx",
-      "line": 126,
+      "line": 345,
       "category": "duration",
       "snippet": "<g transform={transform} style={{ transition: drag.current ? 'none' : 'transform 200ms ease-out' }}>"
     },
     {
       "file": "pages/settings/MemoryGraph.tsx",
-      "line": 112,
+      "line": 108,
       "category": "color",
       "snippet": "return `hsl(${h} 55% 60%)`"
     },
     {
       "file": "pages/settings/MemoryGraph.tsx",
-      "line": 158,
+      "line": 154,
       "category": "duration",
       "snippet": "<g transform={transform} style={{ transition: drag.current ? 'none' : 'transform 200ms ease-out' }}>"
     },
     {
       "file": "pages/settings/NotificationRulesMatrix.tsx",
-      "line": 86,
+      "line": 94,
       "category": "duration",
       "snippet": "<ChevronDown size={12} style={{ transform: isOpen ? 'rotate(180deg)' : undefined, transition: 'trans"
     },
@@ -826,7 +825,7 @@
     },
     {
       "file": "ui/widget/WidgetFrame.tsx",
-      "line": 278,
+      "line": 280,
       "category": "spacing",
       "snippet": "style={{ height: expanded ? 'calc(100% - 36px)' : height }}"
     }
