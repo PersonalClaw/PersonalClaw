@@ -229,14 +229,14 @@ class TestAcpFailureSignalReachesTheHost:
         )
 
     def test_failed_marks_ok_false(self):
-        events = extract_tool_update_events(self._msg("failed"), {})
+        events = extract_tool_update_events(self._msg("failed"), {}, {})
         results = [e for e in events if e.kind == EVENT_TOOL_RESULT]
         assert results and results[0].tool_meta.get("ok") is False
 
     def test_completed_leaves_meta_empty(self):
         """Absent on success — matching the native tool_meta contract, so no existing
         reader changes behaviour on a passing call."""
-        events = extract_tool_update_events(self._msg("completed"), {})
+        events = extract_tool_update_events(self._msg("completed"), {}, {})
         results = [e for e in events if e.kind == EVENT_TOOL_RESULT]
         assert results and "ok" not in results[0].tool_meta
 
