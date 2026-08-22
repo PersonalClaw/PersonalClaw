@@ -474,3 +474,27 @@ Extends **Sessions 7-8** (the ramp — the guide/kit are being written there any
   the check. Also corrected an adjacent stale claim in `docs/architecture/inbox-channels.md` ("apps
   *may* contribute sources, but none do today by decision") — CE-8 shipped one, and the doctrine now
   expects one per channel app.
+
+- **2026-08-22 — DISCOVERY (owner decision needed): `CE-9` and `ET-7` are in a real dependency
+  DEADLOCK, so neither can ever reach the ready frontier.** Surfaced by the workspace dashboard's own
+  health check, which has been reporting "2 cycles" for many ticks; this is the one that matters.
+  Measured from `dag.json`:
+  * `CE-9` deps include `EXT:ECOSYSTEM-TOOLING:channel scaffold template + bounty board` → resolves to
+    `ET-7` (*"Bounty board: labeled `bounty` issues for wanted apps"*).
+  * `ET-7` deps include `EXT:CHANNEL-EXPANSION:channel wants-list (T7.3) + channel scaffold template the
+    channel bounties reference` → resolves back to `CE-9`.
+  Both are `todo`, so this is a mutual wait, not a bookkeeping artifact: `CE-9` waits on `ET-7`'s bounty
+  board while `ET-7` waits on `CE-9`'s channel wants-list. `CE-9` sits in OWNER PRIORITY area 2
+  (Channels), so the deadlock is on the priority path.
+  **Not fixed here, deliberately.** Breaking it means re-pointing a cross-plan dependency edge — most
+  likely `ET-7`'s edge should name the earlier CE atom that actually publishes the wants-list rather than
+  `CE-9`, which also consumes the bounty board — and that is roadmap *design*, which is owner-maintained
+  (`CLAUDE.md` §2: propose roadmap changes via issue, not by editing `docs/roadmap/` structure). Recorded
+  with evidence so the call can be made once.
+  **The other cycle is harmless and needs nothing:** `CRE-4 → DIST-3 → DIST-1 → CRE-4` is formed the same
+  way by `EXT:` resolution, but **all three atoms are `done`**, so nothing is waiting on it. It inflates
+  the health count without blocking scheduling. (An earlier guess of mine — that this cycle was part of
+  why priority area 1 looks gated — was wrong, and the `status=done` on all three is what disproved it.)
+  **Also still open, and genuinely an owner item:** `WF2LEA-10`'s dep
+  `EXT:OWNER-RULING:skill-md-conformance` is the dashboard's one `unresolved` edge — it names an owner
+  ruling that has not been made.
