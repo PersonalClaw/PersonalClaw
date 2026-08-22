@@ -23,6 +23,7 @@ from typing import TYPE_CHECKING, Any
 
 from personalclaw.acp.client import AcpClient
 from personalclaw.acp.errors import AcpError
+from personalclaw.acp.outcomes import AcpToolOutcomesMixin
 from personalclaw.acp.types import STOP_REASON_CANCELLED, STOP_REASON_END_TURN
 from personalclaw.agents.provider import AgentProvider
 from personalclaw.llm.base import (
@@ -50,7 +51,7 @@ logger = logging.getLogger(__name__)
 # activation). There is deliberately no fabricated default agent name.
 
 
-class AcpAgentProvider(ModelProvider, AgentProvider):
+class AcpAgentProvider(AcpToolOutcomesMixin, ModelProvider, AgentProvider):
     """Generic ACP-over-stdio agent runtime.
 
     Spawns the configured ``command`` as a subprocess, completes the open
@@ -567,8 +568,13 @@ class AcpAgentProvider(ModelProvider, AgentProvider):
         return acp_event_to_agent_event(e)
 
     async def stream(self, message: str) -> AsyncIterator[LLMEvent]:
+        # Procedural-memory signal (`G7`): a new turn starts with a clean accumulator,
+        # then every event is folded in. See acp/outcomes.py for why the reset is here.
+        self._outcome_accumulator.begin_turn()
         async for e in self._client.stream_events(message):
-            yield self._to_llm_event(e)
+            event = self._to_llm_event(e)
+            self._outcome_accumulator.observe(event)
+            yield event
 
     @property
     def supports_native_commands(self) -> bool:
@@ -577,8 +583,11 @@ class AcpAgentProvider(ModelProvider, AgentProvider):
         return bool(getattr(self._client, "supports_native_commands", False))
 
     async def stream_command(self, command: str) -> AsyncIterator[LLMEvent]:
+        self._outcome_accumulator.begin_turn()
         async for e in self._client.stream_command(command):
-            yield self._to_llm_event(e)
+            event = self._to_llm_event(e)
+            self._outcome_accumulator.observe(event)
+            yield event
 
     async def approve_tool(self, request_id: str | int) -> None:
         await self._client.approve_tool(request_id)

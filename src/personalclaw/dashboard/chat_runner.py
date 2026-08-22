@@ -226,11 +226,14 @@ def _maybe_after_turn_review(
 
         record_denial(decision)
         return
-    # Procedural memory (M5d): drain this turn's tool outcomes (native runtime
-    # only — ACP providers don't accumulate them) into how-to-work priors. The
-    # provider is the ModelProvider returned by get_or_create (threaded in by the
-    # caller) — the dashboard session has no `.provider` attribute, so reading it
-    # off the session silently no-oped this whole class.
+    # Procedural memory (M5d): drain this turn's tool outcomes into how-to-work priors.
+    # BOTH runtimes accumulate them now — the native ReAct loop from inside its own
+    # dispatch, and the ACP providers from the translated event stream (`G7`, see
+    # acp/outcomes.py). Before that, `getattr` missed on every ACP provider and a
+    # six-tool-call ACP turn produced zero procedural rows. The provider is the
+    # ModelProvider returned by get_or_create (threaded in by the caller) — the
+    # dashboard session has no `.provider` attribute, so reading it off the session
+    # silently no-oped this whole class.
     #
     # Drained ONCE and shared: `drain_tool_outcomes` clears the accumulator, so a second reader
     # would see an empty list. Procedural memory and the self-model observer both need this turn's

@@ -445,8 +445,17 @@ found zero warn/block/circuit output after six failures in one turn (`G6`).
 - **`G6` No host-side brake on a failing ACP loop** (`O24`) — six consecutive tool failures in
   one turn produced no warn, no block, no circuit abort and no steering injection. Confirms
   audit gap 5; owner `AAP-6`.
+  **STILL OPEN as of 2026-08-21** (see the `AAP-8` log entry). `AAP-6` built the whole brake and
+  correctly stamped the failure bit in `acp/translate.py:238`, but `acp/adapter.py` did not map
+  `tool_meta`, so the bit never reached `chat_runner.py:2877` and `_acp_failed` could never be True.
+  `AAP-8` fixed that one adapter line; the remaining `G6` question is a live drive, which is
+  owner-gated. Do not read `AAP-6`'s log as having closed this.
 - **`G7` Procedural memory never learns from ACP turns** (`O12`) — zero rows after a 6-tool-call
   turn. Confirms audit gap 4; owner `AAP-8`.
+  **Root cause + code fix landed 2026-08-21** (see the `AAP-8` log entry): `drain_tool_outcomes`
+  existed only on the native runtime, so `chat_runner.py:238`'s duck-typed read missed on every
+  `acp:*` provider. Both ACP providers now accumulate per turn via `acp/outcomes.py`. Measured in
+  tests, **not** re-measured on a live CLI — that drive is owner-gated, so this row stays as measured.
 
 **P2 — fidelity**
 
@@ -2506,3 +2515,91 @@ Nothing under the real `~/.personalclaw` was touched: every test uses `tmp_path`
 **No matrix cell flipped and `dag.json` untouched** — re-marking the resume row needs an owner-gated live
 drive. The one documentation change is the `G5` bullet's own factual correction (four fields → two),
 cited above.
+
+- 2026-08-21 — `AAP-8` **`G7` CLOSED (code): ACP turns now feed procedural memory. `G6` found still
+  OPEN — its failure bit dies one line after it is authored.** Code-only session; no CLI driven, no
+  authenticated `claude` session, so no matrix cell is flipped and `dag.json` is untouched.
+  **`G7` root cause — confirmed as stated, and it was only the SECOND of two broken links.**
+  `drain_tool_outcomes` was implemented on exactly ONE provider
+  (`agents/native/runtime.py:1696`); `dashboard/chat_runner.py:238` reads it duck-typed
+  (`getattr(provider, "drain_tool_outcomes", None)`), so on any `acp:*` provider the lookup returned
+  `None`, `tool_outcomes` stayed `[]`, and `after_turn_review.record_procedural_outcomes` was handed
+  nothing. Measured before the fix: 0 occurrences of the name in `llm/acp_agent.py`,
+  `llm/acp_session_provider.py`, `agents/provider.py`, `llm/base.py`.
+  **DISCOVERY — the first link, and it means `G6` is NOT closed.** `acp/translate.py:238` does stamp
+  the failure bit (`_meta = {"ok": False}` on `status: "failed"`) exactly as `AAP-6` recorded — but
+  `acp/adapter.py`'s `acp_event_to_agent_event`, documented as mapping the event "field-for-field",
+  **omitted `tool_meta`**. Every downstream consumer therefore read the dataclass default `{}`.
+  Runtime probe on `origin/main` (`05bba66e`): `AcpEvent(tool_meta={"ok": False})` →
+  `AgentEvent.tool_meta == {}`. Consequences, both measured: the tool card's failure colour-coding
+  never fires on ACP, and `chat_runner.py:2877`'s `_acp_failed = _tool_ok is False` can never be
+  True — so the entire `_acp_breaker` path (`:1586` construction, `:1594` `_acp_breaker_aborted`,
+  `:2877` `record`, then `WARN_THRESHOLD` / `BLOCK_THRESHOLD` / `circuit_tripped()`) is **live code
+  that cannot execute**. `AAP-6`'s breaker is present but inert; `G6`'s "host acts" half is written
+  and its "host is told" half is severed at the adapter.
+  **Why the suite was green over it:** `tests/test_acp_unattended_and_loop_breaker.py` proves the
+  translate half correctly (`:234`, `:241`, on `AcpEvent`) and then drives the breaker over
+  **hand-built** `AgentEvent(..., tool_meta={"ok": False})` values (`:314`, `:536`, `:564`) — events
+  the production path could not produce. Falsified: with the adapter mapping reverted, that whole
+  file stays **green** while the new suite reds 6. A rail now exists
+  (`TestFailureBitCrossesTheAdapter`, with a passing-call vacuity floor) so the bit cannot be dropped
+  again silently.
+  **What shipped.** `acp/adapter.py` maps `tool_meta` (one field; closes `G6`'s severed link and
+  supplies `G7`'s only honest failure signal). New `acp/outcomes.py`: `ToolOutcomeAccumulator` +
+  `AcpToolOutcomesMixin`, mixed into `AcpAgentProvider` and `AcpSessionProvider` so both the N=1
+  client-backed and the pooled session-backed provider carry the hook.
+  **Where the accumulator lives, and why:** on the **provider wrapper**, not `AcpClient`/`AcpSession`.
+  Three reasons. (1) The wrapper is the object `chat_runner` already holds as `provider=client`
+  (`:3839`), so the existing duck-typed read finds the hook with no change at the read site — and
+  `ModelCallGuard.__getattr__` (`guardrails/model_call.py:550`) forwards unknown attributes to
+  `_inner`, so a guarded provider keeps it too. (2) `stream()` / `stream_command()` **is** the turn
+  boundary: one call per turn, which is where the reset has to be expressible. (3) A connection is
+  shared by co-tenant sessions, so accumulating below the wrapper risks smearing attribution across
+  sessions.
+  **Turn boundary — one thing the native accumulator does NOT have.** `begin_turn()` clears at the
+  START of each turn, because the drain is behind the learning gate: `_maybe_after_turn_review`
+  returns on `not decision.worthwhile` *before* reaching the drain, so an accumulator that only
+  cleared on drain would credit the next turn with the previous turn's failures. Falsified: deleting
+  the `self._outcomes.clear()` line reds exactly one test with
+  `[('Bash','failed'), ('Read','success')] != [('Read','success')]`.
+  **Vocabulary — emitted from its single definition.** `memory_service.py:120`'s
+  `PROCEDURAL_OUTCOMES = {"success", "failed", "denied"}`. The ACP seam emits **`success` and
+  `failed` only**; the accumulator re-checks membership and drops-with-warning, ahead of
+  `after_turn_review.py:135`'s own drop-and-warn. `denied` is deliberately NOT emitted: it requires a
+  denial *observation* authored by `security.classify_denial`, which the native runtime has because it
+  refuses the call itself — on this seam the CLI owns the refusal and a rejected permission arrives as
+  an ordinary failed (or absent) result. Deriving one here would be the second-derivation defect.
+  Failure is likewise read from the `ok` key, never re-derived from the ACP `status` field, so the
+  breaker and procedural memory cannot disagree about one call.
+  **Hook NOT promoted to the ABC.** Kept duck-typed. `ModelProvider`/`AgentProvider` have six
+  implementers (`OpenAIProvider`, `AnthropicProvider`, `ModelCallGuard`, `NativeAgentRuntime`, the two
+  ACP providers) plus test doubles; four of them have no tool loop and would gain a method returning
+  `[]`. `getattr` tolerates absence by design — widening the contract to fix one seam is how a
+  6-line change becomes a 6-file one.
+  **Tool identity.** ACP has no tool-name field; `update.title` is the identity
+  (`acp/translate.py:101`, `:164`). Only the `tool_call` title is trusted — a `tool_call_update`
+  title is a progress DETAIL when it differs from the name (`chat_runner.py:2848` renders it that
+  way), and folding it in would fragment one tool's priors across every argument it ever saw. A
+  result with no preceding `tool_call` is dropped rather than filed under a placeholder. Bounded at
+  200, the native ceiling.
+  **Falsifications (each mutation applied to the LIVE line, re-read, and its enclosing function
+  confirmed by AST probe; restored from a file copy).** (a) rename `drain_tool_outcomes` →
+  `getattr` misses → `AssertionError: O12: zero procedural rows after a six-tool-call ACP turn`
+  (9 failed / 6 passed) — the reproduction reds on ROWS, not on a missing attribute. (b) disable the
+  vocabulary guard → the out-of-vocabulary outcome is silently STORED (`[('Read','success')] != []`).
+  (c) accumulator never clears → the turn-leak test reds as above (1 failed / 14 passed). (d) replace
+  `tools=tuple(sorted({t for t, _outcome in tool_outcomes}))` with a second `drain()` →
+  `observe_turn` receives `'tools': ()` — the second reader starves exactly as the drain-once comment
+  at `chat_runner.py:235` warns. (e) revert the adapter mapping → 6 reds here, and
+  `test_acp_unattended_and_loop_breaker.py` stays green (the false green above).
+  **Gates.** `make lint` clean (mypy 960 files); targeted pytest **480 green** across the new suite
+  plus after-turn-review, acp client / session / session-provider / translate / event-mapping /
+  unattended-and-loop-breaker, chat-runner procedural wiring, memory-service, memory-procedural,
+  learning-procedural-loop and dashboard-chat. `gate_report.py` **6/6**; flat wire-error census
+  **1507/1507** (no error path added). No test touches the real home — the memory store is a
+  `tmp_path` sqlite file.
+  **Inventory correction.** The `G7` bullet's root cause is now recorded above; `G6` remains OPEN and
+  should NOT be re-read as closed on the strength of `AAP-6`'s log — the breaker it describes is real
+  and correct, it was simply never reachable. Whether the residual `G6` work is anything beyond this
+  adapter line is a live-drive question (`AAP-6`'s own BOUNDARY note records that kiro never emits
+  `status: "failed"`, so the failure rungs stay unmeasured on that CLI), and that drive is owner-gated.
