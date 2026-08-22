@@ -833,3 +833,83 @@ Canonical usage of each shared primitive + each interaction pattern (selection, 
   **Related, shipped separately (#1889):** that same regenerated data is what exposed the
   `primitiveAdoption` ratchet's two units of `rawInput` slack. The two changes are independent; this
   one is why the measurement was available to make.
+- **2026-08-22 — `outline-none` silently defeats the app-wide focus ring. Railed AND driven to its
+  irreducible core: a naive 35 → a calibrated 10 → **2**, after fixing the nine real ones and making
+  the scan read code instead of prose.** `tokens.css` provides ONE global keyboard ring
+  (`:focus-visible { outline: 2px solid var(--color-primary) }`) and its own comment says that is what
+  "makes the whole app navigable by keyboard without per-component work". `consistencyAudit` asserts
+  that rule EXISTS (`hasGlobalFocusRing`) — **nothing asserted it SURVIVES on any element.**
+  **Mechanism confirmed on the BUILT stylesheet, not reasoned from source.** In
+  `web/dist/assets/index-*.css`: `:focus-visible{outline:2px solid var(--color-primary);outline-offset:2px}`
+  at byte **92269** (`@layer base`) versus `.outline-none{--tw-outline-style:none;outline-style:none}` at
+  byte **156514** (`@layer utilities`). `.outline-none` is both later in the file and in a layer that
+  beats `base`, and it sets `outline-style: none` — so the ring's width and colour survive while its
+  style is removed and it is simply never painted. An element with `outline-none` and no replacement
+  takes keyboard focus with no visible indicator: the exact failure `focusRevealContract` covers for
+  `opacity` and no one covered for `outline`.
+  **The population was CALIBRATED, and the first number was mostly noise.** A near-context window
+  (±3 lines) reported **35** sites. Checking them found most correct by construction, in two distinct
+  ways, and BOTH are negative results worth keeping because the shapes look alarming:
+  * **The ring lives on the WRAPPER, sometimes in another file.** `ui/RowHitTarget`'s own docstring
+    prescribes exactly that — the button sits at `-z-10`, so the parent draws the ring via
+    `has-[>button:focus-visible]:ring-2`. **All SEVEN consumers already do it**
+    (`AppsSection`, `widgets/kit`, `LoopsListPage`, `NotificationsPage`, `ProjectsSection`,
+    `TasksListPage`, `NotificationBell`), and `ui/ListScaffold` rings its own row through
+    `:has(> button:focus-visible)`. Zero defects in that class.
+  * **The ring is composed in a constant elsewhere in the file.** `ui/SearchField` keeps
+    `outline-none` in `INPUT_CHROME` and `focus:ring-2 focus:ring-inset` in `OVERLAY_FOCUS` seven
+    lines below, and *documents* why its INLINE variant deliberately has none (the palette row's focus
+    is carried by the modal context; an inset rectangle inside a round row would redesign a hero
+    surface). A written taste call, not drift.
+  So a line window mostly measures formatter breaks. The rail credits a file that provides ANY focus
+  treatment ANYWHERE and counts only files providing NONE: **35 → 21** (crediting the wrapper pattern)
+  **→ 10** (crediting file-wide composition). All ten are `<input>`/`<textarea>`-shaped controls in
+  files with no focus treatment at all. Ten is worth guarding; thirty-five was noise, and **a ratchet
+  whose population is noise lets a real regression hide inside churn.**
+  **Shipped as a GROWTH ratchet at 10, not teeth at zero** — this repo's own doctrine
+  (`generate_docs_lint_baseline.py`: *"SHIP AT THE MEASURED POPULATION, NOT AT ZERO. A never-run gate
+  given teeth at zero is an outage"*).
+  **The nine real ones are FIXED in this change, so the rail ships at 1 rather than at 10.** Shipping
+  a gate at 10 while the true population was 1 would have left nine units of slack — the exact defect
+  `#1889` had just removed from `primitiveAdoption`, so knowingly repeating it was not an option. Each
+  got the shared form family's own treatment, verbatim
+  (`outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50`, as `ui/forms`'s `INPUT_BASE`,
+  `TextArea`, `NumberField` and `Select` all use): the `<select>`s in `ArtifactViewer`,
+  `AlwaysOnConventions` and `PromptsPanel`; the `<textarea>`s in `ActiveWork` and
+  `AlwaysOnConventions`; the two `<input>`s in `SecurityPanel`; and the inline rename `<input>` in
+  `TerminalPage`. `PathBar` is the one exception in FORM: its input is `bg-transparent` inside the
+  visible `bg-surface-high` box, so an inset ring on the input would draw inside a transparent child —
+  the ring goes on the container via `focus-within:`, which is the same reasoning `ui/SearchField`
+  records for its overlay variant.
+  **The single survivor is correct by design and now says so in code.** `DevicesPanel`'s pairing-code
+  block is `tabIndex={-1}` and focused PROGRAMMATICALLY through `codeRef` so a screen reader announces
+  the code — not a keyboard stop. A ring there would draw around the whole block for a focus the user
+  never initiated.
+  🔴 **The detector read COMMENTS, I tripped it myself, and it is now FIXED.** The first version of
+  that explanatory comment contained the utility's literal name, so the scan counted the explanation as
+  a site and the population read 2 where the truth was 1. **A gate that reds because someone DOCUMENTED
+  the thing it guards teaches people to delete the documentation**, so `withoutComments()` now blanks
+  block comments (which is also the JSX `{/* … *\/}` form) and whole-line `//` comments before either
+  the detection or the credit runs, preserving line numbers so reported positions stay accurate.
+  Deliberately narrow: a TRAILING `//` is left alone, because `bg-[url(https://…)]` would be mangled by
+  an end-of-line rule and a token hiding after code is not the failure mode this fixes. Two tests pin
+  it — a comment naming the utility must not count, and a URL must survive.
+  **Stripping comments RAISED the honest floor from 1 to 2, and that is the point.**
+  `ui/RowHitTarget.tsx` was being credited *by its own docstring* — the prose that prescribes
+  `has-[>button:focus-visible]` on the parent — while its own code carries no treatment at all, correctly,
+  because the ring is drawn in the seven consumer files. Once prose stops counting as credit, that
+  cross-file contract is visible instead of hidden, which is the honest state for something a
+  single-file scan cannot see. Both survivors are now acknowledged in the baseline's own doc comment.
+  **Explicitly NOT claimed: that the 9 were all live defects.** A static scan cannot tell whether an
+  element is FOCUSABLE — a decorative `<div className="outline-none">` loses nothing. Confirming each
+  needs a browser Tab-walk reading the computed outline, which is `e2e:a11y`'s job. But all nine were
+  `<select>`/`<textarea>`/`<input>` controls with a visible box and no indicator of any kind, which is
+  the set worth fixing whether or not each was reachable today.
+  **Falsified four ways:** adding one unringed `outline-none` to an untreated file reds
+  (*"11 … above the baseline of 10"* pre-fix, and *"2 … above the baseline of 1"* post-fix, so the
+  tightened gate has ZERO slack) and names it; adding a `focus:ring-2` to a listed file drops
+  the population 10 → 9, so the credit is a real fix path rather than a suppression; and breaking the
+  detector regex trips the vacuity floor — *"the scan
+  found NO outline-none sites at all — the detector broke, it did not get clean"*. A third test pins
+  the global rule's continued existence, so if the ring is ever removed this rail fails loudly rather
+  than measuring the wrong thing.
