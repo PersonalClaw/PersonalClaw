@@ -3013,8 +3013,28 @@ export interface LoopPhase {
   deliverable?: string; tasks?: Record<string, unknown>[]
   [k: string]: unknown
 }
+/** What one loop cost, read from the per-turn ledger (MRT-3, `loop.manager.loop_spend`).
+ *
+ *  `dollars_est` spans the loop's worker session AND every task-worker session under it, so a
+ *  fan-out loop is one figure. `planning` is the planner session (`loop-plan-<id>`), which is NOT
+ *  under that prefix and is therefore reported separately rather than summed — the two are
+ *  different money and a single total would overstate "this run".
+ *
+ *  `priced` is False when ANY constituent turn had no price row, which makes the figure a FLOOR.
+ *  Present on the loop DETAIL only (`GET /api/loops/{id}`) — never on the list, and never on the
+ *  SSE snapshot, so a consumer must not store it inside the loop entity it re-derives from a
+ *  snapshot or it will vanish on the first lifecycle event. */
+export interface LoopSpend {
+  dollars_est: number
+  turns: number
+  tokens: number
+  priced: boolean
+  planning: { dollars_est: number; turns: number }
+}
 export interface Loop {
   id: string; kind: LoopKind; name: string; task: string; summary?: string
+  /** Detail-only (see `LoopSpend`). Absent on the list and on the SSE snapshot. */
+  spend?: LoopSpend
   intake_rigor?: string
   plan?: LoopPhase[]; phase_status?: Record<string, string>
   execution: 'solo' | 'multi_agent'; roster?: RosterMember[]; strategy_id?: string

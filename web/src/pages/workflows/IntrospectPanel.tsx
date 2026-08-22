@@ -6,6 +6,7 @@ import { Skeleton } from '../../ui/ListScaffold'
 import { InlineError } from '../../ui/InlineError'
 import { api, type WorkflowIntrospection, type WorkflowTimelineRow } from '../../lib/api'
 import { fmtElapsed } from './workflowMeta'
+import { runCostText } from '../../lib/runCost'
 
 /** The cockpit's introspection panel: the nine questions §6.4 promotes to Success Criteria
  *  (WORK-CONTAINERS R6 — criteria 6 & 8).
@@ -414,26 +415,6 @@ function Answer({ q, a }: { q: string; a: string }) {
       <dd className="text-on-surface">{a}</dd>
     </div>
   )
-}
-
-/** The run's money line — `~$X this run`, and why the tilde is not decoration (MRT-3).
- *
- *  A run's `cost_usd` sums `step_completed.cost_usd`, and `pricing.py` says out loud what that
- *  number is: "Providers report token counts but not always a dollar cost (most set
- *  `cost_usd=0.0`)", so the figure is normally DERIVED from `model_pricing.json` rather than
- *  billed. This used to render `$${cost.toFixed(4)}` — four decimals of precision on an estimate,
- *  which is the one thing a money surface must not do.
- *
- *  Zero is its own case, and NOT "$0.00". Zero means the provider reported nothing and the model
- *  had no price row, or the model ran locally and was genuinely free — indistinguishable from
- *  this number alone. "$0.00 this run" would assert the second reading; the copy states both.
- *
- *  The 2dp-above-a-dollar / 4dp-below rule is `routing/usage.py::_usd`'s, reused rather than
- *  re-decided, so a run's money and the Usage panel's money are rounded the same way. */
-export function runCostText(costUsd: number): string {
-  if (!(costUsd > 0)) return 'Nothing recorded — a local model, or one with no price row'
-  const usd = costUsd >= 1 ? `$${costUsd.toFixed(2)}` : `$${costUsd.toFixed(4)}`
-  return `~${usd} this run — estimated from model prices, not a provider-reported charge`
 }
 
 /** The risk answer, assembled from its three real sources.

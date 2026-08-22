@@ -344,6 +344,50 @@ def task_session_key(loop_id: str, task_id: str) -> str:
     return f"{session_key(loop_id)}-{task_id}"
 
 
+def loop_spend(loop_id: str) -> dict:
+    """What one loop cost, read from the per-turn ledger (MRT-3).
+
+    Lives here because this module owns every session key a loop spends under, and the figure is
+    exactly "the spend booked against those keys". A loop's worker turns reach
+    ``usage/turns.jsonl`` through the ordinary chat seam (``chat_runner`` passes
+    ``session._app or "chat"``, and the worker's ``_app`` is ``"loop"``), so no loop-specific
+    writer is involved — only a loop-specific READ.
+
+    Two figures, deliberately not summed into one:
+
+    * ``worker`` — :func:`session_key` and every :func:`task_session_key` under it, via a
+      separator-aware prefix query. A fan-out loop that under-counted its task workers would
+      report a confidently-low number, so the prefix is the point.
+    * ``planning`` — ``plan_walkthrough.planner_session_key``, which is ``loop-plan-<id>`` and
+      therefore NOT under the worker prefix. Reported beside the worker figure rather than folded
+      into it: the planner is a distinct session doing distinct work, and a surface that silently
+      omitted it would imply a completeness the number does not have. The caller renders both.
+
+    NOT ``ledger.run_totals``. That reads ``loop/journal.py``'s ``step_completed`` rows, which
+    carry no ``tokens`` and no ``cost_usd``, so making it work would mean copying turn dollars
+    into a second store — one dollar in two records, in a subsystem whose own money doctrine
+    (``routing/usage.py`` module docstring) is that a total which can double-count is worse than
+    one that admits a gap. See MODEL-ROUTING-TELEMETRY's MRT-3 log for the recorded deviation.
+    """
+    from personalclaw import usage_ledger
+    from personalclaw.loop.plan_walkthrough import planner_session_key
+
+    worker = usage_ledger.totals(session_prefix=session_key(loop_id))
+    planning = usage_ledger.totals(session_key=planner_session_key(loop_id))
+    return {
+        "dollars_est": round(float(worker["cost_usd"]), 6),
+        "turns": int(worker["turns"]),
+        "tokens": int(worker["input_tokens"]) + int(worker["output_tokens"]),
+        # False when ANY constituent turn had no price row, so the caller can state a FLOOR
+        # instead of a total. A money figure that hides its own incompleteness is the defect.
+        "priced": bool(worker["priced"]),
+        "planning": {
+            "dollars_est": round(float(planning["cost_usd"]), 6),
+            "turns": int(planning["turns"]),
+        },
+    }
+
+
 _FIRST_CYCLE_IDLE_SECS = 5  # a freshly-spawned task-worker fires its first cycle fast
 
 

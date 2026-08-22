@@ -379,6 +379,15 @@ async def api_loop_get(request: web.Request) -> web.Response:
     view = store.get_redacted(cid)
     if view is None:
         return web.json_response({"error": "Not found"}, status=404)
+    # What this loop cost (MRT-3). Detail-only, never on the list: it is one JSONL scan per loop,
+    # so putting it on `api_loop_list` would be N scans per poll. Best-effort — a money read must
+    # never turn a working cockpit into a 500, and a missing figure renders as "not recorded".
+    try:
+        from personalclaw.loop.manager import loop_spend
+
+        view = {**view, "spend": loop_spend(cid)}
+    except Exception:
+        logger.warning("loop spend read failed for %s", cid, exc_info=True)
     return web.json_response(view)
 
 
