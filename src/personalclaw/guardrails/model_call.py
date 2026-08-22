@@ -31,7 +31,7 @@ import uuid
 from collections.abc import AsyncIterator
 from pathlib import Path
 
-from personalclaw.guardrails.audit import AttemptRecord, now_ms, record_attempt
+from personalclaw.guardrails.audit import AttemptRecord, current_caller, now_ms, record_attempt
 from personalclaw.guardrails.breaker import CircuitBreaker, get_breaker
 from personalclaw.guardrails.budgets import (
     Budget,
@@ -466,6 +466,10 @@ class ModelCallGuard(ModelProvider):
             query_class=self._query_class,
             routed=self._routed,
             routed_fallback=self._routed_fallback,
+            # WHICH SUBSYSTEM asked (`G47`). Read from a ContextVar for the same reason
+            # `current_run_key()` above is: this guard is built by `provider_bridge` from
+            # provider config and never sees its caller. "" when nothing bound one.
+            caller=current_caller(),
         )
         record_attempt(rec)
         # Fold the same attempt into the rolling routing stats (MODEL-ROUTING-TELEMETRY

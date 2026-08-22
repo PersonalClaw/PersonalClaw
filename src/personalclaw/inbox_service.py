@@ -36,6 +36,7 @@ from typing import TYPE_CHECKING
 
 from personalclaw import shutdown_event
 from personalclaw import trace_recorder as _trace
+from personalclaw.guardrails.audit import caller_scope
 from personalclaw.inbox import (
     SOURCE_DECLARABLE_KINDS,
     Classification,
@@ -392,7 +393,10 @@ class InboxService:
             # output_type=dict adds one targeted-retry attempt (§2.4). A parse miss
             # that survives the retry still safe-defaults to needs_reply/needs_review
             # (the error carries the retry text) — never a silent drop.
-            raw = await one_shot_completion(prompt, use_case="background", output_type=dict)
+            # `caller_scope` so the attempt row names WHICH background pass spent this
+            # (`G47`): triage, drafting and digests all resolve on the same axis.
+            with caller_scope("inbox_triage"):
+                raw = await one_shot_completion(prompt, use_case="background", output_type=dict)
         except OutputContractError as exc:
             raw = exc.raw
         except Exception:
@@ -435,7 +439,8 @@ class InboxService:
             or ""
         )
         try:
-            raw = (await one_shot_completion(prompt, use_case="background") or "").strip()
+            with caller_scope("inbox_triage"):
+                raw = (await one_shot_completion(prompt, use_case="background") or "").strip()
         except Exception:
             logger.warning("inbox draft failed for %s", item_id, exc_info=True)
             return None
@@ -476,7 +481,8 @@ class InboxService:
             or ""
         )
         try:
-            summary = (await one_shot_completion(prompt, use_case="background") or "").strip()
+            with caller_scope("inbox_triage"):
+                summary = (await one_shot_completion(prompt, use_case="background") or "").strip()
         except Exception:
             logger.warning("inbox digest failed for %s", channel_id, exc_info=True)
             return None

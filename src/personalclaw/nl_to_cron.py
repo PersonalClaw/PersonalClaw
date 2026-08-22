@@ -54,7 +54,12 @@ async def nl_to_cron(request: str, *, ask=None) -> tuple[str, str]:
         from personalclaw.llm_helpers import one_shot_completion
 
         async def ask(p: str) -> str:  # noqa: ANN001
-            return await one_shot_completion(p, use_case="background")
+            # Attributed on the attempt ledger (`G47`) — otherwise a schedule translation
+            # and an inbox triage are the same anonymous `background` row.
+            from personalclaw.guardrails.audit import caller_scope
+
+            with caller_scope("nl_to_cron"):
+                return await one_shot_completion(p, use_case="background")
 
     # The conversion instruction lives in the prompt system (bundled
     # ``task-nl-to-cron``, bindable in Settings → Prompts), rendered with the request.
