@@ -1175,3 +1175,43 @@ discipline in [`AGENTS.md`](../../../AGENTS.md))*
   **Four tests were re-contracted, none weakened:** three asserted bounds that encoded the binary
   failure (`<= 4`, `< 20`, an exact iteration count) and now assert the STRONGER property — the run
   surfaces through the ladder rather than drifting into its cap, with the nudge tier tried first.
+
+- **2026-08-22 — `PP-16` BLOCKED on an owner decision: retiring the inert `WorkflowRun.task_list_id`
+  makes a Loop field homeless, and the map's own rail says that is an owner call.** The change was
+  built, verified end to end, and then REVERTED rather than pushed past the rail. Recorded with the
+  evidence so the decision can be made once and the edit re-applied in minutes.
+  **The field is genuinely inert, measured.** Filtering out the unrelated and very live
+  `Task.task_list_id` (the tasks domain, ~80 references), `WorkflowRun.task_list_id` exists as exactly
+  five things: the dataclass field (`workflows/models.py:845`), its `_KNOWN` entry, `to_dict`
+  (`:914`), `from_dict` (`:951`), and a persisted SQLite column (`workflows/store.py:91` DDL +
+  `_COLUMNS`). **No writer sets it to a real value and no reader consumes it** — so it is a declared
+  field AND a persisted column that nothing populates, which is the `loop_run_map` field map's own
+  finding 3.
+  **Removal is clean and backward-compatible — tested, not assumed.** With the field, the DDL row and
+  the `_COLUMNS` entry gone: a run round-trips through the real store with `extra` left EMPTY (the
+  column is never SELECTed, so nothing spills into the tolerant reader); and against a **legacy
+  schema** — created by `ALTER TABLE runs ADD COLUMN task_list_id`, populated with `'tl-legacy'` — the
+  new code reads that row fine and still writes NEW rows, because the column keeps its
+  `NOT NULL DEFAULT ''`. There is no migration to write. A runtime import sweep over models, store,
+  service, controller, loop_run_map, materialize and dashboard.server was clean.
+  **Why it stopped.** `loop_run_map`'s `task_list_ids` row named `WorkflowRun.task_list_id` as its
+  destination, so `test_every_declared_destination_resolves` correctly reds the moment the field goes.
+  Re-homing that row to `NONE` then trips
+  `test_the_homeless_fields_are_pinned_and_explained`, whose message is explicit: *"It must SHRINK as
+  PP-16 lands; a new homeless field is an owner decision, not a detail."* Removing an inert
+  destination GROWS the homeless set by one, which is precisely what that rail exists to stop a
+  session doing unilaterally.
+  **The decision, stated once.** `Loop.task_list_ids` is `{phase_key: task_list_id}` — one TaskList per
+  phase. Either (a) `WorkflowRun` gains a per-phase destination designed for that shape and the inert
+  singular field is replaced, or (b) the row re-homes to `PROJECTION` on the argument that a per-phase
+  TaskList map is a projection of run state (`materialize.py` already projects tasks that way), or
+  (c) the singular field stays as a reserved slot and the projection keeps provisioning imperatively
+  through `loop/tasks_link.py`. **(c) is the status quo and the cost of it is a slot a later migration
+  can fill with the wrong shape** — the reason this was worth attempting now while it is still a plain
+  clean break.
+  **One thing worth carrying:** the DDL↔`_COLUMNS` direction IS railed — adding a `_COLUMNS` entry with
+  no DDL column reds **34** store tests with `sqlite3.OperationalError: table runs has no column
+  named task_list_id`. What no schema rail can catch is the shape that actually occurred: a
+  *consistent* DDL + `_COLUMNS` + dataclass triple that nothing writes or reads. That is why this field
+  survived, and why the inert-surface baseline does not mention it either (0 hits — its detector does
+  not cover a declared-but-unused dataclass field).
