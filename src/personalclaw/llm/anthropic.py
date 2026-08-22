@@ -390,7 +390,9 @@ class AnthropicProvider(ModelProvider):
             client_kwargs["base_url"] = base_url
         self._client: Any = anthropic.AsyncAnthropic(**client_kwargs)
         self._history: list[dict[str, Any]] = []
-        self._last_context_pct: float = 0.0
+        # ``None`` until the first usage report: before then this provider has no
+        # measurement, and 0.0 would be a fabricated one (see llm/base contract).
+        self._last_context_pct: float | None = None
         # One-shot image content part for the next turn (MI-4). Empty on every
         # ordinary turn, which keeps the untouched wire payload byte-identical.
         self._pending_image: str = ""
@@ -755,7 +757,7 @@ class AnthropicProvider(ModelProvider):
                 tool_input=bucket["arguments"],
             )
 
-        context_pct = 0.0
+        context_pct: float | None = None
         if input_tokens > 0:
             ctx = _model_window(model or self._model, _DEFAULT_CONTEXT_WINDOW)
             context_pct = (input_tokens / ctx) * 100
@@ -782,7 +784,7 @@ class AnthropicProvider(ModelProvider):
 
     # ── Status ────────────────────────────────────────────────────────
 
-    def context_usage_pct(self) -> float:
+    def context_usage_pct(self) -> float | None:
         return self._last_context_pct
 
     async def cancel(self, *, wait_ack_timeout: float = 0.0) -> CancelOutcome:

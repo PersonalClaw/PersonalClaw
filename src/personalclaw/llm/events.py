@@ -51,7 +51,10 @@ class AgentEvent:
     # gate resolves the per-invocation EFFECTIVE risk from this (a read-only bash
     # call downgrades to safe); it's also surfaced as a user-facing indicator.
     risk_level: str = ""
-    context_usage_pct: float = 0.0
+    #: Context-window usage the provider actually measured, or ``None`` when it
+    #: measured none. A defaulted 0.0 made "unsupplied" and "a genuinely empty
+    #: context" the same value, so every consumer printed a fabricated 0%.
+    context_usage_pct: float | None = None
     stop_reason: str = ""
     request_id: str | int = ""
     options: Any = field(default_factory=list)

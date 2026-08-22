@@ -41,4 +41,7 @@ class TestAcpPromptStats:
         assert stats.event_count == 0
         assert stats.text_chunks == 0
         assert stats.tool_calls == []
-        assert stats.context_pct == 0.0
+        # ``None``, not 0.0 — see AcpPromptStats.context_pct: an adapter that never
+        # sends contextUsagePercentage leaves this UNKNOWN, and a fabricated 0%
+        # printed on every turn is the G8 defect.
+        assert stats.context_pct is None

@@ -115,7 +115,9 @@ export interface ComposerProps {
   /** When true, the send button becomes a "queue" affordance — the host runs the
    *  message after the in-flight turn finishes instead of dropping it. */
   canQueue?: boolean
-  /** 0–100 context-window usage for the bound session → ring on the model pill. */
+  /** 0–100 context-window usage for the bound session → ring on the model pill.
+   *  `undefined` means the backend reported NO measurement — the pill then shows a
+   *  plain dot rather than a fabricated 0%. A measured `0` renders a 0% ring. */
   contextPct?: number
   /** Minimum trimmed length before Send enables (default 1). The goal composer
    *  needs ≥20 chars to plan, so the button stays disabled (not a silent no-op)

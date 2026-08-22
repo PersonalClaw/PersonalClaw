@@ -140,7 +140,7 @@ class AcpSessionProvider(AgentProvider):
         await self._session.reject_tool(request_id)
 
     # ── status / control ────────────────────────────────────────────────────────
-    def context_usage_pct(self) -> float:
+    def context_usage_pct(self) -> float | None:
         return self._session.context_usage_pct()
 
     def is_alive(self) -> bool:

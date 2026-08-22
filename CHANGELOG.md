@@ -507,6 +507,19 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Fixed
 
+- **The context gauge said "0%" on turns that were nearly full.** The little ring on the model pill,
+  and the "Turn complete" line under a finished turn, both printed a context percentage on every
+  turn — including turns where the agent behind the chat had never reported one. The number they
+  printed was zero, so a session carrying a large amount of context read as completely empty. A
+  driven session showed `context 0%` on fourteen consecutive turns while the window was filling up.
+  A gauge that states a number it was never given is worse than no gauge: it invites you to keep
+  going right up to the point where the conversation gets truncated.
+  **An unmeasured context now shows nothing at all** — no ring, no percentage — rather than zero.
+  **A genuinely empty context still shows 0%**, because that is a real answer and hiding it would be
+  the same mistake pointed the other way. This also fixes two decisions that were reading the fake
+  zero: the background session was recycled as "no readings ever arrived" when it had in fact
+  measured an empty window, and the automatic-compaction check no longer treats an unknown gauge as
+  a low one.
 - **The sign-in page said "Sign-in failed" no matter what went wrong.** It read the error out of the
   wrong place in the response, so a wrong password, a rate-limited address, a password-sign-in that
   is switched off and an already-used device code all produced the same unhelpful sentence — and the

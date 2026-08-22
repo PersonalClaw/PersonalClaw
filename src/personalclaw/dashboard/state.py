@@ -930,7 +930,9 @@ class DashboardState:
                     "Failed to append compact notice to session %s", session_name
                 )
             try:
-                self.broadcast_ws("context_usage", {"session": session_name, "pct": 0.0})
+                # ``None``, not 0.0: a compaction shrank the window but nothing has
+                # re-measured it yet, so the honest chip is absent rather than "0%".
+                self.broadcast_ws("context_usage", {"session": session_name, "pct": None})
             except Exception:
                 logging.getLogger(__name__).exception(
                     "Failed to broadcast context_usage for session %s", session_name

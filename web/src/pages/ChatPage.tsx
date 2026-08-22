@@ -632,7 +632,9 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
   // AbortController for the in-flight attach upload, so the user can cancel it.
   const uploadAbortRef = useRef<AbortController | null>(null)
   const [promptHistory, setPromptHistory] = useState<string[]>([])
-  const [contextPct, setContextPct] = useState(0)
+  // `undefined` until the backend reports a measurement (it sends `pct: null` when it
+  // has none) — an unmeasured context must show no percentage, not 0%.
+  const [contextPct, setContextPct] = useState<number | undefined>(undefined)
   const [optimizing, setOptimizing] = useState(false)
   // the draft as it was just before an optimize-prompt rewrite, so the user can
   // revert if they don't like the optimized version (otherwise it's lost).
@@ -1043,7 +1045,9 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
         break
       }
       case 'context_usage':
-        if (d.session === sessionRef.current && typeof d.pct === 'number') setContextPct(d.pct as number)
+        // A non-number `pct` (null) is the backend saying "not measured" — clear the
+        // ring rather than leaving a stale or fabricated percentage on screen.
+        if (d.session === sessionRef.current) setContextPct(typeof d.pct === 'number' ? d.pct : undefined)
         break
       // A title resolved server-side (auto-titled after the first turn, or renamed
       // from elsewhere). Reflect it live in the header of the open session, so the

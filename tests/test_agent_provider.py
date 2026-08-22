@@ -188,4 +188,6 @@ def test_agent_provider_abc_stateless_defaults_are_total():
     # 2-arg set_session_key (warm-pool claim path) must not raise.
     t.set_session_key("k", "chan")
     t.set_resume("sid")
-    assert t.context_usage_pct() == 0.0
+    # Unknown, NOT 0.0: a provider that measures nothing must not report a number
+    # a consumer would then render as "context 0%".
+    assert t.context_usage_pct() is None

@@ -219,7 +219,7 @@ class TestRecycleBackground:
         await mgr.start_pool()
 
         old_provider = mgr._sessions[BACKGROUND_KEY].provider
-        old_provider.context_usage_pct = lambda: 0.0  # no metadata
+        old_provider.context_usage_pct = lambda: None  # no metadata EVER reported
         mgr._sessions[BACKGROUND_KEY].prompt_count = 45
 
         await mgr.recycle_background()
@@ -227,6 +227,26 @@ class TestRecycleBackground:
         old_provider.shutdown.assert_awaited_once()
         assert BACKGROUND_KEY in mgr._sessions
         assert mgr._sessions[BACKGROUND_KEY].provider is not old_provider
+        await mgr.close_all()
+
+    @pytest.mark.asyncio
+    async def test_measured_zero_is_not_blind(self, cfg):
+        """A MEASURED 0% context is not "no metadata" — it must not recycle blind.
+
+        The inverse of the fabricated-zero bug: folding a legitimate 0 into the
+        absent marker recycles a perfectly fresh session as though it were blind.
+        """
+        mgr = SessionManager(cfg, provider_factory=_mock_provider_factory())
+        await mgr.start_pool()
+
+        old_provider = mgr._sessions[BACKGROUND_KEY].provider
+        old_provider.context_usage_pct = lambda: 0.0  # measured: the context IS empty
+        mgr._sessions[BACKGROUND_KEY].prompt_count = 45
+
+        await mgr.recycle_background()
+
+        old_provider.shutdown.assert_not_awaited()
+        assert mgr._sessions[BACKGROUND_KEY].provider is old_provider
         await mgr.close_all()
 
     @pytest.mark.asyncio
@@ -1416,6 +1436,38 @@ class TestCheckContextUsage:
         result = mgr.check_context_usage("nonexistent", mock_p)
         assert result == 55.0
 
+    @pytest.mark.asyncio
+    async def test_unmeasured_returns_none_and_never_compacts(self, cfg):
+        """A provider that measured nothing yields no percentage and no compaction —
+        an unknown gauge cannot cross a threshold (G8)."""
+        cfg.session.autocompact_pct = 90.0
+        mgr = SessionManager(cfg, provider_factory=_mock_provider_factory())
+        provider, _, _ = await mgr.get_or_create("k1")
+        mgr.release("k1")
+        provider.context_usage_pct = lambda: None
+        with patch.object(mgr, "_trigger_compaction") as mock_trigger:
+            assert mgr.check_context_usage("k1", provider) is None
+            mock_trigger.assert_not_called()
+        # The prompt counter still advances — the blind fallback depends on it.
+        assert mgr._sessions["k1"].prompt_count == 1
+        await mgr.close_all()
+
+    @pytest.mark.asyncio
+    async def test_measured_zero_returns_zero_not_none(self, cfg):
+        """The inverse direction: a measured-empty context is a real 0.0 answer and
+        must NOT be folded into the unmeasured marker."""
+        mgr = SessionManager(cfg, provider_factory=_mock_provider_factory())
+        provider, _, _ = await mgr.get_or_create("k1")
+        mgr.release("k1")
+        provider.context_usage_pct = lambda: 0.0
+        measured = mgr.check_context_usage("k1", provider)
+        provider.context_usage_pct = lambda: None
+        unmeasured = mgr.check_context_usage("k1", provider)
+        assert measured == 0.0
+        assert unmeasured is None
+        assert measured != unmeasured  # the two cases must stay distinguishable
+        await mgr.close_all()
+
 
 class TestDestroy:
     """Tests for destroy() — permanent session removal."""
@@ -1468,6 +1520,24 @@ class TestContextInfo:
         assert entry["name"] == "Chat (session0)"
         assert entry["prompts"] == 5
         assert entry["context_pct"] == 0.0
+        await mgr.close_all()
+
+    @pytest.mark.asyncio
+    async def test_context_pct_is_null_when_unmeasured(self, cfg):
+        """GET /api/sessions/context must emit JSON ``null``, not 0.0, for a provider
+        that measured nothing — and a measured 0.0 must still emit 0.0 (G8)."""
+        mgr = SessionManager(cfg, provider_factory=_mock_provider_factory())
+        await mgr.get_or_create("dashboard:unmeasured")
+        mgr.release("dashboard:unmeasured")
+        await mgr.get_or_create("dashboard:empty")
+        mgr.release("dashboard:empty")
+        mgr._sessions["dashboard:unmeasured"].provider.context_usage_pct = lambda: None
+        mgr._sessions["dashboard:empty"].provider.context_usage_pct = lambda: 0.0
+
+        by_key = {e["key"]: e["context_pct"] for e in mgr.context_info()}
+        assert by_key["dashboard:unmeasured"] is None
+        assert by_key["dashboard:empty"] == 0.0
+        assert by_key["dashboard:unmeasured"] != by_key["dashboard:empty"]
         await mgr.close_all()
 
     @pytest.mark.asyncio

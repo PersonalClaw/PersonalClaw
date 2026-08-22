@@ -896,7 +896,9 @@ class SessionManager:
                     "name": name,
                     "model": model,
                     "agent": agent,
-                    "context_pct": round(pct, 1),
+                    # ``None`` (JSON null), never 0.0, when the provider measured
+                    # nothing — the surface must omit the number, not invent one.
+                    "context_pct": None if pct is None else round(pct, 1),
                     "prompts": sess.prompt_count,
                 }
             )
@@ -945,15 +947,19 @@ class SessionManager:
             return
 
         pct = session.provider.context_usage_pct()
-        needs_recycle = pct >= _BG_RECYCLE_PCT
-        if not needs_recycle and pct == 0.0:
-            # Blind fallback: recycle after N prompts if metadata never reports %
+        needs_recycle = pct is not None and pct >= _BG_RECYCLE_PCT
+        if not needs_recycle and pct is None:
+            # Blind fallback: recycle after N prompts when the provider reports NO
+            # measurement. Keyed on ``is None``, not ``== 0.0``: a session measured at
+            # a genuine 0% is not blind, and used to be recycled as if it were.
             needs_recycle = session.prompt_count >= _BG_BLIND_RECYCLE_PROMPTS
 
         if not needs_recycle:
             return
 
-        reason = f"context at {pct:.0f}%" if pct > 0 else f"blind ({session.prompt_count} prompts)"
+        reason = (
+            f"blind ({session.prompt_count} prompts)" if pct is None else f"context at {pct:.0f}%"
+        )
         logger.info("Recycling background session — %s", reason)
 
         # Kill old session
@@ -1339,11 +1345,13 @@ class SessionManager:
                         logger.exception("Reset %s: child sweep failed", key)
             logger.debug("Reset session: %s (pid=%s)", key, pid)
 
-    def check_context_usage(self, key: str, provider: ModelProvider) -> float:
+    def check_context_usage(self, key: str, provider: ModelProvider) -> float | None:
         """Check context usage and fire background compaction at >= 90%.
 
         Falls back to prompt-count compaction if metadata never reports %.
-        Returns context usage percentage immediately — never blocks.
+        Returns the context usage percentage immediately — never blocks — or
+        ``None`` when the provider measured none. An unmeasured session neither
+        compacts nor logs a percentage: there is no percentage to log.
         """
         pct = provider.context_usage_pct()
 
@@ -1352,11 +1360,13 @@ class SessionManager:
         if session:
             session.prompt_count += 1
 
+        if pct is None:
+            return None
         if pct >= self._cfg.session.autocompact_pct:
             self._trigger_compaction(key, f"context at {pct:.0f}%", pct)
         elif pct >= _CONTEXT_WARN_PCT:
             logger.warning("Session %s context at %.0f%%", key, pct)
-        elif pct > 0:
+        else:
             logger.info("Session %s context at %.0f%%", key, pct)
         return pct
 

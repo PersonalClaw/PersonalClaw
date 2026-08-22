@@ -136,7 +136,11 @@ export function ModelPill({ data, agent, value, onSelect, contextPct, openSignal
     ? Object.values(data?.discovered ?? {}).flat().find((d) => d.name === agent)
     : undefined
   const acpModels = acp?.models ?? []
-  const dot = contextPct !== undefined && contextPct > 0
+  // `undefined` = the backend measured NO context usage → plain dot, no number.
+  // A measured 0 still renders the ring (reading "0% used"): an empty context is a
+  // real answer, and folding it into "unmeasured" is the inverse of the fabricated-
+  // zero bug this guard replaced (it used to also require `> 0`, which hid it).
+  const dot = contextPct !== undefined
     ? <ContextRing pct={contextPct} />
     : <span className="size-1.5 rounded-pill bg-primary" />
   // The pill shows the friendly model_name, not the raw "Provider:model_id" ref
