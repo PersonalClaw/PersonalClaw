@@ -41,6 +41,7 @@ if TYPE_CHECKING:
 
 from personalclaw.acp import translate
 from personalclaw.acp.errors import (  # noqa: F401 — re-exported for existing importers
+    AcpCommandsUnsupported,
     AcpError,
     AcpPermissionNeeded,
     AcpProcessDied,
@@ -48,6 +49,7 @@ from personalclaw.acp.errors import (  # noqa: F401 — re-exported for existing
 )
 from personalclaw.acp.transport import AcpProcess
 from personalclaw.acp.types import (
+    CAP_LOAD_SESSION,
     EVENT_COMPLETE,
     EVENT_TEXT_CHUNK,
     METHOD_COMPACTION_STATUS,
@@ -191,6 +193,7 @@ class AcpClient:
         self._resume_session_id: str | None = None
         self._resumed = False
         self._can_load_session = False
+        self._can_execute_commands = False
         self._agent_capabilities: dict[str, object] = {}
         self._session_new_snapshot: dict[str, object] = {}
         self.last_prompt_stats = AcpPromptStats()
@@ -490,7 +493,10 @@ class AcpClient:
         )
         self._agent_capabilities = dict(conn.agent_capabilities or {})
         logger.info("ACP initialized (protocol=%s)", self._dialect.protocol_version())
-        self._can_load_session = bool(self._agent_capabilities.get("loadSession", False))
+        self._can_load_session = bool(self._agent_capabilities.get(CAP_LOAD_SESSION, False))
+        # Same shape, same handshake, same allowlist direction — see
+        # ``AcpConnection.supports_native_commands`` for why absence means "don't send".
+        self._can_execute_commands = conn.supports_native_commands
 
         # 2. Try session/load if we have a resume ID and the agent supports it.
         self._resumed = False
@@ -652,12 +658,26 @@ class AcpClient:
             self._last_stop_reason = self._session._last_stop_reason
             yield event
 
+    @property
+    def supports_native_commands(self) -> bool:
+        """Whether the spawned agent advertised the slash-command extension. False before
+        the handshake — a caller must not send a command to a process that hasn't spoken
+        yet."""
+        return self._can_execute_commands
+
     async def stream_command(
         self, command: str, timeout: float = _DEFAULT_PROMPT_TIMEOUT
     ) -> AsyncIterator[AcpEvent]:
         """Execute a slash command (e.g. '/compact', '/usage') and yield streaming
-        AcpEvents. Delegates to the session's ``stream_command``."""
+        AcpEvents. Delegates to the session's ``stream_command``.
+
+        Gated on the declared capability: an agent that never advertised the extension
+        gets no request at all, and the caller sees :class:`AcpCommandsUnsupported`
+        BEFORE any wire write — so it can substitute a plain prompt knowing the turn is
+        still untouched (`G4`)."""
         await self.ensure_ready()
+        if not self._can_execute_commands:
+            raise AcpCommandsUnsupported(command)
         assert self._session is not None
         async for event in self._session.stream_command(command, timeout=timeout):
             self._stamp_turn_telemetry(event)
@@ -685,7 +705,13 @@ class AcpClient:
 
         For streaming output use :meth:`stream_command`. Drains the command's event
         stream into a string (the terminal result is formatted into a text chunk by the
-        session's ``extract_agent_from_result`` path)."""
+        session's ``extract_agent_from_result`` path).
+
+        Returns "" when the agent never advertised commands: this is the fire-and-forget
+        surface (``compact()`` drives it), and ``ModelProvider.compact`` declares itself a
+        no-op for providers without native support. A caller that must DISTINGUISH "no
+        output" from "cannot" reads :attr:`supports_native_commands` or drives
+        :meth:`stream_command`, which raises."""
         parts: list[str] = []
         try:
             async for event in self.stream_command(command, timeout=60.0):
@@ -693,6 +719,8 @@ class AcpClient:
                     parts.append(event.text)
         except AcpTimeoutError:
             logger.debug("Command '%s' response timed out (may still be running)", command)
+        except AcpCommandsUnsupported:
+            logger.info("Command '%s' skipped — this agent declares no command support", command)
         return "".join(parts)
 
     def _stamp_turn_telemetry(self, event: AcpEvent) -> None:

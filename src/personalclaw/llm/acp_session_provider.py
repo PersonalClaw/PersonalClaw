@@ -119,7 +119,18 @@ class AcpSessionProvider(AgentProvider):
             self._stamp_turn_telemetry(e)
             yield self._to_llm_event(e)
 
+    @property
+    def supports_native_commands(self) -> bool:
+        """The connection's declared flag — the SAME derivation the N=1 client reads, so a
+        co-tenant session on one process cannot disagree with it."""
+        return bool(self._conn.supports_native_commands)
+
     async def stream_command(self, command: str) -> AsyncIterator[LLMEvent]:
+        """Gated exactly like the N=1 client: no advertisement, no request (`G4`)."""
+        if not self._conn.supports_native_commands:
+            from personalclaw.acp.errors import AcpCommandsUnsupported
+
+            raise AcpCommandsUnsupported(command)
         async for e in self._session.stream_command(command):
             self._stamp_turn_telemetry(e)
             yield self._to_llm_event(e)

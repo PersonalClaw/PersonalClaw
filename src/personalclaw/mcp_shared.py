@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from personalclaw.config.loader import AppConfig, config_dir
+from personalclaw.constants import JSONRPC_METHOD_NOT_FOUND
 from personalclaw.dashboard.origin import parse_dashboard_url
 from personalclaw.sel import sel
 
@@ -495,4 +496,11 @@ def run_mcp_stdio_loop(
                 result_text = call_tool_fn(tool_name, tool_args)
                 respond(req_id, build_tool_response(result_text))
         elif req_id is not None:
-            respond(req_id, None, error={"code": -32601, "message": f"Unknown method: {method}"})
+            respond(
+                req_id,
+                None,
+                error={
+                    "code": JSONRPC_METHOD_NOT_FOUND,
+                    "message": f"Unknown method: {method}",
+                },
+            )

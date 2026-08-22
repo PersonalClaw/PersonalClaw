@@ -30,6 +30,7 @@ from pathlib import Path
 from personalclaw.acp import translate
 from personalclaw.acp.translate import extract_text_chunk  # noqa: F401 — re-export
 from personalclaw.acp.types import (
+    CAP_COMMANDS,
     EVENT_AGENT_SWITCHED,
     EVENT_CLEAR_STATUS,
     EVENT_COMPACTION_STATUS,
@@ -50,6 +51,7 @@ from personalclaw.acp.types import (
     AcpPromptStats,
     JsonRpcMessage,
 )
+from personalclaw.constants import JSONRPC_METHOD_NOT_FOUND
 
 logger = logging.getLogger(__name__)
 
@@ -265,14 +267,19 @@ class AcpSession:
                 METHOD_PROMPT,
                 {"sessionId": self.session_id, "prompt": translate.encode_prompt_content(message)},
             )
-            async for event in self._dispatch_frames(req_id, fut, timeout):
+            async for event in self._dispatch_frames(req_id, fut, timeout, method=METHOD_PROMPT):
                 yield event
 
     async def stream_command(
         self, command: str, timeout: float = _DEFAULT_PROMPT_TIMEOUT
     ) -> AsyncIterator[AcpEvent]:
         """Execute a slash command on THIS session and yield streaming AcpEvents
-        (``commands/execute`` — output arrives in the terminal result, not chunks)."""
+        (``commands/execute`` — output arrives in the terminal result, not chunks).
+
+        This is the raw wire write; the capability gate lives one layer up, at the two
+        provider seams that own the ``agentCapabilities`` snapshot (``AcpClient`` and
+        ``AcpSessionProvider``). Callers reaching a session directly are asking for the
+        frame they asked for."""
         async with self._turn_lock:
             self._cancelled = False
             self._turn_done.clear()
@@ -282,7 +289,7 @@ class AcpSession:
                 {"sessionId": self.session_id, "command": {"command": name, "args": args}},
             )
             async for event in self._dispatch_frames(
-                req_id, fut, timeout, extract_agent_from_result=True
+                req_id, fut, timeout, extract_agent_from_result=True, method=METHOD_COMMANDS_EXECUTE
             ):
                 yield event
 
@@ -293,6 +300,7 @@ class AcpSession:
         timeout: float,
         *,
         extract_agent_from_result: bool = False,
+        method: str = "",
     ) -> AsyncIterator[AcpEvent]:
         """Turn ladder: classify each drained frame and translate it into AcpEvents via
         the shared ``translate.*`` decoders. This is THE turn loop — the N=1 AcpClient
@@ -301,7 +309,7 @@ class AcpSession:
         queue, with NO process-wide lock and no JSONL/SEL/telemetry side-channels (the
         concurrent-capable backend streams tool results via protocol ``tool_call_update``
         frames, already handled by ``translate.extract_tool_update_events``)."""
-        from personalclaw.acp.errors import AcpError, AcpTimeoutError
+        from personalclaw.acp.errors import AcpError, AcpMethodNotFound, AcpTimeoutError
 
         prev_pct = self.last_prompt_stats.context_pct
         self.last_prompt_stats = AcpPromptStats(context_pct=prev_pct)
@@ -337,6 +345,13 @@ class AcpSession:
                 yield AcpEvent(kind=EVENT_COMPLETE, stop_reason=reason)
                 return
             if action == "error":
+                _err = msg.error if isinstance(msg.error, dict) else {}
+                if _err.get("code") == JSONRPC_METHOD_NOT_FOUND:
+                    # The ONE error that means "this agent cannot do that at all", so the
+                    # only one a caller may answer by substituting another path (`G4`).
+                    # Typed here rather than string-matched upstairs so the substitution
+                    # can never widen to errors that mean a real attempt failed.
+                    raise AcpMethodNotFound(method, msg.error)
                 raise AcpError(f"Prompt error: {msg.error}")
             if action == "permission":
                 yield translate.build_permission_event(
@@ -655,6 +670,18 @@ class AcpConnection:
     @property
     def agent_capabilities(self) -> dict:
         return self._agent_capabilities
+
+    @property
+    def supports_native_commands(self) -> bool:
+        """Did THIS agent advertise the slash-command extension in ``initialize``?
+
+        THE single derivation of that flag — the N=1 client and the concurrent session
+        provider both read it here, so there is one answer per process rather than two
+        that can disagree. Same one-key shape as ``AcpClient._can_load_session``
+        (``loadSession``), and the same allowlist direction: an agent that said nothing
+        gets no ``commands/execute`` request, because a ``-32601`` reply fails the whole
+        turn instead of degrading (`O23`/`G4`)."""
+        return bool(self._agent_capabilities.get(CAP_COMMANDS, False))
 
     @property
     def last_session_new_snapshot(self) -> dict:

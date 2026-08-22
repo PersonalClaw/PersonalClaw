@@ -20,6 +20,7 @@ import pytest
 
 from personalclaw.acp.client import AcpClient
 from personalclaw.acp.types import (
+    CAP_COMMANDS,
     EVENT_AGENT_SWITCHED,
     EVENT_COMPLETE,
     EVENT_PERMISSION_REQUEST,
@@ -106,6 +107,12 @@ def _client_with_frames(
     # dropped to the broadcast sink). Real spawns register per session/new too.
     session = conn._bind_session("sess-abc", session_files_dir=None)
     router.start()
+    # These scenarios model an agent that speaks the vendor extensions, so declare the
+    # command capability the real `initialize` would have captured — `stream_command` is
+    # gated on it (`G4`), and a harness that skipped the handshake would otherwise be
+    # exercising the refusal path instead of the command turn.
+    conn._agent_capabilities = {CAP_COMMANDS: True}
+    client._can_execute_commands = conn.supports_native_commands
     client._connection = conn
     client._session = session
     client._session_id = "sess-abc"

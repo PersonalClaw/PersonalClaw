@@ -23,6 +23,7 @@ from typing import Any
 
 from aiohttp import web
 
+from personalclaw.constants import JSONRPC_METHOD_NOT_FOUND
 from personalclaw.inbound import audit as audit_mod
 from personalclaw.inbound import auth
 from personalclaw.inbound import caps as caps_mod
@@ -71,10 +72,12 @@ PROTOCOL_VERSION = "2025-06-18"
 # exactly the subset it would have got yesterday.
 SUPPORTED_PROTOCOL_VERSIONS: tuple[str, ...] = ("2025-06-18", "2024-11-05")
 
-# JSON-RPC 2.0 error codes (the spec's reserved range).
+# JSON-RPC 2.0 error codes (the spec's reserved range). `_METHOD_NOT_FOUND` is a re-export,
+# not a local literal: the ACP client reads the same code off an agent's error frame to decide
+# an extension method is absent, so the number has exactly one definition in the tree.
 _PARSE_ERROR = -32700
 _INVALID_REQUEST = -32600
-_METHOD_NOT_FOUND = -32601
+_METHOD_NOT_FOUND = JSONRPC_METHOD_NOT_FOUND
 _INVALID_PARAMS = -32602
 _INTERNAL_ERROR = -32603
 
