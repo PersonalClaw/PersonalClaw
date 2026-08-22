@@ -2472,7 +2472,13 @@ export interface FeedbackProducerRow {
   downs: number
   n: number
   accuracy?: number
+  /** Below the retire threshold AND of a kind whose output is actually withheld
+   *  (`feedback.ENFORCED_SUPPRESSION_KINDS` — today only `skill_synthesis`). */
   suppressed?: boolean
+  /** Below the retire threshold but of a kind with NO surfacing gate: the producer keeps
+   *  surfacing and gets the retire proposal only. Reporting these as `suppressed` told the
+   *  user five of six producer kinds had "stopped surfacing" when they had not. */
+  proposal_only?: boolean
   collecting?: boolean
 }
 export interface FeedbackProducersResponse {

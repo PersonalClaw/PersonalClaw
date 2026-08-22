@@ -143,7 +143,17 @@ async def api_feedback_producers(request: web.Request) -> web.Response:
         }
         if row["n"] >= cfg.min_n:
             entry["accuracy"] = round(row["accuracy"], 3)
-            entry["suppressed"] = (kind, pid) in suppressed
+            below = (kind, pid) in suppressed
+            # `suppressed` is a claim about EFFECT, and only a kind with a surfacing gate has one.
+            # Reporting it for every below-threshold producer told the user five of six kinds had
+            # "stopped surfacing" while their output was still injected verbatim. The other five get
+            # the retire proposal and nothing else, which is what `proposal_only` says.
+            if below and kind in fb.ENFORCED_SUPPRESSION_KINDS:
+                entry["suppressed"] = True
+            elif below:
+                entry["proposal_only"] = True
+            else:
+                entry["suppressed"] = False
         else:
             entry["collecting"] = True
         rows.append(entry)
