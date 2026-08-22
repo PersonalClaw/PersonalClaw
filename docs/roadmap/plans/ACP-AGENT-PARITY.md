@@ -4428,3 +4428,47 @@ cited above.
   failures in one turn is not reachable through a CLI. `O185`: kiro twice **fabricated** a six-row
   results table with zero tool frames, so any live breaker drive needs an explicit "actually execute"
   instruction or it measures prose rather than tool calls.
+- **2026-08-22 — `G19` host half CLOSED: a denial said "the turn was cancelled" instead of "this tool
+  was refused".** `AcpSession.approve_tool` resolves the agent's OWN option id (its docstring: "agent-
+  defined ids need not equal `allow_once`"); `reject_tool` popped the offered options and threw them
+  away, sending `{"outcome": "cancelled"}`. In ACP `cancelled` means *the prompt turn was cancelled
+  before the user responded* — so on every denial the host was telling the agent its turn was over.
+  **My first root-cause theory was WRONG and the recorded measurements are what killed it.** I had it
+  as "the two paths send different payloads", which `C11` refutes: a *card* rejection on codex was
+  graceful (`tool_result` with `exit_code: null`, `Turn complete`) through the SAME `reject_tool` →
+  `cancelled`. Reading `C6`/`C7`/`C17` against `C11` gives the real split — the graceful case was an
+  `execute` tool (`exec_command`), the fatal ones were `apply_patch` (`kind: edit`). The host's message
+  was wrong in both; only the agent's tolerance differed. That reframing matters: the fix is a protocol
+  correctness fix, not a per-path patch.
+  **The fix is the mirror the allow side already had.** New `select_reject_option_id` uses the same
+  spec `kind` classifier `select_allow_option_id` already used to EXCLUDE reject options
+  (`dialect.py:242`), so the knowledge was present and only ever used negatively. `reject_outcome`
+  takes the resolved id and emits `selected` + that id, falling back to `cancelled` only when the agent
+  offered no reject option. `reject_tool` READS the offered options before popping them — the pre-fix
+  order popped first, which is how there was never anything to resolve.
+  **Prefers `reject_once` over `reject_always`:** a task-mode denial is about THIS call, and echoing an
+  "always" option would ask the agent to remember a permanent rule the host never decided.
+  **`cancel`-kinded options are deliberately not treated as reject options** — selecting one says the
+  same thing as the fallback, so it is left to the fallback rather than dressed up as a choice.
+  **One seam, ~30 call sites.** `reject_outcome` had exactly ONE caller (`session.py:163`), no dialect
+  subclass overrode it, and all 30+ `reject_tool` callers (chat_runner's 20, subagent, suggestions,
+  llm_helpers, eval runner/judge, loop judge, guardrails, followups, title, folders, optimizer) route
+  through it — so the fix lands everywhere at once.
+  **A defect in my own test, worth recording.** The first end-to-end attempt supplied options as
+  `optionId`/`name` (the public ACP spec shape) against `DefaultDialect`, whose parser reads
+  `id`/`label` — the options were dropped, the allow-only fallback was used, and the assertion failed
+  with `cancelled`. The code was right and the harness was wrong. Only `ZedAdapterDialect` and its
+  subclasses (`dialect.py:438`) accept both shapes; verified codex's wire shape resolves through its
+  own dialect.
+  **NAMED residual, asserted rather than left implicit:** a permission request carrying NO options
+  still denies as `cancelled`, because `default_permission_options()` is allow-only and leaves nothing
+  to echo. Adding a reject row there would also add a button to the approval card the user sees — a
+  product change, not this fix. `test_a_request_carrying_no_options_still_denies_as_cancelled` pins it.
+  **Falsifications** (restored from file copies): · **M1** restore the pre-fix pop-then-resolve order →
+  **1 red**, the end-to-end test, which is precisely the trap it was written for. · **M2**
+  `reject_outcome` always `cancelled` → **2 red**. **Blind spot measured:** under M2 the pre-existing
+  suites (acp-client, acp-permission-authority, dashboard-approval, approval-threading) were
+  **105 passed, 0 failed** — nothing asserted what a denial puts on the wire.
+  **Honest limit, stated in the parity doc too:** the wire message is unit-proven correct, but whether
+  codex's `apply_patch` then completes gracefully is **unverified** — that needs a live codex drive,
+  which is owner-gated. No matrix cell flipped to CONFIRMED and `dag.json` is untouched.

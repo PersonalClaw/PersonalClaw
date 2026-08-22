@@ -47,6 +47,66 @@ def test_default_permission_options_id_label():
     assert d.reject_outcome() == {"outcome": {"outcome": "cancelled"}}
 
 
+def test_select_reject_option_id_echoes_the_agents_own_reject_option():
+    """`G19` — the mirror of the allow side. Denial used to throw the offered options away
+    and send ``cancelled``, which in ACP means *the prompt turn was cancelled*, not *this
+    tool was refused*. A policy denial must select the agent's own reject option."""
+    d = DefaultDialect()
+    offered = [
+        {"id": "allow-it", "kind": "allow_once", "label": "Allow"},
+        {"id": "deny-this-one", "kind": "reject_once", "label": "Reject"},
+    ]
+    assert d.select_reject_option_id(offered) == "deny-this-one"
+    assert d.reject_outcome("deny-this-one") == {
+        "outcome": {"outcome": "selected", "optionId": "deny-this-one"}
+    }
+
+
+def test_select_reject_option_id_prefers_once_over_always():
+    """A task-mode denial is about THIS call. Echoing an "always" option would ask the agent
+    to remember a permanent rule the host never decided."""
+    d = DefaultDialect()
+    offered = [
+        {"id": "forever", "kind": "reject_always", "label": "Always reject"},
+        {"id": "just-now", "kind": "reject_once", "label": "Reject"},
+    ]
+    assert d.select_reject_option_id(offered) == "just-now"
+
+
+def test_select_reject_option_id_reads_agent_defined_ids_without_spec_kinds():
+    """Same hazard the allow side already carries: ``kind`` is optional, so an agent that
+    only sends ids must still resolve."""
+    d = DefaultDialect()
+    assert d.select_reject_option_id([{"id": "reject_once"}, {"id": "allow_once"}]) == "reject_once"
+    assert d.select_reject_option_id([{"id": "x", "kind": "deny"}]) == "x"
+
+
+def test_no_reject_option_offered_falls_back_to_cancelled():
+    """The ONLY case where ``cancelled`` is still correct — the agent gave us nothing else
+    to say. This is the vacuity floor: the fix must not invent an option id."""
+    d = DefaultDialect()
+    assert d.select_reject_option_id([{"id": "a", "kind": "allow_once"}]) == ""
+    assert d.reject_outcome("") == {"outcome": {"outcome": "cancelled"}}
+
+
+def test_a_request_carrying_no_options_still_denies_as_cancelled():
+    """A NAMED boundary, not an oversight. ``default_permission_options()`` is allow-only, so
+    an agent that sends a permission request with NO options leaves the host nothing to echo
+    and the denial goes out as ``cancelled``. Adding a reject row to that fallback would also
+    add a button to the approval card the user sees — a product change, not this fix.
+    """
+    d = DefaultDialect()
+    assert d.select_reject_option_id(d.default_permission_options()) == ""
+    assert d.reject_outcome("") == {"outcome": {"outcome": "cancelled"}}
+
+
+def test_a_cancel_option_is_not_treated_as_a_reject_option():
+    """Selecting a ``cancel``-kinded option says the same thing as the ``cancelled``
+    fallback, so it is left to that fallback rather than dressed up as a deliberate choice."""
+    d = DefaultDialect()
+    assert d.select_reject_option_id([{"id": "c", "kind": "cancel"}]) == ""
+
+
 def test_select_allow_option_id_echoes_agent_defined_id():
     """Regression (fs_write denial): the agent's optionId is agent-defined and
     NOT assumed to be the literal ``allow_once``. approve must echo the id the
