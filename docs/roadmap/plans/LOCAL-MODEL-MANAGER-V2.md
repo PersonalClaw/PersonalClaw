@@ -982,3 +982,50 @@ filter on exactly the machines that need it. Reproduced live: a 48 GB host with 
 chipped all six models "Won't fit" and hid none of them. The gate now tests `>= 0`, `measured` alone
 carries the unknown case, and a test asserts the two answers DISAGREE. After the fix the same drive
 hides all six with a "6 hidden" notice and an empty state that explains itself.
+
+## Execution log — `LMMV-7` (Session 5b hardening) — third pass
+
+- [2026-08-23][LMMV-7] **PARTIAL — the atom stays `todo`, and this pass was an AUDIT plus one real hole
+  closed, not a build.** Most of the atom was already on `origin/main` before the pass began: the budget
+  helper landed in `addbc332` (PR #1628) and both hardening rails were made derived in `39d28fda`. The two
+  prior `PARTIAL` entries (2026-08-18, 2026-08-21) say so. Observations `O211`-`O218`, findings
+  `G171`-`G176`.
+- [2026-08-23][LMMV-7] **Clauses 1, (a), (b), (c) verified MET, by identity rather than by count.**
+  Clause 1: `local_models/budgets.py` (`catalog_window` → `model_budget` → `output_budget`) is consumed at
+  `llm_helpers.py:498` and awaited on **all three** resolution paths (pin `:535`, chain-advance `:556`,
+  plain `:588`); `workflows/compaction.py` is **byte-identical**, so "no compaction logic rewritten"
+  holds. Clause (a): every two-population case asserts the bundled provider **`is` the same object** and
+  `set(before) - set(after) == {transient}`, with the population derived by AST and reconciled both ways;
+  an independent census confirms no unnamed member (`_providers.clear()` appears only in
+  `manifest_reference.py`, which clears the **tool** registry). Clause (b): asserts the app-name key
+  resolves **and** the internal name is `None`.
+- [2026-08-23][LMMV-7] 🔴 **Closed a DISCOVERY the prior pass recorded but did not fix: the SC-10
+  model-root fixture's reach is exactly one attribute lookup deep.** It patches module attributes, so a
+  module-level `from personalclaw.local_models.layouts import cleanup_candidates` binds the **unwrapped**
+  object at collection time, before the fixture runs. Measured which entry point that actually bites:
+  `cleanup_candidates` (`layouts.py:211`) walks `root.rglob("*")` itself at `:223` and delegates to
+  nothing, so an alias of it reaches a real cache root unintercepted; the other six delegate to a guarded
+  module global one hop in. Closed by **banning the shape** (`ORIGINALS` + an AST
+  `import_bound_guarded_names()` detector + a suite-wide ban) rather than by tracking the delegation
+  graph, so the hazard cannot be written rather than being chased.
+- [2026-08-23][LMMV-7] **Clause 4 (the full download/delete/bind/RUN matrix across all six providers)
+  remains NOT MET** — the same clause both prior passes left open.
+- [2026-08-23][LMMV-7] 🔴 **The 2026-08-21 entry is WRONG where it says "there is no
+  voice/transcribe/synthesize handler in `dashboard/handlers/`".** `POST /api/stt/transcribe` exists
+  (`dashboard/server.py:647` → `handlers/core.py:186`) and `POST /api/voice/synthesize` exists
+  (`server.py:1026`). The prior pass grepped only `handlers/`; **the routes are registered in
+  `server.py`.** Diarization genuinely has no run route (`G172`). So two matrix cells are **"not
+  exercised", not "no surface"** — a materially different reason.
+- [2026-08-23][LMMV-7] **`G173` (MEDIUM) — `PERSONALCLAW_HOME` does not isolate model weights** for
+  `faster-whisper` / `diarization-onnx`: they root at `XDG_CACHE_HOME`/`~/.cache`. That is the
+  production-side analogue of the very incident SC-10 closes in tests, and today it rests on a convention
+  nobody sets.
+- **STILL UNVERIFIED / recorded.** `G171` the SC-5 selftest is provider-blind (`_run_selftest` uses `name`
+  only as an output label, `handlers/doctor.py:266-267`), so it returns `ok: true` for deleted-weight
+  providers and for nonexistent names — owned by LMMV-4, not this atom. `G175` one guarded-entry-point
+  cell passes only because the wrapper raises before forwarding, so it never exercises the real arity.
+  `G176` the SC-3 gated-download failure is unclassified (`reason: ""`), carried from the prior pass and
+  not re-verified here.
+- **`O216`: `origin/main` is not green.** A pristine full run on `origin/main` reds
+  `test_loop_worktree_sparse::TestPoolBound::test_batch_creates_every_worktree` — the documented
+  sparse-cone flake. Recorded so a future pass does not attribute it to its own change.
