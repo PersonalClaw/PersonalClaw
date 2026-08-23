@@ -230,7 +230,15 @@ def test_sandbox_config_in_to_dict():
     assert "sandbox" in d
     # env_passthrough is the child-env allowlist's declared-needs seam (PHF-4) — same
     # section, same round-trip contract, so it belongs in this exact-set assertion.
-    assert set(d["sandbox"]) == {"nofile", "max_pids", "max_rss_mb", "env_passthrough"}
+    # cgroup_scopes is PHF-2's opt-in Linux enforcement tier: it decides whether max_pids
+    # and max_rss_mb are enforced at all, so it round-trips with the ceilings it governs.
+    assert set(d["sandbox"]) == {
+        "nofile",
+        "max_pids",
+        "max_rss_mb",
+        "env_passthrough",
+        "cgroup_scopes",
+    }
 
 
 def AppConfig_to_dict():
@@ -248,6 +256,9 @@ def test_sandbox_keys_in_editable_config_allowlist():
         assert _EDITABLE_CONFIG[key]["type"] == "int"
     # The child-env allowlist's declared-needs seam is a name list, not a ceiling.
     assert _EDITABLE_CONFIG["sandbox.env_passthrough"]["type"] == "str_list"
+    # PHF-2's tier is a flag, not a ceiling — but it must be PATCH-reachable for the same
+    # reason: a hardening tier nothing can turn on is a tier nobody has.
+    assert _EDITABLE_CONFIG["sandbox.cgroup_scopes"]["type"] == "bool"
 
 
 def test_default_ceilings_do_not_emit_nproc():
