@@ -1908,6 +1908,15 @@ class GatewayOrchestrator:
                 reconcile_digest_cron(_trigger_store)
             except Exception:
                 logger.warning("digest-cron reconcile failed", exc_info=True)
+            # The Self-QA commit watcher (SELF-VERIFICATION §3.1). Reconciled, not just created,
+            # so toggling the companion or re-pointing `watched_repo` in Settings converges without
+            # a restart being part of the instructions. No-ops entirely when it is off.
+            try:
+                from personalclaw.selfqa.install import reconcile as reconcile_selfqa_watch
+
+                reconcile_selfqa_watch(_trigger_store)
+            except Exception:
+                logger.warning("selfqa-watch reconcile failed", exc_info=True)
             # The monthly usage recap (MRT-3). Sits in the `--no-crons` else-branch with every
             # other unattended writer: a recap is background work, and a harness run must not
             # emit one. Creation only, not convergence — "monthly" is the feature, not a setting.

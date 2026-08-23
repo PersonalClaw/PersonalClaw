@@ -60,6 +60,30 @@
     "type": "str"
   },
   {
+    "default": false,
+    "path": "agent.self_qa.enabled",
+    "sensitive": false,
+    "type": "bool"
+  },
+  {
+    "default": false,
+    "path": "agent.self_qa.fix_branch_enabled",
+    "sensitive": false,
+    "type": "bool"
+  },
+  {
+    "default": 3,
+    "path": "agent.self_qa.max_scenarios_per_fire",
+    "sensitive": false,
+    "type": "int"
+  },
+  {
+    "default": "",
+    "path": "agent.self_qa.watched_repo",
+    "sensitive": false,
+    "type": "str"
+  },
+  {
     "default": 10.0,
     "path": "agent.soft_stop_budget_secs",
     "sensitive": false,

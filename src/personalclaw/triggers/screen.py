@@ -423,6 +423,10 @@ READ_ONLY_PROVIDERS: frozenset[str] = frozenset(
         "knowledge-health",  # deterministic store health report, zero tokens
         "knowledge-gaps",  # finds referenced-but-unwritten entities, zero tokens
         "artifact_inspect",  # reads a run's own artifacts, path-escape confined; no side effect
+        # SV-9: read-only git inspection (hex-validated refs, fixed argv, no shell) whose only
+        # effect is a run-ledger row. Zero tokens and nothing user-visible, so it belongs with
+        # the deterministic knowledge probes above rather than with the writers below.
+        "selfqa-triage",
     }
 )
 
@@ -452,6 +456,11 @@ WRITE_CAPABLE_PROVIDERS: frozenset[str] = frozenset(
         # unattended, on a cron, forever. Write-capable is the only honest side of this table for
         # it — and being explicit here is what keeps the fail-closed default from being the reason.
         "knowledge-report",
+        # SV-9: files a Task AND raises an inbox item. `create-task` sits in the read-only table
+        # above because a task row has no external effect, but the inbox item is the same
+        # unattended "puts something in front of the user" write that puts `notification-digest`
+        # on this side — so the pair lands here, on the stricter of the two classifications.
+        "selfqa-file-finding",
     }
 )
 
