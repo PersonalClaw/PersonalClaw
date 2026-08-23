@@ -892,6 +892,34 @@ INVENTORY: tuple[StateEntry, ...] = (
         merge=MERGE_APPEND_DEDUP,
         help="the security event log (audit trail)",
     ),
+    # EXTERNAL-ACCESS §10. The client registry EXPORTS: it holds an integration's
+    # label and bindings, which a user restoring a home expects back, and losing it
+    # silently means every external client stops working after a restore with no
+    # indication why. It carries token HASHES only, so it is not `secret=True` —
+    # the tokens themselves live in the credential store, which is already excluded.
+    StateEntry(
+        id="inbound_clients",
+        kind=KIND_JSON_FILE,
+        path="inbound_clients.json",
+        domain=DOMAIN_SECURITY,
+        merge=MERGE_LWW,
+        help="inbound access clients: labels, bindings and token hashes (never tokens)",
+    ),
+    # 🔴 `derived=True`, so this is DELIBERATELY excluded from exports (§10 lists it
+    # among the excluded stores) while still being CLAIMED — an undeclared file under
+    # the home fails `audit_home()`, so leaving it out entirely would report the
+    # request trail as unmanaged drift the first time anyone calls an inbound surface.
+    # It is a local request trace, trimmed at 2× cap, and its security-relevant lines
+    # are mirrored into `security_events.jsonl`, which DOES export.
+    StateEntry(
+        id="inbound_audit",
+        kind=KIND_JSONL_APPEND,
+        path="inbound_audit.jsonl",
+        domain=DOMAIN_SECURITY,
+        merge=MERGE_APPEND_DEDUP,
+        derived=True,
+        help="per-request inbound trace (local; security events also go to the SEL)",
+    ),
 )
 
 

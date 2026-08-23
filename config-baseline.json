@@ -491,6 +491,108 @@
     "type": "int"
   },
   {
+    "default": false,
+    "path": "external_access.a2a.allow_remote",
+    "sensitive": false,
+    "type": "bool"
+  },
+  {
+    "default": false,
+    "path": "external_access.a2a.enabled",
+    "sensitive": false,
+    "type": "bool"
+  },
+  {
+    "default": 10,
+    "path": "external_access.auto_disable_after_breaches",
+    "sensitive": false,
+    "type": "int"
+  },
+  {
+    "default": false,
+    "path": "external_access.bridge.allow_remote",
+    "sensitive": false,
+    "type": "bool"
+  },
+  {
+    "default": false,
+    "path": "external_access.bridge.enabled",
+    "sensitive": false,
+    "type": "bool"
+  },
+  {
+    "default": false,
+    "path": "external_access.capture.allow_remote",
+    "sensitive": false,
+    "type": "bool"
+  },
+  {
+    "default": false,
+    "path": "external_access.capture.enabled",
+    "sensitive": false,
+    "type": "bool"
+  },
+  {
+    "default": 30,
+    "path": "external_access.capture_retention_days",
+    "sensitive": false,
+    "type": "int"
+  },
+  {
+    "default": false,
+    "path": "external_access.enabled",
+    "sensitive": false,
+    "type": "bool"
+  },
+  {
+    "default": false,
+    "path": "external_access.mcp.allow_remote",
+    "sensitive": false,
+    "type": "bool"
+  },
+  {
+    "default": false,
+    "path": "external_access.mcp.enabled",
+    "sensitive": false,
+    "type": "bool"
+  },
+  {
+    "default": false,
+    "path": "external_access.openai.allow_remote",
+    "sensitive": false,
+    "type": "bool"
+  },
+  {
+    "default": false,
+    "path": "external_access.openai.enabled",
+    "sensitive": false,
+    "type": "bool"
+  },
+  {
+    "default": "",
+    "path": "external_access.public_url",
+    "sensitive": false,
+    "type": "str"
+  },
+  {
+    "default": 20,
+    "path": "external_access.rate_burst",
+    "sensitive": false,
+    "type": "int"
+  },
+  {
+    "default": 4,
+    "path": "external_access.rate_concurrent",
+    "sensitive": false,
+    "type": "int"
+  },
+  {
+    "default": 1.0,
+    "path": "external_access.rate_rps",
+    "sensitive": false,
+    "type": "float"
+  },
+  {
     "default": true,
     "path": "feedback.enabled",
     "sensitive": false,
@@ -585,24 +687,6 @@
     "path": "hooks",
     "sensitive": false,
     "type": "dict"
-  },
-  {
-    "default": false,
-    "path": "inbound.mcp.allow_remote",
-    "sensitive": false,
-    "type": "bool"
-  },
-  {
-    "default": false,
-    "path": "inbound.mcp.enabled",
-    "sensitive": false,
-    "type": "bool"
-  },
-  {
-    "default": "",
-    "path": "inbound.public_url",
-    "sensitive": false,
-    "type": "str"
   },
   {
     "default": false,

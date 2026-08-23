@@ -217,30 +217,49 @@ Security audit and deny list.
 
 PersonalClaw can expose a **read-only MCP endpoint** at `POST /mcp` so a local MCP
 client (your IDE, an MCP inspector) can ask it questions. It is off by default and
-stays off until you both mint a token and flip the flag — and it only answers
+stays off until you both mint a token and flip the flags — and it only answers
 loopback callers.
+
+There are **five** inbound surfaces in the config schema — `openai`, `mcp`, `a2a`,
+`capture`, `bridge` — each with its own token and its own `enabled` flag. Only `mcp`
+has a route today; enabling one of the other four is accepted by config and simply
+has nothing to mount yet.
 
 | Command | What it does |
 |---|---|
-| `personalclaw inbound token create mcp [--rotate]` | Mint the surface's bearer token, stored `0600` at `<home>/.inbound_mcp_token`. **Printed once** — copy it into your client immediately. `--rotate` replaces an existing token, which immediately invalidates the old one. |
-| `personalclaw inbound token show mcp` | Report whether a usable token is configured, and why not if it isn't. Deliberately never prints the value: a credential the CLI can re-read is one an unattended process can exfiltrate. Lost it? Rotate. |
+| `personalclaw inbound token create <surface> [--rotate]` | Mint that surface's bearer token, stored in the **credential store** (keychain, else `.env` at `0600`) as `PERSONALCLAW_INBOUND_<SURFACE>_TOKEN`. **Printed once** — copy it into your client immediately. `--rotate` replaces an existing token, which immediately invalidates the old one. |
+| `personalclaw inbound token show <surface>` | Report whether a usable token is configured, and why not if it isn't. Deliberately never prints the value: a credential the CLI can re-read is one an unattended process can exfiltrate. Lost it? Rotate. |
 
-Minting a token is not enough on its own — enable the surface too:
+A token is refused if it is shorter than 32 bytes, equal to the dashboard token or
+internal secret, or equal to **another surface's** token — five surfaces sharing one
+bearer would collapse five independently revocable credentials into one.
+
+Minting a token is not enough on its own — enable the surface too, and the master
+switch above it:
 
 ```bash
-personalclaw inbound token create mcp        # copy the printed bearer token
-personalclaw config set inbound.mcp.enabled true
+personalclaw inbound token create mcp                     # copy the printed bearer token
+personalclaw config set external_access.enabled true      # master gate, all surfaces
+personalclaw config set external_access.mcp.enabled true  # this surface
 ```
 
-Both conditions are checked on every request, so setting `inbound.mcp.enabled false`
-is an immediate kill switch — no restart needed. When the surface refuses to mount,
-the gateway log carries one line naming the exact reason. Every request (allowed or
-refused) is recorded in `<home>/inbound_audit.jsonl`, and refusals also land in the
-security event log.
+Every condition is checked on every request, so setting either flag to `false` is an
+immediate kill switch — no restart needed, and `external_access.enabled false` takes
+all five down at once. A third layer is per-client (Settings → External Access can
+disable one integration without touching the surface), and a fourth is the guardrails
+incident flag: while an incident is active every inbound request gets `503`. All four
+parse **fail-closed** — an unreadable flag reads as *off*, which is the inverse of a
+guard flag, because for an inbound surface OFF is the safe state.
 
-Remote access (`inbound.mcp.allow_remote` + `inbound.public_url`) exists but is
-**discouraged** until the hardened external-access layer lands. Neither knob is
-editable from the dashboard — they are config-file-only on purpose.
+When a surface refuses to mount, the gateway log carries one line naming the exact
+reason. Every request (allowed or refused) is recorded in `<home>/inbound_audit.jsonl`,
+and refusals also land in the security event log.
+
+Remote access (`external_access.<surface>.allow_remote` + `external_access.public_url`)
+exists but is **discouraged**, and does not work for an MCP client at all — see
+[Use from your IDE](../guides/use-from-your-ide.md). Neither knob is editable from the
+dashboard; they are config-file-only on purpose, and the PATCH endpoint refuses them
+rather than ignoring them.
 
 ## Other commands
 

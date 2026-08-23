@@ -406,7 +406,7 @@ def test_every_leaf_field_survives_save_load(cfg_file):
 def test_evals_editable_allowlist_excludes_the_capture_flag():
     """EVALUATION-SUBSTRATE §10 — the runtime-editable evals subset is in the PATCH
     allowlist, but the privacy-sensitive input-capture flag is deliberately NOT
-    (mirroring inbound.mcp.allow_remote's exclusion)."""
+    (mirroring external_access.mcp.allow_remote's exclusion)."""
     from personalclaw.dashboard.handlers.core import _EDITABLE_CONFIG
 
     assert "evals.enabled" in _EDITABLE_CONFIG

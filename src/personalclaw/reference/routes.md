@@ -240,6 +240,10 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `GET /api/evals/judge-bench` — the newest tier-recommendation table.
 - `GET /api/evals/studies` — one compact row per pre-registered study (§2.4 / ES-5).
 - `GET /api/evals/studies/{study_id}` — one study's verdict, agreement and per-run rows.
+- `GET /api/external-access` — the whole operator view of the inbound seam.
+- `POST /api/external-access/clients` — create; DELETE …/{client_id} — revoke.
+- `DELETE /api/external-access/clients/{client_id}` — create; DELETE …/{client_id} — revoke.
+- `POST /api/external-access/clients/{client_id}/disabled` — kill-switch layer (c).
 - `POST /api/feedback` — record one verdict.
 - `GET /api/feedback/producers` — per-producer accuracy.
 - `POST /api/feedback/producers/clear` — un-suppress after an artifact edit.

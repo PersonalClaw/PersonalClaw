@@ -43,20 +43,29 @@ def audit(
     duration_ms: int = 0,
     refused: str = "",
     tool: str = "",
+    client_id: str = "",
+    rate_limited: bool = False,
 ) -> None:
     """Append one audit line. Never raises — auditing must not break a response.
 
     A failure to record is itself logged at debug: losing an audit line is bad,
     but failing the user's request because we couldn't write a log line is worse.
+
+    ``client_id`` is the identity that Settings → External Access renders per-client
+    last-seen and request counts FROM — derived from this file rather than collected
+    into a second counter, so the number beside a client and the trail behind it
+    cannot disagree.
     """
     row = {
         "ts": datetime.now(timezone.utc).isoformat(),
         "surface": surface,
+        "client_id": client_id,
         "route": route,
         "status": status,
         "bytes_in": bytes_in,
         "bytes_out": bytes_out,
         "duration_ms": duration_ms,
+        "rate_limited": bool(rate_limited),
     }
     if tool:
         row["tool"] = tool
@@ -72,7 +81,7 @@ def audit(
         logger.debug("inbound: audit write failed", exc_info=True)
 
     if refused:
-        _sel_refusal(surface, route, refused)
+        _sel_refusal(surface, route, refused, client_id)
 
 
 def _maybe_trim(path: Path) -> None:
@@ -88,13 +97,19 @@ def _maybe_trim(path: Path) -> None:
         logger.debug("inbound: audit trim failed", exc_info=True)
 
 
-def _sel_refusal(surface: str, route: str, reason: str) -> None:
-    """Mirror a refusal into the security event log."""
+def _sel_refusal(surface: str, route: str, reason: str, client_id: str = "") -> None:
+    """Mirror a refusal into the security event log.
+
+    The caller names the CLIENT when one was resolved. A refusal attributed only to
+    `inbound:mcp` cannot answer "which integration is failing auth?", which is the
+    first question anyone asks of this log.
+    """
     try:
         from personalclaw.sel import sel
 
+        caller = f"inbound:{surface}:{client_id}" if client_id else f"inbound:{surface}"
         sel().log_api_access(
-            caller=f"inbound:{surface}",
+            caller=caller,
             operation=route,
             outcome="denied",
             source="inbound",
