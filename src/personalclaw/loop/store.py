@@ -24,7 +24,14 @@ from typing import Any
 from personalclaw.atomic_write import atomic_write
 from personalclaw.config.loader import config_dir
 from personalclaw.ledger import EVENTS_FILE, JUDGE_VERDICT, STEP_COMPLETED
-from personalclaw.loop.loop import KINDS, TERMINAL_STATUSES, Loop, LoopStatus
+from personalclaw.loop.loop import (
+    ENDED_STATUSES,
+    KINDS,
+    PRELAUNCH_STATUSES,
+    TERMINAL_STATUSES,
+    Loop,
+    LoopStatus,
+)
 from personalclaw.security import redact_credentials, redact_exfiltration_urls
 from personalclaw.sqlite_compat import sqlite3
 
@@ -422,8 +429,9 @@ def update_status(loop_id: str, new_status: LoopStatus, **fields: Any) -> Loop:
     """Transition status + stamp timing. Raises TransitionError out of a terminal
     state, KeyError if missing. Banks the just-finished running stretch into
     elapsed_seconds whenever we LEAVE running (so displayed time excludes pauses);
-    sets started_at on entering RUNNING (+ clears stale error); completed_at on a
-    finished state. Extra ``fields`` are written through (JSON-encoded if needed)."""
+    sets started_at on entering RUNNING (+ clears stale error); stamps completed_at on arriving
+    at an ENDED status and clears it on leaving one. Extra ``fields`` are written through
+    (JSON-encoded if needed)."""
     if not valid_loop_id(loop_id):
         raise KeyError(loop_id)
     conn = _connect()
@@ -449,9 +457,17 @@ def update_status(loop_id: str, new_status: LoopStatus, **fields: Any) -> Loop:
             sets.append("started_at = ?")
             vals.append(now)
             fields.setdefault("error_message", None)
-        if new_status in (LoopStatus.COMPLETE, LoopStatus.STOPPED, LoopStatus.FAILED):
+        if new_status in ENDED_STATUSES:
             sets.append("completed_at = ?")
             vals.append(now)
+        else:
+            # Leaving an ended state UN-ends the loop. Only reachable for FAILED — the one ended
+            # state `RESUMABLE_ENDED_STATUSES` lets a loop leave — and without this a resumed
+            # loop ran with the `completed_at` its failure stamped, i.e. `started_at` after the
+            # moment it supposedly finished. The stale stamp was the single observable cost of
+            # "ended" and "terminal" having been one word: FAILED was ended enough to stamp and
+            # non-terminal enough to leave, and nothing cleared the stamp on the way out.
+            fields.setdefault("completed_at", None)
         for key, value in fields.items():
             if key in _JSON_COLS:
                 value = json.dumps(value)
@@ -505,8 +521,6 @@ def update_spec(loop_id: str, fields: dict) -> Loop | None:
     """Patch editable spec fields on a PRE-LAUNCH loop. Returns None if the loop
     is missing OR its spec is frozen (already started) — the caller routes a
     name-only patch to :func:`rename` instead."""
-    from personalclaw.loop.loop import PRELAUNCH_STATUSES
-
     loop = get(loop_id)
     if loop is None:
         return None
@@ -542,8 +556,6 @@ def rebind_workspace(loop_id: str, workspace_dir: str) -> Loop | None:
     loop = get(loop_id)
     if loop is None:
         return None
-    from personalclaw.loop.loop import TERMINAL_STATUSES
-
     if LoopStatus(loop.status) in TERMINAL_STATUSES or loop.status == LoopStatus.RUNNING.value:
         return None
     _simple_set(loop_id, "workspace_dir", str(workspace_dir or "").strip())
