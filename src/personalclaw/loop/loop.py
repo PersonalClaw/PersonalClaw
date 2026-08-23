@@ -24,6 +24,8 @@ from dataclasses import asdict, dataclass, field
 from enum import Enum
 from typing import Any
 
+from personalclaw.workflows.models import LifecyclePhase
+
 
 class LoopKind(str, Enum):
     """The subject-matter axis of a loop. Picks the strategy that supplies the
@@ -45,8 +47,9 @@ class LoopStatus(str, Enum):
     ``blocked`` (code's repeatedly-failing stage gate) are both supervisor-set
     attention states; a kind uses whichever its watchdog logic raises.
 
-    Transitions are enforced in :mod:`personalclaw.loop.store`. ``COMPLETE`` and
-    ``STOPPED`` are terminal.
+    Transitions are enforced in :mod:`personalclaw.loop.store`. Which members are terminal is
+    not spelled out here: it is DERIVED from :data:`LOOP_PHASES` below, so the enum names the
+    states and the phase map names what they mean (`PP-16`, "one status vocabulary").
     """
 
     INTAKE = "intake"  # submitted, classifier running
@@ -63,29 +66,63 @@ class LoopStatus(str, Enum):
     STOPPED = "stopped"  # user stopped it
 
 
-# Terminal states cannot transition to a different state.
-TERMINAL_STATUSES: frozenset[LoopStatus] = frozenset({LoopStatus.COMPLETE, LoopStatus.STOPPED})
+#: Every :class:`LoopStatus` member's :class:`LifecyclePhase` — the ONE declaration the four
+#: membership sets below are derived from, rather than four literals maintained beside the enum
+#: and drifting apart (`PP-16`, "one status vocabulary"). Exhaustive in both directions by rail.
+#:
+#: ``FAILED`` is ``ENDED``, not ``ATTENTION``, and that is the assignment the whole model turns
+#: on. A failed loop HAS stopped producing — ``update_status`` stamps its ``completed_at``
+#: alongside ``COMPLETE`` and ``STOPPED`` — and it is still a ``resume`` source. Those two facts
+#: only look contradictory while "ended" and "terminal" are the same word; split apart, ``FAILED``
+#: is simply the one ended state this noun can leave (:data:`RESUMABLE_ENDED_STATUSES`).
+LOOP_PHASES: dict[LoopStatus, LifecyclePhase] = {
+    LoopStatus.INTAKE: LifecyclePhase.PRELAUNCH,
+    LoopStatus.PLANNING: LifecyclePhase.PRELAUNCH,
+    LoopStatus.REVIEW: LifecyclePhase.PRELAUNCH,
+    LoopStatus.READY: LifecyclePhase.PRELAUNCH,
+    LoopStatus.RUNNING: LifecyclePhase.ACTIVE,
+    LoopStatus.PAUSED: LifecyclePhase.ATTENTION,
+    LoopStatus.STAGNANT: LifecyclePhase.ATTENTION,
+    LoopStatus.BLOCKED: LifecyclePhase.ATTENTION,
+    LoopStatus.NEEDS_INPUT: LifecyclePhase.ATTENTION,
+    LoopStatus.COMPLETE: LifecyclePhase.ENDED,
+    LoopStatus.FAILED: LifecyclePhase.ENDED,
+    LoopStatus.STOPPED: LifecyclePhase.ENDED,
+}
 
-# States that count as "an active loop" (a worker is or should be armed, or it's
-# awaiting the user but resumable) — used for list filters + active-count badges.
-# FAILED is deliberately NOT here: it's resumable (it's a `resume` source) but a
-# failed loop has no armed worker and shouldn't inflate the "active" badge — it sits
-# in its own resumable-attention category, the one status outside the
-# prelaunch / active / terminal tripartition.
-ACTIVE_STATUSES: frozenset[LoopStatus] = frozenset(
-    {
-        LoopStatus.RUNNING,
-        LoopStatus.PAUSED,
-        LoopStatus.STAGNANT,
-        LoopStatus.BLOCKED,
-        LoopStatus.NEEDS_INPUT,
-    }
+#: Loop states that have stopped producing, so an end timestamp belongs on arrival. This is the
+#: set ``store.update_status`` stamps ``completed_at`` for; it was an anonymous inline tuple that
+#: happened to disagree with ``TERMINAL_STATUSES`` about ``FAILED`` with nothing naming why.
+ENDED_STATUSES: frozenset[LoopStatus] = frozenset(
+    status for status, phase in LOOP_PHASES.items() if phase is LifecyclePhase.ENDED
 )
 
-# Pre-launch states whose spec is still editable (no worker has run yet). Mirrors
-# the former code store's editable-spec gate; the union covers every kind's intake.
+#: Ended loop states a loop may still LEAVE — the one place ``failed`` stops meaning what it
+#: means for a run, stated rather than implied. A loop is a CAMPAIGN of attempts, so a dead
+#: worker ends the attempt and not the campaign: ``ACTION_SOURCE_STATES["resume"]`` accepts
+#: ``FAILED`` and re-arms the same loop. A run is ONE attempt, so its counterpart
+#: (`workflows.models:RESUMABLE_ENDED_RUN_STATUSES`) is empty and its ``failed`` IS terminal.
+#: Moving ``FAILED`` out of here is therefore not a tidy-up — it withdraws resumability from
+#: every failed loop, and `tests/test_lifecycle_phase_vocabulary.py` fails when it is tried.
+RESUMABLE_ENDED_STATUSES: frozenset[LoopStatus] = frozenset({LoopStatus.FAILED})
+
+#: Terminal = ended and not resumable. Nothing may transition OUT of these (``store``'s guard).
+TERMINAL_STATUSES: frozenset[LoopStatus] = ENDED_STATUSES - RESUMABLE_ENDED_STATUSES
+
+#: States that count as "an active loop" — used for list filters + active-count badges. Derived
+#: as ``ACTIVE | ATTENTION``, which is *why* ``FAILED`` is absent: a failed loop is resumable but
+#: has no armed worker, so it must not inflate the badge. That used to be a hand-written comment
+#: on a hand-written literal; it is now a consequence of ``FAILED`` being ``ENDED``.
+ACTIVE_STATUSES: frozenset[LoopStatus] = frozenset(
+    status
+    for status, phase in LOOP_PHASES.items()
+    if phase in (LifecyclePhase.ACTIVE, LifecyclePhase.ATTENTION)
+)
+
+#: Pre-launch states whose spec is still editable (no worker has run yet). Mirrors the former
+#: code store's editable-spec gate; the union covers every kind's intake.
 PRELAUNCH_STATUSES: frozenset[LoopStatus] = frozenset(
-    {LoopStatus.INTAKE, LoopStatus.PLANNING, LoopStatus.REVIEW, LoopStatus.READY}
+    status for status, phase in LOOP_PHASES.items() if phase is LifecyclePhase.PRELAUNCH
 )
 
 # Which action a status can be the SOURCE of (the lifecycle transition guard the
