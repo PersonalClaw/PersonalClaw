@@ -167,9 +167,83 @@ SYNC = EgressPolicy(
     timeout_s=120.0,
 )
 
+# BROWSE-AUTOMATION §6.1: the headless-browser navigation posture. Every CDP
+# ``Page.navigate`` is pre-flighted through ``guard.evaluate`` against this profile before
+# the target URL reaches Chrome, and each redirect hop is re-evaluated (§6.2). A distinct
+# profile — not CONNECTOR — because a browser is not ``net/client.fetch``: it renders, so it
+# pulls dozens of subresources, follows chains the user never typed, and takes render time on
+# top of network time. Public-only stance and ``on_violation="deny"`` are STRICT's, unchanged.
+#
+# ``allow_schemes`` is inherited and LOAD-BEARING here in a way it is not for a fetch surface:
+# a browser understands `file:`, `data:`, `blob:`, `chrome:`, `devtools:` and `view-source:`,
+# and a `Page.navigate` to `file:///etc/…` or to `devtools://` is local-file read / debugger
+# self-attach, not egress. Keeping the tuple at ("http", "https") is what refuses those, so
+# the pre-flight is also the scheme gate — do not widen it for a "convenience" local-file case.
+#
+# ``pin_resolved_ip=False`` — DELIBERATE, and the one field where True would be a LIE. Pinning
+# means "the caller dials these exact validated IPs, so the name is never resolved twice"; it
+# closes the rebind window only because ``net/client`` owns the socket. Chrome owns its own
+# resolver and its own sockets: it re-resolves the hostname itself after our pre-flight, and
+# CDP has no "connect to this IP" parameter to hand a pinned list to. So the rebind window
+# between "we validated this host's A/AAAA records" and "Chrome resolved it again, possibly to
+# a different answer" is REAL and this profile cannot close it. Declaring True would advertise
+# a mitigation the surface does not implement, which is strictly worse than an honest False:
+# a reader auditing the browse path would credit a control that isn't there. Note that
+# ``evaluate`` still returns ``pinned_ips`` regardless of this flag — for BROWSE those are
+# evidence for the SEL row ("at pre-flight, this host resolved to these addresses"), not an
+# enforcement mechanism. Closing the window for real needs a browser-level control (a proxy
+# Chrome must dial through, or ``--host-resolver-rules``), which is not this atom.
+#
+# Ceilings, each raised from STRICT for a stated reason and none removed:
+#   * ``max_redirects=10`` (STRICT 5) — consent walls, geo/locale bounces and SSO hops routinely
+#     exceed five on ordinary public sites, and every hop is re-evaluated by the guard (§6.2),
+#     so an extra hop costs a check rather than a hole. Still bounded, so a redirect loop
+#     terminates instead of spinning the browser forever.
+#   * ``timeout_s=60.0`` (STRICT 30.0) — a navigation is render + N subresource round-trips, not
+#     one request; 30s fails healthy slow sites. 60s bounds a hung navigation.
+#   * ``max_bytes=50_000_000`` (STRICT 5 MB) — sized for what OUR code reads back over CDP (a
+#     serialized DOM, extracted text, a screenshot), which a 5 MB page-fetch cap would truncate.
+#     Honest limit of the field on this surface: it does NOT meter the bytes Chrome pulls for
+#     subresources, because our code never sees that stream (see the gap note below).
+#
+# §6.3 — THE HEADLESS BYPASS GAP, recorded so nobody mistakes the pre-flight for a sandbox.
+# A check in front of ``Page.navigate`` constrains exactly one thing: the top-level URL we ask
+# the browser to open, plus its redirect hops. Once the page is live, Chrome egresses on its own
+# for things we never evaluated:
+#   * subresources the document requests (img/script/link/xhr/fetch/EventSource/WebSocket),
+#   * cross-origin iframes and anything their scripts fetch,
+#   * ``window.open`` / ``target=_blank`` and JS/meta-refresh navigations that never round-trip
+#     through the CDP command we guard,
+#   * service workers and shared/dedicated workers, which outlive the navigation,
+#   * WebRTC/ICE and DNS prefetch, which are not HTTP at all.
+# All of those resolve DNS and dial sockets inside Chrome, so neither this profile nor
+# ``guard.evaluate`` sees them. The injected safety script (BA-2's other third) narrows the
+# in-page, same-context JavaScript surface — it runs in the document, so that is the part it can
+# reach. What remains OPEN after both halves land is the network-stack surface: subresource,
+# worker and cross-origin-iframe egress, which no in-page script can intercept. Closing that
+# needs enforcement at a layer Chrome must traverse — ``Fetch.enable``/``Network`` request
+# interception, or a mandatory local proxy — and is deliberately NOT claimed by this atom.
+BROWSE = EgressPolicy(
+    name="browse",
+    pin_resolved_ip=False,
+    max_redirects=10,
+    max_bytes=50_000_000,
+    timeout_s=60.0,
+)
+
 _PROFILES: dict[str, EgressPolicy] = {
     p.name: p
-    for p in (STRICT, CONNECTOR, SOURCE, WEBHOOK, LOOPBACK_INTERNAL, REGISTRY, LISTED, SYNC)
+    for p in (
+        STRICT,
+        CONNECTOR,
+        SOURCE,
+        WEBHOOK,
+        LOOPBACK_INTERNAL,
+        REGISTRY,
+        LISTED,
+        SYNC,
+        BROWSE,
+    )
 }
 
 
