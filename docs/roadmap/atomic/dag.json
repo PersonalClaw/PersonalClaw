@@ -7494,11 +7494,6 @@
         "plan": "AAP"
       },
       {
-        "id": "AAP-5",
-        "title": "\u00a72.2 Approval-gate coverage \u2014 host is permission authority (gap 2, the safety hole)",
-        "plan": "AAP"
-      },
-      {
         "id": "AAP-6",
         "title": "\u00a72.3 Unattended threading + runtime-agnostic loop breaker for ACP (gaps 3 & 5)",
         "plan": "AAP"
@@ -9966,12 +9961,9 @@
         "code": "AAP",
         "plan": "ACP-AGENT-PARITY",
         "total_atoms": 10,
-        "done": 4,
+        "done": 5,
         "in_progress": 0,
-        "todo": 6,
-        "done": 2,
-        "in_progress": 0,
-        "todo": 8,
+        "todo": 5,
         "blocked": 0
       },
       {
