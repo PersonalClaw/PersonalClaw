@@ -149,3 +149,63 @@ class TestCwdExtractionFromProvider:
         provider = MagicMock(spec=[])
         _cwd_str = str(provider._work_dir) if hasattr(provider, "_work_dir") else ""
         assert _cwd_str == ""
+
+
+class TestGetReturnsTheStoredIdWithoutAFileGate:
+    """AAP-7 / `G156` — ``get`` must not condition a stored id on a file nobody writes.
+
+    The gate was ``sessions/<sid>.json`` must exist, and its absence did not merely
+    suppress the id: it DELETED the entry. Nothing in the tree writes that path (the
+    only two references were this gate and ``prune``'s copy of it), so the branch fired
+    on every lookup — the map came back empty and ``resume_sid=None`` was unexplainable
+    from the logs (G5/O16). Measured on a live gateway: the map was ``{}`` after one
+    restart. Whether an id still loads is the agent's answer; ``AcpClient`` sends
+    ``session/load`` and falls back to ``session/new`` when it is refused.
+    """
+
+    def test_a_stored_id_survives_with_no_session_file_on_disk(self, session_map, tmp_path):
+        session_map.set("dashboard:chat-1", "sid-abc")
+        assert not list(tmp_path.glob("sessions/*.json")), "precondition: no session files"
+        assert session_map.get("dashboard:chat-1") == "sid-abc"
+
+    def test_a_lookup_does_not_delete_the_entry(self, session_map):
+        """The destructive half. Two reads must agree — the first used to consume it."""
+        session_map.set("dashboard:chat-1", "sid-abc")
+        assert session_map.get("dashboard:chat-1") == "sid-abc"
+        assert session_map.get("dashboard:chat-1") == "sid-abc"
+        assert session_map.find_key_by_sid("sid-abc") == "dashboard:chat-1"
+
+    def test_it_survives_a_reload_from_disk(self, tmp_path):
+        """The restart path itself: a new process reads the same file."""
+        with patch("personalclaw.session_map.config_dir", return_value=tmp_path):
+            SessionMap().set("dashboard:chat-1", "sid-abc")
+            assert SessionMap().get("dashboard:chat-1") == "sid-abc"
+
+    def test_the_dashboard_history_roundtrip_key_still_resolves(self, session_map):
+        """The documented ``dashboard:dashboard_X`` → ``dashboard:X`` fallback is kept."""
+        session_map.set("dashboard:chat-1", "sid-abc")
+        assert session_map.get("dashboard:dashboard_chat-1") == "sid-abc"
+
+    def test_an_entry_with_no_id_still_reads_as_no_mapping(self, session_map):
+        """VACUITY FLOOR: ``get`` is not a blanket 'return something'. A channel-link
+        entry carrying only a thread_ts has no session to resume."""
+        session_map.set_channel_link("dashboard:chat-1", "1699.1", "C123")
+        assert session_map.get("dashboard:chat-1") is None
+
+
+class TestPruneNoLongerWipesEveryResumableMapping:
+    """``prune()`` ran at every ``start_pool`` and dropped any entry whose
+    ``sessions/<sid>.json`` was missing — i.e. all of them. The mapping a
+    mid-conversation restart needs was destroyed before the first turn could ask."""
+
+    def test_an_entry_with_an_id_and_no_session_file_is_kept(self, session_map):
+        session_map.set("dashboard:chat-1", "sid-abc")
+        assert session_map.prune() == 0
+        assert session_map.get("dashboard:chat-1") == "sid-abc"
+
+    def test_an_entry_naming_nothing_is_still_pruned(self, session_map):
+        """VACUITY FLOOR: prune is not a no-op. An entry with neither a session id
+        nor a channel thread names nothing and still goes."""
+        session_map._data["dashboard:empty"] = {"sid": "", "thread_ts": None, "channel_id": None}
+        assert session_map.prune() == 1
+        assert session_map.get("dashboard:empty") is None

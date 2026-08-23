@@ -377,12 +377,17 @@ def test_provider_kind_acp_does_not_build_native():
         called["native"] = True
         return MagicMock(name="NativeRuntime")
 
+    def _fake_acp(runtime_id, **kw):
+        called["acp"] = runtime_id
+        return MagicMock(name="AcpProvider")
+
     with (
         patch.object(pb, "_build_native_runtime", side_effect=_fake_native),
         patch.object(pb, "_agent_provider_kind", return_value="native"),
         patch("personalclaw.providers.use_cases.active_model_refs", return_value=[]),
+        patch.object(pb, "_build_acp_runtime", side_effect=_fake_acp),
         patch.object(
-            pb, "_resolve_from_config_registry", return_value=MagicMock(name="AcpProvider")
+            pb, "_resolve_from_config_registry", return_value=MagicMock(name="ModelProvider")
         ),
     ):
         prov = pb.resolve_provider_for_use_case(
@@ -390,6 +395,10 @@ def test_provider_kind_acp_does_not_build_native():
         )
     assert prov is not None
     assert called.get("native") is None
+    # AAP-7 tightened this from "not native" to "the NAMED runtime". Before, the ACP kind
+    # merely skipped the native builder and then resolved a MODEL through the config
+    # registry — not native, and not the CLI either (`G158`).
+    assert called.get("acp") == "acp:claude-code"
 
 
 def test_colon_qualified_override_routes_to_named_provider():

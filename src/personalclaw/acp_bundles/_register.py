@@ -124,7 +124,24 @@ def register_acp_cli_entry(
     if env:
         options["env"] = dict(env)
     if session_files_dir:
-        options["session_files_dir"] = session_files_dir
+        # A declared directory is PROVISIONED here, not merely recorded: the readers
+        # (``AcpClient``'s ``_meta`` session-file hint, ``AcpSession``'s JSONL
+        # tool-result tail) both probe for files inside it, and a path that does not
+        # exist makes every probe a silent miss the bundle cannot distinguish from an
+        # empty directory. Creation failure downgrades to "not declared" rather than
+        # advertising a directory nothing can read.
+        from pathlib import Path
+
+        try:
+            Path(session_files_dir).mkdir(parents=True, exist_ok=True)
+            options["session_files_dir"] = session_files_dir
+        except OSError:
+            logger.warning(
+                "acp:%s bundle: could not create session_files_dir %s — option dropped",
+                cli,
+                session_files_dir,
+                exc_info=True,
+            )
     if extension:
         options["extension"] = extension
     if login_command:

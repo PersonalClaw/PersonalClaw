@@ -636,6 +636,35 @@ def build_cancelled_turn_preamble(
     )
 
 
+def has_restorable_history(conversation_log: "ConversationLog | None", session_key: str) -> bool:
+    """True when *session_key* has prior conversation the history bootstrap will restore.
+
+    This is the SAME question :func:`compress_thread_history` asks first, factored out so
+    the caller can answer it before paying for the compression. Two callers share it and
+    must agree: the bootstrap decides whether to inject restored history at all, and the
+    session activity line decides which verb it is allowed to print. A fresh runner over
+    an existing conversation is "restored from history"; a fresh runner over nothing is
+    "created". Deriving the sentence from a *different* predicate is how a label starts
+    lying, so there is one predicate.
+
+    Note the roles filter: only ``user``/``assistant`` turns can be restored, which is why
+    a fact that lives solely in a tool result does NOT survive a non-protocol restart —
+    the honest boundary the label exists to state.
+    """
+    if conversation_log is None:
+        return False
+    try:
+        recent = conversation_log.recent(
+            session_key,
+            max_messages=_COMPRESSION_MAX_MESSAGES,
+            roles={"user", "assistant"},
+        )
+    except Exception:  # a pluggable log must not be able to break the turn's sentence
+        logger.debug("conversation_log.recent failed for %s", session_key, exc_info=True)
+        return False
+    return bool(recent)
+
+
 async def compress_thread_history(
     conversation_log: "ConversationLog",
     session_key: str,

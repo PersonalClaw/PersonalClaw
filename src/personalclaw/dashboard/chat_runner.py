@@ -1973,26 +1973,52 @@ async def run_chat(
         # running its own tools. Derive from the live provider: NativeAgentRuntime
         # reports provider_id "native"; ACP reports "acp:<cli>".
         _runtime_label = getattr(client, "provider_id", "") or provider_kind or "native"
-        # WHICH of three things actually happened this turn. ``get_or_create``
-        # returns a pair of flags that distinguishes them, and the sentence must
-        # not collapse them:
-        #   is_new and resumed     → a runner was started and LOADED a persisted
-        #                            session (ACP session/load) → "resumed"
-        #   is_new and not resumed → a runner was started with a fresh
-        #                            conversation → "created"
-        #   not is_new             → the SAME live in-process session served this
-        #                            turn; nothing was created or loaded →
-        #                            "continued"
+        # WHICH of four things actually happened this turn. ``get_or_create``
+        # returns a pair of flags, and the sentence must not collapse them:
+        #   is_new and resumed        → a runner was started and LOADED a persisted
+        #                               session (ACP ``session/load``) → "resumed"
+        #   is_new, not resumed, but
+        #   the key HAS prior history → a runner was started fresh and this turn's
+        #                               context comes from the compressed-history
+        #                               bootstrap below → "restored from history"
+        #   is_new and neither        → a runner was started over nothing → "created"
+        #   not is_new                → the SAME live in-process session served this
+        #                               turn; nothing was created or loaded →
+        #                               "continued"
         # ``resumed`` alone was the gate, and the reuse path returns
         # ``resumed=False`` unconditionally (``session.py`` "return provider,
         # was_new, False"), so every turn of a long-lived session claimed "Session
         # created". Gating on ``is_new`` alone inverts the same lie — a reused
         # session would read "resumed". So: ``is_new`` says whether a runner was
         # started at all, ``resumed`` picks the verb when one was.
+        #
+        # The fourth case is the honest boundary for a provider that cannot resume
+        # (no ``loadSession``, or an id the agent refused): the conversation IS
+        # continued, but from OUR compressed transcript, not the agent's own state,
+        # and the two are not equivalent — the bootstrap carries user/assistant text
+        # only, so anything that lived in a tool result is gone. Printing "resumed"
+        # there would claim a protocol resume that did not happen; printing "created"
+        # denies a restore that did. ``_restoring_history`` is computed from the very
+        # predicate the bootstrap consumes (one predicate, so the label cannot drift
+        # from the behaviour it names).
+        from personalclaw.context import (  # circular: context -> chat -> chat_runner
+            has_restorable_history,
+        )
+
+        _restore_log = (
+            getattr(state.context_builder, "conversation_log", None)
+            if state.context_builder is not None
+            else None
+        )
+        _restoring_history = bool(
+            is_new and not resumed and has_restorable_history(_restore_log, session_key)
+        )
         if not is_new:
             _session_verb = "continued"
         elif resumed:
             _session_verb = "resumed"
+        elif _restoring_history:
+            _session_verb = "restored from history"
         else:
             _session_verb = "created"
         state.broadcast_ws(
@@ -2128,14 +2154,19 @@ async def run_chat(
             compressed: str | None = None
             # is_new = new ACP agent/dashboard process, NOT new conversation.
             # The channel thread persists across processes, so we compress its
-            # history to bootstrap the fresh session's context window.
-            if is_new and not resumed and state.context_builder.conversation_log:
+            # history to bootstrap the fresh session's context window. The gate is
+            # ``_restoring_history`` — the same value the activity line printed
+            # "restored from history" from, so the sentence and the bootstrap can
+            # never disagree about whether a restore happened. The ``is not None`` is a
+            # TYPE narrowing only — ``_restoring_history`` is already false for a missing
+            # log — so it cannot reintroduce a second, drifting predicate.
+            if _restoring_history and _restore_log is not None:
                 from personalclaw.context import (  # circular: context -> chat
                     compress_thread_history,
                 )
 
                 compressed = await compress_thread_history(
-                    state.context_builder.conversation_log,
+                    _restore_log,
                     session_key,
                     message,
                     state.sessions,

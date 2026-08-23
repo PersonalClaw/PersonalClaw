@@ -4848,7 +4848,7 @@
         {
           "id": "AAP-7",
           "title": "\u00a72.4 Resume \u2014 live session/load via bundle session_files_dir (gap 6)",
-          "status": "todo",
+          "status": "done",
           "scope": "Phase 2 \u00a72.4 Resume \u2014 gap 6 (register_acp_cli_entry passes session_files_dir; core registration helper provisions the dir; client.py:388-414 load path)",
           "done_when": "Gateway restart mid-conversation on a resume-capable provider shows 'Session resumed' with full-fidelity continuation; non-capable providers degrade to compressed history with an accurate 'restored from history' label rather than implying protocol resume (SC #5).",
           "deps": [
@@ -7501,11 +7501,6 @@
         "plan": "AAP"
       },
       {
-        "id": "AAP-7",
-        "title": "\u00a72.4 Resume \u2014 live session/load via bundle session_files_dir (gap 6)",
-        "plan": "AAP"
-      },
-      {
         "id": "APE-3",
         "title": "Background worker SDK (sdk/background.py) + backend_runtime supervised hosting",
         "plan": "APE"
@@ -9958,9 +9953,9 @@
         "code": "AAP",
         "plan": "ACP-AGENT-PARITY",
         "total_atoms": 10,
-        "done": 5,
+        "done": 6,
         "in_progress": 0,
-        "todo": 5,
+        "todo": 4,
         "blocked": 0
       },
       {

@@ -519,6 +519,22 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
   looking like an ordinary reply. Being moved onto another agent without being told is the part that
   actually costs you something.
 
+- **Restarting PersonalClaw mid-conversation lost what the agent had actually done.** A chat running
+  on an external coding CLI came back knowing only what was written in the transcript. Everything the
+  agent had learned from *doing* the work — what a command printed, what a file turned out to
+  contain — was gone, so it would ask again, or guess. **A restart now picks the conversation back up
+  inside the CLI itself**, with the agent's own memory of the session intact: it can still tell you
+  the output of a command it ran before the restart. Three separate things had to be fixed for this,
+  and none of them was the one it looked like: the stored conversation id was being thrown away at
+  every start (checked against a file nothing has ever written), the request to reopen the
+  conversation was gated on the same missing file, and a chat pointed at an external CLI was, on this
+  one path, quietly answered by the built-in model instead — which is why a restart used to feel like
+  talking to a different agent that had read your notes.
+  **And when a CLI genuinely cannot pick a conversation back up**, the chat now says *"Session
+  restored from history"* rather than *"Session resumed"*. It is a smaller promise and it is the
+  truthful one: the conversation is rebuilt from what was written down, so what was said survives and
+  what was merely *done* does not. A line claiming a full resume it did not get is worse than no line.
+
 - **The assistant learned nothing from turns run through an external coding CLI.** PersonalClaw keeps
   a quiet record of which tools actually work for which kind of job, and leans on it later. That
   record was only ever written by the built-in agent. Run the same work through an external CLI
