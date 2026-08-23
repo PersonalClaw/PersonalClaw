@@ -22,6 +22,7 @@ provider SDK (``anthropic``, ``openai``, ``httpx``); Property 11
 """
 
 import logging
+import os
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
@@ -336,6 +337,144 @@ def canonical_provider_type(ptype: str) -> str:
     return _CONFIG_TYPE_MAP.get(ptype, ptype)
 
 
+# ── Offline scripted provider (roadmap atom PHF-7) ───────────────────────────
+#
+# The one model type core registers for itself. Every other type is registered by
+# its own installed app (``sdk/provider_helpers.py``), and that is precisely why
+# this one cannot be: the browser gate's ``GATEWAY_COMMAND`` boots a temp home
+# whose config.json carries only a user name — no app is installed, and core CI
+# never checks out the apps repo — so a scripted provider registered by an app
+# would be unreachable from the gate it exists to serve.
+#
+# Registered ONLY under an explicit env opt-in. With the opt-in absent nothing
+# here runs: the type is absent from ``_factories``/``_capabilities``,
+# ``capability_of("scripted")`` raises exactly as it does for any unknown type, no
+# entry is synthesized, and a real home is untouched.
+
+SCRIPTED_PROVIDER_TYPE = "scripted"
+
+SCRIPTED_PROVIDER_ENV = "PERSONALCLAW_SCRIPTED_MODEL_SCRIPT"
+"""Env opt-in: the path of the script JSON the fixture replays.
+
+The SAME variable ``ScriptedProvider`` itself requires — it refuses to construct
+without it — so there is exactly ONE switch for the pair, and a registered type
+can never outlive a constructible provider.
+"""
+
+SCRIPTED_PROVIDER_ENTRY_NAME = "Scripted"
+
+SCRIPTED_PROVIDER_MODEL = "scripted-1"
+
+SCRIPTED_PROVIDER_CAPABILITY = ProviderCapability(
+    type=SCRIPTED_PROVIDER_TYPE,
+    # The HONEST MINIMUM, asserted as an EQUALITY by
+    # tests/test_scripted_provider_binding.py so a later widening reds rather than
+    # sliding in.
+    #
+    # * CHAT — PHF-7 clause 1: the gateway must complete a scripted chat turn, and
+    #   ``chat`` is the capability ``resolve_provider_for_use_case`` matches on.
+    # * CODE_TOOLS — the fixture's declared job includes tool-call emission (the
+    #   atom text), and the native loop only offers tool schemas to a type that
+    #   declares it.
+    #
+    # Deliberately NOT declared, because a JSON fixture cannot perform them:
+    # EMBEDDING, VISION, and STREAMING / PLANNING / SUMMARIZATION / TOOL_APPROVAL —
+    # a replayed string does not stream and a fixture makes no plan. Each omission
+    # is load-bearing: declaring one would make this entry the implicit fallback
+    # for a use case it cannot serve, which is how a test double becomes a silent
+    # production wrong answer.
+    capabilities=frozenset({Capability.CHAT, Capability.CODE_TOOLS}),
+    supports_streaming=False,
+    supports_tools=True,
+    supports_embeddings=False,
+    supports_vision=False,
+    max_context_tokens=0,  # fixture-dependent; 0 == unknown per ProviderCapability
+    notes=(
+        "Deterministic offline fixture: replays the script JSON named by "
+        f"{SCRIPTED_PROVIDER_ENV}. Zero network, no credential. Registered only "
+        "while that variable is set; never present in a normal home."
+    ),
+)
+
+
+def scripted_provider_enabled() -> bool:
+    """True when the scripted-provider opt-in names a script path.
+
+    Read from the environment on every call rather than cached at import: the
+    gateway sets it before startup, and a test must be able to set and clear it.
+    """
+    return bool(os.environ.get(SCRIPTED_PROVIDER_ENV, "").strip())
+
+
+def _scripted_factory(
+    *, entry: ProviderEntry, session_key: str | None = None, **kwargs: object
+) -> ModelProvider:
+    """Build the scripted fixture provider (the :data:`ProviderFactory` contract).
+
+    The fixture module is imported LAZILY — as every provider construction this
+    module reaches for is — so ``import personalclaw.llm.registry`` never depends
+    on it and the import only happens on a path the opt-in already gated (this
+    module must not import a provider at all; see the module docstring's
+    Property 11 note).
+
+    The fixture takes **no** constructor arguments — deliberately, because a
+    ``script_path`` kwarg would be a hole in its env gate, and its own test pins
+    ``inspect.signature`` to exactly ``["self"]``. So ``entry.model`` and any
+    per-turn ``model`` override stay descriptive here: the reply text comes from
+    the script file the opt-in names, not from a model id. Reading them anyway
+    would imply a choice the fixture does not make.
+    """
+    from personalclaw.llm.scripted import ScriptedProvider
+
+    return ScriptedProvider()
+
+
+def register_scripted_provider_type() -> bool:
+    """Register the ``scripted`` type plus its one bindable entry, under the opt-in.
+
+    Returns True when the opt-in is set (the type and entry are now present),
+    False when it is absent — in which case NOTHING is touched. Idempotent, so it
+    is safe on every call of :func:`sync_entries_from_config`: ``register_type``
+    is strict about duplicates by design, so the repeat-call tolerance belongs
+    here rather than there, and ``register_entry`` is already a no-op on a
+    duplicate name.
+
+    The entry carries ``credential=None`` — the whole point of a fixture that runs
+    with no credentials present. That exemption is a LITERAL on this one entry and
+    is scoped to this type alone: no other type reaches it, and every
+    config-derived entry below keeps its own ``credential`` verbatim, so a real
+    provider still refuses to build without one.
+
+    Registered BEFORE the config-derived entries so it wins the implicit
+    first-entry-declaring-the-capability fallback — under an explicit opt-in the
+    fixture is what the caller asked for.
+    """
+    if not scripted_provider_enabled():
+        return False
+
+    registry = get_default_registry()
+    try:
+        registry.register_type(SCRIPTED_PROVIDER_CAPABILITY, _scripted_factory)
+    except ProviderResolutionError:
+        logger.debug("scripted provider type already registered with default registry")
+    registry.register_entry(
+        ProviderEntry(
+            name=SCRIPTED_PROVIDER_ENTRY_NAME,
+            type=SCRIPTED_PROVIDER_TYPE,
+            model=SCRIPTED_PROVIDER_MODEL,
+            options={},
+            credential=None,  # scoped to THIS type alone — see the docstring
+            declared_capabilities=SCRIPTED_PROVIDER_CAPABILITY.capabilities,
+        )
+    )
+    logger.info(
+        "Scripted offline provider registered as %r (%s is set)",
+        SCRIPTED_PROVIDER_ENTRY_NAME,
+        SCRIPTED_PROVIDER_ENV,
+    )
+    return True
+
+
 def sync_entries_from_config() -> int:
     """Register every ``config.json`` ``providers[]`` entry into the default registry.
 
@@ -352,27 +491,34 @@ def sync_entries_from_config() -> int:
     manifest-``declared_capabilities`` when a type isn't registered, so a not-yet-loaded
     provider app degrades gracefully rather than failing this sync.
     """
+    # The scripted offline fixture, when its env opt-in is set. It belongs HERE and
+    # not in the config loop because it must appear even when config.json has no
+    # ``providers[]`` at all — which is exactly the browser gate's home (a config
+    # carrying only a user name) — and because this is the startup path that runs
+    # before chat can resolve anything (dashboard/server.py boot). Counted in the
+    # return value because it IS an entry registered. No-op without the opt-in.
+    count = 1 if register_scripted_provider_type() else 0
+
     import json
 
     try:
         from personalclaw.config.loader import config_path
     except Exception:  # pragma: no cover - defensive
         logger.debug("sync_entries_from_config: imports failed", exc_info=True)
-        return 0
+        return count
 
     path = config_path()
     try:
         data = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
     except Exception:
         logger.debug("sync_entries_from_config: cannot read %s", path, exc_info=True)
-        return 0
+        return count
 
     providers = data.get("providers") or []
     if not isinstance(providers, list):
-        return 0
+        return count
 
     registry = get_default_registry()
-    count = 0
     for p in providers:
         if not isinstance(p, dict):
             continue
