@@ -795,6 +795,14 @@ _EDITABLE_CONFIG: dict[str, dict] = {
     # load() applies the same function, defense in depth for hand-edits.
     "agent.bot_name": {"type": "str", "max_len": 50, "sanitize": _bot_name_sanitizer},
     "agent.log_level": {"type": "enum", "values": ["DEBUG", "INFO", "WARNING", "ERROR"]},
+    # Self-QA companion (SELF-VERIFICATION §5 wiring point (d)). All four fields are editable,
+    # not just the two toggles: a companion you can enable but cannot point at a repo is
+    # enabled and inert, which reads as broken. `max_scenarios_per_fire` is clamped to the same
+    # [1, 20] window ``AppConfig.load()`` applies, so the file and the dashboard agree.
+    "agent.self_qa.enabled": {"type": "bool"},
+    "agent.self_qa.watched_repo": {"type": "str", "max_len": 512},
+    "agent.self_qa.fix_branch_enabled": {"type": "bool"},
+    "agent.self_qa.max_scenarios_per_fire": {"type": "int", "min": 1, "max": 20},
     "session.timeout_secs": {"type": "int", "min": 0, "max": 86400},
     "session.autocompact_pct": {"type": "float", "min": 5.0, "max": 90.0},
     "session.pool_size": {"type": "int", "min": 0, "max": 10},
@@ -1159,6 +1167,20 @@ async def api_personalclaw_config_patch(request: web.Request) -> web.Response:
             _discovery.reconcile()
         except Exception:
             logger.exception("Failed to apply the LAN discovery setting")
+
+    # Converge the Self-QA commit watcher (SELF-VERIFICATION §3.1) the moment the toggle or the
+    # watched path changes, mirroring the startup reconcile. Without this the switch would need a
+    # gateway restart to mean anything, and the trigger list beside it would keep showing the old
+    # reality while the control read "on" — the same defect the LAN-discovery hook above fixes.
+    if path_key.startswith("agent.self_qa."):
+        try:
+            from personalclaw.config.loader import config_dir as _config_dir
+            from personalclaw.selfqa.install import reconcile as _reconcile_selfqa
+            from personalclaw.triggers.store import TriggerStore as _TriggerStore
+
+            _reconcile_selfqa(_TriggerStore(base_dir=_config_dir()))
+        except Exception:
+            logger.exception("Failed to apply the Self-QA companion setting")
 
     # Live-apply tool-output projection rules (TokenJuice OP6) so an edit takes effect
     # immediately (no restart) — mirrors the startup install into the projection engine.

@@ -192,6 +192,16 @@ _OPERATOR_EXEMPT: dict[str, str] = {
     # `core.hooksPath=` and `commit.gpgsign=false`, so a user's global hooks or signing config
     # cannot execute on a history commit. Operator/host-fact, not agent-influenced.
     "durability/state_history.py::_git::subprocess.run": "operator: state-history git runner",
+    # SV-9's Self-QA commit watcher and its triage classifier. Both run READ-ONLY git inspection
+    # (`rev-parse`, `rev-list`, `show --name-only`) with a fixed argv, no shell, `check=False` and
+    # a 30s timeout, and neither runs any agent code. The repo root is the operator's
+    # `agent.self_qa.watched_repo`. The one caller-supplied value that reaches git is a commit
+    # ref, and it is hex-validated before use (`selfqa/triage.py::_SHA_RE`) so nothing
+    # option-shaped can pose as a sha — the same discipline as the state-history runner above.
+    "selfqa/triage.py::_git::subprocess.run": "host-fact: read-only git commit inspection",
+    "selfqa/scripts/selfqa_commit_watch.py::_git::subprocess.run": (
+        "host-fact: read-only git HEAD probe"
+    ),
     "durability/state_history.py::ensure_repo::subprocess.run": "operator: state-history repo init",
     "durability/state_history.py::git_available::subprocess.run": "host-fact: git presence probe",
     # App install — operator-initiated (Store install), scanned+vetted.
