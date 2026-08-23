@@ -182,7 +182,7 @@ backend has no access to the gateway's SecurityEventLog).
 
 ## The App SDK
 
-- **Python**: `sdk/` (26 modules) is THE stable app-facing import surface —
+- **Python**: `sdk/` (33 modules) is THE stable app-facing import surface —
   apps import core **only** via `personalclaw.sdk.*`
   (boundary-lint-enforced by `tests/test_apps_import_boundary.py`). Modules
   cover models, channels, tools, search, memory, knowledge, STT/TTS,

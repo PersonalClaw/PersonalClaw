@@ -394,3 +394,97 @@ skipped: [`docs/architecture/agent-activity-feed.md`](../../architecture/agent-a
   a small loss to note: `mypy src/personalclaw` no longer type-checks the moved file (it is outside the
   discovered packages); it was run directly and is clean, and a bundled module is a normal candidate for
   the same treatment installed apps get.
+
+- **2026-08-23 — `APE-3` COMPLETE (all five clauses, proven with real processes). Atom stays `todo` only
+  because this code is unmerged**; flip it when the PR lands.
+  `APE-1` shipped the `backgroundTasks` permission and `manifest.py` said so in its own comment: *"NOT
+  ENFORCED TODAY, and honestly so: nothing in core hosts an app worker yet"*, and *"unlike
+  ``backgroundTasks`` above, **whose host still does not exist**"*. This is the host.
+  **END TO END, with a real app rather than a fake:** a fixture app declaring the permission and shipping a
+  `worker.py` written against the SDK contract:
+
+      declared_workers -> [WorkerSpec(name='worker', entry_point='worker.py', restart=True)]
+      start()          -> 1 worker, pid 73527, alive
+      kill -9 + sweep  -> revived, old_pid=73527 new_pid=73529
+      revoke backgroundTasks + sweep -> still supervised: False
+      stop()           -> nothing alive
+
+  **The worker shape is a unit of work, not a loop.** `BackgroundWorker.run_once(ctx)` returns and
+  `run_worker` owns the loop, because a host that must both STOP and PAUSE needs a moment when the worker
+  is between units and the control state can be consulted. It is an entry script under `sys.executable`
+  with its context handed over in env, matching `_launch_cmd`'s existing convention rather than inventing a
+  second launch mechanism.
+  **Pause and stop are distinct states with three enforced asymmetries**, each of which is a way a naive
+  single flag fails in production rather than in a test. Probed live: `resume()` after a stop stays
+  `STOPPING` (resume cannot undo a stop); `pause()` after a stop stays `STOPPING` (stop wins, or an
+  uninstall leaves an orphan); and `request_stop()` **releases** a paused worker (or budget-pause then
+  disable wedges forever). `STOPPING` ≠ `STOPPED`: the first is the graceful window, the second is when
+  reaping is safe.
+  **THE CROSS-BRANCH DEFECT, and why lint could not see it.** The runtime imported three names the
+  contract never defined — `WorkerSpec`, `declared_workers`, `WORKER_NAME_ENV`. Both branches were green
+  and `make lint` clean on each, because `pyproject.toml` sets `ignore_missing_imports = true` and a
+  missing MODULE is invisible to mypy; the runtime agent reported observing **silence, not a red**. Three
+  decisions resolved it:
+  1. **`WORKER_NAME_ENV` was a second spelling of an existing variable** — its stub value
+     `"PERSONALCLAW_APP_WORKER"` is exactly what the contract exports as `WORKER_ID_ENV`. Collapsed onto
+     the one name; no alias.
+  2. **`WorkerSpec`/`declared_workers` are parent-side and were re-homed into `worker_runtime`.** An app
+     author never reads them, and routing them through the app-facing SDK facade would export names with
+     no app-side consumer — which the inert-sdk-export gate proved by failing the moment I tried it.
+  3. **The declaration source did not exist.** `APE-1` shipped only a boolean: no worker list, no entry
+     path. `manifest.py`'s own comment settles it — an app *"may register **a** long-lived supervised
+     worker"*, singular — so the permission IS the declaration and `worker.py` is the filename it implies.
+     An app that grants the permission and ships no `worker.py` simply has no worker, which beats a
+     manifest field that can disagree with the files on disk.
+  That third decision created a fresh drift risk (the filename an app is told to use vs the one the
+  supervisor resolves), now pinned by a rail that doubles as the SDK constants' real consumer.
+  **Two full-suite-only gates, both real.** The inert-surface baseline caught two SDK exports with no
+  consumer, and the SDK agent **fixed them at the source rather than regenerating**: an inert
+  `StopReason.UNINSTALLED` was REMOVED (from the child's vantage an uninstall is a disable that never comes
+  back; the part that differs is parent-side PPID reaping) and `DEFAULT_POLL_INTERVAL` got a real reader.
+  It then correctly diagnosed a THIRD failure as downstream of those two — a structural-baseline test
+  asserting *"3 of 6 gate(s) FAILED"* saw 4, because its other entries are the test's own synthetic
+  injections.
+  **DISCOVERY — the spawn-ceiling audit pins the CLASSIFICATION, not the CEILING.** Adding
+  `apps/worker_runtime.py::WorkerSupervisor._spawn::subprocess.Popen` to
+  `tests/test_spawn_ceiling_audit.py` was required (a full-suite red). But measured: deleting
+  `spawn_shim_argv` from `_spawn` entirely and launching the bare command leaves that audit **fully green,
+  3 passed** — so its entry reading *"tool ceiling via spawn_shim_argv"* is a claim nothing checked. An
+  unceilinged worker matters more than an unceilinged one-shot: it is long-lived and unattended. A
+  behavioural AST rail now lives in this atom's own suite (removing the shim reds 1 of 16); widening the
+  shared audit is deliberately left to its owner rather than rewritten at the end of a tick, since it would
+  red every other site that is classified but unverified — a discovery, not a regression.
+  *That rail was itself broken on first run:* `ast.parse` on an indented METHOD source raises
+  `IndentationError`, making it a permanent false RED until dedented. Fail-closed is the safe direction for
+  a rail to break, and running it is what found it.
+  **The consent surface moved, because the manifest comment demanded it.** `APE-1` deliberately kept
+  `backgroundTasks` out of "Permissions the gateway enforces" — listing an unenforced grant there is the
+  EI-12 D2 defect — and put it in a "Declared, not yet in effect" box, rendered as divs so
+  `permissionConsent.test.tsx`'s `enforcedRows` (which reads every `<li>` as enforced) stayed true. With a
+  host shipping, leaving it there would UNDERSTATE a live capability: the mirror image of that defect. So
+  it joins the bullets, exactly the move `APE-2` made for `eventSubscriptions`, and the box is **deleted**
+  — it had one feeder, and a box that renders for nothing is where a future grant falls silently. Two tests
+  asserting the old truth were restated with what they used to claim recorded.
+  **Wiring, and where.** `providers/loader.py` starts the sweep at boot beside the backend watchdog, with
+  no paired `start_enabled_app_workers()` — the sweep is self-healing, and a second boot entry point could
+  disagree with it about who should be running. `app_manager._stop_worker` runs on the same
+  disable/uninstall path as `_stop_backend`, and that placement is load-bearing: `reap_orphans` needs the
+  entry path, which is only resolvable while the app directory still exists. The sweep alone cannot deliver
+  the V1 clause, because a process re-parented to init is in no supervisor's table and nothing would look
+  for it once the directory is gone.
+  **`permissions.can_run_background_tasks()`** is now the accessor the host consults, so the grant denies
+  as well as declares — and it is re-asked at every spawn, which is why revoking it in an app update stops
+  the next revival and not merely the first launch (a gap the runtime's own tests caught mid-build).
+  **Reaping is reused, not re-derived:** `WorkerSupervisor.reap_orphans` delegates to
+  `BackendSupervisor.reap_orphans`, keeping ONE PPID walk for the tree. A second walk that disagreed with
+  the first is how a live gateway's children — or a concurrent test run's — get killed.
+  **Honest limits, recorded rather than glossed.** "Alive" is `proc.poll() is None` and nothing stronger: a
+  worker has no inbound surface, so a wedged-but-running worker is invisible here, and telling it apart
+  from one sleeping between units needs a declared heartbeat interval that is not in the manifest. The
+  budget breach is measured against the meter's **DAY** scope, not per-app: nothing charges a per-worker
+  key today, so a per-app ceiling does not exist in usable form and none was invented — `ModelCallGuard`
+  already refuses the worker's individual calls, and the supervisor stops the process spinning against the
+  wall and says why it went quiet. `stdout`/`stderr` go to `DEVNULL` matching backend precedent, so a
+  crash-looping worker's traceback is unavailable; a per-worker log file is a named follow-up.
+  **DISCOVERY (pre-existing): `docs/architecture/app-platform.md` said "`sdk/` (26 modules)" and was
+  already stale by 6** before this atom (32 on `main`). Corrected to 33. Nothing asserts the number.

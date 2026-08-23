@@ -351,6 +351,15 @@ def load_all_extensions() -> None:
         from personalclaw.apps.backend_runtime import start_backend_watchdog
 
         start_backend_watchdog()
+        # APE-3: the same sweep shape for app background WORKERS — portless children with no
+        # health check, so liveness is `proc.poll()` and nothing stronger. Deliberately not
+        # paired with a `start_enabled_app_workers()` call above: the sweep is self-healing
+        # (it starts a declared worker for an enabled app and stops one whose app, grant or
+        # declaration went away), so boot needs no second entry point that could disagree
+        # with it about who should be running.
+        from personalclaw.apps.worker_runtime import start_worker_watchdog
+
+        start_worker_watchdog()
         # Same semantics, different children: a model sidecar (LMMV §3.1) is respawned on
         # crash and never survives the gateway. A sweep over an empty runner table is
         # free, so this costs nothing until an app declares `execution: sidecar`.
