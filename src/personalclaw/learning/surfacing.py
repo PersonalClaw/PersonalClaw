@@ -261,6 +261,21 @@ def _check_ablate(ablate: str) -> str:
     return ablate
 
 
+def env_ablate() -> str:
+    """The heuristic an ES-7 ablation CHILD was told to switch off, or ``""``.
+
+    The §3.1 runner toggles a component through an overlay that exists only inside the
+    spawned cell (:mod:`personalclaw.evals.overlay`) — never by editing live config. For a
+    surfacing heuristic the toggle has nowhere in config to live, so it rides the child's
+    own process env. Absent env var ⇒ ``""`` ⇒ the shipped path, byte for byte.
+    """
+    import os
+
+    from personalclaw.evals.overlay import ABLATE_SURFACING_ENV
+
+    return str(os.environ.get(ABLATE_SURFACING_ENV) or "")
+
+
 def score_candidate(
     cand: Candidate, query: str, intent: str = "default", *, ablate: str = ""
 ) -> float:
@@ -443,10 +458,14 @@ def allocate(
     (:func:`_tier_fits`) and both degrade through the same tier ladder, so "a cap per
     item and in aggregate" stays one mechanism (CE2-9).
 
-    ``ablate`` names one heuristic to switch off, for `ablation_deltas`. Default "" is
-    the live path and pays nothing for the parameter's existence.
+    ``ablate`` names one heuristic to switch off, for `ablation_deltas`. Default "" falls
+    back to :func:`env_ablate` (the ES-7 ablation child's process-scoped overlay) and is
+    otherwise the live path, paying nothing for the parameter's existence.
     """
-    _check_ablate(ablate)
+    # An explicit argument always wins; the env is consulted only when the caller named
+    # nothing, so `ablation_deltas`' own sweep is unaffected and the live path (no env,
+    # no argument) is unchanged.
+    ablate = _check_ablate(ablate or env_ablate())
     intent = classify_intent(query)
     for candidates in sources.values():
         for cand in candidates:

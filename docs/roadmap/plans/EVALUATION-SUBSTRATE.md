@@ -726,3 +726,87 @@ Sharpens, doesn't append: RunPin + scenario library extend **Session 1** (the st
   *specified* — its total vocabulary across the plan set is *"a small set of past successful runs per
   template"* and *"grows organically from previously-failing-now-passing runs"*, referenced by six
   consumers. There was no contract to under-deliver against.
+## Execution log — ES-7 (ablation runner + skills bench + model-upgrade watchdog) — §3 **PARTIAL**, atom stays `todo`
+
+- [2026-08-23][ES-7] **PARTIAL.** Eight of nine `done_when` clauses hold and are railed; §3.3's *"replays
+  consulted runs"* is met in **population and provenance but not in inputs**, so the atom stays `todo`.
+  Ships `evals/overlay.py`, `evals/ablation.py`, `evals/model_watchdog.py`, `evals/skills_bench.py`,
+  `skills/suppression.py`, the `arm_mask` plumbing through `evals/runner.py` → `evals/child.py`, a real
+  maintenance-tick call site (`durability/service.py:857`, inside the periodic loop, gated on
+  `evals.enabled` — not on `auto_backup`), a `personalclaw ablation` CLI, and `GET /api/evals/ablation`.
+
+- [2026-08-23][ES-7] 🔴 **A config-flag target that does not exist produced a FABRICATED `remove`
+  recommendation.** `_patch_child_config` writes any dotted key into the cell's `config.json`;
+  `AppConfig.load()` then **drops** an unrecognized key during normalization. The arm therefore ran with
+  the component fully ON, scored identically to the baseline, and would be reported as a no-delta
+  `remove` — a fabricated retirement filed as *ablation-grade* evidence, which is the strongest evidence
+  class the retirement path accepts. The fix had to be a **refusal in both processes**
+  (`overlay.config_field_exists()` at the parent's `validate_component` before paying for the matrix, and
+  again at the child's `apply_in_child` so a hand-built overlay cannot bypass it). The secondary hazard
+  was probed and does not exist: `config_field_exists`' own `AppConfig.load()` does not cache and cannot
+  poison the later patch (no caching in `config/loader.py`; confirmed empirically).
+
+- [2026-08-23][ES-7] **Config normalization looked like a live-state mutation, and the guard accused
+  itself.** `AppConfig.load()` rewrites `config.json` in full (defaults + a `meta.lastTouchedAt` stamp) on
+  its first load of an un-normalized file, and the run pin loads config *inside* the guarded block — so on
+  a fresh or hand-edited home the very first ablation reported the one thing §3.1 forbids.
+  `_normalize_config_before_snapshot()` (`ablation.py:280`) runs first, with a vacuity floor asserting the
+  normalization actually happened.
+
+- [2026-08-23][ES-7] **"live spec/config never mutated" is railed as a byte-identical negative that also
+  covers the RAISING run** — the case the obvious implementation gets wrong by restoring on the success
+  path and leaking on the exception path. `live_state_unchanged()` sha256s `config.json`,
+  `active_models.json`, every `use_case_settings/*.json` and the component's declared spec refs, compares
+  in a **`finally`**, and when the body both raised and drifted raises `LiveStateMutatedError` with the
+  body's error as `__cause__`; `run_ablation` writes **no report** on a leaked run. Falsified at
+  integration: making the drift check success-path-only (`drift = [] if failure is not None else …`) reds
+  `test_live_state_guard_still_checks_after_a_run_that_raised`. Scope stated honestly: the guard's default
+  set is the write surfaces the overlay can actually reach — template specs enter only via
+  `component.live_refs`, and the overlay has no code path that writes a spec file at all.
+
+- [2026-08-23][ES-7] **"exactly ONE digest" is asserted as a COUNT, which is the assertion that matters.**
+  `len(notifier.calls) == 1` for a **three**-binding rebind, with all three use cases present in that one
+  body. A `>= 1` assertion would have waved through the mutation that wraps the notifier in
+  `for _change in result.changes:` — falsified, `assert 3 == 1`. Floors both ways: a no-change tick emits
+  `[]`, a first observation records a baseline and no digest, and three later ticks still yield exactly 1.
+  The fingerprint is computed through `RunPin.model_fp()` so it equals the ledger's own `model_fp` column
+  rather than a second hash of the same facts; mtime is a pre-filter only, so a rewrite that moved a
+  *fallback* is `file_touched_no_rebind`, not a rebind.
+
+- [2026-08-23][ES-7] **§3.3 PARTIAL — surfaced-vs-suppressed is verified, "replays consulted runs" is
+  not literal.** `verify_suppression` assembles both arms through the real `allocate_skills` and requires
+  the body **present in one and absent in the other** — the presence half is what stops an empty prompt
+  satisfying the negative trivially — and an unverified suppression refuses before spending a run.
+  Suppression bites at the single choke point `SkillsLoader.load_skill`. **The gap:** `consulted_runs()`
+  reads the WF2-R13 `consulted` ledger event and uses it to *gate and attribute* the bench, but the
+  artifact replayed is a scenario-library `subject`, not the consulted runs' own inputs. No run→scenario
+  harvest path exists anywhere in `evals/` — harvested suites belong to ES-5, which is itself PARTIAL for
+  the mirror-image reason.
+
+- [2026-08-23][ES-7] **Plan/code drift found and recorded rather than implemented: §3.2 names four
+  watched bindings, but `eval_judge` is not in `providers.use_cases.VALID_USE_CASES`**, so
+  `active_models.json` cannot hold it and watching it would have been a control reporting "no change"
+  forever. The code watches `("chat", "reasoning", "background")` and keeps `PLAN_WATCHED_USE_CASES` as
+  the record of the discrepancy. **The plan text should be corrected.**
+
+- ⚠️ **One inert surface deliberately left open and flagged.** `GET /api/evals/ablation` ships with **no
+  frontend consumer**, unlike ES-4's sibling `/api/evals/judge-bench` which renders as `JudgeBenchPanel`
+  on the Learning page. The route is registered, tested and in `routes.md`, but nothing reads it. FE is
+  not in ES-7's `done_when` and the drive could not gate a web change from its worktree, so it was
+  reported rather than half-shipped. Closing it is roughly a 250-line `AblationPanel` mirroring
+  `JudgeBenchPanel`.
+
+- [2026-08-23][ES-7] **A died-mid-flight commit was RED four ways while its tree was clean** — worth
+  remembering as a diagnostic: a clean `git status` is not evidence of a green commit. 10 of 38 ablation
+  tests failed because the shared fixture targeted `workflows.judge_enabled`, **a config field that does
+  not exist**, so the drive's own new validation refused it and every test asserted the refusal instead
+  of the behaviour; `make lint` failed on mypy at `cli_commands.py:790`; `ablation_absent` /
+  `ablation_unreadable` were emitted with no `HTTP_ERROR_CODES` row; and `reference/routes.md` had been
+  **hand-edited** rather than generated, with `index.md`'s counts never bumped. The fixture was retargeted
+  to real fields and the reference regenerated via `python -m personalclaw.manifest_reference`, verified
+  to write the worktree and not the main checkout.
+- [2026-08-23][ES-7] **Minor over-claim corrected in-code:** `overlay.py`'s docstring said *"No code path
+  here can reach the live home."* The refusal in `_cell_home()` is narrower — it catches an absent
+  `PERSONALCLAW_HOME` or one resolving to the **default** `~/.personalclaw`, not an arbitrary non-default
+  real home. The actual guarantee comes from `_spawn_cell` always handing the child a
+  `TemporaryDirectory`; the refusal is a secondary rail.

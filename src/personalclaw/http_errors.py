@@ -111,6 +111,8 @@ HTTP_ERROR_CODES: dict[str, str] = {
     "judge_bench_unreadable": "The judge benchmark artifacts could not be read.",
     "studies_unreadable": "The pre-registered study artifacts could not be read.",
     "study_absent": "No study is registered under that id.",
+    "ablation_absent": "No harness-ablation report has been produced yet.",
+    "ablation_unreadable": "The ablation artifacts could not be read.",
     # ── packs (handlers/packs.py) ──
     "pack_not_installed": "No such installed pack.",
     "pack_not_bundled": "The pack is not bundled with this build.",

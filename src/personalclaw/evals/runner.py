@@ -31,6 +31,7 @@ import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 
+from personalclaw.evals import overlay as overlay_lib
 from personalclaw.evals import pinning
 from personalclaw.evals import scenarios as scenario_lib
 from personalclaw.evals import store
@@ -89,6 +90,27 @@ def _parse_child_stdout(stdout: str) -> dict | None:
     return None
 
 
+def _cell_overlay(spec: MatrixSpec, coords: dict) -> "overlay_lib.ComponentOverlay | None":
+    """The component overlay for one cell, or ``None`` for a plain matrix.
+
+    The spec names the component; the cell's ``arm_mask`` coordinate names the arm. A spec
+    with a component but a cell with no arm coordinate falls back to the ``on`` baseline —
+    which changes nothing — rather than guessing that an unlabelled cell meant ``off``.
+    """
+    if not spec.component:
+        return None
+    try:
+        base = overlay_lib.ComponentOverlay.from_dict(spec.component)
+    except ValueError:
+        logger.warning("invalid component on matrix spec; running cells unmodified")
+        return None
+    arm = str((coords or {}).get(overlay_lib.ARM_AXIS) or overlay_lib.ARM_ON)
+    if arm not in overlay_lib.ARMS:
+        logger.warning("unknown arm %r on cell; running the ON baseline", arm)
+        return base.for_arm(overlay_lib.ARM_ON)
+    return base.for_arm(arm)
+
+
 def _spawn_cell(
     spec: MatrixSpec,
     coords: dict,
@@ -127,6 +149,11 @@ def _spawn_cell(
         "fixture_home": cell_pin.fixture_home,
         "pin": cell_pin.to_dict(),
     }
+    # ES-7 §3.1: the component overlay for THIS cell's arm. Recorded in the descriptor for
+    # attribution and handed to the child through its spawn env below — never applied here.
+    cell_overlay = _cell_overlay(spec, coords)
+    if cell_overlay is not None:
+        descriptor["overlay"] = cell_overlay.to_dict()
     descriptor_path.write_text(json.dumps(descriptor, indent=2, sort_keys=True), encoding="utf-8")
     artifact_ref = str(cell_dir)
 
@@ -140,6 +167,10 @@ def _spawn_cell(
         env = os.environ.copy()
         env["PERSONALCLAW_WORKSPACE"] = str(ws)
         env["PERSONALCLAW_HOME"] = str(cell_home)
+        # The component toggle rides the child's env, on the same COPY. This is the whole
+        # of "child-process overlay toggling": nothing in the parent applies the overlay,
+        # so no code path here can reach the live spec/config.
+        env = overlay_lib.spawn_env_for(env, cell_overlay)
         try:
             proc = subprocess.run(
                 [sys.executable, "-m", "personalclaw.evals.child", str(descriptor_path)],
