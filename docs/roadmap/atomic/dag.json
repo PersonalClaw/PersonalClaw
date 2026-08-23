@@ -2225,7 +2225,7 @@
         {
           "id": "AS-8",
           "title": "Mission Control preset: four attention lanes with inline resolution",
-          "status": "todo",
+          "status": "done",
           "scope": "Amendment 2026-07-26 round 2 (a) Dashboard-as-views, task A2-2 (Mission Control preset over the unified attention store).",
           "done_when": "a locked \"Mission Control\" view renders four attention lanes (Needs-approval / Your-turn / Working / Idle) sourced from the unified attention store; approving from a lane resolves the approval via the existing /api/approvals actions; a pending question answered from a card (options as actionable buttons) unblocks its loop.",
           "deps": [
@@ -7530,11 +7530,6 @@
         "plan": "AS"
       },
       {
-        "id": "AS-8",
-        "title": "Mission Control preset: four attention lanes with inline resolution",
-        "plan": "AS"
-      },
-      {
         "id": "BA-2",
         "title": "CDP browser integration + per-page safety-script injection + BROWSE egress policy + redirect re-eval",
         "plan": "BA"
@@ -9728,9 +9723,9 @@
         "code": "AS",
         "plan": "AMBIENT-SURFACES",
         "total_atoms": 9,
-        "done": 6,
+        "done": 7,
         "in_progress": 0,
-        "todo": 3,
+        "todo": 2,
         "blocked": 0
       },
       {
