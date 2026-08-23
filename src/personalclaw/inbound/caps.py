@@ -93,7 +93,12 @@ def retry_after_secs(surface: str, caps: Caps = DEFAULT_CAPS) -> int:
 
 
 def acquire_slot(surface: str, caps: Caps = DEFAULT_CAPS) -> bool:
-    """Claim one of the surface's concurrency slots. False when saturated."""
+    """Claim one of the CLIENT's concurrency slots. False when saturated.
+
+    ``surface`` is really "the bucket key" — the caller passes a per-client key (see
+    `slot_key`), so a saturated client cannot starve the others. It kept the old
+    parameter name because the whole module keys on the same string.
+    """
     with _inflight_lock:
         current = _inflight.get(surface, 0)
         if current >= caps.concurrent:
@@ -105,6 +110,98 @@ def acquire_slot(surface: str, caps: Caps = DEFAULT_CAPS) -> bool:
 def release_slot(surface: str) -> None:
     with _inflight_lock:
         _inflight[surface] = max(0, _inflight.get(surface, 0) - 1)
+
+
+# ── per-client caps (§1.3) ───────────────────────────────────────────────────
+
+
+def rate_key(surface: str, client_id: str, peer_fallback: str = "") -> str:
+    """The bucket key for one caller: the CLIENT, falling back to the peer.
+
+    Per-client rather than per-peer is the point: two integrations behind one loopback
+    address are two callers, and rate-limiting them as one lets a chatty IDE panel
+    starve a scheduled job. The peer fallback exists only for a request refused
+    *before* identity is known, so an unauthenticated flood is still bounded.
+    """
+    return f"{surface}|client:{client_id}" if client_id else f"{surface}|peer:{peer_fallback}"
+
+
+def slot_key(surface: str, client_id: str, peer_fallback: str = "") -> str:
+    """Concurrency key — same identity rule as :func:`rate_key`, separate namespace so
+    a rate bucket and a slot counter can never collide on one dict entry."""
+    return "slots|" + rate_key(surface, client_id, peer_fallback)
+
+
+def caps_for(client=None) -> Caps:
+    """The effective caps: module constants, config overrides, then per-client overrides.
+
+    Three layers in that order, resolved HERE rather than at each surface, so
+    "what limit applies to this request?" has one answer. A client's `rate_overrides`
+    can only be read for the three rate dimensions — a per-client override of
+    `max_result_bytes` would let a client raise its own memory ceiling.
+    """
+    body_bytes = DEFAULT_CAPS.body_bytes
+    rps, burst, concurrent = DEFAULT_CAPS.rps, DEFAULT_CAPS.burst, DEFAULT_CAPS.concurrent
+    try:
+        from personalclaw.config.loader import AppConfig
+
+        ea = AppConfig.load().external_access
+        rps, burst, concurrent = float(ea.rate_rps), int(ea.rate_burst), int(ea.rate_concurrent)
+    except Exception:  # noqa: BLE001 — unreadable config keeps the module constants
+        logger.debug("inbound: cap config unreadable; using module defaults", exc_info=True)
+    overrides = dict(getattr(client, "rate_overrides", None) or {}) if client is not None else {}
+    for name, setter in (("rps", "rps"), ("burst", "burst"), ("concurrent", "concurrent")):
+        if name not in overrides:
+            continue
+        try:
+            value = float(overrides[name])
+        except (TypeError, ValueError):
+            continue
+        if setter == "rps":
+            rps = max(0.01, value)
+        elif setter == "burst":
+            burst = max(1, int(value))
+        else:
+            concurrent = max(1, int(value))
+    return Caps(
+        body_bytes=body_bytes,
+        deadline_s=DEFAULT_CAPS.deadline_s,
+        rps=rps,
+        burst=burst,
+        concurrent=concurrent,
+        max_items=DEFAULT_CAPS.max_items,
+        max_result_bytes=DEFAULT_CAPS.max_result_bytes,
+    )
+
+
+def check_rate_for_client(
+    surface: str, client_id: str, peer_fallback: str = "", caps: Caps | None = None
+) -> bool:
+    """Per-client sustained-rate check. False ⇒ the caller returns 429.
+
+    The bucket is created per KEY with that key's caps, so a client whose override
+    widened its rate does not also widen everyone else's — the defect a single
+    per-surface bucket has by construction.
+    """
+    effective = caps or DEFAULT_CAPS
+    key = rate_key(surface, client_id, peer_fallback)
+    with _bucket_lock:
+        bucket = _buckets.get(key)
+        if bucket is None:
+            bucket = _TokenBucket(effective.rps, effective.burst)
+            _buckets[key] = bucket
+    return bucket.take(key)
+
+
+def retry_after_for_client(
+    surface: str, client_id: str, peer_fallback: str = "", caps: Caps | None = None
+) -> int:
+    key = rate_key(surface, client_id, peer_fallback)
+    with _bucket_lock:
+        bucket = _buckets.get(key)
+    if bucket is None:
+        return max(1, int(round(1.0 / max(0.01, (caps or DEFAULT_CAPS).rps))))
+    return bucket.retry_after()
 
 
 def clamp_items(items: list, caps: Caps = DEFAULT_CAPS) -> list:

@@ -979,6 +979,14 @@ _SNAPSHOT_COVERAGE_GAPS: frozenset[str] = frozenset(
         # the size of the user's recent edits for no recoverable benefit. The workspace itself
         # holds the authoritative copy of every file in here.
         "turn_checkpoints",
+        # security: EA-1's per-request inbound trace. `derived=True` and excluded by
+        # EXTERNAL-ACCESS §10's own list, on the same grounds as the entries above: it is
+        # a local request log trimmed at 2× cap, and every security-relevant line in it is
+        # ALSO written to `security_events.jsonl`, which does travel — so the thing worth
+        # keeping is already backed up under a different name. Its sibling
+        # `inbound_clients` (the labels and bindings, token hashes only) is NOT here: that
+        # one is real state a restore must return, and it exports.
+        "inbound_audit",
     }
 )
 

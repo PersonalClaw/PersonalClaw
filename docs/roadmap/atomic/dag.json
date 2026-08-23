@@ -4244,7 +4244,7 @@
         {
           "id": "EA-1",
           "title": "Shared inbound access seam \u2014 widen plan-41 substrate to 5 surfaces + per-client identity",
-          "status": "todo",
+          "status": "done",
           "scope": "\u00a71 (The Inbound Access Layer): \u00a71.1 fail-closed enablement, \u00a71.2 per-client identity/bindings, \u00a71.3 hard caps, \u00a71.4 framing wrapper, \u00a71.5 audit; \u00a710 stores; \u00a711 ExternalAccessConfig 4-point wiring. Session 1.",
           "done_when": "New ExternalAccessConfig top-level section wired through all 4 points (dataclass+_meta, load(), to_dict(), _EDITABLE_CONFIG runtime subset \u2014 tokens/public_url NOT PATCH-editable); per-surface tokens (openai/mcp/a2a/capture/bridge) via save_credential with \u226532-byte + not-dashboard-token refusal; `~/.personalclaw/inbound_clients.json` (0600, atomic_write) with label/token_hash/surfaces/agent/tools/scope/rate_overrides/disabled; constant-time client lookup with bindings-as-pins (arg override = 403 + SEL); per-client token-bucket (1rps/burst20/4 concurrent) + result caps + auto-disable-on-repeat-breach; layered kill switches (master + per-surface + per-client + AUTONOMY-GUARDRAILS incident check, fail-closed parse); single fence_untrusted response wrapper; inbound_audit.jsonl (2\u00d7 trim) + SEL on security events; Settings\u2192External Access skeleton; inbound_clients.json + sender_trust.json join export/snapshot sets; test_config_roundtrip passes.",
           "deps": [
@@ -7631,13 +7631,33 @@
         "plan": "DL"
       },
       {
-        "id": "EA-1",
-        "title": "Shared inbound access seam \u2014 widen plan-41 substrate to 5 surfaces + per-client identity",
+        "id": "EA-2",
+        "title": "OpenAI-compatible inbound dialect (/v1/*) \u2014 agent-as-model + audio aliases",
+        "plan": "EA"
+      },
+      {
+        "id": "EA-4",
+        "title": "Self-describing MCP control bridge \u2014 loopback FE semantic actions",
+        "plan": "EA"
+      },
+      {
+        "id": "EA-5",
+        "title": "External-agent capture proxy (/capture/v1) + telemetry import",
         "plan": "EA"
       },
       {
         "id": "EA-7",
         "title": "Sender-trust substrate \u2014 channels' inbound-identity half + DM pairing",
+        "plan": "EA"
+      },
+      {
+        "id": "EA-8",
+        "title": "A2A gateway (inbound agent card + tasks\u2192WorkflowRun) + a2a-call outbound provider",
+        "plan": "EA"
+      },
+      {
+        "id": "EA-9",
+        "title": "Headless CLI mode \u2014 `personalclaw run` one-shot scripted turns",
         "plan": "EA"
       },
       {
@@ -9904,9 +9924,9 @@
         "code": "EA",
         "plan": "EXTERNAL-ACCESS",
         "total_atoms": 9,
-        "done": 1,
+        "done": 2,
         "in_progress": 0,
-        "todo": 8,
+        "todo": 7,
         "blocked": 0
       },
       {

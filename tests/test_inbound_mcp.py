@@ -7,6 +7,7 @@ that happens for the wrong reason is a bug even when the status code is right.
 """
 
 import json
+import os
 
 import pytest
 from aiohttp import web
@@ -27,19 +28,33 @@ def _isolate(tmp_path, monkeypatch):
     this reset a test would inherit whatever budget an earlier test spent.
     """
     monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path))
-    monkeypatch.delenv("PERSONALCLAW_INBOUND_MCP_TOKEN", raising=False)
+    # Cleared on BOTH sides. `save_credential` mirrors into `os.environ` itself, so a
+    # token minted mid-test is a variable monkeypatch never recorded and therefore never
+    # undoes — it would leak into every later test in this xdist worker, where a stale
+    # `PERSONALCLAW_INBOUND_*_TOKEN` reads as "this surface has a valid token".
+    for surface in ("OPENAI", "MCP", "A2A", "CAPTURE", "BRIDGE"):
+        monkeypatch.delenv(f"PERSONALCLAW_INBOUND_{surface}_TOKEN", raising=False)
     caps_mod.reset_for_tests()
     yield
+    for surface in ("OPENAI", "MCP", "A2A", "CAPTURE", "BRIDGE"):
+        os.environ.pop(f"PERSONALCLAW_INBOUND_{surface}_TOKEN", None)
     caps_mod.reset_for_tests()
 
 
-def _enable(monkeypatch, *, enabled=True, allow_remote=False, public_url=""):
-    """Point AppConfig.load() at an inbound config without writing config.json."""
-    from personalclaw.config.loader import AppConfig, InboundConfig, InboundSurfaceConfig
+def _enable(monkeypatch, *, enabled=True, allow_remote=False, public_url="", master=True):
+    """Point AppConfig.load() at an external-access config without writing config.json.
+
+    ``master`` defaults True because these tests predate the master switch (EA-1) and
+    are about the per-surface behaviour; the master layer has its own tests in
+    `test_external_access_seam.py`.
+    """
+    from personalclaw.config.loader import AppConfig, ExternalAccessConfig
+    from personalclaw.config.loader import ExternalAccessSurfaceConfig as Surface
 
     cfg = AppConfig()
-    cfg.inbound = InboundConfig(
-        mcp=InboundSurfaceConfig(enabled=enabled, allow_remote=allow_remote),
+    cfg.external_access = ExternalAccessConfig(
+        enabled=master,
+        mcp=Surface(enabled=enabled, allow_remote=allow_remote),
         public_url=public_url,
     )
     monkeypatch.setattr(AppConfig, "load", staticmethod(lambda *a, **k: cfg))
@@ -72,13 +87,21 @@ class TestSurfaceToken:
         assert problem is not None
         assert "inbound token create mcp" in problem
 
-    def test_created_token_is_long_and_0600(self, tmp_path):
+    def test_created_token_is_long_and_lands_in_the_credential_store_at_0600(self, tmp_path):
+        """EA-1 moved surface tokens from a bespoke dotfile to `save_credential`.
+
+        So the assertion is about the CREDENTIAL STORE, not `<home>/.inbound_mcp_token`
+        (which no longer exists): the token is retrievable through `get_credential`, and
+        the `.env` the fallback backend writes is 0600 — never briefly world-readable.
+        """
+        from personalclaw.config.loader import get_credential
+
         token = auth.create_surface_token("mcp")
-        path = auth.token_path("mcp")
         assert len(token.encode()) >= auth.MIN_TOKEN_BYTES
-        assert path.exists()
-        # The token must never be briefly world-readable, so 0600 from creation.
-        assert oct(path.stat().st_mode)[-3:] == "600"
+        assert get_credential(auth.token_env_key("mcp")) == token
+        env = tmp_path / ".env"
+        if env.exists():  # the `.env` backend; a keychain-active machine has no file
+            assert oct(env.stat().st_mode)[-3:] == "600"
         assert auth.token_problem("mcp") is None
 
     def test_rotation_invalidates_the_previous_token(self):
@@ -88,23 +111,25 @@ class TestSurfaceToken:
         assert auth.verify_bearer("mcp", first) is False
         assert auth.verify_bearer("mcp", second) is True
 
-    def test_short_token_is_refused_outright(self, tmp_path):
-        auth.token_path("mcp").write_text("tiny", encoding="utf-8")
+    def test_short_token_is_refused_outright(self, monkeypatch):
+        monkeypatch.setenv(auth.token_env_key("mcp"), "tiny")
         assert "shorter than" in (auth.token_problem("mcp") or "")
         assert auth.verify_bearer("mcp", "tiny") is False
 
-    def test_dashboard_secret_may_not_be_reused_as_the_inbound_token(self, tmp_path):
+    def test_dashboard_secret_may_not_be_reused_as_the_inbound_token(self, tmp_path, monkeypatch):
         """Reusing .local_secret would silently extend it to a network surface."""
         secret = "s" * 80
         (tmp_path / ".local_secret").write_text(secret, encoding="utf-8")
-        auth.token_path("mcp").write_text(secret, encoding="utf-8")
-        assert auth.token_problem("mcp") == "token must not equal the dashboard/internal secret"
+        monkeypatch.setenv(auth.token_env_key("mcp"), secret)
+        assert auth.token_problem("mcp") == (
+            "token must not equal the dashboard/internal secret or another surface's token"
+        )
         assert auth.verify_bearer("mcp", secret) is False
 
-    def test_env_token_wins_over_disk(self, monkeypatch):
+    def test_env_token_wins_over_the_stored_credential(self, monkeypatch):
         auth.create_surface_token("mcp")
         injected = "e" * 60
-        monkeypatch.setenv("PERSONALCLAW_INBOUND_MCP_TOKEN", injected)
+        monkeypatch.setenv(auth.token_env_key("mcp"), injected)
         assert auth.load_surface_token("mcp") == injected
         assert auth.verify_bearer("mcp", injected) is True
 
@@ -144,7 +169,7 @@ class TestMountGating:
         _enable(monkeypatch, enabled=False)
         with caplog.at_level("INFO", logger="personalclaw.inbound.mcp_http"):
             assert mcp_http.mount(web.Application()) is False
-        assert "inbound.mcp.enabled is off" in caplog.text
+        assert "external_access.mcp.enabled is off" in caplog.text
 
     def test_enabled_with_token_mounts_both_methods(self, monkeypatch):
         _enable(monkeypatch)
@@ -279,7 +304,7 @@ class TestTransport:
         client = await _client(monkeypatch)
         try:
             assert (await _rpc(client, "initialize", token=token)).status == 200
-            cfg.inbound.mcp.enabled = False
+            cfg.external_access.mcp.enabled = False
             assert (await _rpc(client, "initialize", token=token)).status == 404
         finally:
             await client.close()
@@ -553,22 +578,23 @@ class TestAudit:
 
 
 class TestConfigWiring:
-    def test_inbound_defaults_are_off(self):
+    def test_external_access_defaults_are_off(self):
         from personalclaw.config.loader import AppConfig
 
         cfg = AppConfig()
-        assert cfg.inbound.mcp.enabled is False
-        assert cfg.inbound.mcp.allow_remote is False
-        assert cfg.inbound.public_url == ""
+        assert cfg.external_access.enabled is False
+        assert cfg.external_access.mcp.enabled is False
+        assert cfg.external_access.mcp.allow_remote is False
+        assert cfg.external_access.public_url == ""
 
-    def test_inbound_round_trips_through_to_dict(self, tmp_path):
+    def test_external_access_round_trips_through_to_dict(self, tmp_path):
         from personalclaw.config.loader import AppConfig
 
         cfg = AppConfig()
-        cfg.inbound.mcp.enabled = True
+        cfg.external_access.mcp.enabled = True
         data = cfg.to_dict()
-        assert data["inbound"]["mcp"]["enabled"] is True
-        assert data["inbound"]["mcp"]["allow_remote"] is False
+        assert data["external_access"]["mcp"]["enabled"] is True
+        assert data["external_access"]["mcp"]["allow_remote"] is False
 
     @pytest.mark.parametrize(
         "raw,expected",
@@ -593,19 +619,19 @@ class TestConfigWiring:
         from personalclaw.config.loader import AppConfig, config_path
 
         config_path().write_text(
-            json.dumps({"inbound": {"mcp": {"enabled": raw, "allow_remote": raw}}}),
+            json.dumps({"external_access": {"mcp": {"enabled": raw, "allow_remote": raw}}}),
             encoding="utf-8",
         )
         cfg = AppConfig.load()
-        assert cfg.inbound.mcp.enabled is expected
-        assert cfg.inbound.mcp.allow_remote is expected
+        assert cfg.external_access.mcp.enabled is expected
+        assert cfg.external_access.mcp.allow_remote is expected
 
     def test_enabled_flag_is_patchable_but_remote_knobs_are_not(self):
         """allow_remote/public_url are deliberately NOT web-editable."""
         from personalclaw.dashboard.handlers.core import _EDITABLE_CONFIG
 
-        assert "inbound.mcp.enabled" in _EDITABLE_CONFIG
-        assert "inbound.mcp.allow_remote" not in _EDITABLE_CONFIG
+        assert "external_access.mcp.enabled" in _EDITABLE_CONFIG
+        assert "external_access.mcp.allow_remote" not in _EDITABLE_CONFIG
         assert "inbound.public_url" not in _EDITABLE_CONFIG
 
     def test_mcp_route_bypasses_dashboard_token_auth(self):

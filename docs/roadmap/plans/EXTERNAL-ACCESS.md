@@ -307,3 +307,69 @@ No new session; session count stays ~7. Session 2 gains the three sharpenings ab
 |---|---|---|---|
 | T2-A1 | Model-name dual form + OpenAI-shaped error envelope (stable `code` preserved) + usage block on final SSE frame | `inbound/openai_dialect.py` (Session 2 module), tests | `openai` SDK `client.chat.completions.create(model="<agent>", stream=True)` works verbatim; error shapes parse in the SDK |
 | T2-A2 | `X-PersonalClaw-Session` header mapping behind `persistent_sessions` | same module | header session resumes across two requests; ignored (stateless) when the client record doesn't opt in; SEL-clean |
+
+
+## Execution log — EA-1 (§1 shared inbound access seam + §10 stores + §11 config wiring, Session 1)
+
+- [2026-08-23][EA-1] **DONE.** All acceptance clauses hold, with two deviations and two follow-ups recorded
+  below. Gate at integration: `make lint` 0 (mypy 977 files), 114 targeted, `make test` 25272 passed / 0
+  failed, 6-gate aggregate 6/6, web `typecheck:web` 0 + `build` 0 + full `test:web` green, probe residue 0.
+  The master kill switch was re-falsified by me: neutering `gate.py:60`'s `if not master:` reds
+  `TestLayeredKillSwitches::test_master_off_closes_an_enabled_surface`.
+
+- [2026-08-23][EA-1] **This is a CLEAN BREAK, not an additive section — two user-visible breaks.**
+  `ExternalAccessConfig` is a rename of MCP-READONLY-INBOUND's `InboundConfig`/`InboundSurfaceConfig`
+  (`inbound` → `external_access`), **and** token storage moved from `<home>/.inbound_<surface>_token` to
+  `save_credential`. Consequence a user meets immediately: `personalclaw config set inbound.mcp.enabled
+  true` now answers `❌ Unknown key`. CHANGELOG entry included; no `cfg.inbound` stragglers remain.
+
+- [2026-08-23][EA-1] **All four layered kill switches were proved to DENY, individually.** Each was
+  falsified by neutering its own live line: master (`gate.py`), per-surface (`gate.py`), per-client
+  (`clients.py`'s `if matched.disabled:`), and the AUTONOMY-GUARDRAILS incident check (forcing
+  `incident_problem` to return `None` reds **two** tests including the transport-level one). A fifth
+  falsification — adding an `mcp_token` field to `ExternalAccessConfig` — reds the no-token-leaf rail with
+  the offender named, which is what makes that rail non-vacuous.
+
+- [2026-08-23][EA-1] 🔴 **`_EDITABLE_CONFIG` is not the only write path, so the criterion's phrasing was
+  too weak to protect what it meant to protect.** `tokens/public_url NOT PATCH-editable` holds — driven
+  through the real PATCH endpoint with a vacuity floor. But `personalclaw config set
+  external_access.public_url …` **succeeds**, because `cli_config._dict_set` walks `to_dict()` and does not
+  consult `_EDITABLE_CONFIG` at all. That is §11's stated design (its alternative is "a deliberate
+  config-file edit") and it is SEL-audited, so it is not a defect. The response was to pin the *stronger,
+  path-independent* claim instead: `TestTheSecondWritePath` asserts **no config leaf anywhere can hold a
+  token**, which survives any future write path. Worth remembering as a general shape — a control named
+  after one mechanism understates what the requirement actually needs.
+
+- [2026-08-23][EA-1] 🔴 **A dict-comprehension in `load()` made the four-points harness structurally
+  blind.** The five surfaces were built with `**{s: … for s in …}`, so `config-four-points` could not see
+  the field names and reported all five (then `allow_remote`) as unmapped. Fixed by spelling out one
+  surface *and field* at a time. This is a scanner-blindness class worth generalizing: a field synthesized
+  by a comprehension is invisible to any text-level census, so it reads as unwired no matter how correct
+  the runtime is.
+
+- [2026-08-23][EA-1] **Backend truth, frontend silence — closed.** The backend shipped `caps` (five
+  numbers) and `public_url`; the Settings panel rendered **neither**. Added a Limits section with five
+  `NumberRow`s plus a stated reason the public URL is read-only, and `externalAccessControls.test.tsx`
+  asserting each control PATCHes **its own** key (the assertion that catches a copy-paste panel).
+
+- [2026-08-23][EA-1] **A second implementation of layer 3 was deleted, not wired.** `gate.client_problem`
+  had **zero callers including tests** — a duplicate per-client kill switch. Removed, with a comment
+  recording that layer 3 lives in `lookup_by_token`.
+
+- [2026-08-23][EA-1] **DEVIATION — `sender_trust.json` does not exist as-built.** §10 names it; the trust
+  seam is actually `entity_settings/channel_trust.json`, which already joins the export/snapshot sets. The
+  test asserts the real path. Plan text should be corrected.
+- [2026-08-23][EA-1] **DEVIATION — `inbound_audit.jsonl` ships 0644, not 0600.** Left deliberately: the
+  real home's `security_events.jsonl` and `notifications.jsonl` — the precedent §1.5 itself cites — are
+  both 0644, so 0600 would be the inconsistent choice. **Owner call if the tighter mode is wanted.**
+
+- [2026-08-23][EA-1] **`test_portability`: `inbound_audit` added to `_SNAPSHOT_COVERAGE_GAPS` with its
+  reason** (it is `derived=True`, and §10 excludes it) rather than silently widening coverage.
+- [2026-08-23][EA-1] **Seven flat `{"error": prose}` sites converted to `http_errors.json_error`** rather
+  than raising the wire-envelope census ceiling, which the new handler had pushed 2 over.
+
+- [2026-08-23][EA-1] **A design ratchet resolved an identifier tree-wide and mis-attributed six unrelated
+  files.** `ExternalAccessPanel.tsx` declared `const KEY` and passed it to `useQuery`;
+  `dataLayerAdoption.test.ts` matches `const <NAME> = '…'` across the tree, so it adopted six unrelated
+  `const KEY` localStorage constants as cache namespaces. Renamed to `CACHE_KEY`. Attribution was proved by
+  running the ratchet on a base worktree at `origin/main` — green there, red here — rather than assumed.

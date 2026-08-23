@@ -152,6 +152,52 @@ export interface AutonomyLadder {
   reversals: AutonomyReversal[]
 }
 
+// External Access — the shared inbound seam (EXTERNAL-ACCESS §1).
+export interface ExternalAccessSurface {
+  surface: string
+  enabled: boolean
+  allow_remote: boolean
+  /** Whether a usable (≥32-byte, non-reserved) token is configured. Never the token. */
+  token_configured: boolean
+  /** WHY the token is unusable, when it is — the mount refusal's own reason string. */
+  token_problem: string
+  /** True for the control bridge, which ignores `allow_remote` by construction. */
+  loopback_only: boolean
+}
+export interface ExternalAccessClient {
+  client_id: string
+  label: string
+  surfaces: string[]
+  /** Pinned agent — a request naming a different one is refused, never substituted. */
+  agent: string
+  tools: string[]
+  scope: Record<string, unknown>
+  rate_overrides: Record<string, unknown>
+  disabled: boolean
+  created_at: string
+  last_seen_at: string
+  /** Derived from `inbound_audit.jsonl`, not a stored counter. */
+  requests_seen: number
+  refusals_seen: number
+  // 🔴 No `token_hash`. The server does not send it; see handlers/external_access.py.
+}
+export interface ExternalAccess {
+  /** The master kill switch. Off means all five surfaces are unmounted. */
+  enabled: boolean
+  /** An active incident refuses every inbound request with 503, whatever the switches say. */
+  incident_active: boolean
+  public_url: string
+  caps: {
+    rate_rps?: number
+    rate_burst?: number
+    rate_concurrent?: number
+    auto_disable_after_breaches?: number
+    capture_retention_days?: number
+  }
+  surfaces: ExternalAccessSurface[]
+  clients: ExternalAccessClient[]
+}
+
 // Doctor — the tiered read-only health report (PLATFORM-RESILIENCE §1).
 export interface DoctorProbe {
   id: string
@@ -3567,6 +3613,40 @@ export const api = {
   setLoginPassword: (username: string, password: string) =>
     post<{ ok: boolean; username: string }>('/api/auth/password', { username, password }),
   authLogout: () => post<{ ok: boolean; revoked: boolean }>('/api/auth/logout'),
+
+  // ── External Access: the shared inbound seam (EXTERNAL-ACCESS §1.5) ──
+  //
+  // There is deliberately NO method here that writes `public_url`, `allow_remote` or a
+  // surface token: the backend exposes no route for them, and the surface switches go
+  // through `patchConfig` like every other `_EDITABLE_CONFIG` field. If you find
+  // yourself adding one, that is the security boundary asking to be moved — don't.
+  externalAccess: () => get<ExternalAccess>('/api/external-access'),
+  externalAccessCreateClient: (body: {
+    label: string
+    surfaces: string[]
+    agent?: string
+    tools?: string[]
+    scope?: Record<string, unknown>
+    rate_overrides?: Record<string, unknown>
+  }) =>
+    post<{
+      ok: boolean
+      client_id: string
+      label: string
+      surfaces: string[]
+      /** Present in THIS response only — it is stored as a hash and never returned again. */
+      token: string
+      token_notice: string
+    }>('/api/external-access/clients', body),
+  // `del` resolves to void by design (it throws on !ok), so revocation is confirmed by
+  // the absence of a throw plus the re-read — not by a body this helper cannot return.
+  externalAccessRevokeClient: (clientId: string) =>
+    del(`/api/external-access/clients/${encodeURIComponent(clientId)}`),
+  externalAccessSetClientDisabled: (clientId: string, disabled: boolean) =>
+    post<{ ok: boolean; client_id: string; disabled: boolean }>(
+      `/api/external-access/clients/${encodeURIComponent(clientId)}/disabled`,
+      { disabled },
+    ),
 
   // ── Guardrails: incident kill switch + derived provider health (§1.3, §2.5) ──
   incident: () => get<{ active: boolean; reason: string; started_at: string }>('/api/incident'),

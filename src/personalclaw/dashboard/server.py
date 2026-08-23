@@ -781,6 +781,18 @@ async def start_dashboard(
     app.router.add_post("/api/incident/resume", handlers.api_incident_resume)
     app.router.add_get("/api/guardrails/project-trust", handlers.api_project_trust)
     app.router.add_post("/api/guardrails/project-trust", handlers.api_project_trust)
+    # EXTERNAL-ACCESS §1.5 — Settings → External Access. Read + client lifecycle only:
+    # the surface switches ride the existing `_EDITABLE_CONFIG` PATCH path, and there is
+    # deliberately NO route here that can write `public_url`, `allow_remote` or a token.
+    app.router.add_get("/api/external-access", handlers.api_external_access)
+    app.router.add_post("/api/external-access/clients", handlers.api_external_access_client)
+    app.router.add_delete(
+        "/api/external-access/clients/{client_id}", handlers.api_external_access_client
+    )
+    app.router.add_post(
+        "/api/external-access/clients/{client_id}/disabled",
+        handlers.api_external_access_client_toggle,
+    )
     app.router.add_get("/api/models/health", handlers.api_models_health)
     # The earned-autonomy ladder (§6.1). One read + three writes, and only ONE of the three
     # increases autonomy — see handlers/autonomy.py for why that asymmetry is the design.

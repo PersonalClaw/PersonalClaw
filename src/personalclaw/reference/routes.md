@@ -238,6 +238,10 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `POST /api/durability/run` — {job} — run one backup job now.
 - `GET /api/durability/status` — schedule state + what's due.
 - `GET /api/evals/judge-bench` — the newest tier-recommendation table.
+- `GET /api/external-access` — the whole operator view of the inbound seam.
+- `POST /api/external-access/clients` — create; DELETE …/{client_id} — revoke.
+- `DELETE /api/external-access/clients/{client_id}` — create; DELETE …/{client_id} — revoke.
+- `POST /api/external-access/clients/{client_id}/disabled` — kill-switch layer (c).
 - `POST /api/feedback` — record one verdict.
 - `GET /api/feedback/producers` — per-producer accuracy.
 - `POST /api/feedback/producers/clear` — un-suppress after an artifact edit.
