@@ -574,7 +574,19 @@ class SkillsLoader:
         return None
 
     def load_skill(self, name: str) -> str | None:
-        """Load a single skill's content by name, searching this loader's dirs."""
+        """Load a single skill's content by name, searching this loader's dirs.
+
+        ES-7 §3.3: the ablation/bench suppression set is consulted HERE, the one place a
+        body is read, so a suppressed skill's body cannot reach a prompt through the
+        forced, surfaced, or ``skill_invoke`` path. ``None`` (not ``""``) so a suppressed
+        skill is indistinguishable from an absent one to every caller — every one of them
+        already guards with ``if content:``. Suppression is env-scoped to a throwaway eval
+        child; with the env var absent this is the shipped behaviour exactly.
+        """
+        from personalclaw.skills.suppression import is_suppressed
+
+        if is_suppressed(name):
+            return None
         skill_file = self.skill_file(name)
         if skill_file is None:
             return None

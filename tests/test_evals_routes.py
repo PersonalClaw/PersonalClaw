@@ -104,8 +104,67 @@ def test_the_route_table_offers_no_way_to_START_a_run():
     E.register_evals_routes(app)
     routes = [(r.method, str(r.resource.canonical)) for r in app.router.routes()]
     assert ("GET", "/api/evals/judge-bench") in routes
+    assert ("GET", "/api/evals/ablation") in routes
     # aiohttp registers HEAD alongside GET; nothing else exists, and no mutating verb does.
     assert {m for m, _ in routes} == {"GET", "HEAD"}
+
+
+# ── ES-7 §3.1: the ablation report's read surface ────────────────────────────
+
+
+def _abl_req(**kw):
+    return _req(path="/api/evals/ablation", **kw)
+
+
+def test_ablation_disabled_is_a_404_with_its_own_code(monkeypatch):
+    monkeypatch.setattr(E, "_enabled", lambda: False)
+    resp = _run(E.api_evals_ablation(_abl_req()))
+    assert resp.status == 404
+    assert _body(resp)["error"]["code"] == "evals_disabled"
+
+
+def test_no_ablation_yet_is_a_distinct_404_code(evals_on, monkeypatch):
+    """Three states send a user to three different places — the switch, the registry, and
+    waiting for the cadence — so "nothing has run" cannot share a code with "evals off"."""
+    monkeypatch.setattr("personalclaw.evals.ablation.latest_ablation_view", lambda: None)
+    resp = _run(E.api_evals_ablation(_abl_req()))
+    assert resp.status == 404
+    code = _body(resp)["error"]["code"]
+    assert code == "ablation_absent"
+    assert code != "evals_disabled"
+    assert "ablation_registry.json" in _body(resp)["error"]["message"]
+
+
+def test_an_unreadable_artifact_is_a_500_not_an_empty_table(evals_on, monkeypatch):
+    def boom():
+        raise OSError("bad json")
+
+    monkeypatch.setattr("personalclaw.evals.ablation.latest_ablation_view", boom)
+    resp = _run(E.api_evals_ablation(_abl_req()))
+    assert resp.status == 500
+    assert _body(resp)["error"]["code"] == "ablation_unreadable"
+
+
+def test_the_ablation_view_arrives_decided(evals_on, monkeypatch):
+    """The verdict, the deltas and the threshold they were compared against all come from the
+    runner. A frontend that re-derived "is this a real delta" would eventually disagree with
+    it, and the copy shipping the permissive answer would be the UI."""
+    view = {
+        "report": {"matrix_id": "ablation-x-1", "verdict": "remove", "delta": 0.004},
+        "verdict_vocabulary": ["keep", "remove", "lighten"],
+        "registry": [],
+        "history": [],
+        "last_run_ts": "2026-08-17T12:00:00+00:00",
+        "cadence_days": 30,
+        "due": False,
+    }
+    monkeypatch.setattr("personalclaw.evals.ablation.latest_ablation_view", lambda: view)
+    resp = _run(E.api_evals_ablation(_abl_req()))
+    assert resp.status == 200
+    body = _body(resp)
+    assert body["report"]["verdict"] == "remove"
+    assert body["verdict_vocabulary"] == ["keep", "remove", "lighten"]
+    assert body["cadence_days"] == 30
 
 
 def test_the_enabled_check_fails_closed_on_an_unreadable_config(monkeypatch):

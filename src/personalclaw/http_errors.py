@@ -109,6 +109,8 @@ HTTP_ERROR_CODES: dict[str, str] = {
     "evals_disabled": "The evals surface is switched off in config.",
     "judge_bench_absent": "No judge benchmark artifact has been produced yet.",
     "judge_bench_unreadable": "The judge benchmark artifacts could not be read.",
+    "ablation_absent": "No harness-ablation report has been produced yet.",
+    "ablation_unreadable": "The ablation artifacts could not be read.",
     # ── packs (handlers/packs.py) ──
     "pack_not_installed": "No such installed pack.",
     "pack_not_bundled": "The pack is not bundled with this build.",

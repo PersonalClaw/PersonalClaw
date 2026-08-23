@@ -747,6 +747,144 @@ async def _judge_bench(args: argparse.Namespace) -> None:
     print(f"\nArtifacts: {store.matrix_dir(result.bench_id)}")
 
 
+def _ablation(args: argparse.Namespace) -> None:
+    """Run (or preview) the harness-ablation runner / skills bench (ES-7 §3.1 + §3.3).
+
+    Without this the only trigger is the monthly cadence, which is a control the operator
+    cannot exercise — and a measurement you have to wait 30 days to see is one nobody trusts.
+    ``--dry-run`` prints the cell count FIRST, for the same reason ``judge-bench`` does: an
+    ablation replays a scenario once per arm per trial, and a user who sees the count can lower
+    ``--trials`` before paying for a matrix they did not want.
+    """
+    from personalclaw.evals import ablation
+
+    if getattr(args, "list_components", False):
+        rows = ablation.registry()
+        if not rows:
+            print(
+                f"No components registered. Add rows to {ablation.registry_path()} "
+                '({"components": [{"component_id": ..., "kind": ..., "target": ..., '
+                '"subject": ...}]}).'
+            )
+            return
+        for comp in rows:
+            print(
+                f"{comp.component_id}\t{comp.kind}\t{comp.target}\t{comp.subject}\t"
+                f"arms={','.join(comp.arms())}"
+            )
+        return
+
+    skill = str(getattr(args, "skill", "") or "")
+    if skill:
+        _ablation_bench_skill(args, skill)
+        return
+
+    component_id = str(getattr(args, "component", "") or "")
+    if component_id:
+        matches = [c for c in ablation.registry() if c.component_id == component_id]
+        if not matches:
+            print(f"Error: no registered component {component_id!r} (try --list).")
+            raise SystemExit(1)
+        component: ablation.AblationComponent = matches[0]
+    else:
+        picked = ablation.pick_component()
+        if picked is None:
+            print(f"No components registered. See --list and {ablation.registry_path()}.")
+            return
+        component = picked
+
+    trials = max(1, int(getattr(args, "trials", 3) or 3))
+    try:
+        # Before the preflight print, so a typo'd target is a message and not a matrix.
+        ablation.validate_component(component)
+    except ValueError as exc:
+        print(f"Error: {exc}")
+        raise SystemExit(1) from exc
+    arms = component.arms()
+    print(
+        f"Ablation '{component.component_id}' ({component.kind} → {component.target})\n"
+        f"  subject: {component.subject}\n"
+        f"  arms:    {', '.join(arms)}\n"
+        f"  trials:  {trials} per arm\n"
+        f"  cells (the spend): {len(arms) * trials}\n"
+        f"  cadence: every {ablation._cadence_days()}d "
+        f"(due now: {ablation.due()})\n"
+    )
+    if getattr(args, "dry_run", False):
+        print("--dry-run: nothing was called.")
+        return
+    if not getattr(args, "force", False) and not ablation.due():
+        print("Not due yet. Pass --force to measure anyway.")
+        return
+
+    from personalclaw.evals import scenarios as scenario_lib
+    from personalclaw.evals import store as evals_store
+
+    try:
+        report = ablation.run_ablation(
+            component, trials=trials, budget_usd=float(getattr(args, "budget", 0.0) or 0.0)
+        )
+    except ablation.LiveStateMutatedError as exc:
+        # Loud, not swallowed: the run altered the operator's config, which is the one thing
+        # §3.1 forbids outright.
+        print(f"REFUSED: {exc}")
+        raise SystemExit(1) from exc
+    except (scenario_lib.ScenarioLibraryError, evals_store.PinRequiredError) as exc:
+        # A misregistered subject or an incomplete pin is a registry mistake, not a crash. The
+        # message already names what is installed — a traceback on top of it only hides it.
+        print(f"Error: {exc}")
+        raise SystemExit(1) from exc
+    _print_ablation_report(report)
+    if report.verdict == ablation.REMOVE:
+        _verdict, proposal = ablation.file_retirement_proposal(report)
+        if proposal is not None:
+            print(f"\nFiled retirement proposal {proposal.id} (evidence: {report.evidence_ref()})")
+
+
+def _ablation_bench_skill(args: argparse.Namespace, skill: str) -> None:
+    """The §3.3 half: one skill, surfaced vs suppressed, over its consulted runs."""
+    from personalclaw.evals import skills_bench
+
+    subject = str(getattr(args, "subject", "") or "")
+    if getattr(args, "dry_run", False):
+        runs = skills_bench.consulted_runs(skill)
+        print(
+            f"Skill bench '{skill}'\n"
+            f"  consulted runs: {len({r['run_id'] for r in runs})}\n"
+            f"  subject:        {subject or '<none>'}\n"
+            "--dry-run: nothing was called."
+        )
+        return
+    report = skills_bench.bench_skill(
+        skill,
+        subject=subject,
+        trials=max(1, int(getattr(args, "trials", 3) or 3)),
+        budget_usd=float(getattr(args, "budget", 0.0) or 0.0),
+    )
+    print(f"Skill bench '{skill}' → {report.verdict}")
+    print(f"  consulted runs: {len(report.consulted_run_ids)}")
+    if report.suppression:
+        print(f"  suppression verified: {report.suppression.get('verified')}")
+    if report.delta is not None:
+        print(f"  delta (surfaced − suppressed): {report.delta}")
+    if report.reason:
+        print(f"  {report.reason}")
+
+
+def _print_ablation_report(report) -> None:
+    print(f"Verdict: {report.verdict}")
+    for arm, agg in sorted(report.arms.items()):
+        mean = agg.get("mean_score")
+        print(
+            f"  {arm}: mean={'n/a' if mean is None else round(float(mean), 4)} "
+            f"scored={agg.get('scored_count')} of {agg.get('total')}"
+        )
+    print(f"  delta (on − off): {report.delta}  (threshold {report.epsilon})")
+    if report.cheap_delta is not None:
+        print(f"  delta (on − cheap): {report.cheap_delta}")
+    print(f"  report: evals/ablation/{report.matrix_id}.json")
+
+
 def _learn(args: argparse.Namespace) -> None:
     """Save, list, or remove learned corrections in memory.db ``lesson.*``."""
 
