@@ -403,6 +403,40 @@ class FailureSignature:
 # ── run status ───────────────────────────────────────────────────────────────
 
 
+class LifecyclePhase(str, Enum):
+    """What a work-unit status MEANS, separate from the word a noun spells it with.
+
+    `PP-16`'s "one status vocabulary" clause is not a rename. `LoopStatus` and `RunStatus` each
+    carry members the other cannot express — `loop_run_map.STATUS_VOCABULARY_DELTA` measures the
+    ten orphans — and, the part no rename can reconcile, they disagreed about the terminality of
+    the SAME word: `failed` stamped an end timestamp and refused any further transition on a run,
+    while a failed loop is one of `ACTION_SOURCE_STATES["resume"]`'s five sources.
+
+    That was never drift between two vocabularies. It is **two properties collapsed into one
+    set**:
+
+    * **phase** — has the unit stopped producing? A property of the STATE, so it is declared
+      once, here, and shared by every noun.
+    * **terminality** — may it still transition? A property of the NOUN's lifetime, because a
+      run is one attempt while a loop is a campaign OF attempts. Retrying a run means creating
+      another run; "retrying" a loop means the same loop moves again.
+
+    So `ENDED` is declared once, each noun names which of its ended states remain resumable, and
+    terminality is **derived** from the two. `failed` is then ended for both nouns and terminal
+    for only one, with no contradiction and no membership set hand-maintained beside an enum.
+
+    The four phases are exhaustive over both vocabularies by rail
+    (`tests/test_lifecycle_phase_vocabulary.py`), which is what makes them a vocabulary rather
+    than a convenience: a new status member has no phase until someone decides which one, and
+    the rail refuses the merge until they do.
+    """
+
+    PRELAUNCH = "prelaunch"  # nothing has executed yet; the spec is still editable
+    ACTIVE = "active"  # a worker is, or should be, armed
+    ATTENTION = "attention"  # progress stopped pending a human/supervisor act; a worker re-arms
+    ENDED = "ended"  # stopped producing; an end timestamp is stamped on arrival
+
+
 class RunStatus(str, Enum):
     DRAFT = "draft"
     RUNNING = "running"
@@ -414,9 +448,33 @@ class RunStatus(str, Enum):
     ESCALATED = "escalated"
 
 
-TERMINAL_RUN_STATUSES = frozenset(
-    {RunStatus.COMPLETE, RunStatus.FAILED, RunStatus.CANCELLED, RunStatus.ESCALATED}
+#: Every `RunStatus` member's :class:`LifecyclePhase`. Exhaustive in both directions by rail.
+RUN_PHASES: dict[RunStatus, LifecyclePhase] = {
+    RunStatus.DRAFT: LifecyclePhase.PRELAUNCH,
+    RunStatus.RUNNING: LifecyclePhase.ACTIVE,
+    RunStatus.PAUSED: LifecyclePhase.ATTENTION,
+    RunStatus.NEEDS_INPUT: LifecyclePhase.ATTENTION,
+    RunStatus.COMPLETE: LifecyclePhase.ENDED,
+    RunStatus.FAILED: LifecyclePhase.ENDED,
+    RunStatus.CANCELLED: LifecyclePhase.ENDED,
+    RunStatus.ESCALATED: LifecyclePhase.ENDED,
+}
+
+#: Run states that have stopped producing. Read as "an end timestamp belongs here".
+ENDED_RUN_STATUSES: frozenset[RunStatus] = frozenset(
+    status for status, phase in RUN_PHASES.items() if phase is LifecyclePhase.ENDED
 )
+
+#: Ended run states a run may still LEAVE. Deliberately empty, and that emptiness is the
+#: decision rather than an omission: a run is one attempt, so every way it can stop is a way it
+#: stops for good. `service.request_cancel` refuses a run that is already ended and
+#: `service.delete_run` refuses one that is not, and those two guards are only coherent together
+#: while nothing leaves an ended run. The loop side's counterpart is NOT empty — see
+#: `loop.loop:RESUMABLE_ENDED_STATUSES`, which is exactly where `failed` stops meaning the same
+#: thing for the two nouns, stated once instead of implied by two disagreeing frozensets.
+RESUMABLE_ENDED_RUN_STATUSES: frozenset[RunStatus] = frozenset()
+
+TERMINAL_RUN_STATUSES: frozenset[RunStatus] = ENDED_RUN_STATUSES - RESUMABLE_ENDED_RUN_STATUSES
 
 
 class OriginKind(str, Enum):

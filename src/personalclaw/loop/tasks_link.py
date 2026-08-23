@@ -16,6 +16,7 @@ import logging
 
 from personalclaw.loop import kinds, store
 from personalclaw.loop.loop import Loop
+from personalclaw.workflows import materialize as _materialize
 
 logger = logging.getLogger(__name__)
 
@@ -47,13 +48,20 @@ def _hierarchy():
 
 
 def _is_done(status) -> bool:
-    return getattr(status, "value", status) in ("done", "completed")
+    """The loop side's entry to the ONE task-status vocabulary
+    (:func:`personalclaw.workflows.materialize.is_done`). Named here only because callers
+    outside this module reach for ``tasks_link._is_done``; it holds no logic of its own, so
+    PP-16's later slices delete it along with the rest of this module."""
+    return _materialize.is_done(status)
 
 
 def _is_resolved(status) -> bool:
-    """Terminal (done/completed/cancelled) — a cancelled blocker resolves its
-    dependents (matches the canonical task graph + the cockpit). C432."""
-    return getattr(status, "value", status) in ("done", "completed", "cancelled")
+    """The loop side's entry to the ONE task-status vocabulary
+    (:func:`personalclaw.workflows.materialize.is_resolved`). This module used to carry its own
+    string list — ``("done", "completed", "cancelled")`` — which is the same judgement the run
+    side's projection makes, spelled a second time; a loop and a run are the same work unit, so
+    "has this task finished" cannot have two answers (PP-16, "one projection to tasks")."""
+    return _materialize.is_resolved(status)
 
 
 def _loop_project_name(loop: Loop) -> str:

@@ -10,7 +10,10 @@ import { PanelHeader, Section } from './settingsUI'
  *  Every row is a JUDGMENT SOURCE (a bound prompt, a loop judge kind, a workflow's
  *  surfacing, a routing pair, an app producer) with its rolling ups/downs. Below
  *  min-N the row shows "collecting" and no number (nothing is shown before the
- *  sample means anything). A suppressed source stopped surfacing; Snooze pauses
+ *  sample means anything). A `suppressed` source stopped surfacing — which only happens for
+ *  kinds with a surfacing gate (today `skill_synthesis` alone, see
+ *  `feedback.ENFORCED_SUPPRESSION_KINDS`); every other kind below the threshold reads
+ *  "retire proposed", because it keeps surfacing and only earns a proposal. Snooze pauses
  *  the check 30 days; Clear un-suppresses after you've edited the source.
  *  Rich "is it learning?" analytics belong to LEARNING-VISIBILITY — this is the
  *  raw table. */
@@ -110,6 +113,15 @@ function ProducerRow({ row, busy, act }: {
         <span className="shrink-0 rounded-pill px-2 py-0.5 text-[0.75rem]"
           style={{ background: 'color-mix(in srgb, var(--color-danger) 14%, transparent)', color: 'var(--color-danger)' }}
           title="Stopped surfacing — accuracy fell below the retire threshold.">suppressed</span>
+      )}
+      {/* Below the threshold, but this producer kind has no surfacing gate, so nothing withholds it
+          — it keeps being injected and only earns a retire proposal. This row used to render the
+          "suppressed" pill above, titled "Stopped surfacing", for exactly these producers: five of
+          the six kinds. Saying "retire proposed" is both true and the actionable half. */}
+      {row.proposal_only && (
+        <span className="shrink-0 rounded-pill px-2 py-0.5 text-[0.75rem]"
+          style={{ background: 'color-mix(in srgb, var(--color-warning) 14%, transparent)', color: 'var(--color-warning)' }}
+          title="Below the retire threshold. This kind of source has no surfacing gate, so it still runs — you get a retire proposal to act on.">retire proposed</span>
       )}
       {!row.collecting && (
         <div className="flex shrink-0 items-center gap-1">

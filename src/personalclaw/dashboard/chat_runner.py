@@ -1356,23 +1356,27 @@ def _report_ungated_tool_call(
     left to block. What is still available, and what the finding actually asked for,
     is a positive mechanism:
 
-    * a **declared** entry in the per-provider not-gateable registry means this hole
-      is written down with the observation that proved it — surfaced, not silent, but
-      not treated as a new incident;
-    * an **undeclared** ungated call is the dangerous case. It is surfaced in the
+    * an **accepted** entry in the per-provider not-gateable registry means this hole
+      is written down AND blessed — surfaced, not silent, but not treated as a new
+      incident;
+    * everything else is the dangerous case, and that includes a residual which is
+      measured but *not* accepted (``entry.accepted`` False). It is surfaced in the
       transcript (not just the activity feed), audited as ``ungated``, and — when it
       is a mutation under a read-only posture — aborts the turn, so the model cannot
       chain further ungated mutations behind a gate that was never consulted.
+      Writing a hole down is never a way to silence it.
 
     Returns the abort reason, or ``""`` to continue the turn.
     """
     entry = acp_permission_authority.not_gateable_entry(acp_cli, title)
+    # Declared is not excused: only an ACCEPTED residual may quiet the signal.
+    excused = entry is not None and entry.accepted
     risk = resolve_effective_risk("", title, tool_kind, tool_input)
     task_mode = getattr(session, "_task_mode", "agent")
     _title, _ = redact_exfiltration_urls(title or "?")
     _title, _ = redact_credentials(_title)
     abort = ""
-    if entry is None and risk != "safe" and task_mode in ("ask", "plan"):
+    if not excused and risk != "safe" and task_mode in ("ask", "plan"):
         abort = (
             f"{_title} ran without a host approval request under {task_mode} mode "
             f"({acp_cli} never asked) — turn stopped"
@@ -1383,7 +1387,7 @@ def _report_ungated_tool_call(
         if m.get("role") == "tool" and m.get("meta", {}).get("tool_call_id") == request_id:
             _meta = m.setdefault("meta", {})
             _meta["ungated"] = True
-            _meta["ungated_declared"] = entry is not None
+            _meta["ungated_declared"] = excused
             break
     state.broadcast_ws(
         "activity_event",
@@ -1392,12 +1396,12 @@ def _report_ungated_tool_call(
             "kind": "permission",
             "text": (
                 f"Not gated by host: {_title} — documented {acp_cli} limitation"
-                if entry is not None
+                if excused
                 else f"Ran without host approval: {_title} ({acp_cli} never asked)"
             ),
         },
     )
-    if entry is None:
+    if not excused:
         session.append(
             "tool",
             f"{_title} (ungated: {acp_cli} executed it without asking the host)",
@@ -1410,7 +1414,7 @@ def _report_ungated_tool_call(
             source="dashboard",
             tool_name=title,
             tool_kind=tool_kind,
-            outcome="ungated_declared" if entry is not None else "ungated",
+            outcome="ungated_declared" if excused else "ungated",
             request_id=request_id,
             metadata={
                 "risk": risk,
@@ -1418,7 +1422,7 @@ def _report_ungated_tool_call(
                 "task_mode": task_mode,
                 "reason": (
                     entry.reason
-                    if entry is not None
+                    if excused and entry is not None
                     else "no session/request_permission for this tool_call"
                 ),
                 **({"aborted_turn": True} if abort else {}),

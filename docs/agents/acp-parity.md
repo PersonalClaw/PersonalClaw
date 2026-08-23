@@ -423,15 +423,42 @@ does not ask about runs before the host ever sees a decision point, so the deny-
 task-mode gate and blocking PreToolUse hooks — all of which hang off the permission request —
 never run for it. The host cannot enumerate that set by inspection; it can only measure it.
 
-The measured residual is a registry in core (`acp/permission_authority.py`, `NOT_GATEABLE`) so
-the gate and this document cannot drift apart. **Every provider is listed even when its residual
-set measured empty, so "no entry" can never be read as "gated".** Rendered:
+The measured residual is a registry in core (`acp/permission_authority.py`, `NOT_GATEABLE`) and
+the block below is RENDERED from it by `scripts/render_acp_parity_residual.py`, so the gate and
+this document cannot drift apart. **Every provider is listed even when its residual set measured
+empty, so "no entry" can never be read as "gated".** Do not hand-edit inside the markers;
+`tests/test_acp_parity_residual_render.py` fails the build when they disagree.
 
-| Provider | Residual set | Measurement behind it |
-|---|---|---|
-| kiro-cli | `todo_list` — kiro's native task-list tool emits a tool-call frame and a SEL `invoked` row but never a permission request, so no host gate can run for it. `fs_read` — kiro self-approves its OWN file reads: the read raises no permission request even though the write in the same turn does, so a read of a path the host would have questioned is never offered for a decision. Effective risk resolves to safe, so this residue is labelled, never turn-aborting | `AAP-3` sweep (`K13`, `K15`) plus a live re-drive on 2026-08-18: one turn, 6 tool calls, **1 gated, 5 ungated** (4× `todo_list` + 1 file read) |
-| claude-code | **measured empty** | `AAP-1` sweep — 44 audited tool events, every one surfaced a permission request |
-| codex | **measured empty** | `AAP-2` sweep — no tool observed executing without passing the host gate |
+<!-- BEGIN GENERATED: not-gateable-registry (scripts/render_acp_parity_residual.py) -->
+<!-- Regenerate with: python scripts/render_acp_parity_residual.py -->
+
+- **`claude-code`** — 2 declared residual entries.
+  - Measurement: AAP-5 Phase-1 SEL re-read (O96): 7 persisted rows with outcome='ungated', provider='claude-code', across 4 sessions and 2 tool titles. RETRACTS the earlier AAP-1 zero-residual claim, which runtime disproved: chat_runner records 'ungated_declared' whenever not_gateable_entry() matched, so a plain 'ungated' row is proof the registry held nothing for that title.
+  - `Terminal`
+    - Reason: claude-code runs its shell tool without emitting a session/request_permission for it. The host's deny-list, task-mode gate and blocking PreToolUse hooks all hang off that frame, so none of them ran. NOT accepted: a shell command that reaches the OS with no host decision point is not a limitation we are willing to go quiet about.
+    - Observation: O97: the execute-kind share of O96's 7 'ungated' rows carries title='Terminal' and reason='no session/request_permission for this tool_call'.
+    - State: measured, NOT accepted — the host cannot gate it and nobody blessed it, so it stays loud
+  - `Read File`
+    - Reason: claude-code self-approves its own file reads — the same missing frame — so a read of a path the host would have questioned is never offered for a decision. NOT accepted: effective risk resolves to SAFE so it never aborts a turn, but nobody ever blessed it, and an unblessed hole stays loud.
+    - Observation: O98: 'Read File' is the second of the two titles in O96's 7-row 'ungated' set for provider='claude-code'.
+    - State: measured, NOT accepted — the host cannot gate it and nobody blessed it, so it stays loud
+- **`codex`** — 1 declared residual entry.
+  - Measurement: AAP-5 Phase-1 live drive (O99-O102): 4 plain 'ungated' rows on provider='codex' — a read, an in-workspace write, an out-of-workspace write and a network call. RETRACTS the earlier AAP-2 zero-residual claim.
+  - `codex-native`
+    - Reason: codex is its own first-line permission authority: under HOST_AUTHORITY_MODE='default' it escalates almost nothing, so its whole native tool surface — reads, writes, shell, network — can execute before the host has a decision point. NOT accepted: an out-of-workspace write that completed with no card is the exact shape §2.2 exists to make loud.
+    - Observation: O99-O101: four plain 'ungated' rows in one AAP-5 Phase-1 drive — a read, an in-workspace write, an out-of-workspace write ('printf … > /private/tmp/aap2b-outside-probe.txt', which EXECUTED) and a network call ('curl https://example.com'). Vacuity floor for the same drive (O102): codex DOES escalate on retry, and 'git push' was escalated and correctly deny-listed — so 'escalates almost nothing' measures codex, not a dead harness.
+    - State: measured, NOT accepted — the host cannot gate it and nobody blessed it, so it stays loud
+- **`kiro-cli`** — 2 declared residual entries.
+  - Measurement: AAP-3 sweep (K13, K15) + AAP-5 live re-drive 2026-08-18: one turn, 6 tool calls, 1 gated, 5 ungated (4x todo_list + 1 file read)
+  - `todo_list`
+    - Reason: kiro's native task-list tool emits a tool_call frame and a SEL 'invoked' row but never a session/request_permission, so no host gate — deny-list, task-mode, PreToolUse — can run for it.
+    - Observation: G27: seven of thirteen tool calls in one turn ('Creating task list: …', 'Completing #1/#2/#3') executed with no permission request, each labelled risk='destructive' by the host, in the same turns where the read, the write and the rm each raised a card.
+    - State: measured, accepted — a documented limitation; the host labels it and stays quiet
+  - `fs_read`
+    - Reason: kiro self-approves its OWN file reads: the read raises no session/request_permission even though the write in the same turn does, so a read of a path the host would have questioned is never offered for a decision.
+    - Observation: AAP-5 live re-drive 2026-08-18 against real kiro-cli: in one turn 'Creating todo_probe.txt' raised a card while 'Reading todo_probe.txt:1-10' (kind='read') did not — 6 tool calls, 1 gated, 5 ungated. Effective risk resolves to SAFE, so this residue is labelled, never turn-aborting.
+    - State: measured, accepted — a documented limitation; the host labels it and stays quiet
+<!-- END GENERATED: not-gateable-registry -->
 
 Two honest qualifications on those empty sets:
 
