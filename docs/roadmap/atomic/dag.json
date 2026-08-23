@@ -1081,7 +1081,7 @@
     {
       "plan": "DESIGN-SYSTEM-CONSISTENCY",
       "code": "DSC",
-      "status": "in_progress",
+      "status": "done",
       "summary": "DSC is owner-closed DONE (2026-07-24): a design-system consistency audit + hardening across S1/S2/S3, executed in ~90 cycles on branch feature-design-system-consistency (not pushed; no PR numbers in the log). 10 done atoms + 2 todo tail atoms (authenticated axe-per-route CI gate + V3 walkthrough; ErrorState primitive + CodeCockpitPage-class raw-button redesign) that the owner deferred as follow-on plans.",
       "atoms": [
         {
@@ -1195,7 +1195,8 @@
             "DSC-2",
             "DSC-3",
             "EXT:CI-RELEASE-ENGINEERING:seeded authenticated per-route axe CI harness in ci.yml web/rails"
-          ]
+          ],
+          "pr": 1899
         },
         {
           "id": "DSC-12",
@@ -3220,7 +3221,8 @@
           "done_when": "routing/usage.py folds usage_stats.json (per-day keyed date->provider:model->purpose with interactive|background|loop|eval|app mapping) matching a hand-computed fixture over 50 audit lines and reproducible after delete via the shared \u00a71.3 rebuild; GET /api/usage?window=&group= returns rows+total+estimated_share; Usage section on Settings->Models renders daily/weekly charts and a run/loop detail shows '~$X this run' via run_totals; usage_recap(month) template renders verbatim-predictable and delivers one digest-mode notification honoring quiet hours/mute via the rules engine + system cron",
           "deps": [
             "MRT-1"
-          ]
+          ],
+          "pr": 1899
         },
         {
           "id": "MRT-4",
