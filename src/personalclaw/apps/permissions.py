@@ -132,6 +132,20 @@ class PermissionChecker:
         nothing)."""
         return self.permissions.storageShared
 
+    def can_run_background_tasks(self) -> bool:
+        """Whether this app may have a long-lived supervised worker (APE-3's host).
+
+        ``manifest.py``'s comment on the flag called it "NOT ENFORCED TODAY, and honestly
+        so: nothing in core hosts an app worker yet". That is no longer true — this is the
+        accessor the host consults, so the declaration APE-1 disclosed at install consent
+        now denies as well as declares.
+
+        Boolean, deny-by-default, and read off the INSTALLED manifest by every caller that
+        goes through :func:`checker_for`: the supervisor re-asks at every spawn, so revoking
+        the grant in an app update stops the next revival rather than only the first launch.
+        """
+        return self.permissions.backgroundTasks
+
     def can_read_shared_storage(self, target_app: str) -> bool:
         """Whether THIS app (the CONSUMER) may read ``target_app``'s data dir read-only.
 
