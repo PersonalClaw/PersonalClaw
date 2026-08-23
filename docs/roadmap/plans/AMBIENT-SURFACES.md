@@ -694,3 +694,52 @@ picture; `web/src/pages/dashboard/world/` renders it ("Orbit", a new dashboard b
   probe made: with 1-2 entities per state ring the nodes cluster in one quadrant rather than
   distributing around their orbits, and overlapping same-ring nodes bloom into each other. Node
   distribution within a sparse ring is the obvious next taste call.
+
+## Execution log — AS-8 (Mission Control preset: four attention lanes with inline resolution)
+
+- [2026-08-23][AS-8] **DONE.** All three `done_when` clauses land in one commit: the locked
+  `mission-control` preset joins `dashboard/views_store.py` beside Overview (four `core:lane-*`
+  tile refs, `nav_pinned`, icon `Radar`, `preset=True`); `web/src/lib/attentionLanes.ts` owns
+  `laneFor`/`toLanes` as pure functions over the unified attention store; and
+  `web/src/pages/dashboard/MissionControl.tsx` renders the four lanes with inline resolution —
+  `api.resolveApproval(id, 'approve'|'reject')` for the approval verb and
+  `api.resumeWorkflowRun(runId, { answer, resume_token })` for a question's options, both existing
+  endpoints, no new routes. Gate: `make lint` 0 (mypy 960 files), 27 targeted pytest, `npm run
+  typecheck` 0, **469 web test files / 4942 tests**, `npm run build` 0.
+- [2026-08-23][AS-8] 🔴 **DISCOVERY — the two halves named DIFFERENT tiles, and nothing could see
+  it.** The registry declared `core:lane-{needs-approval,your-turn,working,idle}`; the view's
+  `LANE_REFS` declared `core:attention-*`. Both halves were built on separate worktrees against a
+  contract written in prose, and **both were fully green**: a tile ref is a plain string on either
+  side, so neither `make lint`, nor mypy, nor either suite had anything to compare. The frontend
+  would have looked correct and matched no registered tile. Reconciled onto the server's
+  vocabulary (the registry is what persists) and closed with a **cross-language rail** in
+  `tests/test_dashboard_mission_control_preset.py`, which parses `LANE_REFS` out of the `.tsx` and
+  asserts set equality with `_MISSION_CONTROL_CORE_REFS`, with a vacuity floor asserting it parsed
+  four refs. Falsified: restoring `core:attention-needs-approval` reds exactly that one test.
+- [2026-08-23][AS-8] 🔴 **DISCOVERY — a page component nothing routes to.** `missionControl.test.tsx`
+  was at full green while `App.tsx` had never heard of the file, so the atom's "renders" clause was
+  unproven by construction. Mounted it: lazy import, a `case 'mission-control'` in `renderPage`, and
+  the id added to `ROUTABLE` — without which the hash route is rejected before it renders, and
+  without the case it falls through to the *"— coming soon"* placeholder, which reads as a
+  deliberately unbuilt page rather than a broken route. Five source-parse rails now assert the mount;
+  deleting the dispatch case reds exactly one of them.
+- **DEVIATION — reached via the command palette, not the nav rail.** `mission-control` is
+  deliberately **not** in `NAV`: it is a server-registered dashboard *view*, and adding a static rail
+  row would mint a second source of nav truth for a destination the registry already declares. So
+  ⌘K carries it (`go:mission-control`, icon `Radar`), which is that palette's stated job — its own
+  comment calls it "the always-open door to a surface the starter rail is holding back".
+- **GAP (AS-1's, surfaced here, not closed) — `nav_pinned` and `icon` have no frontend consumer.**
+  `DashboardView.nav_pinned` is `True` on both presets and nothing reads it; same for `icon`. Until a
+  rail is built from `GET /api/dashboard/views`, those two fields are declared-and-inert. Recorded
+  rather than absorbed: building that rail is AS-1 surface work, not this atom's `done_when`.
+- **GAP — no axe scan and no visual baseline for this route.** `web/e2e/routes.ts` is iterated by
+  both the visual and a11y specs, but `design/routeManifestParity.test.ts` asserts the manifest
+  lists **nothing outside `NAV`** — so adding a ROUTABLE-only route reds an existing ratchet. That
+  file's own comment marks the six ROUTABLE-only routes as a deliberate distinction needing "its own
+  owner call, because it is a product decision about baseline scope". Left out on that reasoning; the
+  route ships with jsdom coverage (24 tests) and no browser-level scan.
+- **NOTE — `docs/roadmap/atomic/AS.md`'s header said "9 atoms, all todo" beside five ✅ rows.**
+  Corrected to the counts `dag.json` derives, in the same file this atom flips.
+- **STILL UNVERIFIED — not driven in a browser.** The lanes, the approve verb and the answer verb are
+  asserted in jsdom against mocked `api` helpers. Both write paths post to endpoints that already
+  existed and are exercised elsewhere, but no live gateway drive was done for this atom.
