@@ -14,6 +14,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
 from personalclaw.atomic_write import atomic_write
+from personalclaw.safety_flags import strict_bool
 from personalclaw.security import is_denied, is_sensitive_bash_command, is_sensitive_path
 
 logger = logging.getLogger(__name__)
@@ -339,8 +340,14 @@ class HooksConfig:
         return cls(
             auto_approve_tools=data.get("auto_approve_tools", []),
             auto_approve_sources=data.get("auto_approve_sources", []),
-            auto_approve_subagent_spawn=bool(data.get("auto_approve_subagent_spawn", False)),
-            auto_approve_subagent_tools=bool(data.get("auto_approve_subagent_tools", False)),
+            auto_approve_subagent_spawn=strict_bool(
+                data.get("auto_approve_subagent_spawn"),
+                field="hooks.auto_approve_subagent_spawn",
+            ),
+            auto_approve_subagent_tools=strict_bool(
+                data.get("auto_approve_subagent_tools"),
+                field="hooks.auto_approve_subagent_tools",
+            ),
             auto_deny_tools=data.get("auto_deny_tools", []),
             auto_replies=auto_replies,
             transforms=transforms,
