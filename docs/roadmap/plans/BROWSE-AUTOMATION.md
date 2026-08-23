@@ -444,3 +444,72 @@ class ElementRef:
 - **Extension maintenance is a real cost** across browser versions and manifest revisions; keeping it in an app bundle (removable, versioned separately) is deliberate for exactly this reason.
 - **Prompt injection reaches a privileged surface.** A page the agent reads can attempt to steer it while it holds an authenticated session. Existing controls apply (`fence_untrusted` on all page content, the §1 compression layer meaning raw DOM never enters context) and must not be weakened for this target. Worth noting: the research itself encountered two live injection attempts on vendor/affiliate pages, so this is an observed threat, not a theoretical one.
 - **Open:** whether read-only `user_browser` use (extract from a page I'm logged into) should be a lighter grant than action-bearing use. Deferred — one grant model ships first; splitting it is a natural follow-up if the single grant proves heavy in practice.
+
+- **2026-08-23 — `BA-2` COMPLETE (all four clauses, proven against a real browser). Atom stays `todo`
+  only because this code is unmerged**; flip it when the PR lands.
+  **Clause 1+2 — every CDP navigation pre-flighted, and the deny lands BEFORE the wire.** The ordering is
+  the whole gate, so it is asserted on the transport's message list rather than on a return value:
+  a denied host produces **zero** `Page.navigate` messages, and an allowed host produces exactly one (the
+  vacuity partner, without which "zero" is trivially satisfiable). Falsified by moving the guard after the
+  send — reds **9 of 22**, including the allowed-host count failing `assert 2 == 1`.
+  **Clause 3 — the injected script blocks in-page network, media and device APIs**, and this was proven by
+  EXECUTION, not by grepping the script text. `chrome-headless-shell` driven over raw CDP, injected at
+  `Page.addScriptToEvaluateOnNewDocument` (the production point), with a **local `http.server` as the
+  network oracle and an uninjected BASELINE run as the positive control**: baseline
+  `{fetch:1, xhr:1, beacon:1, ws:1, es:1, worker:1, iframe-src:1, iframe-blank:1, iframe-srcdoc:1}` vs
+  guarded `{}`. Errors are asserted by identity (`err.name === "PersonalClawBlockedError"`), because
+  headless autoplay policy and DNS failure also reject — "it threw" would have proved nothing.
+  **Clause 4 — client-side redirects re-evaluated per `Page.frameNavigated`**, and the enforcement is a
+  teardown rather than a log line: `Page.stopLoading` **then** `Page.navigate → about:blank`, in that
+  order, because `stopLoading` alone leaves the denied document and its script context alive for the agent
+  to extract. Applied to the whole page even for a subframe deny, fenced against re-entrancy with a
+  **closed** exempt set so `file:`/`data:` frames still go through the guard; if neither message can be
+  delivered the session **quarantines**.
+  **LIVE END-TO-END, against a real browser rather than the fake transport:**
+
+      start() wire: ['Page.enable', 'Page.addScriptToEvaluateOnNewDocument']
+      DENIED  http://127.0.0.1:9/blocked  -> allowed=False, Page.navigate messages: 0
+      ALLOWED https://example.com/        -> allowed=True,  Page.navigate messages: 1
+      in-page marker: applied = [fetch, XMLHttpRequest, WebSocket, EventSource, sendBeacon,
+                                 workers, peerConnection, media, deviceApis]
+      in-page fetch() -> BLOCKED:PersonalClawBlockedError
+
+  **`pin_resolved_ip=False`, deliberately, and the reasoning is the point.** Pinning promises "the caller
+  dials these exact validated IPs", which is keepable only where we own the socket. Chrome owns its
+  resolver and its sockets and CDP has no connect-to-this-IP parameter, so declaring `True` would
+  advertise a mitigation this path does not implement. `evaluate` still returns `pinned_ips`; for BROWSE
+  those are **SEL evidence**, not enforcement, and closing the rebind window for real needs
+  `--host-resolver-rules` or a mandatory proxy — not claimed here. `LOOPBACK_INTERNAL` sets it `False` for
+  an analogous reason, so this is not a novel stance.
+  **The pre-flight is also the SCHEME gate, which a fetch profile never has to be.** A browser understands
+  schemes where `Page.navigate` is not egress at all: verified live, `file:///etc/passwd`,
+  `devtools://…`, `data:text/html,…` and `view-source:https://…` are all refused by
+  `allow_schemes=("http","https")` — local-file read and debugger self-attach, refused as a side effect of
+  the profile rather than by a special case. Do not widen that tuple for a local-file convenience.
+  **§6.3 headless bypass gap — enumerated in the module, not left implicit.** The pre-flight covers the
+  top-level URL and its redirect hops. Chrome still egresses unevaluated for: subresources
+  (`img`/`script`/`link`/`iframe src`, CSS `url()`, `@font-face`, form submission), cross-origin iframes,
+  `window.open`, service/shared workers outliving the navigation, and WebRTC/ICE + DNS prefetch. The
+  in-page script narrows the **JavaScript** half of that (`fetch`, `XHR.open`+`.send` via a WeakSet stamp,
+  `WebSocket`, `EventSource`, `sendBeacon`, `Worker`/`SharedWorker`, `RTCPeerConnection`,
+  `serviceWorker.register`, and 8 device keys — widened past the clause's single `bluetooth`, because
+  closing bluetooth while leaving `navigator.usb` open is a control with a hole in it). **What remains open
+  after both halves is the network-stack surface**, which no in-page script can reach: it needs
+  `Network.setBlockedURLs`/`Fetch.enable` or an injected CSP. Guards are `writable:false,
+  configurable:false` (measured: assignment silently fails, `delete` returns `false`,
+  `defineProperty` throws) — which does not beat a page holding a pre-injection reference, and that is
+  precisely why the injection point is `addScriptToEvaluateOnNewDocument` and not `Runtime.evaluate`.
+  **An integration defect only the MERGE could see.** `test_a_missing_safety_script_module_fails_closed`
+  simulated the sibling's absence with `monkeypatch.delitem(sys.modules, …)`. That worked only while
+  `safety_script.py` genuinely did not exist on the CDP branch; once it landed, evicting the cache just
+  re-imported it from disk and the test asserted nothing. Corrected to insert `None` into `sys.modules`
+  (which makes `import` raise), and proven non-vacuous: swallowing the injection failure reds 2 of 22.
+  **NEXT SLICE, recorded rather than rushed:** the session sends the guard script but never confirms it
+  installed. `safety_script` exports `SAFETY_MARKER` for exactly that, and the live run above shows the
+  read works (`window.__personalclawSafety.applied` lists 9 steps) — so verifying it after navigation, and
+  quarantining on an absent marker or non-empty `failed`, is a small addition. Left out deliberately: it
+  changes the message sequence nine tests assert on the wire, and rushing that into a security path at the
+  end of a tick is how a gate acquires a hole.
+  **DISCOVERY (pre-existing BA-1, outside this atom): `browse/__init__.py`'s docstring claim "No network,
+  no gateway, no config" is false.** `extraction.py:39` imports `personalclaw.knowledge.connectors.base`,
+  which drags in `httpx`/`urllib3`/`http.client`. The package is import-clean in intent only.
