@@ -42,7 +42,6 @@ def _line(pct: float | None) -> str:
         context_pct=pct,
         input_tokens=0,
         output_tokens=0,
-        cache_tokens=0,
         cost_usd=0.0,
         priced=False,
     )
