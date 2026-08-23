@@ -7485,15 +7485,23 @@
   "dag": {
     "ready_frontier": [
       {
-        "id": "AAP-2",
-        "title": "Phase 1 validation \u2014 codex end-to-end sweep",
-        "id": "AAP-1",
-        "title": "Phase 1 validation \u2014 claude-code end-to-end sweep",
+        "id": "AAP-4",
+        "title": "\u00a72.1 MCP reachability \u2014 personalclaw-core reachable on all three providers (gap 1)",
         "plan": "AAP"
       },
       {
-        "id": "AAP-3",
-        "title": "Phase 1 validation \u2014 kiro-cli end-to-end sweep",
+        "id": "AAP-5",
+        "title": "\u00a72.2 Approval-gate coverage \u2014 host is permission authority (gap 2, the safety hole)",
+        "plan": "AAP"
+      },
+      {
+        "id": "AAP-6",
+        "title": "\u00a72.3 Unattended threading + runtime-agnostic loop breaker for ACP (gaps 3 & 5)",
+        "plan": "AAP"
+      },
+      {
+        "id": "AAP-7",
+        "title": "\u00a72.4 Resume \u2014 live session/load via bundle session_files_dir (gap 6)",
         "plan": "AAP"
       },
       {
@@ -9954,9 +9962,9 @@
         "code": "AAP",
         "plan": "ACP-AGENT-PARITY",
         "total_atoms": 10,
-        "done": 2,
+        "done": 4,
         "in_progress": 0,
-        "todo": 8,
+        "todo": 6,
         "blocked": 0
       },
       {
