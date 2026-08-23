@@ -169,7 +169,7 @@ the platforms to validate on) — Session 1–2 ship macOS + honest refusals, pe
   governance ceiling already owns, so the keystone and the ceiling share ONE trust root and ONE
   sensitive-path denylist entry (`security.py` needed no change) — and is overridable to an absolute
   path by `PERSONALCLAW_COMPUTER_USE_ENABLE_FILE` so an operator can put it on a root-owned `0444`
-  file outside the agent's home. Required content: exactly `{"version": 1, "enabled": true}`.
+  file outside the agent's home. Required content: exactly `{"version": 1, "enabled": true, "apps": ["TextEdit"]}`.
   DISCOVERY: a touch-a-marker file is unsafe here, and it is measurable — as a marker, an empty file
   and a half-flushed write both ARM the machine; as a document with a required positive shape both
   fail closed. Those two cases are now named rows in the fail-closed corpus rather than a claim.
@@ -252,3 +252,86 @@ the platforms to validate on) — Session 1–2 ship macOS + honest refusals, pe
   the ceiling, not with this atom, and the correct fix is an *ignore* entry (operator-owned
   out-of-band state must not be snapshot-restored — restoring it could re-arm a machine), which
   belongs to whoever owns that inventory row.
+
+- **2026-08-23 — `DCU-2` COMPLETE (all three clauses). Atom stays `todo` only because this code is
+  unmerged**; flip it when the PR lands.
+  Three clauses, all offline-testable, against `DCU-1`'s shipped keystone: a non-allowlisted app refuses,
+  a secure/password destination refuses, and **every** attempt — allowed or refused — leaves a SEL row.
+  The OS driver is `DCU-3` and is not touched here.
+  **The allowlist lives in the out-of-band enable document, NOT `config.json` — a decision, not a
+  convenience.** `DCU-1` built the keystone so *"no tool or config path can flip the state"*. The app
+  allowlist is what stands between "computer use is on" and "the agent may drive your password manager", so
+  PATCH-editable config would hand an agent with config-write access a route to widen its own reach. Same
+  threat, same storage.
+  **The `ENABLE_DOCUMENT` tension, resolved rather than deferred.** That constant is quoted verbatim in the
+  refusal's FIX line precisely so *"the message a model reads and the bytes this module accepts can never
+  drift apart"*. Once `apps` is required, the old two-key document arms a capability that drives nothing —
+  an operator would follow the FIX exactly, hit a second refusal, and that one names no further fix, which
+  teaches them the message cannot be trusted. So the quoted bytes became
+  `{"version": 1, "enabled": true, "apps": ["TextEdit"]}`, one deliberately benign target, and a test runs
+  the constant through the real parser and asserts the result can actually drive something. Verified at
+  integration rather than taken on report.
+  **Absent and explicit `[]` are identical BY CONSTRUCTION** (`data.get("apps", [])`), not by two branches
+  — neither can mean "all" without inverting the narrower of the operator's two grants into the widest one.
+  `[]` is deliberately not a parse refusal: "armed, targets not chosen yet" is coherent, and reporting it as
+  malformed would collapse it with "your JSON has a typo", the distinction `EnableState.detail` exists to
+  keep.
+  **Name matching is exact byte equality, and every normalisation was rejected with a reason:** case-folding
+  reaches a differently-cased app the operator never named (and these names are case-sensitive on the
+  platforms this drives), sub/superstring reaches `TextEditPro`, display-name↔bundle-id reaches
+  `com.apple.TextEdit`, stripping makes a padded entry start matching. So `parse_enable_document` REFUSES a
+  non-list, a non-string entry, an empty or padded entry, and an exact duplicate — naming the offender —
+  rather than normalising into something broader. Probed live: padded, duplicate and unknown-key documents
+  all read as OFF with an empty allowlist.
+  **`policy` decides; `gate` only records.** That split is the plan's, and it is enforced by naming: neither
+  module uses the `computer_*` prefix, because that prefix is what the keystone ratchet binds to
+  `require_enabled()`, and a second keystone reader inside the chain is exactly the drift
+  `require_enabled`'s own docstring was written about (an earlier version read `state.enabled` directly and
+  *"forcing `is_enabled` to return True left every refusal test GREEN"*).
+  **Unknown means no, per shape.** `check_input_target` screens role/subrole/label/value across both the
+  bare and `AX*` spellings, and **every present spelling must pass, not the first found** — a target
+  claiming `{"role": "AXTextField", "AXRole": "AXButton"}` refuses, because screening whichever came first
+  lets the caller choose which of its two claims gets enforced. A non-mapping, an empty mapping, a missing
+  or empty role, a role outside the editable set, a subrole outside the allowed set, or any screened key
+  holding a non-string all refuse. Falsified at integration: disabling the role guard reds 4, including the
+  contradictory-spellings case and the never-seen-role case.
+  **"Sensitive text" reuses the repo's one definition** — `security.redact_credentials`, refusing when it
+  warns — rather than minting a second sensitivity vocabulary. The separate label lexicon (`password`,
+  `passcode`, `cvv`, `otp`, …) identifies the FIELD, not the content, and exists because the commonest real
+  password field is a web-view `AXTextField` titled "Password" with no secure subrole at all. Word-bounded,
+  so `Pinned messages` and `Shipping address` do not refuse; the refusal never quotes the value it refused.
+  **DEVIATION — no implicit self-allowance.** The plan says "self-plus-operator allowlist"; PersonalClaw
+  itself is NOT granted. Driving PersonalClaw's own windows means clicking its own approval dialogs and
+  settings — the one target where computer use converts into raising the agent's own permissions. "Self" is
+  an ordinary operator-listed entry, and an empty allowlist refuses everything including PersonalClaw. Not
+  escalated as E4 because the ambiguity only resolves toward granting MORE, and the strict version ships
+  correctly.
+  **The audit records and cannot decide.** `require_computer_use` never raises: the whole body is wrapped,
+  and a dropped write logs a **WARNING** (a deliberate step up from `DCU-1`'s `logger.debug` on its
+  once-per-run boot row — this one is per-attempt, so a broken audit is a silent ONGOING hole) naming the
+  tool, outcome and app. A test asserts the level, the content, and that it fires exactly once, so "fails
+  open" stays distinguishable from "never ran". `outcome` passes through unvalidated: coercing an
+  unrecognised outcome would record a different verdict than happened, and rejecting it would be a decision.
+  **`metadata` carries no free text, enforced structurally — and the reason is a real finding about the
+  SEL.** `redact_event` protects nothing here: `log()` writes `json.dumps(asdict(event))` to disk
+  **unredacted** (verified at `sel.py:339`; redaction runs only on the forward callback at `:344` and the
+  read surface), and it recognises credential-shaped strings, not personal data. A window title like
+  "Bank of America — Checking" is neither, so it would pass through and live in the audit log forever. So
+  strings and containers are replaced **wholesale** with a `<str len=N>` shape — wholesale, not walked, so
+  there is no depth at which a string survives and no recursion to get wrong.
+  **Four things only the MERGE could resolve, all fixed here.** (1) The public-surface AST ratchet needed
+  one combined entry for both new modules — three branches editing one dict literal is the conflict the
+  fence exists to prevent, and both agents correctly deferred it. (2) `ERR_COMPUTER_USE_APP_NOT_ALLOWED`
+  and `ERR_COMPUTER_USE_SECURE_FIELD` were missing from the append-only `ERROR_CODES` registry the way
+  `DCU-1` registered its code; added, and verified by extracting the codes `policy.py` actually names and
+  checking every one is registered. (3) The package docstring still said *"the only module here today is
+  enable_state"*. (4) **Two owner-maintained docs stated required content the parser no longer accepts** —
+  `DESKTOP-COMPUTER-USE.md:172` and `DCU.md:36` both said the file must contain exactly
+  `{"version": 1, "enabled": true}`, which after this change arms a capability that can drive nothing.
+  **A premise in the briefing was wrong, and the agent was right to override it.** I required `DCU-1`'s
+  ratchet to pass untouched as the compatibility proof. It cannot: `DCU-1` deliberately chose `apps` as its
+  canonical **unenforced scope key**, with a parametrized case asserting
+  `{"version":1,"enabled":true,"apps":["Mail"]}` must refuse with *"does not enforce"*. `DCU-2` enforcing
+  `apps` makes that assertion factually false. The case was **re-keyed to `windows`, not deleted**, so the
+  case count and the property survive — and a falsification accepting unknown keys still reds it, proving
+  the edit left it detecting rather than vacuous.

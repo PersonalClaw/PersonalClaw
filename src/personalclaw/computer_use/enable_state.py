@@ -12,19 +12,32 @@ that could touch an OS input API.
 **The file, and why it is a document rather than a marker.** Default
 ``$PERSONALCLAW_HOME/governance/computer_use.enable.json``, overridable to an absolute path
 with ``PERSONALCLAW_COMPUTER_USE_ENABLE_FILE`` (the option that gives a real trust root: put
-it on a root-owned ``0444`` file outside the agent's home). It must contain exactly
-``{"version": 1, "enabled": true}``. A bare touch-a-marker file was rejected: an empty or
+it on a root-owned ``0444`` file outside the agent's home). It must contain the document
+:data:`ENABLE_DOCUMENT` quotes verbatim — a version, the literal ``true``, and the ``apps``
+allowlist naming what may be driven. A bare touch-a-marker file was rejected: an empty or
 half-flushed file is indistinguishable from a deliberate one, so a truncated write — or any
 stray process that creates the path — would read as ENABLED. A document with a required
 positive shape fails the other way, which is the only acceptable direction here.
 
 **Fail closed, in every direction.** Absent file, unreadable file, non-JSON bytes, wrong
-root type, unknown version, unknown key, ``enabled`` that is not the literal ``true`` → the
-capability is OFF and :func:`require_enabled` refuses with WHAT/WHY/FIX. Nothing in this
-module can raise its way into an enabled state, and a parse problem is never reported as
-"probably fine". Unknown keys are refused rather than ignored for a specific reason: an
-operator writing ``{"enabled": true, "apps": ["Mail"]}`` means *"on, for Mail"*, and a build
-that honoured the flag while dropping the scope would grant strictly more than was asked.
+root type, unknown version, unknown key, ``enabled`` that is not the literal ``true``, a
+malformed ``apps`` entry → the capability is OFF and :func:`require_enabled` refuses with
+WHAT/WHY/FIX. Nothing in this module can raise its way into an enabled state, and a parse
+problem is never reported as "probably fine". Unknown keys are refused rather than ignored
+for a specific reason: an operator writing ``{"enabled": true, "windows": ["Inbox"]}`` means
+*"on, for that window"*, and a build that honoured the flag while dropping the scope would
+grant strictly more than was asked. (``apps`` was that example until `DCU-2`; this build
+enforces it, so it is an accepted key now and a scope key this build cannot honour has to be
+spelled with something else.)
+
+**The target allowlist lives HERE, not in config.** ``apps`` is the operator's list of
+applications an armed process may drive, read only through :func:`allowed_apps`, and it is
+stored in this document for exactly the reason ``enabled`` is. The allowlist is what stands
+between "computer use is on" and "the agent may drive your password manager", so a
+PATCH-editable home for it would hand an agent with config-write access a route to widen its
+own reach — the same threat the keystone exists to close, one field over. An absent or empty
+list means NO app may be driven: armed-with-no-targets is a state the system runs in
+happily, and it is the only fail-closed reading available (see :func:`allowed_apps`).
 
 **Where this sits relative to the guardrails ceiling.** It is the same shape as
 :mod:`personalclaw.guardrails.ceiling` and deliberately reuses that module's operator-owned
@@ -83,11 +96,33 @@ ENABLE_FILENAME = "computer_use.enable.json"
 #: parsed: a future document may carry scoping keys this build cannot enforce.
 SCHEMA_VERSION = 1
 
-#: The exact document an operator writes. Quoted verbatim in the refusal's FIX line so the
-#: message a model reads and the bytes this module accepts can never drift apart.
-ENABLE_DOCUMENT = '{"version": 1, "enabled": true}'
+#: The document an operator writes. Quoted verbatim in the refusal's FIX line so the message
+#: a model reads and the bytes this module accepts can never drift apart.
+#:
+#: It carries a one-app ``apps`` allowlist rather than the bare version+flag pair it was
+#: before `DCU-2`, and that is not decoration. An empty allowlist drives NOTHING
+#: (:func:`allowed_apps`), so quoting the old two-key document would tell an operator to arm
+#: a capability that the very next check refuses — they would follow the FIX line exactly and
+#: hit a second refusal, one whose own FIX names nothing further to do. That is strictly
+#: worse than no FIX line, because it teaches the operator this message cannot be trusted.
+#: So the quoted bytes are a document that genuinely works: one deliberately benign, real
+#: target, which the operator replaces with their own. ``TextEdit`` is chosen because pasting
+#: it verbatim grants the least interesting thing on the machine.
+#:
+#: ``tests/test_computer_use_app_allowlist.py`` parses THIS constant through
+#: :func:`parse_enable_document` and asserts the resulting state can actually drive
+#: something. That test is what keeps the paragraph above true rather than aspirational —
+#: without it, "the message and the accepted bytes cannot drift" is a comment, not a
+#: property.
+ENABLE_DOCUMENT = '{"version": 1, "enabled": true, "apps": ["TextEdit"]}'
 
-_ALLOWED_KEYS = ("version", "enabled")
+#: The keys this build enforces. Unknown keys are REFUSED, so widening this tuple is a
+#: deliberate act and must arrive together with the parser branch that enforces the new key —
+#: an allowed-but-unparsed key would be a scope an operator writes and this module ignores,
+#: which is the exact widening the refusal exists to prevent. The vacuity floor in
+#: ``test_computer_use_app_allowlist.py`` pins the membership so a fourth key cannot be added
+#: quietly.
+_ALLOWED_KEYS = ("version", "enabled", "apps")
 
 #: The stable code every computer-use refusal carries, for callers that branch on the code
 #: rather than the prose.
@@ -96,19 +131,30 @@ ERR_DISABLED = "ERR_COMPUTER_USE_DISABLED"
 
 @dataclass(frozen=True)
 class EnableState:
-    """The keystone as resolved for this process. ``enabled`` is the only decision.
+    """The keystone as resolved for this process.
+
+    ``enabled`` is the only ON/OFF decision; ``apps`` narrows WHICH applications an armed
+    process may drive. Two separate operator acts, deliberately: arming the capability and
+    choosing its targets are different grants, and collapsing them would mean a human could
+    not say "on, but only for this one thing" — which is the thing most humans actually want
+    to say.
 
     ``detail`` is the human-readable reason the state is what it is ("no enable file at
     …", "malformed", "enabled is not true"). It exists so a refusal can say WHICH failure
     the operator hit — "off" and "off because your JSON has a typo" are very different
     problems to be handed, and collapsing them is how an operator concludes the feature is
     broken rather than mis-typed.
+
+    ``apps`` is the operator's target allowlist, resolved from the same out-of-band document
+    and read ONLY through :func:`allowed_apps`. Empty is the fail-closed default and means no
+    app may be driven; it never means "all".
     """
 
     enabled: bool = False
     source: str = ""
     digest: str = ""
     detail: str = ""
+    apps: tuple[str, ...] = ()
 
 
 class ComputerUseDisabled(Exception):
@@ -184,8 +230,83 @@ def parse_enable_document(raw: str, *, source: str) -> EnableState:
             digest=digest,
             detail=f'the enable file\'s "enabled" is {flag!r}, not the literal true',
         )
+    apps = data.get("apps", [])
+    # An absent "apps" and an explicit [] land here identically, by construction rather than
+    # by two branches: both are the empty allowlist. There is no third meaning to give
+    # either one — neither can mean "all apps" without inverting the narrower of the
+    # operator's two grants into the widest one — so the only way to make them differ would
+    # be to make one of them fail open. Note also that [] is NOT a parse refusal: "armed,
+    # targets not chosen yet" is a coherent thing for a human to have written, and reporting
+    # it as a malformed document is the same collapse of distinct failures that
+    # ``EnableState.detail`` exists to prevent.
+    #
+    # Entries are matched by EXACT string equality later, so this is the one place a
+    # malformed entry can be caught, and it is REFUSED rather than normalised. Every
+    # normalisation available here widens the allowlist past the bytes a human wrote:
+    # case-folding lets "textedit" reach a differently-cased app they never named (and app
+    # names are case-sensitive on the platforms this drives), stripping lets a padded entry
+    # reach a target, and substring or display-name<->bundle-id equivalence would let "Mail"
+    # reach "Mailbox" or "TextEdit" reach "com.apple.TextEdit". The operator writes the
+    # identifier their driver reports; this module refuses to guess which namespace they
+    # meant, because guessing in the permissive direction is the only mistake that matters.
+    # Same choice the ``enabled`` check above makes when it rejects the string "true".
+    if not isinstance(apps, list):
+        return EnableState(
+            source=source,
+            digest=digest,
+            detail=f'the enable file\'s "apps" is {apps!r}, not a list of app names',
+        )
+    names: list[str] = []
+    for entry in apps:
+        if not isinstance(entry, str):
+            return EnableState(
+                source=source,
+                digest=digest,
+                detail=f'the enable file\'s "apps" carries {entry!r}, which is not a string',
+            )
+        if not entry.strip():
+            return EnableState(
+                source=source,
+                digest=digest,
+                detail=(
+                    'the enable file\'s "apps" carries an empty name; an entry that can '
+                    "match nothing is a stray comma, not a target"
+                ),
+            )
+        if entry != entry.strip():
+            return EnableState(
+                source=source,
+                digest=digest,
+                detail=(
+                    f'the enable file\'s "apps" carries {entry!r}, which is padded with '
+                    "whitespace; names are matched exactly, so write it without the padding"
+                ),
+            )
+        if entry in names:
+            return EnableState(
+                source=source,
+                digest=digest,
+                detail=(
+                    f'the enable file\'s "apps" names {entry!r} twice; a duplicate means the '
+                    "list is not the one whoever wrote it thinks they wrote"
+                ),
+            )
+        names.append(entry)
+    # Sorted, so two documents naming the same targets in different orders resolve to the
+    # same tuple: an allowlist is a set, the typing order carries no meaning, and a stable
+    # order stops a caller (or a test) from passing on incidental document order.
+    allowed = tuple(sorted(names))
     return EnableState(
-        enabled=True, source=source, digest=digest, detail=f"enabled out-of-band by {source}"
+        enabled=True,
+        source=source,
+        digest=digest,
+        apps=allowed,
+        detail=(
+            f"enabled out-of-band by {source} for {len(allowed)} allowlisted app(s)"
+            if allowed
+            else f"enabled out-of-band by {source} with an EMPTY app allowlist, so no app "
+            "may be driven"
+        ),
     )
 
 
@@ -240,6 +361,25 @@ def is_enabled() -> bool:
     return active_enable_state().enabled
 
 
+def allowed_apps() -> tuple[str, ...]:
+    """The operator's allowlist for this process — the ONE reader of ``EnableState.apps``.
+
+    Empty means NO app may be driven. It never means "all": treating the unset list as
+    everything would turn the narrower of the operator's two grants into the widest possible
+    one, which is the fail-open this whole module exists to prevent. So an armed process with
+    an empty allowlist runs perfectly happily and drives nothing until a human names a
+    target — the capability being on and the capability having somewhere to point are
+    separate facts, and this is the one that is safe to get wrong in the strict direction.
+
+    Single reader on purpose, and not a stylistic one: :func:`require_enabled`'s docstring
+    records what happened while ``enabled`` briefly had two readers — forcing one of them to
+    return True left every refusal test GREEN. A second place that reaches into
+    ``state.apps`` is a second place that can default, normalise or widen it differently
+    from this one, and the divergence would only be visible on the day it mattered.
+    """
+    return active_enable_state().apps
+
+
 def disabled_error(tool: str, state: EnableState | None = None) -> AgentError:
     """The WHAT/WHY/FIX a computer-use refusal carries, naming the out-of-band enable step.
 
@@ -264,7 +404,9 @@ def disabled_error(tool: str, state: EnableState | None = None) -> AgentError:
             "point of the gate, not a bug in it."
         ),
         fix=(
-            f"A human must write {path} containing exactly {ENABLE_DOCUMENT}, then restart "
+            f'A human must write {path} containing {ENABLE_DOCUMENT}, with "apps" listing '
+            "the applications this agent may drive (names are matched exactly, and an empty "
+            "list allows none), then restart "
             "PersonalClaw so the keystone is re-read at boot. To keep the switch outside the "
             f"agent's home entirely, put the file anywhere and point {ENABLE_PATH_ENV} at it "
             "(e.g. a root-owned 0444 file) — that is the only version this process genuinely "
@@ -301,13 +443,18 @@ def ensure_computer_use_boot() -> EnableState:
     the fact even though the file itself lives outside anything this process controls.
     """
     state = active_enable_state()
+    # Through the accessor, never off ``state.apps``: see :func:`allowed_apps`.
+    allowed = allowed_apps()
     if state.enabled:
         # WARNING, not INFO: an armed keystone is the loudest posture this process can be
-        # in, and it should be legible in a log an operator skims rather than greps.
+        # in, and it should be legible in a log an operator skims rather than greps. The
+        # allowlist rides along because "armed" and "armed for what" are different facts to
+        # an operator reading this line, and the second one is the blast radius.
         logger.warning(
-            "computer_use: desktop drive is ENABLED by %s (digest %s)",
+            "computer_use: desktop drive is ENABLED by %s (digest %s) for %s",
             state.source,
             state.digest or "none",
+            ", ".join(allowed) if allowed else "NO apps (the allowlist is empty)",
         )
     else:
         logger.info("computer_use: desktop drive is off — %s", state.detail)
@@ -321,7 +468,7 @@ def ensure_computer_use_boot() -> EnableState:
             source="computer_use",
             resources=(
                 f"{state.source or enable_file_path()} digest={state.digest or 'none'} "
-                f"detail={state.detail}"
+                f"apps={','.join(allowed) or 'none'} detail={state.detail}"
             ),
         )
     except Exception:

@@ -108,7 +108,10 @@ def test_the_exact_document_arms_the_keystone(home):
         ("true", "not a JSON object"),
         ("[]", "not a JSON object"),
         ('"enabled"', "not a JSON object"),
-        ('{"version": 1, "enabled": true, "apps": ["Mail"]}', "does not enforce"),
+        # NOT "apps": `DCU-2` made that an ENFORCED key (it is the operator's target
+        # allowlist now), so this case needs a scope key this build genuinely cannot
+        # honour or it stops testing the refusal its id names.
+        ('{"version": 1, "enabled": true, "windows": ["Inbox"]}', "does not enforce"),
         ('{"version": 1, "enabled": true, "enabeld": true}', "does not enforce"),
         ('{"version": 2, "enabled": true}', "declares version 2"),
         ('{"enabled": true}', "declares version None"),
@@ -504,6 +507,7 @@ def test_the_packages_public_surface_is_pinned():
             "ComputerUseDisabled",
             "EnableState",
             "active_enable_state",
+            "allowed_apps",
             "disabled_error",
             "enable_file_path",
             "ensure_computer_use_boot",
@@ -513,6 +517,19 @@ def test_the_packages_public_surface_is_pinned():
             "require_enabled",
             "reset_enable_state",
         ],
+        # DCU-2's two modules. `policy` DECIDES (steps 2 and 4 of the dispatch chain) and
+        # `gate` only RECORDS (step 5) — neither is named `computer_*`, deliberately: that
+        # prefix is what the keystone ratchet above binds to `require_enabled()`, and a
+        # second keystone reader inside the chain is the drift `require_enabled`'s own
+        # docstring was written about.
+        "policy.py": [
+            "ComputerUsePolicyRefusal",
+            "app_not_allowed_error",
+            "check_app",
+            "check_input_target",
+            "input_target_error",
+        ],
+        "gate.py": ["require_computer_use"],
     }, (
         "the computer_use package grew a public function/class. If it is a dispatchable "
         "tool, name it computer_* so the keystone ratchet covers it and call "
