@@ -4818,7 +4818,7 @@
         {
           "id": "AAP-5",
           "title": "\u00a72.2 Approval-gate coverage \u2014 host is permission authority (gap 2, the safety hole)",
-          "status": "todo",
+          "status": "done",
           "scope": "Phase 2 \u00a72.2 Approval-gate coverage \u2014 gap 2 (most-restrictive mode forwarding + always-ask so tools hit chat_runner.py:1771 gate; extend CC config isolation to bundled default)",
           "done_when": "With task-mode=Ask a file write via any ACP provider yields a host approval card or block (never a silent write); deny-list rejects a denied command at the prompt and blocking PreToolUse fires pre-exec on every permission-surfaced ACP tool; residual not-gateable set enumerated per provider (SC #3).",
           "deps": [
@@ -9962,9 +9962,9 @@
         "code": "AAP",
         "plan": "ACP-AGENT-PARITY",
         "total_atoms": 10,
-        "done": 1,
+        "done": 2,
         "in_progress": 0,
-        "todo": 9,
+        "todo": 8,
         "blocked": 0
       },
       {

@@ -1452,6 +1452,164 @@ unblocked the four "needs a model provider" cells (`K29`).
 | `K59` | the artifact and subagent halves the calls exposed, read from the store rather than the reply | **two attribution losses.** (a) The artifact saved by the CLI on a session bound to project `p-14b92d4c` persisted with **`project_id: ""`** *and* `events[0].session_id: ""` — so the ABSENT verdict for `project_id → artifact stamping` is right, but for the opposite reason to the one recorded (`G48`). (b) The spawned subagent produced **no `[Subagent completion event]` injection** in ~4 minutes, and the gateway logged `_spawn_session_resolver: rid=spawn:6c6039b3 … session=` — an **empty** originating session, which is exactly the inject-back's precondition (`G49`) |
 | `K49` | two cross-checks worth keeping: the lesson extractor on an injected-context turn, and one turn's vendor error | **`G16` is worse than "bad extraction":** the lesson row written for `K30`'s turn is `User correction to honor: The user referenced the following item(s) from their knowledge library. Their content is included below …` — the extractor swallowed the *injected knowledge block* as if it were the user's correction, alongside a second row `Never: never violate these):` clipped from prompt boilerplate. Separately, one turn failed with kiro's `-32603` `MODEL_TEMPORARILY_UNAVAILABLE` ("unexpectedly high load"); that is recorded as **ENV** and no cell rests on it |
 
+## Phase 2 results — §2.2 Approval-gate coverage (atom `AAP-5`)
+
+Four fenced drives, 2026-08-23, plus my own verification of the acceptance clause. Observations
+`O96`-`O135`, findings `G120`-`G135`. **The safety hole was real, and its cause was not what §2.2
+assumed.**
+
+### The headline: host-authority mode forwarding was a NO-OP on codex, and the rejection was invisible
+
+`HOST_AUTHORITY_MODE = "default"` is **claude-code's** vocabulary. codex's `configId="mode"` options are
+`read-only` / `agent` / `agent-full-access`, with `currentModeId: agent` ("Read and edit files, and run
+commands"). So every codex session was told `default`, **rejected it with JSON-RPC `-32602 Invalid
+params`, and stayed in the self-approving mode §2.2 exists to leave** (`O107`/`O108`).
+
+**Why nobody saw it:** `AcpConnection.send_request` returns `(req_id, future)` *without* awaiting, and
+**every** `session/set_*` site discarded that future — so a hard `-32602` was invisible for AAP-5's
+entire life (`G125`). The drive proved receipt the only way available, since the host logs no ACP wire
+frames: it temporarily awaited the correlated future and read the adapter's own id-matched reply. **A
+reply is proof of receipt — a CLI cannot answer a frame it never got.** claude-code answered with a
+`result` echoing `configOptions` and `currentValue: 'default'` (`O109`).
+
+Per provider: **codex = the host sends it and the adapter rejects it**; **kiro-cli = no frame at all**
+(`DefaultDialect.set_mode_request` returns `None`, and kiro's `availableModes` are agent *personas*, so
+there is no axis to forward — `O110`); **claude-code = accepted, and it was already at `default`**, so
+the send is confirmatory rather than corrective, and its `ungated` rows are the honest boundary.
+
+**The fix** (`4801d723`): `ZedAdapterDialect.native_mode()` puts per-CLI vocabulary translation in the
+dialect, where vendor knowledge belongs — `CodexDialect` maps canonical→codex (`default`/`plan` →
+`read-only`, `acceptEdits`/`dontAsk` → `agent`, `bypassPermissions` → `agent-full-access`), keyed on
+`canonical_mode` so §2.3's verbatim aliases land too, and **unknown → `read-only`, fail-closed**. Plus
+`AcpClient._watch_dialect_reply()`, a done-callback (not an `await`, so the handshake pays no latency)
+that logs `ACP adapter REJECTED … the setting did NOT apply` on all four `session/set_*` sites.
+
+**Live A/B on one prompt, same session shape, only the forwarded value differing** (`O113`/`O114`):
+
+| forwarded | codex, in-workspace write |
+|---|---|
+| `default` (rejected → stays `agent`) | `ungated: True`, **executed**, file on disk |
+| `read-only` | `session/request_permission`, `risk: destructive`, `approval_id: 0`, **file absent** — parked on the host gate; approving it then wrote the file |
+
+### The registry told a false story, and the obvious fix would have been a safety regression
+
+Two of three providers declared `entries=()` / `"residual set measured EMPTY"` with
+`gated_universally` true, while Phase 1 had recorded plain `ungated` rows for both — 7 for claude-code
+across 4 sessions and 2 titles, and for codex a read, an in-workspace write, an **out-of-workspace write
+that executed**, and a network call. A test asserted the false claim **twice over** (both
+`gated_universally` and `"EMPTY" in cov.measurement`).
+
+**The third state** (`1e9b8cd2`): `NotGateable.state: ResidualState`, a two-member `(str, Enum)`
+**field** defaulting to `UNACCEPTED`:
+
+* `ACCEPTED` — measured, blessed: a documented limitation; the host labels it and stays quiet.
+* `UNACCEPTED` — measured, **not** blessed: the host cannot gate it and nobody accepted it, so it stays
+  **loud**.
+
+It belongs on the *entry*, not the provider, because "empty" is a claim about a provider while
+accept/reject is a claim about an entry — and a provider can hold a mix (kiro's two are blessed,
+claude-code's two are not). `gated_universally` stays `not self.entries`, so declaring any residual
+makes it false and it cannot drift. Default `UNACCEPTED` makes acceptance opt-in and never inherited.
+
+🔴 **The consumer was FIVE behaviours, not two — and the fifth is why the naive fix was dangerous.**
+`entry is not None` drove the `_meta` flag, the activity-feed text, the loud transcript line, the SEL
+`outcome`+`reason`, **and the turn abort** at `chat_runner.py:1379`. I verified that line myself: `if
+not excused and risk != "safe" and task_mode in ("ask", "plan")` → *"turn stopped"*. So under
+`excused = entry is not None`, declaring a residual would have **stopped aborting destructive ungated
+tools under ask/plan** — a safety regression, not merely a legibility downgrade. The shipped predicate
+is `excused = entry is not None and entry.accepted` — **declared is not excused** — and a category-3 row
+stays byte-identical to today's undeclared row.
+
+### `G89`: a control that reported enforcement it never achieved
+
+A `PreToolUse` trigger showed `last_status: "blocked"` and `enforcement: "enforcing"` after firing on the
+**informational** seam — while the write it claimed to block landed. Measured on both claude-code and
+codex, so cross-provider.
+
+Fixed (`f5dcd0d4`) as a distinct `last_status` written **per fire**, reusing the shipped `advisory`
+vocabulary so there is one word at two levels, on a field the trigger row already exposes and the
+frontend already renders raw — **no new field, no config round-trip, no FE change, and `chat_runner.py`
+untouched**. `enforcement` is deliberately left alone: it is a *capability* claim and it is true, because
+a bound hook does block calls that reach the host gate. The lie lived only in the per-fire record
+borrowing enforcement language. `O118` widened the defect: `BLOCKING_EVENTS` has exactly **one** member
+(`PreToolUse`), so a `Stop` hook exiting 2 recorded `blocked` when nothing could ever block it.
+
+### §2.2's "RENDERS" requirement was unmet — and falsely claimed met
+
+The parity doc's paragraph ended with the literal word **"Rendered:"** above a **hand-written** table, and
+the drift had already materialized: 2 of 3 rows stated sweep measurements that appear nowhere in the
+registry, and the per-entry `observation` field — whose whole job is naming what *proved* each residue —
+was **absent from the doc entirely**. Two columns for a three-field record.
+
+Fixed (`db2129fe`) with `scripts/render_acp_parity_residual.py` (the repo's `scripts/generate_*` idiom,
+not `tools/`) owning a marker-delimited block, plus a drift rail whose **vacuity floor is the one that
+matters**: deleting the BEGIN marker reds 8 of 11, because without it a doc with no markers splices
+nothing and reads clean. The renderer never names a field — it reflects `dataclasses.fields()` and splits
+by shape — so the new `state` field renders with **no renderer edit**, which the registry drive verified
+by extracting the renderer from the sibling commit and running it. **Regenerated at integration**, since
+the registry change legitimately drifted the block (`G123`): `--check` exit 1 before, 0 after, idempotent.
+
+### Acceptance clause, measured by me at integration
+
+> With task-mode=Ask a file write via any ACP provider yields a host approval card or block (never a
+> silent write).
+
+| provider | result | how |
+|---|---|---|
+| codex | **card** | the A/B above: `session/request_permission`, file absent until approved |
+| claude-code | **block** | `O136` — file **absent**, **0** permission frames, and the host's own abort fired: *"Terminal ran without a host approval request under ask mode (claude-code never asked) — turn stopped"*. The two tools that ran ungated were `Terminal` and `Read File` — **exactly its now-declared UNACCEPTED residual**, which is why `not excused` is true and the abort fires. Under the naive fix this abort would have been skipped |
+| kiro-cli | **vacuous — recorded, not claimed** | `O137` — file absent, but because kiro replied *"I can't create it in this turn — this session…"*: it has **no write tool** in an ACP session (`G68`'s read-only grant, `allowed_write_paths: []`). The write never reaches the host gate, so this is **not** a demonstration of host authority for kiro |
+
+So the clause holds for all three, **demonstrated** on two and **vacuous** on the third. The other three
+clauses were measured during Phase 1: the deny-list rejects a denied command at the prompt (`git push` →
+`(blocked: Blocked by security policy)`, and it correctly precedes trust), blocking `PreToolUse` fires
+pre-exec on both claude-code and codex when the bound profile references the hook, and the residual set
+is now enumerated per provider with each entry carrying its reason and proving observation.
+
+### Gaps
+
+**Open, and `G127` is the one that can silently undo this fix**
+
+- **`G127`** `session.py:595`/`:677` and `acp_session_provider.set_mode` only fire `if _acp_mode:`, so a
+  **pooled claim can never re-assert** the host-authority mode; it works today only because the warm
+  connection's `AcpClient` handshake asserts it, and `_open_acp_session_provider` has **no mode step at
+  all**. A future path that claims a pool entry without that handshake gets the CLI's own default back,
+  silently. **Highest-value follow-up.**
+- **`G126`** codex `plan` has no home on the mode axis — its real switch is `configId="collaboration_mode"`
+  (`default`/`plan`). `chat_runner.py:1872` sets `acp_mode="plan"` for plan task-mode and the fix maps it
+  to `read-only`, preserving the restriction but not "plan". Needs the second axis.
+- **`G129`** `enforcement: "enforcing"` still overstates ACP sessions: hooks gate only calls that pass the
+  host permission gate, and auto-approved `EVENT_TOOL_CALL` frames bypass them.
+- **`G120`** codex's residual cannot be matched per-title — Phase 1 recorded its *actions*, not the
+  `tool_call` titles, so the entry carries `title_patterns=()`. Harmless while `UNACCEPTED` (matching only
+  decides whether to go quiet) but it blocks any promotion to `ACCEPTED`. **`O115` now supplies the
+  missing titles**, so this is a specifiable follow-up rather than an unknown.
+- **`G135`** `tests/test_acp_permission_authority.py:93` hard-codes the three-provider set; the renderer
+  and its rail absorb a new provider, that assertion will not. Left unloosened deliberately, since no
+  provider key changed.
+- **`G121`/`G122`/`G128`/`G130`/`G131`/`G132`-`G134`** legibility residue, listed with the rest.
+
+**`O115` — what still never surfaces on codex `read-only`** (for `G120`'s follow-up): a file read; `ls -la .`
+(codex satisfies the shell request with its *native* list-files tool, which read-only auto-approves); a
+`whoami` shell exec — **despite read-only's own description saying it "requires approval to run
+commands"**; and a `curl` first attempt (sandboxed, network blocked), which **escalates on retry**. File
+edits **do** escalate — that is what moved. So codex `read-only` gates edits and sandbox-refused commands,
+not "all commands", contradicting its own option description. Measured, not documented.
+
+### Three recorded claims this work found false
+
+1. **`dialect.py:312`** said *"the adapter clamps to the model's available modes and rejects unknown ones,
+   so we forward the value verbatim and let the adapter be the authority."* codex **rejects without
+   clamping** — it keeps its own mode. **That sentence is exactly what made the bug unfindable by
+   reading**, and my brief repeated it as fact. Corrected in the docstring.
+2. **`dialect.py:136-137`** claimed Claude Code *and* Codex expose the same five modes. They do not, and
+   claude-code has a sixth (`auto`) that AAP-5's canonical five never named. Corrected with both measured
+   option sets.
+3. **`gateway.log` is WARNING-only by default**, so `client.py`'s existing `logger.info("ACP mode: %s")`
+   was present and invisible all along — compounding `O18`'s "no wire frames" into "no mode evidence at
+   all". Add `--verbose` (before the subcommand; `-v` is rejected) and the handshake narrates itself.
+
+
 ## Gap closure index (status as of 2026-08-22, verified against `origin/main` = `05bba66e`)
 
 **Why this exists.** The `G*` bullets in the inventories below are written as defect statements and are
@@ -3158,3 +3316,65 @@ cited above.
   symbol: the import fails first, so the test reds as an **ImportError (a collection error)** rather than
   through that assertion. Still a red, but a different signal — worth knowing before treating the floor
   as proven.
+
+## Execution log — `AAP-5` (§2.2 Approval-gate coverage)
+
+- [2026-08-23][AAP-5] **DONE.** All four acceptance clauses hold, three measured during Phase 1 and the
+  fourth measured by me at integration. Four fenced drives; observations `O96`-`O137`, findings
+  `G120`-`G135`. Gate: `make lint` 0, `make test` full green, targeted suites green, parity-doc drift
+  check 0 and idempotent.
+- [2026-08-23][AAP-5] 🔴 **THE SAFETY HOLE'S CAUSE WAS NOT WHAT §2.2 ASSUMED: host-authority mode
+  forwarding was a NO-OP on codex, and its rejection was invisible.** `HOST_AUTHORITY_MODE = "default"` is
+  **claude-code's** vocabulary; codex's options are `read-only`/`agent`/`agent-full-access`. Every codex
+  session was told `default`, **rejected it with `-32602 Invalid params`, and stayed in the self-approving
+  `agent` mode §2.2 exists to leave.** Invisible because `send_request` returns `(req_id, future)` without
+  awaiting and **every** `session/set_*` site discarded the future (`G125`). Proved by awaiting the
+  correlated future and reading the adapter's own id-matched reply — a reply is proof of receipt, which is
+  the only evidence available since the host logs no ACP wire frames. Fixed by moving vocabulary
+  translation into the dialect (`native_mode()`, unknown → `read-only`, fail-closed) plus a done-callback
+  that logs any future rejection. **Live A/B: `default` → the write executed ungated; `read-only` → parked
+  on the host gate with the file absent.**
+- [2026-08-23][AAP-5] 🔴 **The obvious fix to the residual registry would have been a SAFETY REGRESSION,
+  not just a legibility downgrade.** `entry is not None` drove **five** behaviours, and the fifth is the
+  turn abort at `chat_runner.py:1379` — I verified that line myself. Under `excused = entry is not None`,
+  declaring claude-code's and codex's measured residuals would have **stopped aborting destructive ungated
+  tools under ask/plan**. This fully vindicates the earlier drive that refused to apply the naive fix and
+  escalated instead. Shipped predicate: `excused = entry is not None and entry.accepted` — **declared is
+  not excused**.
+- [2026-08-23][AAP-5] **The third state is a dataclass FIELD, not a property, and that was a cross-branch
+  contract.** `NotGateable.state: ResidualState` (`ACCEPTED`/`UNACCEPTED`, default `UNACCEPTED` so
+  acceptance is opt-in and never inherited). It had to be a field because the sibling's renderer reflects
+  `dataclasses.fields()` — `gated_universally` is a property and is invisible to it for exactly that
+  reason. I relayed that constraint mid-flight and the registry drive verified it by **extracting the
+  renderer from the sibling's commit and running it against the new registry**, rather than assuming.
+- [2026-08-23][AAP-5] **A test was asserting the false claim — the third such instance this session.**
+  `test_measured_empty_is_a_positive_statement` asserted `gated_universally` **and** `"EMPTY" in
+  cov.measurement` for the two providers runtime had already contradicted. Replaced by an honesty rail
+  plus a **separate** expressiveness floor, so `gated_universally` cannot quietly become constant `False`.
+- [2026-08-23][AAP-5] **`G89` fixed without touching `chat_runner.py`** — a distinct per-fire
+  `last_status: "advisory"` reusing the shipped vocabulary, on a field the trigger row already exposes and
+  the FE already renders raw. `enforcement` deliberately untouched: it is a capability claim and it is
+  true. **My brief was wrong to call it part of the lie**, and the drive established that rather than
+  accepting it. `BLOCKING_EVENTS` has exactly one member, so a `Stop` hook exiting 2 was recording
+  `blocked` when nothing could ever block it.
+- [2026-08-23][AAP-5] **§2.2's "RENDERS" requirement was unmet and falsely claimed met** — the paragraph
+  ended with the literal word "Rendered:" above a hand-written table, 2 of 3 rows stated measurements
+  absent from the registry, and the `observation` field was missing from the doc entirely. Now generated
+  from `NOT_GATEABLE` into a marker block with a drift rail whose vacuity floor (delete the BEGIN marker →
+  8 of 11 red) is the assertion that actually matters. Regenerated at integration for the registry change.
+- [2026-08-23][AAP-5] **Acceptance measured, and one arm recorded as VACUOUS rather than claimed.** codex
+  yields a **card**; claude-code yields a **block** (the host's abort fires, and the two tools that ran
+  ungated are exactly its declared UNACCEPTED residual); kiro's file is absent only because it **has no
+  write tool** in an ACP session (`G68`'s read-only grant), so that arm demonstrates nothing about host
+  authority and is labelled so.
+- ⚠️ **`G127` is the highest-value follow-up and it can silently undo this fix.** `session.py:595`/`:677`
+  and `acp_session_provider.set_mode` fire only `if _acp_mode:`, so a **pooled claim never re-asserts** the
+  host-authority mode — it holds today only because the warm connection's handshake asserts it, and
+  `_open_acp_session_provider` has no mode step at all. A future path claiming a pool entry without that
+  handshake silently gets the CLI's own default back.
+- **STILL UNVERIFIED / recorded.** `G126` (codex `plan` needs the `collaboration_mode` axis), `G129`
+  (`enforcement` still overstates ACP sessions), `G120` (codex's residual has no title patterns — `O115`
+  now supplies them). Three recorded claims were found false and corrected in place: `dialect.py:312`'s
+  "the adapter clamps and rejects unknown modes" (codex rejects **without** clamping — the sentence that
+  made this bug unfindable by reading), `dialect.py:136-137`'s claim that claude-code and codex share five
+  modes, and the invisibility of `gateway.log`'s existing INFO mode line at the default WARNING level.

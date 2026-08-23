@@ -8,6 +8,7 @@ inverse floor so it reads as a *requirement* rather than an always-refuse.
 """
 
 import asyncio
+from dataclasses import fields, replace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -16,6 +17,9 @@ from personalclaw.acp.permission_authority import (
     AUTO_APPROVE_MODES,
     HOST_AUTHORITY_MODE,
     NOT_GATEABLE,
+    NotGateable,
+    ProviderCoverage,
+    ResidualState,
     command_probe,
     coverage_for,
     normalize_provider,
@@ -87,6 +91,11 @@ class TestCommandProbe:
         assert command_probe("fs_write", "") == ""
 
 
+def _claims_empty_residual(cov: ProviderCoverage) -> bool:
+    """Does this coverage's prose assert a zero-length residual set?"""
+    return "empty" in cov.measurement.lower()
+
+
 class TestNotGateableRegistry:
     def test_every_provider_is_enumerated_with_its_measurement(self):
         """A missing entry must never be readable as "gated" — SC #3's honesty clause."""
@@ -113,11 +122,83 @@ class TestNotGateableRegistry:
         assert not_gateable_entry("kiro-cli", "Creating todo_probe.txt") is None
         assert not_gateable_entry("kiro-cli", "Running: rm -rf /tmp/x") is None
 
-    def test_measured_empty_is_a_positive_statement(self):
-        for provider in ("claude-code", "codex"):
+    def test_gated_universally_is_false_wherever_a_residual_exists(self):
+        """The claim runtime disproved. claude-code and codex each declared
+        "residual set measured EMPTY" (so ``gated_universally`` was True) while SEL
+        was persisting plain ``ungated`` rows for both — and a plain ``ungated`` row
+        is proof ``not_gateable_entry`` returned None for that title."""
+        for provider in ("claude-code", "codex", "kiro-cli"):
             cov = coverage_for(provider)
-            assert cov is not None and cov.gated_universally
-            assert "EMPTY" in cov.measurement
+            assert cov is not None, provider
+            assert cov.entries, f"{provider} declares no measured residual"
+            assert not cov.gated_universally, f"{provider} still claims full coverage"
+
+    def test_an_empty_residual_is_still_expressible(self):
+        """Category floor for the test above: ``gated_universally`` is a real
+        statement, not a constant False. A provider that genuinely gates everything
+        still says so — the registry lost none of its expressive range."""
+        empty = ProviderCoverage(provider="hypothetical", measurement="measured, none")
+        assert empty.gated_universally
+        assert empty.unaccepted_residual == ()
+
+    def test_every_measured_residual_carries_its_proving_observation(self):
+        for cov in NOT_GATEABLE.values():
+            for entry in cov.entries:
+                assert entry.reason.strip(), f"{cov.provider}/{entry.tool} has no reason"
+                assert entry.observation.strip(), f"{cov.provider}/{entry.tool} has no proof"
+
+    def test_no_provider_claims_an_empty_residual_while_declaring_one(self):
+        """The original defect in its general form: measurement prose asserting an
+        empty residual next to entries that contradict it."""
+        for cov in NOT_GATEABLE.values():
+            assert not (cov.entries and _claims_empty_residual(cov)), cov.measurement
+
+    def test_the_empty_claim_scanner_can_actually_fire(self):
+        """Vacuity floor for the scanner above — the exact shape it must reject."""
+        liar = ProviderCoverage(
+            provider="liar",
+            measurement="AAP-1 sweep — residual set measured EMPTY",
+            entries=(NotGateable(tool="Terminal", reason="r", observation="o"),),
+        )
+        assert liar.entries and _claims_empty_residual(liar)
+
+    def test_a_declared_residual_is_not_an_excused_one(self):
+        """The third state. claude-code's measured holes are written down — so they
+        are not "a new incident" — yet unaccepted, so nothing may go quiet."""
+        entry = not_gateable_entry("acp:claude-code-acp", "Terminal")
+        assert entry is not None and entry.tool == "Terminal"
+        assert entry.state is ResidualState.UNACCEPTED
+        assert entry.accepted is False  # the derived shorthand agrees
+        cov = coverage_for("claude-code")
+        assert cov is not None and cov.unaccepted_residual == cov.entries
+
+    def test_an_accepted_residual_is_the_inverse_floor(self):
+        """…and ``accepted`` is not uniformly False: kiro's two holes ARE blessed,
+        which is what lets the host label them instead of shouting."""
+        entry = not_gateable_entry("kiro-cli", "Creating task list: fix the thing")
+        assert entry is not None and entry.state is ResidualState.ACCEPTED
+        cov = coverage_for("kiro-cli")
+        assert cov is not None and cov.unaccepted_residual == ()
+
+    def test_a_new_entry_is_loud_until_someone_blesses_it(self):
+        """Fail-loud by construction: acceptance is opt-in, never inherited."""
+        fresh = NotGateable(tool="x", reason="r", observation="o")
+        assert fresh.state is ResidualState.UNACCEPTED and fresh.accepted is False
+
+    def test_the_state_is_a_rendered_field_not_a_derived_property(self):
+        """§2.7's parity doc renders the registry by reflecting ``dataclasses.fields``
+        and skipping collection-shaped fields, unwrapping ``Enum`` via ``.value``. A
+        state expressed as a ``@property`` — like ``gated_universally``, which is
+        deliberately absent below — never reaches that operator-facing surface, so
+        this rail pins where the third state LIVES, not merely what it says."""
+        names = {f.name for f in fields(NotGateable)}
+        assert "state" in names
+        assert "gated_universally" not in {f.name for f in fields(ProviderCoverage)}  # floor
+        for cov in NOT_GATEABLE.values():
+            for entry in cov.entries:
+                assert isinstance(entry.state, ResidualState), (cov.provider, entry.tool)
+                # Prose, not a bare flag: the doc prints this verbatim.
+                assert " " in entry.state.value
 
     def test_provider_key_normalization_covers_all_three_spellings(self):
         assert normalize_provider("acp:claude-code-acp") == "claude-code"
@@ -276,8 +357,12 @@ def _tool_texts(session):
     return [m["content"] for m in session.messages if m.get("role") in ("tool", "permission")]
 
 
-async def _drive(state, session, *, answer=None):
-    """Run one turn; optionally answer the interactive approval card."""
+async def _drive(state, session, *, answer=None, sel_mock=None):
+    """Run one turn; optionally answer the interactive approval card.
+
+    ``sel_mock`` lets a caller inspect the audit rows the turn persisted — the SEL
+    half of "loud" lives there, not in the transcript.
+    """
     if answer is not None:
 
         async def _answer():
@@ -289,8 +374,17 @@ async def _drive(state, session, *, answer=None):
                 await asyncio.sleep(0.01)
 
         asyncio.get_event_loop().create_task(_answer())
-    with patch("personalclaw.dashboard.chat_runner.sel", MagicMock()):
+    with patch("personalclaw.dashboard.chat_runner.sel", sel_mock or MagicMock()):
         await _run_chat(state, session, "hello")
+
+
+def _ungated_audit_rows(sel_mock):
+    """The ``log_tool_invocation`` kwargs for rows the host was never asked about."""
+    return [
+        c.kwargs
+        for c in sel_mock.return_value.log_tool_invocation.call_args_list
+        if str(c.kwargs.get("outcome", "")).startswith("ungated")
+    ]
 
 
 class TestNoSilentWriteUnderAsk:
@@ -611,3 +705,94 @@ class TestUngatedResidue:
             if c.args and c.args[0] == "activity_event"
         ]
         assert any("Not gated by host" in t for t in texts), texts
+
+
+# ── the third state: declared, unaccepted, and therefore still loud ──────────
+
+
+class TestUnacceptedResidualStaysLoud:
+    """§2.2's registry had two states and needed three. claude-code and codex both
+    declared "residual set measured EMPTY" while SEL was persisting plain ``ungated``
+    rows for them — the data was false, not the shape. Populating the registry the
+    obvious way would have swapped one defect for a worse one, because a declared
+    entry also quiets the transcript, downgrades the SEL outcome and suppresses the
+    turn abort. These two tests are the same drive either side of the accepted bit.
+    """
+
+    _CMD = '{"command": "printf hi > /private/tmp/aap5-probe.txt"}'
+
+    def _drive_claude_code_terminal(self, tmp_path):
+        state, client = _make_state(tmp_path, context_builder=_context_builder())
+        client.provider_id = "acp:claude-code"
+        session = _session(task_mode="ask")
+        _set_stream(
+            client,
+            TestUngatedResidue._tool_pair("tc-cc", "Terminal", "execute", self._CMD)
+            + [LLMEvent(kind=EVENT_COMPLETE, stop_reason="end_turn")],
+        )
+        return state, client, session
+
+    @staticmethod
+    def _activity(state):
+        return [
+            c.args[1].get("text", "")
+            for c in state.broadcast_ws.call_args_list
+            if c.args and c.args[0] == "activity_event"
+        ]
+
+    @staticmethod
+    def _tool_meta(session):
+        return [m.get("meta", {}) for m in session.messages if m.get("role") == "tool"]
+
+    @pytest.mark.asyncio
+    async def test_a_declared_but_unaccepted_hole_keeps_every_signal(self, tmp_path):
+        """claude-code's ungated ``Terminal`` IS in the registry — so it is not a NEW
+        hole — and is unaccepted, so nothing goes quiet: the ``(ungated: …)``
+        transcript line, the plain ``ungated`` audit row with its generic reason, the
+        ``ungated_declared=False`` marker, and the abort of a destructive tool that
+        ran under ask mode with no card."""
+        declared = not_gateable_entry("claude-code", "Terminal")
+        assert declared is not None  # precondition, not luck: the registry DOES hold it
+        assert declared.state is ResidualState.UNACCEPTED
+        state, client, session = self._drive_claude_code_terminal(tmp_path)
+        sel_mock = MagicMock()
+        await _drive(state, session, sel_mock=sel_mock)
+
+        texts = self._activity(state)
+        assert any("Ran without host approval" in t for t in texts), texts
+        assert not any("Not gated by host" in t for t in texts), texts
+        assert any("(ungated:" in t for t in _tool_texts(session)), _tool_texts(session)
+        assert any("turn stopped" in t for t in _tool_texts(session)), _tool_texts(session)
+        client.cancel_session.assert_awaited_once()
+        assert any(m.get("ungated_declared") is False for m in self._tool_meta(session))
+        rows = _ungated_audit_rows(sel_mock)
+        assert [r["outcome"] for r in rows] == ["ungated"], rows
+        assert rows[0]["metadata"]["reason"] == ("no session/request_permission for this tool_call")
+
+    @pytest.mark.asyncio
+    async def test_accepting_that_same_residual_is_what_quiets_it(self, tmp_path):
+        """Vacuity floor for the rail above. Flip ONLY ``state`` on that same entry
+        and every signal inverts — so the loudness is carried by the third state, not
+        by something incidental to this drive. It is also the regression this whole
+        change exists to prevent: this quiet shape is what a naive population of the
+        registry would have produced for an out-of-workspace write that executed."""
+        cov = NOT_GATEABLE["claude-code"]
+        blessed = ProviderCoverage(
+            provider=cov.provider,
+            measurement=cov.measurement,
+            entries=tuple(replace(e, state=ResidualState.ACCEPTED) for e in cov.entries),
+        )
+        state, client, session = self._drive_claude_code_terminal(tmp_path)
+        sel_mock = MagicMock()
+        with patch.dict(NOT_GATEABLE, {"claude-code": blessed}):
+            await _drive(state, session, sel_mock=sel_mock)
+
+        texts = self._activity(state)
+        assert any("Not gated by host" in t for t in texts), texts
+        assert not any("Ran without host approval" in t for t in texts), texts
+        assert not any("(ungated:" in t for t in _tool_texts(session)), _tool_texts(session)
+        client.cancel_session.assert_not_awaited()
+        assert any(m.get("ungated_declared") is True for m in self._tool_meta(session))
+        rows = _ungated_audit_rows(sel_mock)
+        assert [r["outcome"] for r in rows] == ["ungated_declared"], rows
+        assert "claude-code runs its shell tool" in rows[0]["metadata"]["reason"]

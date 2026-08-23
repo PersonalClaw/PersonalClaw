@@ -132,12 +132,16 @@ class ACPDialect:
         """Request that sets the session's permission/operating MODE, or ``None``.
 
         This is distinct from :meth:`activate_agent_request` (which selects the
-        *agent*). Some adapters expose a separate permission-mode axis — Claude
-        Code / Codex offer ``default`` / ``acceptEdits`` / ``plan`` / ``dontAsk``
-        / ``bypassPermissions`` via ``session/set_config_option`` (``configId =
-        "mode"``). The default dialect has NO separate mode axis — its
-        ``set_mode`` already *is* agent activation — so it returns ``None`` and
-        the client skips the step. Empty ``mode`` → ``None`` (use agent default).
+        *agent*). Some adapters expose a separate permission-mode axis via
+        ``session/set_config_option`` (``configId="mode"``) — and they do NOT share
+        a vocabulary on it. Measured off live ``session/new`` snapshots: claude-code
+        offers ``auto``/``default``/``acceptEdits``/``plan``/``dontAsk``/
+        ``bypassPermissions``, codex offers ``read-only``/``agent``/
+        ``agent-full-access``. So a value is never forwarded verbatim — see
+        :meth:`ZedAdapterDialect.native_mode`. The default dialect has NO separate
+        mode axis — its ``set_mode`` already *is* agent activation — so it returns
+        ``None`` and the client skips the step (kiro: the host gate is the only
+        gate). Empty ``mode`` → ``None`` (use agent default).
 
         MUST be issued AFTER the model is set: adapters recompute the available
         modes for the active model and clamp an out-of-range current mode."""
@@ -306,17 +310,39 @@ class ZedAdapterDialect(ACPDialect):
             )
         return None
 
+    def native_mode(self, mode: str) -> str:
+        """Translate a HOST-canonical permission mode into THIS adapter's own
+        ``configId="mode"`` vocabulary. ``""`` = this adapter has no equivalent,
+        so send nothing rather than a value it will reject.
+
+        The canonical vocabulary is claude-code's (``default`` / ``acceptEdits`` /
+        ``plan`` / ``dontAsk`` / ``bypassPermissions``), which is what
+        ``permission_authority`` speaks, so the base translation is identity.
+        A subclass whose CLI names the same axis differently overrides this."""
+        return mode
+
     def set_mode_request(self, *, session_id: str, mode: str) -> AcpRequest | None:
         """Set the Zed-adapter permission mode via ``session/set_config_option``
-        (``configId="mode"``). The adapter validates the value against the
-        model's currently-available modes (``default`` / ``acceptEdits`` /
-        ``plan`` / ``dontAsk`` / ``bypassPermissions``) and rejects unknown ones,
-        so we forward the value verbatim and let the adapter be the authority.
-        Empty ``mode`` → ``None`` (keep the adapter's default)."""
-        if mode:
+        (``configId="mode"``), translated into the adapter's own vocabulary by
+        :meth:`native_mode` first.
+
+        Forwarding the host value VERBATIM is what this used to do, on the belief
+        that "the adapter validates against the model's available modes and
+        rejects unknown ones, so let the adapter be the authority". Measured on a
+        live adapter, that belief is false in the way that matters: codex-acp does
+        not clamp an out-of-vocabulary value, it answers ``-32602 Invalid params``
+        and *keeps its own default-allow mode*. The reply was dropped on the floor
+        (see :meth:`AcpClient._watch_dialect_reply`), so §2.2's "never leave the
+        CLI in its own default-allow mode" silently did not hold for codex at all.
+        The host therefore owns the translation, and an untranslatable mode is
+        skipped instead of sent.
+
+        Empty/untranslatable ``mode`` → ``None`` (keep the adapter's default)."""
+        native = self.native_mode(mode) if mode else ""
+        if native:
             return AcpRequest(
                 METHOD_SET_CONFIG_OPTION,
-                {"sessionId": session_id, "configId": "mode", "value": mode},
+                {"sessionId": session_id, "configId": "mode", "value": native},
             )
         return None
 
@@ -423,6 +449,61 @@ class CodexDialect(ZedAdapterDialect):
     """`@zed-industries/codex-acp` driving the OpenAI Codex CLI."""
 
     name = "codex"
+
+    #: codex-acp's ``configId="mode"`` vocabulary is NOT claude-code's. Measured off a
+    #: live ``session/new`` snapshot, its ``options`` are exactly::
+    #:
+    #:   read-only          "Requires approval to edit files and run commands."
+    #:   agent              "Read and edit files, and run commands."          ← its DEFAULT
+    #:   agent-full-access  "…edit files outside this workspace and run commands
+    #:                       with network access."
+    #:
+    #: so the canonical ``default`` was answered ``-32602 Invalid params`` and every
+    #: codex session stayed on ``agent`` — the self-approving mode §2.2 exists to leave.
+    #: ``read-only`` is codex's most-restrictive mode and the only one that makes the
+    #: host the permission authority, so that is where the canonical restrictive mode
+    #: lands. ``plan`` maps there too: codex's planning switch is a DIFFERENT axis
+    #: (``configId="collaboration_mode"``, values ``default``/``plan``), and on the
+    #: permission axis "plan" means "change nothing without asking" — which is
+    #: ``read-only``. The auto-approve modes map to the nearest codex equivalent so
+    #: §2.3's unattended path still widens to something codex accepts.
+    #: Keyed on ``permission_authority.canonical_mode`` form, because the §2.3 unattended
+    #: path forwards the caller's auto-approve mode VERBATIM — any of that module's
+    #: aliases (``yolo``, ``fullAuto``, ``accept-edits``…) can arrive here, not just the
+    #: five claude-code spellings.
+    _NATIVE_MODES = {
+        # host-authority / behavioural → codex's most restrictive
+        "default": "read-only",
+        "plan": "read-only",
+        # "auto-approve edits, still gate the rest" → codex's workspace-scoped mode
+        "acceptedits": "agent",
+        "acceptall": "agent",
+        "acceptalledits": "agent",
+        "dontask": "agent",
+        "neverask": "agent",
+        # "do not gate anything" → codex's unsandboxed mode. Anything narrower would
+        # still escalate network + out-of-workspace writes (measured), so an unattended
+        # run pointed at `agent` would wedge on exactly the calls §2.3 exists to unblock.
+        "bypasspermissions": "agent-full-access",
+        "bypass": "agent-full-access",
+        "yolo": "agent-full-access",
+        "allowall": "agent-full-access",
+        "dangerfullaccess": "agent-full-access",
+        "fullauto": "agent-full-access",
+        "autoapprove": "agent-full-access",
+        "auto": "agent-full-access",
+    }
+
+    def native_mode(self, mode: str) -> str:
+        """Canonical → codex vocabulary, fail-closed.
+
+        An unrecognised mode becomes ``read-only``, not ``agent`` and not "send
+        nothing": both of those leave codex on its self-approving default, which is
+        the failure this method exists to remove. The restrictive answer is the only
+        safe one for a value the host cannot interpret."""
+        from personalclaw.acp.permission_authority import canonical_mode
+
+        return self._NATIVE_MODES.get(canonical_mode(mode), "read-only")
 
     def child_process_names(self) -> tuple[str, ...]:
         return ("codex",)

@@ -122,6 +122,15 @@ class _FakeSession:
         self.session_id = sid
 
 
+class _UnansweredPending:
+    """A pending reply this fake never answers — ``add_done_callback`` is registered
+    and simply never fires. Mirrors the real contract: ``send_request`` hands back
+    ``(req_id, future)``, and the client attaches a rejection watcher to it."""
+
+    def add_done_callback(self, cb):
+        return None
+
+
 class _FakeConn:
     """Records the params of every session/new + session/load."""
 
@@ -139,7 +148,7 @@ class _FakeConn:
         return _FakeSession(session_id or "LOADED")
 
     async def send_request(self, method, params):
-        return {}
+        return 0, _UnansweredPending()
 
     async def drain_init_notifications(self, duration=0.0):
         return None
@@ -209,7 +218,7 @@ class _RecordingConn(_FakeConn):
 
     async def send_request(self, method, params):
         self.sent.append((method, dict(params or {})))
-        return {}
+        return len(self.sent), _UnansweredPending()
 
     async def drain_init_notifications(self, duration=0.0):
         self.drains += 1
