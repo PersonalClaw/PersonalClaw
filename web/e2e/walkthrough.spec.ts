@@ -48,38 +48,22 @@ const TAB_CAP = 60
  *  there. Keyboard focus is at least as panel-local as axe's findings were. */
 const SURFACES = [...ROUTES, ...SETTINGS_ROUTES, ...VIEW_ROUTES]
 
-/** Focus stops known to have no visible indicator, with the fix already in flight elsewhere.
+/** Focus stops allowed to have no visible indicator.
  *
  *  SELF-CLEARING, deliberately: the leg asserts each entry still MATCHES a real unannounced stop, so
  *  the moment the fix lands this file goes red telling you to delete the entry. That is the opposite
- *  of a count baseline, which would quietly absorb the fix and leave permanent slack. */
+ *  of a count baseline, which would quietly absorb the fix and leave permanent slack. It has already
+ *  paid for itself once — it turned the merge of the focus-ring work red and named the five entries
+ *  to delete, which a count baseline would have silently absorbed. */
 const KNOWN_UNANNOUNCED: { route?: string; opener?: string; match: string; why: string }[] = [
-  // ── all four groups are fixed by ONE open PR: the focus-ring change that rings the seventeen
-  //    controls whose `outline-none` defeated the global ring. It owns every file below, so fixing
-  //    them here would conflict with it. Deleting these entries is part of merging it — and the
-  //    assertion under each leg is what forces that, because a fixed stop turns this file RED.
-  {
-    route: 'files',
-    match: 'Go to path',
-    why: "PathBar's path input — the open focus-ring PR puts focus-within: on its container.",
-  },
-  {
-    route: 'settings/prompts',
-    match: 'Prompt for',
-    why:
-      'ONE source line, PromptsPanel.tsx:87, rendered once per prompt use-case — ~28 stops from a ' +
-      'single defect. The open focus-ring PR rings that select.',
-  },
-  {
-    route: 'settings/security',
-    match: 'Add a shell denylist pattern',
-    why: "SecurityPanel's denylist input — ringed by the open focus-ring PR.",
-  },
-  {
-    route: 'settings/security',
-    match: 'Add a host to allowed hosts',
-    why: "SecurityPanel's allowed-hosts input — ringed by the open focus-ring PR.",
-  },
+  // ── The four pending-fix groups that used to live here are GONE, because the focus-ring PR they
+  //    were waiting on landed in the same batch as this file: PathBar's container (`files` / "Go to
+  //    path"), PromptsPanel's select (`settings/prompts` / "Prompt for"), SecurityPanel's denylist
+  //    and host inputs (`settings/security`, two entries from ONE ringed `HostList` rendered twice)
+  //    and AlwaysOnConventions' select (`settings/legibility`). The self-clearing assertion below is
+  //    what forced the deletion — each of those stops now announces its focus, so keeping the
+  //    entries would have left the gate wider than the code needs. Nothing pending remains; the one
+  //    survivor is a written taste call, not a fix in flight.
   {
     // NOT a pending fix — a deliberate, written taste call, and the reason lives in the code this
     // points at. `ui/SearchField` puts `outline-none` in INPUT_CHROME and `focus:ring-2
@@ -91,11 +75,6 @@ const KNOWN_UNANNOUNCED: { route?: string; opener?: string; match: string; why: 
     opener: 'command palette',
     match: 'Search pages and actions',
     why: "ui/SearchField's inline variant, deliberately unringed — see SearchField.tsx around the OVERLAY_FOCUS constant.",
-  },
-  {
-    route: 'settings/legibility',
-    match: 'Show project instructions for',
-    why: "AlwaysOnConventions' select (AlwaysOnConventions.tsx:126) — ringed by the open focus-ring PR.",
   },
 ]
 
