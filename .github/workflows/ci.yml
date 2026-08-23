@@ -283,6 +283,16 @@ jobs:
       - name: V3 walkthrough — keyboard / reduced-motion / phone (web/e2e/walkthrough.spec.ts)
         working-directory: web
         run: npx playwright test e2e/walkthrough.spec.ts --project=chromium
+      # PHF-7's clause: the browser gate completes a real chat turn OFFLINE, with no
+      # provider credential anywhere in the environment, against the scripted fixture
+      # provider. A separate step because this one proves a different property from the
+      # two above — not "is the page accessible" but "does the app still work at all
+      # without a vendor". `make test-e2e` picks up every spec automatically, but CI
+      # names them explicitly, so a spec not listed here runs nowhere: declared and
+      # never executed is the failure class this repo's rails exist to catch.
+      - name: offline scripted chat turn (web/e2e/chat.spec.ts)
+        working-directory: web
+        run: npx playwright test e2e/chat.spec.ts --project=chromium
       - name: upload the axe reports
         if: always()
         uses: actions/upload-artifact@v7
