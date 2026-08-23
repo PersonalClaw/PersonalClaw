@@ -560,3 +560,99 @@ def test_unregister_reverses_the_seed(seed_env, monkeypatch):
 
     _register.unregister_acp_cli_entry("needs-seed")
     assert not (cli_root / "personalclaw.json").exists()
+
+
+# ── prong B: is the machinery REACHED? (`G46`, `G116`) ──────────────────────
+#
+# Every test above supplies ``agent_config_dir`` itself, so all of them pass
+# against a seeder that production never calls — they measure the mechanism, not
+# its use. `K54` then drove the real thing and found nothing seeded at all. The
+# two rails below close that hole from opposite sides: one pins how many
+# production call sites supply the argument, the other proves the one call path
+# that is NOT gated actually executes the import it names.
+
+
+def _seed_supplier_census() -> tuple[list[str], int]:
+    """Production call sites that supply ``agent_config_dir``, and files scanned.
+
+    The file count is the vacuity floor: a mistyped root would scan nothing and
+    report "no suppliers" for the wrong reason.
+    """
+    root = Path(__file__).resolve().parent.parent / "src" / "personalclaw"
+    suppliers: list[str] = []
+    scanned = 0
+    for path in root.rglob("*.py"):
+        scanned += 1
+        for num, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+            if "agent_config_dir=" in line:
+                suppliers.append(f"{path.relative_to(root)}:{num}")
+    return suppliers, scanned
+
+
+def test_the_prong_b_seeder_has_no_production_supplier_in_core():
+    """`G46`: the seed runs only under ``if agent_config_dir:`` and core never supplies it.
+
+    Deliberately pins the measured state rather than asserting the seeder works:
+    the destination is vendor knowledge, so the only legitimate suppliers live in
+    the removable app bundles (a separate repo). Zero suppliers in core therefore
+    means the whole path is dead unless a bundle passes the argument — which is
+    exactly what `K54` measured, and what every other test in this section hides.
+
+    If someone wires it, this rail fails and they must say which side is now true.
+    """
+    import inspect
+
+    from personalclaw.acp_bundles._register import register_acp_cli_entry
+
+    # Vacuity floors: the parameter must still exist (otherwise "no supplier" is
+    # trivially true), and the scan must have read a real tree.
+    params = inspect.signature(register_acp_cli_entry).parameters
+    assert "agent_config_dir" in params, "the seam this rail measures is gone — retire the rail"
+    assert params["agent_config_dir"].default is None
+
+    suppliers, scanned = _seed_supplier_census()
+    assert scanned > 100, f"census scanned only {scanned} files — the root is wrong, not the code"
+    assert suppliers == [], (
+        "core now supplies agent_config_dir at "
+        f"{suppliers} — core must not name a CLI's config root (provider boundary), "
+        "and `G46`'s inertness finding needs re-measuring"
+    )
+
+
+def test_disable_really_executes_the_config_seed_import(home, monkeypatch):
+    """`G116`: ``unregister_acp_cli_entry``'s ``config_seed`` import is UNGATED.
+
+    ``register_acp_cli_entry`` imports the seeder behind ``if agent_config_dir:``
+    which nothing satisfies, but disable imports ``unseed_agent_config``
+    unconditionally. So deleting ``config_seed.py`` breaks every bundle disable —
+    and nothing catches it before runtime: mypy's ``ignore_missing_imports``
+    makes a missing first-party MODULE silent, and because the import is
+    function-local even importing ``_register`` still succeeds. Only calling the
+    function fails, with ``ModuleNotFoundError``.
+    """
+    import sys
+
+    from personalclaw.acp_bundles import _register
+
+    monkeypatch.setattr(
+        _register,
+        "get_default_registry",
+        lambda: type(
+            "R",
+            (),
+            {"unregister_entry": lambda self, n: None, "register_entry": lambda self, e: None},
+        )(),
+    )
+
+    # Drop the module so "it was imported" can only be caused by the call below.
+    monkeypatch.delitem(sys.modules, "personalclaw.acp.config_seed", raising=False)
+    assert "personalclaw.acp.config_seed" not in sys.modules
+
+    _register.unregister_acp_cli_entry("never-enabled")
+
+    # Vacuity floor: had the call not reached the import, this section would pass
+    # against a deleted module and the rail would prove nothing.
+    assert "personalclaw.acp.config_seed" in sys.modules, (
+        "disable no longer imports config_seed — either it was rewired (update this "
+        "rail) or the unseed call was dropped (a bundle disable now leaves residue)"
+    )

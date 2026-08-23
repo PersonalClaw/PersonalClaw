@@ -1452,6 +1452,162 @@ unblocked the four "needs a model provider" cells (`K29`).
 | `K59` | the artifact and subagent halves the calls exposed, read from the store rather than the reply | **two attribution losses.** (a) The artifact saved by the CLI on a session bound to project `p-14b92d4c` persisted with **`project_id: ""`** *and* `events[0].session_id: ""` — so the ABSENT verdict for `project_id → artifact stamping` is right, but for the opposite reason to the one recorded (`G48`). (b) The spawned subagent produced **no `[Subagent completion event]` injection** in ~4 minutes, and the gateway logged `_spawn_session_resolver: rid=spawn:6c6039b3 … session=` — an **empty** originating session, which is exactly the inject-back's precondition (`G49`) |
 | `K49` | two cross-checks worth keeping: the lesson extractor on an injected-context turn, and one turn's vendor error | **`G16` is worse than "bad extraction":** the lesson row written for `K30`'s turn is `User correction to honor: The user referenced the following item(s) from their knowledge library. Their content is included below …` — the extractor swallowed the *injected knowledge block* as if it were the user's correction, alongside a second row `Never: never violate these):` clipped from prompt boilerplate. Separately, one turn failed with kiro's `-32603` `MODEL_TEMPORARILY_UNAVAILABLE` ("unexpectedly high load"); that is recorded as **ENV** and no cell rests on it |
 
+## Phase 2 results — §2.1 MCP reachability (atom `AAP-4`) — **PARTIAL**
+
+Four fenced drives, 2026-08-23: one acceptance drive per provider plus a census resolving the
+delete-or-wire decision this atom owns. Observations `O76`-`O95`, `C90`-`C99`, `K100`-`K108`; findings
+`G104`-`G119`. **The atom stays `todo`** — two of its three `done_when` clauses are unsatisfiable as
+written, for reasons that are owner scope decisions rather than measurement failures.
+
+**§2.1's own text was stale before this work began.** It says both `session/new` call sites hardcode
+`"mcpServers": []` and that the pool parameter has no live caller. Neither has been true since
+`b62bd62e` ("feat(acp): AAP-4 make personalclaw-core reachable from ACP sessions"), whose content is on
+`main` even though its PR (#1626) reads **closed** — the merge train took the commit. Prong A was
+already implemented; this work is the behavioural verification the plan asked Phase 1 to supply.
+
+### Clause 1 — "'list your tools' shows personalclaw-core tools": **PASS on all three**
+
+| provider | result | evidence |
+|---|---|---|
+| claude-code | **PASS** — exact **set equality**, not a count match | `O76` enumerated 586 tools of which **68** carry `mcp__personalclaw-core__`; against `_aggregated_list_tools()` on the same home: `SET EQUAL: True`, nothing missing, nothing extra. `O77` falsified by mutating `core_mcp_servers` to `return []` → the model answered `COUNT=0`. The operator's real `~/.claude.json` has **no** `personalclaw-core` entry at any scope, so seeding cannot explain it |
+| kiro-cli | **PASS** — **68** | `K100` listed 68 `personalclaw-core.*`, cross-checked against an independent census of `"name"` literals in `src/personalclaw/mcp_*.py`. **This corrects `K51`'s "67"**: the authoritative count is 68 |
+| codex | **PASS**, though invisible in the flat list | `C90` — `personalclaw mcp-core` ran as pid `71445 ← 71236 ← 71233 (codex app-server) ← 71224 (codex-acp)` while `~/.codex/config.toml` holds **zero** `personalclaw` entries, so **the protocol frame was the only channel**. `C91` codex's verbatim list is 14 tools with 0 core, because codex 0.146.1 uses **deferred tool loading** (`tool_search`); asked to search it returned `mcp__personalclaw_core.notify`/`.notify_attachment`/`.subagent_run` (`C92`). **`C4`'s "codex has no host-injected tools at all" was reading the gate, not the surface** |
+
+**All three CLIs honour protocol-passed `mcpServers`** — settling what `O18` left open for claude-code and
+what was never established for codex. **Prong B is unnecessary for every provider.**
+
+### Clause 2 — the four named tools + inject-back: **FAIL**
+
+| item | result |
+|---|---|
+| `notify` | **PASS on all three**, verified by store effect rather than the returned string (`O78`, `K102`, `C93`) |
+| `subagent_run` | **claude-code PASS** — `O79` spawned `1f458f22` and a separate assistant message carrying `AAP4A-SUBAGENT-OK` arrived **in the originating session**. **kiro and codex FAIL** — receipt returned, then `_No result._` after 3 min / 695 s (`K105`, `C97`). **Provider-independent per `C97`'s control**: an invocation straight over MCP wedged identically while a native session answered the same prompt in 8.5 s. The divergence with claude-code is unresolved (`G110`) |
+| `knowledge_search`, `task_create` | **DO NOT EXIST on the MCP surface** — OWNER DECISION 1 |
+| session inject-back | **works only by fallback.** The pid tree walk resolves correctly (`O81`; `K106` ran the real `_resolve_session_key` walk over 5-6-level chains, and unclaimed pool spares fail **closed** to `''` rather than cross-session). The **env half is inert** — `G109` |
+
+### Clause 3 — "seeding is idempotent, marker-scoped and reversible on disable (SC #2)": **moot** — OWNER DECISION 2
+
+### 🔴 OWNER DECISION 1 — the criterion names two tools the platform deliberately excludes
+
+`knowledge_search` and `task_create` are **absent from the `personalclaw-core` MCP surface for every
+provider** — three independent drives (`O80`, `K101`, `C94`) plus an in-process census at integration:
+mcp-core advertises **68** tools with **zero** `knowledge_*` and **zero** `task_*`.
+
+**This is not an oversight; it is a designed, test-enforced boundary.** `mcp_core.py:1724`'s
+`_AGGREGATED_CATEGORY_MODULES` lists six modules (artifacts, prompts, memory, subagents, workflows,
+automation) with **no knowledge, tasks or inbox** (`C95`), and `tests/test_native_builtin_split.py`
+asserts the exclusion in as many words — *"platform must NOT carry the installable-app categories"* —
+via an explicit `assert not ({"knowledge_search", "task_create", "project_run_create",
+"post_to_inbox"} & plat)`. `K101a` adds that **`K53` was wrong** to retire the earlier ABSENT verdict as
+"a naming artifact": the `knowledge`/`todo_list` tools it scored are **kiro's own natives**, writing
+kiro's stores, not ours.
+
+So `AAP-4` cannot be satisfied as written without either breaking that split or adding the categories to
+the MCP aggregation — **28 native-registry tools are absent from the MCP surface in total** (`G112`).
+Both are architectural decisions outside a §2.1 reachability fix. **Either the criterion should name
+mcp-core tools that exist (`get_context`, `memory_remember`, `notify`, `subagent_run`), or a separate
+atom should own extending the surface.** Recorded, not decided here.
+
+### 🔴 OWNER DECISION 2 — delete or wire the prong-B seeder
+
+The census (`O86`-`O90`) found **three independent layers of inertness** plus a decisive constraint:
+
+1. **Nobody supplies `agent_config_dir`** (`_register.py:49`, default `None`; the seed block is
+   `if agent_config_dir:` at `:155`). The intended supplier is the **agent app bundle**, and
+   `grep -rn "agent_config_dir"` over the **entire apps repo** returns **0 hits**;
+   `src/personalclaw/acp_bundles/` contains no bundles at all. **The miss is cross-repo by
+   construction, so no core lint or core test could have caught it** — and all 28 existing tests supply
+   the argument themselves, which is exactly how it shipped described as landed: mechanism, not use.
+2. **The symlink source does not exist** on the real home, so even a wired bundle returns
+   `skipped_no_source` — proved at runtime (`O88`).
+3. **The only bundle-side suite is permanently dark**: `tests/test_acp_bundles.py` collects **zero
+   items**, because its skip needs `<workspace>/apps` and the clone is `PersonalClawApps` (`G117`).
+
+**Decisive (`O90`/`G118`): prong B is kiro-shaped by construction, not by configuration.** It writes a
+symlink hardcoded to the filename `personalclaw.json` whose payload is a **kiro agent document**. codex
+reads TOML `[mcp_servers.*]` tables; claude-code's MCP artifact is named `personalclaw.mcp.json`
+(`dashboard/handlers/mcp.py`). **No provider verdict could have made this wirable** — and since all
+three honour protocol `mcpServers`, the premise is dead everywhere.
+
+**Recommendation: delete** — `config_seed.py`, the two `_register.py` call sites, the parameter, the
+`acp_seeds.json` receipt (nothing else reads it), `seed_status` (zero production callers) and 12 test
+items. **Not done here, because deleting it makes this atom's own clause 3 unsatisfiable**, and
+rewriting an atom's success criteria is the owner's call rather than an executor's. The plan's own later
+text (:1660) further contests even the kiro-only wiring, arguing the destination should be
+`<cwd>/.kiro/agents`.
+
+**One deletion hazard is already characterised.** `G116` (P1): `unregister_acp_cli_entry`'s `config_seed`
+import is **ungated and function-local**, so on a tree with the module removed `mypy` reports *"Success:
+no issues found"*, importing `_register` succeeds **2/2**, and the enable path stays green — **only
+calling the disable path raises `ModuleNotFoundError`**. Three cheaper checks all pass on a broken tree.
+The two rails added in this PR close exactly that.
+
+### Gap addendum — `G104`-`G119`
+
+**P1 / HIGH**
+
+- **`G104` The host omits `clientCapabilities` and serves no `terminal/*`, so a claude-code turn that
+  reaches for Terminal deadlocks** until the 90 s watchdog fires (`ACP prompt timed out`).
+  `client.py:485-493` sends `initialize` with only `protocolVersion` + `clientInfo` — no
+  `clientCapabilities` anywhere in `src/` — and the session dispatcher handles only
+  `session/request_permission`, `session/update` and four metadata notifications.
+- **`G108`/`G112` `knowledge_search`, `task_create` and 26 further native tools are unreachable over
+  `personalclaw-core` for every ACP provider** — OWNER DECISION 1.
+- **`G109` `PERSONALCLAW_SESSION_KEY` is never declared for any pooled ACP provider**, so the env half of
+  inject-back is **inert**. Falsified independently twice: `K107` added a probe var that **arrived**
+  while `session_key` read `EMPTY_AT_SESSION_NEW`, and `C96` measured `sentinel-None` on all three
+  pooled children. Both prove the same pair — the CLIs forward our env array faithfully, and
+  `session_key` is `None` at `session/new`. Since MCP children spawn once at `session/new`, the later
+  `rekey()` can never inject it: `mcp_servers.py` solved the *stale-key* case, not the
+  *no-key-at-warm-time* case.
+- **`G113` HTTP-bridged core tools outside the auth allowlist hard-fail `403 {"error":"Token required"}`**
+  (`server.py:1874-1897`) — including **`get_context`, the tool kiro calls first** — and `memory_recall`;
+  `memory_remember` 400s on the allowlisted path (`K104`).
+- **`G114`/`G110` `subagent_run` dispatches but never injects back** on kiro and codex, with a
+  provider-independent control showing it is not environmental — yet it **did** inject back on
+  claude-code (`O79`), so the divergence is unresolved.
+
+**P2 / MEDIUM**
+
+- **`G106` `PERSONALCLAW_HOME` isolation does not extend to the spawned CLI's tool surface.** **493 of
+  claude-code's 586 tools** come from the operator's real `~/.claude.json` global `mcpServers` — Slack,
+  calendar, AWS and more — so an isolated dev home still hands an ACP session live write access to
+  external systems. Same mechanism as P0 `G52`, on the tool surface rather than the transcript path.
+- **`G111`/`G115` Stale `session_pid_<pid>.txt` files are never removed on adapter death.** A respawn
+  *does* write a fresh correct entry — **correcting an earlier sibling claim that the map is not
+  refreshed** — but the dead file remains: unbounded growth, and on **pid reuse** any MCP server whose
+  chain crosses that pid resolves to the **wrong session**. The one path to a cross-session identity bind.
+- **`G117`** the only bundle-side suite collects zero items. **`G118`** prong B is kiro-only by
+  construction. **`G105`** is subsumed by OWNER DECISION 1.
+- **`G48` reproduces** (`K103a`): an artifact saved through the protocol MCP surface persists
+  `project_id: ""` and a created-event `session_id: ""` on a session bound to a project. Both fields
+  exist in the schema, so this is genuine loss — a direct hit on the "correct session inject-back"
+  clause: the tool runs, the identity does not arrive.
+
+**P3 / LOW** — **`G107`** the 586-tool surface forces a `ToolSearch` round-trip before each mcp-core
+call; fixing `G106` shrinks the surface and removes it. **`G119`** `seed_status` has zero production
+callers, a declared-but-unread reporter.
+
+### Recipe corrections for whoever drives §2.2 next
+
+- **The approve field is `action`, and it defaults to `"rejected"`** (`chat_handlers.py:2580`,
+  `action = body.get("action", "rejected")`). A body naming any other field returns `{"ok": true}` and
+  **silently denies** — naming the *verb* is not enough, the field is where the silent deny lives. One
+  rejected card also auto-rejects the remaining batch (`stop_reason 'refusal'`).
+- **`PATCH /api/config` is 404; the route is `PATCH /api/config/personalclaw`** with body
+  `{"path": "...", "value": ...}`.
+- **`GET /api/chat/sessions` returns a bare list**; the single-session GET returns a dict.
+- **`/api/approvals` never shows an ACP permission request.** They surface in the stream and, after
+  `_APPROVAL_MIRROR_GRACE_SECS = 90.0`, as an inbox `agent_request` with `refs.approval` — so an
+  inbox-polling approver cannot see one sooner than 90 s. One drive measured a uniform ~92 s per call and
+  **correctly declined to report it as product latency**, since it was its own harness.
+- **`session_pid_<pid>.txt` is not an MCP-reachability signal.** Under the `return []` mutation the file
+  was still written: `chat_runner.py:2031` writes it every turn keyed by ACP pid, with no reference to
+  `mcpServers`. It counts live ACP sessions.
+- **A backgrounded `curl` SSE stream dies with its subshell**, leaving a 0-byte transcript that reads
+  exactly like "no assistant output / no tools".
+
+
 ## Gap closure index (status as of 2026-08-22, verified against `origin/main` = `05bba66e`)
 
 **Why this exists.** The `G*` bullets in the inventories below are written as defect statements and are
@@ -3158,3 +3314,61 @@ cited above.
   symbol: the import fails first, so the test reds as an **ImportError (a collection error)** rather than
   through that assertion. Still a red, but a different signal — worth knowing before treating the floor
   as proven.
+
+## Execution log — `AAP-4` (§2.1 MCP reachability)
+
+- [2026-08-23][AAP-4] **PARTIAL — the atom stays `todo`.** Clause 1 (personalclaw-core tools reachable)
+  **PASSES on all three providers**, verified behaviourally and falsified. Clause 2 fails on two tools
+  that do not exist, and clause 3 is moot. Four fenced drives; observations `O76`-`O95`, `C90`-`C99`,
+  `K100`-`K108`; findings `G104`-`G119`. Two rails shipped (see below); **no deletion and no criteria
+  rewrite performed** — both are owner decisions, recorded in the results section above.
+- [2026-08-23][AAP-4] ✅ **Prong A works, and it was already implemented before this tick.** §2.1's text
+  claiming both `session/new` sites hardcode `"mcpServers": []` is **stale**: the content of `b62bd62e`
+  is on `main` even though PR #1626 reads *closed* — the merge train took the commit. All three CLIs
+  honour protocol-passed `mcpServers`: claude-code by **exact set equality** on 68 tools (`O76`,
+  falsified by zeroing `core_mcp_servers` → `COUNT=0`), kiro at 68 (`K100`, **correcting `K51`'s 67**),
+  and codex decisively — `personalclaw mcp-core` spawned four levels under `codex-acp` while
+  `config.toml` holds zero `personalclaw` entries, so **the protocol frame was the only channel**
+  (`C90`). **`C4`'s "codex has no host-injected tools at all" was reading codex's deferred-loading gate,
+  not its surface** (`C91`/`C92`).
+- [2026-08-23][AAP-4] 🔴 **BLOCKED — OWNER DECISION 1 (E6 scope): the acceptance criterion names two
+  tools the platform deliberately excludes.** `knowledge_search` and `task_create` are absent from the
+  MCP surface for **every** provider — three drives plus an integration census (68 tools, zero
+  `knowledge_*`, zero `task_*`). `mcp_core.py:1724` aggregates six modules with no knowledge/tasks/inbox,
+  and **`tests/test_native_builtin_split.py` asserts the exclusion explicitly** ("platform must NOT carry
+  the installable-app categories"). Satisfying the atom as written requires either breaking that
+  test-enforced split or adding 28 native tools to the MCP aggregation — architectural decisions outside
+  a reachability fix. **Needs: re-scope the criterion to mcp-core tools that exist, or a new atom for the
+  surface extension.** Also corrects `K53`, which had retired the ABSENT verdict as a naming artifact by
+  scoring kiro's *own* natives.
+- [2026-08-23][AAP-4] 🔴 **BLOCKED — OWNER DECISION 2 (E6 scope): delete or wire the prong-B seeder.**
+  Three independent inertness layers, and the decisive one is that **prong B is kiro-shaped by
+  construction** (hardcoded `personalclaw.json` + a kiro agent payload), so no provider verdict could
+  make it wirable for codex (TOML) or claude-code (`personalclaw.mcp.json`) — and all three honour
+  protocol `mcpServers` anyway. **Recommendation: delete.** Not done here because deleting it makes this
+  atom's own clause 3 unsatisfiable, and rewriting success criteria is the owner's call.
+- [2026-08-23][AAP-4] 🔴 **A defect class that no core gate can catch, recorded because it explains how
+  this shipped as "landed".** The prong-B supplier lives in the **apps** repo (0 hits for
+  `agent_config_dir` across every file there) while `src/personalclaw/acp_bundles/` holds no bundles at
+  all, so the missing argument was invisible to core lint and core tests — and all 28 existing tests
+  supply the argument themselves. Compounding it, `tests/test_acp_bundles.py` collects **zero items**
+  because its skip needs `<workspace>/apps` and the clone is `PersonalClawApps` (`G117`): the only suite
+  that exercises the supplying side never runs.
+- [2026-08-23][AAP-4] **Two rails shipped, both falsified** (`tests/test_acp_mcp_reachability.py`, +96).
+  One censuses `src/**` for `agent_config_dir=` call sites and pins zero, with two vacuity floors — the
+  parameter must still exist with default `None` (else "no supplier" is trivially true) and the scan must
+  have read >100 files (a mistyped root scans nothing). The other deletes `personalclaw.acp.config_seed`
+  from `sys.modules`, calls `unregister_acp_cli_entry` and asserts it is back — the **only** automatic
+  detector of the deletion hazard in `G116`, where `mypy` reports "Success", both function-local imports
+  still succeed, and the enable path stays green on a tree with the module removed.
+- [2026-08-23][AAP-4] 🔴 **`G109`: the env half of session inject-back is inert**, falsified
+  independently by two drives — a probe var **arrived** in the child while `session_key` read
+  `EMPTY_AT_SESSION_NEW` / `sentinel-None`. So the CLIs forward our env faithfully and `session_key` is
+  `None` at `session/new`; because MCP children spawn once there, the later `rekey()` can never inject
+  it. Inject-back therefore rests entirely on the pid tree walk, which does resolve — and fails **closed**
+  for unclaimed pool spares rather than cross-session (`K106`).
+- **STILL UNVERIFIED.** `subagent_run` injected back on claude-code but wedged on kiro and codex with a
+  provider-independent control (`G110`/`G114`) — unresolved. `G113`'s 403 on `get_context` (the first
+  tool kiro calls) and `G115`'s stale-pid cross-session risk are filed unfixed: one needs an auth
+  allowlist widened, the other is session lifecycle, and both are escalate-not-improvise with four drives
+  live in the subsystem. No `web/` surface was touched.
