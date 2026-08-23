@@ -558,3 +558,57 @@ inline page render — this automation profile will not embed a pdf in an `<obje
 pdf FILE shows the identical browser fallback in the same session, so the limit is
 environmental. What *was* verified in-browser for both sources: the object's `data` is the
 correct URL and returns `200 application/pdf`.
+
+- **2026-08-23 — `DFE-2` COMPLETE (all four clauses). Atom stays `todo` only because this code is
+  unmerged**; flip it when the PR lands.
+  A document model that cannot express bold makes every writer a lossy one. `_strip_inline` threw
+  markdown formatting away at **seven** call sites (the brief said eight — the eighth occurrence was the
+  definition itself), so `**bold**` reached the docx writer as the word "bold" and no file could carry it.
+  **Clause 1 — every existing model test passes untouched.** `tests/test_documents.py` (48 tests) was
+  never edited by any of the three agents; it passes on the integrated tree. That is the compatibility
+  proof, not a claim.
+  **Clause 2 — derivation.** `Block` gains `runs`/`cells`/`style` and `DocumentModel` gains `page`, all
+  additive; `__post_init__` derives `text` from runs and `rows` from cells. Probed live:
+  `Block(kind="paragraph", runs=[Run("a"), Run("b", bold=True)]).text == "ab"` and
+  `Block(kind="table", cells=[[Cell(runs=[Run("H1")]), Cell(text="H2")]]).rows == [["H1", "H2"]]`.
+  **When both are supplied the explicit value wins** — recomputing an author's `text` would make a
+  deliberate override impossible to express. An unknown `align`/`orientation` **raises** rather than
+  normalising to `""`: a typo like `"centre"` silently becoming "writer default" yields a file that looks
+  plausible while discarding the layout the author asked for.
+  **Clause 3 — one parser, and `_strip_inline` is GONE, measured.** The atom's own wording is "not left
+  beside it", so the name appears nowhere in the package and a rail asserts that — with a vacuity guard
+  pointed at a directory where the name is genuinely absent, which is exactly the false green a typo'd
+  path produces. **The compatibility set was captured by RUNNING the old function on `origin/main` before
+  deleting it:** 46 inputs, **40 byte-identical**, 6 divergences pinned in a table with both columns.
+  **Five of those six ADD BACK characters the old function silently ate** — `2 * 3 * 4` → `2  3  4`,
+  `snake_case_name` → `snakecasename`, `a_b_c_d` → `abc_d`. So the brief's premise that "`_strip_inline`
+  never dropped any characters" was **false**, and the general rail is a subsequence property in both
+  directions (old ⊆ new ⊆ raw) rather than a table lookup: nothing is dropped and nothing is invented.
+  Two CommonMark rules keep prose from reading as markup (an opener is never followed by whitespace; `_`
+  never opens inside a word). The sixth divergence is the atom's requirement — a code span is literal.
+  **Clause 4 — the round-trip asserts the DOCUMENT, not the model.** A bold run is rendered to bytes,
+  reopened with python-docx, and read back `bold is True`. Falsifying it (`bold = None`) reds 2 of 25;
+  a test that stayed green there would have been asserting the model it was handed.
+  **Hyperlinks are real** `w:hyperlink` relationships with `is_external=True` and an asserted `target_ref`,
+  carrying explicit colour and underline rather than a `"Hyperlink"` character style a template need not
+  define (a dangling style reference renders as prose). `0.0` on the spacing and margin fields means
+  "writer default", never an explicit zero — inverting that would silently reformat every existing
+  document, and a falsification pins it.
+  **Backwards compatibility proved by differential.** A runs-less model covering all eight block kinds
+  renders **byte-identical `word/document.xml`** through a transcription of the pre-DFE-2 dispatch and the
+  new one, with identical zip part lists; the runs-less output contains no `w:rPr` or `w:pPr` at all.
+  **DEPENDENCY FLOOR RAISED, and it is a content-loss fix rather than housekeeping.** `python-docx` moves
+  from `>=0.8.6,<2` to `>=1.1,<2`. `Paragraph.text` only includes hyperlink display text from 1.1 onward
+  (verified against the installed 1.2.0, whose own docstring states it) and `knowledge/readers.py:229`
+  reads exactly that — so shipping clickable links while the declared floor allowed 0.8.x would leave
+  **our own reader** silently dropping a link's words. `uv lock` churn is exactly one line, the specifier
+  mirror.
+  **Left for the next slice, recorded rather than half-built:** markdown table cells still become plain
+  strings through the same parser. `Cell` now exists and `rows` derives from `cells`, so the remaining
+  work is one line in `from_markup` plus its test — but the atom's clause is satisfied by the model's
+  derivation, and widening `Block.rows`' own type would touch every writer, serializer and test that
+  reads it.
+  **DISCOVERY (pre-existing, outside this atom): `mcp_artifacts._document_create` swallows a writer
+  exception into its outcome callback** rather than raising, so a writer failure presents to the caller as
+  "no artifact appeared" instead of an error. It surfaced here as two `IndexError`s in
+  `test_documents.py` that were one hop downstream of the real cause.
