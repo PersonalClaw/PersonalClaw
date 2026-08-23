@@ -209,6 +209,93 @@ def extract_tool_event(
     return None
 
 
+# ── the tool-result FAILURE bit, derived runtime-agnostically ────────────────
+#
+# `AAP-6` §2.3 gap 5. The loop breaker, the procedural-outcome accumulator and the
+# tool card all read ONE bit: did this tool call fail. Reading it off the ACP
+# `status` field alone made that bit a per-CLI lottery, measured:
+#
+#   codex  → status="failed",    rawOutput {"formatted_output": "boom\n", "exit_code": 3}
+#   kiro   → status="completed", rawOutput {"items":[{"Json":{"exit_status":
+#                                "exit status: 3", "stdout": "", "stderr": "boom\n"}}]}
+#
+# Both ran `bash -c 'echo boom >&2; exit 3'`. kiro calls a non-zero-exit command a
+# COMPLETED tool call — it completed the act of running it — so a status-only reading
+# left every kiro failure signed as a success and the whole warn/block/circuit path
+# inert on that runtime (measured live: ten consecutive failing calls, zero notices).
+# Neither CLI is wrong; they answer different questions. So the host stops asking the
+# CLI to agree and derives the bit itself: trust a DECLARED failure, and otherwise look
+# for a declared non-zero process exit in the result payload.
+#
+# Deliberately KEY-BASED, never a scan of the output prose. `grep -c error`, a test
+# runner printing "1 failed", or a file whose contents say "exit 1" are all successful
+# tool calls, and a text heuristic would sign them failed — a breaker that aborts a
+# healthy turn is worse than one that misses a failure. For the same reason the scan
+# never touches `rawInput`: kiro's own input for the measured call is
+# `{"command": "bash -c 'echo boom >&2; exit 3'"}`, so a whole-frame scan would call
+# EVERY invocation of that command a failure regardless of how it exited.
+_EXIT_STATUS_KEYS = ("exit_code", "exitCode", "exit_status", "exitStatus")
+# The MCP tool-result failure flag — for a tool the CLI serves over MCP rather than
+# running itself, which is how an app-provided tool reaches an ACP session.
+_ERROR_FLAG_KEYS = ("isError", "is_error")
+# Both measured runtimes bury the status two-to-three levels down (kiro: items → Json).
+# Bounded so a pathological or cyclic-looking payload can't turn one frame into a walk.
+_FAILURE_SCAN_MAX_DEPTH = 6
+
+
+def _declares_nonzero_exit(value: object) -> bool:
+    """True when ``value`` is a DECLARED non-zero process exit status.
+
+    Accepts both measured spellings: codex's ``3`` (int) and kiro's
+    ``"exit status: 3"`` (string). A bool is not an exit status — ``True`` is ``1`` in
+    Python and would otherwise read as "exited 1" — and a string carrying no digits
+    (``"unknown"``) is an absent status, not a failing one.
+    """
+    if isinstance(value, bool):
+        return False
+    if isinstance(value, int):
+        return value != 0
+    if isinstance(value, str):
+        m = re.search(r"-?\d+", value)
+        return m is not None and int(m.group()) != 0
+    return False
+
+
+def _declares_failure(node: object, depth: int = 0) -> bool:
+    """Walk a tool-result payload for a declared failure key. Keys only, never prose."""
+    if depth > _FAILURE_SCAN_MAX_DEPTH:
+        return False
+    if isinstance(node, dict):
+        if any(node.get(k) is True for k in _ERROR_FLAG_KEYS):
+            return True
+        if any(_declares_nonzero_exit(node[k]) for k in _EXIT_STATUS_KEYS if k in node):
+            return True
+        return any(_declares_failure(v, depth + 1) for v in node.values())
+    if isinstance(node, list):
+        return any(_declares_failure(v, depth + 1) for v in node)
+    return False
+
+
+def terminal_result_failed(update: dict) -> bool:
+    """Did this terminal ``tool_call_update`` frame report a FAILED tool call?
+
+    Runtime-agnostic by construction — it asks the payload, not the runtime:
+
+    1. ``status == "failed"``: the CLI declared it. Always believed, so a runtime that
+       does sign its failures (codex, claude-code-acp) is decided by its own word and
+       the derivation below can only ever ADD a failure the CLI declined to name.
+    2. Otherwise, a declared non-zero exit status or ``isError`` anywhere in the
+       structured result (``rawOutput``/``content``) — which is what a runtime that
+       reports a failing command as a ``completed`` tool call (kiro) leaves behind.
+
+    A frame with neither is a success, so the ``ok`` key stays absent and no existing
+    reader changes behaviour on a passing call.
+    """
+    if update.get("status") == "failed":
+        return True
+    return _declares_failure(update.get("rawOutput")) or _declares_failure(update.get("content"))
+
+
 def extract_tool_update_events(
     msg: JsonRpcMessage,
     tool_call_inputs: dict[str, str],
@@ -281,6 +368,11 @@ def extract_tool_update_events(
     #    what the user needs to see — surface both. Prefer the human-readable
     #    content blocks; fall back to rawOutput.
     if update.get("status") in ("completed", "failed"):
+        # The terminal frame decides the failure bit below, and the two CLIs disagree
+        # about which key carries the failure. Log the payload once, at the one place
+        # that reads it, so the next runtime's shape can be MEASURED rather than
+        # guessed (same reason `build_permission_event` logs its `toolCall` payload).
+        logger.debug("Terminal tool_call_update payload: %s", update)
         output = coerce_tool_content(update.get("content"))
         if not output:
             raw_output = update.get("rawOutput")
@@ -300,7 +392,12 @@ def extract_tool_update_events(
         # is `ok`, matching the native runtime's tool_meta contract: present and
         # False ONLY on failure, absent on success, so no existing reader changes
         # behaviour on a passing call.
-        _meta = {"ok": False} if update.get("status") == "failed" else {}
+        #
+        # DERIVED, not read off `status` (`G151`): reading the CLI's status field alone
+        # made the bit a per-runtime lottery and left the whole breaker path inert on
+        # every runtime that calls a failing command a `completed` tool call. See
+        # `terminal_result_failed`.
+        _meta = {"ok": False} if terminal_result_failed(update) else {}
         events.append(
             AcpEvent(
                 kind=EVENT_TOOL_RESULT,

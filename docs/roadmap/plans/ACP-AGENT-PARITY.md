@@ -2291,6 +2291,97 @@ not "all commands", contradicting its own option description. Measured, not docu
 3. **`gateway.log` is WARNING-only by default**, so `client.py`'s existing `logger.info("ACP mode: %s")`
    was present and invisible all along — compounding `O18`'s "no wire frames" into "no mode evidence at
    all". Add `--verbose` (before the subcommand; `-v` is rejected) and the handshake narrates itself.
+## Phase 2 results — §2.3 Unattended threading + runtime-agnostic loop breaker (atom `AAP-6`) — **PARTIAL**
+
+Observations `O181`-`O186`, findings `G151`-`G155`. **Clause 1 is fully met on all three providers;
+clause 2 is met on kiro and codex and blocked on claude-code by a distinct root cause.** The atom stays
+`todo`.
+
+**§2.3 was not unimplemented.** The gap-3 unify (`chat_runner.py:1852`) and the unattended fail-fast
+(`:3387`) were already on `main` and work. **Only the gap-5 failure signal was broken** — which is why
+this landed as two surgical changes rather than a build.
+
+### One root cause: the breaker asked the CLI a question only some CLIs answer
+
+The three CLIs report the *same* failing command three different ways. Measured live, all on
+`bash -c 'echo boom >&2; exit 3'`:
+
+| provider | frame |
+|---|---|
+| kiro | `status: "completed"`, `rawOutput{items:[{Json:{exit_status: "exit status: 3", stderr: "boom\n"}}]}` |
+| codex | `status: "failed"`, `rawOutput{formatted_output: "boom\n", exit_code: 3}` |
+| claude-code | `status: "failed"`, `rawOutput: "Exit code 3\nboom"` |
+
+kiro's success frame is the same shape with `"exit status: 0"` — that string is the discriminator, and
+it is the vacuity floor. Because `translate.py` stamped `ok: False` **only** on a declared
+`status == "failed"`, kiro's failures were recorded as successes, and the same unset bit feeds the loop
+breaker and the tool-card colour. So `G6`'s landed failure-breaker fix was inert on kiro: ten
+consecutive failures produced nothing.
+
+**Fix 1 — `terminal_result_failed(update)`** (`acp/translate.py:279`): believes a declared
+`status == "failed"`, and otherwise derives failure from a **declared non-zero exit status** or `isError`
+in the structured result. **Key-based, `rawOutput`/`content` only — never prose, never `rawInput`.** That
+constraint is what makes it runtime-agnostic rather than a third per-provider special case.
+
+**Fix 2 — `normalize_call_args()`** (`guardrails/loop_breaker.py`): strips `__`-prefixed
+adapter-injected args before `params_key` builds the bucket. **Without it the fixed bit still produced
+nothing** — the signal arrived and every call landed in its own bucket, so no streak could form.
+
+### Clause 1 — unattended completes or fails fast, no wedge: **MET on all three**
+
+- **claude-code** (`cron:aap6-cc-unatt`): 23.3 s, file written. SEL
+  `mode_change:unattended_auto_approve | allowed | mode=bypassPermissions`, then `Terminal`/`Write`
+  ungated. **Here the grant is load-bearing** — it is what stops claude-code asking.
+- **codex** (`cron:aap6-codex-brk`): 23.3 s to completion, never asks, no wedge.
+- **kiro** (`cron:aap6-kiro-fail`): fail-fast in **8.1 s** — `(auto-denied: unattended run, no one to
+  approve)`, SEL `denied {reason: "unattended_fail_fast", risk: "destructive"}`.
+
+`O184` is the nuance worth carrying: **kiro asks permission for every shell call**, so an unattended
+kiro session auto-denies *all* tools — its "runs to completion" is always "fails fast". That satisfies
+the clause as written, and it is worth knowing that the two halves are indistinguishable there.
+
+### Clause 2 — a failing-tool session trips the circuit: **kiro ✅ codex ✅ claude-code ❌**
+
+kiro was fully inert and now produces 4× `ok: False` with the standard wording firing live —
+`[note: this is failure #3 of \`bash -c 'echo boom >&2; exit 3'\` with these arguments this run — stop
+repeating it and change approach.]` then `#4`. codex the same.
+
+**claude-code receives the bit (4× `ok: False`) but no rung fires**, and the cause is separate from
+either fix:
+
+- **`G154` (HIGH)** — claude-code's `Bash` tool takes a per-call **`description`** (`"Run boom command
+  (1 of 4)"` … `(4 of 4)`), refined into the breaker key at `chat_runner.py:2764`. Four byte-identical
+  failing commands therefore produce **four buckets, four streaks of one**. It is the same shape as the
+  dunder problem but `description` is a **model-authored first-class argument**, so it was deliberately
+  **not** added to the strip list: for a tool whose payload *is* a description (task creation),
+  stripping it merges genuinely different calls and the breaker starts aborting healthy turns. The fix
+  needs a per-tool notion of which args are behavioural — or to key off the CLI's stable `detail`, which
+  for these four calls was exactly the command. **The circuit is unaffected**, since `total_failures` is
+  bucket-independent.
+- **`G155` (MEDIUM)** — the ACP circuit rung is practically unreachable: `_acp_breaker = LoopBreaker()`
+  is a local in `_run_chat`, i.e. **per turn**, while `CIRCUIT_THRESHOLD = 30` is sized for a native
+  **run** spanning many turns. 31 failures inside one prompt turn is not something a CLI does, so an
+  unattended loop repeating a failing tool across 20 turns **resets the counter every turn and never
+  trips**. Proved at the code level from real frames; deliberately **not** fixed, because choosing the
+  breaker's lifetime and reset point is a design decision (E3), not an implementation detail.
+
+### Corrections this drive makes to the record
+
+1. **"The fail-fast needs `event.request_id`, which codex never emits" is misleading.** Codex emits no
+   `session/request_permission` **at all** for these tools (SEL `reason: no session/request_permission
+   for this tool_call`), so the handler is never entered — nothing is missing a `request_id`.
+2. **"The `bypassPermissions` grant is a no-op" is true only for codex and kiro.** On claude-code it is
+   what makes the CLI self-approve instead of parking.
+3. `O183` — claude-code sends `rawInput: {}` on the opening `tool_call` and **no** `rawInput` on the
+   update, so the host only ever sees the command via the refined update.
+4. `O185` — **kiro twice fabricated a six-row results table without invoking any tool** (zero frames).
+   A live breaker drive therefore needs an explicit "actually execute" instruction, or it measures
+   prose.
+5. `O186` — the MCP `get_context` tool returns `HTTP Error 403: Forbidden` in an isolated home, matching
+   the already-recorded auth-allowlist gap.
+6. `PERSONALCLAW_ACP_TRACE=1` traces **outbound** frames only; inbound needs `-vv` **before** the
+   subcommand plus a decoder-side debug line. `POST /api/chat` blocks for the whole turn, so approving a
+   card needs a concurrent poller, and a stale `approval_id` returns **404**, which kills a naive driver.
 
 
 ## Gap closure index (status as of 2026-08-22, verified against `origin/main` = `05bba66e`)
@@ -4299,3 +4390,41 @@ cited above.
   "the adapter clamps and rejects unknown modes" (codex rejects **without** clamping — the sentence that
   made this bug unfindable by reading), `dialect.py:136-137`'s claim that claude-code and codex share five
   modes, and the invisibility of `gateway.log`'s existing INFO mode line at the default WARNING level.
+
+## Execution log — `AAP-6` (§2.3 unattended threading + runtime-agnostic loop breaker)
+
+- [2026-08-23][AAP-6] **PARTIAL — the atom stays `todo`.** Clause 1 (an unattended loop completes or
+  fails fast without wedging) is **MET on all three providers**. Clause 2 (a failing-tool session trips
+  the circuit with the standard message) is **MET on kiro and codex**, and blocked on claude-code by a
+  separate root cause (`G154`). Observations `O181`-`O186`, findings `G151`-`G155`.
+- [2026-08-23][AAP-6] 🔴 **The breaker was asking the CLI a question only some CLIs answer.** kiro
+  reports a non-zero-exit shell command as `status: "completed"` with the failure buried in a nested
+  string (`exit_status: "exit status: 3"`), so `translate.py`'s `status == "failed"` test recorded it as a
+  success — and the same unset bit feeds the loop breaker and the tool-card colour. `terminal_result_failed`
+  now believes a declared failure and otherwise **derives** it from a declared non-zero exit status or
+  `isError`, **key-based over `rawOutput`/`content` only, never prose** — which is what makes it
+  runtime-agnostic instead of a third per-provider case.
+- [2026-08-23][AAP-6] 🔴 **The fixed bit alone produced nothing.** Adapter-injected `__`-prefixed args
+  were part of the breaker's bucket key, so every repeat landed in its own bucket and no streak could
+  form. `normalize_call_args()` strips them. **Two independent defects had to be fixed before one
+  observable behaviour appeared** — either alone leaves the control inert, which is why the earlier
+  `G6` fix looked landed and did nothing on kiro.
+- [2026-08-23][AAP-6] ⚠️ **`G154` (HIGH) — claude-code's per-call `description` fragments the bucket.**
+  Four byte-identical failing commands carry `"Run boom command (1 of 4)"` … `(4 of 4)`, refined into the
+  key at `chat_runner.py:2764`, so four streaks of one form and no rung fires. **Deliberately not
+  stripped**: `description` is a *model-authored first-class argument*, and for a tool whose payload IS a
+  description, stripping it merges genuinely different calls and the breaker starts aborting healthy
+  turns. Needs a per-tool notion of which args are behavioural, or keying off the CLI's stable `detail`.
+- [2026-08-23][AAP-6] ⚠️ **`G155` (MEDIUM) — the ACP circuit rung is practically unreachable.**
+  `_acp_breaker` is a local in `_run_chat`, i.e. **per turn**, while `CIRCUIT_THRESHOLD = 30` is sized
+  for a native **run** across many turns. An unattended loop repeating a failing tool for 20 turns resets
+  the counter every turn and never trips. Not fixed: the breaker's lifetime and reset point is a design
+  decision (E3), not an implementation detail.
+- [2026-08-23][AAP-6] **Two claims in the record corrected.** The fail-fast does **not** fail for want of
+  `event.request_id` on codex — codex emits **no** `session/request_permission` at all for these tools,
+  so the handler is never entered. And the `bypassPermissions` grant is a no-op only for codex and kiro;
+  on claude-code it is **load-bearing**, being what makes the CLI self-approve rather than park.
+- **STILL UNVERIFIED.** `G155` is proved at the code level from real frames, never driven live — 31
+  failures in one turn is not reachable through a CLI. `O185`: kiro twice **fabricated** a six-row
+  results table with zero tool frames, so any live breaker drive needs an explicit "actually execute"
+  instruction or it measures prose rather than tool calls.
