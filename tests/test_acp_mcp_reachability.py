@@ -665,3 +665,74 @@ def test_disable_really_executes_the_config_seed_import(home, monkeypatch):
         "disable no longer imports config_seed — either it was rewired (update this "
         "rail) or the unseed call was dropped (a bundle disable now leaves residue)"
     )
+
+
+@pytest.fixture
+def _stub_registry(monkeypatch):
+    """Registration without mutating the process-wide provider registry — the same
+    shape the seeding tests above use, so these tests can call the real
+    ``register_acp_cli_entry`` for its DIRECTORY side effect without leaking entries."""
+    from personalclaw.acp_bundles import _register
+
+    monkeypatch.setattr(
+        _register,
+        "get_default_registry",
+        lambda: type(
+            "R",
+            (),
+            {"unregister_entry": lambda self, n: None, "register_entry": lambda self, e: None},
+        )(),
+    )
+
+
+# ── AAP-7 §2.4: a DECLARED session_files_dir is provisioned, not just recorded ──
+
+
+def test_register_provisions_a_declared_session_files_dir(tmp_path, _stub_registry):
+    """The plan's registration deliverable: "the core registration helper creates it".
+
+    Both readers of the option probe for files INSIDE the directory (``AcpClient``'s
+    ``_meta`` session-file hint, ``AcpSession``'s JSONL tool-result tail), and a path
+    that does not exist makes every probe a silent miss indistinguishable from an empty
+    directory. So a bundle that declares one gets a live one.
+    """
+    from personalclaw.acp_bundles._register import register_acp_cli_entry
+
+    target = tmp_path / "acp_sessions" / "demo"
+    assert not target.exists()
+    entry = register_acp_cli_entry(
+        cli="demo",
+        dialect="default",
+        command=["/bin/true"],
+        session_files_dir=str(target),
+    )
+    assert entry is not None
+    assert target.is_dir(), "declared session_files_dir was recorded but never created"
+    assert entry.options["session_files_dir"] == str(target)
+
+
+def test_an_uncreatable_session_files_dir_drops_the_option(tmp_path, _stub_registry):
+    """VACUITY FLOOR / fail-honest: advertising a directory nothing can read is worse
+    than declaring none, so a creation failure removes the option rather than leaving a
+    dangling path for the readers to miss on."""
+    from personalclaw.acp_bundles._register import register_acp_cli_entry
+
+    blocker = tmp_path / "not-a-dir"
+    blocker.write_text("i am a file")
+    entry = register_acp_cli_entry(
+        cli="demo2",
+        dialect="default",
+        command=["/bin/true"],
+        session_files_dir=str(blocker / "under-a-file"),
+    )
+    assert entry is not None
+    assert "session_files_dir" not in entry.options
+
+
+def test_no_declaration_creates_nothing(tmp_path, _stub_registry):
+    """The option stays OPT-IN: a bundle that declares nothing gets nothing."""
+    from personalclaw.acp_bundles._register import register_acp_cli_entry
+
+    entry = register_acp_cli_entry(cli="demo3", dialect="default", command=["/bin/true"])
+    assert entry is not None
+    assert "session_files_dir" not in entry.options

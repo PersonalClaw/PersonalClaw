@@ -101,7 +101,27 @@ async def _async_iter(items):
         yield item
 
 
-def _state(tmp_path, *, provider_id: str, is_new: bool, resumed: bool):
+def _history_log(rows: list[dict] | None):
+    """A ``conversation_log`` double whose ``recent()`` returns *rows*.
+
+    ``None`` means "no log wired at all" (the pre-existing harness shape). ``[]`` means
+    "a log that holds nothing for this key" — the two are different inputs to the
+    restore predicate and both must yield "created".
+    """
+    if rows is None:
+        return None
+    log = MagicMock()
+    log.recent = MagicMock(return_value=list(rows))
+    return log
+
+
+_PRIOR_TURNS = [
+    {"role": "user", "content": "what did we decide?"},
+    {"role": "assistant", "content": "we decided X"},
+]
+
+
+def _state(tmp_path, *, provider_id: str, is_new: bool, resumed: bool, history=None):
     sessions = MagicMock(count=0)
     sessions.get_pid = MagicMock(return_value=None)
     client = AsyncMock()
@@ -117,7 +137,7 @@ def _state(tmp_path, *, provider_id: str, is_new: bool, resumed: bool):
     cb = MagicMock()
     cb.hooks.on_tool_call.return_value = ToolHookResult.allow()
     cb.build_message.return_value = ("hello", None)
-    cb.conversation_log = None
+    cb.conversation_log = _history_log(history)
     state.context_builder = cb
     hs = MagicMock()
     hs.fire_for_ids = AsyncMock(return_value=[])
@@ -144,13 +164,30 @@ def _session_lines(state) -> list[str]:
     return out
 
 
-async def _one_turn(tmp_path, *, provider_id: str, is_new: bool, resumed: bool) -> list[str]:
-    state, _client = _state(tmp_path, provider_id=provider_id, is_new=is_new, resumed=resumed)
+async def _one_turn(
+    tmp_path, *, provider_id: str, is_new: bool, resumed: bool, history=None
+) -> list[str]:
+    state, _client = _state(
+        tmp_path, provider_id=provider_id, is_new=is_new, resumed=resumed, history=history
+    )
     session = _ChatSession("chat-1-g1415")
     session._trust = True
     with patch("personalclaw.dashboard.chat_runner.sel", MagicMock()):
         await run_chat(state, session, "hello")
     return _session_lines(state)
+
+
+async def _turn_and_state(tmp_path, *, provider_id: str, is_new: bool, resumed: bool, history=None):
+    """Like :func:`_one_turn` but also hands back the state, so a test can assert what
+    the turn DID (whether the history bootstrap ran) beside what it SAID."""
+    state, _client = _state(
+        tmp_path, provider_id=provider_id, is_new=is_new, resumed=resumed, history=history
+    )
+    session = _ChatSession("chat-1-g1415")
+    session._trust = True
+    with patch("personalclaw.dashboard.chat_runner.sel", MagicMock()):
+        await run_chat(state, session, "hello")
+    return _session_lines(state), state
 
 
 # ── G14 at the call site: the sentence itself ───────────────────────────────
@@ -222,3 +259,126 @@ class TestSentenceVerbMatchesWhatHappened:
                 tmp_path, provider_id="acp:claude-code", is_new=is_new, resumed=resumed
             )
             assert len(lines) == 1, (is_new, resumed, lines)
+
+
+# ── AAP-7 / `G156`: the fourth verb — a history restore is not a protocol resume ──
+
+
+class TestARestoreFromHistoryIsNotCalledResumed:
+    """AAP-7's central hazard: a session that came back on OUR compressed transcript
+    must not wear the word a protocol ``session/load`` earns.
+
+    Measured on all three CLIs (claude-code / codex / kiro-cli): a mid-conversation
+    gateway restart that does NOT resume gets its context from
+    ``compress_thread_history``, which selects ``roles={"user", "assistant"}`` — so
+    anything that lived only in a tool result is GONE. Calling that "resumed" claims
+    a fidelity the turn does not have; calling it "created" denies a restore that
+    happened. Every test asserts the rendered sentence, and every verb here has its
+    inverse floor, because a single hard-coded word passes any one of them alone.
+    """
+
+    @pytest.mark.asyncio
+    async def test_a_fresh_runner_over_prior_history_says_restored_from_history(self, tmp_path):
+        lines = await _one_turn(
+            tmp_path,
+            provider_id="acp:claude-code",
+            is_new=True,
+            resumed=False,
+            history=_PRIOR_TURNS,
+        )
+        assert lines == [
+            "Session restored from history · default · auto · via acp:claude-code"
+        ], lines
+
+    @pytest.mark.asyncio
+    async def test_it_never_claims_resumed_or_created(self, tmp_path):
+        """The two words the sentence is not allowed to reach for on this path."""
+        lines = await _one_turn(
+            tmp_path, provider_id="acp:codex", is_new=True, resumed=False, history=_PRIOR_TURNS
+        )
+        assert "resumed" not in lines[0], lines
+        assert "created" not in lines[0], lines
+
+    @pytest.mark.asyncio
+    async def test_a_real_protocol_resume_still_says_resumed_over_the_same_history(self, tmp_path):
+        """VACUITY FLOOR for the new verb: prior history present AND ``resumed=True``
+        (what ``session/load`` returns) must still read "resumed". If the new branch
+        were ordered above the resume branch, this reds — which is the whole point:
+        the label must track WHICH mechanism ran, not merely that history exists."""
+        lines = await _one_turn(
+            tmp_path,
+            provider_id="acp:claude-code",
+            is_new=True,
+            resumed=True,
+            history=_PRIOR_TURNS,
+        )
+        assert lines == ["Session resumed · default · auto · via acp:claude-code"], lines
+        assert "restored from history" not in lines[0]
+
+    @pytest.mark.asyncio
+    async def test_no_prior_history_still_says_created(self, tmp_path):
+        """VACUITY FLOOR the other way: an empty log is not a restore. Both "no log
+        wired" and "a log holding nothing for this key" must read "created", or the
+        new verb would fire on every brand-new conversation."""
+        for history in (None, []):
+            lines = await _one_turn(
+                tmp_path,
+                provider_id="acp:kiro-cli",
+                is_new=True,
+                resumed=False,
+                history=history,
+            )
+            assert lines == ["Session created · default · auto · via acp:kiro-cli"], (
+                history,
+                lines,
+            )
+
+    @pytest.mark.asyncio
+    async def test_a_reused_live_session_is_not_a_restore_either(self, tmp_path):
+        """``not is_new`` outranks everything: nothing was created, loaded OR restored."""
+        lines = await _one_turn(
+            tmp_path,
+            provider_id="acp:claude-code",
+            is_new=False,
+            resumed=False,
+            history=_PRIOR_TURNS,
+        )
+        assert lines == ["Session continued · default · auto · via acp:claude-code"], lines
+
+    @pytest.mark.asyncio
+    async def test_the_sentence_and_the_bootstrap_read_ONE_predicate(self, tmp_path):
+        """THE CALL SITE, not the mechanism. The word "restored" is only honest if the
+        turn actually restored, so the label and the compressed-history bootstrap must
+        be gated on the same value. Asserted by observing the bootstrap: the sentence
+        says "restored from history" exactly on the turns where
+        ``compress_thread_history`` was invoked for this key, and never otherwise.
+
+        A test that only checked the string would pass if the two sites drifted apart —
+        which is precisely how "resumed" came to be printed for a session nothing had
+        loaded.
+        """
+        with patch(
+            "personalclaw.context.compress_thread_history", new=AsyncMock(return_value="summary")
+        ) as compress:
+            said, _state_restored = await _turn_and_state(
+                tmp_path,
+                provider_id="acp:claude-code",
+                is_new=True,
+                resumed=False,
+                history=_PRIOR_TURNS,
+            )
+            assert "restored from history" in said[0], said
+            assert compress.await_count == 1, "the label claimed a restore that never ran"
+
+        with patch(
+            "personalclaw.context.compress_thread_history", new=AsyncMock(return_value="summary")
+        ) as compress:
+            said, _state_created = await _turn_and_state(
+                tmp_path,
+                provider_id="acp:claude-code",
+                is_new=True,
+                resumed=False,
+                history=[],
+            )
+            assert "created" in said[0], said
+            assert compress.await_count == 0, "a restore ran on a turn labelled 'created'"

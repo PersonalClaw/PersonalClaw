@@ -17,7 +17,6 @@ lived in the OTHER restore path, so the key was written and then never read back
 from __future__ import annotations
 
 import json
-import logging
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -317,50 +316,147 @@ class TestAnUnrestorableBindingIsAnnounced:
         assert _binding_notices(bcast) == []
 
 
-# ── claim 4: why resume_sid was None, and why nothing said so ────────────────
+# ── claim 4: resume_sid is no longer None, and the reason it was is DELETED ──
 
 
-class TestResumeSidIsNoneForAMeasurableReason:
-    def test_get_prunes_and_says_why_when_the_session_file_is_absent(
-        self, tmp_path, monkeypatch, caplog
-    ):
-        """The measured reason ``resume_sid`` was ``None`` after a restart.
+class TestResumeSidSurvivesARestart:
+    """AAP-7 supersedes this claim's original form.
 
-        ``SessionMap.get`` gates on ``$PERSONALCLAW_HOME/sessions/<sid>.json``, which
-        nothing in core ever writes — the adapter writes it only when the provider was
-        built with an opt-in ``session_files_dir`` the bundle has to pass. So the lookup
-        returned ``None`` *and* deleted the mapping, and the following ``session/new``
-        wrote a FRESH sid over the top: from the outside, a map that "holds a sid" while
-        the log says ``resume_sid=None``. That is why O16 could not explain it, and the
-        reason this branch now logs like its sibling does.
-        """
+    The filed reason ``resume_sid`` was ``None`` after a restart — ``SessionMap.get``
+    gating on ``$PERSONALCLAW_HOME/sessions/<sid>.json`` and DELETING the mapping when
+    it was absent — was not a diagnosis to log better. It was the defect: nothing in the
+    tree writes that path (its only two references were this gate and ``prune``'s copy of
+    it), so the branch fired on every lookup and no bundle opt-in could have satisfied
+    it, because the directory is never communicated to the spawned CLI either. The gate
+    and the pruning are gone; whether an id still loads is the AGENT's answer, delivered
+    as a ``session/load`` refusal that ``AcpClient`` falls back from.
+
+    Measured on a live gateway before the change: ``session_map.json`` read ``{}`` after
+    one restart. After: the id survives, ``session/load`` is sent, and all three CLIs
+    resume.
+    """
+
+    def _map(self, tmp_path, monkeypatch):
         monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path))
         monkeypatch.setattr("personalclaw.session_map.config_dir", lambda: tmp_path)
         monkeypatch.setattr("personalclaw.config.loader.config_dir", lambda: tmp_path)
         from personalclaw.session_map import SessionMap
 
-        m = SessionMap()
+        return SessionMap()
+
+    def test_the_sid_is_returned_and_kept_with_no_session_file(self, tmp_path, monkeypatch):
+        m = self._map(tmp_path, monkeypatch)
         m.set(HISTORY_KEY, "2cb03780-dead-beef", cwd=str(tmp_path))
+        assert not (tmp_path / "sessions").exists(), "precondition: no session files at all"
+        assert m.get(HISTORY_KEY) == "2cb03780-dead-beef"
+        # The destructive half: the entry is still on disk for the NEXT restart.
         assert json.loads((tmp_path / "session_map.json").read_text())[HISTORY_KEY]
 
-        with caplog.at_level(logging.INFO, logger="personalclaw.session_map"):
-            assert m.get(HISTORY_KEY) is None
-        assert json.loads((tmp_path / "session_map.json").read_text()) == {}
-        assert any(
-            "no session file" in r.getMessage() for r in caplog.records
-        ), "the entry was pruned without saying why — resume_sid=None stays unexplainable"
-
-    def test_get_returns_the_sid_when_the_session_files_are_present(self, tmp_path, monkeypatch):
-        """The vacuity floor. Without this the test above passes on a broken ``get``."""
-        monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path))
-        monkeypatch.setattr("personalclaw.session_map.config_dir", lambda: tmp_path)
-        monkeypatch.setattr("personalclaw.config.loader.config_dir", lambda: tmp_path)
-        from personalclaw.session_map import SessionMap
-
-        sd = tmp_path / "sessions"
-        sd.mkdir(parents=True, exist_ok=True)
-        (sd / "2cb03780-dead-beef.json").write_text("{}", encoding="utf-8")
-        (sd / "2cb03780-dead-beef.jsonl").write_text('{"role":"user"}\n', encoding="utf-8")
-        m = SessionMap()
+    def test_startup_prune_does_not_wipe_it(self, tmp_path, monkeypatch):
+        """``prune()`` runs at every ``start_pool``. Keyed on the same missing file, it
+        deleted the mapping a mid-conversation restart needs before the first turn could
+        ask for it."""
+        m = self._map(tmp_path, monkeypatch)
         m.set(HISTORY_KEY, "2cb03780-dead-beef", cwd=str(tmp_path))
+        assert m.prune() == 0
         assert m.get(HISTORY_KEY) == "2cb03780-dead-beef"
+
+    def test_an_entry_naming_nothing_is_still_dropped(self, tmp_path, monkeypatch):
+        """VACUITY FLOOR: neither ``get`` nor ``prune`` became a blanket yes."""
+        m = self._map(tmp_path, monkeypatch)
+        m._data[HISTORY_KEY] = {"sid": "", "thread_ts": None, "channel_id": None}
+        assert m.get(HISTORY_KEY) is None
+        assert m.prune() == 1
+
+
+# ── `G157`: the first message after a restart must not run on a blank session ──
+
+
+class TestAColdKeyPostRehydratesItsBinding:
+    """A named session that is on disk but not in memory must come back WITH its
+    persisted runtime binding.
+
+    ``get_or_create_session`` mints a BARE session on a miss, and after a restart every
+    un-foldered session is a miss (the startup restore is window/folder-scoped and
+    ``restore_sessions`` defaults to false). So the first ``POST /api/chat`` resolved on
+    the native axis even though the meta line said ``acp:<cli>`` — and then
+    ``save_session_to_history`` rebuilt that meta line from the blank session and
+    DROPPED the binding, turning one bad turn into permanent state. It also made resume
+    unreachable: the resume id is handed to whatever provider the turn resolved, and a
+    native provider ignores it. A GET of the session first happened to rehydrate and
+    hide the whole thing, which is why it only bit non-UI callers.
+    """
+
+    def _log(self, tmp_path):
+        log = ConversationLog(base_dir=tmp_path)
+        log.init()
+        return log
+
+    def _persisted_session(self, tmp_path):
+        """A session on disk carrying an ACP binding, with nothing in memory."""
+        state = DashboardState(
+            sessions=MagicMock(count=0), start_time=0.0, conversation_log=self._log(tmp_path)
+        )
+        s = _ChatSession(SESSION)
+        s.acp_provider = "acp:claude-code"
+        s.workspace_dir = str(tmp_path / "ws")
+        s.append("user", "hi", "msg msg-u")
+        save_session_to_history(state, s)
+        # The restart: a brand-new state, nothing in memory.
+        restarted = DashboardState(
+            sessions=MagicMock(count=0), start_time=0.0, conversation_log=self._log(tmp_path)
+        )
+        assert SESSION not in restarted._sessions
+        return restarted
+
+    def test_get_or_create_alone_returns_a_blank_session(self, tmp_path):
+        """The floor that makes the next test mean something: the create path on its own
+        genuinely loses the binding, so the fix cannot be vacuous."""
+        restarted = self._persisted_session(tmp_path)
+        blank = restarted.get_or_create_session(SESSION)
+        assert blank.acp_provider == ""
+
+    def test_rehydrating_first_restores_the_binding_the_turn_will_resolve(self, tmp_path):
+        """What ``api_chat`` now does before ``get_or_create_session``. The rehydrate
+        REGISTERS the restored session, so the create returns that one — the object the
+        turn reads ``acp_provider`` off."""
+        restarted = self._persisted_session(tmp_path)
+        _rehydrate_session_from_history(restarted, SESSION)
+        used = restarted.get_or_create_session(SESSION)
+        assert used.acp_provider == "acp:claude-code"
+        assert used.workspace_dir == str(tmp_path / "ws")
+
+    def test_the_meta_line_survives_the_turn_that_follows(self, tmp_path):
+        """The permanence half: with the binding restored, the end-of-turn save rewrites
+        the meta line WITH it. Without the rehydrate the same save erases it, and no
+        later restore can recover what is no longer written down."""
+        restarted = self._persisted_session(tmp_path)
+        _rehydrate_session_from_history(restarted, SESSION)
+        s = restarted.get_or_create_session(SESSION)
+        s.append("user", "second turn", "msg msg-u")
+        save_session_to_history(restarted, s)
+        meta = ConversationLog(base_dir=tmp_path).get_metadata(HISTORY_KEY)
+        assert meta.get("acp_provider") == "acp:claude-code"
+
+    def test_a_never_persisted_name_is_still_created_fresh(self, tmp_path):
+        """VACUITY FLOOR: the rehydrate must not become a precondition. A brand-new
+        session name has nothing on disk and still opens."""
+        restarted = self._persisted_session(tmp_path)
+        assert _rehydrate_session_from_history(restarted, "chat-9-brand-new") is None
+        fresh = restarted.get_or_create_session("chat-9-brand-new")
+        assert fresh.key.endswith("chat-9-brand-new")
+
+    def test_api_chat_rehydrates_before_it_resolves(self, tmp_path):
+        """THE CALL SITE. The two helpers above are correct in isolation; what shipped
+        broken was their ORDER in ``api_chat``. Assert the handler's source contract:
+        the rehydrate precedes ``get_or_create_session``, because after it the create is
+        a no-op that returns the already-registered session."""
+        import inspect
+
+        from personalclaw.dashboard import chat_handlers
+
+        src = inspect.getsource(chat_handlers.api_chat)
+        assert "_rehydrate_session_from_history(state, session_name)" in src
+        assert src.index("_rehydrate_session_from_history(state, session_name)") < src.index(
+            "state.get_or_create_session(session_name"
+        ), "api_chat resolves the session before restoring its binding"

@@ -155,6 +155,77 @@ class TestInitializeSession:
         conn.new_session.assert_not_awaited()
 
     @pytest.mark.asyncio
+    async def test_load_is_attempted_with_NO_local_session_file(self, tmp_path):
+        """AAP-7 / `G156` — the request goes out on capability + id ALONE.
+
+        The old precondition was ``<session_files_dir>/<sid>.json`` must exist, and
+        nothing in this codebase (or in any CLI we spawn — the directory is never
+        communicated to the child) writes that file, so protocol resume was
+        unreachable on every provider. ``session/load`` needs only sessionId + cwd +
+        mcpServers; the agent is the authority on whether the id still loads.
+        """
+        client = AcpClient(work_dir=tmp_path)  # NO session_files_dir at all
+        client.set_resume_session_id("old-sid")
+        conn, _ = _fake_conn(caps={"loadSession": True})
+        resumed_sess = MagicMock()
+        resumed_sess.session_id = "old-sid"
+        resumed_sess.last_prompt_stats = AcpPromptStats()
+        resumed_sess._last_stop_reason = ""
+        conn.load_session = AsyncMock(return_value=resumed_sess)
+        client._connection = conn
+        await client._initialize_session()
+        conn.load_session.assert_awaited_once()
+        assert client._resumed is True
+        assert client._session_id == "old-sid"
+        conn.new_session.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_the_session_file_is_a_hint_not_a_gate(self, tmp_path):
+        """The ``_meta`` hint is attached when a file happens to exist and OMITTED
+        when it doesn't — the same request either way. A dialect that ignores the
+        hint must not be able to tell the difference."""
+        conn_with, conn_without = None, None
+        for present in (True, False):
+            client = AcpClient(work_dir=tmp_path, session_files_dir=tmp_path)
+            client.set_resume_session_id("hint-sid")
+            if present:
+                (tmp_path / "hint-sid.json").write_text("{}")
+            elif (tmp_path / "hint-sid.json").exists():
+                (tmp_path / "hint-sid.json").unlink()
+            conn, _ = _fake_conn(caps={"loadSession": True})
+            loaded = MagicMock()
+            loaded.session_id = "hint-sid"
+            loaded.last_prompt_stats = AcpPromptStats()
+            loaded._last_stop_reason = ""
+            conn.load_session = AsyncMock(return_value=loaded)
+            client._connection = conn
+            await client._initialize_session()
+            params = conn.load_session.await_args.args[0]
+            assert params["sessionId"] == "hint-sid"
+            if present:
+                conn_with = params
+            else:
+                conn_without = params
+        assert conn_with is not None and "_meta" in conn_with
+        assert conn_without is not None and "_meta" not in conn_without
+
+    @pytest.mark.asyncio
+    async def test_no_load_without_the_capability(self, tmp_path):
+        """VACUITY FLOOR. Dropping the file gate must not turn ``session/load`` into
+        an unconditional request: an agent that never advertised ``loadSession``
+        gets ``session/new``, however many resume ids we hold."""
+        client = AcpClient(work_dir=tmp_path, session_files_dir=tmp_path)
+        client.set_resume_session_id("old-sid")
+        (tmp_path / "old-sid.json").write_text("{}")
+        conn, _sess = _fake_conn(caps={})  # no loadSession
+        conn.load_session = AsyncMock()
+        client._connection = conn
+        await client._initialize_session()
+        conn.load_session.assert_not_awaited()
+        assert client._resumed is False
+        conn.new_session.assert_awaited_once()
+
+    @pytest.mark.asyncio
     async def test_falls_back_to_new_when_load_returns_none(self, tmp_path):
         client = AcpClient(work_dir=tmp_path, session_files_dir=tmp_path)
         client.set_resume_session_id("old-sid")

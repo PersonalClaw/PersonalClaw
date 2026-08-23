@@ -176,27 +176,45 @@ class TestBridgeThreadsUnattendedToAcp:
 
     def test_bridge_injects_for_acp_and_not_for_native(self):
         """The bridge pops ``unattended`` (the model-axis resolvers must never see it)
-        and re-injects it ONLY on the ACP branch."""
+        and re-injects it ONLY on the ACP branch.
+
+        Updated by AAP-7: the ACP branch now RESOLVES THE NAMED RUNTIME rather than
+        falling through to the model axis, so the flag is observed where it is actually
+        consumed. The old shape asserted it arrived at
+        ``_resolve_from_config_registry`` — which was only reachable because an
+        ``acp:<cli>`` kind used to resolve a MODEL (`G158`).
+        """
         import personalclaw.providers.provider_bridge as pb
 
         seen: dict = {}
+        model_axis_called: list[str] = []
 
         def _fake_registry_resolve(use_case, **kwargs):
+            model_axis_called.append(use_case)
+            seen.update(kwargs)
+            return MagicMock()
+
+        def _fake_acp_build(runtime_id, **kwargs):
+            seen["runtime_id"] = runtime_id
             seen.update(kwargs)
             return MagicMock()
 
         with patch.object(pb, "_resolve_from_config_registry", _fake_registry_resolve):
-            pb.resolve_provider_for_use_case(
-                "chat",
-                session_key="cron:x",
-                agent="a",
-                model_override="Prov/m",
-                provider_kind="acp:demo-cli",
-                unattended=True,
-            )
+            with patch.object(pb, "_build_acp_runtime", _fake_acp_build):
+                pb.resolve_provider_for_use_case(
+                    "chat",
+                    session_key="cron:x",
+                    agent="a",
+                    model_override="Prov/m",
+                    provider_kind="acp:demo-cli",
+                    unattended=True,
+                )
         assert seen.get("unattended") is True
+        assert seen.get("runtime_id") == "acp:demo-cli"
+        assert model_axis_called == [], "an acp: binding must never resolve a MODEL"
 
         seen.clear()
+        model_axis_called.clear()
         with patch.object(pb, "_resolve_from_config_registry", _fake_registry_resolve):
             with patch.object(pb, "_build_native_runtime", lambda **kw: seen.update(kw)):
                 pb.resolve_provider_for_use_case(
@@ -891,3 +909,113 @@ class TestBreakerIdentityIgnoresAdapterNarration:
         session = _session()
         await _drive(state, session)
         assert any("was blocked" in t for t in _texts(session)), _texts(session)
+
+
+# ── AAP-7 / `G158`: an ``acp:<cli>`` binding resolves THAT CLI, never a model ──
+
+
+class TestAnAcpBindingResolvesTheNamedRuntime:
+    """The defect that made protocol resume unreachable, measured end to end.
+
+    ``provider_kind`` was only ever read to SKIP the native builder; an ACP kind then
+    fell into the MODEL-axis resolution, which deliberately excludes ``acp_agent``
+    entries — so a session bound to ``acp:<cli>`` silently ran the pinned chat model.
+    It hid because ``SessionManager``'s ACP connection-pool claim normally answers
+    first using ``provider_kind`` directly, and that claim is skipped exactly when a
+    resume id exists. Result: the one path that needed a resumable ACP client was the
+    one path that never got one — a live gateway restart mid-conversation continued on
+    Bedrock while the activity line still read ``via acp:claude-code``.
+    """
+
+    @staticmethod
+    def _register(monkeypatch, tmp_path, name="acp:demo-cli"):
+        from personalclaw.llm.acp_agent import ACP_AGENT_CAPABILITY
+        from personalclaw.llm.registry import ProviderEntry, get_default_registry
+
+        entry = ProviderEntry(
+            name=name,
+            type=ACP_AGENT_CAPABILITY.type,
+            model="",
+            options={"command": ["/bin/true"], "dialect": "default"},
+            declared_capabilities=ACP_AGENT_CAPABILITY.capabilities,
+        )
+        registry = get_default_registry()
+        registry.register_entry(entry)
+        monkeypatch.setattr(registry, "unregister_entry", lambda n: None, raising=False)
+        return entry
+
+    def test_it_builds_a_resumable_agent_provider_not_a_model(self, monkeypatch, tmp_path):
+        """THE CALL SITE. The built provider must be an ``AgentProvider`` — that is the
+        isinstance ``SessionManager`` gates ``set_resume`` on, so anything else means
+        the resume id is dropped on the floor and ``session/load`` is never sent."""
+        import personalclaw.providers.provider_bridge as pb
+        from personalclaw.agents.provider import AgentProvider
+
+        self._register(monkeypatch, tmp_path)
+        model_axis_called: list[str] = []
+        monkeypatch.setattr(
+            pb,
+            "_resolve_from_config_registry",
+            lambda use_case, **kw: model_axis_called.append(use_case) or MagicMock(),
+        )
+        provider = pb.resolve_provider_for_use_case(
+            "chat",
+            session_key="dashboard:chat-1",
+            agent="",
+            cwd=str(tmp_path),
+            channel_id=None,
+            provider_kind="acp:demo-cli",
+        )
+        assert isinstance(provider, AgentProvider), type(provider)
+        assert provider.provider_id == "acp:demo-cli"
+        assert hasattr(provider, "set_resume")
+        assert model_axis_called == [], "the model axis answered an acp: binding"
+
+    def test_the_per_session_cwd_reaches_the_built_runtime(self, monkeypatch, tmp_path):
+        """cwd is a SESSION axis — a CLI spawned in the wrong directory cannot find the
+        conversation the resume id names (``SessionManager`` restores the stored cwd for
+        exactly this reason)."""
+        import personalclaw.providers.provider_bridge as pb
+
+        self._register(monkeypatch, tmp_path)
+        ws = tmp_path / "ws"
+        ws.mkdir()
+        provider = pb.resolve_provider_for_use_case(
+            "chat",
+            session_key="dashboard:chat-1",
+            agent="",
+            cwd=str(ws),
+            channel_id=None,
+            provider_kind="acp:demo-cli",
+        )
+        assert str(provider._client._work_dir) == str(ws)
+
+    def test_an_unregistered_runtime_raises_instead_of_answering_with_a_model(
+        self, monkeypatch, tmp_path
+    ):
+        """VACUITY FLOOR, and the honesty requirement: silently serving a different
+        runtime is the failure mode. An absent entry must be a refusal the user can
+        read, not a fallback."""
+        import personalclaw.providers.provider_bridge as pb
+
+        monkeypatch.setattr(pb, "_resolve_from_config_registry", lambda use_case, **kw: MagicMock())
+        with pytest.raises(pb.ProviderResolutionError) as exc:
+            pb.resolve_provider_for_use_case(
+                "chat", session_key="dashboard:chat-1", provider_kind="acp:not-installed"
+            )
+        assert "acp:not-installed" in str(exc.value)
+
+    def test_a_native_kind_is_untouched(self, monkeypatch, tmp_path):
+        """VACUITY FLOOR the other way: the branch is scoped to ``acp:`` and must not
+        capture the native path."""
+        import personalclaw.providers.provider_bridge as pb
+
+        built: dict = {}
+        monkeypatch.setattr(pb, "_build_native_runtime", lambda **kw: built.update(kw))
+        monkeypatch.setattr(
+            pb, "_build_acp_runtime", lambda *a, **kw: pytest.fail("acp branch took a native turn")
+        )
+        pb.resolve_provider_for_use_case(
+            "chat", session_key="dashboard:chat-1", agent="a", provider_kind="native"
+        )
+        assert built.get("session_key") == "dashboard:chat-1"
