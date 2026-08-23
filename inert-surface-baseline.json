@@ -26,12 +26,11 @@
       ]
     },
     "src/personalclaw/sdk/acp.py": {
-      "inert": 5,
+      "inert": 4,
       "surfaces": [
         "sdk_export:is_npx_fallback",
         "sdk_export:node_manager_bin_globs",
         "sdk_export:provision_acp_adapter",
-        "sdk_export:register_acp_cli_entry",
         "sdk_export:resolve_acp_cli"
       ]
     },
@@ -433,9 +432,9 @@
       "config": 0,
       "editable_config": 0,
       "enum": 9,
-      "sdk_export": 232,
+      "sdk_export": 231,
       "trigger_kind": 0
     },
-    "inert": 241
+    "inert": 240
   }
 }

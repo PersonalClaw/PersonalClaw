@@ -5,25 +5,31 @@ three NOs on all three providers — ``knowledge_search`` NO, ``task_create`` NO
 ``notify`` NO, no ``personalclaw-core`` server (`O4`, `C4`, `K4`) — because every
 live ``session/new`` sent ``"mcpServers": []``.
 
-Two prongs are covered here:
+**Prong A is the whole mechanism.** All three ``session/new``/``session/load``
+sites and the pooled (concurrent) path carry the ``personalclaw-core`` spec, with
+the session inject-back (``PERSONALCLAW_SESSION_KEY`` + ``PERSONALCLAW_HOME``)
+declared in its env.
 
-* **prong A** — the protocol path: all three ``session/new``/``session/load``
-  sites and the pooled (concurrent) path carry the ``personalclaw-core`` spec,
-  with the session inject-back (``PERSONALCLAW_SESSION_KEY`` + ``PERSONALCLAW_HOME``)
-  declared in its env;
-* **prong B** — config seeding for a CLI that ignores the protocol field, under
-  the full seeding contract (plan `:139`).
+**Prong B — config seeding for a CLI that ignores the protocol field — is
+deleted** (`AAP-4` DEVIATION 2): no such CLI exists, nothing ever supplied the
+argument that reached it, and it was kiro-shaped by construction. The rails at the
+bottom of this file are that deletion's regression floor.
 
-Plus the `G31` home-isolation break the seeding would otherwise activate: the
-generated agent config's bash-audit hook named the operator's REAL
-``~/.personalclaw/audit.log`` with a literal tilde.
+The one record that reads like a contradiction, resolved: `K6` found that kiro
+never *discovers* the ``$PERSONALCLAW_HOME/agents/personalclaw.json`` the host
+writes, because its only roots are ``<cwd>/.kiro/agents`` and ``~/.kiro/agents``.
+That is a fact about a **config file path** and it was prong B's motivation — not
+evidence that kiro ignores the protocol array, which is a separate channel and
+measured live (`K54`, `K100`). A config kiro cannot see and a protocol array kiro
+honours are both true, so the deletion removes no kiro mechanism.
+
+Plus the `G31` home-isolation break: the generated agent config's bash-audit hook
+named the operator's REAL ``~/.personalclaw/audit.log`` with a literal tilde.
 """
 
 from __future__ import annotations
 
 import asyncio
-import json
-import os
 from pathlib import Path
 
 import pytest
@@ -344,8 +350,10 @@ def test_pool_forwards_the_session_key_to_the_opener():
 def test_generated_hook_writes_into_the_active_home(home, monkeypatch):
     """`G31` — the bash-audit hook used a literal ``~/.personalclaw/audit.log``.
 
-    Prong B makes a CLI honour this file, so a literal tilde turns every
-    isolated-home ACP session into an append to the operator's real audit log.
+    A literal tilde turns every isolated-home session into an append to the
+    operator's REAL audit log. This rail outlived prong B on purpose: the deleted
+    seeder was one consumer of this generated file, but the native path and the
+    dashboard MCP manager write it too, so the leak was never prong B's to own.
     """
     import personalclaw.agent as agent_mod
 
@@ -377,291 +385,91 @@ def test_unresolved_placeholder_fails_closed(home, monkeypatch):
         )
 
 
-# ── prong B: the seeding contract (plan :139) ───────────────────────────────
-
-
-@pytest.fixture
-def seed_env(home):
-    """A generated agent config plus a fake CLI agent-discovery root."""
-    src = home / "agents" / "personalclaw.json"
-    src.write_text(json.dumps({"name": "personalclaw"}), encoding="utf-8")
-    cli_root = home.parent / "cli-root" / "agents"
-    cli_root.mkdir(parents=True)
-    return src, cli_root
-
-
-def test_seed_makes_the_config_discoverable(seed_env):
-    from personalclaw.acp.config_seed import seed_agent_config
-
-    src, cli_root = seed_env
-    res = seed_agent_config("kiro-cli", cli_root)
-    assert res["status"] == "seeded"
-    dest = cli_root / "personalclaw.json"
-    assert dest.is_symlink() and os.readlink(dest) == str(src)
-    assert json.loads(dest.read_text())["name"] == "personalclaw"
-
-
-def test_seed_is_idempotent(seed_env):
-    """Contract item 2: seeding twice changes nothing and reports it."""
-    from personalclaw.acp.config_seed import seed_agent_config
-
-    _src, cli_root = seed_env
-    assert seed_agent_config("kiro-cli", cli_root)["status"] == "seeded"
-    before = sorted(p.name for p in cli_root.iterdir())
-    assert seed_agent_config("kiro-cli", cli_root)["status"] == "already_seeded"
-    assert sorted(p.name for p in cli_root.iterdir()) == before
-
-
-def test_unseed_removes_exactly_what_we_wrote(seed_env):
-    """Contract item 4: disable leaves nothing of ours, and only ours."""
-    from personalclaw.acp.config_seed import seed_agent_config, unseed_agent_config
-
-    _src, cli_root = seed_env
-    (cli_root / "my-own-agent.json").write_text('{"name": "mine"}', encoding="utf-8")
-    seed_agent_config("kiro-cli", cli_root)
-
-    assert unseed_agent_config("kiro-cli")["status"] == "unseeded"
-    assert not (cli_root / "personalclaw.json").exists()
-    assert (cli_root / "my-own-agent.json").read_text() == '{"name": "mine"}'
-
-
-def test_user_owned_config_survives_untouched(seed_env):
-    """Contract item 3: a file we did not write is never clobbered.
-
-    The user hand-wrote their own ``personalclaw.json`` agent. Seeding must
-    refuse, and unseeding must not delete it either.
-    """
-    from personalclaw.acp.config_seed import seed_agent_config, unseed_agent_config
-
-    _src, cli_root = seed_env
-    mine = cli_root / "personalclaw.json"
-    mine.write_text('{"name": "personalclaw", "hand": "edited"}', encoding="utf-8")
-
-    assert seed_agent_config("kiro-cli", cli_root)["status"] == "skipped_user_owned"
-    assert json.loads(mine.read_text())["hand"] == "edited"
-    assert not mine.is_symlink()
-
-    assert unseed_agent_config("kiro-cli")["status"] == "not_seeded"
-    assert json.loads(mine.read_text())["hand"] == "edited"
-
-
-def test_a_replaced_seed_is_disowned_not_deleted(seed_env):
-    """Contract item 4's edge: the user overwrote our link after we seeded."""
-    from personalclaw.acp.config_seed import seed_agent_config, seed_status, unseed_agent_config
-
-    _src, cli_root = seed_env
-    seed_agent_config("kiro-cli", cli_root)
-    dest = cli_root / "personalclaw.json"
-    dest.unlink()
-    dest.write_text('{"name": "personalclaw", "mine": true}', encoding="utf-8")
-
-    assert seed_status("kiro-cli") == "diverged"
-    assert unseed_agent_config("kiro-cli")["status"] == "skipped_diverged"
-    assert json.loads(dest.read_text())["mine"] is True
-
-
-def test_seed_and_unseed_are_sel_audited(seed_env, monkeypatch):
-    """Contract item 5: every seed/unseed decision reaches the audit log."""
-    from personalclaw.acp import config_seed as cs
-
-    rows: list[tuple[str, str]] = []
-    monkeypatch.setattr(
-        cs,
-        "_audit",
-        lambda op, outcome, resources, error="": rows.append((op, outcome)),
-    )
-    _src, cli_root = seed_env
-    cs.seed_agent_config("kiro-cli", cli_root)
-    cs.unseed_agent_config("kiro-cli")
-    assert ("seed", "completed") in rows
-    assert ("unseed", "completed") in rows
-
-
-def test_sel_event_carries_the_seed_type(seed_env):
-    """The real SEL row, not a stub: type/operation/outcome are readable."""
-    from personalclaw.acp.config_seed import _audit
-
-    logged: list = []
-
-    import personalclaw.sel as sel_mod
-
-    class _Sel:
-        def log(self, event):
-            logged.append(event)
-
-    orig = sel_mod.sel
-    sel_mod.sel = lambda: _Sel()  # type: ignore[assignment]
-    try:
-        _audit("seed", "completed", "provider=kiro-cli dest=/x")
-    finally:
-        sel_mod.sel = orig  # type: ignore[assignment]
-
-    assert len(logged) == 1
-    assert logged[0].event_type == "acp_config_seed"
-    assert logged[0].operation == "seed" and logged[0].outcome == "completed"
-
-
-def test_seed_refuses_without_a_generated_config(home):
-    """Nothing to point at — never create a dangling link into our home."""
-    from personalclaw.acp.config_seed import seed_agent_config
-
-    cli_root = home.parent / "empty-root"
-    cli_root.mkdir()
-    assert seed_agent_config("kiro-cli", cli_root)["status"] == "skipped_no_source"
-    assert not (cli_root / "personalclaw.json").exists()
-
-
-# ── prong B: the bundle seam stays provider-agnostic ───────────────────────
-
-
-def test_registration_seeds_only_when_the_bundle_declares_a_dir(seed_env, monkeypatch):
-    """Which directory a CLI reads is vendor knowledge — it comes from the bundle.
-
-    A CLI that honours protocol ``mcpServers`` declares nothing and nothing is
-    seeded; core never names a CLI's config root.
-    """
-    from personalclaw.acp_bundles import _register
-
-    calls: list[tuple] = []
-    monkeypatch.setattr(
-        _register,
-        "get_default_registry",
-        lambda: type(
-            "R",
-            (),
-            {"unregister_entry": lambda self, n: None, "register_entry": lambda self, e: None},
-        )(),
-    )
-    import personalclaw.acp.config_seed as cs
-
-    monkeypatch.setattr(
-        cs, "seed_agent_config", lambda cli, d: calls.append((cli, str(d))) or {"status": "seeded"}
-    )
-
-    _src, cli_root = seed_env
-    _register.register_acp_cli_entry(cli="honours-protocol", dialect="default", command=["x"])
-    assert calls == []
-
-    _register.register_acp_cli_entry(
-        cli="needs-seed", dialect="default", command=["x"], agent_config_dir=str(cli_root)
-    )
-    assert calls == [("needs-seed", str(cli_root))]
-
-
-def test_unregister_reverses_the_seed(seed_env, monkeypatch):
-    """Disable must reverse it — an enable/disable cycle leaves no residue."""
-    from personalclaw.acp_bundles import _register
-
-    monkeypatch.setattr(
-        _register,
-        "get_default_registry",
-        lambda: type(
-            "R",
-            (),
-            {"unregister_entry": lambda self, n: None, "register_entry": lambda self, e: None},
-        )(),
-    )
-    _src, cli_root = seed_env
-    _register.register_acp_cli_entry(
-        cli="needs-seed", dialect="default", command=["x"], agent_config_dir=str(cli_root)
-    )
-    assert (cli_root / "personalclaw.json").is_symlink()
-
-    _register.unregister_acp_cli_entry("needs-seed")
-    assert not (cli_root / "personalclaw.json").exists()
-
-
-# ── prong B: is the machinery REACHED? (`G46`, `G116`) ──────────────────────
+# ── prong B is DELETED — AAP-4 DEVIATION 2 ──────────────────────────────────
 #
-# Every test above supplies ``agent_config_dir`` itself, so all of them pass
-# against a seeder that production never calls — they measure the mechanism, not
-# its use. `K54` then drove the real thing and found nothing seeded at all. The
-# two rails below close that hole from opposite sides: one pins how many
-# production call sites supply the argument, the other proves the one call path
-# that is NOT gated actually executes the import it names.
+# ``acp/config_seed.py`` seeded a ``personalclaw.json`` symlink into a CLI's own
+# agent-discovery directory, for a CLI that ignored the protocol's ``mcpServers``
+# field. No such CLI exists: §2.1's four fenced drives measured all three shipped
+# CLIs honouring the protocol array (`O76`, `K100`, `C90`), and codex decisively —
+# ``personalclaw mcp-core`` ran four levels under ``codex-acp`` with zero
+# ``personalclaw`` entries in ``~/.codex/config.toml``, so the protocol frame was
+# the only channel. The seeder was also unreachable (nothing in either repo passed
+# ``agent_config_dir``) and kiro-shaped by construction (a hardcoded
+# ``personalclaw.json`` filename holding a kiro agent document, where codex reads
+# TOML ``[mcp_servers.*]`` and claude-code reads ``personalclaw.mcp.json``).
+#
+# The rails below are the deletion's regression floor. They exist because `G116`
+# proved the three cheap checks all pass on a half-deleted tree: ``mypy`` reports
+# success (``ignore_missing_imports`` hides a missing first-party MODULE), and both
+# ``config_seed`` imports were function-local, so importing ``_register`` succeeded
+# too. Only *calling* the disable path failed.
 
 
-def _seed_supplier_census() -> tuple[list[str], int]:
-    """Production call sites that supply ``agent_config_dir``, and files scanned.
+def test_the_config_seeder_module_is_gone():
+    """The module is deleted, not merely unreferenced (clean-break tenet)."""
+    import importlib
 
-    The file count is the vacuity floor: a mistyped root would scan nothing and
-    report "no suppliers" for the wrong reason.
-    """
-    root = Path(__file__).resolve().parent.parent / "src" / "personalclaw"
-    suppliers: list[str] = []
-    scanned = 0
-    for path in root.rglob("*.py"):
-        scanned += 1
-        for num, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
-            if "agent_config_dir=" in line:
-                suppliers.append(f"{path.relative_to(root)}:{num}")
-    return suppliers, scanned
+    with pytest.raises(ModuleNotFoundError):
+        importlib.import_module("personalclaw.acp.config_seed")
+
+    # Vacuity floor: the package this module lived in must still import, else the
+    # raise above would be an unrelated broken import root rather than the
+    # deletion this rail measures.
+    assert importlib.import_module("personalclaw.acp.mcp_servers") is not None
 
 
-def test_the_prong_b_seeder_has_no_production_supplier_in_core():
-    """`G46`: the seed runs only under ``if agent_config_dir:`` and core never supplies it.
+def test_the_sdk_signature_no_longer_carries_agent_config_dir():
+    """``register_acp_cli_entry`` is a public SDK export, so its shape is a contract.
 
-    Deliberately pins the measured state rather than asserting the seeder works:
-    the destination is vendor knowledge, so the only legitimate suppliers live in
-    the removable app bundles (a separate repo). Zero suppliers in core therefore
-    means the whole path is dead unless a bundle passes the argument — which is
-    exactly what `K54` measured, and what every other test in this section hides.
-
-    If someone wires it, this rail fails and they must say which side is now true.
+    A CLI's agent-config directory is no longer declarable: an app bundle that
+    still passed it would now ``TypeError`` at import time rather than silently
+    seeding nothing, which is the point of removing it instead of ignoring it.
     """
     import inspect
 
-    from personalclaw.acp_bundles._register import register_acp_cli_entry
+    from personalclaw.sdk.acp import register_acp_cli_entry
 
-    # Vacuity floors: the parameter must still exist (otherwise "no supplier" is
-    # trivially true), and the scan must have read a real tree.
     params = inspect.signature(register_acp_cli_entry).parameters
-    assert "agent_config_dir" in params, "the seam this rail measures is gone — retire the rail"
-    assert params["agent_config_dir"].default is None
-
-    suppliers, scanned = _seed_supplier_census()
-    assert scanned > 100, f"census scanned only {scanned} files — the root is wrong, not the code"
-    assert suppliers == [], (
-        "core now supplies agent_config_dir at "
-        f"{suppliers} — core must not name a CLI's config root (provider boundary), "
-        "and `G46`'s inertness finding needs re-measuring"
-    )
+    assert "agent_config_dir" not in params
+    # Vacuity floor: the other bundle-declared vendor-knowledge parameters must
+    # still be there, or this rail would pass against a wrong/renamed symbol.
+    assert {"cli", "dialect", "command", "requires_executable", "login_command"} <= set(params)
 
 
-def test_disable_really_executes_the_config_seed_import(home, monkeypatch):
-    """`G116`: ``unregister_acp_cli_entry``'s ``config_seed`` import is UNGATED.
+def test_disable_is_registry_only_and_survives_the_deletion(monkeypatch):
+    """`G116` closed by construction: the disable path no longer imports the seeder.
 
-    ``register_acp_cli_entry`` imports the seeder behind ``if agent_config_dir:``
-    which nothing satisfies, but disable imports ``unseed_agent_config``
-    unconditionally. So deleting ``config_seed.py`` breaks every bundle disable —
-    and nothing catches it before runtime: mypy's ``ignore_missing_imports``
-    makes a missing first-party MODULE silent, and because the import is
-    function-local even importing ``_register`` still succeeds. Only calling the
-    function fails, with ``ModuleNotFoundError``.
+    This is the ONE call path that was ungated, so it is the one that raised
+    ``ModuleNotFoundError`` on a tree with ``config_seed.py`` removed. Asserting
+    it runs clean is what makes the deletion complete rather than half-done.
     """
-    import sys
-
     from personalclaw.acp_bundles import _register
 
-    monkeypatch.setattr(
-        _register,
-        "get_default_registry",
-        lambda: type(
-            "R",
-            (),
-            {"unregister_entry": lambda self, n: None, "register_entry": lambda self, e: None},
-        )(),
-    )
+    unregistered: list[str] = []
 
-    # Drop the module so "it was imported" can only be caused by the call below.
-    monkeypatch.delitem(sys.modules, "personalclaw.acp.config_seed", raising=False)
-    assert "personalclaw.acp.config_seed" not in sys.modules
+    class _Registry:
+        def unregister_entry(self, name: str) -> None:
+            unregistered.append(name)
+
+    monkeypatch.setattr(_register, "get_default_registry", lambda: _Registry())
 
     _register.unregister_acp_cli_entry("never-enabled")
 
-    # Vacuity floor: had the call not reached the import, this section would pass
-    # against a deleted module and the rail would prove nothing.
-    assert "personalclaw.acp.config_seed" in sys.modules, (
-        "disable no longer imports config_seed — either it was rewired (update this "
-        "rail) or the unseed call was dropped (a bundle disable now leaves residue)"
-    )
+    # Vacuity floor: the call must actually have reached the registry. Without
+    # this, a disable path rewritten into a no-op would also "survive", and the
+    # rail would prove nothing about the deletion.
+    assert unregistered == ["acp:never-enabled"]
+
+
+def test_no_seed_receipt_is_written_anywhere(home):
+    """The ``acp_seeds.json`` receipt is gone with its only writer and reader."""
+    import inspect
+
+    from personalclaw.acp_bundles import _register
+
+    assert "config_seed" not in inspect.getsource(_register)
+    assert not (home / "acp_seeds.json").exists()
+    # Vacuity floor: the home fixture is real and writable, so "no receipt" is a
+    # fact about the code and not about an unusable directory.
+    (home / "probe.json").write_text("{}", encoding="utf-8")
+    assert (home / "probe.json").exists()

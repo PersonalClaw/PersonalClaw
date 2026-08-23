@@ -46,7 +46,6 @@ def register_acp_cli_entry(
     extension: str | None = None,
     login_command: list[str] | None = None,
     requires_executable: dict[str, str] | None = None,
-    agent_config_dir: str | None = None,
 ) -> ProviderEntry | None:
     """Register (idempotently) an ``acp_agent`` entry named ``acp:<cli>``.
 
@@ -93,18 +92,20 @@ def register_acp_cli_entry(
         delegates to what is vendor knowledge, so it lives ONLY in the bundle;
         the probe just honours the declaration. Runtimes whose binary *is* the
         engine (a self-contained ACP CLI) declare nothing.
-    agent_config_dir:
-        Optional declaration that this CLI does NOT honour protocol-passed
-        ``mcpServers`` at ``session/new`` and instead discovers MCP servers from
-        an agent-config directory of its own — the path given here. Declaring it
-        seeds the host-generated ``personalclaw.json`` into that directory
-        (ACP-AGENT-PARITY §2.1 prong B), marker-scoped and reversed on
-        :func:`unregister_acp_cli_entry`. kiro is the measured case (`K6`): it
-        reads only ``<cwd>/.kiro/agents`` and ``~/.kiro/agents``, so the correct
-        config the host already writes under ``$PERSONALCLAW_HOME/agents/`` is
-        never seen. Which directory a CLI reads is vendor knowledge, so it lives
-        ONLY in the bundle; a CLI that honours the protocol field declares
-        nothing and nothing is seeded.
+
+    A CLI's own agent-config directory is deliberately NOT a parameter here.
+    ACP-AGENT-PARITY §2.1 measured all three shipped CLIs honouring the
+    protocol's ``session/new`` ``mcpServers`` array (prong A,
+    :mod:`personalclaw.acp.mcp_servers`), so seeding a vendor config file is
+    unnecessary as well as unwired — see the `AAP-4` DEVIATION 2 log entry.
+
+    This parameter used to cite `K6` — that kiro reads only ``<cwd>/.kiro/agents``
+    and ``~/.kiro/agents``, so the config the host writes under
+    ``$PERSONALCLAW_HOME/agents/`` is never seen. That measurement still holds; it
+    just does not imply seeding is needed. It is a fact about a config **file
+    path**, and the protocol array is an independent channel: `K54`/`K100` watched
+    a kiro session receive the whole ``personalclaw-core`` surface with nothing in
+    ``~/.kiro`` naming us. Don't re-add the parameter on the strength of `K6`.
 
     Returns
     -------
@@ -152,28 +153,15 @@ def register_acp_cli_entry(
         return None
     logger.info("acp:%s bundle: registered AgentProvider (dialect=%s)", cli, dialect)
 
-    if agent_config_dir:
-        from personalclaw.acp.config_seed import seed_agent_config
-
-        seeded = seed_agent_config(cli, agent_config_dir)
-        logger.info(
-            "acp:%s bundle: agent-config seed %s (%s)",
-            cli,
-            seeded.get("status"),
-            seeded.get("path"),
-        )
     return entry
 
 
 def unregister_acp_cli_entry(cli: str) -> None:
     """Remove the ``acp:<cli>`` entry (bundle disable / teardown).
 
-    Reverses the §2.1 prong-B agent-config seed too: a disabled bundle must leave
-    nothing of ours in the CLI's own config, and only what we wrote is removed.
+    Registry-only: a disabled bundle leaves nothing of ours behind because
+    nothing of ours was ever written into the CLI's own config. The MCP surface
+    an ACP session sees is passed per ``session/new`` (prong A), so it vanishes
+    with the session rather than needing a teardown.
     """
     get_default_registry().unregister_entry(f"acp:{cli}")
-    from personalclaw.acp.config_seed import unseed_agent_config
-
-    removed = unseed_agent_config(cli)
-    if removed.get("status") != "not_seeded":
-        logger.info("acp:%s bundle: agent-config unseed %s", cli, removed.get("status"))
