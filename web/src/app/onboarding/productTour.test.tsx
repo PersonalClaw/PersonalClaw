@@ -81,6 +81,9 @@ function resetEnvelopes() {
     // `approvals` anchor vanishes — which reads as "the tour lost its anchor".
     // Settings' bento reads `.capabilities` off the doctor report.
     doctor: { ok: true, capabilities: {} },
+    // Same trap, one surface over: ActionCenter maps `.proposals`, and the feed carries the
+    // ladder's `lastReview` beside them so an empty queue can say WHY it is empty.
+    skillProposals: { proposals: [], lastReview: null },
     modelsLoaded: {
       loaded: [], providers: [],
       pressure: { total_mb: 0, used_mb: 0, available_mb: 0, used_pct: 0, warn_pct: 90, warn: false, source: 'unavailable' },

@@ -24,6 +24,7 @@ import hashlib
 import json
 import logging
 from dataclasses import asdict, dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 
 from personalclaw.atomic_write import atomic_write
@@ -43,6 +44,68 @@ def _proposals_dir() -> Path:
     from personalclaw.skills import loader as _loader
 
     return _loader.config_dir() / "skills" / _PROPOSALS_DIRNAME
+
+
+def _last_review_path() -> Path:
+    """Where the ladder's most recent pass records itself.
+
+    Deliberately a SIBLING of ``.proposals/`` rather than a file inside it:
+    :func:`list_pending` globs ``*.json`` in that directory and coerces every hit
+    to a :class:`SkillProposal`, so a marker living there would be a sentinel
+    sharing a namespace with real records — silently skipped today by the
+    ``except (OSError, ValueError, TypeError)``, and a latent mis-parse the first
+    time that constructor grows a default.
+    """
+    from personalclaw.skills import loader as _loader
+
+    return _loader.config_dir() / "skills" / ".ladder_last_review.json"
+
+
+def record_review(*, verdict: str, elapsed_ms: float, session_key: str, detail: str = "") -> None:
+    """Record that a skill-ladder pass RAN, and how it ended.
+
+    This exists because an empty proposals list is two different facts wearing one
+    face: "the ladder ran and had nothing to propose" and "the ladder never ran"
+    are the same observation from outside (`G44`). The per-pass log line added by
+    `G47` does not separate them on a shipped install either — the verdicts that
+    mean the pass worked, ``no_action`` chief among them, log at INFO while the
+    default ``log_level`` is WARNING, so the common success is invisible.
+
+    Overwrites: one marker, always the latest pass. A history would be a second
+    unbounded store to cap and prune, and the question this answers ("did it run
+    at all, and what did it decide?") is answered by the most recent pass.
+
+    Best-effort by construction. This is called from the ``finally`` of the pass,
+    so a raising write here would replace the pass's real verdict with an
+    unrelated failure — instrumentation must never be the thing that breaks the
+    mechanism it observes.
+    """
+    rec = {
+        "verdict": str(verdict),
+        "elapsed_ms": int(elapsed_ms),
+        "session_key": str(session_key or ""),
+        "detail": str(detail or ""),
+        "at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+    }
+    try:
+        p = _last_review_path()
+        p.parent.mkdir(parents=True, exist_ok=True)
+        atomic_write(p, json.dumps(rec, indent=2))
+    except OSError:
+        logger.debug("skill-ladder review: could not record the last-run marker", exc_info=True)
+
+
+def last_review() -> dict | None:
+    """The most recent ladder pass, or ``None`` if no pass has ever run.
+
+    ``None`` is the load-bearing value: it is what distinguishes a home where the
+    ladder has never fired from one where it fired and proposed nothing.
+    """
+    try:
+        data = json.loads(_last_review_path().read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    return data if isinstance(data, dict) else None
 
 
 @dataclass
