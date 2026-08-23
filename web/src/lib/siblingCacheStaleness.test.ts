@@ -34,7 +34,7 @@ const proposals = [{ id: 'p1', name: 'summarize-pr', description: 'x', procedure
 
 function mockApi(over: Record<string, unknown> = {}) {
   const named: Record<string, unknown> = {
-    skillProposals: () => Promise.resolve(proposals),
+    skillProposals: () => Promise.resolve({ proposals, lastReview: null }),
     acceptSkillProposal: () => Promise.resolve({ name: 'summarize-pr' }),
     rejectSkillProposal: () => Promise.resolve({ ok: true }),
     skills: () => Promise.resolve([]),

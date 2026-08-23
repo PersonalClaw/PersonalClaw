@@ -4042,6 +4042,14 @@ async def _run_chat(
                 _err_text,
                 "msg msg-err",
             )
+            # AAP-1 `O43`: the `Error` lifecycle hook fired ZERO times across two sweeps
+            # (kiro `K40`, claude-code `O43`) despite real, user-visible ACP failures. Measured
+            # cause: `HOOK_EVENT_ERROR` had exactly ONE fire site — the generic `except Exception`
+            # below — so every `AcpError`, i.e. the entire error class an ACP session can raise,
+            # terminated here with an error card and no hook. An `Error` hook on an ACP chat was a
+            # control that could never fire. Same text the user sees, so a policy hook observes the
+            # failure the human observed.
+            await _fire(HOOK_EVENT_ERROR, _err_text)
     except Exception as exc:
         logger.exception("Dashboard chat error in session %s", session.key)
         _err_text, _ = redact_exfiltration_urls(humanize_provider_error(exc))

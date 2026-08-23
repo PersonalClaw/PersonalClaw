@@ -3053,6 +3053,64 @@ class TestPromptBusyRecovery:
         error_msgs = [m for m in session.messages if m.get("role") == "error"]
         assert not any("process exited" in m.get("content", "") for m in error_msgs)
 
+    @pytest.mark.asyncio
+    async def test_terminal_acp_error_fires_error_hook(self, tmp_path: Path) -> None:
+        """A terminal ``AcpError`` must fire the ``Error`` lifecycle hook.
+
+        AAP-1 measured the ``Error`` hook firing **zero** times on two providers
+        despite real, user-visible ACP failures. Cause: ``HOOK_EVENT_ERROR`` had
+        exactly one fire site — the generic ``except Exception`` — so every
+        ``AcpError``, the whole error class an ACP session can raise, ended with an
+        error card and no hook. Retry-eligible ``AcpError``s are excluded on
+        purpose (they re-queue; the turn is not over), which the sibling tests above
+        cover.
+        """
+        from personalclaw.acp.client import AcpError
+        from personalclaw.dashboard.chat import _run_chat
+        from personalclaw.hooks import HOOK_EVENT_ERROR
+
+        state = _make_state(tmp_path)
+        state.sessions.get_or_create = AsyncMock(return_value=(MagicMock(), False, False))
+        state.sessions.release = MagicMock()
+        state.sessions.reset = AsyncMock()
+        state.sessions.set_approval_policy = MagicMock()
+        state.sessions.check_context_usage = MagicMock()
+        state.sessions.get_channel_link = MagicMock(return_value=(None, None))
+        state.broadcast_ws = MagicMock()
+        state.push_sessions_update = MagicMock()
+        state.is_yolo_active = MagicMock(return_value=False)
+        state._background_tasks = set()
+
+        fired: list[str] = []
+
+        async def _record(event, hook_ids, context="", **kwargs):
+            fired.append(event)
+            return []
+
+        hook_store = MagicMock()
+        hook_store.fire_for_ids = _record
+        state._hook_store = hook_store
+
+        session = state.get_or_create_session("acp-error-session")
+        session.append("user", "hello", "msg msg-u")
+
+        # "timed out" is NOT retry-eligible, so this takes the terminal branch that
+        # surfaces an error card to the user.
+        async def _raise_timeout(msg):
+            raise AcpError("ACP prompt timed out")
+            yield  # make it an async generator  # noqa: E501
+
+        mock_client = state.sessions.get_or_create.return_value[0]
+        mock_client.stream = _raise_timeout
+        mock_client.stream_command = _raise_timeout
+        mock_client.shutdown = AsyncMock()
+
+        await _run_chat(state, session, "test message")
+
+        error_msgs = [m for m in session.messages if m.get("role") == "error"]
+        assert any("timed out" in m.get("content", "") for m in error_msgs)
+        assert HOOK_EVENT_ERROR in fired
+
 
 # ── Tests: session.task None guard ──
 
