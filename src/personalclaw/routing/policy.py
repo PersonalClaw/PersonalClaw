@@ -47,7 +47,7 @@ import json
 import logging
 import re
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from personalclaw.atomic_write import atomic_write
 
@@ -372,6 +372,121 @@ def _heuristic_rank(
     return (exception, 0 if local else 1)
 
 
+def _learned_order(
+    ordered: list[str],
+    use_case: str,
+    query_class: str,
+    local_keys: set[str],
+    *,
+    home: Path | None = None,
+) -> list[str]:
+    """The MRT-5 learned stage, with everything it needs loaded HERE rather than inside it.
+
+    ``learned.learned_order`` is deliberately pure — no file, config, clock or network — so this
+    is the one place that reads the fold, the three knobs and the price table. Two consequences
+    worth stating: the stage is exactly testable without a home, and a failure in any of these
+    loads degrades to "no opinion" (the input order) instead of failing a resolution.
+
+    The feedback signal is OVERLAID onto the fold rather than folded into ``routing_stats.json``:
+    a judge verdict is not a routing observation, and writing it into the stats file would make
+    the fold's ``feedback`` field mean two different things depending on which writer touched it
+    last. Today the overlay is empty on every real install — no ``judge_verdict`` producer stamps
+    ``(use_case, query_class, ref)`` — so ``_score`` renormalises onto ``success_rate`` alone,
+    which is precisely the atom's declared behaviour when feedback is absent.
+    """
+    from personalclaw.routing import learned as _learned
+    from personalclaw.routing import stats as _stats
+
+    resolved = home if home is not None else _default_home()
+    if resolved is None:
+        return ordered
+    try:
+        fold = _stats.load_stats(resolved)
+    except Exception:  # noqa: BLE001 — a missing/corrupt fold means "no opinion", never a failure
+        return ordered
+
+    _overlay_feedback(fold, use_case, query_class, home=resolved)
+
+    cfg = _routing_knobs()
+    return _learned.learned_order(
+        ordered,
+        use_case=use_case,
+        query_class=query_class,
+        stats=fold,
+        hysteresis=float(cfg["hysteresis"]),
+        cloud_quality_margin=float(cfg["cloud_quality_margin"]),
+        local_keys=local_keys,
+        cost_of=_cost_of(resolved),
+        min_samples=int(cfg["min_samples"]),
+    )
+
+
+def _overlay_feedback(fold: dict[str, Any], use_case: str, query_class: str, *, home: Path) -> None:
+    """Write the ledger-derived feedback into the in-memory fold, for this cell only.
+
+    Best-effort: no feedback simply leaves the fold's own values in place.
+    """
+    try:
+        from personalclaw.routing.feedback import feedback_index
+
+        index = feedback_index(home=home)
+    except Exception:  # noqa: BLE001 — the EXT dep is SOFT; the router works with no ledger at all
+        return
+    if not index:
+        return
+    bucket = fold.get("use_cases", {}).get(use_case, {}).get(query_class, {})
+    if not isinstance(bucket, dict):
+        return
+    for ref, row in bucket.items():
+        got = index.get((use_case, query_class, ref))
+        if not got or not isinstance(row, dict):
+            continue
+        feedback, feedback_n = got
+        row["feedback"] = feedback
+        row["feedback_n"] = feedback_n
+
+
+def _routing_knobs() -> dict[str, Any]:
+    """The three learned-stage knobs, fail-open to their declared defaults.
+
+    The defaults are restated here ONLY as the fail-open floor for an unreadable config; the live
+    values come from ``RoutingConfig``. A test pins these literals to the dataclass defaults so
+    the fail-open floor and the declared default cannot drift apart.
+    """
+    try:
+        from personalclaw.config.loader import AppConfig
+
+        r = AppConfig.load().routing
+        return {
+            "hysteresis": float(r.hysteresis),
+            "cloud_quality_margin": float(r.cloud_quality_margin),
+            "min_samples": int(r.min_samples),
+        }
+    except Exception:  # noqa: BLE001 — an unreadable config must not change the routing decision
+        return {"hysteresis": 0.05, "cloud_quality_margin": 0.10, "min_samples": 5}
+
+
+def _cost_of(home: Path) -> "Callable[[str], float]":
+    """A per-ref cost probe for the learned stage's within-band ordering.
+
+    A fixed nominal token shape, because the stage compares refs against each OTHER — the absolute
+    dollars are irrelevant and a per-call token count is not known at ordering time. An unpriced
+    model returns ``inf`` rather than ``0.0``: unknown must not read as free, or an unpriced cloud
+    model wins every cost tie.
+    """
+    from personalclaw.routing.rates import cost_for
+
+    def probe(ref: str) -> float:
+        provider, _, model = ref.partition(":")
+        try:
+            got = cost_for(provider, model, input_tokens=1000, output_tokens=500, home=home)
+        except Exception:  # noqa: BLE001 — an unpriced or unreadable rate is "unknown", not free
+            return float("inf")
+        return float("inf") if got is None else float(got)
+
+    return probe
+
+
 def route_refs(
     use_case: str,
     query_class: str,
@@ -414,7 +529,18 @@ def route_refs(
             listed = len(index)
             return _stable_by(ordered, lambda r: (index.get(r, listed),))
 
-        # The heuristic floor (§4.1). ``learned`` lands here too until MRT-5 scores the fold.
+        # Lever 4 — the LEARNED stage (MRT-5). Only for mode ``learned``: ``heuristic`` must keep
+        # behaving exactly as it did, so a use case opts into scoring rather than inheriting it.
+        # Returns the input unchanged whenever the fold cannot decide (no stats file, fewer than
+        # two opinionated refs, a corrupt entry), and then falls through to the heuristic below —
+        # which is what makes "deleting routing_stats.json degrades to heuristic" true by
+        # construction rather than by a catch.
+        if mode == "learned":
+            learned_ranked = _learned_order(ordered, use_case, query_class, local_keys, home=home)
+            if learned_ranked != ordered:
+                return learned_ranked
+
+        # The heuristic floor (§4.1). ``learned`` falls through to here when the fold is silent.
         structured = _structured_providers() if query_class == _CLASS_STRUCTURED else set()
         return _stable_by(
             ordered,
