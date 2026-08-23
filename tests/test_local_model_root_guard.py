@@ -153,6 +153,127 @@ def test_every_guarded_entry_point_is_wrapped(fn_name):
         fn(real_root, "some/model") if fn_name != "cleanup_candidates" else fn(real_root)
 
 
+# ── The rail's one soft edge: it is an attribute lookup deep, not alias deep ───
+
+
+def test_the_installed_rail_is_only_an_attribute_lookup_deep():
+    """State the rail's reach, because the ban below rests on it.
+
+    ``monkeypatch.setattr(layouts, name, wrapper)`` replaces a module ATTRIBUTE. Anything
+    that resolves the name per call (``layouts.delete_all_layouts(...)``, and every
+    function-local ``from ... import`` in ``dashboard/`` and ``local_models/``) therefore
+    goes through the wrapper. Anything that captured the name at import time holds the
+    object asserted here — a different object, with no guard in front of it.
+    """
+    recorded = real_model_root_guard.ORIGINALS
+    # Vacuity: an empty ORIGINALS would make the loop below assert nothing at all.
+    assert set(recorded) == set(real_model_root_guard.GUARDED_FUNCTIONS), sorted(recorded)
+    for name, original in recorded.items():
+        installed = getattr(layouts, name)
+        assert installed is not original, f"layouts.{name} is not behind the rail at all"
+        assert installed.__name__ == "_guarded"
+        assert getattr(original, "__name__", None) == name
+
+
+def test_an_import_bound_alias_of_the_deletion_sweep_is_still_caught(monkeypatch, tmp_path):
+    """The sweep from the incident is caught even through an import-bound alias.
+
+    Not because the fixture reaches aliases — it cannot — but because
+    ``delete_all_layouts`` (``layouts.py:184``) resolves ``candidate_paths`` as a MODULE
+    GLOBAL at ``:195``, which is a guarded attribute, so the refusal happens before
+    ``shutil.rmtree`` at ``:200``. Worth pinning: it means a refactor that inlined that
+    lookup would quietly shorten the rail.
+
+    ``REAL_HOME`` is repointed at ``tmp_path`` so the forbidden root is a real directory the
+    rail rejects while being physically disposable. Driving the true ``~/.cache/huggingface``
+    here would mean that a regression in the rail makes THIS test perform the incident.
+    """
+    monkeypatch.setattr(real_model_root_guard, "REAL_HOME", tmp_path)
+    root = tmp_path / ".cache" / "huggingface"
+    doomed = root / "models--org--m" / "snapshots" / "abc"
+    doomed.mkdir(parents=True)
+    (doomed / "model.bin").write_bytes(b"x" * 128)
+
+    alias = real_model_root_guard.ORIGINALS["delete_all_layouts"]
+    with pytest.raises(AssertionError, match="REAL model root"):
+        alias(root, "org/m")
+    assert doomed.exists(), "the refusal must happen before anything is removed"
+
+
+def _test_sources() -> list[tuple[Path, str]]:
+    root = Path(__file__).resolve().parent
+    return [(p, p.read_text(encoding="utf-8", errors="ignore")) for p in root.rglob("*.py")]
+
+
+def test_no_test_module_import_binds_a_guarded_layouts_name():
+    """The ban that closes the soft edge above, stated over the whole suite.
+
+    LOAD-BEARING, not belt-and-braces. Most guarded entry points delegate to another
+    guarded module global before touching disk (``is_downloaded`` → ``candidate_paths``,
+    ``on_disk_bytes`` → ``downloaded_layouts``, ``reclaimable_bytes`` →
+    ``cleanup_candidates``), so an alias of those is still intercepted one hop in. But
+    ``cleanup_candidates`` (``layouts.py:211``) delegates to nothing — it walks
+    ``root.rglob("*")`` itself at ``:223`` — so an import-bound alias of THAT name reaches a
+    real cache root with nothing in front of it. One name is enough for the incident class
+    this rail exists to close, and which name is self-contained is a refactor away from
+    changing, so the suite bans the shape rather than tracking the delegation graph.
+
+    The safe shape stays available and is what every module here already uses: import the
+    MODULE (``from personalclaw.local_models import layouts``) and call through it, or
+    import the function inside the test body.
+    """
+    sources = _test_sources()
+    # Vacuity: a scan that found no files, or one that had stopped recognizing the shape,
+    # would report clean. Assert it really read the suite; the detector's own ability to
+    # flag is asserted in test_the_import_binding_detector_flags_the_offending_shape_only.
+    assert len(sources) >= 900, f"the import-binding scan only read {len(sources)} files"
+
+    offenders = {
+        str(path.relative_to(Path(__file__).resolve().parent)): sorted(names)
+        for path, text in sources
+        if (names := real_model_root_guard.import_bound_guarded_names(text))
+    }
+    assert not offenders, (
+        f"{offenders} bind a guarded layouts function at IMPORT time, which captures the "
+        f"UNWRAPPED object and bypasses the model-root rail (LMMV Success Criterion 10). "
+        f"Import the module instead (`from personalclaw.local_models import layouts`) and "
+        f"call `layouts.<fn>(...)`, or move the import inside the test body."
+    )
+
+
+@pytest.mark.parametrize(
+    ("source", "expected"),
+    [
+        # The offending shape: bound at import time, before the fixture exists.
+        (
+            "from personalclaw.local_models.layouts import cleanup_candidates",
+            {"cleanup_candidates"},
+        ),
+        # Aliased, and more than one name — still the same capture.
+        (
+            "from personalclaw.local_models.layouts import (\n"
+            "    delete_all_layouts as nuke,\n"
+            "    is_downloaded,\n"
+            ")",
+            {"delete_all_layouts", "is_downloaded"},
+        ),
+        # The safe shapes, none of which may be flagged or the rail becomes a tax nobody keeps.
+        ("from personalclaw.local_models import layouts", set()),
+        ("import personalclaw.local_models.layouts", set()),
+        ("def t():\n    from personalclaw.local_models.layouts import delete_all_layouts", set()),
+        (
+            "async def t():\n    from personalclaw.local_models.layouts import cleanup_candidates",
+            set(),
+        ),
+        # A non-guarded helper from the same module is not this rail's business.
+        ("from personalclaw.local_models.layouts import hf_repo_dirname", set()),
+    ],
+)
+def test_the_import_binding_detector_flags_the_offending_shape_only(source, expected):
+    """The scan's vacuity floor: prove it fires, and prove it does not over-fire."""
+    assert real_model_root_guard.import_bound_guarded_names(source) == expected
+
+
 def test_a_tmp_root_still_reaches_the_real_implementation(tmp_path):
     """The rail must not swallow behaviour: a tmp root produces real answers."""
     model_dir = tmp_path / "models--org--m" / "snapshots" / "abc"
