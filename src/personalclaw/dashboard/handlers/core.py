@@ -544,6 +544,11 @@ _EDITABLE_CONFIG: dict[str, dict] = {
     "sandbox.nofile": {"type": "int", "min": 0, "max": 1_048_576},
     "sandbox.max_pids": {"type": "int", "min": 0, "max": 100_000},
     "sandbox.max_rss_mb": {"type": "int", "min": 0, "max": 1_048_576},
+    # PHF-2 — opt into the Linux-only second enforcement tier (a transient systemd user
+    # scope carrying TasksMax/MemoryMax derived from the ceilings above, so they bound the
+    # whole child subtree). Editable because it is the one knob that changes HOW the
+    # ceilings are delivered; it is a no-op where systemd user scopes are unavailable.
+    "sandbox.cgroup_scopes": {"type": "bool"},
     # PHF-4 — the declared-needs seam for the child-env allowlist. Names only; the
     # credential floor still refuses a sensitive name at spawn, so a write here cannot
     # hand a hook the gateway's AWS session.

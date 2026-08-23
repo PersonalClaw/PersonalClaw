@@ -1331,3 +1331,60 @@ a hand-rewrap then created two NEW overlong lines, so the prose was reflowed pro
 `make test-e2e` 149 passed / 4 skipped · `make lint` clean · `make -n test` shows plain `pytest`, so
 the browser gate stays out of the unit run. `docs/roadmap/atomic/dag.json` deliberately **untouched**:
 `PHF-7` is PARTIAL and must stay `todo`.
+
+- **2026-08-22 — `PHF-2` PARTIAL: the tier ships and the macOS half is measured; the Linux fork-bomb
+  clause is unexercised. Atom stays `todo`.**
+  `ResourceCeilings.policy()` carried the comment *"NPROC (fork-bomb bound) and RSS apply to every
+  non-none profile when configured"*. On Darwin that is false, and this atom exists to make it true on
+  Linux and audible everywhere else.
+  **Measured on Darwin 26.6.1 / CPython 3.13 in fresh children — twice, by the implementing agent and
+  then independently — not read from documentation:**
+  * **RSS is never installed at all**, which is worse than ignored. `RLIMIT_AS == RLIMIT_RSS` on Darwin,
+    the inherited pair is `(INFINITY, INFINITY)`, and `setrlimit` refuses **any** finite value —
+    including a soft-only change far below the reported hard limit — with
+    `ValueError: current limit exceeds maximum limit`. The shim's `except (ValueError, OSError): continue`
+    swallows it. End to end: the policy asked `RLIMIT_AS [67108864, 67108864]` and the child reported
+    `(9223372036854775807, 9223372036854775807)`.
+  * **pids installs but is not a per-tree bound.** `RLIMIT_NPROC (450, 450)` — deliberately half this
+    uid's 901 live processes, so a per-tree limit must permit one fork — succeeded, and then the capped
+    child's **first** `fork()` failed `BlockingIOError(35)` EAGAIN while its own tree held one process.
+    Darwin counts every process of the real uid: below the uid's live count it denies every fork, above
+    it, it bounds nothing.
+  * **NOFILE is enforced**: `nofile=137` arrived in the child as `NOFILE (137, ...)`.
+  **What ships.** An opt-in `sandbox.cgroup_scopes` tier wrapping the existing NOFILE shim in
+  `systemd-run --user --scope` with `TasksMax`, `MemoryMax` and `MemorySwapMax=0`. The scope is the
+  **outer** layer, so it contains the shim and the exec'd target — a second layer above the NOFILE floor,
+  not a substitute (its own rail asserts the shim survives inside). `MemorySwapMax=0` always rides with
+  `MemoryMax` because swap escape defeats a memory cap; a property is emitted only when its ceiling is
+  configured, since `TasksMax=0` would be an accidental total denial. `probe_cgroup_scopes()` answers
+  once (`lru_cache`), requires a unified cgroup v2 hierarchy AND a usable systemd user session, and never
+  raises.
+  **The warning claims exactly what was measured and no more:** pids and RSS do not bound the spawn's
+  process tree (naming both mechanisms), a fork bomb or memory blowup in an agent child is **not**
+  contained, `sandbox.nofile` **is** still enforced, and the remedy is Linux + cgroup v2 + a systemd user
+  session with `cgroup_scopes=true`. Exactly one per process, latched — a per-spawn warning would flood a
+  tool-heavy turn. **Two vacuity tests fail loudly with "the warning has become a LIE — narrow it"** if
+  Darwin ever starts enforcing either ceiling; the NPROC one derives its cap as
+  `live_uid_processes // 2` precisely so a per-tree limit would permit the fork and a per-user one cannot.
+  **The doctor row splits on CONSEQUENCE, not platform.** `CAPABILITY` tier, so it can never gate the
+  core ladder. Unavailable with no ceiling configured is `ok=True` — a permanent red on every Mac trains
+  operators to ignore the doctor, and nothing is being silently dropped. Unavailable **while** `max_pids`
+  or `max_rss_mb` is set is `ok=False`, the only case where green would hide a configured control that
+  cannot do what the operator asked. Both reads degrade toward "not enforced": a probe that cannot prove
+  enforcement must not claim it.
+  **UNMET — the Linux clause.** *"On a Linux fixture a fork bomb hits pids.max and dies contained"* is
+  unexercised: this host is macOS and no container runtime is available (`docker`, `podman`, `nerdctl`,
+  `lima`, `limactl`, `colima` all absent — the same measurement that blocks `WF2WOR-12` and `EI-7`'s SC7).
+  The construction is unit-tested exactly (both properties, `MemorySwapMax=0`, per-ceiling emission,
+  outer-layer ordering), so what is owed is the live containment observation, not the code.
+  **A rail only the MERGED tree could see.** `test_spawn_shim.py` holds two exhaustive `sandbox.*` key
+  assertions. Neither implementing branch could red them — the `to_dict` set-equality passes while the
+  config field is absent, and the config work never ran that suite — so the failure exists only after
+  integration. Both were extended with the reason the new key belongs, not weakened. This is the
+  argument for integrating and re-gating rather than trusting three green branch reports.
+  **DISCOVERY (pre-existing, outside this atom, not swept in): `ResourceCeilings.from_config()` fails
+  open through a blanket `except Exception`.** A missing or misspelled `sandbox.*` attribute raises
+  `AttributeError` inside it, is swallowed, and **every** configured ceiling silently reverts to the class
+  default with only a `logger.debug`. That was visible here as four unrelated ceiling tests failing on the
+  tier branch for one absent field. Fail-open is defensible for a ceiling — a spawn must not be blocked by
+  a config typo — but a control that quietly stops enforcing deserves at least a WARNING naming the field.

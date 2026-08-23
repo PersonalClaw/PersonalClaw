@@ -1271,6 +1271,12 @@
     "type": "float"
   },
   {
+    "default": false,
+    "path": "sandbox.cgroup_scopes",
+    "sensitive": false,
+    "type": "bool"
+  },
+  {
     "default": [],
     "path": "sandbox.env_passthrough",
     "sensitive": false,
