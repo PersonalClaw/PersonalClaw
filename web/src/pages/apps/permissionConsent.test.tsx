@@ -199,6 +199,14 @@ describe('PermissionList — declared proposal kinds are disclosed as enforced',
 // bullets. `network` is unenforceable in principle, so it gets an always-on advisory row.
 // Under APE-1 both `backgroundTasks` and `eventSubscriptions` were the third case.
 //
+// APE-3 shipped the worker host, so `backgroundTasks` has now made the SAME move
+// `eventSubscriptions` made under APE-2: `apps/worker_runtime` consults
+// `can_run_background_tasks()` before every spawn AND every revival, so the grant denies as
+// well as declares. With both grants enforced, the "Declared, not yet in effect" block has
+// no feeder left and is gone — a box that renders for nothing is a shape a future grant can
+// silently fall into. The reading this file now kills is the INVERSE of the original D2
+// defect: understating a live capability, so a user weighs a real grant as disclosure-only.
+//
 // APE-2 shipped the platform event registry, so `eventSubscriptions` is now ENFORCED —
 // `apps/app_events.emit` is the only path a platform event reaches an app by and it
 // consults `can_receive_platform_event` per app per event (deny by default, exact name).
@@ -230,23 +238,28 @@ describe('PermissionList — eventSubscriptions is enforced, backgroundTasks is 
     expect(rows.some((r) => /Receive platform events: session\.created, task\.completed/.test(r))).toBe(true)
   })
 
-  it('keeps backgroundTasks OUT of the enforced bullets', () => {
+  it('puts backgroundTasks IN the enforced bullets now that APE-3 hosts it', () => {
+    // This asserted the OPPOSITE until APE-3: with no worker host, listing it among
+    // "Permissions the gateway enforces" was the D2 defect verbatim. The host exists now, so
+    // keeping it out would understate a live capability instead.
     const { container } = render(<PermissionList perms={PENDING_PAYLOAD} />)
     const rows = enforcedRows(container)
-    expect(rows.some((r) => /background worker/i.test(r))).toBe(false)
-    // The vacuity floor: the enforced list still renders what IS enforced.
+    expect(rows.some((r) => /background worker/i.test(r))).toBe(true)
+    // The vacuity floor: the enforced list still renders what was already enforced.
     expect(rows.some((r) => /Scheduled jobs/.test(r))).toBe(true)
   })
 
-  it('still discloses backgroundTasks, and says plainly that it does nothing yet', () => {
+  it('no longer claims the worker grant does nothing yet, and drops the empty box', () => {
+    // The three phrases below were correct under APE-1 and are now false: the host exists,
+    // so the grant is not "not yet in effect", it does not "grant the app nothing today",
+    // and there is no later moment when it "becomes live without asking you again" — it is
+    // live at install. A disclosure that keeps saying so would train users to discount it.
     const { container } = render(<PermissionList perms={PENDING_PAYLOAD} />)
     const text = container.textContent ?? ''
-    expect(text).toMatch(/Declared, not yet in effect/)
     expect(text).toMatch(/Run a long-lived background worker/)
-    expect(text).toMatch(/grants the app nothing today/)
-    // And that it becomes live later without a second prompt — the material fact.
-    expect(text).toMatch(/without asking you again/)
-    // The caption must no longer claim platform events are undelivered: they are.
+    expect(text).not.toMatch(/Declared, not yet in effect/)
+    expect(text).not.toMatch(/grants the app nothing today/)
+    expect(text).not.toMatch(/without asking you again/)
     expect(text).not.toMatch(/deliver platform events yet/)
   })
 
@@ -256,8 +269,10 @@ describe('PermissionList — eventSubscriptions is enforced, backgroundTasks is 
     expect(worker.container.textContent ?? '').not.toMatch(/Receive platform events/)
     const events = render(<PermissionList perms={{ eventSubscriptions: ['knowledge.ingested'] }} />)
     expect(enforcedRows(events.container).some((r) => /Receive platform events: knowledge\.ingested/.test(r))).toBe(true)
-    // …and an app that subscribes but declares no worker gets no pending block at all.
+    // …and the pending block is gone for everyone: with both grants enforced it has no
+    // feeder, and a box that renders for nothing is where a future grant falls silently.
     expect(events.container.textContent ?? '').not.toMatch(/Declared, not yet in effect/)
+    expect(worker.container.textContent ?? '').not.toMatch(/Declared, not yet in effect/)
   })
 
   it('makes no claim at all for an app that declares neither', () => {

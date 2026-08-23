@@ -73,6 +73,13 @@ _CEILING_WRAPPED: dict[str, str] = {
     "apps/backend_runtime.py::BackendSupervisor.start::subprocess.Popen": (
         "app backend → tool ceiling via spawn_shim_argv (argv-prepend; NOT preexec_fn)"
     ),
+    # App background worker (tool profile) — APE-3. Same ceiling and the same argv-prepend as
+    # the backend above, and for a sharper reason: a worker is LONG-LIVED and unattended, so an
+    # unceilinged one is the fork bomb nobody is watching. `preexec_fn` is again refused (PHF-1)
+    # because this spawn can run off the watchdog thread.
+    "apps/worker_runtime.py::WorkerSupervisor._spawn::subprocess.Popen": (
+        "app background worker → tool ceiling via spawn_shim_argv (argv-prepend; NOT preexec_fn)"
+    ),
     # MCP stdio discovery probe (tool profile).
     "mcp_discovery.py::probe_server::create_subprocess_limited": (
         "MCP probe → tool ceiling via create_subprocess_limited"
