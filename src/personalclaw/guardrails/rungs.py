@@ -180,12 +180,29 @@ _PROVIDER_SPECS: tuple[ActionTypeSpec, ...] = (
         ceiling=RUNG_AUTONOMOUS,
         providers=("artifact_inspect",),
     ),
+    # SELF-VERIFICATION §3.2 step 1. Its own key rather than sharing `action.notify`'s:
+    # reading a git working tree is a different governed behavior from writing a dashboard
+    # row, and the shared-key convention below is for a second NAME for one behavior, not for
+    # two behaviors that happen to be equally harmless. Autonomous at both ends because the
+    # effect is a run-ledger row and nothing else — there is nothing to reverse and nothing
+    # to tell the user about.
+    ActionTypeSpec(
+        key="action.selfqa_triage",
+        floor=RUNG_AUTONOMOUS,
+        ceiling=RUNG_AUTONOMOUS,
+        providers=("selfqa-triage",),
+    ),
     # Local writes: the effect stays on this machine, where the user can see and undo it.
     ActionTypeSpec(
         key="action.create_task",
         floor=RUNG_AUTONOMOUS,
         ceiling=RUNG_AUTONOMOUS,
-        providers=("create-task",),
+        # `selfqa-file-finding` (SELF-VERIFICATION §3.2) shares this class rather than minting
+        # its own key, on the same reasoning as `knowledge-report` below: what it ultimately
+        # does is file a task through the same native provider listed beside it, plus one local
+        # inbox row. Both effects stay on this machine and both are visible where the user
+        # already looks, so a second key would be a second name for one governed behavior.
+        providers=("create-task", "selfqa-file-finding"),
     ),
     ActionTypeSpec(
         key="action.knowledge_write",

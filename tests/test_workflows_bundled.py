@@ -86,6 +86,12 @@ EXPECTED = {
     # The Learning-Flywheel template refiner (WF2LEA-6): a trigger-fired run-workflow whose
     # stage runs the propose-only `template-refiner` agent over a template's own run ledger.
     "refine-template",
+    # The Self-QA companion (SELF-VERIFICATION §3.2, SV-9): commit-driven rather than
+    # clock-driven — the commit-watch cron script fires it with the SHAs it saw. The only
+    # bundled template whose triage node is an `action` rather than an `infer`, because its
+    # verdict has to land in the run ledger with a rationale and only a node holding the run
+    # id can write one.
+    "self-qa",
 }
 
 

@@ -885,7 +885,12 @@ def test_the_ladder_view_carries_the_whole_governed_inventory(_isolated_home):
     assert [m["key"] for m in view["rung_meta"]] == list(au.RUNGS)
     assert all(m["label"] and m["hint"] for m in view["rung_meta"])
     row = _row(view, "action.create_task")
-    assert row["providers"] == ["create-task"]
+    # Exact, not `in`: this row is the sample that proves a row carries its providers, and an
+    # exact list is also the ratchet that makes an unnoticed addition to a governed class red.
+    # `selfqa-file-finding` (SV-9) shares this class deliberately — what it ultimately does is
+    # file a task through the provider beside it — so it is named here rather than the assertion
+    # being loosened to accommodate it.
+    assert row["providers"] == ["create-task", "selfqa-file-finding"]
     assert row["record"], "every row explains its track record, eligible or not"
 
 

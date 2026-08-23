@@ -696,6 +696,57 @@ def _sanitize_bot_name(raw: str) -> str:
 
 
 @dataclass
+class SelfQaConfig:
+    """Self-QA Companion settings (SELF-VERIFICATION §3) — the commit-watch QA loop.
+
+    The companion watches a repo, triages each new commit for user-visible impact, drives one
+    deep as-a-user scenario against the live gateway UI, and files a finding when the scenario
+    fails. It spends model calls and drives real UI, so it is **off by default** — enabling it is
+    a decision about what runs on your machine unattended, not a preference.
+
+    ``fix_branch_enabled`` is separately off because it is a second, larger step: a confirmed
+    finding spawns a coder subagent on a `pclaw/selfqa-<sha8>` branch. That branch is never
+    merged and never pushed, but it is still code written without a human in the loop.
+    """
+
+    enabled: bool = field(
+        default=False,
+        metadata=_meta(
+            "Self-QA companion",
+            "Watch a repo and run an as-a-user QA scenario on each user-impacting commit, "
+            "filing an Inbox item and a Task when one fails. Off by default — it spends model "
+            "calls and drives your browser unattended.",
+        ),
+    )
+    watched_repo: str = field(
+        default="",
+        metadata=_meta(
+            "Watched repository",
+            "Absolute path to the git repository whose commits trigger a QA run. Empty means "
+            "the watcher stays idle even when the companion is enabled.",
+        ),
+    )
+    fix_branch_enabled: bool = field(
+        default=False,
+        metadata=_meta(
+            "Propose fix branches",
+            "On a confirmed finding, open a `pclaw/selfqa-<sha>` branch with a proposed diff. "
+            "Never merged and never pushed — the branch name lands in the Task for you to "
+            "review. Off by default.",
+        ),
+    )
+    max_scenarios_per_fire: int = field(
+        default=3,
+        metadata=_meta(
+            "Max scenarios per run",
+            "Ceiling on scenarios generated from one watcher fire. A push of twenty commits "
+            "should not open twenty browser sessions; the most impactful few are the ones "
+            "worth checking.",
+        ),
+    )
+
+
+@dataclass
 class AgentConfig:
     approval_mode: str = field(
         default="auto",
@@ -832,6 +883,15 @@ class AgentConfig:
             "presenting an old reading as the present state. Probing is never "
             "automatic — this only decides when a stored measurement stops counting "
             "as an answer.",
+        ),
+    )
+
+    self_qa: SelfQaConfig = field(
+        default_factory=SelfQaConfig,
+        metadata=_meta(
+            "Self-QA companion",
+            "Commit-watch QA loop: triage each new commit, drive an as-a-user scenario, file "
+            "findings. Off by default.",
         ),
     )
 
@@ -4328,6 +4388,9 @@ class AppConfig:
         agent_data = data.get("agent", {})
         if not isinstance(agent_data, dict):
             agent_data = {}
+        self_qa_data = agent_data.get("self_qa", {})
+        if not isinstance(self_qa_data, dict):
+            self_qa_data = {}
         session_data = data.get("session", {})
         if not isinstance(session_data, dict):
             session_data = {}
@@ -4547,6 +4610,16 @@ class AppConfig:
                 # staleness window the dashboard would refuse to save.
                 runner_health_check_secs=max(
                     60, min(86_400, int(agent_data.get("runner_health_check_secs", 3600)))
+                ),
+                self_qa=SelfQaConfig(
+                    enabled=bool(self_qa_data.get("enabled", False)),
+                    watched_repo=str(self_qa_data.get("watched_repo", "") or ""),
+                    fix_branch_enabled=bool(self_qa_data.get("fix_branch_enabled", False)),
+                    # Clamped to the same [1, 20] window ``_EDITABLE_CONFIG`` enforces, so a
+                    # hand-edited config.json cannot express a ceiling the dashboard refuses.
+                    max_scenarios_per_fire=max(
+                        1, min(20, int(self_qa_data.get("max_scenarios_per_fire", 3)))
+                    ),
                 ),
             ),
             session=SessionConfig(

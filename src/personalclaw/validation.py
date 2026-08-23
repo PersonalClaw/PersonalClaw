@@ -819,6 +819,15 @@ ALLOWED_HOOK_PROVIDERS = frozenset(
         "create-task",
         "invoke-agent",
         "run-prompt",
+        # SELF-VERIFICATION §3.2 steps 1 and 5. §5 of that plan states the rule these two
+        # lines follow: a provider added by a later revision MUST appear here or hook
+        # create/update rejects it. Neither is the `qa-run` provider §5 forbids — the QA run
+        # still fires through `run-workflow`. `selfqa-triage` classifies commits at zero
+        # tokens and writes its verdicts to the run ledger; `selfqa-file-finding` files one
+        # Inbox item + one Task through the existing native sinks, adding no inbox source and
+        # no task provider.
+        "selfqa-triage",
+        "selfqa-file-finding",
         # WORKFLOWS-V2 Slice 3: re-added in the SAME commit that re-registers the v2
         # provider. Listing a provider that cannot be dispatched is worse than omitting
         # it — the trigger would validate, save, and then fail at run time.

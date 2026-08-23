@@ -80,6 +80,20 @@ def _ensure_default_providers_registered() -> None:
         from personalclaw.action_providers.invoke_agent_provider import InvokeAgentActionProvider
 
         register_action_provider(InvokeAgentActionProvider())
+    if "selfqa-triage" not in _providers:
+        from personalclaw.action_providers.selfqa_triage_provider import SelfQaTriageActionProvider
+
+        register_action_provider(SelfQaTriageActionProvider())
+    if "selfqa-file-finding" not in _providers:
+        # SELF-VERIFICATION §3.2 step 5 — the Self-QA loop's filing step. Registered here
+        # rather than behind the `agent.self_qa.enabled` flag: a provider the `self-qa`
+        # template names must be dispatchable whenever that template can run, and a
+        # registration that depends on config is one the run-start preflight cannot see.
+        from personalclaw.action_providers.selfqa_finding_provider import (
+            SelfQaFindingActionProvider,
+        )
+
+        register_action_provider(SelfQaFindingActionProvider())
     if "run-prompt" not in _providers:
         from personalclaw.action_providers.run_prompt_provider import RunPromptActionProvider
 
