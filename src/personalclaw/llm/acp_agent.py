@@ -939,7 +939,10 @@ def _factory(
         Path(str(session_files_dir_value)) if session_files_dir_value else None
     )
 
-    channel_id_value = options.get("channel_id")
+    # Channel id is PER SESSION for the same reason cwd/agent/model/mode above are:
+    # the bridge threads the session's channel as a kwarg, and it must win over the
+    # entry-level default (an ``acp:<cli>`` runtime entry belongs to no channel).
+    channel_id_value = str(kwargs.get("channel_id") or "").strip() or options.get("channel_id")
     channel_id: str | None = str(channel_id_value) if channel_id_value else None
 
     # Resolve credential through the credential store, if one is wired.

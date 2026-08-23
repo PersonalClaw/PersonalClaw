@@ -1,7 +1,7 @@
 import {
   User, Palette, MessageSquare, Plug, Cpu, FileText, Database, Bot, AudioLines,
   Inbox, Bell, Shield, ShieldAlert, ScrollText, Archive, FolderSync, DownloadCloud, CheckCircle2, Search, Blocks, Activity, Compass, Stethoscope, Scissors, ThumbsUp, HardDriveDownload, Coins, Route, Trophy,
-  MonitorSmartphone,
+  MonitorSmartphone, Plug2,
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { notify } from '../../app/appSdk'
@@ -138,6 +138,10 @@ const useDoctor = () => useQuery('settings:doctor', () => api.doctor(), { persis
 // incident pill. On the one card that says whether unattended work is suspended, blank is not an
 // answer. (`toolsSavings` below keeps its catch: a missing SAVINGS number is genuinely "no data".)
 const useIncident = () => useQuery('settings:incident', () => api.incident(), { persist: true })
+// `persist: false` — this reports which network surfaces are reachable right now. A
+// cached "no inbound access" surviving a restart is the one wrong answer that matters.
+const useExternalAccess = () =>
+  useQuery('settings:external-access', () => api.externalAccess(), { persist: false })
 // A SEPARATE key from the panel's `settings:devices` (like `settings:durability-card`): this one
 // swallows a read failure into `null` so the card can say "couldn't check", while the panel needs
 // the raw error to render `LoadError`. One key with two fetchers would make which behaviour you get
@@ -642,6 +646,40 @@ export const SETTINGS_WIDGETS: SettingsWidget[] = [
                 {i.reason && <div className="mt-1.5 truncate text-on-surface-low text-[0.75rem]">{i.reason}</div>}</>
             : <><StatusPill label="Normal operation" tone="ok" />
                 <div className="mt-1.5 text-on-surface-low text-[0.75rem]">Kill switch · budgets · outbound scan</div></>)}
+        </BentoCard>
+      )
+    },
+  },
+  {
+    id: 'external-access', group: 'System', label: 'External access', icon: Plug2, size: 'sm',
+    description: 'Ways in from outside — inbound surfaces, their tokens, and per-client limits.',
+    useSearchText() {
+      const { data: e } = useExternalAccess()
+      const on = e?.surfaces.filter((s) => s.enabled && s.token_configured).length ?? 0
+      return `external access inbound mcp openai a2a capture bridge tokens clients rate limit kill switch ${e ? (e.enabled ? `on ${on} serving` : 'off disabled') : ''}`
+    },
+    render(query, go) {
+      const { data: e, error: eErr, stale: eStale } = useExternalAccess()
+      // "Serving" is enabled AND holding a usable token — the two conditions that must
+      // BOTH hold for a surface to answer. Counting only `enabled` would report a
+      // tokenless surface as live, which is the exact confusion the panel's per-row
+      // "not serving" pill exists to clear up.
+      const serving = e?.surfaces.filter((s) => s.enabled && s.token_configured) ?? []
+      return (
+        <BentoCard icon={Plug2} title="External access" query={query} onClick={() => go('external-access')} loading={e === undefined && !eErr} stale={eStale}>
+          {!e && eErr
+            ? <StatusPill label="Couldn't check" tone="warn" />
+            : e && (!e.enabled
+            ? <><StatusPill label="No inbound access" tone="ok" />
+                <div className="mt-1.5 text-on-surface-low text-[0.75rem]">Nothing outside can reach in</div></>
+            : serving.length === 0
+              ? <><StatusPill label="On, nothing serving" tone="warn" />
+                  <div className="mt-1.5 text-on-surface-low text-[0.75rem]">Each surface still needs its own token</div></>
+              : <><StatusPill label={`${serving.length} surface${serving.length === 1 ? '' : 's'} reachable`} tone="warn" />
+                  <div className="mt-1.5 truncate text-on-surface-low text-[0.75rem]">
+                    {serving.map((s) => s.surface).join(' · ')}
+                    {e.clients.length > 0 && ` · ${e.clients.length} client${e.clients.length === 1 ? '' : 's'}`}
+                  </div></>)}
         </BentoCard>
       )
     },

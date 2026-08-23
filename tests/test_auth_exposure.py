@@ -69,10 +69,11 @@ def test_dashboard_public_url_declares_exposure(_isolated) -> None:
     assert exposure.is_https() is True
 
 
-def test_inbound_public_url_is_honored_as_a_fallback(_isolated) -> None:
+def test_external_access_public_url_is_honored_as_a_fallback(_isolated) -> None:
     """An operator who already declared exposure for the inbound surface has declared it."""
     (_isolated / "config.json").write_text(
-        json.dumps({"inbound": {"public_url": "https://pc.example.com"}}), encoding="utf-8"
+        json.dumps({"external_access": {"public_url": "https://pc.example.com"}}),
+        encoding="utf-8",
     )
     assert exposure.is_exposed() is True
     assert exposure.public_host() == "pc.example.com"

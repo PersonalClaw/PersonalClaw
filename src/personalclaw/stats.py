@@ -141,3 +141,49 @@ class Stats:
             for k in self._c:
                 self._c[k] = 0
             self._start_time = time.monotonic()
+
+
+def cache_hit_pct(
+    *,
+    cache_read_tokens: int,
+    cache_creation_tokens: int,
+    input_tokens: int,
+) -> float | None:
+    """Share of one turn's PROMPT tokens that were served from cache, or ``None``.
+
+    Deliberately a module-level function, not a :class:`Stats` method: it derives a
+    per-turn ratio from three numbers the caller already holds. Putting it on the
+    singleton would invite a second, turn-scoped store beside the process-lifetime
+    counters at ``stats.py:43-44`` (``cache_creation_tokens`` / ``cache_read_tokens``),
+    and those counters stay the only tally.
+
+    THE DENOMINATOR — ``input_tokens + cache_read_tokens + cache_creation_tokens``.
+    The three buckets on ``LLMEvent`` are DISJOINT: ``input_tokens`` EXCLUDES the
+    cached tokens, so they must be added back to recover the turn's whole prompt.
+    Evidence:
+
+    * ``llm/anthropic.py:524-526`` (and its twin at ``:689-691``) assigns
+      ``input_tokens`` verbatim from ``usage.input_tokens``, while the cache counts
+      come from the SDK's separate ``cache_creation_input_tokens`` /
+      ``cache_read_input_tokens`` fields via ``_read_cache_usage``
+      (``llm/anthropic.py:84-98``). No arithmetic ever relates the three.
+    * ``pricing.py:76-83`` bills them additively — ``input * in_rate + cache_read *
+      cache_read_rate + cache_creation * cache_write_rate``. If ``input_tokens``
+      already contained the cached tokens, the shipped cost model would double-bill
+      every cached turn.
+    * ``dashboard/chat_runner.py:3712-3714`` composes the rendered "cached" figure as
+      ``cache_read + cache_creation`` and reports it BESIDE ``input_tokens``, not as a
+      subset of it.
+
+    Returns ``None`` when the denominator is 0: no prompt tokens is NO MEASUREMENT,
+    not ``0%``. Same honesty rule as ``context_pct`` on the turn-complete line — see
+    ``dashboard/chat_runner.py:492-525``, where a defaulted ``0`` printed
+    ``context 0%`` for providers that reported nothing, a number the backend never
+    supplied. A measured 0 (prompt tokens present, none of them cached) is a real
+    answer and returns ``0.0``.
+    """
+    read = cache_read_tokens or 0
+    prompt_tokens = read + (cache_creation_tokens or 0) + (input_tokens or 0)
+    if prompt_tokens <= 0:
+        return None
+    return (read / prompt_tokens) * 100.0

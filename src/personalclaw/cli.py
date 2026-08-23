@@ -524,21 +524,37 @@ Examples:
         "--force", action="store_true", help="Restore even if gateway is running"
     )
 
-    # inbound — read-only inbound surfaces
+    # inbound — the shared inbound access seam
     inbound_parser = sub.add_parser(
-        "inbound", help="Manage read-only inbound surfaces (e.g. the MCP tool surface)"
+        "inbound", help="Manage the inbound access surfaces (openai, mcp, a2a, capture, bridge)"
     )
     inbound_sub = inbound_parser.add_subparsers(dest="inbound_command")
     inbound_token = inbound_sub.add_parser("token", help="Create or inspect a surface token")
     inbound_token.add_argument(
         "token_action", choices=("create", "show"), nargs="?", default="create"
     )
-    inbound_token.add_argument("surface", nargs="?", default="mcp", help="Surface name (mcp)")
+    # `choices` is deliberately NOT set from `EXTERNAL_ACCESS_SURFACES` here: importing
+    # the config loader at parser-build time would put a heavy module on every CLI
+    # invocation's import path. `inbound_cmd` validates against the single declaration
+    # and names the known set on a miss, so a typo still gets the full list.
+    inbound_token.add_argument(
+        "surface",
+        nargs="?",
+        default="mcp",
+        help="Surface name: openai, mcp, a2a, capture or bridge (default: mcp)",
+    )
     inbound_token.add_argument(
         "--rotate",
         action="store_true",
         help="Replace an existing token (the old one stops working)",
     )
+    # `confirm` resolves a control-bridge action the bridge flagged
+    # `requiresConfirmation`. It is a CLI verb because the whole
+    # point is that a HUMAN authorises the write — the agent that asked cannot.
+    inbound_confirm = inbound_sub.add_parser(
+        "confirm", help="Confirm a pending control-bridge action by its token"
+    )
+    inbound_confirm.add_argument("confirm_token", help="The confirm_token the bridge returned")
 
     # auth — the owner login. Setting a password is CLI-only on
     # purpose: a plaintext credential should never ride in an HTTP body.
@@ -651,12 +667,116 @@ action on Settings -> Models, never automatic.
         "--list-sets", action="store_true", help="List runnable fixture sets and exit"
     )
 
+    # eval-harvest (the harvested regression suite: real runs -> scenario library cases)
+    harvest_parser = sub.add_parser(
+        "eval-harvest",
+        help="Harvest real workflow runs from the Run Ledger into scenario-library cases",
+        epilog="""
+Examples:
+  personalclaw eval-harvest --dry-run          # what WOULD be harvested, nothing written
+  personalclaw eval-harvest                    # harvest the 50 most recent terminal runs
+  personalclaw eval-harvest --workflow daily_digest --limit 200
+  personalclaw eval-harvest --list             # the harvested suite already installed
+
+Harvested cases land beside the shipped scenarios in ~/.personalclaw/evals/scenarios/
+as harvested_*.json, so `personalclaw eval --all` runs them. Inputs are read from the
+ledger's redacted run_started record, never from the run row. An empty population is
+reported as a refusal (exit 1), which is not the same as a suite of zero cases.
+""",
+        formatter_class=_fmt,
+    )
+    harvest_parser.add_argument(
+        "--workflow", default="", help="Only harvest runs of this workflow definition"
+    )
+    harvest_parser.add_argument(
+        "--limit", type=int, default=0, help="How many recent runs to consider (default: 50)"
+    )
+    harvest_parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Build and hash the cases but write nothing",
+    )
+    harvest_parser.add_argument(
+        "--list", action="store_true", dest="list_suite", help="List the installed harvested suite"
+    )
+
+    # study
+    study_parser = sub.add_parser(
+        "study",
+        help="Run a pre-registered template A/B study over the harvested suite",
+        epilog="""
+Examples:
+  personalclaw study --list                    # every registered study and its verdict
+  personalclaw study --view <study_id>         # one study's registration + verdict
+  personalclaw study --run <study_id> --dry-run  # the spend preflight, nothing called
+  personalclaw study --run <study_id>          # the real k-run paired A/B
+
+A study is pre-registered when the flywheel FILES a template diff (registration is
+free and must precede arm 1); running it spends real money, so it is always a
+deliberate invocation and --dry-run prints the arm + judge call counts first. The
+locked/ checks never leave the machine that registered the study.
+""",
+        formatter_class=_fmt,
+    )
+    study_parser.add_argument("--list", action="store_true", help="List every registered study")
+    study_parser.add_argument("--view", default="", help="Print one study's registration + verdict")
+    study_parser.add_argument("--run", default="", help="Run this registered study id")
+    study_parser.add_argument(
+        "--dry-run", action="store_true", help="Print the spend preflight and call nothing"
+    )
+    study_parser.add_argument(
+        "--samples", type=int, default=0, help="Judge samples per position (default: 3)"
+    )
+
     sec_sub = sec_parser.add_subparsers(dest="sec_action")
     sec_sub.add_parser("audit", help="Scan conversation history for suspicious tool usage")
     sec_sub.add_parser("deny-list", help="Show active deny patterns")
     sel_parser = sec_sub.add_parser("events", help="Show recent security event log entries")
     sel_parser.add_argument("-n", "--limit", type=int, default=20, help="Number of entries")
     sec_sub.add_parser("verify", help="Verify security event log HMAC integrity")
+
+    # ablation
+    abl_parser = sub.add_parser(
+        "ablation",
+        help="Measure whether a harness component still earns its keep (keep/remove/lighten)",
+        epilog="""
+Examples:
+  personalclaw ablation --list                       # the registry (ships empty)
+  personalclaw ablation --dry-run                    # the cell preflight, nothing called
+  personalclaw ablation --force                      # measure the next component now
+  personalclaw ablation --component judge-node
+  personalclaw ablation --skill code/release-flow --subject triage   # the §3.3 bench
+
+The component is toggled by an overlay applied ONLY inside the spawned child; your live
+spec and config are never edited, and a run that leaked an edit refuses to report. A
+no-delta verdict files a retirement proposal — removing anything stays your call.
+""",
+        formatter_class=_fmt,
+    )
+    abl_parser.add_argument(
+        "--list", action="store_true", dest="list_components", help="List registered components"
+    )
+    abl_parser.add_argument(
+        "--component", default="", help="Measure this component id instead of the next in rotation"
+    )
+    abl_parser.add_argument(
+        "--skill", default="", help="Bench one SKILL surfaced-vs-suppressed (§3.3) instead"
+    )
+    abl_parser.add_argument(
+        "--subject", default="", help="Scenario to replay for --skill (required to score it)"
+    )
+    abl_parser.add_argument("--trials", type=int, default=3, help="Trials per arm (default: 3)")
+    abl_parser.add_argument(
+        "--budget", type=float, default=0.0, help="Hard spend cap in USD (0 = no cap)"
+    )
+    abl_parser.add_argument(
+        "--force", action="store_true", help="Measure even if the cadence is not due"
+    )
+    abl_parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Print the cell preflight and exit without calling a model",
+    )
 
     sub.add_parser("update", help="Update PersonalClaw to the latest version")
 
@@ -1044,6 +1164,12 @@ Examples:
         asyncio.run(_run_eval(args))
     elif args.command == "judge-bench":
         asyncio.run(_judge_bench(args))
+    elif args.command == "eval-harvest":
+        _eval_harvest(args)
+    elif args.command == "study":
+        asyncio.run(_study(args))
+    elif args.command == "ablation":
+        _ablation(args)
     elif args.command == "security":
         _security(args)
     elif args.command == "update":
@@ -1127,9 +1253,11 @@ from personalclaw.cli_app_new import add_parser as _add_app_parser  # noqa: E402
 from personalclaw.cli_app_new import app_cmd as _app_cmd  # noqa: E402
 from personalclaw.cli_chat import _chat  # noqa: E402
 from personalclaw.cli_commands import (  # noqa: E402
+    _ablation,
     _automation,
     _cron,
     _discover,
+    _eval_harvest,
     _handle_agent,
     _judge_bench,
     _learn,
@@ -1138,6 +1266,7 @@ from personalclaw.cli_commands import (  # noqa: E402
     _run_eval,
     _security,
     _spawn,
+    _study,
 )
 from personalclaw.cli_config import _config_cmd  # noqa: E402
 from personalclaw.cli_doctor import _doctor, _doctor_paths  # noqa: E402

@@ -747,6 +747,317 @@ async def _judge_bench(args: argparse.Namespace) -> None:
     print(f"\nArtifacts: {store.matrix_dir(result.bench_id)}")
 
 
+def _eval_harvest(args: argparse.Namespace) -> None:
+    """Harvest real runs into scenario-library cases (the harvested regression suite).
+
+    Exits 1 on a REFUSAL — an empty population — and 0 on a harvest that looked at runs and kept
+    none of them. The two are different statements and the exit code says which: "nothing to
+    measure" must not be indistinguishable from "measured nothing", because a caller wiring this
+    into a study would read the second as a green.
+    """
+    from personalclaw.evals import harvest as hv
+
+    if getattr(args, "list_suite", False):
+        try:
+            suite = hv.load_harvested_suite(workflow_name=getattr(args, "workflow", "") or "")
+        except hv.EmptyHarvestError as exc:
+            print(f"Refusing: {exc}")
+            raise SystemExit(1) from exc
+        print(f"Harvested suite: {len(suite)} case(s)")
+        for installed in suite:
+            block = installed.get("harvest") or {}
+            print(
+                f"  {installed.get('name')}  run={block.get('run_id')}  "
+                f"workflow={block.get('workflow_name')}  status={block.get('status')}"
+            )
+        return
+
+    limit = int(getattr(args, "limit", 0) or 0) or hv.DEFAULT_LIMIT
+    dry_run = bool(getattr(args, "dry_run", False))
+    report = hv.harvest(
+        workflow_name=getattr(args, "workflow", "") or "",
+        limit=limit,
+        write=not dry_run,
+    )
+
+    if report.is_refusal:
+        print(f"Refusing: {report.refusal}")
+        raise SystemExit(1)
+
+    wrote = sum(1 for c in report.cases if c.written)
+    print(
+        f"Considered {report.considered} terminal run(s); harvested {report.population} case(s)"
+        + (" (--dry-run: nothing written)" if dry_run else f"; wrote {wrote} new/changed")
+    )
+    for case in report.cases:
+        mark = "+" if case.written else "=" if not dry_run else " "
+        print(f"  {mark} {case.name}  run={case.run_id}  sha256={case.sha256[:12]}")
+    if report.skipped:
+        print("Skipped:")
+        for reason, count in sorted(report.skipped_by_reason().items()):
+            print(f"  {count} x {reason}")
+    if not report.cases:
+        # NOT a refusal: runs existed and every one was disqualified, with a reason each.
+        print(
+            "No case qualified. This is a measured result over "
+            f"{report.considered} run(s), not an empty population."
+        )
+        return
+    from personalclaw.evals import scenarios as sc
+
+    print(f"\nLibrary: {sc.installed_dir()}")
+
+
+async def _study(args: argparse.Namespace) -> None:
+    """Run (or preview) a pre-registered template A/B study (ES-5 / §2).
+
+    The invocation surface §2 had none of. Without it the instrument was complete and
+    unreachable: `run_study` had no production caller at all, so a pre-registered study could
+    be listed on the Learning page and never executed.
+
+    ``--dry-run`` prints the spend FIRST for exactly the reason ``judge-bench`` does, only
+    more so: a study is ``cases x k x 2`` ARM calls plus twice that many JUDGE calls, so a
+    ten-case suite at k=5 is 100 arm + 300 judge calls. A user who sees that number can
+    narrow it; a user who does not, pays for it.
+    """
+    from personalclaw.evals import studies, study_arms
+
+    if getattr(args, "list", False):
+        rows = studies.study_index()
+        if not rows:
+            print(
+                "No study has been registered yet. One is pre-registered whenever the "
+                "template refiner files a diff (`propose_template_diff`)."
+            )
+            return
+        for row in rows:
+            verdict = row.get("verdict") or "not run"
+            power = " [low_power]" if row.get("low_power") else ""
+            print(
+                f"{row['study_id']}\t{row.get('kind')}\t"
+                f"{(row.get('subject') or {}).get('template_id', '')}\t"
+                f"k={row.get('k')}\t{verdict}{power}"
+            )
+        return
+
+    view_id = str(getattr(args, "view", "") or "")
+    if view_id:
+        view = studies.study_view(view_id)
+        if view is None:
+            print(f"Error: no registered study {view_id!r}")
+            raise SystemExit(1)
+        print(json.dumps(view, indent=2, sort_keys=True))
+        return
+
+    study_id = str(getattr(args, "run", "") or "")
+    if not study_id:
+        print("Nothing to do. Pass --list, --view <id> or --run <id>.")
+        raise SystemExit(1)
+
+    from personalclaw.evals import store as evals_store
+
+    raw = evals_store.read_study_registration(study_id)
+    if raw is None:
+        print(f"Error: no registered study {study_id!r}")
+        raise SystemExit(1)
+    reg = studies.registration_from_dict(raw)
+
+    samples = int(getattr(args, "samples", 0) or 0) or studies.DEFAULT_JUDGE_SAMPLES
+    try:
+        old_body, new_body = await study_arms.arm_bodies_for_study(reg)
+    except studies.StudyError as exc:
+        # A study whose arms cannot be built is refused BEFORE the preflight, so the printed
+        # spend is never for a matrix that could not have run.
+        print(f"Refusing: {exc}")
+        raise SystemExit(1) from exc
+
+    suite = study_arms.harvested_study_cases(
+        workflow_name=str(reg.subject.get("template_id") or "")
+    )
+    pre = study_arms.preflight(
+        reg,
+        cases=suite.cases,
+        old_template_body=old_body,
+        new_template_body=new_body,
+        samples=samples,
+        refusal=suite.refusal,
+    )
+    print(
+        f"Study {reg.study_id} ({reg.kind}) on "
+        f"{reg.subject.get('template_id') or '<unnamed template>'}\n" + pre.render() + "\n"
+    )
+    if pre.refusal:
+        raise SystemExit(1)
+    if getattr(args, "dry_run", False):
+        print("--dry-run: nothing was called.")
+        return
+
+    try:
+        result = await study_arms.run_registered_study(
+            study_id,
+            old_template_body=old_body,
+            new_template_body=new_body,
+            samples=samples,
+        )
+    except studies.StudyError as exc:
+        print(f"Refusing: {exc}")
+        raise SystemExit(1) from exc
+
+    agreement = "unmeasurable" if result.agreement is None else f"{result.agreement:.2f}"
+    print(f"Verdict: {result.verdict}" + (" [low_power]" if result.low_power else ""))
+    print(f"  win rate:  {result.win_rate}")
+    print(f"  agreement: {agreement} (floor {result.agreement_floor})")
+    if result.fail_reason:
+        print(f"  fail reason: {result.fail_reason}")
+    for hit in result.locked_regressions:
+        print(f"  locked regression: {hit}")
+    if result.evidence_ref:
+        print(f"  evidence: {result.evidence_ref}")
+    if result.demotion_proposal_id:
+        print(f"  demotion proposal: {result.demotion_proposal_id}")
+    if result.calibration_ref:
+        print(f"  judge calibration filed: {result.calibration_ref}")
+    print(f"\nArtifacts: {evals_store.study_dir(study_id)}")
+
+
+def _ablation(args: argparse.Namespace) -> None:
+    """Run (or preview) the harness-ablation runner / skills bench (ES-7 §3.1 + §3.3).
+
+    Without this the only trigger is the monthly cadence, which is a control the operator
+    cannot exercise — and a measurement you have to wait 30 days to see is one nobody trusts.
+    ``--dry-run`` prints the cell count FIRST, for the same reason ``judge-bench`` does: an
+    ablation replays a scenario once per arm per trial, and a user who sees the count can lower
+    ``--trials`` before paying for a matrix they did not want.
+    """
+    from personalclaw.evals import ablation
+
+    if getattr(args, "list_components", False):
+        rows = ablation.registry()
+        if not rows:
+            print(
+                f"No components registered. Add rows to {ablation.registry_path()} "
+                '({"components": [{"component_id": ..., "kind": ..., "target": ..., '
+                '"subject": ...}]}).'
+            )
+            return
+        for comp in rows:
+            print(
+                f"{comp.component_id}\t{comp.kind}\t{comp.target}\t{comp.subject}\t"
+                f"arms={','.join(comp.arms())}"
+            )
+        return
+
+    skill = str(getattr(args, "skill", "") or "")
+    if skill:
+        _ablation_bench_skill(args, skill)
+        return
+
+    component_id = str(getattr(args, "component", "") or "")
+    if component_id:
+        matches = [c for c in ablation.registry() if c.component_id == component_id]
+        if not matches:
+            print(f"Error: no registered component {component_id!r} (try --list).")
+            raise SystemExit(1)
+        component: ablation.AblationComponent = matches[0]
+    else:
+        picked = ablation.pick_component()
+        if picked is None:
+            print(f"No components registered. See --list and {ablation.registry_path()}.")
+            return
+        component = picked
+
+    trials = max(1, int(getattr(args, "trials", 3) or 3))
+    try:
+        # Before the preflight print, so a typo'd target is a message and not a matrix.
+        ablation.validate_component(component)
+    except ValueError as exc:
+        print(f"Error: {exc}")
+        raise SystemExit(1) from exc
+    arms = component.arms()
+    print(
+        f"Ablation '{component.component_id}' ({component.kind} → {component.target})\n"
+        f"  subject: {component.subject}\n"
+        f"  arms:    {', '.join(arms)}\n"
+        f"  trials:  {trials} per arm\n"
+        f"  cells (the spend): {len(arms) * trials}\n"
+        f"  cadence: every {ablation._cadence_days()}d "
+        f"(due now: {ablation.due()})\n"
+    )
+    if getattr(args, "dry_run", False):
+        print("--dry-run: nothing was called.")
+        return
+    if not getattr(args, "force", False) and not ablation.due():
+        print("Not due yet. Pass --force to measure anyway.")
+        return
+
+    from personalclaw.evals import scenarios as scenario_lib
+    from personalclaw.evals import store as evals_store
+
+    try:
+        report = ablation.run_ablation(
+            component, trials=trials, budget_usd=float(getattr(args, "budget", 0.0) or 0.0)
+        )
+    except ablation.LiveStateMutatedError as exc:
+        # Loud, not swallowed: the run altered the operator's config, which is the one thing
+        # §3.1 forbids outright.
+        print(f"REFUSED: {exc}")
+        raise SystemExit(1) from exc
+    except (scenario_lib.ScenarioLibraryError, evals_store.PinRequiredError) as exc:
+        # A misregistered subject or an incomplete pin is a registry mistake, not a crash. The
+        # message already names what is installed — a traceback on top of it only hides it.
+        print(f"Error: {exc}")
+        raise SystemExit(1) from exc
+    _print_ablation_report(report)
+    if report.verdict == ablation.REMOVE:
+        _verdict, proposal = ablation.file_retirement_proposal(report)
+        if proposal is not None:
+            print(f"\nFiled retirement proposal {proposal.id} (evidence: {report.evidence_ref()})")
+
+
+def _ablation_bench_skill(args: argparse.Namespace, skill: str) -> None:
+    """The §3.3 half: one skill, surfaced vs suppressed, over its consulted runs."""
+    from personalclaw.evals import skills_bench
+
+    subject = str(getattr(args, "subject", "") or "")
+    if getattr(args, "dry_run", False):
+        runs = skills_bench.consulted_runs(skill)
+        print(
+            f"Skill bench '{skill}'\n"
+            f"  consulted runs: {len({r['run_id'] for r in runs})}\n"
+            f"  subject:        {subject or '<none>'}\n"
+            "--dry-run: nothing was called."
+        )
+        return
+    report = skills_bench.bench_skill(
+        skill,
+        subject=subject,
+        trials=max(1, int(getattr(args, "trials", 3) or 3)),
+        budget_usd=float(getattr(args, "budget", 0.0) or 0.0),
+    )
+    print(f"Skill bench '{skill}' → {report.verdict}")
+    print(f"  consulted runs: {len(report.consulted_run_ids)}")
+    if report.suppression:
+        print(f"  suppression verified: {report.suppression.get('verified')}")
+    if report.delta is not None:
+        print(f"  delta (surfaced − suppressed): {report.delta}")
+    if report.reason:
+        print(f"  {report.reason}")
+
+
+def _print_ablation_report(report) -> None:
+    print(f"Verdict: {report.verdict}")
+    for arm, agg in sorted(report.arms.items()):
+        mean = agg.get("mean_score")
+        print(
+            f"  {arm}: mean={'n/a' if mean is None else round(float(mean), 4)} "
+            f"scored={agg.get('scored_count')} of {agg.get('total')}"
+        )
+    print(f"  delta (on − off): {report.delta}  (threshold {report.epsilon})")
+    if report.cheap_delta is not None:
+        print(f"  delta (on − cheap): {report.cheap_delta}")
+    print(f"  report: evals/ablation/{report.matrix_id}.json")
+
+
 def _learn(args: argparse.Namespace) -> None:
     """Save, list, or remove learned corrections in memory.db ``lesson.*``."""
 

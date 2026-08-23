@@ -12,6 +12,15 @@ export const PROPOSALS_KEY_PREFIX = 'learning:proposals:'
 export const WEEK_KEY = 'learning:week'
 export const HEALTH_KEY = 'learning:health'
 export const JUDGE_BENCH_KEY = 'learning:judge-bench'
+export const STUDIES_KEY = 'learning:studies'
+export const STUDY_DETAIL_KEY_PREFIX = 'learning:study:'
+
+/** The cache key for ONE study's drill-down. Keyed per study for the same reason the
+ *  proposal list is keyed per facet: a shared key would make expanding a second study paint
+ *  the first one's runs out of cache, and the numbers would look real. */
+export function studyDetailKey(studyId: string): string {
+  return STUDY_DETAIL_KEY_PREFIX + studyId
+}
 
 /** The cache key for one facet of the proposal list. `kind` is `''` for the All tab. */
 export function proposalsKey(kind: string): string {
@@ -54,6 +63,7 @@ export function refreshEverything(
   refreshWeek: () => void,
   refreshHealth: () => void = () => {},
   refreshJudgeBench: () => void = () => {},
+  refreshStudies: () => void = () => {},
 ): void {
   invalidateKeys(PROPOSALS_KEY_PREFIX, true)
   invalidateKeys(WEEK_KEY)
@@ -62,8 +72,15 @@ export function refreshEverything(
   // terminal — so it is the one read on this page whose staleness the PAGE cannot detect, and an
   // explicit Refresh is exactly when re-asking is worth a request.
   invalidateKeys(JUDGE_BENCH_KEY)
+  // The study list AND every expanded drill-down. A study is run from a terminal too, so the
+  // page cannot detect its staleness either — and dropping the list while keeping a detail
+  // entry would paint a fresh verdict beside stale runs, which is the worst of the three
+  // states because both halves look current.
+  invalidateKeys(STUDIES_KEY)
+  invalidateKeys(STUDY_DETAIL_KEY_PREFIX, true)
   refreshProposals()
   refreshWeek()
   refreshHealth()
   refreshJudgeBench()
+  refreshStudies()
 }

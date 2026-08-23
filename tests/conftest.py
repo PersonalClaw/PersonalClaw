@@ -321,6 +321,13 @@ def _forbid_real_model_roots(monkeypatch):
     Detection is a separate module so it can be driven against a fake root and proven to
     fire (``tests/test_local_model_root_guard.py``) — the same reason the real-home rail
     keeps its detection in ``real_home_guard``.
+
+    The reach is ONE attribute lookup deep, which is the rail's one soft edge: a module-level
+    ``from ...layouts import delete_all_layouts`` captures the unwrapped object before this
+    fixture ever runs. Each original is recorded in ``real_model_root_guard.ORIGINALS`` so
+    that shape is testable rather than assumed, and a companion rail
+    (``test_no_test_module_import_binds_a_guarded_layouts_name``) keeps the suite from
+    growing one.
     """
     import real_model_root_guard
 
@@ -333,6 +340,8 @@ def _forbid_real_model_roots(monkeypatch):
                 f"layouts.{fn_name} no longer exists; update GUARDED_FUNCTIONS so the "
                 f"model-root rail keeps covering every cache-root entry point."
             )
+
+        real_model_root_guard.ORIGINALS[fn_name] = original
 
         def _guarded(cache_root, *args, _original=original, _name=fn_name, **kwargs):
             real_model_root_guard.assert_safe(_name, cache_root)

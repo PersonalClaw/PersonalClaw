@@ -99,20 +99,14 @@ def _json(payload: dict, status: int = 200) -> web.Response:
 def enablement_problem() -> str | None:
     """Why the surface must not mount, or None when it may.
 
-    Fail-CLOSED: a missing or unreadable `inbound.mcp.enabled` reads DISABLED. An
-    inbound network surface that turns itself on because config was unparseable is
-    the wrong direction to fail, so this returns a reason instead of a default-on.
+    Delegates to the shared admission gate (`gate.surface_enablement_problem`), which
+    owns the master + per-surface + token layers for all five surfaces. Kept as a
+    named function because `mount()` and the tests both call it, and because a
+    dialect asking "may I serve?" should not have to know how many layers there are.
     """
-    try:
-        from personalclaw.config.loader import AppConfig
+    from personalclaw.inbound.gate import surface_enablement_problem
 
-        cfg = AppConfig.load()
-        enabled = bool(getattr(getattr(cfg.inbound, SURFACE, None), "enabled", False))
-    except Exception:  # noqa: BLE001
-        return "config unreadable (inbound stays off — the safe state)"
-    if not enabled:
-        return "inbound.mcp.enabled is off"
-    return auth.token_problem(SURFACE)
+    return surface_enablement_problem(SURFACE)
 
 
 async def handle_mcp_get(request: web.Request) -> web.Response:
@@ -125,10 +119,20 @@ async def handle_mcp_get(request: web.Request) -> web.Response:
 
 
 async def handle_mcp(request: web.Request) -> web.Response:
+    from personalclaw.inbound import clients as clients_mod
+    from personalclaw.inbound.gate import admission_problem
+
     started = time.monotonic()
     bytes_in = 0
+    client_id = ""
 
-    def _done(status: int, payload: dict, refused: str = "", tool: str = "") -> web.Response:
+    def _done(
+        status: int,
+        payload: dict,
+        refused: str = "",
+        tool: str = "",
+        rate_limited: bool = False,
+    ) -> web.Response:
         body = json.dumps(payload)
         audit_mod.audit(
             SURFACE,
@@ -139,14 +143,19 @@ async def handle_mcp(request: web.Request) -> web.Response:
             duration_ms=int((time.monotonic() - started) * 1000),
             refused=refused,
             tool=tool,
+            client_id=client_id,
+            rate_limited=rate_limited,
         )
         return _json(payload, status=status)
 
-    # 1) Enablement — re-checked per request, so flipping the config kill switch
-    #    takes effect on the next call rather than needing a restart.
-    problem = enablement_problem()
+    # 1) Admission — the layered kill switches (master, per-surface, token) plus the
+    #    guardrails incident check, re-evaluated per request so flipping any of them
+    #    takes effect on the next call rather than needing a restart. An incident
+    #    answers 503 (come back later), a disabled surface 404 (nothing here).
+    problem, status = admission_problem(SURFACE)
     if problem:
-        return _done(404, {"error": "not found"}, refused=f"disabled: {problem}")
+        refusal = {"error": "service unavailable"} if status == 503 else {"error": "not found"}
+        return _done(status, refusal, refused=problem)
 
     # 2) Peer, then 3) token. Peer first: a non-loopback caller shouldn't get to
     #    probe token validity at all.
@@ -158,12 +167,30 @@ async def handle_mcp(request: web.Request) -> web.Response:
     header = request.headers.get("Authorization", "")
     if header.startswith("Bearer "):
         presented = header[len("Bearer ") :].strip()
-    if not auth.verify_bearer(SURFACE, presented):
-        return _done(401, {"error": "unauthorized"}, refused="bad or missing bearer token")
 
-    # 4) Rate, keyed per peer so one noisy client can't starve another.
-    client_key = request.headers.get("Host", "") + "|" + (request.remote or "")
-    if not caps_mod.check_rate(SURFACE, client_key):
+    # 3b) Identity. A bearer may be EITHER the surface token (the un-scoped operator
+    #     credential MCP-READONLY-INBOUND shipped) or a per-client token. A client
+    #     token is tried FIRST so a registered client is never mistaken for the
+    #     surface principal and thereby handed un-pinned access.
+    client, client_reason = clients_mod.lookup_by_token(presented, SURFACE)
+    if client is not None:
+        client_id = client.client_id
+    elif not auth.verify_bearer(SURFACE, presented):
+        # Neither credential matched. The audited reason names the CLIENT-lookup
+        # outcome when there is one, because "matches no registered client" and
+        # "client is disabled" are different operator problems with the same 401.
+        return _done(
+            401,
+            {"error": "unauthorized"},
+            refused=client_reason or "bad or missing bearer token",
+        )
+
+    # 4) Caps — per CLIENT, so one noisy integration cannot starve another. Falls back
+    #    to the peer for a surface-token caller, which has no client identity.
+    peer_fallback = request.headers.get("Host", "") + "|" + (request.remote or "")
+    caps = caps_mod.caps_for(client)
+    if not caps_mod.check_rate_for_client(SURFACE, client_id, peer_fallback, caps):
+        _record_breach(client_id, "rate limit")
         payload = {"error": "rate limited"}
         body = json.dumps(payload)
         audit_mod.audit(
@@ -174,19 +201,32 @@ async def handle_mcp(request: web.Request) -> web.Response:
             bytes_out=len(body),
             duration_ms=int((time.monotonic() - started) * 1000),
             refused="rate limit",
+            client_id=client_id,
+            rate_limited=True,
         )
         return web.json_response(
             payload,
             status=429,
             headers={
                 "Cache-Control": "no-store",
-                "Retry-After": str(caps_mod.retry_after_secs(SURFACE)),
+                "Retry-After": str(
+                    caps_mod.retry_after_for_client(SURFACE, client_id, peer_fallback, caps)
+                ),
             },
         )
 
-    # 5) Concurrency.
-    if not caps_mod.acquire_slot(SURFACE):
-        return _done(503, {"error": "too many concurrent requests"}, refused="concurrency cap")
+    # 5) Concurrency, also per client.
+    slot = caps_mod.slot_key(SURFACE, client_id, peer_fallback)
+    if not caps_mod.acquire_slot(slot, caps):
+        _record_breach(client_id, "concurrency cap")
+        return _done(
+            503,
+            {"error": "too many concurrent requests"},
+            refused="concurrency cap",
+        )
+
+    if client_id:
+        clients_mod.touch_last_seen(client_id)
 
     try:
         # 6) Body size, checked BEFORE reading the whole body where possible.
@@ -280,7 +320,17 @@ async def handle_mcp(request: web.Request) -> web.Response:
         if method == "tools/list":
             from personalclaw.inbound.tools import list_tools
 
-            return _done(200, _rpc_result(request_id, {"tools": list_tools()}))
+            listed = list_tools()
+            if client is not None:
+                # A `tools` binding NARROWS the advertised table: a client bound to
+                # two tools sees exactly those two. Filtering the LIST as well as the
+                # CALL matters — a client that can see a tool it may not call will
+                # try, and the 403 reads as a bug rather than as a boundary.
+                permitted = set(
+                    clients_mod.allowed_tools(client, [str(t.get("name", "")) for t in listed])
+                )
+                listed = [t for t in listed if str(t.get("name", "")) in permitted]
+            return _done(200, _rpc_result(request_id, {"tools": listed}))
 
         if method == "tools/call":
             from personalclaw.inbound.tools import call_tool
@@ -294,8 +344,27 @@ async def handle_mcp(request: web.Request) -> web.Response:
                     refused="arguments not an object",
                     tool=name,
                 )
+            if client is not None:
+                # Bindings are PINS: a request argument that disagrees with a binding
+                # is a 403 and a SEL event, never a silent substitution. Checked
+                # BEFORE the handler runs — enforcing after the read has happened
+                # would make this an audit trail, not a control.
+                violation = clients_mod.check_bindings(client, arguments)
+                if not violation and client.tools and name not in client.tools:
+                    violation = (
+                        f"client {client.client_id} is pinned to tools "
+                        f"{sorted(client.tools)}; request called un-bound {name!r}"
+                    )
+                if violation:
+                    clients_mod.log_binding_violation(client.client_id, violation)
+                    return _done(
+                        403,
+                        {"error": "forbidden", "detail": "request conflicts with a client binding"},
+                        refused=violation,
+                        tool=name,
+                    )
             try:
-                result = await call_tool(name, arguments, request.app.get("state"))
+                result = await call_tool(name, arguments, request.app.get("state"), client_id)
             except KeyError:
                 return _done(
                     200,
@@ -338,7 +407,25 @@ async def handle_mcp(request: web.Request) -> web.Response:
             refused=f"unknown method {method!r}",
         )
     finally:
-        caps_mod.release_slot(SURFACE)
+        caps_mod.release_slot(slot)
+
+
+def _record_breach(client_id: str, reason: str) -> None:
+    """Count one cap breach toward auto-disable (§1.3). No-op for an anonymous caller.
+
+    Read from config here rather than baked in, so the owner's
+    `auto_disable_after_breaches` (including 0 = never) governs.
+    """
+    if not client_id:
+        return
+    try:
+        from personalclaw.config.loader import AppConfig
+        from personalclaw.inbound import clients as clients_mod
+
+        limit = int(AppConfig.load().external_access.auto_disable_after_breaches)
+        clients_mod.record_breach(client_id, limit=limit, reason=reason)
+    except Exception:  # noqa: BLE001 — bookkeeping must not fail the response
+        logger.debug("inbound: breach bookkeeping failed", exc_info=True)
 
 
 def _server_info() -> dict:

@@ -102,6 +102,19 @@ def test_exactly_min_samples_counts_as_an_opinion() -> None:
     assert _call(refs, fold) == [_LOCAL_B, _LOCAL_A]
 
 
+def test_one_below_min_samples_is_not_an_opinion() -> None:
+    """The other side of the same boundary, on the SAME fold that reorders at 5.
+
+    A floor asserted only from its passing side is half a test: ``n >= 5`` and ``n >= 4`` both
+    satisfy :func:`test_exactly_min_samples_counts_as_an_opinion`. Holding the scores fixed and
+    moving only ``n`` from 5 to 4 makes the boundary itself the single variable — the decisive
+    0.20-vs-0.95 gap is present in both folds, so the unchanged order here can only be the floor.
+    """
+    refs = [_LOCAL_A, _LOCAL_B]
+    fold = _fold({_LOCAL_A: _row(4, 0.20), _LOCAL_B: _row(4, 0.95)})
+    assert _call(refs, fold) == refs
+
+
 def test_one_opinion_alone_reorders_nothing() -> None:
     """With a single opinionated ref there is nothing to compare it against."""
     refs = [_LOCAL_A, _LOCAL_B]

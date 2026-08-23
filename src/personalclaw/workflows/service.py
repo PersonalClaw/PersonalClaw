@@ -581,7 +581,7 @@ async def start_run(
             # The blocking tool RESULT is the honest mirror surface: it lands in the launching
             # chat's transcript as a normal message and is persisted by that chat's own full
             # rewrite — a controller-side `ConversationLog.append` into the origin JSONL would be
-            # clobbered by `_save_session_to_history`, which rebuilds the file from in-memory
+            # clobbered by `save_session_to_history`, which rebuilds the file from in-memory
             # messages. Indexability travels WITH the text via `ownership.announcement` rather
             # than being re-derived at the destination: a restricted origin gets the summary
             # WITHOUT it being indexed. (The durable control is belt-and-suspenders — a restricted

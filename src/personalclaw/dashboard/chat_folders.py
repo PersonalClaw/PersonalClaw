@@ -7,7 +7,7 @@ import uuid
 
 from aiohttp import web
 
-from personalclaw.dashboard.chat_persistence import _save_session_to_history, resolve_session
+from personalclaw.dashboard.chat_persistence import resolve_session, save_session_to_history
 from personalclaw.dashboard.state import DashboardState
 from personalclaw.llm.base import EVENT_COMPLETE, EVENT_PERMISSION_REQUEST, EVENT_TEXT_CHUNK
 from personalclaw.security import redact_credentials, redact_exfiltration_urls
@@ -158,7 +158,7 @@ async def api_chat_folder_delete(request: web.Request) -> web.Response:
     for session in state._sessions.values():
         if session.folder_id == fid:
             session.folder_id = ""
-            _save_session_to_history(state, session, force=True)
+            save_session_to_history(state, session, force=True)
     state.save_folders()
     state.push_sessions_update()
     sel().log_api_access(
@@ -187,7 +187,7 @@ async def api_chat_session_folder(request: web.Request) -> web.Response:
     if folder_id and not any(f["id"] == folder_id for f in state._folders):
         return web.json_response({"error": "folder not found"}, status=400)
     session.folder_id = folder_id
-    _save_session_to_history(state, session, force=True)
+    save_session_to_history(state, session, force=True)
     state.push_sessions_update()
     sel().log_api_access(
         caller="dashboard",
@@ -212,7 +212,7 @@ async def api_chat_session_pin(request: web.Request) -> web.Response:
     except Exception:
         return web.json_response({"error": "invalid JSON"}, status=400)
     session.pinned = bool(body.get("pinned", False))
-    _save_session_to_history(state, session, force=True)
+    save_session_to_history(state, session, force=True)
     state.push_sessions_update()
     sel().log_api_access(
         caller="dashboard",

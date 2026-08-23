@@ -682,9 +682,9 @@ class TestConfigRestoreFields:
         session.append("user", "hello")
         session.drain()
 
-        from personalclaw.dashboard.chat import _save_session_to_history
+        from personalclaw.dashboard.chat import save_session_to_history
 
-        _save_session_to_history(state, session)
+        save_session_to_history(state, session)
 
         path = tmp_path / "dashboard_testsession.jsonl"
         assert path.exists()
@@ -734,9 +734,9 @@ class TestConfigRestoreFields:
         session.append("user", "hello")
         session.drain()
 
-        from personalclaw.dashboard.chat import _save_session_to_history
+        from personalclaw.dashboard.chat import save_session_to_history
 
-        _save_session_to_history(state, session)
+        save_session_to_history(state, session)
 
         path = tmp_path / "dashboard_pinsession.jsonl"
         assert path.exists()

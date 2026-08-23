@@ -201,9 +201,9 @@ async def _run_side_turn(
             # it (sidecar meta, not the main transcript). force=True since the
             # side turn doesn't add to session.messages.
             try:
-                from personalclaw.dashboard.chat_persistence import _save_session_to_history
+                from personalclaw.dashboard.chat_persistence import save_session_to_history
 
-                _save_session_to_history(state, session, force=True)
+                save_session_to_history(state, session, force=True)
             except Exception:
                 logger.debug("side buffer persist failed for %s", name, exc_info=True)
         _emit("", done=True)

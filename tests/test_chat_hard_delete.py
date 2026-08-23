@@ -32,15 +32,15 @@ async def _client(state) -> TestClient:
 
 def _seed_persistent_chat(state):
     """A persistent session with a couple of turns, PERSISTED to the JSONL history
-    the way a real turn does (via _save_session_to_history, not just append+drain —
+    the way a real turn does (via save_session_to_history, not just append+drain —
     append only updates the in-memory list)."""
-    from personalclaw.dashboard.chat_persistence import _save_session_to_history
+    from personalclaw.dashboard.chat_persistence import save_session_to_history
 
     session = state.get_or_create_session(name=None)
     session.append("user", "hello", "msg u0", broadcast=False)
     session.append("assistant", "hi there", "msg a0", broadcast=False)
     session.drain()
-    _save_session_to_history(state, session, force=True)
+    save_session_to_history(state, session, force=True)
     return session
 
 
@@ -152,7 +152,7 @@ async def test_cleanup_still_soft_archives(tmp_path):
     not start hard-deleting. Guards that the hard-delete change was scoped to the
     explicit Delete button only. Seeds an OLD last-activity so the staleness gate fires."""
     state = _make_state(tmp_path)
-    from personalclaw.dashboard.chat_persistence import _save_session_to_history
+    from personalclaw.dashboard.chat_persistence import save_session_to_history
     from personalclaw.dashboard.chat_utils import _history_key_for
 
     session = state.get_or_create_session(name=None)
@@ -160,7 +160,7 @@ async def test_cleanup_still_soft_archives(tmp_path):
     session.append("user", "hello", "msg u0", broadcast=False, ts="2020-01-01T00:00:00+00:00")
     session.append("assistant", "hi", "msg a0", broadcast=False, ts="2020-01-01T00:00:01+00:00")
     session.drain()
-    _save_session_to_history(state, session, force=True)
+    save_session_to_history(state, session, force=True)
     hk = _history_key_for(session.key)
 
     client = await _client(state)

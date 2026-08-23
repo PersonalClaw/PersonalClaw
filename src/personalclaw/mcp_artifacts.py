@@ -17,14 +17,68 @@ logger = logging.getLogger(__name__)
 
 
 def _current_project_id() -> str:
-    """The Project id bound for this turn (S5) — lazily read the native runtime's
-    per-turn contextvar. Returns "" when unbound (unscoped session, or a caller
-    outside the native runtime), so an unscoped save simply carries no project."""
+    """The Project this save scopes under (S5), resolved for BOTH runtimes.
+
+    Two callers, two mechanisms, one answer:
+
+    * the **native** runtime runs in-process and binds a per-turn contextvar, so reading
+      it is exact and free;
+    * an **ACP** CLI's tools run in a separate ``personalclaw mcp-core`` process, where
+      that contextvar is empty by construction. ``provider_bridge`` pops ``project_id``
+      unconditionally and hands it only to the native builder, so nothing about the
+      binding crosses into the ACP branch. Every ACP ``artifact_save`` therefore stamped
+      ``project_id=""`` and the artifact never appeared on its Project page
+      (ACP-AGENT-PARITY §2.6 gap 10, atom ``AAP-9``).
+
+    The ACP half resolves SERVER-SIDE from the session key rather than by threading a new
+    argument through the protocol: the key already crosses as ``PERSONALCLAW_SESSION_KEY``
+    (or the ``session_pid_<pid>.txt`` ancestor walk), which is exactly what
+    ``_resolve_session_key`` reads, so the gateway can be asked what that session is bound
+    to. No protocol change, and the answer is live rather than a snapshot taken at spawn.
+
+    Returns "" for an unscoped session, and "" on any failure — never a default project.
+    Stamping an unscoped save into "Personal" would file work under a project the user
+    never chose, which is worse than an unstamped artifact.
+    """
     try:
         from personalclaw.agents.native.builtin_tools import current_project_id
 
-        return current_project_id() or ""
+        pid = current_project_id() or ""
+        if pid:
+            return pid
     except Exception:
+        pass
+    return _session_bound_project_id()
+
+
+def _session_bound_project_id() -> str:
+    """The calling session's bound Project, read from the gateway. "" when unresolvable.
+
+    **Out-of-process callers only, and the guard is load-bearing.** The in-process native
+    runtime lives INSIDE the gateway, so a blocking ``urllib`` GET from here would have
+    the gateway waiting on itself — at best a wasted round trip, at worst a request
+    issued from the event loop that cannot be served until it returns. Its session key
+    arrives via ``mcp_core._CURRENT_SESSION_KEY`` (a contextvar), so that contextvar
+    being set is the exact signal for "I am in-process": in that case the native project
+    contextvar is authoritative and its emptiness means unscoped, full stop.
+
+    An ACP CLI's ``mcp-core`` process has no such contextvar — its key comes from
+    ``PERSONALCLAW_SESSION_KEY`` or the ``session_pid_<pid>.txt`` ancestor walk — so it
+    falls through and asks.
+    """
+    from personalclaw.mcp_core import _CURRENT_SESSION_KEY, _get
+
+    if _CURRENT_SESSION_KEY.get():
+        return ""  # in-process native turn: the contextvar already answered
+    if not _resolve_session_key():
+        return ""  # no session identity → nothing to look up
+    try:
+        got = _get("/api/chat/sessions/bound-project")
+        if not isinstance(got, dict) or got.get("error"):
+            return ""
+        return str(got.get("project_id") or "")
+    except Exception:
+        logger.debug("session project lookup failed", exc_info=True)
         return ""
 
 

@@ -24,11 +24,11 @@ from personalclaw.dashboard.chat_persistence import (
     _attach_variants,
     _redact_meta,
     _rehydrate_session_from_history,
-    _save_session_to_history,
     _validate_reasoning_effort,
     resolve_session,
+    save_session_to_history,
 )
-from personalclaw.dashboard.chat_runner import _run_chat
+from personalclaw.dashboard.chat_runner import run_chat
 from personalclaw.dashboard.chat_utils import (
     _build_stream_chunk,
     _emit_agent_assignment,
@@ -111,6 +111,21 @@ async def api_chat(request: web.Request) -> web.StreamResponse:
     if not isinstance(session_name, str) and session_name is not None:
         session_name = None  # coerce non-string session to auto-generate
 
+    # A named session that is on disk but not in memory must come back WITH its
+    # persisted runtime binding, not as a blank one. ``get_or_create_session`` mints a
+    # bare session on a miss, and after a gateway restart every un-foldered session is a
+    # miss (the startup restore is window/folder-scoped and ``restore_sessions`` defaults
+    # to false) — so the first message after a restart resolved on the native axis even
+    # though the session's meta line said ``acp:<cli>``, and then
+    # ``_save_session_to_history`` rebuilt that meta line from the blank session and
+    # DROPPED the binding, turning a one-turn slip into permanent state. That also made
+    # protocol resume unreachable: the resume id is handed to whatever provider the turn
+    # resolved, and a native provider ignores it. A GET of the session first happened to
+    # rehydrate and hide all of this, which is why it only bit non-UI callers.
+    # Registers the restored session in ``state._sessions``, so the create below
+    # returns it; a name with nothing on disk yields None and still creates fresh.
+    if session_name:
+        _rehydrate_session_from_history(state, session_name)
     session = state.get_or_create_session(session_name, app=request.get("app", ""))
 
     # App ownership check: deny-by-default for app tokens.
@@ -295,7 +310,7 @@ async def api_chat(request: web.Request) -> web.StreamResponse:
         tracker.reset_after_guidance()
         logger.info("Rounds reset after user guidance for session %s", session.key)
 
-    task = asyncio.create_task(_run_chat(state, session, message))
+    task = asyncio.create_task(run_chat(state, session, message))
     session.task = task
     session._recovery_retrigger_count = 0
     state._background_tasks.add(task)
@@ -682,6 +697,37 @@ async def api_chat_tool_result(request: web.Request) -> web.Response:
     content, _ = redact_credentials(content)
     res["content"] = content
     return web.json_response(res)
+
+
+async def api_chat_session_bound_project(request: web.Request) -> web.Response:
+    """GET /api/chat/sessions/bound-project — the CALLING session's bound Project id.
+
+    ACP-AGENT-PARITY §2.6 gap 10. An ACP CLI's tools run in a separate ``mcp-core``
+    process, where the native runtime's per-turn project contextvar is empty by
+    construction, so ``artifact_save`` there stamped nothing. The session key already
+    crosses to that process, so this endpoint closes the loop with no protocol change.
+
+    Keyed off the ``X-Session-Key`` header, never off a path segment or a query
+    parameter: the caller must prove which session it IS, and letting it name any
+    session would turn a stamping helper into a cross-session read of someone else's
+    project binding.
+
+    Returns ``{"project_id": ""}`` — a 200, not a 404 — when the header is absent, the
+    session is unknown or the session binds no project. All three mean the same thing to
+    the one caller ("nothing to stamp"), and an error status would make a normal
+    unscoped save look like a failure in its logs. Deliberately does NOT fall back to
+    the Personal default the way ``/api/context`` does: filing an unscoped save under a
+    project the user never chose is worse than an unstamped artifact.
+    """
+    state: DashboardState = request.app["state"]
+    sk = request.headers.get("X-Session-Key", "")
+    if not sk or sk == "dashboard:ui":
+        return web.json_response({"project_id": ""})
+    name = sk.split(":", 1)[-1] if ":" in sk else sk
+    session = (getattr(state, "_sessions", {}) or {}).get(name)
+    return web.json_response(
+        {"project_id": str(getattr(session, "project_id", "") or "") if session else ""}
+    )
 
 
 async def api_chat_session_detail(request: web.Request) -> web.Response:
@@ -1416,7 +1462,7 @@ async def api_chat_session_interrupt(request: web.Request) -> web.Response:
     """POST /api/chat/sessions/{session}/interrupt — stop the turn, KEEP the queue.
 
     Unlike /stop (which clears the queue), /interrupt soft-cancels the current
-    turn and preserves the queue so the _run_chat finally-block dequeue picks up
+    turn and preserves the queue so the run_chat finally-block dequeue picks up
     the next queued message immediately. Optional body ``{"queue_id": ...}``
     promotes a specific queued message to the front first.
 
@@ -1740,7 +1786,7 @@ async def api_chat_sessions_cleanup(request: web.Request) -> web.Response:
         if not removed:
             continue
         try:
-            _save_session_to_history(state, removed, closed=True)
+            save_session_to_history(state, removed, closed=True)
         except Exception:
             logger.error("Cleanup: failed to archive session %s", name, exc_info=True)
             state._sessions[name] = removed

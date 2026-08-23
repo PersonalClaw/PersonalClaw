@@ -681,11 +681,31 @@ _EDITABLE_CONFIG: dict[str, dict] = {
     # Context Economy §5 — dynamic tool-group activation (runtime-editable). Takes
     # effect for sessions created after the change (activation state is per-runtime).
     "tools.groups_enabled": {"type": "bool"},
-    # The kill switch is runtime-editable so turning the
-    # surface OFF takes effect on the next request without a restart. `allow_remote`
-    # and `public_url` are deliberately NOT here: widening a network surface should
-    # be a deliberate config-file edit, not a one-click PATCH.
-    "inbound.mcp.enabled": {"type": "bool"},
+    # The runtime-editable subset of the inbound access seam.
+    # The kill switches are here so turning a surface OFF takes effect on the next
+    # request without a restart (that is the whole point of a kill switch).
+    #
+    # 🔴 Deliberately NOT PATCH-editable, and asserted as REFUSALS in
+    # `test_external_access_seam.py` rather than merely absent from this dict:
+    #   · `external_access.public_url` — the public URL is the security boundary for
+    #     every non-loopback peer check (`inbound/auth.peer_allowed` compares the
+    #     request Host to it). A boundary that moves on one PATCH is not a boundary.
+    #   · `external_access.<surface>.allow_remote` — widening a network surface from
+    #     loopback to the world is a deliberate config-file edit.
+    #   · the per-surface TOKENS — they are not in `config.json` at all (they live in
+    #     the credential store via `save_credential`), so there is no path here even in
+    #     principle; token lifecycle is `personalclaw inbound token create <surface>`.
+    "external_access.enabled": {"type": "bool"},
+    "external_access.openai.enabled": {"type": "bool"},
+    "external_access.mcp.enabled": {"type": "bool"},
+    "external_access.a2a.enabled": {"type": "bool"},
+    "external_access.capture.enabled": {"type": "bool"},
+    "external_access.bridge.enabled": {"type": "bool"},
+    "external_access.rate_rps": {"type": "float", "min": 0.01, "max": 1000.0},
+    "external_access.rate_burst": {"type": "int", "min": 1, "max": 10000},
+    "external_access.rate_concurrent": {"type": "int", "min": 1, "max": 256},
+    "external_access.auto_disable_after_breaches": {"type": "int", "min": 0, "max": 10000},
+    "external_access.capture_retention_days": {"type": "int", "min": 0, "max": 3650},
     # Entity linking. Runtime-editable: turning it off
     # stops new links immediately (existing links are kept, so re-enabling doesn't
     # need a backfill).
@@ -775,6 +795,14 @@ _EDITABLE_CONFIG: dict[str, dict] = {
     # load() applies the same function, defense in depth for hand-edits.
     "agent.bot_name": {"type": "str", "max_len": 50, "sanitize": _bot_name_sanitizer},
     "agent.log_level": {"type": "enum", "values": ["DEBUG", "INFO", "WARNING", "ERROR"]},
+    # Self-QA companion (SELF-VERIFICATION §5 wiring point (d)). All four fields are editable,
+    # not just the two toggles: a companion you can enable but cannot point at a repo is
+    # enabled and inert, which reads as broken. `max_scenarios_per_fire` is clamped to the same
+    # [1, 20] window ``AppConfig.load()`` applies, so the file and the dashboard agree.
+    "agent.self_qa.enabled": {"type": "bool"},
+    "agent.self_qa.watched_repo": {"type": "str", "max_len": 512},
+    "agent.self_qa.fix_branch_enabled": {"type": "bool"},
+    "agent.self_qa.max_scenarios_per_fire": {"type": "int", "min": 1, "max": 20},
     "session.timeout_secs": {"type": "int", "min": 0, "max": 86400},
     "session.autocompact_pct": {"type": "float", "min": 5.0, "max": 90.0},
     "session.pool_size": {"type": "int", "min": 0, "max": 10},
@@ -1139,6 +1167,20 @@ async def api_personalclaw_config_patch(request: web.Request) -> web.Response:
             _discovery.reconcile()
         except Exception:
             logger.exception("Failed to apply the LAN discovery setting")
+
+    # Converge the Self-QA commit watcher the moment the toggle or the
+    # watched path changes, mirroring the startup reconcile. Without this the switch would need a
+    # gateway restart to mean anything, and the trigger list beside it would keep showing the old
+    # reality while the control read "on" — the same defect the LAN-discovery hook above fixes.
+    if path_key.startswith("agent.self_qa."):
+        try:
+            from personalclaw.config.loader import config_dir as _config_dir
+            from personalclaw.selfqa.install import reconcile as _reconcile_selfqa
+            from personalclaw.triggers.store import TriggerStore as _TriggerStore
+
+            _reconcile_selfqa(_TriggerStore(base_dir=_config_dir()))
+        except Exception:
+            logger.exception("Failed to apply the Self-QA companion setting")
 
     # Live-apply tool-output projection rules (TokenJuice OP6) so an edit takes effect
     # immediately (no restart) — mirrors the startup install into the projection engine.

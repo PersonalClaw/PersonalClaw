@@ -155,16 +155,77 @@ def _cycle_at(recent: list[str], period: int, cycles: int) -> tuple[str, ...] | 
     return None
 
 
+#: Argument keys an adapter INJECTS rather than the model passing them as arguments.
+#: Dunder-prefixed by convention, and per-call by nature — kiro stamps
+#: ``__tool_use_purpose`` ("Run the requested command for the first time." → "…second
+#: time.") into every ``rawInput``. Excluded from the bucket identity because they say
+#: nothing about what the tool was asked to do. See :func:`normalize_call_args`.
+ADAPTER_ARG_PREFIX = "__"
+
+#: Argument keys that ANNOTATE a call rather than determine what it does — free-text the
+#: model writes for the human reading the transcript. `AAP-6`/`G154`: claude-code sends
+#: ``description`` on every Bash call, and a model enumerating its own retries writes
+#: "Run boom command (1 of 4)" … "(4 of 4)". Byte-identical commands therefore produced
+#: four buckets of one and no rung fired, which is the same defect ``ADAPTER_ARG_PREFIX``
+#: fixed for kiro arriving through a different door: a per-call nonce in the identity.
+#:
+#: Dropped ONLY when a behavioural key survives beside them (see
+#: :func:`normalize_call_args`) — for a tool whose payload genuinely IS a description,
+#: the description is the behaviour and merging on it would abort healthy turns.
+ANNOTATION_ARG_KEYS = frozenset(
+    {"description", "explanation", "reason", "rationale", "thought", "why", "purpose"}
+)
+
+
+def normalize_call_args(args: object) -> object:
+    """Strip adapter-injected metadata from tool arguments before keying on them.
+
+    `AAP-6`/`G152`. The breaker's whole premise is that the SAME call repeated is one
+    bucket. An ACP adapter hands the host its arguments as an opaque JSON string, and
+    kiro's includes a per-call narration key — so four byte-identical
+    ``bash -c 'echo boom >&2; exit 3'`` calls produced four DIFFERENT keys, four streaks
+    of one, and no warn at a threshold of three. Measured live: the failure bit arrived
+    on all four and the breaker still said nothing, because a params-aware breaker
+    keyed on a per-call nonce is a params-BLIND breaker that also never repeats.
+
+    Parses the ACP string shape, drops :data:`ADAPTER_ARG_PREFIX` keys, and leaves
+    everything else — including the native dict shape and any non-JSON string —
+    untouched, so this can only ever MERGE buckets that differ by adapter narration.
+    """
+    raw = args
+    if isinstance(args, str):
+        try:
+            raw = json.loads(args)
+        except (TypeError, ValueError):
+            return args
+    if not isinstance(raw, dict):
+        return args
+    stripped = {k: v for k, v in raw.items() if not str(k).startswith(ADAPTER_ARG_PREFIX)}
+    # Free-text annotation keys are per-call by nature, so they fragment the
+    # bucket exactly like an adapter nonce. Dropped only when something behavioural
+    # survives beside them — a tool whose ONLY argument is a description keeps keying on
+    # it, because there the description IS the call and merging would blame identical
+    # buckets for genuinely different work.
+    behavioural = {k: v for k, v in stripped.items() if str(k) not in ANNOTATION_ARG_KEYS}
+    if behavioural:
+        stripped = behavioural
+    # An input made ENTIRELY of adapter metadata would otherwise collapse to `{}` and
+    # merge every such call into one bucket regardless of tool arguments. Keep the
+    # original rather than invent an identity out of nothing.
+    return stripped if stripped else args
+
+
 def params_key(tool_name: str, args: object) -> str:
     """Stable ``(tool, params)`` identity for breaker bucketing.
 
     Same tool + same args = same bucket, so repeated *identical* failing calls
-    accumulate while genuinely different calls stay independent. Falls back to the
-    tool name alone if args aren't JSON-serializable — which is also the ACP shape,
-    where ``tool_input`` arrives as an opaque string rather than a dict.
+    accumulate while genuinely different calls stay independent. Adapter-injected
+    per-call metadata is normalized out first (:func:`normalize_call_args`) — without
+    that the ACP shape, an opaque JSON string, keys on the narration too. Falls back to
+    the tool name alone if args aren't JSON-serializable.
     """
     try:
-        return f"{tool_name}:{json.dumps(args, sort_keys=True, default=str)}"
+        return f"{tool_name}:{json.dumps(normalize_call_args(args), sort_keys=True, default=str)}"
     except (TypeError, ValueError):
         return str(tool_name)
 

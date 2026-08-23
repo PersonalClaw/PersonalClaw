@@ -662,10 +662,10 @@ async def api_send_message(request: web.Request) -> web.Response:
                         # personalclaw.dashboard.handlers (MAX_PROMPT_BYTES,
                         # _list_provider_prompts), so we can't import it at
                         # module top-level without a cycle.
-                        from personalclaw.dashboard.chat_runner import _run_chat
+                        from personalclaw.dashboard.chat_runner import run_chat
 
                         session.append("inject", wrapped, inject_cls)
-                        task = asyncio.create_task(_run_chat(state, session, wrapped))
+                        task = asyncio.create_task(run_chat(state, session, wrapped))
                         session.task = task
                         state._background_tasks.add(task)
                         task.add_done_callback(state._background_tasks.discard)

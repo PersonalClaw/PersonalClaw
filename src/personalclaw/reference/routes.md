@@ -123,6 +123,7 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `GET /api/chat/sessions` — list all chat sessions.
 - `POST /api/chat/sessions` — create a new chat session.
 - `POST /api/chat/sessions/auto-archive` — run (or preview) the auto-archive rule.
+- `GET /api/chat/sessions/bound-project` — the CALLING session's bound Project id.
 - `POST /api/chat/sessions/bulk` — apply one op to many sessions.
 - `POST /api/chat/sessions/cleanup` — bulk-archive inactive sessions to history.
 - `GET /api/chat/sessions/templates` — every saved session starter.
@@ -237,7 +238,14 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `POST /api/durability/import` — validate, then apply, an export zip (§6).
 - `POST /api/durability/run` — {job} — run one backup job now.
 - `GET /api/durability/status` — schedule state + what's due.
+- `GET /api/evals/ablation` — the newest keep/remove/lighten report (ES-7 §3.1).
 - `GET /api/evals/judge-bench` — the newest tier-recommendation table.
+- `GET /api/evals/studies` — one compact row per pre-registered study (§2.4 / ES-5).
+- `GET /api/evals/studies/{study_id}` — one study's verdict, agreement and per-run rows.
+- `GET /api/external-access` — the whole operator view of the inbound seam.
+- `POST /api/external-access/clients` — create; DELETE …/{client_id} — revoke.
+- `DELETE /api/external-access/clients/{client_id}` — create; DELETE …/{client_id} — revoke.
+- `POST /api/external-access/clients/{client_id}/disabled` — kill-switch layer (c).
 - `POST /api/feedback` — record one verdict.
 - `GET /api/feedback/producers` — per-producer accuracy.
 - `POST /api/feedback/producers/clear` — un-suppress after an artifact edit.
@@ -762,7 +770,10 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 
 ## Websocket / internal routes
 
+- `POST /action` — invoke one semantic action (control bridge, loopback).
+- `GET /actions` — the self-describing action catalogue (control bridge, loopback).
 - `GET /api/ws` — single multiplexed WebSocket for all real-time events.
 - `GET /api/ws/terminal/{session_id}` — WebSocket PTY for the built-in CLI panel.
+- `POST /confirm` — redeem a confirm_token, running the action the user approved.
 - `GET /mcp` — `GET /mcp` → 405. No SSE stream in v1 (spec-permitted).
 - `POST /mcp` — _(no summary)_

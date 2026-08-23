@@ -1665,7 +1665,7 @@ class TestSubagentDone:
 
     @pytest.mark.asyncio
     async def test_dashboard_session_idle_triggers_run_chat(self):
-        """Subagent done → dashboard session idle → _run_chat."""
+        """Subagent done → dashboard session idle → run_chat."""
         orch, mock_sm = self._setup_orch_with_subagent_mgr()
         # Get the on_done callback
         on_done = mock_sm.call_args[1]["on_done"]
@@ -1692,7 +1692,7 @@ class TestSubagentDone:
         info.started = 0.0
 
         with patch(
-            "personalclaw.dashboard.chat_runner._run_chat",
+            "personalclaw.dashboard.chat_runner.run_chat",
             new_callable=AsyncMock,
             return_value=None,
         ):

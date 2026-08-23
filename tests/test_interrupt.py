@@ -1,7 +1,7 @@
 """/interrupt — stop the turn, keep the queue.
 
 Unlike /stop (which clears the queue), /interrupt soft-cancels the current turn
-with preserve_queue=True so the _run_chat finally-block dequeue picks up the
+with preserve_queue=True so the run_chat finally-block dequeue picks up the
 next queued message. Preconditions: running + non-empty queue. An optional
 queue_id promotes a message to the front (id-preserving).
 """

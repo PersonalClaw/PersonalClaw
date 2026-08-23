@@ -168,7 +168,7 @@ def index_session(
     """Replace one session's index entry. Returns whether it was indexed.
 
     Whole-session replacement rather than per-message append: the transcript is
-    rewritten wholesale on every turn (`_save_session_to_history` rewrites the file),
+    rewritten wholesale on every turn (`save_session_to_history` rewrites the file),
     so incremental rows would drift out of sync with it. One row per session also
     makes `snippet()` return the best-matching passage from the entire conversation.
 

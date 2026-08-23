@@ -40,7 +40,7 @@ class _State:
 @pytest.fixture(autouse=True)
 def _quiet(monkeypatch):
     """No SEL writes, no history writes — this is handler logic under test."""
-    monkeypatch.setattr(sb, "_save_session_to_history", lambda *a, **k: None)
+    monkeypatch.setattr(sb, "save_session_to_history", lambda *a, **k: None)
 
     class _Sel:
         def log_api_access(self, **kw):
@@ -220,7 +220,7 @@ def test_lifecycle_fields_survive_a_real_write_then_read(real_state):
     through the actual save and the actual rehydrate rather than inspecting source."""
     from personalclaw.dashboard.chat_persistence import (
         _rehydrate_session_from_history,
-        _save_session_to_history,
+        save_session_to_history,
     )
     from personalclaw.dashboard.state import _ChatSession
 
@@ -230,7 +230,7 @@ def test_lifecycle_fields_survive_a_real_write_then_read(real_state):
     s.never_archive = True
     stamped = s.last_activity_at
     assert stamped > 0.0, "the append must have stamped activity"
-    _save_session_to_history(real_state, s, force=True)
+    save_session_to_history(real_state, s, force=True)
 
     real_state._sessions.clear()
     back = _rehydrate_session_from_history(real_state, "chat-1-roundtrip")
@@ -245,14 +245,14 @@ def test_a_default_session_writes_no_lifecycle_keys(real_state):
     byte-identical and the rollout is invisible until something changes."""
     import json
 
-    from personalclaw.dashboard.chat_persistence import _save_session_to_history
+    from personalclaw.dashboard.chat_persistence import save_session_to_history
     from personalclaw.dashboard.state import _ChatSession
 
     s = _ChatSession("chat-1-default", "test")
     # Insert a message WITHOUT going through append(), so no activity is stamped —
     # this is the shape of a session that predates the field.
     s.messages.append({"role": "user", "content": "hi", "cls": "", "ts": "2026-01-01T00:00:00Z"})
-    _save_session_to_history(real_state, s, force=True)
+    save_session_to_history(real_state, s, force=True)
 
     path = next(real_state.conversation_log._dir.glob("*chat-1-default*"))
     meta = json.loads(path.read_text(encoding="utf-8").splitlines()[0])
@@ -267,13 +267,13 @@ def test_an_unknown_lifecycle_value_on_disk_is_ignored(real_state):
 
     from personalclaw.dashboard.chat_persistence import (
         _rehydrate_session_from_history,
-        _save_session_to_history,
+        save_session_to_history,
     )
     from personalclaw.dashboard.state import _ChatSession
 
     s = _ChatSession("chat-1-junk", "test")
     s.append("user", "hello", broadcast=False)
-    _save_session_to_history(real_state, s, force=True)
+    save_session_to_history(real_state, s, force=True)
 
     path = next(real_state.conversation_log._dir.glob("*chat-1-junk*"))
     lines = path.read_text(encoding="utf-8").splitlines()

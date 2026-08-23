@@ -54,6 +54,13 @@ ALLOWED_BUILDERS = {
     "_resolve_from_config_registry",
     # native-agent runtime: its INNER inference provider resolves through the same path
     "_build_native_runtime",
+    # ACP agent runtime (``acp:<cli>``): an EXTERNAL CLI owns the model call, out of
+    # process and on its own vendor account. There is no host-side inference to meter, so
+    # there is nothing for ModelCallGuard to wrap — the same reason the pooled ACP claim
+    # in SessionManager has never gone through the chokepoint either. The spend it does
+    # incur is the CLI's, and it is unobservable to us by construction (documented in
+    # docs/agents/acp-parity.md as a protocol boundary, not an audit hole we opened).
+    "_build_acp_runtime",
 }
 
 

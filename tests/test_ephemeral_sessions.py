@@ -144,14 +144,14 @@ class TestHistoryPersistence:
     def test_restricted_session_still_saves_conversation_log(self, tmp_path, monkeypatch):
         """All memory modes write conversation log for tab recovery."""
         monkeypatch.setattr("personalclaw.dashboard.state.config_dir", lambda: tmp_path)
-        from personalclaw.dashboard.chat import _save_session_to_history
+        from personalclaw.dashboard.chat import save_session_to_history
 
         state = _make_state(tmp_path)
         session = state.get_or_create_session("e1", memory_mode="temporary")
         session.append("user", "secret tax info")
         session.append("assistant", "noted")
 
-        _save_session_to_history(state, session)
+        save_session_to_history(state, session)
 
         msgs = state.conversation_log.read_messages("dashboard:e1")
         assert len(msgs) == 2
@@ -159,13 +159,13 @@ class TestHistoryPersistence:
     def test_restricted_metadata_flag_persisted(self, tmp_path, monkeypatch):
         """Conversation log metadata includes memory_mode for restricted sessions."""
         monkeypatch.setattr("personalclaw.dashboard.state.config_dir", lambda: tmp_path)
-        from personalclaw.dashboard.chat import _save_session_to_history
+        from personalclaw.dashboard.chat import save_session_to_history
 
         state = _make_state(tmp_path)
         session = state.get_or_create_session("e1", memory_mode="incognito")
         session.append("user", "hello")
 
-        _save_session_to_history(state, session)
+        save_session_to_history(state, session)
 
         meta = state.conversation_log.get_metadata("dashboard:e1")
         assert meta.get("memory_mode") == "incognito"
@@ -173,13 +173,13 @@ class TestHistoryPersistence:
     def test_persistent_session_no_memory_mode_metadata(self, tmp_path, monkeypatch):
         """Persistent sessions don't have memory_mode in metadata."""
         monkeypatch.setattr("personalclaw.dashboard.state.config_dir", lambda: tmp_path)
-        from personalclaw.dashboard.chat import _save_session_to_history
+        from personalclaw.dashboard.chat import save_session_to_history
 
         state = _make_state(tmp_path)
         session = state.get_or_create_session("n1")
         session.append("user", "hello")
 
-        _save_session_to_history(state, session)
+        save_session_to_history(state, session)
 
         meta = state.conversation_log.get_metadata("dashboard:n1")
         assert "memory_mode" not in meta or meta.get("memory_mode") == "persistent"
@@ -192,13 +192,13 @@ class TestRestore:
     def test_restore_rebuilds_memory_mode(self, tmp_path, monkeypatch):
         """Gateway restart restores restricted sessions with memory_mode intact."""
         monkeypatch.setattr("personalclaw.dashboard.state.config_dir", lambda: tmp_path)
-        from personalclaw.dashboard.chat import _save_session_to_history, restore_recent_sessions
+        from personalclaw.dashboard.chat import restore_recent_sessions, save_session_to_history
 
         state1 = _make_state(tmp_path)
         session = state1.get_or_create_session("e1", memory_mode="incognito")
         session.append("user", "private stuff")
         session.append("assistant", "ok")
-        _save_session_to_history(state1, session)
+        save_session_to_history(state1, session)
 
         state2 = _make_state(tmp_path)
         restored = restore_recent_sessions(state2, window_minutes=0)

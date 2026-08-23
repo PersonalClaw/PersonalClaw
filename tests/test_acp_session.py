@@ -290,6 +290,55 @@ async def test_stream_events_permission_event_uses_dialect():
 
 
 @pytest.mark.asyncio
+async def test_rejecting_echoes_the_agents_reject_option_not_cancelled():
+    """`G19` end to end: what actually goes on the wire when a tool is DENIED.
+
+    Driven through the real permission frame so the offered options are captured the way a
+    turn captures them — a test that seeds ``_offered_options`` by hand cannot catch a
+    ``reject_tool`` that pops them before resolving, which is exactly the pre-fix order.
+    """
+    from personalclaw.acp.dialect import DefaultDialect
+    from personalclaw.acp.types import EVENT_PERMISSION_REQUEST
+
+    s, q, _sent, _c = _mk(dialect=DefaultDialect())
+    q.put_nowait(
+        JsonRpcMessage(
+            id=77,
+            method="session/request_permission",
+            params={
+                "sessionId": "A",
+                "toolCall": {"title": "Write", "toolCallId": "t1", "kind": "edit"},
+                # DefaultDialect's parser reads ``id``/``label``; the Zed/codex dialects
+                # additionally accept the public spec's ``optionId``/``name``.
+                "options": [
+                    {"id": "ok", "label": "Allow", "kind": "allow_once"},
+                    {"id": "no-thanks", "label": "Reject", "kind": "reject_once"},
+                ],
+            },
+        )
+    )
+
+    async def _resolve():
+        while not s._test_sent_futs:
+            await asyncio.sleep(0)
+        rid, fut = s._test_sent_futs[-1]
+        await asyncio.sleep(0.05)
+        fut.set_result(JsonRpcMessage(id=rid, result={"stopReason": "end_turn"}))
+
+    asyncio.ensure_future(_resolve())
+    events = [ev async for ev in s.stream_events("edit", timeout=5)]
+    assert [e for e in events if e.kind == EVENT_PERMISSION_REQUEST], "no permission frame"
+
+    await s.reject_tool(77)
+    assert s._test_responses, "reject_tool sent nothing"
+    req_id, result = s._test_responses[-1]
+    assert req_id == 77
+    outcome = result["outcome"]
+    assert outcome["outcome"] == "selected", f"a denial still went out as {outcome!r}"
+    assert outcome["optionId"] == "no-thanks"
+
+
+@pytest.mark.asyncio
 async def test_stream_command_formats_result_text():
     from personalclaw.acp.types import EVENT_COMPLETE, EVENT_TEXT_CHUNK
 

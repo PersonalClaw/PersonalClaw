@@ -157,6 +157,13 @@ from personalclaw.dashboard.handlers.durability import (  # noqa: E402, F401
     api_durability_status,
 )
 
+# ── External Access (handlers/external_access.py) — EXTERNAL-ACCESS §1.5 ──
+from personalclaw.dashboard.handlers.external_access import (  # noqa: E402, F401
+    api_external_access,
+    api_external_access_client,
+    api_external_access_client_toggle,
+)
+
 # ── Files & Workspaces (handlers/files.py) ──
 from personalclaw.dashboard.handlers.files import (  # noqa: E402, F401
     _validate_dashboard_path,

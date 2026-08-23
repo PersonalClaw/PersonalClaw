@@ -332,7 +332,7 @@ class TestConversationScope:
         """A pick made before the first send has no session to PATCH, so the send
         body carries it — or turn 1 would run without the instruction while the
         composer showed it on."""
-        with patch("personalclaw.dashboard.chat_handlers._run_chat", new=AsyncMock()):
+        with patch("personalclaw.dashboard.chat_handlers.run_chat", new=AsyncMock()):
             async with TestClient(TestServer(_make_app(chat_app))) as client:
                 resp = await client.post(
                     "/api/chat?ws=1",
@@ -345,7 +345,7 @@ class TestConversationScope:
     async def test_an_absent_body_key_does_not_clear_it(self, chat_app):
         session = chat_app.get_or_create_session("keep")
         session.natural_voice = "on"
-        with patch("personalclaw.dashboard.chat_handlers._run_chat", new=AsyncMock()):
+        with patch("personalclaw.dashboard.chat_handlers.run_chat", new=AsyncMock()):
             async with TestClient(TestServer(_make_app(chat_app))) as client:
                 resp = await client.post(
                     "/api/chat?ws=1", json={"message": "hi", "session": "keep"}
@@ -376,21 +376,21 @@ class TestConversationScope:
 
     def test_it_survives_a_session_meta_round_trip(self, chat_app, tmp_path):
         """Both restore paths read the meta line; this pins the write + one read."""
-        from personalclaw.dashboard.chat_persistence import _save_session_to_history
+        from personalclaw.dashboard.chat_persistence import save_session_to_history
 
         session = chat_app.get_or_create_session("nv-session")
         session.natural_voice = "on"
         session.messages.append({"role": "user", "content": "hi"})
-        _save_session_to_history(chat_app, session)
+        save_session_to_history(chat_app, session)
         meta = chat_app.conversation_log.get_metadata("dashboard:nv-session")
         assert meta.get("natural_voice") == "on"
 
     def test_an_inheriting_session_writes_no_meta_key(self, chat_app):
-        from personalclaw.dashboard.chat_persistence import _save_session_to_history
+        from personalclaw.dashboard.chat_persistence import save_session_to_history
 
         session = chat_app.get_or_create_session("nv-session")
         session.messages.append({"role": "user", "content": "hi"})
-        _save_session_to_history(chat_app, session)
+        save_session_to_history(chat_app, session)
         meta = chat_app.conversation_log.get_metadata("dashboard:nv-session")
         assert "natural_voice" not in meta
 
@@ -398,14 +398,14 @@ class TestConversationScope:
         """The other half of the round trip: a gateway restart must not silently
         drop the conversation's override back to "inherit"."""
         from personalclaw.dashboard.chat_persistence import (
-            _save_session_to_history,
             restore_recent_sessions,
+            save_session_to_history,
         )
 
         session = chat_app.get_or_create_session("nv-session")
         session.natural_voice = "off"
         session.messages.append({"role": "user", "content": "hi"})
-        _save_session_to_history(chat_app, session)
+        save_session_to_history(chat_app, session)
         chat_app._sessions.clear()
         restore_recent_sessions(chat_app)
         restored = chat_app._sessions.get("nv-session")

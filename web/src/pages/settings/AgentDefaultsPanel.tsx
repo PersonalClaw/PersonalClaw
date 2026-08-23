@@ -6,7 +6,7 @@ import { useAgentCatalog, ensureBindableAgentName, type AgentOption } from '../.
 import { useQuery } from '../../lib/data'
 import { PanelHeader, Section, Row, Field, SegPills, SavedToast, ToggleRow } from './settingsUI'
 import { Combobox } from '../../ui/Combobox'
-import { FieldError, NumberField } from '../../ui/forms'
+import { FieldError, NumberField, TextInput } from '../../ui/forms'
 import { SquareIconButton } from '../../ui/SquareIconButton'
 import { Button } from '../../ui/Button'
 import { FormSkeleton, LoadError } from '../../ui/ListScaffold'
@@ -73,6 +73,20 @@ export function AgentDefaultsPanel() {
     })
   }
 
+  // `agent.self_qa.*` is a nested section, so its rows need a patch that prefixes the sub-path
+  // AND rolls back into the nested object. Reusing the flat `patch` above would PATCH
+  // `agent.enabled` — a path the server's allowlist rejects, so the control would appear to work
+  // and then quietly revert.
+  const selfQa = (cfg.self_qa ?? {}) as Record<string, unknown>
+  const patchSelfQa = (key: string, value: unknown, onSaved: () => void, label?: string) => {
+    const prev = selfQa[key]
+    setCfg((c) => ({ ...c, self_qa: { ...((c?.self_qa ?? {}) as object), [key]: value } }))
+    api.patchConfig(`agent.self_qa.${key}`, value).then(onSaved).catch((e) => {
+      setCfg((c) => ({ ...c, self_qa: { ...((c?.self_qa ?? {}) as object), [key]: prev } }))
+      notify(`Couldn't save ${label ?? key}: ${String((e as Error)?.message || e)}`, 'error')
+    })
+  }
+
   return (
     <div>
       <PanelHeader title="Agent defaults" hint="The default agent for new sessions and how agents execute — approval, subagents, and advanced safety knobs. New sessions inherit these unless overridden." />
@@ -121,6 +135,20 @@ export function AgentDefaultsPanel() {
         </div>
         {/* multi-agent space concurrency (max_spaces / max_space_agents) lives in
             Settings → Spaces, not here. */}
+      </Section>
+
+      <Section title="Self-QA companion" hint="Watch a repository and QA each user-impacting commit as a user would — driving the real UI, then filing an Inbox item and a Task when a scenario fails. Off by default: it spends model calls and drives your browser unattended.">
+        <div className="rounded-lg bg-surface-container px-4 py-1">
+          <ToggleRow label="Enable the companion" cfg={selfQa} field="enabled" patch={patchSelfQa}
+            hint="Off means the commit watcher stays idle. A commit only gets a scenario when the change could actually be noticed by a user — test-only and docs-only commits are recorded as skips, with the reason, and cost nothing." />
+          <TextRow label="Watched repository" cfg={selfQa} field="watched_repo" patch={patchSelfQa}
+            placeholder="/path/to/your/repo"
+            hint="Absolute path to the git repository whose new commits trigger a QA run. Empty leaves the watcher idle even when the companion is enabled." />
+          <NumberRow label="Max scenarios per run" cfg={selfQa} field="max_scenarios_per_fire" patch={patchSelfQa} min={1} max={20}
+            hint="Ceiling on scenarios generated from one push. Every commit still gets a verdict; this bounds how many browser sessions one push can start." />
+          <ToggleRow label="Propose fix branches" cfg={selfQa} field="fix_branch_enabled" patch={patchSelfQa} danger
+            hint="On a confirmed failure, open a pclaw/selfqa-<sha> branch carrying a proposed diff. Never merged and never pushed — the branch name lands in the Task for you to review." />
+        </div>
       </Section>
     </div>
   )
@@ -265,6 +293,43 @@ function RunnerRowItem({ row }: { row: RunnerRow }) {
 function useSavedFlash(): [boolean, () => void] {
   const [saved, setSaved] = useState(false)
   return [saved, () => { setSaved(true); window.setTimeout(() => setSaved(false), 1500) }]
+}
+
+/** A free-text config row with an explicit Save.
+ *
+ *  Explicit rather than save-on-change because the value is a filesystem path: a PATCH per
+ *  keystroke would persist a dozen half-typed paths, and the last one saved before a pause would
+ *  be a directory that does not exist. Dirty state gates the button, so "did that save?" is
+ *  answered on screen instead of by re-opening the panel. */
+function TextRow({ label, hint, cfg, field, patch, placeholder }: {
+  label: string; hint?: string; cfg: AgentCfg; field: string
+  patch: (k: string, v: unknown, cb: () => void, label?: string) => void
+  placeholder?: string
+}) {
+  const stored = String(cfg[field] ?? '')
+  const [draft, setDraft] = useState(stored)
+  const [saved, flash] = useSavedFlash()
+  // Re-seed when the loaded config changes under us (a revalidate, or another tab's write), but
+  // never while the user has an unsaved edit — clobbering their typing to show them the server's
+  // older value is worse than a briefly stale field.
+  useEffect(() => { setDraft(stored) }, [stored])
+  const dirty = draft !== stored
+  const save = () => patch(field, draft.trim(), flash, label)
+  return (
+    <Row label={label} hint={hint}>
+      <div className="flex items-center gap-s">
+        <SavedToast show={saved} />
+        <div className="flex-1" style={{ maxWidth: 280 }}>
+          <TextInput value={draft} onChange={setDraft} placeholder={placeholder} ariaLabel={label} size="sm"
+            onKeyDown={(e) => { if (e.key === 'Enter' && dirty) save() }} />
+        </div>
+        <Button size="sm" variant={dirty ? 'primary' : 'secondary'} ariaLabel={`Save: ${label}`}
+          disabled={!dirty} disabledReason={!dirty ? 'No changes to save' : undefined} onClick={save}>
+          Save
+        </Button>
+      </div>
+    </Row>
+  )
 }
 
 function EnumRow({ label, hint, cfg, field, patch, options }: {

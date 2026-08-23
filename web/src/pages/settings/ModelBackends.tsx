@@ -128,7 +128,22 @@ function InstanceCard({ provider, models, onChanged }: { provider: ModelProvider
     setTesting(false)
   }
   const remove = async () => {
-    if (!(await confirmDelete('provider', provider.name, { body: 'Models it provides will no longer be available.' }))) return
+    // 🔑 VERIFIED AGAINST `handlers/providers.py`'s `api_provider_delete`, which does three things, and
+    // the body described only the first:
+    //
+    //   1. drops the entry from config + unregisters it — "models no longer available", as stated;
+    //   2. `_drop_provider_active_models(name)` removes EVERY active-model ref for it across EVERY use
+    //      case, so a use case pointed at one of its models silently loses that choice. That is the
+    //      user's configuration changing, not just a capability going away, and nothing else says so;
+    //   3. does NOT touch the credential store. Worth stating because it is actionable — a user who
+    //      removes a provider to revoke access still has the key saved — and because the app's house
+    //      style pairs what goes with what stays. Conditional on `credential_status`, which the row
+    //      already renders as a badge, so it is only claimed when a credential really is stored.
+    const selections = ' Any use case set to one of its models loses that selection.'
+    const key = provider.credential_status === 'ok' ? ' Its saved credential stays in the store.' : ''
+    if (!(await confirmDelete('provider', provider.name, {
+      body: `Models it provides will no longer be available.${selections}${key}`,
+    }))) return
     setBusy(true)
     try { await api.deleteModelProvider(provider.name); onChanged() } catch { setBusy(false) }
   }

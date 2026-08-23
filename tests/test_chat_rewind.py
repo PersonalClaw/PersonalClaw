@@ -33,7 +33,7 @@ async def _noop_run_chat(state, session, msg, **kwargs):
 
 @pytest.fixture(autouse=True)
 def _mock_run_chat(monkeypatch):
-    monkeypatch.setattr("personalclaw.dashboard.chat_regenerate._run_chat", _noop_run_chat)
+    monkeypatch.setattr("personalclaw.dashboard.chat_regenerate.run_chat", _noop_run_chat)
 
 
 def _seed(state, name: str, n_turns: int):

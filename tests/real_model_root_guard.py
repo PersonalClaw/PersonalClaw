@@ -96,6 +96,14 @@ def assert_safe(function_name: str, cache_root: object) -> None:
     )
 
 
+#: The UNWRAPPED ``layouts`` functions, recorded by ``conftest._forbid_real_model_roots``
+#: as it installs each wrapper. This is exactly the object a module-level
+#: ``from personalclaw.local_models.layouts import delete_all_layouts`` captures — the
+#: alias is bound at IMPORT time, before any fixture runs, so it never sees the wrapper.
+#: Kept here so the rail can be driven against the shape that escapes it instead of only
+#: against the shape it catches.
+ORIGINALS: dict[str, object] = {}
+
 #: The layouts entry points the rail wraps. Every one takes ``cache_root`` first, and
 #: between them they cover every probe and the single deletion sweep.
 GUARDED_FUNCTIONS: tuple[str, ...] = (
@@ -107,3 +115,44 @@ GUARDED_FUNCTIONS: tuple[str, ...] = (
     "cleanup_candidates",
     "reclaimable_bytes",
 )
+
+#: The module a guarded name would be imported FROM.
+_LAYOUTS_MODULE = "personalclaw.local_models.layouts"
+
+
+def import_bound_guarded_names(source: str) -> set[str]:
+    """Guarded ``layouts`` names ``source`` captures at IMPORT time, if any.
+
+    The rail is installed with ``monkeypatch.setattr(layouts, name, wrapper)``, so it
+    intercepts an ATTRIBUTE LOOKUP (``layouts.delete_all_layouts(...)``) and nothing else.
+    A module-level ``from personalclaw.local_models.layouts import delete_all_layouts``
+    binds the unwrapped function object at collection time — before the autouse fixture has
+    run even once — and every later call through that alias bypasses the rail.
+
+    Only import-TIME bindings count. A ``from ... import`` inside a function body executes
+    when the function is called, i.e. after the fixture has installed the wrapper, so it
+    resolves the guarded attribute and is the safe shape (it is what the production callers
+    in ``dashboard/`` and ``local_models/`` already use). Imports nested inside a function
+    are therefore skipped, and importing the MODULE (``from ... import layouts``) is fine at
+    any depth because the lookup still happens per call.
+    """
+    import ast
+
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:  # pragma: no cover — the lint gate owns syntax
+        return set()
+
+    guarded = set(GUARDED_FUNCTIONS)
+    found: set[str] = set()
+
+    def _walk(node: ast.AST) -> None:
+        for child in ast.iter_child_nodes(node):
+            if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue  # deferred to call time — resolves the wrapper, not the original
+            if isinstance(child, ast.ImportFrom) and child.module == _LAYOUTS_MODULE:
+                found.update(a.name for a in child.names if a.name in guarded)
+            _walk(child)
+
+    _walk(tree)
+    return found

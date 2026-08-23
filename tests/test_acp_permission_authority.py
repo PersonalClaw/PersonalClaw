@@ -2,7 +2,7 @@
 
 Every test here drives a real call site, not a predicate: the mode clamp is asserted
 on :class:`AcpClient` (the chokepoint every mode path crosses), and the gate
-behaviours are asserted by running ``_run_chat`` over a synthetic ACP event stream —
+behaviours are asserted by running ``run_chat`` over a synthetic ACP event stream —
 the same harness ``test_dashboard_approval.py`` uses. Each restriction gets its
 inverse floor so it reads as a *requirement* rather than an always-refuse.
 """
@@ -28,7 +28,7 @@ from personalclaw.acp.permission_authority import (
 )
 from personalclaw.acp.translate import build_permission_event
 from personalclaw.acp.types import JsonRpcMessage
-from personalclaw.dashboard.chat_runner import _run_chat
+from personalclaw.dashboard.chat_runner import run_chat
 from personalclaw.dashboard.state import DashboardState, _ChatSession
 from personalclaw.history import ConversationLog
 from personalclaw.hooks import ToolHookResult
@@ -302,7 +302,7 @@ class TestPermissionFrameCarriesKind:
         assert event.title == "unknown"  # the adapter sent none — unchanged
 
 
-# ── the gate call sites: drive _run_chat ─────────────────────────────────────
+# ── the gate call sites: drive run_chat ─────────────────────────────────────
 
 
 async def _async_iter(items):
@@ -375,7 +375,7 @@ async def _drive(state, session, *, answer=None, sel_mock=None):
 
         asyncio.get_event_loop().create_task(_answer())
     with patch("personalclaw.dashboard.chat_runner.sel", sel_mock or MagicMock()):
-        await _run_chat(state, session, "hello")
+        await run_chat(state, session, "hello")
 
 
 def _ungated_audit_rows(sel_mock):

@@ -398,7 +398,7 @@ class TestTurnLevel:
     async def test_slash_turn_answers_and_announces_instead_of_erroring(
         self, tmp_path, monkeypatch
     ):
-        """End to end through ``_run_chat``: `/compact` on a provider with no command axis
+        """End to end through ``run_chat``: `/compact` on a provider with no command axis
         lands an ASSISTANT message (not the `O23` error card) and broadcasts the
         substitution on the activity channel CE2-8 established."""
         from unittest.mock import AsyncMock, MagicMock
@@ -428,9 +428,9 @@ class TestTurnLevel:
         state.sessions.get_or_create = AsyncMock(return_value=(client, True, False))
 
         session = state.get_or_create_session("g4")
-        from personalclaw.dashboard.chat_runner import _run_chat
+        from personalclaw.dashboard.chat_runner import run_chat
 
-        await _run_chat(state, session, "/compact")
+        await run_chat(state, session, "/compact")
 
         roles = [m.get("role") for m in session.messages]
         assert "error" not in roles, f"the turn hard-errored: {session.messages}"

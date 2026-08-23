@@ -59,6 +59,20 @@ class AgentEvent:
     request_id: str | int = ""
     options: Any = field(default_factory=list)
     tool_input: Any = ""
+    #: The structured form of :attr:`tool_input`, for backends that carry BOTH a
+    #: display string and the object behind it (ACP-AGENT-PARITY §2.5 gap 7). The
+    #: native runtime needs nothing here — it already puts its dict straight into
+    #: ``tool_input`` — but an ACP frame's ``tool_input`` is a redacted, pretty-printed
+    #: string the card renders verbatim, so flattening the object into that field
+    #: would have changed every ACP card's preview to buy the schema-driven fields.
+    #: ``None`` means "no object was supplied", never "the object was empty".
+    tool_input_obj: dict[str, Any] | None = None
+    #: A file edit the BACKEND declared, as ``{"path", "before", "after"}``
+    #: (ACP-AGENT-PARITY §2.5 gap 7). The native runtime leaves this empty and keeps
+    #: driving chips off its own write-tool name set, because it can reconstruct
+    #: ``after`` from the call arguments; a backend that states both sides outright
+    #: fills this instead of asking the host to infer anything.
+    file_change: dict[str, str] | None = None
     tool_output: Any = ""
     # usage / cost — read by chat_runner's EVENT_COMPLETE token block
     input_tokens: int = 0

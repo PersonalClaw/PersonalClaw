@@ -269,7 +269,7 @@ class TestTagVocabulary:
                     json={"name": "Col", "tag_ids": [tag["id"], other["id"]], "mode": "any"},
                 )
             ).json()
-            with patch("personalclaw.dashboard.chat_tags._save_session_to_history"):
+            with patch("personalclaw.dashboard.chat_tags.save_session_to_history"):
                 resp = await client.delete(f"/api/chat/tags/{tag['id']}")
             assert resp.status == 200
             assert tag["id"] not in {t["id"] for t in state._tags}
@@ -302,7 +302,7 @@ class TestSessionTags:
             t2 = await (await client.post("/api/chat/tags", json={"name": "T2"})).json()
             session = _ChatSession("s1")
             state._sessions["s1"] = session
-            with patch("personalclaw.dashboard.chat_tags._save_session_to_history"):
+            with patch("personalclaw.dashboard.chat_tags.save_session_to_history"):
                 resp = await client.put(
                     "/api/chat/sessions/s1/tags",
                     json={"tags": [t1["id"], "ghost", t1["id"], t2["id"], 7]},
@@ -562,7 +562,7 @@ class TestDrop:
                     json={"name": "Col", "tag_ids": [done["id"]], "mode": "any"},
                 )
             ).json()
-            with patch("personalclaw.dashboard.chat_tags._save_session_to_history"):
+            with patch("personalclaw.dashboard.chat_tags.save_session_to_history"):
                 resp = await client.post(
                     "/api/chat/sessions/s1/drop", json={"column_id": col["id"]}
                 )
@@ -749,7 +749,7 @@ class TestDropOnMixedColumn:
                     json={"name": "Col", "tag_ids": [done["id"], spike["id"]], "mode": "all"},
                 )
             ).json()
-            with patch("personalclaw.dashboard.chat_tags._save_session_to_history"):
+            with patch("personalclaw.dashboard.chat_tags.save_session_to_history"):
                 resp = await client.post(
                     "/api/chat/sessions/s1/drop", json={"column_id": col["id"]}
                 )

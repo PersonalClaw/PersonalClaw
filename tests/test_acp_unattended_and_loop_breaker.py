@@ -6,7 +6,7 @@ opposite for a genuinely unattended run — and only for one. So every widening 
 here is paired with the INTERACTIVE floor that must stay clamped: that pairing is the
 point, because the way this change could quietly undo AAP-5 is to widen both.
 
-The breaker half is driven the same way the gate tests are: ``_run_chat`` over a
+The breaker half is driven the same way the gate tests are: ``run_chat`` over a
 synthetic ACP event stream, not a predicate call. Phase 1's `G6` measured six
 consecutive ACP tool failures producing no warn, no block and no circuit trip, so a
 unit call on the counter would have passed *before* this change too and proved
@@ -16,20 +16,23 @@ nothing.
 from __future__ import annotations
 
 import asyncio
+import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from personalclaw.acp.adapter import acp_event_to_agent_event
 from personalclaw.acp.client import AcpClient
 from personalclaw.acp.permission_authority import HOST_AUTHORITY_MODE
 from personalclaw.acp.translate import extract_tool_update_events
 from personalclaw.acp.types import JsonRpcMessage
-from personalclaw.dashboard.chat_runner import _run_chat
+from personalclaw.dashboard.chat_runner import run_chat
 from personalclaw.dashboard.state import DashboardState, _ChatSession
 from personalclaw.guardrails.loop_breaker import (
     BLOCK_THRESHOLD,
     CIRCUIT_THRESHOLD,
     WARN_THRESHOLD,
+    params_key,
 )
 from personalclaw.history import ConversationLog
 from personalclaw.hooks import ToolHookResult
@@ -173,27 +176,45 @@ class TestBridgeThreadsUnattendedToAcp:
 
     def test_bridge_injects_for_acp_and_not_for_native(self):
         """The bridge pops ``unattended`` (the model-axis resolvers must never see it)
-        and re-injects it ONLY on the ACP branch."""
+        and re-injects it ONLY on the ACP branch.
+
+        Updated: the ACP branch now RESOLVES THE NAMED RUNTIME rather than
+        falling through to the model axis, so the flag is observed where it is actually
+        consumed. The old shape asserted it arrived at
+        ``_resolve_from_config_registry`` — which was only reachable because an
+        ``acp:<cli>`` kind used to resolve a MODEL.
+        """
         import personalclaw.providers.provider_bridge as pb
 
         seen: dict = {}
+        model_axis_called: list[str] = []
 
         def _fake_registry_resolve(use_case, **kwargs):
+            model_axis_called.append(use_case)
+            seen.update(kwargs)
+            return MagicMock()
+
+        def _fake_acp_build(runtime_id, **kwargs):
+            seen["runtime_id"] = runtime_id
             seen.update(kwargs)
             return MagicMock()
 
         with patch.object(pb, "_resolve_from_config_registry", _fake_registry_resolve):
-            pb.resolve_provider_for_use_case(
-                "chat",
-                session_key="cron:x",
-                agent="a",
-                model_override="Prov/m",
-                provider_kind="acp:demo-cli",
-                unattended=True,
-            )
+            with patch.object(pb, "_build_acp_runtime", _fake_acp_build):
+                pb.resolve_provider_for_use_case(
+                    "chat",
+                    session_key="cron:x",
+                    agent="a",
+                    model_override="Prov/m",
+                    provider_kind="acp:demo-cli",
+                    unattended=True,
+                )
         assert seen.get("unattended") is True
+        assert seen.get("runtime_id") == "acp:demo-cli"
+        assert model_axis_called == [], "an acp: binding must never resolve a MODEL"
 
         seen.clear()
+        model_axis_called.clear()
         with patch.object(pb, "_resolve_from_config_registry", _fake_registry_resolve):
             with patch.object(pb, "_build_native_runtime", lambda **kw: seen.update(kw)):
                 pb.resolve_provider_for_use_case(
@@ -241,7 +262,137 @@ class TestAcpFailureSignalReachesTheHost:
         assert results and "ok" not in results[0].tool_meta
 
 
-# ── the _run_chat harness (same shape as AAP-5's) ────────────────────────────
+# ── the same bit, DERIVED so it does not depend on the runtime's word ──
+
+
+def _terminal_frame(update: dict) -> JsonRpcMessage:
+    return JsonRpcMessage(
+        method="session/update",
+        params={"update": {"sessionUpdate": "tool_call_update", "toolCallId": "t1", **update}},
+    )
+
+
+def _ok_bit(update: dict):
+    """The ``ok`` value the host ends up with for a terminal frame — via the real
+    decoder, not the helper, so these are CALL-SITE assertions."""
+    events = extract_tool_update_events(_terminal_frame(update), {}, {})
+    results = [e for e in events if e.kind == EVENT_TOOL_RESULT]
+    assert results, f"no tool result decoded from {update!r}"
+    return results[0].tool_meta.get("ok", "ABSENT")
+
+
+# Byte-copies of the frames the two CLIs actually sent for the SAME command,
+# `bash -c 'echo boom >&2; exit 3'`, captured live on 2026-08-23. The whole point of
+# the change is that these two disagree, so paraphrasing them would test the paraphrase.
+KIRO_FAILED_FRAME = {
+    "kind": "execute",
+    "status": "completed",
+    "title": "Running: bash -c 'echo boom >&2; exit 3'",
+    "rawInput": {
+        "__tool_use_purpose": "Run the requested command for the first time.",
+        "command": "bash -c 'echo boom >&2; exit 3'",
+    },
+    "rawOutput": {
+        "items": [{"Json": {"exit_status": "exit status: 3", "stdout": "", "stderr": "boom\n"}}]
+    },
+}
+KIRO_PASSED_FRAME = {
+    "kind": "execute",
+    "status": "completed",
+    "title": "Running: bash -c 'echo hello; exit 0'",
+    "rawInput": {"command": "bash -c 'echo hello; exit 0'"},
+    "rawOutput": {
+        "items": [{"Json": {"exit_status": "exit status: 0", "stdout": "hello\n", "stderr": ""}}]
+    },
+}
+CODEX_FAILED_FRAME = {
+    "status": "failed",
+    "rawOutput": {"formatted_output": "boom\n", "exit_code": 3},
+    "_meta": {"terminal_exit": {"exit_code": 3, "signal": None, "terminal_id": "t1"}},
+}
+
+
+class TestFailureBitIsRuntimeAgnostic:
+    """Reading the bit off ``status`` alone made it a per-CLI lottery: kiro
+    calls a non-zero-exit command a ``completed`` tool call, so every kiro failure was
+    signed ``success`` and the entire warn/block/circuit path was inert on it while
+    passing on codex. The host derives the bit now.
+
+    The vacuity floor is the pair of NEGATIVE cases below: a rule that answered
+    "failed" to everything would satisfy every positive case here, and it is exactly
+    the failure mode that matters — a breaker that aborts a healthy turn is worse than
+    one that misses a failure.
+    """
+
+    def test_kiro_completed_but_nonzero_exit_is_a_failure(self):
+        """The measured defect, at the decoder. Was ``ABSENT`` before this change."""
+        assert _ok_bit(KIRO_FAILED_FRAME) is False
+
+    def test_codex_declared_failure_is_unchanged(self):
+        """A runtime that signs its own failures is still decided by its own word."""
+        assert _ok_bit(CODEX_FAILED_FRAME) is False
+
+    def test_kiro_zero_exit_is_still_a_success(self):
+        """Vacuity floor 1 — the SAME shape, the same keys, exit 0."""
+        assert _ok_bit(KIRO_PASSED_FRAME) == "ABSENT"
+
+    def test_the_command_text_is_never_what_decides(self):
+        """Vacuity floor 2, and the reason the scan is key-based and skips ``rawInput``.
+        kiro's own input for the failing call is ``{"command": "... exit 3"}``. A prose
+        scan — or a scan of the whole frame — would sign EVERY invocation of that
+        command failed no matter how it exited, which is the same class of bug as
+        reading the status field: a bit that is not about this call's outcome."""
+        frame = {
+            "status": "completed",
+            "rawInput": {"command": "bash -c 'echo boom >&2; exit 3'"},
+            "rawOutput": {"items": [{"Json": {"exit_status": "exit status: 0", "stdout": ""}}]},
+        }
+        assert _ok_bit(frame) == "ABSENT"
+
+    def test_output_prose_mentioning_failure_is_not_a_failure(self):
+        """Vacuity floor 3. ``grep -c error`` and a test runner printing "1 failed" are
+        SUCCESSFUL tool calls."""
+        frame = {
+            "status": "completed",
+            "content": [
+                {"type": "content", "content": {"type": "text", "text": "3 failed, exit 1, ERROR"}}
+            ],
+        }
+        assert _ok_bit(frame) == "ABSENT"
+
+    def test_mcp_error_flag_is_a_failure(self):
+        """A tool the CLI serves over MCP declares failure with ``isError``, not an
+        exit status — the shape an app-provided tool reaches an ACP session in."""
+        frame = {
+            "status": "completed",
+            "content": [
+                {"type": "content", "isError": True, "content": {"type": "text", "text": "no"}}
+            ],
+        }
+        assert _ok_bit(frame) is False
+
+    def test_a_frame_declaring_nothing_stays_a_success(self):
+        """Vacuity floor 4: no exit status anywhere → absent, not failed. Most tool
+        results (a file read, a search) carry no exit status at all."""
+        assert _ok_bit({"status": "completed", "rawOutput": {"content": "hello"}}) == "ABSENT"
+
+    def test_a_true_flag_is_not_read_as_exit_one(self):
+        """``True == 1`` in Python, so a boolean under an exit-status key would read as
+        "exited 1" if the type were not checked first."""
+        assert _ok_bit({"status": "completed", "rawOutput": {"exit_code": True}}) == "ABSENT"
+
+    def test_deeply_buried_status_is_bounded_not_infinite(self):
+        """kiro buries the status two levels down, so the walk must descend — but it is
+        depth-bounded, so one pathological payload cannot become a traversal."""
+        deep: dict = {"exit_code": 3}
+        for _ in range(20):
+            deep = {"nested": deep}
+        assert _ok_bit({"status": "completed", "rawOutput": deep}) == "ABSENT"
+        shallow: dict = {"a": {"b": {"exit_code": 3}}}
+        assert _ok_bit({"status": "completed", "rawOutput": shallow}) is False
+
+
+# ── the run_chat harness (same shape as AAP-5's) ────────────────────────────
 
 
 async def _async_iter(items):
@@ -291,7 +442,42 @@ def _texts(session):
 
 async def _drive(state, session):
     with patch("personalclaw.dashboard.chat_runner.sel", MagicMock()):
-        await _run_chat(state, session, "hello")
+        await run_chat(state, session, "hello")
+
+
+def _decoded_result(frame: dict, call_id: str) -> LLMEvent:
+    """A tool RESULT event produced by the real ACP pipeline from a real CLI frame.
+
+    ``extract_tool_update_events`` then ``acp_event_to_agent_event`` — the two hops the
+    live stream takes. Built this way on purpose: ``_fail_cycle`` below hands
+    ``chat_runner`` a hand-written ``tool_meta={"ok": False}``, which tests the counter
+    but would keep passing if no runtime on earth ever produced that bit. `G6` shipped
+    exactly that way. These events carry only what the CLI actually said.
+    """
+    msg = JsonRpcMessage(
+        method="session/update",
+        params={"update": {"sessionUpdate": "tool_call_update", "toolCallId": call_id, **frame}},
+    )
+    results = [e for e in extract_tool_update_events(msg, {}, {}) if e.kind == EVENT_TOOL_RESULT]
+    assert results, f"the decoder produced no tool result for {frame!r}"
+    return acp_event_to_agent_event(results[0])
+
+
+def _real_frame_cycle(n, frame):
+    """n identical tool calls whose RESULTS are decoded from a real CLI frame."""
+    out: list = []
+    for i in range(n):
+        out.append(
+            LLMEvent(
+                kind=EVENT_TOOL_CALL,
+                tool_call_id=f"t{i}",
+                title="bash",
+                tool_input='{"command": "bash -c \'echo boom >&2; exit 3\'"}',
+            )
+        )
+        out.append(_decoded_result(frame, f"t{i}"))
+    out.append(LLMEvent(kind=EVENT_COMPLETE, stop_reason="end_turn"))
+    return out
 
 
 def _fail_cycle(n):
@@ -438,7 +624,7 @@ class TestUnattendedFailFast:
 
 class TestAcpLoopBreaker:
     """`G6` measured that six consecutive failures produced nothing. Each rung is
-    driven through _run_chat, and the vacuity floor (a passing stream produces no
+    driven through run_chat, and the vacuity floor (a passing stream produces no
     breaker text at all) is asserted so a rail that matches everything can't read as
     a pass."""
 
@@ -569,3 +755,267 @@ class TestAcpLoopBreaker:
         session = _session()
         await _drive(state, session)
         assert not any("was blocked" in t for t in _texts(session))
+
+
+# ── the CALL SITE: a real CLI's frames, through the real decoder, into the breaker ──
+
+
+class TestBreakerFiresOnRealRuntimeFrames:
+    """The rail the earlier work did not have, and the reason it shipped inert.
+
+    Every test above hands ``chat_runner`` a hand-written ``tool_meta={"ok": False}``.
+    That proves the counter counts; it cannot notice that no runtime on earth produced
+    the bit. These drive the SAME breaker from the literal frames the two CLIs sent for
+    the same failing command, decoded by the real translate + adapter hops — so the
+    chain the live system uses is what is under test, not a re-statement of its output.
+    """
+
+    @pytest.mark.asyncio
+    async def test_kiro_completed_nonzero_exit_reaches_the_warn_rung(self, tmp_path):
+        """`G151`, end to end. Before the derivation this stream produced NOTHING: ten
+        such calls were measured live against kiro with no warn, no block, no trip."""
+        state, client = _make_state(tmp_path)
+        _set_stream(client, _real_frame_cycle(WARN_THRESHOLD, KIRO_FAILED_FRAME))
+        session = _session()
+        await _drive(state, session)
+        assert any("this is failure #" in t for t in _texts(session)), _texts(session)
+
+    @pytest.mark.asyncio
+    async def test_kiro_frames_reach_the_block_rung(self, tmp_path):
+        state, client = _make_state(tmp_path)
+        _set_stream(client, _real_frame_cycle(BLOCK_THRESHOLD, KIRO_FAILED_FRAME))
+        session = _session()
+        await _drive(state, session)
+        assert any("was blocked" in t for t in _texts(session)), _texts(session)
+
+    @pytest.mark.asyncio
+    async def test_kiro_frames_trip_the_circuit_and_abort_the_turn(self, tmp_path):
+        """Acceptance clause 2 on the runtime that could not reach it before."""
+        state, client = _make_state(tmp_path)
+        _set_stream(client, _real_frame_cycle(CIRCUIT_THRESHOLD + 2, KIRO_FAILED_FRAME))
+        session = _session()
+        await _drive(state, session)
+        assert any("Run aborted by the loop breaker" in t for t in _texts(session))
+        client.cancel_session.assert_awaited()
+
+    @pytest.mark.asyncio
+    async def test_codex_frames_still_reach_the_warn_rung(self, tmp_path):
+        """The runtime that already worked keeps working — the derivation only ever
+        ADDS a failure the CLI declined to name."""
+        state, client = _make_state(tmp_path)
+        _set_stream(client, _real_frame_cycle(WARN_THRESHOLD, CODEX_FAILED_FRAME))
+        session = _session()
+        await _drive(state, session)
+        assert any("this is failure #" in t for t in _texts(session)), _texts(session)
+
+    @pytest.mark.asyncio
+    async def test_kiro_passing_frames_produce_no_breaker_text(self, tmp_path):
+        """The vacuity floor for this whole class. Same runtime, same tool, same frame
+        SHAPE, exit 0 — thirty of them. If the derivation ever widens into "kiro means
+        failure", this is what goes red instead of a user's healthy turn being aborted
+        in production."""
+        state, client = _make_state(tmp_path)
+        _set_stream(client, _real_frame_cycle(CIRCUIT_THRESHOLD, KIRO_PASSED_FRAME))
+        session = _session()
+        await _drive(state, session)
+        texts = _texts(session)
+        assert not any("this is failure #" in t for t in texts), texts
+        assert not any("Run aborted by the loop breaker" in t for t in texts), texts
+
+
+# ── the breaker's IDENTITY: a per-call narration must not mint a new bucket ──
+
+
+#: kiro's real ``rawInput`` for the four byte-identical failing calls it ran live on
+#: 2026-08-23 — same command, a different narration every time.
+KIRO_PER_CALL_INPUTS = [
+    json.dumps(
+        {
+            "__tool_use_purpose": f"Run the requested command for the {nth} time.",
+            "command": "bash -c 'echo boom >&2; exit 3'",
+        },
+        indent=2,
+    )
+    for nth in ("first", "second", "third", "fourth", "fifth", "sixth")
+]
+
+
+def _kiro_narrated_cycle(n):
+    """n identical failing calls carrying kiro's per-call ``__tool_use_purpose``."""
+    out: list = []
+    for i in range(n):
+        out.append(
+            LLMEvent(
+                kind=EVENT_TOOL_CALL,
+                tool_call_id=f"t{i}",
+                title="bash",
+                tool_input=KIRO_PER_CALL_INPUTS[i % len(KIRO_PER_CALL_INPUTS)],
+            )
+        )
+        out.append(_decoded_result(KIRO_FAILED_FRAME, f"t{i}"))
+    out.append(LLMEvent(kind=EVENT_COMPLETE, stop_reason="end_turn"))
+    return out
+
+
+class TestBreakerIdentityIgnoresAdapterNarration:
+    """`G152`, the half that survived the failure-bit fix. Four identical failing calls
+    each arrived correctly signed ``ok: False`` and the breaker STILL said nothing,
+    because ``params_key`` bucketed on kiro's per-call ``__tool_use_purpose`` and gave
+    each call its own streak of one."""
+
+    def test_identical_calls_with_different_narration_are_one_bucket(self):
+        keys = {params_key("bash", raw) for raw in KIRO_PER_CALL_INPUTS}
+        assert len(keys) == 1, keys
+
+    def test_different_commands_are_still_different_buckets(self):
+        """Vacuity floor: the normalization merges narration, never arguments. If it
+        ever merged on tool name alone, every bash call in a run would share one streak
+        and an ordinary session would start tripping the breaker."""
+        a = json.dumps({"__tool_use_purpose": "same", "command": "ls"})
+        b = json.dumps({"__tool_use_purpose": "same", "command": "rm -rf /"})
+        assert params_key("bash", a) != params_key("bash", b)
+
+    def test_native_dict_args_are_untouched(self):
+        """The native runtime passes a dict of real arguments and shares this function,
+        so the ACP fix must be a no-op there."""
+        assert params_key("write", {"path": "a.txt"}) != params_key("write", {"path": "b.txt"})
+        assert params_key("write", {"path": "a.txt"}) == params_key("write", {"path": "a.txt"})
+
+    def test_an_all_metadata_input_keeps_its_original_identity(self):
+        """Stripping everything would collapse unrelated calls into one bucket, so an
+        input made only of adapter metadata is left alone."""
+        a = json.dumps({"__tool_use_purpose": "one"})
+        b = json.dumps({"__tool_use_purpose": "two"})
+        assert params_key("bash", a) != params_key("bash", b)
+
+    def test_a_non_json_input_string_is_left_alone(self):
+        assert params_key("bash", "not json at all") == params_key("bash", "not json at all")
+        assert params_key("bash", "a") != params_key("bash", "b")
+
+    @pytest.mark.asyncio
+    async def test_narrated_kiro_calls_reach_the_warn_rung(self, tmp_path):
+        """The CALL SITE for both halves at once: real frames for the failure bit, real
+        per-call inputs for the identity. This is the stream measured live."""
+        state, client = _make_state(tmp_path)
+        _set_stream(client, _kiro_narrated_cycle(WARN_THRESHOLD))
+        session = _session()
+        await _drive(state, session)
+        assert any("this is failure #" in t for t in _texts(session)), _texts(session)
+
+    @pytest.mark.asyncio
+    async def test_narrated_kiro_calls_reach_the_block_rung(self, tmp_path):
+        state, client = _make_state(tmp_path)
+        _set_stream(client, _kiro_narrated_cycle(BLOCK_THRESHOLD))
+        session = _session()
+        await _drive(state, session)
+        assert any("was blocked" in t for t in _texts(session)), _texts(session)
+
+
+# ── An ``acp:<cli>`` binding resolves THAT CLI, never a model ──
+
+
+class TestAnAcpBindingResolvesTheNamedRuntime:
+    """The defect that made protocol resume unreachable, measured end to end.
+
+    ``provider_kind`` was only ever read to SKIP the native builder; an ACP kind then
+    fell into the MODEL-axis resolution, which deliberately excludes ``acp_agent``
+    entries — so a session bound to ``acp:<cli>`` silently ran the pinned chat model.
+    It hid because ``SessionManager``'s ACP connection-pool claim normally answers
+    first using ``provider_kind`` directly, and that claim is skipped exactly when a
+    resume id exists. Result: the one path that needed a resumable ACP client was the
+    one path that never got one — a live gateway restart mid-conversation continued on
+    Bedrock while the activity line still read ``via acp:claude-code``.
+    """
+
+    @staticmethod
+    def _register(monkeypatch, tmp_path, name="acp:demo-cli"):
+        from personalclaw.llm.acp_agent import ACP_AGENT_CAPABILITY
+        from personalclaw.llm.registry import ProviderEntry, get_default_registry
+
+        entry = ProviderEntry(
+            name=name,
+            type=ACP_AGENT_CAPABILITY.type,
+            model="",
+            options={"command": ["/bin/true"], "dialect": "default"},
+            declared_capabilities=ACP_AGENT_CAPABILITY.capabilities,
+        )
+        registry = get_default_registry()
+        registry.register_entry(entry)
+        monkeypatch.setattr(registry, "unregister_entry", lambda n: None, raising=False)
+        return entry
+
+    def test_it_builds_a_resumable_agent_provider_not_a_model(self, monkeypatch, tmp_path):
+        """THE CALL SITE. The built provider must be an ``AgentProvider`` — that is the
+        isinstance ``SessionManager`` gates ``set_resume`` on, so anything else means
+        the resume id is dropped on the floor and ``session/load`` is never sent."""
+        import personalclaw.providers.provider_bridge as pb
+        from personalclaw.agents.provider import AgentProvider
+
+        self._register(monkeypatch, tmp_path)
+        model_axis_called: list[str] = []
+        monkeypatch.setattr(
+            pb,
+            "_resolve_from_config_registry",
+            lambda use_case, **kw: model_axis_called.append(use_case) or MagicMock(),
+        )
+        provider = pb.resolve_provider_for_use_case(
+            "chat",
+            session_key="dashboard:chat-1",
+            agent="",
+            cwd=str(tmp_path),
+            channel_id=None,
+            provider_kind="acp:demo-cli",
+        )
+        assert isinstance(provider, AgentProvider), type(provider)
+        assert provider.provider_id == "acp:demo-cli"
+        assert hasattr(provider, "set_resume")
+        assert model_axis_called == [], "the model axis answered an acp: binding"
+
+    def test_the_per_session_cwd_reaches_the_built_runtime(self, monkeypatch, tmp_path):
+        """cwd is a SESSION axis — a CLI spawned in the wrong directory cannot find the
+        conversation the resume id names (``SessionManager`` restores the stored cwd for
+        exactly this reason)."""
+        import personalclaw.providers.provider_bridge as pb
+
+        self._register(monkeypatch, tmp_path)
+        ws = tmp_path / "ws"
+        ws.mkdir()
+        provider = pb.resolve_provider_for_use_case(
+            "chat",
+            session_key="dashboard:chat-1",
+            agent="",
+            cwd=str(ws),
+            channel_id=None,
+            provider_kind="acp:demo-cli",
+        )
+        assert str(provider._client._work_dir) == str(ws)
+
+    def test_an_unregistered_runtime_raises_instead_of_answering_with_a_model(
+        self, monkeypatch, tmp_path
+    ):
+        """VACUITY FLOOR, and the honesty requirement: silently serving a different
+        runtime is the failure mode. An absent entry must be a refusal the user can
+        read, not a fallback."""
+        import personalclaw.providers.provider_bridge as pb
+
+        monkeypatch.setattr(pb, "_resolve_from_config_registry", lambda use_case, **kw: MagicMock())
+        with pytest.raises(pb.ProviderResolutionError) as exc:
+            pb.resolve_provider_for_use_case(
+                "chat", session_key="dashboard:chat-1", provider_kind="acp:not-installed"
+            )
+        assert "acp:not-installed" in str(exc.value)
+
+    def test_a_native_kind_is_untouched(self, monkeypatch, tmp_path):
+        """VACUITY FLOOR the other way: the branch is scoped to ``acp:`` and must not
+        capture the native path."""
+        import personalclaw.providers.provider_bridge as pb
+
+        built: dict = {}
+        monkeypatch.setattr(pb, "_build_native_runtime", lambda **kw: built.update(kw))
+        monkeypatch.setattr(
+            pb, "_build_acp_runtime", lambda *a, **kw: pytest.fail("acp branch took a native turn")
+        )
+        pb.resolve_provider_for_use_case(
+            "chat", session_key="dashboard:chat-1", agent="a", provider_kind="native"
+        )
+        assert built.get("session_key") == "dashboard:chat-1"

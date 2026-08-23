@@ -26,7 +26,7 @@ class TestChatSessionTemporary:
 
 
 # ---------------------------------------------------------------------------
-# Dashboard: _save_session_to_history persists all modes (no skip)
+# Dashboard: save_session_to_history persists all modes (no skip)
 # ---------------------------------------------------------------------------
 
 
@@ -46,10 +46,10 @@ class TestSaveSessionToHistory:
             "personalclaw.dashboard.chat_persistence.resolve_history_key",
             side_effect=RuntimeError("reached"),
         ):
-            from personalclaw.dashboard.chat import _save_session_to_history
+            from personalclaw.dashboard.chat import save_session_to_history
 
             with pytest.raises(RuntimeError, match="reached"):
-                _save_session_to_history(mock_state, session)
+                save_session_to_history(mock_state, session)
 
     def test_normal_slot_not_skipped(self):
         """Persistent session should NOT early-return."""
@@ -65,10 +65,10 @@ class TestSaveSessionToHistory:
             "personalclaw.dashboard.chat_persistence.resolve_history_key",
             side_effect=RuntimeError("reached"),
         ):
-            from personalclaw.dashboard.chat import _save_session_to_history
+            from personalclaw.dashboard.chat import save_session_to_history
 
             with pytest.raises(RuntimeError, match="reached"):
-                _save_session_to_history(mock_state, session)
+                save_session_to_history(mock_state, session)
 
 
 # ---------------------------------------------------------------------------

@@ -28,23 +28,13 @@ logger = logging.getLogger(__name__)
 _SESSION_MAP_FILE = "session_map.json"
 
 
-def _sessions_dir():
-    """ACP agent session file directory, resolved on EVERY call.
-
-    This was a module-level ``_SESSIONS_DIR`` bound at import time, for which
-    ``transcript_path`` below already carried the workaround and the reason. The two
-    remaining readers were worse off than a stale path: both decide whether a session still
-    exists, so a frozen real-home path made ``prune()`` delete map entries based on the
-    contents of the developer's real ``~/.personalclaw/sessions`` (CRE-8).
-    """
-    return _path_home_pclaw() / "sessions"
-
-
 def transcript_path(session_id: str):
     """Resolve a session id to its ``sessions/<sid>.jsonl`` transcript, or None.
 
-    Resolves the home dir on EVERY call, like ``_sessions_dir`` above and for the same
-    reason (it was a module-level constant bound at import time): a caller that set
+    Resolves the home dir on EVERY call rather than at import time, for the same
+    reason the deleted ``_sessions_dir`` helper did (it was a module-level constant
+    bound at import time, and its last two readers — the ``<sid>.json`` gates in
+    :meth:`SessionMap.get` and :meth:`SessionMap.prune` — are gone): a caller that set
     ``PERSONALCLAW_HOME`` after this module was first imported — every test, and any
     process that boots the gateway lazily — would otherwise be handed a path under the
     real home. Returns None for an empty/traversing id or a missing file, so a caller
@@ -137,55 +127,33 @@ class SessionMap:
         atomic_write(self._path, json.dumps(self._data))
 
     def get(self, key: str) -> str | None:
-        """Return ACP agent session ID if mapping exists and .json file is present.
+        """Return the stored ACP agent session ID for *key*, or None.
 
         Handles the dashboard history key round-trip: the original session key
         ``dashboard:chat-1-xxx`` becomes ``dashboard_chat-1-xxx`` on disk (via
         ``_safe_key``), and when resumed from history the session name becomes
         ``dashboard_chat-1-xxx``, producing session key
         ``dashboard:dashboard_chat-1-xxx``.  We try the canonical form too.
+
+        A stored id is returned as-is. This used to additionally require
+        ``sessions/<sid>.json`` to exist and would DELETE the mapping when it
+        didn't — and nothing anywhere writes that file, so the branch fired every
+        time: it reported "no mapping" for a mapping it had just destroyed, which
+        is why ``resume_sid=None`` was unexplainable from the logs (G5/O16) and
+        why protocol resume could never happen even once the client stopped
+        gating on its own copy of the same missing file (`G156`). Whether an id is
+        still loadable is the AGENT's answer, not a local file's: ``AcpClient``
+        sends ``session/load`` and falls back to ``session/new`` on refusal, so a
+        dead id costs one rejected request instead of a silently erased mapping.
         """
         entry = self._data.get(key)
         # Fallback: dashboard history round-trip (dashboard:dashboard_X → dashboard:X)
-        matched_key = key
         if not entry and key.startswith("dashboard:dashboard_"):
             canonical = "dashboard:" + key[len("dashboard:dashboard_") :]
             entry = self._data.get(canonical)
-            if entry:
-                matched_key = canonical
         if not entry:
             return None
-        sid = entry["sid"]
-        sessions_dir = _sessions_dir()
-        if sid and (sessions_dir / f"{sid}.json").exists():
-            jsonl = sessions_dir / f"{sid}.jsonl"
-            try:
-                jsonl_size = jsonl.stat().st_size
-            except FileNotFoundError:
-                jsonl_size = 0
-            if jsonl_size < 10:
-                logger.info("Session %s has empty JSONL — pruning stale entry for %s", sid, key)
-                self._remove_entry(matched_key)
-                return None
-            return sid
-        if sid:
-            # The sibling branch above logs when it prunes; this one did not, and it is
-            # the branch that actually fires: nothing in core writes
-            # ``sessions/<sid>.json`` — the adapter writes it only when the provider was
-            # built with ``session_files_dir``, an opt-in the bundle has to pass. So a
-            # resume read as "no mapping" AND took the entry with it, leaving the next
-            # ``set()`` to mint a fresh sid over the top. From the outside that is
-            # indistinguishable from never having had a mapping at all, which is exactly
-            # why "resume_sid=None" was unexplainable from the logs (G5/O16).
-            logger.info(
-                "Session %s has no session file in %s — pruning stale entry for %s "
-                "(no session/load will be attempted)",
-                sid,
-                sessions_dir,
-                key,
-            )
-            self._remove_entry(matched_key)
-        return None
+        return entry.get("sid") or None
 
     def _remove_entry(self, key: str) -> None:
         """Remove an entry and update reverse index."""
@@ -233,13 +201,20 @@ class SessionMap:
         self._remove_entry(key)
 
     def prune(self) -> int:
-        """Remove entries whose session files no longer exist."""
-        sessions_dir = _sessions_dir()
+        """Remove entries that name nothing — no session id AND no channel thread.
+
+        Called once at ``SessionManager.start_pool``. It used to also drop every
+        entry whose ``sessions/<sid>.json`` was missing, and since that file has no
+        writer (see :meth:`get`) the effect was to wipe the whole map on every
+        gateway start — the mapping a mid-conversation restart needs was gone before
+        the first turn could ask for it. An id that the agent no longer holds is
+        handled where the answer lives: ``session/load`` is refused and the client
+        falls back to ``session/new``.
+        """
         stale = [
             k
             for k, entry in self._data.items()
-            if (entry.get("sid") and not (sessions_dir / f"{entry['sid']}.json").exists())
-            or (not entry.get("sid") and not entry.get("thread_ts"))
+            if not entry.get("sid") and not entry.get("thread_ts")
         ]
         for k in stale:
             del self._data[k]

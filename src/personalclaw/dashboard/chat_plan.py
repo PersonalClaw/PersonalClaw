@@ -474,15 +474,15 @@ def _dispatch(state: DashboardState, chat: _ChatSession, prompt: str) -> None:
     """Run one more turn in this chat, appending ``prompt`` as the user message.
 
     Deliberately the same dispatch shape as the edit-resend path
-    (``chat_regenerate.py``): append, then ``asyncio.create_task(_run_chat(...))``. The
+    (``chat_regenerate.py``): append, then ``asyncio.create_task(run_chat(...))``. The
     import is local (and resolved per call) both to break the import cycle with
     ``chat_runner`` — which calls this module's turn-end hook — and so a test can
-    substitute ``chat_runner._run_chat``.
+    substitute ``chat_runner.run_chat``.
     """
-    from personalclaw.dashboard.chat_runner import _run_chat
+    from personalclaw.dashboard.chat_runner import run_chat
 
     chat.append("user", prompt, "msg msg-u")
-    task = asyncio.create_task(_run_chat(state, chat, prompt))
+    task = asyncio.create_task(run_chat(state, chat, prompt))
     chat.task = task
     state._background_tasks.add(task)
     task.add_done_callback(state._background_tasks.discard)

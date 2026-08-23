@@ -781,6 +781,18 @@ async def start_dashboard(
     app.router.add_post("/api/incident/resume", handlers.api_incident_resume)
     app.router.add_get("/api/guardrails/project-trust", handlers.api_project_trust)
     app.router.add_post("/api/guardrails/project-trust", handlers.api_project_trust)
+    # Settings → External Access. Read + client lifecycle only:
+    # the surface switches ride the existing `_EDITABLE_CONFIG` PATCH path, and there is
+    # deliberately NO route here that can write `public_url`, `allow_remote` or a token.
+    app.router.add_get("/api/external-access", handlers.api_external_access)
+    app.router.add_post("/api/external-access/clients", handlers.api_external_access_client)
+    app.router.add_delete(
+        "/api/external-access/clients/{client_id}", handlers.api_external_access_client
+    )
+    app.router.add_post(
+        "/api/external-access/clients/{client_id}/disabled",
+        handlers.api_external_access_client_toggle,
+    )
     app.router.add_get("/api/models/health", handlers.api_models_health)
     # The earned-autonomy ladder. One read + three writes, and only ONE of the three
     # increases autonomy — see handlers/autonomy.py for why that asymmetry is the design.
@@ -863,6 +875,13 @@ async def start_dashboard(
     # Session templates + transcript export (S3). The literal `templates` segment has
     # the same capture hazard as `bulk` above, so it registers here too.
     session_starters.register_routes(app)
+    # The calling session's bound Project, keyed off `X-Session-Key` (ACP-AGENT-PARITY
+    # §2.6 gap 10). An ACP CLI's tools run in a separate `mcp-core` process where the
+    # native runtime's per-turn contextvar is empty, so `artifact_save` asks the gateway
+    # instead of having a new argument threaded through the protocol. Same literal-segment
+    # capture hazard as `bulk`/`templates` above, hence this position — and `bound-project`
+    # rather than `project` so it can never be misread as a session named "project".
+    app.router.add_get("/api/chat/sessions/bound-project", chat.api_chat_session_bound_project)
     app.router.add_get("/api/chat/sessions/{session}", chat.api_chat_session_detail)
     app.router.add_get("/api/chat/sessions/{session}/tool-result/{rid}", chat.api_chat_tool_result)
     app.router.add_post("/api/chat/sessions/{session}/stop", chat.api_chat_session_stop)
@@ -1311,6 +1330,39 @@ async def start_dashboard(
             logger.exception("Failed to register the Web UI channel transport")
 
     app.on_startup.append(_transports_startup)
+
+    async def _control_bridge_startup(app_: web.Application) -> None:
+        """Bind the loopback control bridge on its own random port (EXTERNAL-ACCESS §4).
+
+        Its OWN runner, not a route here: the dashboard's port is knowable and a control
+        surface on a knowable port is a port-scan away from being probed. A mount refusal
+        is normal (the surface is off by default) and must never block gateway startup —
+        so this swallows, logs, and leaves no discovery file behind.
+        """
+        from personalclaw.inbound import bridge as _bridge
+
+        try:
+            await _bridge.start(app_["state"])
+        except Exception:
+            logger.warning("control bridge failed to start", exc_info=True)
+            try:
+                _bridge.remove_discovery()
+            except Exception:
+                pass
+
+    app.on_startup.append(_control_bridge_startup)
+
+    async def _control_bridge_shutdown(app_: web.Application) -> None:
+        """Tear the bridge down and DELETE its discovery file: a file naming a dead
+        port is worse than no file, because a client trusts it and hangs."""
+        from personalclaw.inbound import bridge as _bridge
+
+        try:
+            await _bridge.stop()
+        except Exception:
+            logger.debug("control bridge shutdown failed", exc_info=True)
+
+    app.on_cleanup.append(_control_bridge_shutdown)
 
     async def _mcp_migrate_startup(app_: web.Application) -> None:
         """UT3: fold any legacy ``settings/mcp.json`` content into the canonical

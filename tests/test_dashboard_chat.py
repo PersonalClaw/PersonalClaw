@@ -95,7 +95,7 @@ class TestChatSession:
         session._pending_subagent_failures.append(
             "[Subagent completion event]\nAgent `a2` ❌ timed out"
         )
-        # Simulate drain logic from _run_chat
+        # Simulate drain logic from run_chat
         failures = session._pending_subagent_failures[:]
         session._pending_subagent_failures.clear()
         message = "\n\n".join(failures) + "\n\n" + "user message"
@@ -120,7 +120,7 @@ class TestApiChatDrainOnDisconnect:
             sl.append("chunk", "partial answer", "chunk")
             await asyncio.sleep(60)
 
-        monkeypatch.setattr("personalclaw.dashboard.chat_handlers._run_chat", fake_run_chat)
+        monkeypatch.setattr("personalclaw.dashboard.chat_handlers.run_chat", fake_run_chat)
 
         async with TestClient(TestServer(_make_app(state))) as client:
             resp = await client.post(
@@ -615,7 +615,7 @@ class TestChunkCleanup:
         session.append("chunk", " world")
         assert sum(1 for m in session.messages if m["role"] == "chunk") == 3
 
-        # Simulate what _run_chat does after streaming
+        # Simulate what run_chat does after streaming
         session.messages = [m for m in session.messages if m.get("role") != "chunk"]
         session.append("assistant", "Hello world")
         assert sum(1 for m in session.messages if m["role"] == "chunk") == 0
@@ -713,9 +713,9 @@ class TestHistorySaveOnClose:
         session.append("assistant", "hi")
         session.drain()
         # Persist first (a real chat has an on-disk transcript before delete).
-        from personalclaw.dashboard.chat import _save_session_to_history
+        from personalclaw.dashboard.chat import save_session_to_history
 
-        _save_session_to_history(state, session, force=True)
+        save_session_to_history(state, session, force=True)
         assert state.conversation_log.has_log("dashboard:s1")
 
         async with TestClient(TestServer(_make_app(state))) as client:
@@ -728,10 +728,10 @@ class TestHistorySaveOnClose:
         assert state.conversation_log.read_messages("dashboard:s1") == []
 
     def test_transient_roles_excluded_from_history(self, tmp_path, monkeypatch):
-        """chunk, done, queued, permission are not persisted (the _save_session_to_history
+        """chunk, done, queued, permission are not persisted (the save_session_to_history
         contract — exercised directly since delete now hard-purges rather than saves)."""
         monkeypatch.setattr("personalclaw.dashboard.state.config_dir", lambda: tmp_path)
-        from personalclaw.dashboard.chat import _save_session_to_history
+        from personalclaw.dashboard.chat import save_session_to_history
 
         state = _make_state(tmp_path)
         session = state.get_or_create_session("s1")
@@ -744,7 +744,7 @@ class TestHistorySaveOnClose:
         session.append("assistant", "done")
         session.drain()
 
-        _save_session_to_history(state, session, force=True)
+        save_session_to_history(state, session, force=True)
 
         msgs = state.conversation_log.read_messages("dashboard:s1")
         roles = [m["role"] for m in msgs]
@@ -756,7 +756,7 @@ class TestHistorySaveOnClose:
 
     def test_close_saves_mode_to_history(self, tmp_path, monkeypatch):
         """Session mode is persisted in session metadata on close."""
-        from personalclaw.dashboard.chat import _save_session_to_history
+        from personalclaw.dashboard.chat import save_session_to_history
 
         monkeypatch.setattr("personalclaw.dashboard.state.config_dir", lambda: tmp_path)
         state = _make_state(tmp_path)
@@ -764,14 +764,14 @@ class TestHistorySaveOnClose:
         session.append("user", "plan")
         session.drain()
 
-        _save_session_to_history(state, session, closed=True)
+        save_session_to_history(state, session, closed=True)
 
         meta = state.conversation_log._read_metadata("dashboard:modesess1")
         assert meta.get("mode") == "plan"
 
     def test_close_does_not_persist_trust(self, tmp_path, monkeypatch):
         """Trust flags are ephemeral — not written to session metadata."""
-        from personalclaw.dashboard.chat import _save_session_to_history
+        from personalclaw.dashboard.chat import save_session_to_history
 
         monkeypatch.setattr("personalclaw.dashboard.state.config_dir", lambda: tmp_path)
         state = _make_state(tmp_path)
@@ -780,7 +780,7 @@ class TestHistorySaveOnClose:
         session._trust_reads = True
         session.append("user", "hi")
         session.drain()
-        _save_session_to_history(state, session, closed=True)
+        save_session_to_history(state, session, closed=True)
         meta = state.conversation_log._read_metadata("dashboard:t1")
         assert meta.get("trust") is None
         assert meta.get("trust_reads") is None
@@ -824,10 +824,10 @@ class TestResumeDedupe:
     @pytest.mark.asyncio
     async def test_resume_then_save_no_duplicate_history(self, tmp_path, monkeypatch):
         """Resume → add messages → save should rewrite the transcript, not append a
-        duplicate copy. (Uses _save_session_to_history — the archive/persist path —
+        duplicate copy. (Uses save_session_to_history — the archive/persist path —
         since Delete now hard-purges rather than saving.)"""
         monkeypatch.setattr("personalclaw.dashboard.state.config_dir", lambda: tmp_path)
-        from personalclaw.dashboard.chat import _save_session_to_history
+        from personalclaw.dashboard.chat import save_session_to_history
 
         state = _make_state(tmp_path)
         log = state.conversation_log
@@ -839,7 +839,7 @@ class TestResumeDedupe:
             state._sessions["s1"].append("user", "new question")
             state._sessions["s1"].append("assistant", "new answer")
             state._sessions["s1"].drain()
-            _save_session_to_history(state, state._sessions["s1"], force=True)
+            save_session_to_history(state, state._sessions["s1"], force=True)
 
         # 4 messages (original 2 + new 2), not duplicated (full-file rewrite).
         msgs = log.read_messages("dashboard:s1")
@@ -855,7 +855,7 @@ class TestHistoryKeyPrefix:
         """A 'dashboard:'-prefixed session key must not get double-prefixed on save
         (dashboard:dashboard:…). Exercised via the save path since Delete now purges."""
         monkeypatch.setattr("personalclaw.dashboard.state.config_dir", lambda: tmp_path)
-        from personalclaw.dashboard.chat import _save_session_to_history
+        from personalclaw.dashboard.chat import save_session_to_history
 
         state = _make_state(tmp_path)
         log = state.conversation_log
@@ -868,7 +868,7 @@ class TestHistoryKeyPrefix:
             )
             state._sessions["dashboard:chat-1"].append("user", "new msg")
             state._sessions["dashboard:chat-1"].drain()
-            _save_session_to_history(state, state._sessions["dashboard:chat-1"], force=True)
+            save_session_to_history(state, state._sessions["dashboard:chat-1"], force=True)
 
         # Saved under dashboard:chat-1, not dashboard:dashboard:chat-1.
         msgs = log.read_messages("dashboard:chat-1")
@@ -1156,7 +1156,7 @@ class TestSessionColor:
             assert resp.status == 400
 
     def test_color_zero_persisted(self, tmp_path, monkeypatch):
-        from personalclaw.dashboard.chat import _save_session_to_history
+        from personalclaw.dashboard.chat import save_session_to_history
 
         monkeypatch.setattr("personalclaw.dashboard.state.config_dir", lambda: tmp_path)
         state = _make_state(tmp_path)
@@ -1165,13 +1165,13 @@ class TestSessionColor:
         session.append("user", "hello")
         session.drain()
 
-        _save_session_to_history(state, session, closed=True)
+        save_session_to_history(state, session, closed=True)
 
         meta = state.conversation_log._read_metadata("dashboard:s1")
         assert meta.get("color_index") == 0
 
     def test_color_persisted_in_history(self, tmp_path, monkeypatch):
-        from personalclaw.dashboard.chat import _save_session_to_history
+        from personalclaw.dashboard.chat import save_session_to_history
 
         monkeypatch.setattr("personalclaw.dashboard.state.config_dir", lambda: tmp_path)
         state = _make_state(tmp_path)
@@ -1180,13 +1180,13 @@ class TestSessionColor:
         session.append("user", "hello")
         session.drain()
 
-        _save_session_to_history(state, session, closed=True)
+        save_session_to_history(state, session, closed=True)
 
         meta = state.conversation_log._read_metadata("dashboard:s1")
         assert meta.get("color_index") == 4
 
     def test_color_null_not_persisted(self, tmp_path, monkeypatch):
-        from personalclaw.dashboard.chat import _save_session_to_history
+        from personalclaw.dashboard.chat import save_session_to_history
 
         monkeypatch.setattr("personalclaw.dashboard.state.config_dir", lambda: tmp_path)
         state = _make_state(tmp_path)
@@ -1194,7 +1194,7 @@ class TestSessionColor:
         session.append("user", "hello")
         session.drain()
 
-        _save_session_to_history(state, session, closed=True)
+        save_session_to_history(state, session, closed=True)
 
         meta = state.conversation_log._read_metadata("dashboard:s1")
         assert "color_index" not in meta
@@ -1259,9 +1259,9 @@ class TestBlockedSlashCommands:
         state.push_sessions_update = MagicMock()
         session = state.get_or_create_session("s1")
 
-        from personalclaw.dashboard.chat import _run_chat
+        from personalclaw.dashboard.chat import run_chat
 
-        await _run_chat(state, session, "/quit")
+        await run_chat(state, session, "/quit")
 
         # Should have the warning message
         texts = [m["content"] for m in session.messages if m.get("role") == "assistant"]
@@ -1358,7 +1358,7 @@ class TestTitleGenerationSessionLeak:
         state.sessions.release.assert_called_once_with(BACKGROUND_KEY)
 
 
-# ── Inline tool cards: _flush_segment and segment flush in _run_chat ──
+# ── Inline tool cards: _flush_segment and segment flush in run_chat ──
 
 
 class TestFlushSegment:
@@ -1393,7 +1393,7 @@ class TestFlushSegment:
 
 
 class TestRunChatSegmentFlush:
-    """Tests for segment flush behavior in _run_chat()."""
+    """Tests for segment flush behavior in run_chat()."""
 
     @staticmethod
     def _make_mock_client(events):
@@ -1411,7 +1411,7 @@ class TestRunChatSegmentFlush:
 
     @staticmethod
     def _make_state_for_run_chat(tmp_path, monkeypatch):
-        """Create a DashboardState wired for _run_chat tests."""
+        """Create a DashboardState wired for run_chat tests."""
         monkeypatch.setattr("personalclaw.dashboard.state.config_dir", lambda: tmp_path)
         state = _make_state(tmp_path)
         state.broadcast_ws = MagicMock()
@@ -1451,9 +1451,9 @@ class TestRunChatSegmentFlush:
         client = self._make_mock_client(events)
         state.sessions.get_or_create = AsyncMock(return_value=(client, True, False))
 
-        from personalclaw.dashboard.chat import _run_chat
+        from personalclaw.dashboard.chat import run_chat
 
-        await _run_chat(state, session, "hello")
+        await run_chat(state, session, "hello")
 
         # Check persisted messages (exclude transient roles)
         assistant_msgs = [m for m in session.messages if m.get("role") == "assistant"]
@@ -1501,9 +1501,9 @@ class TestRunChatSegmentFlush:
         client.approve_tool = AsyncMock()
         state.sessions.get_or_create = AsyncMock(return_value=(client, True, False))
 
-        from personalclaw.dashboard.chat import _run_chat
+        from personalclaw.dashboard.chat import run_chat
 
-        await _run_chat(state, session, "run ls")
+        await run_chat(state, session, "run ls")
 
         # Segment should have been flushed before permission flow
         ws_types = [c.args[0] for c in state.broadcast_ws.call_args_list]
@@ -1535,9 +1535,9 @@ class TestRunChatSegmentFlush:
         client = self._make_mock_client(events)
         state.sessions.get_or_create = AsyncMock(return_value=(client, True, False))
 
-        from personalclaw.dashboard.chat import _run_chat
+        from personalclaw.dashboard.chat import run_chat
 
-        await _run_chat(state, session, "hello")
+        await run_chat(state, session, "hello")
 
         # No chat_segment events
         ws_types = [c.args[0] for c in state.broadcast_ws.call_args_list]
@@ -1574,9 +1574,9 @@ class TestRunChatSegmentFlush:
         client = self._make_mock_client(events)
         state.sessions.get_or_create = AsyncMock(return_value=(client, True, False))
 
-        from personalclaw.dashboard.chat import _run_chat
+        from personalclaw.dashboard.chat import run_chat
 
-        await _run_chat(state, session, "hello")
+        await run_chat(state, session, "hello")
 
         ws_calls = [(c.args[0], c.args[1]) for c in state.broadcast_ws.call_args_list]
         ws_types = [t for t, _ in ws_calls]
@@ -1625,9 +1625,9 @@ class TestRunChatSegmentFlush:
         client = self._make_mock_client(events)
         state.sessions.get_or_create = AsyncMock(return_value=(client, True, False))
 
-        from personalclaw.dashboard.chat import _run_chat
+        from personalclaw.dashboard.chat import run_chat
 
-        await _run_chat(state, session, "hello")
+        await run_chat(state, session, "hello")
 
         # Collect all seq values from chat_chunk broadcasts
         seq_values: list[int] = []
@@ -1646,7 +1646,7 @@ class TestModelBackfillOnComplete:
 
     Background: Claude Code reports its model only after the prompt is
     dispatched (via the `init` system event). The original eager backfill
-    at the start of _run_chat reads client._model too early for CC, so it
+    at the start of run_chat reads client._model too early for CC, so it
     stays empty. The fix re-reads client._model at EVENT_COMPLETE into a local
     ``_record_model`` used for the cost estimate — WITHOUT writing it onto
     session.model (the user's selection). These tests observe that resolved
@@ -1710,7 +1710,7 @@ class TestModelBackfillOnComplete:
         provider model and session.model is updated.
 
         The mock starts with an empty ``inner._model`` so the *early* backfill
-        at the top of _run_chat finds nothing, then mutates ``inner._model``
+        at the top of run_chat finds nothing, then mutates ``inner._model``
         just before yielding EVENT_COMPLETE — mirroring CC reporting its
         model only after the prompt is dispatched. This way only the *late*
         backfill branch can populate the record's model, so removing the
@@ -1728,7 +1728,7 @@ class TestModelBackfillOnComplete:
 
         state = self._make_state_for_run_chat(tmp_path, monkeypatch)
         session = state.get_or_create_session("s1")
-        session.model = ""  # CC has not yet emitted init when _run_chat begins
+        session.model = ""  # CC has not yet emitted init when run_chat begins
 
         # Build a mock whose inner._model starts EMPTY so the early backfill
         # branch (chat_runner.py:471-476) finds nothing and leaves session.model
@@ -1753,9 +1753,9 @@ class TestModelBackfillOnComplete:
 
         captured = self._capture_estimate_model(monkeypatch)
 
-        from personalclaw.dashboard.chat import _run_chat
+        from personalclaw.dashboard.chat import run_chat
 
-        await _run_chat(state, session, "hello")
+        await run_chat(state, session, "hello")
 
         assert captured == ["opus"], "the cost estimate should reflect the model that ran"
         # session.model (the USER'S selection) must stay on "auto" — the provider's
@@ -1785,9 +1785,9 @@ class TestModelBackfillOnComplete:
 
         captured = self._capture_estimate_model(monkeypatch)
 
-        from personalclaw.dashboard.chat import _run_chat
+        from personalclaw.dashboard.chat import run_chat
 
-        await _run_chat(state, session, "hello")
+        await run_chat(state, session, "hello")
 
         # 'auto' is not a real model → no resolved model → estimate never runs.
         assert captured == []
@@ -1816,9 +1816,9 @@ class TestModelBackfillOnComplete:
 
         captured = self._capture_estimate_model(monkeypatch)
 
-        from personalclaw.dashboard.chat import _run_chat
+        from personalclaw.dashboard.chat import run_chat
 
-        await _run_chat(state, session, "hello")
+        await run_chat(state, session, "hello")
 
         # The cost estimate reflects the model that ran...
         assert captured == ["claude-opus-4-8"]
@@ -1847,9 +1847,9 @@ class TestModelBackfillOnComplete:
 
         captured = self._capture_estimate_model(monkeypatch)
 
-        from personalclaw.dashboard.chat import _run_chat
+        from personalclaw.dashboard.chat import run_chat
 
-        await _run_chat(state, session, "hello")
+        await run_chat(state, session, "hello")
 
         # The estimate uses the already-set session.model, not the provider default.
         assert captured == ["claude-opus-4.6"]
@@ -2060,7 +2060,7 @@ class TestRuntimeWiring:
 
     @pytest.mark.asyncio
     async def test_run_chat_passes_memory_store_to_build_message(self, tmp_path, monkeypatch):
-        """_run_chat resolves agent bindings and passes memory_store to build_message.
+        """run_chat resolves agent bindings and passes memory_store to build_message.
 
         Requirements: 3.1
         """
@@ -2116,10 +2116,10 @@ class TestRuntimeWiring:
         state.sessions.get_or_create = AsyncMock(return_value=(mock_client, True, False))
         state.sessions.get_pid = MagicMock(return_value=None)
 
-        # Import and run _run_chat
-        from personalclaw.dashboard.chat import _run_chat
+        # Import and run run_chat
+        from personalclaw.dashboard.chat import run_chat
 
-        await _run_chat(state, session, "test message")
+        await run_chat(state, session, "test message")
 
         # Verify build_message was called with memory_store
         assert len(build_message_calls) == 1
@@ -2127,11 +2127,11 @@ class TestRuntimeWiring:
 
 
 class TestRunChatToolBoundarySegments:
-    """Test that _run_chat inserts whitespace across tool call boundaries."""
+    """Test that run_chat inserts whitespace across tool call boundaries."""
 
     @pytest.mark.asyncio
     async def test_tool_boundary_splits_segments(self, tmp_path, monkeypatch):
-        from personalclaw.dashboard.chat import _run_chat
+        from personalclaw.dashboard.chat import run_chat
         from personalclaw.llm.base import LLMEvent
 
         monkeypatch.setattr("personalclaw.dashboard.chat.config_dir", lambda: tmp_path)
@@ -2164,7 +2164,7 @@ class TestRunChatToolBoundarySegments:
         state.sessions.release = MagicMock()
 
         session = state.get_or_create_session("s1")
-        await _run_chat(state, session, "do it")
+        await run_chat(state, session, "do it")
 
         assistant_msgs = [m for m in session.messages if m.get("role") == "assistant"]
         # With _flush_segment, text is split into separate segments at tool boundaries
@@ -2176,7 +2176,7 @@ class TestRunChatToolBoundarySegments:
     @pytest.mark.asyncio
     async def test_tool_boundary_empty_chunk_still_splits(self, tmp_path, monkeypatch):
         """Empty text chunk after tool call doesn't prevent segment splitting."""
-        from personalclaw.dashboard.chat import _run_chat
+        from personalclaw.dashboard.chat import run_chat
         from personalclaw.llm.base import LLMEvent
 
         monkeypatch.setattr("personalclaw.dashboard.chat.config_dir", lambda: tmp_path)
@@ -2210,7 +2210,7 @@ class TestRunChatToolBoundarySegments:
         state.sessions.release = MagicMock()
 
         session = state.get_or_create_session("s1")
-        await _run_chat(state, session, "do it")
+        await run_chat(state, session, "do it")
 
         assistant_msgs = [m for m in session.messages if m.get("role") == "assistant"]
         # Segments are flushed at tool boundaries; empty chunks don't create segments
@@ -2969,13 +2969,13 @@ class TestStageFailureEscalation:
 
 
 class TestPromptBusyRecovery:
-    """When ACP agent returns 'Prompt already in progress', _run_chat must
+    """When ACP agent returns 'Prompt already in progress', run_chat must
     reset the session and re-queue the message so the next attempt cold-starts."""
 
     @pytest.mark.asyncio
     async def test_prompt_busy_resets_session_and_requeues(self, tmp_path: Path) -> None:
         from personalclaw.acp.client import AcpError
-        from personalclaw.dashboard.chat import _run_chat
+        from personalclaw.dashboard.chat import run_chat
 
         state = _make_state(tmp_path)
         state.sessions.get_or_create = AsyncMock(return_value=(MagicMock(), False, False))
@@ -3003,7 +3003,7 @@ class TestPromptBusyRecovery:
         mock_client.stream_command = _raise_busy
         mock_client.shutdown = AsyncMock()
 
-        await _run_chat(state, session, "test message")
+        await run_chat(state, session, "test message")
 
         # Session must be reset (kill the stuck ACP agent process)
         state.sessions.reset.assert_awaited_once()
@@ -3015,11 +3015,11 @@ class TestPromptBusyRecovery:
 
     @pytest.mark.asyncio
     async def test_process_exited_resets_session_and_requeues(self, tmp_path: Path) -> None:
-        """When ACP subprocess dies (SIGTERM/SIGKILL), _run_chat must reset
+        """When ACP subprocess dies (SIGTERM/SIGKILL), run_chat must reset
         the session and re-queue the message so autonudges land on a fresh
         provider instead of a bare ❌ error card with no work done."""
         from personalclaw.acp.client import AcpError
-        from personalclaw.dashboard.chat import _run_chat
+        from personalclaw.dashboard.chat import run_chat
 
         state = _make_state(tmp_path)
         state.sessions.get_or_create = AsyncMock(return_value=(MagicMock(), False, False))
@@ -3046,7 +3046,7 @@ class TestPromptBusyRecovery:
         mock_client.stream_command = _raise_dead
         mock_client.shutdown = AsyncMock()
 
-        await _run_chat(state, session, "test message")
+        await run_chat(state, session, "test message")
 
         state.sessions.reset.assert_awaited_once()
         assert session.task is not None
@@ -3066,7 +3066,7 @@ class TestPromptBusyRecovery:
         cover.
         """
         from personalclaw.acp.client import AcpError
-        from personalclaw.dashboard.chat import _run_chat
+        from personalclaw.dashboard.chat import run_chat
         from personalclaw.hooks import HOOK_EVENT_ERROR
 
         state = _make_state(tmp_path)
@@ -3105,7 +3105,7 @@ class TestPromptBusyRecovery:
         mock_client.stream_command = _raise_timeout
         mock_client.shutdown = AsyncMock()
 
-        await _run_chat(state, session, "test message")
+        await run_chat(state, session, "test message")
 
         error_msgs = [m for m in session.messages if m.get("role") == "error"]
         assert any("timed out" in m.get("content", "") for m in error_msgs)
@@ -3156,7 +3156,7 @@ class TestSessionTaskNoneGuard:
         session.task = asyncio.get_running_loop().create_future()
 
         async with TestClient(TestServer(_make_app(state))) as client:
-            with patch("personalclaw.dashboard.chat_handlers._save_session_to_history"):
+            with patch("personalclaw.dashboard.chat_handlers.save_session_to_history"):
                 resp = await client.delete("/api/chat/sessions/s1")
             assert resp.status == 200
             assert session.task.cancelled()
@@ -3307,7 +3307,7 @@ class TestBulkCleanup:
 
     @pytest.mark.asyncio
     async def test_cleanup_rollback_on_save_failure(self, tmp_path, monkeypatch):
-        """When _save_session_to_history raises, session is restored and reported as failed."""
+        """When save_session_to_history raises, session is restored and reported as failed."""
         monkeypatch.setattr("personalclaw.dashboard.state.config_dir", lambda: tmp_path)
         state = _make_state(tmp_path)
         from datetime import datetime, timedelta, timezone
@@ -3318,7 +3318,7 @@ class TestBulkCleanup:
         session.drain()
 
         with patch(
-            "personalclaw.dashboard.chat_handlers._save_session_to_history",
+            "personalclaw.dashboard.chat_handlers.save_session_to_history",
             side_effect=OSError("disk full"),
         ):
             async with TestClient(TestServer(_make_app(state))) as client:
@@ -3941,7 +3941,7 @@ class TestGenerateFolderIcon:
 class TestFolderAssignmentPersistence:
     @pytest.mark.asyncio
     async def test_folder_assignment_saves_to_history(self, tmp_path, monkeypatch):
-        """api_chat_session_folder should call _save_session_to_history for new sessions."""
+        """api_chat_session_folder should call save_session_to_history for new sessions."""
         monkeypatch.setattr("personalclaw.dashboard.state.config_dir", lambda: tmp_path)
         state = _make_state(tmp_path)
         session = state.get_or_create_session("mysession")
@@ -3963,7 +3963,7 @@ class TestFolderAssignmentPersistence:
         """Regression: folder_id must reach disk even when session is a resumed
         session with no new messages.
 
-        Root cause: _save_session_to_history had an early-return guard that
+        Root cause: save_session_to_history had an early-return guard that
         skipped disk writes when ``session._resumed_count > 0 and
         len(messages) <= session._resumed_count``. Metadata-only changes like
         folder assignment don't grow the message count past the resumed
@@ -4003,7 +4003,7 @@ class TestFolderAssignmentPersistence:
         """Regression: pinned flag must reach disk on resumed sessions.
 
         Same root cause as the folder regression — the resumed-count guard
-        in _save_session_to_history was blocking metadata-only writes. Pin
+        in save_session_to_history was blocking metadata-only writes. Pin
         endpoint now passes ``force=True``.
         """
         monkeypatch.setattr("personalclaw.dashboard.state.config_dir", lambda: tmp_path)
@@ -4032,7 +4032,7 @@ class TestFolderAssignmentPersistence:
         Without force, resumed sessions with no new messages skip the write.
         With force, the metadata-only mutation reaches disk regardless.
         """
-        from personalclaw.dashboard.chat import _save_session_to_history
+        from personalclaw.dashboard.chat import save_session_to_history
 
         monkeypatch.setattr("personalclaw.dashboard.state.config_dir", lambda: tmp_path)
         state = _make_state(tmp_path)
@@ -4043,12 +4043,12 @@ class TestFolderAssignmentPersistence:
         session.folder_id = "f-force"
 
         # Without force — save is skipped by the guard, no file written.
-        _save_session_to_history(state, session)
+        save_session_to_history(state, session)
         path = tmp_path / "dashboard_forcesession.jsonl"
         assert not path.exists(), "guard must skip save when not forced"
 
         # With force — save bypasses the guard, file is written with folder_id.
-        _save_session_to_history(state, session, force=True)
+        save_session_to_history(state, session, force=True)
         assert path.exists(), "force=True must bypass the guard"
         import json
 
@@ -4090,7 +4090,7 @@ class TestRegenerateAndVariants:
         async def _capture(*a, **kw):
             captured.extend(list(session._pending_variants))
 
-        with patch("personalclaw.dashboard.chat_regenerate._run_chat", new=_capture):
+        with patch("personalclaw.dashboard.chat_regenerate.run_chat", new=_capture):
             async with TestClient(TestServer(_make_app(state))) as client:
                 resp = await client.post("/api/chat/sessions/s1/regenerate")
                 assert resp.status == 200
@@ -4160,7 +4160,7 @@ class TestRegenerateAndVariants:
 
     @pytest.mark.asyncio
     async def test_regenerate_passes_hint_to_run_chat(self, tmp_path, monkeypatch):
-        """_run_chat should receive a non-empty regenerate_hint kwarg."""
+        """run_chat should receive a non-empty regenerate_hint kwarg."""
         monkeypatch.setattr("personalclaw.dashboard.state.config_dir", lambda: tmp_path)
         state = _make_state(tmp_path)
         session = state.get_or_create_session("s1")
@@ -4168,7 +4168,7 @@ class TestRegenerateAndVariants:
         session.append("assistant", "reply")
         session.drain()
         mock_run = AsyncMock()
-        with patch("personalclaw.dashboard.chat_regenerate._run_chat", new=mock_run):
+        with patch("personalclaw.dashboard.chat_regenerate.run_chat", new=mock_run):
             async with TestClient(TestServer(_make_app(state))) as client:
                 resp = await client.post("/api/chat/sessions/s1/regenerate")
                 assert resp.status == 200
@@ -4197,7 +4197,7 @@ class TestRegenerateAndVariants:
         async def _capture(*a, **kw):
             captured.extend(list(session._pending_variants))
 
-        with patch("personalclaw.dashboard.chat_regenerate._run_chat", new=_capture):
+        with patch("personalclaw.dashboard.chat_regenerate.run_chat", new=_capture):
             async with TestClient(TestServer(_make_app(state))) as client:
                 resp = await client.post("/api/chat/sessions/s1/regenerate")
                 assert resp.status == 200
@@ -4223,7 +4223,7 @@ class TestRegenerateAndVariants:
         async def _capture(*a, **kw):
             captured.extend(list(session._pending_variants))
 
-        with patch("personalclaw.dashboard.chat_regenerate._run_chat", new=_capture):
+        with patch("personalclaw.dashboard.chat_regenerate.run_chat", new=_capture):
             async with TestClient(TestServer(_make_app(state))) as client:
                 resp = await client.post("/api/chat/sessions/s1/regenerate")
                 assert resp.status == 200
@@ -4249,7 +4249,7 @@ class TestRegenerateAndVariants:
         async def _capture(*a, **kw):
             captured.extend(list(session._pending_variants))
 
-        with patch("personalclaw.dashboard.chat_regenerate._run_chat", new=_capture):
+        with patch("personalclaw.dashboard.chat_regenerate.run_chat", new=_capture):
             async with TestClient(TestServer(_make_app(state))) as client:
                 resp = await client.post("/api/chat/sessions/s1/regenerate")
                 assert resp.status == 200
@@ -4286,10 +4286,10 @@ class TestRegenerateAndVariants:
         session.append("assistant", "old")
         session.drain()
         # Save first so a file exists
-        from personalclaw.dashboard.chat import _history_key_for, _save_session_to_history
+        from personalclaw.dashboard.chat import _history_key_for, save_session_to_history
 
-        _save_session_to_history(state, session)
-        with patch("personalclaw.dashboard.chat_regenerate._run_chat", new=AsyncMock()):
+        save_session_to_history(state, session)
+        with patch("personalclaw.dashboard.chat_regenerate.run_chat", new=AsyncMock()):
             async with TestClient(TestServer(_make_app(state))) as client:
                 resp = await client.post("/api/chat/sessions/s1/regenerate")
                 assert resp.status == 200
@@ -4314,9 +4314,9 @@ class TestRegenerateAndVariants:
         ]
         session.messages[-1]["variant_idx"] = 1
         session.drain()
-        from personalclaw.dashboard.chat import _history_key_for, _save_session_to_history
+        from personalclaw.dashboard.chat import _history_key_for, save_session_to_history
 
-        _save_session_to_history(state, session)
+        save_session_to_history(state, session)
         key = _history_key_for(session.key)
         persisted = state.conversation_log.read_messages(key)
         ai = [m for m in persisted if m.get("role") == "assistant"][0]
@@ -4389,7 +4389,7 @@ class TestRegenerateAndVariants:
 
     @pytest.mark.asyncio
     async def test_regenerate_clears_pending_on_task_error(self, tmp_path, monkeypatch):
-        """If _run_chat raises, _pending_variants must be cleared to prevent leak."""
+        """If run_chat raises, _pending_variants must be cleared to prevent leak."""
         monkeypatch.setattr("personalclaw.dashboard.state.config_dir", lambda: tmp_path)
         state = _make_state(tmp_path)
         session = state.get_or_create_session("s1")
@@ -4400,7 +4400,7 @@ class TestRegenerateAndVariants:
         async def _boom(*a, **kw):
             raise RuntimeError("llm blew up")
 
-        with patch("personalclaw.dashboard.chat_regenerate._run_chat", new=_boom):
+        with patch("personalclaw.dashboard.chat_regenerate.run_chat", new=_boom):
             async with TestClient(TestServer(_make_app(state))) as client:
                 resp = await client.post("/api/chat/sessions/s1/regenerate")
                 assert resp.status == 200
@@ -4493,9 +4493,9 @@ class TestRegenerateAndVariants:
         ]
         session.messages[-1]["variant_idx"] = 1
         session.drain()
-        from personalclaw.dashboard.chat import _save_session_to_history, restore_recent_sessions
+        from personalclaw.dashboard.chat import restore_recent_sessions, save_session_to_history
 
-        _save_session_to_history(state, session)
+        save_session_to_history(state, session)
         # Clear in-memory state and restore via production path
         state._sessions.clear()
         restore_recent_sessions(state, window_minutes=9999)
@@ -4519,7 +4519,7 @@ class TestRegenerateAndVariants:
         async def _hang(*a, **kw):
             await asyncio.sleep(999)
 
-        with patch("personalclaw.dashboard.chat_regenerate._run_chat", new=_hang):
+        with patch("personalclaw.dashboard.chat_regenerate.run_chat", new=_hang):
             async with TestClient(TestServer(_make_app(state))) as client:
                 resp = await client.post("/api/chat/sessions/s1/regenerate")
                 assert resp.status == 200
@@ -4576,7 +4576,7 @@ class TestRegenerateAndVariants:
         async def _hang(*a, **kw):
             await asyncio.sleep(999)
 
-        with patch("personalclaw.dashboard.chat_regenerate._run_chat", new=_hang):
+        with patch("personalclaw.dashboard.chat_regenerate.run_chat", new=_hang):
             async with TestClient(TestServer(_make_app(state))) as client:
                 r1, r2 = await asyncio.gather(
                     client.post("/api/chat/sessions/s1/regenerate"),
@@ -5050,9 +5050,9 @@ class TestForkSession:
         for i in range(250):
             session.append("user" if i % 2 == 0 else "assistant", f"m{i}", "msg")
         session.drain()
-        from personalclaw.dashboard.chat import _save_session_to_history
+        from personalclaw.dashboard.chat import save_session_to_history
 
-        _save_session_to_history(state, session)
+        save_session_to_history(state, session)
         # Simulate restore cap: keep only last 50 in memory.
         # Clear _dirty so the endpoint's flush-if-dirty path doesn't overwrite disk.
         session.messages = session.messages[-50:]
@@ -5081,9 +5081,9 @@ class TestForkSession:
         for i in range(250):
             session.append("user" if i % 2 == 0 else "assistant", f"m{i}", "msg")
         session.drain()
-        from personalclaw.dashboard.chat import _save_session_to_history
+        from personalclaw.dashboard.chat import save_session_to_history
 
-        _save_session_to_history(state, session)
+        save_session_to_history(state, session)
         # Simulate restore with cap: real path caps messages then sets
         # _resumed_count to the capped length. User then sends new messages.
         session.messages = session.messages[-50:]
@@ -5271,7 +5271,7 @@ class TestColorTheme:
     async def test_color_theme_set_on_session(self, tmp_path, monkeypatch):
         monkeypatch.setattr("personalclaw.dashboard.state.config_dir", lambda: tmp_path)
         state = _make_state(tmp_path)
-        with patch("personalclaw.dashboard.chat_handlers._run_chat", new=AsyncMock()):
+        with patch("personalclaw.dashboard.chat_handlers.run_chat", new=AsyncMock()):
             async with TestClient(TestServer(_make_app(state))) as client:
                 resp = await client.post(
                     "/api/chat?ws=1",
@@ -5286,7 +5286,7 @@ class TestColorTheme:
         state = _make_state(tmp_path)
         session = state.get_or_create_session("theme-session")
         session.color_theme = "lumon"
-        with patch("personalclaw.dashboard.chat_handlers._run_chat", new=AsyncMock()):
+        with patch("personalclaw.dashboard.chat_handlers.run_chat", new=AsyncMock()):
             async with TestClient(TestServer(_make_app(state))) as client:
                 resp = await client.post(
                     "/api/chat?ws=1",
@@ -5302,7 +5302,7 @@ class TestColorTheme:
         state = _make_state(tmp_path)
         session = state.get_or_create_session("theme-session")
         session.color_theme = "lumon"
-        with patch("personalclaw.dashboard.chat_handlers._run_chat", new=AsyncMock()):
+        with patch("personalclaw.dashboard.chat_handlers.run_chat", new=AsyncMock()):
             async with TestClient(TestServer(_make_app(state))) as client:
                 resp = await client.post(
                     "/api/chat?ws=1",
@@ -5315,7 +5315,7 @@ class TestColorTheme:
     async def test_invalid_color_theme_coerced_to_empty(self, tmp_path, monkeypatch):
         monkeypatch.setattr("personalclaw.dashboard.state.config_dir", lambda: tmp_path)
         state = _make_state(tmp_path)
-        with patch("personalclaw.dashboard.chat_handlers._run_chat", new=AsyncMock()):
+        with patch("personalclaw.dashboard.chat_handlers.run_chat", new=AsyncMock()):
             async with TestClient(TestServer(_make_app(state))) as client:
                 resp = await client.post(
                     "/api/chat?ws=1",
@@ -5328,7 +5328,7 @@ class TestColorTheme:
     async def test_non_string_color_theme_coerced(self, tmp_path, monkeypatch):
         monkeypatch.setattr("personalclaw.dashboard.state.config_dir", lambda: tmp_path)
         state = _make_state(tmp_path)
-        with patch("personalclaw.dashboard.chat_handlers._run_chat", new=AsyncMock()):
+        with patch("personalclaw.dashboard.chat_handlers.run_chat", new=AsyncMock()):
             async with TestClient(TestServer(_make_app(state))) as client:
                 resp = await client.post(
                     "/api/chat?ws=1",
@@ -5422,7 +5422,7 @@ class TestStopReasonCancelled:
         """When EVENT_COMPLETE carries stop_reason='cancelled', neither
         record_success nor record_failure should be called."""
         from personalclaw.acp.types import STOP_REASON_CANCELLED
-        from personalclaw.dashboard.chat import _run_chat
+        from personalclaw.dashboard.chat import run_chat
         from personalclaw.llm.base import EVENT_COMPLETE, EVENT_TEXT_CHUNK, LLMEvent
 
         events = [
@@ -5436,7 +5436,7 @@ class TestStopReasonCancelled:
         state.sessions.record_success = MagicMock()
         state.sessions.record_failure = AsyncMock()
 
-        await _run_chat(state, session, "hello")
+        await run_chat(state, session, "hello")
 
         state.sessions.record_success.assert_not_called()
         state.sessions.record_failure.assert_not_called()
@@ -5445,7 +5445,7 @@ class TestStopReasonCancelled:
     async def test_handler_stop_reason_cancelled_skips_consolidation(self, tmp_path, monkeypatch):
         """When cancelled, maybe_consolidate must not be called."""
         from personalclaw.acp.types import STOP_REASON_CANCELLED
-        from personalclaw.dashboard.chat import _run_chat
+        from personalclaw.dashboard.chat import run_chat
         from personalclaw.llm.base import EVENT_COMPLETE, EVENT_TEXT_CHUNK, LLMEvent
 
         events = [
@@ -5457,7 +5457,7 @@ class TestStopReasonCancelled:
         client = self._make_mock_client(events)
         state.sessions.get_or_create = AsyncMock(return_value=(client, True, False))
 
-        await _run_chat(state, session, "hello")
+        await run_chat(state, session, "hello")
 
         state.consolidator.maybe_consolidate.assert_not_called()
 
@@ -5467,7 +5467,7 @@ class TestStopReasonCancelled:
     ):
         """When stop_reason='end_turn', record_success and maybe_consolidate fire."""
         from personalclaw.acp.types import STOP_REASON_END_TURN
-        from personalclaw.dashboard.chat import _run_chat
+        from personalclaw.dashboard.chat import run_chat
         from personalclaw.llm.base import EVENT_COMPLETE, EVENT_TEXT_CHUNK, LLMEvent
 
         events = [
@@ -5480,7 +5480,7 @@ class TestStopReasonCancelled:
         state.sessions.get_or_create = AsyncMock(return_value=(client, True, False))
         state.sessions.record_success = MagicMock()
 
-        await _run_chat(state, session, "hello")
+        await run_chat(state, session, "hello")
 
         state.sessions.record_success.assert_called_once()
         state.consolidator.maybe_consolidate.assert_called_once()
@@ -5489,7 +5489,7 @@ class TestStopReasonCancelled:
     async def test_handler_stop_reason_cancelled_flushes_partial_text(self, tmp_path, monkeypatch):
         """Partial text chunks before cancel must be flushed to the session."""
         from personalclaw.acp.types import STOP_REASON_CANCELLED
-        from personalclaw.dashboard.chat import _run_chat
+        from personalclaw.dashboard.chat import run_chat
         from personalclaw.llm.base import EVENT_COMPLETE, EVENT_TEXT_CHUNK, LLMEvent
 
         events = [
@@ -5501,7 +5501,7 @@ class TestStopReasonCancelled:
         client = self._make_mock_client(events)
         state.sessions.get_or_create = AsyncMock(return_value=(client, True, False))
 
-        await _run_chat(state, session, "hello")
+        await run_chat(state, session, "hello")
 
         assistant_msgs = [m for m in session.messages if m.get("role") == "assistant"]
         assert any("partial output here" in m["content"] for m in assistant_msgs)
@@ -5710,7 +5710,7 @@ class TestStopHistoryBanner:
 
     @staticmethod
     def _last_stop_soft(session: _ChatSession) -> bool:
-        """Replicates the detection logic in chat.py:_run_chat."""
+        """Replicates the detection logic in chat.py:run_chat."""
         import json
 
         for m in reversed(session.messages):
@@ -5771,31 +5771,31 @@ class TestStopHistoryBanner:
         assert self._last_stop_soft(session) is False
 
 
-# ── Tests: AcpProcessDied handler in _run_chat ──
+# ── Tests: AcpProcessDied handler in run_chat ──
 
 
-# The real `_run_chat` coroutine, captured at import time — before any test in any
-# module can patch `chat_runner._run_chat`. TestAcpProcessDiedRecovery below tests that
+# The real `run_chat` coroutine, captured at import time — before any test in any
+# module can patch `chat_runner.run_chat`. TestAcpProcessDiedRecovery below tests that
 # function's OWN error handling, so it must never receive a mock: reading the module
 # attribute at call time made the class fail on CI whenever xdist co-located it with a
 # module that patches the attribute.
-from personalclaw.dashboard.chat_runner import _run_chat as _REAL_RUN_CHAT  # noqa: E402
+from personalclaw.dashboard.chat_runner import run_chat as _REAL_RUN_CHAT  # noqa: E402
 
 
 class TestAcpProcessDiedRecovery:
-    """Verify _run_chat handles AcpProcessDied with retry logic, redaction, and session reset."""
+    """Verify run_chat handles AcpProcessDied with retry logic, redaction, and session reset."""
 
     def _make_state_and_session(self, tmp_path):
         # Use the function captured at IMPORT time (`_REAL_RUN_CHAT`), not the module
-        # attribute. These tests exercise `_run_chat`'s own AcpProcessDied handling, so
+        # attribute. These tests exercise `run_chat`'s own AcpProcessDied handling, so
         # they need the real coroutine — and several other test modules patch
-        # `chat_runner._run_chat`. Reading the attribute here made this class fail on CI
+        # `chat_runner.run_chat`. Reading the attribute here made this class fail on CI
         # (never locally) with "object MagicMock can't be used in 'await' expression"
         # whenever xdist placed it on a worker where such a patch was live or leaked.
         # Binding once at import is immune to that by construction: the reference is
         # taken before any test can patch anything, and nothing in this class depends on
         # seeing a patched version.
-        _run_chat = _REAL_RUN_CHAT
+        run_chat = _REAL_RUN_CHAT
 
         state = _make_state(tmp_path)
         state.sessions.get_or_create = AsyncMock(return_value=(MagicMock(), False, False))
@@ -5814,7 +5814,7 @@ class TestAcpProcessDiedRecovery:
 
         mock_client = state.sessions.get_or_create.return_value[0]
         mock_client.shutdown = AsyncMock()
-        return state, session, mock_client, _run_chat
+        return state, session, mock_client, run_chat
 
     def _make_stream_raise(self, mock_client, exc):
         async def _raise(msg):
@@ -5829,10 +5829,10 @@ class TestAcpProcessDiedRecovery:
         """First pipe death at depth 0 → message re-queued, retrying shown."""
         from personalclaw.acp.client import AcpProcessDied
 
-        state, session, client, _run_chat = self._make_state_and_session(tmp_path)
+        state, session, client, run_chat = self._make_state_and_session(tmp_path)
         self._make_stream_raise(client, AcpProcessDied("pipe broken"))
 
-        await _run_chat(state, session, "test message")
+        await run_chat(state, session, "test message")
 
         state.sessions.reset.assert_awaited_once()
         assert session._acp_pipe_death_retries == 1
@@ -5844,11 +5844,11 @@ class TestAcpProcessDiedRecovery:
         """4th pipe death → 'Session stuck' shown, no re-queue."""
         from personalclaw.acp.client import AcpProcessDied
 
-        state, session, client, _run_chat = self._make_state_and_session(tmp_path)
+        state, session, client, run_chat = self._make_state_and_session(tmp_path)
         session._acp_pipe_death_retries = 3  # already exhausted
         self._make_stream_raise(client, AcpProcessDied("pipe broken"))
 
-        await _run_chat(state, session, "test message")
+        await run_chat(state, session, "test message")
 
         assert session._acp_pipe_death_retries == 4
         error_msgs = [m for m in session.messages if m.get("role") == "error"]
@@ -5859,10 +5859,10 @@ class TestAcpProcessDiedRecovery:
         """Pipe death at depth > 0 → 'please retry' shown, no re-queue."""
         from personalclaw.acp.client import AcpProcessDied
 
-        state, session, client, _run_chat = self._make_state_and_session(tmp_path)
+        state, session, client, run_chat = self._make_state_and_session(tmp_path)
         self._make_stream_raise(client, AcpProcessDied("pipe broken"))
 
-        await _run_chat(state, session, "test message", _prompt_depth=1)
+        await run_chat(state, session, "test message", _prompt_depth=1)
 
         assert session._acp_pipe_death_retries == 1
         error_msgs = [m for m in session.messages if m.get("role") == "error"]
@@ -5874,7 +5874,7 @@ class TestAcpProcessDiedRecovery:
         from personalclaw.acp.client import AcpProcessDied
         from personalclaw.llm.base import EVENT_TEXT_CHUNK, LLMEvent
 
-        state, session, client, _run_chat = self._make_state_and_session(tmp_path)
+        state, session, client, run_chat = self._make_state_and_session(tmp_path)
 
         async def _stream_then_die(msg):
             yield LLMEvent(
@@ -5885,7 +5885,7 @@ class TestAcpProcessDiedRecovery:
         client.stream = _stream_then_die
         client.stream_command = _stream_then_die
 
-        await _run_chat(state, session, "test message")
+        await run_chat(state, session, "test message")
 
         assistant_msgs = [m for m in session.messages if m.get("role") == "assistant"]
         assert assistant_msgs, "Expected at least one assistant message with redacted content"
@@ -5897,10 +5897,10 @@ class TestAcpProcessDiedRecovery:
         """Verify the finally block resets the session after AcpProcessDied."""
         from personalclaw.acp.client import AcpProcessDied
 
-        state, session, client, _run_chat = self._make_state_and_session(tmp_path)
+        state, session, client, run_chat = self._make_state_and_session(tmp_path)
         self._make_stream_raise(client, AcpProcessDied("pipe broken"))
 
-        await _run_chat(state, session, "test message")
+        await run_chat(state, session, "test message")
 
         state.sessions.reset.assert_awaited_once()
 
@@ -5909,7 +5909,7 @@ class TestAcpProcessDiedRecovery:
         """CancelledError mid-stream → partial output redacted before display."""
         from personalclaw.llm.base import EVENT_TEXT_CHUNK, LLMEvent
 
-        state, session, client, _run_chat = self._make_state_and_session(tmp_path)
+        state, session, client, run_chat = self._make_state_and_session(tmp_path)
 
         async def _stream_then_cancel(msg):
             yield LLMEvent(kind=EVENT_TEXT_CHUNK, text="partial with AKIA1234567890ABCDEF key")
@@ -5918,7 +5918,7 @@ class TestAcpProcessDiedRecovery:
         client.stream = _stream_then_cancel
         client.stream_command = _stream_then_cancel
 
-        await _run_chat(state, session, "test message")
+        await run_chat(state, session, "test message")
 
         assistant_msgs = [m for m in session.messages if m.get("role") == "assistant"]
         assert assistant_msgs, "Expected at least one assistant message with redacted content"
@@ -5933,7 +5933,7 @@ class TestAcpProcessDiedRecovery:
         from personalclaw.acp.client import AcpProcessDied
         from personalclaw.dashboard.state import _ChatSession
 
-        state, session, client, _run_chat = self._make_state_and_session(tmp_path)
+        state, session, client, run_chat = self._make_state_and_session(tmp_path)
         self._make_stream_raise(client, AcpProcessDied("pipe broken"))
 
         calls = []
@@ -5944,6 +5944,6 @@ class TestAcpProcessDiedRecovery:
             return orig(self_session, *a, **kw)
 
         with _patch.object(_ChatSession, "queue_insert", spy):
-            await _run_chat(state, session, "test message")
+            await run_chat(state, session, "test message")
 
         assert (0, "test message") in calls

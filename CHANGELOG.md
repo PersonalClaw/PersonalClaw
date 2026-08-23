@@ -10,6 +10,8 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Added
 
+- **"Is this template edit actually better?" is now a question you can answer, not settle by taste.**
+
 - **A resumed session no longer redoes yesterday's finished work.**
 - **A big skill can no longer take the conversation.**
 - **A stale browser tab now says it is stale instead of going blank.**
@@ -66,6 +68,8 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 - **Restarting PersonalClaw quietly moved a chat onto a different agent.**
 
+- **Restarting PersonalClaw mid-conversation lost what the agent had actually done.**
+
 - **The assistant learned nothing from turns run through an external coding CLI.**
 - **A read-only command is no longer called "destructive", and read-only tools no longer wait on you.**
 - **The approval card now tells you which tool it is asking about.**
@@ -74,6 +78,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **The assistant learned "never more" as a permanent rule.**
 - **A reasoning-effort setting that the coding CLI cannot honor is now refused instead of silently stored.**
 - **A reasoning-effort setting no longer quietly lapses partway through long-running work.**
+- **A tool blocked by Ask or Plan mode no longer ends the whole conversation.**
 
 - **The context gauge said "0%" on turns that were nearly full.**
 - **Typing `/compact` at a coding-CLI agent killed the whole turn.**
@@ -161,6 +166,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **A second starter home, for looking around before you commit anything.**
 
 ### Changed
+- **PersonalClaw no longer writes anything into your coding CLI's own config, and an ACP agent app can no longer ask it to.**
 - **The agent can no longer edit a file it has not read.**
 - **Rewinding a conversation no longer throws the old ending away — and that history is now stored inside your chats.**
 - **Finding something in a long conversation now works properly with a keyboard and a screen reader.**
@@ -181,6 +187,10 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **The approval prompt now tells you what a tool call can touch, and how far your answer reaches.**
 
 ### Security
+
+- **Ways *in* now share one gate instead of each inventing their own.**
+
+- **Inbound settings and tokens moved, and old ones stop working.**
 
 - **A `.env` reached a file checkpoint through a symlink.**
 

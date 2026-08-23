@@ -14,7 +14,7 @@ from personalclaw.hooks import (
 
 
 def _make_state(tmp_path):
-    """Create a DashboardState wired for _run_chat hook tests."""
+    """Create a DashboardState wired for run_chat hook tests."""
     sessions = MagicMock(count=0)
     sessions.remove = AsyncMock()
     sessions.get_pid = MagicMock(return_value=None)
@@ -66,7 +66,7 @@ class TestAgentSpawnHookInjection:
 
     @pytest.mark.asyncio
     async def test_injects_on_new_session(self, tmp_path, monkeypatch):
-        from personalclaw.dashboard.chat import _run_chat
+        from personalclaw.dashboard.chat import run_chat
         from personalclaw.llm.base import LLMEvent
 
         monkeypatch.setattr("personalclaw.dashboard.chat.config_dir", lambda: tmp_path)
@@ -108,7 +108,7 @@ class TestAgentSpawnHookInjection:
         state.sessions.get_or_create = AsyncMock(return_value=(fake_client, True, False))
 
         session = state.get_or_create_session("s1")
-        await _run_chat(state, session, "hello")
+        await run_chat(state, session, "hello")
 
         assert captured_message is not None
         assert "[Hook context]" in captured_message
@@ -116,7 +116,7 @@ class TestAgentSpawnHookInjection:
 
     @pytest.mark.asyncio
     async def test_not_injected_on_existing_session(self, tmp_path, monkeypatch):
-        from personalclaw.dashboard.chat import _run_chat
+        from personalclaw.dashboard.chat import run_chat
         from personalclaw.llm.base import LLMEvent
 
         monkeypatch.setattr("personalclaw.dashboard.chat.config_dir", lambda: tmp_path)
@@ -151,7 +151,7 @@ class TestAgentSpawnHookInjection:
         state.sessions.get_or_create = AsyncMock(return_value=(fake_client, False, False))
 
         session = state.get_or_create_session("s1")
-        await _run_chat(state, session, "hello")
+        await run_chat(state, session, "hello")
 
         assert captured_message is not None
         assert "Enable caveman mode" not in captured_message

@@ -33,6 +33,22 @@ asserts every per-file inert counter **may only shrink** versus the committed ba
         python scripts/generate_inert_surface_baseline.py
 
     Each such cleanup commit should be able to point at the writer/reader it added.
+
+    ONE further case, added 2026-08-19: a counter may also rise because the CENSUS started
+    seeing a population it was previously blind to — not because anything became inert.
+    `sdk/channel.py` was the only `sdk/` module with no `__all__`, and the ``sdk_export``
+    detector keys on `__all__`, so its 104 published re-exports were invisible to this
+    ratchet for the whole life of the facade (it counted 0). Declaring the surface moved it
+    to 104 without changing one line of what the module publishes.
+
+    That case is NOT an escape hatch, and it does not soften the rule above. It is
+    admissible only with the arithmetic attached: render the census against the PRE-change
+    file with an ``__all__`` mechanically derived from its own imports, and show the count is
+    identical. If the two numbers differ, the difference is a real new inert surface and the
+    forbidden-to-raise rule applies to it in full. (Measured for the case above: 104 before,
+    104 after. Of those 104, 97 are imported by a bundled channel app in the apps repo — the
+    census cannot see across the repo boundary by construction, which the generator's own
+    docstring says of every ``sdk_export``.)
 """
 
 from __future__ import annotations

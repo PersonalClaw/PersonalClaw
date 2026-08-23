@@ -152,6 +152,52 @@ export interface AutonomyLadder {
   reversals: AutonomyReversal[]
 }
 
+// External Access — the shared inbound seam.
+export interface ExternalAccessSurface {
+  surface: string
+  enabled: boolean
+  allow_remote: boolean
+  /** Whether a usable (≥32-byte, non-reserved) token is configured. Never the token. */
+  token_configured: boolean
+  /** WHY the token is unusable, when it is — the mount refusal's own reason string. */
+  token_problem: string
+  /** True for the control bridge, which ignores `allow_remote` by construction. */
+  loopback_only: boolean
+}
+export interface ExternalAccessClient {
+  client_id: string
+  label: string
+  surfaces: string[]
+  /** Pinned agent — a request naming a different one is refused, never substituted. */
+  agent: string
+  tools: string[]
+  scope: Record<string, unknown>
+  rate_overrides: Record<string, unknown>
+  disabled: boolean
+  created_at: string
+  last_seen_at: string
+  /** Derived from `inbound_audit.jsonl`, not a stored counter. */
+  requests_seen: number
+  refusals_seen: number
+  // 🔴 No `token_hash`. The server does not send it; see handlers/external_access.py.
+}
+export interface ExternalAccess {
+  /** The master kill switch. Off means all five surfaces are unmounted. */
+  enabled: boolean
+  /** An active incident refuses every inbound request with 503, whatever the switches say. */
+  incident_active: boolean
+  public_url: string
+  caps: {
+    rate_rps?: number
+    rate_burst?: number
+    rate_concurrent?: number
+    auto_disable_after_breaches?: number
+    capture_retention_days?: number
+  }
+  surfaces: ExternalAccessSurface[]
+  clients: ExternalAccessClient[]
+}
+
 // Doctor — the tiered read-only health report.
 export interface DoctorProbe {
   id: string
@@ -1724,6 +1770,91 @@ export interface JudgeBenchView {
   recommendations: JudgeBenchRecommendation[]
   pin: Record<string, unknown> | null
   runs: string[]
+}
+/** One pre-registered template A/B study, as the index lists it.
+ *
+ *  `verdict` is `null` for a study that is registered but has not run — a real state, not a
+ *  missing field, so the UI renders "not run yet" from data instead of from an absent key.
+ *  `agreement` and `win_rate` are `null` for the same reason AND for a second one: an
+ *  UNMEASURABLE agreement is why a study is `judge_unreliable`, so drawing it as 0% would
+ *  report a catastrophically biased judge where the truth is "we could not tell". */
+export interface StudyRow {
+  study_id: string
+  kind: string
+  subject: Record<string, unknown>
+  hypothesis: string
+  k: number
+  registered_ts: number
+  /** 'win' | 'loss' | 'tie' | 'invalidated' | 'judge_unreliable', or null when unrun. */
+  verdict: string | null
+  agreement: number | null
+  agreement_floor: number
+  win_rate: number | null
+  low_power: boolean
+  /** '' | 'locked_check_regression' | 'win_rate' | a rubric-pin state. */
+  fail_reason: string
+  locked_regressions: string[]
+}
+/** One pair, judged at both positions. `slot_a_arm` is the randomized assignment recorded
+ *  OUTSIDE the judge's prompt — publishing it is what makes the blinding auditable. */
+export interface StudyPair {
+  case_id: string
+  trial: number
+  slot_a_arm: string
+  direct_winner: string
+  swapped_winner: string
+  outcome: string
+  judgeable: boolean
+  agreed: boolean
+  position_flipped: boolean
+  cost_usd: number | null
+}
+export interface StudyCaseRun {
+  case_id: string
+  outcome: string
+  pairs: StudyPair[]
+}
+export interface StudyVerdict {
+  verdict: string
+  wins: number
+  losses: number
+  ties: number
+  no_signal: number
+  win_rate: number | null
+  agreement: number | null
+  agreement_floor: number
+  judge_below_floor: boolean
+  low_power: boolean
+  fail_reason: string
+  detail: string
+  k: number
+  decided_cases: number
+  locked_regressions: string[]
+  ledger_row_written: boolean
+}
+/** 🔴 Deliberately WITHOUT the rubric text and without the `locked/` checks. The server
+ *  omits them (§2.2: a check the worker can read is a check it satisfies by construction,
+ *  and a dashboard is one fetch away from an agent's context), so this type omits them too
+ *  — a field declared here would invite a future handler to fill it. */
+export interface StudyView {
+  study_id: string
+  kind: string
+  subject: Record<string, unknown>
+  hypothesis: string
+  k: number
+  inputs: string[]
+  metric: string
+  decision_rule: string
+  rubric_sha256: string
+  registration_sha256: string
+  agreement_floor: number
+  budget_usd: number
+  registered_ts: number
+  locked_check_count: number
+  status: 'registered' | 'complete'
+  verdict: StudyVerdict | null
+  runs: StudyCaseRun[]
+  evidence: Record<string, unknown> | null
 }
 export interface LearningHealth {
   days: number
@@ -3568,6 +3699,40 @@ export const api = {
     post<{ ok: boolean; username: string }>('/api/auth/password', { username, password }),
   authLogout: () => post<{ ok: boolean; revoked: boolean }>('/api/auth/logout'),
 
+  // ── External Access: the shared inbound seam ──
+  //
+  // There is deliberately NO method here that writes `public_url`, `allow_remote` or a
+  // surface token: the backend exposes no route for them, and the surface switches go
+  // through `patchConfig` like every other `_EDITABLE_CONFIG` field. If you find
+  // yourself adding one, that is the security boundary asking to be moved — don't.
+  externalAccess: () => get<ExternalAccess>('/api/external-access'),
+  externalAccessCreateClient: (body: {
+    label: string
+    surfaces: string[]
+    agent?: string
+    tools?: string[]
+    scope?: Record<string, unknown>
+    rate_overrides?: Record<string, unknown>
+  }) =>
+    post<{
+      ok: boolean
+      client_id: string
+      label: string
+      surfaces: string[]
+      /** Present in THIS response only — it is stored as a hash and never returned again. */
+      token: string
+      token_notice: string
+    }>('/api/external-access/clients', body),
+  // `del` resolves to void by design (it throws on !ok), so revocation is confirmed by
+  // the absence of a throw plus the re-read — not by a body this helper cannot return.
+  externalAccessRevokeClient: (clientId: string) =>
+    del(`/api/external-access/clients/${encodeURIComponent(clientId)}`),
+  externalAccessSetClientDisabled: (clientId: string, disabled: boolean) =>
+    post<{ ok: boolean; client_id: string; disabled: boolean }>(
+      `/api/external-access/clients/${encodeURIComponent(clientId)}/disabled`,
+      { disabled },
+    ),
+
   // ── Guardrails: incident kill switch + derived provider health ──
   incident: () => get<{ active: boolean; reason: string; started_at: string }>('/api/incident'),
   incidentOn: (reason: string) =>
@@ -4512,6 +4677,13 @@ export const api = {
    *  `personalclaw judge-bench`, because the full matrix is 540 judge calls and a click
    *  must not start one. 404 carries a distinct code for "no benchmark yet" vs "evals off". */
   judgeBench: () => get<JudgeBenchView>('/api/evals/judge-bench'),
+  /** Pre-registered template A/B studies. Read-only for the same reason as the
+   *  bench: a k=5 paired study is ten template runs plus six judge calls per pair. §2.1 is
+   *  also explicit that the human REGISTERS and the substrate RUNS, so there is deliberately
+   *  no POST here — a click that could do both would defeat the pre-registration. */
+  evalStudies: () => get<{ studies: StudyRow[] }>('/api/evals/studies'),
+  evalStudy: (studyId: string) =>
+    get<StudyView>(`/api/evals/studies/${encodeURIComponent(studyId)}`),
   /** The proposals queue AND the ladder's last pass, from one read. Returns the whole
    *  feed rather than unwrapping to the array: `lastReview` is what makes an empty
    *  `proposals` falsifiable, and a second accessor over the same route would be two

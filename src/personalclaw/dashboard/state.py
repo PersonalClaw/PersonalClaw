@@ -21,6 +21,7 @@ from personalclaw.atomic_write import atomic_write
 from personalclaw.config.loader import DASHBOARD_PORT, config_dir
 from personalclaw.dashboard.desktop_registry import DesktopRegistry
 from personalclaw.dashboard.sse import SseRegistry
+from personalclaw.guardrails.loop_breaker import LoopBreaker
 from personalclaw.knowledge.store import KnowledgeStore
 from personalclaw.security import redact_credentials, redact_exfiltration_urls
 from personalclaw.sel import sel
@@ -259,6 +260,8 @@ class _ChatSession:
         "_tab_id",
         "_disk_older_count",
         "_file_changes",
+        "_declared_file_change_idx",
+        "_acp_breaker",
         "_memory_citations",
         "_side",
         "_extra_tool_roots",
@@ -424,7 +427,7 @@ class _ChatSession:
         self._ephemeral: bool = ephemeral  # Incognito mode: no memory writes
         self._pending_context: list[dict[str, Any]] = []
         self._app: str = ""  # owning app identity (empty = dashboard user)
-        self._last_turn_errored: bool = False  # set by _run_chat on a crashed turn
+        self._last_turn_errored: bool = False  # set by run_chat on a crashed turn
         # Follow-up chips: the fire-and-forget background task that
         # suggests next messages after a completed turn; cancelled by the next dispatch.
         self._followups_task: asyncio.Task | None = None  # type: ignore[type-arg]
@@ -440,8 +443,25 @@ class _ChatSession:
             0  # count of disk messages OLDER than in-memory window (stable, set at restore/resume)
         )
         # Per-turn file-change accumulator [{path, before, after}], reset at the
-        # top of each _run_chat and flushed onto the assistant message's meta at turn end.
+        # top of each run_chat and flushed onto the assistant message's meta at turn end.
         self._file_changes: list[dict[str, str]] = []
+        # path -> its index in `_file_changes`, for chips a BACKEND declared rather than
+        # ones the host inferred. A streaming adapter re-declares
+        # the same edit as its arguments fill in, and the flush's earliest-before rule
+        # would then pin a partial first declaration; this lets the newest one replace it
+        # in place. Reset alongside `_file_changes` — an index into an emptied list is
+        # what would overwrite slot 0 of the next turn.
+        self._declared_file_change_idx: dict[str, int] = {}
+        # The ACP loop breaker, kept for the SESSION rather than the turn
+        # (`G155`). `LoopBreaker` defines its own ceiling as
+        # "this RUN's total failures" (`CIRCUIT_THRESHOLD = 30`), and for an ACP session
+        # the host-side analogue of a native run is the session's sequence of turns —
+        # a fresh breaker per turn reset the counter every turn, so an unattended loop
+        # repeating a failing tool for twenty turns could never reach thirty and the
+        # circuit rung was unreachable by construction. Per-key streaks persist for the
+        # same reason, and `record()` still clears a key on success, so a tool that
+        # recovers is not held against the model.
+        self._acp_breaker = LoopBreaker()
         # Episodic memory citations [{n, id, preview}] surfaced into THIS turn's prompt
         # (MEMORY-GRAPH-AND-VAULT §5.4). Reset per turn, populated from the assembled
         # context's metadata, and attached to each finalized assistant message's meta so
@@ -1248,13 +1268,13 @@ class DashboardState:
         """Write any session with new messages to its JSONL file."""
         if not self.conversation_log:
             return
-        from personalclaw.dashboard.chat import _save_session_to_history
+        from personalclaw.dashboard.chat import save_session_to_history
 
         for session in list(self._sessions.values()):
             if not session._dirty or not session.messages:
                 continue
             try:
-                _save_session_to_history(self, session)
+                save_session_to_history(self, session)
                 session._dirty = False
             except Exception:
                 logger.warning("Flush failed for session %s", session.key, exc_info=True)

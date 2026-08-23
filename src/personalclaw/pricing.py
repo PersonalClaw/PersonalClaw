@@ -88,3 +88,54 @@ def estimate_cost(
 def has_pricing(model: str) -> bool:
     """True if *model* has a price row (used to decide whether to estimate)."""
     return _rates(model) is not None
+
+
+def cache_savings_usd(
+    model: str,
+    *,
+    cache_read_tokens: int = 0,
+    cache_creation_tokens: int = 0,
+    input_tokens: int = 0,
+    output_tokens: int = 0,
+) -> float | None:
+    """USD the prompt cache saved (or cost) on one turn — counterfactual minus actual.
+
+    Both sides are computed through :func:`estimate_cost` itself, never from a
+    hand-derived rate delta: one function owns the rate lookup, so the two paths
+    cannot drift when a price row gains a field or a default changes.
+
+    * ``actual`` — what this turn cost with its real cache split.
+    * ``counterfactual`` — the same turn with NO prompt cache at all: every
+      cached token re-billed at the plain input rate
+      (``input + cache_read + cache_creation`` as input, cache buckets zero).
+      Sound because the three token buckets are DISJOINT populations, not
+      overlapping views of one number — see :func:`cache_hit_pct`'s docstring in
+      ``stats.py`` for the file:line evidence.
+
+    Returns ``None`` — never ``0.0`` — when *model* has no price row. An unpriced
+    model must be reportable as *unpriced*: a ``0.0`` would be indistinguishable
+    from a priced model that saved nothing, and this is exactly the "never
+    estimates when the provider reported nothing" clause. A priced model with no
+    cache activity at all returns ``0.0``, which is a real measurement.
+
+    The result is NEGATIVE on a first turn that only WROTE the cache (every real
+    row prices ``cache_write`` above ``in`` — a 25% write premium for Anthropic
+    rows), and that negative is returned as-is rather than clamped to zero. A
+    cache write genuinely costs more than the uncached call it replaces; hiding
+    it would make the cache look free on the one turn where it is not, and the
+    saving only materializes on the later reads.
+    """
+    if _rates(model) is None:
+        return None
+    actual = estimate_cost(
+        model,
+        input_tokens,
+        output_tokens,
+        cache_read_tokens,
+        cache_creation_tokens,
+    )
+    uncached_prompt_tokens = (
+        (input_tokens or 0) + (cache_read_tokens or 0) + (cache_creation_tokens or 0)
+    )
+    counterfactual = estimate_cost(model, uncached_prompt_tokens, output_tokens, 0, 0)
+    return round(counterfactual - actual, 6)

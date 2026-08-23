@@ -1,0 +1,268 @@
+{
+  "name": "self-qa",
+  "description": "Watch a repo's commits, decide which ones a user could notice, and drive one deep as-a-user scenario against the live UI for each — filing an Inbox item and a Task, with a proof bundle, when a scenario fails.",
+  "source": "bundled",
+  "provenance": "user",
+  "version": 1,
+  "tags": [
+    "qa",
+    "verification",
+    "maintenance"
+  ],
+  "inputs": {
+    "repo": {
+      "type": "string",
+      "required": true,
+      "help": "Absolute path to the git repository the commits belong to. The commit watcher passes the repo it is configured to watch."
+    },
+    "commits": {
+      "type": "array",
+      "required": true,
+      "help": "New commit SHAs to triage, oldest first. Every one gets a ledger verdict; only the user-impacting ones get a scenario."
+    },
+    "base_url": {
+      "type": "string",
+      "required": false,
+      "default": "http://127.0.0.1:10000",
+      "help": "Where the running gateway's dashboard is. The scenario drives this instance, so it must be the one built from the commits under test."
+    },
+    "fix_branch_enabled": {
+      "type": "boolean",
+      "required": false,
+      "default": false,
+      "help": "On a confirmed failure, open a branch with a proposed diff. Off by default; the branch is never merged and never pushed."
+    }
+  },
+  "metadata": {
+    "risk": "high",
+    "why_risky": "It drives a real browser against your running instance and mutates real state — that is the point, and it is also why it is not something to start without meaning to.",
+    "capabilities": [
+      "browser",
+      "terminal",
+      "tasks",
+      "inbox"
+    ],
+    "cost_tier": "metered",
+    "why_metered": "Triage is free and deterministic; only a user-impacting commit spends a scenario, and `agent.self_qa.max_scenarios_per_fire` caps how many one push can start.",
+    "requirements": {
+      "binaries": [
+        "git",
+        "ffmpeg"
+      ]
+    },
+    "cadence": "commit-driven — the commit-watch cron script fires this when the watched repo's HEAD moves, not on a clock.",
+    "steering_examples": [
+      {
+        "event": "kickoff",
+        "description": "Only check the commit that touched the inbox filters; skip the rest of this push."
+      },
+      {
+        "event": "mutation",
+        "description": "The scenario is render-checking rather than mutating state — make it actually send the message and then verify it persisted."
+      }
+    ],
+    "keywords": [
+      "qa my last commit",
+      "self-qa",
+      "check the new commits",
+      "did that change break anything"
+    ],
+    "example_outputs": [
+      "a ledger verdict per commit, and for each user-impacting one a proof bundle plus an Inbox item and Task when the scenario failed"
+    ]
+  },
+  "root": {
+    "kind": "sequence",
+    "id": "root",
+    "children": [
+      {
+        "kind": "action",
+        "id": "triage",
+        "label": "Which commits could a user notice?",
+        "config": {
+          "provider": "selfqa-triage",
+          "with": {
+            "repo": "{{inputs.repo}}",
+            "commits": "{{inputs.commits}}"
+          }
+        }
+      },
+      {
+        "kind": "branch",
+        "id": "route",
+        "label": "Anything worth a scenario?",
+        "config": {
+          "on": "{{nodes.triage.output.has_impactful}}",
+          "enum": [
+            "true",
+            "false"
+          ]
+        },
+        "cases": {
+          "true": {
+            "kind": "foreach",
+            "id": "scenarios",
+            "label": "One scenario per impactful commit",
+            "config": {
+              "items": "{{nodes.triage.output.impactful}}",
+              "on_item_error": "collect"
+            },
+            "body": {
+              "kind": "sequence",
+              "id": "scenario",
+              "children": [
+                {
+                  "kind": "stage",
+                  "id": "scenario-gen",
+                  "label": "Design one deep as-a-user scenario",
+                  "config": {
+                    "prompt": "Design ONE scenario that would catch a regression in this commit, as a user would hit it.\n\nCommit: {{item.sha}}\nSubject: {{item.subject}}\nWhy it matters: {{item.rationale}}\nChanged paths:\n{{item.paths}}\n\nRead the diff for these paths before you design anything. A scenario built on what the commit probably did is worse than no scenario, because it passes for the wrong reason and you stop looking.\n\nThe scenario MUST mutate state. Opening a page and reading it is not a scenario — every regression this loop exists to catch survives a render check. Send the message, create the item, toggle the setting, cancel the run: do the thing, then go look at whether it actually landed, in the UI and in the backend.\n\nBuild in, where the diff calls for it:\n- fault injection, if it touches an error path — make the failure happen rather than assuming the handler is fine\n- a restart/resume arc, if it touches persistence — mutate, restart the gateway, confirm the state survived\n- a resource-growth assertion, if it touches a cache or a queue — do the thing N times and check what grows\n- backend inspection, always — the UI saying it worked is a claim, not evidence\n\nEntry surface means the URL and the element a user starts from, not a description of the feature.\n\nReturn JSON: {\"scenario_id\": string, \"title\": string, \"entry_surface\": string, \"steps\": [string], \"mutation\": string, \"backend_check\": string, \"fault_injection\": string, \"restart_arc\": string, \"growth_assertion\": string}",
+                    "schema": {
+                      "scenario_id": "string",
+                      "title": "string",
+                      "entry_surface": "string",
+                      "steps": "array",
+                      "mutation": "string",
+                      "backend_check": "string",
+                      "fault_injection": "string",
+                      "restart_arc": "string",
+                      "growth_assertion": "string"
+                    },
+                    "model_tier": "reasoning",
+                    "success_when": "output.mutation != '' && output.steps.length > 0"
+                  }
+                },
+                {
+                  "kind": "stage",
+                  "id": "execute",
+                  "label": "Drive it against the live UI",
+                  "config": {
+                    "prompt": "Run this scenario against the running instance at {{inputs.base_url}} and report what happened.\n\nScenario: {{nodes.scenario-gen.output.title}}\nEntry surface: {{nodes.scenario-gen.output.entry_surface}}\nSteps:\n{{nodes.scenario-gen.output.steps}}\nThe mutation that must happen: {{nodes.scenario-gen.output.mutation}}\nBackend check: {{nodes.scenario-gen.output.backend_check}}\n\nDrive the browser through the Chrome DevTools MCP server. Open a NEW page rather than taking over one the user may be looking at. Use the terminal for the backend check.\n\nThings about this repo that will otherwise cost you the run:\n- A backend .py change does NOT hot-reload. If the commit touched Python and you did not restart the gateway, you are testing the old code and your PASS means nothing.\n- The frontend is served live through a `static/dist` SYMLINK. After a rebuild, hard-reload the page — a cached bundle looks exactly like a change that did not land.\n- React inputs do not see a raw value assignment. Type, do not set.\n\nCapture as you go, under the run workspace: `screenshots/*.png` at every state change, and a screen recording at `recording.mp4`.\n\nA scenario FAILS when the mutation did not land, when the backend disagrees with the UI, or when anything you did not expect appeared in the console or the logs. \"It looked right\" is not a pass.\n\nReturn JSON: {\"passed\": boolean, \"observed\": string, \"failure_detail\": string, \"repro_steps\": [string]}",
+                    "schema": {
+                      "passed": "boolean",
+                      "observed": "string",
+                      "failure_detail": "string",
+                      "repro_steps": "array"
+                    },
+                    "model_tier": "standard",
+                    "tools_posture": "full",
+                    "isolation": "fresh"
+                  }
+                },
+                {
+                  "kind": "stage",
+                  "id": "evidence",
+                  "label": "Seal the proof bundle",
+                  "config": {
+                    "prompt": "Turn what the run captured into a proof bundle someone can watch without re-running anything.\n\nFrom `recording.mp4`, produce `contact-sheet.png` (ffmpeg tile filter, one frame per 5s) and `failure.gif` (palettegen, the failure window plus ten seconds either side — for a pass, the mutation window).\n\nThen write `manifest.json`: {\"schema_version\": 1, \"scenario_id\": \"{{nodes.scenario-gen.output.scenario_id}}\", \"sha\": \"{{item.sha}}\", \"passed\": {{nodes.execute.output.passed}}, \"files\": [{\"kind\": ..., \"name\": ..., \"size\": ..., \"sha256\": ...}]} with a real entry for every file you produced. Compute the digests; do not estimate them.\n\nReturn JSON: {\"manifest_written\": boolean, \"file_count\": number}",
+                    "schema": {
+                      "manifest_written": "boolean",
+                      "file_count": "number"
+                    },
+                    "model_tier": "standard",
+                    "tools_posture": "full",
+                    "required_artifacts": [
+                      "screenshots/*.png",
+                      "recording.mp4",
+                      "manifest.json"
+                    ]
+                  }
+                },
+                {
+                  "kind": "branch",
+                  "id": "verdict",
+                  "label": "Did it pass?",
+                  "config": {
+                    "on": "{{nodes.execute.output.passed}}",
+                    "enum": [
+                      "true",
+                      "false"
+                    ]
+                  },
+                  "cases": {
+                    "false": {
+                      "kind": "sequence",
+                      "id": "on-failure",
+                      "children": [
+                        {
+                          "kind": "action",
+                          "id": "file-findings",
+                          "label": "File the finding",
+                          "config": {
+                            "provider": "selfqa-file-finding",
+                            "with": {
+                              "sha": "{{item.sha}}",
+                              "scenario_id": "{{nodes.scenario-gen.output.scenario_id}}",
+                              "title": "{{nodes.scenario-gen.output.title}}",
+                              "scenario_text": "{{nodes.scenario-gen.output.steps}}",
+                              "repro_steps": "{{nodes.execute.output.repro_steps}}"
+                            }
+                          }
+                        },
+                        {
+                          "kind": "branch",
+                          "id": "fix-route",
+                          "label": "Propose a fix?",
+                          "config": {
+                            "on": "{{inputs.fix_branch_enabled}}",
+                            "enum": [
+                              "true",
+                              "false"
+                            ]
+                          },
+                          "cases": {
+                            "true": {
+                              "kind": "stage",
+                              "id": "fix-branch",
+                              "label": "Propose a diff on its own branch",
+                              "config": {
+                                "prompt": "Propose a fix for the failure this run found, on a branch of its own.\n\nCommit under test: {{item.sha}}\nWhat failed: {{nodes.execute.output.failure_detail}}\nWhat was observed: {{nodes.execute.output.observed}}\nReproduction:\n{{nodes.execute.output.repro_steps}}\n\nWork on a new branch named `pclaw/selfqa-{{item.sha}}`. Do NOT merge it and do NOT push it — a human reviews this diff before either happens, and a pushed branch takes that choice away.\n\nFix the cause, not the symptom. If the reproduction passes because you changed the assertion rather than the behaviour, you have made the next failure invisible; say you could not fix it instead.\n\nReturn JSON: {\"branch\": string, \"fixed\": boolean, \"diff_summary\": string, \"why_not\": string}",
+                                "schema": {
+                                  "branch": "string",
+                                  "fixed": "boolean",
+                                  "diff_summary": "string",
+                                  "why_not": "string"
+                                },
+                                "model_tier": "standard",
+                                "tools_posture": "full",
+                                "isolation": "fresh"
+                              }
+                            },
+                            "false": {
+                              "kind": "transform",
+                              "id": "fix-declined",
+                              "label": "Leave the fix to a human",
+                              "config": {
+                                "expr": "{{nodes.execute.output.failure_detail}}"
+                              }
+                            }
+                          }
+                        }
+                      ]
+                    },
+                    "true": {
+                      "kind": "transform",
+                      "id": "passed",
+                      "label": "Nothing to file",
+                      "config": {
+                        "expr": "{{nodes.execute.output.observed}}"
+                      }
+                    }
+                  }
+                }
+              ]
+            }
+          },
+          "false": {
+            "kind": "transform",
+            "id": "no-impact",
+            "label": "Why nothing ran",
+            "config": {
+              "expr": "{{nodes.triage.output.skipped}}"
+            }
+          }
+        }
+      }
+    ]
+  }
+}
