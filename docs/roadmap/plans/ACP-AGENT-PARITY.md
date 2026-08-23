@@ -80,10 +80,29 @@ Each fix names its **owner**: *core seam* (host-side `src/personalclaw/`), *agen
 
 Without this, an ACP session has none of knowledge/tasks/inbox/artifacts/workflows/subagents/notify — the single largest capability cliff.
 
-- **Owner: core seam + agent app bundles, two-pronged.**
+- **Owner: the core seam alone. Prong B is DELETED** (`AAP-4` DEVIATION 2, 2026-08-23) — the
+  two-pronged design was insurance against a CLI that ignores protocol-passed `mcpServers`, and no
+  such CLI exists among the three we ship. Prong A is the whole mechanism.
 - **Prong A (protocol-first, core seam):** pass the `personalclaw-core` server spec (`personalclaw mcp-core` stdio command, resolved via the same `_resolve_personalclaw_bin` used by `agent.py:253`) in `mcpServers` at `session/new` — the ACP protocol field exists and the pool path already has the parameter (`acp_session_provider.py:240-247`); wire it through both `client.py` call sites (419, 481 — including `start_fresh_turn_session`) and the live `session.py` caller. Phase 1 tells us which CLIs actually honor protocol-passed `mcpServers`; where honored, this is the clean fix — zero user-config mutation, per-session `PERSONALCLAW_SESSION_KEY` env already flows via `transport.py:323-326`.
-- **Prong B (config seeding, agent app bundle):** for any CLI that ignores protocol `mcpServers`, the bundle's `create_provider`/enable path seeds the CLI's own config: claude-code → `mcpServers` block in the (already opt-in isolatable) `CLAUDE_CONFIG_DIR` settings; codex → `~/.codex/config.toml` `mcp_servers` entry; kiro → ensure `personalclaw.json` is discoverable from `~/.kiro/agents/` (symlink or copy of `~/.personalclaw/agents/personalclaw.json`, which already lists `@personalclaw-core`). Seeding is marker-scoped and idempotent (the prompt-seed contract: never clobber user config outside our block; remove on disable exactly what we wrote). The claude-code isolated-config hardening (`PERSONALCLAW_CC_ISOLATE`) becomes the *preferred* documented setup because seeding an isolated dir touches nothing of the user's.
-- **Acceptance:** per provider, "list your tools" shows personalclaw-core tools; `knowledge_search`, `task_create`, `notify`, and `subagent_run` (with correct session inject-back via the `session_pid_<pid>.txt` + env resolution) all work as-a-user. The dashboard MCP manager's external servers (`~/.personalclaw/mcp.json` → rebuilt into `personalclaw.json`) reach kiro; claude/codex external-MCP parity rides the same prong that wins for core.
+- ~~**Prong B (config seeding, agent app bundle):**~~ **DELETED, not deferred.** It seeded a
+  `personalclaw.json` symlink into a CLI's own agent-discovery directory for a CLI that ignored the
+  protocol field. Measurement retired the premise on every provider (`O76`, `K100`, `C90` — and again
+  post-deletion, below), and the code was kiro-shaped by construction: a hardcoded `personalclaw.json`
+  filename holding a kiro agent document, where codex reads TOML `[mcp_servers.*]` tables and
+  claude-code reads `personalclaw.mcp.json`. Nothing in either repo ever passed the `agent_config_dir`
+  argument that reached it. `acp/config_seed.py`, the parameter, both call branches and the
+  `acp_seeds.json` receipt are gone; four deletion rails replace twelve seeding tests.
+- **Acceptance (re-scoped 2026-08-23 — `AAP-4` DEVIATION 1).** Per provider, "list your tools" shows
+  `personalclaw-core` tools, and the **platform** tools on that surface — `notify` and `subagent_run`
+  among them — work as-a-user with correct session inject-back (`session_pid_<pid>.txt` + env).
+  `knowledge_search` and `task_create` are **deliberately not on this surface**: they are
+  installable-app tools, and `mcp_core.py`'s `_AGGREGATED_CATEGORY_MODULES` excludes the
+  knowledge/tasks/inbox categories with `tests/test_native_builtin_split.py` asserting the exclusion in
+  as many words. Testing for them tested the platform against a promise it does not make. Their
+  reachability is an **app-installed** property and belongs to whichever atom owns extending the
+  aggregation — not to a §2.1 reachability fix. The dashboard MCP manager's external servers
+  (`~/.personalclaw/mcp.json` → rebuilt into `personalclaw.json`) reach kiro; claude/codex external-MCP
+  parity rides the same prong that wins for core.
 
 ### 2.2 Approval-gate coverage — gap 2 (the safety hole)
 
@@ -167,7 +186,7 @@ Phase 2 order is severity order and each step is independently shippable; if Pha
 ## Success Criteria
 
 1. **Phase 1:** three checked-in verified matrix columns (every audit cell CONFIRMED or DIVERGED at runtime) + a severity-ranked gap inventory; zero UNKNOWN cells remain for any provider.
-2. A chat bound to each of the three providers can list and successfully invoke `knowledge_search`, `task_create`, `notify`, and `subagent_run` (with correct completion inject-back) — the personalclaw-core surface is reachable on all three.
+2. A chat bound to each of the three providers can list the `personalclaw-core` surface and successfully invoke the **platform** tools on it — `notify` and `subagent_run` among them — with correct completion inject-back. *(Re-scoped 2026-08-23, `AAP-4` DEVIATION 1: this criterion originally also named `knowledge_search` and `task_create`, which `mcp_core.py` deliberately excludes from the platform surface and `tests/test_native_builtin_split.py` asserts must stay excluded. Those are installable-app tools; their reachability is an app-installed property, not a §2.1 protocol-reachability property.)*
 3. With task-mode=Ask, a file write attempted via any ACP provider is gated by a host approval card or blocked — never silently executed; the deny-list and blocking PreToolUse hooks apply to every permission-surfaced ACP tool; the residual not-gateable set is enumerated per provider in the parity doc.
 4. An unattended Code loop bound to each provider runs without wedging: Zed dialects execute via `bypassPermissions`, kiro fail-fasts interactive prompts deterministically; a failing-tool ACP session trips the host-side breaker and aborts with the standard message.
 5. Gateway restart mid-conversation on a resume-capable provider shows "Session resumed" with full continuity; non-capable providers show accurate compressed-history labeling.
@@ -1050,6 +1069,12 @@ resolves on the ACP axis and drove fine, so **cell 690 was drivable all along**.
   `personalclaw-core` surface, i.e. kiro honours protocol-passed `mcpServers` (`K51`). So the prong-B
   path is both inert and unnecessary; `AAP-4` owns the decision to wire it or delete it, and deleting
   it is the clean-break option. Severity **P2** (dead machinery a doc describes as landed).
+  **✅ CLOSED 2026-08-23 by deletion** (`AAP-4` DEVIATION 2). Note the two claims in this entry are
+  independent and both were checked separately before deleting: *nothing wires it* (the 0-hit census)
+  and *nothing needs it* (the protocol channel is live on all three, re-verified post-deletion by
+  process attribution with no CLI config naming us). Conflating them would have been the way to delete
+  a mechanism something still depended on. `G119` (`seed_status`, a declared-but-unread reporter) is
+  closed by the same deletion.
 - **`G48` An artifact saved through the protocol MCP surface loses BOTH its project and its session**
   (`K59`) — the CLI's `artifact_save` on a session bound to project `p-14b92d4c` persisted
   `project_id: ""` and a created-event `session_id: ""`. The `project_id → artifact stamping` row was
@@ -1664,6 +1689,21 @@ by `AAP-5` after this column was written, so this sweep did not re-measure it.
   the file is honored every isolated-home ACP session appends to the operator's real home. Fix the
   path in the generator in the same change. Owner: core seam (generator) + agent app bundle
   (placement).
+  **⚠️ CORRECTION 2026-08-23 — this entry's inference "confirms §2.1 Prong B is required" was WRONG,
+  and it is the single sentence that made the prong-B deletion look like a regression.** What `K6`
+  measured is that kiro never *discovers* the host-written config. That is a fact about a **file path**,
+  and "kiro cannot see our config file" does not imply "kiro cannot receive our server list" — the
+  protocol's `session/new` `mcpServers` array is a second, independent channel, and `K54`/`K100`/`O123`
+  measured it live with **nothing in `~/.kiro` naming us at all**. Prong B was never *required*; it was
+  insurance against a CLI that ignores the protocol field, and no such CLI ships. Prong B is deleted
+  (`AAP-4` DEVIATION 2), so the **placement half of this gap is closed by deletion — there is nothing
+  left to place.** The **generator half is closed by fix**: the literal tilde is gone from
+  `src/personalclaw/agent.py` (0 hits for `~/.personalclaw/audit.log`) and three rails hold it —
+  the hook resolves into the active home, the shipped defaults name no real-home path, and an
+  unresolved placeholder fails closed rather than writing a literal `{{...}}`. **`G31` is fully
+  closed.** Worth keeping the reasoning: the generator fix mattered *independently* of prong B, because
+  the file is also what the native path and the dashboard MCP manager write — which is why deleting the
+  consumer did not make the leak moot.
 - **`G32` Concurrent sessions are declared, gated on, and do not happen.** `agent.acp_concurrent_
   sessions` was set true and verified in `config.json`, `default` dialect declares
   `supports_concurrent_sessions = True`, an in-process check returns
@@ -1983,8 +2023,14 @@ unblocked the four "needs a model provider" cells (`K29`).
 
 Four fenced drives, 2026-08-23: one acceptance drive per provider plus a census resolving the
 delete-or-wire decision this atom owns. Observations `O76`-`O95`, `C90`-`C99`, `K100`-`K108`; findings
-`G104`-`G119`. **The atom stays `todo`** — two of its three `done_when` clauses are unsatisfiable as
-written, for reasons that are owner scope decisions rather than measurement failures.
+`G104`-`G119`. Two of its three `done_when` clauses were unsatisfiable **as written**, for reasons that
+were owner scope decisions rather than measurement failures.
+
+> **Both owner decisions were taken on 2026-08-23** (`AAP-4` DEVIATION 1 + 2, second tick, observations
+> `O120`-`O126`). Decision 1: the criterion is re-scoped to what the architecture promises — the
+> platform surface — instead of naming two installable-app tools it deliberately excludes. Decision 2:
+> prong B is **deleted**, and clause 3 is therefore **moot by deletion** rather than unmet-and-pending.
+> The subsections below are kept as the record of what was measured; each carries its resolution.
 
 **§2.1's own text was stale before this work began.** It says both `session/new` call sites hardcode
 `"mcpServers": []` and that the pool parameter has no live caller. Neither has been true since
@@ -2009,12 +2055,19 @@ what was never established for codex. **Prong B is unnecessary for every provide
 |---|---|
 | `notify` | **PASS on all three**, verified by store effect rather than the returned string (`O78`, `K102`, `C93`) |
 | `subagent_run` | **claude-code PASS** — `O79` spawned `1f458f22` and a separate assistant message carrying `AAP4A-SUBAGENT-OK` arrived **in the originating session**. **kiro and codex FAIL** — receipt returned, then `_No result._` after 3 min / 695 s (`K105`, `C97`). **Provider-independent per `C97`'s control**: an invocation straight over MCP wedged identically while a native session answered the same prompt in 8.5 s. The divergence with claude-code is unresolved (`G110`) |
-| `knowledge_search`, `task_create` | **DO NOT EXIST on the MCP surface** — OWNER DECISION 1 |
+| `knowledge_search`, `task_create` | **DO NOT EXIST on the MCP surface** — OWNER DECISION 1, **resolved: the criterion was wrong, not the surface.** Re-measured post-deletion at 70 exported tools, `knowledge_*` = 0, `task_*` = 0, `post_to_inbox` = 0 (`O120`) |
 | session inject-back | **works only by fallback.** The pid tree walk resolves correctly (`O81`; `K106` ran the real `_resolve_session_key` walk over 5-6-level chains, and unclaimed pool spares fail **closed** to `''` rather than cross-session). The **env half is inert** — `G109` |
 
-### Clause 3 — "seeding is idempotent, marker-scoped and reversible on disable (SC #2)": **moot** — OWNER DECISION 2
+### Clause 3 — "seeding is idempotent, marker-scoped and reversible on disable (SC #2)": **MOOT BY DELETION**
 
-### 🔴 OWNER DECISION 1 — the criterion names two tools the platform deliberately excludes
+There is no seeding to be idempotent about. Prong B is deleted (DEVIATION 2 below), so this clause has
+no referent — it is not an unmet requirement awaiting work. Two notes for the record: the clause cited
+**SC #2, which never contained a seeding requirement at all** (SC #2 is the tool-reachability criterion),
+so the citation was wrong independently of the deletion; and "reversible on disable" is now satisfied
+vacuously and correctly — a disabled bundle leaves nothing behind because nothing is ever written, and
+the MCP surface an ACP session sees is passed per `session/new`, so it vanishes with the session.
+
+### ✅ OWNER DECISION 1 — RESOLVED: the criterion named two tools the platform deliberately excludes
 
 `knowledge_search` and `task_create` are **absent from the `personalclaw-core` MCP surface for every
 provider** — three independent drives (`O80`, `K101`, `C94`) plus an in-process census at integration:
@@ -2031,11 +2084,20 @@ kiro's stores, not ours.
 
 So `AAP-4` cannot be satisfied as written without either breaking that split or adding the categories to
 the MCP aggregation — **28 native-registry tools are absent from the MCP surface in total** (`G112`).
-Both are architectural decisions outside a §2.1 reachability fix. **Either the criterion should name
-mcp-core tools that exist (`get_context`, `memory_remember`, `notify`, `subagent_run`), or a separate
-atom should own extending the surface.** Recorded, not decided here.
+Both are architectural decisions outside a §2.1 reachability fix.
 
-### 🔴 OWNER DECISION 2 — delete or wire the prong-B seeder
+**Resolution (2026-08-23): re-scope the criterion; do NOT extend the MCP surface.** Nothing was added to
+`_AGGREGATED_CATEGORY_MODULES`. §2.1's Acceptance bullet and SC #2 now test what the architecture
+promises — the platform surface is reachable and its tools work as-a-user with correct inject-back — and
+say plainly that installable-app tools are reachable **when their app is installed**, which is a
+different property owned by a different atom. Independent re-census at integration (`O120`,
+`_aggregated_list_tools()` against an isolated home on this tree): **70 tools exported; `notify`
+PRESENT, `subagent_run` PRESENT, `knowledge_search` ABSENT, `task_create` ABSENT** — so **2 of the 4
+tools the criterion named were never on the surface it was testing.** (The 70 corrects the 68 recorded
+above; both counts are the same census run at different tips, and the drift is why the criterion should
+name a *property*, not a number.)
+
+### ✅ OWNER DECISION 2 — RESOLVED: delete the prong-B seeder
 
 The census (`O86`-`O90`) found **three independent layers of inertness** plus a decisive constraint:
 
@@ -2056,12 +2118,43 @@ reads TOML `[mcp_servers.*]` tables; claude-code's MCP artifact is named `person
 (`dashboard/handlers/mcp.py`). **No provider verdict could have made this wirable** — and since all
 three honour protocol `mcpServers`, the premise is dead everywhere.
 
-**Recommendation: delete** — `config_seed.py`, the two `_register.py` call sites, the parameter, the
-`acp_seeds.json` receipt (nothing else reads it), `seed_status` (zero production callers) and 12 test
-items. **Not done here, because deleting it makes this atom's own clause 3 unsatisfiable**, and
-rewriting an atom's success criteria is the owner's call rather than an executor's. The plan's own later
-text (:1660) further contests even the kiro-only wiring, arguing the destination should be
-`<cwd>/.kiro/agents`.
+**DELETED 2026-08-23** — `config_seed.py` (237 lines), the two `_register.py` call branches, the
+`agent_config_dir` parameter, the docstring paragraph, the `acp_seeds.json` receipt, `seed_status`
+(`G119` closed by deletion) and 12 seeding test items plus the 2 inertness-census rails they made
+redundant. Clause 3 becomes **moot**, which is the owner's call and is recorded as `AAP-4` DEVIATION 2.
+The plan's own later text (:1660) further contests even the kiro-only wiring, arguing the destination
+should be `<cwd>/.kiro/agents` — one more reason the mechanism was never right, not merely unwired.
+
+**The one thing that had to be settled before deleting, and was: `K6` and `K54` are not in conflict.**
+`K6` measured that the host-written `$PERSONALCLAW_HOME/agents/personalclaw.json` is **never discovered**
+by kiro, whose only roots are `<cwd>/.kiro/agents` and `~/.kiro/agents`. That is a fact about a **config
+file path** — it is the *motivation* for prong B, not evidence that kiro ignores the protocol field.
+`K54`/`K100` measured the **protocol channel** and found it live. A config kiro cannot see and a
+protocol array kiro honours are independent claims, and both are true. **Deleting prong B therefore
+removes no kiro mechanism** — it removes a mechanism that had never run for kiro or anyone else
+(`O88`: even a wired bundle returned `skipped_no_source`, because the symlink source did not exist).
+
+**Re-verified post-deletion, on a tree with prong B already gone** (`O121`-`O124`, isolated home
+`/private/tmp/aap4b-home`, gateway pid 77746). `personalclaw mcp-core` spawned and ran under **all
+three** adapters, every chain rooted at that gateway:
+
+| provider | chain | seeded config? |
+|---|---|---|
+| claude-code | `mcp-core ← claude ← claude ← claude ← claude-agent-acp ← gateway` | none — `~/.claude.json` has **zero** `personalclaw-core` MCP entry at any scope, and the adapter's own `--mcp-config` flag was observed on the wire carrying **only** `personalclaw-core` with our `PERSONALCLAW_HOME`/`PERSONALCLAW_PORT` env (`O121`) |
+| codex | `mcp-core ← codex ← codex ← codex ← codex-acp ← gateway` | none — **zero `[mcp_servers.personalclaw*]` tables** in `~/.codex/config.toml` (`O122`) |
+| kiro-cli | `mcp-core ← Kiro ← Kiro ← launcher ← aim ← kiro-cli ← gateway` | none — `~/.kiro/mcp.json` **does not exist**, `find ~/.kiro -name 'personalclaw*'` returns **zero**, `<cwd>/.kiro/agents` does not exist, and the only `agents/personalclaw.json` on the box is in the isolated home kiro never reads (`O123`) |
+
+**Falsified** (`O124`): with `core_mcp_servers` mutated to `return []` and the gateway restarted on the
+same home, mcp-core processes rooted at the gateway went **5 → 0** and no process under it named
+`personalclaw-core` at all — while **4 ACP adapters still spawned**, so the zero is a fact about the
+`mcpServers` array and not about a gateway that failed to start CLIs. The mutation was reverted from a
+file copy taken before it.
+
+**`O125`, a precision correction to `C90`:** a naive `grep -ci personalclaw ~/.codex/config.toml`
+returns **1**, not 0 — the hit is `[projects."<workspace-path>"]
+trust_level = "trusted"`, a project-trust entry. `C90`'s conclusion is right; its measurement should be
+stated as "zero `[mcp_servers.personalclaw*]` tables", which is what makes the protocol frame the only
+channel.
 
 **One deletion hazard is already characterised.** `G116` (P1): `unregister_acp_cli_entry`'s `config_seed`
 import is **ungated and function-local**, so on a tree with the module removed `mypy` reports *"Success:
@@ -4422,6 +4515,65 @@ cited above.
   tool kiro calls) and `G115`'s stale-pid cross-session risk are filed unfixed: one needs an auth
   allowlist widened, the other is session lifecycle, and both are escalate-not-improvise with four drives
   live in the subsystem. No `web/` surface was touched.
+- [2026-08-23][AAP-4] **DEVIATION 1 — criterion re-scoped, MCP surface deliberately NOT extended.**
+  Owner decision 1 taken. `_AGGREGATED_CATEGORY_MODULES` is unchanged (still six modules) and nothing
+  was added to it. §2.1's Acceptance bullet and SC #2 now assert the property the architecture actually
+  promises — the **platform** surface is reachable and its tools work as-a-user with correct inject-back
+  — and state that installable-app tools are reachable **when their app is installed**, a separate
+  property owned by a separate atom. Census at integration (`O120`, `_aggregated_list_tools()` on an
+  isolated home, this tree): **70 tools exported; `notify` PRESENT, `subagent_run` PRESENT,
+  `knowledge_search` ABSENT (0 `knowledge_*`), `task_create` ABSENT (0 `task_*`), 0 `*inbox*`.** So
+  **2 of the 4 tools the criterion named have never been on the surface it tested**, and
+  `tests/test_native_builtin_split.py:59-60` asserts they must not be. The 70 also corrects the 68 in
+  the results table above — same census, different tip, which is precisely why the criterion should name
+  a property rather than a count. Only the plan text changed; `docs/roadmap/atomic/` is owner-maintained
+  and untouched, so `dag.json`/`AAP.md` still carry the pre-re-scope `done_when` for the owner to flip.
+- [2026-08-23][AAP-4] **DEVIATION 2 — prong B DELETED. `K6` vs `K54` settled first, because the whole
+  change turned on it.** The two records are **not** in conflict and the deletion removes no kiro
+  mechanism. `K6` measured a **config-file path** fact — kiro's only roots are `<cwd>/.kiro/agents` and
+  `~/.kiro/agents`, so the correct `personalclaw.json` the host writes under `$PERSONALCLAW_HOME/agents/`
+  is never seen; that is the *motivation* for prong B. `K54`/`K100` measured the **protocol channel** and
+  found it live. Re-verified post-deletion (`O121`-`O123`): `personalclaw mcp-core` spawned under **all
+  three** adapters with every chain rooted at my gateway, while **no CLI config named us anywhere** —
+  claude-code's own `--mcp-config` flag was read off the wire carrying only `personalclaw-core`;
+  `~/.codex/config.toml` has zero `[mcp_servers.personalclaw*]` tables; `~/.kiro/mcp.json` does not
+  exist and `find ~/.kiro -name 'personalclaw*'` returns zero. **Falsified** (`O124`): mutating
+  `core_mcp_servers` to `return []` took mcp-core processes under the gateway **5 → 0** while **4 ACP
+  adapters still spawned** (the vacuity floor), then restored from a pre-mutation file copy.
+  **Deleted:** `acp/config_seed.py` (-237), the `agent_config_dir` parameter, both call branches, the
+  docstring paragraph, the `acp_seeds.json` receipt and `seed_status` (closing `G119` by deletion), and
+  12 seeding tests + the 2 inertness-census rails from the previous tick that the deletion made
+  redundant. **Runtime import sweep for `config_seed|seed_agent_config|unseed_agent_config`: 0 hits in
+  `src/`** (matches only exist in the four deletion rails and this plan's own record) — the grep count
+  is the evidence, because `ignore_missing_imports` means `mypy` cannot catch a stranded first-party
+  import. `register_acp_cli_entry` is a public SDK export via `sdk/acp.py`, so the parameter removal is
+  SDK-visible and carries a CHANGELOG entry. Clause 3 is **moot by deletion**, not unmet-and-pending —
+  and it cited **SC #2, which never contained a seeding requirement**, so its citation was wrong
+  independently of the deletion.
+- [2026-08-23][AAP-4] **Four deletion rails replace twelve seeding tests, each with a vacuity floor and
+  each falsified** (`tests/test_acp_mcp_reachability.py`, 22 passing). The module rail deletes-and-imports
+  (floor: `acp.mcp_servers` must still import, else the raise is an unrelated broken root); the SDK rail
+  pins `agent_config_dir` out of the signature (floor: the four other bundle-declared parameters must
+  still be there, so it cannot pass against a renamed symbol); the disable rail runs
+  `unregister_acp_cli_entry` against a stub registry (floor: the call must reach the registry, so a
+  no-op rewrite would not "survive"); the receipt rail pins no `acp_seeds.json` (floor: it writes a
+  probe file first, so "no receipt" is a fact about the code, not an unwritable directory).
+  **Falsifications, all observed red:** restoring `config_seed.py` → *"DID NOT RAISE
+  ModuleNotFoundError"*; reverting `_register.py` on a tree with the module gone → the signature rail
+  fails, the receipt rail fails, and the disable rail raises **`ModuleNotFoundError: No module named
+  'personalclaw.acp.config_seed'`** — which is `G116` reproduced exactly, the hazard three cheaper checks
+  (`mypy`, importing `_register`, the enable path) all miss. Both mutations were reverted from file
+  copies taken before them, not with `git checkout`.
+- [2026-08-23][AAP-4] **Arms NOT measured this tick, labelled rather than claimed.** (a) **VACUOUS —
+  claude-code's as-a-user tool-census answer**: the turn hit the 90 s watchdog with *"ACP prompt timed
+  out"* (`G104`/`G107` reproducing), so its reachability here rests on process attribution and the
+  observed `--mcp-config` flag, not on a model reply. (b) **NOT TRUSTED — the model-reported counts**:
+  kiro and codex both answered the identical `CORE=17; TOTAL=107`, which is a host-composed prompt tool
+  index being read back, not a live MCP enumeration; treated as evidence that core tools are *visible*,
+  never as a count. The authoritative count is the in-process census (`O120` = 70). (c) **NOT re-driven:
+  `subagent_run` inject-back and `notify` store effect** — measured hours earlier this same day
+  (`O78`/`O79`, `K102`/`K105`, `C93`/`C97`) against the same prong on the same tree; this tick's scope
+  was the deletion's safety, and `G110`/`G114` remain open exactly as filed. No `web/` surface touched.
 ## Execution log — `AAP-5` (§2.2 Approval-gate coverage)
 
 - [2026-08-23][AAP-5] **DONE.** All four acceptance clauses hold, three measured during Phase 1 and the
@@ -4612,3 +4764,90 @@ cited above.
   across 60 kiro sessions plus 2 codex rollouts, and the whole `~/.claude/projects/<slug>/` directory — the
   `G52` escape, re-confirmed. Gateway killed **before** removal (the directory regenerates otherwise), then
   verified zero remaining matches with the operator's own codex/kiro state intact.
+
+## Execution log — `AAP-4` (§2.1 MCP reachability) — DEVIATIONS executed, atom stays `todo`
+
+- [2026-08-23][AAP-4] **Both "owner decisions" resolved and executed; the atom stays `todo` because two
+  gaps remain open on the very tools its criterion names.** Prong B is deleted and the criterion's defect
+  is diagnosed and re-worded **as a recommendation below** — `dag.json`'s `done_when` is deliberately NOT
+  rewritten here, since the roadmap is owner-maintained and accepting a criterion change is the owner's
+  call. Gate at integration: `make lint` 0 (mypy 972 files), 45 targeted + 1 skipped, `make test` 25099
+  passed / 0 failed, probe residue 0.
+
+- [2026-08-23][AAP-4] 🔴 **THE TWO DOCSTRINGS WERE NOT IN CONFLICT — AND THAT IS THE FINDING.** I escalated
+  a contradiction: `_register.py`'s old text said kiro *"reads only `<cwd>/.kiro/agents` and
+  `~/.kiro/agents`, so the correct config the host already writes is never seen"* (`K6`), while the
+  rewrite claimed all three CLIs honour protocol-passed `mcpServers`. **Both are true, because they
+  describe two independent mechanisms:** `K6` is a **config-file-path** fact; `K54`/`K100` are a
+  **protocol-channel** fact. *"kiro cannot see our config file"* does not imply *"kiro cannot receive our
+  server list."* My "these cannot both be true" was wrong, and it is the **third** instance this session of
+  the same conflation — confusing "nothing wires X" with "nothing needs X", one layer down. A `K6`-vs-`K54`
+  note now sits in the docstring so nobody re-adds the parameter on `K6`'s strength.
+
+- [2026-08-23][AAP-4] **Prong A verified live on a tree with prong B already deleted**, attributed by
+  process ancestry plus the adapter's own wire flag rather than model self-report. `personalclaw mcp-core`
+  spawned and ran under **all three** adapters, every chain rooted at the test gateway, with **no seeded
+  config anywhere**: claude-code's `--mcp-config` carried *only* `personalclaw-core` with our
+  `PERSONALCLAW_HOME`/`PERSONALCLAW_PORT` (and `~/.claude.json` has no `personalclaw-core` entry at any
+  scope); codex had zero `[mcp_servers.personalclaw*]` tables; kiro had no `~/.kiro/mcp.json` at all,
+  `find ~/.kiro -name 'personalclaw*'` = 0, and no `<cwd>/.kiro/agents`. Falsified by forcing
+  `core_mcp_servers` to `return []` and restarting: mcp-core processes **5 → 0**, with the vacuity floor
+  that **4 ACP adapters still spawned** — so the zero is about the array, not a dead gateway.
+  `O88` had already shown even a *wired* bundle returned `skipped_no_source`; the symlink source never existed.
+
+- [2026-08-23][AAP-4] **DEVIATION 1 — the criterion names two tools the platform deliberately excludes.**
+  Census via `_aggregated_list_tools()` in an isolated home: **70 tools exported** (the plan's 68 was the
+  same census at an earlier tip, which is why the wording below names a *property*, not a count).
+  `notify` **PRESENT**, `subagent_run` **PRESENT**; `knowledge_search` **ABSENT**, `task_create`
+  **ABSENT**, `knowledge_*` = 0, `task_*` = 0, `*inbox*` = 0. `mcp_core.py:1724`'s
+  `_AGGREGATED_CATEGORY_MODULES` is 6 modules (artifacts, prompts, memory, subagents, workflows,
+  automation) and `tests/test_native_builtin_split.py:59-60` asserts the exclusion in as many words.
+  **Nothing was added to the aggregation** — that boundary is deliberate and separately railed.
+  **Recommended re-wording for the owner:** *"Per provider, 'list your tools' shows personalclaw-core
+  tools, and every tool the platform surface exports works as-a-user with correct session inject-back
+  (`session_pid_<pid>` + env); tools belonging to installable-app categories are reachable when their app
+  is installed."*
+- [2026-08-23][AAP-4] **Clause 3 is moot by deletion, and its citation was wrong independently.** It cites
+  **SC #2, which contains no seeding requirement** — SC #2 is the tool-reachability criterion.
+
+- [2026-08-23][AAP-4] **DEVIATION 2 — prong B deleted, not wired** (clean break, zero dead code).
+  Removed: `acp/config_seed.py` (-237), the `agent_config_dir` parameter, both call branches, the docstring
+  paragraph, the `acp_seeds.json` receipt, `seed_status` (**closes `G119`**), 12 seeding tests, and the 2
+  inertness-census rails from the prior tick. Runtime import sweep: **0 hits in `src/`** (remaining hits
+  are the four deletion rails and this plan's own record — `docs/` is nonzero by design). **Cross-repo
+  census with the vacuity floor the original lacked:** 0 hits in `PersonalClawApps`, while **3 files DO
+  call `register_acp_cli_entry`** (the claude-code / codex / kiro-cli agent `provider.py` files) — so the
+  zero is about the *parameter*, not a repo that never calls the function. No shipped app breaks.
+  Falsified three ways, including the disable path reproducing `G116` exactly with
+  `ModuleNotFoundError: No module named 'personalclaw.acp.config_seed'` — the hazard mypy and an
+  enable-path import both miss. Re-falsified by me at integration: restoring the module reds
+  `test_the_config_seeder_module_is_gone` with *DID NOT RAISE ModuleNotFoundError*.
+
+- [2026-08-23][AAP-4] **`G31`'s inference was wrong and is corrected in place.** Its sentence *"confirms
+  §2.1 Prong B is required"* is the origin of this entire doubt. `G31`'s generator half is separately
+  **closed by fix** (no literal tilde remains, 3 rails).
+
+- ⚠️ **WHY THE ATOM STAYS `todo`.** Reachability is met on all three. What is not freshly measured:
+  claude-code's **as-a-user** arm is **VACUOUS** — the turn hit the 90 s watchdog (`ACP prompt timed out`),
+  reproducing `G104`/`G107`, so its reachability rests on the process chain and the wire flag rather than
+  an answered turn. Model-reported tool counts are **NOT TRUSTED**: kiro and codex returned the *identical*
+  `CORE=17; TOTAL=107`, and two providers with different surfaces cannot independently produce identical
+  counts, so those are not live enumerations. And **`notify`'s store effect and `subagent_run`'s inject-back
+  were not re-driven** — `G110`/`G114` remain open as filed. A criterion whose named tools carry open gaps
+  is not met.
+
+- [2026-08-23][AAP-4] **`inert-surface-baseline.json` shrank legitimately and was regenerated, not
+  widened.** The new SDK-signature rail is the **first in-repo importer** of
+  `personalclaw.sdk.acp.register_acp_cli_entry`, so that export correctly left the inert list
+  (`sdk/acp.py: 5 → 4`). Verified the generator resolves `parents[1]` from its own file and that the main
+  checkout's baseline stayed **byte-identical** before and after. Re-resolved at integration: the rebase
+  conflicted on this file, resolved by taking `origin/main`'s copy and **regenerating against the combined
+  tree** rather than picking a side.
+
+- [2026-08-23][AAP-4] **Recipe corrections for the next ACP drive.** `POST /api/chat`'s `agent` field is
+  **not** the provider — `{"agent": "acp:kiro-cli"}` returns `400 {"error":"invalid agent name"}`; it is
+  the *agent definition* name, and the provider comes from the session's ACP binding, so **omit it**.
+  **kiro-cli has no `*-acp` adapter shim** — its chain is `kiro-cli → aim → launcher → Kiro` and it speaks
+  ACP natively; only claude-code and codex go through `acp-adapters/.bin/`. And `C90`'s measurement must be
+  stated as *"zero `[mcp_servers.personalclaw*]` tables"*: a bare `grep -ci personalclaw
+  ~/.codex/config.toml` returns 1, matching a `trust_level` line, not an MCP server.

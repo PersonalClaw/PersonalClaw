@@ -1349,6 +1349,18 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
   is only a file copy; create one of each by hand if a screenshot needs them.
 
 ### Changed
+- **PersonalClaw no longer writes anything into your coding CLI's own config, and an ACP agent app can
+  no longer ask it to.** A CLI-side config seeder existed for a coding CLI that ignored the tool list
+  we hand it when a session opens. Driven end to end against all three shipped CLIs, no such CLI
+  exists — each one honours the list passed over the protocol, verified by watching PersonalClaw's own
+  tool server actually start underneath it while none of the CLIs' config files mentioned us at all.
+  The seeder never ran either: nothing ever supplied the setting that switched it on. It is now
+  deleted rather than left lying around, so there is one way the tools reach a session instead of two,
+  and enabling or disabling an agent app touches nothing of yours outside PersonalClaw's own home.
+  **SDK note for app authors:** `register_acp_cli_entry` no longer accepts `agent_config_dir`. A
+  bundle still passing it fails loudly at import instead of quietly seeding nothing — which is the
+  point of removing it rather than ignoring it. Nothing else about the call changes, and no CLI needs
+  the argument, so a bundle that never declared it is unaffected.
 - **The agent can no longer edit a file it has not read.** An edit computed against a stale or
   imagined version of a file used to succeed silently and revert whatever someone else had just
   changed. Now a write to an existing file is admitted only if that file's *current* content was
