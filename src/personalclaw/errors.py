@@ -56,6 +56,17 @@ ERROR_CODES: dict[str, str] = {
         "Desktop computer use is not armed on this machine — the out-of-band keystone "
         "enable file is absent, unreadable, or does not say enabled."
     ),
+    "ERR_COMPUTER_USE_APP_NOT_ALLOWED": (
+        "The target application is not on the operator's allowlist in the out-of-band "
+        "keystone enable file. An empty or absent allowlist permits nothing, so an armed "
+        "capability still drives no application until the operator names one."
+    ),
+    "ERR_COMPUTER_USE_SECURE_FIELD": (
+        "The input destination is a secure/password field, a field whose label names a "
+        "secret, a field already holding credential-shaped text, or a target shape the "
+        "screen does not recognise. An unrecognised destination is refused like a password "
+        "field is: a screen that only knows the shapes it was shown has a hole in it."
+    ),
 }
 
 
