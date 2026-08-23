@@ -2384,6 +2384,99 @@ either fix:
    card needs a concurrent poller, and a stale `approval_id` returns **404**, which kills a naive driver.
 
 
+
+## Phase 2 results — §2.4 Resume (atom `AAP-7`)
+
+**Both acceptance clauses hold. The atom's own title named the wrong defect.**
+
+§2.4 was written as *"no agent bundle passes a `session_files_dir`, so the load path has no session file to
+find"*. That premise is true and useless: **the directory is never communicated to the spawned CLI** — not
+in argv, not in the environment, not in `session/new` params — so the file the load path was gated on has
+**no possible writer**, and passing the option could never have worked. The gate was the defect, and the
+thing that actually kept resume dead was never named in §2.4 at all (`G158`).
+
+### Clause 1 — restart mid-conversation shows "Session resumed" with full-fidelity continuation: **PASS on all three**
+
+The probe had to defeat the compressed-history fallback, which is why an ordinary recall question proves
+nothing here: `compress_thread_history` selects `roles={"user", "assistant"}`, so a token the *user* typed
+survives a restart on the fallback path too. Each pre-restart turn therefore established two facts — a
+user-typed token **and** a nonce that existed **only inside a tool result** (`openssl rand -hex 3`, with the
+agent instructed not to repeat it). Absence of the nonce from all user/assistant text was verified before
+restarting.
+
+| Provider | session id | tool-result nonce | post-restart answer | verdict |
+|---|---|---|---|---|
+| claude-code | `aa0d1fa4-…` | `d85d52` | `TOKEN=QUETZAL-7741 NONCE=d85d52` | **full fidelity** (`O187`) |
+| codex | `01a02ff5-…` | `6c21a0` | `TOKEN=QUETZAL-7741 NONCE=6c21a0` | **full fidelity** (`O188`) |
+| kiro-cli | `9c7e01a8-…` | `ad7d28` | `TOKEN=QUETZAL-7741 NONCE=ad7d28` | **full fidelity** (`O189`) |
+
+Not taken on the label's word. `gateway.log` shows `Attempting session/load` → `ACP session resumed: <sid>`
+for each, and claude-code's **own** transcript (`~/.claude/projects/<slug>/aa0d1fa4-….jsonl`) was *appended
+to* by the post-restart turn — new prompt at row 32, answer at row 36. The CLI genuinely continued that
+conversation rather than being handed a summary of it.
+
+Baseline (`O191`): before the fix all three answered `NONCE=UNKNOWN`, `resume_sid` was `None`, and
+`session_map.json` read `{}` after a single restart.
+
+### Clause 2 — a non-capable provider degrades with an accurate label: **PASS, with the arm's limit stated**
+
+All three CLIs advertise `loadSession`, so **no genuinely non-capable provider was available to test**. What
+was measured is the path such a provider routes to: on the pre-fix runs all three were *factually* on the
+compressed-history fallback, and each rendered `Session restored from history · default · auto · via
+acp:<cli>` — never "resumed" (`O190`). The capability-absent branch is additionally railed with inverse
+floors in both directions (`test_a_fresh_runner_over_prior_history_says_restored_from_history` /
+`test_it_never_claims_resumed_or_created`), because a single hard-coded verb satisfies any one of those
+assertions alone. **This arm is a measurement of the fallback path plus a rail on the routing decision, not
+a live observation of a provider that declines `loadSession`.**
+
+The fourth verb matters because the sentence is a UI surface: a restore that wears the word a protocol
+`session/load` earns claims a fidelity the turn does not have — the tool-result nonce is exactly what is
+missing — while calling it "created" denies a restore that happened.
+
+### Four defects had to be fixed before any of this appeared
+
+- **`G156` HIGH — FIXED.** `session/load` was gated on `<dir>/<sid>.json`, a file with no writer anywhere.
+  Two independent gates: `AcpClient._initialize_session`, and `SessionMap.get`, which additionally
+  **deleted** the mapping when the file was absent. Both removed; the agent's own refusal is the fallback
+  signal, which is the only signal that cannot go stale.
+- **`G157` HIGH — FIXED.** `POST /api/chat` on a cold session key called `get_or_create_session` with no
+  rehydrate. After a restart every un-foldered session is a miss (`restore_sessions` defaults **false**), so
+  the turn ran native despite a persisted `acp:<cli>`, and `_save_session_to_history` then rebuilt the meta
+  line **without** the binding — making the loss permanent. A `GET` first happened to rehydrate, which is
+  why this only bit non-UI callers.
+- **`G158` CRITICAL — FIXED.** `provider_kind="acp:<cli>"` was only ever read to *skip* the native builder;
+  it then fell through into **model-axis** resolution, which deliberately excludes `acp_agent` entries. So a
+  session bound to an ACP CLI silently resolved the pinned chat model on any path that bypassed the
+  connection-pool claim — and that claim is skipped **exactly when a resume id exists**. The one path that
+  needed a real, resumable ACP client was the only path that never got one.
+- **`G159` MEDIUM — FIXED.** `SessionMap.prune()` runs at every `start_pool` and carried the same dead key,
+  so it wiped every resumable mapping on each boot.
+
+### Gaps opened
+
+- **`G160` MEDIUM — OPEN.** `session_files_dir` is still never communicated to the spawned CLI, so its other
+  consumer — `AcpSession._tail_session_file`'s JSONL tool-result tail — is inert for every provider and
+  **cannot** be activated by a bundle passing the option. Registration now provisions the directory, but
+  nothing will write into it.
+- **`G161` HIGH — OPEN, not `AAP-7`'s scope.** An adapter dying mid-turn silently falls back to the native
+  runtime while the activity line still reads `via acp:<cli>` (`O193`): claude-code's adapter was force-killed
+  mid-turn, the turn was served by Bedrock, and the model emitted literal `<invoke name="terminal">` XML as
+  assistant *text*. No CLI session file, no map entry, no visible change of runtime. `_runtime_label` falls
+  back to `provider_kind`, so it structurally cannot detect this.
+- **`G162` LOW — OPEN.** `_vendor.dev/*` method and capability strings are literal in `acp/types.py`, and
+  `_vendor.dev/commands` appeared in no provider's advertised capabilities.
+
+### Recipe corrections for whoever drives §2.5 next
+
+- **`O192` — a "remember this" token is not a resume discriminator.** kiro answered the recall probe by
+  calling `memory_remember`, so PersonalClaw's own memory injection carries the token across a restart
+  independently of ACP. Only a fact that lived in a tool result discriminates.
+- **`O194`** — `personalclaw -v gateway` is rejected; `--verbose` is global-only and must precede the
+  subcommand. `log_level` is otherwise pinned to config (`PATCH /api/config/personalclaw` answers *"field
+  not editable"*).
+- **`O195`** — a WebSocket probe's "last assistant message" can be a history replay: it reported
+  `NONCE=UNKNOWN` while the transcript held the right nonce. The transcript is the authority.
+
 ## Gap closure index (status as of 2026-08-22, verified against `origin/main` = `05bba66e`)
 
 **Why this exists.** The `G*` bullets in the inventories below are written as defect statements and are
@@ -4472,3 +4565,50 @@ cited above.
   **Honest limit, stated in the parity doc too:** the wire message is unit-proven correct, but whether
   codex's `apply_patch` then completes gracefully is **unverified** — that needs a live codex drive,
   which is owner-gated. No matrix cell flipped to CONFIRMED and `dag.json` is untouched.
+
+## Execution log — `AAP-7` (§2.4 Resume via `session/load`)
+
+- [2026-08-23][AAP-7] **DONE.** Both acceptance clauses hold; clause 2's arm is recorded with its limit
+  stated rather than overclaimed (all three CLIs advertise `loadSession`, so the degrade label was measured
+  on the fallback path each of them was factually running, plus inverse-floor rails on the routing decision).
+  Observations `O187`-`O195`, findings `G156`-`G162`. Gate at integration: `make lint` 0 (mypy 973 files),
+  168 targeted green, `make test` full green, and the ACP-routing falsification re-run by me — disabling the
+  new `acp:` branch reds `test_provider_kind_acp_does_not_build_native` with `assert None == 'acp:claude-code'`.
+- [2026-08-23][AAP-7] 🔴 **THE ATOM'S OWN TITLE NAMED THE WRONG DEFECT, AND THE REAL ONE WAS NEVER IN §2.4.**
+  §2.4 said the load path had no session file because no bundle passed a `session_files_dir`. True, and a dead
+  end: the directory is never communicated to the child process, so that file has **no possible writer** and
+  passing the option could never have worked. The gate itself was the bug (`G156`). What actually kept resume
+  dead was `G158` — an `acp:<cli>` binding fell into **model-axis** resolution, which excludes `acp_agent`
+  entries, so the session silently answered on the pinned chat model. It hid because the connection-pool claim
+  normally answers first using `provider_kind` directly, and **that claim is skipped exactly when a resume id
+  exists**: the one path that needed a resumable ACP client was the only one that never got one.
+- [2026-08-23][AAP-7] **A recall probe cannot measure resume fidelity, and two of the three obvious probes are
+  vacuous.** `compress_thread_history` carries `roles={"user","assistant"}`, so a user-typed token survives on
+  the fallback path too; and kiro answered the recall question by calling `memory_remember`, so PersonalClaw's
+  own memory injection carries a "remember this" token across the restart independently of ACP (`O192`). Only a
+  nonce that existed **solely inside a tool result** discriminates. Every column was verified nonce-free in
+  user/assistant text before the restart, and the label was cross-checked against `Attempting session/load` →
+  `ACP session resumed` in `gateway.log` plus claude-code's own transcript being **appended to** at row 32.
+- [2026-08-23][AAP-7] **Two existing tests encoded the old behaviour and were rewritten, not weakened.**
+  `test_acp_restart_binding.py`'s claim-4 class asserted the destructive `prune()` as *intended*, and
+  `test_provider_resolution_unify.py::test_provider_kind_acp_does_not_build_native` asserted only "not native"
+  — tightened to assert the **named** runtime, which is what makes it the falsification witness above.
+  `_build_acp_runtime` was added to the chokepoint rail's `ALLOWED_BUILDERS` with the reason recorded: an
+  external CLI owns the model call, so there is no host-side inference to meter.
+- ⚠️ **`G161` is the highest-value follow-up and it is a legibility hazard, not a resume one.** An adapter
+  dying mid-turn silently falls back to the native runtime while the line still reads `via acp:<cli>` (`O193`)
+  — observed with claude-code force-killed mid-turn, Bedrock serving the turn, and the model emitting literal
+  `<invoke name="terminal">` XML as assistant text. `_runtime_label` falls back to `provider_kind`, so it
+  cannot detect this by construction.
+- **Recorded, still open.** `G160` (`session_files_dir` reaches no writer, so the JSONL tool-result tail is
+  inert for every provider and cannot be activated by a bundle), `G162` (`_vendor.dev/commands` advertised by
+  nobody). Two brief premises were found false and are corrected in place: the claimed
+  `POST /api/chat/sessions/{s}/acp-agent` 404-after-restart did **not** reproduce (the 404 came from using
+  `dashboard_<name>` instead of the returned key; post-restart binds return `{"ok": true}` — the real defect is
+  `G157`'s silent binding loss on a cold-key POST), and the `cron:`→`cron_` key-rewrite does not touch resume
+  fidelity (dashboard keys round-trip, and `SessionMap.get` already carries the `dashboard:dashboard_X`
+  fallback).
+- **Residual cleanup.** 174 artifacts removed, scoped by content match on the probe workspace: 171 files
+  across 60 kiro sessions plus 2 codex rollouts, and the whole `~/.claude/projects/<slug>/` directory — the
+  `G52` escape, re-confirmed. Gateway killed **before** removal (the directory regenerates otherwise), then
+  verified zero remaining matches with the operator's own codex/kiro state intact.

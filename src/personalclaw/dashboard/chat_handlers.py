@@ -111,6 +111,21 @@ async def api_chat(request: web.Request) -> web.StreamResponse:
     if not isinstance(session_name, str) and session_name is not None:
         session_name = None  # coerce non-string session to auto-generate
 
+    # A named session that is on disk but not in memory must come back WITH its
+    # persisted runtime binding, not as a blank one. ``get_or_create_session`` mints a
+    # bare session on a miss, and after a gateway restart every un-foldered session is a
+    # miss (the startup restore is window/folder-scoped and ``restore_sessions`` defaults
+    # to false) — so the first message after a restart resolved on the native axis even
+    # though the session's meta line said ``acp:<cli>``, and then
+    # ``_save_session_to_history`` rebuilt that meta line from the blank session and
+    # DROPPED the binding, turning a one-turn slip into permanent state. That also made
+    # protocol resume unreachable: the resume id is handed to whatever provider the turn
+    # resolved, and a native provider ignores it. A GET of the session first happened to
+    # rehydrate and hide all of this, which is why it only bit non-UI callers (`G157`).
+    # Registers the restored session in ``state._sessions``, so the create below
+    # returns it; a name with nothing on disk yields None and still creates fresh.
+    if session_name:
+        _rehydrate_session_from_history(state, session_name)
     session = state.get_or_create_session(session_name, app=request.get("app", ""))
 
     # App ownership check: deny-by-default for app tokens.

@@ -547,34 +547,52 @@ class AcpClient:
         self._session_id = None
 
         if resume_sid and self._can_load_session:
+            # The ONLY preconditions are the two above: we hold a session id, and the
+            # agent advertised ``loadSession``. There is deliberately no local-file
+            # precondition. This branch used to require ``<session_files_dir>/<sid>.json``
+            # to exist before it would even send the request, which made protocol resume
+            # unreachable on every provider: no bundle declares ``session_files_dir``,
+            # and even when one does, nothing tells the spawned CLI about that directory,
+            # so the file it gated on has no writer (`G156`). ``session/load`` needs only
+            # ``sessionId`` + ``cwd`` + ``mcpServers`` — the AGENT owns the conversation
+            # and is the authority on whether the id is still loadable, so a refusal is
+            # the signal to fall back, not a file we guess about first.
+            #
+            # ``session_file`` stays as an OPTIONAL ``_meta`` hint for a CLI that does
+            # keep its session state where we can see it; when the file is absent the
+            # hint is simply omitted rather than the request being skipped.
             session_file = (
-                str(self._session_files_dir / f"{resume_sid}.json")
+                self._session_files_dir / f"{resume_sid}.json"
                 if self._session_files_dir is not None
                 else None
             )
-            if session_file is not None and Path(session_file).exists():
-                try:
-                    self._session = await conn.load_session(
-                        {
-                            "sessionId": resume_sid,
-                            "cwd": str(self._work_dir),
-                            "mcpServers": self._core_mcp_servers(),
-                            "_meta": {"_vendor.dev/session_file": session_file},
-                        },
-                        session_id=resume_sid,
-                        timeout=_INIT_TIMEOUT,
-                        session_files_dir=self._session_files_dir,
-                    )
-                    if self._session is not None:
-                        self._session_id = resume_sid
-                        self._resumed = True
-                        logger.info("ACP session resumed: %s", resume_sid)
-                except (AcpError, AcpTimeoutError):
-                    logger.info(
-                        "session/load failed for %s, falling back to session/new", resume_sid
-                    )
-            else:
-                logger.info("Session file missing for %s, skipping load", resume_sid)
+            load_params: dict[str, object] = {
+                "sessionId": resume_sid,
+                "cwd": str(self._work_dir),
+                "mcpServers": self._core_mcp_servers(),
+            }
+            if session_file is not None and session_file.exists():
+                load_params["_meta"] = {"_vendor.dev/session_file": str(session_file)}
+            try:
+                self._session = await conn.load_session(
+                    load_params,
+                    session_id=resume_sid,
+                    timeout=_INIT_TIMEOUT,
+                    session_files_dir=self._session_files_dir,
+                )
+                if self._session is not None:
+                    self._session_id = resume_sid
+                    self._resumed = True
+                    logger.info("ACP session resumed: %s", resume_sid)
+            except (AcpError, AcpTimeoutError):
+                logger.info("session/load failed for %s, falling back to session/new", resume_sid)
+        elif resume_sid:
+            logger.info(
+                "Agent does not advertise %s — no session/load for %s "
+                "(history bootstrap will restore the conversation)",
+                CAP_LOAD_SESSION,
+                resume_sid,
+            )
 
         # 3. Create a new session if load didn't succeed.
         if not self._session_id:

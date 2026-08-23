@@ -110,6 +110,55 @@ def _agent_provider_kind(agent: str | None) -> str:
     return "acp" if str(kind).startswith("acp") else "native"
 
 
+def _build_acp_runtime(
+    runtime_id: str,
+    *,
+    session_key: str | None,
+    agent: str | None,
+    model_override: str | None,
+    cwd: str | None,
+    channel_id: str | None,
+    **kwargs: Any,
+) -> "ModelProvider":
+    """Build the ``acp:<cli>`` agent runtime the caller NAMED, per session.
+
+    The per-session axes (agent/persona, model, cwd, channel) are threaded as kwargs
+    because they are properties of the SESSION, not of the global runtime entry — which
+    is exactly the contract ``acp_agent._factory`` already documents for each of them.
+    A missing or non-``acp_agent`` entry raises rather than falling back to a model:
+    silently answering a "run my CLI" request with a different runtime is the failure
+    this function exists to remove.
+    """
+    from personalclaw.llm.acp_agent import ACP_AGENT_CAPABILITY  # register_type() too
+    from personalclaw.llm.registry import get_default_registry
+
+    registry = get_default_registry()
+    try:
+        entry = registry.get_entry(runtime_id)
+    except Exception as exc:
+        raise ProviderResolutionError(
+            f"WHAT: the session is bound to agent runtime {runtime_id!r}, which is not "
+            f"registered\nWHY: its agent app is not installed or failed to register "
+            f"(the CLI may be missing from this machine)\nFIX: install/enable the "
+            f"matching agent app in the App Store, or rebind the session's runtime"
+        ) from exc
+    if entry.type != ACP_AGENT_CAPABILITY.type:
+        raise ProviderResolutionError(
+            f"WHAT: provider entry {runtime_id!r} is type {entry.type!r}, not an agent "
+            f"runtime\nWHY: only an {ACP_AGENT_CAPABILITY.type!r} entry can serve an "
+            f"``acp:`` binding\nFIX: rebind the session to a registered agent runtime"
+        )
+    return registry.build(
+        runtime_id,
+        session_key=session_key,
+        agent=agent or "",
+        model=model_override or "",
+        cwd=cwd or "",
+        channel_id=channel_id or "",
+        **kwargs,
+    )
+
+
 def _provider_entry_name(provider: "ModelProvider | None", *, use_case: str = "chat") -> str:
     """Best-effort name of the provider ENTRY a resolved ModelProvider came from.
 
@@ -646,6 +695,26 @@ def resolve_provider_for_use_case(
     # MODEL-axis resolvers must never see this key.
     if _kind == "acp" and _unattended:
         kwargs["unattended"] = True
+    # An explicit ``acp:<cli>`` NAMES the runtime to build — honour it here. Until now
+    # ``_kind`` was only ever read to SKIP the native builder below, and an ACP kind then
+    # fell through into the MODEL-axis resolution, which deliberately excludes
+    # ``acp_agent`` entries — so a session bound to ``acp:<cli>`` silently resolved the
+    # pinned chat model instead of its CLI. It hid because ``SessionManager``'s ACP
+    # connection-pool claim normally answers first and uses ``provider_kind`` directly;
+    # that claim is SKIPPED exactly when a resume id exists (a pooled connection has no
+    # prior session), so the ONE path that needs a real, resumable ACP client was the one
+    # path that never got one — this is gap 6's actual content (`G158`).
+    if _kind == "acp" and _provider_kind.startswith("acp:"):
+        return _build_acp_runtime(
+            _provider_kind,
+            session_key=session_key,
+            agent=agent,
+            model_override=model_override,
+            cwd=cwd,
+            # Arrives in kwargs (not a named parameter); popped so it is passed once.
+            channel_id=kwargs.pop("channel_id", None),
+            **kwargs,
+        )
     if not _force_model_axis and use_case in ("chat", "code_tools") and _kind == "native":
         # reasoning_effort_override is meaningful to the native runtime as the
         # per-turn effort, but the native builder's downstream (model-axis resolver)
