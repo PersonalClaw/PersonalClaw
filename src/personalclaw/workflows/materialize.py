@@ -21,7 +21,7 @@ import hashlib
 from dataclasses import dataclass, field
 from typing import Any
 
-from personalclaw.tasks.models import TaskStatus, WorkflowTaskBinding
+from personalclaw.tasks.models import TERMINAL_STATUSES, TaskStatus, WorkflowTaskBinding
 from personalclaw.workflows.models import InstanceState
 
 #: Materialized tasks per fan-out before the board collapses them into a parent with a counter.
@@ -116,6 +116,59 @@ def project_blocked_kind(
     if state in (InstanceState.SCOPE_VIOLATION, InstanceState.BLOCKED):
         return "needs_input"
     return FAILURE_TO_BLOCKED_KIND.get((failure_class or "").strip().lower(), "")
+
+
+#: Status strings a NON-NATIVE task provider may return for a state `TaskStatus` spells
+#: differently. Kept, not dropped, because `TaskSpec.to_fields` deliberately writes through the
+#: task FAÇADE, so a task this projection reads BACK can carry a provider's own vocabulary rather
+#: than the native enum. Measured before keeping it: `TaskStatus` has no `completed` member (it
+#: spells that state `done`), and `Task.from_dict` coerces an unknown status to OPEN — so without
+#: this row a provider's "completed" reads as work still to do and a phase gate waits on finished
+#: work forever. `personalclaw/task.py`'s `TaskState.COMPLETED` is a DIFFERENT domain (message
+#: lifecycle, one importer) and is not what this row exists for.
+_FOREIGN_STATUS_ALIASES: dict[str, TaskStatus] = {"completed": TaskStatus.DONE}
+
+
+def normalize_status(status: Any) -> TaskStatus | None:
+    """One task status as the native enum, or `None` when nothing recognizes it. `None` rather
+    than a default member because the two predicates below both mean "is this finished", and an
+    unknown status defaulting to a terminal one would report unfinished work as complete — the
+    one direction of error a gate must never make.
+    """
+    if isinstance(status, TaskStatus):
+        return status
+    raw = str(getattr(status, "value", status) or "").strip().lower()
+    if not raw:
+        return None
+    try:
+        return TaskStatus(raw)
+    except ValueError:
+        return _FOREIGN_STATUS_ALIASES.get(raw)
+
+
+def is_done(status: Any) -> bool:
+    """Whether a task is DONE specifically — the narrow reading, for callers that must not treat
+    a cancellation as an accomplishment (a loop's per-task completion check is one).
+    """
+    return normalize_status(status) is TaskStatus.DONE
+
+
+def is_resolved(status: Any) -> bool:
+    """Whether a task is terminal, i.e. whether it still owes anyone work. Derived from
+    `tasks.models.TERMINAL_STATUSES` rather than re-listing the members, so this stays ONE
+    vocabulary with the task graph's own dependency-satisfaction rule instead of becoming a
+    second dialect that drifts from it.
+
+    A cancelled blocker resolves its dependents — the canonical task graph and the cockpit
+    already agree on that, and the loop side's phase gate was written to the same rule (C432).
+
+    NOT resolved here: `SKIPPED`. That is the canonical tuple's reading, carried faithfully
+    rather than quietly widened — see this module's own `STATE_TO_STATUS`, which MINTS
+    `SKIPPED` from two engine states while the board maps `skipped` onto DONE. Reconciling
+    those three is an owner decision that moves `reconcile.py`'s dependency behavior, not
+    something this projection may decide on its own.
+    """
+    return normalize_status(status) in TERMINAL_STATUSES
 
 
 def fingerprint(*, source_ref: str = "", title: str = "", body: str = "") -> str:
