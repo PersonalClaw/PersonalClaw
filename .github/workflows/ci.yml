@@ -321,6 +321,19 @@ jobs:
       # -n/--dist, which pytest then can't parse with the xdist plugin disabled.
       - name: provider-boundary residue sweep (plan 32)
         run: uv run pytest tests/test_provider_boundary_residue.py -n0
+      # ── The gate AGGREGATE, finally executed ────────────────────────────────────────────────
+      # `make gates` (scripts/gate_report.py) is the one surface that reports all six ratchets
+      # together — config-baseline, inert-surface, docs-lint, and the three structural gates. It
+      # ran in NO workflow: every gate reached CI only through its own pytest counterpart, so a
+      # green build never showed the table an operator actually reads, and a gate with no pytest
+      # twin reached CI not at all.
+      #
+      # Run as the script rather than `make gates` so the failure names the gate instead of
+      # "make: *** [gates] Error 1", and placed in `rails` because that job is already the home
+      # for machine-checked invariants. It imports only `scripts/*` + stdlib, so it needs no
+      # PERSONALCLAW_HOME — consistent with this job's no-global-home contract.
+      - name: gate aggregate (make gates)
+        run: uv run python scripts/gate_report.py
 
   harness:
     # Self-verification gate (SELF-VERIFICATION SV-7): the repo-inner harness/ package
