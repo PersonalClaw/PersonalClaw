@@ -941,3 +941,94 @@ guard is a multi-line negated condition using `_SESSION_KEY_SEP`. The mutation s
 nothing and the suite stayed green at 15/15, which would have been reported as "the mutation was
 absorbed" if the applied-count check had not printed `0`. Grep the mutated form and assert the count
 before trusting any red *or* green. See [[a-mutation-that-lands-can-still-be-off-the-property-path]].
+
+- **2026-08-23 — `MRT-5` COMPLETE in code; the feedback SIGNAL is structurally zero today, and that is the
+  clause's own declared state. Atom stays `todo` only because this code is unmerged**; flip it when the PR
+  lands.
+  `MRT-4` shipped `MODES = ("off", "heuristic", "learned")` and `policy.py` named its own gap twice: *"Mode
+  `learned` is accepted and folded onto the heuristic here: the learned scoring stage is [MRT-5's]"* (39-41)
+  and *"The heuristic floor. `learned` lands here too **until MRT-5 scores the fold**"* (417). Three config
+  knobs — `hysteresis` 0.05, `cloud_quality_margin` 0.10, `min_samples` 5 — were parsed and **inert** for
+  want of a reader. This is that reader, wired as **Lever 4** of `route_refs`.
+  **The 60/40 score was NOT re-derived.** `stats._score`, `_ema` and the `feedback_n: 0` renormalisation
+  already existed (`stats.py:44-60`); all three thirds import and call them, asserted by AST with no
+  `0.6`/`0.4` literal anywhere in the new modules. Three copies of one formula is how the router and the
+  proposal end up disagreeing about which model is better.
+  **Hysteresis is a band, and the band is anchored at each band's BEST score.** Chaining off the previous
+  member would drift (0.90 → 0.86 → 0.82) and let a cheap, meaningfully worse ref overtake a better one
+  through individually-legal steps. Inside a band the incoming order stands and cost may reorder; outside
+  it, cost cannot. Probed at integration: `0.90 vs 0.88` (band 0.05) puts the cheap ref first, `0.90 vs
+  0.60` does not.
+  **`cloud_quality_margin` is a penalty applied BEFORE banding**, so it is asymmetric — an equal-scoring
+  cloud ref loses to local. Recorded consequence: with `hysteresis >= cloud_quality_margin` an equal pair
+  bands together and the incoming order stands (still never a cloud *promotion*); at the shipped defaults
+  it does not bite.
+  **Sub-threshold refs keep their incoming slot.** Demoting is a demotion on absent evidence and promoting
+  lets one lucky call outrank a long record — and `loader.py:2598-2604`'s own prose says that below the
+  floor *"the simple local-first rule stands"*, i.e. the incoming order IS the answer. Verified: a
+  1-sample 100% ref does not leapfrog a 20-sample 0.90.
+  **Propose-don't-write, asserted on the BYTES.** `propose` reads `routing_policy.json` before and after and
+  compares the file, not a key — with a vacuity floor driving a real `save_policy` in the same fixture home
+  to prove the harness can see a change. Acceptance is the only writer; a `{"source": "user"}` basis makes
+  `accept` return `False` and write **no table**, recording `status="refused"` + a `refusal_reason` so the
+  surface can explain rather than appear to do nothing — the only reading that satisfies "writes the
+  proposal_id basis" and "does not clobber a user basis" together. A raising SEL leaves an acceptance
+  **standing** (the table write already happened; rolling back would discard a human decision to protect an
+  audit line, and raising would report failure for a change that occurred).
+  **Cooldown keys on `(use_case, query_class, proposed[0])`** — the ref being promoted to first. Keying the
+  whole order lets a one-token tail reorder re-nag immediately; keying the pair alone swallows a genuinely
+  different finding ("try the *other* local model first") for a fortnight. Durable in the same file as the
+  queue, so it survives a restart. An unparseable rejection timestamp reads as **expired**: this module
+  never writes the table, so an extra proposal costs one notification, whereas a corrupt byte silencing a
+  real finding leaves the router quietly wrong forever.
+  **THE FINDING — the feedback signal exists as a KIND and cannot be attributed.** `JUDGE_VERDICT` is real
+  (`ledger/kinds.py:76`) and live, but **no producer stamps `(use_case, query_class, ref)`**: verified
+  field-by-field against both writers (`workflows/controller.py:2945` carries `instance_path, node_id,
+  epoch, template, verdict, status, evidence`; `loop/journal.py:121` carries `cycle` + `JudgeVerdict`),
+  zero hits for `use_case`, `query_class`, `model` or `provider` on either. A `step_completed` join on
+  `node_id` was available and **was refused**, because the controller stamps the JUDGE GATE's `node_id` —
+  that join attributes a PASS to the model that *issued* the verdict, making a lenient judge read as a
+  strong worker. `query_class` is computed only in `guardrails/model_call.py:170` and lands only in
+  `model_calls.jsonl`, which has no run/node coordinate and no `audit_id` on the ledger side, so there is
+  **no join key between the two stores** — the identical gap `MRT-3` recorded for spend, resolved the same
+  way: fold what is attributable, census what is not, state the gap. So `feedback_for` returns `(0.0, 0)`
+  on every real install and `_score` renormalises onto `success_rate` alone, which is exactly the clause's
+  *"renormalizing onto success_rate + feedback_n:0 when absent"*. The extractor picks the fields up the
+  moment a producer stamps them; **stamping them is producer-side work this atom does not own.**
+  **`quality_score` (0-5) is deliberately unused** — the loop producer carries it and the workflow producer
+  does not, so preferring it would make two producers non-comparable inside one cell: a fifth dialect of
+  the same measurement. An unrecognised verdict is **dropped**, not neutralised (0.5 is a number nobody
+  chose; 0.0 punishes a model for a parser gap), and `RETRY`/`REPLAN`/`ESCALATE`/`NEEDS_INPUT` are dropped
+  as control flow. `feedback_n` increments once per `event_id`, only for an attributable `PASS`/`REJECT` —
+  its falsification proves why: counting verdict-less events inflated n from 1 to 3, straight through the
+  `n >= 5` floor on nothing.
+  **Feedback is OVERLAID onto the in-memory fold, never written into `routing_stats.json`.** A judge verdict
+  is not a routing observation, and persisting it would make the fold's `feedback` field mean two different
+  things depending on which writer touched it last.
+  **An unpriced model costs `inf`, not `0.0`.** Zero would make every unpriced cloud model win each
+  within-band cost tie — the exact inverse of the local-first posture.
+  **THREE fixture bugs found while writing the seam test, each of which would have passed for the wrong
+  reason.** Recorded because they are the shape of a green test that measures nothing:
+  1. `master_enabled()` gates every mode on `routing.enabled`, whose default AND failure mode are both
+     `False` — so without overriding it every mode reads `off`, and an "off returns the bound order" test
+     passes while measuring the master switch. The fixture now asserts its own premise.
+  2. **The table's mode key is `"mode"`, not `MODE_KEY`.** `MODE_KEY` (`"routing_mode"`) is the
+     *settings-store* key the UI writes and `mode_for` consults FIRST; the table's fallback is the plain
+     `"mode"`. Writing `MODE_KEY` into the table sets nothing any reader looks at.
+  3. **`_use_case_entry` is a READ accessor** — it returns `{}` for an unlisted use case and does not
+     insert it, so mutating its result writes into a throwaway dict. Caught immediately by the
+     `assert mode_for(...) == mode` guard added after (2).
+  Also: in a bare `tmp_path` home `local_keys` is **empty** (local providers come from installed apps), so
+  the heuristic is a no-op there — the heuristic-vs-learned contrast test asserts that premise rather than
+  assuming a local-first reordering it would never observe.
+  **DISCOVERY — routing proposals are not reachable from the unified inbox apply path.**
+  `proposals_contract.py` (INU-7) closes its apply-case set to four — `action`, `workflow`,
+  `skill_promotion`, `app_callback` — and a routing-order change is none of them. So a proposal surfaces as
+  an `INFO` notification plus the `pending()` queue, and accept/reject are API-level today. Wiring it in
+  needs a fifth apply case in that file, which belongs to whichever atom owns the routing-proposal UI —
+  outside §6.3-6.4 and outside this fence.
+  **Notification went through the existing choke point on purpose.** `tests/test_notification_kinds.py`
+  AST-sweeps every literal `emit_attention_item(source=…, kind=…)` call and asserts the pair is registered
+  (registration also raises on a duplicate at import), so minting a pair would have been a new inventory
+  entry; `state.notify(notification_kinds.INFO, …)` is the same accessor `guardrails/rungs.py:488` uses
+  from a non-request context, with an already-registered kind.
