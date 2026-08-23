@@ -972,6 +972,37 @@ TOOL_META: dict[str, dict[str, Any]] = {
         ],
     },
     # ── personalclaw-automation (== mcp_automation._list_tools) ───────────────
+    # WF2LOO-9. Both share `automation_create`'s response type because they ARE that call — the
+    # separate names exist so the tool log distinguishes "the agent scheduled itself" from "the
+    # agent built the user an automation", not because the result differs.
+    "set_onetime_task": {
+        "response_type": "automation.create.result",
+        "error_codes": [],
+        "examples": [
+            {
+                "summary": "Wake yourself once to check on something",
+                "args": {
+                    "name": "Check the build",
+                    "when": "in 20 minutes",
+                    "message": "Check whether the release build finished and report the result",
+                },
+            }
+        ],
+    },
+    "set_recurring_task": {
+        "response_type": "automation.create.result",
+        "error_codes": [],
+        "examples": [
+            {
+                "summary": "Keep monitoring something on a cadence",
+                "args": {
+                    "name": "Weekday triage",
+                    "cadence": "every weekday at 9",
+                    "message": "Triage the inbox and surface anything that needs me",
+                },
+            }
+        ],
+    },
     "automation_create": {
         "response_type": "automation.create.result",
         "error_codes": [],

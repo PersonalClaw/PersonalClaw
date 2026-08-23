@@ -1042,6 +1042,26 @@ MCP_HUB_SCHEMAS: dict[str, ToolSchema] = {}
 # NL and gets the medium-string cap rather than a pattern, since its whole job is to accept the
 # sentence a user would type.
 MCP_AUTOMATION_SCHEMAS: dict[str, ToolSchema] = {
+    # WF2LOO-9's self-scheduling pair. Same field bounds as `automation_create`, because they
+    # reach the same constructor — a tool absent from this table skips validation entirely, so
+    # adding the tools without adding the schemas would have let an agent-supplied `name` or
+    # `message` past every length and pattern check on the way to the store.
+    "set_onetime_task": ToolSchema(
+        tool_name="set_onetime_task",
+        fields=[
+            FieldSpec("name", str, required=True, max_len=MAX_SHORT_STRING),
+            FieldSpec("when", str, required=True, max_len=MAX_MEDIUM_STRING),
+            FieldSpec("message", str, required=True, max_len=MAX_MEDIUM_STRING),
+        ],
+    ),
+    "set_recurring_task": ToolSchema(
+        tool_name="set_recurring_task",
+        fields=[
+            FieldSpec("name", str, required=True, max_len=MAX_SHORT_STRING),
+            FieldSpec("cadence", str, required=True, max_len=MAX_MEDIUM_STRING),
+            FieldSpec("message", str, required=True, max_len=MAX_MEDIUM_STRING),
+        ],
+    ),
     "automation_create": ToolSchema(
         tool_name="automation_create",
         fields=[

@@ -52,7 +52,7 @@ def _list_tools() -> list[dict[str, Any]]:
                 "`when` phrase is routed to the right trigger kind (file/clock/web_watch/…) — a "
                 "cadence becomes a cron schedule, an event becomes an event trigger. Give `when` "
                 "+ `name` + `message` (what the automation should do). Announced to you on "
-                "creation and capped at 20 agent-created automations."
+                "creation, and capped by workflows.self_schedule_max_outstanding."
             ),
             "inputSchema": {
                 "type": "object",
@@ -176,6 +176,63 @@ def _list_tools() -> list[dict[str, Any]]:
                 "required": ["confirm"],
             },
         },
+        {
+            # WF2LOO-9. `automation_create` can already build either of these — but an agent
+            # scheduling ITSELF is a different act from an agent building the user an automation,
+            # and the name is what makes the difference legible in the tool log and in the
+            # approval prompt. Both route through `T.create(created_by="agent")`, so they inherit
+            # the outstanding-task bound, the command screening and the announcement rather than
+            # re-implementing any of it.
+            "name": "set_onetime_task",
+            "description": (
+                "Schedule YOURSELF to do something ONCE at a later time, then stop. Use when you "
+                "need to wait for something outside this turn — 'check the build in 20 minutes', "
+                "'follow up tomorrow morning'. The task wakes you with `message` as the "
+                "instruction. Counts against your outstanding-task allowance; it frees a slot "
+                "when it fires, since a one-time task disables itself."
+            ),
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string", "description": "A short name for the task."},
+                    "when": {
+                        "type": "string",
+                        "description": "When to wake, in plain language: 'in 20 minutes', "
+                        "'tomorrow at 9am', '2026-09-01 14:00'.",
+                    },
+                    "message": {
+                        "type": "string",
+                        "description": "The instruction to give yourself when it fires.",
+                    },
+                },
+                "required": ["name", "when", "message"],
+            },
+        },
+        {
+            "name": "set_recurring_task",
+            "description": (
+                "Schedule YOURSELF to do something REPEATEDLY on a cadence — 'every weekday at "
+                "9', 'hourly', 'every Monday'. Use for ongoing monitoring you should keep doing "
+                "rather than a single follow-up. Counts against your outstanding-task allowance "
+                "for as long as it stays enabled, so pause or delete one you no longer need."
+            ),
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string", "description": "A short name for the task."},
+                    "cadence": {
+                        "type": "string",
+                        "description": "How often, in plain language: 'every weekday at 9', "
+                        "'hourly', 'every Monday at 08:00'.",
+                    },
+                    "message": {
+                        "type": "string",
+                        "description": "The instruction to give yourself each time it fires.",
+                    },
+                },
+                "required": ["name", "cadence", "message"],
+            },
+        },
     ]
 
 
@@ -207,6 +264,24 @@ def _call_tool_inner(name: str, args: dict[str, Any]) -> str:
             when=str(args.get("when") or ""),
             kind=str(args.get("kind") or ""),
             spec=args.get("spec") if isinstance(args.get("spec"), dict) else None,
+            message=str(args.get("message") or ""),
+            created_by="agent",
+        )
+    elif name == "set_onetime_task":
+        result = T.create(
+            store,
+            name=str(args.get("name") or ""),
+            when=str(args.get("when") or ""),
+            message=str(args.get("message") or ""),
+            created_by="agent",
+        )
+    elif name == "set_recurring_task":
+        # `cadence` is the caller-facing word (a recurrence, not an instant); `when` is what the
+        # NL router takes. Same routing either way — a cadence phrase becomes a cron spec.
+        result = T.create(
+            store,
+            name=str(args.get("name") or ""),
+            when=str(args.get("cadence") or ""),
             message=str(args.get("message") or ""),
             created_by="agent",
         )
