@@ -4798,7 +4798,7 @@
         {
           "id": "AAP-3",
           "title": "Phase 1 validation \u2014 kiro-cli end-to-end sweep",
-          "status": "todo",
+          "status": "done",
           "scope": "Phase 1 \u2014 VALIDATION (\u00a76 12-step checklist, kiro-cli column; incl. concurrent-sessions step 12)",
           "done_when": "mwinit freshness checked first (auth failures recorded as ENV not capability); checked-in verified matrix column for kiro-cli with every cell CONFIRMED or DIVERGED (personalclaw.json discovery, effort-pill, concurrent-sessions resolved) and findings in the gap inventory.",
           "deps": []
@@ -7495,11 +7495,6 @@
         "plan": "AAP"
       },
       {
-        "id": "AAP-3",
-        "title": "Phase 1 validation \u2014 kiro-cli end-to-end sweep",
-        "plan": "AAP"
-      },
-      {
         "id": "APE-3",
         "title": "Background worker SDK (sdk/background.py) + backend_runtime supervised hosting",
         "plan": "APE"
@@ -9962,9 +9957,9 @@
         "code": "AAP",
         "plan": "ACP-AGENT-PARITY",
         "total_atoms": 10,
-        "done": 1,
+        "done": 2,
         "in_progress": 0,
-        "todo": 9,
+        "todo": 8,
         "blocked": 0
       },
       {
