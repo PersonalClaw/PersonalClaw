@@ -13,11 +13,24 @@ The original design record is kept below — execution logs, measured findings a
 S78-S80 (#234-#236); the S69-S80 stacked-merge recovery landed as #239. Capture/propose/curate/
 inject/measure/self-model/refiner/inbox are live-wired through `context.py`, `after_turn_review.py`,
 `chat_runner.py`, `history.py`, the five `/api/learning/*` routes and the Learning page.
-🔴 **REMAINING:** `learning/accountability.py` and `learning/detectors.py` have **ZERO production
-importers** (AST audit 2026-08-04), so criterion 9's EFFECTIVE/HARMFUL verdict + auto-filed revert
-never runs; and `Cadence.SESSION_END`/`RUN_END` still have no live call sites (pinned by
-`assert_gate_covers_cadences()`, which is itself uncalled outside tests). Status corrected
-2026-08-04. (rev 2 — research-integrated 2026-07-12)
+✅ **The 2026-08-04 "REMAINING" block was CLOSED and is corrected here (measured 2026-08-22 against
+`origin/main` = `05bba66e`).** All three of its claims are now false, and both owning atoms
+(`WF2LEA-5`, `WF2LEA-7`) are `done` in `dag.json` — the header was contradicting its own rows and its
+own execution log, which is the first thing a session reads:
+· `learning/accountability.py` has **1** production importer — `learning/attribution.py` imports it
+  and calls `accountability.attribute` / `Outcome` / `MIN_RUNS`, which IS criterion 9's verdict path
+  (logged DONE 2026-08-09 under `WF2LEA-5`).
+· `learning/detectors.py` has **6** — `after_turn_review.py`, `learning/attribution.py`,
+  `learning/loop_end.py`, `learning/run_end.py`, `learning/template_gate.py`, `mcp_core.py`
+  (`WF2LEA-7`).
+· `Cadence.SESSION_END` is live at `dashboard/chat_utils.py:705`; `Cadence.RUN_END` at
+  `workflows/controller.py:4235` and `loop/watchdog.py:483`. `assert_gate_covers_cadences()` returns
+  `[]` — run, not read — so NO declared cadence is uncovered. That guard being called only from
+  tests is its design, not a gap: it is a source scan whose whole job is to be asserted by a test
+  (`tests/test_learning_accountability.py` pins both the empty gap set and a seeded phantom).
+Importer counts came from an AST index, not a grep: `detectors.py` shares its stem with ordinary
+prose and with an unrelated `web_source.DETECTOR_ORDER`, both of which a text scan reports as
+importers. (rev 2 — research-integrated 2026-07-12)
 
 ---
 
@@ -1795,3 +1808,61 @@ green; full suite green but for the known worktree-only `test_harness_validate.p
   tool scores out, that instruction becomes unfollowable for a turn (`tool_search` is the escape hatch and
   `reduced()` does warn). Pairing it with `skill_invoke` in `_CORE_NAMES` is a one-line change deliberately
   left out of #1551: it alters retrieval behaviour and deserves its own test.
+
+### 2026-08-22 — the header's 🔴 REMAINING block was three false claims; corrected and pinned
+
+**No atom flipped** — `WF2LEA-5` and `WF2LEA-7` were already `done`. This is a legibility fix to the
+plan HEADER, which is the first thing a session reads and was directing work at three items that
+ship.
+
+**Measured against `origin/main` = `05bba66e`.** The 2026-08-04 audit block claimed:
+
+| claim | measured |
+|---|---|
+| `learning/accountability.py` has ZERO production importers | **1** — `learning/attribution.py` imports it and calls `accountability.attribute` / `Outcome` / `MIN_RUNS`, i.e. criterion 9's verdict path |
+| `learning/detectors.py` has ZERO production importers | **6** — `after_turn_review.py`, `learning/attribution.py`, `learning/loop_end.py`, `learning/run_end.py`, `learning/template_gate.py`, `mcp_core.py` |
+| `Cadence.SESSION_END`/`RUN_END` have no live call sites | SESSION_END at `dashboard/chat_utils.py:705`; RUN_END at `workflows/controller.py:4235` and `loop/watchdog.py:483` |
+
+`assert_gate_covers_cadences()` was **run**, not read: it returns `[]`, so no declared cadence is
+uncovered. The header also treated that guard "being uncalled outside tests" as a gap — it is not.
+The function is a source scan whose entire job is to be asserted by a test, and
+`tests/test_learning_accountability.py` pins both the empty gap set and a seeded phantom cadence.
+
+**Counted by AST, not grep, and that mattered.** A text scan for `detectors` returns six files —
+`web_source.DETECTOR_ORDER`, a comment about "cheap detectors" in `agents/native/tool_retrieval.py`,
+several docstrings — **none of which import the module**. The stem is an ordinary English word here.
+
+**Pinned by `tests/test_learning_flywheel_wiring.py`.** Both modules shipped complete, well-tested and
+orphaned once; the atoms wired them and nothing pinned that. Delete the last call site and each module
+keeps passing its own unit tests forever while the behaviour it exists for stops — the same
+"present but inert" shape the original audit found, and a healthy-looking suite either way.
+
+**🪤 A general docs-lint check for this claim class was BUILT, MEASURED, and REJECTED.** Do not
+rebuild it. Added as a fourth `docs-lint` kind (`stale_zero_importer`: a doc claiming a module has no
+importers when it has some), it swept every tracked doc and reported 22 findings across 6 files —
+then inspection showed it cannot be made precise:
+
+* **a markdown table is one paragraph with no sentence-ending period**, so the claim's sentence scope
+  swallowed every module named in the table — that is where `gateway.py`, `history.py` and
+  `cli_commands.py` came from in `atomic/WF2LEA.md`;
+* **`**Done when:** … (module no longer has zero importers)` is an aspirational negation** that reads
+  identically to the claim it inverts;
+* **execution logs are full of past-tense narrative** — "shipped 1,096 lines … with zero importers in
+  `src/`" — describing gaps that were then closed. `WORKFLOWS-V2-WORK-CONTAINERS.md` even labels its
+  own block *"partially superseded — see the Execution log, which wins"*.
+
+Separating "has none" from "had none, then we fixed it" needs tense, not pattern matching, and a gate
+that flags correct history teaches people to delete the history. The generator was reverted; the
+narrow checkable fact is asserted for the two named modules instead.
+
+**Falsification.** Remove **all three** of `attribution.py`'s `accountability` import sites → the rail
+reds (`exit 1`, *"has NO production importer under src/personalclaw"*), then restores byte-identical.
+🪤 The first attempt removed **one of three** sites: the applied-count check passed, two importers
+remained, and the rail correctly stayed green — an incomplete mutation is not a falsification, and
+reporting that green as "the rail is insensitive" would have been wrong. The vacuity floor also
+earned itself organically: it failed on first run because `_importers` mapped `learning/__init__.py`
+to `learning.__init__`, a name nobody imports, so a module dozens of files import read as orphaned.
+The floor caught a real bug in the helper rather than in the code under test.
+
+**Gate.** `tests/test_learning_flywheel_wiring.py` 3 passed · `tests/test_learning_accountability.py`
++ `tests/test_docs_lint_baseline.py` below · `make lint` clean. No `web/` change; `dag.json` untouched.
