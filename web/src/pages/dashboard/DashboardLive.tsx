@@ -95,7 +95,7 @@ export function DashboardLiveProvider({ children }: { children: ReactNode }) {
 
   const loadApprovals = useCallback(() => { api.approvals().then(guard(setApprovals)).catch(() => {}) }, [])
   const loadInbox = useCallback(() => { api.inboxPending().then(guard(setInbox)).catch(() => {}) }, [])
-  const loadProposals = useCallback(() => { api.skillProposals().then(guard(setProposals)).catch(() => {}) }, [])
+  const loadProposals = useCallback(() => { api.skillProposals().then(guard((d) => setProposals(d.proposals))).catch(() => {}) }, [])
   const loadLoops = useCallback(() => { api.uLoops().then(guard(setLoops)).catch(() => {}) }, [])
   const loadTasks = useCallback(() => { api.readyTasks().then(guard(setTasks)).catch(() => {}) }, [])
   // 🔴 Keeps the archive split, which this call discarded (S165). The backend has returned

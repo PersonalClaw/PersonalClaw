@@ -1438,6 +1438,11 @@ export interface PromptSyntax { functions: PromptSyntaxFn[]; constructs: PromptS
 export interface SkillItem { key: string; name: string; description: string; always: boolean; path?: string; source: string; type: string; loaded_by_agents: string[]; integrity?: 'intact' | 'tampered' | 'unverified'; agent?: string }
 export interface EphemeralDraft { slug: string; title: string; body: string; created_at: string }
 export interface SkillProposal { id: string; slug: string; description: string; triggers: string; kind: string; refine_target?: string; session_key: string; created_at: string; status: string; procedure_preview: string }
+/** The most recent skill-ladder pass. `null` on the feed means the ladder has never
+ *  run — which is the only thing that distinguishes an idle ladder from a broken one
+ *  when `proposals` is empty. Both looked identical before this existed. */
+export interface SkillLadderReview { verdict: string; elapsed_ms: number; session_key: string; detail: string; at: string }
+export interface SkillProposalFeed { proposals: SkillProposal[]; lastReview: SkillLadderReview | null }
 export interface SkillProposalDetail extends SkillProposal { procedure_md: string; source_excerpt: string }
 export interface SkillIntegrity { name: string; integrity: 'intact' | 'tampered' | 'unverified'; ok: boolean; unlocked: boolean; mutated: string[]; missing: string[]; added: string[]; summary: string }
 export interface SkillFile { path: string; size: number }
@@ -4501,7 +4506,11 @@ export const api = {
    *  `personalclaw judge-bench`, because the full matrix is 540 judge calls and a click
    *  must not start one. 404 carries a distinct code for "no benchmark yet" vs "evals off". */
   judgeBench: () => get<JudgeBenchView>('/api/evals/judge-bench'),
-  skillProposals: () => get<{ proposals: SkillProposal[] }>('/api/skills/proposals').then((d) => d.proposals),
+  /** The proposals queue AND the ladder's last pass, from one read. Returns the whole
+   *  feed rather than unwrapping to the array: `lastReview` is what makes an empty
+   *  `proposals` falsifiable, and a second accessor over the same route would be two
+   *  reads of one collection — the drift this file's own callers already warn about. */
+  skillProposals: () => get<SkillProposalFeed>('/api/skills/proposals'),
   skillProposalDetail: (id: string) => get<SkillProposalDetail>(`/api/skills/proposals/${encodeURIComponent(id)}`),
   acceptSkillProposal: (id: string, edits?: { description?: string; procedure_md?: string }) =>
     post<{ ok: boolean; name: string }>(`/api/skills/proposals/${encodeURIComponent(id)}/accept`, edits ?? {}),

@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { fvs } from '../../design/fontWeight'
 import { Lightbulb, Loader2, Check, X, ChevronDown, ChevronRight, ShieldQuestion } from 'lucide-react'
-import { api, type SkillProposal, type SkillProposalDetail } from '../../lib/api'
+import { api, type SkillProposal, type SkillProposalDetail, type SkillProposalFeed, type SkillLadderReview } from '../../lib/api'
 import { Button } from '../../ui/Button'
 import { ListSkeleton, EmptyState, LoadError } from '../../ui/ListScaffold'
 import { useQuery, useMutation, invalidateKeys } from '../../lib/data'
@@ -15,9 +15,10 @@ export function SkillProposals() {
   // No `.catch(() => [])`. A swallowed rejection became an empty array, and "no skill proposals"
   // is a claim about the synthesizer — a user waiting on a proposal would read a failed read as
   // "it hasn't produced one yet" and stop looking.
-  const { data: proposals, error: loadErr, refresh } = useQuery<SkillProposal[]>(
+  const { data: feed, error: loadErr, refresh } = useQuery<SkillProposalFeed>(
     'skill-proposals', () => api.skillProposals(),
   )
+  const proposals = feed?.proposals
   // 🔴 ONE COLLECTION, TWO KEYS. `SkillsPage` reads the same proposals under
   // `skill-proposals-count` to render its "Proposals (N)" badge, so busting only this key left
   // the sibling number describing a collection that had already changed. `invalidateKeys`'s
@@ -32,7 +33,7 @@ export function SkillProposals() {
       <EmptyState
         icon={Lightbulb}
         title="No skill proposals"
-        hint="When the system synthesizes a skill from your sessions, it lands here and in your inbox for review — it's never installed automatically."
+        hint={emptyHint(feed?.lastReview ?? null)}
       />
     )
   }
@@ -53,6 +54,30 @@ export function SkillProposals() {
       {proposals.map((p) => <ProposalRow key={p.id} proposal={p} />)}
     </div>
   )
+}
+
+/** Verdicts that mean the pass WORKED (including deciding there was nothing to learn).
+ *  Listed as the allowlist, not its complement, so an UNMAPPED verdict reads as
+ *  "something to look at" — mirroring the backend, which logs an unrecognised verdict
+ *  at WARNING deliberately, because a default branch that swallows the unknown into
+ *  "all is well" is how this whole defect class reappears. */
+const LADDER_HEALTHY = new Set(['env_failure_claim', 'no_action', 'enqueue_skipped', 'filed', 'template_filed', 'template_declined'])
+
+/** What an empty queue MEANS, which it could not say before `lastReview` existed.
+ *
+ *  The old copy — "when the system synthesizes a skill it lands here" — was an
+ *  unfalsifiable promise: identical whether the reviewer had run a hundred times and
+ *  found nothing or had never run at all. Three states now, and the failure one is
+ *  named as a failure rather than dressed as patience. */
+export function emptyHint(last: SkillLadderReview | null): string {
+  if (!last) {
+    return 'The skill reviewer has not run yet. It runs after a substantial turn — one you corrected, or one that used several tools — and proposes here for review, never installing on its own.'
+  }
+  const when = new Date(last.at).toLocaleString()
+  if (!LADDER_HEALTHY.has(last.verdict)) {
+    return `The reviewer last ran ${when} but did not finish (${last.verdict}). That is a failure, not an idle queue — check the agent log and your background model provider.`
+  }
+  return `The reviewer ran ${when} and had nothing worth proposing. That is the healthy case: it only proposes when a session teaches it something durable, and it never installs on its own.`
 }
 
 function ProposalRow({ proposal }: { proposal: SkillProposal }) {

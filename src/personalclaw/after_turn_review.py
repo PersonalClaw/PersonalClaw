@@ -538,8 +538,29 @@ async def run_skill_ladder_review(
     finally:
         # In a `finally` so an exception escaping the pass is still reported as a verdict
         # rather than vanishing — the invisibility this exists to fix.
-        _log_ladder_verdict(verdict, (time.monotonic() - started) * 1000.0, session_key, detail)
+        _elapsed_ms = (time.monotonic() - started) * 1000.0
+        _log_ladder_verdict(verdict, _elapsed_ms, session_key, detail)
+        # Same choke point, second surface. The log line above answers "what happened"
+        # for an operator tailing logs at INFO; the marker answers "did this ever run"
+        # for anyone reading the API, which is the only surface the proposals queue has.
+        # `G44`: without it, `{"proposals": []}` means both "ran, proposed nothing" and
+        # "never ran", and no drive from outside can tell them apart. Recorded here
+        # rather than at the enqueue site on purpose — enqueueing is one of eleven
+        # verdicts, and the ten that file nothing are exactly the invisible ones.
+        _record_ladder_review(verdict, _elapsed_ms, session_key, detail)
     return summary
+
+
+def _record_ladder_review(verdict: str, elapsed_ms: float, session_key: str, detail: str) -> None:
+    """Persist the pass's verdict for the API. Never raises: see `record_review`."""
+    try:
+        from personalclaw.skills import proposals as _proposals
+
+        _proposals.record_review(
+            verdict=verdict, elapsed_ms=elapsed_ms, session_key=session_key, detail=detail
+        )
+    except Exception:  # pragma: no cover - defence in depth around a `finally`
+        logger.debug("skill-ladder review: last-run marker failed", exc_info=True)
 
 
 async def _ladder_pass(

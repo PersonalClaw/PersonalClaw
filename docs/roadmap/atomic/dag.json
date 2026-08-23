@@ -4782,7 +4782,7 @@
         {
           "id": "AAP-1",
           "title": "Phase 1 validation \u2014 claude-code end-to-end sweep",
-          "status": "todo",
+          "status": "done",
           "scope": "Phase 1 \u2014 VALIDATION (\u00a76 12-step checklist, claude-code column)",
           "done_when": "Checked-in verified matrix column for claude-code with every audit cell re-marked CONFIRMED or DIVERGED at runtime (zero UNKNOWN cells) and its findings entered in the severity-ranked (P0/P1/P2/P3) gap inventory; incidental in-session bugs fixed per campaign doctrine.",
           "deps": []
@@ -7485,11 +7485,6 @@
   "dag": {
     "ready_frontier": [
       {
-        "id": "AAP-1",
-        "title": "Phase 1 validation \u2014 claude-code end-to-end sweep",
-        "plan": "AAP"
-      },
-      {
         "id": "AAP-2",
         "title": "Phase 1 validation \u2014 codex end-to-end sweep",
         "plan": "AAP"
@@ -9962,9 +9957,9 @@
         "code": "AAP",
         "plan": "ACP-AGENT-PARITY",
         "total_atoms": 10,
-        "done": 1,
+        "done": 2,
         "in_progress": 0,
-        "todo": 9,
+        "todo": 8,
         "blocked": 0
       },
       {
