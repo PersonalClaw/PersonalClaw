@@ -59,6 +59,10 @@ def test_failure_records_error(monkeypatch):
     assert hook.last_status == "error"
 
 
-def test_blocked_records_blocked(monkeypatch):
+def test_ungated_block_records_advisory(monkeypatch):
+    """🔴 G89. This `_run` is a bare `run_script_hook` on a `Stop` hook — no gating caller, and no
+    block seam on the event either — so exit 2 was only ever a REQUEST to block. It used to record
+    `blocked`, the same overstatement T7 fixed for `launched`. `blocked` is now reserved for the
+    fire that honored it; `tests/test_hook_advisory_status.py` pins both sides."""
     hook = _run(ActionResult(success=False, blocked=True), monkeypatch)
-    assert hook.last_status == "blocked"
+    assert hook.last_status == "advisory"
