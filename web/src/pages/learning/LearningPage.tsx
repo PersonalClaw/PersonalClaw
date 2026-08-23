@@ -7,15 +7,16 @@ import { Segmented } from '../../ui/forms'
 import { InlineError } from '../../ui/InlineError'
 import { EmptyState, ListSkeleton, LoadError } from '../../ui/ListScaffold'
 import { useQuery } from '../../lib/data'
-import { api, type JudgeBenchView, type LearningHealth, type LearningInbox, type LearningRow, type StagingWeek } from '../../lib/api'
+import { api, type JudgeBenchView, type LearningHealth, type LearningInbox, type LearningRow, type StagingWeek, type StudyRow } from '../../lib/api'
 import { HealthPanel } from './HealthPanel'
 import { JudgeBenchPanel } from './JudgeBenchPanel'
+import { StudiesPanel } from './StudiesPanel'
 import { fvs } from '../../design/fontWeight'
 import {
   DAY_HINT, DAY_TONE, bulkBlockedReason, dayLabel, dayState,
   kindIcon, kindLabel, tierLabel, tierTone,
 } from './learningMeta'
-import { HEALTH_KEY, JUDGE_BENCH_KEY, WEEK_KEY, proposalsKey, refreshAfterDecision, refreshEverything } from './proposalCache'
+import { HEALTH_KEY, JUDGE_BENCH_KEY, STUDIES_KEY, WEEK_KEY, proposalsKey, refreshAfterDecision, refreshEverything } from './proposalCache'
 import { PageTitle } from '../../ui/PageTitle'
 
 /** The Learning page — the Proposal Inbox plus the capture week panel.
@@ -55,6 +56,13 @@ export function LearningPage() {
   const { data: judgeBench, error: judgeBenchError, refresh: refreshJudgeBench } = useQuery<JudgeBenchView>(
     JUDGE_BENCH_KEY,
     () => api.judgeBench(),
+  )
+  // Pre-registered studies (ES-5). `error` is read for the judge table's exact two reasons: a
+  // 404 ("no study registered") is this panel's ORDINARY state, and a swallowed failure would
+  // render an unreadable study tree as "no study has been graduated" — the opposite claim.
+  const { data: studies, error: studiesError, refresh: refreshStudies } = useQuery<{ studies: StudyRow[] }>(
+    STUDIES_KEY,
+    () => api.evalStudies(),
   )
 
   // Kind chips carry their counts, so a filter never has to be clicked to discover it is empty.
@@ -96,7 +104,7 @@ export function LearningPage() {
         right={
           <QuietButton
             title="Refresh"
-            onClick={() => refreshEverything(refreshProposals, refreshWeek, refreshHealth, refreshJudgeBench)}
+            onClick={() => refreshEverything(refreshProposals, refreshWeek, refreshHealth, refreshJudgeBench, refreshStudies)}
           >
             <RefreshCw size={14} /> Refresh
           </QuietButton>
@@ -125,6 +133,8 @@ export function LearningPage() {
           <HealthPanel health={health} error={healthError} onRetry={refreshHealth} />
 
           <JudgeBenchPanel bench={judgeBench} error={judgeBenchError} onRetry={refreshJudgeBench} />
+
+          <StudiesPanel studies={studies?.studies} error={studiesError} onRetry={refreshStudies} />
 
 
           <div className="flex flex-col gap-m">

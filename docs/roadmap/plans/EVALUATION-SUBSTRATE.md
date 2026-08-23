@@ -560,3 +560,80 @@ Sharpens, doesn't append: RunPin + scenario library extend **Session 1** (the st
   `test_portability.py` + `test_agent_reference.py` all pass; `web` typecheck clean, full
   `npm test` green (3214 tests) after adding the new `api.judgeBench` to three partial api mocks the
   Models/Learning panels' existing suites hold; `npm run build` clean.
+
+
+## Execution log — ES-5 (pre-registered template A/B studies) — §2 **PARTIAL**, atom stays `todo`
+
+- [2026-08-23][ES-5] **PARTIAL. The instrument is complete, honest and railed; nothing drives it.**
+  `evals/studies.py` (1611 lines) implements all of §2 — immutable pre-registration, the `locked/` check
+  DSL, a hash-pinned rubric with four-way invalidation, the worker-visible surface plus its leak guard,
+  supervisor-side `locked/` execution in the child output workspace, blinded position-swapped
+  median-of-3 judging, the agreement floor, and the verdict/persist/evidence/demotion/calibration path.
+  Eight of ten `done_when` clauses hold. **Two do not, and one of them is the sentence the criterion opens
+  with**, so the atom stays `todo`.
+
+- [2026-08-23][ES-5] 🔴 **UNMET clause 1 — "a flywheel template-diff RUNS a pre-registered study".**
+  There is no caller. `run_study` / `register_study` / `decide` / `emit_evidence` /
+  `file_demotion_proposal` have **zero production importers**; the only production importer of `studies`
+  is the read-only handler, and it imports just `study_index` / `study_view`. There is **no production
+  `ArmRunner`** — it is a bare type alias, and `arm_runner` is a required kwarg with no default, unlike
+  `caller: JudgeCaller | None = None` which falls back to `live_judge_caller`. So nothing can execute a
+  template arm. There is also **no invocation surface**: the sibling precedent is explicit — ES-4's
+  equally expensive `run_judge_bench` is invoked from `cli_commands.py:730` with a spend preflight and
+  `--dry-run`, and ES-5 has no equivalent. The handler docstring's phrase *"the RUN is a deliberate
+  invocation"* names a thing that does not exist.
+
+- [2026-08-23][ES-5] 🔴 **UNMET clause 2 — "over the harvested suite".** No harvested-suite →
+  `StudyCase` builder exists; the word `harvested` appears in `studies.py` only inside a comment
+  (line 116).
+
+- [2026-08-23][ES-5] **The drive deliberately did NOT bolt on a CLI command, and that was the right call.**
+  Without an `ArmRunner` a command could not run anything, and inventing an arm-execution seam over the
+  WF2 engine is a separate coherent scope. Everything the table below marks "(mechanism)" is exercised
+  only through injected seams. **Remaining scope for the follow-on session:** a production `ArmRunner`, a
+  harvested-suite case builder, a `register_study` hook on the flywheel's `file_template_diff`
+  (`learning/refiner_tools.py:73`), and a CLI command modelled on `_judge_bench`.
+
+- [2026-08-23][ES-5] **All four anti-cheat clauses carry a negative assertion AND a vacuity floor** —
+  which is the part of §2 that would otherwise ship inert. The `locked/`-leak guard is the best-guarded:
+  `_assert_absent` **raises if the token set is empty or the scan set is empty** (an empty negative
+  assertion is not an assertion), two tests prove those refusals, a third plants a locked phrase in a
+  template body and requires red, `MIN_LEAK_TOKEN_LEN = 4` refuses tokens too short to detect, and
+  `test_a_new_worker_payload_text_field_is_scanned_by_DEFAULT` makes a future field scanned by default.
+  Rubric pinning is checked in **both** directions (live rubric moved, and the study's own pinned copy
+  tampered), decided on the hash never an mtime, with a floor proving a no-op touch does **not**
+  invalidate. The position swap exchanges outputs for real and randomizes slot-A per (study, case,
+  trial), floored by *a position-biased judge produces NO winner*. The agreement floor is floored by *a
+  consistent judge clears it*, treats an unmeasurable rate as below every floor (`None` ≠ `0.0`), and
+  excludes `cannot_judge` from the denominator.
+- [2026-08-23][ES-5] **A config field that had no consumer now has one.** `judge_agreement_floor` was
+  documented and read nowhere (`judge_bench.py:145`); §2's floor makes it live.
+
+- [2026-08-23][ES-5] **Two shared-contract misses surfaced only in the FULL suite, not the targeted run.**
+  `studies_unreadable` / `study_absent` were emitted with no `HTTP_ERROR_CODES` row, and the two new
+  routes made the offline agent reference stale (753 → 755 agent-callable of 759). Both are the
+  wire-code/generated-artifact contracts that a feature-scoped test set cannot see. The reference
+  regeneration was verified to resolve **into the worktree**, with the main checkout's `reference/` at 0
+  dirty files before and after — the known "a generator run from a worktree writes the main checkout"
+  hazard did not fire.
+
+- [2026-08-23][ES-5] **`docs/design/consistency-audit.json` is a generated REPORTER, not a ratchet.**
+  `consistencyAudit.test.ts` rewrites it every run and never fails on drift. The commit was carrying a
+  self-contradicting copy (it still recorded `raw-button: 1` for `StudiesPanel.tsx`, generated before the
+  button fix). Regenerated; its honest delta is `filesScanned: 549 → 550`. The real ratchets
+  (`primitiveAdoption.baseline.json` at `rawButton: 265`, `tokenLint.allowlist.json`) are **untouched**,
+  and `web/src/design/` is entirely absent from the diff — `StudiesPanel.tsx` is held to the strict
+  token standard rather than allowlisted.
+
+| `done_when` clause | Status |
+|---|---|
+| k=5 paired old-vs-new | MET (mechanism) — `DEFAULT_K = 5` from `evals.study_default_k`, not a literal |
+| over the harvested suite | 🔴 **NOT MET** — no harvested → `StudyCase` builder |
+| immutable `registration.json` | MET — second write refused, read-only on disk, `locked/` 0600 in 0700 |
+| blinded median-of-3 position-swapped | MET |
+| agreement floor + `judge_unreliable` | MET |
+| `locked/` supervisor-side in the child workspace | MET — escaping path and unrunnable command both yield `verifier_absent`, never a silent pass |
+| verdict + agreement + artifacts on the Learning page | MET — 11 FE tests, incl. "never renders the locked checks or the rubric text" |
+| pass → evidence unit + `results.tsv` row | MET (mechanism) — a refused ledger pin is reported, not hidden |
+| fail → demotion/revert proposal | MET (mechanism) |
+| **a flywheel template-diff RUNS it** | 🔴 **NOT MET** — no caller, no `ArmRunner`, no CLI |
