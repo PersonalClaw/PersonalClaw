@@ -2231,7 +2231,8 @@
           "deps": [
             "AS-1",
             "EXT:INBOX-NOTIFICATIONS-UNIFICATION:S1-2 kind registry + inbox-as-attention-store"
-          ]
+          ],
+          "pr": 1932
         },
         {
           "id": "AS-9",
@@ -4785,7 +4786,8 @@
           "status": "done",
           "scope": "Phase 1 \u2014 VALIDATION (\u00a76 12-step checklist, claude-code column)",
           "done_when": "Checked-in verified matrix column for claude-code with every audit cell re-marked CONFIRMED or DIVERGED at runtime (zero UNKNOWN cells) and its findings entered in the severity-ranked (P0/P1/P2/P3) gap inventory; incidental in-session bugs fixed per campaign doctrine.",
-          "deps": []
+          "deps": [],
+          "pr": 1932
         },
         {
           "id": "AAP-2",
@@ -4793,7 +4795,8 @@
           "status": "done",
           "scope": "Phase 1 \u2014 VALIDATION (\u00a76 12-step checklist, codex column)",
           "done_when": "Checked-in verified matrix column for codex with every audit cell CONFIRMED or DIVERGED at runtime (zero UNKNOWN cells: compaction, slash commands, context-%, subagent inject-back resolved) and findings added to the severity-ranked gap inventory.",
-          "deps": []
+          "deps": [],
+          "pr": 1932
         },
         {
           "id": "AAP-3",
@@ -4801,7 +4804,8 @@
           "status": "done",
           "scope": "Phase 1 \u2014 VALIDATION (\u00a76 12-step checklist, kiro-cli column; incl. concurrent-sessions step 12)",
           "done_when": "mwinit freshness checked first (auth failures recorded as ENV not capability); checked-in verified matrix column for kiro-cli with every cell CONFIRMED or DIVERGED (personalclaw.json discovery, effort-pill, concurrent-sessions resolved) and findings in the gap inventory.",
-          "deps": []
+          "deps": [],
+          "pr": 1932
         },
         {
           "id": "AAP-4",
