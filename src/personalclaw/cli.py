@@ -524,16 +524,25 @@ Examples:
         "--force", action="store_true", help="Restore even if gateway is running"
     )
 
-    # inbound — read-only inbound surfaces (MCP-READONLY-INBOUND)
+    # inbound — the shared inbound access seam (EXTERNAL-ACCESS §1.1)
     inbound_parser = sub.add_parser(
-        "inbound", help="Manage read-only inbound surfaces (e.g. the MCP tool surface)"
+        "inbound", help="Manage the inbound access surfaces (openai, mcp, a2a, capture, bridge)"
     )
     inbound_sub = inbound_parser.add_subparsers(dest="inbound_command")
     inbound_token = inbound_sub.add_parser("token", help="Create or inspect a surface token")
     inbound_token.add_argument(
         "token_action", choices=("create", "show"), nargs="?", default="create"
     )
-    inbound_token.add_argument("surface", nargs="?", default="mcp", help="Surface name (mcp)")
+    # `choices` is deliberately NOT set from `EXTERNAL_ACCESS_SURFACES` here: importing
+    # the config loader at parser-build time would put a heavy module on every CLI
+    # invocation's import path. `inbound_cmd` validates against the single declaration
+    # and names the known set on a miss, so a typo still gets the full list.
+    inbound_token.add_argument(
+        "surface",
+        nargs="?",
+        default="mcp",
+        help="Surface name: openai, mcp, a2a, capture or bridge (default: mcp)",
+    )
     inbound_token.add_argument(
         "--rotate",
         action="store_true",

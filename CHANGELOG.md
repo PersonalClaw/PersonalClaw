@@ -1497,6 +1497,44 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Security
 
+- **Ways *in* now share one gate instead of each inventing their own.** The read-only MCP endpoint
+  used to be the only inbound surface, and it carried its own answer to "am I allowed to serve
+  this?". Four more surfaces are on the way, so that answer moved into one place they all pass
+  through — and it got considerably stricter on the way.
+  **Four switches stack, and any one of them says no.** A master switch that takes every inbound
+  surface down at once; a per-surface switch; a per-client switch, so you can cut off one
+  integration without turning off the surface it uses; and the guardrails incident flag, which
+  suspends every inbound request while unattended work is paused. All four are re-read on every
+  request, so turning one off takes effect on the next call — never on the next restart.
+  **Every one of them fails closed.** A missing, corrupt, or unreadable switch reads as *off*, an
+  unreadable incident file reads as *active*, and a client registry that will not parse
+  authenticates nobody. This is the opposite of how a *guard* flag behaves, and deliberately so: a
+  guard that cannot read its flag must keep protecting, while a door that cannot read its lock must
+  stay shut.
+  **A caller is now a client, not just a token.** Each integration gets its own record with a label
+  and its own bindings — which surfaces it may reach, which agent, which tools, what scope — and
+  those bindings are **pins, not defaults**: a request that asks for something it is not bound to is
+  refused and logged, never quietly given the bound value instead. Only a hash of each token is
+  stored, so revoking a client is deleting its record. Each client has its own rate ceiling, and one
+  that keeps hitting it is disabled automatically with a notification, rather than being throttled
+  forever in silence.
+  **And everything that comes back out is fenced.** Content returned to an external caller is
+  wrapped as data with its origin attached — down to which client asked — so a model reading it
+  cannot mistake it for instructions. Every request, allowed or refused, is written to an audit
+  trail, and the security-relevant ones also reach the security event log.
+
+- **Inbound settings and tokens moved, and old ones stop working.** The config section is now
+  `external_access` rather than `inbound`, so `personalclaw config set inbound.mcp.enabled true`
+  becomes `personalclaw config set external_access.mcp.enabled true` — plus the new master switch,
+  `external_access.enabled`, which must also be on. Surface tokens now live in the credential store
+  (your keychain, or `.env` at `0600`) instead of a bespoke `.inbound_<surface>_token` file, so an
+  existing MCP token needs re-minting with `personalclaw inbound token create mcp`. A token is also
+  now refused if it equals *another* surface's token — five surfaces sharing one bearer would
+  collapse five separately revocable credentials into one. `external_access.public_url` and
+  `allow_remote` are not editable from the dashboard at all: the endpoint refuses them rather than
+  ignoring them, because a security boundary that moves on one request is not a boundary. Client
+  records join snapshots and exports; the request audit trail deliberately does not.
+
 - **A `.env` reached a file checkpoint through a symlink.** File checkpoints — the backups behind
   `/rewind-to-turn` — never copy credential-shaped files like `.env`. That rule was applied to the
   name the agent wrote to, so a file called something harmless that was really a link to your `.env`

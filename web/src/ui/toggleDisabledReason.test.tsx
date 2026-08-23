@@ -151,7 +151,14 @@ describe('the triage, pinned per site', () => {
     // naming what unlocks it rather than going dark unexplained. Reasoned sites 4 → 5.
     // 🔺 16 → 17 (WF2KNO-12): the scheduled-report pause switch. An IN-FLIGHT switch (the only
       // thing that disables it is its own PUT), so it stays native and the reasoned count holds at 5.
-      expect(sites.length).toBe(17)
-    expect(sites.filter((m) => /disabledReason/.test(m[0])).length, 'five carry a reason; eleven stay native').toBe(5)
+    // 🔺 17 → 20 (EA-1): Settings → External Access gained three switches — the master inbound
+    // kill switch, the per-surface row, and the per-client enable. All three gate ONLY on their
+    // own in-flight PATCH/POST (`disabled={busy === …}`), so all three belong to the in-flight
+    // class and stay native: re-clicking a kill switch mid-flight is the failure being prevented,
+    // and a reason there would soften it. Reasoned count therefore holds at 5.
+    // A surface that is off for a PRECONDITION (no token yet) is explained on the row itself by
+    // the "not serving" pill naming the cause — not by disabling the control the user needs.
+      expect(sites.length).toBe(20)
+    expect(sites.filter((m) => /disabledReason/.test(m[0])).length, 'five carry a reason; fifteen stay native').toBe(5)
   })
 })

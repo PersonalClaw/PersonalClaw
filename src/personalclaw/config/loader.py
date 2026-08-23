@@ -657,6 +657,27 @@ def _expose_flag(value: object) -> bool:
     return False
 
 
+def _num(value: object, default: float) -> float:
+    """Coerce a config number, falling back to ``default`` for anything unparseable.
+
+    Needed because the cap fields below are read from a hand-editable `config.json`:
+    a bare `float("abc")` raises, and an exception inside `AppConfig.load()`'s single
+    expression does not degrade one field — it takes down the WHOLE config load, so a
+    typo in a rate limit would present as an instance that cannot start. Clamping to
+    a sane range is the dataclass's `__post_init__`; this only guarantees a number.
+    """
+    if isinstance(value, bool):  # `True` is an int in Python; a flag is not a rate.
+        return default
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, str):
+        try:
+            return float(value.strip())
+        except ValueError:
+            return default
+    return default
+
+
 # The readable-vault modes (MEMORY-GRAPH-AND-VAULT §5.1). Declared here, next to the
 # field, and imported by `memory_vault` + the memory settings handler so the three
 # readers cannot drift into three spellings of "two-way".
@@ -3696,9 +3717,37 @@ class ProactiveConfig:
             self.decision_default_horizon_days = 1
 
 
+#: The five inbound surfaces of the shared access seam (EXTERNAL-ACCESS §1.1).
+#: Declared HERE, beside the dataclass, and imported by `inbound.auth`, the client
+#: registry and the settings handler, so the five readers cannot drift into five
+#: spellings of the surface set — the failure that let `inbound.mcp` be the only
+#: surface anything actually knew about.
+EXTERNAL_ACCESS_SURFACES: tuple[str, ...] = ("openai", "mcp", "a2a", "capture", "bridge")
+
+
+def _ea_surface_data(section: dict, surface: str) -> dict:
+    """One surface's raw sub-section, or ``{}``.
+
+    Only the LOOKUP is factored out, deliberately not the field mapping: `load()` has to
+    contain the literal ``enabled=`` / ``allow_remote=`` assignments, because
+    `config-four-points` — the scanner whose whole job is catching a `_meta`-bearing field
+    that `load()` forgot — reads those names out of `load()`'s own body. Move them into a
+    helper and the scanner reports the fields as unmapped; it is right to, since it cannot
+    follow the indirection any more than a reader skimming for "where does allow_remote
+    get set?" can.
+
+    A sub-section that is not a dict — `mcp: true`, or a stray string — yields ``{}`` and
+    therefore both flags False. Fail-closed applies to the SHAPE as well as the value: a
+    malformed surface entry must not take the whole config load down, because an instance
+    that cannot start is an outage caused by a typo in a network switch.
+    """
+    raw = section.get(surface)
+    return raw if isinstance(raw, dict) else {}
+
+
 @dataclass
-class InboundSurfaceConfig:
-    """One inbound surface's switches (MCP-READONLY-INBOUND §C4).
+class ExternalAccessSurfaceConfig:
+    """One inbound surface's switches (EXTERNAL-ACCESS §1.1).
 
     Both default to the CLOSED position. `enabled` in particular is fail-closed by
     design: a missing or corrupt value reads False, because an inbound network
@@ -3709,38 +3758,107 @@ class InboundSurfaceConfig:
         default=False,
         metadata=_meta(
             "Enabled",
-            "Expose this read-only inbound surface. Off by default; also requires a "
-            "surface token (personalclaw inbound token create mcp). Loopback-only "
-            "unless allow_remote is on AND inbound.public_url is set.",
+            "Expose this inbound surface. Off by default; also requires the master "
+            "external_access.enabled switch AND a ≥32-byte surface token "
+            "(personalclaw inbound token create <surface>). Loopback-only unless "
+            "allow_remote is on AND external_access.public_url is set.",
         ),
     )
     allow_remote: bool = field(
         default=False,
         metadata=_meta(
             "Allow remote",
-            "Permit non-loopback callers. Requires inbound.public_url, and the "
-            "request's Host must match it exactly. Discouraged until the hardened "
-            "inbound layer lands — prefer an SSH tunnel to loopback.",
+            "Permit non-loopback callers. Requires external_access.public_url, and the "
+            "request's Host must match it exactly. Prefer an SSH tunnel to loopback. "
+            "The control bridge ignores this flag entirely — loopback-only forever.",
         ),
     )
 
 
 @dataclass
-class InboundConfig:
-    """Curated read-only ways IN (MCP-READONLY-INBOUND). Off unless configured."""
+class ExternalAccessConfig:
+    """The shared inbound access seam (EXTERNAL-ACCESS §1, §11). Off unless configured.
 
-    mcp: InboundSurfaceConfig = field(
-        default_factory=InboundSurfaceConfig,
+    Replaces MCP-READONLY-INBOUND's single-surface `InboundConfig` outright (clean
+    break, no `inbound` back-read): that section could only describe one surface, and
+    four more were arriving. The kill switches are LAYERED — master, per-surface,
+    per-client (`inbound_clients.json`) and the guardrails incident flag — and every
+    one of them parses fail-CLOSED, the inverse of `guard_flag`, because for an
+    *inbound* surface OFF is the safe state.
+    """
+
+    enabled: bool = field(
+        default=False,
+        metadata=_meta(
+            "Enabled",
+            "Master switch for every inbound surface. Off unmounts all five within one "
+            "config read. Fail-closed: an unreadable value reads OFF.",
+        ),
+    )
+    openai: ExternalAccessSurfaceConfig = field(
+        default_factory=ExternalAccessSurfaceConfig,
+        metadata=_meta("OpenAI-compatible API", "POST /v1/* — an agent behind an OpenAI dialect."),
+    )
+    mcp: ExternalAccessSurfaceConfig = field(
+        default_factory=ExternalAccessSurfaceConfig,
         metadata=_meta("MCP surface", "POST /mcp — JSON-RPC read-only tool surface."),
+    )
+    a2a: ExternalAccessSurfaceConfig = field(
+        default_factory=ExternalAccessSurfaceConfig,
+        metadata=_meta("A2A gateway", "Agent-to-agent inbound dialect."),
+    )
+    capture: ExternalAccessSurfaceConfig = field(
+        default_factory=ExternalAccessSurfaceConfig,
+        metadata=_meta("Capture proxy", "External-agent capture proxy (records full prompts)."),
+    )
+    bridge: ExternalAccessSurfaceConfig = field(
+        default_factory=ExternalAccessSurfaceConfig,
+        metadata=_meta("Control bridge", "Self-describing MCP control bridge. Loopback-only."),
     )
     public_url: str = field(
         default="",
         metadata=_meta(
             "Public URL",
             "The URL this instance answers to (e.g. https://pc.example.com). Required "
-            "for any non-loopback inbound access; the request Host must match it.",
+            "for any non-loopback inbound access; the request Host must match it. NOT "
+            "PATCH-editable — it is a security boundary, not a display setting.",
         ),
     )
+    rate_rps: float = field(
+        default=1.0,
+        metadata=_meta("Rate (req/s)", "Sustained per-client request rate (§1.3 cap override)."),
+    )
+    rate_burst: int = field(
+        default=20,
+        metadata=_meta("Burst", "Per-client token-bucket capacity, so a panel can batch a few."),
+    )
+    rate_concurrent: int = field(
+        default=4,
+        metadata=_meta("Concurrency", "Per-client in-flight request ceiling."),
+    )
+    auto_disable_after_breaches: int = field(
+        default=10,
+        metadata=_meta(
+            "Auto-disable after",
+            "Cap breaches within an hour before a client is auto-disabled (0 = never).",
+        ),
+    )
+    capture_retention_days: int = field(
+        default=30,
+        metadata=_meta("Capture retention (days)", "How long captured external sessions are kept."),
+    )
+
+    def __post_init__(self) -> None:
+        # Clamped HERE rather than at each reader: `caps.py`, the settings PATCH and a
+        # hand-edited config.json are three entry points, and a 0-rps bucket refuses
+        # every request forever — a config typo should not be a self-inflicted outage.
+        self.rate_rps = max(0.01, min(1000.0, float(self.rate_rps)))
+        self.rate_burst = max(1, min(10_000, int(self.rate_burst)))
+        self.rate_concurrent = max(1, min(256, int(self.rate_concurrent)))
+        self.auto_disable_after_breaches = max(
+            0, min(10_000, int(self.auto_disable_after_breaches))
+        )
+        self.capture_retention_days = max(0, min(3650, int(self.capture_retention_days)))
 
 
 @dataclass
@@ -4182,9 +4300,9 @@ class AppConfig:
         default_factory=FeedbackConfig,
         metadata=_meta("Feedback", "👍/👎 capture on AI judgments + accuracy thresholds."),
     )
-    inbound: InboundConfig = field(
-        default_factory=InboundConfig,
-        metadata=_meta("Inbound", "Curated read-only inbound surfaces (off by default)."),
+    external_access: ExternalAccessConfig = field(
+        default_factory=ExternalAccessConfig,
+        metadata=_meta("External Access", "The shared inbound access seam (off by default)."),
     )
     agents_routing: AgentsRoutingConfig = field(
         default_factory=AgentsRoutingConfig,
@@ -4374,7 +4492,12 @@ class AppConfig:
         if not isinstance(tools_data, dict):
             tools_data = {}
         feedback_data = data.get("feedback", {})
-        inbound_data = data.get("inbound", {}) or {}
+        external_access_data = data.get("external_access", {}) or {}
+        if not isinstance(external_access_data, dict):
+            # A non-dict section reads as absent, i.e. every surface OFF. Fail-closed
+            # applies to the SHAPE too: `external_access: "yes"` must not become a
+            # section whose `.get` raises past the surface flags into a default-on path.
+            external_access_data = {}
         durability_data = data.get("durability", {}) or {}
         evals_data = data.get("evals", {}) or {}
         proactive_data = data.get("proactive", {}) or {}
@@ -4848,14 +4971,71 @@ class AppConfig:
                 min_n=int(feedback_data.get("min_n", 5)),
                 window_days=int(feedback_data.get("window_days", 90)),
             ),
-            inbound=InboundConfig(
-                # Fail-CLOSED via `_expose_flag`: only an explicit true-spelling opens
-                # the surface. Plain `bool()` would read the string "false" as True.
-                mcp=InboundSurfaceConfig(
-                    enabled=_expose_flag((inbound_data.get("mcp") or {}).get("enabled")),
-                    allow_remote=_expose_flag((inbound_data.get("mcp") or {}).get("allow_remote")),
+            external_access=ExternalAccessConfig(
+                # Fail-CLOSED via `_expose_flag` at EVERY layer: only an explicit
+                # true-spelling opens anything. Plain `bool()` would read the string
+                # "false" as True — which on an inbound surface is a network exposure,
+                # not a cosmetic parse bug.
+                enabled=_expose_flag(external_access_data.get("enabled")),
+                # Spelled out one surface and one FIELD at a time, NOT built by a
+                # `**{s: … for s in EXTERNAL_ACCESS_SURFACES}` comprehension. The
+                # comprehension worked at runtime and `test_point_b_load_maps_every_field`
+                # proved it, but `config-four-points` — the scanner that exists precisely
+                # to catch a `_meta`-bearing field missing from this mapping — cannot see
+                # a field name that only exists as a loop variable, and reported all five
+                # surfaces (then `allow_remote`) as unmapped. The rule this mapping is the
+                # subject of has to be able to read it. Ten named lines are the cost, and
+                # adding a sixth surface now fails loudly here instead of being swept in.
+                openai=ExternalAccessSurfaceConfig(
+                    enabled=_expose_flag(
+                        _ea_surface_data(external_access_data, "openai").get("enabled")
+                    ),
+                    allow_remote=_expose_flag(
+                        _ea_surface_data(external_access_data, "openai").get("allow_remote")
+                    ),
                 ),
-                public_url=str(inbound_data.get("public_url", "") or ""),
+                mcp=ExternalAccessSurfaceConfig(
+                    enabled=_expose_flag(
+                        _ea_surface_data(external_access_data, "mcp").get("enabled")
+                    ),
+                    allow_remote=_expose_flag(
+                        _ea_surface_data(external_access_data, "mcp").get("allow_remote")
+                    ),
+                ),
+                a2a=ExternalAccessSurfaceConfig(
+                    enabled=_expose_flag(
+                        _ea_surface_data(external_access_data, "a2a").get("enabled")
+                    ),
+                    allow_remote=_expose_flag(
+                        _ea_surface_data(external_access_data, "a2a").get("allow_remote")
+                    ),
+                ),
+                capture=ExternalAccessSurfaceConfig(
+                    enabled=_expose_flag(
+                        _ea_surface_data(external_access_data, "capture").get("enabled")
+                    ),
+                    allow_remote=_expose_flag(
+                        _ea_surface_data(external_access_data, "capture").get("allow_remote")
+                    ),
+                ),
+                bridge=ExternalAccessSurfaceConfig(
+                    enabled=_expose_flag(
+                        _ea_surface_data(external_access_data, "bridge").get("enabled")
+                    ),
+                    allow_remote=_expose_flag(
+                        _ea_surface_data(external_access_data, "bridge").get("allow_remote")
+                    ),
+                ),
+                public_url=str(external_access_data.get("public_url", "") or ""),
+                rate_rps=_num(external_access_data.get("rate_rps"), 1.0),
+                rate_burst=int(_num(external_access_data.get("rate_burst"), 20)),
+                rate_concurrent=int(_num(external_access_data.get("rate_concurrent"), 4)),
+                auto_disable_after_breaches=int(
+                    _num(external_access_data.get("auto_disable_after_breaches"), 10)
+                ),
+                capture_retention_days=int(
+                    _num(external_access_data.get("capture_retention_days"), 30)
+                ),
             ),
             agents_routing=AgentsRoutingConfig(
                 enabled=bool(agents_routing_data.get("enabled", True)),
@@ -5328,7 +5508,7 @@ class AppConfig:
             "inbox": asdict(self.inbox),
             "tools": asdict(self.tools),
             "feedback": asdict(self.feedback),
-            "inbound": asdict(self.inbound),
+            "external_access": asdict(self.external_access),
             "agents_routing": asdict(self.agents_routing),
             "planning": asdict(self.planning),
             "loops": asdict(self.loops),

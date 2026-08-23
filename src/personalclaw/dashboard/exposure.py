@@ -37,17 +37,18 @@ def public_url(cfg: Any | None = None) -> str:
     """The configured public URL, or "" when this instance is not declared exposed.
 
     Prefers `dashboard.public_url` (this plan's field, describing the human dashboard) and falls
-    back to `inbound.public_url` (MCP-READONLY-INBOUND's field). The fallback is deliberate: an
-    operator who already declared their public URL for the inbound surface has already told us
-    the box is exposed, and making them say it twice would mean the dashboard stayed unhardened
-    on an instance already known to be reachable.
+    back to `external_access.public_url` (the inbound seam's field — `inbound.public_url` before
+    EA-1 renamed the section). The fallback is deliberate: an operator who already declared their
+    public URL for the inbound surface has already told us the box is exposed, and making them say
+    it twice would mean the dashboard stayed unhardened on an instance already known to be
+    reachable.
     """
     try:
         c = cfg if cfg is not None else _cfg()
         declared = str(getattr(c.dashboard, "public_url", "") or "").strip()
         if declared:
             return declared
-        return str(getattr(c.inbound, "public_url", "") or "").strip()
+        return str(getattr(c.external_access, "public_url", "") or "").strip()
     except Exception:  # noqa: BLE001
         logger.debug("could not read the public URL", exc_info=True)
         return ""

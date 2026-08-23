@@ -15,9 +15,9 @@ that is not a setting you can change.
 ## The one hard limit: same machine, full stop
 
 The MCP surface answers a client on **loopback** (`127.0.0.1` / `::1`) and refuses everything
-else. There are two config fields that look like they lift that — `inbound.mcp.allow_remote` and
-`inbound.public_url` — and **they do not work for an MCP client.** Do not spend an evening on
-them.
+else. There are two config fields that look like they lift that — `external_access.mcp.allow_remote`
+and `external_access.public_url` — and **they do not work for an MCP client.** Do not spend an
+evening on them.
 
 Why: the gateway's CSRF middleware runs before the MCP surface does, and it only trusts a request
 with no `Origin` header when the peer is loopback. A browser always sends `Origin`; an MCP client
@@ -95,42 +95,52 @@ personalclaw inbound token create mcp
 
 ```
 ✅ Created the mcp inbound token.
-📁 /Users/you/.personalclaw/.inbound_mcp_token (0600)
+🔑 stored as PERSONALCLAW_INBOUND_MCP_TOKEN in the credential store (keychain, else .env at 0600)
 
 Copy it into your client now — it is not shown again:
 
     Authorization: Bearer <a long random string>
 
-Then enable the surface:
-    personalclaw config set inbound.mcp.enabled true
-The surface is loopback-only until you set inbound.public_url + allow_remote.
+Then enable the surface (BOTH switches — the master gate is separate):
+    personalclaw config set external_access.enabled true
+    personalclaw config set external_access.mcp.enabled true
+The surface is loopback-only until you set external_access.public_url + external_access.mcp.allow_remote.
 ```
 
 **Copy it now.** There is no command that prints it again — `personalclaw inbound token show mcp`
 confirms a valid token exists and deliberately does not reveal it:
 
 ```
-✅ mcp: a valid token is configured (/Users/you/.personalclaw/.inbound_mcp_token)
+✅ mcp: a valid token is configured (PERSONALCLAW_INBOUND_MCP_TOKEN, credential store)
    The value is intentionally not printed — rotate if you've lost it.
 ```
 
 If you lose it, mint a new one (see [Rotating the token](#rotating-the-token)) — that is cheaper
 than a credential you can read back out of the CLI.
 
-> The last line of that output oversells things: `inbound.public_url` + `allow_remote` do **not**
-> get you off-machine access. See [the hard limit](#the-one-hard-limit-same-machine-full-stop).
+> The last line of that output oversells things: `external_access.public_url` + `allow_remote` do
+> **not** get you off-machine access. See
+> [the hard limit](#the-one-hard-limit-same-machine-full-stop).
 
 ---
 
 ## Step 2 — turn the surface on
 
+There are **two** switches, and the surface answers only when both are on. The master switch is
+what makes "turn every inbound surface off" one command instead of five:
+
 ```bash
-personalclaw config set inbound.mcp.enabled true
+personalclaw config set external_access.enabled true      # master gate, all surfaces
+personalclaw config set external_access.mcp.enabled true   # this surface
 ```
 
 ```
-✅ inbound.mcp.enabled = true
+✅ external_access.enabled = true
+✅ external_access.mcp.enabled = true
 ```
+
+If you set only the second one, every request still returns `{"error": "not found"}` — the master
+gate is off and an off surface deliberately does not confirm its own existence.
 
 The surface fails **closed**: a missing, unreadable, or `false` flag reads as disabled, and so
 does a missing or too-short token. Both must be right or `/mcp` does not exist.
@@ -264,10 +274,12 @@ the counter-offer working. If you see all four lines, your editor will connect t
 
 ## The kill switch
 
-One command, and it takes effect on the **next call** — no restart:
+One command, and it takes effect on the **next call** — no restart. Either switch does it, and the
+master one takes every inbound surface down at once:
 
 ```bash
-personalclaw config set inbound.mcp.enabled false
+personalclaw config set external_access.mcp.enabled false   # just this surface
+personalclaw config set external_access.enabled false       # all of them
 ```
 
 Enablement is re-checked on every request, so the surface stops answering immediately:
@@ -308,7 +320,7 @@ personalclaw inbound token create mcp --rotate
 Without `--rotate` the command refuses rather than clobbering an existing token:
 
 ```
-❌ A token already exists at /Users/you/.personalclaw/.inbound_mcp_token.
+❌ A token already exists for mcp (PERSONALCLAW_INBOUND_MCP_TOKEN).
    Re-run with --rotate to replace it (the old token stops working).
 ```
 
@@ -322,7 +334,8 @@ client holding the old token will get `401` until you do.
 | What you see | What it means |
 |---|---|
 | plain-text `404: Not Found` | route never mounted — the flag or token was not in place when the gateway started. Fix, then **restart** (step 3). |
-| JSON `{"error": "not found"}` | route is mounted, `inbound.mcp.enabled` is `false`. Set it back to `true` — it takes effect on the next call, no restart. |
+| JSON `{"error": "not found"}` | route is mounted, but a switch is off — `external_access.enabled` **or** `external_access.mcp.enabled`. Check both; the master one is easy to forget. It takes effect on the next call, no restart. |
+| `{"error": "..."}` (503) | an incident is active (`~/.personalclaw/incident.json`). Every inbound surface is suspended while unattended work is paused; resume from Settings → Guardrails. |
 | `405 Method Not Allowed` on a `GET` | correct. The surface is POST-only; this is the mounted-and-healthy signal. |
 | `{"error": "unauthorized"}` (401) | missing, malformed, or stale `Authorization: Bearer` header. Rotate and re-copy. |
 | `CSRF check failed: request origin not allowed.` (403) | you are reaching the gateway from off the machine. This is the 403 you will actually get, and it is not fixable by config — see [the hard limit](#the-one-hard-limit-same-machine-full-stop). |

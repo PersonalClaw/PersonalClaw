@@ -2,7 +2,7 @@ import { useEffect } from 'react'
 import {
   Palette, Plug, Bell, Cpu, Shield, ShieldAlert, Database, User, MessageSquare, Bot, Inbox,
   FolderSync, ScrollText, Archive, AudioLines, DownloadCloud, FileText, ChevronRight, Search, Blocks, Activity, Scissors, Compass, Stethoscope, ThumbsUp,
-  HardDriveDownload, Coins, Route, LayoutDashboard, Rss, Package, Smartphone, MonitorSmartphone,
+  HardDriveDownload, Coins, Route, LayoutDashboard, Rss, Package, Smartphone, MonitorSmartphone, Plug2,
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { TopBar } from '../../ui/TopBar'
@@ -37,6 +37,7 @@ import { CompanionPanel } from './CompanionPanel'
 import { DevicesPanel } from './DevicesPanel'
 import { SourcesPanel } from './SourcesPanel'
 import { PacksPanel } from './PacksPanel'
+import { ExternalAccessPanel } from './ExternalAccessPanel'
 import { GuardrailsPanel } from './GuardrailsPanel'
 import { DoctorPanel } from './DoctorPanel'
 import { AppsPanel } from './AppsPanel'
@@ -81,6 +82,9 @@ const SUBPAGES: SubPage[] = [
   // transport settings, not a list of devices.
   { id: 'devices', label: 'Devices', icon: MonitorSmartphone, render: () => <DevicesPanel /> },
   { id: 'guardrails', label: 'Guardrails', icon: ShieldAlert, render: () => <GuardrailsPanel /> },
+  // Beside Guardrails on purpose: "what can reach in, and can I cut it off" is the same
+  // question Guardrails asks about what can act. EXTERNAL-ACCESS §1.5.
+  { id: 'external-access', label: 'External access', icon: Plug2, render: () => <ExternalAccessPanel /> },
   { id: 'audit', label: 'Audit log', icon: ScrollText, render: () => <AuditPanel /> },
   { id: 'doctor', label: 'Doctor', icon: Stethoscope, render: () => <DoctorPanel /> },
   { id: 'diagnostics', label: 'Diagnostics', icon: Activity, render: () => <DiagnosticsPanel /> },
