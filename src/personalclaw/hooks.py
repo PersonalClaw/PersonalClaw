@@ -221,6 +221,13 @@ def hook_enforcement(event: str, *, enabled: bool, bound: bool) -> str:
     the events that have no blocking seam at all, so an unbound ``Stop`` hook is not mislabelled
     as a disarmed control. Never returns ``enforcing`` on a maybe: an unresolvable binding is
     reported ``not_enforcing``, because a control that only *looks* armed is worse than none.
+
+    **This is the hook's CAPABILITY, not a record of a fire (G89).** A hook can be
+    ``enforcing`` — bound, enabled, blocking event — and still be *reached* through the
+    informational seam for a given tool call, because an ACP ``EVENT_TOOL_CALL`` frame arrives
+    already auto-approved. What that individual fire did is
+    ``advisory`` vs ``blocked`` on the hook's ``last_status``; the two fields
+    answer different questions and both are needed to read the row.
     """
     if event not in BLOCKING_EVENTS:
         return ENFORCEMENT_ADVISORY
@@ -617,7 +624,11 @@ class ScriptHook:
     timeout: int = 30  # seconds
     enabled: bool = True
     last_run: float = 0.0
-    last_status: str = ""  # "ok", "error", "timeout", "blocked"
+    # "ok" | "error" | "timeout" | "launched" | "queued" | "skipped_incident" | "held_for_rung" |
+    # "blocked" (the exit-2 block was HONORED, or guardrails refused the action) | "advisory" (the
+    # script asked to block and the seam could not honor it — G89). Every literal must have a key
+    # in `triggers.history.HOOK_STATUS_TO_OUTCOME`, which reports an unmapped one as a failure.
+    last_status: str = ""
     run_count: int = 0
 
     def to_dict(self) -> dict:
@@ -664,9 +675,23 @@ class ScriptHookResult:
 
 
 async def run_script_hook(
-    hook: ScriptHook, context: str = "", hook_event: dict | None = None
+    hook: ScriptHook,
+    context: str = "",
+    hook_event: dict | None = None,
+    *,
+    enforced: bool = False,
 ) -> ScriptHookResult:
-    """Dispatch hook execution through its registered ActionProvider."""
+    """Dispatch hook execution through its registered ActionProvider.
+
+    ``enforced`` declares that THIS fire's result is consumed as a gate — the caller reads the
+    exit-2 signal and rejects the tool. It decides which status an exit 2 records: ``blocked``
+    when the block was honored, ``advisory`` when it was only reported (G89).
+
+    **The default is False on purpose.** Every caller that does not gate — the informational
+    :func:`fire_tool_hooks` seam, the "Run now" button in the trigger UI, any future site — gets
+    the honest status without knowing this parameter exists. Claiming enforcement has to be
+    opt-in, for the same reason :func:`hook_enforcement` never returns ``enforcing`` on a maybe.
+    """
     import os
 
     from personalclaw.action_providers import get_action_provider
@@ -791,7 +816,18 @@ async def run_script_hook(
 
     hook.last_run = time.time()
     if result.blocked:
-        hook.last_status = "blocked"
+        # 🔴 REPORTED ≠ ENFORCED (G89). `ActionResult.blocked` is a REQUEST ("PreToolUse exit_code 2
+        # is a block signal"), not evidence that anything was stopped, and only the gating seam
+        # turns it into a refusal. Writing `blocked` for any exit 2 is what let an informational
+        # fire report `blocked` beside `enforcement: enforcing` while the out-of-workspace write it
+        # claimed to stop landed on disk — measured on codex and again on claude-code, where the
+        # hook fired 3× and the file still held its content. Worse than inert: it reported success.
+        #
+        # `advisory` is deliberately the same word as `ENFORCEMENT_ADVISORY`: one vocabulary, two
+        # levels. `enforcement` says whether this hook CAN block; this says whether the last fire
+        # DID. Both are needed — a bound, enforcing hook still reaches this branch when an ACP
+        # `EVENT_TOOL_CALL` frame arrives already auto-approved.
+        hook.last_status = "blocked" if enforced else "advisory"
     elif result.success:
         # Honest "started ≠ succeeded" (T7): a fire-and-forget action (run-prompt/
         # run-workflow/invoke-agent) only LAUNCHED a background turn — record
@@ -929,6 +965,11 @@ class ScriptHookStore:
         ``subagent_id``/``parent_session_key``/``agent_role`` (E11-P3) attribute a
         fire to the subagent that triggered it; they ride the event payload and
         are absent for top-level fires.
+
+        **This path never enforces (G89).** Its results are returned but no caller gates on
+        them — :func:`fire_tool_hooks`, ``subagent`` and ``llm_helpers`` reach it when the tool is
+        already running — so an exit 2 here records ``advisory``, not ``blocked``.
+        Use :meth:`fire_for_ids` for the gating seam.
         """
         return await self._fire(
             event,
@@ -969,6 +1010,12 @@ class ScriptHookStore:
 
         ``subagent_id``/``parent_session_key``/``agent_role`` (E11-P3) attribute the
         fire to a subagent; additive optional payload fields, absent at top level.
+
+        **This is the gating seam, and that is why it passes ``enforced=True`` (G89).** Both of
+        its callers — ``chat_runner._fire`` and ``provider_bridge``'s ``hook_fire`` — turn an
+        exit-2 result into the ``BLOCKED:`` sentinel that rejects the tool, so a block recorded
+        from here really happened. A future caller that ignores the results would make the status
+        a lie again; ``test_hook_advisory_status`` pins the two that exist.
         """
         if not hook_ids:
             return []
@@ -981,6 +1028,7 @@ class ScriptHookStore:
             tool_response=tool_response,
             hook_ids=allow,
             depth=depth,
+            enforced=True,
             subagent_id=subagent_id,
             parent_session_key=parent_session_key,
             agent_role=agent_role,
@@ -996,12 +1044,19 @@ class ScriptHookStore:
         tool_response: dict | None = None,
         hook_ids: "set[str] | None" = None,
         depth: int = 0,
+        enforced: bool = False,
         subagent_id: str = "",
         parent_session_key: str = "",
         agent_role: str = "",
     ) -> list[ScriptHookResult]:
         """Shared firing core. ``hook_ids`` (when not None) restricts firing to
-        that allow-set of hook ids; None fires every enabled matching hook."""
+        that allow-set of hook ids; None fires every enabled matching hook.
+
+        ``enforced`` rides down to :func:`run_script_hook` so an exit 2 is recorded as a real
+        ``blocked`` only on the gating seam (G89). It is ANDed with
+        :data:`BLOCKING_EVENTS` here: ``PreToolUse`` is the one event with a block seam at all, so
+        a ``Stop`` hook that exits 2 records ``advisory`` no matter who fired it — there was
+        nothing for it to block."""
         import os
 
         results = []
@@ -1039,7 +1094,12 @@ class ScriptHookStore:
                         continue
                 elif context and not fnmatch.fnmatch(context.lower(), hook.matcher.lower()):
                     continue
-            result = await run_script_hook(hook, context, hook_event)
+            result = await run_script_hook(
+                hook,
+                context,
+                hook_event,
+                enforced=enforced and event in BLOCKING_EVENTS,
+            )
             results.append(result)
             logger.info(
                 "Hook %s (%s): %s in %dms (exit=%d)",
@@ -1096,6 +1156,11 @@ async def fire_tool_hooks(
     Note: For EVENT_TOOL_CALL, hooks are informational only. The tool is
     already running (auto-approved by ACP agent), so hook results cannot
     block execution. Hook scripts can log, audit, or trigger side effects.
+
+    A hook that exits 2 here therefore records ``last_status`` ``advisory``, never
+    ``blocked`` — measured on codex and claude-code alike, this seam reported a block while the
+    write it "blocked" landed on disk (G89). :meth:`ScriptHookStore.fire` owns that decision, so
+    this function stays a thin adapter.
 
     ``subagent_id``/``parent_session_key``/``agent_role`` (E11-P3) attribute the
     fire to the subagent that ran the tool; omitted for top-level tool calls.

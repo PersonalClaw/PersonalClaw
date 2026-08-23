@@ -324,11 +324,52 @@ class AcpClient:
 
     # ── live per-session reconfig (pool post-claim + per-turn) ──────────────────
     # The dialect's set_* requests are SESSION-SCOPED (carry sessionId); issued on
-    # the connection's send path, mirroring AcpSessionProvider. Fire-and-forget
-    # (adapters usually send no response). A dialect with no verb returns None → no-op.
+    # the connection's send path, mirroring AcpSessionProvider. Fire-and-forget but NOT
+    # reply-blind: both Zed adapters DO answer every ``session/set_config_option``
+    # (measured), so the correlated future is watched for a rejection instead of being
+    # discarded. A dialect with no verb returns None → no-op.
+    def _watch_dialect_reply(self, method: str, params: dict, rid, fut) -> None:
+        """Surface an adapter's REJECTION of a session-config frame instead of
+        dropping it on the floor.
+
+        ``AcpConnection.send_request`` registers the pending future and returns
+        WITHOUT awaiting it, and every ``session/set_*`` send site here discarded
+        that future — so the adapter's answer was garbage-collected unread. The
+        comment justifying it ("adapters usually send no response") is false:
+        measured live, BOTH Zed adapters answer every ``session/set_config_option``.
+        The consequence was the worst kind of silence — codex-acp answered
+        ``-32602 Invalid params`` to §2.2's host-authority permission mode on every
+        single session, kept its own default-allow mode, and nothing logged it, so
+        the mode read as forwarded when it had been refused.
+
+        A done-callback rather than an ``await``: the send stays fire-and-forget, so
+        neither the handshake nor a per-turn reconfig pays latency for an adapter
+        that answers slowly or not at all, and a rejection still becomes a warning.
+        """
+
+        def _on_done(f: "asyncio.Future") -> None:
+            try:
+                resp = f.result()
+            except Exception:
+                return  # cancelled / process gone — the send is best-effort by design
+            err = getattr(resp, "error", None)
+            if err:
+                logger.warning(
+                    "ACP adapter REJECTED %s (%s=%r) rid=%s: %r — the setting did NOT "
+                    "apply and the session keeps the adapter's own value",
+                    method,
+                    params.get("configId") or "value",
+                    params.get("value"),
+                    rid,
+                    err,
+                )
+
+        fut.add_done_callback(_on_done)
+
     async def _send_dialect_request(self, req) -> None:
         if req is not None and self._connection is not None:
-            await self._connection.send_request(req.method, req.params)
+            rid, fut = await self._connection.send_request(req.method, req.params)
+            self._watch_dialect_reply(req.method, req.params, rid, fut)
 
     async def set_model(self, model_id: str) -> None:
         """Switch model on a running session (pass a sentinel default so the dialect's
@@ -552,7 +593,8 @@ class AcpClient:
             session_id=self._session_id, agent=self._agent
         )
         if _activate is not None:
-            await conn.send_request(_activate.method, _activate.params)
+            _rid, _fut = await conn.send_request(_activate.method, _activate.params)
+            self._watch_dialect_reply(_activate.method, _activate.params, _rid, _fut)
             logger.info("ACP agent activated: %s", self._agent)
 
         # 5. Set model — dialect decides (None = agent default / no verb).
@@ -560,23 +602,33 @@ class AcpClient:
             session_id=self._session_id, model=self._model, default_model=DEFAULT_MODEL
         )
         if _set_model is not None:
-            await conn.send_request(_set_model.method, _set_model.params)
+            _rid, _fut = await conn.send_request(_set_model.method, _set_model.params)
+            self._watch_dialect_reply(_set_model.method, _set_model.params, _rid, _fut)
             logger.info("ACP model: %s", self._model)
         else:
             logger.info("ACP model: %s (from agent config)", self._model or "auto")
 
         # 6. Set permission/operating mode — MUST follow model (adapters clamp modes).
+        # The dialect translates the host-canonical mode into the adapter's OWN
+        # vocabulary (``ZedAdapterDialect.native_mode``); an adapter with no equivalent
+        # gets no frame rather than one it answers ``-32602`` to. The reply is watched,
+        # because a refused mode leaves the CLI its own permission authority and that
+        # must never be silent again (§2.2).
         _set_mode = self._dialect.set_mode_request(session_id=self._session_id, mode=self._mode)
         if _set_mode is not None:
-            await conn.send_request(_set_mode.method, _set_mode.params)
-            logger.info("ACP mode: %s", self._mode)
+            _rid, _fut = await conn.send_request(_set_mode.method, _set_mode.params)
+            self._watch_dialect_reply(_set_mode.method, _set_mode.params, _rid, _fut)
+            logger.info("ACP mode: %s (native %r)", self._mode, _set_mode.params.get("value"))
+        else:
+            logger.info("ACP mode: %s — no native mode axis on this adapter", self._mode)
 
         # 7. Set reasoning effort — MUST follow model (granularity can be model-dependent).
         _set_effort = self._dialect.set_effort_request(
             session_id=self._session_id, effort=self._reasoning_effort
         )
         if _set_effort is not None:
-            await conn.send_request(_set_effort.method, _set_effort.params)
+            _rid, _fut = await conn.send_request(_set_effort.method, _set_effort.params)
+            self._watch_dialect_reply(_set_effort.method, _set_effort.params, _rid, _fut)
             logger.info("ACP effort: %s", self._reasoning_effort)
 
         # Drain MCP server init notifications (best-effort, bounded).
@@ -610,15 +662,18 @@ class AcpClient:
             session_id=self._session_id, agent=self._agent
         )
         if _activate is not None:
-            await conn.send_request(_activate.method, _activate.params)
+            _rid, _fut = await conn.send_request(_activate.method, _activate.params)
+            self._watch_dialect_reply(_activate.method, _activate.params, _rid, _fut)
         _set_model = self._dialect.set_model_request(
             session_id=self._session_id, model=self._model, default_model=DEFAULT_MODEL
         )
         if _set_model is not None:
-            await conn.send_request(_set_model.method, _set_model.params)
+            _rid, _fut = await conn.send_request(_set_model.method, _set_model.params)
+            self._watch_dialect_reply(_set_model.method, _set_model.params, _rid, _fut)
         _set_mode = self._dialect.set_mode_request(session_id=self._session_id, mode=self._mode)
         if _set_mode is not None:
-            await conn.send_request(_set_mode.method, _set_mode.params)
+            _rid, _fut = await conn.send_request(_set_mode.method, _set_mode.params)
+            self._watch_dialect_reply(_set_mode.method, _set_mode.params, _rid, _fut)
         # 7 + drain — this method's own docstring promised "activate/model/mode/effort +
         # drain" and ran only the first three (`G20`). Two consequences, both silent:
         #   * a driver that reopens a session per cycle (``gateway.py``, one prompt per
@@ -632,7 +687,8 @@ class AcpClient:
             session_id=self._session_id, effort=self._reasoning_effort
         )
         if _set_effort is not None:
-            await conn.send_request(_set_effort.method, _set_effort.params)
+            _rid, _fut = await conn.send_request(_set_effort.method, _set_effort.params)
+            self._watch_dialect_reply(_set_effort.method, _set_effort.params, _rid, _fut)
         await conn.drain_init_notifications(duration=_DRAIN_DURATION)
         logger.info("ACP fresh turn session: %s", self._session_id)
 

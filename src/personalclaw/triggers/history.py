@@ -111,6 +111,13 @@ HOOK_STATUS_TO_OUTCOME: dict[str, str] = {
     "failure": Outcome.FAILED.value,
     "timeout": Outcome.FAILED.value,
     "blocked": Outcome.REFUSED.value,
+    # 🔴 REPORTED, NOT ENFORCED (G89). `hooks.run_script_hook` writes this when a hook exited 2 on
+    # a seam that cannot honor it — the informational `fire()` path, the "Run now" button, or any
+    # non-blocking event. `RAN`, not `REFUSED`: the script really did run, with a real exit code
+    # and duration, and nothing was refused — the tool it objected to went ahead. Calling it
+    # REFUSED is the original defect one layer up: it would put "blocked" in the runs feed for a
+    # write that landed. `_hook_reason` carries the "and nothing stopped" half.
+    "advisory": Outcome.RAN.value,
     # A hook whose action queued a run rather than starting one (WV-14). Without this the
     # fire would fall to the `RAN if last_run` default and read as "it ran and did something
     # durable" — a queued start has run nothing.
@@ -250,7 +257,14 @@ def _hook_reason(status: str, outcome: str) -> str:
     feed showing two different explanations of one thing reads as two different things. A `RAN` row
     carries no reason, because "it ran" is the whole story and a decorative reason costs a line of a
     user's attention for nothing.
+
+    🔴 `advisory` is the ONE `RAN` row that gets a reason (G89), and it is checked before the
+    early return above for exactly that: "it ran" is not the whole story when the script asked to
+    block and nothing stopped. Without this sentence the honest status degrades into a silent
+    success — the same shape of miss as reporting it `blocked`, in the opposite direction.
     """
+    if status == "advisory":
+        return "reported only: the hook asked to block, and the tool it objected to already ran"
     if outcome == Outcome.RAN.value:
         return ""
     if status == "launched":

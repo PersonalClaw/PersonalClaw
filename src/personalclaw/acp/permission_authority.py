@@ -25,12 +25,36 @@ This module owns the three host-side answers:
    hole, because the card's absence reads as "nothing dangerous happened". Every
    provider is enumerated — including the ones whose residual set measured EMPTY,
    so "no entry" can never be confused with "not measured".
+
+   The registry distinguishes **declared** from **excused**, which is not the same
+   axis. A residual can be measured and written down without being blessed, so
+   there are exactly three states:
+
+   * *measured, residual empty* — ``entries=()``, :attr:`ProviderCoverage.
+     gated_universally` is True: everything this provider does reaches the gate.
+   * *measured, residual non-empty and ACCEPTED* (``state=ACCEPTED``) — a known
+     upstream limitation we have blessed. The host may go quiet about it: the
+     transcript says "documented limitation" and SEL records
+     ``ungated_declared``.
+   * *measured, residual non-empty and NOT accepted* (``state=UNACCEPTED``, the
+     default) — the host cannot gate it and we have **not** blessed it. It stays
+     exactly as loud as an undeclared hole: the ``(ungated: …)`` transcript line,
+     the plain ``ungated`` SEL outcome, and the turn abort for a non-safe mutation
+     under ask/plan. Writing a hole down must never be a way to silence it.
+
+   Only the accepted state excuses the absence of a card, so consumers ask
+   :func:`not_gateable_entry` whether a residual is *declared* and
+   :attr:`NotGateable.state` whether it is *excused*. Conflating the two is the
+   original defect: two providers declared ``residual set measured EMPTY`` while
+   runtime was persisting plain ``ungated`` SEL rows for them, and populating the
+   registry naively would have muted those rows instead of fixing the claim.
 """
 
 from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
+from enum import Enum
 
 logger = logging.getLogger(__name__)
 
@@ -163,14 +187,42 @@ def command_probe(title: str, command: str) -> str:
     return f"Running: {cmd}"
 
 
+class ResidualState(str, Enum):
+    """Whether a measured residual has been blessed — *declared* vs *excused*.
+
+    Two members, both entry-scoped: the third registry state ("measured, residual
+    set empty") is a statement about a PROVIDER, carried by ``entries=()``, so it
+    would be nonsense as an entry's own state. The values are prose because they
+    are read by operators: §2.7's parity doc renders this field verbatim.
+    """
+
+    ACCEPTED = "measured, accepted — a documented limitation; the host labels it and stays quiet"
+    UNACCEPTED = (
+        "measured, NOT accepted — the host cannot gate it and nobody blessed it, so it stays loud"
+    )
+
+
 @dataclass(frozen=True)
 class NotGateable:
-    """One provider-scoped tool the host provably cannot pre-gate."""
+    """One provider-scoped tool the host provably cannot pre-gate.
+
+    ``state`` is the difference between *declared* and *excused*. It defaults to
+    :attr:`ResidualState.UNACCEPTED` — fail-loud by construction, so an entry added
+    without an explicit judgement keeps the operator-visible signal rather than
+    silently muting it. Set it to ``ACCEPTED`` only for a residual we have decided
+    to live with; the entry's ``reason`` then has to say why that is acceptable.
+    """
 
     tool: str
     reason: str
     observation: str
     title_patterns: tuple[str, ...] = ()
+    state: ResidualState = ResidualState.UNACCEPTED
+
+    @property
+    def accepted(self) -> bool:
+        """Derived read-side convenience — the state itself lives in ``state``."""
+        return self.state is ResidualState.ACCEPTED
 
     def matches(self, title: str) -> bool:
         low = str(title or "").lower()
@@ -188,6 +240,10 @@ class ProviderCoverage:
     ``entries`` empty is a *positive* statement — "measured, residual set empty"
     — not an absence of data. ``measurement`` names the sweep that produced it so
     a stale claim is traceable to the turn that made it.
+
+    ``gated_universally`` is derived from ``entries``, never asserted separately, so
+    it cannot drift away from the entries: declaring any residual — accepted or not
+    — makes it False.
     """
 
     provider: str
@@ -197,6 +253,16 @@ class ProviderCoverage:
     @property
     def gated_universally(self) -> bool:
         return not self.entries
+
+    @property
+    def unaccepted_residual(self) -> tuple[NotGateable, ...]:
+        """The measured holes we have NOT blessed — the ones that stay loud.
+
+        The operator-facing question the registry exists to answer: "what can this
+        provider do that the host never got asked about, and which of those have we
+        not agreed to live with?"
+        """
+        return tuple(e for e in self.entries if not e.accepted)
 
 
 #: Per-provider residual not-gateable set (SC #3). Keyed by the normalized
@@ -223,6 +289,9 @@ NOT_GATEABLE: dict[str, ProviderCoverage] = {
                     "same turns where the read, the write and the rm each raised a card."
                 ),
                 title_patterns=("creating task list", "completing #", "task list"),
+                # Accepted: kiro's task list is bookkeeping inside kiro's own
+                # process — it mutates no host state, so labelling it is enough.
+                state=ResidualState.ACCEPTED,
             ),
             NotGateable(
                 tool="fs_read",
@@ -240,18 +309,92 @@ NOT_GATEABLE: dict[str, ProviderCoverage] = {
                     "this residue is labelled, never turn-aborting."
                 ),
                 title_patterns=("reading ",),
+                # Accepted: effective risk resolves to SAFE for a read, so the
+                # label carries the whole signal — nothing to abort, nothing to
+                # deny. Blessed on that basis, not on kiro's behalf.
+                state=ResidualState.ACCEPTED,
             ),
         ),
     ),
     "claude-code": ProviderCoverage(
         provider="claude-code",
-        measurement="AAP-1 sweep — residual set measured EMPTY",
-        entries=(),
+        measurement=(
+            "AAP-5 Phase-1 SEL re-read (O96): 7 persisted rows with "
+            "outcome='ungated', provider='claude-code', across 4 sessions and 2 "
+            "tool titles. RETRACTS the earlier AAP-1 zero-residual claim, which "
+            "runtime disproved: chat_runner records "
+            "'ungated_declared' whenever not_gateable_entry() matched, so a plain "
+            "'ungated' row is proof the registry held nothing for that title."
+        ),
+        entries=(
+            NotGateable(
+                tool="Terminal",
+                reason=(
+                    "claude-code runs its shell tool without emitting a "
+                    "session/request_permission for it. The host's deny-list, "
+                    "task-mode gate and blocking PreToolUse hooks all hang off that "
+                    "frame, so none of them ran. NOT accepted: a shell command that "
+                    "reaches the OS with no host decision point is not a limitation "
+                    "we are willing to go quiet about."
+                ),
+                observation=(
+                    "O97: the execute-kind share of O96's 7 'ungated' rows carries "
+                    "title='Terminal' and reason='no session/request_permission for "
+                    "this tool_call'."
+                ),
+            ),
+            NotGateable(
+                tool="Read File",
+                reason=(
+                    "claude-code self-approves its own file reads — the same missing "
+                    "frame — so a read of a path the host would have questioned is "
+                    "never offered for a decision. NOT accepted: effective risk "
+                    "resolves to SAFE so it never aborts a turn, but nobody ever "
+                    "blessed it, and an unblessed hole stays loud."
+                ),
+                observation=(
+                    "O98: 'Read File' is the second of the two titles in O96's 7-row "
+                    "'ungated' set for provider='claude-code'."
+                ),
+            ),
+        ),
     ),
     "codex": ProviderCoverage(
         provider="codex",
-        measurement="AAP-2 sweep — residual set measured EMPTY",
-        entries=(),
+        measurement=(
+            "AAP-5 Phase-1 live drive (O99-O102): 4 plain 'ungated' rows on "
+            "provider='codex' — a read, an in-workspace write, an out-of-workspace "
+            "write and a network call. RETRACTS the earlier AAP-2 zero-residual claim."
+        ),
+        entries=(
+            NotGateable(
+                tool="codex-native",
+                reason=(
+                    "codex is its own first-line permission authority: under "
+                    "HOST_AUTHORITY_MODE='default' it escalates almost nothing, so "
+                    "its whole native tool surface — reads, writes, shell, network — "
+                    "can execute before the host has a decision point. NOT accepted: "
+                    "an out-of-workspace write that completed with no card is the "
+                    "exact shape §2.2 exists to make loud."
+                ),
+                observation=(
+                    "O99-O101: four plain 'ungated' rows in one AAP-5 Phase-1 drive — "
+                    "a read, an in-workspace write, an out-of-workspace write "
+                    "('printf … > /private/tmp/aap2b-outside-probe.txt', which "
+                    "EXECUTED) and a network call ('curl https://example.com'). "
+                    "Vacuity floor for the same drive (O102): codex DOES escalate on "
+                    "retry, and 'git push' was escalated and correctly deny-listed — "
+                    "so 'escalates almost nothing' measures codex, not a dead harness."
+                ),
+                # Deliberately empty (G120): Phase 1 recorded codex's ACTIONS, not the
+                # tool_call titles it sent, so there is no measured string to match on.
+                # This entry is therefore documentation-shaped — it makes
+                # gated_universally False and enumerates the hole with its evidence,
+                # but never matches a live title. Safe precisely because it is
+                # unaccepted: matching only ever decides whether to go QUIET.
+                title_patterns=(),
+            ),
+        ),
     ),
 }
 
@@ -289,9 +432,15 @@ def not_gateable_entry(provider: str, title: str) -> NotGateable | None:
     """The declared not-gateable entry for ``title`` on ``provider``, or None.
 
     A match means "this tool running without a card is a KNOWN, written-down
-    limitation" — the host still surfaces it, but it is not evidence of a new
-    hole. A miss on an ungated tool is the dangerous case: an undeclared tool the
-    host was never asked about.
+    limitation" — it is not evidence of a NEW hole. A miss on an ungated tool is
+    the undeclared case: a tool the host was never asked about and never measured.
+
+    A match does **not** by itself excuse the missing card. Ask ``entry.state``
+    (or its ``entry.accepted`` shorthand) for that: only an accepted residual may
+    go quiet. Callers
+    deciding how loud to be must key on the accepted bit, never on
+    ``entry is not None`` — the two answers diverge for every measured-but-unblessed
+    hole, which is most of this registry.
     """
     coverage = NOT_GATEABLE.get(normalize_provider(provider))
     if coverage is None:
