@@ -8,9 +8,10 @@ appends its jsonl.
 
 ES-1a physically supports the ``matrices/`` subtree and the ``results.tsv`` ledger;
 ES-2 adds the ``scenarios/`` subtree (the versioned Loop-1 library — see
-:mod:`personalclaw.evals.scenarios`). The ``studies/``/``benchmarks/``/``trust/``
-subtrees named in §1.1 are owned by later atoms (ES-5/ES-8): this module does NOT
-create them, because a dir with no writer is dead scaffolding. The single
+:mod:`personalclaw.evals.scenarios`). ES-4 added ``benchmarks/`` and ES-5 adds
+``studies/`` (the pre-registered A/B studies of §2 — registration, hidden ``locked/``
+checks, verdict, per-run artifacts). ``trust/`` is still unowned and still NOT
+created here, because a dir with no writer is dead scaffolding. The single
 ``StateEntry`` for ``evals`` (in ``durability/inventory.py``) claims the whole tree
 for backup regardless of which subtrees exist yet.
 
@@ -54,8 +55,29 @@ RESULTS_COLUMNS: tuple[str, ...] = (
 )
 
 
+#: Mode for a file that must not change after it is written (a study's
+#: ``registration.json`` and its pinned ``rubric.md``). Belt to the braces of
+#: :func:`write_study_registration`'s explicit refusal — the refusal is the contract,
+#: the mode is what a stray editor trips over first.
+IMMUTABLE_MODE = 0o400
+
+#: Mode for a ``locked/`` check file, and for the dir that holds them (§2.2).
+LOCKED_MODE = 0o600
+LOCKED_DIR_MODE = 0o700
+
+
 class PinRequiredError(ValueError):
     """Raised when a caller tries to write a ledger row without a complete RunPin."""
+
+
+class StudySealedError(RuntimeError):
+    """Raised when a caller tries to re-write an already-registered study's registration.
+
+    §2.1's "immutable once arm-1 starts" is enforced as "immutable, full stop": a study
+    whose pre-registration can be rewritten is not a pre-registration, and the window
+    between registration and arm-1 buys nothing a second `register_study` call could not
+    abuse. Re-registering means picking a new ``study_id``.
+    """
 
 
 # ── path helpers ─────────────────────────────────────────────────────────────
@@ -106,6 +128,38 @@ def judge_benchmarks_dir() -> Path:
     """``evals/benchmarks/judge/`` — judge fixture sets (§6)."""
     d = benchmarks_dir() / "judge"
     d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def studies_dir() -> Path:
+    """``evals/studies/`` — one directory per pre-registered study (§2, ES-5)."""
+    d = evals_root() / "studies"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def study_dir(study_id: str) -> Path:
+    """``evals/studies/<study_id>/`` — one study's artifact directory."""
+    d = studies_dir() / study_id
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def study_locked_dir(study_id: str) -> Path:
+    """``evals/studies/<study_id>/locked/`` — the hidden validation checks (§2.2).
+
+    Created ``0700`` and its files ``0600``: §2.2 says the checks are "never rendered
+    into any worker session's prompt, bindings, or workspace", and a mode is the one
+    part of that promise the filesystem can keep on its own. The structural guarantee
+    is :func:`personalclaw.evals.studies.assert_no_locked_leakage`; this is the floor
+    under it.
+    """
+    d = study_dir(study_id) / "locked"
+    d.mkdir(parents=True, exist_ok=True)
+    try:
+        d.chmod(LOCKED_DIR_MODE)
+    except OSError:  # pragma: no cover - a filesystem without modes (some CI mounts)
+        pass
     return d
 
 
@@ -230,3 +284,209 @@ def read_matrix_trials(matrix_id: str) -> list | None:
     if not path.exists():
         return None
     return json.loads(path.read_text(encoding="utf-8"))
+
+
+# ── per-study artifacts (§2.1 registration → §2.4 verdict) ───────────────────
+
+
+def _write_immutable(path: Path, text: str) -> Path:
+    """Write ``text`` once and mark the file read-only.
+
+    ``atomic_write`` renames a fresh temp file into place, so it would happily replace a
+    ``0400`` file — the mode is a tripwire, not the lock. The lock is the caller's
+    existence check, which is why every caller of this helper does one first.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    atomic_write(path, text)
+    try:
+        path.chmod(IMMUTABLE_MODE)
+    except OSError:  # pragma: no cover - a filesystem without modes
+        pass
+    return path
+
+
+def registration_path(study_id: str) -> Path:
+    """``evals/studies/<id>/registration.json`` — the immutable pre-registration."""
+    return study_dir(study_id) / "registration.json"
+
+
+def rubric_path(study_id: str) -> Path:
+    """``evals/studies/<id>/rubric.md`` — the pinned rubric text the judge renders from."""
+    return study_dir(study_id) / "rubric.md"
+
+
+def write_study_registration(study_id: str, data: dict, *, rubric_text: str) -> Path:
+    """Write a study's registration + its pinned rubric, ONCE.
+
+    Raises :class:`StudySealedError` when either file already exists — including when only
+    one of the two does, because a registration whose pinned rubric went missing (or the
+    reverse) is a study that cannot be honestly interpreted, and silently completing the
+    pair would produce a study pinned to a rubric nobody registered.
+    """
+    reg = registration_path(study_id)
+    rub = rubric_path(study_id)
+    existing = [p.name for p in (reg, rub) if p.exists()]
+    if existing:
+        raise StudySealedError(
+            f"study {study_id!r} is already registered ({', '.join(existing)} present) — "
+            "a pre-registration is immutable; register a new study_id instead"
+        )
+    _write_immutable(rub, rubric_text)
+    return _write_immutable(reg, json.dumps(data, indent=2, sort_keys=True) + "\n")
+
+
+def read_study_registration(study_id: str) -> dict | None:
+    """Read a study's ``registration.json``, or ``None`` when it has none."""
+    path = registration_path(study_id)
+    if not path.exists():
+        return None
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def read_study_rubric(study_id: str) -> str | None:
+    """Read a study's pinned rubric text, or ``None`` when it is missing."""
+    path = rubric_path(study_id)
+    if not path.exists():
+        return None
+    return path.read_text(encoding="utf-8")
+
+
+def write_locked_check(study_id: str, name: str, data: dict) -> Path:
+    """Write one ``locked/<name>.json`` check at ``0600`` (§2.2)."""
+    path = study_locked_dir(study_id) / f"{name}.json"
+    atomic_write(path, json.dumps(data, indent=2, sort_keys=True) + "\n")
+    try:
+        path.chmod(LOCKED_MODE)
+    except OSError:  # pragma: no cover - a filesystem without modes
+        pass
+    return path
+
+
+def read_locked_checks(study_id: str) -> list[dict]:
+    """Read every ``locked/*.json`` for a study, sorted by filename.
+
+    Sorted so the check order (and therefore the artifact order) is reproducible; a
+    directory-iteration order would make two runs of the same study diff for no reason.
+    """
+    d = study_dir(study_id) / "locked"
+    if not d.is_dir():
+        return []
+    out: list[dict] = []
+    for path in sorted(d.glob("*.json")):
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if isinstance(payload, dict):
+            payload.setdefault("id", path.stem)
+            out.append(payload)
+    return out
+
+
+def write_study_verdict(study_id: str, data: dict) -> Path:
+    """Persist a study's ``verdict.json`` (§2.4 — written for EVERY outcome)."""
+    path = study_dir(study_id) / "verdict.json"
+    atomic_write(path, json.dumps(data, indent=2, sort_keys=True) + "\n")
+    return path
+
+
+def read_study_verdict(study_id: str) -> dict | None:
+    """Read a study's ``verdict.json``, or ``None`` when it has not run."""
+    path = study_dir(study_id) / "verdict.json"
+    if not path.exists():
+        return None
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def write_study_runs(study_id: str, rows: list) -> Path:
+    """Persist a study's per-run artifacts (``runs.json``) — the §2.4 drill-down."""
+    path = study_dir(study_id) / "runs.json"
+    payload = [r.to_dict() if hasattr(r, "to_dict") else dict(r) for r in rows]
+    atomic_write(path, json.dumps(payload, indent=2, sort_keys=True))
+    return path
+
+
+def read_study_runs(study_id: str) -> list | None:
+    """Read a study's ``runs.json``, or ``None`` when it has none."""
+    path = study_dir(study_id) / "runs.json"
+    if not path.exists():
+        return None
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def write_study_evidence(study_id: str, data: dict) -> Path:
+    """Persist the evidence unit a PASSING study emits (§2.4 → §4's trust ladder)."""
+    path = study_dir(study_id) / "evidence.json"
+    atomic_write(path, json.dumps(data, indent=2, sort_keys=True) + "\n")
+    return path
+
+
+def read_study_evidence(study_id: str) -> dict | None:
+    """Read a study's evidence unit, or ``None`` — absence means "did not pass"."""
+    path = study_dir(study_id) / "evidence.json"
+    if not path.exists():
+        return None
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def judge_calibration_dir() -> Path:
+    """``evals/benchmarks/judge/calibration/`` — work the studies file for §6's harness.
+
+    A study whose position-swap agreement fell below the floor files an item here instead
+    of a template verdict (§2.3). It lives under the JUDGE benchmark tree rather than under
+    the study, because the item is a request to `personalclaw judge-bench`: the thing that
+    needs fixing is the judge, and a queue kept inside the study that noticed it would be a
+    queue nobody drains.
+    """
+    d = judge_benchmarks_dir() / "calibration"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def write_judge_calibration_item(study_id: str, data: dict) -> Path:
+    """File one judge-calibration item, keyed on the study that noticed.
+
+    Keyed on the study id (not on a timestamp) so re-running the same study replaces its
+    own item rather than piling up a duplicate per attempt — the queue should say which
+    judges need work, not how many times we asked.
+    """
+    path = judge_calibration_dir() / f"{study_id}.json"
+    atomic_write(path, json.dumps(data, indent=2, sort_keys=True) + "\n")
+    return path
+
+
+def read_judge_calibration_items() -> list[dict]:
+    """Every filed judge-calibration item, newest first by its recorded ``ts``."""
+    d = evals_root() / "benchmarks" / "judge" / "calibration"
+    if not d.is_dir():
+        return []
+    out: list[dict] = []
+    for path in sorted(d.glob("*.json")):
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if isinstance(payload, dict):
+            out.append(payload)
+    return sorted(out, key=lambda r: float(r.get("ts") or 0.0), reverse=True)
+
+
+def list_study_ids() -> list[str]:
+    """Every registered study id, newest-registered first.
+
+    Ordered by the registration file's mtime rather than by name so the Learning page's
+    "latest study" is the latest one, not the alphabetically luckiest id.
+    """
+    root = evals_root() / "studies"
+    if not root.is_dir():
+        return []
+    pairs: list[tuple[float, str]] = []
+    for d in root.iterdir():
+        reg = d / "registration.json"
+        if not (d.is_dir() and reg.exists()):
+            continue
+        try:
+            pairs.append((reg.stat().st_mtime, d.name))
+        except OSError:  # pragma: no cover - raced unlink
+            continue
+    return [name for _mtime, name in sorted(pairs, key=lambda p: (-p[0], p[1]))]

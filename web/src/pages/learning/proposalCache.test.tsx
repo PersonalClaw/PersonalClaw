@@ -52,6 +52,7 @@ const rejectLearningProposal = vi.fn<() => Promise<void>>()
 // five unrelated failures about rows and cache keys, and hides which fetch is missing.
 const learningHealth = vi.fn<() => Promise<never>>()
 const judgeBench = vi.fn<() => Promise<never>>()
+const evalStudies = vi.fn<() => Promise<never>>()
 
 vi.mock('../../lib/api', () => ({
   api: {
@@ -61,6 +62,7 @@ vi.mock('../../lib/api', () => ({
     acceptLearningProposal: () => acceptLearningProposal(),
     rejectLearningProposal: () => rejectLearningProposal(),
     judgeBench: () => judgeBench(),
+    evalStudies: () => evalStudies(),
   },
 }))
 
@@ -78,6 +80,9 @@ describe('LearningPage drops a decided row from the screen (#676)', () => {
     // rendering is not this suite's subject, and a 404 is its ORDINARY state (no benchmark
     // has run), so the list must be unaffected by it.
     judgeBench.mockRejectedValue(new Error('judge_bench_absent'))
+    // And the study panel, for the third time and the same reason: `StudiesPanel.test.tsx` owns
+    // its rendering, and "no study registered" is its ordinary state.
+    evalStudies.mockRejectedValue(new Error('study_absent'))
     acceptLearningProposal.mockResolvedValue({ ok: true })
     rejectLearningProposal.mockResolvedValue(undefined)
   })
