@@ -214,9 +214,9 @@
     }
   ],
   "a11y": {
-    "outlineNoneCount": 142,
-    "outlineNoneFiles": 67,
-    "localFocusVisibleFiles": 33,
+    "outlineNoneCount": 143,
+    "outlineNoneFiles": 68,
+    "localFocusVisibleFiles": 34,
     "reducedMotionFiles": 13,
     "animatedFiles": 168,
     "hasGlobalReducedMotion": true,
