@@ -39,11 +39,18 @@ def _data(text: str) -> dict:
 # ── the surface lists and every tool validates ──
 
 
-def test_all_eight_tools_are_listed():
+#: WF2LOO-9 added two self-scheduling tools to this surface. They are NOT in
+#: `triggers.tools.TOOL_NAMES` on purpose: that tuple is §4's table of `automation_*` handlers
+#: living in that module, and these two live here and delegate into `tools.create`. Naming them
+#: separately keeps both meanings honest — "handlers there" and "names an agent may call here".
+SELF_SCHEDULE_TOOLS = frozenset({"set_onetime_task", "set_recurring_task"})
+
+
+def test_the_surface_is_section_4s_table_plus_the_self_schedule_pair():
     from personalclaw.triggers.tools import TOOL_NAMES
 
     listed = {t["name"] for t in A._list_tools()}
-    assert listed == set(TOOL_NAMES)
+    assert listed == set(TOOL_NAMES) | SELF_SCHEDULE_TOOLS
 
 
 def test_every_listed_tool_has_a_schema():

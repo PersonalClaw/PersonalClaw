@@ -42,7 +42,30 @@ logger = logging.getLogger(__name__)
 #: capped (default 20 active) — visible, not silent." The cap counts ACTIVE agent-made rows only:
 #: a paused one is not doing anything, and counting it would make the cap unrecoverable without
 #: deleting history the user may still want.
-MAX_AGENT_TRIGGERS = 20
+#:
+#: WF2LOO-9 made the number configurable. It was a module constant, so the one bound standing
+#: between a self-scheduling agent and an unbounded fan-out of clocks could not be tightened by an
+#: operator who wanted 5, nor set to 0 to turn self-scheduling off — the only way to change it was
+#: to edit the source. Read per call, not captured at import, so a PATCH takes effect without a
+#: restart (the same reason `mcp.json`'s resolvers became functions).
+DEFAULT_MAX_AGENT_TRIGGERS = 20
+
+
+def max_agent_triggers() -> int:
+    """`workflows.self_schedule_max_outstanding`, or the historical 20 if config is unreadable.
+
+    Falling back to the OLD default rather than to "unbounded" is the point: an unreadable config
+    must not silently remove the only cap on agent-created automations. 0 is a legitimate value —
+    it turns self-scheduling off — so the fallback cannot be 0 either, which would look like the
+    operator had disabled the feature when they had not.
+    """
+    try:
+        from personalclaw.config.loader import AppConfig
+
+        return int(AppConfig.load().workflows.self_schedule_max_outstanding)
+    except Exception:  # noqa: BLE001 - an unreadable config must not remove the cap
+        return DEFAULT_MAX_AGENT_TRIGGERS
+
 
 #: The tool names §4's table declares. Data rather than eight scattered string literals, so
 #: `list_tools()`, the dispatcher, and the tests cannot drift out of step — the failure mode where
@@ -179,14 +202,15 @@ def create(
 
     if created_by == "agent":
         active = _active_agent_count(store)
-        if active >= MAX_AGENT_TRIGGERS:
+        cap = max_agent_triggers()
+        if active >= cap:
             # Decision 5d's cap. Refusing with the count and the remedy, because "limit reached"
             # without a number leaves the user unable to tell what to pause.
             return ToolResult(
                 False,
                 f"Error: {active} agent-created automations are already active "
-                f"(cap {MAX_AGENT_TRIGGERS}). Pause or delete one first.",
-                {"active": active, "cap": MAX_AGENT_TRIGGERS},
+                f"(cap {cap}). Pause or delete one first.",
+                {"active": active, "cap": cap},
             )
 
     if message and not workflow:
@@ -237,7 +261,7 @@ def create(
     if created_by == "agent":
         lines.append(
             f"  I created this for you — it is active now and visible on the Automations page "
-            f"({_active_agent_count(store)}/{MAX_AGENT_TRIGGERS} agent-created)."
+            f"({_active_agent_count(store)}/{max_agent_triggers()} agent-created)."
         )
     return ToolResult(True, "\n".join(lines), {"trigger": saved.to_dict()})
 

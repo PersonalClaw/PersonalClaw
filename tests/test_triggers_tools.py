@@ -178,18 +178,18 @@ def test_an_agent_created_trigger_is_tagged(store):
 def test_the_agent_cap_is_enforced_with_a_count_and_a_remedy(store):
     """🔴 Decision 5d's cap (default 20 active). "Limit reached" without a number leaves the user
     unable to tell what to pause."""
-    for i in range(T.MAX_AGENT_TRIGGERS):
+    for i in range(T.max_agent_triggers()):
         assert T.create(store, name=f"A{i}", when="when a file in ~/notes changes", message="go").ok
     blocked = T.create(store, name="Over", when="when a file in ~/notes changes", message="go")
     assert not blocked.ok
-    assert str(T.MAX_AGENT_TRIGGERS) in blocked.text
+    assert str(T.max_agent_triggers()) in blocked.text
     assert "pause or delete" in blocked.text.lower()
 
 
 def test_a_paused_agent_trigger_does_not_count_against_the_cap(store):
     """A paused automation is not doing anything, and counting it would make the cap
     unrecoverable without deleting history the user may still want."""
-    for i in range(T.MAX_AGENT_TRIGGERS):
+    for i in range(T.max_agent_triggers()):
         T.create(store, name=f"A{i}", when="when a file in ~/notes changes", message="go")
     T.set_paused(store, trigger_id="file:a0", paused=True)
     assert T.create(store, name="Room", when="when a file in ~/notes changes", message="go").ok
@@ -198,7 +198,7 @@ def test_a_paused_agent_trigger_does_not_count_against_the_cap(store):
 def test_a_user_created_trigger_is_not_capped(store):
     """The cap exists because AGENTS create silently. The user asking for their 21st automation is
     not the risk decision 5d addresses."""
-    for i in range(T.MAX_AGENT_TRIGGERS):
+    for i in range(T.max_agent_triggers()):
         T.create(store, name=f"A{i}", when="when a file in ~/notes changes", message="go")
     assert T.create(
         store,
