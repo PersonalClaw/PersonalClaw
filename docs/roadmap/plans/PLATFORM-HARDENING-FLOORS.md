@@ -1331,3 +1331,70 @@ a hand-rewrap then created two NEW overlong lines, so the prose was reflowed pro
 `make test-e2e` 149 passed / 4 skipped · `make lint` clean · `make -n test` shows plain `pytest`, so
 the browser gate stays out of the unit run. `docs/roadmap/atomic/dag.json` deliberately **untouched**:
 `PHF-7` is PARTIAL and must stay `todo`.
+
+- **2026-08-22 — `PHF-7`: all five clauses now MET, including the live ones. Atom stays `todo` only
+  because this code is unmerged** (never flip an atom whose implementation is not yet on `main`); flip
+  it when this PR lands.
+  **Three of five were already shipped and were not rebuilt:** `make test-e2e` with a bare pytest
+  excluded, the axe-per-route job (`ci.yml` `e2e-a11y`), and the raw-model-call chokepoint rail. What was
+  missing was clause 1 — the gate booted a gateway with **no model at all**, so the SPA rendered but no
+  chat turn could complete and every spec was written to avoid needing one.
+  **Clause 1, driven directly** (not inferred from a passing spec): a gateway on a fresh `$TMPDIR` home
+  with `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `AWS_PROFILE` and `AWS_ACCESS_KEY_ID` stripped from the
+  environment booted in **1.9 s**, `/api/model-providers` returned 200 naming `scripted`, and
+  `POST /api/chat` returned 200 in **0.88 s** carrying the scripted reply. The real `~/.personalclaw`
+  was untouched.
+  **Clause 5, runtime recorded:** `e2e/chat.spec.ts` **2 passed in 24.0 s** cold on the fully integrated
+  tree (Apple silicon, Darwin 25.6 arm64); the implementing agent measured 29.4 s cold / 9.1 s warm
+  including the vite build.
+  **Why the provider lives in core rather than a first-party app.** Measured before briefing: the
+  gate's `GATEWAY_COMMAND` boots a temp home with **no app installed**, and core CI never checks out the
+  apps repo. Every other provider type is registered by its own app, so an app-registered fixture would
+  be unreachable from the gate it exists to serve.
+  **The gate on the fake is two conditions, both loud typed refusals.** The env var's VALUE is the script
+  path, so enabling the fixture and stating exactly what it will reply are one act — there is no "on"
+  state with a built-in default, and there is deliberately no `script_path` kwarg (its own test pins
+  `inspect.signature` to `["self"]`). It also refuses the real home outright, re-checked at `start()`
+  because `PERSONALCLAW_HOME` is read live. Verified live: no env → `ScriptedProviderNotEnabled`; script
+  set with `PERSONALCLAW_HOME` unset or pointing at the real home → `ScriptedProviderRefused`; script
+  path missing → `ScriptedScriptError`; isolated home → constructs. The gate never calls `config_dir()`,
+  because that helper `mkdir`s the home it resolves and would CREATE the thing it is refusing to touch.
+  **Not a credential bypass.** `credential=None` is a literal on the one synthesized entry, and a rail
+  proves a real provider type still raises `CredentialMissing` under the same opt-in. That rail was
+  partly decorative when written — both anti-bypass tests red at a cheap earlier assertion so the
+  `pytest.raises` never executed — and was reordered to assert the refusal FIRST.
+  **THREE integration defects no single branch could see, and why lint could not help.**
+  `pyproject.toml` sets `ignore_missing_imports = true`, so mypy says nothing about a sibling module that
+  does not exist yet: both branches were lint-clean and green while the pair was broken.
+  1. The two halves named **different env vars** (`PERSONALCLAW_SCRIPTED_LLM` vs
+     `PERSONALCLAW_SCRIPTED_MODEL_SCRIPT`) while each docstring claimed they were the same one — so the
+     pair could only ever be half-enabled: one registers a type that cannot construct, the other builds
+     nothing. Now one variable, plus a **drift rail** asserting the two constants are equal.
+  2. The factory called `ScriptedProvider(model=...)` against an `__init__` taking only `self` — a
+     `TypeError` at bind time. Now a **build-through rail** constructs via the registry instead of
+     reading source. Both rails deliberately avoid the stub: a stub that accepts any constructor call and
+     needs no fixture file is exactly what hid both defects, and the stub itself had mirrored the wrong
+     contract. Two shipped assertions encoding the impossible contract were restated to the real one
+     (the model id is descriptive on the ENTRY; a per-turn override is accepted and ignored) with a note
+     saying what they used to claim.
+  3. `GATEWAY_COMMAND` did not pin `PYTHONPATH`, so a **worktree run booted the editable install from the
+     MAIN checkout**. The first integrated run failed with *"no model provider resolves for use case
+     'background'"* and a traceback entirely in the main checkout, because the scripted provider does not
+     exist there. The gate now tests the tree it lives in — redundant in CI, decisive in a worktree.
+  **`chat.spec.ts` is named in `ci.yml` explicitly.** `make test-e2e` passes no spec list so a new spec
+  joins it automatically, but CI lists specs, and a spec not listed runs nowhere. Declared-and-never-
+  executed is the failure class these rails exist to catch, so wiring it was part of the change rather
+  than a follow-up.
+  **DISCOVERY — the "Turn complete" telemetry line is not in the DOM after a turn completes.** Measured
+  against the real provider: a fully completed turn rendered the reply, the per-message action row and an
+  idle composer, with **no ContextLedger node at all** (zero matches after 30 s). The line is documented
+  in-tree as live-only and does not survive the re-render that lands the finished turn, so the spec
+  asserts completion two ways that ARE rendered — `Stop` gone with `Send message` restored, and the
+  newest assistant turn's action row. A shipped completion signal a user cannot see at the moment it
+  matters is worth its own issue.
+  **DISCOVERY (pre-existing on `main`, not swept in): `chat_runner.py:4210` raises `UnboundLocalError`
+  and MASKS the real error.** `maybe_offer_check_work(state, session, _turn_tool_call_count)` reads a
+  local that is only initialized inside the turn loop (~2521), so whenever provider resolution fails
+  first it raises inside an unretrieved asyncio task and hides the actual failure. Same family as the
+  `_record_model` defect `PCS-7` fixed one variable over; deliberately not touched here because both
+  changes land in the same initialiser block and would collide in the merge train.

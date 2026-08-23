@@ -34,6 +34,57 @@ const GATEWAY_PORT = Number(process.env.PW_GATEWAY_PORT || 10437)
 // a live owner token for the throwaway gateway).
 const STORAGE_STATE = process.env.STORAGE_STATE || 'e2e/.auth/state.json'
 
+// ── The scripted provider contract — ONE place to reconcile ─────────────────
+// Read off the committed modules, not guessed: `src/personalclaw/llm/scripted.py`
+// owns SCRIPT_ENV_VAR / HOME_ENV_VAR and the version-1 script schema;
+// `src/personalclaw/llm/registry.py` owns SCRIPTED_PROVIDER_TYPE and the env
+// opt-in that REGISTERS the type. If a name drifts, fix THIS object — nothing
+// else in the harness spells any of them out.
+//
+// `ScriptedProvider` is deterministic, makes ZERO network calls and needs NO
+// credential. TWO locks, and both must hold or it refuses loudly:
+//   · its script env var must name a readable script JSON file; and
+//   · PERSONALCLAW_HOME must be set and must NOT resolve to the real
+//     ~/.personalclaw — the provider refuses in a real home outright, re-checking
+//     at both __init__ and start(). The gateway boot below already satisfies this
+//     with its $TMPDIR home. Do not drop it.
+//
+// ONE env var, not two. `registry.py` gates REGISTRATION of the `scripted` type and
+// `scripted.py` gates CONSTRUCTION of the provider, and both now read
+// PERSONALCLAW_SCRIPTED_MODEL_SCRIPT — so the pair can never be half-enabled. The two
+// modules briefly disagreed (the registry spelled it PERSONALCLAW_SCRIPTED_LLM while
+// claiming it was "the SAME variable ScriptedProvider itself requires"), which is why
+// `tests/test_scripted_provider_binding.py` now asserts the two constants are equal:
+// nothing else could catch it, because `ignore_missing_imports` keeps mypy silent about
+// a sibling module that does not exist yet.
+//
+// Script schema (version 1, validated STRICTLY — unknown keys at any level are an
+// error, so a typo in the fixture fails the boot instead of scripting nothing):
+//   { "version": 1, "on_exhausted": "repeat_last",
+//     "turns": [ { "text": "…", "stop_reason": "end_turn", "usage": {…} } ] }
+// The Nth prompt maps to the Nth turn. The fixture keeps `repeat_last` — the
+// default, written out rather than left implicit — and NOT the stricter `error`,
+// because one user turn drives more than one model call. Measured, not assumed: a
+// green run logs `WARNING personalclaw.suggestions: Failed to parse suggestions
+// response: SCRIPTED-E2E-OK…`, i.e. the follow-up-chips pass consumed a scripted
+// reply of its own. Under `error` that second call would red this spec for a reason
+// that is not its clause. `expect_prompt` is omitted for the same reason: those
+// extra calls carry their own prompts, and their order against the user's turn is
+// not deterministic.
+export const SCRIPTED = {
+  /** The provider type `llm/registry.py` registers (SCRIPTED_PROVIDER_TYPE). */
+  type: 'scripted',
+  /** The ONE opt-in: `llm/scripted.py` SCRIPT_ENV_VAR == `llm/registry.py`
+   *  SCRIPTED_PROVIDER_ENV. Its value IS the script path, so enabling the fixture and
+   *  saying what it will reply are one act — there is no "on" state with a default. */
+  scriptEnvVar: 'PERSONALCLAW_SCRIPTED_MODEL_SCRIPT',
+  /** The script fixture, relative to `web/` (playwright's cwd for webServer). */
+  scriptPath: 'e2e/fixtures/scripted-chat.json',
+  /** The reply the fixture scripts. chat.spec.ts asserts the fixture still
+   *  contains this exact string, so config↔fixture drift reds loudly. */
+  reply: 'SCRIPTED-E2E-OK: this reply came from the offline scripted provider.',
+} as const
+
 // An ISOLATED, ONBOARDED gateway, with AUTH LEFT ON.
 //  - PERSONALCLAW_HOME under the OS temp dir, wiped per run. Never ~/.personalclaw.
 //  - PERSONALCLAW_WORKSPACE too: PERSONALCLAW_HOME does NOT confine workspace_dir,
@@ -46,12 +97,37 @@ const STORAGE_STATE = process.env.STORAGE_STATE || 'e2e/.auth/state.json'
 //  - NOT PERSONALCLAW_AUTH_MODE=none: that swaps csrf_middleware for
 //    _dev_user_middleware, so any a11y/CSRF-adjacent conclusion drawn under it
 //    would not describe a real user. The token flow below is the real one.
+//  - A MODEL, and still no credential and still no network: the two scripted-provider
+//    env vars below. config.json stays EXACTLY as it was — a user name and nothing
+//    else — on purpose: `registry.py`'s `register_scripted_provider_type()`
+//    synthesizes its own entry ("Scripted"/scripted-1, credential=None) and registers
+//    it BEFORE the config-derived ones so it wins the implicit
+//    first-entry-declaring-the-capability fallback. So there is no `providers[]` entry
+//    and no `active_models.json` pin to write here, and adding either would put a
+//    second, competing entry of the same type in the registry. Nothing is weakened:
+//    the home is still under $TMPDIR, still wiped per run, auth is still on, and
+//    readiness is still the READY line.
 const GATEWAY_COMMAND = [
   'D="${TMPDIR:-/tmp}"; D="${D%/}/personalclaw-e2e-home"',
   'rm -rf "$D"; mkdir -p "$D/workspace"',
+  // Fail the BOOT, loudly, if the script fixture is missing. The provider does
+  // raise ScriptedScriptError on an unreadable path, but that surfaces at
+  // CONSTRUCTION — mid-turn, inside a chat request — so without this guard the run
+  // would come up green-looking and fail deep in the spec while naming the wrong
+  // thing. The absolute path also means the gateway resolves it after any chdir.
+  `S="$PWD/${SCRIPTED.scriptPath}"`,
+  `[ -f "$S" ] || { echo "PERSONALCLAW_E2E_FATAL: scripted-provider script not found at $S (cwd $PWD)" >&2; exit 1; }`,
   `printf '%s' '{"dashboard":{"user_name":"Keyur"}}' > "$D/config.json"`,
   'PC="../.venv/bin/personalclaw"; [ -x "$PC" ] || PC=personalclaw',
-  `PERSONALCLAW_HOME="$D" PERSONALCLAW_WORKSPACE="$D/workspace" exec "$PC" gateway --port ${GATEWAY_PORT} --no-open --json-ready`,
+  // Pin the gateway to THIS tree's source. Without it a worktree run boots whatever
+  // `personalclaw` is on PATH — the editable install from the MAIN checkout — so the
+  // gate silently tests code that is not the code under test. Measured: the first
+  // integrated run failed with `no model provider resolves for use case 'background'`
+  // and a traceback whose paths were all in the main checkout, because the scripted
+  // provider does not exist there. In CI this is redundant (uv installs this repo) and
+  // harmless; in a worktree it is the difference between a real result and a decoy.
+  'export PYTHONPATH="$(cd .. && pwd)/src${PYTHONPATH:+:$PYTHONPATH}"',
+  `PERSONALCLAW_HOME="$D" PERSONALCLAW_WORKSPACE="$D/workspace" ${SCRIPTED.scriptEnvVar}="$S" exec "$PC" gateway --port ${GATEWAY_PORT} --no-open --json-ready`,
 ].join('\n')
 
 export default defineConfig({
