@@ -2887,6 +2887,18 @@ class WorkflowsConfig:
             "its runs finish would otherwise stack them without bound.",
         ),
     )
+    self_schedule_max_outstanding: int = field(
+        default=20,
+        metadata=_meta(
+            "Self-Scheduled Tasks — Max Outstanding",
+            "How many enabled automations the agent may hold at once via set_onetime_task / "
+            "set_recurring_task. The bound exists because a self-scheduling agent can create "
+            "work faster than it retires it: each task it parks wakes it again later, and an "
+            "unbounded fan-out of clocks is how a helpful loop becomes a runaway one. Counted "
+            "over ENABLED agent-created automations, so pausing one frees a slot without "
+            "deleting it.",
+        ),
+    )
     max_concurrent_nodes: int = field(
         default=6,
         metadata=_meta(
@@ -4849,6 +4861,9 @@ class AppConfig:
             workflows=WorkflowsConfig(
                 enabled=bool(workflows_data.get("enabled", True)),
                 max_active_runs=_safe_int(workflows_data.get("max_active_runs", 10), 10),
+                self_schedule_max_outstanding=_safe_int(
+                    workflows_data.get("self_schedule_max_outstanding", 20), 20
+                ),
                 max_concurrent_nodes=_safe_int(workflows_data.get("max_concurrent_nodes", 6), 6),
                 default_node_timeout_total_secs=_safe_int(
                     workflows_data.get("default_node_timeout_total_secs", 900), 900

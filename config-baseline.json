@@ -1628,6 +1628,12 @@
     "type": "int"
   },
   {
+    "default": 20,
+    "path": "workflows.self_schedule_max_outstanding",
+    "sensitive": false,
+    "type": "int"
+  },
+  {
     "default": "off",
     "path": "workflows.surface_mode_default",
     "sensitive": false,

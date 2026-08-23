@@ -335,7 +335,7 @@ Turn structured DATA into a generative-UI widget (charts, stat tiles, tables, ca
 
 ### `automation_create`
 
-Create an automation from ONE natural-language message. Use for 'when a file in ~/notes changes', 'every weekday at 9', 'when my nightly run finishes'. The `when` phrase is routed to the right trigger kind (file/clock/web_watch/…) — a cadence becomes a cron schedule, an event becomes an event trigger. Give `when` + `name` + `message` (what the automation should do). Announced to you on creation and capped at 20 agent-created automations.
+Create an automation from ONE natural-language message. Use for 'when a file in ~/notes changes', 'every weekday at 9', 'when my nightly run finishes'. The `when` phrase is routed to the right trigger kind (file/clock/web_watch/…) — a cadence becomes a cron schedule, an event becomes an event trigger. Give `when` + `name` + `message` (what the automation should do). Announced to you on creation, and capped by workflows.self_schedule_max_outstanding.
 
 **Response type:** `automation.create.result`
 
@@ -543,6 +543,52 @@ Patch an automation. Only settable fields apply (name, spec, gates, workflow, en
   "patch": {
     "name": "Notes summarizer"
   }
+}
+```
+
+### `set_onetime_task`
+
+Schedule YOURSELF to do something ONCE at a later time, then stop. Use when you need to wait for something outside this turn — 'check the build in 20 minutes', 'follow up tomorrow morning'. The task wakes you with `message` as the instruction. Counts against your outstanding-task allowance; it frees a slot when it fires, since a one-time task disables itself.
+
+**Response type:** `automation.create.result`
+
+**Safety:** requires approval, risk: caution
+
+**Parameters:**
+- `message` (string, required) — The instruction to give yourself when it fires.
+- `name` (string, required) — A short name for the task.
+- `when` (string, required) — When to wake, in plain language: 'in 20 minutes', 'tomorrow at 9am', '2026-09-01 14:00'.
+
+**Example — Wake yourself once to check on something:**
+
+```json
+{
+  "message": "Check whether the release build finished and report the result",
+  "name": "Check the build",
+  "when": "in 20 minutes"
+}
+```
+
+### `set_recurring_task`
+
+Schedule YOURSELF to do something REPEATEDLY on a cadence — 'every weekday at 9', 'hourly', 'every Monday'. Use for ongoing monitoring you should keep doing rather than a single follow-up. Counts against your outstanding-task allowance for as long as it stays enabled, so pause or delete one you no longer need.
+
+**Response type:** `automation.create.result`
+
+**Safety:** requires approval, risk: caution
+
+**Parameters:**
+- `cadence` (string, required) — How often, in plain language: 'every weekday at 9', 'hourly', 'every Monday at 08:00'.
+- `message` (string, required) — The instruction to give yourself each time it fires.
+- `name` (string, required) — A short name for the task.
+
+**Example — Keep monitoring something on a cadence:**
+
+```json
+{
+  "cadence": "every weekday at 9",
+  "message": "Triage the inbox and surface anything that needs me",
+  "name": "Weekday triage"
 }
 ```
 

@@ -822,6 +822,7 @@ _EDITABLE_CONFIG: dict[str, dict] = {
     # restart to change them would mean restarting mid-run to fix a run.
     "workflows.enabled": {"type": "bool"},
     "workflows.max_active_runs": {"type": "int", "min": 1, "max": 100},
+    "workflows.self_schedule_max_outstanding": {"type": "int", "min": 0, "max": 200},
     "workflows.max_concurrent_nodes": {"type": "int", "min": 1, "max": 64},
     "workflows.default_node_timeout_total_secs": {"type": "int", "min": 0, "max": 86400},
     "workflows.default_node_timeout_stall_secs": {"type": "int", "min": 0, "max": 86400},

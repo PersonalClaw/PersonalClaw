@@ -1766,3 +1766,72 @@ Gate: `make lint` green (black/isort/flake8/mypy, 1598 files / 821 source files)
 `pytest --no-cov -q` 19205 passed / 30 skipped / 12 xfailed / 0 failed, collection 19245 vs the
 stacked base's 19223 (+22 new, 0 removed); `config-baseline.json` regenerated in the same commit
 (a new config field legitimately grows it). No `web/` change, so no web gate.
+
+### 2026-08-23 — `WF2LOO-9` PARTIAL: the self-schedule tools + a configurable bound
+
+**`WF2LOO-9` stays `blocked`/not-done.** Three of its four clauses ship here; the template does not,
+and is recorded below rather than claimed.
+
+| clause | state |
+|---|---|
+| `set_onetime_task` / `set_recurring_task` tool module registered on the agent surface | **DONE** |
+| `workflows.self_schedule_max_outstanding` wired through all four config points | **DONE** |
+| the outstanding-task bound enforced through those tools | **DONE** |
+| `goal-pursuit-monitor` template (parked run + self-created clock trigger) | **NOT DONE** — see below |
+
+**🪤 The contract cites a registry that does not exist.** `done_when` says the tool module is
+"registered via `mcp_core._TOOL_MODULES` + `tool_providers/registry.py`". There is no `_TOOL_MODULES`
+in `mcp_core.py` — the aggregation tuple is `_AGGREGATED_CATEGORY_MODULES` (`mcp_core.py:1724`), and
+`mcp_automation` is already a member of it, with `create_automation_provider` already in
+`tool_providers/registry.py`. So the registration the clause asks for was satisfied by adding the two
+tools to the existing automation surface rather than by creating a module. Recorded as a DEVIATION on
+the mechanism; the substance — the tools are reachable by an agent — holds.
+
+**The bound was a module constant.** `MAX_AGENT_TRIGGERS = 20` in `triggers/tools.py`, enforced at one
+site. The single bound standing between a self-scheduling agent and an unbounded fan-out of clocks
+could not be tightened to 5, nor set to 0 to turn self-scheduling off, without editing source. It is
+now `workflows.self_schedule_max_outstanding` — dataclass + `_meta`, `load()`, `to_dict()` (automatic
+via `asdict`), and the `_EDITABLE_CONFIG` PATCH allowlist (`min: 0, max: 200`). Clean break: the
+constant is gone, no dual path, and `DEFAULT_MAX_AGENT_TRIGGERS` survives only as the fail-safe.
+
+**Read per call, not captured at import** — a value read at import cannot be changed by a PATCH
+without a restart, which is exactly the defect the `mcp.json` resolvers had. A test asserts the config
+is consulted on every call.
+
+**Fail-safe direction, and why it cannot be 0.** An unreadable config returns the historical 20, not
+"unbounded" (which would silently remove the only cap) and not 0 (which would look as if the operator
+had disabled the feature when they had not).
+
+**Both tools route through `triggers.tools.create(created_by="agent")`** rather than reaching the
+store, so they inherit the bound, the command screening and the on-creation announcement instead of
+re-implementing any of them. A test asserts that routing, because a tool that wrote directly would
+look identical until the day it mattered. `automation_create` could already build either shape — the
+separate names exist so the tool log and the approval prompt distinguish *the agent scheduled itself*
+from *the agent built the user an automation*.
+
+**Four rails the addition tripped, each a real requirement rather than noise:**
+`MCP_AUTOMATION_SCHEMAS` (a tool absent from that table **skips validation entirely**, so an
+agent-supplied `name`/`message` would have reached the store unchecked); `TOOL_META` (response type +
+example); the offline agent reference (`index.md`, `tools.md` regenerated — the documented "a new
+route stales the offline reference" shape); and `config-baseline.json` for the new field.
+
+**🪤 `TOOL_NAMES` means "handlers in this module", not "names an agent may call."** Adding the two
+names to `triggers.tools.TOOL_NAMES` broke two of its own rails
+(`test_every_declared_tool_name_has_a_handler`, `test_the_namespace_covers_section_4s_table`: 11 == 9).
+Reverted; the surface inventory now reads `set(TOOL_NAMES) | SELF_SCHEDULE_TOOLS`, and this plan's own
+test asserts dispatch by driving every declared name rather than by set-comparing against that tuple.
+
+**UNMET — `goal-pursuit-monitor` template.** Not attempted. It is a parked-run-plus-self-created-clock
+template, i.e. a consumer of the tools this change adds, and it needs a parked-run resume target the
+`workflows` side owns (`wakeup.resume_for` exists; the template wiring does not). Building it against
+tools that were unmerged would have meant guessing the seam. It is the natural next slice.
+
+**Falsification (2, each on a live line, applied-count confirmed, restored from a file copy).**
+(1) Re-hardcode the bound to 20, ignoring config → 1 failed (the per-call test). (2) Make
+`set_onetime_task` write to the store directly instead of via `tools.create` → 4 failed, including
+the bound and the routing assertions.
+
+**Gate.** `test_self_schedule_tools` (14) + `test_triggers_tools` + `test_mcp_automation` → **80
+passed**; the four regenerated rails → **58 passed**; `make lint` clean over 960 files; full
+`make test` → **24,133 passed, 30 skipped, exit 0**. `dag.json` deliberately untouched — a PARTIAL
+atom stays not-done.
