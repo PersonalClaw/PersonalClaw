@@ -33,7 +33,7 @@ New computer_use package with enable_state.py (§3.1): an out-of-band enable fil
 `$PERSONALCLAW_HOME/governance/computer_use.enable.json` (the directory the ceiling already owns,
 so the two share one trust root and one denylist entry), overridable to an absolute path by
 `PERSONALCLAW_COMPUTER_USE_ENABLE_FILE` so an operator can put it on a root-owned `0444` file
-outside the agent's home. It must contain exactly `{"version": 1, "enabled": true}`. A
+outside the agent's home. It must contain exactly `{"version": 1, "enabled": true, "apps": ["TextEdit"]}`. A
 touch-a-marker file was rejected on measurement: as a marker, an empty file and a half-flushed
 write both arm the machine — the `empty-file` and `half-flushed-write` cases in the fail-closed
 corpus are that decision made testable. Fourteen malformed shapes (non-JSON, wrong root type,
