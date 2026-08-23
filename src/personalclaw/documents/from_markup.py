@@ -12,8 +12,9 @@ credential redactor (`security.redact_credentials`) — never a second implement
 from __future__ import annotations
 
 import re
+from dataclasses import replace
 
-from personalclaw.documents.model import Block, DeckModel, DocumentModel, Slide
+from personalclaw.documents.model import Block, DeckModel, DocumentModel, Run, Slide
 
 _HEADING = re.compile(r"^(#{1,6})\s+(.*)$")
 _BULLET = re.compile(r"^\s*[-*+]\s+(.*)$")
@@ -28,18 +29,140 @@ _HRULE = re.compile(r"^\s*([-*_])\s*(\1\s*){2,}$")
 _NOTES = re.compile(r"^\s*<!--\s*notes:\s*(.*?)\s*-->\s*$", re.IGNORECASE | re.DOTALL)
 
 
-def _strip_inline(text: str) -> str:
-    """Drop inline markdown emphasis so it doesn't render as literal asterisks.
+_LINK = re.compile(r"\[([^\]]*)\]\(([^)]*)\)")
+_WORD = re.compile(r"[0-9A-Za-z_]")
 
-    Deliberately shallow: bold/italic/code/links, nothing else. Rich inline formatting
-    would mean carrying styled runs through the model, which is a much larger surface for
-    little gain in a generated document.
+
+def _delim_run(text: str, i: int) -> int:
+    """Length of the run of identical emphasis characters starting at ``i``."""
+    ch = text[i]
+    j = i
+    while j < len(text) and text[j] == ch:
+        j += 1
+    return j - i
+
+
+def _opens(text: str, i: int, take: int, ch: str) -> bool:
+    """Can the delimiter run at ``i`` open emphasis?
+
+    Two rules, both there to stop ordinary prose from being read as markup: an opener is
+    never followed by whitespace (so ``2 * 3`` keeps its asterisk), and an ``_`` opener
+    never sits inside a word (so ``snake_case_name`` keeps its underscores).
     """
-    text = re.sub(r"\[([^\]]+)\]\([^)]*\)", r"\1", text)  # [label](url) → label
-    text = re.sub(r"(\*\*|__)(.+?)\1", r"\2", text)
-    text = re.sub(r"(\*|_)(.+?)\1", r"\2", text)
-    text = re.sub(r"`([^`]+)`", r"\1", text)
-    return text.strip()
+    after = text[i + take : i + take + 1]
+    if not after or after.isspace():
+        return False
+    return not (ch == "_" and bool(_WORD.match(text[i - 1 : i])))
+
+
+def _closes(text: str, j: int, take: int, ch: str) -> bool:
+    """Can the delimiter run at ``j`` close emphasis? The mirror of :func:`_opens`."""
+    if text[j - 1].isspace():
+        return False
+    return not (ch == "_" and bool(_WORD.match(text[j + take : j + take + 1])))
+
+
+def _find_closer(text: str, content_start: int, take: int, ch: str) -> int:
+    """Index of the closing delimiter run, or ``-1``.
+
+    Only a run of the SAME length closes, which is what makes nesting work: scanning for
+    the ``**`` that ends a bold span steps over the single ``*`` of an inner italic
+    instead of closing early on it.
+    """
+    j = content_start
+    while j < len(text):
+        c = text[j]
+        if c == "`":  # a code span's contents are literal and never close emphasis
+            close = text.find("`", j + 1)
+            j = close + 1 if close > j + 1 else j + 1
+            continue
+        if c != ch:
+            j += 1
+            continue
+        run = _delim_run(text, j)
+        if run == take and j > content_start and _closes(text, j, take, ch):
+            return j
+        j += run
+    return -1
+
+
+def _scan(text: str, *, bold: bool, italic: bool, link: str) -> list[Run]:
+    """Tokenize ``text`` into runs, recursing through nested emphasis and link labels."""
+    out: list[Run] = []
+    buf: list[str] = []
+
+    def flush_literal() -> None:
+        if buf:
+            out.append(Run(text="".join(buf), bold=bold, italic=italic, link=link))
+            buf.clear()
+
+    i = 0
+    while i < len(text):
+        ch = text[i]
+        if ch == "`":
+            close = text.find("`", i + 1)
+            if close > i + 1:  # an empty span (``) is not a code span
+                flush_literal()
+                body = text[i + 1 : close]
+                out.append(Run(text=body, bold=bold, italic=italic, code=True, link=link))
+                i = close + 1
+                continue
+        elif ch == "[":
+            m = _LINK.match(text, i)
+            if m and m.group(1):  # an empty label is not a link
+                flush_literal()
+                out.extend(_scan(m.group(1), bold=bold, italic=italic, link=m.group(2) or link))
+                i = m.end()
+                continue
+        elif ch in "*_":
+            run = _delim_run(text, i)
+            # 1 = italic, 2 = bold, 3 = both. A run of 4+ is nobody's emphasis and stays
+            # literal rather than losing characters to a half-consumed marker.
+            if run <= 3 and _opens(text, i, run, ch):
+                close = _find_closer(text, i + run, run, ch)
+                if close >= 0:
+                    flush_literal()
+                    out.extend(
+                        _scan(
+                            text[i + run : close],
+                            bold=bold or run >= 2,
+                            italic=italic or run != 2,
+                            link=link,
+                        )
+                    )
+                    i = close + run
+                    continue
+            buf.append(text[i : i + run])  # unmatched marker → literal, never dropped
+            i += run
+            continue
+        buf.append(ch)
+        i += 1
+
+    flush_literal()
+    return out
+
+
+def parse_inline(text: str) -> list[Run]:
+    """Parse inline markdown into styled runs: bold, italic, code and links.
+
+    The same shallow subset a generated document actually uses, but the formatting now
+    survives INTO the model instead of being thrown away — one parser feeding both the
+    runs-carrying surfaces and, via :func:`inline_text`, the ones that stay plain strings.
+
+    No input is ever dropped: an unmatched ``**``, an unterminated ``[t](`` and an
+    intra-word underscore all stay literal. Edge whitespace is trimmed and empty runs
+    discarded, so blank or whitespace-only input yields NO runs at all.
+    """
+    runs = _scan(text or "", bold=False, italic=False, link="")
+    if runs:
+        runs[0] = replace(runs[0], text=runs[0].text.lstrip())
+        runs[-1] = replace(runs[-1], text=runs[-1].text.rstrip())
+    return [r for r in runs if r.text]
+
+
+def inline_text(runs: list[Run]) -> str:
+    """Plain text of a run list, for the surfaces that stay ``list[str]``."""
+    return "".join(r.text for r in runs)
 
 
 def document_from_markdown(md: str, *, title: str = "") -> DocumentModel:
@@ -61,13 +184,16 @@ def document_from_markdown(md: str, *, title: str = "") -> DocumentModel:
     def flush() -> None:
         nonlocal para, bullets, numbered, table
         if para:
-            model.blocks.append(Block(kind="paragraph", text=_strip_inline(" ".join(para))))
+            # `text` is left to the model's derivation rather than computed a second time.
+            model.blocks.append(Block(kind="paragraph", runs=parse_inline(" ".join(para))))
             para = []
         if bullets:
-            model.blocks.append(Block(kind="bullets", items=[_strip_inline(b) for b in bullets]))
+            items = [inline_text(parse_inline(b)) for b in bullets]
+            model.blocks.append(Block(kind="bullets", items=items))
             bullets = []
         if numbered:
-            model.blocks.append(Block(kind="numbered", items=[_strip_inline(n) for n in numbered]))
+            items = [inline_text(parse_inline(n)) for n in numbered]
+            model.blocks.append(Block(kind="numbered", items=items))
             numbered = []
         if table:
             model.blocks.append(Block(kind="table", rows=table))
@@ -95,7 +221,10 @@ def document_from_markdown(md: str, *, title: str = "") -> DocumentModel:
         if m:
             if para or bullets or numbered:
                 flush()
-            table.append([_strip_inline(c) for c in m.group(1).split("|")])
+            # Cells stay plain strings: `Block.rows` is `list[list[str]]` and every reader
+            # (writers, API serializers, tests) depends on that. Widening it to carry runs
+            # is the model third's call, not something to guess at from here.
+            table.append([inline_text(parse_inline(c)) for c in m.group(1).split("|")])
             continue
         if table:
             flush()  # a non-table line ends the table
@@ -107,13 +236,13 @@ def document_from_markdown(md: str, *, title: str = "") -> DocumentModel:
         if m:
             flush()
             level = len(m.group(1))
-            text = _strip_inline(m.group(2))
+            runs = parse_inline(m.group(2))
             # An H1 with no explicit title becomes the document title rather than a
-            # duplicate heading under it.
+            # duplicate heading under it. A title is a plain string, so it takes the text.
             if level == 1 and not model.title and not model.blocks:
-                model.title = text
+                model.title = inline_text(runs)
             else:
-                model.blocks.append(Block(kind="heading", text=text, level=level))
+                model.blocks.append(Block(kind="heading", runs=runs, level=level))
             continue
         m = _BULLET.match(line)
         if m:
@@ -172,7 +301,7 @@ def deck_from_markdown(md: str, *, title: str = "") -> DeckModel:
             continue
         m = _HEADING.match(raw)
         if m and len(m.group(1)) <= 2:
-            text = _strip_inline(m.group(2))
+            text = inline_text(parse_inline(m.group(2)))
             # A leading H1 titles the DECK when no title was supplied, rather than
             # becoming a content-free first slide.
             if len(m.group(1)) == 1 and not deck.title and current is None:
@@ -187,5 +316,6 @@ def deck_from_markdown(md: str, *, title: str = "") -> DeckModel:
             current = Slide(title=deck.title or "")
             deck.slides.append(current)
         b = _BULLET.match(raw) or _NUMBERED.match(raw)
-        current.body.append(_strip_inline(b.group(1) if b else raw))
+        # A slide body is `list[str]`; the atom does not widen it, so join the runs' text.
+        current.body.append(inline_text(parse_inline(b.group(1) if b else raw)))
     return deck

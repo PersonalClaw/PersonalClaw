@@ -9,7 +9,16 @@ declarative model, and code renders the file. No vendor file-format vocabulary a
 outside ``writers/``.
 """
 
-from personalclaw.documents.model import Block, DeckModel, DocumentModel, SheetModel
+from personalclaw.documents.model import (
+    Block,
+    Cell,
+    DeckModel,
+    DocumentModel,
+    PageSetup,
+    ParagraphStyle,
+    Run,
+    SheetModel,
+)
 from personalclaw.documents.registry import (
     available_formats,
     get_writer,
@@ -18,9 +27,13 @@ from personalclaw.documents.registry import (
 
 __all__ = [
     "Block",
+    "Cell",
     "DocumentModel",
     "SheetModel",
     "DeckModel",
+    "PageSetup",
+    "ParagraphStyle",
+    "Run",
     "register_writer",
     "get_writer",
     "available_formats",

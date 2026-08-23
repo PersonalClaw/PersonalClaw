@@ -51,7 +51,12 @@ dependencies = [
     "sqlite-vec>=0.1,<1",
     # Knowledge document readers (readers.py): .docx / .pdf / .pptx / .html.
     # Pure-Python, no native/torch weight — safe as core deps (incl. desktop bundle).
-    "python-docx>=0.8.6,<2",
+    # Floor raised to 1.1 by DFE-2: `Paragraph.text` only includes HYPERLINK text from 1.1
+    # onward, and `knowledge/readers.py:229` reads exactly that. On a 0.8.x install our own
+    # reader would silently drop a link's display words — the content loss this plan exists to
+    # prevent. `Paragraph.hyperlinks` (which the docx writer's round-trip test asserts) also
+    # does not exist before 1.1.
+    "python-docx>=1.1,<2",
     "pdfplumber>=0.11,<1",
     "python-pptx>=0.6.21,<2",
     "html2text>=2020.1.16",
