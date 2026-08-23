@@ -29,7 +29,11 @@ import pytest
 
 from personalclaw.acp.adapter import acp_event_to_agent_event
 from personalclaw.acp.outcomes import ToolOutcomeAccumulator
-from personalclaw.acp.translate import extract_tool_event, extract_tool_update_events
+from personalclaw.acp.translate import (
+    SeenToolCall,
+    extract_tool_event,
+    extract_tool_update_events,
+)
 from personalclaw.acp.types import (
     EVENT_COMPLETE,
     EVENT_TOOL_RESULT,
@@ -78,11 +82,15 @@ def _turn_events(calls: list[tuple[str, str, str]]) -> list[AcpEvent]:
     """Translate a whole turn's frames into AcpEvents. ``calls`` = (id, title, status)."""
     events: list[AcpEvent] = []
     inputs: dict[str, str] = {}
+    # The opening ``tool_call`` frame is the only one that names the tool, so the
+    # correlation map has to outlive it and be shared with the update frames —
+    # exactly how ``AcpSession`` threads its own ``_tool_call_seen``.
+    seen: dict[str, SeenToolCall] = {}
     for call_id, title, status in calls:
-        call_event = extract_tool_event(_call_frame(call_id, title), inputs, [])
+        call_event = extract_tool_event(_call_frame(call_id, title), inputs, seen, [])
         assert call_event is not None, "translate did not decode the tool_call frame"
         events.append(call_event)
-        events.extend(extract_tool_update_events(_result_frame(call_id, status), inputs))
+        events.extend(extract_tool_update_events(_result_frame(call_id, status), inputs, seen))
     events.append(AcpEvent(kind=EVENT_COMPLETE, stop_reason="end_turn"))
     return events
 
@@ -162,7 +170,7 @@ class TestFailureBitCrossesTheAdapter:
     could never be True, so a fully implemented warn/block/circuit path was inert."""
 
     def test_failed_result_keeps_ok_false_through_translation(self):
-        events = extract_tool_update_events(_result_frame("t1", "failed"), {})
+        events = extract_tool_update_events(_result_frame("t1", "failed"), {}, {})
         results = [e for e in events if e.kind == EVENT_TOOL_RESULT]
         assert results, "translate produced no tool_result"
         assert acp_event_to_agent_event(results[0]).tool_meta.get("ok") is False
@@ -170,7 +178,7 @@ class TestFailureBitCrossesTheAdapter:
     def test_passing_result_carries_no_ok_key(self):
         """Vacuity floor: an adapter that stamped ``ok`` unconditionally would pass the
         test above while telling the breaker every call failed."""
-        events = extract_tool_update_events(_result_frame("t1", "completed"), {})
+        events = extract_tool_update_events(_result_frame("t1", "completed"), {}, {})
         results = [e for e in events if e.kind == EVENT_TOOL_RESULT]
         assert results
         assert "ok" not in acp_event_to_agent_event(results[0]).tool_meta
