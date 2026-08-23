@@ -118,7 +118,10 @@ def parent_capability(use_case: str) -> str:
 # ── Active-model store (active_models.json) ──────────────────────────────────
 
 
-def _active_models_path() -> Path:
+def active_models_path() -> Path:
+    """The single active-model store. Public because the ES-7 model-upgrade watchdog
+    watches this exact file for changes, and a second module deriving the path itself is
+    how two "the same" paths drift apart."""
     from personalclaw.config.loader import config_dir
 
     return config_dir() / "active_models.json"
@@ -255,7 +258,7 @@ def load_active_models() -> dict[str, list[str]]:
     string value from an older store normalizes to a one-entry chain; writes
     (:func:`save_active_models`) emit lists only.
     """
-    path = _active_models_path()
+    path = active_models_path()
     if not path.is_file():
         return {}
     try:
@@ -274,7 +277,7 @@ def load_active_models() -> dict[str, list[str]]:
 
 
 def save_active_models(active: dict[str, list[str]]) -> None:
-    path = _active_models_path()
+    path = active_models_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     atomic_write(path, json.dumps(active, indent=2) + "\n")
 

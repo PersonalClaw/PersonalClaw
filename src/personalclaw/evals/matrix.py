@@ -43,6 +43,12 @@ class MatrixSpec:
     trial_count: int = 3
     scorer: str = ""  # "judge" | "assertion" | "qrels" | "command"
     budget_usd: float = 0.0  # hard cap — the ES-1b runner refuses a cell it can't afford
+    #: ES-7 §3.1: the harness component this matrix ablates, as a
+    #: :class:`~personalclaw.evals.overlay.ComponentOverlay` dict. The per-cell ARM comes
+    #: from the ``arm_mask`` axis; this records WHAT is being toggled, so
+    #: ``experiment.json`` alone answers "which component produced this delta". Empty ⇒ a
+    #: plain matrix with no component toggling.
+    component: dict = field(default_factory=dict)
 
     def to_dict(self) -> dict:
         # Copy the axes lists so the frozen spec's mapping can't be mutated through
@@ -53,6 +59,7 @@ class MatrixSpec:
             "trial_count": self.trial_count,
             "scorer": self.scorer,
             "budget_usd": self.budget_usd,
+            "component": dict(self.component),
         }
 
     @classmethod
@@ -65,6 +72,7 @@ class MatrixSpec:
             trial_count=int(data.get("trial_count", 3)),
             scorer=str(data.get("scorer", "")),
             budget_usd=float(data.get("budget_usd", 0.0) or 0.0),
+            component=dict(data.get("component") or {}),
         )
 
 
@@ -173,3 +181,19 @@ def aggregate(cells: list[CellResult]) -> dict:
         "scored_count": len(scored),
         "mean_score": mean_score,
     }
+
+
+def aggregate_by(cells: list[CellResult], axis: str) -> dict[str, dict]:
+    """Per-axis-value aggregates: ``{str(axis value): aggregate(cells for that value)}``.
+
+    The ablation runner's on-vs-off delta is this call with ``axis="arm_mask"`` — one
+    :func:`aggregate` per arm, so an arm whose cells were all ``VERIFIER_ABSENT`` reports
+    ``mean_score=None`` (no measurement) instead of borrowing the other arm's mean. Cells
+    lacking the axis are grouped under ``""`` rather than dropped, because a silently
+    discarded cell is a delta computed over a different population than the one that ran.
+    """
+    buckets: dict[str, list[CellResult]] = {}
+    for cell in cells:
+        key = str((cell.coords or {}).get(axis, ""))
+        buckets.setdefault(key, []).append(cell)
+    return {key: aggregate(group) for key, group in buckets.items()}

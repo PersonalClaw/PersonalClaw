@@ -237,6 +237,7 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `POST /api/durability/import` — validate, then apply, an export zip (§6).
 - `POST /api/durability/run` — {job} — run one backup job now.
 - `GET /api/durability/status` — schedule state + what's due.
+- `GET /api/evals/ablation` — the newest keep/remove/lighten report (ES-7 §3.1).
 - `GET /api/evals/judge-bench` — the newest tier-recommendation table.
 - `GET /api/evals/studies` — one compact row per pre-registered study (§2.4 / ES-5).
 - `GET /api/evals/studies/{study_id}` — one study's verdict, agreement and per-run rows.

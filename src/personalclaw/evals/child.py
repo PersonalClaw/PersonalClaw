@@ -158,6 +158,16 @@ async def _run(descriptor: dict) -> dict:
     if fixture_home:
         seed_fixture_home(fixture_home)
 
+    # ES-7 §3.1: the component overlay, applied AFTER the fixture seed (so it patches the
+    # seeded throwaway home, not a home the seed is about to overwrite) and BEFORE the
+    # first config read. It reads from THIS process's env; `apply_in_child` refuses outright
+    # unless PERSONALCLAW_HOME is a throwaway, so a mis-spawned cell becomes an honest
+    # VERIFIER_ABSENT rather than a measurement taken against live state.
+    from personalclaw.evals import overlay as overlay_lib
+
+    cell_overlay = overlay_lib.from_env()
+    applied = overlay_lib.apply_in_child(cell_overlay)
+
     coords = descriptor.get("coords") or {}
     model = coords.get("model") if isinstance(coords, dict) else None
 
@@ -169,7 +179,17 @@ async def _run(descriptor: dict) -> dict:
     # inside THIS process only — the parent's env is untouched (§1.3).
     runner = EvalRunner(provider_factory=factory, workspace_dir=ws, judge_enabled=False)
     scenario_result = await runner.run_scenario(scenario)
-    return result_from_scenario(scenario_result)
+    result = result_from_scenario(scenario_result)
+    if cell_overlay is not None:
+        # WHAT the overlay actually changed, reported back rather than assumed: an arm that
+        # applied nothing is a delta of 0.0 that would otherwise read as "the component does
+        # not matter", which is the exact wrong conclusion.
+        result["overlay"] = {
+            "component_id": cell_overlay.component_id,
+            "arm": cell_overlay.arm,
+            "applied": applied,
+        }
+    return result
 
 
 def main(argv: list[str]) -> int:

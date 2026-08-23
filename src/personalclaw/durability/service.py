@@ -582,6 +582,68 @@ def _tick_graph_maintenance() -> None:
         logger.info("graph maintenance processed %d unit(s): %s", result.total, result.per_pass)
 
 
+def _tick_evals_watchdog(*, notifier=None) -> None:
+    """One eval-substrate maintenance tick (EVALUATION-SUBSTRATE §3.1 + §3.2).
+
+    This is the "cron today" the plan asks for: the ablation runner is periodic and the
+    model-upgrade watchdog is "an mtime check on the maintenance tick today" (a
+    ``Trigger{kind:clock}`` / ``kind:file`` watcher after AUTOMATION-SUBSTRATE). A named
+    module function, like ``_tick_graph_maintenance``, so its test calls exactly what the
+    loop calls.
+
+    Gated on ``evals.enabled`` — the substrate's OWN switch, off by default — and NOT on
+    ``durability.auto_backup``: turning off scheduled backups must not silently disable a
+    subsystem it does not name. The ablation half is additionally gated by an empty ablation
+    registry (which is what ships), so enabling the substrate cannot by itself start spending
+    model calls on a component the user never registered.
+
+    Never raises: a maintenance tick that can break the backup loop is worse than a tick that
+    skipped one cadence.
+    """
+    try:
+        if not _cfg_evals_enabled():
+            return
+    except Exception:  # noqa: BLE001 — an unreadable config is not a reason to raise here
+        logger.debug("evals tick: config unreadable", exc_info=True)
+        return
+
+    try:
+        from personalclaw.evals import model_watchdog
+
+        result = model_watchdog.check(notifier=notifier)
+        if result.changed:
+            logger.info(
+                "model rebind detected (%s → %s): queued %d re-benchmark(s)",
+                result.previous_model_fp or "—",
+                result.model_fp or "—",
+                len(result.queued),
+            )
+    except Exception:  # noqa: BLE001
+        logger.warning("model-upgrade watchdog tick failed", exc_info=True)
+
+    try:
+        from personalclaw.evals import ablation
+
+        summary = ablation.run_cadence()
+        if summary.get("ran"):
+            logger.info(
+                "ablation measured %s: %s (delta %s)",
+                summary.get("component_id"),
+                summary.get("verdict"),
+                summary.get("delta"),
+            )
+        else:
+            logger.debug("ablation not run: %s", summary.get("reason"))
+    except Exception:  # noqa: BLE001
+        logger.warning("ablation cadence tick failed", exc_info=True)
+
+
+def _cfg_evals_enabled() -> bool:
+    from personalclaw.config.loader import AppConfig
+
+    return bool(AppConfig.load().evals.enabled)
+
+
 def run_due_jobs(*, now: float | None = None, force: str = "", notifier=None) -> list[JobResult]:
     """Run whatever is due. Returns one result per job attempted.
 
@@ -788,6 +850,17 @@ class DurabilityService:
                 raise
             except Exception:  # noqa: BLE001 — maintenance must never break the backup tick
                 logger.warning("graph maintenance tick failed", exc_info=True)
+            # ES-7: the eval substrate's cadences (ablation runner + model-upgrade watchdog).
+            # Also outside the `enabled()` gate below, for the same reason: `evals.enabled` is
+            # their switch, and `durability.auto_backup` must not quietly be a second one.
+            try:
+                await asyncio.get_running_loop().run_in_executor(
+                    None, lambda: _tick_evals_watchdog(notifier=self._notifier)
+                )
+            except asyncio.CancelledError:
+                raise
+            except Exception:  # noqa: BLE001 — evals must never break the backup tick
+                logger.warning("evals maintenance tick failed", exc_info=True)
             if not enabled():
                 continue
             try:
