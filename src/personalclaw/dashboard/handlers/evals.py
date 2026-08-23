@@ -1,6 +1,8 @@
-"""Evals routes — the judge tier-recommendation table (EVALUATION-SUBSTRATE §6 / ES-4).
+"""Evals routes — the judge tier table (§6 / ES-4) and pre-registered studies (§2 / ES-5).
 
-GET /api/evals/judge-bench   the newest benchmark run's table + recommendations
+GET /api/evals/judge-bench           the newest benchmark run's table + recommendations
+GET /api/evals/studies               one row per pre-registered study
+GET /api/evals/studies/{study_id}    one study's verdict, agreement rate and per-run rows
 
 **Read-only on purpose.** The full shipped matrix is 540 judge calls; a POST that started
 one would hold a request open for minutes and spend real money on a click. So the RUN is
@@ -77,6 +79,74 @@ async def api_evals_judge_bench(request: web.Request) -> web.Response:
     return web.json_response(view)
 
 
+async def api_evals_studies(request: web.Request) -> web.Response:
+    """GET /api/evals/studies — one compact row per pre-registered study (§2.4 / ES-5).
+
+    Read-only for the same reason the bench table is: a k=5 paired study is ten template
+    runs plus six judge calls per pair, so starting one from a click would spend real money
+    and hold the request open. Registration is a proposal-queue item and the run is a
+    deliberate invocation; this publishes what they produced.
+    """
+    if not _enabled():
+        return json_error(
+            "evals_disabled",
+            message="The eval substrate is off. Turn on `evals.enabled` to publish "
+            "study results.",
+            status=404,
+        )
+    from personalclaw.evals.studies import study_index
+
+    try:
+        rows = study_index()
+    except Exception:
+        logger.warning("study index failed", exc_info=True)
+        return json_error(
+            "studies_unreadable",
+            message="The study artifacts could not be read.",
+            status=500,
+        )
+    _audit(request, "evals_studies", "read", f"count={len(rows)}")
+    return web.json_response({"studies": rows})
+
+
+async def api_evals_study(request: web.Request) -> web.Response:
+    """GET /api/evals/studies/{study_id} — one study's verdict, agreement and per-run rows.
+
+    🔴 The payload comes from `studies.study_view`, which deliberately omits the rubric TEXT
+    and the ``locked/`` checks. That omission is a §2.2 control, not a size optimization: a
+    dashboard is one `curl` away from an agent's context, so a route that served the hidden
+    checks would defeat the clause the whole study is built around. The rubric's HASH is
+    published instead — enough to prove the pin, not enough to satisfy it.
+    """
+    if not _enabled():
+        return json_error(
+            "evals_disabled",
+            message="The eval substrate is off. Turn on `evals.enabled` to publish "
+            "study results.",
+            status=404,
+        )
+    study_id = request.match_info.get("study_id", "")
+    from personalclaw.evals.studies import study_view
+
+    try:
+        view = study_view(study_id)
+    except Exception:
+        logger.warning("study view failed for %s", study_id, exc_info=True)
+        return json_error(
+            "studies_unreadable",
+            message="The study artifacts could not be read.",
+            status=500,
+        )
+    if view is None:
+        return json_error(
+            "study_absent",
+            message=f"No study {study_id!r} is registered.",
+            status=404,
+        )
+    _audit(request, "evals_study", "read", f"study_id={study_id}")
+    return web.json_response(view)
+
+
 def _audit(request: web.Request, operation: str, outcome: str, resources: str) -> None:
     """SEL-log the read. The table names which model a judge should be bound to, so who
     read it is an audit question — best-effort, and never breaks the response."""
@@ -95,5 +165,7 @@ def _audit(request: web.Request, operation: str, outcome: str, resources: str) -
 
 
 def register_evals_routes(app: web.Application) -> None:
-    """Register /api/evals/* — the judge tier-recommendation table."""
+    """Register /api/evals/* — the judge tier table and the pre-registered studies."""
     app.router.add_get("/api/evals/judge-bench", api_evals_judge_bench)
+    app.router.add_get("/api/evals/studies", api_evals_studies)
+    app.router.add_get("/api/evals/studies/{study_id}", api_evals_study)

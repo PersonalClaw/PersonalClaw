@@ -500,19 +500,29 @@ INVENTORY: tuple[StateEntry, ...] = (
     # other tree stores (loop, artifacts, skills). Not derived: the evidence is the
     # point of backup, not a rebuildable index.
     #
-    # NOTE (future, not now): §1.1 excludes `studies/*/locked` (hidden validation
-    # answer keys) from the PORTABILITY export. That subtree does not exist in ES-1a —
-    # matrices carry no answer keys — so no `derived_within`/export-exclusion is wired
-    # here yet; ES-5 adds it when `locked/` is first written (no dead control before then).
+    # 🔴 ES-5 wires the exclusion the ES-1a note deferred. §1.1/§2.2: `studies/*/locked`
+    # holds hidden validation answer keys that are "never rendered into any worker session's
+    # prompt, bindings, or workspace" — and an export archive handed to an agent is the
+    # longest way round to exactly that. Now that `evals/studies/<id>/locked/` has a writer
+    # (`evals/store.write_locked_check`), the control has something to protect.
+    #
+    # `derived_within` is the field with a live reader on BOTH paths that copy this tree
+    # (`portability.py:_is_derived_within` and `snapshot.py:_derived_within`), so declaring
+    # it here excludes the answer keys from the portability export AND from snapshots. The
+    # snapshot half is a deliberate consequence, not an oversight: an answer key belongs on
+    # one machine, and the cost — a REGISTERED-but-unrun study restored from a snapshot has
+    # lost its checks — is caught loudly rather than silently, because `studies.run_study`
+    # REFUSES a study whose registration declares checks it cannot load.
     StateEntry(
         id="evals",
         kind=KIND_TREE,
         path="evals",
         domain=DOMAIN_PLATFORM,
         merge=MERGE_UNION_BY_ID,
+        derived_within=("studies/*/locked",),
         help=(
-            "offline eval substrate: scenario library, matrices, pinned results ledger "
-            "(studies/benchmarks later)"
+            "offline eval substrate: scenario library, matrices, pinned results ledger, "
+            "pre-registered studies (their hidden locked/ checks never leave this machine)"
         ),
     ),
     # 🔴 S179 — the ten paths `audit_home()` reports on a REAL home. The guard was correct and had
