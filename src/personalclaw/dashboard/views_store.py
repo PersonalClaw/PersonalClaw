@@ -67,6 +67,25 @@ _OVERVIEW_CORE_REFS = (
 )
 
 
+#: The Mission Control preset id — the attention-triage surface (AS-8).
+PRESET_MISSION_CONTROL_ID = "mission-control"
+
+#: The four attention lanes, in triage order (most-blocking first): what needs YOU to
+#: approve, what needs YOU to answer, what the system is doing unattended, what is
+#: parked. Same DECLARED-composition contract as ``_OVERVIEW_CORE_REFS`` — the FE
+#: renders a fixed lane layout for these ``core:`` refs and sources every lane from the
+#: unified attention store (INBOX-NOTIFICATIONS-UNIFICATION), so the schema is
+#: composition-ready without making the render dynamic. The ``lane-`` segment is load
+#: bearing: it keeps a lane ref from colliding with a same-named Overview widget
+#: (``core:lane-working`` vs ``core:active-work``).
+_MISSION_CONTROL_CORE_REFS = (
+    "core:lane-needs-approval",
+    "core:lane-your-turn",
+    "core:lane-working",
+    "core:lane-idle",
+)
+
+
 class PresetLockedError(Exception):
     """Raised when a write targets a locked preset (edit/delete refused)."""
 
@@ -266,10 +285,30 @@ def _overview_preset(data: dict) -> DashboardView:
     )
 
 
+def _mission_control_preset(data: dict) -> DashboardView:
+    """Build the locked Mission Control preset: four attention lanes + persisted overlay."""
+    core = [
+        DashboardTile(ref=ref, size="m", order=i, added_by="user")
+        for i, ref in enumerate(_MISSION_CONTROL_CORE_REFS)
+    ]
+    overlay = _overlay_tiles(data, PRESET_MISSION_CONTROL_ID)
+    # Overlay tiles order AFTER the core band (they append; the registry is additive).
+    for j, t in enumerate(overlay):
+        t.order = len(core) + j
+    return DashboardView(
+        id=PRESET_MISSION_CONTROL_ID,
+        name="Mission Control",
+        icon="Radar",
+        nav_pinned=True,
+        preset=True,
+        tiles=core + overlay,
+    )
+
+
 def _presets(data: dict) -> list[DashboardView]:
-    """All locked presets, in nav order. Only Overview ships in AS-1 (Mission Control
-    is AS-8, gated on INBOX-NOTIFICATIONS-UNIFICATION)."""
-    return [_overview_preset(data)]
+    """All locked presets, in nav order. Overview stays FIRST — it is the default home,
+    and a second preset must never displace it."""
+    return [_overview_preset(data), _mission_control_preset(data)]
 
 
 def _user_view_from_dict(d: dict) -> DashboardView:
