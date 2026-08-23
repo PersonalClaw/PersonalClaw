@@ -384,7 +384,6 @@ class TestTurnCompleteLine:
             context_pct=42.0,
             input_tokens=1200,
             output_tokens=340,
-            cache_tokens=0,
             cost_usd=0.0123,
             priced=True,
         )
@@ -403,8 +402,15 @@ class TestTurnCompleteLine:
         assert "$0.00" not in line and "$" not in line
 
     def test_cache_fragment_only_when_nonzero(self):
-        assert "cached" not in self._line(cache_tokens=0)
-        assert "2,000 cached" in self._line(cache_tokens=2000)
+        # This used to assert the pre-summed rendering — `cache_tokens=2000` →
+        # "2,000 cached". PCS-7 deleted that keyword: reads and writes are reported
+        # separately (a read is the saving, a write is its cost), so the sum could
+        # state neither the hit rate nor the saved USD. The rule under test is
+        # unchanged and still load-bearing: NO cache activity renders NO fragment.
+        assert "cache" not in self._line(cache_read_tokens=0, cache_creation_tokens=0)
+        assert "1,400 read / 600 written" in self._line(
+            cache_read_tokens=1400, cache_creation_tokens=600
+        )
 
     def test_no_tokens_is_backward_compatible_bare_line(self):
         # A turn with no token counts renders exactly the pre-CATO-6 line.

@@ -4591,7 +4591,7 @@
         {
           "id": "PCS-8",
           "title": "Branded-app cache posture declaration (PersonalClawApps, incl. Bedrock cachePoint)",
-          "status": "todo",
+          "status": "done",
           "scope": "Owner tasks #1 (S2 follow-up, cross-repo PersonalClawApps)",
           "done_when": "Branded model apps declare prompt_cache via BrandedProviderSpec: bedrock-models EXPLICIT with in-app Converse cachePoint translation (core never learns cachePoint), openai-compatible/openrouter-models AUTOMATIC where upstream caches, ollama-models/vllm-models EXPLICIT only if server-side prefix caching is actually enabled else NONE; validated by driving a real Bedrock-Anthropic multi-turn run that reports cache reads.",
           "deps": [
@@ -7770,11 +7770,6 @@
         "plan": "PCS"
       },
       {
-        "id": "PCS-8",
-        "title": "Branded-app cache posture declaration (PersonalClawApps, incl. Bedrock cachePoint)",
-        "plan": "PCS"
-      },
-      {
         "id": "PEP-3",
         "title": "App Store persistent category/source rail + card polish",
         "plan": "PEP"
@@ -9935,9 +9930,9 @@
         "code": "PCS",
         "plan": "PROMPT-CACHE-SUBSTRATE",
         "total_atoms": 8,
-        "done": 6,
+        "done": 7,
         "in_progress": 0,
-        "todo": 2,
+        "todo": 1,
         "blocked": 0
       },
       {

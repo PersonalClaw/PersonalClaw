@@ -524,3 +524,115 @@ Status stays DESIGNED — implementation deferred to its natural roadmap positio
   rail against an empty directory → five VACUITY failures, exit 1. Core: dropping
   `"CACHE_HINT_KEY"` from `sdk/model.py`'s `__all__` →
   `test_the_marker_key_is_on_the_app_facing_sdk_facade` red.
+
+- **2026-08-22 — `PCS-7`: the numbers ship AND soul guardrail 4 is measured. Atom stays `todo` only
+  because this code is unmerged** (the tick rule is never to flip an atom whose implementation is not
+  yet on `main`); flip it when this PR lands.
+  The substrate could price a cached turn correctly and could not *show* that it had saved anything.
+  `_turn_complete_line` summed the two counters into one `13,600 cached` figure — the one shape that
+  answers neither question a reader has (how much of this prompt came from cache, and what did the
+  cache save). Shipped: `pricing.cache_savings_usd`, `stats.cache_hit_pct`, and the line carrying
+  `cache 84% hit (12,400 read / 1,200 written) · saved $0.0231`.
+  **Savings is counterfactual-minus-actual, both through `estimate_cost` itself**, not hand-derived
+  rate deltas — one rate table, one arithmetic path, so the two cannot drift. All 26 real rows in
+  `model_pricing.json` carry both `cache_read` and `cache_write`, so nothing needed a new rate.
+  **The denominator was settled from code, not assumed.** `input_tokens` EXCLUDES the cached tokens,
+  so the hit rate divides by `input + cache_read + cache_creation`. The decisive evidence is this
+  repo's own billing model: `pricing.py:76-83` bills all three additively, so if `input_tokens`
+  already contained them every cached turn would be double-billed. Corroborated at
+  `llm/anthropic.py:524-526` (and its twin at `:689-691`), which assigns `input_tokens` verbatim
+  while the cache counts arrive from separate SDK fields via `_read_cache_usage` (`:84-98`) with no
+  arithmetic relating the three.
+  **Honesty rules, each with its own test.** `cache_hit_pct` returns `None` — not `0.0` — with no
+  denominator, because no prompt tokens is no measurement; a measured `0.0` still prints `0% hit`.
+  `cache_savings_usd` returns `None` for a model with no price row, so an unpriced turn reads
+  `saved unpriced` and can never be mistaken for one that saved nothing. A first turn only WRITES the
+  cache, so its net saving is NEGATIVE and renders with its sign — there is no `abs()` or
+  `max(0, ...)` anywhere in the path, and a falsification proves it (`abs()` reds 2 of 15).
+  **Two integration defects found while wiring, both fixed here.** `_record_model` is assigned only
+  inside the `EVENT_COMPLETE` branch while the broadcast guard fires on the event count alone, so
+  pricing against it would have raised `NameError` on a turn that never reported usage; the model now
+  rides a `_turn_model` local beside `_turn_priced`. And the cache fragment was de-nested from inside
+  `if input_tokens or output_tokens:` — nested, it silently dropped measured cache data whenever in
+  and out were both zero.
+  **Rails.** The call site is asserted by AST to pass the two counts as separate keywords and no
+  summed `cache_tokens=`, with a vacuity assertion that the walk found the call at all (a rail that
+  matches nothing looks clean). The two shipped callers of the old signature were corrected to the new
+  contract, not loosened. Falsifications reproduced independently by the integrating session: re-summing
+  at the call site reds 1 of 15; dropping `cache_creation_tokens` from the denominator reds 2 of 8
+  (`75.0` vs `30.0`, and the write-only turn flips to `None`).
+  **Soul guardrail 4 is SATISFIED — a real provider-reported cache read, with the rising hit rate.**
+  Two Bedrock Converse turns on `us.anthropic.claude-sonnet-4-5-20250929-v1:0`, the stable head carrying
+  core's neutral marker and the volatile question in its own message:
+
+      TURN 1  input=20  cache_read=0       cache_creation=14,448
+              · cache 0% hit (0 read / 14,448 written) · saved unpriced
+      TURN 2  input=20  cache_read=14,448  cache_creation=0
+              · cache 100% hit (14,448 read / 0 written) · saved unpriced
+
+  Turn 1 writes, turn 2 reads, and the fragment reports the rise from real numbers — which is exactly
+  the V2 clause. Two things this cost, both worth recording:
+  **(1) A RETRACTION.** An earlier revision of this entry claimed "the installed `bedrock-models` app
+  contains zero occurrences of `cachePoint`/`cacheRead`/`cacheWrite`, so Bedrock is never asked to cache
+  — that translation is `PCS-8`'s unbuilt deliverable." **That inference was wrong.** The translation
+  has been on apps `main` all along — in `bedrock-models/provider.py`, which is in the APPS repo, not
+  this one: `_CACHE_POINT_BLOCK`, the `cacheReadInputTokens`/`cacheWriteInputTokens` reads, and
+  `prompt_cache = EXPLICIT`. (Named by symbol rather than `file.py:NNN` because the docs-lint citation
+  rule resolves paths against THIS repo, so a cross-repo line citation reads as a dead one; the same
+  reason `CI-RELEASE-ENGINEERING.md` cites `anthropic-models/test_provider.py` without a line.) The
+  zero readings
+  were real but came from **two different stale copies**: first the dev home's INSTALLED app (the
+  gateway runs installed copies, not the repo), then the apps clone's checked-out branch, which is 114
+  lines behind `origin/main` for that file and has no `prompt_cache` at all. Loading the provider from a
+  worktree pinned at `origin/main` produced the cache write on the first attempt.
+  **(2) The marker's PLACEMENT is load-bearing, and a plausible-looking driver hides it.** With the
+  question crammed into the same message as the prefix, both turns reported
+  `cache_creation=14,458, cache_read=0` — a WRITE every turn and never a read, because the cachePoint
+  lands after content that changes. Splitting the stable head into its own marked message (the shape
+  core's middleware actually produces) is what turned the second turn into a read. A validation that had
+  stopped at the first shape would have concluded the cache does not work.
+  **DISCOVERY (pre-existing, outside this atom, not swept in): no real Bedrock model id is priced at
+  all.** The table's key is `claude-haiku-4.5` (dotted family form) while live ids are dashed and
+  vendor-prefixed, and `_rates` matches with `model.startswith(key)` — so
+  `has_pricing("global.anthropic.claude-haiku-4-5-20251001-v1:0")`, `has_pricing("us.anthropic.claude-sonnet-4-5-20250929-v1:0")`
+  and even the bare `has_pricing("claude-haiku-4-5-20251001")` are all **False**. Consequence: on the
+  only provider reachable in dev, CATO's cost figure and this plan's saved-USD both read `unpriced`.
+  That is the honest-zero design behaving correctly, not a new bug, but the id-normalisation belongs to
+  the pricing/CATO surface — fixing it would move cost numbers repo-wide, far outside this atom.
+  **DISCOVERY (pre-existing, outside this atom): `context_usage_pct` under-reports on a cached prompt.**
+  `llm/anthropic.py:601-603` and `:761-763` compute `input_tokens / ctx * 100`, and since
+  `input_tokens` excludes cache reads, a 200k-token prompt served 95% from cache reports ~5%. This got
+  worse the moment `PCS-6` began populating the cache fields. It belongs to whoever owns the
+  context-% surface (see `G8`'s honest-unmeasured work).
+  **Also left alone, recorded rather than widened:** the broadcast guard still keys on
+  events/tools/in/out only, so a turn with cache activity and none of those emits no line at all.
+
+- **2026-08-22 — `PCS-8` DONE. The last clause was a live run, and it passes.**
+  The declarative half has been on apps `main` since `3c44598`: all **15** first-party model apps state a
+  posture (`bedrock-models`/`anthropic-models`/`anthropic-compatible`/`claude-subscription` EXPLICIT;
+  `openai-models`/`openrouter-models`/`google-models`/`deepseek-models` AUTOMATIC; the remaining seven,
+  including `ollama-models`, `vllm-models` and `openai-compatible`, NONE), each next to an evidence
+  comment enforced by `.github/scripts/check_prompt_cache_posture.py`'s four rules — R2 requires the
+  evidence to travel with the claim, R3 refuses an EXPLICIT that emits nothing ("marker into the void"),
+  R4 refuses vendor cache syntax on the wire without an EXPLICIT declaration. Core's half
+  (`CACHE_HINT_KEY` on the `sdk.model` facade) is on core `main`.
+  **The open clause was "validated by driving a real Bedrock-Anthropic multi-turn run that reports cache
+  reads", and that is now measured** on `us.anthropic.claude-sonnet-4-5-20250929-v1:0`: turn 1
+  `cache_creation=14,448 / cache_read=0`, turn 2 `cache_read=14,448 / cache_creation=0`. Bedrock reported
+  the read, so the app's Converse `cachePoint` translation works end to end against the live service and
+  core never learned `cachePoint`.
+  **The clause it does NOT cover, stated so nobody reads more into this than it proves.** `openai-models`,
+  `openrouter-models`, `google-models` and `deepseek-models` declare AUTOMATIC on documentary evidence
+  only; no live run confirms an upstream cache read for any of them, and this environment has no
+  credentials for any. Their postures rest on R1-R4 plus vendor documentation, which is what the atom
+  asked for — but an AUTOMATIC that silently never caches would look identical from here.
+  **`openai-compatible` is NONE, not AUTOMATIC**, which the atom's wording ("openai-compatible/
+  openrouter-models AUTOMATIC where upstream caches") could be read as contradicting. It is the honest
+  reading of the conditional: the app points at an arbitrary OpenAI-shaped endpoint, so what the upstream
+  does is unknowable at declaration time and `NONE` is the only claim that cannot be false. Recorded as a
+  DEVIATION from the literal wording, not from the intent.
+  **Bedrock saved-USD is structurally invisible, and that is a pricing-table gap, not this atom's.** Both
+  live turns rendered `saved unpriced`, because no Bedrock inference-profile id resolves to a price row —
+  see the `PCS-7` entry above for the measurement (`_rates` uses `model.startswith(key)` against dotted
+  family keys like `claude-sonnet-4.5`). The cache is working; the money it saves cannot be shown on this
+  provider until ids are normalised.
