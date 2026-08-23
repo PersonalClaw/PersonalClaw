@@ -4798,7 +4798,7 @@
         {
           "id": "AAP-3",
           "title": "Phase 1 validation \u2014 kiro-cli end-to-end sweep",
-          "status": "todo",
+          "status": "done",
           "scope": "Phase 1 \u2014 VALIDATION (\u00a76 12-step checklist, kiro-cli column; incl. concurrent-sessions step 12)",
           "done_when": "mwinit freshness checked first (auth failures recorded as ENV not capability); checked-in verified matrix column for kiro-cli with every cell CONFIRMED or DIVERGED (personalclaw.json discovery, effort-pill, concurrent-sessions resolved) and findings in the gap inventory.",
           "deps": []
@@ -7487,11 +7487,6 @@
       {
         "id": "AAP-2",
         "title": "Phase 1 validation \u2014 codex end-to-end sweep",
-        "plan": "AAP"
-      },
-      {
-        "id": "AAP-3",
-        "title": "Phase 1 validation \u2014 kiro-cli end-to-end sweep",
         "plan": "AAP"
       },
       {

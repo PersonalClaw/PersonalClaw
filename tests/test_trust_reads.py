@@ -215,6 +215,71 @@ class TestTrustReadsApproval:
             assert session._trust is False
 
 
+# ── Approval endpoint: the action vocabulary is closed ──
+
+
+class TestApproveActionVocabulary:
+    """An unknown action verb is a 400, never a silent denial.
+
+    The resolver collapses anything it does not recognise to "rejected", so before
+    this guard a typo'd verb denied the tool while answering 200 {"ok": true}. The
+    most likely typo is "approve" — the present-tense verb the sibling
+    /api/approvals/{id}/{action} surface takes — measured on a live kiro turn.
+    """
+
+    @pytest.mark.asyncio
+    async def test_unknown_action_is_400_and_leaves_approval_pending(self, tmp_path, monkeypatch):
+        monkeypatch.setattr("personalclaw.dashboard.state.config_dir", lambda: tmp_path)
+        state = _make_state(tmp_path)
+        session = state.get_or_create_session("s1")
+        loop = asyncio.get_running_loop()
+        fut: asyncio.Future[str] = loop.create_future()
+        session._approval_futures["test"] = fut
+
+        async with TestClient(TestServer(_make_app(state))) as client:
+            resp = await client.post("/api/chat/sessions/s1/approve", json={"action": "approve"})
+            data = await resp.json()
+        assert resp.status == 400
+        assert "approve" in data["error"]
+        assert "approved" in data["allowed"]
+        # The decisive half: the tool was NOT denied behind the caller's back.
+        assert not fut.done()
+
+    @pytest.mark.asyncio
+    async def test_omitted_action_still_fails_closed_as_reject(self, tmp_path, monkeypatch):
+        monkeypatch.setattr("personalclaw.dashboard.state.config_dir", lambda: tmp_path)
+        state = _make_state(tmp_path)
+        session = state.get_or_create_session("s1")
+        loop = asyncio.get_running_loop()
+        fut: asyncio.Future[str] = loop.create_future()
+        session._approval_futures["test"] = fut
+
+        async with TestClient(TestServer(_make_app(state))) as client:
+            resp = await client.post("/api/chat/sessions/s1/approve", json={})
+            data = await resp.json()
+        assert resp.status == 200
+        assert data["ok"] is True
+        assert fut.result() == "rejected"
+
+    @pytest.mark.asyncio
+    async def test_every_frontend_verb_is_accepted(self, tmp_path, monkeypatch):
+        """Guards the FE/BE vocabulary seam — web/src/pages/ChatPage.tsx's union."""
+        monkeypatch.setattr("personalclaw.dashboard.state.config_dir", lambda: tmp_path)
+        for verb in ("approved", "rejected", "trust", "trust_agent", "trust_reads", "yolo"):
+            state = _make_state(tmp_path)
+            session = state.get_or_create_session(f"s-{verb}")
+            loop = asyncio.get_running_loop()
+            fut: asyncio.Future[str] = loop.create_future()
+            session._approval_futures["test"] = fut
+
+            async with TestClient(TestServer(_make_app(state))) as client:
+                resp = await client.post(
+                    f"/api/chat/sessions/s-{verb}/approve", json={"action": verb}
+                )
+            assert resp.status == 200, f"{verb} was rejected by the vocabulary guard"
+            assert fut.done()
+
+
 # ── Session to_dict includes trust_reads ──
 
 
