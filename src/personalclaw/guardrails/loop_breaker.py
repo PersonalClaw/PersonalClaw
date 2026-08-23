@@ -155,16 +155,55 @@ def _cycle_at(recent: list[str], period: int, cycles: int) -> tuple[str, ...] | 
     return None
 
 
+#: Argument keys an adapter INJECTS rather than the model passing them as arguments.
+#: Dunder-prefixed by convention, and per-call by nature — kiro stamps
+#: ``__tool_use_purpose`` ("Run the requested command for the first time." → "…second
+#: time.") into every ``rawInput``. Excluded from the bucket identity because they say
+#: nothing about what the tool was asked to do. See :func:`normalize_call_args`.
+ADAPTER_ARG_PREFIX = "__"
+
+
+def normalize_call_args(args: object) -> object:
+    """Strip adapter-injected metadata from tool arguments before keying on them.
+
+    `AAP-6`/`G152`. The breaker's whole premise is that the SAME call repeated is one
+    bucket. An ACP adapter hands the host its arguments as an opaque JSON string, and
+    kiro's includes a per-call narration key — so four byte-identical
+    ``bash -c 'echo boom >&2; exit 3'`` calls produced four DIFFERENT keys, four streaks
+    of one, and no warn at a threshold of three. Measured live: the failure bit arrived
+    on all four and the breaker still said nothing, because a params-aware breaker
+    keyed on a per-call nonce is a params-BLIND breaker that also never repeats.
+
+    Parses the ACP string shape, drops :data:`ADAPTER_ARG_PREFIX` keys, and leaves
+    everything else — including the native dict shape and any non-JSON string —
+    untouched, so this can only ever MERGE buckets that differ by adapter narration.
+    """
+    raw = args
+    if isinstance(args, str):
+        try:
+            raw = json.loads(args)
+        except (TypeError, ValueError):
+            return args
+    if not isinstance(raw, dict):
+        return args
+    stripped = {k: v for k, v in raw.items() if not str(k).startswith(ADAPTER_ARG_PREFIX)}
+    # An input made ENTIRELY of adapter metadata would otherwise collapse to `{}` and
+    # merge every such call into one bucket regardless of tool arguments. Keep the
+    # original rather than invent an identity out of nothing.
+    return stripped if stripped else args
+
+
 def params_key(tool_name: str, args: object) -> str:
     """Stable ``(tool, params)`` identity for breaker bucketing.
 
     Same tool + same args = same bucket, so repeated *identical* failing calls
-    accumulate while genuinely different calls stay independent. Falls back to the
-    tool name alone if args aren't JSON-serializable — which is also the ACP shape,
-    where ``tool_input`` arrives as an opaque string rather than a dict.
+    accumulate while genuinely different calls stay independent. Adapter-injected
+    per-call metadata is normalized out first (:func:`normalize_call_args`) — without
+    that the ACP shape, an opaque JSON string, keys on the narration too. Falls back to
+    the tool name alone if args aren't JSON-serializable.
     """
     try:
-        return f"{tool_name}:{json.dumps(args, sort_keys=True, default=str)}"
+        return f"{tool_name}:{json.dumps(normalize_call_args(args), sort_keys=True, default=str)}"
     except (TypeError, ValueError):
         return str(tool_name)
 
