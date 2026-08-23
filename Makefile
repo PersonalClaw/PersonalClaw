@@ -58,13 +58,20 @@ test:
 	$(PYTHON) -m pytest
 
 ## test-e2e: run the BROWSER gate against an isolated gateway (axe-per-route a11y, PWA,
-## visual regression). Deliberately NOT part of `make test`: a bare pytest must stay a fast,
-## offline, browser-free unit run, and this needs a built SPA plus a booted gateway.
+## visual regression, one real end-to-end chat turn). Deliberately NOT part of `make test`:
+## a bare pytest must stay a fast, offline, browser-free unit run, and this needs a built SPA
+## plus a booted gateway.
 ##
 ## Offline and credential-free by construction, which is the property worth stating: playwright's
-## own webServer boots the gateway with PERSONALCLAW_HOME under $$TMPDIR (never a real home) and a
-## config carrying only a user name, so no provider credential is present and nothing reaches the
-## network. Readiness is the PERSONALCLAW_READY line, not a port probe, so the run cannot proceed
+## own webServer boots the gateway with PERSONALCLAW_HOME under $$TMPDIR (never a real home), so
+## nothing here can touch a user's state. The gateway DOES have a model — the SCRIPTED provider
+## (src/personalclaw/llm/scripted.py), bound as the only providers[] entry and pinned as chat's
+## active model, which is what lets e2e/chat.spec.ts complete a real turn instead of every spec
+## carefully avoiding one. That changes neither property: the scripted provider is deterministic,
+## makes ZERO network calls and needs NO credential, and it refuses to construct unless
+## PERSONALCLAW_SCRIPTED_SCRIPT names a script file, so it is inert everywhere the harness has not
+## explicitly opted in. So: still offline, still credential-free, and now also model-bound.
+## Readiness is the PERSONALCLAW_READY line, not a port probe, so the run cannot proceed
 ## against a bound-but-unauthenticated gateway.
 ##
 ## One-time per machine: `npm ci` (from the REPO ROOT — never inside web/, see web-build) and

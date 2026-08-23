@@ -2432,7 +2432,7 @@ requires-dist = [
     { name = "pytest-cov", marker = "extra == 'test'", specifier = ">=4" },
     { name = "pytest-timeout", marker = "extra == 'test'", specifier = ">=2" },
     { name = "pytest-xdist", marker = "extra == 'test'", specifier = ">=3" },
-    { name = "python-docx", specifier = ">=0.8.6,<2" },
+    { name = "python-docx", specifier = ">=1.1,<2" },
     { name = "python-dotenv", specifier = ">=1.0" },
     { name = "python-pptx", specifier = ">=0.6.21,<2" },
     { name = "pyyaml", specifier = ">=6,<7" },

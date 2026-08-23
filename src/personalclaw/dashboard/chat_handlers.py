@@ -2564,6 +2564,15 @@ async def api_chat_task_mode(request: web.Request) -> web.Response:
     return web.json_response({"ok": True, "task_mode": mode, "sessions": [s.key for s in targets]})
 
 
+# The approve endpoint's closed action vocabulary — must stay in step with the
+# frontend's ApproveAction union (web/src/pages/ChatPage.tsx). Past tense throughout:
+# "approved"/"rejected", NOT the "approve"/"reject" pair /api/approvals/{id}/{action}
+# takes. Anything outside this set is a 400, not a silent denial.
+_APPROVE_ACTIONS = frozenset(
+    {"approved", "rejected", "trust", "trust_agent", "trust_reads", "yolo"}
+)
+
+
 async def api_chat_session_approve(request: web.Request) -> web.Response:
     """POST /api/chat/sessions/{session}/approve — resolve a pending tool approval."""
     state: DashboardState = request.app["state"]
@@ -2578,6 +2587,17 @@ async def api_chat_session_approve(request: web.Request) -> web.Response:
     if not isinstance(body, dict):
         return web.json_response({"error": "JSON body must be an object"}, status=400)
     action = body.get("action", "rejected")
+    # Reject an UNKNOWN verb loudly. The resolver below collapses everything it does
+    # not recognise to "rejected", so a typo (notably "approve" — the verb the sibling
+    # /api/approvals/{id}/{action} surface uses) used to deny the tool while returning
+    # 200 {"ok": true}: the caller reads success and the user sees a denial. Omitting
+    # "action" entirely stays a deliberate fail-closed reject, so only an explicitly
+    # supplied unknown verb is an error.
+    if action not in _APPROVE_ACTIONS:
+        return web.json_response(
+            {"error": f"unknown action {action!r}", "allowed": sorted(_APPROVE_ACTIONS)},
+            status=400,
+        )
     original_action = action
     # Trust: auto-approve remaining tools for this session
     if action == "trust":

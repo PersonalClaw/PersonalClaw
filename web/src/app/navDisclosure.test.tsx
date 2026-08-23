@@ -55,6 +55,7 @@ vi.mock('./identity', async (orig) => {
 const ENVELOPES: Record<string, unknown> = {
   dashboardConfig: { user_name: 'Ada' },
   agents: { agents: [] },       // useComposerData reads `.agents.filter(…)`
+  skillProposals: { proposals: [], lastReview: null }, // ActionCenter maps `.proposals`
 }
 vi.mock('../lib/api', async (orig) => {
   const real = await orig<typeof import('../lib/api')>()

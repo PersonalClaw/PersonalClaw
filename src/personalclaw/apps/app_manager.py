@@ -430,6 +430,31 @@ def _stop_backend(name: str) -> None:
         logger.debug("app %s: backend stop failed", name, exc_info=True)
 
 
+def _stop_worker(name: str) -> None:
+    """Stop *name*'s background worker, then reap anything a prior gateway orphaned.
+
+    APE-3's V1 clause is "uninstall leaves no orphan worker", and the sweep alone cannot
+    deliver it: the sweep stops workers whose app went away, but a process re-parented to
+    init by an ungraceful gateway exit is in no supervisor's table, so nothing would ever
+    look for it once the app directory is gone. This is called on the same disable/uninstall
+    path as ``_stop_backend`` — while the entry path is still resolvable.
+
+    Best-effort by construction: an app being turned off must not fail because its worker
+    was already dead."""
+    try:
+        from personalclaw.apps.background import WORKER_ENTRY_POINT
+        from personalclaw.apps.worker_runtime import get_worker_supervisor
+
+        sup = get_worker_supervisor()
+        sup.stop(name)  # `worker=None` stops every worker this app has
+        # Then the orphans: `reap_orphans` needs the entry path, and it is only resolvable
+        # while the app directory still exists — which is exactly why this runs here rather
+        # than being left to the next sweep, by which time the directory may be gone.
+        sup.reap_orphans(name, (app_dir(name) / WORKER_ENTRY_POINT).resolve())
+    except Exception:
+        logger.debug("app %s: worker stop failed", name, exc_info=True)
+
+
 def _register_mcp(manifest: AppManifest) -> None:
     """Wire the app's declared mcpServers into the live MCP config."""
     if not manifest.mcpServers:
@@ -1177,6 +1202,7 @@ def disable(name: str, *, caller: str = "app_manager") -> bool:
         return False
     manifest = _manifest_of(name)
     _stop_backend(name)
+    _stop_worker(name)
     _deregister_mcp(name)
     if manifest is not None and manifest.all_providers():
         _provider_registry().disable(name)
@@ -1254,6 +1280,7 @@ def force_uninstall(name: str, *, caller: str = "app_manager") -> bool:
         return False
     manifest = _manifest_of(name)
     _stop_backend(name)
+    _stop_worker(name)
     _deregister_mcp(name)
     if manifest is not None:
         _remove_app_prompts(manifest, name)  # drop the app's own seeded prompts

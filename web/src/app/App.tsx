@@ -2,7 +2,7 @@ import { lazy, Suspense, useEffect, useRef, useState } from 'react'
 import { MotionConfig, motion } from 'framer-motion'
 import { ease, duration } from '../design/motion'
 import { armCueAudio } from '../design/soundCues'
-import { Bell, Blocks, BookOpen, Brain, Compass, FileCode, FileText, Files, FolderKanban, Inbox, LayoutDashboard, ListChecks, Loader2, MessageSquare, Settings, Sparkles, Terminal, Users, Workflow, Wrench, Zap } from 'lucide-react'
+import { Bell, Blocks, BookOpen, Brain, Compass, FileCode, FileText, Files, FolderKanban, Inbox, LayoutDashboard, ListChecks, Loader2, MessageSquare, Radar, Settings, Sparkles, Terminal, Users, Workflow, Wrench, Zap } from 'lucide-react'
 import { NavRail, type NavItem } from '../ui/NavRail'
 import { ShellCornerLeft, ShellCornerRight } from '../ui/ShellCorners'
 import { IncidentBanner } from './IncidentBanner'
@@ -58,6 +58,7 @@ const AppsSection = lazy(() => import('../pages/apps/AppsSection').then((m) => (
 const AppHostPage = lazy(() => import('../pages/apps/AppHostPage').then((m) => ({ default: m.AppHostPage })))
 const TerminalPage = lazy(() => import('../pages/terminal/TerminalPage').then((m) => ({ default: m.TerminalPage })))
 const DashboardPage = lazy(() => import('../pages/dashboard/DashboardPage').then((m) => ({ default: m.DashboardPage })))
+const MissionControl = lazy(() => import('../pages/dashboard/MissionControl').then((m) => ({ default: m.MissionControl })))
 const DiscoverPage = lazy(() => import('../pages/discover/DiscoverPage').then((m) => ({ default: m.DiscoverPage })))
 const CompanionPage = lazy(() => import('../pages/companion/CompanionPage').then((m) => ({ default: m.CompanionPage })))
 
@@ -92,7 +93,13 @@ const NAV: NavItem[] = [
 // dedicated nav tile — loops are launched from within Projects (and surfaced as
 // chat-session widgets) — but its detail/history/planning sub-routes
 // (#/loop, #/loops/<id>, #/code/<id>, …) stay reachable.
-const ROUTABLE = new Set([...NAV.map((n) => n.id), 'notifications', 'discover', 'loop', 'loops', 'code', 'app'])
+// `mission-control` is routable but NOT in `NAV`: it is a locked DASHBOARD VIEW the server
+// registers (`views_store._mission_control_preset`), not a static rail destination. The registry
+// declares it `nav_pinned` with an icon, and NOTHING on the frontend reads either field yet — so
+// until a rail is built from `/api/dashboard/views`, the command palette below is how a user
+// reaches it. That is the palette's stated job (see its comment: the always-open door to a
+// surface the rail is holding back), not a workaround.
+const ROUTABLE = new Set([...NAV.map((n) => n.id), 'notifications', 'discover', 'loop', 'loops', 'code', 'app', 'mission-control'])
 
 /** The Suspense fallback for every code-split route, so it is what a user sees on EVERY
  *  navigation whose chunk is not cached yet.
@@ -120,6 +127,7 @@ function renderPage(active: string, r: RouteProps) {
   // filters, search, and open-panel state can all be URL-addressable.
   switch (active) {
     case 'dashboard': return <DashboardPage {...r} />
+    case 'mission-control': return <MissionControl />
     case 'chat': return <ChatPage {...r} />
     case 'loop': return <LoopSection {...r} />
     case 'loops': return <LoopsSection {...r} />
@@ -495,6 +503,7 @@ function AppInner() {
     ...NAV.map((n) => ({ id: `go:${n.id}`, label: n.label, hint: 'Go to', icon: n.icon, keywords: n.section ?? '', run: () => navigate(n.id) })),
     // pinned app tiles are nav destinations too — same "Go to" contract
     ...appNavItems.map((n) => ({ id: `go:${n.id}`, label: n.label, hint: 'Go to', icon: n.icon, keywords: 'app', run: () => navigate(n.id) })),
+    { id: 'go:mission-control', label: 'Mission Control', hint: 'Go to', icon: Radar, keywords: 'attention lanes approvals needs approval your turn working idle', run: () => navigate('mission-control') },
     { id: 'go:notifications', label: 'Notifications', hint: 'Go to', icon: Bell, keywords: 'alerts feed', run: () => navigate('notifications') },
     { id: 'go:discover', label: 'Discover', hint: 'Go to', icon: Compass, keywords: 'tips tour learn features guide', run: () => navigate('discover') },
     { id: 'act:terminal-drawer', label: 'Toggle terminal drawer', hint: 'Action · ⌘`', icon: Terminal, keywords: 'shell pty console', run: () => setTermDrawer((v) => !v) },

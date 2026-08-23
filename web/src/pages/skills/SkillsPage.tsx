@@ -86,7 +86,7 @@ function Installed({ onBrowse, onProposals, query, setQuery }: { onBrowse: () =>
   // install some — measured against a 500 with native skills present on disk. The proposals read
   // keeps its catch: it only feeds a count on a header button, and a missing badge is not a lie.
   const { data: items, error: itemsErr, refresh } = useQuery<SkillItem[]>('skills', () => api.skills(), { persist: true })
-  const { data: proposals } = useQuery('skill-proposals-count', () => api.skillProposals().catch(() => []))
+  const { data: proposals } = useQuery('skill-proposals-count', () => api.skillProposals().then((d) => d.proposals).catch(() => []))
   const proposalCount = proposals?.length ?? 0
   const [q, setQ] = useQueryParam(query, setQuery, 'q', '', { replace: true })
   const [openKeyRaw, setOpenKey] = useQueryParam(query, setQuery, 'open', '')

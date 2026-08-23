@@ -680,10 +680,22 @@ async def api_ephemeral_skill_discard(request: web.Request) -> web.Response:
 
 async def api_skill_proposals_list(request: web.Request) -> web.Response:
     """GET /api/skills/proposals — the pending autonomous-synthesis proposals
-    awaiting human review (propose-only; nothing here is installed)."""
+    awaiting human review (propose-only; nothing here is installed).
+
+    ``lastReview`` carries the most recent skill-ladder pass (``null`` when none has
+    ever run). It is here rather than on a route of its own because it is the answer
+    to a question this route's own payload otherwise cannot answer: an empty
+    ``proposals`` list with a ``lastReview`` is a working ladder that found nothing,
+    and an empty list with ``lastReview: null`` is a ladder that never fired (`G44`).
+    """
     from personalclaw.skills import proposals
 
-    return web.json_response({"proposals": [p.summary() for p in proposals.list_pending()]})
+    return web.json_response(
+        {
+            "proposals": [p.summary() for p in proposals.list_pending()],
+            "lastReview": proposals.last_review(),
+        }
+    )
 
 
 async def api_skill_proposal_detail(request: web.Request) -> web.Response:

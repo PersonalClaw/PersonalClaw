@@ -45,7 +45,7 @@ function mockApi(over: Record<string, unknown>) {
       inboxProviders: () => Promise.resolve([]),
       // skills
       skills: () => Promise.resolve([]),
-      skillProposals: () => Promise.resolve([]),
+      skillProposals: () => Promise.resolve({ proposals: [], lastReview: null }),
       // knowledge
       knowledgeCollections: () => Promise.resolve([]),
       knowledgeItems: () => Promise.resolve({ items: [] }),

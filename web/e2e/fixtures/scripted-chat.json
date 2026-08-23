@@ -1,0 +1,16 @@
+{
+  "version": 1,
+  "on_exhausted": "repeat_last",
+  "turns": [
+    {
+      "text": "SCRIPTED-E2E-OK: this reply came from the offline scripted provider.",
+      "stop_reason": "end_turn",
+      "usage": {
+        "input_tokens": 42,
+        "output_tokens": 9,
+        "cache_creation_tokens": 0,
+        "cache_read_tokens": 0
+      }
+    }
+  ]
+}
