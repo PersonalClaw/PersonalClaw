@@ -4790,7 +4790,7 @@
         {
           "id": "AAP-2",
           "title": "Phase 1 validation \u2014 codex end-to-end sweep",
-          "status": "todo",
+          "status": "done",
           "scope": "Phase 1 \u2014 VALIDATION (\u00a76 12-step checklist, codex column)",
           "done_when": "Checked-in verified matrix column for codex with every audit cell CONFIRMED or DIVERGED at runtime (zero UNKNOWN cells: compaction, slash commands, context-%, subagent inject-back resolved) and findings added to the severity-ranked gap inventory.",
           "deps": []
@@ -7487,6 +7487,13 @@
       {
         "id": "AAP-2",
         "title": "Phase 1 validation \u2014 codex end-to-end sweep",
+        "id": "AAP-1",
+        "title": "Phase 1 validation \u2014 claude-code end-to-end sweep",
+        "plan": "AAP"
+      },
+      {
+        "id": "AAP-3",
+        "title": "Phase 1 validation \u2014 kiro-cli end-to-end sweep",
         "plan": "AAP"
       },
       {
