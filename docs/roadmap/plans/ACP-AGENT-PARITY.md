@@ -4827,7 +4827,9 @@ cited above.
   §2.1 Prong B is required"* is the origin of this entire doubt. `G31`'s generator half is separately
   **closed by fix** (no literal tilde remains, 3 rails).
 
-- ⚠️ **WHY THE ATOM STAYS `todo`.** Reachability is met on all three. What is not freshly measured:
+- ⚠️ **WHY THE ATOM STAYS `todo`.** *(SUPERSEDED 2026-08-24 — all three gaps named here were closed by a
+  re-drive; see the `AAP-4` DONE entry at the end of this log. Kept verbatim as the record of what was
+  outstanding.)* Reachability is met on all three. What is not freshly measured:
   claude-code's **as-a-user** arm is **VACUOUS** — the turn hit the 90 s watchdog (`ACP prompt timed out`),
   reproducing `G104`/`G107`, so its reachability rests on the process chain and the wire flag rather than
   an answered turn. Model-reported tool counts are **NOT TRUSTED**: kiro and codex returned the *identical*
@@ -4851,3 +4853,50 @@ cited above.
   ACP natively; only claude-code and codex go through `acp-adapters/.bin/`. And `C90`'s measurement must be
   stated as *"zero `[mcp_servers.personalclaw*]` tables"*: a bare `grep -ci personalclaw
   ~/.codex/config.toml` returns 1, matching a `trust_level` line, not an MCP server.
+- [2026-08-24][AAP-4] ✅ **DONE — the three arms re-driven live, and the atom flips.** This closes the
+  three gaps the previous tick left open (its ⚠️ *"WHY THE ATOM STAYS `todo`"* entry above is superseded
+  by this one). Drove a real gateway on the isolated dev home (`PERSONALCLAW_HOME=./.dev-home`,
+  `PERSONALCLAW_AUTH_MODE=none`, port 10777) with `PYTHONPATH` pointed at the worktree, one chat session
+  per provider bound through `POST /api/chat/sessions/{s}/acp-agent` and driven through `POST /api/chat`
+  with the `agent` field omitted — the recipe correction recorded at the end of the previous tick, which
+  worked verbatim. `kiro-cli-agent` was installed through the real Store path
+  (`POST /api/apps` with a local source; scanner verdict `clean`, tier `community`), not hand-dropped into
+  `apps/`: a copied directory without an `installed.json` is invisible to `/api/apps` and never registers
+  its provider, so the shortcut would have measured nothing.
+  Per provider — `notify` then `subagent_run`, each verified by the STORE and not by the model's sentence:
+
+  | provider | tool event on the wire | `notifications.jsonl` row | subagent | inject-back |
+  |---|---|---|---|---|
+  | `acp:codex` | `mcp.personalclaw-core.notify` | `AAP4-codex` @ 05:59:35.903 | `70d9d212` → `PONG` | `session_pid_71473.txt` → `dashboard:aap4-codex-drive` |
+  | `acp:claude-code` | `mcp__personalclaw-core__notify` | `AAP4-claude` @ 06:01:28.794 | `da5b7646` → `PONG` | `session_pid_72648.txt` → `dashboard:aap4-claude-drive` |
+  | `acp:kiro-cli` | `@personalclaw-core/notify` | `AAP4-kiro` @ 06:04:35.917 | `a4409b02` → `PONG` | `session_pid_87449.txt` → `dashboard:aap4-kiro-drive` |
+
+  Each notification row's timestamp trails its own tool event by ~150-300 ms, and PID 71473 was the live
+  `codex-acp` adapter process, so the `session_pid_<pid>.txt` file is the adapter's own PID mapped to the
+  exact session key — inject-back is exact rather than resting on an ancestor walk. SEL confirms the path:
+  `operation: notify, outcome: completed, tool_kind: mcp_core` with the verbatim arguments, then
+  `subagent_run outcome: spawned` and `subagent_status outcome: completed agent_id: 70d9d212`.
+- [2026-08-24][AAP-4] **`G104`/`G107` do not reproduce — the claude-code as-a-user arm is no longer
+  VACUOUS.** The prior tick's claude arm died on the 90 s `ACP prompt timed out` watchdog, so its
+  reachability rested on the process chain and the wire flag. Re-driven here it ANSWERED twice: 18 s for
+  the `notify` turn and 37 s for the `subagent_run` turn. Recorded as a non-reproduction on this host and
+  these versions (`claude 2.1.241.694`, `codex 0.146.1.378`, `kiro-cli 2.19.1`), not as a fix — nothing in
+  this change touches the watchdog.
+- [2026-08-24][AAP-4] **The distrusted `CORE=17; TOTAL=107` count is now moot, and the reason it was
+  right to distrust it is visible.** Two providers cannot independently produce an identical enumeration,
+  so this drive never asked for a count. It asked for an EFFECT, and the three providers rendered the same
+  tool in three different dialects — `mcp.personalclaw-core.notify` (codex), `mcp__personalclaw-core__notify`
+  (claude-code), `@personalclaw-core/notify` (kiro-cli). Three namespacing shapes for one server is
+  positive evidence that each CLI enumerated the surface through its own protocol path.
+- [2026-08-24][AAP-4] **Falsified, with a positive control.** Inserted `return []` at the top of
+  `core_mcp_servers()` (the documented pre-AAP-4 behaviour), restarted the gateway and re-drove the codex
+  arm: **zero tool events**, the assistant answered exactly `NO CORE TOOLS`, and
+  `grep -c AAP4-FALSIFY notifications.jsonl` → `0`. Restored the file from a pre-mutation copy
+  (`/tmp/mcp_servers.py.pristine`, never `git checkout --`), restarted, re-drove the same arm →
+  `mcp.personalclaw-core.notify` fired and `AAP4-RESTORED` wrote exactly 1 row. The mutation also proves
+  the gateway was executing the worktree's code and not the editable install from the main checkout.
+- [2026-08-24][AAP-4] **Observation for `AAP-5`, filed not fixed:** claude-code's turns emitted
+  `ToolSearch (ungated: claude-code executed it without asking the host)` and `Terminal (ungated: ...)`.
+  That is the host reporting its own non-authority over CLI-proprietary tools, which is §2.2's
+  "residual not-gateable set" rather than a regression of this atom — `AAP-5` is `done` and enumerates it.
+  No action taken here; recorded so the parity doc's residual list can cite a live instance.
