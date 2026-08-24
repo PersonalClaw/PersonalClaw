@@ -532,3 +532,87 @@ No new session; session count stays ~7. Session 2 gains the three sharpenings ab
   `check_sender -> TrustDecision`; as-built they are `entity_settings/channel_trust.json` and
   `guard_inbound -> TrustVerdict`. The `sender_trust.json` DEVIATION is already recorded at :359 for
   `EA-1`; the `check_sender`/`TrustDecision` naming drift was not.
+
+---
+
+## Execution log — `EA-5` (§7 capture proxy + §8 telemetry import) — **PARTIAL, atom stays `todo`**
+
+- [2026-08-24][EA-5] **Shipped in PR #1988** as three fenced halves plus one integration fix:
+  `inbound/capture_store.py` (682) — session assembly, 0600 records + `.content.jsonl` sidecar,
+  `skill_path_map` attribution, retention prune, and the security core: **redact -> fence AT
+  INGESTION**, so a capture session is already inside `fence_untrusted(source="capture:<client>")`
+  before the flywheel ever reads it and an injection planted in an external agent's transcript can
+  never direct-write a lesson. `inbound/capture_proxy.py` (656) — the two routes, loopback-only
+  ALWAYS (`allow_remote` never read), admission reusing the existing seam
+  (`gate.admission_problem` -> `is_loopback` -> `verify_bearer`/`lookup_by_token`), upstream
+  credentials through the EXISTING ladder (`sdk/provider_helpers._resolve_credential` ->
+  `_resolve_spec_secret`) rather than a fourth copy, SSE piped with `guard.evaluate` preflighted
+  BEFORE any socket opens. `inbound/capture_import.py` (850) + a `capture` CLI — three adapters,
+  idempotent by content hash, malformed lines skipped-and-counted.
+- [2026-08-24][EA-5] 🔴 **UNMET — "forward to a client-record `upstream` ProviderEntry".**
+  `InboundClient` has NO `upstream` field (`inbound/clients.py:66`), so the pinned-upstream path is
+  unusable: the proxy reads `client.upstream` then `client.scope["upstream"]` and returns 502 naming
+  the missing binding rather than silently choosing a provider. **Passthrough — §7.1's own documented
+  fallback for agents PClaw has no entry for — is fully functional.** WHAT WOULD CLEAR IT: one field
+  on `InboundClient`, a `create_client` kwarg, and a test. It sat outside every agent's fence and was
+  recorded rather than rushed into a persisted-record shape at the tail of an integration.
+- [2026-08-24][EA-5] **TWO DEFECTS THAT ONLY INTEGRATION COULD FIND** — each half's suite was green
+  in isolation. (1) `stage_records` REJECTED EVERY RECORD THE IMPORTER PRODUCED: the store required
+  `raw["request_body"]` and rebuilt the §7.2 record itself, while the adapters emit §7.2-shaped
+  records with no `request_body`. Measured before the fix:
+  `{'imported': 0, 'skipped': 1, 'reasons': ['record had no request_body object']}` — silently, with
+  exit 0. Root cause was an UNDER-SPECIFIED CONTRACT from the driver: the signature was dictated, the
+  record SHAPE was not, and each half picked a defensible reading of §8. Fixed by keeping
+  `_build_record` as the ONE shaping+screening path, synthesising minimal bodies from the §7.2 text
+  (omitting the user turn entirely when `prompt_digest` is absent — an SSE dump legitimately has none
+  and a fake empty turn would be a lie in the record), then OVERLAYING the adapter's already-extracted
+  `tool_calls`/`read_paths`/`wrote_paths`, because re-deriving them from a synthesised body drops them.
+  (2) **BOTH `/capture/v1/*` ROUTES SHIPPED UNREACHABLE**: the dashboard's `token_auth` middleware
+  denied them before the handler — neither path was on `_BYPASS_EXACT` nor `_BYPASS_PREFIXES`, while
+  `/mcp` is exempted at `token_auth.py:319` with a comment stating this exact case verbatim. Fixed
+  with two EXACT entries, not a `/capture/v1/` prefix: the prefix list holds static-asset trees only,
+  every self-authenticating API surface is an exact entry, and a prefix would hand the exemption to
+  any future route under it whether or not it runs `_admit`.
+- [2026-08-24][EA-5] **The overlay had to be INSIDE `record_hash`.** `_build_record` hashes
+  internally, i.e. before the overlay, so the overlay re-hashes via a shared `_hash_record()` (which
+  excludes `record_hash` and `ts`, keeping proxy-path hashes byte-identical). Without it, two imported
+  turns differing ONLY in tool calls collide and the second is reported as a phantom duplicate.
+  `read_skills`/`wrote_skills` are re-derived from the overlaid paths, else skill attribution would be
+  empty on every import.
+- [2026-08-24][EA-5] **MEASURED — `redact_credentials` has two traps, both now pinned.** It matches
+  the `api_key=` prefix INSIDE the credential span, so screening a composed line destroys the field
+  name (`"api_key=sk-…"` -> `"[REDACTED: credential]"`); every source string is therefore screened
+  once at its own boundary, never at a trailing chokepoint. And `found` is populated **only on first
+  contact** — re-screening already-redacted text returns `(unchanged, [])`, so a vacuity floor built
+  by re-screening what the store persisted reads CLEAN and is silently vacuous. Every floor here
+  screens the RAW secret instead.
+- [2026-08-24][EA-5] **Fail-closed choices, stated because the inverse is plausible.** An empty
+  `upstream_allowlist` DENIES every host, structurally, via `net.policy.LISTED` (`allow_only=True`) —
+  `STRICT` would have made the operator's list decorative since its `allow_hosts` is additive.
+  `retention_days=0` means NEVER prune, not "delete immediately" (indistinguishable in a config file;
+  only one reading silently destroys data), and `prune()` fails toward keeping data on an unreadable
+  config. A malformed allowlist degrades to deny.
+- [2026-08-24][EA-5] **PRE-EXISTING DRIFT, mitigated not ignored:** a flat
+  `external_access.capture_retention_days` already had all five round-trip points wired INCLUDING a
+  live frontend control (`ExternalAccessPanel.tsx:206`). The new nested field mirrors it (nested wins,
+  else flat, else 30) so the shipped slider genuinely governs the new pruner instead of becoming a
+  wired-but-wrong control. **Owed follow-up:** collapse to the nested spelling alone, which touches the
+  handler and the FE.
+- [2026-08-24][EA-5] **Gate, re-run by the driver rather than taken on report:** `make lint` clean
+  (mypy, **998** source files) and **251 passed** across `test_ea5_capture_store.py`,
+  `test_ea5_capture_proxy.py`, `test_ea5_capture_import.py`, `test_ea5_capture_bypass.py`,
+  `test_token_auth.py`, `test_auth_exposure.py`; the halves additionally ran 229 on auth/login/denied
+  rails, 235 across every other reader of the bypass sets, 232 on config-roundtrip/inbound, and 204 on
+  route/manifest rails. The driver reproduced the bypass falsification (removing the `_BYPASS_EXACT`
+  entries -> **10 failed / 3 passed**, the 3 survivors being exactly the `/api/status` vacuity floors,
+  restored byte-clean) and drove the REAL `capture import` CLI — the seam stubbed in every earlier
+  suite — to `imported 1, skipped 0`, with the record carrying the adapter's own `Read` /
+  `/repo/README.md` facts and `import_source`, both files 0600, store module resolved from the
+  worktree. Probe sweep 16, all pre-existing.
+- [2026-08-24][EA-5] **DISCOVERY (not acted on) — imported turns carry no original timestamps.**
+  `stage_records` stamps import time and ignores the adapter's `ts`, for the §7.2 path as for the
+  pre-existing `request_body` path. Dedup is unaffected (the hash excludes `ts`), but a mined capture
+  session cannot be ordered against the agent's own clock. Also: promptless imported turns all fold
+  into one session per client, because `conversation_fingerprint({})` is the digest of the empty
+  string — correct as "unknown conversation opening" is one bucket, but worth knowing before someone
+  reads a per-turn session count.
