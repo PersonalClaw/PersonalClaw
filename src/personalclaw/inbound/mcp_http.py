@@ -24,6 +24,7 @@ from typing import Any
 from aiohttp import web
 
 from personalclaw.constants import JSONRPC_METHOD_NOT_FOUND
+from personalclaw.http_errors import json_error
 from personalclaw.inbound import audit as audit_mod
 from personalclaw.inbound import auth
 from personalclaw.inbound import caps as caps_mod
@@ -31,6 +32,13 @@ from personalclaw.inbound import caps as caps_mod
 logger = logging.getLogger(__name__)
 
 SURFACE = "mcp"
+
+# no-store on EVERY response, refusals included: an inbound answer may contain the
+# user's own data and must not sit in an intermediary cache. One constant rather than a
+# literal per call site, so a new refusal cannot be the one that forgets. Both
+# `web.json_response` and `json_error` COPY the mapping they are handed (verified), so
+# sharing it across call sites cannot leak a header from one response into the next.
+_NO_STORE = {"Cache-Control": "no-store"}
 
 # The MCP protocol revision this surface implements.
 #
@@ -91,9 +99,22 @@ def _rpc_result(request_id: Any, result: Any) -> dict:
 
 
 def _json(payload: dict, status: int = 200) -> web.Response:
-    # no-store on every response: an inbound answer may contain the user's own
-    # data and must not sit in an intermediary cache.
-    return web.json_response(payload, status=status, headers={"Cache-Control": "no-store"})
+    """Results and JSON-RPC frames. Every HTTP-level refusal goes through `json_error`.
+
+    JSON-RPC error frames still travel through here, deliberately: they are a *different*
+    envelope on a different layer — an integer `code` from the spec's reserved range,
+    carried at HTTP 200 — and merging them into the wire vocabulary would claim a
+    transport failure where the transport succeeded.
+
+    What no longer travels through here is the HTTP-level ``{"error": "<prose>"}``
+    refusal. Seven of them did, and because the payload is a *variable* by the time it
+    reaches `json_response`, `tests/test_wire_error_envelope_census.py` scored this
+    module at ZERO on both of its rails until it was widened to follow wrapper
+    indirection — the same blindness that hid eleven in `inbound/bridge.py`. A local
+    response wrapper is exactly where an error shape hides, so this one is now
+    refusal-free by construction and the codes are literals at their call sites.
+    """
+    return web.json_response(payload, status=status, headers=_NO_STORE)
 
 
 def enablement_problem() -> str | None:
@@ -112,9 +133,11 @@ def enablement_problem() -> str | None:
 async def handle_mcp_get(request: web.Request) -> web.Response:
     """`GET /mcp` → 405. No SSE stream in v1 (spec-permitted)."""
     audit_mod.audit(SURFACE, route="GET /mcp", status=405, refused="GET not supported")
-    return _json(
-        {"error": "This MCP surface is POST-only (no SSE stream). Use POST /mcp."},
+    return json_error(
+        "method_not_allowed",
+        message="This MCP surface is POST-only (no SSE stream). Use POST /mcp.",
         status=405,
+        headers=_NO_STORE,
     )
 
 
@@ -148,20 +171,69 @@ async def handle_mcp(request: web.Request) -> web.Response:
         )
         return _json(payload, status=status)
 
+    def _refuse(
+        response: web.Response,
+        refused: str = "",
+        tool: str = "",
+        rate_limited: bool = False,
+    ) -> web.Response:
+        """`_done` for an HTTP-level refusal: the response is already BUILT.
+
+        Takes the finished `json_error` response rather than a code, so that every
+        ``code`` stays a string LITERAL at its own call site. A helper with a
+        ``code: str`` parameter would read as tidier and be strictly worse: the
+        emitter call inside it would be `json_error(code, ...)`, one dynamic site
+        that the append-only registry check cannot inspect at all — and the census's
+        dynamic-code bucket is already at its ceiling. The tidier shape converts nine
+        countable sites into one uncountable one.
+
+        Status and byte count are read off the response instead of being passed
+        alongside it, so the audit row cannot disagree with what went on the wire.
+        `content_length` rather than ``len(response.body)``: `body` is typed
+        ``bytes | bytearray | Payload`` and a `Payload` has no length, whereas
+        `content_length` is the number aiohttp will actually put on the wire.
+        """
+        audit_mod.audit(
+            SURFACE,
+            route="POST /mcp",
+            status=response.status,
+            bytes_in=bytes_in,
+            bytes_out=response.content_length or 0,
+            duration_ms=int((time.monotonic() - started) * 1000),
+            refused=refused,
+            tool=tool,
+            client_id=client_id,
+            rate_limited=rate_limited,
+        )
+        return response
+
     # 1) Admission — the layered kill switches (master, per-surface, token) plus the
     #    guardrails incident check, re-evaluated per request so flipping any of them
     #    takes effect on the next call rather than needing a restart. An incident
     #    answers 503 (come back later), a disabled surface 404 (nothing here).
+    #
+    #    Both codes stay GENERIC on purpose. `gate.admission_problem` answers 404 so a
+    #    switched-off surface does not confirm its own existence to a prober; a code that
+    #    named this surface, or named which of the three kill switches fired, would hand
+    #    back precisely what the status withholds. `problem` carries the operator detail
+    #    into the audit trail, which is where it belongs.
     problem, status = admission_problem(SURFACE)
     if problem:
-        refusal = {"error": "service unavailable"} if status == 503 else {"error": "not found"}
-        return _done(status, refusal, refused=problem)
+        # Two literal calls, not one `json_error(<ternary>)`: a computed code is opaque
+        # to the append-only registry check and lands in the census's dynamic-code
+        # bucket, which is at its ceiling. `admission_problem` returns only 404 or 503.
+        if status == 503:
+            return _refuse(
+                json_error("service_unavailable", status=503, headers=_NO_STORE),
+                refused=problem,
+            )
+        return _refuse(json_error("not_found", status=404, headers=_NO_STORE), refused=problem)
 
     # 2) Peer, then 3) token. Peer first: a non-loopback caller shouldn't get to
     #    probe token validity at all.
     peer_ok, peer_reason = auth.peer_allowed(request, SURFACE)
     if not peer_ok:
-        return _done(403, {"error": "forbidden"}, refused=peer_reason)
+        return _refuse(json_error("forbidden", status=403, headers=_NO_STORE), refused=peer_reason)
 
     presented = ""
     header = request.headers.get("Authorization", "")
@@ -179,9 +251,8 @@ async def handle_mcp(request: web.Request) -> web.Response:
         # Neither credential matched. The audited reason names the CLIENT-lookup
         # outcome when there is one, because "matches no registered client" and
         # "client is disabled" are different operator problems with the same 401.
-        return _done(
-            401,
-            {"error": "unauthorized"},
+        return _refuse(
+            json_error("unauthorized", status=401, headers=_NO_STORE),
             refused=client_reason or "bad or missing bearer token",
         )
 
@@ -191,37 +262,31 @@ async def handle_mcp(request: web.Request) -> web.Response:
     caps = caps_mod.caps_for(client)
     if not caps_mod.check_rate_for_client(SURFACE, client_id, peer_fallback, caps):
         _record_breach(client_id, "rate limit")
-        payload = {"error": "rate limited"}
-        body = json.dumps(payload)
-        audit_mod.audit(
-            SURFACE,
-            route="POST /mcp",
-            status=429,
-            bytes_in=bytes_in,
-            bytes_out=len(body),
-            duration_ms=int((time.monotonic() - started) * 1000),
+        # This site used to inline the whole audit-then-respond dance because it needs a
+        # `Retry-After` header, which the old `_done` had no way to pass. `json_error`
+        # takes headers, so it collapses into `_refuse` like every other refusal — and a
+        # refusal built beside its own audit call is a refusal that can drift from it.
+        return _refuse(
+            json_error(
+                "rate_limited",
+                status=429,
+                headers={
+                    **_NO_STORE,
+                    "Retry-After": str(
+                        caps_mod.retry_after_for_client(SURFACE, client_id, peer_fallback, caps)
+                    ),
+                },
+            ),
             refused="rate limit",
-            client_id=client_id,
             rate_limited=True,
-        )
-        return web.json_response(
-            payload,
-            status=429,
-            headers={
-                "Cache-Control": "no-store",
-                "Retry-After": str(
-                    caps_mod.retry_after_for_client(SURFACE, client_id, peer_fallback, caps)
-                ),
-            },
         )
 
     # 5) Concurrency, also per client.
     slot = caps_mod.slot_key(SURFACE, client_id, peer_fallback)
     if not caps_mod.acquire_slot(slot, caps):
         _record_breach(client_id, "concurrency cap")
-        return _done(
-            503,
-            {"error": "too many concurrent requests"},
+        return _refuse(
+            json_error("too_many_concurrent_requests", status=503, headers=_NO_STORE),
             refused="concurrency cap",
         )
 
@@ -232,11 +297,17 @@ async def handle_mcp(request: web.Request) -> web.Response:
         # 6) Body size, checked BEFORE reading the whole body where possible.
         declared = request.content_length or 0
         if declared > caps_mod.DEFAULT_CAPS.body_bytes:
-            return _done(413, {"error": "request too large"}, refused="body cap (declared)")
+            return _refuse(
+                json_error("request_too_large", status=413, headers=_NO_STORE),
+                refused="body cap (declared)",
+            )
         raw = await request.content.read(caps_mod.DEFAULT_CAPS.body_bytes + 1)
         bytes_in = len(raw)
         if bytes_in > caps_mod.DEFAULT_CAPS.body_bytes:
-            return _done(413, {"error": "request too large"}, refused="body cap")
+            return _refuse(
+                json_error("request_too_large", status=413, headers=_NO_STORE),
+                refused="body cap",
+            )
 
         # 7) Parse.
         try:
@@ -357,9 +428,22 @@ async def handle_mcp(request: web.Request) -> web.Response:
                     )
                 if violation:
                     clients_mod.log_binding_violation(client.client_id, violation)
-                    return _done(
-                        403,
-                        {"error": "forbidden", "detail": "request conflicts with a client binding"},
+                    # Stays the GENERIC `forbidden`, and the hint stays the same sentence
+                    # that shipped. `bridge.py` mints a distinct `action_not_bound` for its
+                    # equivalent refusal; matching that here would make this response
+                    # strictly more specific than the one it replaces, on an
+                    # externally-reachable surface, which is not this change's call to
+                    # make. `violation` (which names the client and the pinned tools) goes
+                    # to the audit trail and the SEL, never to the caller. The hint rides
+                    # INSIDE the `error` object via `error_extra`, because a sibling
+                    # top-level `detail` key is a second place to look for one failure.
+                    return _refuse(
+                        json_error(
+                            "forbidden",
+                            status=403,
+                            headers=_NO_STORE,
+                            error_extra={"detail": "request conflicts with a client binding"},
+                        ),
                         refused=violation,
                         tool=name,
                     )
