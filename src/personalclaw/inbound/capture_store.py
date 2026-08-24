@@ -412,6 +412,20 @@ def _record_hashes(path: Path) -> set[str]:
     return hashes
 
 
+def _hash_record(record: dict) -> str:
+    """Content hash of a record, excluding ``ts`` (and its own previous value).
+
+    Factored out of :func:`_build_record` because :func:`stage_records` overlays an
+    importer's already-extracted tool facts *after* the record is built and must
+    therefore re-hash. A hash that omitted the overlaid fields would make two imported
+    turns that differ only in their tool calls read as duplicates of each other, and the
+    import would silently drop the second one.
+    """
+    return hashlib.sha256(
+        _dumps({k: v for k, v in record.items() if k not in ("ts", "record_hash")}).encode("utf-8")
+    ).hexdigest()
+
+
 def _build_record(
     *,
     client_id: str,
@@ -501,9 +515,7 @@ def _build_record(
         "latency_ms": int(latency_ms),
         "redactions": len(warnings),
     }
-    record["record_hash"] = hashlib.sha256(
-        _dumps({k: v for k, v in record.items() if k != "ts"}).encode("utf-8")
-    ).hexdigest()
+    record["record_hash"] = _hash_record(record)
 
     sidecar = {
         "ts": record["ts"],
@@ -568,6 +580,65 @@ async def record_turn_async(**kwargs: Any) -> str:
     return await asyncio.to_thread(lambda: record_turn(**kwargs))
 
 
+def _overlay_imported_facts(record: dict, sidecar: dict, raw: dict) -> None:
+    """Overlay an importer's already-extracted tool facts onto a synthesised record.
+
+    :func:`_build_record` **derives** ``tool_calls``/``read_paths``/``wrote_paths`` from
+    the request and response bodies. A §8 import has no bodies — only digests plus the
+    facts its adapter already extracted — so the bodies synthesised in
+    :func:`stage_records` contain no tool calls at all and re-deriving from them yields
+    nothing. Without this overlay the derivation would therefore silently DROP every tool
+    call and path the adapter found. It is a REPLACE, not a merge, precisely because the
+    derived lists are provably empty for a synthesised body.
+
+    Screened at each field boundary like every other content path, never over a joined
+    line (module docstring). ``ok`` keeps the importer's tri-state ``None``: "the export
+    contained no result" is not the claim "the call failed".
+    """
+    redactions = 0
+    rows: list[dict] = []
+    raw_calls = raw.get("tool_calls")
+    for row in raw_calls if isinstance(raw_calls, list) else []:
+        if not isinstance(row, dict):
+            continue
+        name_clean, name_found = _screen(str(row.get("name") or ""))
+        args_clean, args_found = _screen(str(row.get("args_clipped") or ""))
+        redactions += len(name_found) + len(args_found)
+        ok = row.get("ok")
+        rows.append(
+            {
+                "name": name_clean,
+                "args_clipped": args_clean,
+                "ok": ok if isinstance(ok, bool) else None,
+            }
+        )
+
+    def _screened_paths(key: str) -> list[str]:
+        nonlocal redactions
+        out: list[str] = []
+        entries = raw.get(key)
+        for entry in entries if isinstance(entries, list) else []:
+            clean, found = _screen(str(entry))
+            redactions += len(found)
+            if clean and clean not in out:
+                out.append(clean)
+        return out
+
+    read_paths = _screened_paths("read_paths")
+    wrote_paths = _screened_paths("wrote_paths")
+    record["tool_calls"] = rows
+    record["read_paths"] = read_paths
+    record["wrote_paths"] = wrote_paths
+    # Attribution is derived FROM the paths, so it must be re-derived from the overlaid
+    # ones — otherwise an imported session reads a skill and nothing says so.
+    record["read_skills"] = attribute_skills(read_paths)
+    record["wrote_skills"] = attribute_skills(wrote_paths)
+    record["redactions"] = int(record.get("redactions") or 0) + redactions
+    # Re-hash over the overlaid content, and keep the sidecar's join key in step with it.
+    record["record_hash"] = _hash_record(record)
+    sidecar["record_hash"] = record["record_hash"]
+
+
 def stage_records(records: list[dict], *, source: str) -> dict:
     """Normalise already-shaped records into capture sessions (§8 telemetry import).
 
@@ -596,10 +667,34 @@ def stage_records(records: list[dict], *, source: str) -> dict:
         if not isinstance(raw, dict):
             _skip("record was not an object")
             continue
-        request_body = raw.get("request_body")
-        if not isinstance(request_body, dict):
-            _skip("record had no request_body object")
-            continue
+        request_body: dict
+        response_body: dict | None
+        # `overlay` is set only for the bodiless §7.2 shape; see below.
+        overlay: dict | None = None
+        raw_request = raw.get("request_body")
+        if isinstance(raw_request, dict):
+            request_body = raw_request
+            raw_response = raw.get("response_body")
+            response_body = raw_response if isinstance(raw_response, dict) else None
+        else:
+            # The §8 adapters emit the §7.2 RECORD shape, not a transcript: digests, tool
+            # calls and paths, with no bodies — an SSE dump structurally cannot supply a
+            # request half at all. Synthesise the minimal bodies so `_build_record` stays
+            # the ONE place that shapes and screens a record; a second, laxer path for
+            # imported content would be the whole security argument undone.
+            prompt = str(raw.get("prompt_digest") or "")
+            response = str(raw.get("response_digest") or "")
+            if not prompt and not response:
+                _skip(
+                    "record had neither a request_body object nor a "
+                    "prompt_digest/response_digest to synthesise one from"
+                )
+                continue
+            # No prompt ⇒ NO message, not an empty one: an SSE import legitimately has no
+            # request half, and a fabricated empty user turn would be a lie in the record.
+            request_body = {"messages": [{"role": "user", "content": prompt}]} if prompt else {}
+            response_body = {"choices": [{"message": {"content": response}}]} if response else None
+            overlay = raw
         client_id = str(raw.get("client_id") or f"import:{source}")
         try:
             session_id = session_id_for(client_id, request_body)
@@ -608,13 +703,13 @@ def stage_records(records: list[dict], *, source: str) -> dict:
                 dialect=str(raw.get("dialect") or "import"),
                 model_requested=str(raw.get("model_requested") or ""),
                 request_body=request_body,
-                response_body=(
-                    raw.get("response_body") if isinstance(raw.get("response_body"), dict) else None
-                ),
+                response_body=response_body,
                 stream_text=str(raw.get("stream_text") or ""),
                 tokens=raw.get("tokens") if isinstance(raw.get("tokens"), dict) else None,
                 latency_ms=int(raw.get("latency_ms") or 0),
             )
+            if overlay is not None:
+                _overlay_imported_facts(record, sidecar, overlay)
             record["import_source"] = str(source)
             record_path, sidecar_path = _session_paths(session_id)
             if session_id not in seen:
