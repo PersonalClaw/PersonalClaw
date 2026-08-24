@@ -117,11 +117,13 @@ COMPANION's `devices.json` shape, minus the file — the row already holds all f
 
 **Transport constraint (folded in from MOBILE-COMPANION C1's `bind_ip` finding — the one thing
 that plan carried and this one did not).** A device session MUST be carried as the session
-**cookie**, never through the `?token=` query-param exchange. Measured in `token_auth.py`, not
-assumed: the query-param path binds the token to the first client IP it sees (`bind_token_ip`,
-`:970`) and denies on mismatch (`check_token_ip`, `:957`), while cookie-borne requests skip the
-IP check entirely — "the cookie itself is the credential, and IP validation behind a proxy is
-unreliable" (`:954`). A roaming phone changes IP between cell and Wi-Fi, so a query-param
+**cookie**, never through the `?token=` query-param exchange. Measured in
+`src/personalclaw/dashboard/token_auth.py`, not assumed: the query-param path binds the token to
+the first client IP it sees (`bind_token_ip`, `:582`, called at `:1055`) and denies on mismatch
+(`check_token_ip`, `:587`, enforced at `:1041` behind a `not from_cookie` guard), while
+cookie-borne requests skip the IP check entirely — "the cookie itself is the credential, and IP
+validation behind a proxy is unreliable" (`:1038-1040`). A roaming phone changes IP between cell
+and Wi-Fi, so a query-param
 device session would die on every network change; a cookie-borne one is untouched. **This
 resolves MOBILE-COMPANION's open design pivot with no `token_auth.py` change at all** — no
 `device` claim, no unbinding, no weakened invariant, so no E4. It is what `MC-2`'s "a
