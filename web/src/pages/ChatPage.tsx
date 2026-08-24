@@ -65,7 +65,7 @@ import { parseOptions, parseSwitchToAgent } from './chat/parseAssistant'
 import { type PasteBlock, shouldCollapsePaste, nextSeq, makePasteId, markerFor, expandPasteMarkers, pruneBlocks } from './chat/pasteBlocks'
 import { Modal } from '../ui/Modal'
 import { confirm, promptInput } from '../ui/dialog'
-import { type ChatTurn, type Segment, type ToolSegment, type ApprovalSegment, type ActivitySegment, type SubagentCard, type HistMsg, type MemoryCitation, userTurn, assistantTurn, hydrateTurns, turnText, deriveActivity } from './chat/chatTypes'
+import { type ChatTurn, type Segment, type ToolSegment, type ApprovalSegment, type ActivitySegment, type SubagentCard, type HistMsg, type MemoryCitation, type SkillUsed, userTurn, assistantTurn, hydrateTurns, turnText, deriveActivity, learnedSurface, skillsUsedLabel, skillsUsedTitle, stampActivityOrigin } from './chat/chatTypes'
 import { branchIndexOf, branchParentKey } from './chat/branchLineage'
 import { buildOptimizerContext } from './chat/optimizerContext'
 import { useIdentity, firstNameOf } from '../app/identity'
@@ -960,10 +960,17 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
         const text = String(d.text ?? '')
         if (kind === 'status' || kind === 'session' || !text) break
         setLatestActivity(text)
+        // Which learning path emitted a `learned` event (T2.2). Absent on every other
+        // activity kind, and absent on a `learned` event from a build before T2.2 — which
+        // `learnedSurface()` renders as a non-tappable chip rather than a wrong link.
+        const origin = String(d.origin ?? '')
         // insertActivity (pure, K42-tested): keeps a mid-stream activity line BEFORE
         // the coalescer's active text run so the next flush replaces-in-place instead
         // of pushing a duplicate; de-dupes adjacent identical lines; tool cards win.
-        patchLastAssistant((segs) => insertActivity(segs, text, kind, coalescing.current))
+        // `stampActivityOrigin` carries `origin` onto the segment insertActivity just created
+        // without widening that helper's signature (and re-baselining its K42/K44/K45 suite).
+        // Pure and tested there, rather than an inline reference-diff nothing could prove.
+        patchLastAssistant((segs) => stampActivityOrigin(segs, insertActivity(segs, text, kind, coalescing.current), origin))
         break
       }
       case 'tool_call': {
@@ -1090,21 +1097,43 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
           if (sk !== sessionRef.current) return
           const byTs = new Map<string, MemoryCitation[]>()
           let lastCites: MemoryCitation[] | null = null
+          // `skills_used` (T2.1) rides the SAME persisted meta and is invisible to the WS
+          // stream for the same reason, so it is grafted on the same pass rather than in a
+          // second fetch. It differs from citations in one way that matters: episodic recall
+          // injects once per session, but skills are allocated EVERY turn — so this keeps a
+          // per-ts map and only falls back to the trailing value for the just-streamed turn
+          // that has no ts yet. A `lastSkills` applied to every tsless turn would stamp one
+          // turn's allocation onto another's.
+          const skillsByTs = new Map<string, SkillUsed[]>()
+          let lastSkills: SkillUsed[] | null = null
           for (const m of d.messages || []) {
+            if (m.role !== 'assistant') continue
             const c = m.meta?.memory_citations
-            if (m.role === 'assistant' && Array.isArray(c) && c.length) {
+            if (Array.isArray(c) && c.length) {
               lastCites = c
               if (m.ts) byTs.set(m.ts, c)
             }
+            const sk2 = m.meta?.skills_used
+            if (Array.isArray(sk2) && sk2.length) {
+              lastSkills = sk2
+              if (m.ts) skillsByTs.set(m.ts, sk2)
+            }
           }
-          if (byTs.size || lastCites) setTurns((prev) => {
+          if (byTs.size || lastCites || skillsByTs.size || lastSkills) setTurns((prev) => {
             const lastIdx = prev.map((t) => t.role).lastIndexOf('assistant')
             return prev.map((t, i) => {
-              if (t.role !== 'assistant' || t.citations) return t
-              if (t.ts && byTs.has(t.ts)) return { ...t, citations: byTs.get(t.ts) }
-              // Trailing streamed turn with no ts → attach the session's one manifest.
-              if (i === lastIdx && !t.ts && lastCites) return { ...t, citations: lastCites }
-              return t
+              if (t.role !== 'assistant') return t
+              const patch: Partial<ChatTurn> = {}
+              if (!t.citations) {
+                if (t.ts && byTs.has(t.ts)) patch.citations = byTs.get(t.ts)
+                // Trailing streamed turn with no ts → attach the session's one manifest.
+                else if (i === lastIdx && !t.ts && lastCites) patch.citations = lastCites
+              }
+              if (!t.skillsUsed) {
+                if (t.ts && skillsByTs.has(t.ts)) patch.skillsUsed = skillsByTs.get(t.ts)
+                else if (i === lastIdx && !t.ts && lastSkills) patch.skillsUsed = lastSkills
+              }
+              return Object.keys(patch).length ? { ...t, ...patch } : t
             })
           })
         }).catch(() => {})
@@ -2875,7 +2904,7 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
                               onSwitchVariant={isLast ? switchVariant : undefined}
                               speaking={speakingTurn === i} onSpeak={() => speak(turnText(turn), i)} />
                           )}>
-                            <AssistantSegments segments={turn.segments} isLast={isLast} messageTs={turn.ts} streaming={isLast && streaming} onApprove={approve} onSwitchToAgent={switchToAgentAndRun} onOpenFile={setOpenFile} chatSessionKey={sessionRef.current ?? undefined} citations={turn.citations} />
+                            <AssistantSegments segments={turn.segments} isLast={isLast} messageTs={turn.ts} streaming={isLast && streaming} onApprove={approve} onSwitchToAgent={switchToAgentAndRun} onOpenFile={setOpenFile} chatSessionKey={sessionRef.current ?? undefined} citations={turn.citations} skillsUsed={turn.skillsUsed} />
                           </MessageAssistant>
                         )}
                         {/* Follow-up chips (CHAT-CRAFT S3) under the last assistant turn only,
@@ -3569,7 +3598,7 @@ function SelectionQuote({ scrollRef, onQuote, attributionFor }: {
  *  historical messages get stripped from the prose (they are never rendered as
  *  buttons — follow-up chips are the single suggestion surface) and referenced
  *  file paths surface as clickable chips below the prose. */
-function AssistantSegments({ segments, isLast, messageTs, streaming, onApprove, onSwitchToAgent, onOpenFile, chatSessionKey, citations }: {
+function AssistantSegments({ segments, isLast, messageTs, streaming, onApprove, onSwitchToAgent, onOpenFile, chatSessionKey, citations, skillsUsed }: {
   segments: Segment[]; isLast: boolean
   messageTs?: string
   streaming?: boolean
@@ -3578,6 +3607,7 @@ function AssistantSegments({ segments, isLast, messageTs, streaming, onApprove, 
   onOpenFile: (path: string) => void
   chatSessionKey?: string
   citations?: MemoryCitation[]
+  skillsUsed?: SkillUsed[]
 }) {
   const fullText = segments.filter((s) => s.kind === 'text').map((s) => (s as { text: string }).text).join('\n')
   // A restricted-mode turn may OFFER a one-click escalation to Agent (TM8).
@@ -3586,12 +3616,18 @@ function AssistantSegments({ segments, isLast, messageTs, streaming, onApprove, 
   // Transparency signals (what FED the turn / what was LEARNED / telemetry) are
   // pulled OUT of the inline flow and consolidated into one collapsible ledger at
   // the turn footer — holistic, non-intrusive, on demand (not three scattered lines).
-  const ledger: { fed?: string; learned?: string; stats?: string } = {}
+  const ledger: { fed?: string; learned?: string; learnedOrigin?: string; stats?: string } = {}
   for (const s of segments) {
     if (s.kind !== 'activity') continue
     const ak = (s as ActivitySegment).activityKind
     if (ak === 'context') ledger.fed = (s as ActivitySegment).text
-    else if (ak === 'learned') ledger.learned = (s as ActivitySegment).text
+    // The learned row carries its emitter's `origin` too (T2.2) — the ledger is where the
+    // chip lives, so the discriminator has to travel with the text or the tap has nothing
+    // to route on. Read off the SAME segment, so the two can never describe different events.
+    else if (ak === 'learned') {
+      ledger.learned = (s as ActivitySegment).text
+      ledger.learnedOrigin = (s as ActivitySegment).origin
+    }
     else if (ak === 'stats') ledger.stats = (s as ActivitySegment).text
   }
   const hasLedger = Boolean(ledger.fed || ledger.learned || ledger.stats)
@@ -3676,7 +3712,13 @@ function AssistantSegments({ segments, isLast, messageTs, streaming, onApprove, 
       {sdlcNodes.length > 0 && <div className="flex flex-col gap-1">{sdlcNodes}</div>}
       {finalNodes}
 
-      {hasLedger && <ContextLedger fed={ledger.fed} learned={ledger.learned} stats={ledger.stats} />}
+      {/* What CAPABILITY fed the turn (T2.1) — a peer of the ledger's "what context fed it",
+          kept as its own always-visible chip rather than a collapsed ledger row: the count is
+          the whole signal, and burying it behind a disclosure would make "which skills am I
+          actually paying for" a thing you have to go looking for. */}
+      {skillsUsed && skillsUsed.length > 0 && <SkillsUsedChip skills={skillsUsed} />}
+
+      {hasLedger && <ContextLedger fed={ledger.fed} learned={ledger.learned} learnedOrigin={ledger.learnedOrigin} stats={ledger.stats} />}
 
       {/* Agent-driven one-click escalation (TM8): the model proposed a switch out
           of a restricted mode; the user approves with a single click, which flips
@@ -3744,17 +3786,50 @@ function ActivityLine({ seg }: { seg: ActivitySegment }) {
   )
 }
 
+/** "used N skills" — the per-turn skill-allocation chip (LEARNING-VISIBILITY T2.1).
+ *
+ *  Hover carries the skill NAMES in the allocator's own order via `title` — the same
+ *  affordance the {@link ContextLedger} trigger beside it uses, so the two footer chips
+ *  behave alike instead of introducing a second hover mechanism for one line of text.
+ *  `title` on a non-interactive element is a HOVER affordance only, not an accessible
+ *  name, so the summarized count is also written into the visible label below rather than
+ *  living solely in the tooltip.
+ *
+ *  A `reduced` skill is called out two ways rather than one, because the count alone would
+ *  present a summary-only load as a full one: the chip appends "· M summarized" so the
+ *  distinction survives without hovering, and the hover list marks each such skill by name.
+ *  Rendered as a non-interactive element on purpose — there is no per-skill surface to land
+ *  on, and a chip that looked like a button but did nothing would be the worse lie. */
+function SkillsUsedChip({ skills }: { skills: SkillUsed[] }) {
+  const reduced = skills.filter((s) => s.state === 'reduced').length
+  return (
+    <div className="mt-2 mb-1 flex items-center gap-1.5 text-on-surface-low/80 text-[0.75rem]"
+      title={skillsUsedTitle(skills)}>
+      <Sparkles size={11} className="shrink-0 opacity-70" />
+      <span>
+        {skillsUsedLabel(skills)}
+        {reduced > 0 && <span className="opacity-80"> · {reduced} summarized</span>}
+      </span>
+    </div>
+  )
+}
+
 /** Holistic per-turn context-transparency footer. Consolidates the three
  *  provenance signals — what context FED the turn (memory/lessons/knowledge/
  *  skills/workflows), what the turn LEARNED & saved (after-turn review), and the
  *  turn TELEMETRY — into one quiet, collapsed-by-default affordance. The
  *  high-signal "learned" flag stays visible even collapsed (so the user always
  *  sees, and can open to undo, what was persisted). On demand, never intrusive. */
-function ContextLedger({ fed, learned, stats }: { fed?: string; learned?: string; stats?: string }) {
+function ContextLedger({ fed, learned, learnedOrigin, stats }: { fed?: string; learned?: string; learnedOrigin?: string; stats?: string }) {
   const [open, setOpen] = useState(false)
   const fedChars = fed?.match(/([\d,]+)\s*chars/)?.[1] ?? ''
   // "Learned: <text>" → just the text for the expanded row.
   const learnedText = learned?.replace(/^Learned:\s*/i, '').trim() ?? ''
+  // Where a tap on this chip lands, decided by the EMITTER (T2.2) rather than by the one
+  // hardcoded Memory link this row used to carry for all three origins — which was right for
+  // a facet and wrong for a skill proposal. `null` for an absent/unknown origin: the row
+  // still renders its text, it just isn't a link, because we don't know which surface owns it.
+  const surface = learnedSurface(learnedOrigin)
   const summary = open
     ? 'Context & learning'
     : [fed && 'recalled context', learned && 'learned 1', stats && 'telemetry'].filter(Boolean).join(' · ') || 'Turn details'
@@ -3783,7 +3858,7 @@ function ContextLedger({ fed, learned, stats }: { fed?: string; learned?: string
               {learned && (
                 <LedgerRow icon={Sparkles} label="Learned & saved">
                   <span className="text-on-surface-var">{learnedText || 'A preference was captured.'}</span>
-                  {' '}<TextLink href="#/settings/memory">Manage in Memory →</TextLink>
+                  {surface && <>{' '}<TextLink href={surface.href}>{surface.label}</TextLink></>}
                 </LedgerRow>
               )}
               {stats && (
