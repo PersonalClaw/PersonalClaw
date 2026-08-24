@@ -20,6 +20,32 @@ into a mechanism that cannot silently reverse.
   an f-string, a variable. Carries NO code, so a client has nothing to branch on
   and is reduced to matching on prose that is free to be reworded.
 
+**Wrapper indirection, and why this scanner follows it.** The first version of this
+census classified the payload at the ``json_response`` *call site* only. That made it
+blind by construction to a module that routes its responses through a local helper —
+``def _json(payload, status): return web.json_response(payload, status=status)`` —
+because at the ``json_response`` line the payload is a *variable*, not a literal, and
+a non-literal was silently skipped. `inbound/bridge.py` shipped **eleven** flat
+envelopes that this census scored at **zero**, and the companion rail
+(:func:`test_no_module_local_error_helper_came_back`) missed them too because it
+matches helper NAMES — ``_err``/``_error``/``_bad_request`` — and the helper was
+called ``_json``. A name-matched denylist is not a control; renaming the helper
+defeats it.
+
+So the scanner now does two things instead:
+
+1. It **follows the value one hop through a wrapper.** Any module-local function that
+   forwards one of its own parameters into ``json_response``'s payload slot (directly,
+   or through another such wrapper) is recognised as a response wrapper, and calls to
+   it are classified by the payload argument at *their* call site. That is what makes
+   the bridge's eleven visible.
+2. Where it **cannot** resolve the payload to a dict literal it *refuses to classify*
+   and says so out loud: the site lands in :attr:`Census.unresolved`, which carries its
+   own ceiling. A scanner that silently declines to classify is the same defect one
+   level up, so the refusal is a counted, shrinking number — and a brand-new flat
+   envelope can no longer hide behind indirection, because it must either resolve
+   (counted flat) or not (counted unresolved). Both directions red.
+
 **Scope.** Only the wire envelope. ``AgentError``'s ``ERR_UPPER_SNAKE`` envelope
 (:mod:`personalclaw.errors`) is a DIFFERENT surface and is deliberately left
 distinct; success envelopes are explicitly out of scope (the same convention says
@@ -56,7 +82,41 @@ EMITTER_SITE_BASELINE = 132
 #: code. A CEILING (may only shrink). Every one of these is a route where a client
 #: must match prose. PL-8 removed the four helpers that manufactured them wholesale;
 #: the remaining population is per-site work for later atoms.
+#:
+#: Deliberately still counts DIRECT sites only, so the number stays comparable with
+#: every earlier measurement of it. The population the widened scanner newly sees is
+#: counted separately below rather than folded in here — folding it in would have
+#: required raising this ceiling, which is the one move a ratchet cannot survive.
 FLAT_BASELINE = 1507
+
+#: Flat sites reached through a WRAPPER (see the module docstring). A CEILING, measured
+#: on this tree the moment the scanner could see them at all. The first measurement was
+#: **18** — eleven in ``inbound/bridge.py`` and seven in ``inbound/mcp_http.py``; the
+#: bridge's eleven were converted to :func:`~personalclaw.http_errors.json_error` in the
+#: same change that widened the scanner, which is why the baseline is 7 and not 18.
+#:
+#: The seven that remain are `mcp_http`'s HTTP-level refusals routed through its ``_json``
+#: and ``_done`` helpers. They are per-site work for a later atom; what matters is that
+#: they are now a counted, shrinking budget instead of invisible.
+FLAT_VIA_WRAPPER_BASELINE = 7
+
+#: The honest single number going forward: no client cares which spelling of
+#: indirection carried the envelope that gave it no code to branch on.
+FLAT_TOTAL_BASELINE = FLAT_BASELINE + FLAT_VIA_WRAPPER_BASELINE
+
+#: ``json_response``/wrapper sites whose payload the scanner CANNOT resolve to a dict
+#: literal — a variable, a call, a comprehension, an await. A CEILING, because this is
+#: precisely the hole the bridge's eleven hid in: a site the scanner declines to
+#: classify must not be a site it declines to *count*. Measured on this tree at 204
+#: (mostly plain names and calls, with a tail of comprehensions/lists/awaits), 14 of
+#: them reached through a wrapper. A wrapper's OWN forwarding line is excluded — it is
+#: accounted for at the wrapper's call sites, so counting it would seed this ceiling
+#: with rows nobody can ever fix.
+#:
+#: A new unresolvable site reds this, which is the point: a new flat envelope must now
+#: either resolve (and hit a flat ceiling) or fail to resolve (and hit this one). There
+#: is no third option any more.
+UNRESOLVED_PAYLOAD_CEILING = 204
 
 #: What the append-only rail must inspect. Derived from the census so a matcher that
 #: stops matching cannot read as clean: if the rail's scan finds fewer emitter sites
@@ -80,10 +140,27 @@ class Census:
     #: reference). Not statically checkable against the registry — counted so they
     #: cannot become a hiding place for unregistered codes.
     emitter_dynamic_sites: list[tuple[str, int]] = field(default_factory=list)
+    #: Flat/structured sites reached through a module-local response WRAPPER rather
+    #: than at a ``json_response`` call directly. Kept in their own lists so the
+    #: long-standing direct ceilings stay comparable across measurements.
+    flat_via_wrapper: list[tuple[str, int]] = field(default_factory=list)
+    structured_via_wrapper: list[tuple[str, int]] = field(default_factory=list)
+    #: ``(file, name)`` for every response wrapper the scanner recognised. The vacuity
+    #: anchor for the whole wrapper mechanism: if this empties, the two buckets above
+    #: read clean for the wrong reason.
+    wrapper_defs: list[tuple[str, str]] = field(default_factory=list)
+    #: ``(file, line, node_type, via_wrapper)`` for every emit site whose payload the
+    #: scanner refused to classify. LOUD by construction — see the docstring.
+    unresolved: list[tuple[str, int, str, bool]] = field(default_factory=list)
 
     @property
     def structured_total(self) -> int:
         return len(self.structured_direct) + len(self.emitter_sites)
+
+    @property
+    def flat_total(self) -> int:
+        """Every flat site, however the payload reached the response."""
+        return len(self.flat) + len(self.flat_via_wrapper)
 
 
 def _is_json_response(call: ast.Call) -> bool:
@@ -91,6 +168,97 @@ def _is_json_response(call: ast.Call) -> bool:
     return (isinstance(f, ast.Attribute) and f.attr == "json_response") or (
         isinstance(f, ast.Name) and f.id == "json_response"
     )
+
+
+def _payload_arg(call: ast.Call) -> ast.expr | None:
+    """``json_response``'s payload argument: first positional, else ``data=``."""
+    if call.args:
+        return call.args[0]
+    for kw in call.keywords:
+        if kw.arg == "data":
+            return kw.value
+    return None
+
+
+def _arg_at(call: ast.Call, index: int, name: str) -> ast.expr | None:
+    """The argument in slot ``index``/``name``, whichever the caller used."""
+    if len(call.args) > index:
+        return call.args[index]
+    for kw in call.keywords:
+        if kw.arg == name:
+            return kw.value
+    return None
+
+
+def _positional_params(fn: ast.FunctionDef | ast.AsyncFunctionDef) -> list[str]:
+    return [p.arg for p in list(fn.args.posonlyargs) + list(fn.args.args)]
+
+
+def _response_wrappers(tree: ast.Module) -> tuple[dict[str, tuple[int, str]], set[int]]:
+    """The module's response wrappers, and the forwarding calls INSIDE them.
+
+    Returns ``({name: (positional index, param name)}, {id(call), ...})``.
+
+    A *response wrapper* is a function that forwards one of its OWN parameters into
+    ``json_response``'s payload slot. Nested functions count — `mcp_http`'s ``_done`` is
+    a closure inside its handler, and it is one of the wrappers that was hiding sites.
+
+    Wrapper-of-wrapper resolves by iterating to a fixpoint (``_done`` forwards into
+    ``_json``, which forwards into ``json_response``), bounded because each pass can only
+    add names and the module has finitely many functions.
+
+    The second element is what keeps the unresolved bucket meaningful. A wrapper's own
+    ``return web.json_response(payload, ...)`` has a non-literal payload by definition,
+    but it is fully ACCOUNTED FOR — every value that reaches it is classified at the
+    wrapper's call sites. Counting it as unaccounted-for would put three permanent,
+    unfixable rows into a ceiling whose job is to make new blindness visible.
+    """
+    found: dict[str, tuple[int, str]] = {}
+    functions = [
+        n for n in ast.walk(tree) if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
+    ]
+
+    def _forwarded_param(call: ast.Call) -> ast.expr | None:
+        if _is_json_response(call):
+            return _payload_arg(call)
+        if isinstance(call.func, ast.Name) and call.func.id in found:
+            index, name = found[call.func.id]
+            return _arg_at(call, index, name)
+        return None
+
+    while True:
+        grew = False
+        for fn in functions:
+            if fn.name in found:
+                continue
+            params = _positional_params(fn)
+            if not params:
+                continue
+            for inner in ast.walk(fn):
+                if not isinstance(inner, ast.Call):
+                    continue
+                forwarded = _forwarded_param(inner)
+                if isinstance(forwarded, ast.Name) and forwarded.id in params:
+                    found[fn.name] = (params.index(forwarded.id), forwarded.id)
+                    grew = True
+                    break
+        if not grew:
+            break
+
+    # Second pass, once `found` is complete: EVERY forwarding call in EVERY recognised
+    # wrapper, not just the first one the fixpoint happened to stop on.
+    accounted: set[int] = set()
+    for fn in functions:
+        if fn.name not in found:
+            continue
+        param = found[fn.name][1]
+        for inner in ast.walk(fn):
+            if not isinstance(inner, ast.Call):
+                continue
+            forwarded = _forwarded_param(inner)
+            if isinstance(forwarded, ast.Name) and forwarded.id == param:
+                accounted.add(id(inner))
+    return found, accounted
 
 
 def _is_emitter(call: ast.Call) -> bool:
@@ -134,6 +302,65 @@ def _static_code(call: ast.Call, constants: dict[str, str]) -> str | None:
     return None
 
 
+def scan_source(source: str, rel: str, census: Census) -> None:
+    """Classify one module's error sites into ``census``.
+
+    Split out of :func:`scan` so the wrapper-following logic can be exercised against a
+    SYNTHETIC module (see :func:`test_the_scanner_follows_a_wrapper`). A mechanism whose
+    only test is "the tree's current count is N" cannot distinguish "no sites" from
+    "detector broken", and that distinction is the whole reason this function exists.
+    """
+    tree = ast.parse(source)
+    census.files_scanned += 1
+    constants = _module_string_constants(tree)
+    wrappers, accounted = _response_wrappers(tree)
+    for name in sorted(wrappers):
+        census.wrapper_defs.append((rel, name))
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        if _is_emitter(node):
+            census.emitter_sites.append((rel, node.lineno))
+            code = _static_code(node, constants)
+            if code is None:
+                census.emitter_dynamic_sites.append((rel, node.lineno))
+            else:
+                census.emitter_literal_codes.append((rel, node.lineno, code))
+            continue
+        via_wrapper = False
+        if _is_json_response(node):
+            payload = _payload_arg(node)
+        elif isinstance(node.func, ast.Name) and node.func.id in wrappers:
+            index, param = wrappers[node.func.id]
+            payload = _arg_at(node, index, param)
+            via_wrapper = True
+        else:
+            continue
+        if payload is None:
+            # A genuinely payload-less call (``json_response()``); nothing to classify
+            # and nothing hidden.
+            continue
+        if not isinstance(payload, ast.Dict):
+            if id(node) in accounted:
+                # A wrapper forwarding its own parameter. Not unaccounted-for: the values
+                # that flow through it are classified at the wrapper's call sites.
+                continue
+            # REFUSED, not skipped. See UNRESOLVED_PAYLOAD_CEILING.
+            census.unresolved.append((rel, node.lineno, type(payload).__name__, via_wrapper))
+            continue
+        for key, value in zip(payload.keys, payload.values):
+            if not (isinstance(key, ast.Constant) and key.value == "error"):
+                continue
+            has_code = isinstance(value, ast.Dict) and any(
+                isinstance(k, ast.Constant) and k.value == "code" for k in value.keys
+            )
+            if via_wrapper:
+                bucket = census.structured_via_wrapper if has_code else census.flat_via_wrapper
+            else:
+                bucket = census.structured_direct if has_code else census.flat
+            bucket.append((rel, node.lineno))
+
+
 def scan() -> Census:
     """Walk every module under ``src/personalclaw`` and classify each error site.
 
@@ -147,39 +374,13 @@ def scan() -> Census:
         if "__pycache__" in path.parts:
             continue
         try:
-            tree = ast.parse(path.read_text(encoding="utf-8"))
-        except (SyntaxError, UnicodeDecodeError):  # pragma: no cover - defensive
+            source = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):  # pragma: no cover - defensive
             continue
-        census.files_scanned += 1
-        rel = str(path.relative_to(SRC.parent.parent))
-        constants = _module_string_constants(tree)
-        for node in ast.walk(tree):
-            if not isinstance(node, ast.Call):
-                continue
-            if _is_emitter(node):
-                census.emitter_sites.append((rel, node.lineno))
-                code = _static_code(node, constants)
-                if code is None:
-                    census.emitter_dynamic_sites.append((rel, node.lineno))
-                else:
-                    census.emitter_literal_codes.append((rel, node.lineno, code))
-                continue
-            if not _is_json_response(node):
-                continue
-            payload = node.args[0] if node.args else None
-            if payload is None:
-                for kw in node.keywords:
-                    if kw.arg == "data":
-                        payload = kw.value
-            if not isinstance(payload, ast.Dict):
-                continue
-            for key, value in zip(payload.keys, payload.values):
-                if not (isinstance(key, ast.Constant) and key.value == "error"):
-                    continue
-                has_code = isinstance(value, ast.Dict) and any(
-                    isinstance(k, ast.Constant) and k.value == "code" for k in value.keys
-                )
-                (census.structured_direct if has_code else census.flat).append((rel, node.lineno))
+        try:
+            scan_source(source, str(path.relative_to(SRC.parent.parent)), census)
+        except SyntaxError:  # pragma: no cover - defensive
+            continue
     return census
 
 
@@ -197,6 +398,120 @@ def test_the_scan_is_not_vacuous():
     assert census.structured_direct, "no structured site found at all — the matcher is broken"
     assert census.flat, "no flat site found at all — the matcher is broken"
     assert census.emitter_sites, "no json_error call found at all — the matcher is broken"
+
+
+# ── the wrapper mechanism, proved against synthetic source ────────────────────
+#
+# These do not measure the tree. They measure the SCANNER, on source written here, so
+# that "the wrapper buckets are empty" can be told apart from "the wrapper detector
+# stopped working" — which is the failure mode that let eleven envelopes hide in the
+# first place, one level up.
+
+
+_WRAPPED = '''
+from aiohttp import web
+
+
+def _json(payload, status=200):
+    return web.json_response(payload, status=status)
+
+
+def _done(status, payload):
+    """A wrapper of a wrapper — `mcp_http`'s real shape, two hops from json_response."""
+    return _json(payload, status=status)
+
+
+def refuse():
+    return _json({"error": "no code here at all"}, status=400)
+
+
+def refuse_two_hops():
+    return _done(500, {"error": "also flat, one hop further away"})
+
+
+def refuse_properly():
+    return _json({"error": {"code": "bad_request", "message": "explained"}}, status=400)
+
+
+def refuse_from_a_local():
+    """Unresolvable: the payload is a local, so its shape is not readable here."""
+    body = {"error": "built above the call"}
+    return _json(body, status=400)
+'''
+
+
+def test_the_scanner_follows_a_wrapper():
+    """The positive: a flat envelope handed to a local wrapper is COUNTED.
+
+    This is the exact shape `inbound/bridge.py` shipped eleven of while both rails
+    reported zero. Two sites here: one a single hop from ``json_response``, one two hops
+    (a wrapper calling a wrapper — `mcp_http`'s ``_done`` → ``_json``, which is why the
+    resolver iterates to a fixpoint rather than looking one level down).
+    """
+    census = Census()
+    scan_source(_WRAPPED, "synthetic.py", census)
+    assert ("synthetic.py", "_json") in census.wrapper_defs, census.wrapper_defs
+    assert ("synthetic.py", "_done") in census.wrapper_defs, census.wrapper_defs
+    assert len(census.flat_via_wrapper) == 2, census.flat_via_wrapper
+    assert not census.flat, "a wrapper-routed site was miscounted as a DIRECT one"
+
+
+def test_the_scanner_does_not_call_a_coded_envelope_flat():
+    """The negative half of the same mechanism — otherwise "follows wrappers" could be
+    satisfied by a scanner that simply calls everything flat."""
+    census = Census()
+    scan_source(_WRAPPED, "synthetic.py", census)
+    assert len(census.structured_via_wrapper) == 1, census.structured_via_wrapper
+
+
+def test_the_scanner_refuses_loudly_when_it_cannot_resolve_the_payload():
+    """``_json(body, ...)`` where ``body`` is a local is unclassifiable — so it is COUNTED.
+
+    The old scanner's bare ``continue`` here is the whole defect: a site it declined to
+    classify was a site it declined to mention, so indirection was free.
+    """
+    census = Census()
+    scan_source(_WRAPPED, "synthetic.py", census)
+    unresolved = [(ln, kind, via) for _f, ln, kind, via in census.unresolved]
+    # Exactly one: `refuse_from_a_local`. The two wrappers' OWN forwarding lines are
+    # accounted for at their call sites and must not be counted here as well — otherwise
+    # the ceiling fills with rows nobody can fix.
+    assert len(unresolved) == 1, unresolved
+    _line, kind, via = unresolved[0]
+    assert kind == "Name" and via is True, unresolved
+
+
+def test_a_renamed_helper_cannot_escape_the_wrapper_scan():
+    """The failure of the NAME-matched rail, stated as a test.
+
+    `test_no_module_local_error_helper_came_back` looks for ``_err``/``_error``/
+    ``_bad_request``. The bridge's helper was ``_json``, so renaming was all it took.
+    The wrapper scan keys on SHAPE — forwards a parameter into ``json_response`` — so a
+    name nobody predicted is still caught.
+    """
+    renamed = _WRAPPED.replace("_json", "_totally_innocuous_name")
+    census = Census()
+    scan_source(renamed, "synthetic.py", census)
+    assert len(census.flat_via_wrapper) == 2, (
+        "renaming the wrapper hid the flat envelopes again — the scan is matching names, "
+        "not shape"
+    )
+
+
+def test_the_wrapper_detector_still_fires_on_the_real_tree():
+    """Vacuity anchor for the two wrapper ceilings below.
+
+    If this tree genuinely has no response wrappers left, both wrapper buckets are
+    trivially green and this floor is the only thing that says so out loud. Delete the
+    floor deliberately in that change — do not let it pass by accident.
+    """
+    census = scan()
+    assert census.wrapper_defs, (
+        "no response wrapper detected in any module. Either every local wrapper was "
+        "removed (in which case delete this floor and FLAT_VIA_WRAPPER_BASELINE in the "
+        "same change) or _response_wrappers stopped resolving — and then "
+        "census.flat_via_wrapper reads clean for the wrong reason."
+    )
 
 
 # ── the ratchets ──────────────────────────────────────────────────────────────
@@ -226,6 +541,59 @@ def test_the_flat_population_never_grows():
     )
 
 
+def test_the_wrapper_routed_flat_population_never_grows():
+    """A local wrapper must not become the place flat envelopes go to hide.
+
+    Eighteen sites were here the moment the scanner could see them; eleven (all of
+    `inbound/bridge.py`'s) were converted in that same change. The rest is a budget.
+    """
+    census = scan()
+    assert len(census.flat_via_wrapper) <= FLAT_VIA_WRAPPER_BASELINE, (
+        f"flat wire-error sites reached through a response wrapper rose to "
+        f"{len(census.flat_via_wrapper)} (ceiling {FLAT_VIA_WRAPPER_BASELINE}). Routing "
+        f'{{"error": "<prose>"}} through a local helper is still a flat envelope — emit '
+        f"it with personalclaw.http_errors.json_error. Sites:\n"
+        + "\n".join(f"  {f}:{ln}" for f, ln in census.flat_via_wrapper)
+    )
+
+
+def test_the_total_flat_population_never_grows():
+    """The number a client would recognise: routes that hand it no code to branch on.
+
+    Held alongside the two component ceilings rather than instead of them, so moving a
+    site from a direct call into a wrapper cannot read as progress on either.
+    """
+    census = scan()
+    assert census.flat_total <= FLAT_TOTAL_BASELINE, (
+        f"total flat wire-error sites rose to {census.flat_total} (ceiling "
+        f"{FLAT_TOTAL_BASELINE} = {len(census.flat)} direct + "
+        f"{len(census.flat_via_wrapper)} via wrapper)."
+    )
+
+
+def test_unclassifiable_payloads_do_not_grow():
+    """The scanner's own blind spot, held to a ceiling instead of a shrug.
+
+    Every site here is one where the payload is a variable, a call or a comprehension,
+    so the shape cannot be read statically. That is exactly where a new flat envelope
+    would go to avoid the ceilings above, which is why growth reds: a new emit site must
+    resolve to a literal (and be counted) or be refused here (and be counted).
+    """
+    census = scan()
+    assert census.files_scanned >= FILES_SCANNED_FLOOR, (
+        f"walked only {census.files_scanned} modules (floor {FILES_SCANNED_FLOOR}) — "
+        f"a shrunken walk makes this ceiling meaningless."
+    )
+    assert len(census.unresolved) <= UNRESOLVED_PAYLOAD_CEILING, (
+        f"{len(census.unresolved)} json_response/wrapper sites have a payload the census "
+        f"cannot resolve to a literal (ceiling {UNRESOLVED_PAYLOAD_CEILING}). Build the "
+        f"response body at the call site — or emit the error with "
+        f"personalclaw.http_errors.json_error, which needs no payload dict at all. New "
+        f"sites:\n"
+        + "\n".join(f"  {f}:{ln} ({kind})" for f, ln, kind, _via in census.unresolved[-12:])
+    )
+
+
 def test_the_one_emitter_is_actually_used():
     """The point of PL-8: thirteen module-local helpers became one shared emitter."""
     census = scan()
@@ -246,6 +614,14 @@ def test_no_module_local_error_helper_came_back():
     Any ``def _err``/``_error``/``_bad_request`` that returns a ``web.Response`` is
     the exact hazard PL-8 removed: a second emitter whose argument order is free to
     disagree with the shared one.
+
+    **This rail is a NAME match, and that is its known limit.** It scored
+    `inbound/bridge.py`'s eleven flat envelopes at zero because the helper was called
+    ``_json``. Kept as-is — the three names it lists are the ones PL-8 actually deleted,
+    and a rail that says "no revival of THESE" is honest about its scope. The general
+    case is not fixable by adding names, so it is not fixed here: it is fixed by
+    `test_the_wrapper_routed_flat_population_never_grows`, which keys on SHAPE and
+    therefore catches a helper whose name nobody thought to list.
     """
     offenders: list[str] = []
     for path in sorted(SRC.rglob("*.py")):
