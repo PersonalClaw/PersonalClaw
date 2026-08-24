@@ -10,6 +10,18 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Added
 
+- **App cards now tell you whether an app is tested, styled like the rest of PersonalClaw, and
+  accessible — and for our own apps, a card that claims it and isn't fails the build.** An app can
+  declare a `quality` block in its manifest (`tested`, `designSystem`, `a11y`) and the Store shows it
+  as badges. For a first-party app that is not a nice sentiment: CI runs the app's own tests, lints its
+  frontend against the same design-token rule the dashboard is held to, and checks its accessibility
+  scan against the version actually shipping — so declaring a bar it doesn't meet turns the build red
+  rather than making the card look nicer. A stale scan from the previous release doesn't count.
+  **An app that says nothing gets no badges.** Not a row of red marks — nothing. Saying "we haven't
+  audited this yet" and saying nothing at all are different, and both are different from passing, so
+  the card shows all three differently. A third-party app's badges are its author's word, which is
+  why the tooltip says *declares*, not *verified*.
+
 - **"Is this template edit actually better?" is now a question you can answer, not settle by
   taste.** When PersonalClaw proposes a change to one of your workflow templates, it now also
   registers a formal A/B study for that change — the old template and the new one, run side by

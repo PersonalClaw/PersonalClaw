@@ -34,6 +34,7 @@ import {
   useGuardedInstall, guardedFromApp, isBlockingResult, terminalRefusalReason, type GuardedResult,
 } from '../../lib/useGuardedInstall'
 import { AppIcon } from './appIcon'
+import { QualityBadges } from './qualityBadges'
 import { AppConfigFields, useAppConfig } from './appConfigForm'
 import { isInNav, setInNav } from './navApps'
 import { PageTitle } from '../../ui/PageTitle'
@@ -75,6 +76,10 @@ function installedToStoreItem(a: AppSummary): StoreItem {
     installed: true, enabled: a.enabled, hasUI: a.hasUI,
     native: !!a.native, hasConfig: a.hasConfig, origin: a.origin,
     updateAvailable: !!a.updateAvailable, latestVersion: a.latestVersion,
+    // APE-4: carried, not defaulted. Coercing an installed app's absent block to `{}`
+    // here would be harmless today but would make the Library the one surface that
+    // cannot tell "declared nothing" from "declared all-false".
+    quality: a.quality,
   }
 }
 
@@ -1017,6 +1022,10 @@ function AppCard({ item, index, busy, onInstall, onOpen, onAction }: {
           {item.description || item.name}{item.author ? ` · by ${item.author}` : ''}
         </p>
 
+        {/* APE-4: the app's DECLARED quality bar. Renders nothing at all when the app
+            declared no block — an unbadged app and a failing app are different states. */}
+        <QualityBadges quality={item.quality} />
+
         {/* footer: tags + the state-appropriate PRIMARY action */}
         <div className="flex items-center gap-2">
           <div className="flex min-w-0 flex-1 flex-wrap gap-1">
@@ -1195,6 +1204,9 @@ function AppDetailPanel({ app, onClose, onChanged, onOpen }: { app: AppSummary; 
         <div>
           <div data-type="body-s" className="text-on-surface-low">{app.description || app.name}</div>
           <div data-type="label-s" className="mt-1 text-on-surface-low">v{app.version} · {app.origin || 'local'}</div>
+          {/* APE-4: same badge row, same component, as the Store card and the pre-install
+              panel — one declaration rendered one way across every surface that shows it. */}
+          <div className="mt-2"><QualityBadges quality={app.quality} /></div>
         </div>
 
         {app.updateAvailable && (
@@ -1342,6 +1354,10 @@ function StoreDetailPanel({ item, onInstalled }: { item: StoreItem; onInstalled:
           </span>
         )}
       </div>
+
+      {/* APE-4: the declared quality bar, shown BEFORE install alongside the
+          permissions/crons consent surface — it is part of what you are choosing. */}
+      <QualityBadges quality={item.quality} />
 
       {(item.tags ?? []).length > 0 && (
         <div className="flex flex-wrap gap-1">

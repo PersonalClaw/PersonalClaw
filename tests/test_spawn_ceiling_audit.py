@@ -362,6 +362,21 @@ _OPERATOR_EXEMPT: dict[str, str] = {
         "host tool: transcription ffmpeg"
     ),
     "voice_reply.py::stitch_wavs::asyncio.create_subprocess_exec": "host tool: wav stitch ffmpeg",
+    # APE-4's quality verifier runs an app bundle's OWN pytest to check a `tested: true`
+    # declaration. Exempt on two grounds, and the second is the load-bearing one:
+    #   1. Not agent-influenced — the argv is `[sys.executable, "-m", "pytest", <dir>]`,
+    #      where <dir> comes from the CLI's own positional argument. No model, no turn,
+    #      no workflow input reaches it, and there is no shell.
+    #   2. Not reachable from the gateway at all. It is a CI/CLI tool
+    #      (`python -m personalclaw.apps.quality`) with ZERO importers in the runtime —
+    #      pinned by `test_the_verifier_has_no_gateway_call_site` in
+    #      tests/test_app_quality_enforcement.py, so wiring it into a request path breaks
+    #      that rail and forces this classification to be re-argued rather than
+    #      inherited. A ceiling would also be wrong on the merits: a bundle's own suite
+    #      legitimately spawns and opens files like any test run.
+    "apps/quality.py::run_bundle_tests::subprocess.run": (
+        "CI tool: app-bundle pytest for a quality declaration (no gateway call site)"
+    ),
 }
 
 
