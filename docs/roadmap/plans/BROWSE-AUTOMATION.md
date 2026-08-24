@@ -513,3 +513,101 @@ class ElementRef:
   **DISCOVERY (pre-existing BA-1, outside this atom): `browse/__init__.py`'s docstring claim "No network,
   no gateway, no config" is false.** `extraction.py:39` imports `personalclaw.knowledge.connectors.base`,
   which drags in `httpx`/`urllib3`/`http.client`. The package is import-clean in intent only.
+
+- **2026-08-24 — `BA-2` re-driven against a REAL browser. The 2026-08-23 code is all merged**
+  (`browse/cdp.py`, `browse/safety_script.py`, `net/policy.py:226` `BROWSE`, both test files at
+  `origin/main` 827751b9), so nothing above needed rebuilding. Prerequisite verified rather than assumed:
+  `AG-1`…`AG-13` are all `done` in `dag.json`, so Autonomy-Guardrails does not gate this.
+  **The done_when has FIVE clauses, not four.** The entry above enumerates pre-flight, ordering, the
+  injected script and redirect re-eval; the SEL clause is a fifth. That one was in fact implemented and
+  covered on both halves (`test_deny_writes_exactly_one_sel_row` plus the vacuity partner
+  `test_allowed_navigation_writes_no_sel_row`, which is what stops "a row exists" from passing when only
+  one path writes) — only the summary was short. Clause status now: **1, 2, 3, 4, 5 met; §4.2 of the
+  atom's SCOPE not met** (below).
+  **The stand-in defect had a SIBLING, and it survived the merge.** The entry above caught
+  `safety_script`'s `delitem` stub — "an integration defect only the MERGE could see". The same file's
+  autouse `browse_profile` fixture was the same defect: it monkeypatched `net_policy.BROWSE` with
+  `EgressPolicy(name="browse", deny_hosts=("denied.example",))` and `raising=False`, which read as a
+  scaffold while BROWSE lived on a sibling branch and became a **shadow** the moment it landed. All 22
+  tests asserted against a two-field fake, so clause 1 — "against a new BROWSE profile in `net/policy.py`"
+  — was self-fulfilling. **Measured:** with the shipped profile re-declared as `pin_resolved_ip=True,
+  max_redirects=5`, the pre-fix suite is **22 of 22 green**. Fixed by deleting the stand-in, sourcing the
+  deny from the operator layer (so `egress_policy_for` is on the path under test), and adding
+  `test_the_guard_is_called_with_the_real_browse_profile`, which captures the policy at the `evaluate`
+  call site and asserts the shipped profile's own values — 10 redirects, 50 MB, `pin_resolved_ip=False` —
+  each of which STRICT contradicts.
+  **`CdpTransport` had ZERO production implementors, so the redirect clause was proven against a dict the
+  test wrote itself.** `handle_event` was only ever reached by `transport.listener(FRAME_NAVIGATED, …)`
+  called by hand. `browse/transport.py` (`WebSocketCdpTransport`) is that implementor — one socket to one
+  page target, replies matched by `id`, no process ownership — and `tests/test_browse_cdp_live.py` drives
+  the gate through it against `chrome-headless-shell`, 9 tests, no skips on this machine.
+  **DISCOVERY — the reader must never await the event listener, and only a live browser can show it.**
+  The listener is `handle_event`, whose teardown *sends* on the same socket, so awaiting it inline from
+  the frame reader parks the only task that can resolve that send's future. **Measured:** with the two
+  tasks collapsed, the wire tail is `['Page.navigate', 'Page.stopLoading']` — `stopLoading` is issued and
+  never answered, `about:blank` never fires, the session quarantines on the timeout, and **enforcement is
+  a live no-op while every fake-transport test stays green.** Hence a reader that only routes and a single
+  dispatcher that only calls the listener (which also keeps events ordered).
+  **The "`stopLoading` alone leaves the denied document alive" claim is now measured, not argued.** With
+  the second teardown message removed, the live page stays on `http://denied.local:PORT/secret`, fully
+  loaded. That is the DOM statement no recording fake can make.
+  **The ordering clause now has a network oracle.** A denied navigation leaves **zero** requests in a live
+  loopback HTTP server's hit ledger, with the allowed navigation immediately after as the vacuity partner
+  (its hit must appear). `--host-resolver-rules` maps `allowed.local` and `denied.local` to 127.0.0.1 and
+  everything else to `~NOTFOUND`, so both names are equally reachable and only POLICY separates them — and
+  a guard regression cannot dial a real host from the suite. Redirect vacuity floor: the same client-side
+  `location =` redirect to an ALLOWED host is left alone (no block, no SEL row, page ends on `/landed`),
+  so the teardown is caused by the deny and not by every `Page.frameNavigated`.
+  **HONEST LIMIT, now asserted instead of implied:** for a client-side redirect the request has already
+  left the browser when `Page.frameNavigated` reports it. `test_the_redirect_request_itself_already_left_
+  the_browser` asserts that hit IS in the ledger, so a future reader cannot mistake the teardown for
+  prevention. The guard's reach here is the DOM, not the socket — §6.3, restated as a test.
+  **The previous entry's NEXT SLICE is half closed.** `test_the_session_really_injected_the_real_safety_
+  script` reads `window.__personalclawSafety` off a live page after the SESSION's own injection, so the
+  production injection path is now proven to install the real guard (applied includes `fetch`,
+  `XMLHttpRequest`, `media`, `deviceApis`; `failed` is empty). What is still out, for the same reason as
+  before, is the session *quarantining* on an absent marker — that changes the message sequence nine
+  tests assert on the wire.
+  **NOT DONE, and deliberately NOT improvised: §4.2's anti-detection baseline and browser lifecycle.**
+  §10's Session-2 line also promises "browser lifecycle management (launch with persistent profile, CDP
+  connection)". There is no launcher in `src/`, so §4.2's `--disable-blink-features=AutomationControlled`,
+  randomized viewport, real (non-`HeadlessChrome`) user-agent and randomized inter-action delays are
+  unimplemented. This is an **owner scope question, not an oversight**: §4.1 says the provider "shares the
+  browser instance lifecycle with the interactive MCP", which reads as *attach*, while §5.1 gives
+  *persistent per-site profiles* to **BA-4** — so whoever writes the launcher decides both, and building
+  it here would pre-empt BA-4's `done_when`. `transport.py` therefore takes a `webSocketDebuggerUrl` and
+  owns no process; the live test launches its own. **Recommendation:** give the launcher + §4.2 a named
+  scope on BA-4 (which already owns profiles) or a new atom, rather than leaving it between two atoms
+  whose `done_when` neither mentions it. BA-2's own `done_when` does not require it and is met.
+  **`GatedCdpSession` still has no non-test importer** — BA-3 is its consumer by design, so clause 1 is
+  a property of the seam, not yet of a running loop. Worth stating plainly so nobody reads BA-2 as
+  "browsing works".
+  **CORRECTION to a standing note:** `egress_policy_for`'s old bare `except Exception: return base`
+  fail-open is **already fixed on main** — it now remembers the last observed `deny_hosts` at module scope
+  (`_LAST_DENY_HOSTS`) and logs at WARNING, so a config-read error can no longer un-deny a host. Residual,
+  unchanged and documented in that function: on a *cold* start with nothing yet observed it still returns
+  the bare profile. Note also that `_LAST_DENY_HOSTS` is module state that leaks between tests in an xdist
+  worker; both browse test files now reset it.
+  **Gate:** `make lint` clean (black/isort/flake8, mypy 993 files); the three browse files 53 passed in
+  34.7s; `gate_report.py` 6 of 6 PASS; probe sweep 16 pre-existing / 0 added. Full `make test`: run 1 was
+  **25631 passed / 2 failed in 1125s**, run 2 **25633 passed, 30 skipped, 12 xfailed, 0 failed in 648s**.
+  Both run-1 failures were load flakes on this box, neither in a file this change touches:
+  `test_structural_baseline::test_three_simultaneous_structural_violations_report_as_three` was a bare
+  `Timeout (>120s)` (it needs ~60s on its own), and `test_inbound_mcp::test_rate_cap_returns_429_with_
+  retry_after` admitted 23 requests against a cap of 20 — a token bucket losing to contention. Both pass
+  `-n0`, and both passed in run 2. Run 1's 1125s against run 2's 648s is the contention itself. The three
+  browse files add ~4s of wall time to the suite (30.8s → 34.7s at `-n auto`), so the new browser launches
+  are not a plausible cause. No CHANGELOG entry: nothing user-visible changed — `GatedCdpSession` still
+  has no production consumer, so this is a seam and its proof, not a capability.
+
+- [2026-08-24][BA-2] **Integration re-verification.** Rebased onto `origin/main` (`9e0f727b`), full gate
+  re-run by the integrator: `make lint` 0 (mypy 993), 55 browse tests green with the **live** headless
+  leg (`chromium_headless_shell-1234` present, 0 skips), `make test` 25646 passed / 0 failed, 6-gate
+  aggregate 6/6, probe residue 0. The redirect re-eval was re-falsified against a real browser — forcing
+  `handle_event` to never re-judge reds `test_a_real_client_side_redirect_to_a_denied_host_is_re_evaluated`
+  **and** the DOM-level `test_the_denied_document_is_torn_down_not_merely_stopped` (*"the denied document
+  is still loaded"*), while the allowed-redirect partner stays green. **Atom left `todo`:** all five
+  `done_when` clauses are met and proven live, but BA-2's declared *scope* (§4 Stealth Stack + §10 browser
+  lifecycle/launcher) is unbuilt and `GatedCdpSession` has no production consumer yet (BA-3's by design) —
+  so whether BA-2 flips on `done_when` or waits for the launcher to move to BA-4/a new atom is an **owner
+  decision**, not the integrator's.
