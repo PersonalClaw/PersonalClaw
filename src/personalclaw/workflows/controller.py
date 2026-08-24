@@ -2492,6 +2492,12 @@ class RunController:
             # `knowledge-persist` files its item under this container. Passed from the run
             # record rather than resolved provider-side so one seam owns the attribution.
             project_id=self.run.project_id,
+            # This instance's engine key, for an ACTION node's ledger provenance. The controller is
+            # the only layer that knows it, and a provider must stamp it rather than its node id:
+            # `inspect_node` slices the run ledger by `instance_path`, so a row carrying a bare node
+            # id is durably written and invisible in the runs surface. Same `item.path` the stall
+            # clock below is bound to, so a row and its progress notes agree on which instance ran.
+            instance_path=item.path,
             cwd=self.services.cwd,
             tiers=self.services.model_tiers,
             completion=self.services.completion,
