@@ -579,6 +579,171 @@ def test_imported_content_is_redacted_and_fenced_like_a_proxied_turn(_isolated_h
     assert UNTRUSTED_CLOSE in sidecar["prompt"], "imported content is not fenced"
 
 
+# ---------------------------------------------------------------------------
+# stage_records — the §7.2 record shape the §8 import ADAPTERS actually emit
+#
+# The three EA-5 halves were built separately, and this seam is where they met: the
+# adapters normalise every log format into the §7.2 RECORD shape (digests + already
+# extracted tool facts, no bodies — an SSE dump structurally cannot supply a request
+# half), while the store's one shaping path reads bodies. Measured before the fix:
+# `stage_records` returned `{'imported': 0, 'skipped': 1, 'reasons': ['record had no
+# request_body object']}` for every record the importer produced, so `personalclaw
+# capture import` could only ever report `imported: 0`.
+# ---------------------------------------------------------------------------
+
+
+def _record_72(**overrides) -> dict:
+    """One §7.2 record exactly as `capture_import._record` emits it."""
+    record = {
+        "ts": 1755000000.0,
+        "dialect": "claude-code-jsonl",
+        "model_requested": "claude-opus-4",
+        "prompt_digest": "read the deploy checklist",
+        "response_digest": "here is the checklist",
+        "tool_calls": [{"name": "Read", "args_clipped": '{"path": "/tmp/a.txt"}', "ok": None}],
+        "read_paths": ["/tmp/a.txt"],
+        "wrote_paths": ["/tmp/b.txt"],
+        "tokens": None,
+        "latency_ms": None,
+    }
+    record.update(overrides)
+    return record
+
+
+def test_a_section_7_2_record_imports_and_keeps_its_extracted_tool_facts(_isolated_home):
+    """The adapters' shape must import, and the facts they already extracted must survive.
+
+    `_build_record` DERIVES tool_calls/read_paths/wrote_paths from the bodies. The bodies
+    synthesised for a bodiless §7.2 record contain no tool calls at all, so a re-derivation
+    would return empty lists and silently DROP everything the adapter found — the record
+    would import and still be wrong. Hence the overlay, and hence this assertion.
+    """
+    result = capture_store.stage_records([_record_72()], source="claude-code-export")
+    assert result == {"imported": 1, "skipped": 0, "reasons": []}
+
+    (main,) = [p for p in capture_store.capture_dir().glob("*.jsonl") if ".content." not in p.name]
+    (record,) = _read_lines(main)
+    assert record["tool_calls"] == [
+        {"name": "Read", "args_clipped": '{"path": "/tmp/a.txt"}', "ok": None}
+    ]
+    assert record["read_paths"] == ["/tmp/a.txt"]
+    assert record["wrote_paths"] == ["/tmp/b.txt"]
+    assert record["import_source"] == "claude-code-export"
+    # `ok` stays tri-state: "the export carried no result" is not "the call failed".
+    assert record["tool_calls"][0]["ok"] is None
+
+
+def test_two_imported_turns_differing_only_in_tool_calls_are_not_duplicates(_isolated_home):
+    """The overlaid facts must be INSIDE `record_hash`, or dedup eats the second turn.
+
+    `record_hash` is the idempotency key. It is computed inside `_build_record`, i.e.
+    before the overlay, so the overlay has to re-hash: without that, two turns with the
+    same prompt and response but different tool calls collide and the import reports a
+    phantom duplicate.
+    """
+    first = _record_72()
+    second = _record_72(
+        tool_calls=[{"name": "Bash", "args_clipped": "ls", "ok": True}],
+        read_paths=[],
+        wrote_paths=[],
+    )
+    result = capture_store.stage_records([first, second], source="export")
+    assert result["imported"] == 2, result
+    assert result["skipped"] == 0
+
+    (main,) = [p for p in capture_store.capture_dir().glob("*.jsonl") if ".content." not in p.name]
+    rows = _read_lines(main)
+    assert len({r["record_hash"] for r in rows}) == 2
+    # And the sidecar's join key tracks the re-hash, or the content cannot be joined back.
+    (sidecar_path,) = capture_store.capture_dir().glob("*.content.jsonl")
+    assert {r["record_hash"] for r in _read_lines(sidecar_path)} == {r["record_hash"] for r in rows}
+
+
+def test_an_overlaid_path_is_still_attributed_to_its_skill(_isolated_home, monkeypatch):
+    """`read_skills` derives FROM `read_paths`, so it must derive from the OVERLAID ones."""
+    skills_root = _isolated_home / "skills"
+    skill_file = skills_root / "deploy-checklist" / "SKILL.md"
+    skill_file.parent.mkdir(parents=True)
+    skill_file.write_text("# deploy checklist\n", encoding="utf-8")
+    monkeypatch.setattr("personalclaw.skills.loader.skills_dir", lambda: skills_root)
+
+    result = capture_store.stage_records(
+        [_record_72(read_paths=[str(skill_file)], wrote_paths=[])], source="export"
+    )
+    assert result["imported"] == 1
+
+    (main,) = [p for p in capture_store.capture_dir().glob("*.jsonl") if ".content." not in p.name]
+    (record,) = _read_lines(main)
+    assert record["read_skills"] == ["deploy-checklist"]
+
+
+def test_an_sse_shaped_record_imports_without_inventing_a_user_turn(_isolated_home):
+    """An SSE dump has no request half. The record must say so rather than fake one."""
+    result = capture_store.stage_records(
+        [
+            _record_72(
+                dialect="openai-sse",
+                prompt_digest=None,
+                response_digest="streamed reply",
+                tool_calls=[],
+                read_paths=[],
+                wrote_paths=[],
+            )
+        ],
+        source="sse-export",
+    )
+    assert result == {"imported": 1, "skipped": 0, "reasons": []}
+
+    (sidecar_path,) = capture_store.capture_dir().glob("*.content.jsonl")
+    (sidecar,) = _read_lines(sidecar_path)
+    # No prompt ⇒ no fabricated user turn, and therefore nothing to fence on that side.
+    assert sidecar["prompt"] == ""
+    assert UNTRUSTED_OPEN[:-1] not in sidecar["prompt"]
+    # The response half is present and fenced exactly like a proxied one.
+    assert "streamed reply" in sidecar["response"]
+    assert UNTRUSTED_CLOSE in sidecar["response"]
+
+
+def test_a_credential_in_prompt_digest_is_redacted_and_fenced_on_the_import_path(_isolated_home):
+    """The synthesised body runs the IDENTICAL redact→fence pipeline, not a laxer one."""
+    _, found = redact_credentials(SECRET)
+    assert found, "vacuity floor: the redactor does not recognise SECRET, so absence proves nothing"
+
+    result = capture_store.stage_records(
+        [_record_72(prompt_digest=f"my key is {SECRET} keep it safe")], source="export"
+    )
+    assert result["imported"] == 1
+
+    for path in capture_store.capture_dir().rglob("*.jsonl"):
+        assert SECRET not in path.read_text(encoding="utf-8"), f"{path.name} leaked the credential"
+
+    (sidecar_path,) = capture_store.capture_dir().glob("*.content.jsonl")
+    (sidecar,) = _read_lines(sidecar_path)
+    assert sidecar["prompt"].startswith(UNTRUSTED_OPEN[:-1])
+    assert sidecar["prompt"].endswith(UNTRUSTED_CLOSE)
+    # Screened per field, so the surrounding words survive the redaction.
+    assert "my key is" in sidecar["prompt"] and "keep it safe" in sidecar["prompt"]
+
+    (main,) = [p for p in capture_store.capture_dir().glob("*.jsonl") if ".content." not in p.name]
+    (record,) = _read_lines(main)
+    assert record["redactions"] >= 1
+
+
+def test_a_record_with_neither_a_body_nor_a_digest_is_skipped_with_an_actionable_reason(
+    _isolated_home,
+):
+    result = capture_store.stage_records(
+        [_record_72(prompt_digest=None, response_digest=None)], source="export"
+    )
+    assert result["imported"] == 0
+    assert result["skipped"] == 1
+    (reason,) = result["reasons"]
+    # The reason names WHICH inputs were missing — "malformed record" is not actionable.
+    assert "request_body" in reason
+    assert "prompt_digest" in reason
+    assert not list(capture_store.capture_dir().glob("*.jsonl"))
+
+
 def test_stage_records_tolerates_a_non_list_payload(_isolated_home):
     result = capture_store.stage_records("nonsense", source="export")  # type: ignore[arg-type]
     assert result == {"imported": 0, "skipped": 0, "reasons": ["records was not a list"]}
