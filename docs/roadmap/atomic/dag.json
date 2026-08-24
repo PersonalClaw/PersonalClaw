@@ -4154,12 +4154,13 @@
         {
           "id": "CA-2",
           "title": "S1 frontend: Settings \u2192 Devices panel (list, revoke, QR pairing)",
-          "status": "todo",
+          "status": "done",
           "scope": "Session 1 T1.2 + V1; new web/src/pages/settings/DevicesPanel.tsx; QR renders {pair_url, code} from C2 routes",
           "done_when": "a second browser pairs as a device from the shown QR end-to-end over the LAN, appears in the Devices list (name, kind, last-seen, issuer), and revoking it is observed to lock it out live",
           "deps": [
             "CA-1"
-          ]
+          ],
+          "pr": 1855
         },
         {
           "id": "CA-3",
@@ -7538,11 +7539,6 @@
         "plan": "BA"
       },
       {
-        "id": "CA-2",
-        "title": "S1 frontend: Settings \u2192 Devices panel (list, revoke, QR pairing)",
-        "plan": "CA"
-      },
-      {
         "id": "CA-6",
         "title": "S3 shared client contract doc + multi-gateway registry (amendment T3.3)",
         "plan": "CA"
@@ -9912,9 +9908,9 @@
         "code": "CA",
         "plan": "COMPANION-APPS",
         "total_atoms": 9,
-        "done": 4,
+        "done": 5,
         "in_progress": 0,
-        "todo": 5,
+        "todo": 4,
         "blocked": 0
       },
       {

@@ -647,3 +647,11 @@ MANIFEST_EXCLUDE: ['/pair']"; a bogus key → "MANIFEST_EXCLUDE lists paths that
 **ARCC was not queried (MCP server unavailable).** The `last_seen` writer is the only auth-path change
 here: best-effort, throttled at 60 s, wrapped so a store failure cannot deny a valid session, and a
 no-op for sessions with no device. No new route, exemption or credential surface ships in this atom.
+- [2026-08-24][CA-2] DONE (ledger only): flipped `CA-2` to `done` in `dag.json` + `atomic/CA.md`, cited to
+  **#1855** (the batch that landed the redeem screen; its member PR #1854 closed as superseded, and the
+  panel half had landed earlier in #1752). No code change — the 2026-08-21 entry above already drove every
+  `done_when` clause over the LAN. This entry exists because the implementing PRs shipped without the
+  status flip, so the atom read `todo` with its deliverable fully on `main`: `GET /pair` in
+  `handlers/devices.py` registered by `register_device_routes`, `/pair` in `token_auth._BYPASS_EXACT`,
+  `DevicesPanel.tsx` + `devicesPanel.test.tsx`, and the `/api/devices` routes. Verified by code on
+  `origin/main`, not by the branch subject — a subject match is a screen, not a verdict.
