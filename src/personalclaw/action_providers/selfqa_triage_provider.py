@@ -108,13 +108,18 @@ class SelfQaTriageActionProvider(ActionProvider):
         # would ship the silence back.
         recorded = 0
         run_id = str(ctx.payload.get("run_id", "") or "")
+        # The engine's own instance key for THIS node, not the node id. `record_triage` refuses an
+        # empty one, because `inspect_node` slices a run's ledger by `instance_path` — a row stamped
+        # `triage` instead of `root.children[0]` is written and then invisible in the runs surface,
+        # which is exactly the half of the skip contract these rows exist to satisfy.
+        instance_path = str(ctx.payload.get("instance_path", "") or "")
         if run_id:
             from personalclaw.workflows.journal import Journal
 
             journal = Journal(run_id=run_id)
             try:
                 for verdict in verdicts:
-                    record_triage(journal, verdict)
+                    record_triage(journal, verdict, instance_path=instance_path)
                     recorded += 1
             except Exception as exc:  # noqa: BLE001 - error result, never raise
                 return ActionResult(

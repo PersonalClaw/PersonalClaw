@@ -364,3 +364,44 @@ Sessions 1-2 ship standalone value immediately; 3-4 are the ones that must not s
   `tests/test_guardrails_ladder.py` fails `test_a_provider_that_refuses_leaves_the_rung_ALONE` (`200 == 400`)
   and `test_create_task_deletes_the_row_it_filed` (`0 == 1`). **Both fail identically on a clean
   `origin/main` worktree** — xdist's distribution masks it. Not this atom's, and not weakened.
+
+- [2026-08-24][SC#6 surfacing] DONE: **Success Criterion #6's "(visible in the runs surface)" half is now met.**
+  The SV-9 entry above was right that nothing rendered a `step_skipped` row's `sha`/`impact`/`rationale` — but
+  it found only the FE half. There were **TWO** breaks, and the first made the second unobservable:
+  1. 🔴 **The row was stamped with the node id, not the engine's instance key.** `record_triage` wrote
+     `instance_path="triage"`, while `models.walk` names that instance `root.children[0]`.
+     `service.inspect_node` — the read behind the runs surface — builds a node's ledger slice by filtering the
+     run's ledger on `instance_path == <target>`, so **every triage row fell outside its own node's slice**.
+     Measured, not reasoned: a run with three test-only commits surfaced `0` of `3` skips (`assert 0 == 3`
+     under the reverted line). Fixed by threading the instance path into the action payload — the controller is
+     the only layer that knows it (`instance_path=item.path` → `dispatch` → `_dispatch_inner` →
+     `dispatch_action` → `payload.setdefault`) — beside the `run_id`/`project_id` provenance already there.
+     `node_id` cannot substitute: a `foreach` body shares one id across every item. `record_triage` now
+     **refuses** an empty path for the same reason it refuses an empty rationale.
+  2. **The surface rendered a row's `kind` and nothing else.** `NodeInspectorDrawer`'s ledger list printed
+     `e.kind` per row, so three skips rendered as three identical words. Now each row renders its `sha`
+     (whole — a 40-char hex a user can paste into `git show`), its `impact` class, and its `rationale` in
+     full, via a generic projection (`web/src/pages/workflows/ledgerRowDetail.ts`) that reads those fields off
+     any row that carries them. **Nothing truncates**: a one-line reason clipped mid-sentence answers "why did
+     nothing run?" no better than silence.
+  **The several-rows-under-one-node-id property is the load-bearing one** and is asserted directly: fixtures
+  carry THREE skips (two sharing an impact class) so a content-keyed fold drops one, `ledgerRowKey` is
+  identity/positional and never content-derived, and the rendered-DOM pins count rows, shas, impacts and
+  rationales. Vacuity floors both ways: rows carrying none of the three fields must render ZERO of the new
+  elements, and a row stamped with the bare node id must still be DROPPED by the slice (the pre-fix state, so
+  the fix cannot be reverted green). Falsified by mutating five live lines — the rationale render, a row fold,
+  `record_triage`'s stamp, the engine's `payload.setdefault`, and the controller's kwarg — each observed red,
+  each restored from a file copy.
+  **"No full run spent" is distinguishable** on two surfaces: per commit, `step_skipped` vs `decision` are
+  rendered verbatim in the ledger list (no new verdict vocabulary minted); per run, the untaken `scenarios`
+  branch renders as `Skipped` through `workflowMeta`'s existing state map. No change was needed for either.
+  Gate: `make lint` clean (mypy 992 files) · targeted pytest 338 passed · `make test` **25640 passed / 30
+  skipped / 12 xfailed / 0 failed** · `gate_report.py` 6/6 · `typecheck:web` clean · full web suite
+  **475 files / 4991 tests passed** · `npm run build` clean · probe sweep 16 pre-existing, 0 introduced.
+
+- [2026-08-24][SC#6 surfacing] DISCOVERY (out of scope, unfixed): **the learning refiner reads field names no
+  ledger row carries.** `learning/refiner.py:399` keys its clusters on `event.get("node") or
+  event.get("path")`, but the ledger writer stamps `node_id` / `instance_path`. So every `step_skipped` the
+  refiner folds — including the ones this entry made visible — is attributed to the node `""`. Not touched
+  here (it is neither a surfacing defect nor SV-9's), but it means the "a repeatedly SKIPPED step is a failure
+  of the template" mechanism at `refiner.py:410` cannot name the step it is talking about.

@@ -47,6 +47,13 @@ from personalclaw.workflows.journal import Journal, ledger
 
 BUNDLED = Path(__file__).resolve().parents[1] / "src/personalclaw/workflows/bundled/self-qa"
 
+#: The ENGINE's instance key for the `self-qa` template's triage node — `root` is a sequence and
+#: `triage` is its first child, so `models.walk` names the instance `root.children[0]`. Written out
+#: rather than derived, because the whole point of the SC#6 surfacing half is that the ledger row
+#: must carry the engine's key and not the node id: `service.inspect_node` slices a run's ledger on
+#: `instance_path`, so a row stamped `triage` is durably written and invisible in the runs surface.
+TRIAGE_PATH = "root.children[0]"
+
 
 def _run(coro):
     return asyncio.run(coro)
@@ -307,7 +314,7 @@ class TestClauseTwoLedgerOnlySkip:
         sha = commit(repo, "tests/test_thing.py", "def test_x():\n    pass\n", "test: assertion")
         verdict = triage_commit(repo, sha)
         run_id = "selfqa-clause2"
-        record_triage(Journal(run_id=run_id), verdict)
+        record_triage(Journal(run_id=run_id), verdict, instance_path=TRIAGE_PATH)
 
         rows = ledger(run_id, kinds={STEP_SKIPPED})
         assert len(rows) == 1, rows
@@ -327,7 +334,7 @@ class TestClauseTwoLedgerOnlySkip:
         verdict = triage_commit(repo, sha)
         assert verdict.impact == IMPACT_USER
         run_id = "selfqa-clause2-floor"
-        record_triage(Journal(run_id=run_id), verdict)
+        record_triage(Journal(run_id=run_id), verdict, instance_path=TRIAGE_PATH)
         assert ledger(run_id, kinds={STEP_SKIPPED}) == []
         assert len(ledger(run_id, kinds={DECISION})) == 1
 
@@ -366,7 +373,11 @@ class TestClauseTwoLedgerOnlySkip:
     def test_a_rationale_less_verdict_is_refused(self):
         """The record's whole job is answering "why?" — an empty answer is a defect, not a value."""
         with pytest.raises(ValueError, match="rationale-less"):
-            record_triage(Journal(run_id="selfqa-empty"), CommitTriage("abc", IMPACT_TEST, "  "))
+            record_triage(
+                Journal(run_id="selfqa-empty"),
+                CommitTriage("abc", IMPACT_TEST, "  "),
+                instance_path=TRIAGE_PATH,
+            )
 
     def test_the_triage_provider_records_every_verdict_and_files_nothing(self, repo, inbox_state):
         """The CALL SITE, not just the mechanism: the provider the template dispatches.
@@ -382,7 +393,9 @@ class TestClauseTwoLedgerOnlySkip:
         result = _run(
             SelfQaTriageActionProvider().execute(
                 {"repo": str(repo), "commits": [test_sha, doc_sha]},
-                ActionContext(event="workflow_node", payload={"run_id": run_id}),
+                ActionContext(
+                    event="workflow_node", payload={"run_id": run_id, "instance_path": TRIAGE_PATH}
+                ),
             )
         )
         assert result.success, result.error
@@ -402,7 +415,10 @@ class TestClauseTwoLedgerOnlySkip:
         result = _run(
             SelfQaTriageActionProvider().execute(
                 {"repo": str(repo), "commits": [sha]},
-                ActionContext(event="workflow_node", payload={"run_id": "selfqa-c2-fwd"}),
+                ActionContext(
+                    event="workflow_node",
+                    payload={"run_id": "selfqa-c2-fwd", "instance_path": TRIAGE_PATH},
+                ),
             )
         )
         output = json.loads(result.stdout)
@@ -415,7 +431,10 @@ class TestClauseTwoLedgerOnlySkip:
         result = _run(
             SelfQaTriageActionProvider().execute(
                 {"repo": str(repo), "commits": shas, "max_scenarios": 2},
-                ActionContext(event="workflow_node", payload={"run_id": "selfqa-c2-cap"}),
+                ActionContext(
+                    event="workflow_node",
+                    payload={"run_id": "selfqa-c2-cap", "instance_path": TRIAGE_PATH},
+                ),
             )
         )
         output = json.loads(result.stdout)
@@ -444,6 +463,254 @@ class TestClauseTwoLedgerOnlySkip:
         impact, rationale = classify_paths(paths)
         assert impact == expected, (paths, rationale)
         assert rationale.strip() and "\n" not in rationale
+
+
+# ── SC#6's other half: the skip is VISIBLE IN THE RUNS SURFACE ───────────────
+
+
+class TestTheSkipIsVisibleInTheRunsSurface:
+    """Success Criterion #6 reads: a test-only commit produces "a ledger-only skip record with a
+    one-line rationale **(visible in the runs surface, no full run spent)**".
+
+    SV-9 shipped the write and recorded that this parenthetical was unmet. Two independent breaks
+    stood between a written row and a legible one, and each looked exactly like working code:
+
+    1. **The row was stamped with the node id, not the engine's instance key.** `record_triage`
+       wrote `instance_path="triage"`, while the engine names that instance `root.children[0]`
+       (`models.walk`). `service.inspect_node` builds a node's ledger slice by filtering the run's
+       ledger on `instance_path == <target>`, so every triage row fell outside its own node's
+       slice — written, readable through the ledger reader, and unreachable from the runs surface.
+       Fixed by threading the instance path into the action payload (the engine is the only layer
+       that knows it) and refusing an absent one, the way an absent rationale is already refused.
+    2. **The surface rendered a row's `kind` and nothing else** — pinned in
+       `web/src/pages/workflows/NodeInspectorDrawer.test.tsx`, on rendered DOM.
+
+    The interesting property is SEVERAL rows under ONE node id: the companion writes one per
+    commit, so a surface (or a slice) that kept only the latest would lose skips while still
+    looking populated. Every test here uses THREE commits for that reason — one row cannot see it.
+    """
+
+    def test_the_template_node_really_lives_at_the_asserted_instance_path(self):
+        """`TRIAGE_PATH` is a claim about the ENGINE's naming, so derive it from the engine.
+
+        If the bundled template ever moves the triage node, this fails here rather than silently
+        stranding every row it writes outside its own node's slice again.
+        """
+        from personalclaw.workflows.models import Node, walk
+
+        spec = json.loads((BUNDLED / "workflow.json").read_text(encoding="utf-8"))
+        paths = {path: node.id for path, node in walk(Node.from_dict(spec["root"]))}
+        assert paths.get(TRIAGE_PATH) == "triage", paths
+
+    def test_the_engine_puts_the_instance_path_in_an_action_payload(self):
+        """The CALL SITE. A provider cannot reconstruct its own instance key, so the engine must
+        hand it over — and `node_id` cannot stand in, because a `foreach` body shares one id
+        across every item.
+        """
+        from personalclaw.action_providers.base import ActionResult
+        from personalclaw.workflows.engine import dispatch_action
+        from personalclaw.workflows.models import Node
+
+        seen: dict = {}
+
+        class _Capture:
+            name = "capture"
+            display_name = "capture"
+
+            async def execute(self, action_config, ctx, timeout=30):
+                seen.update(ctx.payload)
+                return ActionResult(success=True, stdout="{}")
+
+        node = Node.from_dict({"kind": "action", "id": "triage", "config": {"provider": "capture"}})
+        _run(
+            dispatch_action(
+                node,
+                MagicMock(),
+                get_provider=lambda _n: _Capture(),
+                run_id="run-x",
+                instance_path=TRIAGE_PATH,
+            )
+        )
+        assert seen.get("instance_path") == TRIAGE_PATH, seen
+        # The floor: absent an engine-supplied path the key is simply not there — the provider is
+        # never handed a fabricated one to write, which is how the invisible rows happened.
+        seen.clear()
+        _run(dispatch_action(node, MagicMock(), get_provider=lambda _n: _Capture(), run_id="run-x"))
+        assert "instance_path" not in seen, seen
+
+    def test_the_controller_hands_the_running_instances_path_to_the_provider(
+        self, tmp_path, monkeypatch
+    ):
+        """The CALL SITE one layer up. The test above pins `dispatch_action`; this pins the only
+        caller that supplies the argument, driving a REAL run through `RunController`.
+
+        Without it, `instance_path=item.path` could be dropped from the controller and every
+        assertion in this class would still be green — the engine would keep honouring a value
+        nothing passes it, which is how a wired-but-unfed control looks from inside its own test.
+        """
+        from personalclaw.workflows import store
+        from personalclaw.workflows.controller import EngineServices, RunController
+        from personalclaw.workflows.models import RunStatus, WorkflowRun
+
+        home = tmp_path / "wf-home"
+        home.mkdir()
+        monkeypatch.setattr(store, "config_dir", lambda: home)
+
+        seen: list[dict] = []
+
+        class _Capture:
+            async def execute(self, cfg, ctx, timeout=30):
+                seen.append(dict(ctx.payload))
+                return MagicMock(
+                    success=True,
+                    stdout="{}",
+                    outcome="",
+                    error="",
+                    exit_code=0,
+                    stderr="",
+                    agent_error=None,
+                )
+
+        spec = {
+            "name": "selfqa-wiring",
+            "root": {
+                "kind": "sequence",
+                "id": "root",
+                "children": [
+                    {"kind": "action", "id": "triage", "config": {"provider": "selfqa-triage"}}
+                ],
+            },
+        }
+        run = store.create(WorkflowRun(id="", workflow_name="selfqa-wiring"))
+        store.write_spec(run.id, spec)
+        controller = RunController(
+            run, spec, services=EngineServices(get_provider=lambda _name: _Capture())
+        )
+        assert _run(controller.run_to_completion(timeout=20)) == RunStatus.COMPLETE
+
+        assert seen, "the action provider never fired"
+        # The ENGINE's key for the instance that actually ran — the same string the run's node
+        # state is filed under, which is what makes the row findable in the runs surface.
+        assert seen[0].get("instance_path") == TRIAGE_PATH, seen[0]
+        assert TRIAGE_PATH in store.read_state(run.id), "the path is not the run's own instance key"
+
+    def test_three_skips_all_reach_the_runs_surface_with_their_reasons(
+        self, repo, tmp_path, monkeypatch
+    ):
+        """THE assertion: `inspect_node` — what the runs surface fetches — carries every skip row,
+        each with its `sha`, `impact` and `rationale`.
+
+        The run is persisted with the engine's OWN writers (`store.write_state`/`write_output`, the
+        real `Journal`), so this cannot drift from the shape the controller actually leaves behind.
+        """
+        from personalclaw.workflows import service, store
+        from personalclaw.workflows.models import InstanceState, NodeInstance, WorkflowRun
+
+        home = tmp_path / "wf-home"
+        home.mkdir()
+        monkeypatch.setattr(store, "config_dir", lambda: home)
+
+        shas = [
+            commit(repo, f"tests/test_{i}.py", f"def test_{i}():\n    pass\n", f"test: {i}")
+            for i in range(3)
+        ]
+        run = store.create(WorkflowRun(id="", workflow_name="self-qa"))
+        store.write_spec(
+            run.id, json.loads((BUNDLED / "workflow.json").read_text(encoding="utf-8"))
+        )
+        ref = store.write_output(run.id, TRIAGE_PATH, {"recorded": 3})
+        store.write_state(
+            run.id,
+            {TRIAGE_PATH: NodeInstance(path=TRIAGE_PATH, state=InstanceState.DONE, output_ref=ref)},
+        )
+
+        result = _run(
+            SelfQaTriageActionProvider().execute(
+                {"repo": str(repo), "commits": shas},
+                ActionContext(
+                    event="workflow_node",
+                    payload={"run_id": run.id, "instance_path": TRIAGE_PATH},
+                ),
+            )
+        )
+        assert result.success, result.error
+        assert json.loads(result.stdout)["recorded"] == 3
+
+        body = service.inspect_node(run.id, "triage")
+        assert body["ok"], body
+        skips = [e for e in body["ledger_events"] if e["kind"] == STEP_SKIPPED]
+        # All THREE, not the last one — the several-rows-under-one-node-id property.
+        assert len(skips) == 3, body["ledger_events"]
+        assert [e["sha"] for e in skips] == shas
+        assert all(e["impact"] == IMPACT_TEST for e in skips)
+        for e in skips:
+            assert e["rationale"].strip(), "a skip row reached the surface with no reason"
+            assert "\n" not in e["rationale"], "the rationale must stay ONE line on the surface"
+
+    def test_a_row_stamped_with_the_node_id_is_invisible_to_the_surface(
+        self, tmp_path, monkeypatch
+    ):
+        """THE VACUITY FLOOR, and the exact pre-fix state reproduced.
+
+        The test above passes for two different reasons — because the slice is correctly scoped, or
+        because it returns everything in the run regardless of path. This distinguishes them: a row
+        stamped with the bare node id (what `record_triage` used to write) is DROPPED by the very
+        same read, while an identical row stamped with the engine's key comes through. Without this,
+        the fix could be reverted and the test above would still be green.
+        """
+        from personalclaw.workflows import service, store
+        from personalclaw.workflows.models import InstanceState, NodeInstance, WorkflowRun
+
+        home = tmp_path / "wf-home"
+        home.mkdir()
+        monkeypatch.setattr(store, "config_dir", lambda: home)
+
+        run = store.create(WorkflowRun(id="", workflow_name="self-qa"))
+        store.write_spec(
+            run.id, json.loads((BUNDLED / "workflow.json").read_text(encoding="utf-8"))
+        )
+        ref = store.write_output(run.id, TRIAGE_PATH, {"recorded": 2})
+        store.write_state(
+            run.id,
+            {TRIAGE_PATH: NodeInstance(path=TRIAGE_PATH, state=InstanceState.DONE, output_ref=ref)},
+        )
+
+        journal = Journal(run_id=run.id)
+        record_triage(
+            journal,
+            CommitTriage("a" * 40, IMPACT_TEST, "reachable — stamped with the engine's key"),
+            instance_path=TRIAGE_PATH,
+        )
+        # The old shape, written directly past `record_triage`'s guard so the guard itself is not
+        # what this measures: the READ is.
+        journal.write(
+            STEP_SKIPPED,
+            node_id="triage",
+            instance_path="triage",
+            epoch=0,
+            sha="b" * 40,
+            impact=IMPACT_TEST,
+            rationale="unreachable — stamped with the node id",
+        )
+
+        # Both rows are genuinely on disk, so the absence below is about the SLICE, not the write.
+        assert len(ledger(run.id, kinds={STEP_SKIPPED})) == 2
+
+        body = service.inspect_node(run.id, "triage")
+        surfaced = [e["rationale"] for e in body["ledger_events"] if e["kind"] == STEP_SKIPPED]
+        assert surfaced == ["reachable — stamped with the engine's key"], surfaced
+
+    def test_a_pathless_verdict_is_refused(self):
+        """Symmetric with the rationale refusal. A row no surface can find answers "why did
+        nothing run?" to nobody, so it is refused rather than written into the dark.
+        """
+        with pytest.raises(ValueError, match="no instance_path"):
+            record_triage(
+                Journal(run_id="selfqa-pathless"),
+                CommitTriage("c" * 40, IMPACT_TEST, "a perfectly good reason"),
+                instance_path="  ",
+            )
+        assert ledger("selfqa-pathless", kinds={STEP_SKIPPED}) == []
 
 
 # ── Clause 3: the scenario drives the real UI via Chrome DevTools MCP ────────
