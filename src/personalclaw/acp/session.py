@@ -24,7 +24,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from pathlib import Path
 
 from personalclaw.acp import translate
@@ -88,6 +88,13 @@ _STALE_TURN_TIMEOUT = 90.0  # after text streamed, silence this long ⇒ treat t
 _QUEUE_POLL = 1.0  # how long to await the queue before re-checking liveness/deadline
 _DEFAULT_PROMPT_TIMEOUT = 7200.0  # 2 hours — allow very long tool execution (matches client)
 
+# Cap mid-turn steer deliveries per turn so a message flood cannot keep one turn alive
+# forever. Same value and same reason as the native loop's ``_MAX_STEERS_PER_TURN``
+# (agents/native/runtime.py); duplicated rather than imported because ``acp`` is a lower
+# layer than ``agents`` and must not import upward. Test parity: the two are asserted
+# equal in tests/test_mid_turn_steer.py, so a change to one is a red, not a drift.
+_MAX_STEERS_PER_TURN = 4
+
 
 class AcpSession:
     """One ACP session bound to a FrameRouter queue. Owns its turn lock + streaming.
@@ -137,9 +144,164 @@ class AcpSession:
         # Optional per-session JSONL tool-result tail (vendor opt-in; no-op when unset).
         self._session_files_dir = session_files_dir
         self._jsonl_pos: int = 0
+        # ── mid-turn steering (PR2-10) ──
+        # ``_steer_pull`` is the drain SOURCE (the dispatcher's pull over the session's
+        # buffer); None = no steering, which is the state for every dialect that does not
+        # declare ``supports_mid_turn_prompt`` because :meth:`set_steer_source` refuses to
+        # wire one. ``_steer_pending`` holds text that was pulled but NOT yet written to
+        # the CLI, so a delivery that fails is retried at the next boundary and whatever
+        # is left is readable at turn end (:meth:`undelivered_steers`) — a pulled steer
+        # must never evaporate between the buffer and the wire.
+        # ``_steer_inflight`` maps a written frame's request id to its text until the agent
+        # answers, and ``_steer_rejected`` collects the ones it REFUSED. Measured live
+        # against an authenticated kiro-cli: the write succeeds and the CLI answers
+        # ``-32603 "Prompt already in progress"``, so a design that only tracked write
+        # failures reported ``{"steered": true}`` for a steer the agent threw away. An
+        # async refusal has to reach the same visible path as a failed write.
+        self._steer_pull: "Callable[[], list[str]] | None" = None
+        self._steer_pending: list[str] = []
+        self._steer_inflight: dict[object, str] = {}
+        self._steer_rejected: list[str] = []
+        self._steers_delivered = 0
 
     def close(self) -> None:
         self._closed = True
+
+    # ── mid-turn steering (PR2-10) ─────────────────────────────────────────────
+    def steer_capable(self) -> bool:
+        """Whether a mid-turn steer can reach the turn THIS session is running — the
+        dialect's :attr:`~personalclaw.acp.dialect.ACPDialect.supports_mid_turn_prompt`.
+
+        Read from the bound dialect rather than a dialect *id*, so every wrapper
+        (:class:`AcpClient`, :class:`~personalclaw.llm.acp_session_provider.AcpSessionProvider`)
+        answers from the one object that also builds the frame — a wrapper cannot report a
+        capability the frame builder disagrees with."""
+        return bool(self._dialect.supports_mid_turn_prompt)
+
+    def set_steer_source(self, pull: "Callable[[], list[str]] | None") -> bool:
+        """Arm (or with ``None`` disarm) the mid-turn steer drain. Returns whether a drain
+        is now armed — the caller records THAT, never the declared capability.
+
+        A dialect that does not declare mid-turn support is REFUSED here and the source is
+        left unset, so the dispatcher learns ``False``, marks the session non-draining, and
+        the message routes to the visible queue. This is the gate that keeps the S6.1
+        invariant intact now that a drain path exists at all: nothing may buffer a steer
+        against a turn that has no reader."""
+        if pull is not None and not self.steer_capable():
+            self._steer_pull = None
+            return False
+        self._steer_pull = pull
+        return pull is not None
+
+    def undelivered_steers(self) -> list[str]:
+        """Steers this turn owes the user: never written (``_steer_pending``) plus written
+        and REFUSED by the agent (``_steer_rejected``). Empty on the happy path.
+
+        Read by the dispatcher at turn end so an undeliverable steer is surfaced instead of
+        vanishing. A frame that is still awaiting its answer counts as delivered — we wrote
+        it and the agent has not refused it — the same standard
+        :meth:`AcpClient._watch_dialect_reply` applies to every other fire-and-forget
+        session frame. Requeueing on silence instead would fabricate a duplicate of a steer
+        that DID land."""
+        return list(self._steer_pending) + list(self._steer_rejected)
+
+    def _watch_steer_reply(self, rid: object, fut: "asyncio.Future") -> None:
+        """Consume the interleaved prompt's own terminal response, and treat a refusal as a
+        NON-delivery rather than a log line.
+
+        A mid-turn ``session/prompt`` gets its own JSON-RPC id, so the router resolves a
+        SECOND future that the running turn's drain never selects on. Left unread it is both
+        a lost rejection and an "exception was never retrieved" warning.
+
+        This is the path the live spike found: an authenticated kiro-cli accepts the WRITE
+        and then answers ``-32603 "Prompt already in progress"``, so tracking write failures
+        alone reported ``{"steered": true}`` for a steer the agent discarded. The refusal
+        moves the text onto ``_steer_rejected``, which :meth:`undelivered_steers` reports and
+        the dispatcher requeues — the same visible path a failed write takes."""
+
+        def _on_done(f: "asyncio.Future") -> None:
+            text = self._steer_inflight.pop(rid, "")
+            # Cancelled / process gone before an answer: we cannot claim this landed, so it
+            # stays owed. Visible-and-maybe-redundant beats silently-lost. Checked BEFORE
+            # ``result()`` because ``CancelledError`` is a BaseException — an ``except
+            # Exception`` here would let it escape the callback and skip this bookkeeping.
+            if f.cancelled():
+                if text:
+                    self._steer_rejected.append(text)
+                return
+            try:
+                resp = f.result()
+            except Exception:
+                if text:
+                    self._steer_rejected.append(text)
+                return
+            err = getattr(resp, "error", None)
+            if err:
+                if text:
+                    self._steer_rejected.append(text)
+                logger.warning(
+                    "session %s: agent REJECTED the mid-turn steer (rid=%s): %r — the steer "
+                    "did NOT reach the running answer; it is owed back to the user",
+                    self.session_id,
+                    rid,
+                    err,
+                )
+
+        fut.add_done_callback(_on_done)
+
+    async def _deliver_steers_at_tool_boundary(self) -> int:
+        """Write every pending steer to the CLI as the dialect's mid-turn request.
+
+        THE delivery path PR2-10 exists to build. Called from :meth:`_dispatch_frames` at a
+        tool boundary — the point mid-turn where the agent is between decisions, so an
+        extra prompt can still change the answer being written rather than arriving after
+        it. Returns how many steers were written.
+
+        Failure is retained, never swallowed: text stays on ``_steer_pending`` when the
+        dialect builds no frame, when the cap is reached, or when the write raises, so the
+        next boundary retries it and :meth:`undelivered_steers` still names it at turn end.
+        A frame the agent WRITES but then refuses is caught asynchronously by
+        :meth:`_watch_steer_reply`, which is why the text is parked on ``_steer_inflight``
+        rather than simply dropped once the write returns.
+        """
+        if self._steer_pull is not None:
+            try:
+                pulled = self._steer_pull()
+            except Exception:
+                logger.debug("session %s: steer pull failed", self.session_id, exc_info=True)
+                pulled = []
+            self._steer_pending.extend(t for t in (pulled or []) if t and t.strip())
+        if not self._steer_pending:
+            return 0
+        delivered = 0
+        while self._steer_pending and self._steers_delivered < _MAX_STEERS_PER_TURN:
+            text = self._steer_pending[0]
+            req = self._dialect.mid_turn_prompt_request(session_id=self.session_id, text=text)
+            if req is None:
+                logger.warning(
+                    "session %s: dialect %s built no mid-turn frame — steer NOT delivered",
+                    self.session_id,
+                    getattr(self._dialect, "name", "?"),
+                )
+                break
+            try:
+                rid, fut = await self._send_request(req.method, req.params)
+            except Exception:
+                logger.warning(
+                    "session %s: mid-turn steer write failed — steer NOT delivered",
+                    self.session_id,
+                    exc_info=True,
+                )
+                break
+            self._steer_inflight[rid] = text  # owed until the agent answers or refuses
+            self._watch_steer_reply(rid, fut)
+            self._steer_pending.pop(0)
+            self._steers_delivered += 1
+            delivered += 1
+            logger.info(
+                "session %s: delivered a mid-turn steer via %s", self.session_id, req.method
+            )
+        return delivered
 
     async def cancel(self) -> None:
         """Cancel the in-flight turn for THIS session only (co-tenants keep streaming)."""
@@ -327,6 +489,14 @@ class AcpSession:
         self._tool_call_inputs.clear()
         self._tool_call_seen.clear()
         self._offered_options.clear()
+        # Per-turn steer state. Clearing ``_steer_pending`` at the START is deliberate: a
+        # steer that could not be delivered belongs to the turn it was aimed at, and letting
+        # it survive into the next one is the cross-turn leak S6.1 closed. The dispatcher
+        # reads ``undelivered_steers()`` at the end of the SAME turn.
+        self._steers_delivered = 0
+        self._steer_pending.clear()
+        self._steer_inflight.clear()
+        self._steer_rejected.clear()
         stale_eligible = False
         got_complete = False
         saw_agent_switch = False
@@ -402,10 +572,19 @@ class AcpSession:
                     for tr in self._read_new_tool_results():  # prior tool's results first
                         yield tr
                     yield tool_event
-                for upd_event in translate.extract_tool_update_events(
+                upd_events = translate.extract_tool_update_events(
                     msg, self._tool_call_inputs, self._tool_call_seen
-                ):
+                )
+                for upd_event in upd_events:
                     yield upd_event
+                if tool_event or upd_events:
+                    # ── THE ACP TOOL BOUNDARY (PR2-10) ──
+                    # A tool frame is the one point mid-turn where this host knows the agent
+                    # is between decisions, so a steer written now can still change the
+                    # answer being written. Everything else in this loop is text already
+                    # committed to the transcript. No-op unless a drain source is armed,
+                    # which only a dialect declaring `supports_mid_turn_prompt` can do.
+                    await self._deliver_steers_at_tool_boundary()
             elif action == "metadata":
                 pct = translate.extract_context_pct(msg)
                 if pct is not None:

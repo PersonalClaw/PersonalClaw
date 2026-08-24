@@ -35,6 +35,7 @@ from typing import TYPE_CHECKING, Any, AsyncIterator
 
 if TYPE_CHECKING:
     from collections import deque
+    from collections.abc import Callable
 
     from personalclaw.acp.dialect import ACPDialect
     from personalclaw.acp.session import AcpConnection, AcpSession
@@ -198,6 +199,11 @@ class AcpClient:
         self._session_new_snapshot: dict[str, object] = {}
         self.last_prompt_stats = AcpPromptStats()
         self._last_stop_reason: str = ""
+        # Mid-turn steer drain source (PR2-10). Held HERE and re-applied to the bound
+        # session on every turn, because ``ensure_ready`` / ``start_fresh_turn_session`` /
+        # ``_teardown`` each replace ``self._session`` — a seam wired onto a discarded
+        # session delivers nothing, silently.
+        self._steer_pull: "Callable[[], list[str]] | None" = None
 
     def _core_mcp_servers(self) -> list[dict[str, Any]]:
         """The ``mcpServers`` array every ``session/new``/``session/load`` sends.
@@ -741,11 +747,39 @@ class AcpClient:
         the terminal complete event exactly as before."""
         await self.ensure_ready()
         assert self._session is not None
+        # Re-arm the mid-turn steer seam on THIS turn's session (PR2-10). One call site
+        # rather than one per rebind path: ``ensure_ready`` above may have opened a brand-new
+        # AcpSession (first turn, respawn after a death, fresh-turn session), and the seam
+        # must follow the session that is about to run the turn.
+        self._session.set_steer_source(self._steer_pull)
         async for event in self._session.stream_events(message, timeout=timeout):
             self._stamp_turn_telemetry(event)
             self.last_prompt_stats = self._session.last_prompt_stats
             self._last_stop_reason = self._session._last_stop_reason
             yield event
+
+    # ── mid-turn steering (PR2-10) ──────────────────────────────────────────────
+    def steer_capable(self) -> bool:
+        """Whether a mid-turn steer reaches this client's running turn — the dialect's
+        declaration, the same predicate the session applies before it arms a drain."""
+        return bool(self._dialect.supports_mid_turn_prompt)
+
+    def set_steer_source(self, pull: "Callable[[], list[str]] | None") -> bool:
+        """Arm the mid-turn steer drain. Returns whether a drain is now armed.
+
+        Answers from the dialect when no session is bound yet (the usual case: the
+        dispatcher wires the seam before the first prompt spawns the CLI), which is the same
+        predicate :meth:`AcpSession.set_steer_source` applies when the seam is re-armed at
+        :meth:`stream_events`. So the answer the dispatcher records cannot disagree with the
+        session that later does — or does not — drain."""
+        self._steer_pull = pull
+        if self._session is not None:
+            return self._session.set_steer_source(pull)
+        return bool(pull is not None and self.steer_capable())
+
+    def undelivered_steers(self) -> list[str]:
+        """Steers this turn pulled but never wrote to the CLI (empty on the happy path)."""
+        return self._session.undelivered_steers() if self._session is not None else []
 
     @property
     def supports_native_commands(self) -> bool:

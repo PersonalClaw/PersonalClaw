@@ -1638,21 +1638,29 @@ class SessionManager:
         session.steers.append(text.strip())
         return True
 
-    def set_steer_drains(self, key: str, value: bool) -> None:
-        """Declare whether the CURRENT turn on *key* can drain steers.
+    def set_steer_drains(self, key: str, value: bool) -> list[str]:
+        """Declare whether the CURRENT turn on *key* can drain steers. Returns the steers
+        that were still buffered when the turn ended (empty in every other case).
 
         Called by the dispatcher: True when it wires ``set_steer_source`` for this
         turn, False when the turn ends (so a steer sent between turns is queued
         rather than buffered against a runtime that is no longer pulling).
+
+        The RETURN is the fix for the second half of the silent drop (PR2-10). The buffer
+        still has to be emptied at turn end — a steer aimed at a finished answer must not
+        surface inside an unrelated later turn — but emptying it and telling nobody meant a
+        message the user was shown as accepted disappeared with no trace anywhere. Handing
+        the remainder back makes the dispatcher, not this method, decide how to surface it.
         """
         session = self._sessions.get(key)
         if session is None:
-            return
+            return []
         session.steer_drains = bool(value)
-        if not value:
-            # Turn over: anything still buffered will never be drained. Drop it here
-            # rather than letting it surface inside an unrelated later turn.
-            session.steers.clear()
+        if value:
+            return []
+        stranded = [s for s in session.steers if s]
+        session.steers.clear()
+        return stranded
 
     def drain_steers(self, key: str) -> list[str]:
         """Pop all buffered steering messages for a session (the loop's pull source)."""
