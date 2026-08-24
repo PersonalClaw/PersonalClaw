@@ -69,8 +69,8 @@ test:
 ## active model, which is what lets e2e/chat.spec.ts complete a real turn instead of every spec
 ## carefully avoiding one. That changes neither property: the scripted provider is deterministic,
 ## makes ZERO network calls and needs NO credential, and it refuses to construct unless
-## PERSONALCLAW_SCRIPTED_SCRIPT names a script file, so it is inert everywhere the harness has not
-## explicitly opted in. So: still offline, still credential-free, and now also model-bound.
+## PERSONALCLAW_SCRIPTED_MODEL_SCRIPT names a script file, so it is inert everywhere the harness
+## has not explicitly opted in. So: still offline, still credential-free, and now also model-bound.
 ## Readiness is the PERSONALCLAW_READY line, not a port probe, so the run cannot proceed
 ## against a bound-but-unauthenticated gateway.
 ##

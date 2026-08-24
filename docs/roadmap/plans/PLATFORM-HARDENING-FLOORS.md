@@ -1454,3 +1454,170 @@ the browser gate stays out of the unit run. `docs/roadmap/atomic/dag.json` delib
   first it raises inside an unretrieved asyncio task and hides the actual failure. Same family as the
   `_record_model` defect `PCS-7` fixed one variable over; deliberately not touched here because both
   changes land in the same initialiser block and would collide in the merge train.
+- **2026-08-24 — `PHF-7` AUDIT: the code landed. All five clauses hold on `main` at `827751b9`, and
+  the atom is CLOSEABLE. Two clauses were true only by construction with nothing asserting them —
+  both now have rails, and one of the two had ALREADY drifted.**
+  The entry above ends "flip it when this PR lands." It landed. Verified by content, not by
+  `git cherry`: `feature-phf7-offline-scripted-harness` (the integration branch) reverse-applies
+  cleanly against `main`, i.e. every byte of it is present. **Nothing is stranded on any of the five
+  `phf7*` branches** — `-scripted-provider` is likewise byte-identical; `-scripted-binding`,
+  `-scripted-e2e` and `-chokepoint-rail-and-e2e-target` differ only because `main` is *ahead* of
+  them (the binding branch still carries the wrong env var `PERSONALCLAW_SCRIPTED_LLM` and the
+  `ScriptedProvider(model=…)` `TypeError`; `main` has both integration fixes plus 100 more lines of
+  rails, and `main`'s chokepoint allowlist has gained `_build_acp_runtime`). All five can be deleted.
+  **Clause 1 — driven live, not inferred from a green spec.** A gateway on a fresh `$TMPDIR` home
+  with every API-key variable stripped booted in **3.16 s**; `/api/model-providers` returned **200**
+  with exactly one entry (`Scripted`/`scripted`/`scripted-1`, `credential_status: ok`); `POST
+  /api/chat` streamed the fixture's reply and `[DONE]` in **1.27 s**. `~/.personalclaw` mtime was
+  byte-identical before and after.
+  🪤 **Worth stating precisely: "no credentials present" is a property of the PROVIDER, not of the
+  harness.** Nothing asserts the environment is credential-free, and the gate would pass identically
+  with `ANTHROPIC_API_KEY` set. That is fine — the real proof is that the scripted entry carries
+  `credential=None` and a rail shows a genuine provider type still raises `CredentialMissing` under
+  the same opt-in — but "the harness enforces credential absence" would be a false claim.
+  **Clause 5 — "network off" is proven better than by unplugging.** `test_scripted_provider.py`
+  proves zero network twice: an AST sweep for network-capable imports in the module's closure, and a
+  runtime `sys.modules`-delta check that importing `scripted.py` pulls in no networking module. One
+  run with wifi off would only have described one machine. Runtime recorded above and in the gate.
+  **Clause 3 — the axe scan is on a real `run:` line, and its route list had a THIRD-AXIS hole.**
+  `ci.yml:278` is `run: npx playwright test e2e/a11y.spec.ts --project=chromium`, no
+  `continue-on-error` anywhere in the workflow, auth ON, iterating `ROUTES + SETTINGS_ROUTES +
+  VIEW_ROUTES` × both themes plus five opened surfaces. `routeManifestParity.test.ts` already
+  enforced NAV↔manifest parity in BOTH directions with a vacuity floor, and
+  `test_e2e_specs_are_executed.py` already refuses to count a spec named only in a workflow COMMENT
+  (its `names_spec` vacuity test feeds it a commented run line and asserts the answer flips). So the
+  two hazards that usually break this clause were already closed.
+  🪤 **The hole was the axis neither rail can see.** `App.tsx`'s `ROUTABLE` set carries routes with
+  no nav tile, exempted from the harness by a COMMENT — and the comment said **six** while `App.tsx`
+  had **seven**. `mission-control` (a locked dashboard view reached from the command palette) was
+  added later, making it an authenticated, routable page with no axe scan, no visual baseline, and
+  nothing anywhere recording that as intended. NAV↔manifest parity stays green because
+  `mission-control` is in *neither* list. Fixed by making the exemption a **contract**
+  (`EXEMPT_FROM_THE_HARNESS`, four new assertions: undeclared-route sweep, stale-exemption sweep,
+  exempt-AND-scanned contradiction, and a reason-length floor) so the next such page is a decision
+  rather than a silence. Whether `mission-control` should be *scanned* is left as the owner call the
+  file already says it is — recorded, not guessed.
+  **Clause 2 — the positive half runs; the NEGATIVE half had no rail at all.** "a bare pytest does
+  not run it" was true only because the gate is Playwright, so its specs are `.ts`. No test said so.
+  New `tests/test_browser_gate_stays_out_of_pytest.py` asserts it from both ends: the `test` target
+  is a plain pytest invocation that neither performs nor depends on the browser leg (Makefile
+  *parsed*, because `test-e2e` also appears in `.PHONY` and nine comments), and no pytest-collected
+  module shells the gate. That second sweep is **AST-based, and that is load-bearing**:
+  `test_e2e_specs_are_executed.py` contains the literal `"npx playwright test e2e/ghost.spec.ts"`
+  twice inside its own vacuity assertion, so a text scan would flag the repo's best rail and the
+  only available fix would be to weaken the scan. The detector is asserted in both directions and
+  against that real file by name.
+  **A measured drift the new rails caught immediately.** The `test-e2e` recipe's comment named
+  `PERSONALCLAW_SCRIPTED_SCRIPT` — **a variable nothing reads**. The gate worked and its stated
+  reason for working was false, which is the more corrosive half of a drift because the next person
+  wiring a fixture reads the prose. The existing rail pinned the two *Python* constants together;
+  the switch is named in four places. Fixed, and `test_the_harness_spells_the_env_var_the_SAME_way`
+  now covers `playwright.config.ts` and the `Makefile` too. Writing it surfaced a second question
+  immediately: `playwright.config.ts` legitimately NARRATES the dead `PERSONALCLAW_SCRIPTED_LLM`
+  while telling the story of the fix. Banning that would have got the rail deleted, so retirements
+  are declared in `RETIRED_ENV_NAMES` and `test_no_retired_env_name_is_still_read_by_anything`
+  checks the retirement against shipped source — otherwise the allowlist is just a way to silence
+  the sweep.
+  **Falsifications (6, each on the LIVE line, applied-count confirmed, restored from a file copy —
+  never `git checkout`).** (1) `return _SomeVendorProvider(model='x')` planted in
+  `resolve_provider_for_use_case` → 1 failed/7 passed naming the AST node at line 723 — **so yes,
+  clause 4's "a raw call reds the gate" reds when a raw call is actually planted, not merely when
+  the rail is read.** (2) A seventh `ROUTABLE` extra (`ghost-surface`) → the new undeclared-route
+  sweep reds naming it. (3) The `ROUTABLE` parser's regex switched to double quotes so `extras` goes
+  empty → the vacuity floor reds (the contract test would otherwise have passed on nothing).
+  (4) `subprocess.run(["npx","playwright","test"])` appended to `test_web_render.py` → the AST sweep
+  reds naming `run() at line 190`. (5) `test: test-e2e` → the back-door test reds. (6) The exact
+  drift found on `main` reintroduced → the env-var rail reds; and declaring the LIVE name as retired
+  → the retirement floor reds naming `registry.py`/`scripted.py`.
+  **Corrections to the brief that commissioned this audit.** Its premise was right — the deliverables
+  *are* on `main`, and `dag.json` does carry `"status": "todo"` for the atom (checked: under the
+  `plans` key, not a top-level `atoms` one — an early probe of this file reported "no PHF atoms" and
+  that probe was wrong, not the brief). Two sub-claims did not survive:
+  clause 3's "does the route list cover the authenticated routes" was **already** two-directionally
+  railed, so the classic one-sided-inventory failure was not the live defect — the live defect was
+  one axis over, on routes in *neither* list; and clause 2's marker hazard ("a marker that matches
+  nothing satisfies this trivially") does not apply, because there is no marker at all — the gate is
+  a different test runner, which is a stronger separation than a marker and needed a different rail.
+  **Gate.** `make lint` clean (black/isort/flake8/mypy, 992 source files). **`make test-e2e`: 470
+  passed, 8 skipped, exit 0, 8.7 min** on this Darwin dev machine (chromium already installed) —
+  worth recording because the previous entry measured 149/4, so the browser gate has roughly tripled
+  and still runs green offline on the scripted provider. `npm run test:web` 474 files / 4985 passed ·
+  `npm run build` clean · `npm run typecheck:web` clean.
+  `tests/test_model_call_chokepoint_rail.py` 8 passed ·
+  `tests/test_browser_gate_stays_out_of_pytest.py` 14 passed ·
+  `tests/test_scripted_provider_binding.py` 14 passed (12 before) ·
+  `routeManifestParity.test.ts` 8 passed (3 before). `scripts/gate_report.py` all 6 gates PASS.
+  **Full suite: 12 failed / 25625 passed / 30 skipped / 12 xfailed in 24:20 under `-n auto` (18
+  workers) — and all 12 pass with `-n0` (25 passed in 3:08 and 53 passed in 2:48 across the two
+  re-run groups), so all 12 are CPU starvation.** Worth naming precisely, because only half carried
+  the signature the playbook says to look for: six were literal `Timeout (>120.0s)` from
+  pytest-timeout (`test_gate_report` ×3, `test_inert_surface_baseline` ×3), but four
+  (`test_cron_script_ceiling`) failed on their OWN in-test 90 s script budget and one
+  (`test_inbound_mcp::test_rate_cap_returns_429_with_retry_after`) failed as `assert 200 == 429` — a
+  rate-cap window that simply did not close in time. **A starvation failure does not have to look
+  like a timeout**; under contention a test with any wall-clock assumption fails as a wrong VALUE,
+  which reads exactly like a real defect. The twelfth was
+  `test_loop_worktree_sparse::TestPoolBound::test_batch_creates_every_worktree`, already documented
+  pre-existing. Context for the contention: four other agent sessions were running suites on the
+  same machine, visible as foreign `pytest` processes in other worktrees — deliberately not killed.
+  `docs/roadmap/atomic/dag.json` deliberately **untouched** — the owner flips the atom.
+
+
+## Execution log — `PHF-7` (offline fake-model E2E harness + a11y rail) — VERIFIED MERGED; two clauses railed; **one owner decision keeps it `todo`**
+
+- [2026-08-24][PHF-7] **All five clauses hold on `main` as-is** — the prior entry's *"flip when this PR
+  lands"* condition is technically met. Two clauses were true only **by construction** with nothing
+  asserting them; both are now railed. **Left `todo` for one reason: the axe clause carries a
+  newly-discovered, undeclared exemption whose resolution is an owner call** (see the mission-control
+  finding). Gate at integration: `make lint` 0 (mypy 992), 28 targeted + a 13-test browser-gate rail,
+  `typecheck:web` 0 / `test:web` 474 files / 4985 tests, 6-gate aggregate 6/6, probe residue 0.
+
+- [2026-08-24][PHF-7] **The atom-index `done_when` is FIVE clauses; the prior log enumerated four and
+  dropped the axe clause** — the exact omission pattern this codebase keeps hitting. All five, per provider:
+  (1) gateway boots on the fake provider, scripted turn, no credentials — driven live, boot 3.16 s, one
+  `Scripted` entry, SSE reply + `[DONE]` in 1.27 s, real home byte-identical; (2) `make test-e2e` runs the
+  gate offline (470 passed / 8 skipped) and a bare pytest does not; (3) every authenticated route
+  axe-scanned in CI; (4) a raw call skipping the enforced helper reds the gate; (5) validated network-off.
+
+- [2026-08-24][PHF-7] 🔴 **OWNER DECISION — an authenticated, routable page has no axe scan, and the
+  exemption lived in a comment that had already drifted.** `App.tsx`'s `ROUTABLE` set carries non-nav
+  routes exempted by a **comment that said six while the code had seven**: `mission-control` (a locked
+  dashboard view reached from the command palette) was added later, making it an authenticated routable
+  page with no axe scan, no visual baseline, and nothing recording that as intended. The NAV↔manifest
+  parity rail stays green because `mission-control` is in **neither** list. This work makes the exemption a
+  contract (`EXEMPT_FROM_THE_HARNESS` + assertions) so the next such page is a decision, not a silence —
+  **but whether `mission-control` should be *scanned* is the owner's call, and until it is ruled on, clause
+  3's "*every* authenticated route" carries a live exception.** That is why the atom stays `todo` rather
+  than flipping on the prior note.
+
+- [2026-08-24][PHF-7] **The two by-construction clauses, now railed and falsified.** (2)'s negative half
+  ("a bare pytest does not run the gate") was true only because the gate is a **different test runner**
+  (Playwright `.ts`) — a stronger separation than a marker, but nothing asserted it.
+  `tests/test_browser_gate_stays_out_of_pytest.py` now does, via a Makefile parse + an AST subprocess
+  sweep; re-falsified at integration by planting `subprocess.run(["npx","playwright","test"])` into a
+  shipped test module → the sweep reds naming it (1 failed, 13 passed), restored from a file copy.
+  (4)'s raw-call rail was falsified live: planting `return _SomeVendorProvider(model='x')` in
+  `resolve_provider_for_use_case` reds naming the AST node with a WHAT/WHY/FIX message.
+
+- [2026-08-24][PHF-7] **"No credentials present" is a property of the provider, not the harness — stated
+  rather than glossed.** Nothing asserts the environment is credential-free; the gate passes identically
+  with `ANTHROPIC_API_KEY` set. The real proof is `credential=None` on the synthesized entry plus the
+  existing rail showing a genuine provider type still raises `CredentialMissing` under the same opt-in.
+  Zero-network is proven twice in `test_scripted_provider.py` (AST sweep of the import closure + a runtime
+  `sys.modules` delta) — stronger than one wifi-off run.
+
+- [2026-08-24][PHF-7] **The five stranded `phf7*` branches carry NO content missing from main** (checked by
+  reverse-applying each branch's own patch, not `git cherry`): two are byte-identical, three are superseded
+  (one still carries the wrong env var `PERSONALCLAW_SCRIPTED_LLM` and a `ScriptedProvider(model=…)`
+  `TypeError` that main fixed; another is 20 lines behind on `playwright.config.ts`; the third predates
+  `_build_acp_runtime` in `ALLOWED_BUILDERS`). **All five are safe to delete.** A stale env-var name in the
+  `test-e2e` Makefile comment (`PERSONALCLAW_SCRIPTED_SCRIPT` → `PERSONALCLAW_SCRIPTED_MODEL_SCRIPT`) was
+  corrected in passing.
+
+- [2026-08-24][PHF-7] **A starvation failure does NOT have to look like a timeout** — worth carrying
+  forward. Of 12 failures in a contended full run, only 6 carried the `Timeout (>120.0s)` signature; four
+  `test_cron_script_ceiling` blew their **own** in-test 90 s script budget, and
+  `test_inbound_mcp::test_rate_cap_returns_429_with_retry_after` failed as `assert 200 == 429` — a rate-cap
+  window that didn't close in time, which reads exactly like a real defect. All passed under `-n0`. The
+  "all failures are timeouts ⇒ starvation" heuristic is too narrow; the reliable test is re-running the
+  suspects serially.
