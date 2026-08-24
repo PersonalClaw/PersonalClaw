@@ -31,6 +31,16 @@ token and raises a needs-input notification, and only the USER (in the dashboard
 ``personalclaw inbound confirm <token>``) turns that into an execution. A client that
 ignores the flag gets a refusal, not a mutation.
 
+**User content leaves through the ONE inbound wrapper.** ``read_transcript`` hands a
+model the user's own conversation, which is the classic injection carrier: whatever was
+pasted, fetched or forwarded into a chat comes back out as text an external agent reads.
+So an action declares :attr:`Action.user_content` — the result key carrying that text —
+and :func:`_run` routes it through :func:`personalclaw.inbound.framing.fence_payload`,
+the same choke point every other inbound dialect returns through (§1.4). The fence is
+applied in ``_run`` rather than in the handler on purpose: ``_run`` is the single place
+an action result becomes a response, so a handler cannot forget, and a handler that
+fenced its own field would be a second spelling of the fence.
+
 ``sideEffect: "destructive"`` deliberately has no members in v1 — delete and uninstall
 are absent rather than confirm-gated, because the safest confirmation flow for a
 destructive control action is not having one.
@@ -66,6 +76,7 @@ from personalclaw.http_errors import json_error
 from personalclaw.inbound.audit import audit
 from personalclaw.inbound.auth import BRIDGE_SURFACE, peer_allowed, token_env_key, verify_bearer
 from personalclaw.inbound.clients import InboundClient, log_binding_violation, lookup_by_token
+from personalclaw.inbound.framing import fence_payload
 from personalclaw.inbound.gate import admission_problem
 
 logger = logging.getLogger(__name__)
@@ -103,6 +114,14 @@ class Action:
     requires_confirmation: bool
     description: str
     handler: Callable[[Any, dict], Awaitable[dict]]
+    #: The result key whose value is USER-authored free text — a transcript, a document,
+    #: anything a person or a fetched page put into the instance. Declaring it is what
+    #: makes :func:`_run` fence that key (§1.4). Empty means "this action returns no such
+    #: text", which is a claim an author has to make rather than a default they inherit.
+    #:
+    #: Not part of :meth:`descriptor`: the wire contract is the four declared fields, and
+    #: a client that could see this key would start depending on which field is fenced.
+    user_content: str = ""
 
     def descriptor(self) -> dict[str, Any]:
         return {
@@ -143,13 +162,22 @@ async def _read_transcript(state: Any, params: dict) -> dict:
         raise ValueError("session required")
     limit = int(params.get("limit") or 50)
     rows = ConversationLog().recent(session, max_messages=max(1, min(limit, 200)))
-    out = []
+    lines = []
     for row in rows:
         text = str(row.get("content") or row.get("text") or "")
         text, _ = redact_exfiltration_urls(text)
         text, _ = redact_credentials(text)
-        out.append({"role": row.get("role", ""), "content": text[:4000]})
-    return {"session": session, "messages": out}
+        lines.append(f"{row.get('role') or 'unknown'}: {text[:4000]}")
+    # ONE text field, not a list of per-message dicts: `_run` fences `transcript`
+    # through the shared wrapper, and one fence over the whole turn sequence is the
+    # only shape where the size cap means what it says. Fencing each message
+    # separately would apply the cap per message, so N turns could return N× the
+    # ceiling, and would hand the model N provenance labels for one transcript.
+    #
+    # Measured: the 4000-char clip above and the 200-turn ceiling put an ASCII
+    # transcript at ~800 KB, under the 2 MiB inbound cap — so the shared cap is a
+    # BACKSTOP here, reached only by multibyte turns, not the limit doing the work.
+    return {"session": session, "transcript": "\n\n".join(lines)}
 
 
 async def _list_automations(state: Any, params: dict) -> dict:
@@ -264,6 +292,7 @@ _REGISTRY: tuple[Action, ...] = (
         requires_confirmation=False,
         description="Read a chat session's recent turns, credential- and URL-redacted.",
         handler=_read_transcript,
+        user_content="transcript",
     ),
     Action(
         name="list_automations",
@@ -535,6 +564,26 @@ async def handle_actions(request: web.Request) -> web.Response:
     return _json(payload)
 
 
+def _fence_user_content(action: Action, result: dict) -> dict:
+    """Route an action's declared user-content field through the ONE wrapper (§1.4).
+
+    Only the declared key is touched. An action that declares nothing is returned
+    untouched, which is the half of this that carries the security value: fencing every
+    result indiscriminately would put the marker on the action catalogue and on error
+    envelopes too, and "the body contains ``untrusted_content``" would then be true of
+    responses that carry no user data at all — a check that can no longer fail.
+
+    Capping and the ``inbound:<surface>`` provenance come from `fence_payload`; nothing
+    about the fence is re-decided here. Provenance stays at the surface shape
+    (``inbound:bridge``) because this surface has one bearer token and no per-client
+    identity to name — the audit line already records WHICH action ran.
+    """
+    key = action.user_content
+    if not key:
+        return result
+    return {**result, key: fence_payload(str(result.get(key) or ""), surface=BRIDGE_SURFACE)}
+
+
 async def _run(state: Any, action: Action, params: dict, route: str) -> web.Response:
     try:
         result = await action.handler(state, params)
@@ -546,7 +595,7 @@ async def _run(state: Any, action: Action, params: dict, route: str) -> web.Resp
         audit(BRIDGE_SURFACE, route=route, status=500, tool=action.name, refused="handler error")
         return json_error("action_failed", status=500)
     audit(BRIDGE_SURFACE, route=route, status=200, tool=action.name)
-    return _json({"status": "ok", "result": result})
+    return _json({"status": "ok", "result": _fence_user_content(action, result)})
 
 
 async def handle_action(request: web.Request) -> web.Response:
