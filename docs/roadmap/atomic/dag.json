@@ -4201,7 +4201,7 @@
           "deps": [
             "EXT:PLATFORM-RESILIENCE:degraded-connection contract to reuse"
           ],
-          "pr": 1979
+          "pr": 1990
         },
         {
           "id": "CA-7",
@@ -5677,7 +5677,8 @@
           "deps": [
             "APE-1",
             "EXT:AUTONOMY-GUARDRAILS:ModelCallGuard budgets + kill-switch (plan Risks: E6 if shipped before this exists)"
-          ]
+          ],
+          "pr": 1990
         },
         {
           "id": "APE-4",
@@ -6399,7 +6400,7 @@
             "EXT:LEARNING-FLYWHEEL:skill-ladder synthesis machinery (run_skill_ladder_review + proposals.enqueue) steps 1-4",
             "EXT:INBOX-NOTIFICATIONS-UNIFICATION:proposals surface as inbox proposal kind (S4)"
           ],
-          "pr": 1975
+          "pr": 1990
         },
         {
           "id": "LV-2",
