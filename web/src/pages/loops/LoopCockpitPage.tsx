@@ -5,7 +5,7 @@ import {
   ArrowLeft, Pause, Play, Square, X, Check, MessageSquarePlus,
   Play as Start, Trash2, HelpCircle, Search, ChevronRight, CornerDownRight,
   Maximize2, PanelRight, ScrollText, Download, FileText, Bot, Cpu, BarChart3, ExternalLink, ListChecks, Link2, AlertTriangle, Copy,
-  FolderKanban, FolderOpen, Clock, ShieldCheck, DollarSign,
+  FolderKanban, FolderOpen, Clock, ShieldCheck, DollarSign, Sparkles,
 } from 'lucide-react'
 import { TopBar } from '../../ui/TopBar'
 import { IconButton } from '../../ui/IconButton'
@@ -34,6 +34,7 @@ import { foldReducer, emptyRunFlags, type RunFlags } from './runFold'
 import { activePhaseIndex, phaseMinCycles, phaseForCycle } from './loopPhases'
 import { useChatSocket, type WsMessage } from '../../lib/useChatSocket'
 import { belongsToLoop } from '../workflows/containerKey'
+import { type SkillUsed, skillsUsedLabel, skillsUsedTitle } from '../chat/chatTypes'
 import { useQueryFlag, type RouteProps } from '../../app/useQueryState'
 import { accentChip } from '../../design/accent'
 import { tabListKeys } from '../../lib/tabListKeys'
@@ -357,6 +358,41 @@ export function LoopCockpitPage({ id, onBack, onDeleted, onOpenArtifact, onOpenT
     return () => clearTimeout(t)
   }, [confirmStop])
 
+  // ── "used N skills" (LEARNING-VISIBILITY T2.1) ───────────────────────────────
+  // The cockpit's live stream carries `chat_status` / `tool_call` / `activity_event` and
+  // nothing else, so the turn's skill allocation is NOT reachable from it — and the atom
+  // forbids adding a channel to carry it. It rides the worker's assistant-message `meta`
+  // instead, read through the EXISTING `GET /api/chat/sessions/{key}` (a REST read, not a
+  // new WS/SSE channel). The worker is a real registered session (`get_or_create_session`
+  // in loops/manager), so its key resolves while the gateway holds it; a 404 after a
+  // restart simply leaves the chip off, which is the honest answer for a run whose
+  // transcript is gone.
+  //
+  // Re-read on `total_cycles` because a loop allocates skills EVERY cycle: keyed on the
+  // session alone, the chip would freeze on cycle 1's allocation for the whole run.
+  // Must sit ABOVE the not-found/loading early return, like the two effects before it.
+  const [skillsUsed, setSkillsUsed] = useState<SkillUsed[]>([])
+  const workerKey = c?.session_key ?? ''
+  const cyclesSeen = c?.total_cycles ?? 0
+  useEffect(() => {
+    if (!workerKey) { setSkillsUsed([]); return }
+    let alive = true
+    api.chatSessionDetail(workerKey).then((d) => {
+      if (!alive) return
+      // The LAST assistant message that carried an allocation — i.e. the most recent cycle
+      // that loaded a skill. Deliberately not merged across cycles: the chip answers "what
+      // fed the latest turn", and a union would claim one cycle used skills another did.
+      let last: SkillUsed[] = []
+      for (const m of d.messages || []) {
+        if (m.role !== 'assistant') continue
+        const s = m.meta?.skills_used
+        if (Array.isArray(s) && s.length) last = s
+      }
+      setSkillsUsed(last)
+    }).catch(() => { if (alive) setSkillsUsed([]) })
+    return () => { alive = false }
+  }, [workerKey, cyclesSeen])
+
   const onWs = useCallback((m: WsMessage) => {
     if (!belongsToLoop(m.data?.session as string | undefined, id)) return
     if (m.type === 'chat_status') { const s = String(m.data.status ?? ''); setStatusText(s); setActivity((a) => [...a, { kind: 'status', label: s }].slice(-40)) }
@@ -541,6 +577,12 @@ export function LoopCockpitPage({ id, onBack, onDeleted, onOpenArtifact, onOpenT
           this figure sums. `loopSpendTitle` states the rest — turn count, and the FLOOR caveat
           when some model had no price row. */}
       {spend !== null && <MetaPill icon={<DollarSign size={11} />} text={loopSpendPill(spend)} title={loopSpendTitle(spend)} />}
+      {/* What CAPABILITY fed the latest cycle (T2.1) — a peer of the cost and elapsed pills,
+          in the same `MetaPill` idiom so the run's facts read as one row. Names on hover;
+          `skillsUsedTitle` marks a `reduced` skill, which loaded a summary rather than a body.
+          Absent when the run loaded no skill — never a "used 0 skills" that would read as a
+          measured zero rather than the unmeasured turn it is. */}
+      {skillsUsed.length > 0 && <MetaPill icon={<Sparkles size={11} />} text={skillsUsedLabel(skillsUsed)} title={skillsUsedTitle(skillsUsed)} />}
       <span className="flex-1" />
       {/* scope: containing project (clickable) + bound workspace */}
       {projId && projName && (onOpenProject
