@@ -488,3 +488,67 @@ skipped: [`docs/architecture/agent-activity-feed.md`](../../architecture/agent-a
   crash-looping worker's traceback is unavailable; a per-worker log file is a named follow-up.
   **DISCOVERY (pre-existing): `docs/architecture/app-platform.md` said "`sdk/` (26 modules)" and was
   already stale by 6** before this atom (32 on `main`). Corrected to 33. Nothing asserts the number.
+
+- **2026-08-24 — `APE-3` INDEPENDENT AUDIT: the code is on `main` (`8f03cd30`) and all five clauses hold
+  behaviourally, but TWO of its three production wires were asserted by nothing.** The 2026-08-23 entry
+  above claims completion "proven with real processes"; that claim is literally true — the suite kills real
+  children, spawns a real PPID-1 orphan through `/bin/sh … &` and decides graceful-vs-kill by the child's own
+  `returncode`. Every clause mechanism falsifies: neutering `_revive`'s relaunch reds with *"the pid did not
+  change — nothing was relaunched"*; `if False and rec.restarts > _MAX_RESTARTS` reds with *"never gave up
+  (restarts=4)"*; `reap_orphans → 0` reds with *"expected exactly the orphan to be reaped, got 0"*; killing
+  the `BudgetVerdict.EXCEEDED` branch reds two tests; dropping `_notify_paused` reds with *"the breach was
+  silent"*.
+  🔴 **THE GAP — the mechanisms were tested, their only uses were not.** Deleting `start_worker_watchdog()`
+  from `providers/loader.py::load_all_extensions` **and** `_stop_worker(name)` from BOTH `app_manager.disable`
+  and `force_uninstall`, together, left `test_app_worker_runtime` + `test_app_background_contract` +
+  `test_app_manager_lifecycle` + `test_app_manager_update` + `test_apps_import_boundary` +
+  `test_spawn_ceiling_audit` + `test_spawn_hazard_audit` + `test_inert_surface_baseline` **fully green: 116
+  passed, 0 failed.** That is not cosmetic. The sweep is the sole deliverer of three clauses (crash survival,
+  stop-on-disable, policy pause) and has exactly one production caller; `_stop_worker` is the sole deliverer
+  of the V1 clause, as this plan's own entry says — *"the sweep alone cannot deliver the V1 clause, because a
+  process re-parented to init is in no supervisor's table"*. Both are now pinned, each with a vacuity floor
+  (the boot rail also asserts `start_backend_watchdog`, so an empty call set cannot pass it), and the disable
+  rail is behavioural — it drives `app_manager.disable()` and asserts the process dies *and* that
+  `reap_orphans` was reached with the resolved entry path. The asymmetry that hid this: the sibling backend
+  watchdog IS railed (`test_spawn_hazard_audit::test_backend_respawn_is_reached_from_watchdog_thread`); the
+  worker half of that pair was never added.
+  🔴 **DISCOVERY — `PERSONALCLAW_SKIP_APP_WORKERS` had a live reader and ZERO writers.** `worker_runtime`
+  defines it and says *"set by a harness that must not have app workers spawned underneath it — the same
+  escape hatch `_check_and_revive` honors for backends"*. `git grep` over the whole repo returned exactly one
+  hit: its own definition. `conftest` sets the backend twin **because that already went wrong once** — *"its
+  reaper killed the live gateway's backends once"* — and APE-3 put a third spawner on the identical boot path
+  without the flag. Latent only because **no app anywhere declares `backgroundTasks`** (30 apps in the real
+  home: 0; `PersonalClawApps` on `main`: 0; the 27 bundled native apps: 0), so today's sweep finds no spec to
+  spawn. That is a fact about today's apps, not a property of the guard: the watchdog is a daemon thread that
+  outlives the test that started it, so the first sweep lands 30s later with any `config_dir` monkeypatch
+  already gone. `conftest`'s fixture now sets both flags (renamed `_no_app_child_processes`, since it guards
+  two families), `test_app_worker_runtime` clears it in its own fixture because it drives the sweep on
+  purpose, and the rail asserts BOTH halves — the harness writes it, and a flagged sweep does not reach
+  `list_apps` — with a vacuity floor proving an unflagged sweep does.
+  **MEASURED — the SDK surface has no app-side consumer anywhere, and the inert gate cannot see that.**
+  `sdk/background.py` exports 14 names; every importer is in this repo's `src/` or `tests/`. Zero apps in
+  `PersonalClawApps` (either branch or `main`) mention `backgroundTasks`, `BackgroundWorker`, `run_worker` or
+  ship a `worker.py`; zero bundled native apps declare the permission. `inert-surface-baseline.json` records
+  none of the 14, because `_sdk_imported_names()` counts `tests/` as a consumer by design. **This is not a
+  gate on the atom** — the `done_when` says *"fixture app worker runs"*, so a fixture consumer is what was
+  asked for, and it exists — but "the host `backgroundTasks` promised" has no first-party demand yet, which is
+  the real reason to expect the next defect here to be found by an app author rather than by CI.
+  **DISCOVERY — `sweep()`'s stop-on-disable branch is redundant with its own trailing loop.** Replacing
+  `self.stop(app)` in the `not enabled` branch with `pass` leaves
+  `test_a_disabled_app_loses_its_worker_on_the_next_sweep` **GREEN**: the branch `continue`s before
+  `declared.add(...)`, so the trailing *"a row whose declaration is gone"* loop stops the worker anyway. The
+  clause still holds — two mechanisms deliver it — but no assertion distinguishes which one did, so that
+  branch could be deleted silently. Left as recorded rather than rewritten: the behaviour is correct and
+  narrowing the test to one mechanism would over-specify a supervisor whose whole job is to converge.
+  **Stale text corrected, not glossed:** `test_app_worker_runtime.py`'s module docstring still described the
+  pre-integration world — *"`apps/background.py` … does not exist on this branch, so a stub module is
+  installed into `sys.modules`"* and `WORKER_NAME_ENV` — both of which the `_stub_background` fixture 190
+  lines below explicitly says were superseded (real module imported; the name collapsed onto `WORKER_ID_ENV`).
+  A reader takes the docstring as truth.
+  **Branch hygiene, by whole-line coverage over the code trees** (not `git cherry`, which scores cherry-picked
+  content `+`, and not `git apply --reverse --check`, which needs context lines): `feature-ape3-background-sdk`
+  983/983 added lines on `main`; `feature-ape3-background-workers` 2786/2786; `feature-ape3-worker-runtime`
+  1453/1477 — and all 24 uncovered lines are the pre-integration spellings this plan's own entry records as
+  deleted (`WORKER_NAME_ENV`, the `TYPE_CHECKING` import of `WorkerSpec`/`declared_workers` from
+  `apps/background`, and the `sys.modules` stub of that module). **No unlanded content on any of the three.**
+  **Verdict: the atom is satisfiable and now railed.** Flip `APE-3` to done.

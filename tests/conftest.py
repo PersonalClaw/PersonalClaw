@@ -464,14 +464,25 @@ def _no_acp_provision(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.fixture(autouse=True)
-def _no_app_backends(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Never spawn (or orphan-reap) the user's REAL app backends from a test.
+def _no_app_child_processes(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Never spawn (or orphan-reap) the user's REAL app child processes from a test.
     Any test that reaches load_all_extensions() → start_enabled_app_backends()
     against the real config dir would otherwise launch backends for the user's
     installed apps — and its reaper killed the live gateway's backends once.
     Tests that exercise the backend lifecycle explicitly (test_app_api) call
-    the supervisor directly and are unaffected by this flag."""
+    the supervisor directly and are unaffected by this flag.
+
+    The SAME boot block also starts APE-3's app-WORKER watchdog, whose sweep spawns,
+    stops and PPID-reaps a second family of children. worker_runtime declares the
+    matching escape hatch and says of it "set by a harness that must not have app
+    workers spawned underneath it" — and nothing set it: the flag had exactly one
+    mention in the repo, its own definition. Latent only because no app on disk
+    declares `backgroundTasks` yet, so today's sweep finds nothing to spawn; the day
+    one does, an unflagged suite would drive the real home's workers from a daemon
+    thread that outlives the test that started it. test_app_worker_runtime drives the
+    sweep on purpose and clears this flag in its own fixture."""
     monkeypatch.setenv("PERSONALCLAW_SKIP_APP_BACKENDS", "1")
+    monkeypatch.setenv("PERSONALCLAW_SKIP_APP_WORKERS", "1")
 
 
 @pytest.fixture(autouse=True)
