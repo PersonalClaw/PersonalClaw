@@ -4277,12 +4277,13 @@
         {
           "id": "EA-4",
           "title": "Self-describing MCP control bridge \u2014 loopback FE semantic actions",
-          "status": "todo",
+          "status": "done",
           "scope": "\u00a74 (Dialect 3): random-port loopback bridge, control_bridge.json discovery file, typed self-describing action registry, server-side requiresConfirmation flow. Session 3 (bridge half).",
           "done_when": "Loopback-only (allow_remote-exempt) bridge on a random ephemeral port via its own aiohttp runner; control_bridge.json (0600, atomic_write, rewritten each boot, deleted on clean shutdown) carries {port,url,token_ref,schema_version,actions_digest}; action registry emits {name,params_schema,sideEffect,requiresConfirmation,description} for open_cockpit/read_transcript/list_automations/create_task/toggle_automation/run_trigger_dry/notify; confirm-flagged actions return {status:needs_confirmation,confirm_token} + DashboardState.notify, resolved by user in dashboard or `personalclaw inbound confirm <token>`; write actions call the same internal FE handlers (no parallel mutation path); no destructive actions in v1; every call audit-lined (Success Criterion 9).",
           "deps": [
             "EA-1"
-          ]
+          ],
+          "pr": 1971
         },
         {
           "id": "EA-5",
@@ -7623,11 +7624,6 @@
         "plan": "EA"
       },
       {
-        "id": "EA-4",
-        "title": "Self-describing MCP control bridge \u2014 loopback FE semantic actions",
-        "plan": "EA"
-      },
-      {
         "id": "EA-5",
         "title": "External-agent capture proxy (/capture/v1) + telemetry import",
         "plan": "EA"
@@ -9911,9 +9907,9 @@
         "code": "EA",
         "plan": "EXTERNAL-ACCESS",
         "total_atoms": 9,
-        "done": 2,
+        "done": 3,
         "in_progress": 0,
-        "todo": 7,
+        "todo": 6,
         "blocked": 0
       },
       {

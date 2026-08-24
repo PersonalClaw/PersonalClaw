@@ -1331,6 +1331,39 @@ async def start_dashboard(
 
     app.on_startup.append(_transports_startup)
 
+    async def _control_bridge_startup(app_: web.Application) -> None:
+        """Bind the loopback control bridge on its own random port (EXTERNAL-ACCESS §4).
+
+        Its OWN runner, not a route here: the dashboard's port is knowable and a control
+        surface on a knowable port is a port-scan away from being probed. A mount refusal
+        is normal (the surface is off by default) and must never block gateway startup —
+        so this swallows, logs, and leaves no discovery file behind.
+        """
+        from personalclaw.inbound import bridge as _bridge
+
+        try:
+            await _bridge.start(app_["state"])
+        except Exception:
+            logger.warning("control bridge failed to start", exc_info=True)
+            try:
+                _bridge.remove_discovery()
+            except Exception:
+                pass
+
+    app.on_startup.append(_control_bridge_startup)
+
+    async def _control_bridge_shutdown(app_: web.Application) -> None:
+        """Tear the bridge down and DELETE its discovery file: a file naming a dead
+        port is worse than no file, because a client trusts it and hangs."""
+        from personalclaw.inbound import bridge as _bridge
+
+        try:
+            await _bridge.stop()
+        except Exception:
+            logger.debug("control bridge shutdown failed", exc_info=True)
+
+    app.on_cleanup.append(_control_bridge_shutdown)
+
     async def _mcp_migrate_startup(app_: web.Application) -> None:
         """UT3: fold any legacy ``settings/mcp.json`` content into the canonical
         ``~/.personalclaw/mcp.json`` once, so the dual store can't re-diverge."""
