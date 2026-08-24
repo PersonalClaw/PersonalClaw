@@ -161,6 +161,26 @@ HTTP_ERROR_CODES: dict[str, str] = {
     "action_not_bound": "The calling client's bindings do not include this action.",
     "action_failed": "The control-bridge action raised while running.",
     "confirm_token_invalid": "The confirmation token is unknown, already used, or expired.",
+    # ── inbound MCP surface (inbound/mcp_http.py — MCP-READONLY-INBOUND §C2) ──
+    #
+    # Same reasoning as the bridge above, and the same conclusion: ADMISSION reuses the
+    # generic `not_found`/`service_unavailable`/`forbidden`/`unauthorized` rows, because a
+    # code naming this surface — or naming which of the three kill switches fired — hands a
+    # prober exactly what the 404 status is chosen to withhold. The rows below are the ones
+    # a caller who already got past admission needs in order to tell its own mistakes
+    # apart: each names a CAP the caller can respect or a method it can stop using, and
+    # none of them is a fact about the instance.
+    #
+    # `too_many_concurrent_requests` shares its 503 with `service_unavailable` and is a
+    # separate code on purpose: "you have too many in flight" is fixed by the client
+    # serialising its calls, "the instance is suspended" is fixed by waiting, and a client
+    # that cannot tell them apart will retry the wrong one forever.
+    "method_not_allowed": "The HTTP method is not supported on this route.",
+    "rate_limited": "The caller exceeded its request rate cap; see Retry-After.",
+    "too_many_concurrent_requests": (
+        "The caller already has the maximum number of requests in flight."
+    ),
+    "request_too_large": "The request body exceeds this surface's size cap.",
     # ── desktop computer use (handlers/computer_use.py) ──
     # Both rows additionally carry agent_code/what/why/fix INSIDE the `error` object: the
     # AgentError the dispatch composed has to reach the model unchanged, and the wire code is

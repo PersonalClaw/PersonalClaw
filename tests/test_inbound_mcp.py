@@ -328,6 +328,169 @@ class TestTransport:
             await client.close()
 
 
+# ── The wire error envelope on every HTTP-level refusal ──
+
+
+class TestRefusalEnvelope:
+    """Every HTTP-level refusal answers the ONE wire envelope, with a registered code.
+
+    `AGENTS.md` §"Shared conventions" → **Error envelope (HTTP)** declares
+    ``{"error": {"code", "message"}}``. This surface shipped seven flat
+    ``{"error": "<prose>"}`` refusals instead, and they were INVISIBLE to
+    `tests/test_wire_error_envelope_census.py` because they went through the local
+    ``_json``/``_done`` helpers — at the ``json_response`` line the payload is a variable,
+    so the scanner could not read its shape. The census now follows wrapper indirection
+    and these tests are the behavioural half: the census proves the SHAPE is emitted from
+    a literal code, and these prove what a client actually receives off the wire.
+
+    Deliberately asserts the code, NOT the message. The code is the append-only surface a
+    client branches on; the message is free to be reworded, and a test that pinned it
+    would re-create the very coupling the envelope exists to remove.
+    """
+
+    def _assert_envelope(self, body, headers, expected_code):
+        from personalclaw.http_errors import HTTP_ERROR_CODES
+
+        assert isinstance(body.get("error"), dict), (
+            f"refusal answered the FLAT envelope {body!r} — a client gets no code to "
+            f"branch on. Emit it with personalclaw.http_errors.json_error."
+        )
+        assert body["error"]["code"] == expected_code, body
+        assert body["error"]["message"], "a code with no human sentence beside it"
+        assert expected_code in HTTP_ERROR_CODES, (
+            f"{expected_code!r} is emitted on the wire but absent from the append-only "
+            f"registry — tests/test_http_error_codes_append_only.py owns that rail."
+        )
+        # The refusals must be as uncacheable as the answers: `_json` set no-store on
+        # every response, and routing them through `json_error` must not quietly drop it.
+        assert headers["Cache-Control"] == "no-store"
+
+    @pytest.mark.asyncio
+    async def test_a_missing_bearer_is_a_coded_401(self, monkeypatch):
+        _enable(monkeypatch)
+        auth.create_surface_token("mcp")
+        client = await _client(monkeypatch)
+        try:
+            resp = await client.post("/mcp", data="{}")
+            assert resp.status == 401
+            self._assert_envelope(await resp.json(), resp.headers, "unauthorized")
+        finally:
+            await client.close()
+
+    @pytest.mark.asyncio
+    async def test_get_is_a_coded_405(self, monkeypatch):
+        _enable(monkeypatch)
+        token = auth.create_surface_token("mcp")
+        client = await _client(monkeypatch)
+        try:
+            resp = await client.get("/mcp", headers={"Authorization": f"Bearer {token}"})
+            assert resp.status == 405
+            body = await resp.json()
+            self._assert_envelope(body, resp.headers, "method_not_allowed")
+            # The one refusal that keeps a bespoke message: it names the fix (use POST),
+            # which a generic "method not supported" cannot. It leaks nothing a mounted
+            # route did not already confirm — a disabled surface is never mounted at all.
+            assert "POST" in body["error"]["message"]
+        finally:
+            await client.close()
+
+    @pytest.mark.asyncio
+    async def test_a_disabled_surface_is_a_coded_404_that_names_nothing(self, monkeypatch):
+        """The generic-code requirement, as an assertion rather than a comment.
+
+        `gate.admission_problem` answers 404 so a switched-off surface does not confirm
+        its own existence. A code or message naming this surface, or naming which kill
+        switch fired, would hand back exactly what the status withholds — so the envelope
+        is checked for that leak, not merely for being structured.
+        """
+        cfg = _enable(monkeypatch)
+        token = auth.create_surface_token("mcp")
+        client = await _client(monkeypatch)
+        try:
+            cfg.external_access.mcp.enabled = False
+            resp = await _rpc(client, "initialize", token=token)
+            assert resp.status == 404
+            body = await resp.json()
+            self._assert_envelope(body, resp.headers, "not_found")
+            served = json.dumps(body).lower()
+            for leak in ("mcp", "disabled", "kill", "switch", "external_access"):
+                assert leak not in served, (
+                    f"the 404 body names {leak!r} ({body!r}), which tells a prober the "
+                    f"surface exists and is merely switched off"
+                )
+        finally:
+            await client.close()
+
+    @pytest.mark.asyncio
+    async def test_an_oversized_body_is_a_coded_413(self, monkeypatch):
+        _enable(monkeypatch)
+        token = auth.create_surface_token("mcp")
+        client = await _client(monkeypatch)
+        try:
+            resp = await client.post(
+                "/mcp",
+                data=json.dumps({"pad": "x" * (caps_mod.DEFAULT_CAPS.body_bytes + 1024)}),
+                headers={"Authorization": f"Bearer {token}"},
+            )
+            assert resp.status == 413
+            self._assert_envelope(await resp.json(), resp.headers, "request_too_large")
+        finally:
+            await client.close()
+
+    @pytest.mark.asyncio
+    async def test_the_rate_cap_is_a_coded_429_that_keeps_its_retry_after(self, monkeypatch):
+        """The 429 is the site most at risk in this conversion.
+
+        It was the one refusal that did NOT go through `_done`: it inlined its own
+        `json_response` because it needed a `Retry-After` header the wrapper could not
+        pass. Converting it moved both the body and the header, so both are asserted —
+        a structured envelope served without Retry-After would be a regression that the
+        census, which reads shapes and not headers, cannot see.
+        """
+        _enable(monkeypatch)
+        token = auth.create_surface_token("mcp")
+        client = await _client(monkeypatch)
+        try:
+            for _ in range(caps_mod.DEFAULT_CAPS.burst + 3):
+                await _rpc(client, "tools/list", token=token)
+            resp = await _rpc(client, "tools/list", token=token)
+            assert resp.status == 429
+            self._assert_envelope(await resp.json(), resp.headers, "rate_limited")
+            assert int(resp.headers["Retry-After"]) >= 1
+        finally:
+            await client.close()
+
+    @pytest.mark.asyncio
+    async def test_the_envelope_rail_can_fail(self, monkeypatch):
+        """Vacuity floor for the five above.
+
+        `_assert_envelope` would pass on any structured body, so on its own it cannot
+        distinguish "the conversion landed" from "this helper accepts anything". Feeding
+        it the exact FLAT shape this change removed proves it rejects one — and a
+        successful 200 proves the surface is reachable at all, so a red above is the
+        envelope and not a dead fixture.
+        """
+        _enable(monkeypatch)
+        token = auth.create_surface_token("mcp")
+        client = await _client(monkeypatch)
+        try:
+            assert (await _rpc(client, "initialize", token=token)).status == 200
+        finally:
+            await client.close()
+
+        with pytest.raises(AssertionError, match="FLAT envelope"):
+            self._assert_envelope(
+                {"error": "unauthorized"}, {"Cache-Control": "no-store"}, "unauthorized"
+            )
+        # ...and an unregistered code is caught even when the shape is right.
+        with pytest.raises(AssertionError, match="append-only registry"):
+            self._assert_envelope(
+                {"error": {"code": "no_such_code_exists", "message": "x"}},
+                {"Cache-Control": "no-store"},
+                "no_such_code_exists",
+            )
+
+
 # ── Peer policy ──
 
 

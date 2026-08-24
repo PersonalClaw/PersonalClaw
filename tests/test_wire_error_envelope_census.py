@@ -30,7 +30,9 @@ envelopes that this census scored at **zero**, and the companion rail
 (:func:`test_no_module_local_error_helper_came_back`) missed them too because it
 matches helper NAMES — ``_err``/``_error``/``_bad_request`` — and the helper was
 called ``_json``. A name-matched denylist is not a control; renaming the helper
-defeats it.
+defeats it. `inbound/mcp_http.py` shipped **seven** more behind the same blindness,
+two hops deep (``_done``, a closure, forwarding into module-level ``_json``); both
+modules are converted now and the wrapper ceiling is 0.
 
 So the scanner now does two things instead:
 
@@ -91,14 +93,22 @@ FLAT_BASELINE = 1507
 
 #: Flat sites reached through a WRAPPER (see the module docstring). A CEILING, measured
 #: on this tree the moment the scanner could see them at all. The first measurement was
-#: **18** — eleven in ``inbound/bridge.py`` and seven in ``inbound/mcp_http.py``; the
+#: **18** — eleven in ``inbound/bridge.py`` and seven in ``inbound/mcp_http.py``. The
 #: bridge's eleven were converted to :func:`~personalclaw.http_errors.json_error` in the
-#: same change that widened the scanner, which is why the baseline is 7 and not 18.
+#: same change that widened the scanner (baseline 18 → 7); `mcp_http`'s seven, routed
+#: through its ``_json``/``_done`` helpers, were converted in the follow-up atom the
+#: 7 was left visible for. Hence **0**.
 #:
-#: The seven that remain are `mcp_http`'s HTTP-level refusals routed through its ``_json``
-#: and ``_done`` helpers. They are per-site work for a later atom; what matters is that
-#: they are now a counted, shrinking budget instead of invisible.
-FLAT_VIA_WRAPPER_BASELINE = 7
+#: Zero is the strongest form of this ceiling and the most fragile to read: ``0 <= 0``
+#: also passes when the detector has stopped working. Three things stop that from being
+#: indistinguishable from success —
+#: :func:`test_the_wrapper_detector_still_fires_on_the_real_tree` (the tree still HAS
+#: wrappers), :func:`test_a_renamed_helper_cannot_escape_the_wrapper_scan` (shape, not
+#: name), and :func:`test_a_flat_envelope_planted_back_into_mcp_http_is_counted`, which
+#: re-plants one of the converted envelopes into the real module's real source and
+#: asserts this bucket counts it. Do not delete that last one to make this ceiling
+#: cheaper; it is the only thing that makes the zero mean anything.
+FLAT_VIA_WRAPPER_BASELINE = 0
 
 #: The honest single number going forward: no client cares which spelling of
 #: indirection carried the envelope that gave it no code to branch on.
@@ -116,7 +126,14 @@ FLAT_TOTAL_BASELINE = FLAT_BASELINE + FLAT_VIA_WRAPPER_BASELINE
 #: A new unresolvable site reds this, which is the point: a new flat envelope must now
 #: either resolve (and hit a flat ceiling) or fail to resolve (and hit this one). There
 #: is no third option any more.
-UNRESOLVED_PAYLOAD_CEILING = 204
+#:
+#: 204 → **202**: converting `mcp_http`'s refusals also retired two rows that were hiding
+#: HERE rather than in the wrapper bucket — an admission refusal built by a ternary into a
+#: local (``refusal``) and the rate-limit body built into a local (``payload``). Both were
+#: flat envelopes; neither was visible as one, because the scanner correctly refuses to
+#: read a variable's shape. A ceiling that falls when work lands is the ratchet working,
+#: so it is lowered rather than left slack.
+UNRESOLVED_PAYLOAD_CEILING = 202
 
 #: What the append-only rail must inspect. Derived from the census so a matcher that
 #: stops matching cannot read as clean: if the rail's scan finds fewer emitter sites
@@ -498,6 +515,62 @@ def test_a_renamed_helper_cannot_escape_the_wrapper_scan():
     )
 
 
+#: The line the plant below swaps out. A real, converted refusal in `mcp_http.handle_mcp`.
+_MCP_HTTP = SRC / "inbound" / "mcp_http.py"
+_CONVERTED_LINE = (
+    '        return _refuse(json_error("not_found", status=404, headers=_NO_STORE), '
+    "refused=problem)"
+)
+_PLANTED_LINE = '        return _done(404, {"error": "planted flat envelope"})'
+
+
+def test_a_flat_envelope_planted_back_into_mcp_http_is_counted():
+    """The vacuity floor for ``FLAT_VIA_WRAPPER_BASELINE = 0``.
+
+    A ceiling of zero is satisfied by a working detector AND by a detector that has
+    stopped detecting, and those are the two states this whole census exists to tell
+    apart. :func:`test_the_scanner_follows_a_wrapper` proves the mechanism against source
+    written in this file; this proves it against the source that actually ships, through
+    the wrapper shape that actually hid the sites — ``_done``, a CLOSURE nested inside
+    ``handle_mcp``, forwarding into module-level ``_json``, two hops from
+    ``json_response``. A synthetic module cannot vouch for that, because the reason the
+    original scanner missed these was a property of the real nesting.
+
+    Nothing is written to disk: the plant is a string swap on source read into memory.
+    """
+    real = _MCP_HTTP.read_text(encoding="utf-8")
+
+    # 1) The module as it ships scores zero — so a red below is the plant, not the tree.
+    baseline = Census()
+    scan_source(real, "inbound/mcp_http.py", baseline)
+    assert not baseline.flat_via_wrapper, (
+        "mcp_http.py already ships a wrapper-routed flat envelope, so this test cannot "
+        f"attribute the plant: {baseline.flat_via_wrapper}"
+    )
+
+    # 2) The plant APPLIED. A swap that silently matched nothing would make step 3 a
+    #    tautology about unmodified source — the exact shape of a vacuous guard.
+    planted = real.replace(_CONVERTED_LINE, _PLANTED_LINE, 1)
+    assert planted != real, (
+        f"the planted-regression swap matched nothing in {_MCP_HTTP.name}; _CONVERTED_LINE "
+        f"has drifted from the shipped source, so this floor is measuring nothing. "
+        f"Re-anchor it on a live `_refuse(json_error(...))` line."
+    )
+    assert _PLANTED_LINE in planted, "the swap applied but the plant is not in the source"
+
+    # 3) The detector sees it — through two wrapper hops, in the real module.
+    census = Census()
+    scan_source(planted, "inbound/mcp_http.py", census)
+    assert len(census.flat_via_wrapper) == 1, (
+        "a flat envelope routed through mcp_http's own `_done` wrapper was NOT counted. "
+        f"FLAT_VIA_WRAPPER_BASELINE = {FLAT_VIA_WRAPPER_BASELINE} is therefore measuring "
+        f"the detector, not the code. Buckets: flat_via_wrapper="
+        f"{census.flat_via_wrapper}, flat={len(census.flat)}, "
+        f"unresolved={len(census.unresolved)}"
+    )
+    assert not census.flat, "the planted site was miscounted as a DIRECT flat envelope"
+
+
 def test_the_wrapper_detector_still_fires_on_the_real_tree():
     """Vacuity anchor for the two wrapper ceilings below.
 
@@ -544,8 +617,11 @@ def test_the_flat_population_never_grows():
 def test_the_wrapper_routed_flat_population_never_grows():
     """A local wrapper must not become the place flat envelopes go to hide.
 
-    Eighteen sites were here the moment the scanner could see them; eleven (all of
-    `inbound/bridge.py`'s) were converted in that same change. The rest is a budget.
+    Eighteen sites were here the moment the scanner could see them: eleven in
+    `inbound/bridge.py`, converted in that same change, and seven in
+    `inbound/mcp_http.py`, converted in the follow-up. The budget is now ZERO, so this is
+    no longer a shrinking allowance but a closed door — and its meaning rests entirely on
+    :func:`test_a_flat_envelope_planted_back_into_mcp_http_is_counted`.
     """
     census = scan()
     assert len(census.flat_via_wrapper) <= FLAT_VIA_WRAPPER_BASELINE, (
