@@ -4,6 +4,7 @@ import asyncio
 import json
 import logging
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 
 from personalclaw.acp import permission_authority as acp_permission_authority
@@ -2535,17 +2536,19 @@ async def run_chat(
         #
         # The flag tracks a WIRED DRAIN SOURCE, never a declared intention. That is
         # the invariant that makes the silent drop impossible: `steer_drains` is True
-        # only where a callable now exists to pull the deque. An ACP provider may
-        # declare `steer_capable()` (its dialect's `supports_mid_turn_prompt`), but
-        # declaring capability is NECESSARY AND NOT SUFFICIENT — ACP exposes no
-        # tool-boundary hook to drain AT, so until that delivery path is built a
-        # capable dialect still routes to the visible queue. Flipping the dialect flag
-        # alone must not be able to resurrect the drop.
+        # only where a callable now exists to pull the deque. Both runtimes now expose
+        # the seam — the native loop drains at its model boundaries, an ACP session at
+        # its TOOL boundaries (PR2-10) — so the wiring gate is the seam's own ANSWER,
+        # not `hasattr`. An ACP dialect that does not declare `supports_mid_turn_prompt`
+        # refuses and returns False, and a False here still routes the message to the
+        # visible queue. Declaring capability is what arms the drain; a declaration with
+        # no armed drain must never mark this session steerable.
         _steerable = False
         if hasattr(client, "set_steer_source"):
             try:
-                client.set_steer_source(lambda: state.sessions.drain_steers(session_key))
-                _steerable = True
+                _steerable = bool(
+                    client.set_steer_source(lambda: state.sessions.drain_steers(session_key))
+                )
             except Exception:
                 logger.debug("steer source wiring skipped", exc_info=True)
         state.sessions.set_steer_drains(session_key, _steerable)
@@ -4288,10 +4291,52 @@ async def run_chat(
                 logger.debug("Stream cleanup failed", exc_info=True)
         if _acquired:
             # The turn is over: the runtime is no longer pulling, so a steer sent
-            # from here on must queue rather than buffer (S6.1). Clearing also drops
-            # anything the loop never got to, which is preferable to it surfacing
-            # inside an unrelated later turn.
-            state.sessions.set_steer_drains(session_key, False)
+            # from here on must queue rather than buffer (S6.1). The buffer is emptied
+            # here too — a steer aimed at THIS answer must not surface inside an
+            # unrelated later turn — but what comes back is not discarded (PR2-10).
+            _stranded = list(state.sessions.set_steer_drains(session_key, False))
+            # ...plus anything an ACP turn pulled but could not write to the CLI (a
+            # rejected frame, a dead process, the per-turn cap). Both feeders end up on
+            # ONE visible path, so "undeliverable" has a single meaning for every runtime.
+            _undelivered = getattr(client, "undelivered_steers", None)
+            if callable(_undelivered):
+                try:
+                    _stranded.extend(t for t in (_undelivered() or []) if t)
+                except Exception:
+                    logger.debug("undelivered steer read failed", exc_info=True)
+            # A steer the user was told was accepted must not evaporate. Requeue it, which
+            # is exactly what `mid_turn_policy: steer` already promises on a non-capable
+            # runtime ("fall back to queue — never drop, never cancel"): the drain below
+            # takes it as the very next turn, and the `queue_push` echo puts it in the
+            # composer's queue strip where it can be read and cancelled. No new event kind
+            # — the frontend filters `activity_event {kind:"status"}` as noise, so a status
+            # broadcast here would have been another invisible "fix".
+            for _text in _stranded:
+                try:
+                    _qid = session.queue_append(_text)
+                except Exception:
+                    logger.warning("failed to requeue an undelivered steer", exc_info=True)
+                    continue
+                _c, _ = redact_exfiltration_urls(_text)
+                _c, _ = redact_credentials(_c)
+                state.broadcast_ws(
+                    "queue_push",
+                    {
+                        "session": session.key,
+                        "content": _redact_for_display(_c),
+                        "ts": datetime.now(timezone.utc).isoformat(),
+                        "queue_id": _qid,
+                    },
+                )
+                # WARNING, not info: the HTTP caller was already told `{"steered": true}`,
+                # so this is a promise the turn did not keep. The default gateway log level
+                # is WARNING (measured: an isolated run recorded zero INFO lines), and a
+                # broken promise nobody can see in the log is the same defect one layer up.
+                logger.warning(
+                    "steer was NOT delivered to the running turn — requeued for the next one "
+                    "(session=%s)",
+                    session_key,
+                )
             if needs_session_reset:
                 try:
                     await state.sessions.reset(session_key)

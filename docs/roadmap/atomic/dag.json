@@ -902,7 +902,7 @@
         {
           "id": "PR2-10",
           "title": "ACP mid-turn steer delivery path (\u00a76.2 remainder)",
-          "status": "todo",
+          "status": "done",
           "scope": "Execution log Session 6 S6.2 (ACP capability gate) + \u00a76 not-done ACP delivery",
           "done_when": "an ACP tool-boundary drain seam is built so a dialect flipping supports_mid_turn_prompt actually delivers a mid-turn steer instead of silently dropping it, validated against an authenticated ACP CLI.",
           "deps": [
@@ -7838,11 +7838,6 @@
         "plan": "PR2"
       },
       {
-        "id": "PR2-10",
-        "title": "ACP mid-turn steer delivery path (\u00a76.2 remainder)",
-        "plan": "PR2"
-      },
-      {
         "id": "PUBL-10",
         "title": "Publicize once the DISCOVERABILITY-LAUNCH gate is green",
         "plan": "PUBL"
@@ -9633,9 +9628,9 @@
         "code": "PR2",
         "plan": "PLATFORM-RESILIENCE",
         "total_atoms": 11,
-        "done": 7,
+        "done": 8,
         "in_progress": 0,
-        "todo": 4,
+        "todo": 3,
         "blocked": 0
       },
       {

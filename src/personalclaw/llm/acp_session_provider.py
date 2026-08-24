@@ -16,7 +16,7 @@ there is no second translation path.
 from __future__ import annotations
 
 import logging
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -158,6 +158,19 @@ class AcpSessionProvider(AcpToolOutcomesMixin, AgentProvider):
 
     async def reject_tool(self, request_id: str | int) -> None:
         await self._session.reject_tool(request_id)
+
+    # ── mid-turn steering (PR2-10) ──────────────────────────────────────────────
+    # The pooled provider gets the seam for the same reason it gets every other session
+    # method: it wraps the SAME AcpSession the N=1 client does, so leaving it out would make
+    # steering silently depend on which ACP path a session happened to open on.
+    def steer_capable(self) -> bool:
+        return self._session.steer_capable()
+
+    def set_steer_source(self, pull: "Callable[[], list[str]] | None") -> bool:
+        return self._session.set_steer_source(pull)
+
+    def undelivered_steers(self) -> list[str]:
+        return self._session.undelivered_steers()
 
     # ── status / control ────────────────────────────────────────────────────────
     def context_usage_pct(self) -> float | None:

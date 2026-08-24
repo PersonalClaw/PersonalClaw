@@ -17,7 +17,7 @@ spawned agent in its initialize response (R5.4).
 
 import asyncio
 import logging
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -533,6 +533,22 @@ class AcpAgentProvider(AcpToolOutcomesMixin, ModelProvider, AgentProvider):
             return bool(get_dialect(self._dialect_id).supports_mid_turn_prompt)
         except Exception:  # pragma: no cover — defensive; a bad id yields the default
             return False
+
+    def set_steer_source(self, pull: "Callable[[], list[str]] | None") -> bool:
+        """Arm the ACP tool-boundary steer drain (PR2-10). Returns whether a drain is now
+        armed — the dispatcher records THAT and never the declaration.
+
+        This is the method whose absence made ``steer_capable()`` inert: a dialect could
+        declare mid-turn support and the dispatcher's ``hasattr(client, "set_steer_source")``
+        gate still found nothing to wire, so the steer routed to the queue no matter what the
+        dialect said. Refusal now comes from the seam itself (a non-declaring dialect answers
+        False), not from the method being missing."""
+        return self._client.set_steer_source(pull)
+
+    def undelivered_steers(self) -> list[str]:
+        """Steers this turn pulled but never wrote to the CLI (empty on the happy path).
+        Read by the dispatcher at turn end so an undeliverable steer is visible."""
+        return self._client.undelivered_steers()
 
     async def start(self) -> None:
         """Spawn the configured command and run the ACP ``initialize`` handshake.
