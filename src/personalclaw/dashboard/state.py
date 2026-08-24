@@ -259,6 +259,7 @@ class _ChatSession:
         "_tab_id",
         "_disk_older_count",
         "_file_changes",
+        "_declared_file_change_idx",
         "_memory_citations",
         "_side",
         "_extra_tool_roots",
@@ -442,6 +443,13 @@ class _ChatSession:
         # Per-turn file-change accumulator [{path, before, after}], reset at the
         # top of each run_chat and flushed onto the assistant message's meta at turn end.
         self._file_changes: list[dict[str, str]] = []
+        # path -> its index in `_file_changes`, for chips a BACKEND declared rather than
+        # ones the host inferred (ACP-AGENT-PARITY §2.5). A streaming adapter re-declares
+        # the same edit as its arguments fill in, and the flush's earliest-before rule
+        # would then pin a partial first declaration; this lets the newest one replace it
+        # in place. Reset alongside `_file_changes` — an index into an emptied list is
+        # what would overwrite slot 0 of the next turn.
+        self._declared_file_change_idx: dict[str, int] = {}
         # Episodic memory citations [{n, id, preview}] surfaced into THIS turn's prompt
         # (MEMORY-GRAPH-AND-VAULT §5.4). Reset per turn, populated from the assembled
         # context's metadata, and attached to each finalized assistant message's meta so

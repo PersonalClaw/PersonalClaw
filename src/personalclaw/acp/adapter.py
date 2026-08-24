@@ -25,6 +25,11 @@ def acp_event_to_agent_event(e: AcpEvent) -> AgentEvent:
         request_id=e.request_id,
         options=e.options,
         tool_input=e.tool_input,
+        # §2.5 gap 7. The string above is what the card PRINTS; this is what lets it
+        # render schema-driven fields instead. Field-for-field means all fields — the
+        # `tool_meta` note below is the same lesson learned once already.
+        tool_input_obj=e.tool_input_obj,
+        file_change=e.file_change,
         tool_output=e.tool_output,
         input_tokens=e.input_tokens,
         output_tokens=e.output_tokens,

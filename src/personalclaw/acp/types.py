@@ -173,6 +173,23 @@ class AcpEvent:
     request_id: str | int = ""
     options: list[dict[str, str]] = field(default_factory=list)
     tool_input: str = ""
+    #: The SAME input as :attr:`tool_input`, kept structured (ACP-AGENT-PARITY §2.5
+    #: gap 7). ``translate.py`` receives a real ``rawInput`` object and used to
+    #: ``json.dumps`` it away, so ``chat_runner``'s schema-driven field renderer
+    #: (``_redact_tool_input_obj``) saw a ``str``, returned ``None``, and every ACP
+    #: tool card fell back to the flat string preview no matter how well the CLI
+    #: described its call. ``None`` when the frame carried no object — an ACP frame
+    #: with a bare string ``rawInput`` must NOT be dressed up as a one-key dict.
+    tool_input_obj: dict[str, Any] | None = None
+    #: A file edit the frame DECLARED, as ``{"path", "before", "after"}``
+    #: (ACP-AGENT-PARITY §2.5 gap 7). The native file-change chip is driven off a name
+    #: set (``_WRITE_FILE_TOOLS``) plus a disk read plus arg-shape knowledge, none of
+    #: which transfers to a CLI whose edit tool is named and shaped however it likes.
+    #: An ACP ``diff`` content block (or a ``strReplace``-style ``rawInput``) already
+    #: states old text, new text and path outright, so the chip needs no inference and
+    #: no filesystem access. ``None`` when the frame declared no edit — an absent chip
+    #: must never be manufactured from a tool NAME that merely sounds like a write.
+    file_change: dict[str, str] | None = None
     tool_output: str = ""
     input_tokens: int = 0
     output_tokens: int = 0
