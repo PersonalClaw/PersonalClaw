@@ -214,3 +214,81 @@ Stumble detector at the after-turn seam (only when skills were loaded): correcti
   exist, and `ES-2` (which depends on `ES-1`) is already `✅`. The genuinely missing piece is the
   production caller (G5), not the machinery. Flagged for the owner; the header/row was left alone
   because this atom does not own the ES plan.
+
+---
+
+## Execution log — LV-1 (S1 end-to-end visible slice)
+
+- **T1.1 CALLER MAP (recorded before any change, measured on `8b4ca7b0`).**
+  `run_skill_ladder_review` (`after_turn_review.py:509`) had **exactly one production caller**:
+  `dashboard/chat_runner.py:360`, inside `_maybe_skill_ladder_review`, gated on
+  `learning_decision_for_turn(...)` plus its own `cfg.skill_ladder` flag and scheduled off
+  `state._background_tasks`. **Loop end-of-run was NOT covered.** The seam is
+  `loop/watchdog.py:401 _complete`, which already calls `_capture_loop_end` (`:464`, PP-5) — that
+  mines lessons through `LearningGate(Cadence.RUN_END)` and never runs the ladder or enqueues a
+  skill proposal. So every unattended loop — the runs that do the most work and re-derive the most
+  reusable procedure — finished without proposing anything. Use counting: `context.py:1768`
+  `SkillUsageStore().record_uses(skill_alloc.loaded)` in `build_message`'s `if skill_requests:`
+  branch (a REFUSED skill is deliberately uncounted), plus `mcp_core.py:910`/`:961` `record_use`
+  for skill tool reads. Install path: `skills/proposals.py:382 accept()` → `create_auto_skill` for
+  `kind="new"`, sidecar overlay when a `refine_target` is still live.
+- **T1.2 DONE.** `_complete` now calls `_schedule_loop_end_ladder(loop_id)` immediately after
+  `_capture_loop_end` and **before** the `"complete"` publish — a sibling of the PP-5 hook, not a
+  change to it. The sync scheduler owns the gate, the once-guard and the candidate-skill list and
+  hands only the awaitable body to `state._background_tasks`, so the terminal status write and the
+  publish never wait on a model call (falsified: converting the schedule to an `await` made the
+  hanging-review fixture hit `Timeout (>30s)`). Gate order mirrors the chat path — `decision.allowed`
+  and `cfg.skill_ladder` are answered before any run text is composed, and the strongest observable
+  form of that ordering is asserted: `_loop_outcome_text` is never called when the gate denies.
+  `loop.task` becomes `user_message`, the deliverable document (else `loop.summary`) becomes
+  `assistant_text`, both capped at `_LADDER_TEXT_LIMIT = 6000` — matching `loop.finding_content`'s
+  existing ceiling rather than inventing a number, because a monitor loop's `MONITOR_LOG.md` is
+  unbounded and this text becomes a prompt. Env-failure hygiene needed no new predicate: passing the
+  loop's real texts routes through `_ladder_pass`'s existing `is_environment_failure_claim` guard, and
+  the env-failure fixture is asserted on the **queue** (a verdict marker reading `env_failure_claim`
+  while a proposal sat in the queue would pass a verdict-only assertion).
+  `_deliverable_file(loop)` was extracted from `_register_deliverable_artifact` so the workspace-first
+  deliverable resolution exists once and both consumers get the same answer.
+- **MEASURED — the once-per-run guard is load-bearing, not defensive.** `store.update_status`'s
+  transition guard is `if current in TERMINAL_STATUSES and new_status != current`
+  (`loop/store.py:445`), so `COMPLETE → COMPLETE` is **permitted** and `_complete` genuinely re-runs
+  end to end. The guard is a per-instance `self._ladder_done: set[str]`, and a test pins the premise
+  (`COMPLETE → COMPLETE` is reachable) so the guard cannot quietly become dead code; deleting the
+  guard reds with `assert 2 == 1`.
+- **T1.3 DONE — and the finding is that nothing was missing.** The accept→surface→use loop already
+  closed on `main`: `accept()` → `create_auto_skill` writes `auto/<slug>/SKILL.md`;
+  `ContextBuilder.build_message` → `skills.get_surfaced_skills(text)` (`loader.py:1004` →
+  `surface_skills`) returns it on a matching prompt; `load_skill` per hit → `allocate_skills` inlines
+  the body; `context.py:1768` counts the use. The test passed on its FIRST run with no production
+  edit — that is the measurement. What was genuinely missing was a test *crossing* the four links:
+  proposals, surfacing and usage each had their own suite, but nothing proved they compose. It drives
+  `build_message` rather than `surface_skills`/`get_surfaced_skills` in isolation because
+  `record_uses` is written **only** on that path — a surfacing-only test would pass with the counter
+  entirely unwired. One long-lived `ContextBuilder` is built *before* the proposal and used for both
+  turns (how the gateway holds it), which makes the pre-accept turn a real vacuity floor rather than a
+  comparison between two loaders, and `progressive_disclosure_threshold` is pinned to 8: above the
+  threshold the turn injects an index only and deliberately records no use, so a test drifting over it
+  would have gone silently vacuous on the counter leg.
+- **V1 OBSERVED — the full arc, in a throwaway fixture home, no model called.**
+  `run ends → ladder fires → exactly one proposal (verdict `filed`) → approve → repeat the task →
+  `[Skill: auto/release-flow]` in the assembled prompt with its procedure inlined → use recorded`,
+  with the live stores inspected between every step. **Propose-don't-write held at each inspection:**
+  after the ladder filed its proposal the `auto/` dir was still absent, the loader still did not know
+  the skill, the same prompt still surfaced nothing and no use was recorded — only the accept installed
+  anything, and exactly one `auto/` skill existed at the end. The second matching turn incremented the
+  counter to 2, so it accumulates rather than latching at "seen once". The operator's real home was
+  byte-listing-identical before and after.
+- **Gate:** `make lint` green (black 2009 files, isort, flake8, mypy — no issues in 992 source files)
+  and **181 passed** across `test_lv1_loop_end_ladder.py` (24), `test_lv1_accept_surface_use.py` (1),
+  `test_loop_watchdog.py`, `test_after_turn_review.py`, `test_skill_ladder_review.py`,
+  `test_skill_proposals.py`, `test_skill_usage.py`, `test_skill_surfacing.py`,
+  `test_skill_allocation.py` and `test_skill_progressive_disclosure.py`, re-run on the combined tip
+  rather than taken on report. Probe sweep: 16 `FALSIFICATION|if False and|# PROBE` hits, **identical
+  count on the base commit** and none in the new files — the ~13 the brief expected was stale, so the
+  count was confirmed against `8b4ca7b0` instead of assumed.
+- **DISCOVERY (adjacent, not acted on) — the S2 chip has no channel yet.** `LV-2` will need the
+  `used_skills` meta on the existing turn/run events; the ladder path already receives
+  `loaded_skills`, but the runner does not forward the ALLOCATED set (`skill_alloc.loaded`, the same
+  list `record_uses` consumes) to the frontend. That list is the honest input for "used N skills you
+  approved" — the candidate list the ladder gets is every indexed skill, not the ones that reached
+  the turn, and plumbing the wrong one would ship an inflated count.
