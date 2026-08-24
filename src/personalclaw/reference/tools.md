@@ -592,6 +592,176 @@ Schedule YOURSELF to do something REPEATEDLY on a cadence — 'every weekday at 
 }
 ```
 
+## personalclaw-computer-use
+
+### `computer_click`
+
+Activate an element by index. The default performs an accessibility press, which moves no pointer at all. The coordinate methods must be named explicitly and are audited separately; 'auto' never resolves onto them.
+
+**Response type:** `computer_use.click.result`
+
+**Error codes:** `ERR_COMPUTER_USE_DISABLED`, `ERR_COMPUTER_USE_APP_NOT_ALLOWED`, `ERR_COMPUTER_USE_STALE_INDEX`, `ERR_COMPUTER_USE_BAD_ARGUMENT`, `ERR_COMPUTER_USE_DRIVER_UNAVAILABLE`
+
+**Safety:** requires approval
+
+**Parameters:**
+- `app` (string, optional) — Coordinate methods only: target app.
+- `click_method` (string, optional) — auto (default): accessibility press on the element, no pointer motion. located: post a click to the target process at x,y without moving the real cursor. global: warp the operator's real cursor and click — the only method that touches their physical pointer, so it must be asked for by name.
+- `element_index` (integer, required) — Zero-based index of the element within that snapshot.
+- `snapshot_id` (string, required) — The id returned by the computer_snapshot call that found the element.
+- `x` (number, optional) — Coordinate methods only.
+- `y` (number, optional) — Coordinate methods only.
+
+**Example — Activate a control by index, with no pointer motion:**
+
+```json
+{
+  "element_index": 4,
+  "snapshot_id": "9f2c1b0a4d7e5613"
+}
+```
+
+### `computer_list_apps`
+
+List the desktop applications this machine will let you drive. Requires the operator to have armed desktop computer use out-of-band; refuses with the exact enable step otherwise. Reports how many running applications were withheld because the operator did not name them.
+
+**Response type:** `computer_use.list_apps.result`
+
+**Error codes:** `ERR_COMPUTER_USE_DISABLED`, `ERR_COMPUTER_USE_DRIVER_UNAVAILABLE`
+
+**Safety:** requires approval
+
+**Parameters:**
+- _(no parameters)_
+
+**Example — See which applications you are allowed to drive:**
+
+```json
+{}
+```
+
+### `computer_perform_action`
+
+Perform a named accessibility action the element advertises (for controls a press does not cover). The action must be one the snapshot listed for that element.
+
+**Response type:** `computer_use.perform_action.result`
+
+**Error codes:** `ERR_COMPUTER_USE_DISABLED`, `ERR_COMPUTER_USE_APP_NOT_ALLOWED`, `ERR_COMPUTER_USE_STALE_INDEX`, `ERR_COMPUTER_USE_BAD_ARGUMENT`, `ERR_COMPUTER_USE_DRIVER_UNAVAILABLE`
+
+**Safety:** requires approval
+
+**Parameters:**
+- `action` (string, required) — An action name from the element's own 'actions' list.
+- `element_index` (integer, required) — Zero-based index of the element within that snapshot.
+- `snapshot_id` (string, required) — The id returned by the computer_snapshot call that found the element.
+
+**Example — Run an accessibility action the element itself advertises:**
+
+```json
+{
+  "action": "AXShowMenu",
+  "element_index": 5,
+  "snapshot_id": "9f2c1b0a4d7e5613"
+}
+```
+
+### `computer_scroll`
+
+Scroll the element at this index.
+
+**Response type:** `computer_use.scroll.result`
+
+**Error codes:** `ERR_COMPUTER_USE_DISABLED`, `ERR_COMPUTER_USE_APP_NOT_ALLOWED`, `ERR_COMPUTER_USE_STALE_INDEX`, `ERR_COMPUTER_USE_BAD_ARGUMENT`, `ERR_COMPUTER_USE_DRIVER_UNAVAILABLE`
+
+**Safety:** requires approval
+
+**Parameters:**
+- `amount` (integer, optional) — Lines to scroll (default 3).
+- `direction` (string, required)
+- `element_index` (integer, required) — Zero-based index of the element within that snapshot.
+- `snapshot_id` (string, required) — The id returned by the computer_snapshot call that found the element.
+
+**Example — Scroll a list to bring more rows into the tree:**
+
+```json
+{
+  "direction": "down",
+  "element_index": 7,
+  "snapshot_id": "9f2c1b0a4d7e5613"
+}
+```
+
+### `computer_set_value`
+
+Set the element's value directly (faster and more reliable than typing for long text). Screened for secure/password destinations exactly like computer_type.
+
+**Response type:** `computer_use.set_value.result`
+
+**Error codes:** `ERR_COMPUTER_USE_DISABLED`, `ERR_COMPUTER_USE_APP_NOT_ALLOWED`, `ERR_COMPUTER_USE_SECURE_FIELD`, `ERR_COMPUTER_USE_STALE_INDEX`, `ERR_COMPUTER_USE_BAD_ARGUMENT`, `ERR_COMPUTER_USE_DRIVER_UNAVAILABLE`
+
+**Safety:** requires approval, risk: caution
+
+**Parameters:**
+- `element_index` (integer, required) — Zero-based index of the element within that snapshot.
+- `snapshot_id` (string, required) — The id returned by the computer_snapshot call that found the element.
+- `value` (string, required) — The value to set.
+
+**Example — Set a field's value outright instead of typing it:**
+
+```json
+{
+  "element_index": 2,
+  "snapshot_id": "9f2c1b0a4d7e5613",
+  "value": "A long paragraph of text"
+}
+```
+
+### `computer_snapshot`
+
+Walk one application's front window into an indexed accessibility tree. Returns a snapshot id plus numbered elements; act on an element by its index, never by screen coordinates. The index expires, so re-snapshot rather than reusing an old id after the user has touched the app.
+
+**Response type:** `computer_use.snapshot.result`
+
+**Error codes:** `ERR_COMPUTER_USE_DISABLED`, `ERR_COMPUTER_USE_APP_NOT_ALLOWED`, `ERR_COMPUTER_USE_DRIVER_UNAVAILABLE`
+
+**Safety:** requires approval
+
+**Parameters:**
+- `app` (string, required) — Exact application name, as computer_list_apps spells it.
+
+**Example — Walk a window into numbered elements before acting:**
+
+```json
+{
+  "app": "TextEdit"
+}
+```
+
+### `computer_type`
+
+Type text into the element at this index. Refuses secure/password destinations, fields whose label names a secret, and fields already holding credential-shaped text — a refusal you cannot talk it out of.
+
+**Response type:** `computer_use.type.result`
+
+**Error codes:** `ERR_COMPUTER_USE_DISABLED`, `ERR_COMPUTER_USE_APP_NOT_ALLOWED`, `ERR_COMPUTER_USE_SECURE_FIELD`, `ERR_COMPUTER_USE_STALE_INDEX`, `ERR_COMPUTER_USE_BAD_ARGUMENT`, `ERR_COMPUTER_USE_DRIVER_UNAVAILABLE`
+
+**Safety:** requires approval
+
+**Parameters:**
+- `element_index` (integer, required) — Zero-based index of the element within that snapshot.
+- `snapshot_id` (string, required) — The id returned by the computer_snapshot call that found the element.
+- `text` (string, required) — The text to type.
+
+**Example — Type into a text field found by a snapshot:**
+
+```json
+{
+  "element_index": 2,
+  "snapshot_id": "9f2c1b0a4d7e5613",
+  "text": "Lunch on Tuesday"
+}
+```
+
 ## personalclaw-core
 
 ### `dashboard_tile_propose`

@@ -161,6 +161,22 @@ HTTP_ERROR_CODES: dict[str, str] = {
     "action_not_bound": "The calling client's bindings do not include this action.",
     "action_failed": "The control-bridge action raised while running.",
     "confirm_token_invalid": "The confirmation token is unknown, already used, or expired.",
+    # ── desktop computer use (handlers/computer_use.py) ──
+    # Both rows additionally carry agent_code/what/why/fix INSIDE the `error` object: the
+    # AgentError the dispatch composed has to reach the model unchanged, and the wire code is
+    # what an HTTP client branches on. Two codes, not one, because the two mean different
+    # things to an operator: `refused` is a decision somebody can change, `unavailable` is a
+    # driver that could not run and is nobody's misconfiguration.
+    "computer_use_refused": (
+        "A computer-use call was refused — the out-of-band keystone is off, the target "
+        "application is not on the operator's allowlist, the destination is a secure field, "
+        "the element index is stale, or the request named no valid tool."
+    ),
+    "computer_use_unavailable": (
+        "The computer-use call was permitted but no accessibility driver could run it on this "
+        "platform, or the ceilinged driver subprocess failed. Nothing was changed on the "
+        "desktop."
+    ),
 }
 
 

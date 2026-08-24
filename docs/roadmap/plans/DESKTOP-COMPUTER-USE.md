@@ -396,3 +396,161 @@ the platforms to validate on) — Session 1–2 ship macOS + honest refusals, pe
   rail has no dispatch to bind to yet. `DCU-1` left the same tension unresolved — its keystone rail
   requires every `computer_*` function in the package to call `require_enabled()` FIRST, which a central
   chain would satisfy only if the tools re-check it. Recorded for whoever takes `DCU-4`.
+
+- **2026-08-24 — `DCU-4` DONE (composition, tool surface, thin shim, ceilinged spawn) except the one clause
+  that needs `DCU-3`.** Shipped `computer_use/service.py` (the in-gateway chain), `tools.py` (the seven-tool
+  surface + the thin shim), `driver_host.py` (the ceilinged child), `dashboard/handlers/computer_use.py` +
+  `POST /api/computer-use/dispatch`, and the `mcp_core` aggregation entry. **`DCU-2`'s three screens now
+  fire from a real driving path** — its audit's central finding closed.
+  **CLAUSE STATUS.** *Met:* the shim holds no OS handles (AST-asserted: it imports neither a driver nor the
+  dispatch, and calls none of the three screens); the driver spawn carries the resource ceiling (routed
+  through `sandbox.create_subprocess_limited` and classified `CEILING_WRAPPED` in the spawn census); a
+  secure-field refusal; SEL records present on BOTH paths; an absent enable file blocking everything (now
+  exercisable over a real seven-tool population for the first time — `DCU-1` recorded that clause as
+  *"armed but unexercised until `DCU-4`"*). *Not met, and it is a DEPENDENCY not a gap:* **"lists apps and
+  clicks an element by index end-to-end … a real app driven by element index with the pointer staying
+  put"** needs `DCU-3`'s macOS AX driver, which does not exist on `main` (no `macos_driver.py`,
+  `macos_ffi.py` or `types.py`). `DCU-4` declares `DCU-3` as a dep; the atom was taken anyway because
+  every other clause is completable without it and because the alternative — leaving `DCU-2`'s screens
+  inert for another cycle — is the defect this repo keeps rediscovering. **V1 is therefore deferred to
+  `DCU-3`**, which should record it.
+  **The ceilinged spawn is a LIVE path today, not scaffolding.** `driver_host.py` is a real child that the
+  dispatch really starts through the ceiling helper: `resolve_driver()` resolves by IMPORT (not a
+  capability flag, which can say yes about a module that is not there), finds nothing, and answers a typed
+  `ERR_COMPUTER_USE_DRIVER_UNAVAILABLE` naming the platform and the module an operator is waiting for. So
+  when `DCU-3` lands, what changes is one importable module — not the containment story. Driven for real
+  against an armed tmp home: `TextEdit` passes `check_app` and reaches the driver, `Terminal` refuses
+  `ERR_COMPUTER_USE_APP_NOT_ALLOWED`, and the child's refusal arrives through the spawn.
+  **ORDERING IS THE SUBSTANCE, so it is proved twice.** A runtime trace wraps (does not replace) all four
+  collaborators and asserts the exact sequence `[enable, check_app, driver(re-walk), check_input_target,
+  sel, driver(act)]`; an AST rail asserts the same order in the SOURCE, catching a step relocated onto a
+  branch no test happens to take. The re-walk precedes step 4 deliberately and is a READ —
+  `check_input_target`'s own docstring requires the screen to see *"the element that will be typed into,
+  not a stale row"*, so the element screened comes from the re-walk and never from the stored snapshot.
+  Falsified: moving `check_input_target` below the acting call reds 3, and the sharpest message is
+  behavioural — `the type reached the driver: ['snapshot', 'type']`, i.e. the password was typed.
+  **RESOLVING THE TENSION `DCU-1` AND `DCU-2` BOTH LEFT OPEN.** `DCU-1`'s keystone rail binds every
+  module-level `computer_*` function to `require_enabled()` FIRST; a central chain satisfies it only if the
+  tools re-check. Resolved by making the tool NAMES data and the dispatch the only function: `TOOL_SURFACE`
+  in `tools.py` is a tuple of `ToolSpec`s, and `service.computer_dispatch` is the package's ONE dispatchable
+  entry point. So the entry-point population went 0 → **1**, not 0 → 7, and `DCU-1`'s ratchet stopped being
+  vacuous instead of staying vacuous with seven keystone readers beside it. Seven `computer_*` functions
+  would have been seven readers of the one decision `require_enabled`'s docstring was written about.
+  **SEL ON BOTH PATHS, and the allowed leg is the one that would have rotted.** Every exit funnels through
+  one `_audit` helper: refusals record `outcome="denied"` with the refusal's stable code, an approved
+  attempt records `outcome="approved"` **before** the driver runs (the plan's step-5 placement — a driver
+  that wedges or is killed by its ceiling must still have left evidence). Consequence recorded as a test
+  rather than left to accident: the row carries the VERDICT, so a driver failure after approval does not
+  write a second row, and "exactly one row per attempt" stays countable. Proved against a REAL
+  `SecurityEventLog` at a tmp `base_dir` (the sibling gate suite's fake proves `log()` was *called*, not
+  that the row is writable). Falsified by deleting the allowed-path audit: 4 red including
+  `test_the_allowed_path_writes_its_own_sel_row` — and the refused-path and keystone-refusal tests stayed
+  **GREEN**, which is exactly the single-"a row exists"-assertion failure `DCU-2`'s audit predicted.
+  **#1966's AST CENSUS FLIPPED FROM ZERO-POPULATION TO NAMED-CALLERS, and stayed non-vacuous.** It is on
+  `main` (commit `8b4ca7b0`), so it reded on the first production caller exactly as designed, naming the
+  file. It now asserts an exact map (`computer_use/service.py` → the three screens) by EQUALITY, so a NEW
+  caller reds *and* a LOST call reds — without the second direction the file would have gone green again
+  the moment somebody deleted a screen call, returning it to the inert state it was written to complain
+  about. Falsified in both directions: adding a caller reds it (its own pre-existing floor), and deleting
+  `check_app` from the chain reds it with `the population … changed`. Its three original vacuity floors
+  ship untouched. **What a screen-call-site census structurally CANNOT see is a new UNSCREENED path** —
+  code that calls no screen — so that direction is covered by two other rails and this is written down in
+  the file: the entry-point population census (one dispatch, so a second chain reds) and the per-tool
+  declaration rails (`screen_app` exempts only `computer_list_apps`; `screen_input_target` is exactly
+  `computer_type`/`computer_set_value`), so an added tool cannot opt out of a screen silently.
+  **BOUNDS, both directions, each with a floor.** Snapshot TTL 30s: at exactly the bound it acts, one tick
+  past it refuses `ERR_COMPUTER_USE_STALE_INDEX` naming the re-snapshot (falsified by flipping `>` to
+  `>=` — the at-bound leg reds alone). Element index: the last index acts, one past refuses
+  `ERR_COMPUTER_USE_BAD_ARGUMENT` naming the count, and a NEGATIVE index refuses too (falsified by
+  dropping the `0 <=` half: Python would have read `-1` as the last element and pressed a different
+  control). Fingerprint: a changed window refuses INSIDE the TTL, so the TTL is a backstop rather than the
+  check — and the fingerprint is the driver's, never recomputed here, because a fingerprint derived from
+  the stored elements would compare a value with itself and could never disagree. Snapshot store ceiling
+  16: at the ceiling the oldest survives, one past it is evicted and acting on the evicted id is a visible
+  stale-index refusal. Driver timeout 20s is the userspace half of §3.5 — a wedged child becomes a legible
+  refusal, not a request that never answers.
+  **THIN STAYED THIN, and thinness is a shape rather than a claim.** Decisions live only in the dispatch:
+  the shim (which runs in the `mcp-core` subprocess) is AST-asserted to import no driver and no dispatch
+  and to call none of the four guards, and the driver child is asserted the same way. Falsified by giving
+  the shim a `policy.check_app` call: 3 red, `the shim decides: ['check_app']`.
+  **DEVIATIONS, each with its reason.** (1) **No `computer_use/cli.py` and no second `personalclaw
+  mcp-computer` stdio server.** The plan's §2 draws one, but this repo already has exactly one stdio MCP
+  server — `personalclaw mcp-core` — that aggregates category modules and forwards to the gateway over
+  `_post`, which is precisely the thin shim §2 describes ("the same reasoning as PersonalClaw's other MCP
+  tools that dispatch back into the gateway"). A second composition root would mean a second identity
+  resolver in the one process that must hold no authority. So `computer_use/tools.py` is a category module
+  in `_AGGREGATED_CATEGORY_MODULES`. (2) **`driver_host.py` is not in the atom's file list**, but
+  "the driver running as a ceilinged subprocess" needs a child to run in; `DCU-3`'s `macos_driver.py` is
+  described as in-process ctypes FFI, and an FFI call blocking inside the OS is a blocked gateway. (3) **The
+  tool surface is listed unconditionally, even with the keystone OFF.** Hiding it while disarmed is the
+  tempting optimisation and it breaks `DCU-1`'s clause: `mcp_core._aggregated_call_tool` routes by asking
+  each module whether it LISTS the name, so an empty list makes `computer_click` fall through to core's
+  "unknown tool" and replaces the WHAT/WHY/FIX refusal with a dead end. A conditional population is also a
+  second code path whose disabled branch nothing exercises. (4) **A coordinate/global click carries no
+  element index** and so skips step 3 — §2 reserves that path for canvas UI that exposes no addressable
+  element. It is not a chain bypass: the method must be named by the model (`auto` never resolves onto it,
+  and an unknown method refuses rather than falling back in either direction), the app must be named and
+  allowlisted, and the attempt is audited under its own `operation` (`computer_click:global`) so a
+  real-cursor warp is one field filter away from every ordinary click. `tool_kind` stays the category the
+  `SecurityEvent` field definitions say it is.
+  **DISCOVERY — the wire-envelope census caught a computed code, and the fix was at the source.** The first
+  handler resolved its wire code with a conditional; `test_dynamic_code_sites_do_not_grow` reded at 17 of a
+  ceiling of 16. Split into two literal-code emitters (`computer_use_refused` 403 / `computer_use_unavailable`
+  503) rather than raising the ceiling. Both rows added to `HTTP_ERROR_CODES`, and the AgentError fields
+  ride INSIDE the `error` object as `agent_code`/`what`/`why`/`fix` — the two vocabularies stay disjoint,
+  and one refusal keeps one voice. A second defect the tests found: the shim initially rendered the WIRE
+  code into the model's context, where `computer_use_refused` cannot distinguish "app not allowlisted" from
+  "no such tool"; it now renders `agent_code`.
+  **DEP NOTE — `EXT:AUTONOMY-GUARDRAILS` on `DCU-4`, answered concretely.** The **SEL-audit half is now
+  fully consumed**: `DCU-2` shipped `gate.require_computer_use` inert, and it now fires on every attempt
+  from a live call site. The **approval-ladder / `SafetyProfile` half stays UNCONSUMED here, deliberately** —
+  it is `DCU-5`'s declared deliverable and `DCU-5` depends on `DCU-4`, so wiring it now would empty that
+  atom. What `DCU-4` owes it instead is exactly one insertion point, and there is exactly one: in
+  `computer_dispatch`, between step 4 and step 5, keyed on the `caller_identity` the dispatch already
+  carries from `X-Session-Key`. `DCU-5` should read `guardrails.policy.profile_for_session(...)` and refuse
+  when `profile.approval` is unattended without the `computer_*` names in `tool_grants="custom"` +
+  `tool_allowlist` (the creation-time grant its clause names), raising the existing
+  `ComputerUsePolicyRefusal` so no new envelope is needed. Nothing in this atom must be reshaped for that.
+  **Nine falsifications, each mutating the LIVE line and restoring from a file copy (never
+  `git checkout --`), md5-verified back:** input-target screen moved after the action → 3 red; allowed-path
+  audit deleted → 4 red with the two refusal legs still green; TTL made exclusive → 1 red (the at-bound
+  leg); index lower bound dropped → 1 red; ceiling helper replaced by raw `create_subprocess_exec` → 2 red
+  on two INDEPENDENT rails (the dedicated test and the repo's spawn census, naming file:line); shim given a
+  policy decision → 3 red; the stored element screened instead of the re-walked one → 1 red; `check_app`
+  deleted → 6 red including the flipped call-site census; the child simulating success instead of refusing →
+  2 red. None reded nothing.
+  **A BRIEFING PREMISE WAS WRONG.** I was told #1966 was "open and unmerged, so that test may not be in
+  your worktree" and to read it from the branch. It IS on `main` (`8b4ca7b0`, an ancestor of `2d7f5b6b`), so
+  there was no overlap to handle and no duplication risk — the file was edited in place. Separately, the
+  brief did not mention that `DCU-3` is unbuilt, which is what makes one `done_when` clause unreachable
+  here.
+  **DISCOVERY (found by the full suite, not by reading) — "MCP registration" is a TWO-SIDED
+  obligation in this repo, and one side is rail-enforced.** Adding `computer_use.tools` to
+  `mcp_core._AGGREGATED_CATEGORY_MODULES` reded three assertions in
+  `tests/test_native_tool_categories.py`, whose stated invariant is that the ACP aggregate and the
+  in-process catalog must not diverge: *"every tool the ACP aggregate exposes is present in the
+  in-process catalog too"*, and *"each category is its own provider in the tool registry"*. So the
+  aggregation alone would have shipped a surface an ACP CLI can call and the operator cannot see —
+  half a feature, and exactly the asymmetry that rail exists to prevent. Completed the registration:
+  `create_computer_use_provider` in `tool_providers/registry.py`, the bundled
+  `apps/native/personalclaw-computer-use-tools/app.json`, both test censuses updated, and seven
+  `TOOL_META` entries (`test_api_manifest_drift` requires a description, an example, and every
+  example arg to be a REAL parameter). The seven tools now appear in `/api/tools`, the manifest and
+  the offline reference (95 → 102 tools). **The provider changes no authority and adds no second
+  path:** `tools.py` still forwards over `_post`, so in-process invocation is a loopback round trip
+  rather than a shorter route into the dispatch — a branch on "am I inside the gateway" would give
+  the one security-sensitive transport two code paths with only one of them exercised.
+  `InProcessMcpToolProvider.invoke` runs `_call_tool` in an executor thread, so the loopback cannot
+  stall the event loop (the shipped `mcp_automation._http_runner` is the same shape).
+  **DISCOVERY — a nested category module broke a sibling rail's path derivation, and its OWN VACUITY
+  FLOOR is what caught it.** `test_acp_tool_card_fidelity::test_no_core_tool_dict_declares_an_
+  explicit_risk_level` built its corpus as `package_root / f"{module.rsplit('.', 1)[-1]}.py"`, which
+  is correct only while every aggregated category is a top-level `personalclaw.<name>` module.
+  `personalclaw.computer_use.tools` reduced to `tools.py`, pointing the census at an unrelated
+  top-level module — and it did not silently scan the wrong file, because that test ships an
+  `all(p.is_file())` floor precisely against a mistyped path. Fixed at the source: the corpus is now
+  resolved through the import system (`importlib.import_module(m).__file__`), which cannot drift from
+  where a module actually lives. The floor is kept.
+  **Two other full-suite reds, both accounted for:** `test_planning_runner::test_poll_exits_early_
+  when_loop_deactivated_without_sentinel` asserted `6.29 < 5` under a loaded machine (a concurrent
+  `make test` plus other agents) and passes on `-n0`; the risk-level rail above was mine and is fixed.

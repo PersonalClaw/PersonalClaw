@@ -1100,4 +1100,133 @@ TOOL_META: dict[str, dict[str, Any]] = {
             },
         ],
     },
+    # ── personalclaw-computer-use (== computer_use.tools._list_tools) ─────────
+    # `DCU-4`'s seven tools. Every entry lists `ERR_COMPUTER_USE_DISABLED` because the whole
+    # capability is OFF until the operator arms it out-of-band, so on a default install that
+    # is the ONLY answer any of them gives — a model reading this reference should learn that
+    # here rather than by calling one. The screens each tool is subject to are declared in
+    # `computer_use/tools.py`'s ToolSpec flags and enforced in one central dispatch, so the
+    # error codes below are the ones a caller can actually receive, not a superset.
+    "computer_list_apps": {
+        "response_type": "computer_use.list_apps.result",
+        "error_codes": ["ERR_COMPUTER_USE_DISABLED", "ERR_COMPUTER_USE_DRIVER_UNAVAILABLE"],
+        "examples": [
+            {"summary": "See which applications you are allowed to drive", "args": {}},
+        ],
+    },
+    "computer_snapshot": {
+        "response_type": "computer_use.snapshot.result",
+        "error_codes": [
+            "ERR_COMPUTER_USE_DISABLED",
+            "ERR_COMPUTER_USE_APP_NOT_ALLOWED",
+            "ERR_COMPUTER_USE_DRIVER_UNAVAILABLE",
+        ],
+        "examples": [
+            {
+                "summary": "Walk a window into numbered elements before acting",
+                "args": {"app": "TextEdit"},
+            },
+        ],
+    },
+    "computer_click": {
+        "response_type": "computer_use.click.result",
+        "error_codes": [
+            "ERR_COMPUTER_USE_DISABLED",
+            "ERR_COMPUTER_USE_APP_NOT_ALLOWED",
+            "ERR_COMPUTER_USE_STALE_INDEX",
+            "ERR_COMPUTER_USE_BAD_ARGUMENT",
+            "ERR_COMPUTER_USE_DRIVER_UNAVAILABLE",
+        ],
+        "examples": [
+            {
+                # No `click_method` in the example, deliberately: the default is an
+                # accessibility press that moves no pointer, and an example naming a
+                # coordinate method would teach the pointer path as the ordinary one.
+                "summary": "Activate a control by index, with no pointer motion",
+                "args": {"snapshot_id": "9f2c1b0a4d7e5613", "element_index": 4},
+            },
+        ],
+    },
+    "computer_type": {
+        "response_type": "computer_use.type.result",
+        "error_codes": [
+            "ERR_COMPUTER_USE_DISABLED",
+            "ERR_COMPUTER_USE_APP_NOT_ALLOWED",
+            "ERR_COMPUTER_USE_SECURE_FIELD",
+            "ERR_COMPUTER_USE_STALE_INDEX",
+            "ERR_COMPUTER_USE_BAD_ARGUMENT",
+            "ERR_COMPUTER_USE_DRIVER_UNAVAILABLE",
+        ],
+        "examples": [
+            {
+                "summary": "Type into a text field found by a snapshot",
+                "args": {
+                    "snapshot_id": "9f2c1b0a4d7e5613",
+                    "element_index": 2,
+                    "text": "Lunch on Tuesday",
+                },
+            },
+        ],
+    },
+    "computer_set_value": {
+        "response_type": "computer_use.set_value.result",
+        "error_codes": [
+            "ERR_COMPUTER_USE_DISABLED",
+            "ERR_COMPUTER_USE_APP_NOT_ALLOWED",
+            "ERR_COMPUTER_USE_SECURE_FIELD",
+            "ERR_COMPUTER_USE_STALE_INDEX",
+            "ERR_COMPUTER_USE_BAD_ARGUMENT",
+            "ERR_COMPUTER_USE_DRIVER_UNAVAILABLE",
+        ],
+        "examples": [
+            {
+                "summary": "Set a field's value outright instead of typing it",
+                "args": {
+                    "snapshot_id": "9f2c1b0a4d7e5613",
+                    "element_index": 2,
+                    "value": "A long paragraph of text",
+                },
+            },
+        ],
+    },
+    "computer_scroll": {
+        "response_type": "computer_use.scroll.result",
+        "error_codes": [
+            "ERR_COMPUTER_USE_DISABLED",
+            "ERR_COMPUTER_USE_APP_NOT_ALLOWED",
+            "ERR_COMPUTER_USE_STALE_INDEX",
+            "ERR_COMPUTER_USE_BAD_ARGUMENT",
+            "ERR_COMPUTER_USE_DRIVER_UNAVAILABLE",
+        ],
+        "examples": [
+            {
+                "summary": "Scroll a list to bring more rows into the tree",
+                "args": {
+                    "snapshot_id": "9f2c1b0a4d7e5613",
+                    "element_index": 7,
+                    "direction": "down",
+                },
+            },
+        ],
+    },
+    "computer_perform_action": {
+        "response_type": "computer_use.perform_action.result",
+        "error_codes": [
+            "ERR_COMPUTER_USE_DISABLED",
+            "ERR_COMPUTER_USE_APP_NOT_ALLOWED",
+            "ERR_COMPUTER_USE_STALE_INDEX",
+            "ERR_COMPUTER_USE_BAD_ARGUMENT",
+            "ERR_COMPUTER_USE_DRIVER_UNAVAILABLE",
+        ],
+        "examples": [
+            {
+                "summary": "Run an accessibility action the element itself advertises",
+                "args": {
+                    "snapshot_id": "9f2c1b0a4d7e5613",
+                    "element_index": 5,
+                    "action": "AXShowMenu",
+                },
+            },
+        ],
+    },
 }
