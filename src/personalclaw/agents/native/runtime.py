@@ -281,6 +281,13 @@ class NativeAgentRuntime(AgentProvider):
         # for mid-turn user messages. None = no steering (the default until wired).
         self._pull_steer: "Callable[[], list[str]] | None" = None
         self._steers_injected = 0
+        # Text PULLED from the session's buffer but not yet appended to history — the
+        # per-turn cap's overflow. It has to live somewhere: the pull EMPTIES the session
+        # deque, so a cap hit that simply stopped appending discarded steers this runtime
+        # had already removed from the only place holding them, while the HTTP caller was
+        # told ``{"steered": true}``. Whatever is left is named at turn end by
+        # :meth:`undelivered_steers` — the same seam the ACP session exposes (PR2-10).
+        self._steer_pending: list[str] = []
         # Prompt-cache prefix generation (PROMPT-CACHE-SUBSTRATE). Bumped whenever the
         # cached prefix is invalidated — i.e. compaction rewrites history. The agent
         # DEFINITION is immutable per loop (``self._definition`` is set once in __init__
@@ -697,6 +704,10 @@ class NativeAgentRuntime(AgentProvider):
         self._cancel.begin_turn()
         self._breaker.reset()
         self._steers_injected = 0
+        # Cleared, not carried: the dispatcher reads `undelivered_steers()` at the END of
+        # the previous turn and requeues what it finds, so replaying it here would deliver
+        # a second copy of a steer the user can already see in the queue strip.
+        self._steer_pending.clear()
         self._messages.append({"role": "user", "content": message})
 
         tools_kwarg, turn_note = self._prepare_turn_tools(message)
@@ -1728,20 +1739,26 @@ class NativeAgentRuntime(AgentProvider):
         success.
 
         Capped by ``_MAX_STEERS_PER_TURN`` so a flood cannot extend one turn forever;
-        once the cap is hit this returns False and the turn ends normally, leaving any
-        remainder for the session's turn-end clear.
+        once the cap is hit this returns False and the turn ends normally.
+
+        The overflow is RETAINED on ``_steer_pending``, never dropped. The pull empties
+        the session's buffer, so popping the whole deque and then breaking at the cap
+        discarded steers that existed nowhere else — measured: with the cap at 4 and 7
+        buffered, three vanished from history, from the session deque, and from this
+        runtime in one call. The cap is a bound on how much redirection ONE turn absorbs,
+        not a licence to lose the rest, so what does not fit stays owed and is reported at
+        turn end by :meth:`undelivered_steers` for the dispatcher to requeue visibly.
         """
-        if self._pull_steer is None or self._steers_injected >= _MAX_STEERS_PER_TURN:
-            return False
-        try:
-            steers = self._pull_steer()
-        except Exception:
-            logger.debug("steer drain failed", exc_info=True)
-            return False
+        if self._pull_steer is not None:
+            try:
+                pulled = self._pull_steer()
+            except Exception:
+                logger.debug("steer drain failed", exc_info=True)
+                pulled = []
+            self._steer_pending.extend(s for s in (pulled or []) if s and s.strip())
         appended = False
-        for s in steers:
-            if self._steers_injected >= _MAX_STEERS_PER_TURN:
-                break
+        while self._steer_pending and self._steers_injected < _MAX_STEERS_PER_TURN:
+            s = self._steer_pending.pop(0)
             self._messages.append(
                 {
                     "role": "user",
@@ -1751,6 +1768,19 @@ class NativeAgentRuntime(AgentProvider):
             self._steers_injected += 1
             appended = True
         return appended
+
+    def undelivered_steers(self) -> list[str]:
+        """Steers this turn owes the user: pulled from the session's buffer but never
+        appended to history, because the per-turn cap was already spent. Empty on the
+        happy path.
+
+        Read by the dispatcher at turn end (the same duck-typed seam
+        :class:`~personalclaw.acp.session.AcpSession` exposes) so an undeliverable steer is
+        requeued onto the visible queue instead of vanishing. Deliberately NOT a new event
+        kind: the frontend filters ``activity_event {kind:"status"}`` as noise, so
+        announcing the loss that way would be an invisible fix.
+        """
+        return list(self._steer_pending)
 
     def set_approval_policy(self, policy: str) -> None:
         self._approval_policy = policy or ""

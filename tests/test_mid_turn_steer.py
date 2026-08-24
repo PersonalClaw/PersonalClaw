@@ -283,6 +283,7 @@ def _runtime_with_steers(steers: list[str]):
     rt = NativeAgentRuntime.__new__(NativeAgentRuntime)
     rt._messages = []
     rt._steers_injected = 0
+    rt._steer_pending = []
     pending = list(steers)
 
     def _pull() -> list[str]:
@@ -326,6 +327,115 @@ def test_drain_respects_the_per_turn_cap():
     rt._pull_steer = lambda: ["one more"]
     assert rt._drain_steers_into_history() is False
     assert len(rt._messages) == _MAX_STEERS_PER_TURN
+
+
+# ── The overflow's fate (the pop-then-discard defect) ────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_the_capped_overflow_is_retained_not_discarded():
+    """The cap bounds DELIVERY, and used to also destroy the overflow.
+
+    ``_drain_steers_into_history`` pulls the session's whole steer deque and then broke
+    at ``_MAX_STEERS_PER_TURN``, discarding text it had already removed from the only
+    place holding it. Measured on the pre-fix code with the cap at 4 and 7 buffered:
+    ``s4``/``s5``/``s6`` were in history, in the session deque and on the runtime —
+    nowhere. The user had been told ``{"steered": true}``.
+
+    Both halves are asserted, because either alone is passable while the bug is live:
+    a "the cap held" test passes while the rest evaporate, and a "the rest are still
+    there" test passes if the drain never pulled them at all.
+    """
+    from personalclaw.agents.native.runtime import _MAX_STEERS_PER_TURN
+
+    mgr = SessionManager(_cfg(), provider_factory=lambda *_a, **_k: _Provider())
+    sess = await _running_session(mgr, "dashboard:c1", drains=True)
+
+    offered = [f"s{i}" for i in range(_MAX_STEERS_PER_TURN + 3)]
+    for text in offered:
+        assert mgr.add_steer("dashboard:c1", text) is True
+    # VACUITY FLOOR for half A, two parts. The fixture must actually overflow, or
+    # "exactly the cap was delivered" is the same statement as "everything was
+    # delivered" and the cap is untested:
+    assert len(offered) > _MAX_STEERS_PER_TURN
+    # ...and the cap's VALUE is pinned, because `offered` is derived from it: without
+    # this, every assertion below is cap-relative and a raised cap would satisfy all of
+    # them. Enlarging the bound on how much redirection one turn absorbs is a product
+    # decision; it is not a way to stop losing the overflow.
+    assert _MAX_STEERS_PER_TURN == 4
+
+    rt = _runtime_with_steers([])
+    rt._pull_steer = lambda: mgr.drain_steers("dashboard:c1")
+
+    assert rt._drain_steers_into_history() is True
+
+    # Half A — the capped number really is delivered into THIS turn's history.
+    delivered = [m["content"].splitlines()[-1] for m in rt._messages]
+    assert delivered == offered[:_MAX_STEERS_PER_TURN]
+
+    # VACUITY FLOOR for half B: the drain must genuinely have emptied the session's
+    # buffer. Without this, a drain that pulled nothing would satisfy "the remainder
+    # survives" by never having endangered it — the assertion below would be measuring
+    # the fixture instead of the fix.
+    assert list(sess.steers) == []  # type: ignore[attr-defined]
+
+    # Half B — the overflow is still there afterwards, owed rather than lost.
+    assert rt.undelivered_steers() == offered[_MAX_STEERS_PER_TURN:]
+
+    # ...and stays owed: further boundaries in the same turn are already at the cap, so
+    # the remainder must not be silently consumed by a later drain either.
+    assert rt._drain_steers_into_history() is False
+    assert len(rt._messages) == _MAX_STEERS_PER_TURN
+    assert rt.undelivered_steers() == offered[_MAX_STEERS_PER_TURN:]
+
+
+def test_the_runtime_exposes_the_dispatcher_s_turn_end_steer_seam():
+    """CALL SITE contract: the dispatcher reads the remainder duck-typed, by NAME.
+
+    ``chat_runner`` collects what a turn still owes with
+    ``callable(getattr(client, "undelivered_steers", None))`` and requeues each entry via
+    ``session.queue_append`` + the ``queue_push`` WS echo, so the text lands in the
+    composer's queue strip where the user can read and cancel it. That is the ACP path's
+    seam (PR2-10), reused rather than duplicated — a second mechanism for the same problem
+    is the dual path the clean-break tenet forbids.
+
+    This pins the runtime's half: the exact spelling, callable, and a plain ``list[str]``.
+    A rename would leave the dispatcher's ``getattr`` silently returning None, which is
+    precisely the invisible drop being fixed.
+    """
+    from personalclaw.agents.native.runtime import NativeAgentRuntime
+
+    seam = getattr(NativeAgentRuntime, "undelivered_steers", None)
+    assert callable(seam)
+
+    rt = _runtime_with_steers([])
+    assert rt.undelivered_steers() == []  # empty on the happy path, never None
+    rt._steer_pending = ["owed"]
+    owed = rt.undelivered_steers()
+    assert owed == ["owed"]
+    assert isinstance(owed, list)
+    # A COPY, not the live buffer: the dispatcher iterates it while requeueing, and
+    # handing out the internal list would let that mutate turn state mid-iteration.
+    owed.append("mutated")
+    assert rt.undelivered_steers() == ["owed"]
+
+
+def test_a_new_turn_does_not_replay_the_previous_turn_s_owed_steers():
+    """`stream` clears `_steer_pending` at turn start, structurally pinned.
+
+    The dispatcher requeues the remainder at the END of a turn. If the runtime also kept
+    it, the next turn would inject a second copy of a steer already visible in the queue
+    strip — the same text delivered twice, from two owners.
+    """
+    import inspect
+
+    from personalclaw.agents.native.runtime import NativeAgentRuntime
+
+    src = inspect.getsource(NativeAgentRuntime.stream)
+    assert "self._steer_pending.clear()" in src
+    clear_at = src.index("self._steer_pending.clear()")
+    first_append = src.index('self._messages.append({"role": "user"')
+    assert clear_at < first_append, "the reset must precede the turn's first message"
 
 
 def test_drain_never_raises_when_the_source_does():
