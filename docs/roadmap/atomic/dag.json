@@ -4250,7 +4250,8 @@
           "deps": [
             "EXT:MCP-READONLY-INBOUND:inbound/ substrate (auth/caps/audit/mcp_http/tools) to widen",
             "EXT:AUTONOMY-GUARDRAILS:incident.json flag + guard_flag pattern"
-          ]
+          ],
+          "pr": 1951
         },
         {
           "id": "EA-2",
