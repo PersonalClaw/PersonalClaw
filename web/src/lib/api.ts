@@ -899,8 +899,11 @@ export interface TagColumn { id: string; name?: string; tag_ids?: string[]; mode
 export interface ChatHistoryMsg {
   role: string; content: string; ts?: string; cls?: string
   // tool/permission messages carry meta {tool_call_id, input, purpose, output?, done?};
-  // an assistant message that used episodic recall carries memory_citations (§5.4).
-  meta?: { tool_call_id?: string; input?: string; purpose?: string; output?: string; done?: boolean; tool?: string; memory_citations?: { n: number; id: string | null; preview?: string }[] }
+  // an assistant message that used episodic recall carries memory_citations (§5.4); one
+  // whose turn loaded skills carries skills_used (LEARNING-VISIBILITY T2.1) — absent, never
+  // `[]`, when the turn loaded none, and never listing a REFUSED skill (named to the agent
+  // but never loaded).
+  meta?: { tool_call_id?: string; input?: string; purpose?: string; output?: string; done?: boolean; tool?: string; memory_citations?: { n: number; id: string | null; preview?: string }[]; skills_used?: { name: string; state: string; loaded_tokens: number }[] }
 }
 
 // ── workspace / build entity types ──
@@ -3139,6 +3142,13 @@ export interface GoalLoop {
   // project a project-less loop gets at launch (both carried by the unified Loop).
   project_id?: string
   tasks_project_id?: string
+  // The hidden worker session the engine runs this loop's cycles under
+  // (`loops/manager.session_key` → `loop-<id>`, or a run-scoped key once the loop runs as a
+  // workflow template). Already carried at runtime — `loopToGoalLoop` spreads the whole
+  // unified `Loop`, which declares it — but absent from THIS type, so the cockpit could not
+  // read it. Declared here (T2.1) so the cockpit can fetch the worker's transcript meta for
+  // the "used N skills" chip through the existing session endpoint instead of a new channel.
+  session_key?: string
   // Planner-authored capabilities + role-phased plan (goal-loop planner/quorum).
   skill_ids?: string[]; workflow_ids?: string[]; execution_plan?: Record<string, unknown>[]
 }

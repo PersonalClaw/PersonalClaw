@@ -59,7 +59,18 @@ export interface ApprovalSegment {
  *  surface these as a quiet inline
  *  line so native tool turns aren't blank. ACP turns get full ToolSegments
  *  instead, so we suppress activity lines once a turn has real tool cards. */
-export interface ActivitySegment { kind: 'activity'; text: string; activityKind?: string }
+export interface ActivitySegment {
+  kind: 'activity'; text: string; activityKind?: string
+  // Which learning path produced a `learned` activity (LEARNING-VISIBILITY T2.2).
+  // All three captures — the preference facet, the after-turn lesson review, and the
+  // skill-ladder proposal pass — share `activityKind: 'learned'`, so this discriminator
+  // is the only thing that can route a tap on the learned chip to the surface that can
+  // approve or edit THAT artifact. Typed as the raw wire `string` (not a union) because
+  // an older session, or a future emitter, legitimately arrives without it — see
+  // `learnedSurface()`, which degrades an unrecognised value to a non-tappable chip
+  // rather than guessing a surface.
+  origin?: string
+}
 
 /** A turn-level error (the model/provider rejected the turn, e.g. a Bedrock
  *  ValidationException). Surfaced as a distinct red callout so a failed turn is
@@ -76,6 +87,96 @@ export type Segment = TextSegment | ToolSegment | ApprovalSegment | ActivitySegm
  *  non-navigable label. */
 export interface MemoryCitation { n: number; id: string | null; preview?: string }
 
+/** One skill whose content actually reached this turn's prompt (LEARNING-VISIBILITY
+ *  T2.1). Rides the assistant message's `meta.skills_used` — the same seam
+ *  `memory_citations` uses — so the "used N skills" chip needs no second channel.
+ *
+ *  `state` is the allocator's load state, typed as the raw wire `string` rather than a
+ *  union for the same reason `ApprovalSegment.resolved` is: a session persisted by
+ *  another build can carry a state this one doesn't know. Only two ever arrive today —
+ *  `admitted` (the skill's body loaded) and `reduced` (only a summary fit). A REFUSED
+ *  skill is deliberately never in this list: it was NAMED to the agent but none of its
+ *  content loaded, so counting it would overstate the turn. */
+export interface SkillUsed { name: string; state: string; loaded_tokens: number }
+
+/** The chip's own words. N counts every entry — `admitted` and `reduced` alike, because
+ *  both put content in the prompt (a `reduced` skill loaded a summary, not nothing).
+ *  Returns '' for an empty list so a caller can't render a truthful-looking "used 0
+ *  skills" for a turn that loaded none: the backend omits the key entirely in that case,
+ *  and the chip must be absent, not zeroed. */
+export function skillsUsedLabel(skills: SkillUsed[]): string {
+  const n = skills.length
+  if (!n) return ''
+  return `used ${n} skill${n === 1 ? '' : 's'}`
+}
+
+/** Hover text for the chip: the skill names in the ALLOCATOR'S OWN ORDER (the order they
+ *  were admitted — never re-sorted here, which would invent a ranking the backend never
+ *  stated). A `reduced` skill is marked, because presenting a summary-only load as a full
+ *  one is the one thing this chip must not do. */
+export function skillsUsedTitle(skills: SkillUsed[]): string {
+  if (!skills.length) return ''
+  const lines = skills.map((s) => {
+    const name = s.name || '(unnamed skill)'
+    return s.state === 'reduced' ? `${name} — summary only` : name
+  })
+  return `Skills used this turn:\n${lines.join('\n')}`
+}
+
+/** Stamp `origin` onto the activity segment `insertActivity` just created, given the
+ *  arrays before (`prev`) and after (`next`) that call (LEARNING-VISIBILITY T2.2).
+ *
+ *  Exists so the ChatPage WS handler doesn't have to widen `insertActivity`'s signature (and
+ *  re-baseline its K42/K44/K45 suite) just to carry one optional field. It identifies the new
+ *  segment by REFERENCE, not by matching text: `insertActivity` returns `prev` untouched on
+ *  both its early-outs (a turn with tool cards, an adjacent duplicate line), so the only
+ *  activity segment present in `next` and absent from `prev` is the one it spliced in — a
+ *  fresh object literal no previous render holds, which is what makes writing to it safe.
+ *
+ *  Returns `next` either way; a falsy origin is a no-op, which is the pre-T2.2 wire and every
+ *  non-`learned` activity kind. */
+export function stampActivityOrigin(prev: Segment[], next: Segment[], origin?: string): Segment[] {
+  if (!origin || next === prev) return next
+  const added = next.find((sg) => sg.kind === 'activity' && !prev.includes(sg))
+  if (added) (added as ActivitySegment).origin = origin
+  return next
+}
+
+/** Where a tap on the learned chip lands, keyed on the emitter's `origin`
+ *  (LEARNING-VISIBILITY T2.2). Verified against what each surface actually renders, not
+ *  against the artifact's name:
+ *
+ *  - `proposal` → the skill-ladder writes a template PROPOSAL that `SkillProposals`
+ *    (mounted by the Skills page's `?mode=proposals` view) lists with approve/reject.
+ *    The BARE `#/skills` route lands on Installed skills, which shows no proposal at all —
+ *    hence the query param.
+ *  - `lesson` → the after-turn review calls `service.write_lesson()`, so the artifact is a
+ *    LESSON in the lesson store. The Memory Studio (Settings → Memory) reads exactly that
+ *    store (`api.lessons()`) and its inspector edits/deletes a lesson. It deliberately
+ *    does NOT route to the Learning page: that page is the `/api/learning/proposals`
+ *    inbox, a different artifact class (flywheel `lesson_batch` proposals), which can
+ *    neither show nor edit an after-turn lesson.
+ *  - `facet` → `upsert_facet` writes a typed facet to the vector store, and the veto branch
+ *    writes a lesson instead; the Memory Studio owns both.
+ *
+ *  Returns null for an absent or unrecognised origin. That is the graceful-degrade
+ *  contract, not an oversight: every message persisted before T2.2, and anything a future
+ *  emitter adds, arrives without a mapping, and a chip that guessed a surface would send
+ *  the user somewhere the artifact isn't. The chip still renders — it just isn't a link. */
+export interface LearnedSurface { href: string; label: string }
+export function learnedSurface(origin?: string | null): LearnedSurface | null {
+  switch (origin) {
+    case 'proposal':
+      return { href: '#/skills?mode=proposals', label: 'Review in Skill proposals →' }
+    case 'lesson':
+      return { href: '#/settings/memory?tab=studio', label: 'Review lessons in Memory →' }
+    case 'facet':
+      return { href: '#/settings/memory?tab=studio', label: 'Manage in Memory →' }
+    default:
+      return null
+  }
+}
+
 export interface ChatTurn {
   role: 'user' | 'assistant'
   segments: Segment[]     // user turns are a single text segment
@@ -85,6 +186,10 @@ export interface ChatTurn {
   // against this list into a deep-link to the episode. Absent on turns with no
   // episodic recall (the vast majority) and on user turns.
   citations?: MemoryCitation[]
+  // Skills whose content fed THIS assistant turn (T2.1) — the "used N skills" chip's
+  // input. Rides the same meta seam as `citations`, so it is absent on the turns that
+  // loaded no skill (and on every user turn) rather than an empty array.
+  skillsUsed?: SkillUsed[]
   // paste blocks referenced by `[Paste #N]` markers in this turn's text, kept so
   // the bubble can render the markers as inspectable chips after send.
   pastes?: { seq: number; lines: number; content: string }[]
@@ -204,7 +309,7 @@ export function deriveActivity(turns: ChatTurn[]): ChatActivity {
   return { index, files: [...files.values()], links: [...links.values()] }
 }
 
-export interface HistMsg { role: string; content: string; ts?: string; variants?: { content: string; ts?: string }[]; variant_idx?: number; rewound?: { messages: { role: string; content: string; ts?: string }[]; ts?: string }[]; meta?: { tool_call_id?: string; approval_id?: string; input?: string; tool_input?: string; purpose?: string; risk?: string; output?: string; done?: boolean; tool?: string; detail?: string; resolved?: string; content_type?: string; raw_ref?: string; truncated?: boolean; original_length?: number; recovery_hints?: string[]; agent_error?: AgentError; ok?: boolean; pastes?: { seq: number; lines: number; content: string }[]; files?: string[]; original?: string; memory_citations?: MemoryCitation[] } }
+export interface HistMsg { role: string; content: string; ts?: string; variants?: { content: string; ts?: string }[]; variant_idx?: number; rewound?: { messages: { role: string; content: string; ts?: string }[]; ts?: string }[]; meta?: { tool_call_id?: string; approval_id?: string; input?: string; tool_input?: string; purpose?: string; risk?: string; output?: string; done?: boolean; tool?: string; detail?: string; resolved?: string; content_type?: string; raw_ref?: string; truncated?: boolean; original_length?: number; recovery_hints?: string[]; agent_error?: AgentError; ok?: boolean; pastes?: { seq: number; lines: number; content: string }[]; files?: string[]; original?: string; memory_citations?: MemoryCitation[]; skills_used?: SkillUsed[] } }
 
 /** Re-collapse a persisted user message: the stored content has paste markers
  *  expanded to full text (the model saw that), but meta.pastes lets us swap each
@@ -295,6 +400,13 @@ export function hydrateTurns(messages: HistMsg[], running = false): ChatTurn[] {
       // absent on turns with no episodic recall (almost all of them).
       if (Array.isArray(m.meta?.memory_citations) && m.meta!.memory_citations.length) {
         at.citations = m.meta!.memory_citations
+      }
+      // Skills used (T2.1) ride the same meta as the citations above, so they rehydrate on
+      // the same terms: carried onto the turn when present, left absent otherwise. Tolerant
+      // for the same reason — every message persisted before T2.1 lacks the key, and the
+      // chip must simply not render for those rather than read as "used 0 skills".
+      if (Array.isArray(m.meta?.skills_used) && m.meta!.skills_used.length) {
+        at.skillsUsed = m.meta!.skills_used
       }
       // Regenerated answers persist as ONE assistant message carrying every version
       // in `variants` (the active one's content == m.content). Carry the count + index
