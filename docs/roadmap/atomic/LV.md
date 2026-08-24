@@ -10,7 +10,7 @@ Each atom below executes start-to-finish in one go. If an atom lists dependencie
 
 | Atom | Status | Title | Depends on | Done when |
 |---|---|---|---|---|
-| `LV-1` | ⬜ | S1 end-to-end visible slice: fire ladder review at loop end-of-run + confirm accept->surface->use loop | `EXT:LEARNING-FLYWHEEL:skill-ladder synthesis machinery (run_skill_ladder_review + proposals.enqueue) steps 1-4`, `EXT:INBOX-NOTIFICATIONS-UNIFICATION:proposals surface as inbox proposal kind (S4)` | Execution log carries the caller map; a completed multi-step fixture loop enqueues <=1 proposal and an environment-failure fixture enqueues 0; integration test propose->accept->matching-prompt->usage-count-increments passes; V1 full loop (fixture home: run->proposal->approve->repeat->skill loads and usage records) observed with no auto-write anywhere |
+| `LV-1` | ✅ | S1 end-to-end visible slice: fire ladder review at loop end-of-run + confirm accept->surface->use loop | `EXT:LEARNING-FLYWHEEL:skill-ladder synthesis machinery (run_skill_ladder_review + proposals.enqueue) steps 1-4`, `EXT:INBOX-NOTIFICATIONS-UNIFICATION:proposals surface as inbox proposal kind (S4)` | Execution log carries the caller map; a completed multi-step fixture loop enqueues <=1 proposal and an environment-failure fixture enqueues 0; integration test propose->accept->matching-prompt->usage-count-increments passes; V1 full loop (fixture home: run->proposal->approve->repeat->skill loads and usage records) observed with no auto-write anywhere |
 | `LV-2` | ⬜ | S2 legibility: per-run 'used N skills you approved' chip + session learned-chips with tap-through | `LV-1` | run/loop panel shows 'used N skills' chip with names on hover and zero new WS/SSE channels; a correction in chat yields a visible learned-chip within the session whose tap lands on the right approve/edit surface |
 | `LV-3` | ⬜ | S2 digest section: learning summary block (new/refined/pending counts + names) | `LV-1`, `EXT:INBOX-NOTIFICATIONS-UNIFICATION:digest builder registration point (plan 42 S5; has skills-page-header fallback)` | weekly digest (or fallback skills-page header) shows the learning block with real counts and names |
 | `LV-4` | ⬜ | Periodic identity report: compose_identity_report + delivery/schedule/config/FE (amendment) | `LV-3`, `EXT:INBOX-NOTIFICATIONS-UNIFICATION:emit_attention_item kind=report (pre-42 source=learning InboxItem fallback)` | fixture home with seeded lessons/facets/skills yields a truthful report whose counts byte-match store contents with zero writes to any learning store (inspected before/after); no-model fixture still produces the deterministic sections; compressed-clock fixture fires the job, item lands in inbox linking the artifact, quiet-hours suppresses the ping but not the artifact, config round-trips and 'off' disables cleanly |
@@ -22,7 +22,7 @@ Each atom below executes start-to-finish in one go. If an atom lists dependencie
 
 ### `LV-1` — S1 end-to-end visible slice: fire ladder review at loop end-of-run + confirm accept->surface->use loop
 
-**Status:** todo
+**Status:** done
 
 Session 1 (T1.1 recon map, T1.2 loop-complete-seam firing, T1.3 accept->surface->record_uses wiring, V1)
 

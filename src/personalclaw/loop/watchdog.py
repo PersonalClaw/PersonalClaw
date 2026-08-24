@@ -39,6 +39,10 @@ _MIN_STAGNATION_WINDOW = 2
 _MAX_CONSECUTIVE_ERRORS = 2
 _FIRST_CYCLE_GRACE_SECS = 600
 _MAX_TURN_SECS = 1800
+#: Per-side cap on the text handed to the loop-end skill-ladder review (`LV-1`). A monitor
+#: loop's MONITOR_LOG.md grows without bound, and the ladder prompt is a forked model call —
+#: matches `loop.finding_content`'s ceiling so the two loop→prompt paths truncate alike.
+_LADDER_TEXT_LIMIT = 6000
 
 #: Finding keys that are BOOKKEEPING rather than work product. `cycle` changes every
 #: cycle by construction and `new_findings_count` is the worker's own progress claim —
@@ -194,6 +198,12 @@ class LoopWatchdog:
         self._last_activity: dict[str, float] = {}
         self._running_since: dict[str, float] = {}
         self._consec_errors: dict[str, int] = {}
+        #: Loops whose end-of-run skill-ladder review has already been scheduled (`LV-1`).
+        #: The ladder is ONE synthesis call per RUN, and ``store.update_status`` permits
+        #: COMPLETE → COMPLETE (its guard only rejects a terminal → *different* status), so
+        #: ``_complete`` really can run twice for one loop. Without this set the second pass
+        #: would pay for a second forked model call and race a second proposal into the queue.
+        self._ladder_done: set[str] = set()
 
     # ── lifecycle ──
 
@@ -457,9 +467,121 @@ class LoopWatchdog:
         # cadence, now covering the loop kinds it was blind to. Best-effort; a mined draft must
         # never cost the loop its terminal status.
         self._capture_loop_end(loop_id)
+        # Loop-end SKILL ladder (`LV-1`): the same skill-ladder review the chat after-turn path
+        # runs, fired once at the end-of-run seam. Sibling of `_capture_loop_end`, not a change
+        # to it: that one MINES lessons from the ledger, this one proposes a skill/template.
+        # Scheduled, never awaited — the terminal status is already written and the `complete`
+        # publish below must not wait on a forked model call.
+        self._schedule_loop_end_ladder(loop_id)
         self._publish(
             loop_id, "complete", {"loop_id": loop_id, "reason": reason, "genuine": genuine}
         )
+
+    def _schedule_loop_end_ladder(self, loop_id: str) -> None:
+        """Gate + schedule the end-of-run skill-ladder review (`LV-1`).
+
+        Mirrors ``dashboard.chat_runner._maybe_skill_ladder_review``: the gate is answered
+        here, synchronously, and only the expensive half is handed to the background. Gate
+        order is deliberate and matches the chat path — ``decision.allowed`` and the
+        ``skill_ladder`` cadence flag are checked BEFORE anything reads the loop's task or
+        deliverable text, because a restricted session promised that its content feeds no
+        learning and classifying that content is already a read of it.
+
+        Fully guarded: a loop's terminal status is never at the mercy of this pass.
+        """
+        try:
+            # Content-free, so it costs nothing to answer first: one review per RUN.
+            if loop_id in self._ladder_done:
+                return
+            from types import SimpleNamespace
+
+            from personalclaw.learning.gate import Cadence, LearningGate
+
+            loop = store.get(loop_id)
+            if loop is None:
+                return
+            cfg = AppConfig.load().learning
+            session = SimpleNamespace(key=loop.session_key, is_restricted=False, _ephemeral=False)
+            decision = LearningGate.for_session(session, cfg).decide(
+                Cadence.RUN_END, cadence_enabled=bool(getattr(cfg, "run_end_enabled", True))
+            )
+            # The ladder is an expensive forked-LLM pass: it needs the strict answer AND its
+            # own cadence flag, exactly like the chat path.
+            if not decision.allowed or not getattr(cfg, "skill_ladder", True):
+                logger.debug("loop %s: loop-end ladder gated (%s)", loop_id, decision.reason.value)
+                return
+            # Candidate skills to bias refinement toward (the always-on + indexed set).
+            try:
+                cb = getattr(self._state, "context_builder", None)
+                loaded = [s["key"] for s in cb.skills.list_skills()][:40] if cb else []
+            except Exception:
+                loaded = []
+            self._ladder_done.add(loop_id)
+            tasks = getattr(self._state, "_background_tasks", None)
+            coro = self._run_loop_end_ladder(loop_id, loaded)
+            if tasks is None:
+                coro.close()
+                logger.debug("loop %s: loop-end ladder has nowhere to schedule", loop_id)
+                return
+            t = asyncio.create_task(coro)
+            tasks.add(t)
+            t.add_done_callback(tasks.discard)
+        except Exception:
+            logger.debug("loop %s: loop-end ladder scheduling failed", loop_id, exc_info=True)
+
+    async def _run_loop_end_ladder(
+        self, loop_id: str, loaded_skills: list[str], *, completion=None
+    ) -> str | None:
+        """The awaitable half of the loop-end ladder review (`LV-1`).
+
+        Split from :meth:`_schedule_loop_end_ladder` so the body is drivable without a
+        scheduler. Feeds the loop's REAL texts to the shared review — its goal as the
+        "user message", its graduated deliverable (or the planner's summary when the kind
+        declares no document) as the "assistant text" — so the review's own guardrails apply
+        unchanged. In particular an environment-failure claim in either text is caught by
+        ``_ladder_pass``'s ``is_environment_failure_claim`` check and nothing is enqueued;
+        re-implementing that predicate here would be a second copy to drift.
+
+        Best-effort: returns the chip summary or None, and never raises.
+        """
+        try:
+            from personalclaw import after_turn_review as atr
+
+            loop = store.get(loop_id)
+            if loop is None:
+                return None
+            goal = (loop.task or "").strip()
+            if not goal:
+                return None
+            return await atr.run_skill_ladder_review(
+                session_key=loop.session_key,
+                user_message=goal[:_LADDER_TEXT_LIMIT],
+                assistant_text=self._loop_outcome_text(loop)[:_LADDER_TEXT_LIMIT],
+                loaded_skills=loaded_skills,
+                completion=completion,
+            )
+        except Exception:
+            logger.debug("loop %s: loop-end ladder review failed", loop_id, exc_info=True)
+            return None
+
+    def _loop_outcome_text(self, loop: Any) -> str:
+        """What the run PRODUCED, as text for the ladder's "assistant" side.
+
+        The deliverable document when the kind declares one and it exists on disk (resolved
+        by the same :meth:`_deliverable_file` the artifact graduation uses — a second
+        resolution here would be a second thing to keep true), else the planner's one-line
+        summary. Both may legitimately be empty: the review then sees an empty outcome and
+        proposes nothing, which is the correct answer for a run with no observable output.
+        """
+        try:
+            path = self._deliverable_file(loop)
+            if path is not None:
+                text = path.read_text(encoding="utf-8", errors="replace")
+                if text.strip():
+                    return text
+        except Exception:
+            logger.debug("loop %s: deliverable read failed", loop.id, exc_info=True)
+        return (getattr(loop, "summary", "") or "").strip()
 
     def _capture_loop_end(self, loop_id: str) -> None:
         """Route a terminal loop through the LearningGate → loop-end learner (PP-5).
@@ -502,6 +624,37 @@ class LoopWatchdog:
             logger.debug("loop-end: memory service unavailable", exc_info=True)
             return None
 
+    def _deliverable_file(self, loop: Any) -> Path | None:
+        """The loop's document deliverable on disk, or None.
+
+        The ONE resolution of "where did this run write its output" — consumed both by the
+        artifact graduation and by the loop-end ladder review (`LV-1`), which needs the same
+        answer for a different purpose. Kinds with no document deliverable (verifiable/code:
+        the code/check IS the output) declare "" and get None.
+
+        The deliverable lives in the BOUND WORKSPACE when one is set (the brief directs the
+        worker to write it there so downstream loops read it — see goal.build_brief / fix
+        2de9af4); it only falls back to the loop dir for an unbound loop. Resolve
+        workspace-first, else the file-backed artifact is never registered (the file isn't in
+        the loop dir) and the only Outputs entries are the worker's ad-hoc artifact_save calls.
+        """
+        kinds.ensure_loaded()
+        strat = kinds.get_or_none(loop.kind)
+        namer = getattr(strat, "deliverable_name", None)
+        name_on_disk = (namer(loop) if namer else "") or ""
+        if not name_on_disk:
+            return None
+        ws = (loop.workspace_dir or "").strip()
+        if ws:
+            cand = Path(ws) / name_on_disk
+            if cand.is_file():
+                return cand
+        d = store.safe_loop_dir(loop.id)
+        dcand = (d / name_on_disk) if d is not None else None
+        if dcand is not None and dcand.is_file():
+            return dcand
+        return None
+
     def _register_deliverable_artifact(self, loop_id: str) -> None:
         """On completion, surface the loop's document deliverable (REPORT.md /
         MONITOR_LOG.md — whatever the kind declares) in the Artifacts library as a
@@ -514,29 +667,7 @@ class LoopWatchdog:
             loop = store.get(loop_id)
             if loop is None:
                 return
-            kinds.ensure_loaded()
-            strat = kinds.get_or_none(loop.kind)
-            namer = getattr(strat, "deliverable_name", None)
-            name_on_disk = (namer(loop) if namer else "") or ""
-            if not name_on_disk:
-                return
-            # The deliverable lives in the BOUND WORKSPACE when one is set (the brief
-            # directs the worker to write it there so downstream loops read it — see
-            # goal.build_brief / fix 2de9af4); it only falls back to the loop dir for
-            # an unbound loop. Resolve workspace-first, else the file-backed artifact is
-            # never registered (the file isn't in the loop dir) and the only Outputs
-            # entries are the worker's ad-hoc artifact_save calls.
-            deliverable: Path | None = None
-            ws = (loop.workspace_dir or "").strip()
-            if ws:
-                cand = Path(ws) / name_on_disk
-                if cand.is_file():
-                    deliverable = cand
-            if deliverable is None:
-                d = store.safe_loop_dir(loop_id)
-                dcand = (d / name_on_disk) if d is not None else None
-                if dcand is not None and dcand.is_file():
-                    deliverable = dcand
+            deliverable = self._deliverable_file(loop)
             if deliverable is None:
                 return
             content = deliverable.read_text(encoding="utf-8", errors="replace")

@@ -214,3 +214,75 @@ Stumble detector at the after-turn seam (only when skills were loaded): correcti
   exist, and `ES-2` (which depends on `ES-1`) is already `✅`. The genuinely missing piece is the
   production caller (G5), not the machinery. Flagged for the owner; the header/row was left alone
   because this atom does not own the ES plan.
+
+---
+
+## Execution log — LV-1 (S1 end-to-end visible slice)
+
+- **T1.1 caller map (recon, measured on `main` at `8b4ca7b0`).** `run_skill_ladder_review` is defined
+  at `after_turn_review.py:509` and had **exactly one production caller**:
+  `dashboard/chat_runner.py:360`, the chat after-turn path. Loop end-of-run was **not** covered, so
+  every unattended loop — goal, monitor, research, sdlc — finished without ever proposing a skill.
+  The synthesis machinery was fine; only the attended half of the product could reach it.
+  `record_uses` likewise has one writer, `context.py:1768`, inside the `if skill_alloc.loaded:`
+  branch of the turn-assembly path.
+- **T1.2 DONE — the ladder now fires at the loop end-of-run seam.** `loop/watchdog.py::_complete`
+  calls `_schedule_loop_end_ladder(loop_id)` beside the PP-5 `_capture_loop_end` hook and **before**
+  the `complete` publish. The split is deliberate: the gate (`LearningGate` at `Cadence.RUN_END`,
+  plus the `skill_ladder` cadence flag) is answered **synchronously** and only the forked model call
+  is handed to `_background_tasks`, so a terminal status write never waits on a model. Gate order
+  matches the chat path — `decision.allowed` and the cadence flag are checked before anything reads
+  the loop's task or deliverable text, because classifying that content is already a read of it.
+- **The once-per-run guard is load-bearing, not defensive — premise measured, not assumed.**
+  `store.update_status`'s terminal guard rejects only `terminal → different`, so `COMPLETE →
+  COMPLETE` is permitted and `_complete` genuinely runs twice for one loop. Without `_ladder_done`
+  the second pass would pay for a second forked model call and race a second proposal into the
+  queue. `test_complete_to_complete_is_really_reachable` pins the premise: if that transition
+  raised, the guard would be dead code and its test vacuous.
+- **T1.3 — the accept→surface→use half was found ALREADY CLOSED on `main`, and is now railed.**
+  This is the report's headline: the stranded work was **not** symmetric. The loop-end firing was
+  genuinely unbuilt (no `_schedule_loop_end_ladder` on `main`), while accept→surface→use was fully
+  built and merely **unrailed** — `tests/test_lv1_accept_surface_use.py` passes against `main` with
+  **zero** implementation change. So one half's stranded test pinned unbuilt behaviour and the
+  other's pinned shipped-but-untested behaviour.
+- **The surfacing seam is `ContextBuilder.build_message`, chosen because it is the only function
+  carrying all four links** (`get_surfaced_skills` → `load_skill` → `allocate_skills` →
+  `record_uses`). Driving `surface_skills` alone would leave the use counter unproven — and the
+  counter is written on that path only, so such a test would pass with it entirely unwired. The
+  builder is constructed **once, before the accept**, and both turns run through that same
+  long-lived instance, which is how the gateway holds it; that makes the pre-accept turn a real
+  vacuity floor rather than a different object.
+- **LV-1's "surface" is the PROMPT, not the dashboard.** Its `done_when` says
+  "matching-prompt → usage-count-increments" and "skill loads and usage records"; the user-visible
+  `used N skills` chip is **`LV-2`**'s `done_when`, explicitly. So this atom's rendered-output
+  assertions are on the assembled prompt text (`[Skill: auto/release-flow]` and the body marker
+  present in `after`, absent in `before`), and **no `web/` change belongs to LV-1**.
+- **No auto-write anywhere, inspected between steps** (V1's standing condition): a proposal writes
+  no live skill (`assert not (skills_root/"auto"/SLUG).exists()`), surfaces in no listing, and
+  records no use, until `proposals.accept` runs. V1's arc — propose → accept → matching prompt →
+  loads → usage records → second turn increments — is executed as that integration test in a
+  `tmp_path` fixture home rather than hand-driven through the gateway; the real-home rail confirms
+  `~/.personalclaw` is untouched by the run.
+- **Environment-failure hygiene is asserted on the QUEUE, with a non-declining model.** The fixture
+  completion returns a well-formed `create` action that *would* enqueue, so an empty
+  `list_pending()` is evidence of the `is_environment_failure_claim` guardrail rather than of a
+  model that simply declined. The predicate is not re-implemented at this seam — the loop's real
+  texts are fed to the shared review so `_ladder_pass`'s existing check applies unchanged.
+- **`_deliverable_file` extracted, not duplicated.** "Where did this run write its output" now has
+  ONE resolution, consumed by both the artifact graduation and the ladder's "assistant side" text.
+  Workspace-first, loop-dir fallback — the pre-existing order, preserved verbatim.
+- **NOT gated on `ES-7`.** `LV-7` is gated on `ES-7`'s `arm_mask` plus the `fanout_measure.py`
+  arm-name owner call (see the LV-6 log above). `LV-1` shares neither: it needs no skills-off arm
+  and no comparison at all, only that the review fires and that an accepted skill reaches the next
+  prompt. The LV-6 blocking finding does not reach this atom.
+- **DISCOVERY (pre-existing on `main`, not introduced, not fixed here) — the ladder's tier count is
+  stated two ways.** `after_turn_review.py:301`'s section header says "4-tier skill ladder" while
+  `run_skill_ladder_review`'s own docstring at `:517` says "5-tier ladder", and `:581` explains that
+  "the fifth tier is the ad-hoc→template branch". Five is evidently right and the section header is
+  stale. This atom's new comment deliberately says "the same skill-ladder review" rather than minting
+  a third count claim; correcting `:301` belongs to whoever owns that file, not to a loops seam.
+- **OWNER DECISION (deferred, not invented) — the atom status flip.** `docs/roadmap/atomic/LV.md`
+  and `docs/roadmap/atomic/dag.json` both still carry `LV-1` as `todo`/⬜. `dag.json` is the source
+  of truth and was out of scope for this session, and flipping `LV.md` alone would create exactly
+  the one-sided inventory this repo has been burned by. Both are left untouched for the owner's
+  regen; this log entry is the record that the work landed.
