@@ -11,13 +11,28 @@ watching it fire**, not by reading the code and agreeing with it. Most tests bui
 synthetic ``Corpus``/catalog so they are hermetic and fast; two integration tests run the
 real thing against the real repo, because the rails only mean something if they hold on the
 data the tool actually reads.
+
+The second half of this file covers the WIRE CHECK (``--check-wires``), whose subject is the
+census's own biggest miss: ``APE-3`` scored LANDED-AND-CLEAN with three production call sites
+that **no test asserted**, so deleting all three left 116 tests green. The wire check answers
+"would deleting the caller be caught?" by actually deleting it, and that makes its own vacuity
+problem sharper than the census's: a mutation that silently fails to land reports every wire
+as RAILED, and a check that cannot detect a red is indistinguishable from a repo with no
+unrailed wires. So the central rail here is a synthetic repo carrying **one railed and one
+unrailed wire of the same shape**: the check must separate them. If the mutation degrades to a
+no-op the railed case flips to UNRAILED; if it degrades to a parse break both become REFUSED.
+Either way this file reds. ``tools/`` is linted by neither ``make lint`` nor CI, so these
+assertions are the only enforcement the check has.
 """
 
 from __future__ import annotations
 
+import ast
 import json
+import shutil
 import subprocess
 import sys
+import tempfile
 from dataclasses import replace
 from pathlib import Path
 
@@ -27,22 +42,37 @@ from tools.audit_landed_atoms import (
     CLEAN,
     GATED,
     KNOWN_LANDED,
+    MUT_MARK,
     OPEN,
+    RE_ANSI,
     UNKNOWN,
+    WIRE_RAILED,
+    WIRE_REFUSED,
+    WIRE_UNRAILED,
     Atom,
     Corpus,
     LogHit,
     LogVerdict,
+    RunResult,
+    Snapshot,
     VacuityError,
+    Wire,
+    WireRefusal,
+    _test_index,
+    annotated_modules,
     census,
+    check_atom_wires,
     classify,
     decide_log,
     extract_keys,
+    find_wires,
     load_atoms,
+    mutate,
     probe,
     scan_code_caveats,
     scan_plan_logs,
     score_evidence,
+    select_tests,
     self_check,
 )
 
@@ -542,3 +572,472 @@ def test_the_tool_never_writes_to_the_roadmap() -> None:
     before = dag.read_bytes()
     subprocess.run([sys.executable, TOOL], cwd=REPO_ROOT, capture_output=True, text=True)
     assert dag.read_bytes() == before
+
+
+# ===========================================================================
+# the wire check — "would deleting the caller be caught?"
+# ===========================================================================
+
+
+def _run_git(root: Path, *args: str) -> None:
+    subprocess.run(
+        ["git", "-c", "user.name=t", "-c", "user.email=t@t", *args],
+        cwd=root,
+        check=True,
+        capture_output=True,
+    )
+
+
+WIRED_PY = '''\
+"""ZZ-9 deliverable: two side-effect helpers."""
+
+CALLS: list[str] = []
+
+
+def ping(n: int = 0) -> str:
+    CALLS.append(f"ping{n}")
+    return "ping"
+
+
+def pong() -> str:
+    CALLS.append("pong")
+    return "pong"
+'''
+
+HOST_PY = '''\
+"""ZZ-9: the boot block that wires the helpers in."""
+
+from pkg.wired import ping, pong
+
+
+def boot() -> None:
+    ping()
+    # A MULTI-LINE call site. Neutralising it by truncation instead of by whole-statement
+    # replacement breaks the parse, and a parse break is a collection error — evidence about
+    # the mutation, not about the wire.
+    ping(
+        n=2,
+    )
+    pong()
+'''
+
+# Asserts that boot() reaches `ping`. Deleting the ping() calls MUST red this.
+TEST_RAILED = """\
+import ast
+import inspect
+import textwrap
+
+from pkg import host
+
+
+def test_boot_reaches_ping() -> None:
+    tree = ast.parse(textwrap.dedent(inspect.getsource(host.boot)))
+    called = {
+        n.func.id
+        for n in ast.walk(tree)
+        if isinstance(n, ast.Call) and isinstance(n.func, ast.Name)
+    }
+    assert "ping" in called, "boot no longer reaches the helper"
+    assert called, "vacuity floor: the AST walk saw no calls at all"
+"""
+
+# Exercises the mechanism and never asserts its USE. Deleting the pong() call stays green —
+# which is precisely the shape of APE-3's real defect.
+TEST_UNRAILED = """\
+from pkg import wired
+
+
+def test_pong_returns_its_name() -> None:
+    assert wired.pong() == "pong"
+"""
+
+
+@pytest.fixture
+def wire_repo(tmp_path: Path) -> Path:
+    """A committed two-file repo with one railed wire and one unrailed wire.
+
+    Hermetic on purpose: the real APE-3 check costs minutes and mutates ``src/``, so it can
+    never be a CI test. This fixture is the same machinery on four files.
+    """
+    root = tmp_path / "wirerepo"
+    (root / "src" / "pkg").mkdir(parents=True)
+    (root / "tests").mkdir()
+    (root / "src" / "pkg" / "__init__.py").write_text("")
+    (root / "src" / "pkg" / "wired.py").write_text(WIRED_PY)
+    (root / "src" / "pkg" / "host.py").write_text(HOST_PY)
+    (root / "tests" / "test_railed.py").write_text(TEST_RAILED)
+    (root / "tests" / "test_unrailed.py").write_text(TEST_UNRAILED)
+    # Its own ini, so the child pytest does not inherit this repo's addopts (-n auto, --cov,
+    # --timeout) and does not resolve its rootdir to the real project.
+    #
+    # `--color=yes` is here DELIBERATELY, and it is the reason this fixture is trustworthy. A
+    # plain ini disables colour into a pipe, and the first version of this fixture therefore
+    # passed while the real APE-3 run silently mis-parsed every red: this project's own addopts
+    # carry `--color=yes`, pytest emitted `\x1b[31mFAILED\x1b[0m tests/…`, the node-id parser
+    # matched nothing and two railed wires came back UNRAILED. The fixture must reproduce the
+    # configuration the tool actually meets, or it certifies the wrong thing.
+    (root / "pytest.ini").write_text("[pytest]\ntestpaths = tests\naddopts = --color=yes\n")
+    _run_git(root, "init", "-q")
+    _run_git(root, "add", "-A")
+    _run_git(root, "commit", "-q", "-m", "base", "--no-verify")
+    return root
+
+
+ZZ9 = Atom(
+    id="ZZ-9",
+    title="two side-effect helpers wired into boot",
+    status="todo",
+    scope="src/pkg/wired.py",
+    done_when="boot pings and pongs",
+    deps=[],
+    plan_code="ZZ",
+    plan_name="ZZ-PLAN",
+    plan_status="in_progress",
+)
+
+
+def test_the_check_separates_a_railed_wire_from_an_unrailed_one(wire_repo: Path) -> None:
+    """THE rail. Both wires exist and are named; only one is asserted by a test.
+
+    This is the whole thesis in four files. If the mutation silently stops landing, ``ping``
+    flips to UNRAILED and this reds. If the mutation starts breaking the parse, both become
+    REFUSED (collection errors) and this reds. If the selection stops reaching the asserting
+    file, ``ping`` flips to UNRAILED and this reds. A check that cannot tell these two apart
+    looks exactly like a repo with no unrailed wires, which is the defect being hunted.
+    """
+    report = check_atom_wires(wire_repo, ZZ9, max_wires=4, cap=8, timeout=180, with_cov=False)
+    assert not report.refusal, report.refusal
+    by_symbol = {c.wire.symbol: c for c in report.checks}
+    assert set(by_symbol) == {"ping", "pong"}, sorted(by_symbol)
+
+    ping = by_symbol["ping"]
+    assert ping.status == WIRE_RAILED, f"{ping.status}: {ping.reason}"
+    assert any("test_boot_reaches_ping" in node for node in ping.caught_by), ping.caught_by
+
+    pong = by_symbol["pong"]
+    assert pong.status == WIRE_UNRAILED, f"{pong.status}: {pong.reason}"
+    assert not pong.caught_by
+
+    # and the tree survives byte-identical
+    assert (wire_repo / "src" / "pkg" / "host.py").read_text() == HOST_PY
+    assert not subprocess.run(
+        ["git", "status", "--porcelain"], cwd=wire_repo, capture_output=True, text=True
+    ).stdout.strip()
+
+
+def test_the_check_leaves_no_snapshot_directory_behind(wire_repo: Path) -> None:
+    """ "Leaves nothing behind" has to mean the filesystem, not just the git tree.
+
+    Measured: 22 ``wirecheck-snap-*`` directories accumulated in ``$TMPDIR`` over one session —
+    several still holding a byte copy of a source file — because ``check_atom_wires`` created a
+    Snapshot per atom and only the CLI ever disposed of one.
+    """
+    before = set(Path(tempfile.gettempdir()).glob("wirecheck-snap-*"))
+    report = check_atom_wires(wire_repo, ZZ9, max_wires=1, cap=8, timeout=180, with_cov=False)
+    assert report.checks, report.refusal
+    leaked = set(Path(tempfile.gettempdir()).glob("wirecheck-snap-*")) - before
+    assert leaked == set(), f"snapshot directories survived the run: {sorted(leaked)}"
+
+
+def test_a_multi_line_call_site_is_replaced_whole_and_still_parses(wire_repo: Path) -> None:
+    """Truncating a multi-line call yields a collection error, which proves nothing.
+
+    ``ping`` has two sites, one of them three lines long. Both must become ``pass`` markers,
+    the module must still parse, and the restore must be byte-exact.
+    """
+    host = wire_repo / "src" / "pkg" / "host.py"
+    wires = {w.symbol: w for w in find_wires(ZZ9, wire_repo, ["src/pkg/host.py"])}
+    # `ping` is imported into host from wired, so the DEFINING module has to be in scope too
+    wires = {
+        w.symbol: w for w in find_wires(ZZ9, wire_repo, ["src/pkg/host.py", "src/pkg/wired.py"])
+    }
+    ping = wires["ping"]
+    assert len(ping.sites) == 2, [s.where for s in ping.sites]
+    assert any(s.end_lineno > s.lineno for s in ping.sites), "the multi-line site was lost"
+
+    snap = Snapshot(wire_repo)
+    try:
+        mutate(wire_repo, ping, snap)
+        mutated = host.read_text()
+        assert mutated.count(MUT_MARK) == 2, mutated
+        ast.parse(mutated)  # a SyntaxError here is the exact failure being guarded
+        assert "ping()" not in mutated and "n=2," not in mutated
+    finally:
+        assert snap.restore() == []
+        snap.discard()
+    assert host.read_text() == HOST_PY, "restore was not byte-exact"
+
+
+def test_it_refuses_a_dirty_target_file_instead_of_mutating_over_the_edit(
+    wire_repo: Path,
+) -> None:
+    """Someone else's uncommitted edit must stop the check, not be swept into the diff."""
+    host = wire_repo / "src" / "pkg" / "host.py"
+    host.write_text(HOST_PY + "\n# a sibling's work in progress\n")
+    report = check_atom_wires(wire_repo, ZZ9, max_wires=4, cap=8, timeout=60, with_cov=False)
+    assert report.checks, report.refusal
+    assert {c.status for c in report.checks} == {WIRE_REFUSED}
+    assert all("dirty" in c.reason for c in report.checks), [c.reason for c in report.checks]
+    assert host.read_text().endswith("# a sibling's work in progress\n")
+
+
+def test_it_refuses_when_the_baseline_is_not_green(wire_repo: Path) -> None:
+    """A red before the mutation makes a red after it unattributable."""
+    (wire_repo / "tests" / "test_railed.py").write_text(
+        TEST_RAILED + "\n\ndef test_already_red() -> None:\n    assert False, 'pre-existing'\n"
+    )
+    _run_git(wire_repo, "add", "-A")
+    _run_git(wire_repo, "commit", "-q", "-m", "red", "--no-verify")
+    report = check_atom_wires(wire_repo, ZZ9, max_wires=1, cap=8, timeout=180, with_cov=False)
+    (chk,) = report.checks
+    assert chk.status == WIRE_REFUSED, chk.reason
+    assert "baseline is not green" in chk.reason
+
+
+def test_it_refuses_an_empty_selection_rather_than_calling_the_wire_railed(
+    wire_repo: Path,
+) -> None:
+    """A selection that reaches nothing must never read as "the suite catches it".
+
+    A vacuous run is the exact failure this whole tool exists to remove, so the safe-looking
+    outcome (green ⇒ railed) is forbidden by construction.
+    """
+    for name in ("test_railed.py", "test_unrailed.py"):
+        (wire_repo / "tests" / name).unlink()
+    (wire_repo / "tests" / "test_elsewhere.py").write_text(
+        "def test_nothing() -> None:\n    pass\n"
+    )
+    _run_git(wire_repo, "add", "-A")
+    _run_git(wire_repo, "commit", "-q", "-m", "no relevant tests", "--no-verify")
+    report = check_atom_wires(wire_repo, ZZ9, max_wires=2, cap=8, timeout=60, with_cov=False)
+    assert report.checks
+    for chk in report.checks:
+        assert chk.status == WIRE_REFUSED, chk.reason
+        assert "scored above zero" in chk.reason
+
+
+def test_two_calls_on_one_line_are_refused_not_guessed(tmp_path: Path) -> None:
+    """``f(); g()`` — deleting the line would take the sibling statement with it."""
+    root = tmp_path / "r"
+    (root / "src" / "pkg").mkdir(parents=True)
+    (root / "src" / "pkg" / "__init__.py").write_text("")
+    (root / "src" / "pkg" / "m.py").write_text(
+        "# ZZ-9\ndef a() -> None:\n    pass\n\n\ndef b() -> None:\n    pass\n\n\n"
+        "def boot() -> None:\n    a(); b()\n"
+    )
+    wires = {w.symbol: w for w in find_wires(ZZ9, root, ["src/pkg/m.py"])}
+    snap = Snapshot(root)
+    before = (root / "src" / "pkg" / "m.py").read_text()
+    try:
+        with pytest.raises(WireRefusal, match="shares its line"):
+            mutate(root, wires["a"], snap)
+    finally:
+        snap.restore()
+        snap.discard()
+    assert (root / "src" / "pkg" / "m.py").read_text() == before
+
+
+def test_an_unattributable_red_refuses_instead_of_reading_as_unrailed() -> None:
+    """The floor under red DETECTION — the bug this check shipped with for one run.
+
+    A summary the parser cannot read is indistinguishable from a green, and "green" here means
+    UNRAILED, which is the false-comfort answer. So a counts line that says a test failed while
+    no node id was attributed must refuse. Both directions are asserted, because a floor that
+    fires on everything is as useless as one that fires on nothing.
+    """
+    ansi = RunResult(
+        returncode=1,
+        counts={"failed": 2, "passed": 262},
+        failed_ids=(),  # what the ANSI-blind parser produced on the real run
+        error_ids=(),
+        seconds=81.0,
+        timed_out=False,
+        tail="",
+    )
+    assert ansi.attribution_failed
+    assert not ansi.green
+
+    parsed = replace(ansi, failed_ids=("tests/test_x.py::test_y",))
+    assert not parsed.attribution_failed
+    clean = replace(ansi, returncode=0, counts={"passed": 264}, failed_ids=())
+    assert not clean.attribution_failed and clean.green
+
+
+def test_the_run_parser_reads_colourised_pytest_output() -> None:
+    """Directly, on the bytes: colour must not hide a node id."""
+    coloured = (
+        "\x1b[31mFAILED\x1b[0m tests/test_app_worker_runtime.py::test_boot_starts_it"
+        " - AssertionError: boom\n"
+        "\x1b[31m== \x1b[31m\x1b[1m2 failed\x1b[0m, \x1b[32m262 passed\x1b[0m in 81s ==\x1b[0m\n"
+    )
+    stripped = RE_ANSI.sub("", coloured)
+    ids = tuple(
+        ln.split(" ", 1)[1].split(" - ")[0].strip()
+        for ln in stripped.splitlines()
+        if ln.startswith("FAILED ")
+    )
+    assert ids == ("tests/test_app_worker_runtime.py::test_boot_starts_it",), ids
+    # vacuity floor: the UNSTRIPPED text is exactly what failed to parse
+    assert not [ln for ln in coloured.splitlines() if ln.startswith("FAILED ")]
+
+
+def test_a_snapshot_restore_reports_a_hash_mismatch_instead_of_claiming_success(
+    wire_repo: Path,
+) -> None:
+    """The restore is *verified*, not assumed — otherwise "restored" is just a hope."""
+    host = wire_repo / "src" / "pkg" / "host.py"
+    snap = Snapshot(wire_repo)
+    try:
+        snap.take("src/pkg/host.py")
+        host.write_text("# mutated\n")
+        # corrupt the backup so the copy-back cannot reproduce the recorded hash
+        (snap.dir / "src__pkg__host.py").write_text("# not the original\n")
+        broken = snap.restore()
+        assert broken == ["src/pkg/host.py"], broken
+        assert snap.failures == ["src/pkg/host.py"]
+        # and the backup is deliberately KEPT so a human can recover by hand
+        snap.discard()
+        assert snap.dir.is_dir(), "a failed restore must not delete the only surviving copy"
+    finally:
+        snap.disarm()
+        shutil.rmtree(snap.dir, ignore_errors=True)  # this test is the one that must clean up
+        host.write_text(HOST_PY)
+
+
+def test_arming_a_snapshot_does_not_leave_its_signal_handlers_installed(
+    wire_repo: Path,
+) -> None:
+    """Arming is process-global; under pytest a leaked handler outlives the test."""
+    import signal
+
+    before = {s: signal.getsignal(s) for s in (signal.SIGINT, signal.SIGTERM)}
+    snap = Snapshot(wire_repo)
+    snap.take("src/pkg/host.py")
+    assert signal.getsignal(signal.SIGINT) is not before[signal.SIGINT]
+    snap.restore()
+    snap.discard()
+    assert {s: signal.getsignal(s) for s in before} == before
+
+
+# ---------------------------------------------------------------------------
+# the locator, against the real repo (no mutation, no pytest — cheap)
+# ---------------------------------------------------------------------------
+
+
+def test_the_locator_reaches_ape3s_two_unrailed_wires_from_the_atom_alone() -> None:
+    """The census's biggest miss must stay reachable from the atom id alone.
+
+    ``APE-3``'s prose names neither ``start_worker_watchdog`` nor ``_stop_worker`` — its
+    done_when says "survives a crash (watchdog)" and "uninstall leaves no orphan worker". So
+    key extraction cannot reach either wire, and the derivation that can is the atom-id
+    annotation in ``src/`` (``# APE-3: the same sweep shape for app background WORKERS``).
+    Both must rank in the top few, or the check would need the answer handed to it.
+    """
+    atom = next(a for a in load_atoms() if a.id == "APE-3")
+    assert "start_worker_watchdog" not in atom.prose
+    assert "_stop_worker" not in atom.prose
+
+    modules = annotated_modules("APE-3", REPO_ROOT)
+    assert "src/personalclaw/apps/worker_runtime.py" in modules
+    assert "src/personalclaw/providers/loader.py" in modules
+    assert "src/personalclaw/apps/app_manager.py" in modules
+
+    wires = find_wires(atom, REPO_ROOT, modules)
+    ranked = [w.name for w in wires]
+    assert "worker_runtime::start_worker_watchdog" in ranked, ranked[:8]
+    assert "app_manager::_stop_worker" in ranked, ranked[:8]
+    assert ranked.index("worker_runtime::start_worker_watchdog") < 4, ranked[:8]
+    assert ranked.index("app_manager::_stop_worker") < 4, ranked[:8]
+
+    # Vacuity floor: the locator is discriminating, not returning everything it parsed. A
+    # resolver that matched `ast.Attribute` callees by bare name alone reported 572 sites for
+    # this atom, including every `x.update()`, `t.start()` and `time.sleep()` in the tree.
+    assert len(wires) < 60, len(wires)
+    assert not any(w.symbol in {"update", "start", "stop", "sleep", "wait"} for w in wires)
+
+
+def test_a_recursive_call_is_not_a_wire_into_the_symbol(tmp_path: Path) -> None:
+    root = tmp_path / "r"
+    (root / "src" / "pkg").mkdir(parents=True)
+    (root / "src" / "pkg" / "m.py").write_text(
+        "# ZZ-9\ndef walk(n: int) -> None:\n    if n:\n        walk(n - 1)\n"
+    )
+    assert find_wires(ZZ9, root, ["src/pkg/m.py"]) == []
+
+
+def test_the_selection_reaches_the_atoms_own_suite_inside_a_tight_cap() -> None:
+    """The suite that drives the seam must survive the cap, or the check measures neighbours.
+
+    Note WHICH tier carries it here, because it is the finding: on ``main`` **no rail names
+    ``start_worker_watchdog``**, so the symbol tier scores zero and ``test_app_worker_runtime``
+    is reached only by the atom-id tier. An atom with neither a symbol mention nor an id
+    mention in its tests is one this selection cannot aim.
+
+    (This file names the symbol too — as the locator's ground truth, not as a rail on the wire
+    — which is exactly why ``SELECTION_EXCLUDE`` drops it from every selection. Caught by this
+    assertion failing when the docstrings above were written.)
+    """
+    atom = next(a for a in load_atoms() if a.id == "APE-3")
+    modules = annotated_modules("APE-3", REPO_ROOT)
+    wire = next(
+        w for w in find_wires(atom, REPO_ROOT, modules) if w.symbol == "start_worker_watchdog"
+    )
+    index = _test_index(REPO_ROOT)
+    assert len(index) > 200, len(index)
+    assert "tests/test_audit_landed_atoms.py" not in index, "the check must not select itself"
+    assert not [rel for rel, (text, _) in index.items() if wire.symbol in text], (
+        "a rail now names start_worker_watchdog — good, but this test's stated premise "
+        "(the symbol tier scores zero on main) is stale and the docstring must change"
+    )
+    selection = select_tests(wire, atom, index, cap=6)
+    assert "tests/test_app_worker_runtime.py" in selection.files, selection.files
+    assert selection.total_test_files == len(index)
+    # and it says what it left out, because a green over 6 of 1000 files is not a green
+    assert selection.total_test_files - len(selection.files) > 100
+
+
+def test_a_symbol_naming_file_outranks_the_module_importing_crowd() -> None:
+    """Weighting is the difference between finding the rail and burying it under the cap.
+
+    ``app_manager`` appears in ~40 real test files. Scoring "imports the module" as highly as
+    "names the symbol" pushes the one file that could hold a textual rail below three dozen
+    neighbours, and a cap of 6 then cuts it — measured while building this, on APE-3.
+
+    Synthetic on purpose: the real APE-3 wires have NO symbol-naming test on ``main``, so the
+    real repo cannot exercise this tier at all. A rail that cannot fire is the subject of this
+    whole file, so this one is built where the tier is live.
+    """
+    wire = Wire(
+        module="pkg.wired",
+        symbol="zzq_unique_symbol",
+        def_path="src/pkg/wired.py",
+        sites=(),
+        relevance=0.0,
+        cross_module=True,
+        annotated=False,
+    )
+    index: dict[str, tuple[str, set[str]]] = {
+        "tests/test_the_only_rail.py": ("asserts zzq_unique_symbol is reached", set()),
+    }
+    for i in range(40):  # the crowd: each merely imports the module
+        index[f"tests/test_crowd_{i:02d}.py"] = ("nothing relevant", {"pkg.wired"})
+
+    selection = select_tests(wire, ZZ9, index, cap=6)
+    assert selection.files[0] == "tests/test_the_only_rail.py", selection.files
+    assert len(selection.cut) == 35, len(selection.cut)
+
+
+def test_the_destructive_path_is_off_unless_the_flag_is_typed() -> None:
+    """``--check-wires`` mutates source. It must never be reachable from a default run."""
+    proc = subprocess.run(
+        [sys.executable, TOOL, "--help"], cwd=REPO_ROOT, capture_output=True, text=True
+    )
+    assert "--check-wires" in proc.stdout
+    assert "DESTRUCTIVE" in proc.stdout
+    tracked = subprocess.run(
+        ["git", "grep", "-l", MUT_MARK, "--", "src/", "tests/"],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+    )
+    assert tracked.stdout.strip() == "", f"a mutation marker was committed: {tracked.stdout}"
