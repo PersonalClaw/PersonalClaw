@@ -641,6 +641,55 @@ def _truncate_snapshot(text: str) -> str:
     return text
 
 
+def _capture_declared_file_change(session: _ChatSession, change: dict[str, str] | None) -> None:
+    """File-change chip for a backend that DECLARED the edit (ACP-AGENT-PARITY §2.5).
+
+    The native path below infers the chip: a write-tool NAME set, a workspace path
+    resolution and a disk read, because it has to reconstruct ``after`` from the call's
+    arguments. An ACP ``diff`` content block states path, old text and new text outright,
+    so none of that inference applies — and none of it would transfer anyway, since an
+    ACP CLI's edit tool is named and shaped however its vendor chose.
+
+    Two guards are kept identical to the native path on purpose: a no-op edit files no
+    chip, and both snapshots are capped. Sensitive-path skipping is NOT replicated —
+    ``_flush_file_changes`` redacts every field it attaches, and refusing the chip here
+    would drop the only record that the agent touched the file at all.
+
+    LAST declaration wins, on BOTH sides — the one place this must NOT mirror the native
+    path. ``_flush_file_changes`` keeps the earliest ``before`` and the latest ``after``,
+    which is right for real disk snapshots and wrong for a streaming adapter that
+    re-declares the same edit as its arguments fill in. Measured live on claude-code
+    (2026-08-24): an early frame declared the replaced FRAGMENT as ``oldText`` and a later
+    one the whole file, so the merge produced a chip whose "before" was one line and whose
+    "after" was the entire file — a diff asserting the file used to contain only that
+    line. A declared change carries whole-file text by contract, so the newest
+    declaration is the most complete one.
+    """
+    if not change:
+        return
+    path = str(change.get("path") or "")
+    if not path:
+        return
+    before, after = str(change.get("before") or ""), str(change.get("after") or "")
+    if before == after:
+        return  # no-op edit → no chip, same as the native path
+    entry = {
+        "path": path,
+        "before": _truncate_snapshot(before),
+        "after": _truncate_snapshot(after),
+    }
+    seen = getattr(session, "_declared_file_change_idx", None)
+    if seen is None:
+        seen = {}
+        session._declared_file_change_idx = seen
+    prior = seen.get(path)
+    if prior is not None and prior < len(session._file_changes):
+        session._file_changes[prior] = entry
+        return
+    seen[path] = len(session._file_changes)
+    session._file_changes.append(entry)
+
+
 def _capture_file_change(session: _ChatSession, tool_name: str, tool_input: object) -> None:
     """On a native write_file/edit_file CALL, snapshot before+after for the chip.
 
@@ -701,6 +750,9 @@ def _flush_file_changes(session: _ChatSession) -> None:
     ``after``), redacts every field, then clears the accumulator."""
     changes = session._file_changes
     session._file_changes = []
+    # The declared-change index points into the list just emptied. Clearing both
+    # together is what keeps a later turn from writing over slot 0 of a fresh list.
+    session._declared_file_change_idx = {}
     if not changes:
         return
     # Dedup by path: keep the earliest before and the latest after.
@@ -1637,6 +1689,7 @@ async def run_chat(
     # Reset the per-turn file-change accumulator here — all dispatch paths
     # (handler, orchestrator, queued re-dispatch) funnel through run_chat.
     session._file_changes = []
+    session._declared_file_change_idx = {}
     # Same for the per-turn episodic-citation manifest: populated from the assembled
     # context below (new session only), attached to each assistant message's meta.
     session._memory_citations = []
@@ -2698,11 +2751,17 @@ async def run_chat(
                 _input_preview = redact_credentials(
                     redact_exfiltration_urls(tool_input_to_str(event.tool_input)[:4000])[0]
                 )[0]
-                # Structured input object (native passes a dict) for schema-driven
-                # field rendering (tool-io-rendering). Redacted per-value, bounded.
-                # Falls back to None for non-dict (ACP str) input → UI uses the
-                # string preview, exactly as before.
-                _input_obj = _redact_tool_input_obj(event.tool_input)
+                # Structured input object for schema-driven field rendering
+                # (tool-io-rendering). Redacted per-value, bounded. The native runtime
+                # puts its dict straight into `tool_input`; an ACP frame carries the
+                # pretty-printed string there and the object beside it in
+                # `tool_input_obj` (ACP-AGENT-PARITY §2.5 gap 7 — before that field
+                # existed this call was handed a `str`, returned None, and every ACP
+                # card fell back to the flat preview). Still None when neither shape is
+                # a dict, so the string-preview fallback is unchanged.
+                _input_obj = _redact_tool_input_obj(
+                    event.tool_input_obj if event.tool_input_obj is not None else event.tool_input
+                )
                 # Loop-breaker identity for an ACP call (§2.3 gap 5). Keyed off the
                 # UNREDACTED title + input: the breaker only ever compares keys to
                 # each other, never renders them, and redaction is lossy enough
@@ -2741,6 +2800,10 @@ async def run_chat(
                 # Snapshot before/after for a write tool so file-change chips
                 # can render below the assistant message at turn end.
                 _capture_file_change(session, event.title, event.tool_input)
+                # …and the same chip from a backend that DECLARED the edit instead of
+                # leaving it to be inferred (§2.5 gap 7). Both paths are live: an ACP
+                # CLI may put its `diff` block on the opening frame or on the update.
+                _capture_declared_file_change(session, event.file_change)
                 # AskUserQuestion → render an interactive question card alongside
                 # the pill. The card lets the user answer inline; the agent is
                 # already paused on the tool call awaiting the reply.
@@ -2842,9 +2905,15 @@ async def run_chat(
                         _acp_tool_keys[event.tool_call_id] = params_key(
                             _name, tool_input_to_str(event.tool_input)
                         )
+                    # §2.5 gap 7. A file edit the frame DECLARED (ACP diff content
+                    # block) becomes a chip from the declaration alone — no name set, no
+                    # path resolution, no disk read, which is what makes it work for a
+                    # CLI whose edit tool the host has never heard of.
+                    _capture_declared_file_change(session, event.file_change)
                     _u_input = redact_credentials(
                         redact_exfiltration_urls(tool_input_to_str(event.tool_input)[:4000])[0]
                     )[0]
+                    _u_input_obj = _redact_tool_input_obj(event.tool_input_obj)
                     _u_detail = ""
                     if event.title:
                         _u_detail, _ = redact_exfiltration_urls(event.title)
@@ -2870,6 +2939,12 @@ async def run_chat(
                                     "tool": _name,
                                     "tool_call_id": event.tool_call_id,
                                     "input_preview": _meta.get("input", ""),
+                                    # §2.5 gap 7: the structured object usually arrives
+                                    # HERE, not on the opening frame (adapters stream
+                                    # `rawInput: {}` first), so a refinement that
+                                    # carried only the string left the card's fields
+                                    # empty for the whole turn.
+                                    "input": _u_input_obj,
                                     "detail": _meta.get("detail", ""),
                                     "update": True,
                                 },

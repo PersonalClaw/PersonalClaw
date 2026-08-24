@@ -48,6 +48,25 @@ def make_unified_diff(old: str, new: str, path: str, max_len: int = 6000) -> str
     return "".join(udiff).rstrip()[:max_len]
 
 
+def _declared_file_change(path: object, old: object, new: object) -> dict[str, str] | None:
+    """A file-change chip built ONLY from what an ACP ``diff`` block declared.
+
+    ACP's diff content block carries the file's whole ``oldText``/``newText``, which is
+    exactly the chip's contract (``chat_runner._flush_file_changes`` dedups per path
+    keeping the earliest ``before`` and the latest ``after``). No path resolution and no
+    disk read happens here: the native chip needs both because it reconstructs ``after``
+    from a tool's arguments, and there is nothing to reconstruct when the agent states
+    both sides.
+
+    Returns ``None`` without a path — a chip keyed on ``""`` would collapse every
+    unnamed edit in the turn into one row.
+    """
+    rel = str(path or "")
+    if not rel:
+        return None
+    return {"path": rel, "before": str(old or ""), "after": str(new or "")}
+
+
 def coerce_tool_content(content: object) -> str:
     """Flatten ACP tool-result content blocks to text.
 
@@ -146,6 +165,7 @@ def extract_tool_event(
             )
         # For edit tools with diff content blocks, generate unified diff
         found_diff = False
+        file_change: dict[str, str] | None = None
         content_blocks = update.get("content", [])
         if isinstance(content_blocks, list):
             for cb in content_blocks:
@@ -157,6 +177,11 @@ def extract_tool_event(
                     if diff_str:
                         input_str = diff_str
                         found_diff = True
+                    # §2.5 gap 7: the same declaration also feeds the file-change chip.
+                    # Recorded even when `make_unified_diff` returns "" (identical
+                    # texts): the chip layer owns the no-op decision, and duplicating
+                    # that judgement here is how the two surfaces drift apart.
+                    file_change = _declared_file_change(path, old, new)
                     break
         # Fallback for strReplace when no diff content block was found
         if (
@@ -171,6 +196,13 @@ def extract_tool_event(
                 diff_str = make_unified_diff(old, new, path)
                 if diff_str:
                     input_str = diff_str
+                # Deliberately NO `file_change` here. `oldStr`/`newStr` are the
+                # FRAGMENTS being replaced, not the file's before/after contents, and
+                # the chip's contract is whole-file snapshots (`_flush_file_changes`
+                # dedups per path keeping the earliest before and latest after). Filing
+                # a fragment as `before` would render a chip asserting the file
+                # contained only that fragment. The unified diff above still shows the
+                # user exactly what changed; only the chip is withheld.
         # Redact sensitive content before caching/displaying
         if input_str:
             input_str, _ = redact_exfiltration_urls(input_str)
@@ -204,6 +236,13 @@ def extract_tool_event(
             tool_kind=kind,
             tool_purpose=purpose,
             tool_input=input_str,
+            # §2.5 gap 7: hand the OBJECT over too, not only the flattened string.
+            # Carried unredacted on purpose, exactly like the native runtime's dict:
+            # ``chat_runner._redact_tool_input_obj`` is the single redaction+cap point
+            # for the structured shape, and redacting here as well would mask values
+            # twice while leaving the two representations free to disagree.
+            tool_input_obj=raw_input if isinstance(raw_input, dict) else None,
+            file_change=file_change,
             tool_call_id=tool_call_id,
         )
     return None
@@ -323,6 +362,20 @@ def extract_tool_update_events(
 
     # 1) Resolved input + refined title (the initial frame was empty).
     raw_input = update.get("rawInput")
+    # §2.5 gap 7. A `diff` content block on an UPDATE frame is the common case — the
+    # opening `tool_call` usually has no content at all — so the chip has to be read
+    # here as well as there. Only `file_change` is taken from it: rewriting `input_str`
+    # into a unified diff on this path would change what existing ACP cards print,
+    # which is a rendering decision this atom deliberately does not make.
+    upd_file_change: dict[str, str] | None = None
+    _upd_blocks = update.get("content")
+    if isinstance(_upd_blocks, list):
+        for _cb in _upd_blocks:
+            if isinstance(_cb, dict) and _cb.get("type") == "diff":
+                upd_file_change = _declared_file_change(
+                    _cb.get("path", ""), _cb.get("oldText") or "", _cb.get("newText") or ""
+                )
+                break
     input_str = ""
     if isinstance(raw_input, (dict, list)) and raw_input:
         input_str = json.dumps(raw_input, indent=2)
@@ -353,12 +406,19 @@ def extract_tool_update_events(
         if title:
             _seen = replace(_seen, title=title)
         tool_call_seen[tool_call_id] = _seen
-    if input_str or title:
+    # A frame that declares ONLY a diff (no resolved rawInput, no refined title) still
+    # has to produce an event, or the chip it declared is dropped on the floor.
+    if input_str or title or upd_file_change:
         events.append(
             AcpEvent(
                 kind=EVENT_TOOL_CALL_UPDATE,
                 title=title,
                 tool_input=input_str,
+                # The update frame is where an adapter that opened with ``rawInput: {}``
+                # finally names its arguments, so this is the site that decides whether
+                # the card can render fields at all (§2.5 gap 7).
+                tool_input_obj=raw_input if isinstance(raw_input, dict) else None,
+                file_change=upd_file_change,
                 tool_call_id=tool_call_id,
             )
         )

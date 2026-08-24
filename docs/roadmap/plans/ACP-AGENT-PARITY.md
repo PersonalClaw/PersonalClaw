@@ -4900,3 +4900,106 @@ cited above.
   That is the host reporting its own non-authority over CLI-proprietary tools, which is §2.2's
   "residual not-gateable set" rather than a regression of this atom — `AAP-5` is `done` and enumerates it.
   No action taken here; recorded so the parity doc's residual list can cite a live instance.
+
+## Execution log — `AAP-8` (§2.5 Learning capture + tool-card fidelity + risk plumbing)
+
+- [2026-08-24][AAP-8] **PARTIAL — gaps 7 and 8 closed, the atom stays `todo` on clause 1.**
+  Gap 7 (typed tool-result meta / structured input + diff chips) and gap 8 (risk plumbing) are
+  implemented, railed and driven live on two providers. Clause 1 — *"after an ACP turn a procedural
+  outcome row exists"* — is **not verified this tick** and is recorded below rather than assumed.
+- [2026-08-24][AAP-8] **Gap 7a — the object was being thrown away one line after it was parsed.**
+  `translate.py` receives a real `rawInput` object and `json.dumps`-ed it into `tool_input`, so
+  `chat_runner._redact_tool_input_obj` was handed a `str`, returned `None` *by contract*, and every ACP
+  card fell back to the flat string preview no matter how well the CLI described its call. The object
+  now travels BESIDE the string (`AcpEvent.tool_input_obj` → `AgentEvent.tool_input_obj`), deliberately
+  not INSTEAD of it: flattening the object into `tool_input` would have changed every existing ACP
+  card's preview as a side effect of buying the fields. Read on the update frame as well as the opening
+  one, because an adapter that opens with `rawInput: {}` names its arguments only in the update.
+  **Live (claude-code):** the update frames carried
+  `{"replace_all": false, "file_path": …, "old_string": "    return \"hello\"", "new_string": …}` —
+  real schema-driven fields where `main` broadcast `input: null`.
+- [2026-08-24][AAP-8] ⚠️ **The structured-input arm is VACUOUS on codex, and that is a fact about
+  codex.** Measured on the same drive: codex sends **no `rawInput` at all** — its `Read file '…'` call
+  carried `input_preview: ""` and its edit calls put everything in the title plus a `diff` content
+  block. So `tool_input_obj is None` there is correct, not a miss, and the fields arm is claude-code's
+  (and any adapter that populates `rawInput`). Recorded so a later reader does not read the null as a
+  regression.
+- [2026-08-24][AAP-8] **Gap 7b — the diff chip now comes from the DECLARATION.** The native chip is
+  inferred three ways (a write-tool NAME set, a workspace path resolution, a disk read) and none of it
+  transfers to a CLI whose edit tool is named and shaped however its vendor chose. An ACP `diff` content
+  block states path, old text and new text outright, so `_capture_declared_file_change` files the chip
+  with no inference and no filesystem access. Both frame positions are live: codex declares its diff on
+  the opening `tool_call`, claude-code on the updates.
+  **`strReplace` deliberately files NO chip** — `oldStr`/`newStr` are the replaced FRAGMENTS, not the
+  file's contents, and filing one as `before` renders a chip asserting the file contained only that
+  fragment. The unified-diff preview still shows the change; only the chip is withheld.
+- [2026-08-24][AAP-8] 🔴 **A progressive re-declaration produced a lying chip, found live and fixed.**
+  First claude-code drive: `before='    return "hello"'` (one line) with
+  `after='def greet():\n    return "goodbye"'` (whole file) — a diff asserting the file used to contain
+  only that line. Cause: `_flush_file_changes` keeps the **earliest** `before` and the **latest**
+  `after`, which is right for real disk snapshots and wrong for a streaming adapter that re-declares
+  the same edit as its arguments fill in, so the partial first declaration got pinned. Declared chips
+  now do **last-declaration-wins on BOTH sides**, keyed per path (`_ChatSession.
+  _declared_file_change_idx`, reset alongside `_file_changes` — an index into an emptied list is what
+  would overwrite slot 0 of the next turn). Re-driven after the fix: whole file on both sides. Native
+  merge semantics are untouched, and the pre-existing `test_file_change_capture.py` rails still pass.
+- [2026-08-24][AAP-8] **Negative control on `main` — the chip is genuinely new.** Same edit
+  instruction, same provider, same dev home, gateway run WITHOUT `PYTHONPATH` so it executed the
+  editable install from the main checkout at `5f7f0b0e`: the file changed on disk, the tool cards
+  rendered, and the session recorded **`TOTAL file_changes = 0`**. With the worktree on `PYTHONPATH`:
+  one whole-file chip. `_file_changes` had exactly one writer before this change (the native
+  `_WRITE_FILE_TOOLS` snapshot), so an ACP edit turn produced no chip at all.
+- [2026-08-24][AAP-8] **Gap 8 needed NO plumbing, and the census is why.** §2.1's design asked for
+  personalclaw-core's declared `risk_level`s to be threaded through the MCP listing. Measured: **no core
+  tool dict declares an explicit `risk_level`** (`mcp_core` + the six aggregated category modules), so
+  `agents/native/tools.py` derives the declaration from `infer_risk_from_name`, which is the same
+  function `resolve_effective_risk` already falls back to. Probed directly: `artifact_delete` and
+  `memory_forget` resolve `destructive`, `notify` `caution`, in **all three measured name dialects**
+  (`mcp.personalclaw-core.X`, `mcp__personalclaw-core__X`, `@personalclaw-core/X`) — prefixes do not
+  break inference. Building the resolver would have returned the value it was handed: dead code, the
+  same trap `ET-4`'s polarity helper recorded. A rail pins the equivalence AND the census instead, so
+  the day a core tool declares an explicit level the divergence fails loudly rather than mislabeling an
+  approval card. That rail carries a vacuity floor (it asserts the module files exist and that there
+  are at least six of them) because a mistyped path would have scanned nothing and passed.
+- [2026-08-24][AAP-8] ⚠️ **WHY THE ATOM STAYS `todo`: clause 1 is unmeasured, not met.** After four
+  live ACP turns across codex and claude-code, the dev home's `memory.db` held **0 rows whose
+  `category` is procedural** (`by category: [(None, 11), ('decision', 18)]`). This is NOT filed as gap 4
+  regressing: gap 4's wiring is on `main` with its own rails (`tests/test_acp_procedural_outcomes.py`
+  drives real frames through `translate` → provider → adapter → accumulator), and
+  `_maybe_after_turn_review` is gated by ONE `LearningGate` decision
+  (`learning_decision_for_turn`) which a one-line edit turn may legitimately decline. What is missing is
+  the measurement, and the next tick can force it two ways: read the gate's decision for the turn
+  directly, or drive a turn the gate accepts and re-count. Until then the clause is open and the atom is
+  `todo` — a criterion whose only evidence is a unit test is exactly what §2.1's re-drive was for.
+- [2026-08-24][AAP-8] **Falsified twice, restored from file copies.** Deleting
+  `tool_input_obj=e.tool_input_obj` from the adapter reds three tests (`assert None == {...}`) — the
+  field-for-field mapper is load-bearing, the same lesson `tool_meta` taught in `G6`/`G7`. Deleting
+  `file_change=upd_file_change` from the update path reds the two chip tests. Both restored from
+  `/tmp/*.pristine` copies, never `git checkout --`; suite green again at 33 passed and
+  `git status --porcelain` empty.
+- [2026-08-24][AAP-8] ✅ **CLAUSE 1 CLOSED, and the entry above it was wrong for TWO reasons — the
+  atom flips to `done`.** The "0 procedural rows" measurement was a **bad probe**: it filtered
+  `semantic_memory` on `category like '%procedur%'`, but the discriminator is the KEY prefix
+  (`user.procedural.<hash>`) and the `category` column reads `decision` for those rows. Corrected count
+  at the time of that claim: **18 rows already existed**, the earliest stamped
+  `2026-08-24T06:00:34.857` — which is `AAP-4`'s codex `subagent_run` turn to the millisecond. So ACP
+  turns had been feeding procedural memory the whole time and the probe could not see it.
+  The gate finding is still real and still worth having: `learning.min_tool_calls = 4`, and
+  `learning_decision_for_turn` returns `GateReason.NOT_WORTHWHILE: below_threshold` at 0/1/3 tool calls
+  and `GateReason.ALLOWED` at 4/6 — which is why the three-tool EDIT turns produced nothing. Two
+  independent reasons for one zero; either alone would have been a wrong conclusion.
+- [2026-08-24][AAP-8] **Clause 1 driven as a PAIRED comparison, both arms on codex.** Persistent
+  session, one turn instructed as six separate shell tool calls (12 tool events on the wire):
+  `user.procedural.*` **24 → 30**, the six new rows reading `"pwd on 'pwd' → success"`,
+  `"whoami on 'whoami' → success"`, `"date …"`, `"uname -s …"`, `"echo one …"`, `"echo two …"`.
+  Then an **incognito** session (`memory_mode: "incognito"` confirmed on the create response), the SAME
+  six-call instruction, the same 12 tool events: **24 → 24, zero new rows.** The negative arm uses the
+  identical turn shape as the positive one, so "none under incognito" is a comparison rather than an
+  absence of evidence.
+- [2026-08-24][AAP-8] **All four clauses now met.** (1) procedural row after an ACP turn, none under
+  incognito — live, paired, above. (2) an ACP edit turn renders a diff chip and structured input fields —
+  live on claude-code with a negative control on `main` (`TOTAL file_changes = 0`). (3) the approval card
+  shows a core destructive tool's declared risk — measured equal to the inferred one BY CONSTRUCTION
+  (no core tool dict declares `risk_level`), pinned by a rail with a census and a vacuity floor rather
+  than by dead plumbing. (4) native-only meta stays empty, not fabricated, where frames are empty —
+  railed (`tool_input_obj is None`, never `{}`). `dag.json` + `AAP.md` flip to `done` with `pr` 1957.

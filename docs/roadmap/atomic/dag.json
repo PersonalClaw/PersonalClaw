@@ -4864,7 +4864,7 @@
         {
           "id": "AAP-8",
           "title": "\u00a72.5 Learning capture + tool-card fidelity + risk plumbing for ACP (gaps 4, 7, 8)",
-          "status": "todo",
+          "status": "done",
           "scope": "Phase 2 \u00a72.5 Learning + fidelity \u2014 gaps 4, 7, 8 (procedural drain off neutral EVENT_TOOL_* stream; populate structured-input from translate.py rawInput + kind-based diff chips; declared-risk map for core MCP tools + tool_kind floors)",
           "done_when": "After an ACP turn a procedural outcome row exists (none under incognito); an ACP edit-tool turn renders a diff chip and structured input fields; the approval card for a personalclaw-core destructive tool shows its declared risk chip, not the heuristic one; native-only meta stays empty (not fabricated) where frames are empty (SC #6).",
           "deps": [
@@ -4872,7 +4872,8 @@
             "AAP-2",
             "AAP-3",
             "AAP-4"
-          ]
+          ],
+          "pr": 1957
         },
         {
           "id": "AAP-9",
@@ -7500,11 +7501,6 @@
         "plan": "AAP"
       },
       {
-        "id": "AAP-8",
-        "title": "\u00a72.5 Learning capture + tool-card fidelity + risk plumbing for ACP (gaps 4, 7, 8)",
-        "plan": "AAP"
-      },
-      {
         "id": "AAP-9",
         "title": "\u00a72.6 Dialect asymmetry closure + project_id stamping (gaps 9 & 10)",
         "plan": "AAP"
@@ -9977,9 +9973,9 @@
         "code": "AAP",
         "plan": "ACP-AGENT-PARITY",
         "total_atoms": 10,
-        "done": 7,
+        "done": 8,
         "in_progress": 0,
-        "todo": 3,
+        "todo": 2,
         "blocked": 0
       },
       {
