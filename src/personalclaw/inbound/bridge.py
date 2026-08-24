@@ -575,8 +575,11 @@ def _fence_user_content(action: Action, result: dict) -> dict:
 
     Capping and the ``inbound:<surface>`` provenance come from `fence_payload`; nothing
     about the fence is re-decided here. Provenance stays at the surface shape
-    (``inbound:bridge``) because this surface has one bearer token and no per-client
-    identity to name — the audit line already records WHICH action ran.
+    (``inbound:bridge``) deliberately: `_admit` DOES resolve a per-client record now, so a
+    client id is available to name, but naming it would make the marker the model reads vary
+    with which credential called — an identity the model cannot verify and should not be
+    reasoning about. The trust level is a property of the surface, not of the caller, and the
+    audit line already records both WHICH client and WHICH action ran.
     """
     key = action.user_content
     if not key:
