@@ -242,10 +242,15 @@ class FileReader:
             # agent. Rendered as markdown tables to match how the xlsx/csv readers
             # already present tabular data, so downstream consumers see one shape.
             #
-            # Appended after the prose rather than interleaved: python-docx exposes no
-            # ordering between paragraphs and tables without walking the underlying XML
-            # body, and appending is the honest option — losing POSITION is a far
-            # smaller defect than losing the content.
+            # Appended after the prose rather than interleaved, and that is now a CHOICE
+            # rather than a limit: `documents/docx_parser._walk` walks the body element's
+            # own children, which IS document order, so the ordering this reader does not
+            # reproduce is available in this repo. It still appends because this path
+            # flattens a document to plain text for search and embedding, where no
+            # consumer reads position — and because interleaving here changes the stored
+            # text of every already-ingested Word document. Losing POSITION was always a
+            # far smaller defect than losing the content; converging on the parser's walk
+            # belongs to whichever change is willing to own that re-ingest.
             for table in doc.tables:
                 rendered = _render_docx_table(table)
                 if rendered:

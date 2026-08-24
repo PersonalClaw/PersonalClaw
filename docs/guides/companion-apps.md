@@ -317,17 +317,100 @@ alone.
 This one is measured, not stylistic:
 
 - The query-param path **binds** the token to the first client IP it sees
-  (`bind_token_ip`, `dashboard/token_auth.py:582`, called on first query-param use at
-  `dashboard/token_auth.py:1055`) and then denies on mismatch with `IP mismatch`
-  (`check_token_ip`, `:587`, enforced at `:1042`).
+  (`bind_token_ip`, `dashboard/token_auth.py:602`, called on first query-param use at
+  `dashboard/token_auth.py:1075`) and then denies on mismatch with `IP mismatch`
+  (`check_token_ip`, `:607`, enforced at `:1062`).
 - Cookie-borne requests skip that check entirely — *"the cookie itself is the credential, and
-  IP validation behind a proxy is unreliable"* (`dashboard/token_auth.py:1040-1041`).
+  IP validation behind a proxy is unreliable"* (`dashboard/token_auth.py:1059-1061`).
 
 A phone changes IP every time it moves between cell and Wi-Fi. A query-param device session
 would therefore die on every network change, while a cookie-borne one is untouched. Pairing
 completion sets the cookie on the response, and a native shell — Electron or a Capacitor
 WebView — holds it exactly like any browser does. There is nothing to implement here beyond
 *not* reaching for the query parameter because it was the shape you saw in the token link.
+
+### Reaching a remote gateway over `wss://`
+
+A `remote` endpoint is your own gateway reached through the [remote access](remote-access.md)
+tunnel. The tunnel terminates TLS, so the socket is `wss://` rather than `ws://`.
+
+**Nothing is in the middle.** The connection is your client to your gateway and stops there.
+There is no relay, no broker, no account, and no cloud tier that sees your traffic — the tunnel
+is the owner's own, and the gateway is the only server in the path. That is a property of the
+design, not a setting: no first-party code anywhere knows how to forward a companion's request
+to a third host.
+
+#### Building the socket URL
+
+Two different jobs, and mixing them up is the common bug:
+
+- **A WebView shell** loads the served dashboard from `base_url`. The SPA then opens its own
+  socket *origin-relative* (`${proto}://${location.host}/api/ws`), so the shell must not build a
+  URL at all. This is why the rule below says to load `base_url` as an origin and never prepend
+  it to an API path.
+- **A native client** — one that speaks to the gateway directly instead of hosting the SPA — has
+  no document and therefore no `location` to be relative to. It has only the registry row, so it
+  must build the URL, and it should use the shared helper rather than its own string work:
+
+```ts
+import { endpointSocket, endpointSocketUrl } from './lib/endpoints'
+
+endpointSocketUrl('https://pc.example.com')   // 'wss://pc.example.com/api/ws'
+endpointSocketUrl('http://claw.local:10000')  // 'ws://claw.local:10000/api/ws'
+endpointSocket(activeEndpoint(registry))      // same, from a registry row
+```
+
+The scheme is derived from the endpoint's **own** URL, so a remote row behind TLS gets `wss://`
+without anything having to remember that "remote implies TLS". Nothing consults `kind` — that
+field says whether your shell spawned the gateway, which is a lifecycle fact, not a transport
+one. An unparseable `base_url`, a bare host, or a scheme that is not `http`/`https` returns
+`undefined` rather than a guess: show "this endpoint is misconfigured" on that row, because a
+guessed scheme dials a socket somewhere you did not intend.
+
+#### How the gateway authenticates it
+
+The device session rides as the **session cookie**, exactly as on the LAN — see the query-param
+warning above, which matters more here because a phone changes IP whenever it moves between
+cell and Wi-Fi. The URL carries no credential.
+
+The part worth knowing, because it is the one place a native client is treated differently from
+a browser: **a native client sends no `Origin` header**, since it has no document origin to
+send. The gateway admits an `Origin`-less `/api/ws` upgrade **only** when the session that
+authorized it is a paired device session. Concretely:
+
+| Client | `Origin` | Result |
+|---|---|---|
+| Native shell, paired device session | absent | upgrade proceeds |
+| Any client, ordinary browser session | absent | refused |
+| Any client, any session | present but not in the allowlist | refused |
+
+Two things follow, and a wrapper author should not try to work around either:
+
+- **The allowed-origin list is unchanged.** Pairing a device does not add an origin, so it buys
+  no help presenting one. If your client *does* send an `Origin`, it must be in the list like
+  everyone else.
+- **Pairing is the opt-in.** There is no config flag to enable this and nothing to turn on. A
+  session the owner deliberately paired is what vouches for the connection, which is also why
+  revoking that device from Settings → Devices closes it immediately and closes nothing else.
+
+#### Known rough edge: a WebView over the tunnel needs `dashboard.url` too
+
+If your shell loads the dashboard **in a WebView** through the tunnel, the page's origin is your
+public URL, and `dashboard.public_url` alone does not admit it: it adds `wss://<host>` to the
+Content-Security-Policy but does not add `https://<host>` to the CSRF/WebSocket origin
+allowlist. The dashboard then renders and never receives an event, and state-changing requests
+return `403`.
+
+Until that is reconciled, set **both** fields to the same public URL:
+
+```jsonc
+{ "dashboard": { "url": "https://pc.example.com",
+                 "public_url": "https://pc.example.com" } }
+```
+
+`dashboard.url` is the field that widens the origin allowlist (and it refuses to do so unless
+token auth is active). A native client that sends no `Origin` is unaffected by this and needs
+only `public_url`.
 
 ### Reconnecting: reuse the contract, do not write one
 
@@ -378,7 +461,9 @@ A desktop or mobile author can work from this list without deciding anything els
    re-points `active` and navigates. No aggregate view.
 6. **Show per-endpoint health** — reachable, unreachable, or needs-pairing-again — on the
    switcher rows. One endpoint's failure never touches another's entry.
-7. **Inherit reconnect from the SPA.** Add no retry loop of your own.
+7. **Inherit reconnect from the SPA.** Add no retry loop of your own. If you open the socket
+   yourself rather than hosting the SPA, build its URL with `endpointSocketUrl` — never by
+   string-concatenating a scheme.
 8. **Label endpoints from `companion.instance_name`**, falling back to the hostname, and let
    the user override locally.
 

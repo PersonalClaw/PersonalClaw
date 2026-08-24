@@ -544,16 +544,64 @@ def harvest(
     return HarvestReport(cases=cases, considered=len(candidates), skipped=skipped)
 
 
+# ── the consulted-ref match — ONE matcher, two readers ───────────────────────
+
+
+def ref_names_skill(ref: str, skill_name: str) -> bool:
+    """Does one `consulted` ref name this skill?
+
+    THE matcher for the WF2-R13 `consulted` event's `ref`, shared by both readers of that
+    field so they cannot disagree about what "this run used that skill" means:
+
+    * :func:`personalclaw.evals.skills_bench.consulted_runs` matches the LIVE event as it sits in
+      `events.jsonl`;
+    * :func:`installed_harvested_cases` matches the same ref after it was frozen into a harvested
+      case's `harvest.consulted_refs` (which is where it survives run-directory retention).
+
+    Matched on the whole ref or on its last path segment, so both `skill:code/foo` and a bare
+    `code/foo` resolve. Deliberately NOT a substring test: `foo` must not match `foo-bar`, or one
+    skill's bench would replay another skill's runs and report the delta under the wrong name.
+    """
+    if not ref or not skill_name:
+        return False
+    candidates = {ref, ref.split(":", 1)[-1]}
+    return skill_name in candidates or skill_name == ref.rsplit("/", 1)[-1]
+
+
+def case_consulted(case: dict[str, Any], skill_name: str) -> bool:
+    """Did the run this case was harvested from consult `skill_name`?
+
+    Reads `harvest.consulted_refs` — the set this module wrote from that run's own `consulted`
+    events. A case with an EMPTY `consulted_refs` is dropped, never kept: "the run loaded no
+    skill we recorded" is not "the run loaded this one", and admitting it would let a bench
+    replay an unrelated run and call the result the skill's impact.
+    """
+    block = case.get("harvest") if isinstance(case, dict) else None
+    if not isinstance(block, dict):
+        return False
+    refs = block.get("consulted_refs")
+    if not isinstance(refs, list):
+        return False
+    return any(ref_names_skill(str(ref or ""), skill_name) for ref in refs)
+
+
 # ── consuming (the strict loader) ────────────────────────────────────────────
 
 
-def installed_harvested_cases(*, workflow_name: str = "") -> list[dict[str, Any]]:
+def installed_harvested_cases(
+    *, workflow_name: str = "", consulted_ref: str = ""
+) -> list[dict[str, Any]]:
     """Every harvested case already in the installed library, oldest run first.
 
     Reads the library dir rather than re-harvesting, so a consumer scores the suite that was
     reviewed rather than whatever the ledger looks like this second. Selection is by the `harvest`
     block's presence — the same inspection `install_library` uses for `origin` — so a case whose
     provenance was stripped drops out of the suite instead of being scored anonymously.
+
+    `consulted_ref` narrows the suite to the runs that ACTUALLY loaded that skill/template, via
+    :func:`case_consulted`. It is the same shape of filter as `workflow_name` — keyword-only, `""`
+    means "do not filter" — because ES-7 §3.3's population ("replay the runs that consulted this
+    skill") is a scope over the suite, not a second suite.
     """
     out: list[dict[str, Any]] = []
     directory = scenarios.installed_dir()
@@ -574,22 +622,35 @@ def installed_harvested_cases(*, workflow_name: str = "") -> list[dict[str, Any]
             continue
         if workflow_name and str(block.get("workflow_name") or "") != workflow_name:
             continue
+        if consulted_ref and not case_consulted(data, consulted_ref):
+            continue
         out.append(data)
     out.sort(key=lambda d: str((d.get("harvest") or {}).get("run_started_at") or ""))
     return out
 
 
-def load_harvested_suite(*, workflow_name: str = "") -> list[dict[str, Any]]:
+def load_harvested_suite(
+    *, workflow_name: str = "", consulted_ref: str = ""
+) -> list[dict[str, Any]]:
     """The harvested suite, or :class:`EmptyHarvestError` — never an empty list.
 
     This is the entry point a study or a bench should call. Raising is the whole point: a caller
     that got `[]` and compared it to a threshold would report a pass it never measured, and "the
     suite is empty" and "the suite scored zero" are the two statements a harvested suite exists to
     keep apart.
+
+    The refusal NAMES the scope that emptied the suite, so "nothing was ever harvested" and "this
+    skill has no harvested run" are distinguishable in the message rather than by re-running the
+    query without the filter.
     """
-    cases = installed_harvested_cases(workflow_name=workflow_name)
+    cases = installed_harvested_cases(workflow_name=workflow_name, consulted_ref=consulted_ref)
     if not cases:
-        scope = f" for workflow {workflow_name!r}" if workflow_name else ""
+        scopes = []
+        if workflow_name:
+            scopes.append(f"workflow {workflow_name!r}")
+        if consulted_ref:
+            scopes.append(f"runs that consulted {consulted_ref!r}")
+        scope = f" for {' and '.join(scopes)}" if scopes else ""
         raise EmptyHarvestError(
             f"{NO_POPULATION}{scope}. Run `personalclaw eval-harvest` after some runs have "
             f"finished; a suite of zero cases must not be scored."

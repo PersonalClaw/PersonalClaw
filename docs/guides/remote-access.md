@@ -250,9 +250,19 @@ Being straight about the limits, because a false sense of safety is worse than n
 doctor` prints `remote: ✅ tailnet …`. If doctor says `local-only`, the gateway isn't on the
 tailnet yet.
 
-**The page loads but nothing updates.** The WebSocket is blocked. Confirm `public_url` matches
-the host in your browser's address bar exactly, including port — the CSP is derived from it.
-(This applies to the public-tunnel path; the tailnet path needs no `public_url`.)
+**The page loads but nothing updates.** The WebSocket is blocked, and there are two separate
+reasons it can be — check both:
+
+1. Confirm `public_url` matches the host in your browser's address bar exactly, including port —
+   the CSP is derived from it.
+2. **Also set `dashboard.url` to the same public URL.** `public_url` puts `wss://<host>` in the
+   Content-Security-Policy, so the browser is *allowed* to open the socket, but it is
+   `dashboard.url` that adds your public origin to the origin allowlist the gateway checks on the
+   upgrade. With only `public_url` set the browser opens the socket and the gateway refuses it,
+   which looks identical to a CSP problem. State-changing requests return `403` for the same
+   reason.
+
+(Both apply to the public-tunnel path; the tailnet path needs no `public_url`.)
 
 **I get signed out immediately, or the cookie never appears.** An `https` `public_url` sets
 `Secure`, so the cookie is dropped over plain http. Either serve the dashboard over TLS or unset
