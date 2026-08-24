@@ -131,3 +131,131 @@ def test_gather_evidence_is_read_only_and_never_raises_on_empty() -> None:
     assert out["workflow"] == "code-project"
     assert out["clusters"] == [] and out["top_cluster"] is None
     assert out["evidence"] == []
+
+
+# ── layer 3: the mechanism FIRES — the run key the power floor counts ─────────
+
+
+def _seed_skips(workflow: str, skips: list[tuple[str, str, str]]) -> None:
+    """Real runs in the run store, real `step_skipped` rows through the real ledger writer.
+
+    Nothing hand-built: the whole class of defect this section pins is a reader and a fixture
+    agreeing on a key the ENGINE never emits, so a fixture is not admissible evidence here.
+    """
+    from personalclaw.workflows import store as wf_store
+    from personalclaw.workflows.journal import Journal
+    from personalclaw.workflows.models import WorkflowRun
+
+    for run_id, path, node_id in skips:
+        if wf_store.get(run_id) is None:
+            wf_store.create(WorkflowRun(id=run_id, workflow_name=workflow))
+        Journal(run_id).step_skipped(path, node_id, epoch=0, actor="user")
+
+
+def test_a_repeatedly_skipped_step_REACHES_the_agent_as_a_top_cluster() -> None:
+    """The load-bearing end-to-end: the refiner's mechanism actually fires.
+
+    `Cluster.distinct_runs` is a CROSS-RUN count, but a ledger record is run-scoped by directory
+    and the writer never stamps `run_id` on a row. `gather_evidence` — which holds `run.id` in its
+    own loop — has to supply it. It did not, so every event arrived as `run_id=""`, every cluster
+    reported `distinct_runs=1`, `top_cluster` was permanently `None`, and the `refine-template`
+    agent prompt's step 2 (*"If there is no top cluster, STOP and propose nothing"*) was the only
+    branch reachable for any template, forever. Node attribution was necessary but not sufficient.
+
+    Driven through `mcp_core._call_tool("refiner_evidence", ...)` — the tool the agent actually
+    calls (declared `mcp_core.py`, held by `agents/defaults.TEMPLATE_REFINER_TOOLS`, driven by
+    `workflows/bundled/refine-template/workflow.json`) — so this asserts the CALL SITE, not the
+    arithmetic of a helper the shipped path might not reach.
+    """
+    from personalclaw import mcp_core
+    from personalclaw.workflows.journal import ledger
+
+    workflow = "daily-digest"
+    _seed_skips(
+        workflow,
+        [
+            ("skipfire0", "root.children[0]", "summarize"),
+            ("skipfire1", "root.children[0]", "summarize"),
+            ("skipfire2", "root.children[0]", "summarize"),
+            ("skipfire3", "root.children[1]", "translate"),
+        ],
+    )
+
+    # ── the vacuity floor ──
+    # The injection is only load-bearing because the WRITER omits `run_id`. Assert that against a
+    # real row, so a regression that drops the injection cannot pass on rows that carry it anyway.
+    raw = ledger("skipfire0")
+    assert raw and "run_id" not in raw[0], f"writer already stamps run_id: {raw[0]}"
+    assert raw[0]["node_id"] == "summarize"  # the attribution half, still holding
+
+    out = json.loads(mcp_core._call_tool("refiner_evidence", {"workflow_name": workflow}))
+    assert out["ok"] is True
+
+    top = out["top_cluster"]
+    assert top is not None, f"the mechanism did not fire; clusters were {out['clusters']}"
+    # It NAMES the step — the whole point of a cluster is that a template op can target it.
+    assert top["node"] == "summarize"
+    assert top["signature"] == "skipped summarize"
+    assert top["count"] == 3
+    # Real run ids, not the anonymous bucket: this is what `distinct_runs` was counting wrong.
+    assert top["distinct_runs"] == 3
+    assert set(top["run_ids"]) == {"skipfire0", "skipfire1", "skipfire2"}
+    assert "" not in set(top["run_ids"])
+
+
+def test_one_run_is_an_ANECDOTE_and_still_proposes_nothing() -> None:
+    """The other direction. §3.1's power discipline: `MIN_RUNS_FOR_EVIDENCE = 3` because below it
+    "a 'pattern' is one bad afternoon, and a template edited from it is a template edited from
+    noise". Injecting the run key must not smuggle a one-run cluster past that floor, so the same
+    surface is asserted to STAY silent — three skips of one node inside a SINGLE run.
+
+    Note the floor is distinct RUNS, not occurrences: `count == 3` here and it is still refused.
+    """
+    from personalclaw import mcp_core
+
+    workflow = "one-run-only"
+    _seed_skips(
+        workflow,
+        [
+            ("anecdote0", "root.children[0]", "summarize"),
+            ("anecdote0", "root.children[0]", "summarize"),
+            ("anecdote0", "root.children[0]", "summarize"),
+        ],
+    )
+
+    out = json.loads(mcp_core._call_tool("refiner_evidence", {"workflow_name": workflow}))
+
+    # ── the vacuity floor ──
+    # `None` must come from the FLOOR, not from an empty evidence set: a test where nothing was
+    # clustered at all would assert `None` for the wrong reason and pass a broken reader.
+    assert len(out["clusters"]) == 1
+    only = out["clusters"][0]
+    assert only["node"] == "summarize" and only["count"] == 3 and only["rank"] > 0
+    assert only["distinct_runs"] == 1 and only["run_ids"] == ["anecdote0"]
+
+    assert out["top_cluster"] is None, "one run's evidence cleared the power floor"
+
+
+def test_an_abandoned_run_is_attributed_like_every_other_event() -> None:
+    """`run_abandoned` stamped `at_node_id` — the ledger's only divergent spelling of the node
+    field — so an abandoned run clustered under the anonymous `""` node even after the
+    `node_id`/`instance_path` read landed. Reconciled at the EMITTER rather than by teaching the
+    reader a third spelling, which would be the dual path the clean-break tenet forbids.
+    """
+    from personalclaw.learning import refiner
+    from personalclaw.workflows import store as wf_store
+    from personalclaw.workflows.journal import Journal, ledger
+    from personalclaw.workflows.models import WorkflowRun
+
+    wf_store.create(WorkflowRun(id="abandoned0", workflow_name="stalled"))
+    Journal("abandoned0").run_abandoned("review", elapsed_secs=12.5)
+
+    row = next(r for r in ledger("abandoned0") if r["kind"] == "run_abandoned")
+    # ── the vacuity floor ──
+    # The rename is only meaningful if the OLD spelling is gone from the row; a writer stamping
+    # both would let the reader keep working while the vocabulary stayed split.
+    assert "at_node_id" not in row, f"the third spelling is still emitted: {row}"
+    assert row["node_id"] == "review"
+
+    clusters = refiner.cluster_failures([{**row, "run_id": "abandoned0"}])
+    assert [c.node for c in clusters] == ["review"]
