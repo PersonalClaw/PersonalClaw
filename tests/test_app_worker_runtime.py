@@ -18,13 +18,15 @@ ABOUT:
   `action_providers.services.get_action_services`) rather than by spending money or
   declaring an incident.
 
-`apps/background.py` (the sibling half — the declaration shape and the SDK's
-`register_worker`) does not exist on this branch, so a stub module is installed into
-`sys.modules` under its real name. That keeps this suite standalone AND keeps
-`worker_runtime`'s real `from personalclaw.apps.background import …` statements on the
-executed path, so the names/signatures this file stubs are exactly the ones integration has
-to reconcile: `WorkerSpec(name, entry_point, restart=True)`,
-`declared_workers(manifest) -> list[WorkerSpec]`, and `WORKER_NAME_ENV: str`.
+`apps/background.py` (the sibling half — the app-facing contract behind
+`sdk/background.py`) is NOT stubbed: the real module is imported, so
+`BACKGROUND_TASKS_PERMISSION`, `WORKER_ENTRY_POINT`, `WORKER_DEFAULT_NAME` and
+`WORKER_ID_ENV` are the shipped values rather than a fixture's guess at them. The one thing
+still injected is WHICH workers a manifest declares (`_stub_background` below), because the
+real `declared_workers` derives exactly one from the permission and these tests need several.
+That real derivation is exercised — with a vacuity floor — by
+`test_app_background_contract.py::test_the_entry_point_an_app_is_told_to_use_is_the_one_the_
+supervisor_resolves`, so patching it here strands nothing.
 
 No test here sleeps for a fixed duration in place of a condition: every wait polls to a
 deadline, because a fixed sleep measures a skeleton and goes flaky under xdist. Every
@@ -202,6 +204,10 @@ def _isolated_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path))
     monkeypatch.setattr(loader, "config_dir", lambda: tmp_path)
     monkeypatch.setattr(manager, "config_dir", lambda: tmp_path)
+    # The suite-wide `_no_app_child_processes` fixture sets `PERSONALCLAW_SKIP_APP_WORKERS` so no
+    # OTHER test drives the real home's workers from a boot-started daemon thread. This suite is
+    # the one that drives the sweep on purpose, against the tmp home above, so it opts back in.
+    monkeypatch.delenv(worker_runtime._SKIP_ENV, raising=False)
     return tmp_path
 
 
@@ -821,3 +827,125 @@ def test_the_worker_spawn_actually_goes_through_the_ceiling_shim():
     )
     # Vacuity floor: the AST walk really does see this function's calls.
     assert "Popen" in called or "subprocess" in str(called), called
+
+
+# ══ the two production call sites (audited 2026-08-24: both were asserted by nothing) ══
+
+
+def test_disable_through_app_manager_reaches_the_worker_teardown(
+    tmp_path: Path,
+    sup: WorkerSupervisor,
+    _stub_background: types.ModuleType,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`disable()` must reach `_stop_worker` — the half of V1 the sweep cannot serve.
+
+    `reap_orphans` is proven above in isolation, but the V1 clause is about UNINSTALL, and the
+    sweep cannot deliver it: a worker re-parented to init is in no supervisor's table, and
+    nothing would look for it once the app directory is gone. So the teardown has to run on the
+    disable path, while the entry path is still resolvable.
+
+    MEASURED before this rail existed: deleting `_stop_worker(name)` from BOTH `disable` and
+    `force_uninstall` left `test_app_worker_runtime` + `test_app_background_contract` +
+    `test_app_manager_lifecycle` + `test_app_manager_update` fully green (116 passed). The
+    mechanism was tested; its only use was not. `uninstall()` needs no rail of its own — it
+    delegates to `disable()` — but `force_uninstall` has its own copy, so both are pinned below.
+    """
+    from personalclaw.apps import app_manager
+
+    manifest = _install_worker_app(
+        tmp_path,
+        "teardown",
+        body=_body_sleep(),
+        workers=[_spec(_stub_background, "worker", "worker.py")],
+    )
+    (rec,) = sup.start(manifest)
+    assert rec.is_alive()
+
+    # `_stop_worker` resolves the supervisor through the module attribute at call time, so this
+    # points it at the test's own instance instead of the process-wide singleton.
+    monkeypatch.setattr(worker_runtime, "get_worker_supervisor", lambda: sup)
+    reaped: list[tuple[str, Path]] = []
+    monkeypatch.setattr(
+        WorkerSupervisor,
+        "reap_orphans",
+        lambda self, app, entry: (reaped.append((app, Path(entry))), 0)[1],
+    )
+
+    assert app_manager.disable("teardown") is True
+
+    assert (
+        sup.get("teardown", "worker") is None
+    ), "disable() left the worker supervised — the app is off and its worker is not"
+    _wait_for(lambda: not rec.is_alive(), what="disable() to stop the worker process")
+    assert reaped == [("teardown", (tmp_path / "apps" / "teardown" / "worker.py").resolve())], (
+        "disable() did not reap orphans for the resolved entry path; a worker orphaned by a "
+        f"prior ungraceful gateway exit would outlive the app forever (saw {reaped})"
+    )
+
+
+def test_force_uninstall_carries_its_own_copy_of_the_worker_teardown() -> None:
+    """`force_uninstall` does NOT delegate to `disable`, so it needs the call in its own body.
+
+    Asserted by AST on the two functions rather than by grepping the module, because a mention
+    in `_stop_worker`'s own docstring — which names both paths — is not a call from either.
+    """
+    import ast
+    import inspect
+    import textwrap
+
+    from personalclaw.apps import app_manager
+
+    def _calls(fn: object) -> set[str]:
+        tree = ast.parse(textwrap.dedent(inspect.getsource(fn)))  # type: ignore[arg-type]
+        return {
+            (n.func.attr if isinstance(n.func, ast.Attribute) else getattr(n.func, "id", ""))
+            for n in ast.walk(tree)
+            if isinstance(n, ast.Call)
+        }
+
+    for fn in (app_manager.disable, app_manager.force_uninstall):
+        called = _calls(fn)
+        assert "_stop_worker" in called, (
+            f"app_manager.{fn.__name__} no longer tears down the app's background worker; "
+            "the app goes away and its unattended process does not"
+        )
+        # Vacuity floor: the walk sees this function's calls, and the sibling backend teardown
+        # is the precedent this one is meant to sit beside.
+        assert "_stop_backend" in called, called
+
+
+def test_boot_starts_the_worker_watchdog_beside_the_backend_one() -> None:
+    """Nothing sweeps unless boot starts the watchdog — and boot was asserted by nothing.
+
+    Three of APE-3's five clauses (crash survival, stop-on-disable, policy pause) are delivered
+    by the periodic sweep, and the sweep has exactly one production caller: the boot block in
+    `providers/loader.py::load_all_extensions`. MEASURED before this rail existed: deleting
+    `start_worker_watchdog()` from that block left the whole app-lifecycle + worker + audit set
+    green (116 passed) — a gateway that revives nothing, pauses nothing and stops nothing on
+    disable would have shipped without a red.
+
+    The sibling backend watchdog IS railed (`test_spawn_hazard_audit.py`
+    ::test_backend_respawn_is_reached_from_watchdog_thread); this is the missing half of that
+    pair, asserted on the enclosing function by AST so a mention in the block's comment does not
+    satisfy it.
+    """
+    import ast
+    import inspect
+    import textwrap
+
+    from personalclaw.providers import loader
+
+    tree = ast.parse(textwrap.dedent(inspect.getsource(loader.load_all_extensions)))
+    called = {
+        (n.func.attr if isinstance(n.func, ast.Attribute) else getattr(n.func, "id", ""))
+        for n in ast.walk(tree)
+        if isinstance(n, ast.Call)
+    }
+    assert "start_worker_watchdog" in called, (
+        "boot no longer starts the app-worker watchdog, so nothing sweeps: a crashed worker is "
+        "never revived, a disabled app keeps its worker, and a budget breach never pauses one"
+    )
+    # Vacuity floor: this really is the boot block, so the assertion is about the live call site
+    # and not about an empty set of calls.
+    assert "start_backend_watchdog" in called, called

@@ -12,7 +12,7 @@ Each atom below executes start-to-finish in one go. If an atom lists dependencie
 |---|---|---|---|---|
 | `APE-1` | ✅ | Manifest: backgroundTasks + eventSubscriptions permissions (parse/serialize/consent) | `EXT:PROVIDER-BOUNDARY-COMPLETION:manifest-field to_dict/from_dict-parity pattern` | round-trip (to_dict/from_dict) tests pass; install consent UI surfaces the two new grants; unknown-field preservation intact |
 | `APE-2` | ✅ | Platform event registry (app_events.py) + emit sites + declared-subscription WS filter | `APE-1` | app_events.py registers session.created/knowledge.ingested/task.completed at their emit sites; a fixture app subscribed to task.completed receives it; an unsubscribed app never does; SEL clean |
-| `APE-3` | ⬜ | Background worker SDK (sdk/background.py) + backend_runtime supervised hosting | `APE-1`, `EXT:AUTONOMY-GUARDRAILS:ModelCallGuard budgets + kill-switch (plan Risks: E6 if shipped before this exists)` | fixture app worker runs, survives a crash (watchdog), stops on disable; budget breach pauses it + notifies; V1: uninstall leaves no orphan worker (PPID-reaping verified) |
+| `APE-3` | ✅ | Background worker SDK (sdk/background.py) + backend_runtime supervised hosting | `APE-1`, `EXT:AUTONOMY-GUARDRAILS:ModelCallGuard budgets + kill-switch (plan Risks: E6 if shipped before this exists)` | fixture app worker runs, survives a crash (watchdog), stops on disable; budget breach pauses it + notifies; V1: uninstall leaves no orphan worker (PPID-reaping verified) |
 | `APE-4` | ⬜ | quality manifest block + Store card rendering + first-party CI verification | `EXT:DESIGN-SYSTEM-CONSISTENCY:token-lint + axe a11y verification` | a dishonest first-party quality declaration turns apps-repo CI red (tested=CI green, designSystem=token-lint pass, a11y=axe pass); Store cards render honest badges |
 | `APE-5` | ✅ | Native capability contract: optional provider.py + native SDK subset + 2-3 exemplar bundles | — | a native bundle gains a real provider method via the documented native SDK subset without core edits; apps import-boundary test still green — DONE 2026-08-16: `apps/native_contract.py` + one load rule for both tiers + a never-skipping rail; `personalclaw-ui-docs` owns its provider and GAINED `ui_list`. MEASURED: the "native SDK subset" IS `personalclaw.sdk.*` (a narrower native-only allowlist would be a second boundary); 1 exemplar not 2-3, because a census of all 27 bundles found exactly one whose implementation is SDK-expressible today |
 | `APE-6` | ⬜ | Migrate Minutes + Growth backend+UI apps to the current design system | `APE-11`, `EXT:DESIGN-SYSTEM-CONSISTENCY:tokens/primitives to consume` | both apps pass token-lint and look native (screenshot check) using tokens + shell primitives via the UI SDK |
@@ -43,7 +43,7 @@ Session 1 T1.2; Contract C4 (typed platform events registry)
 
 ### `APE-3` — Background worker SDK (sdk/background.py) + backend_runtime supervised hosting
 
-**Status:** todo
+**Status:** done
 
 Session 1 T1.3 + V1; Contract C2 (background worker SDK)
 
