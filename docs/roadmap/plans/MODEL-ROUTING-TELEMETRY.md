@@ -1032,3 +1032,84 @@ before trusting any red *or* green. See [[a-mutation-that-lands-can-still-be-off
   (registration also raises on a duplicate at import), so minting a pair would have been a new inventory
   entry; `state.notify(notification_kinds.INFO, …)` is the same accessor `guardrails/rungs.py:488` uses
   from a non-request context, with an already-registered kind.
+
+- **2026-08-24 — `MRT-5` re-audited against `origin/main` (`9e0f727b`): the scoring/ordering two-thirds are
+  LANDED AND LIVE; the proposal third is on main but INERT. The atom is PARTIALLY satisfied and must NOT be
+  flipped `done` yet.** The 2026-08-23 entry above says "COMPLETE in code … atom stays `todo` only because
+  this code is unmerged". The code is now merged (`ae0dc12c`) and that reading does not survive the merge:
+  one clause of the `done_when` has no implementation and one has no surface.
+  **The merge question is settled — all four decomposition branches are fully landed.** Blob-hash compared
+  per file against `origin/main`: `feature-mrt5-learned-routing` (the union: 9 files),
+  `-learned-ordering` (`learned.py`, `test_routing_learned_order.py`), `-routing-proposals`
+  (`proposals.py`, `test_routing_proposals.py`) and `-feedback-signal` (`feedback.py`,
+  `test_routing_feedback_signal.py`) are byte-identical to main on **every source and test file**. The only
+  divergence is the union branch's copy of this plan, where main is a strict superset (two line-number
+  corrections from other atoms). Nothing is stranded on any of the four; per
+  [[stacked-pr-merged-is-not-on-main]] this was decided on content, not on PR state or `git cherry`.
+  **MET, with the production importer named.** `stats._score` is the single 60/40 implementation
+  (`_W_SUCCESS`/`_W_FEEDBACK` = 0.60/0.40) and `learned._opinion` (`learned.py:112`) calls it rather than
+  re-deriving it; `learned_order` is reached in production from `policy.py:397` (Lever 4 of `route_refs`)
+  and `feedback_index` from `policy.py:430`. Hysteresis banding, the asymmetric `cloud_quality_margin`
+  penalty, within-band cost ordering, the unpriced-model `inf`, and the delete-the-fold degradation are all
+  live through that seam. The `≥5` floor is now asserted from BOTH sides at the exact boundary.
+  **The ledger hazard does not bite here — checked, not assumed.** `feedback.py` reads exactly one kind,
+  `JUDGE_VERDICT`, and `judge_verdict` **IS** in `LEDGER_KINDS` (`kinds.py:177`), so `read_events()` can
+  see the records it wants. (Contrast `RUN_STARTED`/`RUN_FINISHED`, verified absent from `LEDGER_KINDS` —
+  the reason a run-input reader gets an empty list indistinguishable from "no data". That trap is real, but
+  it is not this module's.) The 2026-08-23 attribution finding re-verified and CONFIRMED: the controller
+  stamps `instance_path, node_id, epoch, template, verdict, status, evidence` (`controller.py:2945`) and the
+  loop stamps `{"cycle": n, **JudgeVerdict.to_dict()}` (`loop/journal.py:121`), while `_cell_of`
+  (`feedback.py:176`) requires `use_case` + `query_class` + (`ref` | `provider`+`model`) to be ON the event.
+  So every real verdict counts as `unattributed`, `feedback_for` returns `(0.0, 0)`, and `_score`
+  renormalizes onto `success_rate` — which is what the clause asks for when feedback is absent. Extraction
+  is correct and ready; the producer-side stamp is not this atom's to add.
+  **NOT MET (1) — the enqueuer does not exist. `routing/proposals.py` has ZERO production importers.**
+  Swept `src/` and `web/` for `propose`/`accept`/`reject`/`pending`/`RoutingProposal`/`routing_proposals`:
+  every hit outside the module is an unrelated namesake (`memory_graph`, `packs/fingerprint`,
+  `durability/conflict_resolve`). `propose()` is a **queue primitive whose caller was never written** — it
+  takes `current`, `proposed` and `evidence` as arguments and computes no gap. Decisively:
+  `routing.min_samples` is read at exactly one place in `src/`, `policy.py:420` → the *ordering* path. The
+  proposal path never consults it, so the clause *"a genuine quality gap at n>=5 enqueues a routing
+  proposal"* has no `n>=5`, no gap detection and no call. Nothing on any real install can ever enqueue a
+  proposal today. Cf. [[declared-strategy-without-an-executor]].
+  **NOT MET (2) — there is no accept/reject surface, and the entry above is WRONG about this.** It states
+  *"accept/reject are API-level today"*. They are not: `model_telemetry.py` registers only
+  `GET`/`PUT /api/models/routing-policy` (MRT-4's table), and no handler in
+  `src/personalclaw/dashboard/` imports `routing.proposals`. `accept`/`reject`/`pending` are **library
+  functions reachable from `tests/test_routing_proposals.py` alone**. §6.3 also asks for the queue to be
+  *"Surfaced in the Routing tab (badge count)"*; `RoutingPanel.tsx` has no proposals surface. The narrower
+  claim in that entry — that the unified-inbox apply path (`proposals_contract.py`'s four apply cases)
+  cannot carry a routing-order change — was re-checked and stands; it is the "API-level" gloss that is
+  false. Cf. [[mechanism-present-but-inert]].
+  **NEW TEST — the propose-don't-write negative was passing for the wrong reason on the exception path.**
+  The shipped suite asserted byte-identity only on the success path. Falsified by replacing the tail of
+  `propose` with the textbook leak — stash the table, `set_order`, notify, restore — which restores
+  correctly whenever nothing raises: **that leak passed all 31 pre-existing tests, including
+  `test_propose_leaves_routing_policy_byte_identical`.** So
+  `test_a_raising_propose_still_leaves_routing_policy_byte_identical` injects a fault at `_notify` (the one
+  unguarded call in `propose`, every other helper swallowing its own failures) and asserts the table's bytes
+  are untouched, plus that the enqueue really preceded the fault. Its own vacuity floor,
+  `test_the_byte_harness_can_see_a_real_write_on_the_raising_path`, drives a real `set_order` inside the
+  same raising run and proves the comparison can see it — the success-path floor does not cover that.
+  Property pinned: `propose` never *opens* `routing_policy.json`, which is stronger than "puts it back".
+  **NEW TEST — the `≥5` floor from below.** `test_exactly_min_samples_counts_as_an_opinion` (n=5 reorders)
+  is satisfied by a `>= 4` floor too, and the existing sub-threshold tests use n=1/n=2. `test_one_below_
+  min_samples_is_not_an_opinion` holds the decisive 0.20-vs-0.95 fold fixed and moves only `n` 5 → 4, so
+  the boundary is the single variable. Falsified together: `samples < min_samples` → `samples < 0` turns 3
+  red including the new one.
+  **The unmet clauses need no invented numbers — §6.3/§5.2 specify all three.** `reproposal_cooldown_days`
+  default 14, `cloud_quality_margin` 0.10, `hysteresis` 0.05, and all three match the shipped config
+  (`loader.py:5301-5314`, `policy.py:466`). Nothing here is blocked on a threshold.
+  **⚠️ OWNER DECISION — the enqueuer's trigger point, which the plan never names.** §6.3 says a crossing
+  reordering "enqueues" a proposal and `propose`'s own docstring assumes *"a learned stage calls this on a
+  schedule"*, but no such schedule exists and the plan specifies no host job or interval. The three
+  candidates are not interchangeable: (a) **at route time** inside `route_refs` — puts a queue read, a
+  config read and a file write on the hot path of every model call, which the ordering stage was
+  deliberately written to be pure to avoid; (b) **on the stats-fold write** — cheap and already per-call,
+  but the fold write is documented as best-effort observability that "must not break a model call"; (c) **a
+  scheduled sweep** — matches the docstring and keeps the hot path pure, but needs an interval and a job
+  owner that no plan section supplies. Picking one is an architectural call with a latency/behaviour
+  consequence, not a number to default, so it is recorded rather than improvised (E2/E6). **Remaining MRT-5
+  scope, once that is decided:** the gap detector (fold → `n>=5` → hysteresis-crossing → `propose` with the
+  §6.3 evidence payload), and the accept/reject/list API + Routing-tab badge. Both are startable
+  immediately after the trigger-point call; neither is blocked on anything else.

@@ -103,6 +103,51 @@ def test_the_byte_harness_can_see_a_real_write(home):
     assert _policy_bytes(home) != before
 
 
+def test_a_raising_propose_still_leaves_routing_policy_byte_identical(home, monkeypatch):
+    """The negative has to hold on the EXCEPTION path too, not only the success path.
+
+    Propose-don't-write implemented as "stash the table, write, restore it" would satisfy the
+    success-path assertion above and still leave a rewritten file behind whenever the run died in
+    between. This module never opens the policy file at all, and that structural property is what
+    is pinned here: a fault injected at the last thing ``propose`` does — after the queue write is
+    already durable — leaves the table's bytes untouched.
+    """
+    before = _policy_bytes(home)
+
+    def _boom(_prop):
+        raise RuntimeError("surfacing died after the enqueue")
+
+    monkeypatch.setattr(proposals, "_notify", _boom)
+    with pytest.raises(RuntimeError):
+        _propose(home)
+    assert (
+        _policy_bytes(home) == before
+    ), "propose() left routing_policy.json rewritten on its exception path"
+    # And the run got far enough for that to mean something: the enqueue preceded the fault.
+    assert len(proposals.pending(home=home)) == 1
+
+
+def test_the_byte_harness_can_see_a_real_write_on_the_raising_path(home, monkeypatch):
+    """Vacuity floor for the test above.
+
+    The success-path floor (:func:`test_the_byte_harness_can_see_a_real_write`) does not cover it:
+    if a write performed *inside a raising run* were invisible to the byte comparison — swallowed,
+    rolled back by the fault, or simply never flushed — the assertion above would pass for a
+    leaking implementation. So drive a real ``set_order`` in the same injected fault and prove the
+    bytes move.
+    """
+    before = _policy_bytes(home)
+
+    def _write_then_boom(_prop):
+        policy.set_order(USE_CASE, QCLASS, PROPOSED, home=home)
+        raise RuntimeError("wrote the table, then died")
+
+    monkeypatch.setattr(proposals, "_notify", _write_then_boom)
+    with pytest.raises(RuntimeError):
+        _propose(home)
+    assert _policy_bytes(home) != before
+
+
 def test_reject_leaves_routing_policy_byte_identical(home, sel_rows):
     """Rejection writes no table at all."""
     prop = _propose(home)
