@@ -335,3 +335,64 @@ the platforms to validate on) — Session 1–2 ship macOS + honest refusals, pe
   `apps` makes that assertion factually false. The case was **re-keyed to `windows`, not deleted**, so the
   case count and the property survive — and a falsification accepting unknown keys still reds it, proving
   the edit left it detecting rather than vacuous.
+
+- **2026-08-24 — `DCU-2` AUDIT: the deliverable IS on `main` (commit `22f28ad6`), so the entry above's
+  own condition for flipping — *"stays `todo` only because this code is unmerged"* — is met.** Audited
+  rather than rebuilt: a branch carrying the DCU-2 commit rebased onto `main` reported *"dropping … patch
+  contents already upstream"*, and `policy.py` (395 lines) + `gate.py` (197 lines) are present with the
+  merge-resolution items verified individually — both codes registered in `errors.ERROR_CODES`
+  (`errors.py:59`, `:64`) and both modules pinned in the public-surface AST ratchet
+  (`test_computer_use_enable_state.py:524-531`). 192 tests green across the four computer-use files.
+  **All three clauses hold as MODULE CONTRACTS, proved by driving the real functions, not by reading them.**
+  Against a tmp `PERSONALCLAW_HOME` with `{"version":1,"enabled":true,"apps":["TextEdit"]}`: `TextEdit`
+  allowed, while `Terminal`, `textedit`, `TextEditPro` and `PersonalClaw` all refuse
+  `ERR_COMPUTER_USE_APP_NOT_ALLOWED`; an ordinary `AXTextField` and one titled `Pinned messages` are
+  allowed, while `AXSecureTextField`, a web-view field titled `Password`, an `AXButton`, contradictory
+  `role`/`AXRole` spellings, a target with no role, and a field already holding an API-key-shaped value
+  all refuse `ERR_COMPUTER_USE_SECURE_FIELD`. With the enable document ABSENT the allowlist is `()` and
+  every app refuses including PersonalClaw — the fail-closed direction needs no exemption.
+  **Clause 3 re-proved against a REAL on-disk SEL, because the suite proves it against a fake.**
+  `test_computer_use_gate.py` substitutes `gate.SecurityEventLog` with a capturing stand-in, which shows
+  `log()` was *called* but not that the row is *writable*. Driving a real `SecurityEventLog` at a tmp
+  `base_dir` produced exactly 2 rows in `security_events.jsonl`: the ALLOWED one
+  (`operation=computer_click`, `outcome=completed`, `resources=app=TextEdit`, `error=""`) and the REFUSED
+  one (`operation=computer_type`, `outcome=denied`, `error=ERR_COMPUTER_USE_APP_NOT_ALLOWED`). The
+  metadata leak-proofing holds on a real write: `{"window_title": "Bank of America - Checking"}` landed as
+  `{"window_title": "<str len=26>"}`. Real-home rail: `~/.personalclaw` unchanged.
+  **Four falsifications, each mutating the LIVE line and restoring from a file copy (never
+  `git checkout --`), md5-verified back to `e07c66a9`/`3e63c00b`:** dropping the allowlist comparison in
+  `check_app` reds 15; admitting `AXSecureTextField` into `_ALLOWED_SUBROLES` with `_SECURE_SUBROLES`
+  emptied reds 7; repointing `_SECRET_FIELD_TERMS` at a string that matches nothing reds 2 (so the
+  web-view-password rail detects rather than merely matching nothing); an early `return` before
+  `SecurityEventLog().log(...)` reds 34, **including `test_allowed_attempt_produces_one_sel_row` and
+  `test_refused_attempt_produces_one_sel_row_with_the_refusal_code` separately** — the allowed half is
+  the one a single "a row exists" assertion would have let rot.
+  **THE FINDING, and it is the one this repo keeps rediscovering: all three screens have ZERO production
+  callers.** Censused by AST (not `grep` — `policy.py`'s and `gate.py`'s own docstrings name all three, so
+  a text-shaped scan reads as "already wired"): `check_app`, `check_input_target` and
+  `require_computer_use` are invoked from `tests/` only. The whole package's sole production importer is
+  `gateway.py:3869`, which imports `ensure_computer_use_boot` — `DCU-1`'s once-per-run boot row. So no
+  clause is enforced against a real driving path, and in particular **nothing links a refusal to a SEL
+  row**: `policy` raises without recording, by design, because `gate` is a separate step a caller must
+  remember. That is correct sequencing (`DCU-3` owns the driver, `DCU-4` owns `service.py`'s chain and the
+  `computer_*` tools) but it means the `done_when`'s end-to-end phrasing is only demonstrable at `DCU-4`,
+  whose own `done_when` already repeats it verbatim ("a secure-field refusal, SEL records present").
+  **This inertness was invisible to every gate on `main`, so it is now a test.** Added
+  `tests/test_computer_use_call_sites.py` — an AST census of the three screens' production call sites,
+  shipped at the measured population (ZERO) per the repo's rail idiom, which reds the moment the first
+  caller appears and tells that author to assert the CALL SITE (refusal through the dispatch path, and a
+  SEL row on the ALLOWED path as well as the refused one — separately). Nothing else could catch it:
+  `inert-surface-baseline.json` censuses five surface kinds (config, `_EDITABLE_CONFIG`, enum, trigger
+  kind, SDK export) and has **zero** occurrences of `computer_use`, so a module-level function with no
+  importer is outside its vocabulary; `test_the_packages_public_surface_is_pinned` pins the three names
+  as API but says nothing about anyone calling them. Three vacuity floors ship with it — a synthetic
+  wired caller in all three spellings IS detected, prose naming the screens is NOT counted, and the
+  corpus glob really reaches both shipped modules. Falsified: adding one real
+  `policy.check_app(...)` call to `gate.py` reds it naming the file.
+  **DELIBERATELY NOT BUILT — an owner call, not a guess.** A chain rail binding steps 2/4/5 the way
+  `DCU-1`'s `test_every_computer_use_entry_point_guards_first` binds step 1 would have to choose
+  `DCU-4`'s composition for it: a per-tool "must call `check_input_target`" rail contradicts `DCU-4`'s
+  scope (the chain lives in a central `service.py` dispatch, not in each tool), and a central-dispatch
+  rail has no dispatch to bind to yet. `DCU-1` left the same tension unresolved — its keystone rail
+  requires every `computer_*` function in the package to call `require_enabled()` FIRST, which a central
+  chain would satisfy only if the tools re-check it. Recorded for whoever takes `DCU-4`.
