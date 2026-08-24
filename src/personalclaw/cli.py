@@ -660,6 +660,39 @@ action on Settings -> Models, never automatic.
         "--list-sets", action="store_true", help="List runnable fixture sets and exit"
     )
 
+    # eval-harvest (the harvested regression suite: real runs -> scenario library cases)
+    harvest_parser = sub.add_parser(
+        "eval-harvest",
+        help="Harvest real workflow runs from the Run Ledger into scenario-library cases",
+        epilog="""
+Examples:
+  personalclaw eval-harvest --dry-run          # what WOULD be harvested, nothing written
+  personalclaw eval-harvest                    # harvest the 50 most recent terminal runs
+  personalclaw eval-harvest --workflow daily_digest --limit 200
+  personalclaw eval-harvest --list             # the harvested suite already installed
+
+Harvested cases land beside the shipped scenarios in ~/.personalclaw/evals/scenarios/
+as harvested_*.json, so `personalclaw eval --all` runs them. Inputs are read from the
+ledger's redacted run_started record, never from the run row. An empty population is
+reported as a refusal (exit 1), which is not the same as a suite of zero cases.
+""",
+        formatter_class=_fmt,
+    )
+    harvest_parser.add_argument(
+        "--workflow", default="", help="Only harvest runs of this workflow definition"
+    )
+    harvest_parser.add_argument(
+        "--limit", type=int, default=0, help="How many recent runs to consider (default: 50)"
+    )
+    harvest_parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Build and hash the cases but write nothing",
+    )
+    harvest_parser.add_argument(
+        "--list", action="store_true", dest="list_suite", help="List the installed harvested suite"
+    )
+
     sec_sub = sec_parser.add_subparsers(dest="sec_action")
     sec_sub.add_parser("audit", help="Scan conversation history for suspicious tool usage")
     sec_sub.add_parser("deny-list", help="Show active deny patterns")
@@ -1053,6 +1086,8 @@ Examples:
         asyncio.run(_run_eval(args))
     elif args.command == "judge-bench":
         asyncio.run(_judge_bench(args))
+    elif args.command == "eval-harvest":
+        _eval_harvest(args)
     elif args.command == "security":
         _security(args)
     elif args.command == "update":
@@ -1139,6 +1174,7 @@ from personalclaw.cli_commands import (  # noqa: E402
     _automation,
     _cron,
     _discover,
+    _eval_harvest,
     _handle_agent,
     _judge_bench,
     _learn,

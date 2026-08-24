@@ -103,7 +103,7 @@ from personalclaw.ledger.outcomes import (
     dormancy_verdict,
     open_questions,
 )
-from personalclaw.ledger.reader import read_events, run_totals
+from personalclaw.ledger.reader import journal_only_kinds, read_events, read_journal, run_totals
 from personalclaw.ledger.redaction import is_binary_payload, redact
 from personalclaw.ledger.writer import (
     EVENTS_FILE,
@@ -127,6 +127,8 @@ __all__ = [
     "hash_value",
     "stable_json",
     "read_events",
+    "read_journal",
+    "journal_only_kinds",
     "run_totals",
     # outcomes (PP-9)
     "OutcomeLedger",

@@ -16,9 +16,13 @@ higher ``version`` than the installed copy. A user's own scenario — or a local
 edited one whose ``version`` is >= the shipped version — is never overwritten.
 The ``evals/scenario_library.json`` manifest records what is installed (per-scenario
 ``version``, ``sha256``, ``fixture_home``, ``origin``) so "which library produced
-this row" is answerable from the home alone. It lives BESIDE the scenarios dir, not
-inside it: every reader of that dir (``personalclaw eval``, the matrix runner) globs
-scenario files, and a manifest sitting among them would parse as a broken scenario.
+this row" is answerable from the home alone. ``origin`` has THREE values, not two:
+:mod:`personalclaw.evals.harvest` writes cases built from real runs into the same
+installed dir, and :func:`origin_of` reports those as ``harvested`` so a study can
+name its population from the manifest instead of guessing at filenames. The manifest
+lives BESIDE the scenarios dir, not inside it: every reader of that dir
+(``personalclaw eval``, the matrix runner) globs scenario files, and a manifest sitting
+among them would parse as a broken scenario.
 
 Two scenario fields are load-bearing here:
 
@@ -130,6 +134,22 @@ def _scenario_version(data: dict) -> int:
         return 0
 
 
+def origin_of(path: Path, data: dict) -> str:
+    """Where an installed scenario came from: ``shipped``, ``harvested`` or ``local``.
+
+    ``harvested`` is derived by INSPECTING the scenario for the ``harvest`` provenance block
+    (:mod:`personalclaw.evals.harvest`) rather than from a side list of names: a case whose
+    provenance was stripped stops claiming to be harvested in the same edit that makes the claim
+    false. ``shipped`` still wins the comparison, so a release can never be relabelled by a file
+    that happens to declare the block.
+    """
+    if (packaged_library_dir() / path.name).exists():
+        return "shipped"
+    if isinstance(data.get("harvest"), dict):
+        return "harvested"
+    return "local"
+
+
 def fixture_home_of(data: dict) -> str:
     """The scenario's declared seed-fixture NAME (default :data:`DEFAULT_FIXTURE_HOME`)."""
     raw = data.get("fixture_home") or DEFAULT_FIXTURE_HOME
@@ -176,7 +196,7 @@ def install_library() -> dict:
             "version": _scenario_version(data),
             "sha256": sha256_of_scenario_data(data),
             "fixture_home": fixture_home_of(data),
-            "origin": "shipped" if (packaged_library_dir() / path.name).exists() else "local",
+            "origin": origin_of(path, data),
         }
 
     manifest = {"library_version": LIBRARY_VERSION, "scenarios": installed}

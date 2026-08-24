@@ -747,6 +747,67 @@ async def _judge_bench(args: argparse.Namespace) -> None:
     print(f"\nArtifacts: {store.matrix_dir(result.bench_id)}")
 
 
+def _eval_harvest(args: argparse.Namespace) -> None:
+    """Harvest real runs into scenario-library cases (the harvested regression suite).
+
+    Exits 1 on a REFUSAL — an empty population — and 0 on a harvest that looked at runs and kept
+    none of them. The two are different statements and the exit code says which: "nothing to
+    measure" must not be indistinguishable from "measured nothing", because a caller wiring this
+    into a study would read the second as a green.
+    """
+    from personalclaw.evals import harvest as hv
+
+    if getattr(args, "list_suite", False):
+        try:
+            suite = hv.load_harvested_suite(workflow_name=getattr(args, "workflow", "") or "")
+        except hv.EmptyHarvestError as exc:
+            print(f"Refusing: {exc}")
+            raise SystemExit(1) from exc
+        print(f"Harvested suite: {len(suite)} case(s)")
+        for installed in suite:
+            block = installed.get("harvest") or {}
+            print(
+                f"  {installed.get('name')}  run={block.get('run_id')}  "
+                f"workflow={block.get('workflow_name')}  status={block.get('status')}"
+            )
+        return
+
+    limit = int(getattr(args, "limit", 0) or 0) or hv.DEFAULT_LIMIT
+    dry_run = bool(getattr(args, "dry_run", False))
+    report = hv.harvest(
+        workflow_name=getattr(args, "workflow", "") or "",
+        limit=limit,
+        write=not dry_run,
+    )
+
+    if report.is_refusal:
+        print(f"Refusing: {report.refusal}")
+        raise SystemExit(1)
+
+    wrote = sum(1 for c in report.cases if c.written)
+    print(
+        f"Considered {report.considered} terminal run(s); harvested {report.population} case(s)"
+        + (" (--dry-run: nothing written)" if dry_run else f"; wrote {wrote} new/changed")
+    )
+    for case in report.cases:
+        mark = "+" if case.written else "=" if not dry_run else " "
+        print(f"  {mark} {case.name}  run={case.run_id}  sha256={case.sha256[:12]}")
+    if report.skipped:
+        print("Skipped:")
+        for reason, count in sorted(report.skipped_by_reason().items()):
+            print(f"  {count} x {reason}")
+    if not report.cases:
+        # NOT a refusal: runs existed and every one was disqualified, with a reason each.
+        print(
+            "No case qualified. This is a measured result over "
+            f"{report.considered} run(s), not an empty population."
+        )
+        return
+    from personalclaw.evals import scenarios as sc
+
+    print(f"\nLibrary: {sc.installed_dir()}")
+
+
 def _learn(args: argparse.Namespace) -> None:
     """Save, list, or remove learned corrections in memory.db ``lesson.*``."""
 
