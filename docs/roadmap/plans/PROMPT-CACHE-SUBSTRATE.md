@@ -636,3 +636,87 @@ Status stays DESIGNED — implementation deferred to its natural roadmap positio
   see the `PCS-7` entry above for the measurement (`_rates` uses `model.startswith(key)` against dotted
   family keys like `claude-sonnet-4.5`). The cache is working; the money it saves cannot be shown on this
   provider until ids are normalised.
+
+- **2026-08-24 — `PCS-7` AUDIT (close-or-record): the T3.2 half is DONE AND ON `main`; the V2 half is
+  PARTIALLY met and its remainder is environment-gated. The atom should be SPLIT, not flipped whole.**
+  Verified by CONTENT against `origin/main` (`9e0f727b`), never by PR state — PR #1918 reads
+  `CLOSED, mergedAt=null`, which in this repo means nothing either way because the merge train
+  cherry-picks per commit.
+  **T3.2 — MET, every clause, with its rails.** `pricing.py:93` `cache_savings_usd` and
+  `stats.py:146` `cache_hit_pct` are both on `main`; the renderer carries
+  `cache_read_tokens`/`cache_creation_tokens`/`cache_hit_pct`/`cache_saved_usd`
+  (`dashboard/chat_runner.py:500-503`), the fragment composes at `:537-550`, and the call site passes
+  all four at `:4086-4101`.
+  **"No second store" HOLDS STRUCTURALLY, not just numerically.** A repo-wide census of
+  `cache_read_tokens` writers finds exactly ONE tally: `Stats._c` (`stats.py:43-44`), incremented at
+  `dashboard/chat_runner.py:3805-3806`. PCS-7 added no dict, class or file — only two PURE functions and
+  two per-turn LOCALS (`:3867-3868`), assigned (not accumulated) from the same terminal `EVENT_COMPLETE`
+  that feeds `stats.inc_*`. `test_cache_hit_pct_is_module_level_and_stateless` asserts
+  `not hasattr(Stats, "cache_hit_pct")`, so the helper cannot silently acquire a turn-scoped store.
+  `guardrails/model_call.py:439` and `_record_turn_usage` (`:3846-3847`) read the event directly and are
+  pre-existing consumers, not new stores.
+  **Nuance worth recording:** the clause's literal "reusing `stats.py:42-84` counters" is satisfied in the
+  no-second-store sense and NOT in a "reads `Stats._c`" sense — and it must not be. Those counters are
+  process-lifetime cumulative, so a per-turn ratio derived from them would be wrong arithmetic. The helper
+  lives beside them in `stats.py` and its docstring states exactly that reasoning.
+  **The two negatives, each with a vacuity floor.** Honest-zero:
+  `test_unpriced_model_is_none_and_not_a_zero`, floored by
+  `test_unpriced_none_is_a_real_distinction_not_existing_behaviour`, which proves `estimate_cost` returns
+  a bare `0.0` for the same model — so the `None` is a NEW distinction, not a restatement of existing
+  behaviour. Negative-not-hidden: `test_first_turn_that_only_writes_the_cache_is_negative`, floored by a
+  premise assertion that `row["cache_write"] > row["in"]` in the SHIPPED `model_pricing.json` — without
+  it the test could pass on a table where writes were free. The call-site rail is floored by
+  `test_the_walk_actually_found_the_call` plus a `**`-splat guard.
+  **THE PRODUCTION READER, NAMED.** `web/src/pages/ChatPage.tsx:3595` folds `activityKind === 'stats'`
+  into `ledger.stats`, `:3679` passes it to `ContextLedger`, and `:3790` renders it verbatim in a
+  `Telemetry` `LedgerRow`. The numbers do reach a user. **Two caveats, recorded rather than widened:**
+  (1) that row sits behind a disclosure defaulting to CLOSED (`:3754`), so the collapsed summary shows
+  only the word `telemetry`; (2) **no frontend test asserts the path at all** — `activityKind` appears in
+  exactly two FE tests, both for other kinds, so `ak === 'stats'` could be deleted with every gate green.
+  Both belong to the readout owner (`EXT:COST-AND-TOKEN-OBSERVABILITY`, which this atom's own dep row
+  says "owns/renders" it), so neither was fixed inside PCS-7.
+  **V2 — PARTIALLY met; the remainder needs real credentials and real spend.**
+  (a) Anthropic-family live multi-turn, turn-1 creation → turn-2 read, rising hit rate: **MET** (the
+  Bedrock run in the `PCS-7` entry above). Two turns rather than the row's five, which exercises the
+  assertion (creation→read) if not the literal shape.
+  (b) **non-zero saved-USD on a REAL run: NOT met, and structurally unreachable here.** Both live turns
+  rendered `saved unpriced` because no Bedrock inference-profile id resolves to a price row. That is the
+  honest-zero design behaving correctly; the fix (id normalisation in `_rates`) is a pricing/CATO change
+  that moves cost figures repo-wide.
+  (c) **OpenAI-family live run reporting vendor cache reads with no marker sent: NOT met — ENV-GATED.**
+  No `OPENAI_API_KEY` in the environment, credentials live in the OS keychain (`cli_doctor.py:131`), and
+  the real home's `.env` carries only `PERSONALCLAW_OWNER_ID`. It is ALSO coupled to another atom's known
+  unmet clause: `llm/openai.py` still declares no posture, so `OpenAIProvider` inherits
+  `PromptCache.NONE` (PCS-3's row, recorded twice above). Not chased — paying real OpenAI spend for a
+  personal-project validation is an owner call, not an agent's.
+  (d) undeclared/Ollama byte-identical zeros: **met at kwargs level, not by a live run** —
+  `test_unhinted_request_kwargs_are_byte_identical_to_today`,
+  `test_a_none_provider_posture_still_yields_the_same_kwargs`,
+  `test_runtime_hands_same_object_to_complete_when_undeclared`.
+  (e) config off stops the marker while ordering holds: **met at unit level** —
+  `test_disabled_collapses_every_declared_mode_to_none`,
+  `test_runtime_explicit_with_switch_off_hands_back_the_same_object`, and crucially
+  `test_ordering_repairs_are_not_gated_by_the_switch`.
+  **RECOMMENDATION: SPLIT the atom.** The numbers half has no remaining work and no remaining risk; the
+  live-OpenAI half cannot be closed from this environment at all. Keeping them in one row means a
+  fully-built, fully-railed deliverable reads `todo` indefinitely because of a credential the repo does
+  not have.
+  **The three prior branches carry ZERO content that is not on `main`.**
+  `feature-pcs7-cache-savings-primitive`, `-turn-cache-telemetry` and `-cache-proof-surface` (a stack off
+  base `12469c65`): each one's `src/` + `tests/` patch REVERSE-applies cleanly to `origin/main` AND
+  forward-applies with a failure. That pair is the non-vacuity floor — an empty patch passes the reverse
+  check alone, and a forward apply that succeeded would mean the lines were absent. Their
+  `docs/roadmap/atomic/` hunks also reverse-apply, but only because that hunk was the `PCS-8` flip
+  (already on `main`), not a `PCS-7` one; `PCS-7` is still `"status": "todo"` in `dag.json`.
+  **CORRECTION to a plausible-looking probe.** A `git grep 'cache_hit_rate\|saved_usd'` over
+  `src/personalclaw/` looks like it confirms this atom, but its hits are noise:
+  `workflows/introspection.py:113` `cache_hit_rate` is the WORKFLOW-introspection cache and has nothing
+  to do with the prompt cache, and the `chat_runner.py` hits match `cache_saved_usd` by substring. This
+  atom's real symbols are `cache_savings_usd`, `cache_hit_pct` and the `cache_saved_usd` keyword.
+  **Falsified — three mutations, each red, each restored from a file COPY (never `git checkout`).**
+  (i) `max(0.0, round(counterfactual - actual, 6))` in `pricing.py` →
+  `test_first_turn_that_only_writes_the_cache_is_negative` red (`assert 0.0 < 0`), 1 of 6.
+  (ii) unpriced returning `0.0` instead of `None` → 3 of 6 red, including the vacuity-paired test.
+  (iii) re-summing at the call site (`cache_tokens=read + creation`) →
+  `TestCallSiteRail::test_call_site_passes_the_split_counts_and_no_summed_keyword` red, 1 of 15.
+  No production line was changed by this session — it is an audit, and the tree carries only this entry.
