@@ -1866,3 +1866,119 @@ The floor caught a real bug in the helper rather than in the code under test.
 
 **Gate.** `tests/test_learning_flywheel_wiring.py` 3 passed · `tests/test_learning_accountability.py`
 + `tests/test_docs_lint_baseline.py` below · `make lint` clean. No `web/` change; `dag.json` untouched.
+
+### 2026-08-24 — S73's refiner could not fire: every event attributed to node `""` AND to run `""` (bugfix, no atom flipped)
+
+**No atom flipped.** S73 ships; this is a measured defect inside it, found while closing the adjacent
+triage-skip surfacing gap in PR #1974 and deliberately left out of scope there.
+
+**The mismatch.** `refiner.cluster_failures` read `event["node"] or event["path"]`. The ledger writer
+stamps **`node_id`** and **`instance_path`** (`journal.step_skipped` and every sibling emitter), and
+**no writer in the repo has ever stamped `node` or `path` on a ledger event.** Every clustered event
+therefore fell through to the empty string.
+
+**Measured at the production entry point** (`refiner_tools.gather_evidence`, four real runs, four real
+`step_skipped` rows via `Journal.step_skipped`, two distinct nodes):
+
+| | clusters |
+|---|---|
+| before | `1` — `{node: '', signature: 'skipped ', count: 4}` |
+| after | `2` — `{node: 'summarize', count: 2}` + `{node: 'translate', count: 2}` |
+
+So §3.1's documented mechanism — *"a repeatedly SKIPPED step is a failure of the template"*, which the
+bundled `refine-template` agent prompt spells out as *"delete a step users keep skipping"* — could not
+name the step. Every skip collapsed into one anonymous bucket.
+
+**Reader census (both sides checked).** `refiner.py` was the **sole** reader of bare `node`/`path`
+against a ledger event. Every sibling consumer already reads the writer's names: `evals/harvest.py:406`,
+`resume_account.py:262`, `workflows/introspection.py:173`/`:284` and `routing/feedback.py` (documented
+at its module head). The other `get("path")` hits in `workflows/` are spec/state dicts, not events.
+
+**🪤 The suites were green because reader and fixtures agreed on a fiction.** Every refiner test
+hand-built `{"kind": ..., "node": ...}` — the same key the reader used and the engine never emits — so
+`test_a_repeatedly_skipped_step_is_its_own_mechanism` passed against a shape no run produces. Fixing
+the reader turned `test_refiner_fencing.py::test_the_attack_cannot_hide_among_real_failures` red
+(`assert 'good' in {''}`), which is the false green surfacing, not a new break. Ledger-event fixtures
+now use the writer's names; mutation-op dicts keep `node`, a different vocabulary (`mutations.OpKind`
+addresses a target by `node_id`/`id` and uses `node` for an inline node *dict*).
+
+**Two distinct nodes are structurally required.** With ONE skipped node the buggy and correct reads
+produce an identical single cluster of identical count — only the label differs — so a one-node test
+cannot see this defect. Measured: `{('skipped ', ''): 3}` vs `{('skipped summarize', 'summarize'): 3}`.
+The vacuity floor asserts the writer's rows carry neither `node` nor `path`, so the test cannot drift
+back to passing on hand-built rows.
+
+**🔴 Attribution was NECESSARY BUT NOT SUFFICIENT — the mechanism still could not fire, and that half
+is now fixed too.** On the adjacent line, `run_id = event.get("run_id")` read a key **no writer stamps
+and `gather_evidence` never injected**, so `distinct_runs` was permanently `1`, `top_cluster`
+permanently `None` (`MIN_RUNS_FOR_EVIDENCE = 3`, not 2), and the `refine-template` agent always took
+its step-2 branch *"If there is no top cluster, STOP and propose nothing."* The consumer chain is live
+and named — `refiner_evidence` MCP tool (`mcp_core.py:649` declared, `:1376` dispatched) →
+`gather_evidence` → `cluster_safely` / `top_cluster`, held by `agents/defaults.py:372`, driven by
+`workflows/bundled/refine-template/workflow.json` — so this was an **inert mechanism behind a live
+reader**, not dead code.
+
+**Premise re-verified at the writer, not assumed.** A real `Journal.step_skipped` row is exactly
+`{actor, epoch, event_id, instance_path, kind, node_id, seq, ts}`. There is no `run_id`; the run key
+appears only inside the opaque `event_id` (`<run>-evt-<seq>`), because a ledger record is run-scoped
+by DIRECTORY (`runs/<run_id>/events.jsonl`).
+
+**Chose INJECT over STAMP.** `gather_evidence` already holds `run.id` in its own loop, so injection is
+one additive line at the one consumer that needs it. Stamping at the writer would duplicate the row's
+own storage key onto every row of ~40 emitters to serve one reader, and rewrite the whole
+`tests/fixtures/ledger_golden/` pair. The decisive argument is precedent, not size: `consumer_liveness.py:303`
+already fans in over this same ledger with `{**event, "run_id": str(run.id)}`, so injection IS the
+established convention for a cross-run reader — stamping would have been the novel move. Injection is
+placed LAST in the dict merge so the authoritative directory wins over any same-named field.
+
+| through `mcp_core._call_tool("refiner_evidence", …)`, 4 real runs, real writer | `top_cluster` |
+|---|---|
+| before | `None` — clusters correct (`summarize`/`translate`) but `run_ids: ['']`, `distinct_runs: 1` |
+| after | `{node: 'summarize', signature: 'skipped summarize', count: 3, distinct_runs: 3, run_ids: [3 real ids]}` |
+
+**The `distinct_runs >= 3` floor still holds — asserted in the NEGATIVE direction.** §3.1's power
+discipline, as `MIN_RUNS_FOR_EVIDENCE`'s own comment states it: *"Below this a 'pattern' is one bad
+afternoon, and a template edited from it is a template edited from noise."* So injecting the run key
+must not smuggle an anecdote past it. Three skips of one node inside a SINGLE run still yields
+`top_cluster: None`, and that test's vacuity floor asserts the cluster EXISTS first
+(`count == 3`, `rank > 0`, `distinct_runs == 1`) — otherwise `None` would pass for the wrong reason.
+Note the floor counts distinct RUNS, not occurrences.
+
+**`at_node_id` reconciled AT THE EMITTER (item 2).** `run_abandoned` stamped the ledger's only
+divergent spelling of the node field, so an abandoned run clustered under `''` even after the
+`node_id`/`instance_path` read landed. Renamed to `node_id`; WORKFLOWS-V2 §5's event table moved with
+it. Not aliased in the reader — a second accepted spelling is the dual path the clean-break tenet
+forbids, and it would leave the next cross-kind consumer (`evals/harvest`, `resume_account`,
+`workflows/introspection`, all of which read `node_id`) to rediscover the trap. Nothing semantic
+distinguished it: `step_failed` also means "the node this went wrong at". Free to rename — **zero
+production callers**, and `test_ledger_golden` probes kinds through `write(kind, marker=…)`, not the
+typed emitters, so no golden row churns.
+
+**🔴 `user_edited_mid_flight` — RECORDED, NOT BUILT (item 3), and the earlier recording of it was
+WRONG.** It stamps no node at all. The previous entry said this "needs the emitter's signature to
+change"; measured, **a `node_id=` kwarg on the emitter is the wrong shape.** The sole call site is
+`controller.py:1453`, `user_edited_mid_flight([o.to_dict() for o in result.ops])`, and `ops` is an
+unbounded array at the user surface (`mcp_workflows.py:254`, `required: [run_id, ops]`), so ONE event
+legitimately carries an N-node batch. `Op.to_dict()` also emits `node_id` only when non-empty — a
+positional `insert` addresses its target by `parent_id + index` and carries no node id at all. The
+honest fix is therefore reader-side per-op attribution, which is a clustering-SEMANTICS decision, not
+a signature change: one event would become N cluster contributions, turning `Cluster.count` from an
+event count into an op count, and double-counting one run's evidence toward the power floor when a
+batch touches the same node twice. Out of scope here by the bounded-change rule; §3.1's "gold" signal
+stays unattributed and this is the honest residual.
+
+**Falsification** (six; every restore `cp` from a pre-mutation file copy, never `git checkout`, each
+verified byte-identical). (1) Reverted the live read to `node`/`path` → the attribution test reds on
+its load-bearing assertion, printing `Cluster(signature='skipped ', node='', count=3)`. (2) Rewrote
+that test to hand-build rows carrying `node` → its **vacuity floor** reds, proving the floor is
+load-bearing. (3) Dropped the `run_id` injection from `gather_evidence` → the end-to-end test reds
+*"the mechanism did not fire"* AND the negative test reds on its own floor (`run_ids == ['']`), which
+is the point: without the floor the negative would have kept passing for the wrong reason. (4) Weakened
+`top_cluster`'s floor to `>= 1` → the negative test reds *"one run's evidence cleared the power floor"*.
+(5) Restored `at_node_id` on the emitter → the abandoned-run test reds *"the third spelling is still
+emitted"*. (6) Made `LedgerWriter._append` stamp `run_id` → the end-to-end test's vacuity floor reds
+*"writer already stamps run_id"*, so a writer that starts stamping it can never silently mask a dropped
+injection.
+
+**Gate.** `make lint` clean (black 2007 files, isort, flake8, mypy 992 sources). Refiner suites
+120 passed. `make test` below. No `web/` change; `dag.json` untouched.
