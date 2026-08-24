@@ -810,3 +810,79 @@ Sharpens, doesn't append: RunPin + scenario library extend **Session 1** (the st
   `PERSONALCLAW_HOME` or one resolving to the **default** `~/.personalclaw`, not an arbitrary non-default
   real home. The actual guarantee comes from `_spawn_cell` always handing the child a
   `TemporaryDirectory`; the refusal is a secondary rail.
+
+
+## Execution log — ES-5 executor (§2 clause 1: a flywheel template-diff runs a study) — clause now **PARTIAL→driven**, atom stays `todo`
+
+- [2026-08-24][ES-5] **The instrument now runs end to end, but auto-run did NOT ship — clause 1 is
+  register-automatically, run-on-invocation.** New `evals/study_arms.py` (693 lines): `TemplateArmRunner` /
+  `live_arm_runner` (the production `ArmRunner`, one `one_shot_completion` per arm on the arm's rendered
+  template prompt, in a per-(case,trial,arm) workspace whose `output.md` the `locked/` checks read);
+  `harvested_study_cases()` (the `StudyCase` adapter over `harvest.load_harvested_suite()`);
+  `render_arm_prompt()` (binds via the engine's own `workflows.bindings.resolve` — no second dialect);
+  `arm_bodies_for_ops()` (OLD/NEW via `mutations.apply_batch`, the human-accept path, **writing nothing**);
+  `assert_arms_differ()` (identical arms refused — that case reports a confident `tie`, not a failure);
+  and `preflight()`/`StudyPreflight` (`cases×k×2` arm + `cases×k×2×samples` judge calls). Call sites:
+  `learning/refiner_tools.py:127` (`_preregister_study` — a filed template diff returns a `study_id` and
+  the registration lands on disk), `studies.py:1450` (`arm_runner=None` → `live_arm_runner`), and
+  `cli_commands.py:_study` ← `cli.py "study"` (`--list`/`--view`/`--run`/`--dry-run`).
+
+- [2026-08-24][ES-5] 🔴 **DESIGN DECISION, flagged for owner reversal — register-at-file, run-on-invocation
+  (not auto-run).** A 3-case suite at k=5 is **30 arm + 90 judge** model calls; an agent tool call that
+  silently starts that is exactly what the preflight exists to prevent, and auto-run is Autonomy-Guardrails'
+  spend territory. So the flywheel diff **pre-registers** automatically and the **run** is a deliberate
+  `personalclaw study --run`. Everything from registration to verdict is real and connected — but
+  *"a flywheel template-diff RUNS a study"* with no human in the loop is **not** what shipped, so clause 1
+  is recorded PARTIAL rather than claimed met. **Owner call: ratify this seam, or wire auto-run behind a
+  Guardrails spend gate.**
+
+- [2026-08-24][ES-5] **An arm is ONE model call on the rendered prompt, not a full engine run — and that is
+  a hard bound, not a shortcut.** `workflows.service.start_run` refuses without a `supervisor`, and
+  `ActionServices.workflows` is set only at `gateway.py:2496` from the workflow watchdog — so an
+  engine-driven arm would be permanently **inert** in the CLI, i.e. the exact defect being closed. It is
+  also what a refiner diff actually changes: `check_diff` freezes `id`/`triggers`/surfacing metadata, so
+  legal ops move prompt text. A trajectory-level arm belongs with whoever builds the headless engine driver.
+
+- [2026-08-24][ES-5] 🔴 **Two bugs the live drive found that reading would not have.** (1) **The CLI was
+  inert** — nothing registers a workflow-def provider outside gateway boot, so `--run` refused every study
+  with `no workflow definition named …` while the def sat on disk; fixed by `_live_spec` calling
+  `register_native_provider()` + `register_bundled_provider()` (idempotent). (2) **`ArmOutput.ok` was an
+  unread field** — `run_study` never consulted it, and this runner is the first thing that ever sets it
+  `False`; left unread, a provider outage would hand the judge `""` and **the other arm would win on
+  infrastructure failure**. Fixed: an unfinished arm yields an unjudgeable pair and the judge is **not
+  called at all**. Re-falsified at integration: forcing `unfinished = []` reds
+  `test_an_unfinished_arm_is_NOT_judged_as_an_empty_answer` with *"the judge was asked about an arm that
+  never ran"* (1 failed, 21 passed).
+
+- [2026-08-24][ES-5] **Owner decision A — the low-power threshold N.** `LOW_POWER_CASES = 3` **already
+  existed** on main (`studies.py:119`) and is **arbitrary** — not from the plan or a power calculation. It
+  is a named module constant (not a config field) and a **label only**, never a verdict change. This work
+  surfaces it in the preflight so a user sees it before spending. **Ratify 3, or promote it to
+  `evals.study_low_power_cases` (full round-trip).**
+
+- [2026-08-24][ES-5] **Owner decision B — LEARN-R2 promotion discipline NOT implemented; it needs a design
+  call, not code.** The gate *"a previously-failing task that now passes is re-run, and only if it passes
+  again is it promoted"* needs a predicate for "passes". A harvested case's only assertion is a JUDGE
+  assertion, and `Assertion.check` returns `True` for `AssertionType.JUDGE` when `--judge` is off — so the
+  predicate is **`True` by construction** in the default path, and the gate would sit on a vacuous check.
+  This runner produces text for a *comparative* judge, not pass/fail against a case's own assertions. Owner
+  must pick: **(a)** couple the promotion gate to `--judge`-on re-runs (real spend inside the harvest), or
+  **(b)** give harvested cases a non-judge assertion from the recorded baseline — which the harvest
+  **deliberately refuses**, because turning one observed answer into a `contains` assertion mints a golden
+  nobody reviewed.
+
+- [2026-08-24][ES-5] **New finding, not mine to fix:** `mutations.apply_batch` silently accepts a malformed
+  `update_node` with `fields: {"config": {...}}` and produces a spec with **`config.config`** nested,
+  `issues == []`. A refiner emitting that shape would get a spec nobody authored, with no error.
+
+- **Brief corrections.** (1) The plan *does* name a `low_power` threshold as a shipped constant (`= 3`), so
+  "the plan never gives N — implement the label" was wrong; the label existed, the pre-spend surfacing did
+  not. (2) `load_harvested_suite()` returns `list[dict]` of full library-shaped scenarios, not
+  `[(name, sha256)]`; the sha is computed with `scenarios.sha256_of_scenario_data`. (3) A production
+  `ArmRunner` driving the WF2 engine is **not buildable in-session** (see the supervisor bound above).
+
+- **Gate:** `make lint` 0 (mypy 993 files); `test_evals_study_arms` 21 + a 158-test targeted set; probe
+  residue 0. A new `one_shot_completion` call site required a `_CALL_SITE_SURFACES` row
+  (`test_resilience_degraded_lint`), added as `"evals/study_arms.py": "assistant_reasoning"`. Every negative
+  assertion carries a paired positive floor; one floor initially failed for a *good* reason — a slot-A-only
+  judge correctly became `no_signal` under the position swap — and was rewritten to vote on content.
