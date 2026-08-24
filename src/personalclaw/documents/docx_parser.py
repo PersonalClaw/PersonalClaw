@@ -552,30 +552,44 @@ class _Parser:
     def _list_kind(self, para: _Xml, lowered: str) -> str:
         """ "bullets" / "numbered" / "" for a paragraph that is not a list item.
 
-        Style name first (what the writer emits), then `w:numPr` (what Word emits —
-        Word's list items usually carry the "List Paragraph" style plus a numbering
-        reference, so a style-name-only check reads a Word list as plain paragraphs).
+        A resolvable `w:numPr` first, then the style name (what this repo's writer emits —
+        "List Bullet" / "List Number" with no numbering reference at all, so a
+        numbering-only check would read the writer's own lists as plain paragraphs).
+
+        The direct reference outranks the style because that is the OOXML precedence Word
+        itself renders: a paragraph's own `w:numPr` overrides whatever numbering its style
+        supplies. A real Word document disagrees with itself here routinely — typing at the
+        end of a numbered list and clicking the bullet button leaves the new paragraph
+        styled "List Number" with a bullet `w:numPr` on it, and Word shows a bullet.
+        Reading the style name first turned those bullets into extra items on the numbered
+        list above them; `tests/test_docx_word_authored.py` owns that case on a file Word
+        actually saved.
         """
-        if lowered == "list bullet":
-            return "bullets"
-        if lowered == "list number":
-            return "numbered"
         # `w:numPr` is a child of `w:pPr`, never of `w:p` — reading it off the paragraph
         # element finds nothing and reads every Word list as plain paragraphs.
         properties = _find(para._p, "pPr")
         num_pr = _find(properties, "numPr") if properties is not None else None
-        if num_pr is None:
-            return ""
-        level = _find(num_pr, "ilvl")
-        if level is not None and (_attr(level, "val") or "0") != "0":
-            self.report.add(
-                "nested_list_level",
-                f"list item at indent level {_attr(level, 'val')}; the model's items are "
-                "a flat list of strings",
-                block_index=self._next_index,
-                paragraph_ordinal=self._ordinal,
-            )
-        return "bullets" if self._num_format(num_pr) == "bullet" else "numbered"
+        if num_pr is not None:
+            level = _find(num_pr, "ilvl")
+            if level is not None and (_attr(level, "val") or "0") != "0":
+                self.report.add(
+                    "nested_list_level",
+                    f"list item at indent level {_attr(level, 'val')}; the model's items "
+                    "are a flat list of strings",
+                    block_index=self._next_index,
+                    paragraph_ordinal=self._ordinal,
+                )
+            fmt = self._num_format(num_pr)
+            if fmt:
+                return "bullets" if fmt == "bullet" else "numbered"
+        if lowered == "list bullet":
+            return "bullets"
+        if lowered == "list number":
+            return "numbered"
+        # A numbering reference whose definition we could not read is still a list item.
+        # `numbered` rather than `bullets` keeps the more visible wrong answer off the
+        # table: stripping the numbers off a numbered list.
+        return "numbered" if num_pr is not None else ""
 
     def _num_format(self, num_pr: _Xml) -> str:
         """The `w:numFmt` behind a `w:numPr`, or "" when it cannot be resolved.

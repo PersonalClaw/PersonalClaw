@@ -75,16 +75,19 @@ def _pPr_doc(fragment: str, *, text: str = "body") -> bytes:
     return _bytes(doc)
 
 
-def _numbered_doc(*items: str, num_id: str = "1", level: str = "0") -> bytes:
+def _numbered_doc(
+    *items: str, num_id: str = "1", level: str = "0", style: str = "List Paragraph"
+) -> bytes:
     """A Word-shaped list: the "List Paragraph" style plus a `w:numPr` reference.
 
     This is how Word writes a list. The repo's writer instead uses the "List Bullet" /
     "List Number" styles, so a parser that only checks style names reads a Word list as a
-    run of plain paragraphs — which is why both paths are tested.
+    run of plain paragraphs — which is why both paths are tested. `style` exists so a test
+    can build the two sources DISAGREEING, which is what a real Word document does.
     """
     doc = Document()
     for item in items:
-        para = doc.add_paragraph(item, style="List Paragraph")
+        para = doc.add_paragraph(item, style=style)
         para._p.get_or_add_pPr().append(
             parse_xml(
                 f'<w:numPr {_W}><w:ilvl w:val="{level}"/><w:numId w:val="{num_id}"/></w:numPr>'
@@ -226,6 +229,37 @@ def test_a_word_shaped_numbered_list_is_read_from_its_numbering():
     model, _ = parse_docx(_numbered_doc("one", "two", num_id="5"))
 
     assert [(block.kind, block.items) for block in model.blocks] == [("numbered", ["one", "two"])]
+
+
+def test_a_direct_numbering_reference_outranks_a_contradicting_style_name():
+    """`w:numPr` wins over the style name, in both directions.
+
+    OOXML gives a paragraph's own `w:numPr` precedence over the numbering its style
+    supplies, and Word renders it that way — so when the two disagree, the reference is the
+    one that matches what the user sees. Word produces this disagreement routinely: typing
+    at the end of a numbered list and clicking the bullet button leaves "List Number" on a
+    paragraph with a bullet reference. `tests/test_docx_word_authored.py` owns the same
+    claim on a file Word actually saved; this is the fast synthetic version, and it asserts
+    the mirror case too so the fix cannot be a hardcoded "bullet".
+    """
+    bulleted, _ = parse_docx(_numbered_doc("a", num_id="1", style="List Number"))
+    numbered, _ = parse_docx(_numbered_doc("b", num_id="5", style="List Bullet"))
+
+    assert [(block.kind, block.items) for block in bulleted.blocks] == [("bullets", ["a"])]
+    assert [(block.kind, block.items) for block in numbered.blocks] == [("numbered", ["b"])]
+
+
+def test_an_unresolvable_numbering_reference_falls_back_to_the_style_name():
+    """An unreadable reference must not overrule a style name that IS readable.
+
+    The precedence above is "a RESOLVABLE reference first". A numbering definition can live
+    in a part the document does not carry, and `_num_format` returns "" there — treating
+    that empty answer as "not a bullet" would turn every writer-authored bulleted list into
+    a numbered one the moment a stray unresolvable reference appeared on it.
+    """
+    model, _ = parse_docx(_numbered_doc("a", num_id="999", style="List Bullet"))
+
+    assert [(block.kind, block.items) for block in model.blocks] == [("bullets", ["a"])]
 
 
 def test_an_unresolvable_numbering_reference_reads_as_numbered():
