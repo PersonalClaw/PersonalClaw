@@ -263,6 +263,7 @@ class _ChatSession:
         "_declared_file_change_idx",
         "_acp_breaker",
         "_memory_citations",
+        "_skills_used",
         "_side",
         "_extra_tool_roots",
         "_unattended",
@@ -467,6 +468,13 @@ class _ChatSession:
         # context's metadata, and attached to each finalized assistant message's meta so
         # the frontend can turn a `[Memory N]` token into a deep-link to the episode.
         self._memory_citations: list[dict] = []
+        # Skills whose content actually reached THIS turn's prompt, as
+        # [{name, state, loaded_tokens}] (LEARNING-VISIBILITY T2.1). Reset per turn,
+        # populated from the assembled context's `skill_decisions` metadata, and attached
+        # to each finalized assistant message's meta so the frontend can show "used N
+        # skills" without a second channel. A REFUSED skill is deliberately absent: it was
+        # named to the agent but never loaded, so counting it would overstate the turn.
+        self._skills_used: list[dict] = []
         # Ephemeral side-chat buffer (None = closed). Side Q&A lives ONLY here,
         # never in self.messages — see dashboard/side_state.py.
         self._side: "SideState | None" = None
