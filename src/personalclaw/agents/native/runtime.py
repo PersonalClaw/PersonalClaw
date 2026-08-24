@@ -1721,10 +1721,15 @@ class NativeAgentRuntime(AgentProvider):
     def set_session_key(self, session_key: str, channel_id: str | None = None) -> None:
         self._session_key = session_key
 
-    def set_steer_source(self, pull: "Callable[[], list[str]] | None") -> None:
+    def set_steer_source(self, pull: "Callable[[], list[str]] | None") -> bool:
         """Wire the queue-steering source (#37): a callable the loop drains at each
-        model boundary for mid-turn user messages. None disables steering."""
+        model boundary for mid-turn user messages. None disables steering.
+
+        Returns whether a drain is now armed, so the dispatcher reads one answer from
+        every runtime instead of inferring native's from the absence of a refusal
+        (PR2-10 — the ACP seam CAN refuse, this one never does)."""
         self._pull_steer = pull
+        return pull is not None
 
     def _drain_steers_into_history(self) -> bool:
         """Append any pending steers to history as fresh user input.

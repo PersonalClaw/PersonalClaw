@@ -50,9 +50,22 @@ def gather_evidence(workflow_name: str, *, limit: int = 50) -> dict[str, Any]:
     runs, _ = store.list_runs(workflow_name=workflow_name, limit=limit)
     for run in runs:
         try:
-            events.extend(journal.ledger(run.id, kinds=set(refiner.EVIDENCE_KINDS)))
+            rows = journal.ledger(run.id, kinds=set(refiner.EVIDENCE_KINDS))
         except Exception:
             logger.debug("refiner: could not read ledger for run %s", run.id, exc_info=True)
+            continue
+        # STAMP the run key the power floor counts. A ledger record is run-scoped by DIRECTORY
+        # (`runs/<run_id>/events.jsonl`) so the writer never repeats `run_id` on a row — it appears
+        # only inside the opaque `<run>-evt-<seq>` event id. A consumer that FANS IN across runs
+        # must therefore supply it, and this is that consumer: `Cluster.distinct_runs` is a
+        # cross-run count, so with every event arriving as `run_id=""` it was permanently 1,
+        # `top_cluster` could never clear `MIN_RUNS_FOR_EVIDENCE`, and the `template-refiner` agent
+        # took its "no top cluster — STOP and propose nothing" branch on every template forever.
+        # Injected here rather than stamped by the writer on purpose: the run id is already the
+        # row's storage key, so stamping would duplicate it onto every row of every emitter to
+        # serve one reader. `consumer_liveness` fans in over the same ledger the same way.
+        # Injection LAST so the authoritative directory wins over any field of the same name.
+        events.extend({**row, "run_id": str(run.id)} for row in rows)
     clusters, _screened = refiner.cluster_safely(events)
     top = refiner.top_cluster(clusters)
     fenced = refiner.fenced_evidence(events)

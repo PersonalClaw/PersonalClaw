@@ -396,7 +396,13 @@ def cluster_failures(events: list[dict[str, Any]]) -> list[Cluster]:
         kind = str(event.get("kind", "") or "")
         if kind not in EVIDENCE_KINDS:
             continue
-        node = str(event.get("node") or event.get("path") or "")
+        # `node_id`/`instance_path` are what the LEDGER WRITER stamps (`journal.step_skipped` and
+        # every sibling emitter pass `node_id=` / `instance_path=`). Reading `node`/`path` — which
+        # no writer has ever stamped — attributed EVERY event to the empty string, collapsing all
+        # of a template's steps into one anonymous bucket. `node_id` leads because a cluster names
+        # the step a template op must target, and ops address a node by id, not by instance path;
+        # the path is the fallback for a kind that carries one without an id.
+        node = str(event.get("node_id") or event.get("instance_path") or "")
         run_id = str(event.get("run_id", "") or "")
 
         if kind in ("step_failed", "run_abandoned", "gate_rejected"):

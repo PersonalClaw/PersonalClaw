@@ -318,8 +318,21 @@ class Journal(LedgerWriter):
             error=error,
         )
 
-    def run_abandoned(self, at_node_id: str, *, elapsed_secs: float = 0.0) -> None:
-        self.write(RUN_ABANDONED, at_node_id=at_node_id, elapsed_secs=round(elapsed_secs, 3))
+    def run_abandoned(self, node_id: str, *, elapsed_secs: float = 0.0) -> None:
+        """The node the run died at, stamped as `node_id` like every sibling emitter.
+
+        It stamped `at_node_id` — the ONLY event in the ledger to spell the node field
+        differently. Nothing semantic distinguished it: `step_failed` also means "the node this
+        went wrong at" and calls it `node_id`. The cost was real, not stylistic — every cross-kind
+        ledger consumer (`refiner.cluster_failures`, `evals/harvest`, `resume_account`,
+        `workflows/introspection`) reads `node_id`, so an abandoned run attributed to the anonymous
+        `""` node in all of them. Renamed rather than aliased in the reader: one more accepted
+        spelling is the dual path the clean-break tenet forbids, and it would leave the NEXT
+        consumer to rediscover the same trap. Free to rename — this emitter has no production
+        caller, and `test_ledger_golden` probes kinds through `write()`, not the typed methods.
+        WORKFLOWS-V2 §5's event table said `at_node_id`; the doc moved with the code.
+        """
+        self.write(RUN_ABANDONED, node_id=node_id, elapsed_secs=round(elapsed_secs, 3))
 
     def user_edited_mid_flight(self, ops: list[dict[str, Any]]) -> None:
         """The structured mutation batch, not a diff blob — the refiner needs to know

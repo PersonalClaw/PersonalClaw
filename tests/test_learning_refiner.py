@@ -55,7 +55,7 @@ def _failures(count, *, node="fetch", message="HTTP 503 from api.example.com"):
     return [
         {
             "kind": "step_failed",
-            "node": node,
+            "node_id": node,
             "run_id": f"r{i}",
             "error": f"{message} after {1000 + i}ms (trace a3f9c8d{i})",
         }
@@ -135,7 +135,7 @@ def test_rank_is_frequency_TIMES_unresolvedness():
 
 
 def test_a_completion_resolves_failures_on_the_same_node():
-    events = _failures(3) + [{"kind": "step_completed", "node": "fetch", "run_id": "r9"}]
+    events = _failures(3) + [{"kind": "step_completed", "node_id": "fetch", "run_id": "r9"}]
     cluster = next(c for c in cluster_failures(events) if c.node == "fetch")
     assert cluster.resolved >= 1
     assert cluster.unresolvedness < 1.0
@@ -143,16 +143,67 @@ def test_a_completion_resolves_failures_on_the_same_node():
 
 def test_a_repeatedly_skipped_step_is_its_own_mechanism():
     """The user keeps saying this step should not be here — a deletion, not a prompt rewrite."""
-    events = [{"kind": "step_skipped", "node": "summarize", "run_id": f"r{i}"} for i in range(4)]
+    events = [{"kind": "step_skipped", "node_id": "summarize", "run_id": f"r{i}"} for i in range(4)]
     cluster = cluster_failures(events)[0]
     assert "skipped" in cluster.signature and cluster.count == 4
+
+
+def test_each_skip_is_attributed_to_its_OWN_node_through_the_REAL_writer(tmp_path, monkeypatch):
+    """Per-node attribution, asserted against rows the LEDGER WRITER actually produced.
+
+    The regression this pins: `cluster_failures` used to read `event["node"]`/`event["path"]`,
+    but `journal.step_skipped` stamps `node_id`/`instance_path` and no writer has ever stamped
+    the other two. Every skip therefore attributed to the empty string, and the mechanism this
+    module documents — "a repeatedly SKIPPED step is a failure of the template" — could not name
+    the step. TWO distinct nodes are required to see it at all: with one skipped node, an
+    all-events-under-`""` bucket is indistinguishable from correct attribution.
+    """
+    from personalclaw.workflows import store
+    from personalclaw.workflows.journal import Journal, ledger
+
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setattr("personalclaw.workflows.store.config_dir", lambda: home)
+    assert store.config_dir() == home  # the isolation itself, not a real home
+
+    skips = [
+        ("skipnode0", "root.children[0]", "summarize"),
+        ("skipnode1", "root.children[1]", "translate"),
+        ("skipnode2", "root.children[2]", "summarize"),
+    ]
+    events: list[dict] = []
+    for run_id, path, node_id in skips:
+        Journal(run_id).step_skipped(path, node_id, epoch=0, actor="user")
+        for row in ledger(run_id):
+            events.append({**row, "run_id": run_id})
+
+    assert len(events) == len(skips)
+
+    # ── the vacuity floor ──
+    # A regression to the old keys is only *catchable* because the real writer stamps NEITHER of
+    # them. Assert that, so this test cannot silently pass on hand-built rows that carry `node`.
+    for row in events:
+        assert "node" not in row, "writer stamps `node_id`; a bare `node` would hide the defect"
+        assert "path" not in row, "writer stamps `instance_path`, never `path`"
+        assert row["node_id"] and row["instance_path"]
+
+    by_node = {c.node: c for c in cluster_failures(events)}
+
+    # The load-bearing assertion: each skip lands under its OWN node id, and nothing lands in the
+    # anonymous bucket the buggy read produced.
+    assert "" not in by_node, f"skips collapsed into the anonymous node bucket: {by_node}"
+    assert set(by_node) == {"summarize", "translate"}
+    assert by_node["summarize"].count == 2
+    assert by_node["translate"].count == 1
+    assert by_node["summarize"].signature == "skipped summarize"
+    assert by_node["translate"].signature == "skipped translate"
 
 
 def test_hand_fixes_are_captured_verbatim():
     events = [
         {
             "kind": "user_edited_mid_flight",
-            "node": "fetch",
+            "node_id": "fetch",
             "run_id": f"r{i}",
             "ops": ["update_node"],
         }
@@ -165,7 +216,7 @@ def test_hand_fixes_are_captured_verbatim():
 def test_unknown_ledger_kinds_are_ignored_not_guessed_at():
     """The ledger is append-only and gains kinds; reacting to one nobody designed would
     propose against an unintended signal."""
-    assert cluster_failures([{"kind": "buffer_seal", "node": "x", "run_id": "r1"}]) == []
+    assert cluster_failures([{"kind": "buffer_seal", "node_id": "x", "run_id": "r1"}]) == []
 
 
 def test_clustering_survives_malformed_events():
@@ -190,7 +241,7 @@ def test_an_under_evidenced_cluster_never_reaches_a_model():
 def test_the_floor_counts_DISTINCT_runs_not_occurrences():
     """Three failures in one run is one run's evidence."""
     same_run = [
-        {"kind": "step_failed", "node": "x", "run_id": "r1", "error": "same thing"}
+        {"kind": "step_failed", "node_id": "x", "run_id": "r1", "error": "same thing"}
         for _ in range(5)
     ]
     assert top_cluster(cluster_failures(same_run)) is None
@@ -198,7 +249,7 @@ def test_the_floor_counts_DISTINCT_runs_not_occurrences():
 
 def test_a_fully_resolved_cluster_is_never_the_target():
     events = _failures(4) + [
-        {"kind": "step_completed", "node": "fetch", "run_id": f"r{i}"} for i in range(8)
+        {"kind": "step_completed", "node_id": "fetch", "run_id": f"r{i}"} for i in range(8)
     ]
     top = top_cluster(cluster_failures(events))
     assert top is None or top.rank > 0

@@ -166,9 +166,10 @@ class TestProviderRegistry:
 
     def test_duplicate_entry_name_registration_is_idempotent(self) -> None:
         # Re-registering the same name is a no-op, not an error:
-        # sync_entries_from_config runs more than once at boot (synchronously,
-        # then again in the _model_providers_startup hook), so a second pass must
-        # not crash. The first registration wins; the entry set is unchanged.
+        # sync_entries_from_config runs once at boot, but the embedding path calls it
+        # again lazily to self-heal an unresolvable provider (embedding_providers/
+        # registry.py), so a second pass must not crash. The first registration wins;
+        # the entry set is unchanged.
         reg = ProviderRegistry()
         cap = _make_capability()
         reg.register_type(cap, _FakeProvider)

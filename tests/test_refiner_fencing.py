@@ -58,7 +58,7 @@ REAL_FAILURES = [
 
 
 def _events(text, *, kind="step_failed", field="error", node="fetch", n=4):
-    return [{"kind": kind, "node": node, "run_id": f"r{i}", field: text} for i in range(n)]
+    return [{"kind": kind, "node_id": node, "run_id": f"r{i}", field: text} for i in range(n)]
 
 
 # ── criterion 4: injection must not surface as a proposal ──
@@ -210,7 +210,7 @@ def test_every_surviving_field_is_fenced_not_only_the_flagged_ones():
         [
             {
                 "kind": "step_failed",
-                "node": "n",
+                "node_id": "n",
                 "run_id": "r1",
                 "error": "plain 503",
                 "reason": "retry",
@@ -243,7 +243,7 @@ def test_the_raw_clustering_path_stays_callable_and_unscreened():
 def test_screening_never_raises_on_hostile_input():
     """A screen that throws fails OPEN under exactly the input an attacker controls."""
     for payload in ("", "   ", "\x00\x01", "\ud800", "a" * 50_000, "\n" * 2000):
-        cluster_safely([{"kind": "step_failed", "node": "n", "run_id": "r", "error": payload}])
+        cluster_safely([{"kind": "step_failed", "node_id": "n", "run_id": "r", "error": payload}])
 
 
 def test_malformed_events_are_skipped_not_fatal():
@@ -256,14 +256,14 @@ def test_a_non_string_field_is_ignored():
     """A ledger field that is a dict or a number is not text to screen, and coercing it would invent
     content to match against."""
     clusters, verdicts = cluster_safely(
-        [{"kind": "step_failed", "node": "n", "run_id": "r1", "error": {"nested": "obj"}}]
+        [{"kind": "step_failed", "node_id": "n", "run_id": "r1", "error": {"nested": "obj"}}]
     )
     assert not verdicts[0].blocked
     assert clusters is not None
 
 
 def test_an_event_with_no_untrusted_text_passes_through():
-    events = [{"kind": "step_completed", "node": "n", "run_id": "r1"}]
+    events = [{"kind": "step_completed", "node_id": "n", "run_id": "r1"}]
     safe, verdicts = screen_evidence(events)
     assert safe == events
     assert verdicts[0].fenced is False and not verdicts[0].blocked

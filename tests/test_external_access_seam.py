@@ -560,9 +560,24 @@ class TestClientIdentityAndPins:
                 http, "tools/call", token=token, name="knowledge_search", arguments={}
             )
             assert resp.status == 403, await resp.text()
+            body = await resp.json()
         finally:
             await http.close()
         assert any(e["op"] == "inbound_binding_violation" for e in events), events
+
+        # The wire envelope, and its DISCRETION. The refusal stays the generic
+        # `forbidden` — `bridge.py` mints a distinct `action_not_bound` for its
+        # equivalent, and matching that here would make an externally-reachable
+        # response strictly more specific than the flat one it replaced. The hint
+        # rides inside the `error` object; the violation TEXT (which names the client
+        # and its pinned tools) goes to the audit trail and the SEL only.
+        assert body["error"]["code"] == "forbidden", body
+        assert body["error"]["detail"] == "request conflicts with a client binding", body
+        served = json.dumps(body)
+        assert client_rec.client_id not in served, body
+        assert (
+            "knowledge_search" not in served and "memory_recall" not in served
+        ), f"the 403 body echoes the caller's tool names back to it: {body!r}"
 
     @pytest.mark.asyncio
     async def test_the_403_rail_can_fail(self, monkeypatch):

@@ -1474,23 +1474,24 @@ async def start_dashboard(
     app.on_startup.append(_app_sources_seed_startup)
 
     async def _model_providers_startup(app_: web.Application) -> None:
-        """Replay config.json providers[] into the model ProviderRegistry.
+        """Register config model-managers as local providers; retry the legacy migration.
 
-        Provider entries are persisted by the create/update handlers but are
-        not re-registered on a fresh start, so without this a configured model
-        provider is invisible to chat resolution until re-created via the API.
+        config.json ``providers[]`` are NOT replayed here. That happens exactly once, in
+        the synchronous body above, because ``setup_knowledge_routes`` builds the
+        knowledge embedder during app construction — before any on_startup hook — and
+        would otherwise see an empty registry. A second replay used to sit here and was
+        measured returning 0 entries on every boot: the body call is unguarded, so it has
+        either registered everything already or taken the boot down with it, leaving this
+        one nothing to do. ``migrate_legacy_bindings`` DOES belong here as a retry: it
+        unlinks the legacy file only on success, so a partial failure of the (silently
+        swallowed) body call leaves real work, and this copy logs it.
         """
-        from personalclaw.llm.registry import sync_entries_from_config
         from personalclaw.providers.use_cases import migrate_legacy_bindings
 
         try:
             migrate_legacy_bindings()
         except Exception:
             logger.exception("Failed to migrate legacy use-case bindings")
-        try:
-            sync_entries_from_config()
-        except Exception:
-            logger.exception("Failed to sync model providers from config")
         try:
             from personalclaw.local_models.registry import register_config_model_managers
 
@@ -1575,8 +1576,8 @@ async def start_dashboard(
         runtime, serving BOTH the discovery snapshot (instant lists) AND the first
         chat turn (instant first turn — claimed in get_or_create). Warming runs in
         the BACKGROUND (each is a ~15-20s live session); the pool also starts a
-        health loop that respawns dead connections. Runs after
-        _model_providers_startup so the acp_agent entries are registered.
+        health loop that respawns dead connections. Runs after the boot-time
+        config replay in the body above, so the acp_agent entries are registered.
         Best-effort — failures never affect the gateway."""
         try:
             import asyncio as _asyncio
