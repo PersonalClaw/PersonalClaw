@@ -427,6 +427,21 @@ async def start_dashboard(
     except Exception:  # noqa: BLE001 — an inbound fault must never block startup
         logging.getLogger(__name__).warning("inbound: /mcp mount failed", exc_info=True)
 
+    # External-agent capture proxy (EXTERNAL-ACCESS §7.1). Two literal POST paths under
+    # /capture/v1 that another agent on this machine points OPENAI_BASE_URL /
+    # ANTHROPIC_BASE_URL at. Registered HERE for the same reasons as /mcp above — its own
+    # bearer, its own loopback rail, outside the cookie-auth world — and this early so no
+    # `{...}` pattern below can capture the literal `capture` segment (the hazard the
+    # `bulk`/`templates` comments further down describe). Unlike /mcp it mounts
+    # unconditionally and refuses per-request, so toggling the surface in Settings needs
+    # no restart; a disabled surface answers 404 either way.
+    try:
+        from personalclaw.inbound.capture_proxy import register_routes as _register_capture
+
+        _register_capture(app)
+    except Exception:  # noqa: BLE001 — an inbound fault must never block startup
+        logging.getLogger(__name__).warning("inbound: /capture mount failed", exc_info=True)
+
     # Status / system
     app.router.add_get("/api/healthz", handlers.api_healthz)
     app.router.add_get("/api/status", handlers.api_status)
