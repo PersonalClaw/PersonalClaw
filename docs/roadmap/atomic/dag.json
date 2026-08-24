@@ -1406,7 +1406,8 @@
           "done_when": "Every existing model test passes untouched; a runs-only Block answers .text and a cells-only table answers .rows via __post_init__ derivation; markdown inline formatting (**bold**/*italic*/`code`/[t](url)) round-trips into Runs and old _strip_inline behavior is gone (not left beside it); a bold run reads back bold via python-docx.",
           "deps": [
             "EXT:DOCUMENT-HANDLING-TOOLS:owns model.py + the four writers this extends (DONE)"
-          ]
+          ],
+          "pr": 1978
         },
         {
           "id": "DFE-3",
@@ -4283,7 +4284,7 @@
           "deps": [
             "EA-1"
           ],
-          "pr": 1971
+          "pr": 1978
         },
         {
           "id": "EA-5",
@@ -4781,7 +4782,7 @@
     {
       "plan": "ACP-AGENT-PARITY",
       "code": "AAP",
-      "status": "in_progress",
+      "status": "done",
       "summary": "Decomposed ACP-AGENT-PARITY into 10 atoms: 3 per-provider runtime-validation sweeps (Phase 1) gating 6 severity-ordered parity fixes (Phase 2 \u00a72.1\u2013\u00a72.6) plus the honest-boundary parity doc (\u00a72.7). Plan is PROPOSED \u2014 no execution log, no PRs \u2014 so all atoms are TODO. No hard cross-plan dependencies exist (Wave-0 standalone; guardrails/isolation touchpoints are non-blocking), so all edges are intra-plan.",
       "atoms": [
         {
