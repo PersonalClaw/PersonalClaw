@@ -324,7 +324,16 @@ def load_corpus(ref: str) -> Corpus:
     an error — the worst failure shape.) ``git archive`` streams one way and needs no
     interleaving, and because it only ever emits *tracked* files it also excludes
     ``node_modules``/``web/dist`` for free.
+
+    The ref is resolved HERE, at the point of consumption, rather than only in ``main``.
+    Resolving in the CLI alone left every other entry point — ``census`` called directly,
+    which is what this module's own test fixture does — still failing on a clone without
+    ``origin/main``: ten tests errored at setup in CI while the CLI passed. A guard placed
+    one layer above the call it protects only protects the callers that go through it.
     """
+    ref, note = resolve_ref(ref)
+    if note:
+        print(f"audit_landed_atoms: {note}", file=sys.stderr)
     all_paths = tuple(_git(["ls-tree", "-r", "--name-only", ref]).splitlines())
 
     proc = subprocess.Popen(

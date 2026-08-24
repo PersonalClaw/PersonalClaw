@@ -604,6 +604,38 @@ def test_an_explicitly_named_missing_ref_raises_instead_of_falling_back() -> Non
         resolve_ref("origin/zzz-no-such-branch-9f3a", REPO_ROOT)
 
 
+def test_the_ref_is_resolved_where_it_is_CONSUMED_not_only_in_main() -> None:
+    """A guard above the call only protects the callers that go through it.
+
+    Measured: resolving in ``main`` alone left the CLI green and errored **ten** tests at
+    setup, because ``real_census`` calls ``census(ref="origin/main")`` directly and never
+    touches ``main``. So the resolution has to sit in ``load_corpus``, which is where both
+    git invocations consume the ref.
+
+    Pinned at the source level on purpose. A behavioural version would have to stream the
+    real 45 MiB corpus, and it could not distinguish "resolved in load_corpus" from
+    "resolved by the caller that happened to run first" — which is the exact confusion that
+    produced the bug.
+    """
+    tree = ast.parse((REPO_ROOT / "tools" / "audit_landed_atoms.py").read_text())
+    fns = {n.name: n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef)}
+    assert "load_corpus" in fns and "resolve_ref" in fns
+
+    def calls(node: ast.AST) -> set[str]:
+        return {
+            c.func.id
+            for c in ast.walk(node)
+            if isinstance(c, ast.Call) and isinstance(c.func, ast.Name)
+        }
+
+    assert "resolve_ref" in calls(fns["load_corpus"]), (
+        "load_corpus consumes the ref in two git calls and must resolve it itself; "
+        "resolving only in main() is what errored ten tests at setup in CI"
+    )
+    # Vacuity floor: this must be a real containment test, not a whole-file substring match.
+    assert "resolve_ref" not in calls(fns["extract_keys"]), "the AST scan is not per-function"
+
+
 def test_the_tool_exits_non_zero_on_its_own_broken_input(tmp_path: Path) -> None:
     scratch = tmp_path / "dag.json"
     scratch.write_text(json.dumps({"nope": []}))
