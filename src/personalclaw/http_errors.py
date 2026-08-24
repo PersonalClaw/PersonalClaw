@@ -147,6 +147,20 @@ HTTP_ERROR_CODES: dict[str, str] = {
     "history_audio_missing": "That generation's audio file is gone.",
     # ── session organize (handlers/session_organize.py) ──
     # (uses the generic bad_request/not_found rows above)
+    # ── inbound control bridge (inbound/bridge.py — EXTERNAL-ACCESS §1.1/§4) ──
+    #
+    # The ADMISSION layers deliberately reuse the generic `not_found`/`forbidden` rows
+    # above rather than adding a `bridge_disabled`-style code. `inbound/gate.py` answers
+    # 404 precisely so a disabled surface does not confirm its own existence to a
+    # prober, and a code that named the surface would hand back exactly what the status
+    # withholds. The rows below are the ones a caller who ALREADY authenticated needs in
+    # order to tell its own mistakes apart.
+    "unauthorized": "The request carried no usable bearer credential.",
+    "service_unavailable": "The service is temporarily suspended; retry later.",
+    "unknown_action": "The named control-bridge action does not exist.",
+    "action_not_bound": "The calling client's bindings do not include this action.",
+    "action_failed": "The control-bridge action raised while running.",
+    "confirm_token_invalid": "The confirmation token is unknown, already used, or expired.",
 }
 
 

@@ -34,6 +34,15 @@ ignores the flag gets a refusal, not a mutation.
 ``sideEffect: "destructive"`` deliberately has no members in v1 — delete and uninstall
 are absent rather than confirm-gated, because the safest confirmation flow for a
 destructive control action is not having one.
+
+**The catalogue is filtered to the caller's pin, and the digest covers what was served.**
+A self-describing surface that describes MORE than the caller may invoke is an
+enumeration of the authority the caller lacks. `GET /actions` therefore resolves the
+bearer to a client record (`_admit`), narrows the catalogue by that record's ``tools``
+binding, and fingerprints the SERVED list — because a digest computed over the full
+registry never matches a filtered payload, which turns the client's cache into a
+per-request re-fetch. The same `_bound` predicate gates `/action` AND `/confirm`, so the
+description and the enforcement cannot drift.
 """
 
 from __future__ import annotations
@@ -53,8 +62,10 @@ from typing import Any, Awaitable, Callable
 from aiohttp import web
 
 from personalclaw import notification_kinds
+from personalclaw.http_errors import json_error
 from personalclaw.inbound.audit import audit
 from personalclaw.inbound.auth import BRIDGE_SURFACE, peer_allowed, token_env_key, verify_bearer
+from personalclaw.inbound.clients import InboundClient, log_binding_violation, lookup_by_token
 from personalclaw.inbound.gate import admission_problem
 
 logger = logging.getLogger(__name__)
@@ -328,15 +339,29 @@ def descriptor() -> list[dict[str, Any]]:
     return [a.descriptor() for a in _REGISTRY]
 
 
+def digest_of(descriptors: list[dict[str, Any]]) -> str:
+    """Fingerprint an arbitrary catalogue — i.e. what a client actually RECEIVED.
+
+    Split out from :func:`actions_digest` because a pinned client is served a SUBSET
+    (see :func:`handle_actions`). A digest computed over the full registry and served
+    beside a filtered list is a digest that never matches the payload it accompanies,
+    so a pinned client re-caches the catalogue on every single poll — the caching
+    mechanism inverted into a per-request cost.
+    """
+    canonical = json.dumps(descriptors, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(canonical.encode()).hexdigest()[:16]
+
+
 def actions_digest() -> str:
-    """A stable fingerprint of the action SET and its schemas.
+    """A stable fingerprint of the FULL action SET and its schemas.
 
     In the discovery file so a client can tell "the catalogue I cached is still the
     catalogue" without re-reading it, and so an action added without a
-    :data:`SCHEMA_VERSION` bump is still visible as a change.
+    :data:`SCHEMA_VERSION` bump is still visible as a change. The discovery file is
+    written before any request exists, so it can only ever describe the full set —
+    which is why the per-request digest is :func:`digest_of` over what was served.
     """
-    canonical = json.dumps(descriptor(), sort_keys=True, separators=(",", ":"))
-    return hashlib.sha256(canonical.encode()).hexdigest()[:16]
+    return digest_of(descriptor())
 
 
 def _action(name: str) -> Action | None:
@@ -383,24 +408,98 @@ def take_confirmation(token: str) -> dict[str, Any] | None:
 
 
 def _json(payload: dict, status: int = 200) -> web.Response:
+    """SUCCESS bodies only. Every refusal goes through `http_errors.json_error`.
+
+    Kept as a wrapper because the success envelope is this surface's own shape and
+    imitating the neighbouring handler is the convention. It deliberately no longer
+    carries an ``{"error": ...}`` payload: eleven of them used to route through here,
+    and because the argument is a *variable* by the time it reaches `json_response`,
+    the wire-envelope census scored this whole module at ZERO on both of its rails.
+    A local wrapper is a place error shapes hide, so this one is now success-only —
+    and `tests/test_wire_error_envelope_census.py` follows wrapper indirection so the
+    next one cannot hide either.
+    """
     return web.json_response(payload, status=status)
 
 
-def _admit(request: web.Request, route: str) -> tuple[web.Response | None, str]:
-    """Every gate, in the order that leaks least. Returns (refusal, reason)."""
+def _admit(
+    request: web.Request, route: str
+) -> tuple[web.Response | None, str, InboundClient | None]:
+    """Every gate, in the order that leaks least. Returns ``(refusal, reason, client)``.
+
+    The third element is the load-bearing one: a bearer may be EITHER the un-scoped
+    SURFACE token or a per-client token, and only the second carries bindings. Without
+    resolving it here the bridge cannot honour a `tools` pin at all — which is exactly
+    the state it shipped in.
+    """
     problem, status = admission_problem(BRIDGE_SURFACE)
     if problem:
         audit(BRIDGE_SURFACE, route=route, status=status, refused=problem)
-        return _json({"error": "not available"}, status=status), problem
+        # Split into two literal calls rather than one `json_error(<ternary>)`: a
+        # computed code is invisible to the append-only registry check, and the census
+        # counts such a site against a ceiling that is already full.
+        if status == 503:
+            return json_error("service_unavailable", status=503), problem, None
+        return json_error("not_found", status=404), problem, None
     ok, why = peer_allowed(request, BRIDGE_SURFACE)
     if not ok:
         audit(BRIDGE_SURFACE, route=route, status=403, refused=why)
-        return _json({"error": "forbidden"}, status=403), why
+        return json_error("forbidden", status=403), why, None
     presented = (request.headers.get("Authorization") or "").removeprefix("Bearer ").strip()
-    if not verify_bearer(BRIDGE_SURFACE, presented):
-        audit(BRIDGE_SURFACE, route=route, status=401, refused="bad bearer")
-        return _json({"error": "unauthorized"}, status=401), "bad bearer"
-    return None, ""
+    # Per-CLIENT token FIRST — the same precedence `mcp_http` uses, so a registered
+    # client is never mistaken for the surface principal and thereby handed the
+    # un-pinned authority its record was written to withhold.
+    client, client_reason = lookup_by_token(presented, BRIDGE_SURFACE)
+    if client is None and not verify_bearer(BRIDGE_SURFACE, presented):
+        # The audited reason names the CLIENT-lookup outcome when there is one:
+        # "matches no registered client" and "that client is disabled" are different
+        # operator problems behind the same 401.
+        audit(BRIDGE_SURFACE, route=route, status=401, refused=client_reason or "bad bearer")
+        return json_error("unauthorized", status=401), client_reason or "bad bearer", None
+    return None, "", client
+
+
+def _bound(client: InboundClient | None, name: str) -> bool:
+    """Whether ``client`` may SEE or CALL the action ``name``.
+
+    An EMPTY ``tools`` list means "no pin", matching `clients.allowed_tools`' reading
+    of the same field — NOT "nothing", which is what an empty ``surfaces`` list means
+    to `may_use`. The asymmetry lives in EA-1's records and is not invented here:
+    ``surfaces`` is the binding that GRANTS, ``tools`` is the one that NARROWS. A
+    surface-token caller has no record and therefore no pin.
+    """
+    if client is None or not client.tools:
+        return True
+    return name in client.tools
+
+
+def _refuse_unbound(client: InboundClient | None, action: Action, route: str) -> web.Response:
+    """The one refusal for "your record does not include this action".
+
+    One function so the catalogue filter and the two invoke paths cannot drift into
+    disagreeing about what "bound" means — the drift this whole fix is about.
+    """
+    pinned = sorted(client.tools) if client is not None else []
+    client_id = client.client_id if client is not None else ""
+    violation = (
+        f"client {client_id or '<surface token>'} is pinned to {pinned}; called {action.name!r}"
+    )
+    if client_id:
+        # A binding violation is a SECURITY event, not a validation error (§1.2) — the
+        # same SEL routing `mcp_http` uses for the identical refusal.
+        log_binding_violation(client_id, violation)
+    audit(
+        BRIDGE_SURFACE,
+        route=route,
+        status=403,
+        tool=action.name,
+        refused=violation,
+        client_id=client_id,
+    )
+    # The generic registry message, not `violation`: the refusal must not read back the
+    # caller's own pin, which would turn a 403 into an enumeration of the authority the
+    # caller does not have — the same leak the catalogue filter closes.
+    return json_error("action_not_bound", status=403)
 
 
 async def handle_actions(request: web.Request) -> web.Response:
@@ -408,16 +507,31 @@ async def handle_actions(request: web.Request) -> web.Response:
 
     Carries `schema_version` and `actions_digest` beside the list so a client can tell
     a cached catalogue is still current without diffing the actions themselves.
+
+    **Self-describing is not the same as fully-describing.** The catalogue is filtered
+    to what THIS caller may actually invoke. Advertising `toggle_automation` to a client
+    whose record cannot call it turns the discovery surface into an enumeration of the
+    authority the caller does not have — a catalogue of the lock, handed to whoever
+    lacks the key. A surface-token caller has no pin and still sees all seven.
+
+    The digest is computed over the SERVED list, not the registry: a digest that never
+    matches the payload it accompanies makes a pinned client re-fetch on every poll.
     """
-    refusal, _ = _admit(request, "/actions")
+    refusal, _, client = _admit(request, "/actions")
     if refusal is not None:
         return refusal
+    visible = [d for d in descriptor() if _bound(client, str(d["name"]))]
     payload = {
         "schema_version": SCHEMA_VERSION,
-        "actions_digest": actions_digest(),
-        "actions": descriptor(),
+        "actions_digest": digest_of(visible),
+        "actions": visible,
     }
-    audit(BRIDGE_SURFACE, route="/actions", status=200)
+    audit(
+        BRIDGE_SURFACE,
+        route="/actions",
+        status=200,
+        client_id=client.client_id if client is not None else "",
+    )
     return _json(payload)
 
 
@@ -426,11 +540,11 @@ async def _run(state: Any, action: Action, params: dict, route: str) -> web.Resp
         result = await action.handler(state, params)
     except ValueError as e:
         audit(BRIDGE_SURFACE, route=route, status=400, tool=action.name, refused=str(e))
-        return _json({"error": str(e)}, status=400)
+        return json_error("bad_request", message=str(e), status=400)
     except Exception:
         logger.warning("control bridge action %s failed", action.name, exc_info=True)
         audit(BRIDGE_SURFACE, route=route, status=500, tool=action.name, refused="handler error")
-        return _json({"error": "action failed"}, status=500)
+        return json_error("action_failed", status=500)
     audit(BRIDGE_SURFACE, route=route, status=200, tool=action.name)
     return _json({"status": "ok", "result": result})
 
@@ -441,16 +555,17 @@ async def handle_action(request: web.Request) -> web.Response:
     A confirm-flagged action returns 202 `needs_confirmation` and does NOT run: the
     gate is here, not in the client.
     """
-    refusal, _ = _admit(request, "/action")
+    refusal, _, client = _admit(request, "/action")
     if refusal is not None:
         return refusal
     try:
         body = await request.json()
     except Exception:
         audit(BRIDGE_SURFACE, route="/action", status=400, refused="invalid JSON")
-        return _json({"error": "invalid JSON"}, status=400)
+        return json_error("invalid_json", status=400)
     if not isinstance(body, dict):
-        return _json({"error": "body must be an object"}, status=400)
+        audit(BRIDGE_SURFACE, route="/action", status=400, refused="body is not an object")
+        return json_error("invalid_body", status=400)
     name = str(body.get("action") or "").strip()
     raw_params = body.get("params")
     # A narrowed local, not a conditional expression: mypy widens the ternary to
@@ -461,7 +576,14 @@ async def handle_action(request: web.Request) -> web.Response:
     action = _action(name)
     if action is None:
         audit(BRIDGE_SURFACE, route="/action", status=404, refused=f"unknown action {name!r}")
-        return _json({"error": f"unknown action: {name}"}, status=404)
+        return json_error("unknown_action", message=f"unknown action: {name}", status=404)
+    if not _bound(client, action.name):
+        # Refused BEFORE the confirm branch, deliberately. A pinned client must not be
+        # able to MINT a confirmation token for an action it could never run: the pin
+        # would still stop the mutation, but only after the user had been asked to
+        # approve it — so an un-bound client would own a write channel into the owner's
+        # attention surface, which is the thing the pin exists to deny.
+        return _refuse_unbound(client, action, "/action")
 
     state = request.app["state"]
     if action.requires_confirmation:
@@ -503,21 +625,34 @@ async def handle_confirm(request: web.Request) -> web.Response:
     Single-use and TTL-bounded: an abandoned intent expires rather than staying
     redeemable by whatever still holds the token.
     """
-    refusal, _ = _admit(request, "/confirm")
+    refusal, _, client = _admit(request, "/confirm")
     if refusal is not None:
         return refusal
     try:
         body = await request.json()
     except Exception:
-        return _json({"error": "invalid JSON"}, status=400)
+        # Audited like `/action`'s twin. The asymmetry (one audited, one not) had no
+        # reason behind it, and `/confirm` is the more security-relevant of the two.
+        audit(BRIDGE_SURFACE, route="/confirm", status=400, refused="invalid JSON")
+        return json_error("invalid_json", status=400)
     token = str((body or {}).get("confirm_token") or "").strip()
     intent = take_confirmation(token) if token else None
     if intent is None:
         audit(BRIDGE_SURFACE, route="/confirm", status=404, refused="unknown or expired token")
-        return _json({"error": "unknown or expired confirm_token"}, status=404)
+        return json_error("confirm_token_invalid", status=404)
     action = _action(str(intent["action"]))
     if action is None:  # pragma: no cover - registry cannot shrink at runtime
-        return _json({"error": "action no longer exists"}, status=410)
+        audit(BRIDGE_SURFACE, route="/confirm", status=410, refused="action no longer exists")
+        return json_error("unknown_action", status=410)
+    if not _bound(client, action.name):
+        # The pin is re-checked at REDEMPTION, not only at minting. Otherwise a token
+        # minted by a wider principal becomes a way for a narrower one to run an action
+        # its own record forbids — the exact drift a separately-filtered catalogue and a
+        # separately-enforced invoke path produce. Redemption is single-use, so the token
+        # is already spent by the time we refuse; that is deliberate, because a rejected
+        # redemption that left the token live would let a narrow client burn a wide
+        # client's intent over and over while probing the pin.
+        return _refuse_unbound(client, action, "/confirm")
     return await _run(request.app["state"], action, dict(intent["params"]), "/confirm")
 
 

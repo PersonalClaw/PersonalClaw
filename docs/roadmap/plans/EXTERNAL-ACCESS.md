@@ -433,3 +433,45 @@ No new session; session count stays ~7. Session 2 gains the three sharpenings ab
   button on the needs-input notification). The notification carries `meta.confirm_token`, so the FE has
   everything it needs; §4's own wording offers the dashboard *or* the CLI, and the CLI path is
   implemented and tested here.
+
+### Addendum — two follow-up fixes against the merged bridge
+
+- [2026-08-24][EA-4] 🔴 **The self-describing catalogue leaked the actions the caller could not
+  invoke.** As merged, `handle_actions` admitted the caller and then returned `descriptor()` — the full
+  seven-action catalogue — with `actions_digest()` computed over that same full set. A client whose
+  record pins one action was still shown `toggle_automation`: a description of the lock, handed to
+  whoever lacks the key. Root cause was one level down: `_admit` never resolved the bearer to a client
+  record at all, so the bridge had **no** access to a `tools` binding and honoured the pin nowhere —
+  not in the catalogue, not at `/action`, not at `/confirm`. Fixed by resolving per-client tokens FIRST
+  (the precedence `mcp_http` already uses), filtering the catalogue through one `_bound` predicate, and
+  fingerprinting the SERVED list via a new `digest_of` — a digest over the registry never matches a
+  filtered payload, so a pinned client would re-cache on every poll. `/action` refuses **before**
+  minting a confirmation (otherwise an un-bound client owns a write channel into the owner's attention
+  surface) and `/confirm` re-checks at redemption (otherwise a token minted by a wider principal
+  becomes a narrower one's way in). Negative asserted with a two-sided floor: an unpinned surface-token
+  caller and a client with `tools: []` both still see all seven — `tools` NARROWS, unlike `surfaces`,
+  which GRANTS.
+- [2026-08-24][EA-4] 🔴 **A rail defect, not a bridge defect: the wire-envelope census was blind to
+  wrapper indirection.** `tests/test_wire_error_envelope_census.py` classified the payload at the
+  `json_response` call site, so the eleven flat `{"error": prose}` responses this module routed through
+  its local `_json(payload, status)` were scored at **zero** — the payload is a *variable* by the time
+  it reaches `json_response`. The companion rail missed them too, because it matches helper NAMES
+  (`_err`/`_error`/`_bad_request`) and this helper was called `_json`; a name-matched denylist is one
+  rename from vacuous. Measured tree-wide: **18** hidden sites (11 here, 7 in `inbound/mcp_http.py`).
+  Fixed on both sides — the eleven converted to `http_errors.json_error` with six new registry rows
+  (admission codes kept GENERIC so a 404 does not confirm the surface exists), and the scanner now
+  follows the value through any function that forwards a parameter into `json_response`, iterating to a
+  fixpoint for wrapper-of-wrapper. Where it cannot resolve a payload it refuses **loudly**: the site
+  lands in a counted `unresolved` bucket with its own ceiling, so a new envelope must either resolve
+  (flat ceiling) or not (unresolved ceiling). No third option, and no baseline lowered or ceiling
+  raised: `FLAT_BASELINE` stays 1507 direct sites, and the newly-visible wrapper population is its own
+  ratchet at 7 (from 18).
+- [2026-08-24][EA-4] **Falsified, nine mutations, each restored from a file copy.** The decisive pair:
+  reverting the catalogue filter reds the negative *and* the digest test; re-introducing one flat
+  envelope through `_json` reds the wrapper ceiling while the **old** scanner, run against that same
+  mutated tree, reports it `INVISIBLE` and stays green — the blindness demonstrated in both directions.
+  Also falsified: the digest source, the `/action` pin (which showed `202` — a confirmation minted for
+  an un-bound action), the `/confirm` re-check (`200` — the action ran), the empty-`tools` reading, the
+  wrapper detector going dark (caught by its own vacuity floor, since a ceiling cannot catch a drop),
+  restoring the silent skip, and hiding a new envelope behind a local variable (caught by the
+  unresolved ceiling with both flat ceilings green). Probe sweep clean afterwards.
