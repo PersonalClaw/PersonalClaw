@@ -1113,3 +1113,60 @@ before trusting any red *or* green. See [[a-mutation-that-lands-can-still-be-off
   scope, once that is decided:** the gap detector (fold → `n>=5` → hysteresis-crossing → `propose` with the
   §6.3 evidence payload), and the accept/reject/list API + Routing-tab badge. Both are startable
   immediately after the trigger-point call; neither is blocked on anything else.
+
+## Execution log — two unrailed wires in the routing subsystem (2026-08-24)
+
+**DONE — rails only; no production line changed.** A wire-depth check ("would deleting this caller be
+caught?") found two calls in this plan's own subsystem that no test observed. Both calls are correct;
+what was missing was any test that would notice their removal. Measured on `origin/main` `2d7f5b6b`:
+
+- **`policy::set_order` at `dashboard/handlers/model_telemetry.py:135`.** Replacing the call with `pass`
+  left `PUT /api/models/routing-policy` answering **200 with `applied: ["order"]`** while
+  `routing_policy.json` stayed **byte-identical** — a live swallowed write, invisible to the client. The
+  whole routing test surface (10 files, **294** tests) stayed green. `set_order` was named in exactly one
+  test file, `test_routing_proposals.py`, which is about the *propose* path.
+- **`policy::_overlay_feedback` at `routing/policy.py:408`.** Replacing the call with `pass` left the
+  learned ordering **unchanged** by a real ledger `judge_verdict` (`['cloudy:big','ollama:small']` both
+  with and without a `REJECT`), and the same 294 tests stayed green. Every fold the suite writes carries
+  `feedback_n: 0`, and the overlay is the only thing that ever raises it — so `_score` renormalized onto
+  `success_rate` alone and every pre-existing assertion still held.
+
+**NEW RAILS — the effect, not the call.** `tests/test_routing_telemetry.py::TestRoutingPolicyWrite` (9
+cases) drives the real route through `TestClient` and reads the order back **out of the JSON on disk**,
+deliberately not through `policy.table_order`: a reader's own "no order recorded → the input order"
+fallback must not be able to stand in for a persisted one. Monkeypatching `set_order` and asserting it was
+called was rejected as the weaker form — it passes for a handler that faithfully calls a function which
+writes nothing, which is the exact failure being ruled out. Both directions are covered: an accepted PUT
+persists the sent sequence (order-sensitive, and scoped to the `query_class` it was sent — the other class
+is asserted untouched, since `set_order`'s signature is `(use_case, query_class, order)`), and five
+**rejected** shapes each leave the table byte-identical.
+`tests/test_routing_learned_wiring.py` gains three overlay rails asserting the resulting ORDER: `REJECT`
+demotes, `PASS` promotes (both directions, so a hardcoded `feedback: 0.0` cannot pass), and a verdict
+stamped for another `query_class` must not steer this one.
+
+**Two vacuity floors.** (1) `test_the_byte_harness_can_see_an_accepted_write` — without it the five
+byte-identity rails would hold for a handler that persisted nothing at all; it is the first thing to go red
+when the write is swallowed. (2) Each overlay rail asserts the same fold with an EMPTY ledger first
+(`feedback_index(home=home) == {}`), so the flip is attributable to the feedback rather than to the fold.
+The `_judge_verdict` helper additionally asserts `feedback_index` actually *attributed* its event — the
+attribution rule is strict and `routing/feedback.py` records that no shipped producer stamps the triple
+yet, so a rail built on an unattributable event would drive an empty overlay and pass either way.
+
+**Fixture correction that mattered.** The handler calls `set_order(...)` with no `home=`, so the write
+resolves through `policy._default_home()` → `from personalclaw.config import config_dir`, a binding
+`config/__init__.py` made at import time. The file's pre-existing `_home` fixture patches only
+`personalclaw.config.loader.config_dir`, which does **not** reach it. The new `policy_home` fixture patches
+both bindings and asserts the redirect. `tests/conftest.py`'s real-home rail confirms `~/.personalclaw` was
+untouched by every run.
+
+**Falsified.** Each call mutated on the live line (`pass  # MUTATION: …`), the mutation grepped back to
+confirm it applied, red observed, restored from a file copy taken beforehand: `set_order` → 4 of 9 red
+(including the vacuity floor); `_overlay_feedback` → both directional rails red. Gate: `make lint` clean,
+`make test` **25734 passed / 30 skipped / 12 xfailed**, `gate_report.py` 6/6 PASS, probe sweep 16
+pre-existing / 0 introduced.
+
+**MRT-5's propose-don't-write rail still holds** — `test_routing_proposals.py` is green including its
+raising-path byte-identity case. These rails cover the *write* path, which is legitimately allowed to write.
+
+**Correction to the framing:** the endpoint is a **PUT**, not a PATCH (`add_put`, and its docstring calls
+the per-lever behaviour "PATCH-like"). Nothing in the routing subsystem registers a PATCH.

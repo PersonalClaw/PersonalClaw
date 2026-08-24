@@ -12,6 +12,7 @@ touches `~/.personalclaw`.
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -155,3 +156,119 @@ def test_an_unpriced_model_is_not_free(home: Path) -> None:
     each within-band cost tie — the opposite of the local-first posture."""
     probe = policy._cost_of(home)
     assert probe("nosuchprovider:nosuchmodel") == float("inf")
+
+
+# ── the feedback overlay: `policy::_overlay_feedback` (§4.2) ─────────────────────
+#
+# `_learned_order` folds the ledger-derived feedback onto the in-memory fold before scoring
+# (`policy.py`'s `_overlay_feedback(fold, ...)` call). A wire-depth check found that call railed by
+# nothing: deleting it left 425 tests green, because every fold this suite writes carries
+# `feedback_n: 0` and the overlay is the ONLY thing that ever raises it — so with the overlay gone
+# `_score` renormalizes onto `success_rate` alone and every existing assertion still holds.
+#
+# The two rails below therefore drive a REAL ledger event and assert the resulting ORDER, which is
+# the effect. Asserting that `_overlay_feedback` was called would not do: it passes for an overlay
+# that writes into a copy of the fold, or onto a cell nothing scores.
+
+
+def _judge_verdict(home: Path, *, ref: str, verdict: str, run: str = "run-1") -> None:
+    """Write one real WF2 ledger event, in the exact shape `feedback_index` attributes.
+
+    The attribution rule is strict on purpose — the event must carry `use_case`, `query_class` and
+    a ref ITSELF, and `routing/feedback.py`'s docstring records the measured finding that no
+    shipped producer stamps all three yet. So this asserts the index actually saw the cell: a rail
+    built on an unattributable event would drive an EMPTY overlay and pass identically whether or
+    not `_learned_order` overlays anything.
+    """
+    from personalclaw.routing.feedback import feedback_index
+
+    run_dir = home / "workflows" / "runs" / run
+    run_dir.mkdir(parents=True, exist_ok=True)
+    (run_dir / "events.jsonl").write_text(
+        json.dumps(
+            {
+                "kind": "judge_verdict",
+                "event_id": f"{run}-evt-1",
+                "use_case": "chat",
+                "query_class": "general",
+                "ref": ref,
+                "verdict": verdict,
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    assert feedback_index(home=home).get(
+        ("chat", "general", ref)
+    ), "the ledger event was not attributable — the overlay would be empty and the rail vacuous"
+
+
+def test_a_reject_verdict_in_the_ledger_demotes_the_ref(home: Path) -> None:
+    """A REJECT on the fold's own favourite must move it DOWN the order.
+
+    `cloudy:big` leads on success_rate alone (0.95 vs 0.80). One REJECT gives it
+    `feedback_n: 1, feedback: 0.0`, so `_score` stops renormalizing and returns
+    `0.60·0.95 = 0.57` — below `ollama:small`'s 0.80 — and the order flips.
+    """
+    _policy(home, "chat", "learned")
+    _fold(home, {"cloudy:big": (20, 0.95), "ollama:small": (20, 0.80)})
+
+    # Vacuity floor: the SAME fold with no verdict in the ledger leaves `cloudy:big` first, so the
+    # flip below is caused by the feedback and not by the fold or by the heuristic.
+    from personalclaw.routing.feedback import feedback_index
+
+    assert feedback_index(home=home) == {}, "the home already held a verdict — nothing is isolated"
+    assert policy.route_refs("chat", "general", REFS, home=home) == ["cloudy:big", "ollama:small"]
+
+    _judge_verdict(home, ref="cloudy:big", verdict="REJECT")
+    assert policy.route_refs("chat", "general", REFS, home=home) == ["ollama:small", "cloudy:big"]
+
+
+def test_a_pass_verdict_in_the_ledger_promotes_the_ref(home: Path) -> None:
+    """And the other direction, so the overlay is shown to carry the VALUE, not just presence.
+
+    A rail that only tested REJECT would pass for an overlay that stamped `feedback_n: 1` with a
+    hardcoded `feedback: 0.0` — which demotes every rated ref and would look like a working
+    signal. Here `ollama:small` trails on success_rate (0.50 vs 0.60) and one PASS lifts it to
+    `0.60·0.50 + 0.40·1.0 = 0.70`, above `cloudy:big`'s 0.60.
+    """
+    _policy(home, "chat", "learned")
+    _fold(home, {"cloudy:big": (20, 0.60), "ollama:small": (20, 0.50)})
+
+    assert policy.route_refs("chat", "general", REFS, home=home) == ["cloudy:big", "ollama:small"]
+
+    _judge_verdict(home, ref="ollama:small", verdict="PASS")
+    assert policy.route_refs("chat", "general", REFS, home=home) == ["ollama:small", "cloudy:big"]
+
+
+def test_the_overlay_is_scoped_to_the_cell_it_was_recorded_for(home: Path) -> None:
+    """A verdict recorded for another (use_case, query_class) must not steer this one.
+
+    The overlay writes into one bucket of the loaded fold; an implementation that matched on `ref`
+    alone would let a verdict from any cell reorder every cell. Same REJECT as the rail above, on
+    the same ref, but stamped for a different class — the order must stay put.
+    """
+    _policy(home, "chat", "learned")
+    _fold(home, {"cloudy:big": (20, 0.95), "ollama:small": (20, 0.80)})
+
+    run_dir = home / "workflows" / "runs" / "run-elsewhere"
+    run_dir.mkdir(parents=True, exist_ok=True)
+    (run_dir / "events.jsonl").write_text(
+        json.dumps(
+            {
+                "kind": "judge_verdict",
+                "event_id": "run-elsewhere-evt-1",
+                "use_case": "chat",
+                "query_class": "long_reasoning",  # NOT the class being routed below
+                "ref": "cloudy:big",
+                "verdict": "REJECT",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    # Vacuity floor: the event IS attributable, so "no flip" means scoping and not a dropped event.
+    from personalclaw.routing.feedback import feedback_index
+
+    assert feedback_index(home=home).get(("chat", "long_reasoning", "cloudy:big")) == (0.0, 1)
+    assert policy.route_refs("chat", "general", REFS, home=home) == ["cloudy:big", "ollama:small"]
