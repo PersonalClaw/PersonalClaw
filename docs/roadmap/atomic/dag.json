@@ -4813,14 +4813,15 @@
         {
           "id": "AAP-4",
           "title": "\u00a72.1 MCP reachability \u2014 personalclaw-core reachable on all three providers (gap 1)",
-          "status": "todo",
-          "scope": "Phase 2 \u00a72.1 MCP reachability \u2014 gap 1 (prong A protocol mcpServers via client.py:419/481 + acp_session_provider; prong B marker-scoped config seeding per bundle)",
-          "done_when": "Per provider, 'list your tools' shows personalclaw-core tools and knowledge_search / task_create / notify / subagent_run all work as-a-user with correct session inject-back (session_pid_<pid> + env); seeding is idempotent, marker-scoped and reversible on disable (SC #2).",
+          "status": "done",
+          "scope": "Phase 2 \u00a72.1 MCP reachability \u2014 gap 1 (prong A protocol mcpServers via client.py + acp_session_provider; prong B config seeding DELETED by DEVIATION 2)",
+          "done_when": "Per provider, the personalclaw-core surface reaches the CLI and its PLATFORM tools work as-a-user with correct session inject-back (session_pid_<pid>.txt + env) \u2014 notify and subagent_run among them, verified by the store row / spawned subagent rather than by a model-reported tool count. knowledge_search / task_create are deliberately NOT on this surface (installable-app tools; tests/test_native_builtin_split.py asserts the exclusion) and prong-B seeding is deleted rather than deferred, so the old idempotent / marker-scoped / reversible-on-disable clause is moot (SC #2, re-scoped 2026-08-23 by AAP-4 DEVIATION 1 + DEVIATION 2).",
           "deps": [
             "AAP-1",
             "AAP-2",
             "AAP-3"
-          ]
+          ],
+          "pr": 1956
         },
         {
           "id": "AAP-5",
@@ -7494,13 +7495,18 @@
   "dag": {
     "ready_frontier": [
       {
-        "id": "AAP-4",
-        "title": "\u00a72.1 MCP reachability \u2014 personalclaw-core reachable on all three providers (gap 1)",
+        "id": "AAP-6",
+        "title": "\u00a72.3 Unattended threading + runtime-agnostic loop breaker for ACP (gaps 3 & 5)",
         "plan": "AAP"
       },
       {
-        "id": "AAP-6",
-        "title": "\u00a72.3 Unattended threading + runtime-agnostic loop breaker for ACP (gaps 3 & 5)",
+        "id": "AAP-8",
+        "title": "\u00a72.5 Learning capture + tool-card fidelity + risk plumbing for ACP (gaps 4, 7, 8)",
+        "plan": "AAP"
+      },
+      {
+        "id": "AAP-9",
+        "title": "\u00a72.6 Dialect asymmetry closure + project_id stamping (gaps 9 & 10)",
         "plan": "AAP"
       },
       {
@@ -9971,9 +9977,9 @@
         "code": "AAP",
         "plan": "ACP-AGENT-PARITY",
         "total_atoms": 10,
-        "done": 6,
+        "done": 7,
         "in_progress": 0,
-        "todo": 4,
+        "todo": 3,
         "blocked": 0
       },
       {
