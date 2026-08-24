@@ -93,10 +93,18 @@ from personalclaw.llm.base import (
 from personalclaw.llm_helpers import PromptBusyExhaustedError, humanize_provider_error
 from personalclaw.security import is_sensitive_path, redact_credentials, redact_exfiltration_urls
 from personalclaw.sel import sel
+from personalclaw.skills.allocation import SkillLoadState
 from personalclaw.stats import Stats
 from personalclaw.validation import ValidationError, validate_ask_user_question
 
 logger = logging.getLogger(__name__)
+
+#: The allocator states whose content actually reached the prompt — the only ones that count
+#: as a skill USE. Kept as one tuple beside the reader so the "used N skills" chip and
+#: `SkillAllocation.loaded` (the turn-time use counter's input) cannot drift into two
+#: different answers for what "used" means. REFUSED is absent on purpose: the skill was
+#: NAMED to the agent but none of its content loaded.
+_SKILL_USED_STATES = (SkillLoadState.ADMITTED.value, SkillLoadState.REDUCED.value)
 
 
 def is_empty_turn(
@@ -211,9 +219,18 @@ def _maybe_after_turn_review(
     facet_learned = atr.capture_preference_facet(svc, user_message)
     if facet_learned and getattr(cfg, "surface_chip", True):
         _flabel, _ = redact_credentials(redact_exfiltration_urls(facet_learned[:200])[0])
+        # `origin` (LEARNING-VISIBILITY T2.2): all three learned-chip captures below share
+        # `kind: "learned"`, so without a discriminator the frontend cannot route a tap on the
+        # chip to the surface that can approve or edit THAT artifact. Additive key on the
+        # existing event — `kind` is unchanged because live consumers key on it.
         state.broadcast_ws(
             "activity_event",
-            {"session": session.key, "kind": "learned", "text": f"Learned: {_flabel}"},
+            {
+                "session": session.key,
+                "kind": "learned",
+                "origin": "facet",
+                "text": f"Learned: {_flabel}",
+            },
         )
     # The expensive review (procedural drain + correction→lesson) needs the strict
     # answer — `worthwhile`, not just `permitted`. Same decision object as the
@@ -259,7 +276,12 @@ def _maybe_after_turn_review(
         _label, _ = redact_credentials(redact_exfiltration_urls(learned[:200])[0])
         state.broadcast_ws(
             "activity_event",
-            {"session": session.key, "kind": "learned", "text": f"Learned: {_label}"},
+            {
+                "session": session.key,
+                "kind": "learned",
+                "origin": "lesson",
+                "text": f"Learned: {_label}",
+            },
         )
     # Self-model observer (§2.6 — WF2LEA-8): the ONLY learning path that learns from what quietly
     # WORKS. Runs on the SAME `worthwhile` gate as the review above (a "significant turn"), reusing
@@ -371,7 +393,12 @@ def _maybe_skill_ladder_review(
             label, _ = redact_credentials(redact_exfiltration_urls(summary[:200])[0])
             state.broadcast_ws(
                 "activity_event",
-                {"session": session.key, "kind": "learned", "text": label},
+                {
+                    "session": session.key,
+                    "kind": "learned",
+                    "origin": "proposal",
+                    "text": label,
+                },
             )
 
     try:
@@ -836,6 +863,18 @@ def _flush_segment(
         if not isinstance(meta, dict):
             meta = {}
         meta["memory_citations"] = session._memory_citations
+        last_msg["meta"] = meta
+    # Skills used this turn (LEARNING-VISIBILITY T2.1): stamp the admitted/reduced set onto
+    # the same meta dict so a run or loop panel can render "used N skills" with the names on
+    # hover. Rides the proven `memory_citations` seam — an additive meta key on a message the
+    # frontend already receives — so no new WS/SSE channel is introduced. Omitted entirely
+    # when the turn loaded nothing, so "no skills" is an absent key rather than an empty list
+    # the FE would have to special-case.
+    if session._skills_used:
+        meta = last_msg.get("meta")
+        if not isinstance(meta, dict):
+            meta = {}
+        meta["skills_used"] = session._skills_used
         last_msg["meta"] = meta
     # If a regenerate is pending, attach the stashed variants to this fresh assistant message.
     attached_variants = False
@@ -1699,6 +1738,9 @@ async def run_chat(
     # Same for the per-turn episodic-citation manifest: populated from the assembled
     # context below (new session only), attached to each assistant message's meta.
     session._memory_citations = []
+    # Same for the per-turn skills-used list: a turn that loads no skill must not inherit
+    # the previous turn's chip.
+    session._skills_used = []
 
     # ── Attachments: inject extracted file content into the prompt ──
     # Uploaded attachments begin content-extraction at upload time (knowledge
@@ -2460,6 +2502,22 @@ async def run_chat(
             _cited = _assembled.metadata.get("memory_citations")
             if isinstance(_cited, list) and _cited:
                 session._memory_citations = _cited
+            # Same for the turn's skill allocation (LEARNING-VISIBILITY T2.1). The assembler
+            # already reports EVERY decision in `skill_decisions` (CE2-9); this narrows it to
+            # the ones whose content reached the prompt and drops the allocator's bookkeeping
+            # (tier/cap/body/reason) the chip has no use for. Order is the allocator's own, so
+            # the hover list reads in the order the skills were admitted.
+            _decisions = _assembled.metadata.get("skill_decisions")
+            if isinstance(_decisions, list):
+                session._skills_used = [
+                    {
+                        "name": str(_d.get("name") or ""),
+                        "state": str(_d.get("state") or ""),
+                        "loaded_tokens": int(_d.get("loaded_tokens") or 0),
+                    }
+                    for _d in _decisions
+                    if isinstance(_d, dict) and _d.get("state") in _SKILL_USED_STATES
+                ]
             if is_new:
                 ctx_len = _assembled.injected_chars
                 state.broadcast_ws(
