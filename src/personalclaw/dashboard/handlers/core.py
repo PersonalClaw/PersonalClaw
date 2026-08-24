@@ -706,6 +706,16 @@ _EDITABLE_CONFIG: dict[str, dict] = {
     "external_access.rate_concurrent": {"type": "int", "min": 1, "max": 256},
     "external_access.auto_disable_after_breaches": {"type": "int", "min": 0, "max": 10000},
     "external_access.capture_retention_days": {"type": "int", "min": 0, "max": 3650},
+    # EXTERNAL-ACCESS §7.2 — the capture surface's two operator knobs. Both are
+    # runtime-editable: the pruner reads retention on each curator tick and the
+    # streaming client reads the allow-list per forward, so neither needs a restart.
+    # `retention_days` is the nested spelling of `capture_retention_days` above and
+    # `load()` mirrors one resolved value into both, so editing either is coherent.
+    "external_access.capture.retention_days": {"type": "int", "min": 0, "max": 3650},
+    # Operator-visible by requirement (§7.1): upstream forwarding must be guarded
+    # against an explicit host list rather than hand-rolled unguarded egress, which
+    # means the operator has to be able to SEE and edit the list.
+    "external_access.capture.upstream_allowlist": {"type": "str_list", "max_items": 40},
     # MEMORY-GRAPH-AND-VAULT §1 — entity linking. Runtime-editable: turning it off
     # stops new links immediately (existing links are kept, so re-enabling doesn't
     # need a backfill).

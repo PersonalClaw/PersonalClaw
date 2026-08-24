@@ -3805,6 +3805,36 @@ def _ea_surface_data(section: dict, surface: str) -> dict:
     return raw if isinstance(raw, dict) else {}
 
 
+def _str_list(raw: object) -> list[str]:
+    """A list-of-strings config value, or ``[]``.
+
+    Fail-closed on SHAPE, matching `_ea_surface_data`: a string, a dict or a stray
+    number yields the empty list rather than raising. For `upstream_allowlist` the
+    empty list is the DENY-everything position, so a malformed value degrades to "no
+    approved upstreams" — never to "allow all".
+    """
+    if not isinstance(raw, list):
+        return []
+    return [str(item) for item in raw if isinstance(item, (str, int, float)) and str(item).strip()]
+
+
+def _capture_retention(section: dict) -> float:
+    """The capture retention window, resolved ONCE from either spelling.
+
+    Two keys can express it today — the nested `capture.retention_days` (the §7.2
+    contract the store and the proxy read) and the legacy flat
+    `capture_retention_days` (what the settings PATCH allowlist and the
+    ExternalAccessPanel control already write). Resolving here and mirroring into both
+    fields is what keeps the shipped operator control from becoming inert against the
+    new pruner. The nested key wins when explicitly present, because that is the
+    spelling the plan specifies and the one a new writer will use.
+    """
+    nested = _ea_surface_data(section, "capture").get("retention_days")
+    if nested is not None:
+        return _num(nested, 30)
+    return _num(section.get("capture_retention_days"), 30)
+
+
 @dataclass
 class ExternalAccessSurfaceConfig:
     """One inbound surface's switches (EXTERNAL-ACCESS §1.1).
@@ -3833,6 +3863,52 @@ class ExternalAccessSurfaceConfig:
             "The control bridge ignores this flag entirely — loopback-only forever.",
         ),
     )
+
+
+@dataclass
+class CaptureSurfaceConfig(ExternalAccessSurfaceConfig):
+    """The capture proxy's surface switches PLUS its two operator knobs (§7.1, §7.2).
+
+    Capture is the one surface that owns durable state and outbound forwarding, so it
+    needs two fields the other four do not: how long recorded sessions are kept, and
+    which upstream hosts the streaming client may egress to. It inherits
+    `enabled`/`allow_remote` unchanged — same fields, same fail-CLOSED parsing — rather
+    than restating them, so a future change to the shared pair cannot drift here.
+
+    `upstream_allowlist` is fail-closed in the strong sense: empty means the streaming
+    proxy has no approved egress hosts, not "allow anything". §7.1 requires an
+    operator-visible allow-list precisely so upstream forwarding is never
+    hand-rolled unguarded egress, and a default that allowed all hosts would make the
+    guard decorative.
+    """
+
+    retention_days: int = field(
+        default=30,
+        metadata=_meta(
+            "Capture retention (days)",
+            "How long recorded external-agent sessions are kept before the curator "
+            "tick prunes them. 0 = keep forever (NOT 'delete immediately') — the "
+            "reading that cannot silently destroy data.",
+        ),
+    )
+    upstream_allowlist: list[str] = field(
+        default_factory=list,
+        metadata=_meta(
+            "Upstream allow-list",
+            "Hosts the capture proxy's streaming client may forward to. Empty = no "
+            "approved upstreams; every forward is guard-evaluated against this list, "
+            "so an empty list denies rather than permits.",
+        ),
+    )
+
+    def __post_init__(self) -> None:
+        # Clamped HERE, not at the pruner, because a hand-edited config.json, the
+        # settings PATCH and an import all reach this one constructor. A negative
+        # window would otherwise mean "prune everything", i.e. a typo becomes data loss.
+        self.retention_days = max(0, min(3650, int(self.retention_days)))
+        self.upstream_allowlist = [
+            str(h).strip().lower() for h in self.upstream_allowlist if str(h).strip()
+        ]
 
 
 @dataclass
@@ -3867,8 +3943,8 @@ class ExternalAccessConfig:
         default_factory=ExternalAccessSurfaceConfig,
         metadata=_meta("A2A gateway", "Agent-to-agent inbound dialect."),
     )
-    capture: ExternalAccessSurfaceConfig = field(
-        default_factory=ExternalAccessSurfaceConfig,
+    capture: CaptureSurfaceConfig = field(
+        default_factory=CaptureSurfaceConfig,
         metadata=_meta("Capture proxy", "External-agent capture proxy (records full prompts)."),
     )
     bridge: ExternalAccessSurfaceConfig = field(
@@ -3905,7 +3981,15 @@ class ExternalAccessConfig:
     )
     capture_retention_days: int = field(
         default=30,
-        metadata=_meta("Capture retention (days)", "How long captured external sessions are kept."),
+        metadata=_meta(
+            "Capture retention (days)",
+            "Legacy flat spelling of external_access.capture.retention_days, kept "
+            "because the settings PATCH key and the ExternalAccessPanel control both "
+            "already write it. `load()` resolves ONE value and mirrors it into both, "
+            "so the two can never disagree and the shipped operator control genuinely "
+            "governs pruning. Collapsing to the nested field alone is the clean break "
+            "(see the note in load()).",
+        ),
     )
 
     def __post_init__(self) -> None:
@@ -5083,12 +5167,16 @@ class AppConfig:
                         _ea_surface_data(external_access_data, "a2a").get("allow_remote")
                     ),
                 ),
-                capture=ExternalAccessSurfaceConfig(
+                capture=CaptureSurfaceConfig(
                     enabled=_expose_flag(
                         _ea_surface_data(external_access_data, "capture").get("enabled")
                     ),
                     allow_remote=_expose_flag(
                         _ea_surface_data(external_access_data, "capture").get("allow_remote")
+                    ),
+                    retention_days=int(_capture_retention(external_access_data)),
+                    upstream_allowlist=_str_list(
+                        _ea_surface_data(external_access_data, "capture").get("upstream_allowlist")
                     ),
                 ),
                 bridge=ExternalAccessSurfaceConfig(
@@ -5106,9 +5194,13 @@ class AppConfig:
                 auto_disable_after_breaches=int(
                     _num(external_access_data.get("auto_disable_after_breaches"), 10)
                 ),
-                capture_retention_days=int(
-                    _num(external_access_data.get("capture_retention_days"), 30)
-                ),
+                # Mirrored from the SAME resolution as capture.retention_days above, so
+                # the legacy flat spelling and the nested field cannot drift. Without
+                # this, the shipped ExternalAccessPanel control (which writes the flat
+                # key) would be inert against the pruner (which reads the nested one) —
+                # a wired-but-wrong control, the worse of the two failures available
+                # while the flat key's PATCH entry and frontend control still exist.
+                capture_retention_days=int(_capture_retention(external_access_data)),
             ),
             agents_routing=AgentsRoutingConfig(
                 enabled=bool(agents_routing_data.get("enabled", True)),
