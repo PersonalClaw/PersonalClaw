@@ -223,11 +223,31 @@ def test_known_landed_atoms_are_key_rich() -> None:
 
 
 def test_corpus_excludes_docs_so_an_atom_cannot_match_its_own_prose(real_corpus: Corpus) -> None:
-    """The central false-positive trap: the scope text the keys came from lives in docs/."""
+    """The central false-positive trap: the scope text the keys came from lives in docs/.
+
+    The probe phrase is READ FROM the docs tree, never written here. An earlier version
+    hard-coded ``"Atom stays `todo` only because this code is unmerged"``, which put the
+    phrase into ``tests/`` — and ``tests/`` IS in the corpus. That passed only because this
+    very file did not yet exist on ``origin/main``; the assertion was scheduled to start
+    failing the moment this test landed, whichever ref the corpus was built from. A test whose
+    own source is inside the corpus it audits cannot use a literal as its needle.
+    """
     assert not [p for p in real_corpus.blobs if p.startswith("docs/")]
-    # a phrase that exists ONLY in the roadmap prose must not be findable
-    phrase = "Atom stays `todo` only because this code is unmerged"
-    assert real_corpus.find(phrase) == ([], []), "docs/ leaked into the evidence corpus"
+
+    # A phrase that genuinely exists ONLY in roadmap prose, taken from the prose itself.
+    doc = REPO_ROOT / "docs" / "roadmap" / "plans" / "MODEL-ROUTING-TELEMETRY.md"
+    needle = next(
+        line.strip()
+        for line in doc.read_text().splitlines()
+        if len(line.strip()) > 60 and "unmerged" in line
+    )
+
+    # Vacuity floor, both directions: the needle must be real docs prose, and must not have
+    # crept into any corpus-eligible source file — otherwise a green says nothing about docs/.
+    assert needle in doc.read_text(), needle
+    assert needle not in Path(__file__).read_text(), "the needle must not be a literal here"
+
+    assert real_corpus.find(needle) == ([], []), "docs/ leaked into the evidence corpus"
 
 
 def test_corpus_file_fence_stops_a_match_straddling_two_files() -> None:
