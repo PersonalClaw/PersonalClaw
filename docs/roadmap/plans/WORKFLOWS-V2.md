@@ -536,7 +536,7 @@ The `events.jsonl` journal MUST record these learning-relevant events in structu
 | `user_edited_mid_flight` | `ops[] (the structured mutation batch, not a diff blob)` |
 | `consulted` | `node_id, ref (skill/template actually loaded, distinct from injected-into-prompt)` — evolution attribution (WF2-R13) |
 | `child_run_attach` | `parent_run_id, child_run_id, node_id` (WF2-R13) |
-| `run_abandoned` | `at_node_id, elapsed_secs` |
+| `run_abandoned` | `node_id, elapsed_secs` |
 | `crystallized` | `digest {narrative, decisions, outcomes, artifacts, lessons}` (WF2-R13, pre-prune) |
 
 These are engine-emission requirements, not a separate store — the refiner reads `events.jsonl` filtered to this subset. Per-stage instances journal the **fully-resolved post-binding prompt** (or a content ref) for trajectory replay and forensics. **Acceptance criterion — reasoning-path reconstructability**: from ledger events alone one must be able to replay prompt → tool invocations → final output per node; one record shape serves the cockpit, overnight-runs inbox, flywheel evaluator, and failure forensics (WF2-R13 am.). Pass-rate / failure-distribution / P50-P99 become ledger queries.
