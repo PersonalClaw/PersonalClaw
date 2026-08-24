@@ -1,0 +1,672 @@
+"""The self-describing control bridge (EXTERNAL-ACCESS §4, atom ``EA-4``).
+
+A *local* external agent — Claude Desktop, a validation harness, the Self-QA companion
+someday — needs to drive PersonalClaw's UI-level affordances. Without this it has two
+options, and both are bad: scrape the DOM, or reach for the dashboard's own routes and
+discover their shapes by trial. So the bridge exposes the FE's **semantic actions**,
+typed and self-described, and lets the agent read the catalogue rather than guess it.
+
+Four decisions in here are load-bearing, and each answers a specific failure:
+
+**Loopback forever, `allow_remote` ignored.** Every other inbound surface can be opened
+to non-loopback peers by an explicit config pair. This one cannot, by construction:
+:func:`personalclaw.inbound.auth.peer_allowed` special-cases ``bridge`` and refuses a
+remote peer whatever the config says. A control surface that can drive the UI is not a
+thing to make reachable by editing one flag.
+
+**Its own runner on a random ephemeral port.** Not a route on the dashboard app: the
+dashboard's port is knowable, and a control surface on a knowable port is a port-scan
+away from being probed. The port is chosen by the OS at boot (``port=0``) and published
+only in a 0600 discovery file, so *finding* the bridge already requires read access to
+the user's home directory.
+
+**The discovery file carries a token REF, never the token.** ``token_ref`` names the
+credential key; the agent sources the value from the environment or the credential
+store the same way every other surface's client does. A file that carried the secret
+would make "readable discovery file" and "authenticated" the same thing.
+
+**`requiresConfirmation` is enforced HERE, not by client politeness.** A confirm-flagged
+action never mutates on first call: it returns ``needs_confirmation`` plus an opaque
+token and raises a needs-input notification, and only the USER (in the dashboard, or via
+``personalclaw inbound confirm <token>``) turns that into an execution. A client that
+ignores the flag gets a refusal, not a mutation.
+
+``sideEffect: "destructive"`` deliberately has no members in v1 — delete and uninstall
+are absent rather than confirm-gated, because the safest confirmation flow for a
+destructive control action is not having one.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import hashlib
+import json
+import logging
+import os
+import secrets
+import stat
+import time
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any, Awaitable, Callable
+
+from aiohttp import web
+
+from personalclaw import notification_kinds
+from personalclaw.inbound.audit import audit
+from personalclaw.inbound.auth import BRIDGE_SURFACE, peer_allowed, token_env_key, verify_bearer
+from personalclaw.inbound.gate import admission_problem
+
+logger = logging.getLogger(__name__)
+
+#: Bumped when an action's params_schema or the descriptor envelope changes shape. A
+#: client pins this; `actions_digest` below tells it whether the SET changed without a
+#: schema bump (a new action is not a breaking change, but it is a visible one).
+SCHEMA_VERSION = 1
+
+DISCOVERY_FILENAME = "control_bridge.json"
+
+#: How long a pending confirmation stays redeemable. Long enough for a human to notice
+#: the notification and act; short enough that an abandoned token cannot be redeemed
+#: hours later by whatever still holds it.
+CONFIRM_TTL_SECS = 600.0
+
+#: The closed side-effect vocabulary. ``destructive`` is absent ON PURPOSE — see the
+#: module docstring. A rail asserts no action declares it, so adding one is a decision
+#: someone has to make explicitly rather than by typing a string.
+SIDE_EFFECTS = ("none", "read", "write")
+
+
+@dataclass(frozen=True)
+class Action:
+    """One semantic action, self-described.
+
+    ``handler`` is deliberately not part of the descriptor: the wire contract is the
+    four declared fields, and a client that could see the handler would start depending
+    on its shape.
+    """
+
+    name: str
+    params_schema: dict[str, Any]
+    side_effect: str
+    requires_confirmation: bool
+    description: str
+    handler: Callable[[Any, dict], Awaitable[dict]]
+
+    def descriptor(self) -> dict[str, Any]:
+        return {
+            "name": self.name,
+            "params_schema": self.params_schema,
+            "sideEffect": self.side_effect,
+            "requiresConfirmation": self.requires_confirmation,
+            "description": self.description,
+        }
+
+
+# ── action handlers ──────────────────────────────────────────────────────────
+#
+# Every write handler calls the SAME service the dashboard's own handler calls. That is
+# the rule that keeps this from becoming a second mutation path: `create_task` goes
+# through `tasks.registry.create_task` (what `api_tasks_create` calls) and
+# `toggle_automation` through `TriggerStore.set_enabled` (what the triggers façade
+# calls), so a validation rule added to either is inherited here for free.
+
+
+async def _open_cockpit(state: Any, params: dict) -> dict:
+    """Navigation only — no state changes, hence ``sideEffect: none``."""
+    kind = str(params.get("kind") or "").strip()
+    ident = str(params.get("id") or "").strip()
+    if not kind:
+        raise ValueError("kind required")
+    route = f"#/{kind}/{ident}" if ident else f"#/{kind}"
+    state.broadcast_ws("navigate", {"route": route, "source": "control_bridge"})
+    return {"route": route}
+
+
+async def _read_transcript(state: Any, params: dict) -> dict:
+    from personalclaw.history import ConversationLog
+    from personalclaw.security import redact_credentials, redact_exfiltration_urls
+
+    session = str(params.get("session") or "").strip()
+    if not session:
+        raise ValueError("session required")
+    limit = int(params.get("limit") or 50)
+    rows = ConversationLog().recent(session, max_messages=max(1, min(limit, 200)))
+    out = []
+    for row in rows:
+        text = str(row.get("content") or row.get("text") or "")
+        text, _ = redact_exfiltration_urls(text)
+        text, _ = redact_credentials(text)
+        out.append({"role": row.get("role", ""), "content": text[:4000]})
+    return {"session": session, "messages": out}
+
+
+async def _list_automations(state: Any, params: dict) -> dict:
+    from personalclaw.triggers.store import TriggerStore
+
+    rows = TriggerStore().list_triggers()
+    return {
+        "automations": [
+            {"id": t.id, "name": t.name, "kind": t.kind, "enabled": t.enabled} for t in rows
+        ]
+    }
+
+
+async def _run_trigger_dry(state: Any, params: dict) -> dict:
+    """The triggers façade's own dry-run — a PLAN, never a fire, hence ``read``."""
+    from personalclaw.triggers.store import TriggerStore
+
+    trigger_id = str(params.get("id") or "").strip()
+    if not trigger_id:
+        raise ValueError("id required")
+    # `get` returns a LoadedTrigger (the row PLUS its parse issues), not a Trigger —
+    # reading `.kind` off the wrapper would be an AttributeError, and reporting the
+    # issues is the point of the pair.
+    loaded = TriggerStore().get(trigger_id)
+    if loaded is None:
+        raise ValueError(f"unknown automation: {trigger_id}")
+    trigger = loaded.trigger
+    return {
+        "id": trigger_id,
+        "dry_run": True,
+        "name": trigger.name,
+        "kind": trigger.kind,
+        "enabled": trigger.enabled,
+        "would_fire": bool(trigger.enabled),
+        "issues": [getattr(i, "message", str(i)) for i in (loaded.issues or [])],
+    }
+
+
+async def _notify(state: Any, params: dict) -> dict:
+    """Additive and user-visible by construction, so it writes without confirmation.
+
+    Gating a notification behind a confirmation would be circular: the confirmation
+    itself arrives as a notification.
+    """
+    text = str(params.get("text") or "").strip()
+    if not text:
+        raise ValueError("text required")
+    state.notify(
+        notification_kinds.AGENT,
+        "Control bridge",
+        text[:2000],
+        meta={"source": "control_bridge"},
+    )
+    return {"delivered": True}
+
+
+async def _create_task(state: Any, params: dict) -> dict:
+    from personalclaw.tasks import registry
+
+    title = str(params.get("title") or "").strip()
+    if not title:
+        raise ValueError("title required")
+    kwargs: dict[str, Any] = {"title": title}
+    for key in ("notes", "list_id", "due", "priority"):
+        if params.get(key) is not None:
+            kwargs[key] = params[key]
+    task = await registry.create_task(provider_name="native", **kwargs)
+    return {"task": task.to_dict()}
+
+
+async def _toggle_automation(state: Any, params: dict) -> dict:
+    from personalclaw.triggers.store import TriggerStore
+
+    trigger_id = str(params.get("id") or "").strip()
+    if not trigger_id:
+        raise ValueError("id required")
+    store = TriggerStore()
+    loaded = store.get(trigger_id)
+    if loaded is None:
+        raise ValueError(f"unknown automation: {trigger_id}")
+    target = params.get("enabled")
+    # Absent `enabled` means TOGGLE, so the current value has to be read first — an
+    # unconditional `True` would make a second identical call a no-op instead of a flip.
+    enabled = (not loaded.trigger.enabled) if target is None else bool(target)
+    updated = store.set_enabled(trigger_id, enabled)
+    if updated is None:
+        raise ValueError(f"could not set enabled on {trigger_id}")
+    return {"id": trigger_id, "enabled": updated.enabled}
+
+
+_REGISTRY: tuple[Action, ...] = (
+    Action(
+        name="open_cockpit",
+        params_schema={
+            "type": "object",
+            "properties": {"kind": {"type": "string"}, "id": {"type": "string"}},
+            "required": ["kind"],
+        },
+        side_effect="none",
+        requires_confirmation=False,
+        description="Focus a cockpit surface in the dashboard (navigation only).",
+        handler=_open_cockpit,
+    ),
+    Action(
+        name="read_transcript",
+        params_schema={
+            "type": "object",
+            "properties": {"session": {"type": "string"}, "limit": {"type": "integer"}},
+            "required": ["session"],
+        },
+        side_effect="read",
+        requires_confirmation=False,
+        description="Read a chat session's recent turns, credential- and URL-redacted.",
+        handler=_read_transcript,
+    ),
+    Action(
+        name="list_automations",
+        params_schema={"type": "object", "properties": {}},
+        side_effect="read",
+        requires_confirmation=False,
+        description="List configured automations with their enabled state.",
+        handler=_list_automations,
+    ),
+    Action(
+        name="run_trigger_dry",
+        params_schema={
+            "type": "object",
+            "properties": {"id": {"type": "string"}},
+            "required": ["id"],
+        },
+        side_effect="read",
+        requires_confirmation=False,
+        description="Report what firing an automation WOULD do. Never fires it.",
+        handler=_run_trigger_dry,
+    ),
+    Action(
+        name="notify",
+        params_schema={
+            "type": "object",
+            "properties": {"text": {"type": "string"}},
+            "required": ["text"],
+        },
+        side_effect="write",
+        requires_confirmation=False,
+        description="Raise a notification for the user.",
+        handler=_notify,
+    ),
+    Action(
+        name="create_task",
+        params_schema={
+            "type": "object",
+            "properties": {
+                "title": {"type": "string"},
+                "notes": {"type": "string"},
+                "list_id": {"type": "string"},
+                "due": {"type": "string"},
+                "priority": {"type": "string"},
+            },
+            "required": ["title"],
+        },
+        side_effect="write",
+        requires_confirmation=True,
+        description="Create a task. Requires the user to confirm before it is written.",
+        handler=_create_task,
+    ),
+    Action(
+        name="toggle_automation",
+        params_schema={
+            "type": "object",
+            "properties": {"id": {"type": "string"}, "enabled": {"type": "boolean"}},
+            "required": ["id"],
+        },
+        side_effect="write",
+        requires_confirmation=True,
+        description="Enable or disable an automation. Requires the user to confirm.",
+        handler=_toggle_automation,
+    ),
+)
+
+
+def actions() -> tuple[Action, ...]:
+    return _REGISTRY
+
+
+def descriptor() -> list[dict[str, Any]]:
+    """The self-describing catalogue — what ``GET /actions`` serves."""
+    return [a.descriptor() for a in _REGISTRY]
+
+
+def actions_digest() -> str:
+    """A stable fingerprint of the action SET and its schemas.
+
+    In the discovery file so a client can tell "the catalogue I cached is still the
+    catalogue" without re-reading it, and so an action added without a
+    :data:`SCHEMA_VERSION` bump is still visible as a change.
+    """
+    canonical = json.dumps(descriptor(), sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(canonical.encode()).hexdigest()[:16]
+
+
+def _action(name: str) -> Action | None:
+    for a in _REGISTRY:
+        if a.name == name:
+            return a
+    return None
+
+
+# ── pending confirmations ────────────────────────────────────────────────────
+#
+# In-process and per-boot ON PURPOSE. A pending confirmation is a live intent, not a
+# durable record: persisting it would mean a token minted before a restart could be
+# redeemed after one, against a config the user may have changed in between.
+
+_pending: dict[str, dict[str, Any]] = {}
+
+
+def _reap() -> None:
+    now = time.monotonic()
+    for token in [t for t, row in _pending.items() if now - row["created"] > CONFIRM_TTL_SECS]:
+        _pending.pop(token, None)
+
+
+def pending_count() -> int:
+    _reap()
+    return len(_pending)
+
+
+def _mint_confirmation(action: Action, params: dict) -> str:
+    _reap()
+    token = secrets.token_urlsafe(32)
+    _pending[token] = {"action": action.name, "params": params, "created": time.monotonic()}
+    return token
+
+
+def take_confirmation(token: str) -> dict[str, Any] | None:
+    """Redeem a token ONCE. Returns the stored intent, or None if unknown/expired."""
+    _reap()
+    return _pending.pop(token, None)
+
+
+# ── HTTP surface ─────────────────────────────────────────────────────────────
+
+
+def _json(payload: dict, status: int = 200) -> web.Response:
+    return web.json_response(payload, status=status)
+
+
+def _admit(request: web.Request, route: str) -> tuple[web.Response | None, str]:
+    """Every gate, in the order that leaks least. Returns (refusal, reason)."""
+    problem, status = admission_problem(BRIDGE_SURFACE)
+    if problem:
+        audit(BRIDGE_SURFACE, route=route, status=status, refused=problem)
+        return _json({"error": "not available"}, status=status), problem
+    ok, why = peer_allowed(request, BRIDGE_SURFACE)
+    if not ok:
+        audit(BRIDGE_SURFACE, route=route, status=403, refused=why)
+        return _json({"error": "forbidden"}, status=403), why
+    presented = (request.headers.get("Authorization") or "").removeprefix("Bearer ").strip()
+    if not verify_bearer(BRIDGE_SURFACE, presented):
+        audit(BRIDGE_SURFACE, route=route, status=401, refused="bad bearer")
+        return _json({"error": "unauthorized"}, status=401), "bad bearer"
+    return None, ""
+
+
+async def handle_actions(request: web.Request) -> web.Response:
+    """GET /actions — the self-describing action catalogue (control bridge, loopback).
+
+    Carries `schema_version` and `actions_digest` beside the list so a client can tell
+    a cached catalogue is still current without diffing the actions themselves.
+    """
+    refusal, _ = _admit(request, "/actions")
+    if refusal is not None:
+        return refusal
+    payload = {
+        "schema_version": SCHEMA_VERSION,
+        "actions_digest": actions_digest(),
+        "actions": descriptor(),
+    }
+    audit(BRIDGE_SURFACE, route="/actions", status=200)
+    return _json(payload)
+
+
+async def _run(state: Any, action: Action, params: dict, route: str) -> web.Response:
+    try:
+        result = await action.handler(state, params)
+    except ValueError as e:
+        audit(BRIDGE_SURFACE, route=route, status=400, tool=action.name, refused=str(e))
+        return _json({"error": str(e)}, status=400)
+    except Exception:
+        logger.warning("control bridge action %s failed", action.name, exc_info=True)
+        audit(BRIDGE_SURFACE, route=route, status=500, tool=action.name, refused="handler error")
+        return _json({"error": "action failed"}, status=500)
+    audit(BRIDGE_SURFACE, route=route, status=200, tool=action.name)
+    return _json({"status": "ok", "result": result})
+
+
+async def handle_action(request: web.Request) -> web.Response:
+    """POST /action — invoke one semantic action (control bridge, loopback).
+
+    A confirm-flagged action returns 202 `needs_confirmation` and does NOT run: the
+    gate is here, not in the client.
+    """
+    refusal, _ = _admit(request, "/action")
+    if refusal is not None:
+        return refusal
+    try:
+        body = await request.json()
+    except Exception:
+        audit(BRIDGE_SURFACE, route="/action", status=400, refused="invalid JSON")
+        return _json({"error": "invalid JSON"}, status=400)
+    if not isinstance(body, dict):
+        return _json({"error": "body must be an object"}, status=400)
+    name = str(body.get("action") or "").strip()
+    raw_params = body.get("params")
+    # A narrowed local, not a conditional expression: mypy widens the ternary to
+    # `Any | dict | None` and every handler downstream then takes an optional dict for
+    # a value that is a dict by construction. A non-dict `params` is coerced to empty
+    # rather than refused — the action's own required-field check is the real gate.
+    params: dict = raw_params if isinstance(raw_params, dict) else {}
+    action = _action(name)
+    if action is None:
+        audit(BRIDGE_SURFACE, route="/action", status=404, refused=f"unknown action {name!r}")
+        return _json({"error": f"unknown action: {name}"}, status=404)
+
+    state = request.app["state"]
+    if action.requires_confirmation:
+        token = _mint_confirmation(action, params)
+        try:
+            # `emit_attention_item`, not `state.notify`: `needs_input` is an ATTENTION
+            # kind, and that function is documented as "the only correct way to raise a
+            # durable agent request" — it files the inbox row AND delivers the one
+            # notification as a view of it, so the two cannot drift into two
+            # notifications for one event, or a row nobody was told about. Reaching for
+            # `notify("needs_input", …)` instead is what the notification-kind ratchet
+            # caught: that kind has no `_LEGACY_FLAT` history, because it was never a
+            # notify() kind.
+            from personalclaw.inbox import emit_attention_item
+
+            emit_attention_item(
+                state,
+                source="loop",
+                kind="needs_input",
+                title="Confirm a control-bridge action",
+                body=f"A local agent wants to run {action.name}. Confirm to allow it.",
+                refs={
+                    "source": "control_bridge",
+                    "action": action.name,
+                    "confirm_token": token,
+                },
+                dedup_key=f"control_bridge:{token}",
+            )
+        except Exception:
+            logger.warning("control bridge confirm notification failed", exc_info=True)
+        audit(BRIDGE_SURFACE, route="/action", status=202, tool=action.name, refused="")
+        return _json({"status": "needs_confirmation", "confirm_token": token}, status=202)
+    return await _run(state, action, params, "/action")
+
+
+async def handle_confirm(request: web.Request) -> web.Response:
+    """POST /confirm — redeem a confirm_token, running the action the user approved.
+
+    Single-use and TTL-bounded: an abandoned intent expires rather than staying
+    redeemable by whatever still holds the token.
+    """
+    refusal, _ = _admit(request, "/confirm")
+    if refusal is not None:
+        return refusal
+    try:
+        body = await request.json()
+    except Exception:
+        return _json({"error": "invalid JSON"}, status=400)
+    token = str((body or {}).get("confirm_token") or "").strip()
+    intent = take_confirmation(token) if token else None
+    if intent is None:
+        audit(BRIDGE_SURFACE, route="/confirm", status=404, refused="unknown or expired token")
+        return _json({"error": "unknown or expired confirm_token"}, status=404)
+    action = _action(str(intent["action"]))
+    if action is None:  # pragma: no cover - registry cannot shrink at runtime
+        return _json({"error": "action no longer exists"}, status=410)
+    return await _run(request.app["state"], action, dict(intent["params"]), "/confirm")
+
+
+# ── lifecycle: its own runner, its own discovery file ────────────────────────
+
+_runner: web.AppRunner | None = None
+_site: Any = None
+
+
+def discovery_path() -> Path:
+    from personalclaw.config.loader import config_dir
+
+    return config_dir() / DISCOVERY_FILENAME
+
+
+def _write_discovery(port: int) -> None:
+    from personalclaw.atomic_write import atomic_write
+
+    payload = {
+        "port": port,
+        "url": f"http://127.0.0.1:{port}",
+        "token_ref": token_env_key(BRIDGE_SURFACE),
+        "schema_version": SCHEMA_VERSION,
+        "actions_digest": actions_digest(),
+    }
+    path = discovery_path()
+    atomic_write(path, json.dumps(payload, indent=2) + "\n")
+    # 0600 AFTER the write: the file names a port a control surface answers on, so it
+    # is world-readable for exactly as long as it takes to chmod it otherwise.
+    try:
+        os.chmod(path, stat.S_IRUSR | stat.S_IWUSR)
+    except OSError:  # pragma: no cover - defensive
+        logger.warning("control bridge: could not tighten %s", path)
+
+
+def remove_discovery() -> None:
+    """Delete the discovery file. Idempotent — a clean shutdown and a crash-recovery
+    boot both call it, and a stale file pointing at a dead port is worse than none."""
+    try:
+        discovery_path().unlink(missing_ok=True)
+    except OSError:  # pragma: no cover - defensive
+        logger.debug("control bridge: discovery file unlink failed", exc_info=True)
+
+
+def enablement_problem() -> str | None:
+    """Why the bridge must not mount, or None. Same shape as the MCP surface's."""
+    from personalclaw.inbound.auth import token_problem
+
+    problem, _status = admission_problem(BRIDGE_SURFACE)
+    if problem:
+        return problem
+    return token_problem(BRIDGE_SURFACE)
+
+
+async def start(state: Any) -> int | None:
+    """Bind the bridge on a random loopback port. Returns the port, or None if unmounted.
+
+    A refusal is not an error: the bridge is off by default, and an unmounted surface
+    leaves no discovery file, so an agent that finds no file correctly concludes there
+    is nothing to talk to.
+    """
+    global _runner, _site
+    remove_discovery()  # a stale file from a previous boot must never outlive it
+    problem = enablement_problem()
+    if problem:
+        logger.info("control bridge not mounted: %s", problem)
+        return None
+    app = web.Application()
+    app["state"] = state
+    app.router.add_get("/actions", handle_actions)
+    app.router.add_post("/action", handle_action)
+    app.router.add_post("/confirm", handle_confirm)
+    _runner = web.AppRunner(app)
+    await _runner.setup()
+    # Port 0: the OS picks. Never the dashboard's port and never a fixed one.
+    _site = web.TCPSite(_runner, "127.0.0.1", 0)
+    await _site.start()
+    port = 0
+    for sock in getattr(getattr(_runner, "server", None), "_sockets", None) or []:
+        port = sock.getsockname()[1]
+        break
+    if not port:
+        srv = getattr(_site, "_server", None)
+        socks = getattr(srv, "sockets", None) or []
+        if socks:
+            port = socks[0].getsockname()[1]
+    _write_discovery(port)
+    logger.info("control bridge listening on 127.0.0.1:%s (loopback only)", port)
+    return port
+
+
+async def stop() -> None:
+    """Tear the runner down and delete the discovery file."""
+    global _runner, _site
+    remove_discovery()
+    if _runner is not None:
+        try:
+            await _runner.cleanup()
+        except Exception:  # pragma: no cover - defensive
+            logger.debug("control bridge cleanup failed", exc_info=True)
+    _runner, _site = None, None
+
+
+def confirm_cli(token: str) -> int:
+    """``personalclaw inbound confirm <token>`` — redeem from OUTSIDE the gateway.
+
+    The pending intent lives in the gateway's memory, so the CLI cannot resolve it
+    locally; it goes through the same authenticated ``/confirm`` route an agent would,
+    reading the port from the discovery file and the token from the credential store.
+    That keeps ONE confirmation path rather than a second in-process one.
+    """
+    import urllib.error
+    import urllib.request
+
+    from personalclaw.inbound.auth import load_surface_token
+
+    path = discovery_path()
+    if not path.is_file():
+        print("control bridge is not running (no discovery file)")
+        return 1
+    try:
+        info = json.loads(path.read_text())
+    except Exception:
+        print(f"discovery file is unreadable: {path}")
+        return 1
+    bearer = load_surface_token(BRIDGE_SURFACE)
+    if not bearer:
+        print(f"no bridge token configured ({token_env_key(BRIDGE_SURFACE)})")
+        return 1
+    req = urllib.request.Request(
+        f"{info.get('url')}/confirm",
+        data=json.dumps({"confirm_token": token}).encode(),
+        headers={"Authorization": f"Bearer {bearer}", "Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            print(resp.read().decode()[:2000])
+        return 0
+    except urllib.error.HTTPError as e:
+        print(f"confirm refused ({e.code}): {e.read().decode()[:400]}")
+        return 1
+    except Exception as e:
+        print(f"confirm failed: {e}")
+        return 1
+
+
+def _sync_stop() -> None:  # pragma: no cover - process-exit backstop
+    try:
+        asyncio.get_event_loop().run_until_complete(stop())
+    except Exception:
+        remove_discovery()

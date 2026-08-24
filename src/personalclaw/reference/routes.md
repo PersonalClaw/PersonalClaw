@@ -770,7 +770,10 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 
 ## Websocket / internal routes
 
+- `POST /action` — invoke one semantic action (control bridge, loopback).
+- `GET /actions` — the self-describing action catalogue (control bridge, loopback).
 - `GET /api/ws` — single multiplexed WebSocket for all real-time events.
 - `GET /api/ws/terminal/{session_id}` — WebSocket PTY for the built-in CLI panel.
+- `POST /confirm` — redeem a confirm_token, running the action the user approved.
 - `GET /mcp` — `GET /mcp` → 405. No SSE stream in v1 (spec-permitted).
 - `POST /mcp` — _(no summary)_

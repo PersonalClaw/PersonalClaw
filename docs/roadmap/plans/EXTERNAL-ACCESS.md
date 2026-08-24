@@ -373,3 +373,63 @@ No new session; session count stays ~7. Session 2 gains the three sharpenings ab
   `dataLayerAdoption.test.ts` matches `const <NAME> = '…'` across the tree, so it adopted six unrelated
   `const KEY` localStorage constants as cache namespaces. Renamed to `CACHE_KEY`. Attribution was proved by
   running the ratchet on a base worktree at `origin/main` — green there, red here — rather than assumed.
+
+## Execution log — `EA-4` (§4 Dialect 3: the self-describing control bridge)
+
+- [2026-08-24][EA-4] ✅ **DONE — `src/personalclaw/inbound/bridge.py`, its own runner, wired into the
+  gateway's startup/shutdown.** `EA-1` had already done the contract-owner work: the `bridge` surface
+  exists in `EXTERNAL_ACCESS_SURFACES`, `auth.BRIDGE_SURFACE` is named, and `peer_allowed` already
+  special-cases it (*"the control bridge is loopback-only by construction"*). So this atom is the
+  surface itself and nothing else — no config change was needed, which is the sign the seam was right.
+- [2026-08-24][EA-4] **Four decisions, each answering a specific failure rather than a preference.**
+  (1) **Loopback forever**: the bridge calls `peer_allowed(request, BRIDGE_SURFACE)` rather than
+  re-deciding locally, so `allow_remote` cannot open it and a rail proves a remote peer is refused
+  *even with a valid token*. (2) **Its own `AppRunner` on an OS-chosen ephemeral port** (`port=0`), not
+  a route on the dashboard app — the dashboard's port is knowable and a control surface on a knowable
+  port is a port-scan away from being probed. (3) **The discovery file carries `token_ref`, never the
+  token**: a file holding the secret would make "readable discovery file" and "authenticated" the same
+  thing. 0600, `atomic_write`, rewritten each boot, deleted on shutdown AND on a refused mount — a file
+  naming a dead port is worse than no file, because a client trusts it and hangs.
+  (4) **`requiresConfirmation` is enforced server-side**: a flagged action returns
+  `{status: needs_confirmation, confirm_token}` + a `needs_input` notification carrying the token, and
+  only redemption runs the handler. A client that ignores the flag gets a token, not a mutation.
+- [2026-08-24][EA-4] **The v1 registry is exactly §4's seven**, self-described as
+  `{name, params_schema, sideEffect, requiresConfirmation, description}` — `handler` is deliberately
+  NOT in the descriptor, because a client that could see it would start depending on its shape.
+  `open_cockpit` (none) · `read_transcript` (read, credential- and URL-redacted) · `list_automations`
+  (read) · `run_trigger_dry` (read — reports what firing WOULD do and reports the row's parse issues) ·
+  `notify` (write, **not** confirm-gated: gating it is circular, since the confirmation arrives AS a
+  notification) · `create_task` and `toggle_automation` (write, confirm).
+  **`sideEffect: "destructive"` has no members and is not in the vocabulary** — delete and uninstall are
+  ABSENT rather than confirm-gated, because the safest confirmation flow for a destructive control
+  action is not having one. A rail pins that, so adding one is a decision instead of a typo.
+- [2026-08-24][EA-4] **No parallel mutation path, pinned at the source level.** `create_task` goes
+  through `tasks.registry.create_task` — what `api_tasks_create` itself calls — and `toggle_automation`
+  through `TriggerStore.set_enabled`, what the triggers façade calls. A rail asserts both call sites and
+  that the module's only `atomic_write` is the discovery file, because a second implementation would
+  pass every behavioural test here while drifting from whatever validation the real handler gained.
+- [2026-08-24][EA-4] 🔴 **Two shape errors caught by reading the code rather than by a green test.**
+  `TriggerStore.get()` returns a **`LoadedTrigger`** (the row PLUS its parse issues), not a `Trigger`,
+  so the first cut's `trigger.kind` would have been an `AttributeError` on every dry-run — and surfacing
+  `loaded.issues` turned out to be the point of the pair. And `toggle_automation` with no `enabled`
+  argument means TOGGLE: an unconditional `True` would make a second identical call a silent no-op
+  instead of a flip.
+- [2026-08-24][EA-4] **`personalclaw inbound confirm <token>` goes through the bridge, not around it.**
+  The pending intent lives in the gateway's memory, so the CLI reads the port from the discovery file
+  and the bearer from the credential store and POSTs `/confirm` — the same route an agent uses. One
+  confirmation path, not a second in-process one that could drift.
+- [2026-08-24][EA-4] 🔴 **My own test had a dead assertion, and the falsification is what exposed it.**
+  `test_it_names_the_token_and_never_carries_it` asserted `"a"*64 not in raw` with nothing wiring that
+  value into the writer — vacuous. Injecting a real leak still reddened the test, but via the sibling
+  key check, not the secret check. Rewritten to patch `load_surface_token` with a known secret; re-
+  falsified by writing `load_surface_token(...)` into the payload, which now reds with *"the discovery
+  file leaked the bearer token"*. Recorded because a passing security assertion that cannot fail is
+  worse than no assertion.
+- [2026-08-24][EA-4] **Falsified, each restored from a file copy.** Neutering the confirm branch
+  (`if False and action.requires_confirmation`) reds three rails including the decisive one
+  (`assert 200 == 202` — the flagged action ran on first call). Leaking the token into the discovery
+  file reds the secret rail. Probe sweep clean afterwards.
+- [2026-08-24][EA-4] **Not in this atom, deliberately:** the dashboard-side confirm affordance (a
+  button on the needs-input notification). The notification carries `meta.confirm_token`, so the FE has
+  everything it needs; §4's own wording offers the dashboard *or* the CLI, and the CLI path is
+  implemented and tested here.
