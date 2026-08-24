@@ -908,7 +908,8 @@
           "deps": [
             "PR2-6",
             "EXT:ACP-AGENT-PARITY:authenticated ACP CLI (owner-gated) + mid-turn session/prompt delivery seam"
-          ]
+          ],
+          "pr": 1993
         },
         {
           "id": "PR2-11",
