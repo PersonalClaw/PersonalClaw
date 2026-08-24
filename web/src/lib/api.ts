@@ -613,6 +613,17 @@ export interface DevicePairStart {
   expires_in: number
 }
 export interface AppUiPage { route: string; label: string; icon: string }
+/** APE-4 — an app's DECLARED quality bar, rendered as the Store/Library card badge row.
+ *  Every axis is OPTIONAL and that is load-bearing: `undefined` means the app claimed
+ *  nothing on that axis, which is a different fact from `false` ("claims it does not
+ *  meet the bar") and must never render as either a pass or a miss. The backend parses
+ *  the manifest block through `QualityDeclaration`, so an undeclared axis arrives absent
+ *  rather than defaulted — see `qualityBadges` for the three renderings. */
+export interface AppQualityWire {
+  tested?: boolean
+  designSystem?: 'v2' | 'legacy' | 'n/a'
+  a11y?: boolean
+}
 export interface AppSummary {
   name: string; displayName: string; version: string; description: string
   enabled: boolean; origin: string; source?: string; icon: string
@@ -633,6 +644,8 @@ export interface AppSummary {
   // on the /api/apps read path (no polling); `latestVersion` is that newer version.
   updateAvailable?: boolean
   latestVersion?: string
+  // APE-4: the app's declared quality bar. `{}`/absent = declared nothing → no badges.
+  quality?: AppQualityWire
 }
 export interface AppDetail {
   name: string
@@ -669,6 +682,10 @@ export interface AppCatalogEntry {
   // registry-index pointer (its manifest isn't fetched until install).
   permissions?: AppPermissionsWire
   crons?: AppCronSummary[]
+  // APE-4: the declared quality bar, so a Store card can badge it BEFORE install.
+  // `{}`/absent = declared nothing (also the case for a registry pointer whose
+  // manifest hasn't been fetched) → no badges, which is honest either way.
+  quality?: AppQualityWire
 }
 export interface AppScanFinding { surface: string; severity: string; rule: string; path: string; evidence: string }
 /** SH-3 contract C2. `state` is `signed` | `unsigned` | `invalid`; `signer` is the

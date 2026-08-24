@@ -269,6 +269,12 @@ personalclaw = [
     # a hard error, so every review template would fail to load rather than degrade.
     "workflows/bundled/shared/*.md",
     "apps/native/*/app.json",
+    # The ONE token-lint rule (APE-4), shared by web/src/design/tokenLintRule.ts and
+    # apps/quality.py. The apps-repo CI verifies a `quality.designSystem: "v2"` claim
+    # from an installed wheel with no core checkout on disk, so a wheel without this
+    # line makes `load_token_lint_rules()` raise rather than pass everything — loud,
+    # not silently permissive, which is the direction this atom cares about.
+    "apps/token_lint_rules.json",
     # The shipped BYO-runner catalog (EXECUTION-ISOLATION §3.1, EI-5). Settings → Agents
     # renders one row per definition, so a wheel without this line ships an EMPTY runner
     # catalog: no Claude Code / Codex / Gemini CLI / Kiro rows, no adapter verification to

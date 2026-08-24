@@ -1140,6 +1140,88 @@ class ProviderConfig:
 
 
 # ---------------------------------------------------------------------------
+# Declared quality bar (APE-4)
+# ---------------------------------------------------------------------------
+
+#: The values ``quality.designSystem`` may take. ``"v2"`` is the only one that CLAIMS
+#: adherence to the current design system; ``"legacy"`` and ``"n/a"`` are honest
+#: non-claims (predates the system / ships no frontend), so neither is verified.
+DESIGN_SYSTEM_LEVELS = frozenset({"v2", "legacy", "n/a"})
+
+#: The axis names, in card order. Named once so the verifier, the wire and the
+#: Store badges cannot drift into three different axis vocabularies.
+QUALITY_AXES = ("tested", "designSystem", "a11y")
+
+
+@dataclass
+class QualityDeclaration:
+    """An app's SELF-DECLARED quality bar — the Store's badge row (APE-4).
+
+    Deliberately TRI-STATE per axis, because "absent" and "declared false" are
+    different facts and a surface that renders them identically lies:
+
+    * ``None``  — the app claims NOTHING on this axis. No badge. Not a pass, and
+      NOT silently upgraded to ``False``: nobody said the app is untested, only
+      that it didn't say.
+    * ``False`` / ``"legacy"`` / ``"n/a"`` — the app declares it does NOT meet the
+      bar. An honest miss: shown as a miss, never verified (there is no claim to
+      falsify), never shown as a pass.
+    * ``True`` / ``"v2"`` — a CLAIM, and therefore checkable. For a first-party app
+      :mod:`personalclaw.apps.quality` demands the evidence in CI and fails the
+      build when the evidence is absent or contradicts the claim.
+
+    A claim with nothing to check is also a violation, not a free pass — see
+    ``quality.verify_app``: declaring ``designSystem: "v2"`` with no frontend source
+    or ``a11y: true`` with no UI would badge a check that never ran.
+    """
+
+    tested: bool | None = None
+    designSystem: str | None = None  # noqa: N815 — "v2" | "legacy" | "n/a"
+    a11y: bool | None = None
+
+    def claims(self) -> tuple[str, ...]:
+        """The axes this app actively CLAIMS to meet (the verifiable subset)."""
+        out: list[str] = []
+        if self.tested is True:
+            out.append("tested")
+        if self.designSystem == "v2":
+            out.append("designSystem")
+        if self.a11y is True:
+            out.append("a11y")
+        return tuple(out)
+
+    def declared(self, axis: str) -> bool:
+        """Whether ``axis`` was declared at all (either direction)."""
+        return getattr(self, axis, None) is not None
+
+    def to_dict(self) -> dict[str, Any]:
+        """Emit only the axes that were DECLARED — an unclaimed axis stays absent
+        on the wire, so no consumer can mistake silence for a ``False``."""
+        d: dict[str, Any] = {}
+        if self.tested is not None:
+            d["tested"] = self.tested
+        if self.designSystem is not None:
+            d["designSystem"] = self.designSystem
+        if self.a11y is not None:
+            d["a11y"] = self.a11y
+        return d
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "QualityDeclaration":
+        def tri(key: str) -> bool | None:
+            if key not in data or data[key] is None:
+                return None
+            return bool(data[key])
+
+        raw_ds = data.get("designSystem")
+        return cls(
+            tested=tri("tested"),
+            designSystem=(None if raw_ds is None else str(raw_ds)),  # noqa: N815
+            a11y=tri("a11y"),
+        )
+
+
+# ---------------------------------------------------------------------------
 # Main AppManifest
 # ---------------------------------------------------------------------------
 
@@ -1175,6 +1257,8 @@ _KNOWN_FIELDS = frozenset(
         # App-owned SKILL.md skills (§4.1) — a typed field again, seeded through
         # the supply-chain chokepoint on enable. See apps.skill_seed.
         "skills",
+        # Declared quality bar (APE-4) — self-declared, CI-verified for first-party.
+        "quality",
         # Legacy fields (stripped — no runtime consumer): parsed to extra for
         # forward-compat but no longer modeled as typed attributes.
         "agents",
@@ -1295,6 +1379,14 @@ class AppManifest:
     # bundled-provider split.) The three app categories: native / first-party / third-party.
     native: bool = False
 
+    # --- Declared quality bar (APE-4) ---
+    # The app's self-declared quality level, rendered as the Store card's badge row.
+    # ``None`` means the app declared NO block at all — distinct from a block that
+    # declares a miss, and never rendered as a pass. For a FIRST-PARTY app every
+    # claim in here is verified in the apps-repo CI (``personalclaw.apps.quality``),
+    # so a dishonest declaration is a red build rather than a nicer-looking card.
+    quality: QualityDeclaration | None = None
+
     # --- Discovery ---
     tags: list[str] = field(default_factory=list)
 
@@ -1402,6 +1494,17 @@ class AppManifest:
             errors.extend(prov.validate())
 
         errors.extend(self._validate_sources())
+
+        # Declared quality bar (APE-4). Validated HERE so an unknown designSystem
+        # level is an INSTALL error rather than a badge the Store silently drops:
+        # an unrecognised level is neither a claim nor an honest miss, and a card
+        # that renders nothing for it would read exactly like "declared nothing".
+        if self.quality is not None and self.quality.designSystem is not None:
+            if self.quality.designSystem not in DESIGN_SYSTEM_LEVELS:
+                errors.append(
+                    f"quality.designSystem must be one of "
+                    f"{sorted(DESIGN_SYSTEM_LEVELS)}, got: {self.quality.designSystem!r}"
+                )
 
         return errors
 
@@ -1528,6 +1631,10 @@ class AppManifest:
                 d["providers"] = providers_d
         if self.sources:
             d["sources"] = [s.to_dict() for s in self.sources]
+        if self.quality is not None:
+            quality_d = self.quality.to_dict()
+            if quality_d:
+                d["quality"] = quality_d
         if self.native:
             d["native"] = True
         if self.tags:
@@ -1592,6 +1699,14 @@ class AppManifest:
             ProviderConfig.from_dict(p) for p in data.get("providers", []) if isinstance(p, dict)
         ]
 
+        # APE-4: absent → None (the app claims nothing), NOT an all-false block. The
+        # distinction is the whole point of the field, so it is preserved at the parse
+        # boundary rather than defaulted away here.
+        quality_raw = data.get("quality")
+        quality_cfg = (
+            QualityDeclaration.from_dict(quality_raw) if isinstance(quality_raw, dict) else None
+        )
+
         return cls(
             name=str(data.get("name", "")),
             version=str(data.get("version", "")),
@@ -1626,6 +1741,7 @@ class AppManifest:
                 if isinstance(s, dict) and s.get("name")
             ],
             native=bool(data.get("native", False)),
+            quality=quality_cfg,
             tags=[str(t) for t in data.get("tags", []) if t],
             extra=extra,
         )

@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { readFileSync, readdirSync, statSync } from 'node:fs'
 import { join, relative } from 'node:path'
+import { lineViolations } from './tokenLintRule'
 
 // ── Token-lint (component-redesign Slice 0) ────────────────────────────────
 // Design-system adherence guard: no raw color hex or raw px literals in app
@@ -65,22 +66,14 @@ function walk(dir: string): string[] {
   return out
 }
 
-// A raw color hex in a style/className context. We look for #rgb/#rrggbb that
-// aren't part of a URL fragment or a comment marker. This is the HARD rule —
-// hardcoded colors bypass the theme/scheme system and must reach 0.
-const HEX = /#[0-9a-fA-F]{3,8}\b/
-// A raw px literal INSIDE an inline style object, where a design token genuinely
-// applies (font-size / spacing / radius). Arbitrary Tailwind values (min-w-[200px],
-// border-l-[3px]) are pragmatic one-off layout dims — not flagged. And these
-// inline-px CONTEXTS are legitimately px and have NO meaningful token, so they're
-// excluded (checked per-line below): CSS grid track sizing (minmax/repeat), border/
-// outline hairline WIDTHS (the color there is already a token), and computed pixel
-// heights/widths (Math.min(...), calc()). What remains flagged: bare fontSize/
-// padding/margin/gap/width/height px literals that SHOULD use the scale.
-const RAW_PX = /style=\{\{[^}]*?\b\d+px\b/
-// Legitimate inline-px contexts a design token doesn't cover — not violations.
-const PX_OK_CONTEXT = /minmax\(|repeat\(|\bmin\(|\bmax\(|\bclamp\(|\b(border|outline)(-[a-z]+)?:\s*[^;}]*\d+px|border[A-Z][a-zA-Z]*:\s*[`'"]?\s*\$?\{?[^}]*\d+px|Math\.(min|max)\(/
-
+// The rule itself now lives in ./tokenLintRule (APE-4) so an APP BUNDLE can be
+// linted by the same patterns — see that file and token_lint_rules.json. The rule
+// is unchanged: hex is the HARD rule (hardcoded colors bypass the theme/scheme
+// system and must reach 0); inline-style px is flagged only where a real
+// spacing/font/radius token should cover it, so grid track sizing, hairline
+// border/outline widths, computed Math.min/max px and calc(var(…) + Npx) are not
+// violations. What remains flagged: bare fontSize/padding/margin/gap/width/height
+// px literals that SHOULD use the scale.
 function violations(file: string): string[] {
   const text = readFileSync(file, 'utf8')
   const hits: string[] = []
@@ -88,13 +81,7 @@ function violations(file: string): string[] {
     // Skip comment-only lines (design rationale often cites hex/px in prose).
     const trimmed = line.trim()
     if (trimmed.startsWith('//') || trimmed.startsWith('*') || trimmed.startsWith('/*')) return
-    if (HEX.test(line)) hits.push(`${i + 1}: hex — ${trimmed.slice(0, 80)}`)
-    // A px inside a calc() that already references a token (e.g.
-    // calc(var(--content-width) + 160px)) is a legitimate token+offset. Grid
-    // track sizing, hairline border/outline widths, and computed Math.min/max px
-    // are also legitimate (PX_OK_CONTEXT). Flag only inline-style px that a real
-    // spacing/font/radius token should cover.
-    if (RAW_PX.test(line) && !/calc\([^)]*var\(/.test(line) && !PX_OK_CONTEXT.test(line)) hits.push(`${i + 1}: px — ${trimmed.slice(0, 80)}`)
+    for (const kind of lineViolations(line)) hits.push(`${i + 1}: ${kind} — ${trimmed.slice(0, 80)}`)
   })
   return hits
 }

@@ -157,6 +157,22 @@ def _app_status(name: str) -> dict[str, Any]:
     }
 
 
+def _quality_wire(raw: Any) -> dict[str, Any]:
+    """The DECLARED quality axes, and only those (APE-4).
+
+    Routed through :class:`~personalclaw.apps.manifest.QualityDeclaration` rather than
+    passed through raw, so the tri-state survives one hop: an axis the app never
+    declared is ABSENT here, not ``false``. Passing the raw dict through would work
+    today and break the moment a manifest carries a junk axis; parsing keeps the
+    Library wire and the Store's catalog wire on one shape.
+    """
+    from personalclaw.apps.manifest import QualityDeclaration
+
+    if not isinstance(raw, dict):
+        return {}
+    return QualityDeclaration.from_dict(raw).to_dict()
+
+
 # ---------------------------------------------------------------------------
 # Read
 # ---------------------------------------------------------------------------
@@ -239,6 +255,12 @@ async def api_apps_list(request: web.Request) -> web.Response:
                 "hasConfig": has_config,
                 "permissions": manifest.get("permissions", {}),
                 "tags": [str(t) for t in manifest.get("tags", []) if t],
+                # APE-4: the DECLARED quality block, for the Library card's badge row.
+                # `{}` when the app declared nothing — the card must render no badges
+                # there, never a row of misses: absent and "declared false" are
+                # different facts. Read straight off the manifest (not defaulted per
+                # axis) so an undeclared axis stays undeclared on the wire.
+                "quality": _quality_wire(manifest.get("quality")),
                 "installedAt": app.get("installedAt", ""),
                 "updatedAt": app.get("updatedAt", ""),
                 # APE-7: a newer version is available from this app's source. The card
