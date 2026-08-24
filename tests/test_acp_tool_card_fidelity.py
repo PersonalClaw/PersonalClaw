@@ -313,14 +313,18 @@ class TestDeclaredRiskNeedsNoPlumbing:
         Scoped to ``mcp_core`` and the category modules it aggregates; ``llm/scripted.py``
         (a scripted test backend) and ``browse/cdp.py`` (its own outcome shape) are
         legitimate writers of that key and are not core tool dicts."""
+        import importlib
         import pathlib
 
-        import personalclaw
         from personalclaw.mcp_core import _AGGREGATED_CATEGORY_MODULES
 
-        root = pathlib.Path(personalclaw.__file__).parent
-        names = ["mcp_core"] + [m.rsplit(".", 1)[-1] for m in _AGGREGATED_CATEGORY_MODULES]
-        paths = [root / f"{n}.py" for n in names]
+        # Resolved through the import system, not by joining the last dotted segment onto
+        # the package root. That shortcut was silently wrong for a NESTED category module and
+        # its own vacuity floor is what caught it: `personalclaw.computer_use.tools` (DCU-4)
+        # reduced to `tools.py`, pointing the census at an unrelated top-level module. Asking
+        # the module where it lives cannot drift from where it actually lives.
+        modules = ["personalclaw.mcp_core", *_AGGREGATED_CATEGORY_MODULES]
+        paths = [pathlib.Path(importlib.import_module(m).__file__ or "") for m in modules]
         # Vacuity floor: a mistyped path would scan nothing and pass. Assert the sweep
         # actually opened the modules, and enough of them to be the real set.
         assert all(p.is_file() for p in paths), [str(p) for p in paths if not p.is_file()]

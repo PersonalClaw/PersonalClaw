@@ -1151,6 +1151,14 @@ async def start_dashboard(
     # is match order) — the group partition + per-surface activation defaults.
     app.router.add_get("/api/tools/groups", api_tool_groups)
 
+    # Desktop computer use — the in-gateway dispatch the stdio shim forwards to. Internal
+    # only (loopback + X-Internal-Secret, see internal_paths below); the whole capability is
+    # OFF until the operator arms it out-of-band, and every call runs the keystone → app
+    # allowlist → index freshness → input-target screen → SEL audit chain.
+    from personalclaw.dashboard.handlers.computer_use import api_computer_use_dispatch
+
+    app.router.add_post("/api/computer-use/dispatch", api_computer_use_dispatch)
+
     # Manifest — the generated self-description (tools + routes + providers) an
     # agent reads to drive this instance instead of guessing signatures.
     from personalclaw.dashboard.handlers.manifest import api_manifest
@@ -1933,6 +1941,12 @@ async def start_dashboard(
                             "/api/channel/upload-file",
                             "/api/mcp/servers",
                             "/api/tools/invoke",
+                            # The computer-use shim runs in the mcp-core process and posts
+                            # here with the internal secret. Deliberately NOT in
+                            # mixed_internal_paths: no browser surface drives the desktop, and
+                            # admitting cookie auth on this one route would put the operator's
+                            # keyboard behind the weakest browser path.
+                            "/api/computer-use/dispatch",
                         }
                     ),
                     mixed_internal_paths=frozenset(

@@ -55,6 +55,33 @@ def create_automation_provider(config: dict[str, Any] | None = None) -> ToolProv
     )
 
 
+def create_computer_use_provider(config: dict[str, Any] | None = None) -> ToolProvider:
+    """Extension factory for the ``personalclaw-computer-use`` tool surface — in-process over
+    ``computer_use.tools`` (`DCU-4`'s seven ``computer_*`` tools).
+
+    Registered for the same reason every other aggregated category is: ``mcp_core``'s ACP
+    surface and the in-process catalog must not diverge
+    (``tests/test_native_tool_categories.py`` pins that in both directions), so a tool an ACP
+    CLI can call must also be one the Tools page, the manifest and the offline reference name.
+    A surface reachable by one agent and invisible to the operator is half a feature.
+
+    The provider changes NO authority. ``computer_use.tools`` is the thin shim either way — it
+    forwards to the gateway's ``/api/computer-use/dispatch`` over ``mcp_core._post``, so
+    in-process invocation is a loopback round trip rather than a second, shorter path into the
+    dispatch. That is deliberate: a branch on "am I inside the gateway" would give the one
+    security-sensitive transport in this package two code paths, and only one of them would be
+    exercised by whichever surface the next test happened to use. ``InProcessMcpToolProvider``
+    runs ``_call_tool`` in an executor thread, so the loopback cannot stall the event loop.
+    """
+    from personalclaw.agents.native.tools import InProcessMcpToolProvider
+
+    return InProcessMcpToolProvider(
+        module="personalclaw.computer_use.tools",
+        provider_name="personalclaw-computer-use",
+        display="PersonalClaw Computer Use",
+    )
+
+
 def create_artifacts_provider(config: dict[str, Any] | None = None) -> ToolProvider:
     """Extension factory for the ``personalclaw-artifacts`` tool surface — in-process
     over ``mcp_artifacts`` (the Artifacts entity tool group)."""
