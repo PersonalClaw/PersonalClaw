@@ -4195,12 +4195,13 @@
         {
           "id": "CA-6",
           "title": "S3 shared client contract doc + multi-gateway registry (amendment T3.3)",
-          "status": "todo",
+          "status": "done",
           "scope": "Session 3 T3.1 + Amendment T3.3; docs/guides/companion-apps.md + optional minimal shared TS helper in web/src/lib/; C1 endpoint model, {active, endpoints[]} registry, per-endpoint state namespacing, switcher spec, verbatim no-hub / no-gateway-to-gateway rule; reuses (not re-invents) the platform-resilience degraded-connection contract",
           "done_when": "contract is precise enough that desktop + mobile implement it without re-deciding; two paired gateways are switchable from one client with zero state bleed (distinct sessions/inbox/settings per endpoint id); the doc states the hub veto verbatim; degraded UI reuses the existing contract",
           "deps": [
             "EXT:PLATFORM-RESILIENCE:degraded-connection contract to reuse"
-          ]
+          ],
+          "pr": 1979
         },
         {
           "id": "CA-7",
@@ -7535,8 +7536,13 @@
         "plan": "BA"
       },
       {
-        "id": "CA-6",
-        "title": "S3 shared client contract doc + multi-gateway registry (amendment T3.3)",
+        "id": "CA-7",
+        "title": "S3 remote-endpoint auth path over wss (no new origin exemption)",
+        "plan": "CA"
+      },
+      {
+        "id": "CA-9",
+        "title": "S4 coordination docs: mobile task refs + future-platform recipe",
         "plan": "CA"
       },
       {
@@ -9899,9 +9905,9 @@
         "code": "CA",
         "plan": "COMPANION-APPS",
         "total_atoms": 9,
-        "done": 5,
+        "done": 6,
         "in_progress": 0,
-        "todo": 4,
+        "todo": 3,
         "blocked": 0
       },
       {

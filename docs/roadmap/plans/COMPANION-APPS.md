@@ -657,3 +657,61 @@ no-op for sessions with no device. No new route, exemption or credential surface
   `handlers/devices.py` registered by `register_device_routes`, `/pair` in `token_auth._BYPASS_EXACT`,
   `DevicesPanel.tsx` + `devicesPanel.test.tsx`, and the `/api/devices` routes. Verified by code on
   `origin/main`, not by the branch subject — a subject match is a screen, not a verdict.
+
+---
+
+## Execution log — CA-6 (S3 shared client contract + multi-gateway registry)
+
+- **CA-6 DONE.** `docs/guides/companion-apps.md` gains `## The shared client contract` (+199 lines) and
+  `web/src/lib/endpoints.ts` (333) + `endpoints.test.ts` (431, 33 tests) ship the registry the shells
+  import, so desktop (`CA-8`/T4.1) and mobile implement one contract instead of two.
+- **MEASURED — the namespacing obligation is the SHELL's, not the SPA's, and this reshaped the atom.**
+  A literal reading of T3.3's "caches/WS/prefs keyed by endpoint id" is a refactor of every web-storage
+  site in the dashboard (**47 non-test files** under `web/src`, e.g. the `cache:` sessionStorage mirror at
+  `web/src/lib/data/store.ts:50`). That would re-invent what the platform already gives:
+  `desktop/main.js:768` does `wc.loadURL(backendUrl)` — the shell loads the SPA **from the gateway's own
+  origin** — `:143` shows `backendUrl` is single-valued from that gateway's READY line, `grep -n partition
+  desktop/main.js` returns nothing (default partition), `web/src/lib/api.ts` is root-relative with **no
+  `base_url`/`API_BASE` concept at all**, and the socket is origin-relative
+  (`web/src/lib/useChatSocket.ts:32`). So switching gateways IS loading another origin, and browser origin
+  isolation already partitions every SPA store. The served SPA also cannot hold the registry — it is
+  re-downloaded from whichever gateway is active. What spans all N gateways is the **shell's own single
+  storage scope**, and that is the only place two brains can bleed. The doc says so with those anchors,
+  because a reader who assumes otherwise either re-namespaces the SPA pointlessly or forgets the shell.
+- **The key encoding is length-prefixed, and that is the substantive call.**
+  `ep:${id.length}:${id}:${logicalKey}` rather than `id + ':' + key`, because the obvious form is **not
+  injective**: `{id:'a', key:'b:c'}` and `{id:'a:b', key:'c'}` land in one slot — the exact bleed the module
+  exists to prevent, hidden inside the prevention mechanism. An encoding *property* was chosen over a
+  charset *rule* since the registry cannot police hand-edited or older-shell input; `parseEndpointKey` is
+  the inverse and is what lets `clearEndpointState` sweep by owner. The endpoint `id` is opaque and minted
+  at pair time, deliberately NOT the `base_url`: two rows can share a host and a URL changes (network move,
+  port reassign, Tailscale rename) without the gateway becoming a different brain, so id-as-URL would
+  silently orphan that endpoint's namespaced state on every such change. Unknown `kind` coerces to
+  `remote`, the less privileged value. Parsing is total — corrupt JSON, a missing or dangling `active`,
+  duplicate ids and a throwing `getItem` all resolve rather than raise, because a shell that dies on a bad
+  registry cannot reach the switcher that would fix it.
+- **Hub veto quoted verbatim**, machine-compared against this plan's amendment line after unwrapping the
+  blockquote: identical word for word, only soft-wrapped to the guide's width.
+- **CORRECTED — this plan's own C1 citations were stale and are fixed in the same PR.** The transport
+  paragraph cited `bind_token_ip` at `:970`, `check_token_ip` at `:957` and the cookie comment at `:954`,
+  and omitted the `dashboard/` path segment; those lines hold unrelated code. Measured:
+  `src/personalclaw/dashboard/token_auth.py:582` and `:587`, called at `:1055`, enforced at `:1041` behind
+  a `not from_cookie` guard, comment at `:1038-1040`. A contract doc whose upstream anchors do not resolve
+  is the failure mode this atom exists to prevent, so the drift was fixed rather than inherited.
+- **Gate:** web typecheck clean (`tsc --noEmit` and `tsconfig.sw.json`), 33/33 on `endpoints.test.ts`, the
+  FULL web suite **475 files / 5013 tests**, `npm run build` (524 assets, sw.js emitted), and 20 passed on
+  the two docs rails (`test_docs_lint_baseline.py`, `test_getting_started_walkthrough.py`). The full web
+  suite was run rather than a guessed subset because ~120 suites under `web/src` scan the tree
+  (`readdirSync`/`import.meta.glob`/`globSync`), not just the ~20 in `web/src/design/` — a subset would
+  have left unrun legs. Falsifications: dropping the id from the key → **11 red** (zero-bleed first);
+  naive `id + ':' + key` → **10 red**, failing on the collision itself
+  (`expected 'ep:a:b:c' not to be 'ep:a:b:c'`), the second reproduced independently before pushing. Each
+  mutation was restored from a file copy, never `git checkout`.
+- **Rail honesty:** the docs-drift ratchet's green is not vacuous here — `companion-apps.md` has no
+  baseline entry and `regressions()` scores an absent file as 0, so an injected dead link and a bad
+  `.py` citation were both confirmed to red it before the real run.
+- **DISCOVERY (not acted on) — `CA-7`'s and `CA-8`'s acceptance needs two live gateways.** This atom
+  specifies the switch; the "two paired gateways switchable with zero state bleed" *observation* over real
+  sessions/inbox/settings is T4.4's bar and lands with the desktop connect dialog, which is where a second
+  endpoint can actually be paired. Nothing in the shells reads the registry yet — `desktop/main.js` still
+  holds one `backendUrl` — so the helper is a contract with its first consumer still to come.
