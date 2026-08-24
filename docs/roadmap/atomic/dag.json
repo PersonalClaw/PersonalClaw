@@ -6389,13 +6389,14 @@
         {
           "id": "LV-1",
           "title": "S1 end-to-end visible slice: fire ladder review at loop end-of-run + confirm accept->surface->use loop",
-          "status": "todo",
+          "status": "done",
           "scope": "Session 1 (T1.1 recon map, T1.2 loop-complete-seam firing, T1.3 accept->surface->record_uses wiring, V1)",
           "done_when": "Execution log carries the caller map; a completed multi-step fixture loop enqueues <=1 proposal and an environment-failure fixture enqueues 0; integration test propose->accept->matching-prompt->usage-count-increments passes; V1 full loop (fixture home: run->proposal->approve->repeat->skill loads and usage records) observed with no auto-write anywhere",
           "deps": [
             "EXT:LEARNING-FLYWHEEL:skill-ladder synthesis machinery (run_skill_ladder_review + proposals.enqueue) steps 1-4",
             "EXT:INBOX-NOTIFICATIONS-UNIFICATION:proposals surface as inbox proposal kind (S4)"
-          ]
+          ],
+          "pr": 1975
         },
         {
           "id": "LV-2",
@@ -7723,8 +7724,18 @@
         "plan": "LMMV"
       },
       {
-        "id": "LV-1",
-        "title": "S1 end-to-end visible slice: fire ladder review at loop end-of-run + confirm accept->surface->use loop",
+        "id": "LV-2",
+        "title": "S2 legibility: per-run 'used N skills you approved' chip + session learned-chips with tap-through",
+        "plan": "LV"
+      },
+      {
+        "id": "LV-3",
+        "title": "S2 digest section: learning summary block (new/refined/pending counts + names)",
+        "plan": "LV"
+      },
+      {
+        "id": "LV-5",
+        "title": "S3 refinement arm: stumble detector -> refine proposal (unified diff) -> diff render + versioned accept",
         "plan": "LV"
       },
       {
@@ -10109,9 +10120,9 @@
         "code": "LV",
         "plan": "LEARNING-VISIBILITY",
         "total_atoms": 7,
-        "done": 1,
+        "done": 2,
         "in_progress": 0,
-        "todo": 6,
+        "todo": 5,
         "blocked": 0
       },
       {
