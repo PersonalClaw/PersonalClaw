@@ -1020,6 +1020,30 @@ async def judge_pair(
     )
 
 
+def _unjudgeable_pair(
+    reg: StudyRegistration, *, case_id: str, trial: int, detail: str
+) -> PairJudgement:
+    """A pair no judge was asked about, because an arm never produced an output.
+
+    Shaped exactly like a judge's own ``cannot_judge`` so every downstream consumer already
+    handles it: `agreement_rate` leaves it out of the denominator, `case_outcome` reads it as
+    no-signal, and the recorded ``samples`` carry the REASON rather than an empty tuple that
+    would look like a judge call that returned nothing.
+    """
+    return PairJudgement(
+        case_id=case_id,
+        trial=trial,
+        slot_a_arm=slot_a_arm_for(reg.study_id, case_id, trial),
+        direct_samples=(f"arm_unfinished: {detail}",),
+        swapped_samples=(f"arm_unfinished: {detail}",),
+        direct_winner=WINNER_CANNOT_JUDGE,
+        swapped_winner=WINNER_CANNOT_JUDGE,
+        outcome=OUTCOME_NO_SIGNAL,
+        judgeable=False,
+        cost_usd=None,
+    )
+
+
 def agreement_rate(pairs: Sequence[PairJudgement]) -> float | None:
     """Position-swap agreement over the pairs that produced a winner at BOTH positions.
 
@@ -1423,7 +1447,7 @@ async def run_study(
     cases: Sequence[StudyCase],
     old_template_body: str,
     new_template_body: str,
-    arm_runner: ArmRunner,
+    arm_runner: ArmRunner | None = None,
     live_rubric_text: str | None = None,
     caller: JudgeCaller | None = None,
     samples: int = DEFAULT_JUDGE_SAMPLES,
@@ -1440,7 +1464,17 @@ async def run_study(
        there is nothing to fall back to.
     3. Then the k paired runs, the locked checks supervisor-side in each arm's own output
        workspace, the blinded position-swapped judging, and the decision.
+
+    ``arm_runner`` defaults to the production runner
+    (:data:`personalclaw.evals.study_arms.live_arm_runner`) for the same reason ``caller``
+    defaults to ``live_judge_caller``: a required kwarg with no default meant no caller could
+    execute a template arm without first inventing one, which is why this function had zero
+    production importers. The import is deferred because ``study_arms`` imports this module.
     """
+    if arm_runner is None:
+        from personalclaw.evals.study_arms import live_arm_runner
+
+        arm_runner = live_arm_runner
     pinned_rubric = store.read_study_rubric(reg.study_id)
     state, detail = rubric_status(reg, live_rubric_text)
     if state != RUBRIC_OK:
@@ -1506,6 +1540,27 @@ async def run_study(
                             checks=checks,
                         )
                     )
+            unfinished = [a for a in ARMS if not outputs[a].ok]
+            if unfinished:
+                # An arm that did not finish is a MISSING measurement, not a bad answer. Judging
+                # its empty output against the other arm's real one would move the win rate on
+                # infrastructure failure — a provider outage would read as evidence that the
+                # other template is better. So the pair is recorded unjudgeable (which
+                # `agreement_rate` excludes from its denominator, and `case_outcome` counts as
+                # no-signal) and the judge is not called at all: there is nothing to compare,
+                # and paying for two presentations of it would be the same error with a bill.
+                pairs.append(
+                    _unjudgeable_pair(
+                        reg,
+                        case_id=case.case_id,
+                        trial=trial,
+                        detail="; ".join(
+                            f"{a}: {outputs[a].detail or 'the arm did not finish'}"
+                            for a in unfinished
+                        ),
+                    )
+                )
+                continue
             pairs.append(
                 await judge_pair(
                     reg,

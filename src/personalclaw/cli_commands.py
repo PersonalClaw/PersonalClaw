@@ -808,6 +808,118 @@ def _eval_harvest(args: argparse.Namespace) -> None:
     print(f"\nLibrary: {sc.installed_dir()}")
 
 
+async def _study(args: argparse.Namespace) -> None:
+    """Run (or preview) a pre-registered template A/B study (ES-5 / §2).
+
+    The invocation surface §2 had none of. Without it the instrument was complete and
+    unreachable: `run_study` had no production caller at all, so a pre-registered study could
+    be listed on the Learning page and never executed.
+
+    ``--dry-run`` prints the spend FIRST for exactly the reason ``judge-bench`` does, only
+    more so: a study is ``cases x k x 2`` ARM calls plus twice that many JUDGE calls, so a
+    ten-case suite at k=5 is 100 arm + 300 judge calls. A user who sees that number can
+    narrow it; a user who does not, pays for it.
+    """
+    from personalclaw.evals import studies, study_arms
+
+    if getattr(args, "list", False):
+        rows = studies.study_index()
+        if not rows:
+            print(
+                "No study has been registered yet. One is pre-registered whenever the "
+                "template refiner files a diff (`propose_template_diff`)."
+            )
+            return
+        for row in rows:
+            verdict = row.get("verdict") or "not run"
+            power = " [low_power]" if row.get("low_power") else ""
+            print(
+                f"{row['study_id']}\t{row.get('kind')}\t"
+                f"{(row.get('subject') or {}).get('template_id', '')}\t"
+                f"k={row.get('k')}\t{verdict}{power}"
+            )
+        return
+
+    view_id = str(getattr(args, "view", "") or "")
+    if view_id:
+        view = studies.study_view(view_id)
+        if view is None:
+            print(f"Error: no registered study {view_id!r}")
+            raise SystemExit(1)
+        print(json.dumps(view, indent=2, sort_keys=True))
+        return
+
+    study_id = str(getattr(args, "run", "") or "")
+    if not study_id:
+        print("Nothing to do. Pass --list, --view <id> or --run <id>.")
+        raise SystemExit(1)
+
+    from personalclaw.evals import store as evals_store
+
+    raw = evals_store.read_study_registration(study_id)
+    if raw is None:
+        print(f"Error: no registered study {study_id!r}")
+        raise SystemExit(1)
+    reg = studies.registration_from_dict(raw)
+
+    samples = int(getattr(args, "samples", 0) or 0) or studies.DEFAULT_JUDGE_SAMPLES
+    try:
+        old_body, new_body = await study_arms.arm_bodies_for_study(reg)
+    except studies.StudyError as exc:
+        # A study whose arms cannot be built is refused BEFORE the preflight, so the printed
+        # spend is never for a matrix that could not have run.
+        print(f"Refusing: {exc}")
+        raise SystemExit(1) from exc
+
+    suite = study_arms.harvested_study_cases(
+        workflow_name=str(reg.subject.get("template_id") or "")
+    )
+    pre = study_arms.preflight(
+        reg,
+        cases=suite.cases,
+        old_template_body=old_body,
+        new_template_body=new_body,
+        samples=samples,
+        refusal=suite.refusal,
+    )
+    print(
+        f"Study {reg.study_id} ({reg.kind}) on "
+        f"{reg.subject.get('template_id') or '<unnamed template>'}\n" + pre.render() + "\n"
+    )
+    if pre.refusal:
+        raise SystemExit(1)
+    if getattr(args, "dry_run", False):
+        print("--dry-run: nothing was called.")
+        return
+
+    try:
+        result = await study_arms.run_registered_study(
+            study_id,
+            old_template_body=old_body,
+            new_template_body=new_body,
+            samples=samples,
+        )
+    except studies.StudyError as exc:
+        print(f"Refusing: {exc}")
+        raise SystemExit(1) from exc
+
+    agreement = "unmeasurable" if result.agreement is None else f"{result.agreement:.2f}"
+    print(f"Verdict: {result.verdict}" + (" [low_power]" if result.low_power else ""))
+    print(f"  win rate:  {result.win_rate}")
+    print(f"  agreement: {agreement} (floor {result.agreement_floor})")
+    if result.fail_reason:
+        print(f"  fail reason: {result.fail_reason}")
+    for hit in result.locked_regressions:
+        print(f"  locked regression: {hit}")
+    if result.evidence_ref:
+        print(f"  evidence: {result.evidence_ref}")
+    if result.demotion_proposal_id:
+        print(f"  demotion proposal: {result.demotion_proposal_id}")
+    if result.calibration_ref:
+        print(f"  judge calibration filed: {result.calibration_ref}")
+    print(f"\nArtifacts: {evals_store.study_dir(study_id)}")
+
+
 def _ablation(args: argparse.Namespace) -> None:
     """Run (or preview) the harness-ablation runner / skills bench (ES-7 §3.1 + §3.3).
 

@@ -10,6 +10,22 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Added
 
+- **"Is this template edit actually better?" is now a question you can answer, not settle by
+  taste.** When PersonalClaw proposes a change to one of your workflow templates, it now also
+  registers a formal A/B study for that change — the old template and the new one, run side by
+  side over your own past runs, judged blind. The study's design is fixed and hashed *before* the
+  first run, so nobody (including PersonalClaw) can move the goalposts after seeing the numbers;
+  editing the scoring rubric mid-study voids the study instead of quietly changing the answer.
+  **Nothing spends your money without you asking.** Registering a study is free and automatic.
+  Running one costs real model calls, so it is always something you invoke —
+  `personalclaw study --list` shows what is registered, and `personalclaw study --run <id>
+  --dry-run` tells you exactly how many calls it would take *before* it takes them.
+  **A study that cannot measure anything says so.** Too few past runs to be meaningful is
+  reported as low power rather than dressed up as a result, and no past runs at all is a refusal
+  with an exit code — not a green tick over an empty list. Two candidate versions that turn out
+  to be identical are refused outright, because that would report a confident "no difference"
+  about a comparison that never happened.
+
 - **A resumed session no longer redoes yesterday's finished work.** Picking a long task back up used
   to hand the agent whatever prose survived and leave it to *infer* how far it had got — and it
   inferred wrong, cheerfully re-running a step that had already completed. A resumed or compacted

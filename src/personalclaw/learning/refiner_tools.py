@@ -85,6 +85,9 @@ def file_template_diff(
     nobody authored), and nothing is filed. A legal diff is enqueued through the shared
     human-gated queue with its typed ops carried on the change manifest's ``targeted_fix`` (the
     field the inbox already reads to stamp a risk tier), so acceptance can apply it mechanically.
+
+    A filed diff also PRE-REGISTERS its §2 A/B study (``study_id`` in the outcome) — see
+    :func:`_preregister_study` for why registering here and running elsewhere is the split.
     """
     if not isinstance(ops, list) or not ops:
         return {"filed": False, "rejected": ["a diff needs at least one op"]}
@@ -121,4 +124,35 @@ def file_template_diff(
         "verdict": verdict.value,
         "proposal_id": getattr(prop, "id", ""),
         "risk_tier": refiner.risk_tier(ops),
+        "study_id": _preregister_study(workflow_name, prop, rationale) if prop is not None else "",
     }
+
+
+def _preregister_study(workflow_name: str, prop: Any, rationale: str) -> str:
+    """Pre-register the §2 A/B study for a just-filed template diff (ES-5). Spends nothing.
+
+    THIS is the flywheel's link into the evaluation substrate. Pre-registration must precede
+    arm 1 — that is the whole of §2.1's immutability — and it is free, so it belongs here, at
+    the moment the diff exists. What deliberately does NOT happen here is the RUN: a study
+    over the harvested suite is ``cases x k x 2`` arm calls plus twice that many judge calls,
+    and an agent tool call that silently started a three-digit model-call matrix is precisely
+    what ES-4's spend preflight exists to prevent. The run is `personalclaw study --run`.
+
+    Best-effort by construction: the proposal is already filed and returning a 500 here would
+    strand a legal diff over a missing eval artifact. A failure yields ``""`` — an honest "no
+    study" — never a fabricated id.
+    """
+    try:
+        from personalclaw.evals import study_arms
+
+        reg = study_arms.register_template_study(
+            workflow_name=workflow_name,
+            hypothesis=rationale,
+            proposal_id=str(getattr(prop, "id", "") or ""),
+        )
+        return reg.study_id
+    except Exception:  # noqa: BLE001 - a filed proposal must never be lost to an eval artifact
+        logger.warning(
+            "refiner: could not pre-register a study for %s", workflow_name, exc_info=True
+        )
+        return ""
