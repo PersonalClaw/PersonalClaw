@@ -90,8 +90,10 @@ const FENCE = /^ {0,3}(`{3,}|~{3,})(.*)$/
 
 /** The heading's source text reduced to the words a reader recognizes.
  *
- *  Display only. The inline forms are the ones `documents/from_markup.py`'s `_strip_inline`
- *  already strips (code spans, emphasis, links), plus GFM strikethrough and images, since
+ *  Display only, and deliberately NOT what the backend does: `documents/from_markup.py`
+ *  parses these same inline forms (code spans, emphasis, links) into `Run`s so a generated
+ *  document can carry the formatting, while this panel prints one plain line and has nowhere
+ *  to put it. Also handled here: GFM strikethrough and images, since
  *  `ui/Markdown` loads remark-gfm. Leaving the markers in would print literal backticks and
  *  asterisks in the panel; stripping them is safe here in a way it would NOT be for a
  *  slug-keyed outline, which is the whole point of keying on the offset. */

@@ -297,24 +297,40 @@ def test_no_measured_character_is_ever_dropped(src: str) -> None:
 # The clean break: `_strip_inline` does not survive anywhere
 # --------------------------------------------------------------------------------------
 
-_DOCUMENTS_PKG = Path(__file__).resolve().parents[1] / "src" / "personalclaw" / "documents"
+_REPO = Path(__file__).resolve().parents[1]
+
+#: Every tree that SHIPS, the file types to read in it, and names that are genuinely present
+#: there. `docs/` and this file are excluded deliberately: the plan and the compatibility
+#: table above MUST keep naming `_strip_inline` for the deletion to stay auditable.
+_SHIPPED_SOURCE = (
+    (
+        _REPO / "src" / "personalclaw",
+        ("*.py",),
+        ("parse_inline", "inline_text", "document_from_markdown", "class Block"),
+    ),
+    (_REPO / "web" / "src", ("*.ts", "*.tsx"), ("displayText",)),
+)
 
 
-def _documents_package_source() -> str:
-    assert _DOCUMENTS_PKG.is_dir(), f"documents package not found at {_DOCUMENTS_PKG}"
-    files = sorted(_DOCUMENTS_PKG.rglob("*.py"))
-    assert len(files) >= 3, f"only {len(files)} python files scanned — search is too narrow"
-    return "\n".join(p.read_text(encoding="utf-8") for p in files)
+def test_strip_inline_is_cited_nowhere_in_shipped_source() -> None:
+    """The old name is gone from the whole product, not just the package that held it.
 
-
-def test_strip_inline_is_gone_from_the_documents_package() -> None:
-    blob = _documents_package_source()
-    # Vacuity guard: prove the SAME search finds names that ARE present. Without this a
-    # typo'd needle, an empty blob or a wrong path would make the assertion below pass
-    # forever while `_strip_inline` sat there untouched.
-    for present in ("parse_inline", "inline_text", "document_from_markdown", "class Block"):
-        assert present in blob, f"vacuity guard failed: {present!r} not found by this search"
-    assert "_strip_inline" not in blob
+    Scoping this to `documents/` — where the function lived — is the narrow reading that let
+    `web/src/pages/knowledge/readingOutline.ts` go on citing `_strip_inline` for its stripping
+    behaviour long after that behaviour was INVERTED into run parsing. A dangling citation of a
+    deleted function is how the old mental model comes back, so the rail spans both trees.
+    """
+    for root, globs, present_names in _SHIPPED_SOURCE:
+        assert root.is_dir(), f"shipped source tree not found at {root}"
+        files = sorted(path for pattern in globs for path in root.rglob(pattern))
+        assert len(files) >= 3, f"only {len(files)} files scanned under {root} — too narrow"
+        blob = "\n".join(p.read_text(encoding="utf-8") for p in files)
+        # Vacuity floor, PER TREE: the same read must find names that ARE there. Without it a
+        # typo'd needle, a wrong path or an empty blob keeps this green forever while the
+        # citation sits in the file — exactly the false green that hid the web/ one.
+        for present in present_names:
+            assert present in blob, f"vacuity guard failed: {present!r} not found under {root}"
+        assert "_strip_inline" not in blob, f"`_strip_inline` is still cited under {root}"
 
 
 # --------------------------------------------------------------------------------------

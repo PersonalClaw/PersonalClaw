@@ -1401,7 +1401,7 @@
         {
           "id": "DFE-2",
           "title": "Style-carrying document model + from_markup runs + docx writer emits new fields",
-          "status": "todo",
+          "status": "done",
           "scope": "Session 1 T1.1\u2013T1.3; \u00a7C1 (Run/ParagraphStyle/PageSetup/Cell + additive Block/DocumentModel fields); soul guardrails 1 (vendor-neutral) & 5 (writers stay pure)",
           "done_when": "Every existing model test passes untouched; a runs-only Block answers .text and a cells-only table answers .rows via __post_init__ derivation; markdown inline formatting (**bold**/*italic*/`code`/[t](url)) round-trips into Runs and old _strip_inline behavior is gone (not left beside it); a bold run reads back bold via python-docx.",
           "deps": [
@@ -7583,8 +7583,8 @@
         "plan": "DCU"
       },
       {
-        "id": "DFE-2",
-        "title": "Style-carrying document model + from_markup runs + docx writer emits new fields",
+        "id": "DFE-3",
+        "title": "First real docx\u2192model parser with LossReport + parse\u2192write\u2192parse round-trip proof",
         "plan": "DFE"
       },
       {
@@ -9668,9 +9668,9 @@
         "code": "DFE",
         "plan": "DOCUMENT-FIDELITY-EDITOR",
         "total_atoms": 8,
-        "done": 1,
+        "done": 2,
         "in_progress": 0,
-        "todo": 7,
+        "todo": 6,
         "blocked": 0
       },
       {

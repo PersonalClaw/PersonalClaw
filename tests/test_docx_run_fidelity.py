@@ -13,14 +13,24 @@ from __future__ import annotations
 
 import io
 import zipfile
-from dataclasses import dataclass, field
+from dataclasses import MISSING, dataclass, field, fields
 from pathlib import Path
 
+import pytest
 from docx import Document
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.shared import Inches, Pt
 
-from personalclaw.documents.model import BLOCK_KINDS, Block, DocumentModel
+from personalclaw.documents.from_markup import document_from_markdown
+from personalclaw.documents.model import (
+    BLOCK_KINDS,
+    Block,
+    Cell,
+    DocumentModel,
+    PageSetup,
+    ParagraphStyle,
+    Run,
+)
 from personalclaw.documents.writers import docx_writer
 from personalclaw.documents.writers.docx_writer import render_docx
 from personalclaw.knowledge.readers import FileReader
@@ -417,6 +427,93 @@ def test_a_run_carrying_document_re_reads_through_the_real_reader(tmp_path):
 
     assert meta["format"] == "docx"
     assert "plain strong, see the docs" in text, "the link's words must survive the reader"
+
+
+# ----------------------------------------- the SHIPPED dataclasses, not just the doubles
+
+#: Each double declared at the top of this file, beside the dataclass it stands in for.
+#: The doubles pin the writer's contract in isolation, which is worth having — but on their
+#: own they pin it to a shape `model.py` is free to walk away from: rename `Run.bold` and the
+#: writer stops emitting bold in production while every test above stays green, because the
+#: doubles keep the old name. No other test feeds the writer a real `Run`, so this is the
+#: link that makes those assertions statements about what we actually ship.
+_DOUBLES = ((_Run, Run), (_Style, ParagraphStyle), (_Cell, Cell), (_Page, PageSetup))
+
+
+def _field_spec(cls) -> dict:
+    """Field names mapped to their default VALUES — a rename, a drop and a changed default
+    are the three ways a double goes stale, and names alone would only catch two."""
+    return {
+        spec.name: (spec.default_factory() if spec.default_factory is not MISSING else spec.default)
+        for spec in fields(cls)
+    }
+
+
+@pytest.mark.parametrize(
+    "double,real", _DOUBLES, ids=["Run", "ParagraphStyle", "Cell", "PageSetup"]
+)
+def test_each_double_matches_its_shipped_dataclass_field_for_field(double, real) -> None:
+    assert _field_spec(double) == _field_spec(real), (
+        f"{double.__name__} has drifted from the shipped {real.__name__}; every assertion "
+        "made through it is now about a shape this repo does not ship"
+    )
+
+
+def test_the_parity_check_notices_a_drifted_double() -> None:
+    """Vacuity floor: parity that cannot fail is not parity."""
+
+    @dataclass
+    class _Renamed:  # `bold` under a new name
+        text: str = ""
+        strong: bool = False
+        italic: bool = False
+        code: bool = False
+        link: str = ""
+
+    @dataclass
+    class _Dropped:  # `link` gone
+        text: str = ""
+        bold: bool = False
+        italic: bool = False
+        code: bool = False
+
+    @dataclass
+    class _Redefaulted:  # a formatting flag that arrives ENABLED
+        text: str = ""
+        bold: bool = True
+        italic: bool = False
+        code: bool = False
+        link: str = ""
+
+    for stale in (_Renamed, _Dropped, _Redefaulted):
+        assert _field_spec(stale) != _field_spec(Run), f"{stale.__name__} read as up to date"
+    # ...and the same check calls the real double current, or it would condemn everything.
+    assert _field_spec(_Run) == _field_spec(Run)
+
+
+# ------------------------------- the whole chain: markup → model → bytes → python-docx
+
+
+def test_markdown_bold_survives_markup_model_bytes_and_read_back() -> None:
+    """DFE-2's clause across the ENTIRE chain, which nothing else in the repo joins.
+
+    Every test above starts from a hand-built double, and the markup suite stops at the
+    model. Neither can catch a break BETWEEN the parser's `Run` and the writer that consumes
+    it, and that seam is the only place the atom's promise actually lives.
+    """
+    model = document_from_markdown(f"Some **strong** words and a [link]({_URL}).")
+    assert type(model.blocks[0].runs[0]) is Run, "the chain must carry the SHIPPED Run"
+
+    para = _reopen(render_docx(model)).paragraphs[0]
+    reread = [(run.text, run.bold) for run in para.runs]
+
+    assert ("strong", True) in reread, f"bold did not survive the chain: {reread}"
+    assert ("Some ", None) in reread, "a plain run must inherit, not declare bold OFF"
+    # The link's words live in `w:hyperlink`, NOT among `w:p`'s own runs — so `para.runs`
+    # cannot see them and `para.text` is the surface that proves nothing was dropped. That
+    # `.text` includes them at all is precisely what the python-docx >=1.1 floor buys.
+    assert "link" not in dict(reread)
+    assert para.text == "Some strong words and a link."
 
 
 # ------------------------------------------------------ soul guardrail 5: writers  pure

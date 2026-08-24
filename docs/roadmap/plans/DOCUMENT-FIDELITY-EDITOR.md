@@ -612,3 +612,70 @@ correct URL and returns `200 application/pdf`.
   exception into its outcome callback** rather than raising, so a writer failure presents to the caller as
   "no artifact appeared" instead of an error. It surfaced here as two `IndexError`s in
   `test_documents.py` that were one hop downstream of the real cause.
+
+- **2026-08-24 — `DFE-2` VERIFIED MERGED, and the clean break finished where it had stopped short.**
+  The entry above ended "flip it when the PR lands". It landed: `1dc5f1b7` is an ancestor of `origin/main`
+  (`827751b9` at the start of this session, `9e0f727b` by the end — the train advanced under it, touching
+  neither the documents package nor any file here), so `dag.json`'s `DFE-2: todo` is stale bookkeeping
+  rather than open work. **Flipping it to `done` is left to the owner** — this session does not edit
+  `dag.json`.
+  Re-verified rather than taken on trust — 231 tests green across `test_documents.py`,
+  `test_document_model_runs.py`, `test_markdown_inline_runs.py`, `test_docx_run_fidelity.py` — and each
+  clause falsified by mutating the LIVE line: gating the runs→text derivation off reds 3, gating
+  cells→rows off reds 2, `element.bold = None` in the docx writer reds 2 (including the python-docx
+  read-back), and re-inserting the name into the package reds the clean-break rail. Clause 1 needs no
+  argument: `1dc5f1b7` never touched `tests/test_documents.py`, which the commit's own file list shows.
+  **The clean break was one file short of complete, and the rail's scope is why.** A repo-wide sweep for
+  the deleted name found `web/src/pages/knowledge/readingOutline.ts:93` still citing
+  ``documents/from_markup.py``'s `_strip_inline` — and citing it for behaviour that DFE-2 inverted, telling
+  the next reader the backend still strips inline formatting when it now parses it into `Run`s. The
+  existing rail scanned `src/personalclaw/documents/` only, so it could never see a frontend comment about
+  a python function. **A dangling citation of a deleted function is how the old mental model comes back**,
+  which is the thing "not left beside it" is actually protecting. Fixed the comment to say what the two
+  sides now do differently, and REPLACED the narrow rail with one spanning both shipped trees
+  (`src/personalclaw/**/*.py` + `web/src/**/*.{ts,tsx}`) rather than adding a second rail beside it — the
+  wider python leg strictly subsumes the old one, so keeping both would have been the dual path the tenet
+  forbids. `docs/` and the test itself stay out of scope on purpose: the compatibility table must keep
+  naming `_strip_inline` for the deletion to remain auditable. Both legs falsified — restoring the
+  original web citation reds it with "still cited under .../web/src", and re-pointing the web leg at a
+  real, 963-file directory that lacks its needle trips the per-tree vacuity floor (breadth floor passes
+  there, so only the vacuity guard can catch that shape).
+  **Runtime import sweep, because `ignore_missing_imports` means mypy cannot catch a stranded first-party
+  import:** 961 `personalclaw.*` modules imported and inspected, **0** still exposing a `_strip_inline`
+  attribute; `from personalclaw.documents.from_markup import _strip_inline` raises `ImportError`; the sweep
+  carries its own vacuity floor (the same inspection finds `parse_inline`). Grep agrees — 0 occurrences in
+  `src/`, and after this change 0 in `web/src/`.
+  **Clause 4 was proved against a DOUBLE, not the shipped model — a second gap, and the larger one.**
+  `test_docx_run_fidelity.py` declares its own `_Run`/`_Style`/`_Cell`/`_Page` dataclasses and feeds those
+  to the writer; its docstring defends this ("the writer only ever READS attributes off them"), and it is
+  a reasonable way to pin the writer alone. But **no test in the repo imported `model.Run` at all**
+  (`git grep 'from personalclaw.documents.model import' -- tests/` returns `BLOCK_KINDS, Block,
+  DocumentModel` and nothing more), so nothing bound the doubles to the shape we ship, and nothing joined
+  markup → model → bytes → read-back: the fidelity suite starts at a hand-built double, and the markup
+  suite stops at the model. The seam BETWEEN the parser's `Run` and the writer that consumes it — the only
+  place the atom's promise actually lives — had no coverage from either side.
+  Closed with two additions, both measured against the pre-existing suites rather than asserted:
+  · a **field-for-field parity rail** (names → default VALUES, so a rename, a drop and a changed default
+    are all caught) binding each double to its dataclass, with a vacuity floor that constructs all three
+    drift shapes and confirms the check condemns them while calling the real double current. Falsified by
+    adding `strike: bool = False` to `model.Run`: the parity rail reds, and **the other 29 fidelity tests
+    plus all 27 of `test_document_model_runs.py` stay GREEN** — the drift is invisible to every
+    pre-existing test, which is the whole argument for the rail.
+  · the **full-chain round trip**: `document_from_markdown` → `render_docx` → reopen → `bold is True`,
+    asserting `type(...) is Run` so it cannot silently drift back onto a double. Falsified with a
+    realistic precedence bug — letting `block.text` win over `block.runs` in the paragraph dispatch, which
+    looks harmless until you notice `__post_init__` ALWAYS derives `text` from `runs`, so every genuinely
+    parsed document loses all formatting. **It reds ONLY the new chain test (30 others green)**, because
+    the doubles set `.runs` after construction and so never carry a derived `text`, and the markup suite
+    does not import the writer at all. That is the defect class the doubles were structurally unable to
+    see.
+  The chain test also pins why the dependency floor moved: the link's words live in `w:hyperlink`, so
+  `para.runs` cannot reach them and `para.text` is the only surface that proves nothing was dropped —
+  and `.text` includes them only from python-docx 1.1 onward.
+  **Still correctly out of scope** (unchanged from the entry above): `from_markup` emits plain strings for
+  markdown table cells. The clause is about the model's `rows`←`cells` derivation, which holds; teaching
+  the parser to emit `Cell`s is DFE-3 territory.
+  **Brief correction:** the driving brief said the atom's `done_when` was truncated in the atom index. It
+  is not — `dag.json`'s `DFE-2.done_when` is the complete four-clause sentence, and the brief quoted it
+  verbatim. The clause list is exactly T1.1 + T1.2 + T1.3's "Done when" columns, and T1.4/T1.5 belong to
+  `DFE-3`.

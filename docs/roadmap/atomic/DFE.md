@@ -11,7 +11,7 @@ Each atom below executes start-to-finish in one go. If an atom lists dependencie
 | Atom | Status | Title | Depends on | Done when |
 |---|---|---|---|---|
 | `DFE-1` | ✅ | Fix the artifact surface: register missing kinds, kind-icon cards, pdf artifact preview | — | A docx artifact reads 'Word document' not 'Widget' and is filterable in the library toolbar; office cards show a kind icon instead of a broken <img> while image cards still thumbnail (test); a generated pdf artifact previews inline and a pdf file still previews (both asserted). V0 gate holds. |
-| `DFE-2` | ⬜ | Style-carrying document model + from_markup runs + docx writer emits new fields | `EXT:DOCUMENT-HANDLING-TOOLS:owns model.py + the four writers this extends (DONE)` | Every existing model test passes untouched; a runs-only Block answers .text and a cells-only table answers .rows via __post_init__ derivation; markdown inline formatting (**bold**/*italic*/`code`/[t](url)) round-trips into Runs and old _strip_inline behavior is gone (not left beside it); a bold run reads back bold via python-docx. |
+| `DFE-2` | ✅ | Style-carrying document model + from_markup runs + docx writer emits new fields | `EXT:DOCUMENT-HANDLING-TOOLS:owns model.py + the four writers this extends (DONE)` | Every existing model test passes untouched; a runs-only Block answers .text and a cells-only table answers .rows via __post_init__ derivation; markdown inline formatting (**bold**/*italic*/`code`/[t](url)) round-trips into Runs and old _strip_inline behavior is gone (not left beside it); a bold run reads back bold via python-docx. |
 | `DFE-3` | ⬜ | First real docx→model parser with LossReport + parse→write→parse round-trip proof | `DFE-2` | paragraph↔table order preserved on an interleaved fixture; each unrepresentable construct adds a LossReport item; parse→write→parse yields an equal model across every BLOCK_KIND plus runs/styles/spans/page-setup, and a deliberate writer regression fails the test. V1 gate holds (incl. a Word-authored fixture reporting its losses honestly). |
 | `DFE-4` | ⬜ | Binary artifact write path + model read/render endpoints | `DFE-3` | a stale If-Match is refused 409; an oversized body is refused before buffering; a mime/kind mismatch is refused; an accepted write bumps exactly one version and logs one SEL row with byte count; GET /model returns parsed model + loss report and the render round trip is fully server-side (browser never sees OOXML); offline route reference regenerated. |
 | `DFE-5` | ⬜ | Editing surface: non-Monaco renderer slot, the model editor, lossy-edit contract, config | `DFE-4` | every existing content type still renders Monaco (asserted); an office type mounts the new editor; a user bolds a word, saves, and the downloaded file opens bold in Word (read-back); a lossy doc warns before edit and at save-confirm and revert restores pre-edit bytes exactly (byte-compare); test_config_roundtrip green and document_editing=off restores today's read-only preview. V2 gate holds (incl. two-tab race → 409, not silent loss). |
@@ -31,7 +31,7 @@ Session 0 (T0.1–T0.3) + Design bullet S0
 
 ### `DFE-2` — Style-carrying document model + from_markup runs + docx writer emits new fields
 
-**Status:** todo
+**Status:** done
 
 Session 1 T1.1–T1.3; §C1 (Run/ParagraphStyle/PageSetup/Cell + additive Block/DocumentModel fields); soul guardrails 1 (vendor-neutral) & 5 (writers stay pure)
 
