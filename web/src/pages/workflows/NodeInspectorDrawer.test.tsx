@@ -108,6 +108,118 @@ describe('NodeInspectorDrawer', () => {
   })
 })
 
+// ── SELF-VERIFICATION Success Criterion #6: the skip is VISIBLE IN THE RUNS SURFACE ──────
+//
+// #6 asks for "a ledger-only skip record with a one-line rationale (visible in the runs surface,
+// no full run spent)". The write half shipped with SV-9; the rendering half did not — the ledger
+// list showed each row's `kind` and dropped its `sha`/`impact`/`rationale`, so the Self-QA
+// companion's per-commit skips arrived as N identical words. These pins are on RENDERED DOM,
+// because "the field reached the component" is exactly the assertion that passed while the
+// surface said nothing.
+//
+// The load-bearing case is SEVERAL rows under ONE node id — the companion writes one per
+// test-only commit, all with the same `node_id` and the same `instance_path`. A surface that
+// showed only the latest, or folded them by content, would lose skips while still looking
+// populated, and a fixture with a single row cannot see that.
+
+/** Three skips + the node's own completion, exactly as `record_triage` then the engine write
+ *  them: one `step_skipped` per test-only commit under ONE instance path, then `step_completed`.
+ *  Two of the three share an impact class, so a fold keyed on anything but identity drops one. */
+const TRIAGE_ROWS = [
+  {
+    kind: 'step_skipped', node_id: 'triage', instance_path: 'root.children[0]', event_id: 'r-evt-1',
+    sha: 'a1b2c3d4e5f60718293a4b5c6d7e8f9012345678', impact: 'test',
+    rationale: 'assertion maintenance only — 3 test file(s), no shipped code',
+  },
+  {
+    kind: 'step_skipped', node_id: 'triage', instance_path: 'root.children[0]', event_id: 'r-evt-2',
+    sha: 'bb11223344556677889900aabbccddeeff112233', impact: 'none',
+    rationale: 'no runtime surface — 2 doc/CI file(s) only',
+  },
+  {
+    kind: 'step_skipped', node_id: 'triage', instance_path: 'root.children[0]', event_id: 'r-evt-3',
+    sha: 'cc99887766554433221100ffeeddccbbaa998877', impact: 'test',
+    rationale: 'assertion maintenance only — 1 test file(s), no shipped code',
+  },
+  { kind: 'step_completed', node_id: 'triage', instance_path: 'root.children[0]', event_id: 'r-evt-4', state: 'done' },
+]
+
+describe('the ledger list surfaces a triage skip (SELF-VERIFICATION SC#6)', () => {
+  beforeEach(() => vi.clearAllMocks())
+
+  async function openWith(rows: Array<Record<string, unknown>>) {
+    workflowRunNodeInspect.mockResolvedValue(inspect({ node_id: 'triage', ledger_events: rows }))
+    render(<NodeInspectorDrawer runId="run-1" nodeId="triage" onClose={() => {}} />)
+    return within(await screen.findByTestId('ledger-events'))
+  }
+
+  it('renders EVERY row under one node id — three skips are three rows, not one', async () => {
+    const list = await openWith(TRIAGE_ROWS)
+    // Four rows in, four rows out. Nothing collapsed, nothing deduped, nothing latest-only.
+    expect(list.getAllByRole('listitem')).toHaveLength(4)
+    expect(screen.getAllByTestId('ledger-event')).toHaveLength(4)
+    // The count beside the label is the user-visible cross-check on the same claim.
+    expect(screen.getByText('Ledger events (4)')).toBeInTheDocument()
+    // Three distinct skips, each with its OWN sha — the fold-detector: two of the three share an
+    // impact class, so any content-keyed collapse would render two shas here instead of three.
+    expect(screen.getAllByTestId('ledger-sha')).toHaveLength(3)
+    for (const row of TRIAGE_ROWS.slice(0, 3)) {
+      expect(screen.getByText(row.sha as string)).toBeInTheDocument()
+    }
+  })
+
+  it('renders each row\'s sha, impact and rationale — the three fields the skip record carries', async () => {
+    await openWith(TRIAGE_ROWS)
+
+    const rationales = screen.getAllByTestId('ledger-rationale').map((n) => n.textContent)
+    // Each rationale is present IN FULL. An exact equality (not a substring match) is the pin
+    // against a clamp: a one-line reason clipped mid-sentence reads as content and answers
+    // nothing, which is the same silence the row exists to break.
+    expect(rationales).toEqual([
+      'assertion maintenance only — 3 test file(s), no shipped code',
+      'no runtime surface — 2 doc/CI file(s) only',
+      'assertion maintenance only — 1 test file(s), no shipped code',
+    ])
+    // The sha is passed through WHOLE — a 40-char hex a user can paste into `git show`.
+    expect(screen.getByText(TRIAGE_ROWS[0].sha as string).textContent).toHaveLength(40)
+    // The impact class is rendered per row, so `test` and `none` are told apart on the surface
+    // rather than both reading as "skipped".
+    expect(screen.getAllByTestId('ledger-impact').map((n) => n.textContent)).toEqual(['test', 'none', 'test'])
+  })
+
+  it('tells a skip apart from a node that ran — the "no full run spent" half', async () => {
+    await openWith(TRIAGE_ROWS)
+    // The kind vocabulary stays verbatim on the surface, so the three ledger-only skips and the
+    // one row for work that actually executed are distinguishable without opening the file.
+    expect(screen.getAllByTestId('ledger-kind').map((n) => n.textContent)).toEqual([
+      'step_skipped', 'step_skipped', 'step_skipped', 'step_completed',
+    ])
+    // And a skip row carries a reason while the completion does not — `within` scopes each
+    // assertion to its own row, so a rationale rendered on the wrong row fails here.
+    const rows = screen.getAllByTestId('ledger-event')
+    expect(within(rows[0]).getByTestId('ledger-rationale')).toBeInTheDocument()
+    expect(within(rows[3]).queryByTestId('ledger-rationale')).not.toBeInTheDocument()
+  })
+
+  // VACUITY FLOOR. Every assertion above queries a testid; a renderer that emitted those elements
+  // unconditionally (or a query that matched anything) would pass them all just as happily. This
+  // is the same fixture shape the drawer has always been given — plain rows carrying only a kind —
+  // and it must produce ZERO of the three new elements. If this test ever goes green alongside a
+  // broken renderer, the pins above were measuring their own scaffolding.
+  it('renders NO sha/impact/rationale element for rows that carry none', async () => {
+    const list = await openWith([{ kind: 'step_completed' }, { kind: 'output_written' }])
+    expect(list.getAllByRole('listitem')).toHaveLength(2)
+    // the kind still renders — so the list is genuinely populated, and the absences below are
+    // about the fields, not about an empty surface.
+    expect(screen.getAllByTestId('ledger-kind').map((n) => n.textContent)).toEqual([
+      'step_completed', 'output_written',
+    ])
+    expect(screen.queryAllByTestId('ledger-sha')).toHaveLength(0)
+    expect(screen.queryAllByTestId('ledger-impact')).toHaveLength(0)
+    expect(screen.queryAllByTestId('ledger-rationale')).toHaveLength(0)
+  })
+})
+
 describe('WorkflowRunDetail node rows expose the Inspect affordance', () => {
   beforeEach(() => {
     vi.clearAllMocks()

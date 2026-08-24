@@ -5,6 +5,7 @@ import { Skeleton, LoadingStatus } from '../../ui/ListScaffold'
 import { InlineError } from '../../ui/InlineError'
 import { api, ApiError, type NodeInspect } from '../../lib/api'
 import { accentChip } from '../../design/accent'
+import { ledgerRowDetail, ledgerRowKey } from './ledgerRowDetail'
 
 /** The per-node inspector drawer (WORKFLOWS-V2 / WV-10).
  *
@@ -203,16 +204,43 @@ function NodeInspectBody({ data }: { data: NodeInspect }) {
         )}
       </FieldBlock>
 
+      {/* Ledger events — EVERY row this node's slice carries, in journal order, each rendered with
+          whatever it says rather than just its kind. Never collapsed and never latest-only: a
+          producer can write SEVERAL rows under one node id (the Self-QA companion writes one
+          `step_skipped` per test-only commit), and a surface that folded them would lose every skip
+          but the last while still looking populated. The count in the label is the cross-check. */}
       <FieldBlock label={`Ledger events${data.ledger_events.length ? ` (${data.ledger_events.length})` : ''}`}>
         {data.ledger_events.length === 0 ? (
           <p className="text-on-surface-low text-[0.75rem]">No ledger events for this node.</p>
         ) : (
           <ul data-testid="ledger-events" className="max-h-72 overflow-auto flex flex-col gap-2xs">
             {data.ledger_events.map((e, i) => {
-              const kind = typeof e.kind === 'string' ? e.kind : 'event'
+              const row = ledgerRowDetail(e)
               return (
-                <li key={i} className="rounded-md bg-surface px-2.5 py-1.5 font-mono text-on-surface-var text-[0.6875rem]">
-                  {kind}
+                <li
+                  key={ledgerRowKey(e, i)}
+                  data-testid="ledger-event"
+                  className="flex flex-col gap-2xs rounded-md bg-surface px-2.5 py-1.5 text-[0.6875rem]"
+                >
+                  <div className="flex flex-wrap items-center gap-s">
+                    <span data-testid="ledger-kind" className="font-mono text-on-surface-var">{row.kind}</span>
+                    {row.sha ? (
+                      <span data-testid="ledger-sha" className="font-mono text-on-surface break-all">{row.sha}</span>
+                    ) : null}
+                    {row.impact ? (
+                      <span
+                        data-testid="ledger-impact"
+                        className="inline-flex items-center rounded-pill bg-surface-high px-2 py-0.5 text-on-surface-low"
+                      >
+                        {row.impact}
+                      </span>
+                    ) : null}
+                  </div>
+                  {/* The reason, in full. `break-words` + wrapping rather than any clamp: a
+                      one-line rationale clipped mid-sentence is the silence the row prevents. */}
+                  {row.rationale ? (
+                    <p data-testid="ledger-rationale" className="text-on-surface break-words">{row.rationale}</p>
+                  ) : null}
                 </li>
               )
             })}

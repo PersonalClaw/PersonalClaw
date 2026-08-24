@@ -1030,6 +1030,7 @@ async def dispatch_action(
     timeout: int = 60,
     run_id: str = "",
     project_id: str = "",
+    instance_path: str = "",
 ) -> NodeResult:
     """Dispatch to an action provider — zero tokens.
 
@@ -1074,6 +1075,14 @@ async def dispatch_action(
     payload.setdefault("node_id", getattr(node, "id", "") or "")
     if run_id:
         payload.setdefault("run_id", run_id)
+    # The INSTANCE path, not just the node id. A provider that writes a ledger row must stamp the
+    # engine's own instance key (`root.children[0]`, `root.body#2`) or the row lands outside every
+    # per-node slice: `service.inspect_node` filters the run's ledger by `instance_path == target`,
+    # so a row stamped with a bare node id is written, readable through the ledger reader, and
+    # invisible in the runs surface. `node_id` cannot substitute — a `foreach` body shares one id
+    # across every item, and attributing an item's row to all of them is the same loss in reverse.
+    if instance_path:
+        payload.setdefault("instance_path", instance_path)
     # The owning project (WORK-CONTAINERS §1.6): `knowledge-persist` files what it writes
     # under this container, so the project's brief + Knowledge view can find it and another
     # project cannot see a private item. Absent for a project-less run, which simply leaves
@@ -2436,6 +2445,12 @@ async def dispatch(
     #: attributes what it writes without the template having to restate an id it cannot know
     #: (WORK-CONTAINERS §1.6). Only the ACTION branch reads it.
     project_id: str = "",
+    #: This node instance's engine key (`root.children[0]`, `root.body#2`). Threaded for the third
+    #: time for the same reason as `run_id`/`project_id`, and it is the one id a provider CANNOT
+    #: reconstruct: a ledger row stamped with a bare node id lands outside every per-node slice
+    #: `inspect_node` builds, so it is written and still invisible in the runs surface. Only the
+    #: ACTION branch reads it.
+    instance_path: str = "",
     cwd: str = "",
     tiers: dict[str, str] | None = None,
     completion: Any = None,
@@ -2482,6 +2497,7 @@ async def dispatch(
         depth=depth,
         run_id=run_id,
         project_id=project_id,
+        instance_path=instance_path,
         cwd=cwd,
         tiers=tiers,
         completion=completion,
@@ -2516,6 +2532,7 @@ async def _dispatch_inner(
     depth: int = 0,
     run_id: str = "",
     project_id: str = "",
+    instance_path: str = "",
     cwd: str = "",
     tiers: dict[str, str] | None = None,
     completion: Any = None,
@@ -2553,6 +2570,7 @@ async def _dispatch_inner(
             timeout=timeout,
             run_id=run_id,
             project_id=project_id,
+            instance_path=instance_path,
         )
     if kind == NodeKind.WAIT:
         return await dispatch_wait(node, ctx, now=clock)
