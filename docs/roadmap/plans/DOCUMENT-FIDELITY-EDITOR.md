@@ -679,3 +679,65 @@ correct URL and returns `200 application/pdf`.
   is not — `dag.json`'s `DFE-2.done_when` is the complete four-clause sentence, and the brief quoted it
   verbatim. The clause list is exactly T1.1 + T1.2 + T1.3's "Done when" columns, and T1.4/T1.5 belong to
   `DFE-3`.
+
+---
+
+## Execution log — DFE-3 (docx->model parser + LossReport + round-trip) — **PARTIAL, atom stays `todo`**
+
+- [2026-08-24][DFE-3] **Four clauses met; the V1 gate's Word-authored fixture is NOT, so the atom stays
+  `todo`.** Shipped in PR #1984: `documents/docx_parser.py` (1073) with
+  `parse_docx(bytes) -> (DocumentModel, LossReport)`, a 30-kind loss vocabulary, and three suites
+  (`test_docx_parser.py` 958, `test_docx_roundtrip.py` 352, `test_docx_writer_coverage.py` 851/58 tests).
+  Every writer convention is inverted explicitly: `Courier New` -> `Run(code=True)`, and the
+  `0563C1` + underline pair -> `Run(link=...)` **only inside a `w:hyperlink`** (the same two values in
+  prose are reported as a loss, otherwise every link this repo writes would read as lossy).
+- [2026-08-24][DFE-3] 🔴 **UNMET — "a Word-authored fixture reporting its losses honestly".** No Word
+  exists in this environment and no `.docx` is committed anywhere in the repo
+  (`git ls-files | grep -i docx` returns only the writer and the DFE-2 fidelity suite). The fixture
+  injects the constructs Word emits — footnote ref, comment ref, tracked insertion, bookmark, field, VML
+  text box, nested table — as **raw XML, not a file Word saved**, and its docstring says so and lists
+  what it therefore does not prove (`w:rsid*`, `mc:AlternateContent`, `w:proofErr`, theme fonts, Word's
+  own `settings.xml`). **What would clear it: one owner-supplied `.docx` committed as a fixture.**
+- [2026-08-24][DFE-3] **MEASURED — the writer drops nothing unconditionally, which changes what a
+  LossReport is.** A census of all 27 model fields against emitted documents: **17 emitted, 10 partial,
+  0 dropped**. Every loss is conditional — on a sibling field (`Block.text` beside `runs`, `Block.rows`
+  beside `cells`, `Cell.text` beside `Cell.runs`), on the block kind (`Block.style` honoured on
+  heading/paragraph/bullets/numbered/code, dropped on table/image/pagebreak), or on direction (bold and
+  code can be switched on, never off). So the report is computed **per block**, not read off a static
+  field list. The census also surfaced a contradiction already in the code: `Block.__post_init__`
+  blesses an explicit `text` beside `runs` as *"an author's deliberate override... recomputing it would
+  silently discard"*, and `docx_writer` then discards exactly that (`"" if block.runs else block.text`).
+- [2026-08-24][DFE-3] **The sharpest finding: parse->write->parse idempotence is BLIND to a uniform
+  writer regression.** If the writer stopped emitting bold, the round trip would remain perfectly
+  stable. So the seven regression tests assert an `AssertionError` out of the *authored-model*
+  comparison, not the stability one, and each asserts green **before** patching. Confirmed empirically
+  and re-confirmed by the driver before push: breaking the document-order walk reds the recovery test
+  and **leaves `test_parse_write_parse_is_stable` green**.
+- [2026-08-24][DFE-3] **REAL PRE-EXISTING BUG, fixed here.** `w:numPr` is a child of `w:pPr`, never of
+  `w:p`. Reading it off the paragraph element found nothing, so every **Word-authored** list parsed as
+  plain paragraphs — masked because the writer's own `List Bullet`/`List Number` style path works.
+  Numbering now resolves numId -> abstractNum -> `numFmt`; unresolvable falls back to `numbered`, not
+  `bullets`, because stripping the numbers off a numbered list is the more visible wrong answer.
+- [2026-08-24][DFE-3] **Two honest limits of the model, reported rather than hidden.**
+  python-docx's default template has NON-UNIFORM margins (1.00in top/bottom, 1.25in left/right) which
+  `PageSetup.margin_in` cannot hold, so *every* bare-template document legitimately reports one
+  `page_property` item (`test_default_template_margins_are_reported` owns it; other tests filter it via a
+  documented helper). Same family flags a non-Letter page size, since `PageSetup` carries orientation but
+  no size — an A5 document re-renders as Letter.
+- [2026-08-24][DFE-3] **`code` vs `paragraph` is genuinely ambiguous in this writer's output** — a `code`
+  block and a paragraph whose every run is `code=True` render to identical OOXML. All-monospace is read
+  as `code`; both readings are stable and lossless, and the choice is documented in the module docstring.
+- [2026-08-24][DFE-3] **DISCOVERY — `documents/__init__.py` now overclaims.** Its docstring says no
+  vendor file-format vocabulary appears outside `writers/`; this parser sits at
+  `documents/docx_parser.py`. Left unedited (outside the atom's fence) and noted in the parser's own
+  docstring instead; a `readers/` subpackage is the clean home once there is a second reader. Unrelated:
+  a pre-existing `personalclaw/doc_parser.py` (plain-text extraction for knowledge ingestion) is close in
+  name, different job, no collision.
+- [2026-08-24][DFE-3] **Gate:** `make lint` clean (mypy, 996 source files) and **243 passed** across the
+  six document suites, re-run by the driver on the combined tip rather than taken on report; rails green
+  unmodified (structural baseline, docs lint, inert-surface, provider-boundary, apps-import-boundary,
+  supply-chain — 96 + 21). No docs row is owed: the inert-surface census keys on config keys / Enum
+  members / trigger kinds / `_EDITABLE_CONFIG` / SDK exports, and `_ENUM_BASES` is Enum-subclass only, so
+  a plain `LOSS_KINDS` tuple is invisible to it. Falsifications: order walk broken -> 9 red; one loss kind
+  suppressed -> 3 red; census positive row -> 3 red; census absence row -> 8 red, writer byte-identical
+  after restore. Every mutation restored from a file copy, never `git checkout`.
