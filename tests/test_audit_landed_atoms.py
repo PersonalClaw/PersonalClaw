@@ -968,14 +968,17 @@ def test_a_recursive_call_is_not_a_wire_into_the_symbol(tmp_path: Path) -> None:
 def test_the_selection_reaches_the_atoms_own_suite_inside_a_tight_cap() -> None:
     """The suite that drives the seam must survive the cap, or the check measures neighbours.
 
-    Note WHICH tier carries it here, because it is the finding: on ``main`` **no rail names
-    ``start_worker_watchdog``**, so the symbol tier scores zero and ``test_app_worker_runtime``
-    is reached only by the atom-id tier. An atom with neither a symbol mention nor an id
-    mention in its tests is one this selection cannot aim.
+    Note WHICH tier carries it here, because it is the finding. When this test was written **no
+    rail on ``main`` named ``start_worker_watchdog``**, so the symbol tier scored zero and
+    ``test_app_worker_runtime`` was reached by the atom-id tier alone. ``APE-3`` then landed the
+    missing rail, so the symbol tier is live now and BOTH tiers reach the suite — the assertion
+    below is the one that forced this docstring to be rewritten instead of quietly drifting.
+
+    Either way the property is the same: an atom with neither a symbol mention nor an id mention
+    in its tests is one this selection cannot aim.
 
     (This file names the symbol too — as the locator's ground truth, not as a rail on the wire
-    — which is exactly why ``SELECTION_EXCLUDE`` drops it from every selection. Caught by this
-    assertion failing when the docstrings above were written.)
+    — which is exactly why ``SELECTION_EXCLUDE`` drops it from every selection.)
     """
     atom = next(a for a in load_atoms() if a.id == "APE-3")
     modules = annotated_modules("APE-3", REPO_ROOT)
@@ -985,9 +988,14 @@ def test_the_selection_reaches_the_atoms_own_suite_inside_a_tight_cap() -> None:
     index = _test_index(REPO_ROOT)
     assert len(index) > 200, len(index)
     assert "tests/test_audit_landed_atoms.py" not in index, "the check must not select itself"
-    assert not [rel for rel, (text, _) in index.items() if wire.symbol in text], (
-        "a rail now names start_worker_watchdog — good, but this test's stated premise "
-        "(the symbol tier scores zero on main) is stale and the docstring must change"
+    # The symbol tier is live: APE-3's rail names the symbol, and it is the atom's own suite that
+    # does so. Asserting WHICH file carries it keeps this a premise rail rather than a tautology —
+    # if the rail is ever deleted the symbol tier silently reverts to scoring zero, and the
+    # selection would then depend entirely on the atom-id tier again.
+    naming = [rel for rel, (text, _) in index.items() if wire.symbol in text]
+    assert naming == ["tests/test_app_worker_runtime.py"], (
+        "the symbol tier's only rail moved or vanished — this test's premise (APE-3's rail makes "
+        f"the symbol tier live) is stale and the docstring must change: {naming}"
     )
     selection = select_tests(wire, atom, index, cap=6)
     assert "tests/test_app_worker_runtime.py" in selection.files, selection.files
@@ -1003,9 +1011,10 @@ def test_a_symbol_naming_file_outranks_the_module_importing_crowd() -> None:
     "names the symbol" pushes the one file that could hold a textual rail below three dozen
     neighbours, and a cap of 6 then cuts it — measured while building this, on APE-3.
 
-    Synthetic on purpose: the real APE-3 wires have NO symbol-naming test on ``main``, so the
-    real repo cannot exercise this tier at all. A rail that cannot fire is the subject of this
-    whole file, so this one is built where the tier is live.
+    Synthetic on purpose: this needs a symbol appearing in ~40 files to have anything to
+    outrank, and no real wire has that shape. (When this was written the real APE-3 wires had
+    no symbol-naming test on ``main`` either, so the tier could not be exercised against the
+    repo at all; ``APE-3`` has since landed that rail, but it is one file, not forty.)
     """
     wire = Wire(
         module="pkg.wired",
