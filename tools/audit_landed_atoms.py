@@ -162,6 +162,55 @@ def _git(args: Sequence[str], cwd: Path = REPO_ROOT) -> str:
     return proc.stdout
 
 
+def _ref_exists(ref: str, cwd: Path = REPO_ROOT) -> bool:
+    proc = subprocess.run(
+        ["git", "rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}"],
+        cwd=cwd,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    return proc.returncode == 0
+
+
+def resolve_ref(ref: str, cwd: Path = REPO_ROOT) -> tuple[str, str]:
+    """Resolve ``ref`` to something that exists here, and SAY when it is not what was asked.
+
+    ``origin/main`` exists in a developer clone and does **not** exist under
+    ``actions/checkout``, which fetches the PR's merge preview into a detached ``HEAD``
+    without creating remote-tracking refs. So the tool ran green locally for its author and
+    exited 2 with ``INTERNAL ERROR: ... Not a valid object name origin/main`` on every CI run —
+    a hard failure of the whole census over an environment assumption, not over any roadmap
+    fact.
+
+    The fallback is deliberately narrow and deliberately LOUD.
+
+    Narrow in two ways. It tries only the same branch under a different spelling, then
+    ``HEAD`` — which under ``actions/checkout`` IS main-plus-this-PR. And it applies **only to
+    the default ref**: a ref the caller typed explicitly and that does not exist is a caller
+    mistake, so it raises. Falling back there would answer a question about ``origin/feature-x``
+    with a census of whatever happened to be checked out, and the report would look entirely
+    normal — the exact silent-wrong-subject failure this tool exists to prevent.
+
+    Loud because the returned note is printed: "audited the landed tree" and "audited this
+    PR's merge preview" are different claims, and a reader must not have to guess which one
+    they are holding.
+    """
+    if _ref_exists(ref, cwd):
+        return ref, ""
+    name = ref.rsplit("/", 1)[-1]
+    candidates = [f"refs/remotes/{ref}", f"refs/remotes/origin/{name}", name]
+    if ref == DEFAULT_REF:
+        candidates.append("HEAD")
+    for cand in candidates:
+        if _ref_exists(cand, cwd):
+            return cand, f"{ref!r} does not exist here; auditing {cand!r} instead"
+    raise RuntimeError(
+        f"{ref!r} is not a valid commit here, and nor is any fallback "
+        f"({', '.join(candidates)}) — name a ref this clone actually has"
+    )
+
+
 def _in_corpus(path: str) -> bool:
     if any(skip in path for skip in CORPUS_SKIP):
         return False
@@ -2486,8 +2535,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         # is how a reader ends up believing a ref's census adjudicated a tree's rails.
         return _run_wire_check(args, args.check_wires)
     try:
+        ref, ref_note = resolve_ref(args.ref)
+        if ref_note:
+            print(f"audit_landed_atoms: {ref_note}", file=sys.stderr)
         verdicts, corpus = census(
-            ref=args.ref, statuses=statuses, dag_path=args.dag, plans_dir=args.plans_dir
+            ref=ref, statuses=statuses, dag_path=args.dag, plans_dir=args.plans_dir
         )
         log_hits = scan_plan_logs(args.plans_dir)
     except (VacuityError, RuntimeError) as exc:
@@ -2510,7 +2562,9 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     branches: list[Branch] = []
     if args.branches:
-        branches = scan_branches([v.atom.id for v in verdicts], args.ref, corpus)
+        # `ref`, not `args.ref` — the census above already resolved it, and a branch scan
+        # measured against a ref the census did not use compares two different trees.
+        branches = scan_branches([v.atom.id for v in verdicts], ref, corpus)
 
     only = {"clean": CLEAN, "gated": GATED, "open": OPEN, "unknown": UNKNOWN}.get(args.bucket or "")
     if args.json:

@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import ast
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -58,6 +59,7 @@ from tools.audit_landed_atoms import (
     VacuityError,
     Wire,
     WireRefusal,
+    _ref_exists,
     _test_index,
     annotated_modules,
     census,
@@ -69,6 +71,7 @@ from tools.audit_landed_atoms import (
     load_atoms,
     mutate,
     probe,
+    resolve_ref,
     scan_code_caveats,
     scan_plan_logs,
     score_evidence,
@@ -530,6 +533,75 @@ def test_the_tool_exits_zero_on_an_imperfect_roadmap() -> None:
     assert proc.returncode == 0, proc.stderr
     assert "LANDED-AND-CLEAN" in proc.stdout
     assert "miss-rate=0%" in proc.stdout, "the five known-landed atoms must all be detected"
+
+
+def test_a_clone_without_origin_main_is_audited_not_refused(tmp_path: Path) -> None:
+    """``actions/checkout`` has no ``origin/main``, and the tool must survive that.
+
+    This is the environment the test above CANNOT see: a developer clone always has the
+    remote-tracking ref, so the tool passed locally for its author and exited ``2`` with
+    ``INTERNAL ERROR: ... Not a valid object name origin/main`` on every CI run — the entire
+    census lost to an environment assumption rather than to any roadmap fact.
+
+    Reproduced the way CI produces it: a repo whose ONLY ref is a detached ``HEAD``. Deleting
+    the local branch matters — the first draft of this fixture left ``git init``'s ``main``
+    behind, so the resolver landed on ``main`` and the test asserted the wrong tier while
+    still exercising a fallback. CI has no local branch either, so a fixture that keeps one
+    is not the environment being fixed.
+    """
+    repo = tmp_path / "detached"
+    subprocess.run(["git", "init", "-q", "-b", "main", str(repo)], check=True)
+    (repo / "f.txt").write_text("x\n")
+    env = {
+        **os.environ,
+        "GIT_AUTHOR_NAME": "t",
+        "GIT_AUTHOR_EMAIL": "t@e",
+        "GIT_COMMITTER_NAME": "t",
+        "GIT_COMMITTER_EMAIL": "t@e",
+    }
+    subprocess.run(["git", "-C", str(repo), "add", "f.txt"], check=True)
+    subprocess.run(["git", "-C", str(repo), "commit", "-qm", "c"], check=True, env=env)
+    sha = subprocess.run(
+        ["git", "-C", str(repo), "rev-parse", "HEAD"], capture_output=True, text=True, check=True
+    ).stdout.strip()
+    subprocess.run(["git", "-C", str(repo), "checkout", "-q", "--detach", sha], check=True)
+    subprocess.run(["git", "-C", str(repo), "branch", "-qD", "main"], check=True)
+
+    # Vacuity floor, both tiers: neither the remote-tracking ref NOR a local branch of that
+    # name may exist, or the resolver never reaches the HEAD tier and this test measures a
+    # different fallback than the one CI takes.
+    assert not _ref_exists("origin/main", repo), "the fixture must lack origin/main"
+    assert not _ref_exists("main", repo), "the fixture must lack a local main branch too"
+
+    resolved, note = resolve_ref("origin/main", repo)
+    assert resolved == "HEAD", resolved
+    assert "does not exist here" in note and "HEAD" in note, note
+
+
+def test_the_ref_fallback_is_silent_when_the_requested_ref_exists() -> None:
+    """The other half: an audit of the real ref must not announce a substitution.
+
+    Without this, ``resolve_ref`` could return a note unconditionally and the test above
+    would still pass — and every ordinary run would print a warning about a ref it did in
+    fact read.
+    """
+    assert _ref_exists("HEAD", REPO_ROOT)
+    resolved, note = resolve_ref("HEAD", REPO_ROOT)
+    assert resolved == "HEAD" and note == "", (resolved, note)
+
+
+def test_an_explicitly_named_missing_ref_raises_instead_of_falling_back() -> None:
+    """The fallback must not become "audit whatever is lying around".
+
+    This is the rail on the fix's own scope, and the fix failed it first: a chain ending in
+    ``HEAD`` unconditionally means ``--ref origin/feature-x`` on a clone without that branch
+    gets answered with a census of the working checkout — a report that reads entirely normal
+    while describing the wrong tree. So the HEAD tier is reachable ONLY for ``DEFAULT_REF``.
+    """
+    assert not _ref_exists("origin/zzz-no-such-branch-9f3a", REPO_ROOT)
+    assert _ref_exists("HEAD", REPO_ROOT), "HEAD must exist, or this proves nothing"
+    with pytest.raises(RuntimeError, match="not a valid commit here"):
+        resolve_ref("origin/zzz-no-such-branch-9f3a", REPO_ROOT)
 
 
 def test_the_tool_exits_non_zero_on_its_own_broken_input(tmp_path: Path) -> None:
