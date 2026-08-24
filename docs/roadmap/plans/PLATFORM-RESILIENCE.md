@@ -959,3 +959,44 @@ Sessions 1-4 each ship independently; Session 1 alone is a Wave-0 win (the symli
   instance slot in favour of a caller-owned sink threaded through `_prefetch`/`_guard_and_invoke`
   /`_invoke`. Nothing was reinstated; the drop path needs no meta. The timeout path still shares
   the single kill mechanism, so the two cannot drift.
+
+## Execution log — native steer overflow (the second pop-then-lose instance)
+
+**DONE.** PR2-10 fixed the ACP half of the silent steer drop and recorded the native path as
+the remaining instance. It was real. `NativeAgentRuntime._drain_steers_into_history` called
+its pull — which *empties* the session's steer deque — and then `break`ed at
+`_MAX_STEERS_PER_TURN`, discarding text it had already removed from the only place holding it.
+
+**Measured before the change** (real `SessionManager`, isolated home, cap = 4, 7 buffered):
+history got `s0..s3`; `session.steers` was `[]`; nothing was retained on the runtime; and
+`set_steer_drains(key, False)` returned `None`, so the turn-end clear had nothing to hand back.
+`s4`/`s5`/`s6` existed nowhere, after the HTTP caller was told `{"steered": true}`.
+
+**The docstring was actively wrong**, not merely silent: it claimed the cap left "any remainder
+for the session's turn-end clear". The pull had already emptied the deque, so there was no
+remainder for that clear to see.
+
+**Fix — PR2-10's shape, reused.** The cap is untouched (still 4; it bounds how much
+redirection one turn absorbs). What changed is the overflow's fate: pulled text lands on
+`_steer_pending`, delivery drains from its head while under the cap, and what does not fit
+stays owed and is reported by a new `undelivered_steers()` — the same duck-typed seam
+`AcpSession` exposes, read by the dispatcher's existing turn-end loop and requeued through the
+`queue_push` echo. No second mechanism, no new event kind (`activity_event {kind:"status"}` is
+filtered as noise by `ChatPage`, so announcing the loss there would have been invisible).
+`stream` clears `_steer_pending` at turn start so the requeued copy is not also replayed.
+
+**Sequencing note:** the *reader* lands with PR2-10 (#1977), which converts
+`set_steer_drains` to return the stranded list and adds the requeue loop. Until that merges the
+native seam is exposed but unread — the data no longer evaporates inside the runtime, and the
+visible surface arrives with #1977. Deliberately not duplicated here.
+
+**Falsifications** (mutate live, observe red, restore from a file copy): drop the cap condition
+→ red; re-add `_steer_pending.clear()` before the return, i.e. the original defect → red; raise
+the cap 4→7 → floor A red; make `drain_steers` peek instead of pop → floor B red; rename the
+seam → call-site test red; delete the turn-start reset → replay guard red.
+
+**DISCOVERY (possible latent issue in #1977, not touched here):** `AcpSession` resets
+`_steers_delivered` at turn start but never clears `_steer_pending`. Since the dispatcher
+requeues `undelivered_steers()` at turn end, a surviving `_steer_pending` would let the next
+turn deliver a second copy of a steer already sitting in the visible queue. The native path
+clears at turn start for exactly this reason; the ACP side may want the same line.
