@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from 'vitest'
 import { render, screen } from '@testing-library/react'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { AgentPill, ModelPill, ApprovalPill, ReasoningPill } from './controls'
+import { AgentPill, ModelPill, ApprovalPill, ReasoningPill, effortsForAgent } from './controls'
 import { ProjectPicker } from '../ProjectPicker'
 
 // ── A value pill that never says what it controls ──────────────────────────────────────
@@ -67,6 +67,38 @@ describe('every composer pill announces its dimension', () => {
     render(<ReasoningPill value="" efforts={[{ value: 'low', label: 'Low' }]} onSelect={vi.fn()} />)
     // The pill still shows just the value on screen; only the accessible name gained the axis.
     expect(screen.getByRole('button').textContent).toBe('Default')
+  })
+})
+
+// ── A runtime that declares no reasoning axis (ACP-AGENT-PARITY §2.6, atom AAP-9) ─────
+//
+// Measured live 2026-08-24: `GET /api/agent-providers/acp:kiro-cli/agents` returns 27 agents
+// each with `supported_efforts: []`, and codex the same for its one agent, while claude-code
+// declares five. §2.6 asked for the pill to "grey out"; the shipped behaviour HIDES it, and
+// the owner ruling (recorded as a DEVIATION on the atom) is that hiding is correct: a greyed
+// control still asserts the axis exists for this runtime, while a hidden one plus an API that
+// refuses the value (`G21`, tests/test_acp_effort_declaration.py) tells the truth twice. The
+// machine-readable truth is already in the payload — `supported_efforts: []`.
+//
+// Railed because the ruling is only as durable as the test under it: without this, a later
+// change could render a dead pill for kiro and nothing would object.
+describe('a runtime declaring no efforts offers no pill', () => {
+  it('renders nothing rather than a dead control', () => {
+    const { container } = render(<ReasoningPill value="" efforts={[]} onSelect={vi.fn()} />)
+    expect(container.innerHTML).toBe('')
+    expect(screen.queryByRole('button')).toBeNull()
+  })
+
+  it('effortsForAgent returns the runtime\'s DECLARED set, empty included', () => {
+    const data = {
+      discovered: {
+        'acp:kiro-cli': [{ name: 'atlas', provider_agent: 'atlas', supported_efforts: [] }],
+        'acp:claude-code': [{ name: 'Claude Code', provider_agent: '', supported_efforts: [{ value: 'low', label: 'Low' }] }],
+      },
+    } as never
+    expect(effortsForAgent(data, 'atlas')).toEqual([])
+    // Vacuity floor: the helper is not simply returning [] for everything.
+    expect(effortsForAgent(data, 'Claude Code')).toEqual([{ value: 'low', label: 'Low' }])
   })
 })
 

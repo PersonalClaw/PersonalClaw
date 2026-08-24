@@ -123,6 +123,7 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `GET /api/chat/sessions` — list all chat sessions.
 - `POST /api/chat/sessions` — create a new chat session.
 - `POST /api/chat/sessions/auto-archive` — run (or preview) the auto-archive rule.
+- `GET /api/chat/sessions/bound-project` — the CALLING session's bound Project id.
 - `POST /api/chat/sessions/bulk` — apply one op to many sessions.
 - `POST /api/chat/sessions/cleanup` — bulk-archive inactive sessions to history.
 - `GET /api/chat/sessions/templates` — every saved session starter.

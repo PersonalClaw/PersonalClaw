@@ -59,6 +59,7 @@ from personalclaw.dashboard.chat_handlers import (  # noqa: F401
     api_chat_session_acp_agent,
     api_chat_session_agent,
     api_chat_session_approve,
+    api_chat_session_bound_project,
     api_chat_session_color,
     api_chat_session_context,
     api_chat_session_create,
