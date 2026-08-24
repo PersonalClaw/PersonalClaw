@@ -18,6 +18,7 @@ from personalclaw.dashboard.handlers import (
     api_prompt_detail,
     api_prompts,
 )
+from personalclaw.guardrails.loop_breaker import LoopBreaker
 
 # ── Shared fixtures ──
 
@@ -85,6 +86,13 @@ class _Session:
         self.agent = "personalclaw"
         self.model = None
         self._queue = []
+        # `run_chat` reads the session's ACP loop breaker unconditionally
+        # (ACP-AGENT-PARITY §2.3, `G155` — it lives for the SESSION, not the turn), so a
+        # stub standing in for a session has to carry one. Deliberately NOT made optional
+        # in the runner: a `getattr(..., None) or LoopBreaker()` fallback would silently
+        # restore per-turn counting for any session missing the slot, which is the exact
+        # defect that made the circuit rung unreachable.
+        self._acp_breaker = LoopBreaker()
 
     def append(self, role, text, cls):
         self.messages.append((role, text, cls))

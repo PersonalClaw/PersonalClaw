@@ -21,6 +21,7 @@ from personalclaw.atomic_write import atomic_write
 from personalclaw.config.loader import DASHBOARD_PORT, config_dir
 from personalclaw.dashboard.desktop_registry import DesktopRegistry
 from personalclaw.dashboard.sse import SseRegistry
+from personalclaw.guardrails.loop_breaker import LoopBreaker
 from personalclaw.knowledge.store import KnowledgeStore
 from personalclaw.security import redact_credentials, redact_exfiltration_urls
 from personalclaw.sel import sel
@@ -260,6 +261,7 @@ class _ChatSession:
         "_disk_older_count",
         "_file_changes",
         "_declared_file_change_idx",
+        "_acp_breaker",
         "_memory_citations",
         "_side",
         "_extra_tool_roots",
@@ -450,6 +452,16 @@ class _ChatSession:
         # in place. Reset alongside `_file_changes` — an index into an emptied list is
         # what would overwrite slot 0 of the next turn.
         self._declared_file_change_idx: dict[str, int] = {}
+        # The ACP loop breaker, kept for the SESSION rather than the turn
+        # (ACP-AGENT-PARITY §2.3, `G155`). `LoopBreaker` defines its own ceiling as
+        # "this RUN's total failures" (`CIRCUIT_THRESHOLD = 30`), and for an ACP session
+        # the host-side analogue of a native run is the session's sequence of turns —
+        # a fresh breaker per turn reset the counter every turn, so an unattended loop
+        # repeating a failing tool for twenty turns could never reach thirty and the
+        # circuit rung was unreachable by construction. Per-key streaks persist for the
+        # same reason, and `record()` still clears a key on success, so a tool that
+        # recovers is not held against the model.
+        self._acp_breaker = LoopBreaker()
         # Episodic memory citations [{n, id, preview}] surfaced into THIS turn's prompt
         # (MEMORY-GRAPH-AND-VAULT §5.4). Reset per turn, populated from the assembled
         # context's metadata, and attached to each finalized assistant message's meta so
