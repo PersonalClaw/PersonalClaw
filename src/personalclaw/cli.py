@@ -556,6 +556,32 @@ Examples:
     )
     inbound_confirm.add_argument("confirm_token", help="The confirm_token the bridge returned")
 
+    # capture — telemetry import for agents that cannot be proxied
+    # (EXTERNAL-ACCESS §8). The proxy half of capture needs no CLI; this half does,
+    # because the input is a file a human exported from another tool.
+    capture_parser = sub.add_parser(
+        "capture", help="Import exported agent logs into the capture store"
+    )
+    capture_sub = capture_parser.add_subparsers(dest="capture_action")
+    capture_import = capture_sub.add_parser(
+        "import", help="Normalise an exported agent log and stage it"
+    )
+    capture_import.add_argument("file", help="Path to the exported log")
+    capture_import.add_argument(
+        "--format",
+        default="jsonl",
+        choices=("jsonl", "json", "sse"),
+        help="jsonl (Claude Code session), json (OpenAI request log), sse (raw event dump)",
+    )
+    capture_import.add_argument(
+        "--source",
+        default="import",
+        help="Label recorded on every staged record (e.g. the agent's name)",
+    )
+    capture_import.add_argument(
+        "--json", dest="as_json", action="store_true", help="Emit the report as JSON"
+    )
+
     # auth — the owner login (REMOTE-USER-AUTH C5). Setting a password is CLI-only on
     # purpose: a plaintext credential should never ride in an HTTP body.
     auth_parser = sub.add_parser("auth", help="Manage the owner login (password, 2FA)")
@@ -1229,6 +1255,10 @@ Examples:
         rc = _inbound_cmd(args)
         if rc:
             raise SystemExit(rc)
+    elif args.command == "capture":
+        rc = _capture_cmd(args)
+        if rc:
+            raise SystemExit(rc)
     elif args.command == "auth":
         rc = _auth_cmd(args)
         if rc:
@@ -1293,6 +1323,7 @@ from personalclaw.cli_setup import (  # noqa: E402
 )
 from personalclaw.durability.shards import backup_cmd as _backup_cmd  # noqa: E402
 from personalclaw.inbound.auth import inbound_cmd as _inbound_cmd  # noqa: E402
+from personalclaw.inbound.capture_import import capture_cmd as _capture_cmd  # noqa: E402
 
 
 def _workflow_cmd(args) -> int:  # noqa: ANN001
