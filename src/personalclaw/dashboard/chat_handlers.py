@@ -699,6 +699,37 @@ async def api_chat_tool_result(request: web.Request) -> web.Response:
     return web.json_response(res)
 
 
+async def api_chat_session_bound_project(request: web.Request) -> web.Response:
+    """GET /api/chat/sessions/bound-project — the CALLING session's bound Project id.
+
+    ACP-AGENT-PARITY §2.6 gap 10. An ACP CLI's tools run in a separate ``mcp-core``
+    process, where the native runtime's per-turn project contextvar is empty by
+    construction, so ``artifact_save`` there stamped nothing. The session key already
+    crosses to that process, so this endpoint closes the loop with no protocol change.
+
+    Keyed off the ``X-Session-Key`` header, never off a path segment or a query
+    parameter: the caller must prove which session it IS, and letting it name any
+    session would turn a stamping helper into a cross-session read of someone else's
+    project binding.
+
+    Returns ``{"project_id": ""}`` — a 200, not a 404 — when the header is absent, the
+    session is unknown or the session binds no project. All three mean the same thing to
+    the one caller ("nothing to stamp"), and an error status would make a normal
+    unscoped save look like a failure in its logs. Deliberately does NOT fall back to
+    the Personal default the way ``/api/context`` does: filing an unscoped save under a
+    project the user never chose is worse than an unstamped artifact.
+    """
+    state: DashboardState = request.app["state"]
+    sk = request.headers.get("X-Session-Key", "")
+    if not sk or sk == "dashboard:ui":
+        return web.json_response({"project_id": ""})
+    name = sk.split(":", 1)[-1] if ":" in sk else sk
+    session = (getattr(state, "_sessions", {}) or {}).get(name)
+    return web.json_response(
+        {"project_id": str(getattr(session, "project_id", "") or "") if session else ""}
+    )
+
+
 async def api_chat_session_detail(request: web.Request) -> web.Response:
     """GET /api/chat/sessions/{session} — message history for a session.
 

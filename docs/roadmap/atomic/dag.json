@@ -4878,7 +4878,7 @@
         {
           "id": "AAP-9",
           "title": "\u00a72.6 Dialect asymmetry closure + project_id stamping (gaps 9 & 10)",
-          "status": "todo",
+          "status": "done",
           "scope": "Phase 2 \u00a72.6 Dialect asymmetry closure (gap 9) + project stamping (gap 10) (surface dialect caps in discovered-agent payload; stop popping project_id/extra_tool_roots at provider_bridge.py:541; server-side project binding in mcp_core)",
           "done_when": "ACP artifact_save stamps the session's bound project (server-side via PERSONALCLAW_SESSION_KEY); composer effort pill greys out (not silent no-op) on Kiro; Kiro 'plan mode' enforced by the host task-mode gate; slash commands labeled 'sent as text' where not negotiated; no dead persona UI for Zed dialects (SC #7 partial).",
           "deps": [
@@ -4887,7 +4887,8 @@
             "AAP-3",
             "AAP-4",
             "AAP-5"
-          ]
+          ],
+          "pr": 1958
         },
         {
           "id": "AAP-10",
@@ -7501,11 +7502,6 @@
         "plan": "AAP"
       },
       {
-        "id": "AAP-9",
-        "title": "\u00a72.6 Dialect asymmetry closure + project_id stamping (gaps 9 & 10)",
-        "plan": "AAP"
-      },
-      {
         "id": "APE-3",
         "title": "Background worker SDK (sdk/background.py) + backend_runtime supervised hosting",
         "plan": "APE"
@@ -9973,9 +9969,9 @@
         "code": "AAP",
         "plan": "ACP-AGENT-PARITY",
         "total_atoms": 10,
-        "done": 8,
+        "done": 9,
         "in_progress": 0,
-        "todo": 2,
+        "todo": 1,
         "blocked": 0
       },
       {

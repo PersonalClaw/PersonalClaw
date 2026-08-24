@@ -875,6 +875,13 @@ async def start_dashboard(
     # Session templates + transcript export (S3). The literal `templates` segment has
     # the same capture hazard as `bulk` above, so it registers here too.
     session_starters.register_routes(app)
+    # The calling session's bound Project, keyed off `X-Session-Key` (ACP-AGENT-PARITY
+    # §2.6 gap 10). An ACP CLI's tools run in a separate `mcp-core` process where the
+    # native runtime's per-turn contextvar is empty, so `artifact_save` asks the gateway
+    # instead of having a new argument threaded through the protocol. Same literal-segment
+    # capture hazard as `bulk`/`templates` above, hence this position — and `bound-project`
+    # rather than `project` so it can never be misread as a session named "project".
+    app.router.add_get("/api/chat/sessions/bound-project", chat.api_chat_session_bound_project)
     app.router.add_get("/api/chat/sessions/{session}", chat.api_chat_session_detail)
     app.router.add_get("/api/chat/sessions/{session}/tool-result/{rid}", chat.api_chat_tool_result)
     app.router.add_post("/api/chat/sessions/{session}/stop", chat.api_chat_session_stop)

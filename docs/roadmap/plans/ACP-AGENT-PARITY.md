@@ -5003,3 +5003,80 @@ cited above.
   (no core tool dict declares `risk_level`), pinned by a rail with a census and a vacuity floor rather
   than by dead plumbing. (4) native-only meta stays empty, not fabricated, where frames are empty —
   railed (`tool_input_obj is None`, never `{}`). `dag.json` + `AAP.md` flip to `done` with `pr` 1957.
+
+## Execution log — `AAP-9` (§2.6 Dialect asymmetry closure + project stamping)
+
+- [2026-08-24][AAP-9] ✅ **DONE — one clause needed code, three were already true and had never
+  been measured, and one was an owner call.** Taken after the four owner-priority areas held no
+  startable atom (eight candidates, each gated) and the fall-through tie at unblock=1.
+- [2026-08-24][AAP-9] **Gap 10 (clause 1) — the stamp was structurally unreachable for ACP, not
+  merely unset.** `artifact_save` stamps `project_id=_current_project_id()`, which read ONLY the
+  native runtime's per-turn contextvar; an ACP CLI's tools run in a separate `personalclaw mcp-core`
+  process where that contextvar is empty by construction. `provider_bridge.py` pops `project_id`
+  **unconditionally** ("meaningful only to the native builder"), so nothing about the binding crossed
+  into the ACP branch either — two independent reasons the stamp could never arrive.
+  Resolved SERVER-SIDE from the session key, which already crosses as `PERSONALCLAW_SESSION_KEY` (or
+  the `session_pid_<pid>.txt` ancestor walk `AAP-4` verified live): new
+  `GET /api/chat/sessions/bound-project`, keyed off `X-Session-Key` **only** — the caller must prove
+  which session it IS, or a stamping helper becomes a cross-session read of someone else's binding.
+  It answers `{"project_id": ""}` with a **200** for absent/unknown/unscoped (all three mean
+  "nothing to stamp" to its one caller, and a 404 would make a normal unscoped save look like a
+  failure), and deliberately does NOT fall back to the Personal default the way `/api/context` does:
+  filing work under a project the user never chose is worse than an unstamped artifact.
+- [2026-08-24][AAP-9] 🔴 **The in-process guard is load-bearing, and the first cut lacked it.** The
+  native runtime lives INSIDE the gateway, so an unscoped native turn — empty project contextvar,
+  live session key — would have issued a blocking `urllib` GET against the gateway from within the
+  gateway. `mcp_core._CURRENT_SESSION_KEY` being set is the exact "I am in-process" signal (the ACP
+  child has no such contextvar; its key comes from the env or the PID walk), so that is the guard,
+  with a rail that fails if a self-request is ever issued.
+- [2026-08-24][AAP-9] **Proven by a PAIRED live drive of the real process, and the first attempt
+  measured the wrong tree — worth recording as a harness finding.** Driving a genuine codex ACP turn
+  through `POST /api/chat` produced `aap9-stamp-probe` with `project_id=''` **even with the fix in the
+  worktree**: `acp/mcp_servers.core_mcp_servers` declares the MCP child's env explicitly
+  (`PERSONALCLAW_HOME`, `PERSONALCLAW_PORT`, `PERSONALCLAW_SESSION_KEY`) and a CLI is free to spawn its
+  MCP servers with a filtered environment, so **`PYTHONPATH` does not reach the child** and it imported
+  `main`'s editable install. Any core-tool change is therefore invisible through a real ACP turn in a
+  worktree drive. So the drive was re-run against `personalclaw mcp-core` over stdio directly — the
+  same process the CLI spawns, same three declared env vars, same session key
+  (`dashboard:aap9-proj-codex`, bound to project `p-15282411`), differing ONLY in `PYTHONPATH`:
+  · **control, main's code** → `aap9-main-control`, `project_id=''`
+  · **fix, worktree on PYTHONPATH** → `aap9-worktree-fix`, `project_id='p-15282411'`
+  The endpoint itself answered `{"project_id": "p-15282411"}` with the header and `{"project_id": ""}`
+  without it. Falsified by restoring the pre-fix `return ""`: the stamping rail reds
+  (`assert '' == 'p-acp'`), then restored from a file copy.
+- [2026-08-24][AAP-9] **Clause 4 (slash commands labelled "sent as text") was ALREADY SHIPPED.**
+  `chat_utils.stream_slash_command` notifies verbatim: *"`{command}` isn't a command this agent can
+  run — sent as a plain message."* on the not-negotiated path, and `chat_runner` reports the
+  substitution so "a user is never handed a plain-prompt answer while believing a command ran". No
+  code needed; recorded so the clause is not re-implemented.
+- [2026-08-24][AAP-9] **Clause 5 (no dead persona UI for Zed dialects) — measured live, with a
+  positive control.** `GET /api/agent-providers/<id>/agents`: claude-code returns **1** agent with
+  `provider_agent: ''`, codex **1** with `provider_agent: ''` — so the picker has no persona rows to
+  offer for either. kiro-cli returns **27** named personas, which is the control proving the axis is
+  rendered where it is real rather than always empty. Matches `O2` in the parity doc.
+- [2026-08-24][AAP-9] **Clause 3 (Kiro plan mode enforced by the host gate) — driven live.**
+  kiro-cli declares `permission_modes: []` (no mode axis at all, exactly as §2.6 predicted). With
+  `POST /api/chat/task-mode {"mode":"plan"}` on a kiro session and an explicit instruction to edit a
+  file and write to disk, the tool card came back annotated *"Plan mode — inspection only, nothing is
+  exec…"* and **the file on disk was byte-identical afterwards**. The host is the only enforcement,
+  and it held.
+- [2026-08-24][AAP-9] ⚖️ **DEVIATION (owner call): the effort pill stays HIDDEN, not greyed.** §2.6
+  asked that it "greys out (not silently no-ops)". Measured: kiro-cli declares
+  `supported_efforts: []` for all 27 agents and codex for its one, while claude-code declares five —
+  so `effortsForAgent` returns `[]` and `ReasoningPill` renders nothing. The clause's END is "the UI
+  tells the truth", and the truth is told twice already: the pill is absent, and both write paths
+  refuse an effort outside the declared set (`G21`, `tests/test_acp_effort_declaration.py`, including
+  `test_a_runtime_declaring_none_refuses_an_effort`). A greyed control would instead assert that the
+  axis exists for this runtime — the "dead UI" the same plan calls a defect one clause later for
+  personas. Ruling: hidden is correct; the machine-readable capability (`supported_efforts: []`) is
+  where a reader learns why. Railed in `web/src/ui/composer/pillDimension.test.tsx` so the ruling
+  outlives this session, with a vacuity floor (claude-code's declared set must still come back).
+- [2026-08-24][AAP-9] **NOTE — `docs/design/consistency-audit.json` came back `filesScanned` 550 →
+  551 with `driftHits`/`filesWithDrift` unchanged (8/7).** That is `main`'s baseline being stale, not
+  drift from this change: the diff against `origin/main` under `web/src` is a single **modified** file
+  and no additions, so nothing here could add a scanned file. The build's recompute is included rather
+  than reverted.
+- [2026-08-24][AAP-9] **Gate:** `make lint` clean (992 source files, mypy Success) · new rails 13
+  passed · offline reference re-rendered with the pinned interpreter for the new route (`761 of 765`,
+  `test_agent_reference` 7 passed) · web typecheck clean, **474 test files / 4980 tests passed**,
+  `npm run build` succeeded.

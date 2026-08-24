@@ -18,7 +18,7 @@ Each atom below executes start-to-finish in one go. If an atom lists dependencie
 | `AAP-6` | ⬜ | §2.3 Unattended threading + runtime-agnostic loop breaker for ACP (gaps 3 & 5) | `AAP-1`, `AAP-2`, `AAP-3` | An unattended Code loop bound to each provider runs to completion or fails fast without wedging (Zed dialects via bypassPermissions incl. cron/scheduled; Kiro fail-fasts prompts deterministically); a deliberately failing-tool ACP session trips the circuit and aborts the turn with the standard breaker message (SC #4). |
 | `AAP-7` | ✅ | §2.4 Resume — live session/load via bundle session_files_dir (gap 6) | `AAP-1`, `AAP-2`, `AAP-3` | Gateway restart mid-conversation on a resume-capable provider shows 'Session resumed' with full-fidelity continuation; non-capable providers degrade to compressed history with an accurate 'restored from history' label rather than implying protocol resume (SC #5). |
 | `AAP-8` | ✅ | §2.5 Learning capture + tool-card fidelity + risk plumbing for ACP (gaps 4, 7, 8) | `AAP-1`, `AAP-2`, `AAP-3`, `AAP-4` | After an ACP turn a procedural outcome row exists (none under incognito); an ACP edit-tool turn renders a diff chip and structured input fields; the approval card for a personalclaw-core destructive tool shows its declared risk chip, not the heuristic one; native-only meta stays empty (not fabricated) where frames are empty (SC #6). |
-| `AAP-9` | ⬜ | §2.6 Dialect asymmetry closure + project_id stamping (gaps 9 & 10) | `AAP-1`, `AAP-2`, `AAP-3`, `AAP-4`, `AAP-5` | ACP artifact_save stamps the session's bound project (server-side via PERSONALCLAW_SESSION_KEY); composer effort pill greys out (not silent no-op) on Kiro; Kiro 'plan mode' enforced by the host task-mode gate; slash commands labeled 'sent as text' where not negotiated; no dead persona UI for Zed dialects (SC #7 partial). |
+| `AAP-9` | ✅ | §2.6 Dialect asymmetry closure + project_id stamping (gaps 9 & 10) | `AAP-1`, `AAP-2`, `AAP-3`, `AAP-4`, `AAP-5` | ACP artifact_save stamps the session's bound project (server-side via PERSONALCLAW_SESSION_KEY); composer effort pill greys out (not silent no-op) on Kiro; Kiro 'plan mode' enforced by the host task-mode gate; slash commands labeled 'sent as text' where not negotiated; no dead persona UI for Zed dialects (SC #7 partial). |
 | `AAP-10` | ✅ | §2.7 Parity doc — docs/agents/acp-parity.md (the honest-boundary deliverable) | `AAP-1`, `AAP-2`, `AAP-3`, `AAP-4`, `AAP-5`, `AAP-6`, `AAP-7`, `AAP-8`, `AAP-9` | docs/agents/acp-parity.md exists stating per provider what is at parity, host-compensated, and a protocol/CLI constraint (each ABSENT written down with its reason + upstream watch item + verified CLI/adapter version); linked from each agent app README and the discovered-agents UI capability notes (SC #7). |
 
 ## Atom scopes
@@ -89,7 +89,7 @@ Phase 2 §2.5 Learning + fidelity — gaps 4, 7, 8 (procedural drain off neutral
 
 ### `AAP-9` — §2.6 Dialect asymmetry closure + project_id stamping (gaps 9 & 10)
 
-**Status:** todo
+**Status:** done
 
 Phase 2 §2.6 Dialect asymmetry closure (gap 9) + project stamping (gap 10) (surface dialect caps in discovered-agent payload; stop popping project_id/extra_tool_roots at provider_bridge.py:541; server-side project binding in mcp_core)
 
