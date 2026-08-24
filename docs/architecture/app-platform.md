@@ -273,6 +273,50 @@ and removes them on disable/uninstall. Entries are namespaced
 removes exactly this app's servers. App-shipped stdio servers run with
 `cwd=<app dir>` (`mcp_client.py` / `mcp_discovery.py`).
 
+## Declared quality bar (`apps/quality.py`)
+
+An app may declare `quality` — `{tested, designSystem, a11y}` — which the Store
+renders as the card's badge row (`web/src/pages/apps/qualityBadges.tsx`). Each
+axis is **tri-state, and that is the contract**:
+
+| value | meaning | rendering | verified? |
+|---|---|---|---|
+| absent | claims nothing | no badge at all | nothing to verify |
+| `false` / `"legacy"` / `"n/a"` | an honest miss | a muted MISS badge | nothing to verify |
+| `true` / `"v2"` | a claim | a MET badge | yes, for first-party |
+
+Absent and declared-false are **different facts**. Collapsing them either way is
+a lie: rendering absent as a pass is the obvious one; rendering it as a miss shows
+an app failing a bar it never entered. `QualityDeclaration` keeps the distinction
+at the parse boundary and emits only declared axes on the wire.
+
+For a **first-party** app the block is not just decoration — the apps-repo CI runs
+`python -m personalclaw.apps.quality .` and exits non-zero when a claim outruns the
+evidence in the bundle:
+
+- **`tested: true`** — the bundle ships `test_*.py` (root or `tests/`) *and* they
+  pass. Presence alone is not evidence, or an empty `tests/` would buy the badge.
+- **`designSystem: "v2"`** — every `*.ts`/`*.tsx` in the bundle passes token-lint,
+  by the SAME rule the host frontend is held to. The patterns are shared data
+  (`apps/token_lint_rules.json`), read by both `apps/quality.py` and
+  `web/src/design/tokenLintRule.ts`; `tokenLintRuleParity.test.ts` fails if the two
+  drift. A second implementation of the rule would be the same declared-vs-actual
+  drift one layer down.
+- **`a11y: true`** — the bundle ships `a11y/axe-report.json`
+  (`{"appVersion", "tool", "violations": []}`) whose `appVersion` matches the
+  manifest's, so a clean scan of the previous release cannot launder this one. axe
+  needs a browser the apps-repo CI has none of, so the app produces the artifact and
+  CI checks it.
+
+A claim with **nothing to check** is a violation, not a free pass: `"v2"` with no
+frontend to lint and `a11y: true` with no report would both badge a check that never
+ran. The CLI also exits non-zero on a tree containing no `*/app.json` at all — a
+checker that silently checked nothing is the failure mode this whole surface exists
+to prevent.
+
+Third-party declarations are unverified by construction, which is why the badge
+tooltip says *declares*, never *verified*.
+
 ## Extension registration
 
 `providers/loader.py` loads each enabled app, puts the app directory on

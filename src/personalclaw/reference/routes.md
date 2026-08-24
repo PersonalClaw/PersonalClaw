@@ -188,6 +188,7 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `PATCH /api/chat/tags/{id}` — rename / recolor / reorder.
 - `POST /api/chat/task-mode` — set the per-session TASK mode.
 - `GET /api/companion/discovery` — the live state of the LAN advertiser.
+- `POST /api/computer-use/dispatch` — run one computer-use tool through the chain.
 - `GET /api/config-fs/stream` — SSE feed of out-of-band config-tree changes (#44).
 - `GET /api/config/default-agent` — read or set the default agent.
 - `PUT /api/config/default-agent` — read or set the default agent.

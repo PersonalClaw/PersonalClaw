@@ -67,6 +67,31 @@ ERROR_CODES: dict[str, str] = {
         "screen does not recognise. An unrecognised destination is refused like a password "
         "field is: a screen that only knows the shapes it was shown has a hole in it."
     ),
+    "ERR_COMPUTER_USE_UNKNOWN_TOOL": (
+        "The computer-use dispatch was asked for a tool it does not declare. The seven "
+        "declared tools are the whole surface; an unknown name is refused rather than "
+        "guessed at."
+    ),
+    "ERR_COMPUTER_USE_BAD_ARGUMENT": (
+        "A computer-use argument is missing, the wrong type, or outside the range the "
+        "snapshot supports (for example an element index past the last element the walked "
+        "window exposes)."
+    ),
+    "ERR_COMPUTER_USE_STALE_INDEX": (
+        "The element index names a snapshot that is unknown, has expired, or whose window "
+        "has changed since it was walked. Acting on a stale index would press whatever now "
+        "sits at that position, so it is refused and a fresh snapshot is required."
+    ),
+    "ERR_COMPUTER_USE_DRIVER_UNAVAILABLE": (
+        "No accessibility driver is available for this platform, or the driver has no "
+        "handler for this operation. A typed refusal, never a silent no-op — nothing was "
+        "clicked, typed or changed on the desktop."
+    ),
+    "ERR_COMPUTER_USE_DRIVER_FAILED": (
+        "The ceilinged driver subprocess could not be started, did not answer within its "
+        "timeout, or returned something unreadable. Reported as a failure rather than as an "
+        "empty result, because a computer-use no-op reads to a model as success."
+    ),
 }
 
 

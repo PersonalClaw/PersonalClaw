@@ -10,6 +10,8 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Added
 
+- **App cards now tell you whether an app is tested, styled like the rest of PersonalClaw, and accessible — and for our own apps, a card that claims it and isn't fails the build.**
+
 - **"Is this template edit actually better?" is now a question you can answer, not settle by taste.**
 
 - **A resumed session no longer redoes yesterday's finished work.**

@@ -1,0 +1,19 @@
+{
+  "_comment": [
+    "THE token-lint rule, in one place (APE-4). Two consumers read these patterns and",
+    "neither owns them:",
+    "  - web/src/design/tokenLintRule.ts  — lints the HOST frontend (web/src) in vitest;",
+    "  - personalclaw/apps/quality.py     — lints an APP BUNDLE's frontend so a",
+    "    `quality.designSystem: \"v2\"` declaration can be verified in the apps-repo CI.",
+    "Reimplementing the rule on the app side would have minted a second dialect of the",
+    "same lint — the exact declared-vs-actual drift this atom exists to prevent — so the",
+    "patterns live here and web/src/design/tokenLintRuleParity.test.ts fails if the TS",
+    "copy stops matching this file byte for byte.",
+    "Patterns are written in the JS/Python common subset (no lookbehind, no named",
+    "groups) so `new RegExp(p)` and `re.compile(p)` agree."
+  ],
+  "hex": "#[0-9a-fA-F]{3,8}\\b",
+  "raw_px": "style=\\{\\{[^}]*?\\b\\d+px\\b",
+  "px_ok_context": "minmax\\(|repeat\\(|\\bmin\\(|\\bmax\\(|\\bclamp\\(|\\b(border|outline)(-[a-z]+)?:\\s*[^;}]*\\d+px|border[A-Z][a-zA-Z]*:\\s*[`'\"]?\\s*\\$?\\{?[^}]*\\d+px|Math\\.(min|max)\\(",
+  "calc_with_token": "calc\\([^)]*var\\("
+}

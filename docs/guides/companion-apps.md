@@ -184,3 +184,202 @@ Native wrappers live in their own plans (desktop, mobile); this is the contract 
 3. **Render the served dashboard.** There is no separate companion API — a companion loads the
    same SPA from the gateway it paired with. Keeping one frontend is why the phone never lags
    behind the desktop by a release.
+
+The rest of this guide is the precise version of that contract — the part a desktop shell and
+a phone shell must not answer differently.
+
+---
+
+## The shared client contract
+
+Two wrappers around one product will drift if either of them gets to decide something the
+other also decides. So this section decides it once.
+
+It is deliberately small, and for a good reason: almost everything a companion needs is
+already settled by the fact that it renders the gateway's own dashboard. The SPA brings its
+own routing, its own caching and its own reconnect behaviour. The genuinely new state — the
+only state a wrapper owns — is **the list of gateways it has paired with**.
+
+### One client, several gateways
+
+A companion may hold more than one paired gateway. A work brain and a personal brain is the
+common case, and they are unrelated machines that merely happen to sit in one app's list.
+That list is the **only** sanctioned multi-instance mechanism in PersonalClaw. Nothing is
+shared between the gateways in it — see [No hub, ever](#no-hub-ever) below, which is a
+standing ruling and not a current limitation.
+
+### The endpoint registry
+
+A client stores exactly one thing: a list of endpoints plus a pointer at the active one.
+
+```jsonc
+{
+  "active": "home-laptop",               // the id of the endpoint currently loaded
+  "endpoints": [
+    { "id": "home-laptop",               // stable, client-minted; never sent to a gateway
+      "label": "Home laptop",            // what the switcher shows
+      "base_url": "http://claw.local:10000",
+      "kind": "local",                   // "local" | "remote"
+      "device_session_ref": "<nonce>" }  // which session row, on THAT gateway
+  ]
+}
+```
+
+Four notes, each of which someone would otherwise get wrong:
+
+- **`id` is the client's own.** It exists so the shell has a stable key to namespace state
+  under, and it survives the user relabelling or re-pairing an endpoint. No gateway ever sees
+  it or needs to.
+- **`base_url` is an origin to navigate to, not a prefix to prepend.** More on this below —
+  it is the single most important thing in this section.
+- **`kind`** is `local` for a gateway on your own network and `remote` for one reached through
+  the [remote access](remote-access.md) path. It changes nothing about authentication; it
+  exists so a shell can label a connection honestly.
+- **`label`** defaults to the gateway's own `companion.instance_name` (the same field the
+  discovery record publishes, above), falling back to its hostname. Let the gateway name
+  itself — a user who renames "Living room Mac" once should not have to rename it again in
+  every wrapper.
+
+### Where the registry lives, and why the dashboard cannot hold it
+
+**The registry belongs to the shell, in the shell's own storage, outside any gateway's
+origin.** This is not a preference. The served dashboard is structurally incapable of holding
+it:
+
+- **The dashboard is per-gateway by construction.** A shell loads the SPA *from* a gateway:
+  `desktop/main.js:768` is a bare `wc.loadURL(backendUrl)`, and `backendUrl` is a single value
+  resolved from that one gateway's READY line (`desktop/main.js:143`). One shell window is
+  looking at one gateway, always.
+- **The SPA has no base-URL concept at all.** Its API client speaks root-relative `/api` paths
+  on the same origin (`web/src/lib/api.ts:1-3`), and the WebSocket is built from
+  `location.host` (`web/src/lib/useChatSocket.ts:32`). There is no variable to re-point. A
+  bundle served by gateway A can only ever talk to gateway A.
+
+So a registry kept inside the dashboard would be a registry each gateway held a separate copy
+of, listing itself — which is not a registry.
+
+### Namespacing: exactly one place can bleed
+
+The good news first. Because the SPA is origin-bound, **browser origin isolation already
+partitions everything it stores.** Two gateways on two origins get two separate `localStorage`
+and `sessionStorage` buckets for free — including the `cache:`-prefixed sessionStorage mirror
+at `web/src/lib/data/store.ts:50`, and the other 47 non-test files under `web/src` that touch
+web storage. A wrapper does **not** need to namespace, wrap, or patch any of that, and should
+not try.
+
+The bad news, and the whole point of this subsection: **the shell's own storage is a single
+scope spanning all N gateways.** `desktop/main.js` declares no `partition`, so the default
+session applies. That single scope is the one and only place two brains can bleed into each
+other.
+
+**The rule: everything the shell itself persists is keyed by endpoint `id`.** Window bounds
+and zoom, the last route, notification state, badge counts, cached avatars, any wrapper-side
+prefs — all of it goes under the endpoint's `id`, never under a global key. The registry
+itself (`active` plus the list) is the sole exception, because it is what the ids belong to.
+
+If you find yourself writing a global key in a wrapper, you have found a state-bleed bug
+before it shipped.
+
+### Switching gateways
+
+Switching is two steps, in this order:
+
+1. Re-point `active` to the target endpoint's `id`.
+2. Load that endpoint's `base_url`. Not a re-configuration — a navigation to a different
+   origin.
+
+What the user sees: the switcher shows every paired gateway with the active one marked; they
+pick another; the dashboard reloads as that gateway's dashboard, already signed in, because
+the device session for it is already held. It should feel like switching accounts in a mail
+app, not like reconnecting.
+
+What must **not** happen, in any wrapper:
+
+- **No aggregation.** No merged inbox, no combined search, no unified notification count, no
+  "all gateways" view. One gateway is in view at a time.
+- **No cross-endpoint carry-over.** Do not hand the target endpoint state read from the
+  previous one — that is exactly the bleed the namespacing rule exists to prevent.
+- **No re-pairing on switch.** An endpoint already in the list is already paired. If it is not,
+  that is a revocation to report, not a pairing flow to re-enter.
+
+### Device sessions are per-gateway and never federate
+
+Each entry's `device_session_ref` names a row in **that gateway's own session store**. There is
+no shared identity across gateways, and no gateway knows the others exist.
+
+The consequence a wrapper must get right: **revoking a device session breaks exactly one
+entry.** The other endpoints keep working, untouched. A shell that reacts to one endpoint's
+`401` by clearing its whole registry has turned one revocation into a full re-pair of every
+gateway. Surface it as "this gateway needs pairing again" on that row, and leave the rest
+alone.
+
+**Carry a device session as the session cookie — never through the `?token=` query parameter.**
+This one is measured, not stylistic:
+
+- The query-param path **binds** the token to the first client IP it sees
+  (`bind_token_ip`, `dashboard/token_auth.py:582`, called on first query-param use at
+  `dashboard/token_auth.py:1055`) and then denies on mismatch with `IP mismatch`
+  (`check_token_ip`, `:587`, enforced at `:1042`).
+- Cookie-borne requests skip that check entirely — *"the cookie itself is the credential, and
+  IP validation behind a proxy is unreliable"* (`dashboard/token_auth.py:1040-1041`).
+
+A phone changes IP every time it moves between cell and Wi-Fi. A query-param device session
+would therefore die on every network change, while a cookie-borne one is untouched. Pairing
+completion sets the cookie on the response, and a native shell — Electron or a Capacitor
+WebView — holds it exactly like any browser does. There is nothing to implement here beyond
+*not* reaching for the query parameter because it was the shape you saw in the token link.
+
+### Reconnecting: reuse the contract, do not write one
+
+A wrapper inherits reconnect behaviour by loading the served dashboard, and that behaviour is
+already specified in code:
+
+- The socket reconnects with **capped exponential backoff** — `retry` climbs to a ceiling of 6
+  and the next attempt is scheduled at `250 * 2 ** retry` ms
+  (`web/src/lib/useChatSocket.ts:45-46`).
+- The catch-up callback fires **only after a real connection existed**, guarded by `everOpened`
+  (`web/src/lib/useChatSocket.ts:36`), so a first-load failure is not reported as a dropped
+  connection.
+- Degraded UI is whatever the dashboard already renders in that state. It is the same contract
+  the rest of the product uses; a companion is not a special case.
+
+**Do not add a wrapper-side retry loop.** A second timer racing the SPA's own produces
+duplicated catch-up fetches and a connection indicator that disagrees with the page. A shell's
+legitimate job here is narrower: notice that the machine is unreachable at all (DNS or TCP
+failure against `base_url`), and say so on that endpoint's row in the switcher.
+
+### No hub, ever
+
+This is an owner ruling, quoted from the plan of record rather than summarised, because it is
+the rule most likely to be re-litigated by someone adding "just one" convenience:
+
+> **No hub in core, ever. No gateway-to-gateway anything.** Gateways never discover, sync
+> with, or proxy for each other; no shared identity, no cross-gateway search, no aggregated
+> inbox in core or in the shells. A future "hub" could only ever be a third-party app running
+> against gateways the user pairs it with — explicitly out of every first-party plan's scope.
+
+Read it as a design boundary, not a missing feature. The N gateways in a client's registry are
+N independent machines; the client is the only thing that knows they are related, and it knows
+it only as a list. Multi-gateway support is a *client* affordance from end to end, which is
+why it costs the gateway nothing.
+
+### What a wrapper must implement
+
+A desktop or mobile author can work from this list without deciding anything else:
+
+1. **Persist the registry** — `{active, endpoints[]}` in the shell's own storage, in the shape
+   above.
+2. **Add an endpoint** by discovery or a typed URL, then pair once for a device session
+   (cookie-borne). Store the returned reference as `device_session_ref`.
+3. **Key every shell-side value by endpoint `id`.** No global keys except the registry itself.
+4. **Load `base_url` as an origin.** Never prepend it to an API path; there is nothing in the
+   SPA to prepend it to.
+5. **Ship a switcher** that lists all endpoints, marks the active one, and on selection
+   re-points `active` and navigates. No aggregate view.
+6. **Show per-endpoint health** — reachable, unreachable, or needs-pairing-again — on the
+   switcher rows. One endpoint's failure never touches another's entry.
+7. **Inherit reconnect from the SPA.** Add no retry loop of your own.
+8. **Label endpoints from `companion.instance_name`**, falling back to the hostname, and let
+   the user override locally.
+
+If a wrapper needs something not on this list, that is a change to this document first.

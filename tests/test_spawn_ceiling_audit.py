@@ -61,6 +61,16 @@ _CEILING_WRAPPED: dict[str, str] = {
     # Bash action provider — hook/cron shell commands (tool profile).
     "action_providers/bash_provider.py::BashActionProvider.execute::"
     "create_subprocess_limited": "bash action provider → tool ceiling",
+    # Desktop computer-use driver (tool profile) — DESKTOP-COMPUTER-USE §3.5, `DCU-4`. The
+    # driver is a subprocess precisely BECAUSE of this ceiling: an accessibility call into an
+    # unresponsive application can block inside the OS for a long time, and the plan requires a
+    # wedged/looping driver to be "bounded by the kernel, not just a userspace timeout". The
+    # operation is model-chosen (which app, which element, which named AX action), so it is
+    # agent-influenced in the fullest sense — this is the one spawn in the tree whose child
+    # touches the operator's physical input layer.
+    "computer_use/service.py::_run_driver::create_subprocess_limited": (
+        "desktop computer-use driver → tool ceiling via create_subprocess_limited"
+    ),
     # Loop verify gate (tool profile).
     "loop/gates.py::run_verify_command::create_subprocess_limited": (
         "loop verify command → tool ceiling (was create_subprocess_shell)"
@@ -362,6 +372,21 @@ _OPERATOR_EXEMPT: dict[str, str] = {
         "host tool: transcription ffmpeg"
     ),
     "voice_reply.py::stitch_wavs::asyncio.create_subprocess_exec": "host tool: wav stitch ffmpeg",
+    # The quality verifier runs an app bundle's OWN pytest to check a `tested: true`
+    # declaration. Exempt on two grounds, and the second is the load-bearing one:
+    #   1. Not agent-influenced — the argv is `[sys.executable, "-m", "pytest", <dir>]`,
+    #      where <dir> comes from the CLI's own positional argument. No model, no turn,
+    #      no workflow input reaches it, and there is no shell.
+    #   2. Not reachable from the gateway at all. It is a CI/CLI tool
+    #      (`python -m personalclaw.apps.quality`) with ZERO importers in the runtime —
+    #      pinned by `test_the_verifier_has_no_gateway_call_site` in
+    #      tests/test_app_quality_enforcement.py, so wiring it into a request path breaks
+    #      that rail and forces this classification to be re-argued rather than
+    #      inherited. A ceiling would also be wrong on the merits: a bundle's own suite
+    #      legitimately spawns and opens files like any test run.
+    "apps/quality.py::run_bundle_tests::subprocess.run": (
+        "CI tool: app-bundle pytest for a quality declaration (no gateway call site)"
+    ),
 }
 
 

@@ -43,6 +43,7 @@ The extension-provider taxonomy (the capability types an app can contribute) and
 - **personalclaw-artifacts** — type `tool` / `` (enabled); capabilities: artifacts
 - **personalclaw-automation-tools** — type `tool` / `` (enabled); capabilities: automation_management
 - **personalclaw-code-map** — type `tool` / `` (enabled); capabilities: code_map
+- **personalclaw-computer-use-tools** — type `tool` / `` (enabled); capabilities: desktop_automation
 - **personalclaw-inbox-tools** — type `tool` / `` (enabled); capabilities: inbox
 - **personalclaw-knowledge-tools** — type `tool` / `` (enabled); capabilities: knowledge
 - **personalclaw-memory** — type `tool` / `` (enabled); capabilities: memory
