@@ -59,6 +59,7 @@ def _app_src(
     backend=None,
     files=None,
     platform=None,
+    quality=None,
 ) -> str:
     d = tmp_path / subdir / name
     d.mkdir(parents=True)
@@ -74,6 +75,10 @@ def _app_src(
         mani["backend"] = backend
     if platform:
         mani["platform"] = platform
+    # APE-4: `None` means "declare no quality block at all", which is a DIFFERENT
+    # fixture from `{}` — the wire must be able to tell them apart.
+    if quality is not None:
+        mani["quality"] = quality
     (d / "app.json").write_text(json.dumps(mani), encoding="utf-8")
     for rel, content in (files or {}).items():
         p = d / rel
@@ -151,6 +156,41 @@ async def test_list_hasconfig_false_without_any_schema(tmp_path):
         apps = (await (await client.get("/api/apps")).json())["apps"]
         row = next(a for a in apps if a["name"] == "noconf")
         assert row["hasConfig"] is False
+
+
+@pytest.mark.asyncio
+async def test_list_carries_the_declared_quality_block(tmp_path):
+    """APE-4: GET /api/apps must surface the DECLARED quality axes so the Library card
+    can badge them. Without this leg the block would validate, round-trip and be
+    verified in CI while never reaching a single pixel."""
+    async with _client(tmp_path) as client:
+        src = _app_src(tmp_path, "badged", quality={"tested": True, "designSystem": "legacy"})
+        await client.post("/api/apps", json={"source": src})
+        apps = (await (await client.get("/api/apps")).json())["apps"]
+        row = next(a for a in apps if a["name"] == "badged")
+        assert row["quality"] == {"tested": True, "designSystem": "legacy"}
+        # Per-axis, not per-block: `a11y` was never declared, so it must not appear —
+        # a defaulted `a11y: false` here would put a miss badge on a silent app.
+        assert "a11y" not in row["quality"]
+
+
+@pytest.mark.asyncio
+async def test_list_reports_no_quality_block_for_an_app_that_declares_none(tmp_path):
+    """The other half of APE-4's honesty: an app that declared NOTHING must arrive with
+    an empty block, never a synthesised all-false one. `{}` is what makes the card
+    render no badges; `{"tested": false, …}` would render a row of misses the app never
+    signed up for."""
+    async with _client(tmp_path) as client:
+        src = _app_src(tmp_path, "quiet")
+        await client.post("/api/apps", json={"source": src})
+        apps = (await (await client.get("/api/apps")).json())["apps"]
+        row = next(a for a in apps if a["name"] == "quiet")
+        assert row["quality"] == {}
+        # …and the two shapes are genuinely distinguishable on the wire.
+        src2 = _app_src(tmp_path, "honest-miss", subdir="src2", quality={"tested": False})
+        await client.post("/api/apps", json={"source": src2})
+        apps = (await (await client.get("/api/apps")).json())["apps"]
+        assert next(a for a in apps if a["name"] == "honest-miss")["quality"] == {"tested": False}
 
 
 @pytest.mark.asyncio

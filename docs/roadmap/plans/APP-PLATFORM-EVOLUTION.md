@@ -149,6 +149,82 @@ skipped: [`docs/architecture/agent-activity-feed.md`](../../architecture/agent-a
   read path.
 
 ## Execution log
+- [2026-08-24][S2 · atom `APE-4`] **PARTIAL — the core half is complete and railed; the apps-repo CI job is
+  the one clause this repo cannot land.** Shipped: `quality` on `AppManifest` (`QualityDeclaration`,
+  round-trip + `_KNOWN_FIELDS` + `designSystem` enum validation), the verifier
+  `apps/quality.py` (`python -m personalclaw.apps.quality <tree>`), the wire on BOTH app payloads
+  (`/api/apps` via `_quality_wire`, `CatalogEntry.quality` at all three construction sites), and
+  `web/src/pages/apps/qualityBadges.tsx` rendered on the Store card + both detail panels.
+
+  **The load-bearing artifact is not the schema and not the badge — it is that a lie fails the build**,
+  so each axis was proven by planting one and observing the red, each paired with an honest-declaration
+  floor that stayed green (`tests/test_app_quality_enforcement.py`, 36 tests):
+  `tested: true` with no `test_*.py` (caught statically — the runner raises if consulted) and with tests
+  that FAIL; `designSystem: "v2"` on a frontend carrying a raw hex + inline px; `a11y: true` with axe
+  violations, with no report, with a report that cannot say "zero", and with a report produced against a
+  PREVIOUS version (freshness — one honest scan must not launder every later release).
+
+  **Two vacuity traps closed on purpose.** (a) A claim with *nothing to check* is a violation, not a free
+  pass: `"v2"` with no frontend to lint would otherwise earn the badge because the lint found no files to
+  fail. (b) The CLI exits 1 on a tree with no `*/app.json` at all — a checker that silently checked
+  nothing is precisely this atom's defect class.
+
+  **Absent ≠ false ≠ passing, held at three layers.** `from_dict` keeps `quality` as `None` when the block
+  is absent (a mutation collapsing it to an all-false block reds two tests); `to_dict`/`_quality_wire` emit
+  only DECLARED axes, so an undeclared `a11y` never arrives as `false`; and `qualityBadges` renders a met
+  badge, a distinct muted MISS badge, and *nothing at all* — with one test asserting the three rendered
+  markups are pairwise distinct, which none of the individual assertions can do alone.
+
+  **One token-lint rule, not two.** Verifying `designSystem` from Python needed the host's lint, so the
+  patterns became data — `apps/token_lint_rules.json`, packaged — with a thin consumer on each side
+  (`apps/quality.py`, the extracted `web/src/design/tokenLintRule.ts` that `tokenLint.test.ts` now
+  imports). Re-implementing the regexes would have minted a second dialect of the same lint: the exact
+  declared-vs-actual drift this atom exists to prevent, one layer down. `tokenLintRuleParity.test.ts` pins
+  the two byte-for-byte AND behaviourally over a corpus with known per-line verdicts; drifting the TS
+  `HEX` from `{3,8}` to `{6,8}` reds it.
+
+  **FINDING — `text-positive` emits no CSS, and the card already relies on it.** The first badge draft used
+  `text-positive`; `design/inertUtilities.test.ts` caught it as a utility that compiles to nothing. The
+  allowlist confirms it is a known BUG (`text-positive -> text-ok`) and that
+  `pages/apps/AppsSection.tsx` is already listed for it — i.e. **the Store card's existing green
+  "Installed" affordance is unstyled today**. The badge now uses the real `text-ok`; fixing the
+  neighbouring `text-positive`/`text-negative` is a visible behaviour change the allowlist explicitly
+  reserves for its own change, so it was NOT folded in here.
+
+  **FINDING — an uncapped spawn needed classifying, and its exemption got a premise rail.**
+  `run_bundle_tests` spawns `python -m pytest <bundle>`, which `test_spawn_ceiling_audit` reds as an
+  unmapped spawn site. Classified operator-exempt on the ground that `apps.quality` has ZERO runtime
+  importers — and that ground is now itself a test (`test_the_verifier_has_no_gateway_call_site`,
+  AST-scanned, falsified by adding an importer to `apps/manager.py`), so wiring the verifier into a
+  request path forces the classification to be re-argued instead of silently inherited.
+
+  **FINDING — the CI-call-site test was a fake green under `make test`.** `python -m
+  personalclaw.apps.quality` in a child process resolved `personalclaw` through the venv's editable
+  install (the MAIN checkout), not the worktree, so the child exited 1 for *"no such module"* while the
+  test read exit-1 as *"caught the liar"* — a green proving the opposite of its claim. The child's
+  `PYTHONPATH` is now pinned to the tree the test imported from.
+
+  **MEASURED on the real first-party tree (read-only, nothing committed there): 45 bundles, not the
+  plan's "36".** 43 of 45 ship test files (`alibaba-models` and `meta-muse-spark` do not, so
+  `tested: true` on either is a statically-caught lie). Exactly TWO ship frontend source — `growth`
+  (8 token-lint violations) and `minutes` (9) — so `designSystem: "v2"` on either is a lie **today**, and
+  the honest value for both is `"legacy"` until `APE-6` lands; that is the atom's real-world red, not just
+  a fixture's. ZERO ship an axe report, so `a11y: true` is currently unearnable by any first-party app.
+  Nothing declares `quality` yet, so the new job is green on day one and adoption is opt-in per app.
+
+  **NOT MET — the apps-repo CI job (cross-repo, deliberately not committed).** `PersonalClawApps` needs
+  ONE job added to `.github/workflows/ci.yml`, mirroring the existing `manifest-validate` job's
+  uv-venv + `$CORE_SPEC` install and then `needs: [tests]` (so a declaring app whose suite is red cannot
+  reach a green quality job), running `python -m personalclaw.apps.quality .` from the repo root. An app
+  declaring `a11y: true` additionally has to produce `a11y/axe-report.json`
+  (`{"appVersion", "tool", "violations": []}`) from its own harness. Until that job exists the enforcement
+  is proven only in core; the verifier, its exit codes and all three reds are pinned here, and the
+  remaining delta is a workflow step, not logic.
+
+  Gates: `make lint` clean (mypy 996 files) · `make test` **25761 passed / 0 failed** / 30 skipped /
+  12 xfailed · full web suite **476 files, 4999 tests, all passed** · `typecheck:web` + `npm run build`
+  clean · `gate_report.py` 6/6 PASS. `docs/design/consistency-audit.json` moved by one `filesScanned`
+  (551→552) with driftHits unchanged at 8 — the generated reporter noticing the new component.
 - [2026-08-18][S1 · atom `APE-2`] **DONE** — `apps/app_events.py` registers the three platform events, each
   **at the site the fact becomes true**: `session.created` at `dashboard/state.py:1619` (right after
   `self._sessions[name] = session`), `knowledge.ingested` at `knowledge/pipeline/runner.py:349` (the same

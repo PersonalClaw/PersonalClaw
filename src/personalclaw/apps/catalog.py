@@ -173,6 +173,11 @@ class CatalogEntry:
     # registry-index card (pointer-only, manifest not yet fetched — surfaced post-clone).
     permissions: dict[str, Any] = field(default_factory=dict)
     crons: list[dict[str, Any]] = field(default_factory=list)
+    # APE-4: the app's DECLARED quality block, rendered as the card's badge row. Only
+    # the axes the manifest actually declared appear here — an empty dict means the app
+    # claimed nothing, which the card renders as no badges, NOT as a row of misses.
+    # Verified in the apps-repo CI for first-party apps (apps/quality.py).
+    quality: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -470,6 +475,7 @@ def _scan_git_source(url: str, *, now: float) -> list[CatalogEntry]:
                     providerType=(m.provider.type if m.provider else ""),
                     providerCapabilities=(list(m.provider.capabilities) if m.provider else []),
                     tags=list(m.tags),
+                    quality=(m.quality.to_dict() if m.quality else {}),
                     pointer=f"{url}#{entry.name}",
                     permissions=_perms,
                     crons=_crons,
@@ -821,6 +827,7 @@ def _scan_local_sources() -> list[CatalogEntry]:
                     providerType=(m.provider.type if m.provider else ""),
                     providerCapabilities=(list(m.provider.capabilities) if m.provider else []),
                     tags=list(m.tags),
+                    quality=(m.quality.to_dict() if m.quality else {}),
                     permissions=_perms,
                     crons=_crons,
                 )
@@ -918,6 +925,7 @@ def available_bundled() -> list[CatalogEntry]:
                 providerType=(m.provider.type if m.provider else ""),
                 providerCapabilities=(list(m.provider.capabilities) if m.provider else []),
                 tags=list(m.tags),
+                quality=(m.quality.to_dict() if m.quality else {}),
                 permissions=_perms,
                 crons=_crons,
             )

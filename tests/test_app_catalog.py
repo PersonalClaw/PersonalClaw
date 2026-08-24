@@ -385,6 +385,32 @@ def test_local_source_apps_surface_in_catalog(tmp_path):
     assert entry["sourceKind"] == "local"
 
 
+def test_catalog_carries_the_declared_quality_block(tmp_path):
+    """APE-4: a Store card badges the declared quality bar BEFORE install, so the
+    catalog entry has to carry it — the pre-install card reads this payload, not
+    ``/api/apps``. And an app that declared nothing must arrive as ``{}``, so the card
+    renders no badges rather than a row of misses it never signed up for."""
+    src = tmp_path / "myapps"
+    src.mkdir()
+    for name, quality in (("badged-app", {"tested": True, "a11y": False}), ("quiet-app", None)):
+        d = src / name
+        d.mkdir(parents=True)
+        mani = {
+            "name": name,
+            "version": "1.0.0",
+            "displayName": name.title(),
+            "description": f"{name} fixture",
+        }
+        if quality is not None:
+            mani["quality"] = quality
+        (d / "app.json").write_text(json.dumps(mani), encoding="utf-8")
+    catalog.add_local_source(str(src))
+    by_name = {a["name"]: a for a in catalog.available_catalog()["localApps"]}
+    assert by_name["badged-app"]["quality"] == {"tested": True, "a11y": False}
+    assert "designSystem" not in by_name["badged-app"]["quality"]
+    assert by_name["quiet-app"]["quality"] == {}
+
+
 def test_first_party_source_is_present_and_not_removable(tmp_path, monkeypatch):
     """The first-party default source is always present, badges its apps
     'first-party', and refuses removal."""
