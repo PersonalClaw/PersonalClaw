@@ -23,6 +23,8 @@ imports that symbol from that module (a wrong module path would fail here).
 """
 
 import json
+import pathlib
+import re
 import sys
 import types
 
@@ -409,6 +411,11 @@ def test_the_omitted_capabilities_are_named_so_the_omission_is_deliberate():
 # defects, since it accepts any constructor call and needs no script file.
 
 
+#: Env-var spellings the tree deliberately NARRATES as dead (the drift these rails were written
+#: after). Kept because the story is why the rails exist; asserted to be read by nothing.
+RETIRED_ENV_NAMES = frozenset({"PERSONALCLAW_SCRIPTED_LLM"})
+
+
 def test_the_registry_and_the_fixture_name_the_SAME_env_var() -> None:
     """One switch for the pair, asserted rather than promised.
 
@@ -426,6 +433,68 @@ def test_the_registry_and_the_fixture_name_the_SAME_env_var() -> None:
         "the registration gate and the fixture's own gate name different env vars, so the "
         "pair can be half-enabled and neither half looks broken in isolation"
     )
+
+
+def test_the_harness_spells_the_env_var_the_SAME_way() -> None:
+    """The other two spellings of the one switch — and this one had ALREADY drifted.
+
+    The test above pins the two PYTHON constants together. But the switch is named in two more
+    places that no Python assertion reaches, because the harness that sets it is not Python:
+    `web/playwright.config.ts` (which actually exports the value the gateway is launched with)
+    and the `test-e2e` recipe's own explanation of why the gate is credential-free.
+
+    Measured, not hypothesised: the Makefile said `PERSONALCLAW_SCRIPTED_SCRIPT` — a variable
+    that exists nowhere — while `playwright.config.ts` set the real one. Nothing failed, because
+    the wrong name was in a COMMENT: the gate worked and its stated reason for working was
+    false. That is the more corrosive half of a drift, since the next person to wire a fixture
+    reads the prose. Asserting the prose is cheap; a comment nobody checks is how the four
+    spellings got to three.
+
+    Names that are DELIBERATELY narrated as dead are declared in `RETIRED_ENV_NAMES` above and
+    separately asserted to be read by nothing — narration of a fixed bug is worth keeping, and a
+    sweep that banned it would just get deleted. What is not allowed is a third spelling that is
+    neither the live switch nor a declared retirement.
+    """
+    from personalclaw.llm import registry as R
+
+    env = R.SCRIPTED_PROVIDER_ENV
+    root = pathlib.Path(__file__).resolve().parents[1]
+    for rel in ("web/playwright.config.ts", "Makefile"):
+        text = (root / rel).read_text(encoding="utf-8")
+        assert env in text, f"{rel} never names {env} — the harness cannot enable the fixture"
+        unknown = {
+            tok
+            for tok in re.findall(r"PERSONALCLAW_SCRIPTED[A-Z_]*", text)
+            if tok not in {env, "PERSONALCLAW_SCRIPTED", *RETIRED_ENV_NAMES}
+        }
+        assert not unknown, (
+            f"{rel} names {sorted(unknown)}, which is neither the live switch ({env}) nor a "
+            f"declared retirement. If it is a historical mention, add it to RETIRED_ENV_NAMES; "
+            f"otherwise fix it. A wrong name in a comment leaves the gate working and its "
+            f"stated reason false — which is the state this test was written after finding."
+        )
+
+
+def test_no_retired_env_name_is_still_read_by_anything() -> None:
+    """The floor under the allowlist above: a retirement has to be real.
+
+    Without this, `RETIRED_ENV_NAMES` is a way to make the drift sweep quiet — declare the
+    stale name and the assertion goes green while a module still reads it. So the retirement is
+    checked against the shipped source rather than trusted.
+    """
+    root = pathlib.Path(__file__).resolve().parents[1]
+    src = root / "src"
+    live = sorted(
+        p.name
+        for p in src.rglob("*.py")
+        for n in RETIRED_ENV_NAMES
+        if n in p.read_text(encoding="utf-8")
+    )
+    assert not live, (
+        f"these shipped modules still name a RETIRED env var {sorted(RETIRED_ENV_NAMES)}: "
+        f"{live}. It is not retired; either the allowlist is wrong or the module is."
+    )
+    assert RETIRED_ENV_NAMES, "the retirement list is empty — the sweep above allows nothing extra"
 
 
 def test_the_factory_builds_the_REAL_fixture_through_the_registry(
