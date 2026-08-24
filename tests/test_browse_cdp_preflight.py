@@ -10,13 +10,23 @@ The fake transport and the fake resolver together mean no browser is launched an
 query is made. ``SecurityEventLog`` is replaced for every test, so nothing writes to a real
 audit log, and ``AppConfig.load`` is replaced, so nothing reads the real home.
 
-``net.policy.BROWSE`` is a sibling branch's symbol (it does not exist here yet), so the
-autouse ``browse_profile`` fixture installs a stand-in with ``raising=False`` — pytest
-removes it again after each test, so nothing lingers once the real profile lands. That
-stand-in doubles as the discriminator for "did the session actually use BROWSE?": its
-``deny_hosts`` entry resolves to a perfectly public IP under the fake resolver, so a
-session that reached for STRICT (or any other profile) instead would ALLOW it and
-:func:`test_denied_host_sends_zero_page_navigate` would go red.
+The profile under test is the SHIPPED ``net.policy.BROWSE``, deliberately. This file used to
+install a stand-in profile via an autouse fixture, because BROWSE lived on a sibling branch
+and did not exist here. Once that sibling merged, the stand-in stopped being a scaffold and
+became a *shadow*: every test in the file kept asserting against a two-field fake while the
+real 50 MB / 10-redirect / ``pin_resolved_ip=False`` profile went unexercised, so the clause
+"pre-flighted against a new BROWSE profile in ``net/policy.py``" was self-fulfilling. This is
+the same defect the sibling ``safety_script`` stub had (see
+:func:`test_a_missing_safety_script_module_fails_closed`) — a scaffold that only reads as a
+scaffold on the branch that lacked the real thing. Both are gone now.
+
+Two tests carry what the stand-in used to:
+:func:`test_the_guard_is_called_with_the_real_browse_profile` asserts the policy handed to the
+guard at the call site carries the shipped profile's own field values (a fallback to STRICT
+reds it), and
+:func:`test_a_missing_browse_profile_fails_closed` proves the module really reads that symbol.
+The deny used throughout comes from the OPERATOR's ``deny_hosts``, layered on by
+``egress_policy_for`` — the real path a self-hoster's denial travels.
 """
 
 import sys
@@ -28,7 +38,7 @@ import pytest
 from personalclaw.browse import cdp
 from personalclaw.config.loader import AppConfig
 from personalclaw.net import policy as net_policy
-from personalclaw.net.policy import EgressPolicy
+from personalclaw.net.policy import egress_policy_for
 
 # Public addresses, so the guard's public-only stance is never what denies a host here —
 # only the policy is.
@@ -84,8 +94,15 @@ class _FakeEgressConfig:
 
 @pytest.fixture
 def operator_egress(monkeypatch):
-    """The operator's ``security.egress`` block, faked so no real config is read."""
-    cfg = _FakeEgressConfig()
+    """The operator's ``security.egress`` block, faked so no real config is read.
+
+    ``denied.example`` is denied by default because the shipped BROWSE profile carries no
+    ``deny_hosts`` of its own — its stance is public-only, and every host in ``_DNS``
+    resolves to a public address on purpose. So the denial has to come from the operator
+    layer, which is also the only place a self-hoster's denial ever comes from. That makes
+    ``egress_policy_for`` part of the path under test rather than a detail around it.
+    """
+    cfg = _FakeEgressConfig(deny_hosts=["denied.example"])
     fake_app = types.SimpleNamespace(security=types.SimpleNamespace(egress=cfg))
     monkeypatch.setattr(AppConfig, "load", classmethod(lambda cls: fake_app))
     return cfg
@@ -98,11 +115,13 @@ def _no_real_config(operator_egress):
 
 
 @pytest.fixture(autouse=True)
-def browse_profile(monkeypatch):
-    """The sibling's BROWSE profile, stood in for until it lands in ``net/policy.py``."""
-    base = EgressPolicy(name="browse", deny_hosts=("denied.example",))
-    monkeypatch.setattr(net_policy, "BROWSE", base, raising=False)
-    return base
+def _forget_remembered_denies(monkeypatch):
+    """``egress_policy_for`` remembers the last deny list at MODULE scope (policy.py).
+
+    Left alone, one test's operator denials leak into the next test in the same worker via
+    ``_LAST_DENY_HOSTS`` — and worse, into whatever else that worker runs. Reset per test.
+    """
+    monkeypatch.setattr(net_policy, "_LAST_DENY_HOSTS", ())
 
 
 @pytest.fixture(autouse=True)
@@ -203,6 +222,44 @@ async def test_safety_script_is_called_with_the_layered_allow_hosts(
     await _started(transport)
 
     assert safety_script_calls == [{"allow_hosts": ("lan.example",)}]
+
+
+@pytest.mark.asyncio
+async def test_the_guard_is_called_with_the_real_browse_profile(monkeypatch):
+    """Clause 1, asserted at the CALL SITE: the policy handed to ``evaluate`` IS BROWSE.
+
+    Every other test in this file would still pass if the session quietly reached for STRICT,
+    because the operator's deny list is layered onto any profile. This one cannot: it captures
+    the second positional argument at the ``evaluate`` call site and compares it, field for
+    field, with ``egress_policy_for(net_policy.BROWSE)``.
+
+    The three explicit field assertions are the discriminator, and each names a value STRICT
+    does NOT have — 10 redirects (STRICT 5), 50 MB (STRICT 5 MB), ``pin_resolved_ip=False``
+    (STRICT True). A fallback to STRICT, CONNECTOR or SOURCE reds all three.
+    """
+    captured: list = []
+    real_evaluate = cdp.evaluate
+
+    def _spy(url, policy, **kwargs):
+        captured.append(policy)
+        return real_evaluate(url, policy, **kwargs)
+
+    monkeypatch.setattr(cdp, "evaluate", _spy)
+    transport = FakeTransport()
+    session = await _started(transport)
+    outcome = await session.navigate("https://allowed.example/page")
+
+    assert outcome.ok is True
+    assert len(captured) == 1, "exactly one pre-flight per navigation"
+    policy = captured[0]
+    assert policy == egress_policy_for(net_policy.BROWSE), (
+        "the pre-flight must use the operator-layered BROWSE profile, not another profile "
+        f"and not the bare base; got {policy!r}"
+    )
+    assert policy.name == "browse"
+    assert policy.max_redirects == 10, "STRICT's 5 would mean the session fell back"
+    assert policy.max_bytes == 50_000_000, "STRICT's 5 MB would mean the session fell back"
+    assert policy.pin_resolved_ip is False, "BROWSE cannot pin; True would be another profile"
 
 
 # ── the SEL row ───────────────────────────────────────────────────────────────
@@ -345,6 +402,63 @@ async def test_operator_deny_list_is_on_the_path(operator_egress, sel_rows):
 
 
 @pytest.mark.asyncio
+async def test_a_denied_host_stays_denied_when_the_config_read_fails(monkeypatch):
+    """An unparseable operator config must not UN-deny a host, at this seam.
+
+    ``egress_policy_for``'s best-effort catch is tested at the policy layer
+    (``test_egress_deny_survives_a_config_error.py``); this asserts the consequence where it
+    matters — the session still writes no ``Page.navigate``. A bare ``return base`` on the
+    error path would silently make the denied host reachable through the browser.
+    """
+    transport = FakeTransport()
+    session = await _started(transport)
+    assert (await session.navigate("https://denied.example/secret")).allowed is False
+
+    def _explode(_cls):
+        raise OSError("config.json is unparseable")
+
+    monkeypatch.setattr(AppConfig, "load", classmethod(_explode))
+
+    outcome = await session.navigate("https://denied.example/secret")
+
+    assert outcome.allowed is False, "a config-read error must not un-deny a denied host"
+    assert "deny list" in outcome.reason
+    assert transport.count(cdp.NAVIGATE) == 0
+
+
+@pytest.mark.asyncio
+async def test_the_residual_a_cold_start_has_no_denial_to_preserve(monkeypatch):
+    """The documented RESIDUAL, asserted at the seam so it is visible rather than assumed.
+
+    ``egress_policy_for`` preserves the last *observed* deny list. If the very first config
+    read fails there is nothing observed, so the browse path runs on the bare BROWSE profile —
+    public-only and scheme-gated, but without the operator's denials. That is a deliberate
+    choice in ``net/policy.py`` (refusing all egress on a transient read would take the machine
+    offline over a control that only ever ADDS denials), not an accident here.
+
+    If that choice is ever revisited — a hard refusal, or a persisted deny list — this test is
+    what should go red, and its expectation is what should be inverted. It exists to make that
+    a decision rather than a discovery.
+    """
+
+    def _explode(_cls):
+        raise OSError("config.json is unparseable")
+
+    monkeypatch.setattr(AppConfig, "load", classmethod(_explode))
+    monkeypatch.setattr(net_policy, "_LAST_DENY_HOSTS", ())
+    transport = FakeTransport()
+    session = await _started(transport)
+
+    outcome = await session.navigate("https://denied.example/secret")
+
+    assert outcome.allowed is True, (
+        "the residual has changed: a cold-start config failure now preserves a denial, which "
+        "is an improvement — invert this test rather than deleting it"
+    )
+    assert transport.count(cdp.NAVIGATE) == 1
+
+
+@pytest.mark.asyncio
 async def test_an_unparseable_url_is_denied_without_navigating(sel_rows):
     transport = FakeTransport()
     session = await _started(transport)
@@ -386,7 +500,12 @@ async def test_a_guard_exception_fails_closed(monkeypatch, sel_rows):
 
 @pytest.mark.asyncio
 async def test_a_missing_browse_profile_fails_closed(monkeypatch):
-    """Before the sibling's BROWSE lands, browsing must refuse — not fall back to STRICT."""
+    """A build without BROWSE must REFUSE, not fall back to STRICT.
+
+    Also the vacuity partner for
+    :func:`test_the_guard_is_called_with_the_real_browse_profile`: together they say the module
+    reads that exact symbol and uses what it finds there.
+    """
     transport = FakeTransport()
     session = await _started(transport)
     monkeypatch.delattr(net_policy, "BROWSE", raising=False)
