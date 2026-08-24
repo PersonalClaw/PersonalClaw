@@ -317,6 +317,16 @@ _BYPASS_EXACT.add("/api/logout")
 # request that fails enablement, peer, or token checks, and only mounts the route
 # at all when a valid dedicated token exists.
 _BYPASS_EXACT.add("/mcp")
+# The Dialect-5 capture proxy authenticates ITSELF for exactly the same reason
+# (EXTERNAL-ACCESS §7.1): each route runs `capture_proxy._admit` — surface enablement,
+# then an unconditional loopback rail, then a constant-time bearer check against the
+# capture surface token or a registered per-client token — before it reads a body. The
+# external agent pointing `OPENAI_BASE_URL` here presents that bearer in `Authorization`
+# and has no dashboard cookie, so without these two entries the middleware demanded a
+# session token first and both routes were unreachable: an inert surface.
+# Enumerated EXACTLY rather than prefix-exempting `/capture/v1/`, so a route added under
+# that prefix later does not inherit the exemption without its author choosing it.
+_BYPASS_EXACT.update({"/capture/v1/chat/completions", "/capture/v1/messages"})
 
 # The login front door (REMOTE-USER-AUTH C3). These three MUST be reachable without a
 # session, because they are how a remote browser gets one — gating them behind the session
