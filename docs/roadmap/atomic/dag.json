@@ -5671,7 +5671,7 @@
         {
           "id": "APE-3",
           "title": "Background worker SDK (sdk/background.py) + backend_runtime supervised hosting",
-          "status": "todo",
+          "status": "done",
           "scope": "Session 1 T1.3 + V1; Contract C2 (background worker SDK)",
           "done_when": "fixture app worker runs, survives a crash (watchdog), stops on disable; budget breach pauses it + notifies; V1: uninstall leaves no orphan worker (PPID-reaping verified)",
           "deps": [
@@ -7501,11 +7501,6 @@
   ],
   "dag": {
     "ready_frontier": [
-      {
-        "id": "APE-3",
-        "title": "Background worker SDK (sdk/background.py) + backend_runtime supervised hosting",
-        "plan": "APE"
-      },
       {
         "id": "APE-4",
         "title": "quality manifest block + Store card rendering + first-party CI verification",
@@ -10060,9 +10055,9 @@
         "code": "APE",
         "plan": "APP-PLATFORM-EVOLUTION",
         "total_atoms": 12,
-        "done": 8,
+        "done": 9,
         "in_progress": 0,
-        "todo": 4,
+        "todo": 3,
         "blocked": 0
       },
       {

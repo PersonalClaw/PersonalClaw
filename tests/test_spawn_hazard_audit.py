@@ -114,3 +114,53 @@ def test_native_bash_spawn_has_no_preexec_fn():
     node = _func_node("agents/native/builtin_tools.py", "_t_bash")
     assert "create_subprocess_limited" in _func_calls_named(node)
     assert not _func_passes_preexec_fn(node)
+
+
+# ── Hazard (c): the app-WORKER watchdog, the third spawner on the same boot path ──
+
+
+def test_the_harness_flags_both_families_of_app_child_process(monkeypatch, tmp_path):
+    """APE-3's escape hatch had a live reader and ZERO writers until this rail.
+
+    `load_all_extensions` starts THREE children/sweepers, not two: app backends, app
+    background WORKERS (APE-3) and model sidecars. `conftest` set
+    `PERSONALCLAW_SKIP_APP_BACKENDS` precisely because a test reaching that boot block
+    "killed the live gateway's backends once" — and `worker_runtime._SKIP_ENV` says of itself
+    "set by a harness that must not have app workers spawned underneath it" while having
+    exactly one mention in the whole repo: its own definition.
+
+    The worker sweep spawns, stops and PPID-reaps against whatever `list_apps()` returns, from
+    a daemon thread that outlives the test that started it (so a `config_dir` monkeypatch is
+    already gone by the first sweep). Latent only because no app on disk declares
+    `backgroundTasks` yet — which is a fact about today's apps, not a property of the guard.
+    """
+    import os
+
+    from personalclaw.apps import worker_runtime as wr
+
+    assert os.environ.get(wr._SKIP_ENV) == "1", (
+        f"the test harness does not set {wr._SKIP_ENV}, so a test that reaches "
+        "providers/loader.load_all_extensions() starts a real app-worker watchdog over the "
+        "user's home — the sibling backend flag exists because that already happened once"
+    )
+
+    # The sweeps below are driven against a tmp home: an unflagged sweep also consults the
+    # budget meter, and this rail must not read or seed the real one.
+    from personalclaw.config import loader as _config_loader
+
+    monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path))
+    monkeypatch.setattr(_config_loader, "config_dir", lambda: tmp_path)
+
+    # And the reader honors it: a flagged sweep does not even reach `list_apps`.
+    listed: list[int] = []
+    monkeypatch.setattr(
+        "personalclaw.apps.manager.list_apps", lambda *a, **k: listed.append(1) or []
+    )
+    wr.WorkerSupervisor().sweep()
+    assert listed == [], "the sweep ran despite the skip flag — the guard is decorative"
+
+    # Vacuity floor: WITHOUT the flag the same sweep does reach `list_apps`, so the assertion
+    # above is about the guard and not about a sweep that never lists anything.
+    monkeypatch.delenv(wr._SKIP_ENV, raising=False)
+    wr.WorkerSupervisor().sweep()
+    assert listed == [1], "an unflagged sweep did not list apps — this rail proves nothing"
