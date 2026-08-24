@@ -419,27 +419,38 @@ def _package_sources() -> dict[str, str]:
     return {p.name: p.read_text(encoding="utf-8") for p in sorted(package.glob("*.py"))}
 
 
-def test_the_computer_use_tool_population_is_currently_empty():
-    """⚠️ THE VACUITY MARKER for this whole group — read it before trusting the ratchet.
+def test_the_computer_use_entry_point_population_is_exactly_the_one_dispatch():
+    """THE POPULATION CENSUS — no longer a vacuity marker, because the population is no longer
+    empty.
 
-    `DCU-1` ships the guard; `DCU-4` ships the tool surface, the stdio shim and the
-    in-gateway dispatch chain, and `DCU-3` the macOS driver. So the set of dispatchable
-    computer-use entry points is EMPTY right now, and the ratchet below is
-    armed-but-unexercised over the real package. This test says the size out loud so that
-    emptiness can never be silent, and it REDS the moment `DCU-4` adds the first tool —
-    at which point the author must bump the number here and, in the same look, satisfy the
-    ratchet. Do not delete this test to make that red go away.
+    `DCU-1` shipped this asserting ZERO, out loud, so the ratchet below could not look clean
+    merely by matching nothing. `DCU-4` landed the tool surface, and the honest number turned
+    out to be **one**: seven tools, but ONE dispatchable entry point. That is the composition
+    the atom chose, and this census is where it is pinned.
+
+    **Why one and not seven.** Seven module-level ``computer_*`` functions would each have to
+    call ``require_enabled()`` first to satisfy the ratchet below, making seven readers of the
+    one decision this package cannot afford to have read twice (see ``require_enabled``'s own
+    docstring for the measured version of that failure). So the tool NAMES live in
+    ``tools.py``'s ``TOOL_SURFACE`` as data, and ``service.computer_dispatch`` is the single
+    function that runs them. The ratchet below is therefore no longer vacuous: it binds a real
+    entry point that really does guard first.
+
+    **The complement — a tool that reaches the desktop without going through this dispatch —**
+    is what the number defends. A second entry point appearing here means a second chain, and a
+    second chain means a second order to get right. If you are adding one, say why the existing
+    dispatch cannot carry it before bumping this number.
     """
     found = {
         name: [fn.name for fn in _entry_points(source)]
         for name, source in _package_sources().items()
     }
     populated = {name: tools for name, tools in found.items() if tools}
-    total = sum(len(tools) for tools in found.values())
-    assert total == 0, (
-        f"the computer-use tool population is no longer empty: {populated}. Update this "
-        "census to the new size and confirm test_every_computer_use_entry_point_guards_first "
-        "covers each new tool."
+    assert populated == {"service.py": ["computer_dispatch"]}, (
+        f"the computer-use entry-point population changed: {populated}. Expected exactly one — "
+        "service.py::computer_dispatch. Every tool routes through it; a second entry point is a "
+        "second chain. If that is deliberate, confirm "
+        "test_every_computer_use_entry_point_guards_first covers it and bump this census."
     )
 
 
@@ -471,11 +482,12 @@ def test_the_ratchet_flags_a_guard_that_is_not_first():
 
 
 def test_every_computer_use_entry_point_guards_first():
-    """The ratchet: any future computer-use tool that dispatches without routing through
-    the keystone guard as its first check reds here. Vacuous today by construction — see
-    ``test_the_computer_use_tool_population_is_currently_empty`` for why, and
-    ``test_the_ratchet_flags_an_entry_point_that_skips_the_guard`` for the proof that it
-    detects rather than merely matching nothing."""
+    """The ratchet: any computer-use entry point that dispatches without routing through the
+    keystone guard as its first check reds here. **No longer vacuous** — `DCU-4` landed
+    ``service.computer_dispatch``, so this now binds a real entry point (see
+    ``test_the_computer_use_entry_point_population_is_exactly_the_one_dispatch`` for why the
+    population is one and not seven). ``test_the_ratchet_flags_an_entry_point_that_skips_the_
+    guard`` remains the proof that it detects rather than merely matching nothing."""
     offenders = {
         name: unguarded
         for name, source in _package_sources().items()
@@ -530,6 +542,21 @@ def test_the_packages_public_surface_is_pinned():
             "input_target_error",
         ],
         "gate.py": ["require_computer_use"],
+        # DCU-4's three modules. `service` COMPOSES the chain and owns the package's ONE
+        # dispatchable entry point (`computer_dispatch`, which the ratchet above binds to
+        # `require_enabled` as its first statement); `tools` DECLARES the seven-tool surface
+        # and is the thin shim that forwards a call to that dispatch; `driver_host` is the
+        # ceilinged child the platform driver runs inside. Only `computer_dispatch` is named
+        # `computer_*`, deliberately — the ratchet's prefix is the marker for "this can
+        # dispatch", and neither the declaration nor the transport can.
+        "service.py": [
+            "ComputerUseRefusal",
+            "Snapshot",
+            "computer_dispatch",
+            "reset_snapshots",
+        ],
+        "tools.py": ["ToolSpec"],
+        "driver_host.py": ["main", "resolve_driver", "run_op"],
     }, (
         "the computer_use package grew a public function/class. If it is a dispatchable "
         "tool, name it computer_* so the keystone ratchet covers it and call "

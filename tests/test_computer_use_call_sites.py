@@ -1,40 +1,36 @@
-"""`DCU-2`'s missing half: the three screens exist, and NOTHING in ``src/`` calls them yet.
+"""WHERE `DCU-2`'s three screens are consulted — one dispatch, and nothing else.
 
-`DCU-2` ships the decisions (``policy.check_app``, ``policy.check_input_target``) and the
-audit (``gate.require_computer_use``). Every one of them provably refuses/records when
-called — ``test_computer_use_policy.py`` and ``test_computer_use_gate.py`` drive them
-directly. But a screen is only a screen where something consults it, and on ``main`` the
-dispatch chain those three sit in **does not exist**: `DCU-3` owns the macOS driver and
-`DCU-4` owns ``service.py``'s in-gateway chain and the ``computer_*`` tool surface. So the
-atom's third clause — *"every attempt, allowed or refused, produces a SEL record"* — is
-today a property of a function nobody calls, which is the exact defect shape this codebase
-keeps rediscovering: a control that is present, correct, tested, and inert.
+This file shipped with `DCU-2` as an **inertness marker**: the three screens
+(``policy.check_app``, ``policy.check_input_target``, ``gate.require_computer_use``) existed,
+were correct, were tested by being driven directly — and had ZERO production callers, because
+the chain they sit in was `DCU-4`'s deliverable. The census asserted the population was zero
+and said so out loud, so the inertness could not be silent.
 
-**Why this file exists rather than a chain rail.** `DCU-1` armed the analogous rail for
-step 1 (``test_every_computer_use_entry_point_guards_first``) by requiring every
-``computer_*`` function in the package to call the keystone FIRST. The equivalent for steps
-2/4/5 cannot be written yet without dictating a shape: `DCU-4`'s scope puts the chain in a
-central ``service.py`` dispatch, not in each tool, so a per-tool "must call
-``check_input_target``" rail would prescribe the wrong composition and a central-dispatch
-rail has no dispatch to bind to. Choosing between those is `DCU-4`'s call, not this file's.
+**`DCU-4` landed, so the census flipped from "nobody calls these" to "exactly this calls
+these".** It is the same scanner and the same three vacuity floors; only the expected
+population changed, from empty to the one file that owns the composition. What it now defends
+is the property that replaced the old one:
 
-**What this file does instead**, which needs no such choice: it says the inertness OUT LOUD
-and makes it self-announcing. The census below reds the moment the first production caller
-appears — at which point the author must come back and assert the CALL SITE (that the
-refusal really fires from the driving path, and that a SEL row is written on the allowed
-path as well as the refused one), not merely that the mechanism works in isolation.
+* a **new** caller of any screen reds, naming the file — because a second place that decides
+  whether an app may be driven is a second policy that can drift from this one. `DCU-4`'s
+  chain lives in ONE central dispatch precisely so there is one order to get right.
+* a **lost** caller reds too, because the map is asserted by equality. Deleting the
+  ``check_input_target`` call from the dispatch would otherwise turn this file green again by
+  returning it to the state it was written to complain about.
 
-**This is invisible to every other gate on main, which is why it is written down here.**
-``inert-surface-baseline.json`` censuses five declared-surface kinds — config keys, enum
-members, trigger kinds, ``_EDITABLE_CONFIG`` entries and SDK exports — so a *module-level*
-function with no importer is outside its vocabulary entirely (measured: zero occurrences of
-``computer_use`` in that baseline). ``test_the_packages_public_surface_is_pinned`` pins the
-three names as public API but says nothing about anyone calling them.
+**The complementary half — a new UNSCREENED path — is not this file's job**, and saying so
+matters, because a census of screen call sites structurally cannot see code that calls no
+screen. Two rails cover that direction:
+``test_computer_use_enable_state.py::test_every_computer_use_entry_point_guards_first`` (every
+``computer_*`` entry point in the package must call the keystone first, and the population
+census beside it pins how many entry points exist — currently one), and
+``test_computer_use_dispatch.py``'s declaration rails, which pin exactly which tools are
+exempt from which screen so an added tool cannot opt out silently.
 
-**AST, not a text scan.** ``policy.py``'s own module docstring names all three functions,
-and ``gate.py``'s names two of them, so a ``grep``-shaped rail would count prose as call
-sites and read as "already wired" today — the false-clean this repo has recorded before.
-Only ``ast.Call`` nodes count here, and
+**AST, not a text scan.** ``policy.py``'s own module docstring names all three functions, and
+``gate.py``'s names two of them, so a ``grep``-shaped rail would count prose as call sites and
+would have read as "already wired" on a tree where nothing called anything — the false-clean
+this repo has recorded before. Only ``ast.Call`` nodes count here, and
 :func:`test_the_scanner_does_not_count_prose_as_a_call_site` is the proof of that.
 """
 
@@ -88,34 +84,57 @@ def _production_call_sites() -> dict[str, list[str]]:
 # ── the census ───────────────────────────────────────────────────────────────
 
 
-def test_the_dcu2_screens_have_no_production_caller_yet():
-    """⚠️ THE INERTNESS MARKER for `DCU-2` — read it before trusting the three clauses.
+#: The ONLY production file permitted to consult the screens, and which ones it consults.
+#:
+#: One entry, deliberately. `DCU-4`'s chain is a single central dispatch — ``service.py``'s
+#: ``computer_dispatch`` — so "which files call a screen" and "how many places decide" are the
+#: same question, and the answer has to be one.
+#:
+#: **Each screen appears exactly ONCE, which is a measured fact and not a coincidence.** The
+#: multiplicity is pinned (the value is a list, not a set) because it is the interesting number:
+#: ``check_app`` is called once even though the chain screens both the "app named in the
+#: arguments" and the "app the snapshot walked" shapes, and ``require_computer_use`` is called
+#: once even though the audit fires on three different exits — both because the dispatch funnels
+#: them through single call sites (``policy.check_app(app, …)`` after the app is resolved either
+#: way, and ``_audit`` for every exit). A second call site appearing here means the funnel was
+#: broken open, which is exactly when two paths start disagreeing. What this cannot see is an
+#: exit that stops calling ``_audit`` at all — that is covered behaviourally by
+#: ``test_computer_use_dispatch.py::test_every_attempt_writes_exactly_one_row`` plus the three
+#: tests that assert the allowed, refused and keystone-refused rows separately.
+_EXPECTED_CALL_SITES: dict[str, list[str]] = {
+    "computer_use/service.py": [
+        "check_app",
+        "check_input_target",
+        "require_computer_use",
+    ],
+}
 
-    Measured on ``origin/main``: ZERO. ``check_app``, ``check_input_target`` and
-    ``require_computer_use`` are called from ``tests/`` only. That is correct *for now* —
-    the chain that would call them is `DCU-4`'s deliverable and the driver is `DCU-3`'s —
-    but it means no clause of `DCU-2`'s ``done_when`` is enforced against a real driving
-    path today, and in particular nothing guarantees a refused attempt is ever accompanied
-    by a SEL row: ``policy`` raises without recording, by design, because ``gate`` is a
-    separate step a caller must remember.
 
-    **When this reds, do not just bump the number.** Add, in the same change, a test that
-    asserts the CALL SITE for whichever screen gained a caller:
+def test_the_dcu2_screens_are_consulted_only_by_the_dispatch():
+    """THE CALL-SITE CENSUS — the flipped form of `DCU-2`'s inertness marker.
 
-    * a non-allowlisted app refused *through the dispatch path*, not by calling
-      ``check_app`` directly;
-    * a type/set-value into a secure field refused the same way;
-    * a SEL row written on the ALLOWED path **and** on the refused path — asserted
-      separately, because a single "a row exists" assertion passes when only the refusal
-      records.
+    Asserted by **equality**, in both directions:
+
+    * a new file calling any screen reds, naming itself. That is the drift this guards: two
+      places deciding whether an app may be driven is two policies, and the second one is
+      always the one that forgets a step.
+    * a call REMOVED from the dispatch reds too. Without the equality this file would go green
+      again the moment somebody deleted the ``check_input_target`` call — returning it to
+      exactly the inert state it was written to complain about.
+
+    The per-screen behavioural assertions the old marker demanded of whoever wired these live in
+    ``tests/test_computer_use_dispatch.py``: a non-allowlisted app refused *through the
+    dispatch*, a secure-field type refused the same way, and a SEL row on the ALLOWED path
+    asserted separately from the refused one — against a real ``SecurityEventLog``, not a fake.
     """
     sites = _production_call_sites()
-    total = sum(len(names) for names in sites.values())
-    assert total == 0, (
-        f"`DCU-2`'s screens now have production caller(s): {sites}. They are defined in "
-        f"{sorted(set(_DEFINED_IN.values()))} and were inert when this census was written. "
-        "Update this marker AND add a call-site assertion for each newly-called screen — "
-        "see this test's docstring for the three that `DCU-2`'s done_when requires."
+    assert sites == _EXPECTED_CALL_SITES, (
+        f"the population of `DCU-2` screen call sites changed: {sites}. Expected exactly "
+        f"{_EXPECTED_CALL_SITES} — the screens are defined in "
+        f"{sorted(set(_DEFINED_IN.values()))} and `DCU-4` composes them in ONE dispatch. If you "
+        "added a caller, assert the CALL SITE too (refusal through the dispatch path, and a SEL "
+        "row on the allowed path as well as the refused one, separately). If you removed one, "
+        "the chain just lost a screen."
     )
 
 
