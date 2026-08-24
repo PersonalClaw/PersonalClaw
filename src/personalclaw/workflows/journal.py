@@ -705,6 +705,18 @@ def ledger(run_id: str, *, kinds: set[str] | None = None) -> list[dict[str, Any]
     return reader.read_events(store, run_id, kinds=kinds)
 
 
+def journal_records(run_id: str, *, kinds: set[str] | None = None) -> list[dict[str, Any]]:
+    """Read `journal.jsonl` — for the kinds the `events.jsonl` mirror never carries.
+
+    `run_started` and `run_finished` are outside :data:`LEDGER_KINDS`, so :func:`ledger` cannot
+    see the run's inputs or its final status. This is the engine-side binding of
+    :func:`personalclaw.ledger.reader.read_journal`: it exists so a consumer asks the facade
+    instead of importing the run store and passing it in itself, which is how the store binding
+    grows a second copy.
+    """
+    return reader.read_journal(store, run_id, kinds=kinds)
+
+
 def run_totals(run_id: str) -> dict[str, Any]:
     """Aggregate a run's ledger into the counters the run row carries.
 

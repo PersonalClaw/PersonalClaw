@@ -637,3 +637,92 @@ Sharpens, doesn't append: RunPin + scenario library extend **Session 1** (the st
 | pass → evidence unit + `results.tsv` row | MET (mechanism) — a refused ledger pin is reported, not hidden |
 | fail → demotion/revert proposal | MET (mechanism) |
 | **a flywheel template-diff RUNS it** | 🔴 **NOT MET** — no caller, no `ArmRunner`, no CLI |
+## Execution log — harvested regression suite (the `EXT:LEARN-R2` primitive ES-5 and ES-7 §3.3 both bottomed out on)
+
+- [2026-08-24][harvest] **Built the run→scenario harvest path.** Not an atom of its own: it is the
+  primitive both `ES-5` ("k=5 paired old-vs-new **over the harvested suite**") and `ES-7` §3.3 ("replays
+  **consulted runs**") landed PARTIAL for want of. Confirmed absent on `origin/main` before building:
+  `git grep -ciE 'harvest' -- src/` returns **one file, one hit** — a *comment* at
+  `evals/judge_bench.py:102`; `from_run|from_ledger|run_to_scenario` returns nothing; **`StudyCase` does
+  not exist anywhere** in `src/`, `tests/` or `docs/`; and nothing outside `evals/` has ever written a
+  scenario. `learning/` does read the ledger (`mining.py:211`, `refiner_tools.py:53`, `run_end.py:259`)
+  but only for evidence clustering, never to produce a scenario.
+
+- [2026-08-24][harvest] 🔴 **`run_started` and `run_finished` are NOT in `LEDGER_KINDS`, so the real reader
+  structurally cannot see a run's inputs.** Verified by executing it, not by reading it — and re-verified
+  independently at integration: both symbols are exported from `personalclaw.ledger` yet
+  `RUN_STARTED in LEDGER_KINDS` is `False`. `LedgerWriter.write` mirrors into `events.jsonl` only
+  `if kind in LEDGER_KINDS`, so `reader.read_events` returns `[]` for **the only record that carries
+  `inputs`** — and that empty list is indistinguishable from *"the run took no inputs"*. A harvester built
+  on `read_events` alone would have silently produced input-free cases forever. Resolved by **extending**
+  the real reader (`read_journal()` + `journal_only_kinds()`, bound engine-side as
+  `journal.journal_records()`) rather than adding a second reader.
+
+  | What | Kind | File | Field |
+  |---|---|---|---|
+  | Inputs | `run_started` | `journal.jsonl` **only** | `inputs`, `spec_version`, `resumed` |
+  | Final status | `run_finished` | `journal.jsonl` **only** | `status`, `elapsed_secs` |
+  | Outputs | `step_completed` | `events.jsonl` | `output_ref` (pointer; body spilled), `resolved_prompt_ref` |
+  | Failure | `step_failed` | `events.jsonl` | `failure`, `failure_signature` |
+  | Skill/template loaded | `consulted` | `events.jsonl` | `ref` — the ES-7 §3.3 join key |
+
+- [2026-08-24][harvest] 🔴 **`redact_credentials` is NOT idempotent over a composed `key: value` line, and
+  the second pass DESTROYS the field name.** This is a live property of the shared helper, not a harvest
+  bug. Reproduced independently at integration:
+  `redact_credentials("api_key: [REDACTED: credential]")` → **`"[REDACTED: credential] credential]"`**.
+  It *is* idempotent on its own direct output (a raw secret collapses to `[REDACTED: credential]` whole),
+  which is why the hazard hides: it bites only a caller that screens values individually and then composes
+  `key: value` strings and screens again. The first design here used exactly the single trailing
+  whole-scenario chokepoint that looks safest, and it corrupted every case whose inputs held a credential.
+  Restructured to screen each source **exactly once at entry**, with the non-idempotence pinned in a test
+  so nobody "simplifies" it back. **Any other caller composing `key: value` from already-screened values
+  will hit this.**
+- [2026-08-24][harvest] **`WorkflowRun.inputs` (the SQLite column) is written straight from the API request
+  and is never redacted**; `run_started.inputs` is the same dict *after* the writer's `redact()`. The
+  harvest reads only the ledger, and a run with **no `run_started` is refused** rather than harvested off
+  the row — that refusal is what makes "a harvested case cannot contain a credential" a property of the
+  read path rather than a hope.
+
+- [2026-08-24][harvest] **An empty population is a refusal; harvesting zero from real runs is a
+  measurement.** `HarvestReport.is_refusal` is `considered == 0`, deliberately **not** `population == 0`:
+  *"no replay population: the Run Ledger holds no harvestable terminal run, which is not the same as a
+  harvested suite of zero cases"*, and the CLI **exits 1**. A harvest that looked at runs and kept none
+  exits **0** with per-reason counts. `load_harvested_suite()` **raises** `EmptyHarvestError` rather than
+  returning `[]`. Re-falsified at integration: changing the predicate to `len(self.cases) == 0` reds two
+  tests including the CLI exit-code assertion — the distinction is load-bearing, and a zero-case suite
+  scored against a threshold would otherwise read as a pass.
+
+- [2026-08-24][harvest] **Redaction proof with two vacuity floors, not one.** The credential is planted
+  **raw** via `store.append_jsonl`, bypassing `Journal.write` — planting through `run_started` would let the
+  *writer* strip it and leave the screen unexercised (mechanism-not-use). Floor 1 stubs `redact` to identity
+  and requires the credential to **appear**. Floor 2 proves the planted shape is one `redact_credentials`
+  actually matches, and pins that `password=hunter2` passes through **untouched** — so the suite cannot pass
+  by planting a string nothing was going to strip.
+
+- ⚠️ **Two pre-existing hazards that make "the harvested suite is green" meaningless unless the judge is
+  on.** `personalclaw eval --all` globs the whole installed dir, so harvested cases are picked up by the
+  existing runner — desirable, but it means a zero-turn case would be *run* and *pass* while asserting
+  nothing (hence the "always ≥1 turn" invariant and its falsification). And `Assertion.check` returns
+  `True` for `AssertionType.JUDGE` when `--judge` is off, so a harvested case — like the shipped
+  `context_accumulation` — passes **vacuously**. Neither is this work's to fix.
+
+- **NOT done, deliberately: LEARN-R2's promotion discipline.** *"a previously-failing task that now passes
+  is re-run, and only if it passes again is it promoted"*
+  (`docs/research/learnings/verification-and-judging.md:96`). This harvest admits any terminal run. That
+  gate needs a re-run capability, which is `ArmRunner`'s job on the ES-5 branch, so building it here would
+  have meant guessing at that branch's interface.
+- **What each consumer still needs.** **ES-5:** a `StudyCase` adapter (trivial — `load_harvested_suite()` →
+  `[(name, sha256)]`); the `low_power` label, whose threshold the plan **never gives** (*"`low_power` at <N
+  cases"* — owner decision), noting ES-5 must catch `EmptyHarvestError` to emit an honestly-labelled
+  low-power study rather than crash; and the `ArmRunner`. The hard constraint is already satisfied:
+  `store.append_result` refuses a row without a complete `RunPin`, and a harvested case **is** a library
+  scenario with a named `fixture_home`, so it pins exactly like an authored one. **ES-7 §3.3:** a
+  `workflow_name`-style filter over `consulted_refs`; and a per-skill `MatrixSpec.subject` form —
+  `subject`'s own comment enumerates `template id | retrieval-arm set | judge fixture set | use-case`, and
+  **"skill" is not in that list**, so that is an unmade design decision, not a missing function.
+  `resolved_prompt_ref` is recorded per harvested output precisely because reconstructing a prompt from
+  today's template plus `inputs` would replay the very variable an A/B is trying to hold still.
+- **The `EXT:` dep was worse than "satisfied on paper".** LEARN-R2's harvested suite was never
+  *specified* — its total vocabulary across the plan set is *"a small set of past successful runs per
+  template"* and *"grows organically from previously-failing-now-passing runs"*, referenced by six
+  consumers. There was no contract to under-deliver against.
