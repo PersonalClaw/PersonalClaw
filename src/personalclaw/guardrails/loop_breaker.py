@@ -162,6 +162,20 @@ def _cycle_at(recent: list[str], period: int, cycles: int) -> tuple[str, ...] | 
 #: nothing about what the tool was asked to do. See :func:`normalize_call_args`.
 ADAPTER_ARG_PREFIX = "__"
 
+#: Argument keys that ANNOTATE a call rather than determine what it does — free-text the
+#: model writes for the human reading the transcript. `AAP-6`/`G154`: claude-code sends
+#: ``description`` on every Bash call, and a model enumerating its own retries writes
+#: "Run boom command (1 of 4)" … "(4 of 4)". Byte-identical commands therefore produced
+#: four buckets of one and no rung fired, which is the same defect ``ADAPTER_ARG_PREFIX``
+#: fixed for kiro arriving through a different door: a per-call nonce in the identity.
+#:
+#: Dropped ONLY when a behavioural key survives beside them (see
+#: :func:`normalize_call_args`) — for a tool whose payload genuinely IS a description,
+#: the description is the behaviour and merging on it would abort healthy turns.
+ANNOTATION_ARG_KEYS = frozenset(
+    {"description", "explanation", "reason", "rationale", "thought", "why", "purpose"}
+)
+
 
 def normalize_call_args(args: object) -> object:
     """Strip adapter-injected metadata from tool arguments before keying on them.
@@ -187,6 +201,14 @@ def normalize_call_args(args: object) -> object:
     if not isinstance(raw, dict):
         return args
     stripped = {k: v for k, v in raw.items() if not str(k).startswith(ADAPTER_ARG_PREFIX)}
+    # `G154`: free-text annotation keys are per-call by nature, so they fragment the
+    # bucket exactly like an adapter nonce. Dropped only when something behavioural
+    # survives beside them — a tool whose ONLY argument is a description keeps keying on
+    # it, because there the description IS the call and merging would blame identical
+    # buckets for genuinely different work.
+    behavioural = {k: v for k, v in stripped.items() if str(k) not in ANNOTATION_ARG_KEYS}
+    if behavioural:
+        stripped = behavioural
     # An input made ENTIRELY of adapter metadata would otherwise collapse to `{}` and
     # merge every such call into one bucket regardless of tool arguments. Keep the
     # original rather than invent an identity out of nothing.

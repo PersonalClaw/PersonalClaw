@@ -5080,3 +5080,50 @@ cited above.
   passed · offline reference re-rendered with the pinned interpreter for the new route (`761 of 765`,
   `test_agent_reference` 7 passed) · web typecheck clean, **474 test files / 4980 tests passed**,
   `npm run build` succeeded.
+- [2026-08-24][AAP-6] ✅ **DONE — `G154` and `G155` both closed, and both driven live on the provider
+  that was blocked.** The prior tick left clause 1 MET on all three providers and clause 2 MET on kiro
+  and codex, blocked on claude-code by `G154`, with `G155` recorded as an E3 (the breaker's lifetime is
+  a design decision, not an implementation detail). Taken here as the owner decision it was waiting for.
+- [2026-08-24][AAP-6] **`G154` — annotation keys fragmented the bucket; dropped, but only when
+  something behavioural survives.** claude-code sends `description` on every Bash call and a model
+  enumerating its own retries writes "Run boom command (1 of 4)" … "(4 of 4)", so four byte-identical
+  commands produced four streaks of one and no rung fired. `ANNOTATION_ARG_KEYS`
+  (`description`/`explanation`/`reason`/`rationale`/`thought`/`why`/`purpose`) now leave the bucket
+  identity — **only** when a behavioural key remains beside them. The prior tick's refusal to strip
+  `description` outright was right and is preserved: for a tool whose payload IS a description the
+  description is the behaviour, so a description-only call still keys on it (rail:
+  `TodoWrite {"description": "add auth"}` and `{"description": "delete auth"}` stay two buckets).
+  Same defect as kiro's `__tool_use_purpose` (`G152`) arriving through a different door — a per-call
+  nonce in the identity — so a call carrying BOTH is now one bucket.
+- [2026-08-24][AAP-6] **`G155` (E3 resolved) — the ACP breaker now lives for the SESSION.**
+  `_acp_breaker` was a local in `_run_chat`, i.e. per TURN, while `LoopBreaker` defines its own ceiling
+  as *"this **run's** total failures"* (`CIRCUIT_THRESHOLD = 30`) — so an unattended loop repeating a
+  failing tool for twenty turns reset the counter every turn and the circuit rung was unreachable by
+  construction. Ruling: the host-side analogue of a native run is the session, so the breaker is a
+  `_ChatSession` slot. Per-key streaks persist with it and `record()` still clears a key on success, so
+  a flaky-but-surviving tool is not punished for intermittency (rail: 10 fail-fail-succeed cycles leave
+  the key's streak at 0 while `total_failures` correctly reads 20).
+- [2026-08-24][AAP-6] **Driven live on claude-code, the provider clause 2 was blocked on.** One turn
+  instructed as six separate executions of `bash -c 'echo boom >&2; exit 3'` (10 tool events):
+  warn fired at **failure #3** and **#4** (*"stop repeating it and change approach"*), then the block
+  rung at **#5** and **#6** (*"tool `Terminal` was blocked — it has already failed 5 times this run
+  with these same arguments"*). Before this change that turn produced **no rung at all**.
+  Then a SECOND turn on the same session with two more identical failures reported **#7** and **#8** —
+  the count crossed the turn boundary, which is precisely what a per-turn breaker made impossible (it
+  would have restarted at #1). So the circuit's 30-failure input is now demonstrably reachable across
+  an unattended loop's turns.
+- [2026-08-24][AAP-6] ⚠️ **Residual, stated rather than papered over: the 30-failure abort was NOT
+  driven to completion on claude-code.** I observed the counter increment past the two lower rungs and
+  across a turn boundary (8 failures), not a live circuit trip — driving 31 real failures through a CLI
+  is the same impracticality `G155` recorded. The abort path itself is unchanged and was tripped live
+  on kiro and codex in the prior tick; what was broken on claude-code was the counter feeding it, and
+  that is what the two fixes and the live drive address.
+- [2026-08-24][AAP-6] **Falsified twice, each restored from a file copy.** Removing the annotation drop
+  reds 5 rails, including the decisive streak assertion (`[1, 1, 1, 1, 1]` — four identical calls
+  never reaching a rung). Restoring `_acp_breaker = LoopBreaker()` in `_run_chat` reds only the
+  source-level wiring rail, and that asymmetry is the reason the rail exists: the behavioural tests
+  construct a `_ChatSession` directly, so no in-turn assertion can observe a local being reintroduced.
+- [2026-08-24][AAP-6] **Gate:** `make lint` clean (992 source files, mypy Success) · 13 new rails ·
+  128 passed across every breaker suite · runtime import sweep after dropping the now-unused
+  `LoopBreaker` import from `chat_runner` (2 remaining first-party importers: `native/runtime.py`,
+  `dashboard/state.py`; both modules import cleanly).

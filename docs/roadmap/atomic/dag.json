@@ -4839,14 +4839,15 @@
         {
           "id": "AAP-6",
           "title": "\u00a72.3 Unattended threading + runtime-agnostic loop breaker for ACP (gaps 3 & 5)",
-          "status": "todo",
+          "status": "done",
           "scope": "Phase 2 \u00a72.3 Unattended + loop support \u2014 gaps 3 and 5 (stop popping unattended at provider_bridge.py:534; auto-deny-with-reason on unattended sessions; extract _FailureBreaker/record_structural into a neutral observer for chat_runner)",
           "done_when": "An unattended Code loop bound to each provider runs to completion or fails fast without wedging (Zed dialects via bypassPermissions incl. cron/scheduled; Kiro fail-fasts prompts deterministically); a deliberately failing-tool ACP session trips the circuit and aborts the turn with the standard breaker message (SC #4).",
           "deps": [
             "AAP-1",
             "AAP-2",
             "AAP-3"
-          ]
+          ],
+          "pr": 1965
         },
         {
           "id": "AAP-7",
@@ -7497,11 +7498,6 @@
   "dag": {
     "ready_frontier": [
       {
-        "id": "AAP-6",
-        "title": "\u00a72.3 Unattended threading + runtime-agnostic loop breaker for ACP (gaps 3 & 5)",
-        "plan": "AAP"
-      },
-      {
         "id": "APE-3",
         "title": "Background worker SDK (sdk/background.py) + backend_runtime supervised hosting",
         "plan": "APE"
@@ -9969,9 +9965,9 @@
         "code": "AAP",
         "plan": "ACP-AGENT-PARITY",
         "total_atoms": 10,
-        "done": 9,
+        "done": 10,
         "in_progress": 0,
-        "todo": 1,
+        "todo": 0,
         "blocked": 0
       },
       {

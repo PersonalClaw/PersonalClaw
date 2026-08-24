@@ -61,7 +61,6 @@ from personalclaw.dashboard.state import (
 from personalclaw.guardrails.loop_breaker import (
     BLOCK_THRESHOLD,
     WARN_THRESHOLD,
-    LoopBreaker,
     blocked_message,
     circuit_message,
     params_key,
@@ -1675,7 +1674,13 @@ async def run_chat(
     # process, so the host has to do the counting from the neutral event stream — the
     # SAME observer, so the thresholds and the wording can't diverge (`G6` measured
     # six consecutive ACP failures producing no warn, block or trip at all).
-    _acp_breaker = LoopBreaker()
+    # …and it lives on the SESSION, not here (`G155`). `LoopBreaker` calls its own
+    # ceiling "this RUN's total failures" (`CIRCUIT_THRESHOLD = 30`); a fresh instance
+    # per turn reset the count every turn, so an unattended loop repeating a failing
+    # tool for twenty turns never reached thirty and the circuit rung was unreachable
+    # by construction — proved at the code level in the prior tick and recorded as the
+    # one open reason clause 2 could not close. The session is the host-side run.
+    _acp_breaker = session._acp_breaker
     # tool_call_id -> the breaker's (tool, params) key. Recorded at tool_call and
     # REFINED at tool_call_update, because ACP adapters routinely send the first frame
     # with empty rawInput and stream the real arguments in the update — keying off the
