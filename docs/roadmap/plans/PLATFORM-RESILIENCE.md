@@ -682,6 +682,73 @@ Sessions 1-4 each ship independently; Session 1 alone is a Wave-0 win (the symli
   the steered strip renders above the composer instead, which keeps it beside the queued
   strip it must be distinguished from.
 
+- [2026-08-24][PR2-10] **DONE — the ACP mid-turn delivery path (S6.2's remainder).** The
+  S6.2 stop point above is closed: a dialect flipping `supports_mid_turn_prompt` now
+  delivers, and the delivery was proven serviced against an authenticated ACP CLI.
+
+  **Measured BEFORE, not assumed.** With a fixture dialect declaring the flag:
+  `AcpAgentProvider.steer_capable()` returned True and **had zero production callers**;
+  `set_steer_source` existed on NO layer (`AcpAgentProvider` / `AcpClient` / `AcpSession` /
+  `AcpSessionProvider` all False), so the dispatcher's `hasattr(client,
+  "set_steer_source")` gate found nothing to wire, marked the session non-draining, and
+  the steer queued. Driving a real tool boundary with a steer pending wrote **0** mid-turn
+  frames. The declaration was inert — the "declared capability with no delivery path"
+  shape. Second measured defect: `set_steer_drains(key, False)` cleared the buffer at turn
+  end and returned `None`, so an undrained steer vanished with no signal on any surface
+  while the HTTP caller had been told `{"steered": true}`.
+
+  **Built.** `ACPDialect.mid_turn_prompt_request()` owns the frame (gated on the flag, so
+  a subclass cannot declare support and build nothing). `AcpSession` gains the drain seam —
+  `set_steer_source` (which REFUSES a non-declaring dialect, keeping S6.1's invariant),
+  `undelivered_steers`, and `_deliver_steers_at_tool_boundary` — called from
+  `_dispatch_frames` at the **tool boundary** (`tool_call` / `tool_call_update`), the one
+  point mid-turn where the host knows the agent is between decisions. Both ACP providers
+  and `AcpClient` delegate (the client re-arms at `stream_events`, because `ensure_ready`
+  can bind a NEW session and a seam on a discarded one delivers nothing). The dispatcher's
+  gate is now the seam's ANSWER, not `hasattr`; `set_steer_drains(False)` hands back what
+  it clears, and `chat_runner` requeues each undelivered steer with the existing
+  `queue_push` echo — deliberately not an `activity_event {kind:"status"}`, which the
+  frontend filters as noise (a status broadcast would have been another invisible "fix").
+  `set_steer_source` returns `bool` on both runtimes (native included) so one answer is
+  read everywhere. Delivery is capped at 4/turn, parity-pinned to the native cap.
+
+  **The live spike found a hole in the first cut, and it is the atom's own defect class.**
+  kiro-cli accepts the WRITE and answers `-32603 "Prompt already in progress"`. Tracking
+  write failures alone therefore reported `{"steered": true}` for a steer the agent
+  discarded — measured live: the keyword appeared in NO turn. Fixed by parking each written
+  frame on `_steer_inflight` and moving an async refusal (or a cancelled future) onto
+  `_steer_rejected`, which `undelivered_steers()` reports and the dispatcher requeues. A
+  frame still awaiting its answer counts as delivered — requeueing on silence would
+  fabricate a duplicate of a steer that DID land.
+
+  **Live validation (isolated home + workspace under /private/tmp, never `~/.personalclaw`).**
+  · **kiro-cli, shipped state (no dialect declares):** mid-flight steer → `{"queued": true}`,
+  keyword absent from the running answer, present in the next turn. Honest degradation.
+  · **kiro-cli, flag flipped:** `{"steered": true}`, frame written, refused `-32603`,
+  surfaced as a WARNING and requeued — keyword landed in the next turn (pre-fix: nowhere).
+  · **codex, flag flipped:** `{"steered": true}`, frame written, **SERVICED** — the keyword
+  landed at the end of the SAME answer the turn was already writing, with no requeue and a
+  single user message in the transcript. This is the `done_when`, measured.
+  · **claude-code: VACUOUS** — not exercised (its 90 s prompt watchdog plus session budget);
+  the two arms above already cover both branches (serviced and refused).
+
+  **Every shipped dialect stays False.** The spike proves codex-acp services an interleaved
+  prompt on ONE version/model, which is evidence a flip is now available — not grounds to
+  change shipped behavior for every codex user on one measurement. Flipping
+  `CodexDialect.supports_mid_turn_prompt` is an owner call; the seam is what this atom owed.
+
+  **Adjacent defect found, NOT fixed (out of scope).** The native drain
+  (`runtime._drain_steers_into_history`) pulls the WHOLE buffer and then `break`s at
+  `_MAX_STEERS_PER_TURN`, discarding the overflow it already popped — the same
+  pop-then-lose shape, in the native path. The ACP seam deliberately does not have it
+  (overflow stays on `_steer_pending` and is requeued).
+
+  Tests: 17 new cases in `tests/test_mid_turn_steer.py` (39 → 56), each negative paired with
+  a vacuity floor. Seven falsifications run (call site removed, capability gate removed,
+  undeliverable swallowed, `set_steer_drains` return suppressed, requeue removed, wiring
+  gate reverted to `hasattr` semantics, client re-arm removed) — each reds its own test and
+  was restored from a file copy.
+
 ## Execution log — PR-2 (FTS5 capability guard at init)
 
 - **PR-2 DONE.** Every FTS5-dependent module now checks `sqlite_compat.probe().fts5` ONCE at init and

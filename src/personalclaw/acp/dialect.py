@@ -24,6 +24,7 @@ from dataclasses import dataclass, field
 # strings shared with the client, so import at module top is fine — types has
 # no upward deps).
 from personalclaw.acp.types import (
+    METHOD_PROMPT,
     METHOD_SET_MODE,
     METHOD_SET_MODEL,
     OPTION_ALLOW_ALWAYS,
@@ -97,6 +98,34 @@ class ACPDialect:
     #: serviced rather than queued-or-clobbered. A False here routes a mid-turn message
     #: to the normal queue, which is visible (a `queue_push` event) instead of silent.
     supports_mid_turn_prompt: bool = False
+
+    # ── mid-turn steering ──
+    def mid_turn_prompt_request(self, *, session_id: str, text: str) -> AcpRequest | None:
+        """The request that delivers a STEER into the turn already generating, or
+        ``None`` when this dialect cannot deliver one (PR2-10).
+
+        The verb is dialect-owned for the same reason every other ``*_request`` here is:
+        core ACP's only mid-turn-shaped frame is a second ``session/prompt``, but a
+        backend is free to expose a dedicated extension, and nothing outside this class
+        may assume which. ``None`` is the honest answer for a dialect that does not
+        declare :attr:`supports_mid_turn_prompt` — and the caller MUST treat it as "this
+        steer was NOT delivered" rather than substituting a next-turn prompt, because a
+        steer that lands after the answer is finished is a different message.
+
+        Gated on the flag HERE, not only at the call site: the flag and the frame are one
+        decision, so a subclass that overrides one without the other cannot produce a
+        dialect that declares mid-turn support and then silently builds nothing."""
+        if not self.supports_mid_turn_prompt:
+            return None
+        body = (text or "").strip()
+        if not body:
+            return None
+        from personalclaw.acp import translate
+
+        return AcpRequest(
+            METHOD_PROMPT,
+            {"sessionId": session_id, "prompt": translate.encode_prompt_content(body)},
+        )
 
     # ── handshake ──
     def protocol_version(self) -> object:
