@@ -53,6 +53,14 @@ _CALL_SITE_SURFACES = {
     # its reason in `call_errors`, so the benchmark reports fewer samples and why, rather
     # than fabricating a score for a model it never reached.
     "evals/judge_bench.py": "assistant_reasoning",
+    # ES-5's template-arm runner (`TemplateArmRunner`): the one function in that module that
+    # spends money, one `one_shot_completion` per arm run on the arm's rendered prompt.
+    # Reasoning-axis, and its no-model floor is BUILT IN twice over: a provider fault becomes
+    # `ArmOutput(ok=False, output="")` with its reason in `detail`, and `run_study` then
+    # records that pair UNJUDGEABLE without calling the judge at all — so a provider outage
+    # costs a study its statistical power and says so, instead of feeding the judge an empty
+    # answer and letting the other arm win on infrastructure failure.
+    "evals/study_arms.py": "assistant_reasoning",
     "dashboard/chat_retag.py": "assistant_reasoning",
     "dashboard/chat_handlers.py": "assistant_reasoning",
     "dashboard/handlers/loop_routes.py": "assistant_reasoning",

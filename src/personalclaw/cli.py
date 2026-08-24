@@ -693,6 +693,34 @@ reported as a refusal (exit 1), which is not the same as a suite of zero cases.
         "--list", action="store_true", dest="list_suite", help="List the installed harvested suite"
     )
 
+    # study (EVALUATION-SUBSTRATE §2 / ES-5)
+    study_parser = sub.add_parser(
+        "study",
+        help="Run a pre-registered template A/B study over the harvested suite",
+        epilog="""
+Examples:
+  personalclaw study --list                    # every registered study and its verdict
+  personalclaw study --view <study_id>         # one study's registration + verdict
+  personalclaw study --run <study_id> --dry-run  # the spend preflight, nothing called
+  personalclaw study --run <study_id>          # the real k-run paired A/B
+
+A study is pre-registered when the flywheel FILES a template diff (registration is
+free and must precede arm 1); running it spends real money, so it is always a
+deliberate invocation and --dry-run prints the arm + judge call counts first. The
+locked/ checks never leave the machine that registered the study.
+""",
+        formatter_class=_fmt,
+    )
+    study_parser.add_argument("--list", action="store_true", help="List every registered study")
+    study_parser.add_argument("--view", default="", help="Print one study's registration + verdict")
+    study_parser.add_argument("--run", default="", help="Run this registered study id")
+    study_parser.add_argument(
+        "--dry-run", action="store_true", help="Print the spend preflight and call nothing"
+    )
+    study_parser.add_argument(
+        "--samples", type=int, default=0, help="Judge samples per position (default: 3)"
+    )
+
     sec_sub = sec_parser.add_subparsers(dest="sec_action")
     sec_sub.add_parser("audit", help="Scan conversation history for suspicious tool usage")
     sec_sub.add_parser("deny-list", help="Show active deny patterns")
@@ -1131,6 +1159,8 @@ Examples:
         asyncio.run(_judge_bench(args))
     elif args.command == "eval-harvest":
         _eval_harvest(args)
+    elif args.command == "study":
+        asyncio.run(_study(args))
     elif args.command == "ablation":
         _ablation(args)
     elif args.command == "security":
@@ -1229,6 +1259,7 @@ from personalclaw.cli_commands import (  # noqa: E402
     _run_eval,
     _security,
     _spawn,
+    _study,
 )
 from personalclaw.cli_config import _config_cmd  # noqa: E402
 from personalclaw.cli_doctor import _doctor, _doctor_paths  # noqa: E402
