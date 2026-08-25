@@ -166,8 +166,19 @@ class ArtifactProvider(ABC):
         actor: str | None = None,
         session_id: str | None = None,
         event_type: str | None = None,
+        expect_version: int | None = None,
     ) -> Artifact | None:
-        """Append a new binary version (an edit result)."""
+        """Append a new binary version (an edit result).
+
+        ``expect_version`` is the optimistic-concurrency precondition: when supplied,
+        the write proceeds only if the artifact is at that version, and raises
+        :class:`~personalclaw.artifacts.models.ArtifactVersionConflict` otherwise. It
+        belongs on the PROVIDER rather than in a handler because the comparison has to
+        happen under the same lock as the write — checking the version first and
+        writing second leaves exactly the race a whole-document save exists to detect
+        (DOCUMENT-FIDELITY-EDITOR §C3). ``None`` means last-write-wins, which is what
+        every agent-side edit path already does.
+        """
         raise NotImplementedError(f"{self.name} does not support binary artifacts")
 
     def raw_bytes(self, slug: str, *, version: int | None = None) -> tuple[bytes, str] | None:

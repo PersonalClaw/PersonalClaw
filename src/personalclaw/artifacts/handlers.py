@@ -25,8 +25,17 @@ from personalclaw.artifacts.deploy import (
     resolve_served_file,
 )
 from personalclaw.artifacts.folders import ArtifactFolder, ArtifactFolderStore, delete_folder
-from personalclaw.artifacts.models import Artifact, ext_for_mime
+from personalclaw.artifacts.models import (
+    MAX_BINARY_CONTENT_BYTES,
+    MAX_CONTENT_BYTES,
+    Artifact,
+    ArtifactVersionConflict,
+    ext_for_mime,
+    is_binary_kind,
+    kind_for_mime,
+)
 from personalclaw.dashboard.handlers._shared import _is_restricted_session
+from personalclaw.http_errors import json_error
 from personalclaw.security import redact_credentials, redact_exfiltration_urls
 from personalclaw.sel import sel
 
@@ -321,6 +330,408 @@ async def api_artifact_raw(request: web.Request) -> web.Response:
         body=data,
         content_type=mime or "application/octet-stream",
         headers={"Cache-Control": cache, "X-Content-Type-Options": "nosniff"},
+    )
+
+
+# ── The binary write path + the document model (DOCUMENT-FIDELITY-EDITOR §C3) ──
+#
+# Three routes, one guard chain. `PUT …/raw` takes bytes; `GET …/model` hands the
+# browser structure; `PUT …/model` takes structure back and re-renders it here. The
+# last two are why the browser never constructs OOXML: the only thing that crosses the
+# wire for an edit is the model.
+
+#: Artifact kinds with a shipped bytes→model→bytes round trip. A kind joins this tuple
+#: when BOTH its parser and its writer exist — never before. Listing a kind whose parser
+#: is missing would answer ``GET …/model`` with an empty model, and an empty model reads
+#: exactly like an empty document, so the editor would offer to save the user's file away.
+#: DFE-3 shipped the .docx parser; xlsx/pptx/pdf have writers but no parser yet.
+_MODEL_KINDS = ("docx",)
+
+
+def _binary_target(
+    request: web.Request, prov: Any, slug: str
+) -> tuple[Artifact | None, web.Response | None]:
+    """Resolve *slug* as an existing BINARY artifact, or the refusal to return.
+
+    One resolver for all three routes, so "which kinds may be written as bytes" is
+    answered by :func:`is_binary_kind` in exactly one place.
+    """
+    try:
+        art = prov.get(slug)
+    except ValueError:
+        return None, json_error("bad_request", message="invalid slug", status=400)
+    if art is None:
+        return None, json_error("not_found", message=f"no artifact {slug!r}", status=404)
+    if not is_binary_kind(art.kind):
+        _audit(request, "artifact.raw_write", "denied", f"slug={slug} kind={art.kind}")
+        return None, json_error(
+            "kind_not_binary",
+            message=(
+                f"artifact {slug!r} is kind {art.kind!r}, whose body is text — "
+                f"PATCH /api/artifacts/{slug} edits it"
+            ),
+            status=409,
+        )
+    return art, None
+
+
+def _refuse_if_oversized(request: web.Request, cap: int) -> web.Response | None:
+    """Refuse an over-cap body from the HEADERS, before one byte is buffered.
+
+    This is the whole point of the clause: the cap is only a defense if it is decided
+    from ``Content-Length``, while the body is still on the wire. A handler that reads
+    first and measures after has already spent the memory it was meant to protect, and
+    ``provider._write_bytes`` would silently TRUNCATE to the cap rather than refuse —
+    so a late check produces a corrupt document instead of an error.
+
+    A body with no declared length (chunked) is refused for the same reason: there is
+    nothing to check before reading, and a streaming counter is not what §C3 asks for.
+    """
+    declared = request.content_length
+    if declared is None:
+        return json_error("content_length_required", status=411, error_extra={"cap_bytes": cap})
+    if declared > cap:
+        return json_error(
+            "request_too_large",
+            message=f"the body declares {declared} bytes; the cap is {cap}",
+            status=413,
+            error_extra={"cap_bytes": cap, "declared_bytes": declared},
+        )
+    return None
+
+
+def _if_match(request: web.Request, art: Artifact) -> tuple[int | None, web.Response | None]:
+    """The REQUIRED ``If-Match`` precondition — the artifact's VERSION is the validator.
+
+    There is no ETag anywhere in the artifact store, no CRDT and no OT: the provider
+    holds one coarse lock and writes last-wins. So this defines the convention rather
+    than reusing one — ``If-Match: <version>`` carries the integer the artifact reports
+    verbatim (``If-Match: 3``). A quoted or weak form (``"3"``, ``W/"3"``) is accepted
+    because HTTP clients add those on their own, but nothing here mints an opaque tag: a
+    second identifier for a thing that already has a monotonic version would be a second
+    thing to keep in sync.
+
+    Returns ``(expected_version, None)`` on success. The version is handed back rather
+    than acted on here because the comparison that MATTERS happens inside the provider's
+    lock (``update_binary(expect_version=…)``); this check is the early, well-worded
+    refusal, not the guarantee.
+    """
+    raw = (request.headers.get("If-Match") or "").strip()
+    if not raw:
+        return None, json_error(
+            "if_match_required", status=428, error_extra={"version": art.version}
+        )
+    token = raw[2:] if raw.startswith("W/") else raw
+    try:
+        claimed = int(token.strip('"').strip())
+    except ValueError:
+        return None, json_error(
+            "if_match_malformed",
+            message=f"If-Match {raw!r} is not a version number",
+            status=400,
+            error_extra={"version": art.version},
+        )
+    if claimed != art.version:
+        return None, json_error(
+            "version_conflict",
+            message=(
+                f"artifact {art.slug!r} is at version {art.version}, not {claimed} — "
+                "reload before saving"
+            ),
+            status=409,
+            error_extra={"expected": art.version, "supplied": claimed},
+        )
+    return claimed, None
+
+
+def _writable_provider(request: web.Request) -> tuple[Any, web.Response | None]:
+    """The addressed provider, refused if unknown or read-only."""
+    prov = _provider(request)
+    if prov is None:
+        return None, json_error("bad_request", message="unknown provider", status=400)
+    if prov.readonly:
+        return None, json_error(
+            "forbidden", message=f"provider '{prov.name}' is read-only", status=400
+        )
+    return prov, None
+
+
+def _store_binary(
+    request: web.Request,
+    prov: Any,
+    art: Artifact,
+    data: bytes,
+    *,
+    mime: str,
+    expect_version: int,
+    operation: str,
+) -> web.Response:
+    """Store *data* as the artifact's new body — the one exit both write routes share.
+
+    Always bumps a version and snapshots, because a binary body has no held-back draft
+    state to hold back: there is no silent-save mode to offer, and the version it bumps
+    is what makes a lossy edit revertible (§C5) rather than destructive.
+    """
+    try:
+        updated = prov.update_binary(
+            art.slug,
+            data=data,
+            mime=mime,
+            actor="user",
+            session_id=_session_key(request),
+            expect_version=expect_version,
+        )
+    except ArtifactVersionConflict as conflict:
+        _audit(request, operation, "denied", f"slug={art.slug} version_conflict")
+        return json_error(
+            "version_conflict",
+            message=str(conflict),
+            status=409,
+            error_extra={"expected": conflict.expected, "supplied": conflict.supplied},
+        )
+    except (ValueError, PermissionError) as exc:
+        _audit(request, operation, "error", f"slug={art.slug}: {exc}")
+        return json_error("bad_request", message=str(exc), status=400)
+    if updated is None:
+        return json_error("not_found", message=f"no artifact {art.slug!r}", status=404)
+    # ONE audit row per accepted write, carrying the byte count — the size is the part an
+    # operator cannot recover later, because the body itself is not in the log.
+    _audit(
+        request,
+        operation,
+        "ok",
+        f"slug={art.slug} version={updated.version} bytes={len(data)} mime={updated.mime}",
+    )
+    return web.json_response(
+        {"slug": updated.slug, "version": updated.version, "mime": updated.mime}
+    )
+
+
+async def api_artifact_raw_write(request: web.Request) -> web.Response:
+    """PUT /api/artifacts/{slug}/raw — replace a binary artifact's bytes (§C3).
+
+    The body IS the bytes and ``Content-Type`` declares their MIME — no multipart
+    envelope, deliberately: the cap has to be decided from ``Content-Length`` before
+    anything is buffered, and a multipart frame's declared length is the frame's, not
+    the part's. ``If-Match: <version>`` is REQUIRED — a whole-document save is exactly
+    the write that can silently destroy another tab's work.
+
+    Guard order is the cheap-and-safe one: authorization, then the size refusal from
+    headers alone, then the format, then the artifact, then the precondition. The body
+    is touched last.
+    """
+    state = request.app["state"]
+    if _is_restricted_session(state, request):
+        _audit(request, "artifact.raw_write", "denied", "restricted_session")
+        return json_error("forbidden", message="restricted session", status=403)
+    prov, refusal = _writable_provider(request)
+    if refusal is not None:
+        return refusal
+    # BEFORE the body: see _refuse_if_oversized. Also before the artifact lookup, so an
+    # over-cap upload costs no disk read at all.
+    refusal = _refuse_if_oversized(request, MAX_BINARY_CONTENT_BYTES)
+    if refusal is not None:
+        _audit(request, "artifact.raw_write", "denied", "over_cap_or_unsized")
+        return refusal
+    mime = (request.headers.get("Content-Type") or "").split(";")[0].strip().lower()
+    declared_kind = kind_for_mime(mime)
+    if not declared_kind:
+        return json_error(
+            "unsupported_media_type",
+            message=f"Content-Type {mime!r} is not a storable binary artifact format",
+            status=415,
+        )
+    slug = request.match_info["slug"]
+    art, refusal = _binary_target(request, prov, slug)
+    if refusal is not None or art is None:
+        return refusal or json_error("not_found", status=404)
+    if declared_kind != art.kind:
+        _audit(request, "artifact.raw_write", "denied", f"slug={slug} mime_kind_mismatch")
+        return json_error(
+            "mime_kind_mismatch",
+            message=f"{mime!r} is a {declared_kind!r} body; artifact {slug!r} is {art.kind!r}",
+            status=409,
+            error_extra={"kind": art.kind, "declared_kind": declared_kind},
+        )
+    expect_version, refusal = _if_match(request, art)
+    if refusal is not None or expect_version is None:
+        _audit(request, "artifact.raw_write", "denied", f"slug={slug} if_match")
+        return refusal or json_error("if_match_required", status=428)
+    data = await request.read()
+    if not data:
+        return json_error("bad_request", message="the request body is empty", status=400)
+    # A body that outran its own Content-Length. aiohttp will not deliver more than the
+    # declared length, so this cannot normally fire — it is here because the cap must not
+    # depend on that being true, and the provider TRUNCATES rather than refusing.
+    if len(data) > MAX_BINARY_CONTENT_BYTES:
+        return json_error(
+            "request_too_large",
+            message=f"the body is {len(data)} bytes; the cap is {MAX_BINARY_CONTENT_BYTES}",
+            status=413,
+            error_extra={"cap_bytes": MAX_BINARY_CONTENT_BYTES},
+        )
+    return _store_binary(
+        request,
+        prov,
+        art,
+        data,
+        mime=mime,
+        expect_version=expect_version,
+        operation="artifact.raw_write",
+    )
+
+
+def _model_target(
+    request: web.Request, prov: Any, slug: str
+) -> tuple[Artifact | None, web.Response | None]:
+    """Resolve *slug* as an artifact with an editable document model, or the refusal."""
+    art, refusal = _binary_target(request, prov, slug)
+    if refusal is not None or art is None:
+        return None, refusal or json_error("not_found", status=404)
+    if art.kind not in _MODEL_KINDS:
+        return None, json_error(
+            "model_unavailable",
+            message=f"no document model ships for kind {art.kind!r}",
+            status=415,
+            error_extra={"kind": art.kind, "model_kinds": list(_MODEL_KINDS)},
+        )
+    return art, None
+
+
+async def api_artifact_model(request: web.Request) -> web.Response:
+    """GET /api/artifacts/{slug}/model — the parsed document model + its loss report.
+
+    The editor's READ half (§C4): the browser receives structure — blocks, runs, cells,
+    page setup — and never a byte of OOXML. The parse is the SAME shipped
+    ``documents.docx_parser.parse_docx`` that DFE-3's round-trip proof pins; a second
+    parser here would be a second fidelity story, and only one of them would be tested.
+
+    Not redacted, unlike ``/extract``'s preview. This is an EDIT surface: whatever came
+    back has to be what gets written again, and a redacted model saved back would
+    replace the user's content with the redaction marker. ``GET …/raw`` already serves
+    these same bytes to this same browser unredacted, so there is nothing withheld here
+    that is not already available one route over.
+    """
+    from personalclaw.documents.docx_parser import parse_docx
+    from personalclaw.documents.model_json import document_to_dict
+
+    prov = _provider(request)
+    if prov is None:
+        return json_error("bad_request", message="unknown provider", status=400)
+    slug = request.match_info["slug"]
+    art, refusal = _model_target(request, prov, slug)
+    if refusal is not None or art is None:
+        return refusal or json_error("not_found", status=404)
+    try:
+        result = prov.raw_bytes(slug)
+    except ValueError:
+        return json_error("bad_request", message="invalid slug", status=400)
+    if result is None:
+        return json_error("not_found", message=f"artifact {slug!r} has no body", status=404)
+    data, mime = result
+    try:
+        # Parsing walks a zip + the whole document tree; off the event loop like every
+        # other CPU-bound artifact operation.
+        model, loss = await asyncio.to_thread(parse_docx, data)
+    except Exception:  # noqa: BLE001 — an unparseable document is a 400, not a 500
+        logger.info("artifact model parse failed for %s", slug, exc_info=True)
+        return json_error(
+            "model_parse_failed",
+            message=f"artifact {slug!r} could not be parsed as {art.kind}",
+            status=400,
+        )
+    return web.json_response(
+        {
+            "slug": slug,
+            "kind": art.kind,
+            "version": art.version,
+            "mime": mime,
+            "model": document_to_dict(model),
+            "loss": loss.to_dict(),
+        }
+    )
+
+
+async def api_artifact_model_write(request: web.Request) -> web.Response:
+    """PUT /api/artifacts/{slug}/model — re-render a posted model into the artifact (§C3).
+
+    The editor's SAVE half, and the mechanism behind "the browser never sees OOXML":
+    the client posts back the model it was given, the SHIPPED writer renders it here,
+    and the resulting bytes take the same guarded path as ``PUT …/raw`` — same required
+    ``If-Match``, same byte cap, same single version bump, same audit row.
+
+    ``{"model": {...}}`` rather than a bare model so the body has room for the save-time
+    fields §C5 will need (a lossy-edit acknowledgement) without changing shape later.
+    """
+    from personalclaw.documents.model_json import document_from_dict
+    from personalclaw.documents.registry import get_writer
+
+    state = request.app["state"]
+    if _is_restricted_session(state, request):
+        _audit(request, "artifact.model_write", "denied", "restricted_session")
+        return json_error("forbidden", message="restricted session", status=403)
+    prov, refusal = _writable_provider(request)
+    if refusal is not None:
+        return refusal
+    # The posted MODEL is text, so it is capped by the text cap — the binary cap applies
+    # to the bytes the writer produces, checked after rendering.
+    refusal = _refuse_if_oversized(request, MAX_CONTENT_BYTES)
+    if refusal is not None:
+        _audit(request, "artifact.model_write", "denied", "over_cap_or_unsized")
+        return refusal
+    slug = request.match_info["slug"]
+    art, refusal = _model_target(request, prov, slug)
+    if refusal is not None or art is None:
+        return refusal or json_error("not_found", status=404)
+    expect_version, refusal = _if_match(request, art)
+    if refusal is not None or expect_version is None:
+        _audit(request, "artifact.model_write", "denied", f"slug={slug} if_match")
+        return refusal or json_error("if_match_required", status=428)
+    writer = get_writer(art.kind)
+    if writer is None:
+        return json_error(
+            "model_unavailable",
+            message=f"no writer is available for kind {art.kind!r} in this build",
+            status=415,
+        )
+    try:
+        body = await request.json()
+    except Exception:
+        return json_error("invalid_json", status=400)
+    if not isinstance(body, dict):
+        return json_error("invalid_body", status=400)
+    try:
+        model = document_from_dict(body.get("model"))
+    except ValueError as exc:
+        return json_error("invalid_model", message=str(exc), status=400)
+    try:
+        data = await asyncio.to_thread(writer, model)
+    except Exception as exc:  # noqa: BLE001 — a writer fault is ours, not the caller's
+        logger.warning("artifact model render failed for %s", slug, exc_info=True)
+        _audit(request, "artifact.model_write", "error", f"slug={slug}: {exc}")
+        return json_error(
+            "render_failed", message=f"rendering {art.kind} for {slug!r} failed", status=500
+        )
+    if len(data) > MAX_BINARY_CONTENT_BYTES:
+        return json_error(
+            "request_too_large",
+            message=(
+                f"the rendered document is {len(data)} bytes; "
+                f"the cap is {MAX_BINARY_CONTENT_BYTES}"
+            ),
+            status=413,
+            error_extra={"cap_bytes": MAX_BINARY_CONTENT_BYTES},
+        )
+    # mime="" keeps the artifact's declared MIME: the writer emits the format the
+    # artifact already is, so a save must never be able to change its type.
+    return _store_binary(
+        request,
+        prov,
+        art,
+        data,
+        mime="",
+        expect_version=expect_version,
+        operation="artifact.model_write",
     )
 
 
@@ -927,7 +1338,14 @@ def register_artifact_routes(app: web.Application) -> None:
     app.router.add_patch("/api/artifacts/{slug}", api_artifact_update)
     app.router.add_delete("/api/artifacts/{slug}", api_artifact_delete)
     app.router.add_get("/api/artifacts/{slug}/raw", api_artifact_raw)
+    # The write half of the same path (DFE §C3) — registered beside its GET so the two
+    # halves of one resource cannot drift apart in the table.
+    app.router.add_put("/api/artifacts/{slug}/raw", api_artifact_raw_write)
     app.router.add_get("/api/artifacts/{slug}/extract", api_artifact_extract)
+    # `/model` beside `/extract`: both are derived READS of a binary document body — one
+    # gives an agent text, the other gives the editor structure. The PUT is the save half.
+    app.router.add_get("/api/artifacts/{slug}/model", api_artifact_model)
+    app.router.add_put("/api/artifacts/{slug}/model", api_artifact_model_write)
     app.router.add_post("/api/artifacts/{slug}/regenerate", api_artifact_regenerate)
     app.router.add_get("/api/artifacts/{slug}/versions", api_artifact_versions)
     app.router.add_get("/api/artifacts/{slug}/versions/{version}", api_artifact_version_detail)
