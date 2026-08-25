@@ -172,8 +172,8 @@ def _subscription_availability(
     if not provider_type:
         return None
     try:
+        from personalclaw.llm.branded_specs import spec_credential_source
         from personalclaw.llm.subscription_credentials import subscription_source_status
-        from personalclaw.sdk.provider_helpers import spec_credential_source
 
         source = spec_credential_source(provider_type)
     except Exception:

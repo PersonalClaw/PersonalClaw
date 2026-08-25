@@ -558,6 +558,18 @@
   },
   {
     "default": 30,
+    "path": "external_access.capture.retention_days",
+    "sensitive": false,
+    "type": "int"
+  },
+  {
+    "default": [],
+    "path": "external_access.capture.upstream_allowlist",
+    "sensitive": false,
+    "type": "list[str]"
+  },
+  {
+    "default": 30,
     "path": "external_access.capture_retention_days",
     "sensitive": false,
     "type": "int"
