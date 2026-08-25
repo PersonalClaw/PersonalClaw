@@ -5910,7 +5910,7 @@
         {
           "id": "MC-2",
           "title": "S2 device-session consumption + Devices list in Settings",
-          "status": "todo",
+          "status": "done",
           "scope": "Session 2 T2.3/T2.4 + C1 Device token (SUPERSEDED \u2014 consumes COMPANION-APPS \u00a7C1/C2 device sessions on REMOTE-USER-AUTH's durable store, not token_auth.py)",
           "done_when": "A roaming-IP phone keeps its device session valid per the plan-54 contract; the Settings > Devices list renders name/minted/last-seen and Revoke; revoking kills the device session on the next request. No new claim added to token_auth.py \u2014 the device session comes from plan 54.",
           "deps": [
@@ -7740,13 +7740,18 @@
         "plan": "LV"
       },
       {
-        "id": "MC-2",
-        "title": "S2 device-session consumption + Devices list in Settings",
+        "id": "MC-5",
+        "title": "S3 push-to-approval milestone 1: web push + ntfy adapter + deep link to the approval",
         "plan": "MC"
       },
       {
         "id": "MC-6",
         "title": "S3.5 rest of companion: loops/tasks/inbox/notifications sections + SW sound/badge mapping",
+        "plan": "MC"
+      },
+      {
+        "id": "MC-7",
+        "title": "S4 Capacitor shell wrapping the served companion route",
         "plan": "MC"
       },
       {
@@ -10056,9 +10061,9 @@
         "code": "MC",
         "plan": "MOBILE-COMPANION",
         "total_atoms": 10,
-        "done": 3,
+        "done": 4,
         "in_progress": 0,
-        "todo": 7,
+        "todo": 6,
         "blocked": 0
       },
       {
