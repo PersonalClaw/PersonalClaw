@@ -286,11 +286,17 @@ def test_the_three_origins_are_distinct_and_closed():
 
 # ── The atom's "zero new WS/SSE channels" clause ──────────────────────────────────
 
-#: Every WS event name ``chat_runner`` broadcasts, pinned. Verified to cover 48/48
+#: Every WS event name ``chat_runner`` broadcasts, pinned. Verified to cover 49/49
 #: ``broadcast_ws(`` call sites in the module, so a miss here is a real new channel and
 #: not a regex that stopped matching. Both contracts above are additive payload on names
 #: ALREADY in this set (``meta`` on ``chat_segment``'s message; a key on
 #: ``activity_event``), so landing them must leave it byte-for-byte unchanged.
+#:
+#: This is a shared-module baseline, so it drifts on merge with changes that have nothing
+#: to do with LV-2 — and a rebaseline is only honest when the new name is provably not
+#: ours. ``queue_push`` arrived from ``57194f48`` (PR2-10's ACP mid-turn steer echo) and
+#: appears **zero** times in the LV-2 diff; that provenance, not the fact that the
+#: assertion was red, is what licensed adding it.
 _BASELINE_WS_EVENTS = {
     "activity_event",
     "approval",
@@ -306,6 +312,7 @@ _BASELINE_WS_EVENTS = {
     "heartbeat",
     "question_card",
     "queue_pop",
+    "queue_push",
     "session_agent_switch",
     "session_clear",
     "token_usage",
@@ -337,3 +344,61 @@ async def test_a_turn_carrying_skills_used_broadcasts_only_known_events(turn):
     names = {c.args[0] for c in turn.state.broadcast_ws.call_args_list if c.args}
     assert names, "the turn broadcast nothing — the harness, not the contract, broke"
     assert names <= _BASELINE_WS_EVENTS, f"new channel(s): {sorted(names - _BASELINE_WS_EVENTS)}"
+
+
+# ── The LOOP half's two unguarded seams ───────────────────────────────────────────
+#
+# The chat chip reads `meta["skills_used"]` off a message the page already holds. The LOOP
+# cockpit cannot: its live stream carries no message meta, so it reads the worker transcript
+# over `GET /api/chat/sessions/{key}` and finds that key on `GET /api/loops/{id}`. That makes
+# the cockpit chip depend on TWO backend contracts that no test named, and both fail SILENTLY
+# — a dropped `session_key` leaves `workerKey` empty and a clobbered `meta` leaves the list
+# empty, and the chip's own "absent when the run loaded nothing" rule renders each as simply
+# no chip. Nothing would go red. These two pin them.
+
+
+def test_the_loop_detail_view_serves_the_session_key_the_cockpit_reads(monkeypatch, tmp_path):
+    """`workerKey` comes from the redacted loop view — if it stops, the chip goes inert.
+
+    Drives ``get_redacted``, the function ``api_loop_get`` actually calls, rather than the
+    ``_redact_loop`` helper underneath it: a first draft of this test asserted on the helper
+    and stayed GREEN when the endpoint's own view dropped the key, which is precisely the
+    regression it is here to catch. Isolated to ``tmp_path`` — it writes a loop row.
+    """
+    from personalclaw.loop import store as loop_store
+    from personalclaw.loop.loop import Loop
+
+    monkeypatch.setattr("personalclaw.loop.store.config_dir", lambda: tmp_path)
+    loop_store.create(Loop(id="abc12345", name="n", kind="goal", task="t"))
+    # Vacuity floor: BEFORE the writer runs the field is empty, so the assertion below
+    # cannot be riding a hardcoded value — and this also pins that the cockpit's honest
+    # answer for a never-started loop is "no key" rather than a bogus one.
+    assert loop_store.get_redacted("abc12345")["session_key"] == ""
+
+    loop_store.set_session_key("abc12345", "loop-abc12345")
+    assert loop_store.get_redacted("abc12345")["session_key"] == "loop-abc12345"
+
+
+def test_session_detail_does_not_clobber_skills_used_with_cls_meta():
+    """`_prepare_messages` overwrites `meta` from `cls` — the assistant message must survive.
+
+    The cockpit (and ChatPage's graft) read `skills_used` back out of this endpoint, so the
+    overwrite branch sitting one line away from the payload is the risk worth pinning.
+    """
+    from personalclaw.dashboard.chat_utils import _prepare_messages, parse_cls_meta
+
+    used = [{"name": "auto/release-flow", "state": "admitted", "loaded_tokens": 900}]
+    out = _prepare_messages(
+        [{"role": "assistant", "content": "hi", "cls": "msg msg-a", "meta": {"skills_used": used}}],
+        False,
+    )
+    assert out[0]["meta"]["skills_used"] == used
+    # Vacuity: the clobber branch is LIVE, not dead code this test merely misses. A `cls`
+    # holding a JSON dict does replace `meta` wholesale — which is exactly why a plain
+    # assistant message (`cls="msg msg-a"`, not JSON) has to fall through it.
+    assert parse_cls_meta("msg msg-a") is None
+    clobbered = _prepare_messages(
+        [{"role": "assistant", "content": "hi", "cls": '{"tool": "read"}', "meta": {"gone": 1}}],
+        False,
+    )
+    assert "gone" not in clobbered[0]["meta"], "the overwrite branch stopped firing"
