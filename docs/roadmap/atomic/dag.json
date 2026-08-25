@@ -1275,8 +1275,8 @@
     {
       "plan": "DURABILITY-AND-SYNC",
       "code": "DAS",
-      "status": "in_progress",
-      "summary": "Sessions 1-2 (inventory, safe snapshots, shard format+validate, scheduled service+retention+drills, backups FE, and the full inventory-driven merge/restore/export sweep incl. T2-M1..M3) are DONE. Remaining: Session 3 sync core + git/dir transports, its conflict-handling half, Session 4 rsync/s3 transports + encryption, Session 5 time-travel and the \u00a76 portability endpoints + remaining FE.",
+      "status": "done",
+      "summary": "DURABILITY-AND-SYNC is fully shipped. Sessions 1-2 (inventory, safe snapshots, shard format+validate, scheduled service+retention+drills, backups FE, the inventory-driven merge/restore/export sweep), Session 3 (sync core + git-sync/dir-sync + conflict handling), Session 4 (rsync-sync/s3-sync transports + AES-256-GCM shard encryption + the SYNC egress profile), and Session 5 (workspace time-travel + the \u00a76 portability endpoints and FE) are all DONE. The two Session-4 transports ship as first-party apps in PersonalClawApps (rsync-sync, s3-sync); core owns the encryption codec and the pinned SYNC EgressPolicy.",
       "atoms": [
         {
           "id": "DAS-1",
@@ -1353,7 +1353,7 @@
         {
           "id": "DAS-8",
           "title": "rsync-sync + s3-sync transports + end-to-end encryption (Session 4)",
-          "status": "todo",
+          "status": "done",
           "scope": "\u00a74.3 (rsync-sync, s3-sync); \u00a74.4 Encryption for untrusted stores; Provider & Config Plug-in Map (SYNC EgressPolicy); Implementation Order Session 4",
           "done_when": "rsync-sync (subprocess over ssh) and s3-sync (signed PUT/GET/LIST via net.fetch with a derived SYNC EgressPolicy through egress_policy_for(), host-pinned + raised max_bytes, never hand-rolled aiohttp) shipped as first-party apps; AES-256-GCM per shard with per-shard HKDF key from passphrase + first-write-wins salt object, routing/metadata fields kept plaintext, plaintext-in-encrypted-store rejected on send AND receive as permanent skip, missing salt = hard setup error; per-transport encryption defaults (ON for s3/dir, OFF for git); secret=True entries excluded before any transport; criteria 7-8 met",
           "deps": [
@@ -7554,11 +7554,6 @@
         "plan": "CRE"
       },
       {
-        "id": "DAS-8",
-        "title": "rsync-sync + s3-sync transports + end-to-end encryption (Session 4)",
-        "plan": "DAS"
-      },
-      {
         "id": "DC-1",
         "title": "S1: Rebuild + signing + notarization + electron-updater + install-kind",
         "plan": "DC"
@@ -9665,9 +9660,9 @@
         "code": "DAS",
         "plan": "DURABILITY-AND-SYNC",
         "total_atoms": 10,
-        "done": 9,
+        "done": 10,
         "in_progress": 0,
-        "todo": 1,
+        "todo": 0,
         "blocked": 0
       },
       {
