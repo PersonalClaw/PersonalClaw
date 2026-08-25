@@ -23,6 +23,7 @@ from typing import Any, cast
 
 from personalclaw import cancellation
 from personalclaw.agents.native import read_gate
+from personalclaw.agents.native.decision_tool_defs import decision_tool_definitions
 from personalclaw.tool_providers import result_store
 from personalclaw.tool_providers.base import (
     RiskLevel,
@@ -275,26 +276,6 @@ def _enrich_in_background(item_id: str) -> None:
     task = asyncio.create_task(_run())
     _bg_ingest_tasks.add(task)
     task.add_done_callback(_bg_ingest_tasks.discard)
-
-
-def _decision_domains() -> tuple[str, ...]:
-    """The decision-journal domain vocabulary, read from the module that OWNS it.
-
-    Same reasoning as ``_structural_verbs``: spelling the six strings into this schema would
-    let the tool advertise a domain :mod:`personalclaw.decisions` rejects, and the model would
-    keep sending it. Imported lazily so building the registry on every session start does not
-    pull in the knowledge + trigger + memory stack.
-    """
-    from personalclaw.decisions import DECISION_DOMAINS
-
-    return DECISION_DOMAINS
-
-
-def _decision_grades() -> tuple[str, ...]:
-    """The resolution-grade vocabulary, read from the module that OWNS it."""
-    from personalclaw.decisions import RESOLUTION_GRADES
-
-    return RESOLUTION_GRADES
 
 
 def _ok_capped(
@@ -754,80 +735,9 @@ class NativeBuiltinToolProvider(ToolProvider):
             ),
             # ── Decision journal (PROACTIVE-ASSISTANT §2.2) ──
             # Beside the knowledge tools and in the SAME category, because a decision IS a
-            # knowledge item — a separate app would make the journal removable independently
-            # of the library its entries live in.
-            ToolDefinition(
-                name="log_decision",
-                provider=self.name,
-                requires_approval=False,
-                risk_level=RiskLevel.CAUTION,
-                description=(
-                    "Record a decision the user is making, with the prediction they expect, "
-                    "and schedule ONE review at its horizon. Offer this when you notice a "
-                    "decision being made — never log one silently. Args: summary (str, "
-                    "required — the decision in one line), expectation (str, required — what "
-                    "the user predicts will happen), confidence (number 0-1, required), "
-                    f"domain ({'|'.join(_decision_domains())}, default 'other'), "
-                    "content (str — the reasoning, context and stakes, free prose), "
-                    "review_horizon (str YYYY-MM-DD — defaults to the configured horizon), "
-                    "tags (list of str)."
-                ),
-                parameters={
-                    **s,
-                    "properties": {
-                        "summary": {"type": "string"},
-                        "expectation": {"type": "string"},
-                        "confidence": {"type": "number"},
-                        "domain": {"type": "string", "enum": list(_decision_domains())},
-                        "content": {"type": "string"},
-                        "review_horizon": {"type": "string"},
-                        "tags": {"type": "array", "items": {"type": "string"}},
-                    },
-                    "required": ["summary", "expectation", "confidence"],
-                },
-            ),
-            ToolDefinition(
-                name="decision_list",
-                provider=self.name,
-                requires_approval=False,
-                risk_level=RiskLevel.SAFE,
-                description=(
-                    "List the user's logged decisions. Args: status "
-                    "('pending'|'resolved'|'abandoned'|'overdue' — 'overdue' means pending "
-                    "past its review horizon), domain (str), limit (int, default 25)."
-                ),
-                parameters={
-                    **s,
-                    "properties": {
-                        "status": {"type": "string"},
-                        "domain": {"type": "string"},
-                        "limit": {"type": "integer"},
-                    },
-                },
-            ),
-            ToolDefinition(
-                name="decision_resolve",
-                provider=self.name,
-                requires_approval=False,
-                risk_level=RiskLevel.CAUTION,
-                description=(
-                    "Capture what actually happened for a logged decision. Writes the "
-                    "expectation-vs-outcome lesson to memory. Args: id (str, required), "
-                    "outcome (str, required — what actually happened, in the user's own "
-                    f"words), grade ({'|'.join(_decision_grades())}, required; 'too_early' "
-                    "defers the review instead of resolving it). Never invent an outcome — "
-                    "ask the user."
-                ),
-                parameters={
-                    **s,
-                    "properties": {
-                        "id": {"type": "string"},
-                        "outcome": {"type": "string"},
-                        "grade": {"type": "string", "enum": list(_decision_grades())},
-                    },
-                    "required": ["id", "outcome", "grade"],
-                },
-            ),
+            # knowledge item. The schemas live in ``decision_tool_defs`` so this file stays
+            # clear of the 2800-line watch band; the dispatch methods stay below.
+            *decision_tool_definitions(self.name, s),
             # ── Tasks (Project → TaskList → Task) ──
             ToolDefinition(
                 name="task_create",
