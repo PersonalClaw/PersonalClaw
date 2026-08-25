@@ -685,3 +685,36 @@ skipped: [`docs/architecture/agent-activity-feed.md`](../../architecture/agent-a
   deleted (`WORKER_NAME_ENV`, the `TYPE_CHECKING` import of `WorkerSpec`/`declared_workers` from
   `apps/background`, and the `sys.modules` stub of that module). **No unlanded content on any of the three.**
   **Verdict: the atom is satisfiable and now railed.** Flip `APE-3` to done.
+
+- [2026-08-25][APE-11] **DONE** (#2006). Both clauses met and asserted at the call site. The
+  `@personalclaw/app-sdk/ui` subpath already existed as a **live alias** in the loader's rewrite specs
+  (`appSdk.tsx:497`) that resolved back to the base module — it named nothing of its own. Extended, and
+  the alias deleted, so there is no second parallel export surface. `Button` and `Surface` are exported
+  **by identity**, not wrapped, so app-page markup is byte-identical to a native page; tokens reach the
+  app as `readAppTheme()/useTheme()` returning `cssVars` that map `--app-*` onto `var(--color-*)`, so an
+  app inherits the light-mode flip instead of freezing a hex. `uiCapabilities` rides the existing
+  `AppManifest.to_dict()` → `GET /api/apps/<name>` → `AppHostPage` → `ContributedPage` path; deliberately
+  NOT added to the list payload or the pre-install catalog entry, where nothing renders it (a wire field
+  the browser drops is the APE-12 defect). Falsification re-run at integration: neutering the
+  `shell-primitives` capability gate reds the end-to-end fixture-page test, so the gate is load-bearing.
+  **DISCOVERY — the app bundle-loading path had never been tested.** No test in the suite exercised
+  `loadContributedModule`, `installAppSdk` or `ContributedPage`, and `URL.createObjectURL` is undefined in
+  this jsdom; the new test stands in a `data:` URL of the same bytes so the bundle is genuinely fetched,
+  rewritten, imported and rendered.
+  **DEVIATION (stated, not buried):** an app contributes a *widget*, never a component *type*. Letting an
+  app `defineComponent` into the host registry would put app code behind model-authored chat text and break
+  the reason AMBIENT-SURFACES §5.2 permits host-tree rendering. The registration reading is a separate atom
+  needing its own threat argument.
+  **Correction to an earlier claim in this session:** the `generative-widget` gate is NOT enforced — a
+  contributed page runs in the host React tree with the host `window`, so withholding a specifier withholds
+  the SDK's *name* for a component, not access to it. Documented as an advisory posture (same as
+  `permissions.network`) in the manifest comment, the SDK comment and `docs/architecture/app-platform.md`.
+  **Pre-existing rough edge left alone:** `ContributedPage` cleanup calls `root.unmount()` synchronously
+  during the parent's unmount, logging React's "Attempted to synchronously unmount a root while React was
+  already rendering". The new test is the first to surface it; changing React unmount timing is a behaviour
+  change and was not slipped in.
+  Gate: `make lint` clean (mypy 1001 sources) · 68 passed / 1 skipped targeted (incl.
+  `test_apps_import_boundary.py`) · `gate_report.py` 6/6 PASS · `npm run typecheck:web` 0 ·
+  `npm run test:web` **479 files / 5055 tests** (S2 ratchets `primitiveAdoption`/`tokenLint`/
+  `consistencyAudit` green, baseline untouched) · `npm run build` 0 · probe sweep 16, introduced 0.
+  Flipping APE-11 does NOT complete this plan — `APE-4` and `APE-6` remain `todo`.
