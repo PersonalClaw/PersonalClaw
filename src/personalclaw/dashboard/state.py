@@ -223,8 +223,6 @@ class _ChatSession:
         "_stop_state",
         "_stop_event_id",
         "_dirty",
-        "_orch_tracker",
-        "_auto_run",
         "_recovery_chat_triggered",
         "_stage_titles",
         "_stage_descriptions",
@@ -380,8 +378,6 @@ class _ChatSession:
         self._stop_state: str = "idle"  # 'idle' | 'soft_pending' | 'killing'
         self._stop_event_id: str | None = None  # transcript message id for in-flight stop
         self._dirty: bool = False  # True when messages changed since last flush
-        self._orch_tracker: Any = None  # OrchestrationTracker, set by gateway
-        self._auto_run: bool = False  # "Go All" — skip stage gates
         self._recovery_chat_triggered: bool = False  # guard against concurrent failure recovery
         self._stage_titles: list[str] = []  # stage titles extracted from plan
         self._stage_descriptions: list[list[str]] = []  # bullet points per stage
