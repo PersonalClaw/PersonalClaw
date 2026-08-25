@@ -805,7 +805,7 @@ correct URL and returns `200 application/pdf`.
   failed** (845s) · `scripts/gate_report.py` all 6 gates PASS · probe sweep 16, diff-scoped introduced 0 ·
   no personal strings in the diff. Atom NOT flipped here: the Word-authored-fixture clause lives on
   `feature-dfe3-docx-parser-lossreport` (#1996) and the flip is the owner's at integration.
-- [2026-08-25][DFE-3] **DONE** (#2001, integrated on `main` `03729754` which carries #1996). All clauses
+- [2026-08-25][DFE-3] **DONE** (#2002 via batch, originally #2001, integrated on `main` `03729754` which carries #1996). All clauses
   met with a named test and a demonstrated floor. Closed in this pass: the V1 gate's FIRST half —
   "generate a document with the tools, parse it back, diff the models" was a manual step no test joined,
   because every round trip called `render_docx` directly and bypassed `mcp_artifacts._document_create`
