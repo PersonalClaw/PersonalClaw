@@ -304,6 +304,18 @@ _KINDS: tuple[NotificationKind, ...] = (
         SEV_INFO,
         attention=True,
     ),
+    # learning — the periodic identity report (LV-4). Attention-bearing: the report is
+    # composed while nobody is watching and the durable row is what links the artifact, so
+    # a transient toast would be the one delivery shape that loses the whole feature.
+    #
+    # `immediate` and SEV_INFO, which together are what make quiet hours suppress the PING
+    # while the artifact stays durable — `notification_allowed` drops anything below
+    # SEV_ERROR inside the window, and `deliver_identity_report` writes the artifact first.
+    # Not `digest`: same reasoning as `knowledge/research_finding` — a default that quietly
+    # stops toasting is experienced as "notifications broke".
+    NotificationKind(
+        "learning", "report", "Identity report", "immediate", SEV_INFO, attention=True
+    ),
     # The synthetic fallback, registered so the rules UI can show a row for it.
     NotificationKind(GENERIC_SOURCE, GENERIC_KIND, "Uncategorized", "immediate", SEV_INFO),
 )
@@ -366,6 +378,12 @@ _ATTENTION_FLAT: dict[str, tuple[str, str]] = {
     # map actually encodes: no pre-registry emitter ever passed it, so it carries no historical
     # severity obligation and is free to rank as the info it is.
     "usage_recap": ("system", "usage_recap"),
+    # LV-4's identity report. Registering the PAIR was not enough on its own: the wire string
+    # is what `resolve_rule_for_legacy` and the persisted log resolve BACK through, so without
+    # a row here the emission resolved to system/generic and logged "unregistered notification
+    # kind system/report" on every delivery — the registry's own 🪤 case, one level down.
+    # The bare `report` is safe as its own wire string: no other registered kind spells it.
+    "report": ("learning", "report"),
 }
 
 #: Every wire string this build understands, for resolution. Legacy entries win a collision:

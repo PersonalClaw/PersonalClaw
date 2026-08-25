@@ -14,6 +14,7 @@ export const HEALTH_KEY = 'learning:health'
 export const JUDGE_BENCH_KEY = 'learning:judge-bench'
 export const STUDIES_KEY = 'learning:studies'
 export const RETRIEVAL_BENCH_KEY = 'learning:retrieval-bench'
+export const IDENTITY_REPORT_KEY = 'learning:identity-report'
 export const STUDY_DETAIL_KEY_PREFIX = 'learning:study:'
 
 /** The cache key for ONE study's drill-down. Keyed per study for the same reason the
@@ -66,6 +67,7 @@ export function refreshEverything(
   refreshJudgeBench: () => void = () => {},
   refreshStudies: () => void = () => {},
   refreshRetrieval: () => void = () => {},
+  refreshIdentity: () => void = () => {},
 ): void {
   invalidateKeys(PROPOSALS_KEY_PREFIX, true)
   invalidateKeys(WEEK_KEY)
@@ -85,10 +87,15 @@ export function refreshEverything(
   // is. It also moves when the user SAVES a hand-label card from this very panel, which the
   // panel handles locally; this is the terminal-run half.
   invalidateKeys(RETRIEVAL_BENCH_KEY)
+  // LV-4's identity report. Unlike the three above it, this one CAN move without a terminal —
+  // any turn that captures a facet or promotes a skill changes it — so Refresh is the honest
+  // moment to re-ask, and its own panel already re-reads after a delivery it caused.
+  invalidateKeys(IDENTITY_REPORT_KEY)
   refreshProposals()
   refreshWeek()
   refreshHealth()
   refreshJudgeBench()
   refreshStudies()
   refreshRetrieval()
+  refreshIdentity()
 }

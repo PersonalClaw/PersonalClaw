@@ -158,7 +158,22 @@ FLAT_TOTAL_BASELINE = FLAT_BASELINE + FLAT_VIA_WRAPPER_BASELINE
 #: schema in two places, which is the drift this repo keeps finding. The 3 is bought and then
 #: PINNED by :func:`test_the_a2a_surface_hides_no_flat_envelope_in_its_unresolved_rows`, which
 #: takes the ES-3 pin's stronger shape: that module emits NO flat envelope at all.
-UNRESOLVED_PAYLOAD_CEILING = 208
+#: 205 → **207** (LV-4): the identity report's two new 200 SUCCESS bodies on the same learning
+#: surface — ``json_response(compose_identity_report(...).to_payload())`` and
+#: ``json_response(delivery.to_payload())``. Identical shape and identical reasoning to the LV-3
+#: row above (a composer's return value; spelling its keys out would duplicate
+#: ``IdentityReport``/``IdentityReportDelivery``'s schema in two places). **The slack is not
+#: spendable on an error envelope:** LV-4's four refusals go through :func:`json_error`, which
+#: needs no payload dict at all, so the learning surface's FLAT count is unchanged at 14 and
+#: :func:`test_the_learning_surfaces_new_unresolved_row_cannot_become_a_flat_envelope` pins it
+#: there. Measured: the first draft used flat ``{"error": str}`` bodies and reds three of these
+#: ratchets at once, which is how the structured envelope came to be used here.
+#: **208 + 2 = 210 (union).** Both rows above were measured against the SAME base of 205 —
+#: EA-8 bought +3 and LV-4 bought +2, independently — so NEITHER side's number is correct
+#: for a tree carrying both, and taking either one would silently un-pin the other surface.
+#: The ceiling is the sum, and the two per-surface FLAT pins above are what keep the slack
+#: from being spent on an error envelope.
+UNRESOLVED_PAYLOAD_CEILING = 210
 
 #: What the append-only rail must inspect. Derived from the census so a matcher that
 #: stops matching cannot read as clean: if the rail's scan finds fewer emitter sites
@@ -798,7 +813,10 @@ def test_the_learning_surfaces_new_unresolved_row_cannot_become_a_flat_envelope(
     module = "src/personalclaw/dashboard/handlers/learning.py"
 
     unresolved = [row for row in census.unresolved if row[0] == module]
-    assert len(unresolved) == 4, unresolved
+    # 4 → 6 (LV-4): the identity report's GET preview and POST delivery bodies. Both are
+    # composer return values, both `Call`, neither via a wrapper — exactly the shape the
+    # ceiling is raised for, and the flat assertion below is what keeps the slack unspendable.
+    assert len(unresolved) == 6, unresolved
     assert {row[2] for row in unresolved} == {"Call"}, unresolved
     assert all(row[3] is False for row in unresolved), "none of these is via a wrapper"
 

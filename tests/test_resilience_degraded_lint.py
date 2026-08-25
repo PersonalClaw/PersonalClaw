@@ -52,6 +52,15 @@ _CALL_SITE_SURFACES = {
     # visited URLs survive on an `ok=False` result — and that no navigation is guessed.
     "action_providers/browse_provider.py": "browse",
     "nl_to_cron.py": "assistant_reasoning",
+    # LV-4's identity report. Reasoning-axis, and its no-model floor is BUILT IN and NAMED:
+    # `one_shot_completion` returns a FALSY value rather than raising when nothing resolves,
+    # so both that and a raised provider error land on `narrative_status="unavailable"`, and
+    # `render_markdown` says so in the document ("No model was available to summarise this
+    # period. The figures below are complete and unaffected."). The deterministic sections
+    # are gathered BEFORE the call and are returned byte-identical either way — the numbers
+    # never round-trip through the model, so a provider outage costs the report its prose
+    # and nothing else.
+    "learning_report.py": "assistant_reasoning",
     "context.py": "assistant_reasoning",
     # visualize(data, hint) — the agency-free data→genui primitive (AMBIENT-SURFACES
     # §5.3). Reasoning-axis one-shot; no-model floor: no visualization produced and

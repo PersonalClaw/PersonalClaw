@@ -7,6 +7,8 @@ DELETE /api/learning/proposals/{id}       reject (human reviewers only)
 GET    /api/learning/staging/week         the week-at-a-glance capture panel
 GET    /api/learning/health               the flywheel observability panel (LEARN-R14b)
 GET    /api/learning/summary              the learning summary block (LV-3)
+GET    /api/learning/identity-report      the periodic identity report, deterministic (LV-4)
+POST   /api/learning/identity-report      compose + narrate + persist the artifact + surface it
 
 The plan's success criterion 1 says "One Proposal Inbox SHOWS all six proposal kinds with
 provenance,
@@ -29,6 +31,8 @@ from __future__ import annotations
 import logging
 
 from aiohttp import web
+
+from personalclaw.http_errors import json_error
 
 logger = logging.getLogger(__name__)
 
@@ -556,6 +560,102 @@ async def api_learning_summary(request: web.Request) -> web.Response:
     return web.json_response(compose_learning_summary(window_days=days, vs=vs).to_payload())
 
 
+def _report_window(request: web.Request) -> "int | None":
+    """The clamped ``?days=`` window, or None when ``days`` does not parse.
+
+    ``None`` rather than a message string: the caller owns the envelope, and a helper that
+    returned prose would tempt a second error shape onto a surface the wire-envelope census
+    is already holding at a fixed flat count.
+    """
+    from personalclaw.learning_report import (
+        DEFAULT_WINDOW_DAYS,
+        MAX_WINDOW_DAYS,
+        MIN_WINDOW_DAYS,
+    )
+
+    raw = request.query.get("days", "")
+    if not raw:
+        return DEFAULT_WINDOW_DAYS
+    try:
+        return max(MIN_WINDOW_DAYS, min(int(raw), MAX_WINDOW_DAYS))
+    except ValueError:
+        return None
+
+
+def _report_vs(request: web.Request, action: str):
+    """The vector store the report reads facets and lessons from, or None.
+
+    A temporary session (`blocks_reads`) gets the report WITHOUT them — matching
+    `/api/lessons` and `/api/learning/summary`, which withhold the same content from the
+    same caller. The skills and proposals sections are not memory and stay visible.
+    """
+    from personalclaw.dashboard.handlers._shared import _blocks_reads_session, _get_memory
+
+    state = request.app["state"]
+    if _blocks_reads_session(state, request):
+        _audit(request, action, "denied", resources="facets,lessons")
+        return None
+    try:
+        return getattr(_get_memory(state), "vector_store", None)
+    except Exception:
+        logger.debug("identity report: memory store unavailable", exc_info=True)
+        return None
+
+
+async def api_learning_identity_report(request: web.Request) -> web.Response:
+    """GET /api/learning/identity-report — the deterministic report, no model call.
+
+    The preview the Learning page renders. `narrate=False` on purpose: a GET that a panel
+    issues on mount must not spend a model call, and the narrative is the one part of the
+    document that is not a function of the stores. `POST` is where a narrated document is
+    composed and delivered.
+
+    Read-only end to end — composing this writes to no learning store.
+    """
+    if not _enabled():
+        return json_error("learning_disabled", status=404)
+
+    from personalclaw.learning_report import compose_identity_report
+
+    days = _report_window(request)
+    if days is None:
+        return json_error("bad_request", message="`days` must be an integer.", status=400)
+    vs = _report_vs(request, "learning.identity_report")
+    return web.json_response(compose_identity_report(window_days=days, vs=vs).to_payload())
+
+
+async def api_learning_identity_report_deliver(request: web.Request) -> web.Response:
+    """POST /api/learning/identity-report — compose, narrate, persist, surface.
+
+    The delivery path a user can reach by hand, and the SAME function a scheduled clock
+    job calls: one owner, one mechanism. It writes the versioned artifact first and then
+    raises one attention item, so quiet hours can only drop the notification.
+
+    `require_human` is not applied here. Unlike `accept`, this installs nothing and writes
+    no learning state — it renders things the user already owns into a document — so the
+    gate would be theatre. What it does write (an artifact, an inbox row) is audited.
+    """
+    if not _enabled():
+        return json_error("learning_disabled", status=404)
+
+    from personalclaw.learning_report import deliver_identity_report
+
+    days = _report_window(request)
+    if days is None:
+        return json_error("bad_request", message="`days` must be an integer.", status=400)
+    vs = _report_vs(request, "learning.identity_report_deliver")
+    delivery = await deliver_identity_report(
+        request.app["state"], window_days=days, vs=vs, narrate=True
+    )
+    _audit(
+        request,
+        "learning.identity_report_deliver",
+        "allowed",
+        f"{delivery.artifact_slug}:{delivery.artifact_version}",
+    )
+    return web.json_response(delivery.to_payload())
+
+
 def register_learning_routes(app: web.Application) -> None:
     """Register /api/learning/* — the Proposal Inbox and the staging panel.
 
@@ -565,6 +665,8 @@ def register_learning_routes(app: web.Application) -> None:
     app.router.add_get("/api/learning/staging/week", api_learning_staging_week)
     app.router.add_get("/api/learning/health", api_learning_health)
     app.router.add_get("/api/learning/summary", api_learning_summary)
+    app.router.add_get("/api/learning/identity-report", api_learning_identity_report)
+    app.router.add_post("/api/learning/identity-report", api_learning_identity_report_deliver)
     app.router.add_get("/api/learning/proposals", api_learning_proposals)
     app.router.add_get("/api/learning/proposals/{id}", api_learning_proposal)
     app.router.add_post("/api/learning/proposals/{id}/accept", api_learning_proposal_accept)

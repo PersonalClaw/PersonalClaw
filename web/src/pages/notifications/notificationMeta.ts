@@ -1,4 +1,4 @@
-import { Bell, BellRing, CheckCircle2, Clock, Webhook, Bot, HeartPulse, Info, AlertTriangle, Target, XCircle, Newspaper, MessageSquare, MessageCircle, Activity, Lightbulb, Archive, Route, HelpCircle, ShieldQuestion, RefreshCw, Receipt } from 'lucide-react'
+import { Bell, BellRing, CheckCircle2, Clock, Webhook, Bot, HeartPulse, Info, AlertTriangle, Target, XCircle, Newspaper, MessageSquare, MessageCircle, Activity, Lightbulb, Archive, Route, HelpCircle, ShieldQuestion, RefreshCw, Receipt, UserRound } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import type { NotificationItem } from '../../lib/api'
 
@@ -47,6 +47,11 @@ const KINDS: Record<string, KindMeta> = {
   // output — but the primary tone, not the low one: a finding is a thing to read, whereas
   // the digest is the wrapper it may arrive in.
   research_finding: { label: 'Research report finding', icon: Newspaper, tone: 'var(--color-primary)' },
+  // learning/report (LV-4) — the periodic identity report. Its bare kind IS its wire
+  // string (no legacy flat name existed), so one row covers both. UserRound rather than a
+  // Newspaper: the digest and a research finding are output ABOUT the world, this one is
+  // about the reader.
+  report: { label: 'Identity report', icon: UserRound, tone: 'var(--color-primary)' },
   // apps/update — bare kind `update` (persisted history) + the `app_update` wire string
   // emit_attention_item actually hands state.notify(). Both map to the registry's label.
   update: { label: 'App update available', icon: RefreshCw, tone: 'var(--color-primary)' },
