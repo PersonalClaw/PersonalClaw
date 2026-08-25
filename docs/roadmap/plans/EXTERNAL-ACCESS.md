@@ -475,3 +475,60 @@ No new session; session count stays ~7. Session 2 gains the three sharpenings ab
   wrapper detector going dark (caught by its own vacuity floor, since a ceiling cannot catch a drop),
   restoring the silent skip, and hiding a new envelope behind a local variable (caught by the
   unresolved ceiling with both flat ceilings green). Probe sweep clean afterwards.
+
+## Execution log — `EA-7` (§6 sender-trust substrate)
+
+- [2026-08-24][EA-7] **BLOCKED (E6 scope pressure + E3). Two clauses of the `done_when` contradict each
+  other, and one whole half is cross-repo. Atom stays `todo`; nothing was built.** Measured against
+  `origin/main` = `03729754`.
+  **The substrate is HALF-PRESENT, not unbuilt** — correcting a second-hand note that the missing
+  `sender_trust.json` implies nothing exists. `src/personalclaw/channel_trust.py` (477 lines) is CE-1's
+  trust seam and already ships: the store (`entity_settings/channel_trust.json`, atomic writes),
+  `guard_inbound(...) -> TrustVerdict` (`:428` / `:337`), `note_unknown_sender` (`:354`) with
+  `UNKNOWN_SENDER_RENOTIFY_SECS` and three SEL events, `create_pairing_code`/`redeem_pairing_code`
+  (`:258`/`:279`, SHA-256 hashed, constant-time compare, single-use), `fence_channel_content` (`:322`),
+  and `apply_trust_action` (`:411`). The CLI half exists as `personalclaw pair <provider>`
+  (`cli.py:864` subparser → `:1189` dispatch → `cli_commands.py:165`).
+  **The core clause is genuinely unbuilt: THERE IS NO CHOKEPOINT.** `guard_inbound` has **zero**
+  production callers. The only occurrences in `src/` are `channel_transports/reference_echo.py:134`
+  (the reference/demo transport), `testing/channel_conformance.py:540/584/623/657` (the conformance
+  kit), and an SDK re-export (`sdk/channel.py:52`, no call). `gateway._start_channel_inbound`
+  (`gateway.py:3829`) only loops `await transport.start_inbound(self)` and hands over a
+  `GatewayServices` handle — which is a **bag of live service attributes** (`sessions`, `ctx_builder`,
+  `conv_log`, `consolidator`, …; `gateway_services.py:33-58`), not a method seam. A transport therefore
+  drives `SessionManager` **directly**, with nothing interposed. `receive()` (`base.py:112`), the #40
+  seam intended as the funnel, has **0 consumers** anywhere in `src/` and its default raises
+  `NotImplementedError`; `handle_inbound` is **not on the ABC at all** — it exists only on
+  `reference_echo`. Census proved non-vacuous: injecting a `guard_inbound` reference into `gateway.py`
+  made the same grep report it, then it was restored from a file copy and the count returned to 0.
+  **THE CONTRADICTION (the owner scope decision this atom needs).** The `done_when` asks for both
+  (a) `check_sender` "consulted at the **single gateway channel-ingestion chokepoint** BEFORE any agent
+  session" — §6/:148 adds "one chokepoint, transports don't cooperate" — and (b) "**ChannelTransportProvider
+  ABC unchanged**, new transports inherit trust with zero code". As designed, these are mutually
+  exclusive: the gateway hands out `SessionManager` itself, so a bypass-proof chokepoint requires a NEW
+  method-based ingestion seam on the core→channel contract, which is exactly what (b) forbids. Today
+  trust is **cooperative and unenforced** — a transport that simply omits `guard_inbound` reaches an
+  agent session with no trust check.
+  **Security posture, stated deliberately.** `guard_inbound` itself is correct: fail-CLOSED by policy
+  (unknown sender denied; `DEFAULT_DM_POLICY = "pairing"`) and fail-OPEN for the *store* only (corrupt
+  file → defaults + warning, so a bad file never crashes inbound handling — `channel_trust.py:18-21`).
+  **In aggregate, however, the system is fail-OPEN**, because nothing forces the call. That gap is the
+  atom, and it cannot be closed without the (a)/(b) ruling above.
+  **Cross-repo half is out of reach from this repo.** "Slack app `allowlist.py` data migrated in + its
+  Allow/Deny buttons refitted" cannot be done here: there is no `src/personalclaw/slack_runtime/`
+  — it lives in **PersonalClawApps**. Core registers only `WebUITransport`
+  (`channel_transports/__init__.py:50`); Slack is registered by the extension system. So the in-core
+  transport census is 1 no-op inbound transport plus 1 reference transport — a runtime trust ratchet
+  built here would match nothing and read clean.
+  **Remaining smaller gaps, measured.** Pairing parameters diverge from the `done_when`: as-built is
+  8-**digit** numeric, TTL **600s** (10 min, not 1h), **single active code per provider** (not "max 3
+  pending"). The CLI is top-level `personalclaw pair`, not `personalclaw channel pair`. **No frontend
+  control exists** — every `pairing` hit in `web/src/lib/api.ts` / `endpoints.ts` is *device-endpoint*
+  pairing (`pairing_url`), an unrelated feature; so the "+ Settings" half is unbuilt.
+  **Nothing was deleted, added or wired.** Per the escalation rules this is recorded rather than
+  improvised: guessing an equivalent for a chokepoint whose contract is contested would build a seam
+  against a contract the ruling may redefine. Also worth correcting in plan text: §6/:148 and §10/:208
+  still name `channel_trust.py`'s store `sender_trust.json` and its decision fn
+  `check_sender -> TrustDecision`; as-built they are `entity_settings/channel_trust.json` and
+  `guard_inbound -> TrustVerdict`. The `sender_trust.json` DEVIATION is already recorded at :359 for
+  `EA-1`; the `check_sender`/`TrustDecision` naming drift was not.
