@@ -741,3 +741,67 @@ correct URL and returns `200 application/pdf`.
   a plain `LOSS_KINDS` tuple is invisible to it. Falsifications: order walk broken -> 9 red; one loss kind
   suppressed -> 3 red; census positive row -> 3 red; census absence row -> 8 red, writer byte-identical
   after restore. Every mutation restored from a file copy, never `git checkout`.
+
+- [2026-08-24][DFE-3] **VERIFICATION of the four clauses nobody had re-measured, each falsified against
+  the LIVE source rather than argued.** Baseline on `origin/main` `8c8e5fe3`: 243 passed across the six
+  document suites.
+  · **Interleaved order — MET.** `test_docx_parser.py::test_interleaved_paragraph_and_table_order_is_preserved`
+    already alternates **P,T,P,T,P** (`_interleaved_bytes`), not one-of-each, and
+    `test_the_two_sequence_reading_would_reorder_that_fixture` is its vacuity floor: it computes the naive
+    `doc.paragraphs + doc.tables` reading on the same bytes and asserts `naive != walked`. Falsified by
+    sorting `_walk`'s children so tables come last → **9 red**, and `test_parse_write_parse_is_stable`
+    stayed GREEN, re-confirming that idempotence cannot see this class of defect.
+  · **LossReport in BOTH directions — MET, and each direction is the other's floor.** Items:
+    `test_every_loss_kind_has_a_test` maps all **30** `LOSS_KINDS` to a named test *and* asserts each name
+    exists in `globals()`; suppressing the append inside `LossReport.add` → **42 red**. Empty:
+    `test_docx_roundtrip.py::test_a_document_this_repo_wrote_parses_with_no_losses` asserts `report.lossless`
+    unfiltered on the rich fixture; adding `"jc"` (alignment — a field the model HAS) to `_PARA_PROPS` →
+    **2 red**. So "reports too little" and "reports too much" both red.
+  · **Round trip across every `BLOCK_KIND` — MET, through real bytes.** `render_docx` returns a
+    **37,299-byte, 17-part ZIP** and `parse_docx` reopens it via `Document(io.BytesIO(...))`; the parse
+    recovers all eight kinds AS THEMSELVES (`heading, heading, paragraph, paragraph, bullets, numbered,
+    table, table, code, pagebreak, image, paragraph`) with `_canonical` equal and `lossless` true.
+    `test_the_fixture_covers_every_block_kind` is the rail that keeps the fixture from shrinking. Note
+    `test_docx_writer_coverage.py::_KIND_RECOVERY` records `code` and `image` as NOT recoverable — that is
+    a claim about the raw OOXML, and the parser's two documented conventions (all-monospace → `code`,
+    `[image: slug]` → `image`) are what close the gap; the two suites do not disagree.
+  · **Deliberate writer regression — MET.** Seven parametrized monkeypatch regressions each assert green
+    BEFORE patching. Independently falsified on the shipped file: `docx_writer._add_run`'s
+    `if run.bold or bold:` → an always-false condition → **11 red** including
+    `test_the_round_trip_recovers_the_authored_model`.
+- [2026-08-24][DFE-3] **The one real gap, closed: nothing pinned the parser's output CLASSES.** `_canonical`
+  projects to primitives, and `test_parse_write_parse_is_stable` compares two models the parser itself
+  produced — so a uniformly wrong class agrees with itself. Only `test_page_setup_survives_the_round_trip`
+  pinned one (dataclass `__eq__` is class-scoped) and `PageSetup` is the one field carrying no user content.
+  This is **DFE-2's hazard on DFE-3's seam**. Added
+  `test_the_parse_returns_the_SHIPPED_model_classes` (`type(...) is` over DocumentModel/LossReport/PageSetup/
+  Block/Run/Cell/ParagraphStyle; the set comparisons are self-flooring because `set() == {Run}` is false)
+  plus `test_the_shipped_class_check_discriminates_by_CLASS_not_by_SHAPE`, whose double is asserted
+  field-for-field identical to `Run` and still rejected. Falsified by making the parser emit a module-level
+  `class _ShadowRun(Run)`: **exactly 1 red — the new test — and all 15 others GREEN**, which is the measure
+  of how much the gap was worth.
+- [2026-08-24][DFE-3] **V1 gate's "generate a document with the tools, parse it back, diff the models" was a
+  MANUAL step no test joined.** Every round trip called `render_docx` directly, so the tool the agent
+  actually invokes was outside the circuit. `TestToolGeneratedDocumentParsesBack` in `test_documents.py` now
+  drives `mcp_artifacts._document_create`, reads `prov.raw_bytes(slug)` and parses those bytes: kinds, title
+  and visible text match `document_from_markdown` of the same input, and the report is pinned at exactly
+  `["page_property"]` — exact equality, so it reds whether the parser goes silent or grows an item the model
+  can hold. Isolated under `tmp_path` + `PERSONALCLAW_HOME`.
+- [2026-08-24][DFE-3] **The scope line's `knowledge/readers.py:243-247` stale ordering comment is FIXED.**
+  It claimed python-docx "exposes no ordering between paragraphs and tables without walking the underlying
+  XML body". `docx_parser._walk` does exactly that walk now, so appending is a **choice** this path makes —
+  it flattens to plain text for search/embedding where no consumer reads position, and interleaving would
+  change the stored text of every already-ingested document. Comment corrected; behaviour deliberately
+  unchanged, and the re-ingest is named as belonging to whichever change owns it.
+- [2026-08-24][DFE-3] **CORRECTION to the 2026-08-24 entry above.** It states idempotence is blind to a
+  uniform writer regression. True in principle and confirmed for the order-walk break, but the bold
+  regression DOES trip `test_parse_write_parse_is_stable` — via an asymmetry, not via insight:
+  `_fill_cell` bolds a header through `_add_run(bold=...)` when the cell has `runs` but through a direct
+  `run.bold = True` loop when it has only `text`. Lap 1 (authored `Cell(text=...)`) keeps the bold, lap 2
+  (parser output `Cell(runs=[...])`) loses it. The claim's *conclusion* stands — claim 3 must compare
+  against the AUTHORED model — but the reason it fires here is the writer's two cell paths.
+- [2026-08-24][DFE-3] **Gate on the verification branch:** `make lint` clean (mypy 1001 source files) ·
+  272 passed across the seven document suites · **`make test` 26114 passed / 30 skipped / 12 xfailed, 0
+  failed** (845s) · `scripts/gate_report.py` all 6 gates PASS · probe sweep 16, diff-scoped introduced 0 ·
+  no personal strings in the diff. Atom NOT flipped here: the Word-authored-fixture clause lives on
+  `feature-dfe3-docx-parser-lossreport` (#1996) and the flip is the owner's at integration.
