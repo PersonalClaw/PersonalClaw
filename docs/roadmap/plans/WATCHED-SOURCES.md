@@ -1134,3 +1134,62 @@ Trigger-side work (`web_watch` wiring, morning-digest template install, triage d
   the override that happened here. That reason is fixed separately (the deferral filter demotes the
   `later` clause), moving `WS-7` to `PARTIAL_OR_UNMET` — *"the log names an unmet clause"* — which is
   the true one. Its LANDED-AND-CLEAN sibling error on `MRT-5` is fixed in the same change.
+
+- **[2026-08-25][`WS-7`] DONE — the digest has a caller.** The correction entry above reverted a premature
+  flip and recorded the single unmet clause: *"the digest is invocable and fully tested, but nothing in the
+  shipped product calls it yet"*. Measured then, `git grep run_morning_digest -- src/` returned exactly two
+  hits, both inside `source_digest.py` — the definition and a docstring mention. It now returns hits in
+  **three** modules: the definition, the provider that calls it, and the gateway that arms the trigger.
+  **The caller:** `action_providers/source_digest_provider.py:108` `await run_morning_digest(...)`, inside
+  `SourceDigestActionProvider` (`:76`, name `source-digest`). Reconciled creation-only by
+  `reconcile_source_digest_cron` (`:157`, `0 7 * * *`, `enabled=True`, `delivery="none"`), armed from
+  `gateway.py:1942` inside `_init_cron`'s `--no-crons` else-branch. The path it rides: stored `clock` row
+  `system:source-digest` → clock loop → `gateway.py:901 _fire_store_trigger` → `workflow.inline.provider`
+  → the action-provider registry.
+  **The fence reasoning is intact, which is why a clock trigger and not a template.** WS-7 deliberately
+  made the digest a callable because *"inventing a template format for one consumer would have put
+  `fence_untrusted` inside a user-editable prompt string — a security control a template author could
+  delete."* The new trigger's `workflow.inline.config` is **empty**: the prompt is still composed only in
+  `source_digest.build_prompt`, so there is no prompt text anywhere on the new path for anyone to edit.
+  **Modelled on `reconcile_digest_cron`, including the two bugs its docstring records:** writes the unified
+  `TriggerStore` directly (never `crons.json` — S108), and builds a `Trigger` with a deterministic id
+  (never `tools.create`, which mints a fresh slug per restart).
+  **Rung class `action.knowledge_write`, deliberately NOT `action.digest`.** That class's own comment
+  declares its members deterministic, no-model and local-only; the source digest is a model call over
+  scraped text, so joining it would have made the comment a lie. `knowledge-report` (model call + knowledge
+  write + on a cron) and `knowledge-propose` are already in `knowledge_write` — precedent for both halves.
+  **Reachability is asserted, not assumed.** The test never names the provider in a literal: it reads
+  `workflow.inline.provider` out of the row the reconciler wrote and resolves it through the real registry,
+  so a stored-but-unknown name reds. Proved three ways — deleting the gateway call site reds 1 of 8;
+  corrupting the stored provider name to `source-digestX` reds **6 of 8**, five with *"the stored trigger
+  names an unknown provider"*; and at integration, replacing the `run_morning_digest` call with a stub reds
+  3 of 8 by consuming the stub's wrong return shape, which is what proves the call site is actually
+  executed.
+  **One item / one notification, by two mechanisms neither of which is new.** Sequentially, the
+  `digest_cursor.json` advances only after the item is durable, so a second fire reads an empty window and
+  makes **zero model calls** — removing the cursor write reds `test_a_second_fire_posts_nothing`.
+  Concurrently, the overlap claim lock (`triggers/firepath.py:400`) with `overlap == "skip"` asserted
+  explicitly, because `parallel` would let two runs read one cursor. The failure it deliberately does not
+  prevent is a crash between the item write and the cursor write → one extra visible digest; the reverse
+  loses a day silently.
+  **`mute_all` still suppresses**, and the test asserts the precondition `notification_allowed(INFO) is
+  False` FIRST, so an isolation leak reds there rather than passing as a fake bypass. A companion test
+  covers the other direction: no state means refuse, not notify past a gate we cannot consult.
+  🔴 **One WORDING deviation survives and it is pre-existing, not introduced here.** `done_when` says "the
+  morning-digest **template**"; WS-7 itself recorded the DEVIATION to a callable for the fence reason above.
+  A bundled clock trigger satisfies the substance — a scheduled thing the product ships that produces one
+  knowledge item and one gated notification — but the literal word "template" remains a deviation on the
+  record. Flipped `done` on the substance; if the owner reads "template" literally, the clause is a
+  re-scope, not a rebuild.
+  🔴 **Recorded, not fixed:** this adds a SECOND machine-named system row to a newcomer's Automations list,
+  and `web/src/pages/emptyStateRollout.test.tsx:199` already records that `system:notification-digest`
+  alone defeats that surface's empty state. Pre-existing, and that test marks the Automations pages
+  off-limits. Also still open from WS-7's own log and out of scope here: `budget_spent`/`requests_used`
+  reads 0 for every shipped provider, the notification uses `notification_kinds.INFO` rather than a
+  dedicated kind (WS-9/WS-10), and the `app:` prefix naming wart.
+  **CHANGELOG: yes, now.** WS-7's original "CHANGELOG: no — nothing here has a user-reachable entry point
+  yet" is no longer true, so an Unreleased entry was added.
+  **Gate:** `make lint` clean (mypy **1013** source files); `make test` **26557 passed, 0 failed**; at
+  integration on the rebased tip, the new suite plus streams/digest/notification-rules/rung-routing/
+  registry-validation → **207 passed, 0 failed**; `gate_report.py` 6/6 PASS; probe sweep 16. No `web/`
+  change, so no FE gate. No new config field, enum, trigger kind or `_EDITABLE_CONFIG` entry.
