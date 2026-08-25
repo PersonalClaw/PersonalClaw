@@ -1,10 +1,14 @@
-import { useCallback, useEffect, useState } from 'react'
-import { RefreshCw, ChevronRight, CheckCircle2, AlertTriangle, XCircle, Wrench } from 'lucide-react'
-import { api, type DoctorReport, type DoctorCapability, type DoctorProbe, type RemediationSnapshot } from '../../lib/api'
+import { useCallback, useEffect, useState, type ReactNode } from 'react'
+import { RefreshCw, ChevronRight, CheckCircle2, AlertTriangle, XCircle, Wrench, FlaskConical } from 'lucide-react'
+import {
+  api, type DoctorReport, type DoctorCapability, type DoctorProbe, type RemediationSnapshot,
+  type SurfacingCandidate, type AutomationWouldExecute, type Trigger,
+} from '../../lib/api'
 import { notify } from '../../app/appSdk'
 import { confirm } from '../../ui/dialog'
 import { InvestigateButton } from '../../ui/InvestigateButton'
 import { PanelHeader, Section } from './settingsUI'
+import { Select, TextInput } from '../../ui/forms'
 import { Button } from '../../ui/Button'
 import { FormSkeleton } from '../../ui/ListScaffold'
 
@@ -78,7 +82,273 @@ export function DoctorPanel() {
         </Section>
       )}
 
+      <SimulatorsSection />
       <RemediationSection />
+    </div>
+  )
+}
+
+// ── the two trust simulators (PLATFORM-RESILIENCE §3.1 + §3.3) ───────────────
+//
+// §3.3: "so 'simulate a query' and 'simulate a trigger' live side by side before the user grants
+// unattended operation". Both are read-only by construction — the surfacing one re-runs the same
+// deterministic scorer a real turn runs, and the automation one walks AUTOMATION-SUBSTRATE's dry
+// fire. Neither executes anything, spends a token, or resolves a credential.
+/** Exported for test: the five-fact rendering is only observable by rendering this against a
+ *  stubbed response, and the whole point of §3.3 is that a user can READ the description. */
+export function SimulatorsSection() {
+  return (
+    <Section
+      title="Simulators"
+      hint="Ask the system what it WOULD do, before it does it. Nothing here runs an action, spends a token, or changes any state."
+    >
+      <div className="flex flex-col gap-m">
+        <SurfacingSimulator />
+        <AutomationSimulator />
+      </div>
+    </Section>
+  )
+}
+
+// ── §3.1: simulate a query ───────────────────────────────────────────────────
+function SurfacingSimulator() {
+  const [text, setText] = useState('')
+  const [rows, setRows] = useState<SurfacingCandidate[] | null>(null)
+  const [err, setErr] = useState<unknown>(null)
+  const [busy, setBusy] = useState(false)
+
+  const run = async () => {
+    setBusy(true)
+    try {
+      const r = await api.doctorSimulateSurfacing(text)
+      setRows(r.candidates)
+      setErr(null)
+    } catch (e) { setErr(e); setRows(null) } finally { setBusy(false) }
+  }
+
+  return (
+    <div className="rounded-lg bg-surface-container px-4 py-3">
+      <div className="text-on-surface text-[0.875rem]">Skill surfacing</div>
+      <div className="mt-0.5 text-on-surface-low text-[0.75rem]">
+        Which skills a message would surface, and — for the ones it wouldn't — why not.
+      </div>
+      {/* `TextInput`/`Select` from the shared form family, not raw elements: the primitive-adoption
+          ratchet counts bespoke chrome, and these two carry the accessible-name plumbing (an
+          explicit `ariaLabel` wins, which is what a control outside a `Field` needs). */}
+      <form
+        className="mt-2 flex items-center gap-2"
+        onSubmit={(e) => { e.preventDefault(); if (text.trim() && !busy) void run() }}
+      >
+        <TextInput
+          value={text}
+          onChange={setText}
+          placeholder="e.g. deploy the gateway"
+          ariaLabel="A message to simulate skill surfacing for"
+          size="sm"
+        />
+        {/* `type="submit"` so Enter in the box does what the button does — an input whose Enter
+            key went nowhere is the "enter target unstated" shape. */}
+        <Button type="submit" variant="secondary" size="sm" loading={busy} disabled={!text.trim()}
+          disabledReason="Type a message to simulate">
+          <FlaskConical size={14} /> Simulate
+        </Button>
+      </form>
+      {err !== null && (
+        <div role="alert" className="mt-2 text-on-surface-low text-[0.75rem]">
+          Couldn't simulate surfacing: {String((err as Error)?.message || err)}
+        </div>
+      )}
+      {rows !== null && rows.length === 0 && (
+        <div className="mt-2 text-on-surface-low text-[0.75rem]">No skill scored against that message.</div>
+      )}
+      {rows !== null && rows.length > 0 && (
+        <div className="mt-2 flex flex-col gap-1 border-t border-outline-variant/30 pt-2">
+          {rows.map((c) => (
+            <div key={c.key} className="flex items-baseline justify-between gap-2 text-[0.75rem]">
+              <span className={c.included ? 'text-on-surface-var' : 'text-on-surface-low'}>
+                {c.key} <span className="text-on-surface-low">· {c.reason}</span>
+              </span>
+              <span className="shrink-0 text-on-surface-low tabular-nums">
+                kw {c.kw_score.toFixed(2)} / sem {c.sem_score.toFixed(2)}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ── §3.3: simulate a trigger — the would-execute description ─────────────────
+function AutomationSimulator() {
+  const [triggers, setTriggers] = useState<Trigger[] | null>(null)
+  const [pick, setPick] = useState('')
+  const [desc, setDesc] = useState<AutomationWouldExecute | null>(null)
+  const [err, setErr] = useState<unknown>(null)
+  const [busy, setBusy] = useState(false)
+
+  useEffect(() => {
+    api.triggers().then((r) => setTriggers(r.triggers)).catch(() => setTriggers([]))
+  }, [])
+
+  const run = async () => {
+    setBusy(true)
+    try {
+      const r = await api.doctorSimulateAutomation(pick)
+      setDesc(r)
+      setErr(null)
+    } catch (e) { setErr(e); setDesc(null) } finally { setBusy(false) }
+  }
+
+  // The store id, not the namespaced wire id: the endpoint reads the unified TriggerStore, whose
+  // rows are keyed by `raw_id` (`/api/triggers` prefixes `schedule:`/`event:` as its migration map).
+  const rows = (triggers ?? []).map((t) => ({ value: t.raw_id, label: `${t.name || t.raw_id} · ${t.kind}` }))
+  const empty = triggers !== null && rows.length === 0
+  const options = [{ value: '', label: 'Pick an automation…' }, ...rows]
+
+  return (
+    <div className="rounded-lg bg-surface-container px-4 py-3">
+      <div className="text-on-surface text-[0.875rem]">Automation would-execute</div>
+      <div className="mt-0.5 text-on-surface-low text-[0.75rem]">
+        What one automation would do on its next fire — the resolved schedule, the rendered action,
+        the session it targets, what it is allowed to do, and its observe-mode dry fire.
+      </div>
+      <div className="mt-2 flex items-center gap-2">
+        <Select
+          value={pick}
+          onChange={(v) => { setPick(v); setDesc(null); setErr(null) }}
+          options={options}
+          ariaLabel="An automation to describe"
+        />
+        {/* Two different reasons for one disabled state. A constant would read "you have no
+            automations" on a machine that has three — non-null and still wrong, the ambiguous-name
+            failure the settings-panel census turned up. */}
+        <Button variant="secondary" size="sm" onClick={run} loading={busy} disabled={!pick}
+          disabledReason={empty ? 'You have no automations yet' : 'Pick an automation first'}>
+          <FlaskConical size={14} /> Describe
+        </Button>
+      </div>
+      {/* 🪤 Deliberately NOT "…and it will appear here": this list is read once on mount, so that
+          sentence would promise a live update the panel does not do — and the empty-state-promise
+          census exists precisely to keep that shape out. */}
+      {empty && (
+        <div className="mt-2 text-on-surface-low text-[0.75rem]">
+          No automations yet. Create one on the Automations page, then reopen this panel.
+        </div>
+      )}
+      {err !== null && (
+        <div role="alert" className="mt-2 text-on-surface-low text-[0.75rem]">
+          Couldn't describe that automation: {String((err as Error)?.message || err)}
+        </div>
+      )}
+      {desc && <WouldExecute d={desc} />}
+    </div>
+  )
+}
+
+/** The five facts §3.3 names, in one block. Exported for test. */
+export function WouldExecute({ d }: { d: AutomationWouldExecute }) {
+  const nf = d.next_fire
+  const ac = d.action_config
+  const cg = d.capability_grants
+  const om = d.observe_mode
+  return (
+    <div className="mt-2 flex flex-col gap-1.5 border-t border-outline-variant/30 pt-2">
+      {/* 1 — resolved next fire. `source` is rendered, not just the instant: an "armed" row is
+          one the tick will act on, a "computed" one is enabled-but-inert (it has no
+          `next_fire_at` yet), and conflating them hides exactly the automations a user comes
+          to this panel to ask about. */}
+      <Fact label="Next fire">
+        {nf.source === 'none'
+          ? <span className="text-on-surface-low">Never — this automation has no scheduled fire.</span>
+          : <>
+            {nf.cadence}{nf.at ? ` · ${new Date(nf.at).toLocaleString()}` : ''}
+            <span className="ml-1.5 text-on-surface-low">
+              {nf.armed ? '· armed' : '· not armed yet (this is a preview, not a scheduled time)'}
+            </span>
+          </>}
+      </Fact>
+
+      {/* 2 — the rendered action config. A secret is NAMED, never resolved. */}
+      <Fact label="Action">
+        <span className="font-mono">{ac.provider || '(none)'}</span>
+        {ac.secret_refs.length > 0 && (
+          <span className="ml-1.5 text-on-surface-low">· uses {ac.secret_refs.join(', ')}</span>
+        )}
+        {ac.render_error
+          ? <div role="alert" style={{ color: 'var(--color-warning)' }}>Would fail to render: {ac.render_error}</div>
+          : ac.rendered
+            ? <pre className="mt-1 overflow-x-auto rounded-md bg-surface px-2.5 py-2 text-on-surface-low text-[0.6875rem]">{ac.rendered}</pre>
+            : null}
+        <pre className="mt-1 overflow-x-auto rounded-md bg-surface px-2.5 py-2 text-on-surface-low text-[0.6875rem]">
+          {JSON.stringify(ac.config, null, 2)}
+        </pre>
+      </Fact>
+
+      {/* 3 — the session the fire targets. */}
+      <Fact label="Session">
+        <span className="font-mono">{d.session_key.key}</span>
+        <span className="ml-1.5 text-on-surface-low">· {d.session_key.mode}</span>
+      </Fact>
+
+      {/* 4 — capability grants. Three distinct renderings (fenced / granted by the read-only
+          default / granted by an explicit opt-in), because a refusal a user cannot explain is
+          one they work around by widening the allowlist far past what the automation needed. */}
+      <Fact label="Allowed to">
+        {cg.granted
+          ? <span style={{ color: 'var(--color-success)' }}>
+            {Object.keys(cg.needs_fence).length === 0
+              ? 'Yes — a read-only action needs no opt-in.'
+              : `Yes — the frozen set grants ${Object.values(cg.needs_fence).flat().join(', ')}.`}
+          </span>
+          : <span style={{ color: 'var(--color-warning)' }}>
+            Refused: {cg.refused.map((r) => `${r.value} (${r.reason})`).join(' · ')}
+          </span>}
+      </Fact>
+
+      {/* 5 — the observe-mode result, from AUTOMATION-SUBSTRATE's dry fire. The T9 rule is in
+          the copy: only the spawn-based providers have a real observe mode, so for everything
+          else this says PREVIEW rather than promising a safety property it does not have. */}
+      <Fact label={om.mode === 'observe' ? 'Observe-mode dry fire' : 'Preview (no observe mode)'}>
+        {!om.provider_known && (
+          <div style={{ color: 'var(--color-warning)' }}>
+            No provider named {om.provider || '(none)'} is registered — this automation cannot run.
+          </div>
+        )}
+        {om.mode === 'preview' && om.provider_known && (
+          <div className="text-on-surface-low">
+            {om.provider} executes its config directly and has no observe mode, so this describes
+            what would run instead of running it.
+          </div>
+        )}
+        <pre className="mt-1 overflow-x-auto rounded-md bg-surface px-2.5 py-2 text-on-surface-low text-[0.6875rem]">{om.detail}</pre>
+        {om.gate_plan.enforced && om.gate_plan.enforced.length > 0 && (
+          <div className="text-on-surface-low">Gates enforced: {om.gate_plan.enforced.join(', ')}</div>
+        )}
+      </Fact>
+
+      {/* AUTO-R15's `closest` suggestion. "Invalid" with no next step is how a near-miss becomes
+          a dead row nobody diagnoses, so the suggested key is surfaced with the issue. */}
+      {d.trigger.issues.length > 0 && (
+        <Fact label="Problems with this row">
+          <ul className="list-none">
+            {d.trigger.issues.map((i, n) => (
+              <li key={n} className="text-on-surface-low">
+                {i.path}: {i.message}{i.closest ? ` — did you mean ${i.closest}?` : ''}
+              </li>
+            ))}
+          </ul>
+        </Fact>
+      )}
+    </div>
+  )
+}
+
+function Fact({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <div className="text-[0.75rem]">
+      <div className="text-on-surface-low">{label}</div>
+      <div className="text-on-surface-var">{children}</div>
     </div>
   )
 }

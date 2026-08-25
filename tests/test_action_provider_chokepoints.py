@@ -249,6 +249,28 @@ def test_the_reversal_site_undoes_and_never_executes():
     assert "reversal_kinds" in src, "resolution must be bounded by what the provider claims"
 
 
+def test_the_would_execute_preview_site_only_reads_the_declaration():
+    """The third exemption, and the properties that earn it (PLATFORM-RESILIENCE §3.3 — PR2-7).
+
+    `dashboard/handlers/doctor.py`'s would-execute simulator resolves a provider to read ONE
+    declaration — `supports_dry_run` — because that is the T9 honesty rule: only the spawn-based
+    LLM providers have a real observe mode, and a panel that labelled a deterministic provider's
+    description "observe-mode result" would promise a safety property the provider does not have.
+
+    The kill-switch check every `EXECUTION_SITES` entry shares would be wrong here, because this
+    site is not an entry point at all: the dry fire it renders returns before AUTOMATION-SUBSTRATE
+    consults a runner. "It's different" is not an exemption, so the difference is asserted —
+    it must never execute, and it must never dispatch a fire with a runner attached.
+    """
+    src = _source("personalclaw.dashboard.handlers.doctor")
+    assert "get_action_provider(" in src, "the exemption is stale if this site no longer resolves"
+    assert ".execute(" not in src, "the preview site must never execute a provider"
+    assert "supports_dry_run" in src, "the only reason to resolve here is the T9 declaration"
+    # 🪤 The load-bearing one. `triggers.tools.run` executes when handed a runner, so a `runner=`
+    # that ever became anything but None would turn this read-only panel into a fire path.
+    assert "runner=None" in src, "the dry fire must be dispatched with no runner"
+
+
 def test_the_site_list_is_not_STALE():
     """🔴 The test that makes the list above trustworthy.
 
@@ -271,6 +293,10 @@ def test_the_site_list_is_not_STALE():
     known = {m for m, _ in EXECUTION_SITES} | {
         REVERSAL_SITE,
         "personalclaw.dashboard.handlers.hooks",
+        # The would-execute preview (PR2-7) — reads `supports_dry_run` only; the properties that
+        # earn the exemption are asserted in `test_the_would_execute_preview_site_only_reads_the_
+        # declaration` above, so this entry cannot become a silent bypass.
+        "personalclaw.dashboard.handlers.doctor",
         "personalclaw.action_providers.registry",  # defines it
         "personalclaw.action_providers",  # re-exports it
     }
