@@ -176,6 +176,82 @@ async def test_fetch_latest_release_offline_returns_cache(monkeypatch, tmp_path)
     assert got["tag"] == "v0.1.2"  # degraded to the cached view, no raise
 
 
+# ── The privacy-claim call site: auto_update gates the APPLY, not the CHECK ───
+#
+# `docs/architecture/network-egress-hosts.txt` says api.github.com is the product's one
+# unprompted destination and that nothing turns the check off. That sentence used to cite a
+# config field `updates.check_enabled` which does not exist anywhere in src/ — a doc claim
+# with no code behind it, and the sort of claim a public comparison/privacy page would copy
+# verbatim (DISCOVERABILITY-LAUNCH `DL-7`). These two tests pin the real behaviour at the
+# call site so the doc cannot drift back: the check runs first and unconditionally, and
+# `auto_update` decides only whether the apply follows.
+
+
+def _orchestrator_stub(applied: list[str]):
+    """A bare stand-in for the boot-path caller — `_check_for_updates` touches only these."""
+
+    class _Stub:
+        dashboard_state = None
+
+        async def _auto_apply_update(self) -> None:
+            applied.append("apply")
+
+    return _Stub()
+
+
+async def _drive_check_for_updates(monkeypatch, *, auto_update: bool):
+    """Run `GatewayOrchestrator._check_for_updates` against stubs, recording call order."""
+    from personalclaw.dashboard import handlers as dash_handlers
+    from personalclaw.gateway import GatewayOrchestrator
+
+    order: list[str] = []
+    applied: list[str] = []
+
+    async def _fake_check() -> None:
+        order.append("check")
+
+    class _Cfg:
+        pass
+
+    _Cfg.auto_update = auto_update
+
+    def _load(*_a, **_k):
+        order.append("config")
+        return _Cfg()
+
+    monkeypatch.setattr(dash_handlers, "_do_update_check", _fake_check)
+    # `available` truthy so the auto_update branch is actually reached; a falsy value would
+    # short-circuit before the config read and make the ordering assertion vacuous.
+    monkeypatch.setattr(dash_handlers, "_update_info", {"available": True})
+    monkeypatch.setattr("personalclaw.config.AppConfig.load", _load)
+
+    await GatewayOrchestrator._check_for_updates(_orchestrator_stub(applied))
+    return order, applied
+
+
+@pytest.mark.asyncio
+async def test_auto_update_gates_the_apply_not_the_check(monkeypatch) -> None:
+    # auto_update OFF still contacts api.github.com: the check precedes the config read,
+    # so there is no configuration that suppresses the request. This is the fact the
+    # egress census states; if it ever stops being true, fix the census in the same change.
+    order, applied = await _drive_check_for_updates(monkeypatch, auto_update=False)
+    assert order == ["check", "config"], (
+        "the update check must run BEFORE auto_update is consulted — got "
+        f"{order}. If the check is now gated, `docs/architecture/network-egress-hosts.txt` "
+        "no longer describes api.github.com correctly."
+    )
+    assert applied == []  # ...and the apply is what auto_update=False actually suppressed
+
+
+@pytest.mark.asyncio
+async def test_auto_update_on_reaches_the_apply(monkeypatch) -> None:
+    # The other branch, so the test above is a gate and not a constant: the only thing that
+    # changed is `auto_update`, and only the apply moved.
+    order, applied = await _drive_check_for_updates(monkeypatch, auto_update=True)
+    assert order == ["check", "config"]
+    assert applied == ["apply"]
+
+
 # ── C2 wire-shape conformance (Tier-S once clients read it) ──────────────────
 
 
