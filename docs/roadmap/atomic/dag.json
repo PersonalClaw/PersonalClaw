@@ -1358,7 +1358,8 @@
           "done_when": "rsync-sync (subprocess over ssh) and s3-sync (signed PUT/GET/LIST via net.fetch with a derived SYNC EgressPolicy through egress_policy_for(), host-pinned + raised max_bytes, never hand-rolled aiohttp) shipped as first-party apps; AES-256-GCM per shard with per-shard HKDF key from passphrase + first-write-wins salt object, routing/metadata fields kept plaintext, plaintext-in-encrypted-store rejected on send AND receive as permanent skip, missing salt = hard setup error; per-transport encryption defaults (ON for s3/dir, OFF for git); secret=True entries excluded before any transport; criteria 7-8 met",
           "deps": [
             "DAS-6"
-          ]
+          ],
+          "pr": 2008
         },
         {
           "id": "DAS-9",
@@ -5761,7 +5762,7 @@
             "EXT:DESIGN-SYSTEM-CONSISTENCY:shell primitives/tokens to export",
             "EXT:AMBIENT-SURFACES:generative-UI layer"
           ],
-          "pr": 2006
+          "pr": 2008
         },
         {
           "id": "APE-12",

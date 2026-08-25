@@ -686,7 +686,7 @@ skipped: [`docs/architecture/agent-activity-feed.md`](../../architecture/agent-a
   `apps/background`, and the `sys.modules` stub of that module). **No unlanded content on any of the three.**
   **Verdict: the atom is satisfiable and now railed.** Flip `APE-3` to done.
 
-- [2026-08-25][APE-11] **DONE** (#2006). Both clauses met and asserted at the call site. The
+- [2026-08-25][APE-11] **DONE** (#2008 via batch, originally #2006). Both clauses met and asserted at the call site. The
   `@personalclaw/app-sdk/ui` subpath already existed as a **live alias** in the loader's rewrite specs
   (`appSdk.tsx:497`) that resolved back to the base module — it named nothing of its own. Extended, and
   the alias deleted, so there is no second parallel export surface. `Button` and `Surface` are exported
