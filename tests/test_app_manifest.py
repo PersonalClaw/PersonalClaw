@@ -879,3 +879,92 @@ class TestProviderTypesMatchHandlers:
         assert not any(
             "provider.type" in e for e in errors
         ), f"prompt provider.type rejected: {errors}"
+
+
+# ---------------------------------------------------------------------------
+# uiCapabilities — the declared UI-capability block (APE-11)
+# ---------------------------------------------------------------------------
+
+
+class TestUiCapabilities:
+    """The manifest half of APE-11.
+
+    The block's whole job is to be READ by the browser's UI-SDK gate
+    (``resolvableAppSpecs`` in ``web/src/app/appSdk.tsx``), and the only path it
+    travels to get there is ``GET /api/apps/<name>`` → ``manifest`` →
+    ``AppHostPage`` → ``ContributedPage``. That handler serializes with
+    ``AppManifest.to_dict()``, so a value that does not survive the round trip
+    never reaches the gate at all — which is what these assertions pin.
+    """
+
+    def test_declared_capabilities_survive_the_round_trip(self):
+        original = _valid_manifest(uiCapabilities=["shell-primitives", "generative-widget"])
+        m = AppManifest.from_dict(original)
+        assert m.uiCapabilities == ["shell-primitives", "generative-widget"]
+        assert m.validate() == []
+        # Typed, not swept into `extra` — otherwise validate() could never see it.
+        assert "uiCapabilities" not in m.extra
+        serialized = m.to_dict()
+        assert serialized["uiCapabilities"] == ["shell-primitives", "generative-widget"]
+        assert AppManifest.from_dict(serialized).to_dict() == serialized
+
+    def test_declaring_none_stays_absent_on_the_wire(self):
+        """Absent, not ``[]`` — so a later Store surface can tell the two apart.
+
+        Paired with the test above so this is not an absence claim satisfied by a
+        field that never serializes at all.
+        """
+        m = AppManifest.from_dict(_valid_manifest())
+        assert m.uiCapabilities == []
+        assert "uiCapabilities" not in m.to_dict()
+
+    def test_unknown_capability_is_an_install_error(self):
+        m = AppManifest.from_dict(_valid_manifest(uiCapabilities=["shell-primitives", "bogus"]))
+        errors = m.validate()
+        assert any("uiCapabilities" in e and "bogus" in e for e in errors), errors
+
+    def test_an_unknown_capability_is_kept_verbatim_so_validate_can_report_it(self):
+        """Not filtered at the parse boundary.
+
+        Dropping it there would turn a typo into "declared nothing": the app would
+        install clean and its page would then fail to resolve the SDK subpath with
+        no error naming the cause.
+        """
+        m = AppManifest.from_dict(_valid_manifest(uiCapabilities=["shel-primitives"]))
+        assert m.uiCapabilities == ["shel-primitives"]
+
+    def test_duplicate_capability_is_an_error(self):
+        m = AppManifest.from_dict(_valid_manifest(uiCapabilities=["shell-primitives"] * 2))
+        assert any("duplicate" in e for e in m.validate())
+
+    def test_every_vocabulary_entry_validates(self):
+        """Two-sided: the closed set is not just a rejection list, every member of it
+        is accepted. A vocabulary whose entries all failed would pass the rejection
+        tests above while granting nothing."""
+        from personalclaw.apps.manifest import UI_CAPABILITIES
+
+        assert UI_CAPABILITIES, "the vocabulary must be non-empty or the gate grants nothing"
+        for cap in UI_CAPABILITIES:
+            m = AppManifest.from_dict(_valid_manifest(uiCapabilities=[cap]))
+            assert m.validate() == [], f"{cap!r} is in the vocabulary but does not validate"
+
+    def test_the_frontend_gate_and_the_manifest_share_one_vocabulary(self):
+        """The TS union in ``appSdk.tsx`` mirrors ``UI_CAPABILITIES`` by hand, so the
+        two can drift silently: the manifest would accept a capability the gate has
+        no branch for, and the app would install clean and resolve nothing. Read the
+        union out of the source and compare.
+        """
+        import re
+        from pathlib import Path
+
+        from personalclaw.apps.manifest import UI_CAPABILITIES
+
+        sdk = Path(__file__).resolve().parents[1] / "web" / "src" / "app" / "appSdk.tsx"
+        src = sdk.read_text(encoding="utf-8")
+        match = re.search(r"export type UiCapability =([^\n]*(?:\n\s*\|[^\n]*)*)", src)
+        assert match, f"UiCapability union not found in {sdk} — did the export get renamed?"
+        declared = set(re.findall(r"'([a-z-]+)'", match.group(1)))
+        assert declared == set(UI_CAPABILITIES), (
+            f"appSdk.tsx UiCapability {sorted(declared)} != manifest UI_CAPABILITIES "
+            f"{sorted(UI_CAPABILITIES)} — the gate and the manifest must agree"
+        )

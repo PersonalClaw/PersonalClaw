@@ -194,6 +194,39 @@ backend has no access to the gateway's SecurityEventLog).
   resolves bare `react` / `@personalclaw/app-sdk` imports so app UIs don't
   bundle their own React.
 
+### The UI SDK's gated subpaths (APE-11)
+
+Two subpaths sit beside the base module, each unlocked by one entry in the manifest's
+top-level `uiCapabilities` list (closed vocabulary: `UI_CAPABILITIES` in
+`apps/manifest.py`, mirrored by the `UiCapability` union in `appSdk.tsx` — a test pins
+the two together):
+
+| Import | Declaration | Exports |
+|---|---|---|
+| `@personalclaw/app-sdk/ui` | `shell-primitives` | `Button`, `Surface`, `useTheme`, `readAppTheme` |
+| `@personalclaw/app-sdk/genui` | `generative-widget` | `GenerativeWidget` |
+
+`Button`/`Surface` are the host's OWN components by identity, not copies, so a page built
+from them renders markup identical to a native page's — which is what
+`web/src/app/appSdkUi.test.tsx` asserts, by loading a fixture bundle through
+`ContributedPage` and diffing its output against the same page written natively. `useTheme`
+/`readAppTheme` return the resolved token contract (`colors` + spreadable `cssVars`), so an
+app never names a host CSS variable directly.
+
+`GenerativeWidget` takes a genui DSL body and hands it to the HOST renderer, which validates
+every line against the host's own component registry (`ui/genui/registry.ts`). An app
+contributes a **widget**, never a component **type**: the registry stays host-owned, so
+neither an app nor a model writing that app's spec can put unregistered markup into the host
+React tree. Authoring surface for the DSL is `library.prompt()`.
+
+**The gate is a declaration, not a sandbox.** `resolvableAppSpecs()` omits an undeclared
+subpath from the bundle's import rewrite, so its bare import fails to resolve — but a
+contributed page already runs in the host React tree (`ContributedPage` mounts it with
+`createRoot`, no iframe) with the host `window`, so an undeclared app is not *prevented*
+from reaching the same components. What the block buys is legibility: the app states which
+host surfaces it builds on, in one place the host can read. Same posture as
+`permissions.network` — advisory, and never presented as enforced.
+
 ## The native capability contract (`apps/native_contract.py`)
 
 A **bundled** app may own its own provider code, not just declare a capability core

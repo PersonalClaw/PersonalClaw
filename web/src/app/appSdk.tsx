@@ -25,6 +25,12 @@ import * as ReactDOM from 'react-dom'
 import * as ReactDOMClient from 'react-dom/client'
 import { useEffect, useRef, useState, createContext, useContext, createElement } from 'react'
 import { useInvestigate } from '../lib/investigate'
+// The host's own design-system primitives, re-exported to apps under
+// `@personalclaw/app-sdk/ui` (APE-11). Imported by identity — an app page built from
+// these is built from the SAME components a native page is, not from copies.
+import { Button } from '../ui/Button'
+import { Surface } from '../ui/Surface'
+import { GenUiWidget } from '../ui/genui/GenUiWidget'
 
 // ── permission scope carried per app (mirrors manifest Permissions) ──
 export interface AppPermissions {
@@ -37,9 +43,18 @@ export interface AppPermissions {
   cron?: boolean
 }
 
+/** The closed vocabulary of declared UI capabilities (APE-11). MIRRORS
+ *  `UI_CAPABILITIES` in `apps/manifest.py` — the manifest is the source of truth and
+ *  rejects anything outside it at install, so this type can stay a plain union. */
+export type UiCapability = 'shell-primitives' | 'generative-widget'
+
 export interface AppContext {
   name: string
   permissions: AppPermissions
+  /** The app's declared `uiCapabilities` block, straight off its manifest. Absent
+   *  and `[]` mean the same thing here (declared nothing) — the manifest keeps them
+   *  distinct on the wire, but no gate below needs to tell them apart. */
+  uiCapabilities?: string[]
   /** Host layout bridge (set by AppFrame): contribute right-aligned header
    *  actions + open the standard shared detail panel, without drawing chrome.
    *  Typed loosely here to avoid a UI→SDK import cycle; the concrete shape is
@@ -417,6 +432,78 @@ export function ChatEmbed(props: {
   })
 }
 
+// ── shell primitives + tokens + generative widgets (APE-11) ──────────────────
+//
+// A contributed page should be built from the SAME primitives a native page is,
+// or it will drift: hand-rolled chrome misses the token flip in light mode, the
+// focus-ring contract, the disabled-reason treatment and the pill/squircle shape
+// language. So the host EXPORTS its design-system components rather than
+// documenting their classes for apps to copy.
+//
+// Two subpaths, one per declared capability in the manifest's `uiCapabilities`:
+//
+//   @personalclaw/app-sdk/ui     ← `shell-primitives`  (Button, Surface, tokens)
+//   @personalclaw/app-sdk/genui  ← `generative-widget`  (GenerativeWidget)
+//
+// They are SEPARATE module entries on purpose. Folding both into `/ui` would make
+// one declaration grant the other, and then the two capabilities in the manifest
+// vocabulary would be one capability wearing two names.
+//
+// What the gate is, precisely: `resolvableAppSpecs` omits a subpath an app did not
+// declare, so its bundle's bare import fails to resolve. That is a DECLARATION
+// contract, not a sandbox — a contributed page runs in the host React tree with the
+// host `window`, so an undeclared app is not *prevented* from reaching these
+// components, only from importing them under the SDK's name. Same posture as
+// `permissions.network` (EI-12 D2): stated as advisory, never badged as enforced.
+
+/** Render a generative-UI widget from a contributed app (APE-11).
+ *
+ *  The app supplies the genui DSL body as `spec`; the HOST parses it, validates
+ *  every line against its OWN component registry, renders the valid lines and
+ *  drops invalid ones with a typed error. The app contributes a *widget*, never a
+ *  component TYPE — the registry stays host-owned, so an app (or a model writing
+ *  the app's spec) can only reach components the host already registered. That is
+ *  what keeps AMBIENT-SURFACES' controlled-rendering safety model intact: the
+ *  reason a genui block may render in the host tree at all is that only registered,
+ *  schema-validated components can appear in it, and this path adds nothing to that
+ *  set. `library.prompt()` is the authoring surface for what `spec` may contain. */
+export function GenerativeWidget({ spec, title }: { spec: string; title?: string }) {
+  return createElement(GenUiWidget, { content: spec, title: title ?? 'Widget' })
+}
+
+/** Whether *app* declared `cap` in its manifest `uiCapabilities` block. */
+export function hasUiCapability(
+  app: Pick<AppContext, 'uiCapabilities'> | undefined,
+  cap: UiCapability,
+): boolean {
+  return Boolean(app?.uiCapabilities?.includes(cap))
+}
+
+/** The bare import specifiers a contributed bundle may have resolved, given what
+ *  the app declared. The ungated head (react + the base SDK + lucide) is what every
+ *  app has always got; the two SDK subpaths are appended only for a declaring app.
+ *
+ *  Longest-first, matching the rewrite loop's existing discipline. Order is not
+ *  load-bearing — the rewrite regex anchors on the closing quote, so
+ *  `@personalclaw/app-sdk` cannot match inside `@personalclaw/app-sdk/ui` — but a
+ *  list that only works because of an anchor elsewhere is a trap for the next edit. */
+export function resolvableAppSpecs(app?: Pick<AppContext, 'uiCapabilities'>): string[] {
+  const specs = ['react-dom/client', 'react-dom', 'react', '@personalclaw/app-sdk', 'lucide-react']
+  if (hasUiCapability(app, 'shell-primitives')) specs.unshift('@personalclaw/app-sdk/ui')
+  if (hasUiCapability(app, 'generative-widget')) specs.unshift('@personalclaw/app-sdk/genui')
+  return specs
+}
+
+/** The `@personalclaw/app-sdk/ui` module: the host's design-system shell primitives
+ *  plus the token contract, exactly as the host's own pages import them — the SAME
+ *  component identities, not wrappers, so an app page and a native page built from
+ *  these render identical markup. `useTheme`/`readAppTheme` are re-exported here (they
+ *  are on the base module too) so "make this page look native" is one import. */
+const APP_SDK_UI = { Button, Surface, useTheme, readAppTheme }
+
+/** The `@personalclaw/app-sdk/genui` module — see {@link GenerativeWidget}. */
+const APP_SDK_GENUI = { GenerativeWidget }
+
 let installed = false
 
 /** Define `window.__personalclaw_modules` so a contributed ESM bundle resolves
@@ -452,6 +539,11 @@ export function installAppSdk(): void {
       readAppTheme,
       ChatEmbed,
     },
+    // APE-11 subpaths. Present in the map for EVERY app (the map is one global
+    // object; there is no per-app map to build). What is per-app is which of these
+    // specifiers a bundle's imports get REWRITTEN to — see resolvableAppSpecs.
+    '@personalclaw/app-sdk/ui': APP_SDK_UI,
+    '@personalclaw/app-sdk/genui': APP_SDK_GENUI,
   }
 }
 
@@ -483,8 +575,16 @@ export function appModuleShimUrl(spec: string): string | null {
  *  host-provided blob shims by rewriting the bundle text, then importing the rewrite.
  *  Native `import(src)` alone can't resolve those bare specifiers (no import map), so we
  *  fetch → rewrite → blob-import. Falls back to a direct import if the fetch/rewrite
- *  fails (e.g. a bundle that already uses relative specifiers). */
-export async function loadContributedModule(src: string): Promise<Record<string, unknown>> {
+ *  fails (e.g. a bundle that already uses relative specifiers).
+ *
+ *  *app* supplies the declared `uiCapabilities` (APE-11): a subpath the app did not
+ *  declare is left OUT of the rewrite set, so its bare import stays bare and fails to
+ *  resolve. Omit *app* and only the ungated head resolves — the pre-APE-11 behaviour,
+ *  which is the right default for any caller that has no manifest in hand. */
+export async function loadContributedModule(
+  src: string,
+  app?: Pick<AppContext, 'uiCapabilities'>,
+): Promise<Record<string, unknown>> {
   let text: string
   try {
     const r = await fetch(src)
@@ -494,9 +594,12 @@ export async function loadContributedModule(src: string): Promise<Record<string,
     return import(/* @vite-ignore */ src) as Promise<Record<string, unknown>>
   }
   // Rewrite `from "<spec>"` / `from '<spec>'` for each known bare specifier to its shim URL.
-  const specs = ['react-dom/client', 'react-dom', 'react', '@personalclaw/app-sdk', '@personalclaw/app-sdk/ui', 'lucide-react']
+  // Before APE-11 `@personalclaw/app-sdk/ui` was in this list but ALIASED back to the
+  // base module — the subpath resolved to the same exports, so it named nothing of its
+  // own. It is a real module now (the primitives) and the alias is gone.
+  const specs = resolvableAppSpecs(app)
   for (const spec of specs) {
-    const shim = appModuleShimUrl(spec === '@personalclaw/app-sdk/ui' ? '@personalclaw/app-sdk' : spec)
+    const shim = appModuleShimUrl(spec)
     if (!shim) continue
     const re = new RegExp(`(from\\s*['"])${spec.replace(/[/\\.]/g, '\\$&')}(['"])`, 'g')
     text = text.replace(re, `$1${shim}$2`)
