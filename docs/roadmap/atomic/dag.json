@@ -1425,7 +1425,7 @@
         {
           "id": "DFE-4",
           "title": "Binary artifact write path + model read/render endpoints",
-          "status": "todo",
+          "status": "done",
           "scope": "Session 2 T2.1\u2013T2.2; \u00a7C3 (PUT /api/artifacts/{slug}/raw: BINARY_KINDS guard, MAX_BINARY_CONTENT_BYTES before buffering, mime/kind match, required If-Match\u2192409, SEL audit); GET /api/artifacts/{slug}/model + a server-side re-render endpoint",
           "done_when": "a stale If-Match is refused 409; an oversized body is refused before buffering; a mime/kind mismatch is refused; an accepted write bumps exactly one version and logs one SEL row with byte count; GET /model returns parsed model + loss report and the render round trip is fully server-side (browser never sees OOXML); offline route reference regenerated.",
           "deps": [
@@ -7588,8 +7588,8 @@
         "plan": "DCU"
       },
       {
-        "id": "DFE-4",
-        "title": "Binary artifact write path + model read/render endpoints",
+        "id": "DFE-5",
+        "title": "Editing surface: non-Monaco renderer slot, the model editor, lossy-edit contract, config",
         "plan": "DFE"
       },
       {
@@ -9668,9 +9668,9 @@
         "code": "DFE",
         "plan": "DOCUMENT-FIDELITY-EDITOR",
         "total_atoms": 8,
-        "done": 3,
+        "done": 4,
         "in_progress": 0,
-        "todo": 5,
+        "todo": 4,
         "blocked": 0
       },
       {
