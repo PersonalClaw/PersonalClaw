@@ -21,7 +21,7 @@ only the autonudge deletion is gated); §3.5's
 `skip_if_active`/`acting_on` are undeclared anywhere; the §5 did/suppressed fold affordance has no FE
 consumer; and 🔴 the `view` kind's runtime (`triggers/pull_on_view.py`) has **ZERO production
 callers** — declared, listed by the API, rendered on the Automations page, and unreachable.
-**`web_watch`'s headless tier is NEWLY STARTABLE** — `src/personalclaw/web/render.py` ships an
+~~**`web_watch`'s headless tier is NEWLY STARTABLE**~~ **CORRECTED 2026-08-25: it is BUILT and `WF2AUT-7` is `done`** (see the note at the end of this file) — `src/personalclaw/web/render.py` ships an
 egress-guarded headless-Chromium runtime (the `js-render` Playwright extra), so `web_poll.py`'s
 docstring claim that this repo has no browser runtime is false. Status corrected 2026-08-04 by code
 audit. (rev 2 — research-integrated 2026-07-12)
@@ -6079,3 +6079,22 @@ own commit.
   **The rail is positive AND negative, because either alone is vacuous.** A new `homes` fixture points the REAL `config_dir()` at a **decoy** home via `PERSONALCLAW_HOME` (env var, not a monkeypatched function, so the resolution path under test is the one an ad-hoc script takes) plus `PERSONALCLAW_WORKSPACE`, and asserts `config_dir() == decoy` so the split cannot silently collapse. `test_a_SUPPRESSED_row_lands_in_the_TICKS_home_not_the_AMBIENT_one` asserts the 3 rows ARE under `base_dir` (fails if a fix writes nowhere) and that `decoy/cron-history` **does not exist** (fails if they go to the ambient home). `test_the_RATE_METER_reads_the_TICKS_ledger_not_the_AMBIENT_one` seeds the decoy with 5 rows and the tick's home with 2, asserts the decoy really reads 5 as a positive control, then asserts the meter returns 2 — without that control, reading `2` could equally mean the seed failed.
   **Falsified.** Reverting only the funnel's decision to `ScheduleRunStore(config_dir())` reds both legs: `AssertionError: assert 0 == 3` (write) and `AssertionError: assert 5 == 2` (read). Restored from a file copy and diffed against it; mutant `py_compile`d first so a malformed edit could not read as green.
   **Gate:** `make lint` exit 0 (black 1790 files, isort, flake8, mypy 919 files clean). 397 passed across `test_triggers_service`, `test_triggers_loop`, `test_schedule_history`, `test_blocked_fire_ledger`, `test_triggers_history`, `test_trigger_budget_gate`, `test_triggers_claims`, `test_ledger_outcomes`, `test_triggers_status_vocabulary`, `test_trigger_resource_slots`, `test_triggers_liveness`, `test_triggers_executor`, `test_triggers_kill_switch`. Real home unchanged across the whole session: 10 files / 683 rows before and after, and `find ~/.personalclaw -newer <sentinel>` empty — with the probe proven non-vacuous by a positive control (`-newer <reference file>`, never a relative or bare-ISO timestamp, since `find` is `bfs` here).
+
+- **[2026-08-25][`WF2AUT-7`] HEADER CORRECTION — this atom is `done` and had NO execution-log entry at all.**
+  `git grep WF2AUT-7 -- docs` hit only the atomic table and `dag.json`, which is exactly why nobody ever
+  corrected the header: an atom with no log entry has nothing to contradict a stale claim with. The header
+  at `:24-25` asserted *"`web_watch`'s headless tier is NEWLY STARTABLE"*, `:3295` asserted
+  *"DEVIATION: the headless-browser escalation tier is NOT built"*, and six later entries (`:3362`,
+  `:3403`, `:3667`, `:3713`, `:3763`, `:3806`) listed it as remaining. **All superseded by shipped code.**
+  The tier is built in `triggers/web_poll.py` with a live caller: `escalate_headless` opt-in at `:299-302`,
+  `headless_budget_for` `:277`, `headless_budget_remaining` `:290`, `_render_headless` `:346`, the renderer
+  defaulting to `web.render.render_url` at `:361-363`, the escalation branch `:500-505`, and the digest
+  clause's caller `_route_to_knowledge(...)` at **`:565`** with a `get_knowledge_store()` fallback at
+  `:390-392`. `tests/test_triggers_web_poll.py` **42 passed**. The module docstring at `:37` already reads
+  *"**The headless-browser escalation tier IS built** (§3)"* — the header simply never caught up.
+  **Not container-gated:** no runtime is needed (docker/podman/colima/nerdctl/lima are all absent here and
+  irrelevant), because the tier is injectable through the `renderer` seam and tests drive it with a sync
+  fake. For REAL use it is degraded rather than blocked: the Python `playwright` package is absent from the
+  venv (`js-render = ["playwright>=1.40"]`, `pyproject.toml:169`), while the Chromium binary is already
+  cached from the Node suite — so `pip install -e ".[js-render]"` is the whole gap, and `render_url` fails
+  soft when Playwright is missing (`web_poll.py:43`, `render.py:16`).

@@ -7004,7 +7004,7 @@
         {
           "id": "DCU-2",
           "title": "Target policy, input-target screen, SEL-audit gate",
-          "status": "todo",
+          "status": "done",
           "scope": "policy.py (\u00a73.3-3.4): a self-plus-operator target-app allowlist via check_app, and a secure/password-field and sensitive-text screen via check_input_target run before any type/set-value; plus gate.py where require_computer_use records every attempt to the security event log (records, does not decide).",
           "done_when": "Driving a non-allowlisted app refuses; typing or set-value into a secure/password field refuses; every attempt, allowed or refused, produces a SEL record.",
           "deps": [
@@ -7583,11 +7583,6 @@
         "id": "DC-5",
         "title": "S4: Native notifications as a plan-42 rules target",
         "plan": "DC"
-      },
-      {
-        "id": "DCU-2",
-        "title": "Target policy, input-target screen, SEL-audit gate",
-        "plan": "DCU"
       },
       {
         "id": "DCU-3",
@@ -10151,9 +10146,9 @@
         "code": "DCU",
         "plan": "DESKTOP-COMPUTER-USE",
         "total_atoms": 7,
-        "done": 1,
+        "done": 2,
         "in_progress": 0,
-        "todo": 6,
+        "todo": 5,
         "blocked": 0
       },
       {
