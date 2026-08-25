@@ -365,3 +365,83 @@ Stumble detector at the after-turn seam (only when skills were loaded): correcti
   PASS**; web **unscoped** `npm run test:web` **479 files / 5073 tests passed**, plus
   `npm run typecheck:web` and `npm run build` green from the repo root. Probe sweep 16 hits,
   **0** introduced by this diff.
+
+## Execution log — `LV-3` (T2.3 digest learning block) — 2026-08-25
+
+- [2026-08-25][LV-3] **DONE.** The learning summary block (new / refined / pending counts + names)
+  renders on the skills page header at `web/src/pages/skills/SkillsPage.tsx:138`, fed by one gather —
+  `learning_summary.compose_learning_summary(*, window_days=7, vs=None, now=None) -> LearningSummary`
+  in `src/personalclaw/learning_summary.py` — served over `GET /api/learning/summary`
+  (`dashboard/handlers/learning.py:513`, registered at `:567`). Component at
+  `web/src/pages/skills/LearningSummaryBlock.tsx:53`. `skills/loader.py:501` grew an opt-in
+  `list_skills(with_provenance=True)` mirroring the existing `with_usage` idiom, so `/api/skills`'
+  payload shape is unchanged.
+- [2026-08-25][LV-3] **DISCOVERY — plan 42's digest builder does not exist, so this landed on the
+  sanctioned fallback.** T2.3 asked for the block "registered with plan 42's digest builder
+  (coordinate; if 42 S5 not landed, render the same block on the skills page header and file
+  DISCOVERY)". Measured:
+  `git grep -n 'digest_section\|DigestSection\|digest_sections\|register_digest\|digest_builder' -- src/`
+  returns **zero hits** — there is no digest-section registry under any name. The only `digest`
+  producer in `src/` is `action_providers/digest_provider.py`, a 143-line
+  `NotificationDigestActionProvider` whose public surface is `execute`, `create_provider` and
+  `reconcile_digest_cron`; it has no section/slot concept to register into. So
+  INBOX-NOTIFICATIONS-UNIFICATION S5 has not landed and the fallback clause applies. **No parallel
+  digest mechanism was built** (§1.3, one owner per mechanism): the gather has exactly one home, so
+  when plan 42's builder arrives it consumes `compose_learning_summary` rather than reimplementing
+  the block.
+- [2026-08-25][LV-3] **DISCOVERY — this plan's line-113 recon cites a read seam that no longer
+  exists.** It names `learn.py::LessonStore.load_all()`; **`LessonStore` was deleted by WF2LEA-3** and
+  lessons now live in `memory.db lesson.*`, read through the memory service. The block reads them via
+  `MemoryService.over_vector_store(vs).get_lessons()`.
+- [2026-08-25][LV-3] **A silent-zero bug caught before shipping, and now pinned.** The first draft used
+  `service_for(vs)`. `MemoryService._vs` (`memory_service.py:239-241`) resolves
+  `getattr(provider, "vector_store", None)`, so handing `service_for` a `VectorMemoryStore` yields
+  `_vs = None` and `get_lessons()` returns `[]` — **every lesson would have read as absent forever,
+  with no error and no exception**. Mutation M4 re-introduces it and reds two tests.
+- [2026-08-25][LV-3] **Writer census — the counts are real, not readers of unwritten keys.** Pending
+  proposals: written by `enqueue` at `after_turn_review.py:641` and `history.py:1787`. Facets:
+  `upsert_facet` at `after_turn_review.py:181`. Lessons: `MemoryService.write_lesson` via
+  `/api/lessons` + after-turn review. `SkillUsageStore.all_usage()` is **deliberately unread** —
+  "new/refined" is a provenance question answered by frontmatter `created_at`/`refined_at` plus
+  `overlays.load_overlay` refinements (written by `proposals.accept` at `proposals.py:411`); use
+  counts are LV-4's input and consuming them here would half-build its gather.
+- [2026-08-25][LV-3] **ROUTE RAIL ADDED AT INTEGRATION — a defined handler is not a reachable one.**
+  Every other test in the suite calls `api_learning_summary` directly, so deleting the
+  `app.router.add_get` line left the whole suite green while the block would 404 in a real gateway.
+  Measured at integration: unregistering the route reds only `test_agent_reference.py` (the offline
+  reference render), which catches it *by accident* rather than by intent. Added
+  `test_the_summary_route_is_actually_registered_not_merely_defined`, which builds an `Application`,
+  calls `register_learning_routes` and asserts the canonical path is present — with a sibling
+  assertion that an unregistered path is absent, so a matcher accepting everything fails. Vacuity
+  proved: with the route line removed the new test reds
+  (`assert '/api/learning/summary' in {...}`); restored, 15 passed.
+- [2026-08-25][LV-3] **Judgment calls, recorded rather than buried.** (a) The block **hides itself**
+  when `total == 0` or the route 404s (`learning.enabled` off) instead of rendering four zeros —
+  "absent, never zeroed", pinned by mutation M7. On a fresh dev home nothing shows until a
+  skill/proposal/facet/lesson exists inside the window. (b) `names` is capped at 8 with a `+N more`
+  remainder while `count` is always exact (M6 pins that the count is not `names.length`).
+- [2026-08-25][LV-3] **Two pre-existing suites went red and were FIXED, not weakened.**
+  `design/ariaProhibitedAttr.test.ts` flagged `<section aria-label>` with no explicit `role` — fixed
+  by writing `role="region"` out (`LearningSummaryBlock.tsx:66`); semantically a no-op for a named
+  section, but the HTML-AAM mapping is name-conditional and the ratchet is right to demand it be
+  unconditional. `pages/listDestinationLoadError.test.tsx`'s shared api mock (its docstring: "everything
+  these pages touch on mount") lacked `learningSummary`, and an unmocked method throws inside the
+  fetcher — added it resolving `total: 0`.
+- [2026-08-25][LV-3] **A fixture that would have rotted, fixed.** The endpoint tests first stamped
+  `created_at` against a frozen `NOW = 2026-08-20` while the endpoint reads the wall clock, so five
+  days later the fixture had drifted outside the 7-day window and both tests failed. They now use
+  `_iso_real()`.
+- [2026-08-25][LV-3] **Design vocabulary:** reused LV-2's non-interactive chip idiom (`<div title>`,
+  `text-[0.75rem]`/`0.8125rem`, `fvs(600)`, count in the *visible* label because `title` is not an
+  accessible name) inside a `Surface tone="low"`. No new idiom and no new component in `ui/`.
+- [2026-08-25][LV-3] **Gate:** `make lint` clean (mypy **1012** source files);
+  `test_lv3_learning_summary.py` **15 passed** (14 + the route rail); with
+  `test_learning_routes.py` + `test_skills.py` + `test_skill_proposals.py` +
+  `test_agent_reference.py` → **114 passed, 0 failed** (each path confirmed to exist first);
+  `npm run typecheck:web` green; `npm run test:web` **483 files / 5128 tests passed**;
+  `npm run build` green; `scripts/gate_report.py` 6/6 PASS; probe sweep 16, 0 introduced.
+  `reference/routes.md` + `index.md` regenerated via `python -m personalclaw.manifest_reference`
+  (**769 → 770 routes**) — a new route stales the offline reference.
+  `docs/design/consistency-audit.json` churned on the vitest run (filesScanned 555 → 556, the new
+  component; driftHits 8 and filesWithDrift 7 unchanged, i.e. **zero new drift**) and was reverted
+  out of the commit.
