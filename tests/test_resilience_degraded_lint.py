@@ -42,6 +42,10 @@ _CALL_SITE_SURFACES = {
     # value rather than raising, so the check is `if not text: raise SynthesisUnavailable` —
     # an `except` would never fire.
     "knowledge/updates.py": "synthesis_watchers",
+    # PA-2's triage pipeline. Its own surface for the reason WS-7's digest has one: the manifest
+    # is collected without a model, so a missing model costs the PROPOSALS, not the digest —
+    # neither a deferred run nor an unreasoned answer.
+    "proactive/pipeline.py": "triage_digest",
     "nl_to_cron.py": "assistant_reasoning",
     "context.py": "assistant_reasoning",
     # visualize(data, hint) — the agency-free data→genui primitive (AMBIENT-SURFACES

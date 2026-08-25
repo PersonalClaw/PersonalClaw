@@ -579,6 +579,22 @@ def _register_builtin_contracts() -> None:
             "the narrative prose is missing.",
         )
     )
+    # triage digest (PA-2) — its OWN surface rather than borrowing `source_digest` or the
+    # reasoning axis, on the same reasoning that earned WS-7's digest one: nothing is deferred
+    # and nothing is unreasoned-but-answered. The manifest is collected WITHOUT a model, so the
+    # gate's `drop` decisions and the item list survive; what a missing model costs is the
+    # tiered proposals. Conflating it with `source_digest` would make one contract answer for
+    # two different user-facing promises (a knowledge digest and an attention digest).
+    register_contract(
+        DegradedContract(
+            surface="triage_digest",
+            use_cases=("background",),
+            floor="The triage digest still arrives without a model: collection, dedup and the "
+            "rule-grammar filter keep working and the items are listed with the gate applied, "
+            "but no proposals are attached and the body says so. Nothing is deferred and the "
+            "window is not re-run, because the items were never at risk.",
+        )
+    )
     # search ranking — hybrid retrieval degrades vector-arm-off to FTS + graph +
     # recency automatically; the real backlog is items missing an embedding.
     register_contract(

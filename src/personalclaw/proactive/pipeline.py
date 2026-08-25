@@ -191,14 +191,15 @@ async def _ask(
     to its raw text first: a schema miss that still returned prose is worth parsing, and
     throwing it away would turn a recoverable partial answer into a degraded digest.
     """
-    from personalclaw.guardrails.audit import caller_scope
     from personalclaw.guardrails.failure import OutputContractError
 
+    # The `caller_scope` bind lives at each CALL SITE, not here, and deliberately spells the
+    # caller as a literal. Binding through this function's `scope` parameter worked at runtime
+    # but was invisible to `test_model_call_attribution`'s source scan — and to a human grepping
+    # for which pass spends, which is the whole point of naming the caller. `scope` stays for the
+    # failure log.
     try:
-        # `caller_scope` so the attempt row names WHICH background pass spent this: the gate's
-        # cheap call and the proposal call are one digest run and must not merge in the audit.
-        with caller_scope(scope):
-            return await completion(prompt, use_case="background", output_type=dict)
+        return await completion(prompt, use_case="background", output_type=dict)
     except OutputContractError as exc:
         return getattr(exc, "raw", None)
     except Exception:  # noqa: BLE001 - an unattended run absorbs a provider failure
@@ -235,6 +236,8 @@ async def run_triage(
     pipeline, and reaching for them here would make every test of the ordering also a test of
     the gateway's wiring.
     """
+    from personalclaw.guardrails.audit import caller_scope
+
     completion = completion or _default_completion
     deliver = deliver or make_notify_deliver(run_id=run_id, trigger_id=trigger_id)
 
@@ -267,7 +270,8 @@ async def run_triage(
             notes.append("gate prompt unresolvable: gate defaulted open")
             gate = open_gate(manifest)
         else:
-            raw = await _ask(completion, prompt, scope=GATE_SCOPE)
+            with caller_scope("triage_gate"):
+                raw = await _ask(completion, prompt, scope=GATE_SCOPE)
             llm_calls += 1
             gate_called = True
             outcomes = parse_gate_output(raw, manifest) if raw is not None else {}
@@ -303,7 +307,8 @@ async def run_triage(
                 batch = ProposalBatch(degraded=True)
             else:
                 # Spend decision 4: ONE call. No retry loop against the schema.
-                raw = await _ask(completion, prompt, scope=PROPOSE_SCOPE)
+                with caller_scope("triage_propose"):
+                    raw = await _ask(completion, prompt, scope=PROPOSE_SCOPE)
                 llm_calls += 1
                 if raw is None:
                     notes.append("proposal call failed: plain digest")
