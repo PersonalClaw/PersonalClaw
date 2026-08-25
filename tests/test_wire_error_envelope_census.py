@@ -143,7 +143,14 @@ FLAT_TOTAL_BASELINE = FLAT_BASELINE + FLAT_VIA_WRAPPER_BASELINE
 #: :func:`test_the_evals_surface_hides_no_flat_envelope_in_its_unresolved_rows`, so the slack
 #: cannot be spent on a flat error envelope later — that is the hazard this ceiling exists for,
 #: and every error on that surface goes through :func:`json_error` instead.
-UNRESOLVED_PAYLOAD_CEILING = 204
+#:
+#: 204 → **205** (LV-3): the learning summary's one new read on the learning surface,
+#: ``json_response(compose_learning_summary(...).to_payload())``. Same shape as the ES-3 pair
+#: above — a 200 SUCCESS body built by a composer — and spelling its keys out at the call site
+#: was rejected for the same reason: it would duplicate ``LearningSummary``'s schema in two
+#: places, which is the drift this repo keeps finding. The 1 is bought and then PINNED by
+#: :func:`test_the_learning_surface_hides_no_flat_envelope_in_its_unresolved_rows`.
+UNRESOLVED_PAYLOAD_CEILING = 205
 
 #: What the append-only rail must inspect. Derived from the census so a matcher that
 #: stops matching cannot read as clean: if the rail's scan finds fewer emitter sites
@@ -751,4 +758,45 @@ def test_the_evals_surface_hides_no_flat_envelope_in_its_unresolved_rows():
     assert {row[2] for row in unresolved} == {"Name"}, unresolved
     assert all(row[3] is False for row in unresolved), "none of these is via a wrapper"
     assert [row for row in census.flat if row[0] == module] == []
+    assert [row for row in census.flat_via_wrapper if row[0] == module] == []
+
+
+#: The learning surface's flat-envelope rows at the time LV-3 bought its slack. Unlike the
+#: evals surface this module is NOT flat-free, so the ES-3 pin's shape does not transfer.
+_LEARNING_FLAT_BASELINE = 14
+
+
+def test_the_learning_surfaces_new_unresolved_row_cannot_become_a_flat_envelope():
+    """What the LV-3 ceiling raise bought, pinned so it cannot be re-spent.
+
+    ``UNRESOLVED_PAYLOAD_CEILING`` went 204 → 205 for one 200-status SUCCESS body:
+    ``json_response(compose_learning_summary(...).to_payload())`` at
+    ``handlers/learning.py:556``.
+
+    **This pin deliberately differs from the evals one.** That test asserts the evals module
+    emits NO flat envelope at all, which is what makes its slack unspendable. Measured here,
+    that claim is simply false: ``handlers/learning.py`` already carries **14** flat rows
+    (its proposal-inbox and staging refusals predate LV-3 and are counted against the flat
+    ceiling, not this one). Copying the evals assertion would have produced a test that reds
+    for a reason unrelated to the slack — so the pin instead fixes the flat COUNT, which reds
+    on a NEW flat envelope while tolerating the existing ones.
+
+    The unresolved rows are pinned as ``Call`` rather than ``Name`` on purpose: a ``Call`` is a
+    composer's return value, which is the shape the ceiling was raised for. A ``Name`` would
+    mean a local dict was built in the handler — the indirection the census exists to expose —
+    and would red here even though the total stayed at 4.
+    """
+    census = scan()
+    module = "src/personalclaw/dashboard/handlers/learning.py"
+
+    unresolved = [row for row in census.unresolved if row[0] == module]
+    assert len(unresolved) == 4, unresolved
+    assert {row[2] for row in unresolved} == {"Call"}, unresolved
+    assert all(row[3] is False for row in unresolved), "none of these is via a wrapper"
+
+    flat = [row for row in census.flat if row[0] == module]
+    assert len(flat) == _LEARNING_FLAT_BASELINE, (
+        f"flat envelopes on the learning surface moved {_LEARNING_FLAT_BASELINE} -> "
+        f"{len(flat)}; the LV-3 unresolved slack must not be spent on a flat error envelope"
+    )
     assert [row for row in census.flat_via_wrapper if row[0] == module] == []
