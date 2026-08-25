@@ -783,6 +783,66 @@ Sharpens, doesn't append: RunPin + scenario library extend **Session 1** (the st
   harvest path exists anywhere in `evals/` — harvested suites belong to ES-5, which is itself PARTIAL for
   the mirror-image reason.
 
+- [2026-08-24][ES-7 §3.3] **The `consulted_refs` filter — the gap above is now closed in INPUTS. Atom
+  still `todo`** (§3.3's plural replay and the `MatrixSpec.subject` decision remain, below).
+  `harvest.installed_harvested_cases`/`load_harvested_suite` gained a `consulted_ref=` scope in the same
+  shape as the existing `workflow_name=` (keyword-only, `""` = no filter), and `skills_bench.bench_skill`
+  now DERIVES its subject from it: with no `--subject`, the replayed artifact is the newest harvested case
+  whose own run consulted the skill. `subject_origin` (`harvested`|`operator`), `subject_run_id` and
+  `subject_candidates` ride on the report so a bench cannot claim a replay it did not do.
+
+- [2026-08-24][ES-7 §3.3] 🔴 **`consulted_refs` was written by `harvest.py:360` and read by NOTHING** —
+  a populated, untested, inert field. `git grep consulted_refs -- src/ tests/` returned exactly ONE hit
+  before this change. The harvest drive recorded it as *"the ES-7 §3.3 join key"* and then nothing joined
+  on it, which is the shape where a filter is later built over a field nobody ever verified is populated.
+  `test_consulted_refs_records_what_the_run_actually_loaded` now pins both the populated case and the
+  `[]` case (a run that consulted nothing records the ABSENCE, so the scope can tell "loaded nothing"
+  from "never looked").
+
+- [2026-08-24][ES-7 §3.3] **ONE matcher, deliberately — the `foo`/`foo-bar` predicate was about to be
+  duplicated.** The live event scan (`consulted_runs`) and the frozen-ref scope read the SAME
+  `consulted` `ref` from two places, so `skills_bench._ref_names_skill` was PROMOTED to
+  `harvest.ref_names_skill` and the private copy DELETED, not left in place. Two predicates would have
+  disagreed about `foo` vs `foo-bar` and one skill's bench would have replayed another skill's runs under
+  the wrong name. Railed by identity (`skills_bench.harvest.ref_names_skill is harvest.ref_names_skill`)
+  plus `not hasattr(skills_bench, "_ref_names_skill")`; re-introducing a private matcher reds both suites.
+
+- [2026-08-24][ES-7 §3.3] **`--subject` was a defaulted field, i.e. an unsupplied input, i.e. a dead
+  bench.** `cli.py`'s `--subject` defaults to `""` and `bench_skill` refused outright on it, so the
+  invocation a user actually types (`personalclaw ablation --skill <name>`) could never score anything.
+  The filter is what makes that default path work; `--subject` is now an override, and `--dry-run`
+  resolves the subject the SAME way the scored path does so the preflight cannot print `<none>` for an
+  invocation that would have found one. Asserted through the real dispatch
+  (`cli._ablation is cli_commands._ablation`), not through `bench_skill` directly.
+
+- [2026-08-24][ES-7 §3.3] **Falsified both directions plus the rail.** A filter that matches nothing and
+  one that matches everything both pass "no crash" and "returns a list", so the guard was mutated three
+  ways on the LIVE line and grepped back each time: `if consulted_ref and False` (includes everything) →
+  **5 red** across both suites including `['alpha','beta','gamma'] == ['alpha']` and the CLI call site;
+  `if consulted_ref:` (excludes everything) → **4 red** including `'' == 'harvested_release_triage_…'`;
+  re-adding a private `_ref_names_skill` → **2 red**. Every scope assertion is paired with an unfiltered
+  vacuity floor (`len(load_harvested_suite()) == 3`) so a scope that emptied because nothing was
+  harvested cannot read as a working filter.
+
+- [2026-08-24][ES-7 §3.3] ⚠️ **Test-isolation hazard, measured:** adding
+  `monkeypatch.setattr("personalclaw.config.loader.config_dir", lambda: home)` to `bench_home` — on top
+  of `$PERSONALCLAW_HOME`, the pattern `test_evals_harvest.py`'s fixture uses — **leaked the run store
+  between tests in one process**: the six tests that reuse the fixed run id `run-a` failed on
+  `UNIQUE constraint failed: runs.id`, and the file's runtime went 5s → 57s. Removing the second patch
+  restored 19/19. `$PERSONALCLAW_HOME` alone is what redirects an import-bound store (conftest's
+  real-home rail already re-points every binding of that function object), and the fixture now ASSERTS
+  the redirect for both `scenarios.installed_dir()` and `workflows.store._db_path()` rather than
+  patching harder. Mechanism not pinned; the A/B is reproducible. **`test_evals_harvest.py` still has
+  the double patch and passes only because its runs use generated ids — the same leak there would be
+  invisible.**
+
+- **Still open on §3.3, deliberately NOT settled here.** The clause says *"replays consulted runs"*
+  (plural) and `MatrixSpec` carries exactly ONE `subject`, so this scores the newest case and REPORTS
+  `subject_candidates` it did not score. Scoring the whole population needs the per-skill
+  `MatrixSpec.subject` form the harvest drive already flagged as an unmade design decision — `subject`'s
+  own comment enumerates `template id | retrieval-arm set | judge fixture set | use-case` and "skill" is
+  not in that list. **Owner call, not this drive's.**
+
 - [2026-08-23][ES-7] **Plan/code drift found and recorded rather than implemented: §3.2 names four
   watched bindings, but `eval_judge` is not in `providers.use_cases.VALID_USE_CASES`**, so
   `active_models.json` cannot hold it and watching it would have been a control reporting "no change"
