@@ -149,6 +149,63 @@ skipped: [`docs/architecture/agent-activity-feed.md`](../../architecture/agent-a
   read path.
 
 ## Execution log
+- [2026-08-24][S3-4 · atom `APE-11`] **DONE — both `done_when` clauses close, and the surface is railed at
+  the call site rather than at the export map.** Shipped: `uiCapabilities` as a typed top-level manifest
+  field (closed vocabulary `UI_CAPABILITIES`, `_KNOWN_FIELDS`, validate/round-trip, unknown+duplicate are
+  install errors, absent stays absent on the wire — the `quality` pattern from `APE-4`); two SDK subpaths
+  `@personalclaw/app-sdk/ui` (`Button`, `Surface`, `useTheme`, `readAppTheme`) and
+  `@personalclaw/app-sdk/genui` (`GenerativeWidget`); the per-app gate `resolvableAppSpecs()` threaded
+  through `loadContributedModule(src, app)` ← `ContributedPage` ← `AppHostPage`, which now reads the
+  block off the manifest it already fetches.
+
+  **No new server or wire code was needed and none was added.** The gate's whole path is
+  `GET /api/apps/<name>` → `manifest` (already `AppManifest.to_dict()` at
+  `dashboard/handlers/apps.py:457`) → `AppHostPage` → `ContributedPage`. Deliberately NOT emitted on the
+  `GET /api/apps` list payload or the pre-install catalog entry: nothing renders it there, and a wire
+  field the browser drops is exactly the defect `APE-12` had to fix. Pre-install disclosure is a separate
+  atom's shape if it is wanted, not a free rider here.
+
+  **`@personalclaw/app-sdk/ui` already existed as a live ALIAS** — it was in the loader's rewrite list
+  and resolved to the base module (`appSdk.tsx:499`, pre-change), so the subpath named nothing of its own.
+  Extended rather than built alongside; the alias is deleted.
+
+  **Two findings that would each have shipped an inert control:**
+  (1) `LINE_RE` in `ui/genui/parse.ts` restricts a component name to `[A-Za-z_][A-Za-z0-9_]*` — **no dots,
+  no dashes**. So the other reading of "contribution path" (an app registering a genui component under a
+  dot-namespaced name) would have registered fine and been *unreferenceable from the DSL* — declared kind,
+  no runtime. (2) `URL.createObjectURL` **does not exist in this jsdom** (measured `undefined`), and no test
+  in the suite had ever exercised `loadContributedModule`/`installAppSdk`/`ContributedPage` — the whole app
+  bundle-loading path was untested. The new test stands in a `data:` URL of the same bytes (Node's ESM
+  loader imports those), so the fixture bundle is really fetched, rewritten, imported and rendered.
+
+  **Scope call taken, and stated rather than buried: an app contributes a WIDGET, never a component TYPE.**
+  `GenerativeWidget` hands a DSL body to the host renderer, which validates every line against the
+  host-owned registry. Letting an app `defineComponent` into that registry would put app code behind
+  *model-authored* text in a chat transcript — a new trust edge, and it would break the reason
+  `AMBIENT-SURFACES` §5.2 permits host-tree rendering at all ("safe precisely *because* only registered,
+  schema-validated components can appear"). A test pins that an app-named component is dropped with the
+  typed `unknown-component` error. If the owner wants the registration reading, it is a separate atom with
+  its own threat argument.
+
+  **The gate is a declaration, not a sandbox, and is documented as such.** A contributed page already runs
+  in the host React tree (`createRoot`, no iframe) with the host `window`, so withholding a specifier
+  cannot *prevent* access — it withholds the SDK's name for it. Written up as the `permissions.network`
+  posture (advisory, never badged as enforced) in `docs/architecture/app-platform.md`; the manifest comment
+  says the same. An earlier draft of that comment claimed enforcement and was corrected before commit.
+
+  **Falsification (mutate live → grep back → red → restore from a file copy):** `shell-primitives` gate
+  forced open → 2 red, including the end-to-end fixture-page test, so that test really depends on the gate;
+  `generative-widget` gate forced open → 2 red; `APP_SDK_UI.Button` swapped for a `<div>`-wrapping wrapper →
+  the byte-identical assertion red, so a re-export that is not the same component *identity* cannot pass;
+  `UI_CAPABILITIES` given a third member the TS union lacks → the cross-language vocabulary-parity test red.
+  Each guard carries a non-vacuity assertion (the compared markup must contain `<button>` and exceed 120
+  chars; the vocabulary must be non-empty and every member must validate).
+
+  **Gates:** `make lint` clean (black/isort/flake8 + mypy 1001 files); targeted pytest 184 passed / 1 skipped
+  across 6 files; `gate_report.py` 6/6 PASS incl. `inert-surface` 0; `npm run typecheck:web` clean;
+  `npm run test:web` **unscoped** 479 files / 5055 tests all passed (so the S2 design ratchets —
+  `primitiveAdoption`, `tokenLint`, `consistencyAudit` — ran and are green); `npm run build` clean.
+  No design-system taste call was reached, so none was settled.
 - [2026-08-24][S2 · atom `APE-4`] **PARTIAL — the core half is complete and railed; the apps-repo CI job is
   the one clause this repo cannot land.** Shipped: `quality` on `AppManifest` (`QualityDeclaration`,
   round-trip + `_KNOWN_FIELDS` + `designSystem` enum validation), the verifier
