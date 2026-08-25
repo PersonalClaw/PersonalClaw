@@ -39,7 +39,13 @@ def _isolated_home(tmp_path, monkeypatch):
     home = tmp_path / "home"
     home.mkdir()
     monkeypatch.setenv("PERSONALCLAW_HOME", str(home))
-    monkeypatch.setattr("personalclaw.config.loader.config_dir", lambda: home)
+    # Deliberately NOT patching `config.loader.config_dir`: a patch live during a consumer
+    # module's FIRST import is baked into that consumer permanently (it does
+    # `from … import config_dir`), and monkeypatch's undo cannot reach the copy. Measured — it
+    # made a sibling test in this atom read the previous test's home under xdist. `config_dir()`
+    # reads PERSONALCLAW_HOME per call and caches nothing, so the env var alone is sufficient
+    # AND cannot leak.
+    assert sq.queries_path().parent.parent == home
     return home
 
 

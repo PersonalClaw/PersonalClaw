@@ -31,8 +31,6 @@ from __future__ import annotations
 
 import json
 import logging
-import os
-import tempfile
 from pathlib import Path
 from typing import Any, Iterable
 
@@ -175,13 +173,15 @@ class SourceEventSpool:
             if len(records) <= MAX_SPOOL_RECORDS:
                 return
             kept = records[-TRIM_KEEP_RECORDS:]
-            # Rewritten via a temp file + replace so a crash mid-trim cannot leave a
-            # half-written spool: the reader either sees the old file or the new one.
-            fd, tmp = tempfile.mkstemp(dir=str(self.path.parent), suffix=".tmp")
-            with os.fdopen(fd, "w", encoding="utf-8") as fh:
-                for record in kept:
-                    fh.write(json.dumps(record, ensure_ascii=False) + "\n")
-            os.replace(tmp, self.path)
+            # Rewritten through the ONE durable-write helper so a crash mid-trim cannot leave a
+            # half-written spool: the reader sees either the old file or the new one. A local
+            # mkstemp+os.replace here would be a second implementation of that guarantee.
+            from personalclaw.atomic_write import atomic_write
+
+            atomic_write(
+                self.path,
+                "".join(json.dumps(record, ensure_ascii=False) + "\n" for record in kept),
+            )
         except Exception:  # noqa: BLE001 — trimming is hygiene, never a failure path
             logger.debug("source event spool trim failed", exc_info=True)
 
