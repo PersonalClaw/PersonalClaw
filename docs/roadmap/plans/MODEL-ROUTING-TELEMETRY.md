@@ -1170,3 +1170,88 @@ raising-path byte-identity case. These rails cover the *write* path, which is le
 
 **Correction to the framing:** the endpoint is a **PUT**, not a PATCH (`add_put`, and its docstring calls
 the per-lever behaviour "PATCH-like"). Nothing in the routing subsystem registers a PATCH.
+
+## Execution log — wire-depth sweep of the remaining routing wires (2026-08-24, DISCOVERY)
+
+**DISCOVERY slot — measurement only, nothing fixed.** Continues the sweep logged above over the wires
+that outing did not reach. `tools/audit_landed_atoms.py --check-wires` is **already on `main`**
+(`b96217e1`, hardened by `0737ccfc` + `7aad0281`); PR #1989 reads `CLOSED / mergedAt:null` because the
+merge train cherry-picked it, which is exactly the trap the tool's own docstring warns about. Nothing was
+brought in.
+
+**Wire census, read-only, before any mutation** (via the tool's own `find_wires`, no tree write):
+MRT-5 derives **9** wires from 4 annotated modules, not the 6 the brief assumed remained; APE-3 derives
+**24** from 6 modules, not 22. PHF-7 derives exactly **1**.
+
+**Ground-truth pair had to be re-sourced.** The brief's stated known-answer pair (APE-3 UNRAILED on
+`main`, RAILED on `improvement-ape3-close-or-record`) is stale in both halves: the rail landed on `main`
+as `860c2c1d`, and the branch no longer exists on `origin`. The still-live UNRAILED case on `main` is
+PHF-7's `registry::sync_entries_from_config` — its fix sits in PR **#1994, still OPEN**, so both call
+sites (`dashboard/server.py:1317` and `:1491`) are still there.
+
+**Both directions of the checker reproduced on `main`** before any backlog wire was scored:
+`MRT-5 policy::set_order` → **RAILED** (4 red, the rails the entry above added), and
+`PHF-7 registry::sync_entries_from_config` → **UNRAILED** (257 selected tests green). A checker that
+can only ever say UNRAILED is unusable; this one distinguishes its own known-answer cases.
+
+**MRT-5's seven remaining wires: 3 RAILED, 3 UNRAILED, 1 REFUSED.**
+
+UNRAILED — each a plain side-effect call statement, so each is a *measurement*, not one of the
+locator's blind shapes:
+
+- **`policy::set_mode` at `dashboard/handlers/model_telemetry.py:119`** — 601 selected tests green
+  (1 skipped / 600 passed). Bound: 10 further scored files cut by the cap, and **1003 of 1017 test
+  files overall not run**.
+- **`policy::set_pin` at `dashboard/handlers/model_telemetry.py:122`** — 449 selected tests green.
+  Bound: 0 cut by the cap, **1004 of 1017 test files overall not run**.
+- **`policy::_sel_policy_change`, 3 sites** (`routing/policy.py:604` mode, `:617` pin, `:654` order)
+  — 449 selected tests green. Bound: 0 cut by the cap, **1004 of 1017 overall not run**.
+
+The selection bound does **not** weaken the first two, and this is checkable without a suite run:
+`git grep -l routing-policy -- tests/` returns exactly **one** file, and
+`tests/test_routing_telemetry.py`'s write section is headed *"the write path: PUT
+/api/models/routing-policy, `order` lever (§6.2)"*. The `mode` and `pin` levers of the same PUT have
+no rail **anywhere in the suite**, not merely outside this selection.
+
+Both calls are **correct today** — the swallow shape is the same one the `order` lever actually had:
+delete the call and the handler still answers **200 with `applied: ["mode"]` / `["pin"]`** while
+`entity_settings` stays byte-identical, invisible to the client. Note these two levers persist through
+`providers.use_cases.save_use_case_settings`, a *different* store from `set_order`'s
+`routing_policy.json`, so the rails added above cannot cover them by accident. A fix asserts, per
+lever: the PUT persists the value and a re-read returns it, a rejected value leaves the store
+byte-identical, and a vacuity floor proving the byte harness can see an accepted write.
+
+`_sel_policy_change` is an **audit-trail** gap rather than a user-visible one: every lever change
+emits a SEL row and nothing observes it. The asymmetry is the finding — `proposals::_sel_decision`
+**is** railed (`test_accept_logs_exactly_one_sel_row_naming_the_proposal`), so proposal *decisions*
+are audited-and-asserted while direct lever changes are audited-and-unasserted. That matters because
+MRT's own roadmap position is a hard dependency on Guardrails' audit. A fix asserts one SEL row per
+lever naming the use case, the lever and the new value, with an empty-ledger floor.
+
+RAILED (these bound the problem — the routing *proposal* path is genuinely covered):
+`proposals::_notify` (`proposals.py:351`) → 2 red; `proposals::_save_queue` (`:404`, `:423`) → 4 red;
+`proposals::_sel_decision` (`:424`, `:455`) → 1 red.
+
+REFUSED — **`policy::save_policy` at `routing/policy.py:653`**: the mutated run produced **9
+collection/setup errors** alongside 6 failures, so the tool reported *"that measures the mutation, not
+the wire"* rather than scoring it. Correct behaviour: `save_policy` is the persistence primitive
+`set_order` and the proposal accept path both stand on, so neutralising it breaks fixtures that *set
+up* through it. This is the collection-error guard, **not** the ANSI/`FAILED `-prefix attribution trap
+— that one is a different guard and was not hit.** Scoring this wire needs a selection that does not
+build state through `set_order`.
+
+### Confirmation pass — `set_mode` re-measured with nothing cut
+
+`set_mode` was the one MRT-5 UNRAILED verdict with a non-zero cut (10 files). Re-run at
+`--max-test-files 50`: **`cut=0`, 24 files selected, 883 selected tests green, still UNRAILED.** It is a
+measurement. `set_pin` and `_sel_policy_change` already had `cut=0` on the first pass, so all three MRT-5
+UNRAILED verdicts now stand un-cut. (The same re-run flipped 8 of 11 APE-3 verdicts — see
+`APP-PLATFORM-EVOLUTION.md`; an UNRAILED with a non-zero cut is not a result.)
+
+**PHF-7's `registry::sync_entries_from_config` could not be confirmed.** At the tool's default cap it is
+UNRAILED (257 green, **33 cut**); re-run at cap 50 with `cut=0` it **REFUSED** on a red baseline —
+1 skipped / 5 failed / 945 passed, first reds in `tests/test_acp_session_activity_line.py` and
+`tests/test_acp_unattended_and_loop_breaker.py`, which are ACP suites unrelated to the wire and outside
+this session's changes (the tree was clean and no production line was touched). So that verdict stays
+**provisional**: UNRAILED at cap 14, unconfirmed at `cut=0`. Its fix is already in PR **#1994** (still
+OPEN — it is *not* on `main`, contrary to the briefing that said to expect RAILED there).
