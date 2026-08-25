@@ -1261,3 +1261,49 @@ discipline in [`AGENTS.md`](../../../AGENTS.md))*
   *consistent* DDL + `_COLUMNS` + dataclass triple that nothing writes or reads. That is why this field
   survived, and why the inert-surface baseline does not mention it either (0 hits — its detector does
   not cover a declared-but-unused dataclass field).
+
+### `PP-16` — BLOCKED (E6 scope pressure), 2026-08-25 — needs an owner scope decision
+
+**Not a dependency problem.** `PP-16` is READY: every non-`EXT` dep (`PP-15`, `PP-5`, `PP-13`) is
+`done`, it carries no `EXT:` deps, no prior branch or worktree exists for it, and it is the last
+open atom in this plan. It is blocked on **size**: the criterion is a single atom whose completion
+is a multi-session clean break, and the standing rule is that a PARTIAL atom stays `todo`. One
+execution slot cannot land it clean, so starting it would produce exactly the half-migration this
+plan exists to eliminate.
+
+**Measured blast radius** (`origin/main` at `827fcbdd`):
+
+| What the criterion collapses | What is actually there today |
+|---|---|
+| one status vocabulary | `loop/loop.py:44 LoopStatus` **and** `workflows/models.py:440 RunStatus` |
+| one adoption/reaping path | `loop/manager.py:581 reap_orphaned_loops` **and** `workflows/watchdog.py` adoption |
+| `loop/store.py`'s parallel row retired | `loop/store.py` is **1253 lines**; `loop/manager.py` another **653** |
+| five kinds become bundled templates + policies | `loop/kinds/` ships five modules (`design`, `general`, `goal`, `research`, `sdlc`) as pluggable Python |
+| one ledger / one projection / one cockpit contract | `loop/` is **26 modules** incl. its own `journal.py`, `lifecycle.py`, `tick.py`, `gates.py`, `watchdog.py` |
+
+Import census: **44** files under `src/` import `personalclaw.loop`, plus **61** under `tests/` and
+`web/` — a ~105-file blast radius. The duplicated concerns the plan names are all really there:
+budget appears in **15** `loop/` modules, park-on-human in **4**, cancel in **3**.
+
+On top of the code change, the criterion demands *"verified as a user: each of the five kinds is
+driven end-to-end through the unified path with its cockpit intact, a kill mid-run is adopted by the
+single watchdog, and the flywheel produces a proposal from a loop run's ledger"* — five live
+end-to-end drives against a running gateway, which is itself more than one session's work.
+
+**What would clear it.** An owner scope decision splitting `PP-16` into sequenced sub-atoms with
+their own `done_when` clauses, in the same style this plan used to decompose the engine's three
+unnamed primitives. The natural seams, in dependency order, are: (1) one status vocabulary
+(`LoopStatus` folded into `RunStatus`); (2) one adoption path (delete `reap_orphaned_loops`, extend
+the workflows watchdog); (3) the five `loop/kinds/` modules become bundled templates carrying a
+`SupervisorPolicy`; (4) `loop/store.py` retired onto the run store; (5) the cockpit/projection
+contract unified; (6) the five-kind user validation as its own verification session. Each is
+independently completable and independently gateable, which is what the completability amendment
+asks for.
+
+**Not requesting a roadmap edit here** — the roadmap is owner-maintained, so this entry records the
+measurement and the blocker rather than re-cutting the atom. Until that decision lands, the ready
+frontier holds no atom an execution slot can drive to a clean gated state: `DFE-5` is gated on owner
+task 2 (the editing-library decision, E5), `WF2UNI-12`'s remaining deletion needs loops drained
+(which is this atom), `PR2-8`'s `EXT` dep is genuinely absent (zero `adaptive` symbols under
+`src/personalclaw/triggers/`, so AUTOMATION-SUBSTRATE's adaptive-clock trigger kind does not exist),
+and `WF2LOO-9` already reads `blocked`.
