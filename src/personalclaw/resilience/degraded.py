@@ -250,6 +250,21 @@ def _register_builtin_contracts() -> None:
             "over the same new material. Definitions, schedules and manual runs stay available.",
         )
     )
+    # morning source digest (WS-7) — a DIFFERENT shape from research_report, which is why it
+    # gets its own surface rather than borrowing that one: nothing is deferred here. The items
+    # are already durable in the library before the narrative is attempted, so the honest floor
+    # is a digest that still arrives and says the synthesis was missing. Re-running would
+    # re-summarise items the user already has, so the cursor advances either way.
+    register_contract(
+        DegradedContract(
+            surface="source_digest",
+            use_cases=("background",),
+            floor="The morning digest still arrives without a model: its body says synthesis was "
+            "unavailable and points at the collected items, which are already in the library. "
+            "Collection, dedup, the rule-grammar filter and the cursor all keep working — only "
+            "the narrative prose is missing.",
+        )
+    )
     # search ranking — hybrid retrieval degrades vector-arm-off to FTS + graph +
     # recency automatically; the real backlog is items missing an embedding.
     register_contract(
