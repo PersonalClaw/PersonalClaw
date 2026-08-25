@@ -411,3 +411,280 @@ class TestRoutingPolicyWrite:
         status, _ = await _put({"use_case": _UC, "query_class": _QC, "order": ["p:moved"]})
         assert status == 200
         assert _policy_bytes(policy_home) != before
+
+
+# ── the write path: PUT /api/models/routing-policy, ``mode`` + ``pin`` levers (§6.2) ──
+
+#: The pin the fixture seeds. A provider:model shape, so a rail that reads it back is reading
+#: something a real client would have sent.
+_SEEDED_PIN = "seedprov:seedmodel"
+#: What the fixture seeds for the mode lever. Deliberately NOT what any rail below writes, so
+#: "the mode on disk is the one I sent" cannot be satisfied by the seed standing still.
+_SEEDED_MODE = "heuristic"
+
+
+def _settings_path(home):
+    """Where ``set_mode``/``set_pin`` actually land.
+
+    A DIFFERENT store from ``routing_policy.json``: these two levers persist through
+    ``providers.use_cases.save_use_case_settings``, i.e. ``extensions/use_case_settings/<uc>.json``.
+    That is why the ``order`` rails above cannot cover them even by accident — a swallowed mode
+    write would leave every byte assertion in :class:`TestRoutingPolicyWrite` perfectly green.
+    """
+    return home / "extensions" / "use_case_settings" / f"{_UC}.json"
+
+
+def _settings_bytes(home) -> bytes:
+    path = _settings_path(home)
+    return path.read_bytes() if path.exists() else b"<absent>"
+
+
+def _stored_setting(home, key: str):
+    """One recorded lever as it is ON DISK.
+
+    Read straight out of the JSON rather than through ``policy.mode_for``/``policy.pin_for``: both
+    accessors fall back to a default (``"off"`` / ``""``) for a missing key, so a reader-mediated
+    assertion lets the accessor's own default stand in for a value that was never persisted — the
+    exact substitution that let the ``order`` lever ship a 200 backed by nothing.
+    """
+    path = _settings_path(home)
+    if not path.exists():
+        return None
+    return json.loads(path.read_text(encoding="utf-8")).get(key)
+
+
+@pytest.fixture()
+def lever_home(policy_home):
+    """``policy_home`` plus a seeded mode and pin, with the mode/pin store's redirect ASSERTED.
+
+    ``policy_home`` already re-points both bindings of ``config_dir``; what is asserted here is the
+    consequence that matters for these rails — that ``_settings_dir()`` resolves under the tmp home
+    — because ``save_use_case_settings`` reaches for ``config_dir`` through its own function-local
+    import and a rail that assumed the redirect would drive real writes into ``~/.personalclaw``.
+
+    Seeding both levers first is load-bearing: it gives every byte-identity assertion a real file
+    to compare against instead of the trivially-true ``absent == absent``.
+    """
+    from personalclaw.providers import use_cases as use_cases_mod
+    from personalclaw.routing import policy
+
+    assert (
+        use_cases_mod._settings_dir() == policy_home / "extensions" / "use_case_settings"
+    ), "the fixture did not redirect the mode/pin store"
+
+    policy.set_mode(_UC, _SEEDED_MODE)
+    policy.set_pin(_UC, _SEEDED_PIN)
+    assert _settings_path(policy_home).is_file(), "the seed did not write the settings file"
+    assert _stored_setting(policy_home, policy.MODE_KEY) == _SEEDED_MODE
+    assert _stored_setting(policy_home, policy.PIN_KEY) == _SEEDED_PIN
+    return policy_home
+
+
+class TestRoutingPolicyModeAndPinWrite:
+    """``policy::set_mode`` and ``policy::set_pin`` were reachable from this route and railed by
+    nothing at all.
+
+    Measured on this branch's base: ``git grep -l routing-policy -- tests/`` returned exactly one
+    file, whose only write section is headed *"the ``order`` lever"*. With the ``set_mode`` call at
+    ``model_telemetry.py:119`` deleted the suite stayed green; same for ``set_pin`` at ``:122``.
+
+    What the measurement found is NOT a second swallowed write — both levers persist. It is the
+    mirror image: a **400 that had already moved the store**. Validation was interleaved with
+    application, so ``{use_case, mode, order: "notalist"}`` answered ``400 order must be a list of
+    refs`` with the new mode on disk, and ``{use_case, pin, order: [...]}`` (no ``query_class``)
+    answered 400 with the new pin on disk. The handler now validates every lever before applying
+    any; ``test_a_rejected_write_leaves_both_stores_byte_identical`` is the rail for it.
+    """
+
+    @pytest.mark.asyncio
+    async def test_an_accepted_mode_is_persisted(self, lever_home):
+        """A 200 claiming ``applied: ["mode"]`` must be backed by a changed file on disk."""
+        from personalclaw.routing import policy
+
+        status, payload = await _put({"use_case": _UC, "mode": "learned"})
+
+        assert status == 200
+        assert payload["applied"] == ["mode"]
+        assert _stored_setting(lever_home, policy.MODE_KEY) == "learned"
+        # The store is a read-modify-write of one dict; a write that replaced it would silently
+        # drop the sibling lever, which no response body would ever show.
+        assert _stored_setting(lever_home, policy.PIN_KEY) == _SEEDED_PIN
+
+    @pytest.mark.asyncio
+    async def test_an_accepted_pin_is_persisted(self, lever_home):
+        """Same contract for lever 2, including that it leaves the mode alone."""
+        from personalclaw.routing import policy
+
+        status, payload = await _put({"use_case": _UC, "pin": "other:model"})
+
+        assert status == 200
+        assert payload["applied"] == ["pin"]
+        assert _stored_setting(lever_home, policy.PIN_KEY) == "other:model"
+        assert _stored_setting(lever_home, policy.MODE_KEY) == _SEEDED_MODE
+
+    @pytest.mark.asyncio
+    async def test_an_empty_pin_clears_the_stored_pin(self, lever_home):
+        """``pin: ""`` is the documented CLEAR, and it must remove the key rather than store an
+        empty string — ``pin_for`` treats both as "no pin", so only the file shows the difference,
+        and a stored ``""`` would make the table claim a pin it does not have."""
+        from personalclaw.routing import policy
+
+        status, payload = await _put({"use_case": _UC, "pin": ""})
+
+        assert status == 200
+        assert payload["applied"] == ["pin"]
+        assert _stored_setting(lever_home, policy.PIN_KEY) is None
+        assert _stored_setting(lever_home, policy.MODE_KEY) == _SEEDED_MODE
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "body,why",
+        [
+            ({"use_case": _UC, "mode": "nope"}, "unknown mode"),
+            ({"use_case": "nope", "mode": "off"}, "unknown use_case"),
+            ({"use_case": _UC}, "nothing to change"),
+            # The two regressions. Each carries a VALID lever alongside an invalid one, which is
+            # what a partial write needs to happen at all.
+            (
+                {"use_case": _UC, "mode": "learned", "order": "notalist"},
+                "a valid mode beside a malformed order",
+            ),
+            (
+                {"use_case": _UC, "pin": "clobber:ref", "order": ["p:a"]},
+                "a valid pin beside an order with no query_class",
+            ),
+        ],
+    )
+    async def test_a_rejected_write_leaves_both_stores_byte_identical(self, lever_home, body, why):
+        """A 400 must persist NOTHING — in EITHER store.
+
+        Byte identity rather than "the value I read back is still the old one", so a rewrite that
+        happened to reproduce the same value is caught too. Both files are checked because the
+        levers straddle two stores and the partial write crossed exactly that seam: the rejection
+        came from the ``order`` lever while the damage landed in the mode/pin file.
+        """
+        before_settings = _settings_bytes(lever_home)
+        before_policy = _policy_bytes(lever_home)
+        assert (
+            before_settings != b"<absent>" and before_policy != b"<absent>"
+        ), "the fixture's seeds are what make these comparisons mean something"
+
+        status, payload = await _put(body)
+
+        assert status == 400, why
+        assert payload["error"]["code"] == "bad_request"
+        assert (
+            _settings_bytes(lever_home) == before_settings
+        ), f"a rejected write ({why}) moved the mode/pin store"
+        assert (
+            _policy_bytes(lever_home) == before_policy
+        ), f"a rejected write ({why}) moved the order table"
+
+    @pytest.mark.asyncio
+    async def test_the_byte_harness_can_see_an_accepted_write(self, lever_home):
+        """Vacuity floor for the rejection rails above.
+
+        If an accepted lever change did not move the bytes ``_settings_bytes`` reads, every
+        byte-identity assertion above would hold for a handler that persisted nothing at all —
+        which is the swallowed write these rails exist to rule out. So drive the accepted path
+        through the same helper and prove the bytes move.
+        """
+        before = _settings_bytes(lever_home)
+        status, _ = await _put({"use_case": _UC, "mode": "learned"})
+        assert status == 200
+        assert _settings_bytes(lever_home) != before
+
+
+class _CapturedSel:
+    """A stand-in for the SEL singleton. The real one is a ``__new__``-based singleton whose
+    ``__init__`` no-ops after first construction, so patching the accessor
+    ``policy._sel_policy_change`` reaches for is the only capture guaranteed to see the row."""
+
+    def __init__(self):
+        self.rows: list[dict] = []
+
+    def log_api_access(self, **kw):
+        self.rows.append(kw)
+
+
+@pytest.fixture()
+def sel_rows(monkeypatch):
+    cap = _CapturedSel()
+    import personalclaw.sel as sel_mod
+
+    monkeypatch.setattr(sel_mod, "sel", lambda: cap)
+    return cap.rows
+
+
+class TestRoutingPolicyChangeIsAudited:
+    """``policy::_sel_policy_change`` (3 call sites) audited every lever change and nothing
+    observed the row.
+
+    The asymmetry this closes: routing *proposal decisions* were audited AND asserted
+    (``test_routing_proposals.py``), while direct lever changes through this route were audited and
+    unasserted — so the audit trail for the levers a user actually moves rested on nothing. Routing
+    decides which providers see which content, so a mode or pin flip can move prompts from a local
+    model to a cloud one; that is the event the row exists to record.
+    """
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "lever,body,expected_value",
+        [
+            ("mode", {"use_case": _UC, "mode": "learned"}, "learned"),
+            ("pin", {"use_case": _UC, "pin": "other:model"}, "other:model"),
+            # The documented CLEAR is audited as a change too — "the pin was removed" is exactly
+            # the event an auditor needs, and an empty value would read as no event at all.
+            ("pin", {"use_case": _UC, "pin": ""}, "(cleared)"),
+            # Lever 3's row, so all three of ``_sel_policy_change``'s call sites are observed
+            # rather than two of three. It names the class as well, because an order is recorded
+            # per class and a row without one does not identify what moved.
+            (
+                "order",
+                {"use_case": _UC, "query_class": _QC, "order": ["p:one", "p:two"]},
+                f"{_QC}:p:one,p:two",
+            ),
+        ],
+    )
+    async def test_a_lever_change_logs_exactly_one_row_naming_it(
+        self, lever_home, sel_rows, lever, body, expected_value
+    ):
+        """One row per change, naming the use case, the lever and the NEW value.
+
+        ``resources`` is asserted whole rather than by substring: the row's whole job is to say
+        *which* use case moved to *which* value, and a row naming the lever but not the value
+        would read as an audit trail while recording nothing an auditor could act on.
+        """
+        operation = f"routing.{lever}"
+        before = [r for r in sel_rows if r.get("operation") == operation]
+
+        status, _ = await _put(body)
+        assert status == 200
+
+        rows = [r for r in sel_rows if r.get("operation") == operation]
+        assert len(rows) == len(before) + 1, f"expected exactly one new {operation} row, got {rows}"
+        assert rows[-1]["resources"] == f"{_UC}:{expected_value}"
+        assert rows[-1]["source"] == "routing_policy"
+        assert rows[-1]["outcome"] == "success"
+        assert rows[-1]["caller"] == "user"
+
+    @pytest.mark.asyncio
+    async def test_a_rejected_change_is_not_audited(self, lever_home, sel_rows):
+        """A 400 must not be recorded as a change — and the floor that makes that assertion mean
+        something.
+
+        The first half alone would pass for a capture that never sees anything at all, which is
+        how an audit rail ships vacuous. So the same client then drives an ACCEPTED change through
+        the same capture and the count is required to move.
+        """
+        before = len(sel_rows)
+
+        status, _ = await _put({"use_case": _UC, "mode": "nope"})
+        assert status == 400
+        assert len(sel_rows) == before, "a rejected change was audited as a change"
+
+        status, _ = await _put({"use_case": _UC, "mode": "learned"})
+        assert status == 200
+        assert (
+            len(sel_rows) == before + 1
+        ), "the capture never sees anything; the assertion above is vacuous"
