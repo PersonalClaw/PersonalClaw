@@ -333,3 +333,67 @@ passed** (up from 264 / 2625) · `npm run build --workspace web` rc 0 · `web/e2
 **Known constraint, documented not hidden:** service workers need a secure context, so a gateway
 reached over plain http at a LAN address gets no install and no offline. `registerServiceWorker()`
 prints one line naming that reason instead of leaving an install affordance that never appears.
+
+### 2026-08-25 — `MC-2` (S2 T2.3 + T2.4) — **DONE**, and it was a rail job, not a build job
+
+**The producer already had live consumers.** The decisive check first, because a shipped mechanism
+nothing calls is this repo's recurring defect and it greps identically to a wired one:
+`register_device_routes` is IMPORTED **and CALLED** at `dashboard/server.py:411-413`, registering all
+four C2 routes plus `GET /pair` (`handlers/devices.py:496-505`); `api.ts:3832-3837`'s three client
+methods are called from `web/src/pages/settings/DevicesPanel.tsx:87/118/138`; and that panel is
+mounted as a real tab at `SettingsPage.tsx:83`. `touch_device_last_seen` — the writer behind the
+`last_seen` column, the field most likely to be a reader-of-an-unwritten-key — is called from
+`token_auth.py:221` on both authorized paths. So MC-2's UI clause was already MET by `CA-2` (merged
+2026-08-21), including `minted`: `DevicesPanel.tsx:318` renders `Paired {relPast(d.minted_at)}` and
+`devicesPanel.test.tsx:90` asserts `/^Paired \d+[mhd] ago/`. **No second list was built** (T2.4's
+"this plan builds no second list").
+
+**What was genuinely missing was the two clauses a PHONE depends on — both of which live in the auth
+middleware, not in the store `CA-2`'s tests exercise.** New file
+`tests/test_mc2_device_session_consumption.py` (5 tests) drives the real
+`token_auth.token_auth_middleware` over a real `TestServer`, with `aiohttp.DummyCookieJar` so a
+credential travels only when a leg names it — no leg can pass by inheriting an earlier cookie.
+
+- **T2.3 roaming IP.** Pair a device, then hit a protected route with its cookie from `203.0.113.7`
+  and again from `198.51.100.22`: both 200, same `session_nonce`, one device still in the registry.
+  The **vacuity floor** is a separate test that primes the *same credential* through `?token=` and
+  gets `403 {"error": "IP mismatch"}` from the moved address — so "the phone still gets in" cannot
+  read as a pass on a build whose IP binding was deleted. This closes the gap `CA-3`'s log filed as
+  "worth an atom of its own": the constraint is free today and would break silently.
+- **T2.4 revocation.** `CA-2` asserts revoke through `validate_token`; a phone never calls
+  `validate_token`, it makes a request, and between the two sit the bypass lists, the cookie branch
+  and the adopt-from-store path. Now asserted as a request: device in (200) → owner revokes (200,
+  `revoked: 1`) → **the very next cookie-borne request is 403**, `GET /api/devices` is `[]`, and it
+  stays 403 after `clear_all()` + `reset_secret_cache()`.
+- **"No new claim added to `token_auth.py`"** is ratcheted as a shape rather than as a point-in-time
+  grep: `generate_token`'s parameters are exactly `(user_id, ttl_seconds, app)`, the minted payload's
+  claim set is exactly `{sub, exp, session_exp, iat, nonce}`, the `device_id` appears nowhere in it,
+  and the device identity is asserted to live in the session-store row instead. **`token_auth.py` and
+  `session_store.py` are untouched by this diff** (`git diff --stat` = one new test file).
+
+**Falsification** (each mutation grepped back to confirm it applied, then restored from a file copy
+at the literal path; tree verified clean after):
+1. `token_auth.py:1072` `if not from_cookie and not check_token_ip(...)` → `if not check_token_ip(...)`
+   — i.e. bind cookie sessions too, the exact future regression. `test_a_device_session_roams_between_client_ips`
+   red: *"a device session must ride the cookie, not the address"*; the other 4 stayed green.
+2. `handlers/devices.py:488-490` dropped `revoke_nonce(nonce)`, keeping `forget_session(nonce)` —
+   `test_revoke_refuses_the_devices_next_http_request` red with `assert 200 == 403` while
+   `test_a_revoked_device_stays_refused_across_a_restart` **PASSED**, which is the point: the two legs
+   measure different halves (in-memory vs durable), so neither is redundant.
+
+**Gate:** `make lint` rc 0 (black 2059 files, isort, flake8, mypy 1012 files) · `pytest --no-cov` on
+`test_mc2_device_session_consumption` + `test_device_pairing` + `test_session_store` +
+`test_token_auth` **207 passed** (was 202) · `scripts/gate_report.py` **6/6 PASS** · probe sweep 16
+repo-wide with **0 diff-introduced**, `git status --porcelain` empty. **The web legs were not run and
+did not need to be: the diff contains zero `web/` files.** Clause 2's evidence is the merged
+`devicesPanel.test.tsx` plus `CA-2`'s recorded LAN drive, not a re-run here.
+
+**Unmet, and deliberately left:** T2.4's *Files* column also asks for a "companion nav/link only" —
+a link from `#/companion` to Settings → Devices, so the phone can reach the one list instead of
+growing a second. It is **not** part of `MC-2`'s `done_when` (all four clauses above are met without
+it), it lives in `web/src/pages/companion/CompanionPage.tsx` which was outside this session's fence,
+and it belongs with the surface that adds the companion's other sections (`MC-6`). Recorded here so
+it is not lost. Separately: `role="list"` was NOT added to the Devices rows — the list is named by
+its `Section` `<h2>` ("Paired devices (N)"), which is the house idiom, and a census found `role="list"`
+in **0 of the ~60 settings panels** (only `ui/WindowedList.tsx`), so adding it would invent a pattern
+rather than match one.
