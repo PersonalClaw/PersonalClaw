@@ -1413,12 +1413,13 @@
         {
           "id": "DFE-3",
           "title": "First real docx\u2192model parser with LossReport + parse\u2192write\u2192parse round-trip proof",
-          "status": "todo",
+          "status": "done",
           "scope": "Session 1 T1.4\u2013T1.5; \u00a7C2 (parse_docx via iter_inner_content, LossReport, images\u2192artifact_slug, untrusted-input caps); fix stale knowledge/readers.py:243-247 ordering comment",
           "done_when": "paragraph\u2194table order preserved on an interleaved fixture; each unrepresentable construct adds a LossReport item; parse\u2192write\u2192parse yields an equal model across every BLOCK_KIND plus runs/styles/spans/page-setup, and a deliberate writer regression fails the test. V1 gate holds (incl. a Word-authored fixture reporting its losses honestly).",
           "deps": [
             "DFE-2"
-          ]
+          ],
+          "pr": 2001
         },
         {
           "id": "DFE-4",
@@ -7589,8 +7590,8 @@
         "plan": "DCU"
       },
       {
-        "id": "DFE-3",
-        "title": "First real docx\u2192model parser with LossReport + parse\u2192write\u2192parse round-trip proof",
+        "id": "DFE-4",
+        "title": "Binary artifact write path + model read/render endpoints",
         "plan": "DFE"
       },
       {
@@ -9674,9 +9675,9 @@
         "code": "DFE",
         "plan": "DOCUMENT-FIDELITY-EDITOR",
         "total_atoms": 8,
-        "done": 2,
+        "done": 3,
         "in_progress": 0,
-        "todo": 6,
+        "todo": 5,
         "blocked": 0
       },
       {
