@@ -4337,7 +4337,7 @@
         {
           "id": "EA-9",
           "title": "Headless CLI mode \u2014 `personalclaw run` one-shot scripted turns",
-          "status": "todo",
+          "status": "done",
           "scope": "\u00a79.5 (Headless CLI Mode, grok-build learning): run subcommand + 3 formatters, transient-gateway bootstrap, inbound:cli: headless classification, --allow grant flag, CI recipe docs. Session 7.",
           "done_when": "`personalclaw run -p \"<prompt>\" [--format plain|json|streaming-json] [--agent] [--model] [--session] [--cwd] [--allow]` executes one turn against the local gateway, auto-starting a transient gateway (reusing the doctor readiness probe) when none runs, exits 0/nonzero per turn success; plain=final text, json=one {result,session,turns,tool_calls,tokens,duration_ms} doc, streaming-json=NDJSON of the same WS envelope frames (chat_chunk/tool_call/chat_done); inbound:cli: prefix inherits the \u00a72.3 headless SafetyProfile (read-only defaults; --allow write grant printed to stderr); budgets ride SpendMeter scope_key=cli; --session opts into a persistent named session (default stateless); CI smoke-test recipe in docs + shell-script and GitHub-Action validation.",
           "deps": [
@@ -7642,11 +7642,6 @@
         "plan": "EA"
       },
       {
-        "id": "EA-9",
-        "title": "Headless CLI mode \u2014 `personalclaw run` one-shot scripted turns",
-        "plan": "EA"
-      },
-      {
         "id": "EI-2",
         "title": "`docker` provider + engine/workspace-block adoption + cgroup v2 tier",
         "plan": "EI"
@@ -9915,9 +9910,9 @@
         "code": "EA",
         "plan": "EXTERNAL-ACCESS",
         "total_atoms": 9,
-        "done": 3,
+        "done": 4,
         "in_progress": 0,
-        "todo": 6,
+        "todo": 5,
         "blocked": 0
       },
       {
