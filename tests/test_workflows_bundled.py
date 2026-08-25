@@ -98,6 +98,14 @@ EXPECTED = {
     # it, and the outcome capture happens through `decision_resolve` because a workflow that
     # invented an outcome with nobody present would be worse than no review at all.
     "decision-review",
+    # The budgeted harness search (EVALUATION-SUBSTRATE §8, ES-11). The only bundled template
+    # whose loop body pairs a `stage` with a `bash` action: the propose half needs a model and
+    # the adjudicate half must not have one, because a gate a model can talk its way past is
+    # not a gate. Its bash nodes shell into `personalclaw.evals.optimize`, whose subcommand
+    # names and `PC_OPT_*` env keys are asserted against that module in
+    # `tests/test_evals_optimize.py` — a renamed subcommand fails the TEMPLATE, not just the
+    # module, which is the only way a template's shell-out stays honest.
+    "optimize-harness",
 }
 
 
