@@ -1141,3 +1141,38 @@ session. It lands there now.
   (`context_management.py`, `dashboard/{chat,chat_handlers,chat_title,state}.py`) and 2 test files, ~31 references
   each; `auto_run_stopped` has exactly one emission site and no registry or ratchet entry. Left because it reaches
   into the live chat send path, which was outside this atom's file fence.
+- **2026-08-24 — `WF2UNI-12` clause 2 RE-VERIFIED, STILL BLOCKED (E3/E6). Precondition has not cleared; the blocker
+  is BROADER than the 2026-08-17 entry recorded.** Both facts the ruling turns on were re-measured against
+  `origin/main` = `03729754`, not inherited. **Fact 1 — the replacement still has zero reach:**
+  `git grep 'workflows.intent' -- src/personalclaw/loop src/personalclaw/dashboard` returns **0** (unchanged).
+  `workflows/intent.py` (542 lines) has exactly four src consumers — `mcp_workflows.py:32`, `planning/scratchpad.py:504`,
+  `workflows/grill_protocol.py:37`, `workflows/rigor.py:30` — and **none** is in `loop/` or `dashboard/`, so nothing in
+  the surfaces the deletion would strand has begun consuming it. **Fact 2 — all three routes are still registered and
+  still reached:** `register_unified_loop_routes` (now `handlers/loop_routes.py:1041`, called at `server.py:1218` —
+  the recorded `:1032`/`:1138` are line drift only, same call) registers `POST /api/loops/classify` (`:1046`),
+  `GET /api/loops/{id}/plan-session` (`:1058`) and `POST /api/loops/{id}/plan/start` (`:1059`). `api_loop_classify`
+  (`:224`) returns the kind strategy's dict verbatim (`result = await strat.classify(...)`; `web.json_response(result)`),
+  and the six composer field names the original finding quoted (`intake_rigor`, `roster`, `strategy_id`,
+  `clarifying_questions`, `success_criteria`, `kind_config`) still occur 24× in `loop/classify.py` and 21× in
+  `loop/code_classify.py` — a shape `intent.classify(text) -> Intent` (level/rigor only) still cannot produce.
+  Frontend still live: `api.ts:4441` `post<UnifiedLoopClassification>('/api/loops/classify', …)`, `:4455`
+  `uLoopPlanSession`, `:4456` `uLoopPlanStart`, `:4308` the chat `plan-session`; `LoopPlanningView`/`CodePlanningView`/
+  `CodePlanReview`/`PlanningArtifactDoc` appear in 4/3/8/3 `web/src` files.
+  **Two corrections that ENLARGE the blocker.** (1) The recorded importer list (8 files) undercounts: a
+  `git grep -P '^\s*(from|import)\s+…'` sweep finds **15 src files** with real import statements of the nine modules,
+  including `dashboard/chat_plan.py:52-53` (`from personalclaw.planning import session as PS`), which backs a SECOND
+  route family the 08-17 entry never named — `GET /api/chat/sessions/{session}/plan-session`, registered at
+  `server.py:989`. (2) **"`gateway.py` is NOT affected" is true only of the DIRECT import.** `planning/__init__.py:15`
+  re-exports eleven symbols `from personalclaw.planning.session`, so importing the module this atom KEEPS
+  (`personalclaw.planning.scratchpad`, `gateway.py:1723`) executes that re-export and loads `planning.session`.
+  Proven at runtime: `import personalclaw.planning.scratchpad` leaves `personalclaw.planning.session` in
+  `sys.modules` (`True`). Deleting `planning/session.py` therefore breaks the kept gateway import unless
+  `planning/__init__.py` is rewritten in the same change. Falsified by pointing that one line at a non-existent
+  module: `scratchpad` then raises `ModuleNotFoundError: No module named 'personalclaw.planning.NOSUCH'` and
+  `session in sys.modules` flips to `False` — restored from a file copy, tree left clean.
+  **Ruling unchanged and re-affirmed: the clause's own "as loops drain" precondition is unmet.** The pre-1.0
+  clean-break doctrine licenses deleting a *replaced* mechanism, not an *unreplaced* one. Nothing was deleted, and no
+  gate, shim or dual path was built — there is nothing to build until the replacement exists. Also corrected: the
+  "nine modules" are `loop/classify.py`, `loop/code_classify.py`, `loop/plan_walkthrough.py`, the four
+  `loop/*_plan_briefs.py`, **and `planning/runner.py` + `planning/session.py`** — the last two are named in the
+  `done_when` and are what make this a package-structure change rather than seven file deletions.
