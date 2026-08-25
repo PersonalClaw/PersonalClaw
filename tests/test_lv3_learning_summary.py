@@ -438,3 +438,31 @@ def test_default_summary_is_empty_so_an_empty_home_renders_nothing(home):
     """A fresh home totals zero — which is what makes the block hide itself."""
     assert LearningSummary().total == 0
     assert compose_learning_summary(now=NOW).total == 0
+
+
+def test_the_summary_route_is_actually_registered_not_merely_defined():
+    """A defined handler is not a reachable one.
+
+    Every other test here calls ``api_learning_summary`` directly, so all of them keep
+    passing if the ``app.router.add_get`` line is deleted — the block would 404 in a real
+    gateway while this suite stayed green. Measured: unregistering the route reds only
+    ``test_agent_reference.py`` (the offline reference render), which catches it by
+    accident rather than by intent. This asserts the wiring the block depends on.
+
+    The vacuity floor is the sibling assertion: a route this module does NOT register must
+    be absent from the same collected set, so a matcher that accepts everything fails here.
+    """
+    from aiohttp import web as _web
+
+    from personalclaw.dashboard.handlers import learning as _learning
+
+    app = _web.Application()
+    _learning.register_learning_routes(app)
+    routes = {
+        r.resource.canonical
+        for r in app.router.routes()
+        if r.resource is not None and r.method == "GET"
+    }
+
+    assert "/api/learning/summary" in routes
+    assert "/api/learning/definitely-not-a-route" not in routes
