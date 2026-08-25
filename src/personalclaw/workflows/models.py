@@ -1055,6 +1055,15 @@ class NodeInstance:
     #: output changed (or a reload) the label would otherwise be unrecoverable. Empty for a
     #: non-iterated node.
     item_label: str = ""
+    #: The subagent this instance dispatched, for a `stage` node. `dispatch_stage` spawns and
+    #: returns RUNNING immediately, so the node's real completion arrives out of band and
+    #: `RunController._reconcile_dispatched_stages` needs a way back to the spawn.
+    #:
+    #: PERSISTED for the same reason as `wake_at`: a gateway restart that re-adopts this run
+    #: must still be able to ask who was doing the work. It is a FOREIGN KEY, not a record --
+    #: liveness stays owned by `SubagentManager.get` -- and it is per-INSTANCE because a
+    #: `foreach` fan-out of stages has one subagent per leaf.
+    subagent_id: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -1071,6 +1080,7 @@ class NodeInstance:
             "tokens": self.tokens,
             "wake_at": self.wake_at,
             "item_label": self.item_label,
+            "subagent_id": self.subagent_id,
         }
 
     @classmethod
@@ -1095,4 +1105,5 @@ class NodeInstance:
             tokens=int(d.get("tokens", 0) or 0),
             wake_at=float(d.get("wake_at", 0.0) or 0.0),
             item_label=str(d.get("item_label", "") or ""),
+            subagent_id=str(d.get("subagent_id", "") or ""),
         )
