@@ -7260,12 +7260,13 @@
         {
           "id": "PEP-3",
           "title": "App Store persistent category/source rail + card polish",
-          "status": "todo",
+          "status": "done",
           "scope": "Add a StoreSideRail with a CATEGORIES block (canonical categories derived from installed+catalog tags, live counts, select-to-filter, 'All' resets) and a SOURCES block (Built-in badge + each registered source with app count + Add-source into the existing sources flow), reusing the existing filter state; the current dropdown FilterMenu/SourcesPopover become the narrow-screen fallback. The rail is always open on wide screens and collapses on narrow, with category/source selection deep-linked in the URL (hash-router). Polish app cards to an art-forward shape: hero-image column with a deterministic gradient+icon fallback, name / 2-line-clamp description / category / action; render the quality/permission badge from the app-platform quality manifest block rather than inventing a second badge. No hardcoded colors (token-lint passes).",
           "done_when": "Wide viewport shows the rail persistently and narrow falls back to the dropdown; selecting a category/source filters the grid and survives reload via the URL; cards render art-forward with and without hero art; rail is keyboard-navigable with aria-pressed category buttons.",
           "deps": [
             "EXT:APP-PLATFORM-EVOLUTION:quality-manifest-block"
-          ]
+          ],
+          "pr": 2065
         },
         {
           "id": "PEP-4",
@@ -7792,11 +7793,6 @@
         "id": "PCS-7",
         "title": "Aggregate cache hit-rate + saved-USD into turn telemetry (the proof surface, V2)",
         "plan": "PCS"
-      },
-      {
-        "id": "PEP-3",
-        "title": "App Store persistent category/source rail + card polish",
-        "plan": "PEP"
       },
       {
         "id": "PEP-5",
@@ -10158,9 +10154,9 @@
         "code": "PEP",
         "plan": "PRODUCT-EXPERIENCE-PARITY",
         "total_atoms": 11,
-        "done": 7,
+        "done": 8,
         "in_progress": 0,
-        "todo": 4,
+        "todo": 3,
         "blocked": 0
       },
       {
