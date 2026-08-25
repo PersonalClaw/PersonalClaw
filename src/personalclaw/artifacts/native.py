@@ -34,6 +34,7 @@ from personalclaw.artifacts.models import (
     MAX_VERSIONS,
     Artifact,
     ArtifactEvent,
+    ArtifactVersionConflict,
     clean_event_metadata,
     clean_tags,
     ext_for_mime,
@@ -579,8 +580,14 @@ class NativeArtifactProvider(ArtifactProvider):
         actor: str | None = None,
         session_id: str | None = None,
         event_type: str | None = None,
+        expect_version: int | None = None,
     ) -> Artifact | None:
-        """Append a new binary version (an edit result). Bumps version + snapshots."""
+        """Append a new binary version (an edit result). Bumps version + snapshots.
+
+        ``expect_version`` (see the protocol docstring) is compared INSIDE the lock and
+        before a single byte is written, so a conflicting write cannot slip between the
+        check and the store.
+        """
         if event_type == "reverted":
             raise ValueError("use revert() to restore a version, not update_binary()")
         if event_type is not None and event_type not in ALLOWED_EVENT_TYPES:
@@ -590,6 +597,8 @@ class NativeArtifactProvider(ArtifactProvider):
             if art is None or not is_binary_kind(art.kind):
                 return None
             _refuse_if_readonly(art)
+            if expect_version is not None and art.version != expect_version:
+                raise ArtifactVersionConflict(slug, art.version, expect_version)
             if mime:
                 art.mime = mime
             art.version += 1

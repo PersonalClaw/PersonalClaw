@@ -19,6 +19,7 @@ from personalclaw.documents.model import (
     Run,
     SheetModel,
 )
+from personalclaw.documents.model_json import document_from_dict, document_to_dict
 from personalclaw.documents.registry import (
     available_formats,
     get_writer,
@@ -34,6 +35,8 @@ __all__ = [
     "PageSetup",
     "ParagraphStyle",
     "Run",
+    "document_from_dict",
+    "document_to_dict",
     "register_writer",
     "get_writer",
     "available_formats",

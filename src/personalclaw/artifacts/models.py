@@ -90,6 +90,29 @@ def ext_for_mime(mime: str, default: str = "png") -> str:
     return _MIME_TO_EXT.get((mime or "").strip().lower(), default)
 
 
+def kind_for_mime(mime: str) -> str:
+    """The BINARY artifact kind *mime* belongs to, or ``""`` when it is not one.
+
+    The mime↔kind agreement check for a binary write path (DOCUMENT-FIDELITY-EDITOR
+    §C3): a ``.docx`` slug must not be handed a pdf, and only a MIME the store can
+    name a file for may be stored at all.
+
+    DERIVED, never a second list. Validity comes from :data:`_MIME_TO_EXT` (a MIME
+    with no extension has no on-disk body, so it is refused), and the kind comes from
+    the MIME's own family: ``image/*`` → ``image``, ``video/*`` → ``video``, and the
+    office/PDF types already name their kind with their extension
+    (``…wordprocessingml.document`` → ``docx``). Restating :data:`BINARY_KINDS` here
+    would be a second place to forget a kind.
+    """
+    normalized = (mime or "").strip().lower()
+    ext = _MIME_TO_EXT.get(normalized, "")
+    if not ext:
+        return ""
+    family = normalized.split("/", 1)[0]
+    kind = family if family in BINARY_KINDS else ext
+    return kind if kind in BINARY_KINDS else ""
+
+
 # Inverse of _MIME_TO_EXT: recover a version's MIME from its on-disk extension.
 # Lets a historical body (e.g. versions/v1.jpg) report its true Content-Type even
 # after a later edit changed the artifact's current mime — the extension on disk,
@@ -120,6 +143,29 @@ def slugify(name: str) -> str:
 
 def is_valid_slug(slug: str) -> bool:
     return bool(_SLUG_RE.match(slug))
+
+
+class ArtifactVersionConflict(ValueError):
+    """A write named an expected version the artifact no longer has.
+
+    Raised by a provider write that was handed ``expect_version`` — the optimistic
+    concurrency check for the whole-document write path (DOCUMENT-FIDELITY-EDITOR
+    §C3). It exists as its own type because the caller's remedy is specific and
+    machine-actionable: reload the artifact and re-apply, not "fix your request". It
+    subclasses ``ValueError`` so a provider caller that already funnels bad input into
+    a 400 keeps working; a caller that cares catches this first.
+
+    ``expected`` is the version the artifact actually holds; ``supplied`` is what the
+    writer claimed to be editing.
+    """
+
+    def __init__(self, slug: str, expected: int, supplied: int) -> None:
+        super().__init__(
+            f"artifact {slug!r} is at version {expected}, not {supplied} — reload before saving"
+        )
+        self.slug = slug
+        self.expected = expected
+        self.supplied = supplied
 
 
 @dataclass
