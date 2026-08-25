@@ -328,3 +328,127 @@ run anyway it reports 5 pre-existing findings on `origin/main` — high `fast-ur
 **V5 holds.** Three topics spot-checked in `dist` (`memory-architectures`,
 `skills-and-prompt-craft`, `workflow-engine-design`): each renders its H1, carries in-site
 cross-links, and contains zero raw `.md` hrefs. The generated section index links all 14.
+
+### 2026-08-24 — `DL-7` (S4 T4.1) comparison data + `/compare` pages — **BLOCKED**
+
+Two independent blockers, plus a name-scrub defect in the atom's own `done_when`. Nothing
+was built toward the atom. One core-owned defect found while sourcing it WAS fixed, and is
+the only code/doc change in this commit's sibling.
+
+**Not one line of this atom is core's to build.** The plan says so twice, unprompted:
+§Design — "landing page + comparison pages authored **in the site repo** (they're
+marketing, not product docs)"; and the T4.1 row's deliverable column — "**site repo:**
+`src/data/comparisons.json` + pages". The `done_when`'s paths corroborate it: core's `src/`
+is `src/personalclaw/` and holds no `data/` directory, whereas `personalclaw.dev` has
+`src/data/` (three modules today) and `src/pages/`. Compare `DL-4`, the one atom in this
+plan whose title carries an explicit "(core)" marker — the plan annotates its core work,
+and `DL-7` is not annotated. **The cross-repo split here is total, not partial:** core owns
+no deliverable, so a core session cannot make `DL-7` anything but `todo`.
+
+**BLOCKER 1 — its declared dependency is unbuilt, two atoms deep.** The row declares
+`EXT:LEARNING-VISIBILITY:benchmark results for matrix rows`, which `dag.json`'s
+`resolved_edges` resolves to `LV-7` — status `todo`. And `LV-7` is not merely unstarted: the
+LEARNING-VISIBILITY execution log's own DISCOVERY records that `LV-7`'s declared deps
+understate it, because the skills-off arm it needs is `ES-7` §3.3's `arm_mask`, which is
+"designed, unbuilt" — `ES-7` is `todo` as well. So the benchmark numbers this atom was
+meant to put in its matrix rows are two unbuilt atoms away. (`LV-7`'s own declared
+`EXT:EVALUATION-SUBSTRATE:S1-2` ref resolves to `ES-5`, also `todo`, so the chain is unmet
+by either reading.) Per this plan set's own rule ("If an atom lists dependencies, they must
+be `done` before it starts"), `DL-7` is not startable.
+
+**DISCOVERY — `ready_frontier` ignores `EXT:` edges, and this is systematic.** `DL-7` is
+listed in `dag.json`'s `dag.ready_frontier` despite the above. Walking all 76 frontier
+entries against `plans[].atoms[].status` — following `dag.resolved_edges` for `EXT:` refs —
+**11 entries carry a dependency that is not `done`, and all 11 of those are `EXT:` edges**
+(`CA-9`, `CE-9`, `DCU-3`, `DL-7`, `EI-2`, `ET-7`, `LV-7`, `PEP-3`, `PEP-11`, `PUBL-10`,
+`WF2UNI-12`; two of them point at atoms whose status is literally `blocked`). Zero
+intra-plan `deps` violations, so the frontier computation is honouring `deps` and skipping
+resolved `EXT:` edges entirely. **The consequence is that "in `ready_frontier`" is not
+evidence an atom is startable** — a session briefed off the frontier will pick up a
+dependency-blocked atom roughly one time in seven. Not fixed here (the generator is outside
+this atom's fence and `dag.json` is owner-generated), but it is the reason this session was
+briefed to build a blocked atom.
+
+**BLOCKER 2 — OWNER CALL: which peers, and whether to ship comparison pages at all.** The
+`done_when` names exactly one peer product and otherwise leaves the literal placeholder
+`{peer-product}` unfilled, so the plan never decided the peer set. Naming competitors is
+positioning, not implementation, and an implementation session must not settle it. The
+second half of the same call: whether a pre-1.0 project publishes comparison pages at all.
+
+**DISCOVERY — the `done_when` is itself a name-scrub violation (out of fence, NOT fixed).**
+The single peer it names is on the owner's own keep-out list for these public repos
+(research-source product names; ruling of 2026-08-05), so satisfying the `done_when`
+literally would publish that name on a public route — the atom as written cannot be
+executed without violating a standing ruling. The name is live in three tracked files
+today: the `DL-7` row and the `DL-7` scope block in `docs/roadmap/atomic/DL.md`, and the
+matching `done_when` string in `docs/roadmap/atomic/dag.json`. **Not fixed here** because
+`dag.json` is the generated truth for both and rewording an atom's `done_when` is an owner
+edit, not an implementer's. Deliberately not named in this entry either — writing it here
+to explain the problem would extend the leak. A NAMES-ONLY sweep of the tracked tree found
+**24 matching lines across 12 files**; the other 21 are design-rationale prose in nine other
+plans plus one module docstring, all pre-existing, all out of this atom's fence.
+
+**FIXED (core-owned, this commit's sibling) — the egress census promised an opt-out that
+does not exist.** Sourcing the PersonalClaw column from code rather than from docs turned
+up a false claim in `docs/architecture/network-egress-hosts.txt`: its `api.github.com`
+judgment said the release check "is the reason `updates.check_enabled` exists".
+`git grep check_enabled -- src/` returns nothing. The real field is `auto_update`, and its
+own `_meta` description states the opposite of the doc — "update checks always run; this
+gates the unattended pull + rebuild + restart". The call site confirms it:
+`gateway.py::GatewayOrchestrator._check_for_updates` awaits `_do_update_check()` and only
+then reads `cfg.auto_update`. **There is no configuration that suppresses the request.**
+The pinning test's docstring repeated the same false sentence. Both corrected, plus two
+call-site tests (`test_self_update.py::test_auto_update_gates_the_apply_not_the_check` and
+`::test_auto_update_on_reaches_the_apply`) that pin the ordering in both branches.
+Note what caught this and what could not: the docs-lint census's stale-citation kind only
+flags `file.py:NNN` citations whose FILE is missing, so a doc naming a config field that
+was never built is invisible to it.
+
+**The PersonalClaw column, sourced from code, so the website session does not re-derive it.**
+Every row below is verified against this tree, not against intent:
+
+- **License MIT** — `LICENSE` plus `pyproject.toml` `license = { text = "MIT" }`.
+- **Version 0.1.3, pre-1.0**; `requires-python = ">=3.12"` (`pyproject.toml`).
+- **19 app extension points** — `apps/manifest.py::PROVIDER_TYPES` (`action`, `agent`,
+  `channel`, `duty_gate`, `inbox`, `knowledge`, `memory`, `model`, `notification`, `prompt`,
+  `sandbox`, `search`, `skills`, `sync`, `task`, `tool`, `trigger`, `trigger_source`,
+  `workflow`). Counted from the frozenset, not from a doc.
+- **Egress is a machine-checked census, not a promise** — `network-egress-hosts.txt` plus
+  `tests/test_network_egress_hosts.py`, which reds on a new routable host literal in
+  `src/personalclaw/**/*.py` or `web/src/**` and on a stale entry. This is the strongest
+  privacy row available and it is a *control*, which is the part worth saying.
+- **But the honest privacy cell is narrower than "no phone-home."** One destination is
+  contacted without the user asking for it — `api.github.com`, at every gateway start and
+  at most once per 12h behind `_UPDATE_CHECK_INTERVAL` — carrying a product-identifying
+  `User-Agent` of `personalclaw-update-check` and the instance's IP, **with no off switch**
+  (above). A cell reading "zero telemetry, and you can disable even the update check" is a
+  factual defect. A cell reading "no analytics, no crash reporting, no usage telemetry; one
+  unprompted release check to GitHub" is true today.
+- **Three shipped non-enforcements constrain any isolation row** —
+  `docs/security/limitations.md`: ACP agents under auto-approve rely on system-prompt
+  framing rather than rails; the app `network` permission is **declaration-only** (no
+  per-app egress isolation); app Python dependencies install into the venv the gateway runs
+  from. Any "sandboxed apps" or "per-app network policy" cell would contradict core's own
+  limitations page.
+
+**Zero claims about any peer product were sourced — and that is not a shortfall.** No peer
+has been chosen (BLOCKER 2), so there was nothing to source; no peer research was attempted
+and no cell was guessed. When the owner names the peer set, every cell needs a `source_url`
+plus `retrieved` date per §Comparison data, and any cell that cannot be sourced from the
+peer's own public docs stays empty or reads "unverified" rather than being inferred.
+
+**What the site session must do, and the shape it must fit.** `personalclaw.dev` has no
+`/compare` route and no `src/data/comparisons.json`. Adding the route means: the data module
+(note the existing `src/data/` convention is `.ts`, not the `.json` the `done_when` says —
+a small spec drift for the owner to settle); one page per peer with a "choose them if"
+section; a route entry in `tests/support/site-contract.mjs`, which today declares exactly
+five marketing routes (`/`, `/product`, `/apps`, `/security`, `/release`) with name, path,
+title and description; then new visual baselines, axe runs and a Lighthouse pass for each
+new route, since `npm run test:ci` fans those out per declared route. Gate is
+`npm run test:prepush` under Node 22.12.0 (it re-runs `npm ci` then the full `test:ci`
+aggregate), with visual snapshots platform-qualified Darwin/Linux, plus
+`npm audit --audit-level=moderate` if the lockfile moves. That is a properly-gated website
+change, not a drive-by, and it stays blocked behind both blockers above regardless.
+
+**Core gate — clean.** No core route was added, so the offline API reference and its
+`known-docs`-style contracts are untouched; `web/` unchanged, so no frontend gate applies.

@@ -23,8 +23,8 @@
 #
 # Format: <host> — <judgment>. State whether it is FETCHED and by WHOSE action.
 #
-# ── Fetched by the product, on its own schedule ────────────────────────────────
-api.github.com — FETCHED, unprompted. The release-check endpoint (`self_update.py`) and the GitHub feed source. Unauthenticated and ETag'd; the request carries no identifiers beyond what any HTTP client sends, but it does reveal the instance's IP to GitHub on a schedule. This is the closest thing in the product to a phone-home and it is the reason `updates.check_enabled` exists.
+# ── Fetched by the product, on its own initiative ──────────────────────────────
+api.github.com — FETCHED, unprompted. The release-check endpoint (`self_update.py::fetch_latest_release`) and the GitHub feed source. WHEN: at every gateway start (`gateway.py::GatewayOrchestrator._check_for_updates`, on the boot path) and thereafter at most once per 12 hours when a dashboard update/system endpoint is hit (`dashboard/handlers/updates.py::_UPDATE_CHECK_INTERVAL` throttles `_do_update_check`) — there is no standalone background timer. Unauthenticated and ETag'd; it carries no user identifiers, but it does send a product-identifying `User-Agent` of `personalclaw-update-check`, and it reveals the instance's IP to GitHub. This is the closest thing in the product to a phone-home, and TODAY THERE IS NO SWITCH THAT TURNS IT OFF: `auto_update` gates only the unattended pull + rebuild + restart — `GatewayOrchestrator._check_for_updates` runs the check BEFORE it reads `cfg.auto_update`, and the field's own config metadata says so ("update checks always run"). Any claim that this check is opt-out is false today; if an opt-out lands, this line and `tests/test_self_update.py::test_auto_update_gates_the_apply_not_the_check` move with it.
 # ── Fetched, but only because the user asked for that specific thing ───────────
 codeload.github.com — FETCHED on `personalclaw app new`: downloads the app-template tarball. User-initiated, one-shot, never on a schedule.
 hn.algolia.com — FETCHED only if the user enables the shipped Hacker News feed preset. A preset is a suggestion; nothing polls it until it is turned on.
