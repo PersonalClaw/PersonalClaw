@@ -35,6 +35,13 @@ _CALL_SITE_SURFACES = {
     # run is deferred". `_synthesise` routes an EMPTY completion — the actual no-model shape,
     # which does not raise — through the same fallback as a raised one.
     "knowledge/source_digest.py": "source_digest",
+    # The regenerate action's recompute (`updates.regenerate_synthesis`). The SAME surface as
+    # the watchers' drain, because it is the same promise: a recompile is PROPOSED, never
+    # applied in place. With no model nothing is filed and the reader is told so (503) rather
+    # than shown a cheerful 200 over an empty proposal. `one_shot_completion` returns a FALSY
+    # value rather than raising, so the check is `if not text: raise SynthesisUnavailable` —
+    # an `except` would never fire.
+    "knowledge/updates.py": "synthesis_watchers",
     "nl_to_cron.py": "assistant_reasoning",
     "context.py": "assistant_reasoning",
     # visualize(data, hint) — the agency-free data→genui primitive (AMBIENT-SURFACES

@@ -2559,8 +2559,20 @@ async def get_item_staleness(request: web.Request) -> web.Response:
 async def regenerate_item(request: web.Request) -> web.Response:
     """POST /api/knowledge/items/{id}/regenerate — the one action the staleness banner offers.
 
-    It files a PROPOSAL (``auto_accept=False``) rather than overwriting in place: a synthesis
-    the reader may already have acted on should not change under them without a review step.
+    It RECOMPUTES the synthesis from the sources the item cites and files that as a PROPOSAL
+    (``auto_accept=False``) rather than overwriting in place: a synthesis the reader may already
+    have acted on should not change under them without a review step. The recompute itself lives
+    in :func:`personalclaw.knowledge.updates.regenerate_synthesis` — this route is the HTTP
+    shape around it and owns no synthesis of its own.
+
+    ``ok`` reports whether a proposal was actually FILED, so the two ways a regeneration can
+    honestly come back empty are legible instead of dressed as success:
+
+    * nothing to work with or nothing to change (no cited sources, prose identical to the
+      stored item, a validation refusal, a queue SKIP) — ``200`` with ``ok: false`` and the
+      layer's own sentence under ``proposal.reason``, which the banner renders verbatim;
+    * no model produced a synthesis — ``503`` with ``reason: "model_unavailable"``, the same
+      shape as a missing update pipeline below, because both mean the action cannot run here.
 
     Idempotency belongs to the proposal layer, which owns the pending row; this route only
     re-surfaces what that layer reports. ``already_pending`` is ``true``/``false`` when
@@ -2578,7 +2590,7 @@ async def regenerate_item(request: web.Request) -> web.Response:
             {"error": "only a synthesized item can be regenerated"}, status=400
         )
     try:
-        from personalclaw.knowledge.updates import propose_update
+        from personalclaw.knowledge.updates import SynthesisUnavailable, regenerate_synthesis
     except ImportError:
         # The update pipeline is a separate module; without it there is no regenerate action
         # to perform. An explicit "unavailable" beats a traceback on a button the banner
@@ -2592,20 +2604,34 @@ async def regenerate_item(request: web.Request) -> web.Response:
             },
             status=503,
         )
-    result = await propose_update(store, item_id, auto_accept=False)
-    already = result.get("already_pending") if isinstance(result, dict) else None
+    try:
+        result = await regenerate_synthesis(store, item_id)
+    except SynthesisUnavailable as exc:
+        # No model, no synthesis, nothing filed. Said out loud on the same rail as the missing
+        # pipeline above — the alternative (200 with a cheerful body) is the inert control this
+        # route used to be.
+        logger.warning("knowledge regenerate could not run: %s", exc)
+        return web.json_response({"error": str(exc), "reason": "model_unavailable"}, status=503)
+    if not isinstance(result, dict):  # pragma: no cover — the outcome contract is a dict
+        result = {}
+    # FILED, not merely "the call returned". `pending` is the proposal layer's own word for a
+    # row waiting on the owner and `applied` for a landed write; anything else queued nothing,
+    # which is exactly what `ok` has to say.
+    filed = bool(result.get("pending") or result.get("applied"))
+    already = result.get("already_pending")
     try:
         sel().log_tool_invocation(
             session_key="dashboard:knowledge",
             tool_name="knowledge_regenerate_item",
-            outcome="success",
+            outcome="success" if filed else "skip",
             request_id=item_id,
             source="dashboard",
+            error="" if filed else str(result.get("reason") or ""),
         )
     except Exception:
         logger.warning("SEL audit failed for knowledge regenerate", exc_info=True)
     return web.json_response(
-        {"ok": True, "item_id": item_id, "already_pending": already, "proposal": result}
+        {"ok": filed, "item_id": item_id, "already_pending": already, "proposal": result}
     )
 
 
