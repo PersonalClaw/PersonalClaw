@@ -1430,7 +1430,8 @@
           "done_when": "a stale If-Match is refused 409; an oversized body is refused before buffering; a mime/kind mismatch is refused; an accepted write bumps exactly one version and logs one SEL row with byte count; GET /model returns parsed model + loss report and the render round trip is fully server-side (browser never sees OOXML); offline route reference regenerated.",
           "deps": [
             "DFE-3"
-          ]
+          ],
+          "pr": 2020
         },
         {
           "id": "DFE-5",
