@@ -1021,11 +1021,21 @@ def _ablation_bench_skill(args: argparse.Namespace, skill: str) -> None:
     subject = str(getattr(args, "subject", "") or "")
     if getattr(args, "dry_run", False):
         runs = skills_bench.consulted_runs(skill)
+        # The preflight resolves the subject the SAME way the scored path will, so `--dry-run`
+        # cannot print `<none>` for an invocation that would have found one (or the reverse).
+        population = (
+            skills_bench.ReplayPopulation(skill=skill, subject=subject, candidates=(subject,))
+            if subject
+            else skills_bench.replay_population(skill)
+        )
+        origin = "operator" if subject else "harvested"
         print(
             f"Skill bench '{skill}'\n"
             f"  consulted runs: {len({r['run_id'] for r in runs})}\n"
-            f"  subject:        {subject or '<none>'}\n"
-            "--dry-run: nothing was called."
+            f"  subject:        {population.subject or '<none>'} ({origin})\n"
+            f"  harvested candidates: {len(population.candidates)}\n"
+            + (f"  {population.reason}\n" if population.reason else "")
+            + "--dry-run: nothing was called."
         )
         return
     report = skills_bench.bench_skill(
@@ -1036,6 +1046,17 @@ def _ablation_bench_skill(args: argparse.Namespace, skill: str) -> None:
     )
     print(f"Skill bench '{skill}' → {report.verdict}")
     print(f"  consulted runs: {len(report.consulted_run_ids)}")
+    if report.subject:
+        replayed = f"  replayed: {report.subject} ({report.subject_origin or 'operator'}"
+        replayed += f", run {report.subject_run_id})" if report.subject_run_id else ")"
+        print(replayed)
+    if len(report.subject_candidates) > 1:
+        # Say what was NOT scored. One subject per MatrixSpec is the current shape; printing the
+        # population makes an under-scored bench visible instead of reading as the whole history.
+        print(
+            f"  harvested candidates: {len(report.subject_candidates)} "
+            "(one scored — MatrixSpec carries a single subject)"
+        )
     if report.suppression:
         print(f"  suppression verified: {report.suppression.get('verified')}")
     if report.delta is not None:

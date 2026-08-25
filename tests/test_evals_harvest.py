@@ -61,6 +61,7 @@ def _run(
     started: bool = True,
     finished: bool = True,
     steps: tuple[str, ...] = ("fetch",),
+    consulted: tuple[str, ...] = (),
 ) -> WorkflowRun:
     """Create a run and journal it the way the controller does.
 
@@ -79,6 +80,10 @@ def _run(
         j.step_completed(
             f"root.{node}", node, epoch=1, cache_key=f"ck-{node}", state=InstanceState.DONE
         )
+    # Written through the REAL WF2-R13 emitter, so a change to the `consulted` event's shape
+    # breaks the `consulted_refs` scope instead of quietly emptying it.
+    for index, ref in enumerate(consulted):
+        j.consulted(f"root.{steps[0] if steps else 'fetch'}", f"n{index}", ref=ref)
     if finished:
         j.run_finished(status.value, elapsed_secs=1.5, tokens=42)
     return run
@@ -473,6 +478,97 @@ def test_the_strict_loader_returns_the_installed_suite(home):
     assert [c["harvest"]["workflow_name"] for c in scoped] == ["alpha"]
     with pytest.raises(hv.EmptyHarvestError, match="'gamma'"):
         hv.load_harvested_suite(workflow_name="gamma")
+
+
+# ── the `consulted_refs` scope (ES-7 §3.3's replay population) ────────────────
+
+
+def test_consulted_refs_records_what_the_run_actually_loaded(home):
+    """The field the scope reads. Untested until now, and a filter over an unwritten field
+    would have matched nothing while looking like a clean predicate."""
+    run = _run(journal_inputs={"q": "1"}, consulted=("skill:code/foo", "template:daily"))
+    scenario, reason = hv.case_from_run(run)
+
+    assert reason == ""
+    assert scenario["harvest"]["consulted_refs"] == ["skill:code/foo", "template:daily"]
+    # A run that consulted nothing records the ABSENCE, not a missing key — the scope has to be
+    # able to tell "loaded nothing" from "we never looked".
+    quiet, _ = hv.case_from_run(_run(name="quiet", journal_inputs={"q": "2"}))
+    assert quiet["harvest"]["consulted_refs"] == []
+
+
+def test_the_suite_scopes_to_the_runs_that_consulted_a_skill(home):
+    """BOTH directions plus the vacuity floor.
+
+    Keeps the run whose ledger names the skill; drops the run that named a different one AND the
+    run that named nothing. The unfiltered suite is asserted first: without it, a scope that
+    matched nothing because nothing was harvested would read exactly like a working filter.
+    """
+    _run(name="alpha", journal_inputs={"q": "1"}, consulted=("skill:code/foo",))
+    _run(name="beta", journal_inputs={"q": "2"}, consulted=("skill:code/bar",))
+    _run(name="gamma", journal_inputs={"q": "3"})
+    hv.harvest()
+
+    # Vacuity floor: all three ARE in the library, so the scope below is narrowing a real
+    # population rather than reporting an empty one.
+    assert len(hv.load_harvested_suite()) == 3
+
+    kept = hv.load_harvested_suite(consulted_ref="code/foo")
+    assert [c["harvest"]["workflow_name"] for c in kept] == ["alpha"]
+    assert [
+        c["harvest"]["workflow_name"] for c in hv.load_harvested_suite(consulted_ref="code/bar")
+    ] == ["beta"]
+    # The DROPPED directions, each named: another skill's run, and a run that consulted nothing.
+    dropped = {c["harvest"]["workflow_name"] for c in hv.installed_harvested_cases()} - {
+        c["harvest"]["workflow_name"] for c in kept
+    }
+    assert dropped == {"beta", "gamma"}
+
+
+def test_the_consulted_scope_is_not_a_substring_match_at_suite_level(home):
+    """`foo` must not pull in `foo-bar`'s run, or one skill's bench replays another's inputs."""
+    _run(name="alpha", journal_inputs={"q": "1"}, consulted=("skill:code/foo-bar",))
+    hv.harvest()
+
+    assert len(hv.load_harvested_suite()) == 1, "vacuity floor: the case IS in the suite"
+    assert hv.load_harvested_suite(consulted_ref="code/foo-bar")
+    with pytest.raises(hv.EmptyHarvestError, match="code/foo"):
+        hv.load_harvested_suite(consulted_ref="code/foo")
+
+
+def test_the_refusal_names_which_scope_emptied_the_suite(home):
+    """ "Nothing was harvested" and "this skill has no harvested run" must not read alike."""
+    _run(name="alpha", journal_inputs={"q": "1"}, consulted=("skill:code/foo",))
+    hv.harvest()
+
+    with pytest.raises(hv.EmptyHarvestError) as caught:
+        hv.load_harvested_suite(consulted_ref="code/missing")
+    assert "runs that consulted 'code/missing'" in str(caught.value)
+    with pytest.raises(hv.EmptyHarvestError) as both:
+        hv.load_harvested_suite(workflow_name="alpha", consulted_ref="code/missing")
+    assert "workflow 'alpha' and runs that consulted 'code/missing'" in str(both.value)
+
+
+def test_one_matcher_serves_the_live_event_and_the_frozen_ref(home):
+    """The anti-second-mechanism rail.
+
+    `consulted_runs` matches the live `consulted` event; the suite scope matches the SAME ref
+    after it was frozen into `harvest.consulted_refs`. If they ever became two predicates they
+    would disagree about `foo` vs `foo-bar` and one skill's bench would silently replay
+    another's runs. Asserted by identity, and by the absence of the private copy that used to
+    live in the bench.
+    """
+    from personalclaw.evals import skills_bench
+
+    assert skills_bench.harvest.ref_names_skill is hv.ref_names_skill
+    assert not hasattr(skills_bench, "_ref_names_skill"), "a second matcher was re-introduced"
+    # The predicate itself, both directions.
+    assert hv.ref_names_skill("skill:code/foo", "code/foo") is True
+    assert hv.ref_names_skill("code/foo", "code/foo") is True
+    assert hv.ref_names_skill("skill:code/foo", "foo") is True
+    assert hv.ref_names_skill("skill:code/foo-bar", "foo") is False
+    assert hv.ref_names_skill("", "foo") is False
+    assert hv.ref_names_skill("skill:code/foo", "") is False
 
 
 def test_the_suite_excludes_a_case_whose_provenance_was_stripped(home):

@@ -17,6 +17,12 @@ Two things make this bench honest rather than decorative:
 2. **An unverified suppression refuses to produce a verdict.** :func:`bench_skill` returns
    ``INCONCLUSIVE`` with a reason instead of a delta, on the §1.2 principle that a
    measurement that could not run is never reported as a zero.
+3. **The replayed artifact is a consulted run, not a hand-picked scenario.** The default
+   subject comes from :func:`replay_population`, which scopes the harvested suite to the
+   cases whose own run consulted the skill — `harvest.consulted_refs`, matched by the SAME
+   :func:`~personalclaw.evals.harvest.ref_names_skill` predicate :func:`consulted_runs` uses
+   on the live event. Without that scope the bench gated on the consulted runs and then
+   replayed something else, which is a delta attributed to a skill the artifact never used.
 
 Arm vocabulary: "surfaced"/"suppressed" is how §3.3 SAYS on/off for a skill, so it is an
 ALIAS of the shared :mod:`personalclaw.evals.overlay` arms, not a second dialect. Minting a
@@ -32,7 +38,7 @@ from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from typing import Any
 
-from personalclaw.evals import ablation
+from personalclaw.evals import ablation, harvest
 from personalclaw.evals import overlay as overlay_lib
 from personalclaw.evals.matrix import MatrixSpec, aggregate_by
 
@@ -86,7 +92,7 @@ def consulted_runs(skill_name: str, *, limit: int = DEFAULT_RUN_SCAN) -> list[di
             if event.get("kind") != CONSULTED:
                 continue
             ref = str(event.get("ref") or "")
-            if not _ref_names_skill(ref, skill_name):
+            if not harvest.ref_names_skill(ref, skill_name):
                 continue
             out.append(
                 {
@@ -100,17 +106,67 @@ def consulted_runs(skill_name: str, *, limit: int = DEFAULT_RUN_SCAN) -> list[di
     return out
 
 
-def _ref_names_skill(ref: str, skill_name: str) -> bool:
-    """Does a ``consulted`` event's ``ref`` name this skill?
+# ── the replay population: the CONSULTED runs' own harvested inputs ──────────
 
-    Matched on the whole ref or on its last path segment, so both ``skill:code/foo`` and a
-    bare ``code/foo`` resolve. Deliberately NOT a substring test: ``foo`` must not match
-    ``foo-bar``, or one skill's bench would replay another's runs.
+
+@dataclass(frozen=True)
+class ReplayPopulation:
+    """The harvested cases whose own runs consulted this skill.
+
+    `subject` is the one this bench replays; `candidates` is the whole filtered population, so a
+    caller can see that a plural replay is available and that only one was scored.
     """
-    if not ref:
-        return False
-    candidates = {ref, ref.split(":", 1)[-1]}
-    return skill_name in candidates or skill_name == ref.rsplit("/", 1)[-1]
+
+    skill: str
+    subject: str = ""
+    subject_run_id: str = ""
+    candidates: tuple[str, ...] = ()
+    reason: str = ""
+
+    @property
+    def found(self) -> bool:
+        return bool(self.subject)
+
+
+def replay_population(skill_name: str) -> ReplayPopulation:
+    """The consulted runs' OWN inputs, as harvested scenario names.
+
+    This is what makes §3.3's *"replays consulted runs"* literal in INPUTS rather than only in
+    population and attribution. The filter is
+    :func:`personalclaw.evals.harvest.installed_harvested_cases`'s ``consulted_ref`` scope, which
+    matches the run's frozen ``harvest.consulted_refs`` through the SAME
+    :func:`~personalclaw.evals.harvest.ref_names_skill` matcher :func:`consulted_runs` uses on the
+    live event — one matcher, so the live scan and the persisted scan cannot disagree.
+
+    Returns a REASON rather than an empty subject silently: an empty population is a statement
+    about the harvest, and :class:`~personalclaw.evals.harvest.EmptyHarvestError` already says it
+    in words a caller must not flatten to a zero delta.
+
+    The NEWEST case is chosen because a bench measures the skill as it is used now, and because
+    :class:`~personalclaw.evals.matrix.MatrixSpec` carries exactly ONE subject. Scoring the whole
+    `candidates` list needs a per-skill subject form, which the plan records as an unmade design
+    decision (``MatrixSpec.subject``'s own vocabulary does not include a skill), so this reports
+    the population it did not score instead of inventing a shape for it.
+    """
+    if not skill_name:
+        return ReplayPopulation(skill=skill_name, reason="no skill named")
+    try:
+        cases = harvest.load_harvested_suite(consulted_ref=skill_name)
+    except harvest.EmptyHarvestError as exc:
+        return ReplayPopulation(skill=skill_name, reason=str(exc))
+    names = tuple(str(case.get("name") or "") for case in cases if case.get("name"))
+    if not names:
+        return ReplayPopulation(
+            skill=skill_name,
+            reason="harvested cases consulted this skill but none carries a scenario name",
+        )
+    newest = cases[-1]
+    return ReplayPopulation(
+        skill=skill_name,
+        subject=str(newest.get("name") or ""),
+        subject_run_id=str((newest.get("harvest") or {}).get("run_id") or ""),
+        candidates=names,
+    )
 
 
 # ── suppression verification (the §3.3 honesty rail) ─────────────────────────
@@ -229,6 +285,15 @@ class SkillBenchReport:
 
     skill: str
     subject: str
+    #: Where :attr:`subject` came from: `"harvested"` (the consulted runs' own inputs, the
+    #: default) or `"operator"` (an explicit `--subject`). Recorded because a report that does
+    #: not say WHICH artifact it replayed cannot be read as evidence about the skill.
+    subject_origin: str = ""
+    #: The run the harvested subject was built from — `""` for an operator-named subject.
+    subject_run_id: str = ""
+    #: Every harvested case whose run consulted this skill. One is scored (see
+    #: :func:`replay_population`); the rest are reported so an under-scored population is visible.
+    subject_candidates: list[str] = field(default_factory=list)
     verdict: str = ablation.INCONCLUSIVE
     reason: str = ""
     consulted_run_ids: list[str] = field(default_factory=list)
@@ -284,8 +349,15 @@ def bench_skill(
 ) -> SkillBenchReport:
     """Bench one skill over the runs that consulted it, surfaced vs suppressed.
 
-    Refuses (``INCONCLUSIVE`` + a reason, no delta) when: nothing consulted the skill, or
-    suppression could not be verified. Both refusals exist because the alternative is a
+    ``subject`` is OPTIONAL and normally left empty: the artifact replayed is then derived from
+    the consulted runs' own harvested inputs via :func:`replay_population`, which is what makes
+    §3.3's *"replays consulted runs"* true of the inputs and not only of the population. An
+    explicit ``subject`` overrides the derivation and is recorded as ``subject_origin="operator"``,
+    because an operator-chosen scenario is a different claim from a replayed run.
+
+    Refuses (``INCONCLUSIVE`` + a reason, no delta) when: nothing consulted the skill, no
+    harvested run consulted it (the harvest's OWN refusal sentence is carried through verbatim),
+    or suppression could not be verified. Every refusal exists because the alternative is a
     fabricated 0.0 delta that reads as "this skill does not earn its place".
     """
     moment = now or datetime.now(tz=timezone.utc)
@@ -316,9 +388,18 @@ def bench_skill(
         report.reason = check.reason or "suppression could not be verified"
         return report
 
-    if not subject:
-        report.reason = "no benchmark subject: the bench needs a scenario to replay"
-        return report
+    if subject:
+        report.subject_origin = "operator"
+    else:
+        population = replay_population(skill_name)
+        report.subject_candidates = list(population.candidates)
+        if not population.found:
+            report.reason = population.reason
+            return report
+        subject = population.subject
+        report.subject = subject
+        report.subject_origin = "harvested"
+        report.subject_run_id = population.subject_run_id
 
     if run_matrix is None:  # pragma: no cover - the default wiring
         from personalclaw.evals.runner import run_matrix as _default

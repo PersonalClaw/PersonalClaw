@@ -745,7 +745,7 @@ Examples:
   personalclaw ablation --dry-run                    # the cell preflight, nothing called
   personalclaw ablation --force                      # measure the next component now
   personalclaw ablation --component judge-node
-  personalclaw ablation --skill code/release-flow --subject triage   # the §3.3 bench
+  personalclaw ablation --skill code/release-flow     # the §3.3 bench, over its consulted runs
 
 The component is toggled by an overlay applied ONLY inside the spawned child; your live
 spec and config are never edited, and a run that leaked an edit refuses to report. A
@@ -763,7 +763,12 @@ no-delta verdict files a retirement proposal — removing anything stays your ca
         "--skill", default="", help="Bench one SKILL surfaced-vs-suppressed (§3.3) instead"
     )
     abl_parser.add_argument(
-        "--subject", default="", help="Scenario to replay for --skill (required to score it)"
+        "--subject",
+        default="",
+        help=(
+            "Override the scenario --skill replays. Default: the newest harvested case whose "
+            "run consulted the skill (`personalclaw eval-harvest` builds them)"
+        ),
     )
     abl_parser.add_argument("--trials", type=int, default=3, help="Trials per arm (default: 3)")
     abl_parser.add_argument(
