@@ -77,9 +77,12 @@ def test_provider_lists_single_library_source(store):
     assert sources[0].id == "native" and sources[0].item_count == 2
 
 
-def test_twelve_native_types():
-    assert len(NATIVE_TYPES) == 12
-    assert {"note", "pdf", "video", "bookmark"} <= set(NATIVE_TYPES)
+def test_thirteen_native_types():
+    # 13 since PA-4 added `decision` (PROACTIVE-ASSISTANT §2.2). The count is a ratchet, so the
+    # named subset below is what actually pins membership — a count alone would pass if a type
+    # were swapped for another.
+    assert len(NATIVE_TYPES) == 13
+    assert {"note", "pdf", "video", "bookmark", "decision"} <= set(NATIVE_TYPES)
 
 
 # ── ingest queue ──
