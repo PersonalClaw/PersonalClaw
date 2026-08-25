@@ -2889,7 +2889,7 @@
         {
           "id": "PA-2",
           "title": "Triage pipeline: collect \u2192 classifier gate \u2192 tiered strict-JSON proposals \u2192 rank \u2192 deliver + Morning-triage template (Session 2)",
-          "status": "todo",
+          "status": "done",
           "scope": "\u00a71.1 Collect; \u00a71.2 Classifier gate; \u00a71.3 Tiered strict-JSON proposals; \u00a71.5 Rank + deliver; template pack (\u00a71 intro / \u00a75.4)",
           "done_when": "Firing the bundled \"Morning triage\" WorkflowDef collects inbox + channel + Run-Ledger items into a stable ordinal manifest, the classifier gate drops/surfaces per per-source NL rules (zero-item windows short-circuit before LLM spend), ONE strict-JSON call emits \u22648 tier-clamped proposals honoring the exact-ordinal-id contract, and a materiality-ranked digest is delivered through the notify gate as one normal WorkflowRun",
           "deps": [
@@ -7781,8 +7781,8 @@
         "plan": "OU"
       },
       {
-        "id": "PA-2",
-        "title": "Triage pipeline: collect \u2192 classifier gate \u2192 tiered strict-JSON proposals \u2192 rank \u2192 deliver + Morning-triage template (Session 2)",
+        "id": "PA-3",
+        "title": "Trivial-tier auto-execution + `inbox-op` action provider (Session 3)",
         "plan": "PA"
       },
       {
@@ -9783,9 +9783,9 @@
         "code": "PA",
         "plan": "PROACTIVE-ASSISTANT",
         "total_atoms": 6,
-        "done": 1,
+        "done": 2,
         "in_progress": 0,
-        "todo": 5,
+        "todo": 4,
         "blocked": 0
       },
       {
