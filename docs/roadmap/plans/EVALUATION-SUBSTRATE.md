@@ -1071,3 +1071,92 @@ Sharpens, doesn't append: RunPin + scenario library extend **Session 1** (the st
   **479 files / 5053 tests passed**; `npm run build` clean; `scripts/gate_report.py` 6/6; probe residue 16
   tree-wide with **0** introduced. `src/personalclaw/reference/routes.md` regenerated for the three new
   routes (verified written into the worktree, not the main checkout).
+
+## Execution log — ES-5 registration seal (§2.1 "immutable `registration.json`") — clause was DECORATION, now binding; atom stays `todo`
+
+- [2026-08-25][ES-5] 🔴 **§2.1's pin was self-referential, and the 2026-08-23 audit's "MET — second
+  write refused, read-only on disk" was too generous.** Everything that verified a study lived in
+  `evals/studies/<id>/`: `rubric_status()` compared the pinned `rubric.md` against `rubric_sha256`, and
+  `rubric_sha256` is a FIELD OF `registration.json` in the same directory. So the whole four-way rubric
+  invalidation was defeated by two ordinary edits — rewrite `rubric.md`, set `rubric_sha256` to the new
+  text's hash — after which every hash in the directory agrees with every other one and the study reads
+  as pristine. `registration.json` also carries `agreement_floor` and `k`, which `decide()` READS as the
+  verdict threshold, so an experimenter who saw `judge_unreliable` could lower the floor and re-run. And
+  `reg.sha256()` — docstring: *"the study's identity in the results ledger"* — was **recomputed from
+  whatever was on disk at run time** and written into the evidence unit (`studies.py:1333`), the
+  `results.tsv` pin (`_pin_for`) and `study_view`, with nothing to compare it against. A hash computed
+  from the value it is meant to pin cannot pin it. The only protection was mode `0400`, which the module
+  itself calls *"a tripwire, not the lock"*.
+
+- [2026-08-25][ES-5] **What shipped: the seal, one journal outside the directory under verification.**
+  `store.append_study_seal()` / `read_study_seal()` write `evals/study_seals.tsv`
+  (`study_id`/`registration_sha256`/`sealed_ts`), append-only, **first row wins on read** — so the
+  cheapest attack (append the edited registration's hash) is a no-op, and the next cheapest (rewrite or
+  truncate the journal) is a different and much louder act than editing one JSON field. This is
+  tamper-EVIDENT, not tamper-proof: the same standard the pinned rubric already claimed, one directory
+  further out, which is the difference between a claim that can fail and one that cannot.
+  `studies.seal_status()` returns `ok` / `registration_unsealed` / `registration_tampered`.
+
+- [2026-08-25][ES-5] **Two call sites, and the precedence is load-bearing.** (1) `run_study` checks the
+  seal **before the rubric and before arm 1** — before, because `rubric_sha256` is a field of the object
+  being verified, so checking the rubric first is checking a claim against itself. (2)
+  `study_arms.arm_bodies_for_study` raises `StudyArmError`, which is what makes the refusal reach
+  `personalclaw study --run` **and `--dry-run`**: the CLI calls it before the spend preflight, and a dry
+  run never reaches `run_study` at all, so without this second site the seal would have missed the one
+  surface that exists to be consulted before spending. `decide()` gained `seal_state`/`seal_detail` with
+  the same shape as `rubric_state`, invalidating first.
+
+- [2026-08-25][ES-5] **An UNSEALED registration is `invalidated`, not tolerated — a deliberate clean
+  break.** "No seal was ever recorded" and "the seal was deleted" are indistinguishable from inside the
+  check, and the permissive reading of an indistinguishable pair IS the hole (an attacker who can edit
+  the registration can delete a journal, and would be rewarded for it). A study registered before this
+  journal existed therefore has to be re-registered: one command, under the pre-1.0 banner, and the
+  flywheel re-registers on the next filed diff. `study_seals.tsv` is deliberately **not**
+  `derived_within` on the `evals` inventory entry — excluding it from snapshots would make every
+  restored study read as unsealed, which is the opposite of the `locked/` exclusion's reasoning.
+
+- [2026-08-25][ES-5] **The discriminating test is the one nothing else could catch.**
+  `test_a_forged_rubric_pin_that_the_RUBRIC_CHECK_calls_OK_is_still_invalidated` forges the rubric AND
+  its hash, and its FIRST assertion is the floor: `rubric_status(forged, forged_rubric) == (RUBRIC_OK,
+  "")`. That proves the study is invisible to the pre-seal implementation, so the red the seal produces
+  is a red nothing was catching. Falsification of the `run_study` site (replacing `seal_status(reg)` with
+  a literal `SEAL_OK`) reds three tests with **`assert 'win' == 'invalidated'`** — with the seal deleted,
+  a tampered study returns a WIN, which is the exact artifact §2 exists to prevent. Falsifying the
+  first-wins read (last-wins) reds only the append test; falsifying the `arm_bodies_for_study` site reds
+  the CLI test with *"DID NOT RAISE SystemExit"* while its intact-seal floor still passes.
+
+- [2026-08-25][ES-5] 🔴 **A vacuity floor found a real round-trip bug, and the seal is what made it
+  matter.** `registration_from_dict` read `float(data.get("agreement_floor") or 0.6)` — a **falsy 0.0
+  became 0.6**. Harmless before (a lossy read nobody hashed); with a seal it is a false accusation: a
+  user whose `evals.judge_agreement_floor` is `0` registers a study whose rehydrated form hashes
+  differently from the bytes on disk, so every one of their studies would be `registration_tampered`.
+  Fixed to an `is None` check, with `test_a_zero_agreement_floor_ROUND_TRIPS_or_the_seal_calls_an_honest
+  _study_tampered` pinning it. A default is what an ABSENT key means, never what a zero means.
+
+- [2026-08-25][ES-5] **Revised clause status — nine of ten hold; the earlier table's "over the harvested
+  suite" row is stale** (closed by the 2026-08-24 executor session's `harvested_study_cases()`; the log
+  wins over the table). The one clause still short is the sentence the criterion opens with, and it is
+  short by an **owner decision, not by missing code**: a flywheel template-diff **pre-registers**
+  automatically and the RUN is `personalclaw study --run`. This work strengthens the case for ratifying
+  that seam rather than reversing it — auto-registration is only safe *because* the registration is now
+  binding, and a 3-case suite at k=5 is 30 arm + 90 judge calls that no agent tool call should start
+  silently (Autonomy-Guardrails' territory). **Owner call, unchanged and now cheaper to ratify.**
+
+- [2026-08-25][ES-5] **What the seal does NOT cover, stated so nobody reads `seal_status: ok` as more
+  than it says.** It covers the registration — hypothesis, metric, decision rule, `k`, `agreement_floor`,
+  `rubric_sha256`, `budget_usd`, and the locked checks' **filenames**. It does not cover a locked check's
+  **content**: `locked/*.json` is `0600` but unhashed, so weakening an `expect_exit_code` or dropping a
+  `required_phrases` entry after registration is currently undetectable, and §2.2's anti-nodding half is
+  as editable as §2.1's was. The clean closure is one field — `locked_sha256` over
+  `[c.to_dict() for c in load_locked_checks(id)]`, computed at registration from `sorted(parsed, key=id)`
+  and verified in `run_study` as `locked_checks_tampered` — which the seal then covers transitively. NOT
+  built here: it is outside the criterion's clause list, it changes the registration schema, and getting
+  the sort/formatting normalization wrong would invalidate honest studies. Recommended as the next ES-5
+  increment, with the two standing owner decisions (`LOW_POWER_CASES = 3`; LEARN-R2 promotion discipline).
+
+- **Gate:** `make lint` clean (black 2058 files, mypy 1012 source files, 0 issues); `scripts/gate_report.py`
+  **6/6 PASS**; targeted `pytest --no-cov` — `test_evals_studies` + `test_evals_study_arms` +
+  `test_evals_store` + `test_evals_routes` + `test_evals_harvest` + `test_evals_pinning` +
+  `test_durability_inventory` + `test_snapshot` **320 passed**, the three refiner suites **123 passed**,
+  eight new seal tests green; probe residue **16 tree-wide, 0 introduced**; every falsification restored
+  from a file copy at the literal path and grepped back.
