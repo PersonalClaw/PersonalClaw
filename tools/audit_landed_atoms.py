@@ -618,6 +618,7 @@ PARTIAL_PATTERNS = (
     r"\bunmeasured\b",
     r"could not drive",
     r"stays `?todo`? (?:with|on) ",
+    r"\bstill `?todo`?\b",
     r"zero production (?:importers|consumers|callers)",
     r"no production (?:importer|consumer|caller)",
 )
@@ -674,6 +675,15 @@ ENTRY_START = re.compile(
 MENTION = re.compile(r"`([A-Z][A-Z0-9]{0,7}\d*-\d+)`")
 # code comments do not backtick the id, so the caveat scan needs a bare form
 MENTION_BARE = re.compile(r"\b([A-Z][A-Z0-9]{1,7}-\d+)\b")
+# ``MENTION_BARE`` is also what reads an entry's SUBJECT (see ``_subject_id``), because an entry
+# declares its subject in a leading bracketed tag — ``- [2026-08-23][ES-7]`` — as often as in
+# prose, and that tag carries no backticks. ``ENTRY_START`` already splits on the form; ``MENTION``
+# could not read it, so the entry attributed to nobody. Measured on ``ES-7``: **fifteen** of its
+# own ``- [2026-08-2x][ES-7 §3.3]`` entries were invisible and its whole verdict came from the one
+# place it happens to be backticked — inside the ``[harvest]`` entry that says of itself "Not an
+# atom of its own". A dedicated ``ENTRY_TAG`` regex was written for the tag first and then deleted:
+# neutering it left all 78 tests green, because the tag id is always the first id in the headline
+# anyway, so the bare-first rule already covers it. One rule, not two.
 
 
 def _normalise(text: str) -> str:
@@ -690,6 +700,34 @@ def _clauses(low: str) -> list[str]:
     and its keyword share one clause under either split.
     """
     return [c for c in re.split(r"(?<=[.;!?])\s+", low) if c]
+
+
+def _subject_id(chunk: str) -> str:
+    """The ONE atom an entry adjudicates, or ``""``.
+
+    "Named in the headline" is not the same as "is the subject", and the difference is a whole
+    class of mis-attribution. Measured on ``origin/main``: ``DCU-3`` was reported
+    LANDED-BUT-GATED off ``- **2026-08-24 — `DCU-4` DONE (…) except the one clause that needs
+    `DCU-3`.**`` — its id sits in that headline, but as the dependency the *other* atom is
+    blocked on. ``DCU-3``'s own deliverables (``macos_driver.py``, ``macos_ffi.py``) are not on
+    the ref at all. Same shape for ``ES-7`` in the ``[harvest]`` entry's headline.
+
+    So the subject is a single id: the FIRST id in the headline, **backticked or bare**. These
+    entries are written subject-first — "``DCU-4`` DONE … except …", "``ES-5`` … and ``ES-7`` …
+    landed PARTIAL for want of", "``- [2026-08-23][ES-7]``" — and the bare form is not optional:
+    ``CA-7``'s own ruling opens "**CA-7 PARTIAL — the atom stays ``todo``**" with no backticks,
+    then backticks ``CA-6`` two lines down, still inside the headline window. Reading only
+    backticks handed that entry to ``CA-6`` and left ``CA-7`` with no verdict of its own. A bare
+    token that is not an atom at all (``RFC-2119``, ``SEV-2``) resolves to an id no catalog
+    contains, so it attributes to nobody — the failure mode is inert.
+
+    What that gives up: an entry that genuinely rules on two atoms at once ("``ES-5`` and
+    ``ES-7`` both DONE") demotes the second to cross-reference. That is the safe direction —
+    a cross-reference cannot produce a verdict at all (see ``decide_log``), so the atom lands
+    in UNDECIDABLE-CHEAPLY rather than in the just-flip-it bucket on a neighbour's say-so.
+    """
+    first = MENTION_BARE.search(chunk[:HEADLINE])
+    return first.group(1) if first else ""
 
 
 @dataclass
@@ -765,10 +803,10 @@ def scan_plan_logs(plans_dir: Path = PLANS_DIR) -> dict[str, list[LogHit]]:
 
     Entries here are multi-paragraph and inconsistently started (``### 2026-08-22 —``,
     ``- **2026-08-22 —``, ``- [2026-08-16][DAS-10]``, and bare ``- **REMAINING``), and one
-    entry routinely names *other* atoms in its body. So attribution is two-tier: an id in
-    the entry's headline is its subject, an id only in the body is a cross-reference. If an
-    atom is ever a headline subject, its body mentions are discarded — otherwise the long
-    body of a neighbour's entry outvotes the atom's own verdict.
+    entry routinely names *other* atoms — in its body **and in its headline**. So attribution
+    is two-tier: ``_subject_id`` picks the one atom the entry adjudicates, every other id in it
+    is a cross-reference. Only the subject gets a verdict; the rest are dependency remarks,
+    which is the same rule ``decide_log`` already applies to a foreign *plan*, one level finer.
     """
     hits: dict[str, list[LogHit]] = {}
     for path in sorted(plans_dir.glob("*.md")):
@@ -783,7 +821,8 @@ def scan_plan_logs(plans_dir: Path = PLANS_DIR) -> dict[str, list[LogHit]]:
             if SUPERSEDED.search(chunk):
                 continue  # the log itself retracted this entry
             head = chunk[:HEADLINE]
-            head_ids = {m.group(1) for m in MENTION.finditer(head)}
+            subject = _subject_id(chunk)
+            head_ids = {subject} if subject else set()
             body_ids = {m.group(1) for m in MENTION.finditer(chunk)} - head_ids
             excerpt = _normalise(head).strip()
             for atom_id in head_ids:
@@ -798,7 +837,26 @@ def scan_plan_logs(plans_dir: Path = PLANS_DIR) -> dict[str, list[LogHit]]:
 
 
 def decide_log(hits: Sequence[LogHit], own_plan_file: str = "") -> tuple[str, LogHit | None]:
-    """Last verdict-bearing entry wins, headline subjects outranking cross-references.
+    """Last verdict-bearing entry **of which this atom is the subject** wins.
+
+    Two precedence rules used to coexist here with no stated order — *subject beats
+    cross-reference* and *last entry wins* — and they can disagree by 150 lines. The order is:
+    **subject is a precondition, last-wins only orders within it.** A cross-reference is not a
+    late ruling to be weighed against an early one; it is not a ruling at all, so there is
+    nothing to order it against. An atom with no entry of its own reports ``NO_SIGNAL``.
+
+    Why that is the safe direction rather than the lax one: ``NO_SIGNAL`` can never reach
+    LANDED-AND-CLEAN. ``classify`` puts it in UNDECIDABLE-CHEAPLY with evidence and NOT-LANDED
+    without, because CLEAN requires a ``FLIP`` and a ``FLIP`` requires a subject entry. So
+    dropping inherited verdicts cannot manufacture a false "just flip it" — it can only convert
+    a **false reason** into an honest gap, which is the trade this module already states at
+    ``score_evidence`` and in the module docstring.
+
+    Measured, all three off a sibling's entry in their own plan: ``DCU-3``
+    (``macos_driver.py``/``macos_ffi.py`` absent from the ref) inherited ``DCU-4``'s gate;
+    ``EI-2`` (``sandbox_providers/`` holds only ``base``/``none``/``registry``) inherited
+    ``EI-8``'s STOP POINT; ``LV-7`` inherited a ``run_matrix`` DISCOVERY entry. All three read
+    LANDED-BUT-GATED — the *landed* half asserted on someone else's paperwork.
 
     Plan logs are append-ordered, so a later entry supersedes an earlier one even when both
     carry the same date. ``PHF-7`` is exactly this: logged PARTIAL, then "all five clauses
@@ -816,16 +874,9 @@ def decide_log(hits: Sequence[LogHit], own_plan_file: str = "") -> tuple[str, Lo
     if not hits:
         return LogVerdict.NONE, None
     heads = [h for h in hits if h.headline]
-    if heads:
-        last = max(heads, key=lambda h: h.position)
-        return last.verdict, last
-    # Body-only: the atom was named inside another entry of its own plan. Asymmetric on
-    # purpose — a cross-reference may keep an atom OUT of the flippable bucket (safe
-    # direction) but may never put it in. `DCU-3` is the measured case: it appears in the
-    # body of `DCU-2`'s "flip it when the PR lands" entry and inherited that verdict.
-    last = max(hits, key=lambda h: h.position)
-    if last.verdict == LogVerdict.FLIP:
+    if not heads:
         return LogVerdict.NONE, None
+    last = max(heads, key=lambda h: h.position)
     return last.verdict, last
 
 
@@ -923,11 +974,87 @@ def scan_code_caveats(corpus: Corpus) -> dict[str, list[tuple[str, str]]]:
     return out
 
 
+def split_caveats(
+    keys: Sequence[Key],
+    caveats: Sequence[tuple[str, str]],
+    corpus: Corpus,
+) -> tuple[list[tuple[str, str]], list[tuple[str, str, str]]]:
+    """Partition inertness notes into (live, refuted-by-the-ref).
+
+    The caveat scan is a text scanner, so it reads **comments**, and a comment about inertness
+    outlives the inertness. Measured on ``origin/main``: ``DCU-2`` stayed LANDED-BUT-GATED on
+    three notes that are all past-tense narrative written *after* the gap closed —
+    ``computer_use/service.py`` ("``DCU-2`` **shipped** steps 2/4/5 as three … provably inert
+    functions"), which is ``DCU-4``'s module and says eight lines later "**and this module is
+    that caller**"; ``tests/test_computer_use_call_sites.py`` ("**had** ZERO production callers
+    … **``DCU-4`` landed, so the census flipped** from 'nobody calls these' to 'exactly this
+    calls these'"); and ``tests/test_audit_landed_atoms.py``, which quotes the case as a
+    fixture. A one-directional signal with no expiry pins the fixed atom forever.
+
+    So the note is **falsified against the ref**, not scoped by its prose. An inertness note
+    asserts one checkable fact — *nothing calls this* — and a call-shaped use of the atom's own
+    named symbol in an impl file is that fact's counter-example. Tense-sniffing was rejected
+    because it fixes two of DCU-2's three notes and leaves the present-tense one pinning it;
+    "the note must sit in the atom's own module" was rejected because the founding case is a
+    ratchet under ``tests/``; and "drop it if the note's file calls the symbols" was rejected on
+    measurement — ``test_computer_use_call_sites.py`` itself calls all three (4/1/1 hits), so it
+    would have deleted the very signal the mechanism exists for.
+
+    What it gives up, plainly:
+
+    * the atom needs at least one ``symbol`` key — a path-only atom can never be refuted, so
+      its note stands (conservative);
+    * a **dynamic** caller (registry, decorator, ``self.foo()``) leaves no call-shaped text, so
+      the note stands (conservative — the same blind spot ``--check-wires`` documents);
+    * a **generic** symbol name can be refuted by an unrelated function of the same name in
+      another package. This is the one lax direction, it is the same generic-name hazard
+      ``score_evidence`` already prints for SYMBOL-ONLY evidence, and it is why the refuting
+      ``file calls sym()`` is printed in the ``why`` rather than silently swallowed.
+
+    The note's **own** file counts as a refuting caller, and that is deliberate rather than an
+    oversight: DCU-2's measured case is a note whose own module became the caller — the same
+    docstring says "``gate`` is a separate step *a caller must remember* — **and this module is
+    that caller**" eight lines below the sentence that pins it. Excluding it does not protect
+    the founding case either, because ``tests/`` is not in ``IMPL_PREFIXES``, so a ratchet under
+    ``tests/`` can never be its own refuter no matter what it calls.
+
+    Definitions are excluded: ``def check_app(`` is call-shaped text and the defining module is
+    never its own caller. Only ``found_impl`` is searched, so the whole check costs a handful of
+    regex scans over files ``probe`` already located, not a second pass over the corpus.
+    """
+    syms = [k for k in keys if k.kind == "symbol"]
+    # The atom's OWN deliverable modules are not its consumers. Without this, an atom whose keys
+    # include a type name is refuted by that type's constructor inside the module that returns it
+    # — ``def make_widget(): return WidgetThing()`` reads as a call site for ``WidgetThing``.
+    # "Zero production callers" has always meant zero callers OUTSIDE the thing itself.
+    own_modules = {p for k in keys if k.kind in ("path", "dir") for p in k.found_impl}
+    live: list[tuple[str, str]] = []
+    refuted: list[tuple[str, str, str]] = []
+    for where, excerpt in caveats:
+        proof = ""
+        for key in syms:
+            # ``(?<!\w)`` and not ``(?<![\w.])``: the call is written ``policy.check_app(``
+            # nine times out of ten, so excluding a dotted prefix excludes the normal case.
+            # Measured — with the dot excluded, DCU-2's refutation did not fire at all.
+            pat = re.compile(r"(?<!def )(?<!class )(?<!\w)" + re.escape(key.text) + r"\s*\(")
+            for path in key.found_impl:
+                if path in own_modules:
+                    continue
+                if pat.search(corpus.blobs.get(path, "")):
+                    proof = f"{path} calls {key.text}()"
+                    break
+            if proof:
+                break
+        (refuted.append((where, excerpt, proof)) if proof else live.append((where, excerpt)))
+    return live, refuted
+
+
 def classify(
     atom: Atom,
     keys: list[Key],
     hits: Sequence[LogHit],
     code_caveats: Sequence[tuple[str, str]] = (),
+    refuted_caveats: Sequence[tuple[str, str, str]] = (),
 ) -> Verdict:
     log_verdict, log_hit = decide_log(hits, own_plan_file=atom.plan_file)
     evidence, detail = score_evidence(keys)
@@ -942,6 +1069,9 @@ def classify(
             )
         elif evidence in ("STRONG", "WEAK"):
             bucket, why = CLEAN, f"log says complete-but-unmerged; {detail}"
+            if refuted_caveats:
+                where, _excerpt, proof = refuted_caveats[0]
+                why += f"; an inertness note in {where} is stale — REFUTED on the ref by {proof}"
         else:
             bucket = UNKNOWN
             why = (
@@ -989,7 +1119,8 @@ def census(
     for atom in atoms:
         keys = extract_keys(atom)
         probe(keys, corpus)
-        out.append(classify(atom, keys, hits.get(atom.id, []), caveats.get(atom.id, [])))
+        live, refuted = split_caveats(keys, caveats.get(atom.id, []), corpus)
+        out.append(classify(atom, keys, hits.get(atom.id, []), live, refuted))
     return out, corpus
 
 
