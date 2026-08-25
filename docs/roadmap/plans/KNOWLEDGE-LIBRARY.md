@@ -1856,3 +1856,101 @@ Sequence these **independently of S1-S3** — they touch the store's indexing la
   `origin/main`'s `docs/roadmap/atomic/dag.json`; the clause lives only on the unmerged
   `improvement-wave2-adoption-atoms` branch. No row was invented. This entry is the record until
   that set lands.
+
+## Execution log — KL-8 (S3 library home: shelves, continue reading, favorites, counts)
+
+- **[2026-08-25][KL-8] DONE, with two clauses recorded as scope boundaries (below).** One new READ
+  route + one new frontend lens, no store change:
+  `GET /api/knowledge/library-home` (`handlers/knowledge.py::library_home`, registered beside
+  `/api/knowledge/collections`) returns all four shelves in ONE read;
+  `web/src/pages/knowledge/LibraryHome.tsx` renders them as the `?view=home` lens, FIRST in the
+  Knowledge view strip; `web/src/pages/knowledge/readingPosition.ts` is the resume-point store the
+  reader now writes.
+
+- **What the backend ALREADY declared, and what the atom needed on top.** Checked before designing:
+  `store.set_favorited` + the `favorited` column, `store.set_read_state` with
+  `VALID_READ_STATES = ("unread","reading","read")`, `list_collections()` with a per-shelf
+  `item_count`, `resolve_collection()`, and `items.created_at` — so *three of the four shelves were
+  already expressible*. Nothing existed for a reading POSITION (the plan says so itself: KL-7
+  reports the fraction, "persisting a reading POSITION … is `KL-8`'s own done-when"), and nothing
+  aggregated the four for one surface. So the new code is the aggregate route, the position store,
+  and the surface.
+
+- **🔑 Continue reading has a REAL WRITER, in two halves.** Shelf MEMBERSHIP is server truth:
+  `ReadingView` now POSTs `read_state='reading'` once per mount when an item is `unread` and the
+  reader has actually scrolled into the 2%–98% band (both ends load-bearing — `scrollProgress`
+  returns **1** when there is nothing to scroll, so an article that fits the pane would otherwise be
+  filed as in-progress the instant it opened). Shelf POSITION is per-device: the reader persists the
+  rAF-coalesced fraction to `localStorage` on a 400 ms debounce and restores it on mount. Without
+  the position the shelf still works and resumes at the top — the fact that you are mid-article is
+  library state, the offset is a convenience. `read_state` was already user-writable from
+  `KnowledgeDetail`'s cycle control and the list's bulk ops, so the shelf was never dependent on the
+  new writer alone.
+  **🪤 THE RESTORE GATES THE WRITE.** The progress reader fires 0 on mount and
+  `setReadingPosition` treats <2% as "not started" and DELETES the entry — so an ungated persist
+  erases the position it is about to resume to, silently and on every open. Falsified: removing
+  `if (!restored.current) return` turns `readingResume.test.tsx › restores the saved position before
+  the first write can erase it` red with `expected undefined to be close to 0.5` while every other
+  assertion in the file stays green.
+
+- **Counts are derived, and the existing rail count was found to disagree with its own shelf.**
+  `list_collections()`' `item_count` counts every membership row INCLUDING archived items, while
+  `resolve_collection()` excludes them — so the shelf rail can read 2 over a shelf that opens onto
+  1 row. The new route does not repeat that: a manual count repeats `resolve_collection`'s manual
+  WHERE (join + archived exclusion, no LIMIT, exact) and a smart count IS
+  `len(resolve_collection(...))` at a 200-item cap that is REPORTED (`count_capped` → the chip reads
+  "200+") rather than passed off as a total. Falsified: dropping the archived exclusion turns
+  `test_a_manual_shelfs_count_equals_what_opening_the_shelf_shows` red with `assert 2 == 1`, which
+  is the defect's exact shape. The pre-existing `list_collections` divergence is asserted in that
+  same test as the thing NOT repeated; fixing it there is a separate change (it is the shelf rail's
+  count, not this surface's).
+
+- **Empty ≠ broken, on three axes.** ONE request means one failure the surface can name. Empty →
+  each shelf's own sentence, no alert. Failed → `LoadError` ("Couldn't load your library") + retry,
+  and the test asserts the empty sentences are ABSENT. Stale-with-error → shelves painted from cache
+  ABOVE an `InlineError` saying the refresh failed. A truly empty library is delegated one level up
+  to the page's existing "Knowledge base is empty" state (`view === 'home' && !empty`) rather than
+  four empty sentences stacked. Shelves also reuse the library list's own listable predicate
+  (artifacts + `DEFAULT_LIST_EXCLUDED_KINDS` + archived excluded), so no row on the home vanishes on
+  click-through.
+  **🪤 A DOM-only empty/broken rail is not enough.** Falsification found it: adding
+  `.catch(() => ({ …empty shelves }))` to `api.knowledgeLibraryHome` left all 11 DOM tests GREEN,
+  because they mock that method. The absence of the swallow is now asserted from SOURCE with a
+  vacuity floor (`libraryHome.test.tsx › the FETCHER never swallows the rejection either`), the same
+  idiom `ui/loadErrorState` and `pages/listDestinationLoadError` use — and that assertion reds under
+  the same mutation.
+
+- **Registration is asserted, both sides.** Backend: the route table is built by the real
+  `setup_knowledge_routes` and `("GET", "/api/knowledge/library-home")` asserted present with an
+  obviously-bogus sibling asserted absent (falsified: typo the registered path → red). Frontend:
+  `libraryHomeReachable.test.tsx` mounts the REAL `KnowledgeListPage`, asserts Home is first in the
+  `role=tablist` strip, that `?view=home` renders the four `role=region` shelves, and that another
+  lens does NOT — the vacuity guard against a page that ignores `view`.
+
+- **Two clauses recorded as boundaries rather than claimed.**
+  (1) **AMBIENT-SURFACES tile registry — standalone form, as the atom's own "otherwise" allows.**
+  No registry exists on `main` (no `tileRegistry`/`AmbientTile` symbol in `web/src` or core).
+  `Shelf` is the seam: each shelf is a self-contained titled section over one array.
+  (2) **Home is the first lens, NOT the default lens.** Measured, not preferred: with
+  `view` defaulting to `home`, `pages/listDestinationLoadError.test.tsx` goes red on both of its
+  `#/knowledge` cases — it mounts the page with an empty query and asserts the ITEM LIST's
+  failed-read and empty-library branches, which a different default lens hides. Flipping the default
+  is a one-word change here plus a re-scoping of that file, which is a separate decision from
+  building the surface. Also NOT added: a `knowledge?view=home` entry in `web/e2e/routes.ts`
+  `VIEW_ROUTES` (the axe/visual manifest) — that file is outside this change's scope and a visual
+  baseline PNG can only be produced by `npm run e2e:update`.
+
+- **Cross-file touches this change forced, both mechanical.** `web/src/ui/disabledReasonCensus.test.ts`
+  keys its classified sites on `file:line`, so adding the lens shifted
+  `pages/knowledge/KnowledgeListPage.tsx:918` → `:941` (same site; the file's own shape assertion
+  re-proves it). `docs/design/consistency-audit.json`'s `filesScanned` moved 555 → 558 for the three
+  new files, with `driftHits` unchanged at 8. `web/src/lib/api.ts` gained exactly two small blocks
+  (the `KnowledgeLibraryHome` interface and the `knowledgeLibraryHome` method).
+
+- **Gate.** `make lint` clean (black / isort / flake8 / mypy over 1012 sources). Targeted:
+  `tests/test_knowledge_library_home.py` + `test_knowledge_collections.py` +
+  `test_knowledge_annotations.py` — **93 passed**. `scripts/gate_report.py` — **6/6 PASS**.
+  Web: `npm run typecheck:web` clean, `npm run test:web` **5159 passed / 487 files, 0 failed**
+  (was 5128 before; +31 new: 12 libraryHome, 7 readingResume, 8 readingPosition, 4 reachability),
+  `npm run build` rc=0. Probe sweep: the expected 16 pre-existing hits, **0** introduced, clean
+  `git status`.

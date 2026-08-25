@@ -1,6 +1,6 @@
 import { Fragment, useEffect, useMemo, useState } from 'react'
 import { reportingWrite } from '../../app/reportingWrite'
-import { BookOpen, FileClock, Plus, Search, Database, Sparkles, Network, Library, Trash2, Target, X, Pin, Star, Archive, Play, FileText, Loader2, CircleAlert, Boxes, WifiOff, Layers, Scale, Tag as TagIcon, Rss, ExternalLink } from 'lucide-react'
+import { BookOpen, FileClock, Home, Plus, Search, Database, Sparkles, Network, Library, Trash2, Target, X, Pin, Star, Archive, Play, FileText, Loader2, CircleAlert, Boxes, WifiOff, Layers, Scale, Tag as TagIcon, Rss, ExternalLink } from 'lucide-react'
 import { TopBar } from '../../ui/TopBar'
 import { fvs } from '../../design/fontWeight'
 import { WorkbenchLayout } from '../../ui/WorkbenchLayout'
@@ -19,6 +19,7 @@ import { resolveType, relTime, fmtBytes, typeLabel, isArtifactItem } from './kno
 import { listKnowledge, knowledgeStats, getKnowledge } from './knowledgeStore'
 import { KnowledgeDetail, OutcomeFieldValue } from './KnowledgeDetail'
 import { KnowledgeGraph } from './KnowledgeGraph'
+import { LibraryHome } from './LibraryHome'
 import { useQueryParam, type RouteProps } from '../../app/useQueryState'
 import { useQuery, invalidateKeys } from '../../lib/data'
 import { rowSubject } from '../../lib/rowSubject'
@@ -26,7 +27,11 @@ import { confirm, confirmDelete, promptInput } from '../../ui/dialog'
 import { PageTitle } from '../../ui/PageTitle'
 import { notify } from '../../app/appSdk'
 
-type View = 'library' | 'graph' | 'intents' | 'tags' | 'conflicts'
+// 'home' is the library HOME (KL-8): the shelves — recently added, continue reading, favorites,
+// per-shelf counts — as opposed to the filterable item list. FIRST in the view strip, because it
+// is the orienting lens; `library` stays the DEFAULT, which is a deliberate boundary rather than a
+// preference (see the `view` param below).
+type View = 'home' | 'library' | 'graph' | 'intents' | 'tags' | 'conflicts'
 
 function StatChip({ icon: Icon, label, value }: { icon: typeof Database; label: string; value: number | string }) {
   return (
@@ -86,7 +91,11 @@ function EmbeddingChip({ stats, busy, onBackfill }: { stats: import('../../lib/a
   )
 }
 
-export function KnowledgeListPage({ onCreate, onOpenItem, onOpenSources, onOpenReports, query, setQuery }: { onCreate: () => void; onOpenItem: (id: string) => void; onOpenSources: () => void; onOpenReports: () => void } & Pick<RouteProps, 'query' | 'setQuery'>) {
+export function KnowledgeListPage({ onCreate, onOpenItem, onOpenReader, onOpenSources, onOpenReports, query, setQuery }: { onCreate: () => void; onOpenItem: (id: string) => void; onOpenReader?: (id: string) => void; onOpenSources: () => void; onOpenReports: () => void } & Pick<RouteProps, 'query' | 'setQuery'>) {
+  // 🪤 The default stays 'library', measured rather than preferred: `pages/listDestinationLoadError`
+  // mounts this page with an empty query and asserts the ITEM LIST's failed-read and empty-library
+  // branches, both of which a different default lens hides. Making Home the landing view is a
+  // one-word change here plus that file's re-scoping, which is a separate decision from building it.
   const [viewRaw, setView] = useQueryParam(query, setQuery, 'view', 'library', { replace: true })
   const view = viewRaw as View
   // search: the submitted query lives in the URL (?q); the input box is local
@@ -412,7 +421,7 @@ export function KnowledgeListPage({ onCreate, onOpenItem, onOpenSources, onOpenR
           right={
             <HeaderActions>
               <HeaderSegmented ariaLabel="Knowledge view" value={view} onChange={(v) => setView(v as View)}
-                options={[{ key: 'library', label: 'Library', icon: Library }, { key: 'graph', label: 'Graph', icon: Network }, { key: 'intents', label: 'Intents', icon: Target }, { key: 'tags', label: 'Tags', icon: TagIcon }, { key: 'conflicts', label: 'Conflicts', icon: Scale }]} />
+                options={[{ key: 'home', label: 'Home', icon: Home }, { key: 'library', label: 'Library', icon: Library }, { key: 'graph', label: 'Graph', icon: Network }, { key: 'intents', label: 'Intents', icon: Target }, { key: 'tags', label: 'Tags', icon: TagIcon }, { key: 'conflicts', label: 'Conflicts', icon: Scale }]} />
               {view === 'library' && (items?.length ?? 0) > 0 && (
                 // `priority="low"` so this sheds into the `…` menu before the primary action —
                 // it is a maintenance nicety, not the reason anyone opens the page.
@@ -508,7 +517,21 @@ export function KnowledgeListPage({ onCreate, onOpenItem, onOpenSources, onOpenR
           included; it was simply unreachable from one of them. */}
       {(view !== 'graph' || empty) && (
       <div className="mx-auto px-l py-l" style={{ maxWidth: 'var(--content-width)' }}>
-        {itemsData === undefined && itemsErr ? (
+        {view === 'home' && !empty ? (
+          // The home owns its OWN read, loading and error states (one shelves request, not the
+          // item list), so it sits ahead of the list's gates: a failed item list must not blank a
+          // surface that does not depend on it. `!empty` is the one thing it delegates — a library
+          // with nothing in it has ONE thing to say, and the page below already says it with the
+          // create action attached; four empty shelves stacked would be a worse answer.
+          <LibraryHome
+            onOpenItem={onOpenItem}
+            // Reading mode is a ROUTED capability (`?read=1` on the item page), so a host with no
+            // route for it says so by omitting the prop and the shelf resumes into the item's
+            // default view instead. `KnowledgeSection` — the only routed mount — always supplies it.
+            onOpenReader={onOpenReader ?? onOpenItem}
+            onOpenCollection={(id) => { setCollectionTok(id); setView('library') }}
+            onShowCuration={(f) => { setCurationFilter(f); setView('library') }} />
+        ) : itemsData === undefined && itemsErr ? (
               <LoadError what={collectionTok ? 'shelf items' : 'knowledge items'} error={itemsErr} onRetry={load} />
             ) : items === null ? (itemsLoading ? <ListSkeleton what={collectionTok ? 'shelf items' : 'knowledge items'} /> : null) : empty ? (
               <EmptyState icon={BookOpen} title="Knowledge base is empty" hint="Add notes, code gists, bookmarks, documents, images, audio, and video. Content is extracted, entities surfaced, and everything indexed for agents to retrieve." action={{ label: 'Add knowledge', onClick: onCreate, icon: Plus }} />
