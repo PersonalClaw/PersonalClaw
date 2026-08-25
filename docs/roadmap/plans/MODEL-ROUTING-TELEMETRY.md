@@ -1255,3 +1255,70 @@ UNRAILED (257 green, **33 cut**); re-run at cap 50 with `cut=0` it **REFUSED** o
 this session's changes (the tree was clean and no production line was touched). So that verdict stays
 **provisional**: UNRAILED at cap 14, unconfirmed at `cut=0`. Its fix is already in PR **#1994** (still
 OPEN — it is *not* on `main`, contrary to the briefing that said to expect RAILED there).
+## Execution log — the routing-policy `mode` + `pin` levers, and a 400 that persisted (2026-08-24)
+
+**DISCOVERY.** The sequel to the section above. `PUT /api/models/routing-policy` has three levers; the
+`order` lever's swallowed write was railed there. A wire-depth sweep then measured the other two as
+unrailed — `policy::set_mode` (`model_telemetry.py:119`) and `policy::set_pin` (`:122`), both green with
+the wire deleted. Verified independently and without a suite run: `git grep -l 'routing-policy' -- tests/`
+returns **one** file, whose only write section is headed *"the `order` lever"*. Since `set_mode`/`set_pin`
+persist through `save_use_case_settings` (`extensions/use_case_settings/<uc>.json`) — a **different store**
+from `routing_policy.json` — the `order` rails could not have covered them by accident.
+
+**Both levers DO persist.** Measured by driving the real route against a redirected home and reading the
+settings file off disk: mode `off→heuristic→learned`, pin set, and `pin: ""` correctly *removes* the key.
+So this was not a second swallowed write.
+
+**DEFECT (the headline) — a 400 that had already moved the store.** Validation was interleaved with
+application, so a body carrying a valid lever beside an invalid one persisted the valid one and *then*
+rejected the request. Measured, two distinct 400s:
+
+- `{use_case, mode: "learned", order: "notalist"}` → `400 order must be a list of refs`, with
+  `routing_mode` moved `learned → heuristic` on disk.
+- `{use_case, pin: "clobber:ref", order: ["p:a"]}` (no `query_class`) → `400 query_class is required`,
+  with `routing_pin` moved `seed:ref → clobber:ref` on disk.
+
+The client sees `applied` absent and reverts nothing while the table has changed under it — the mirror
+image of the `order` bug (a 200 backed by nothing) rather than a repeat of it. **Fixed** by validating every
+lever before applying any. The levers straddle two stores, so there is no single write to make atomic; the
+fix is to have nothing left to reject once the first write goes out. The residual (`set_pin` raising *after*
+`set_mode` committed → 500 with mode persisted) is a disk-failure path, not a reachable input path, and is
+noted in the handler docstring rather than papered over with hand-rolled two-store rollback.
+
+**Rails** (`tests/test_routing_telemetry.py`, +14 tests → 35 in the file; the whole routing surface is
+**352 passed** across 11 files). Per lever, asserting the **persisted** value read straight out of the JSON
+— never the response body, and never through `policy.mode_for`/`pin_for`, whose defaults (`"off"`/`""`)
+would let a reader's fallback stand in for a value never written:
+
+1. the PUT persists, and the sibling lever is left alone (the store is a read-modify-write of one dict);
+2. a rejected value leaves **both** stores byte-identical — five parametrized bodies including the two
+   regressions above;
+3. a vacuity floor proving the byte harness can see an accepted write.
+
+Plus `policy::_sel_policy_change`, folded in: all **three** call sites (`:604`/`:617`/`:654`) emitted an
+audit row that nothing observed, while proposal *decisions* were audited **and** asserted — so the audit
+trail for the levers a user actually moves rested on nothing, which matters because MRT's roadmap position
+is a hard dependency on Guardrails' audit. One row per change, `resources` asserted whole (`use_case:value`,
+and `use_case:class:refs` for `order`), with an empty-ledger floor: a rejected change adds no row, and the
+same test then requires an accepted change to add one, so the rail cannot pass vacuously.
+
+**Fixture.** Reuses the existing `policy_home` (which re-points both `config_dir` bindings) rather than
+adding patches on top of `conftest.py:133-137` — and **asserts the redirect** it depends on
+(`use_cases._settings_dir() == home/"extensions"/"use_case_settings"`), because `save_use_case_settings`
+reaches for `config_dir` through its own function-local import. `conftest.py`'s real-home rail confirms
+`~/.personalclaw` was untouched by every run.
+
+**Falsified.** Each wire mutated on the live line, grepped back to confirm the mutation applied, red
+observed, restored from a file copy taken beforehand (literal path, never `git checkout --`):
+`set_mode` → **4 red** (incl. both vacuity floors); `set_pin` → **4 red**; all three `_sel_policy_change`
+sites → **5 red**; and reinstating the pre-fix interleaved validate/apply body verbatim from the base →
+**exactly the 2 regression params red**, nothing else. The first splice of that last mutation dropped the
+final `return`, producing 500s — a botched mutation, not a falsification; repaired and re-run.
+
+**Gate.** `make lint` clean (black/isort/flake8/mypy, 1001 source files). `make test` **26142 passed / 30
+skipped / 12 xfailed**, one red: `test_loop_worktree_sparse::TestPoolBound::test_batch_creates_every_worktree`
+— the known sparse-cone flake, **1 passed** re-run isolated with `-n0`, and it touches no routing code.
+`gate_report.py` 6/6 PASS. Probe sweep 16 pre-existing / **0** introduced. No `web/` change.
+
+**The sweep's line numbers were all exact** against `03729754` — `:119`, `:122`, and the three SEL sites
+at `:604`/`:617`/`:654`. No drift to correct.
