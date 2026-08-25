@@ -9616,9 +9616,9 @@
         "code": "PR2",
         "plan": "PLATFORM-RESILIENCE",
         "total_atoms": 11,
-        "done": 9,
+        "done": 10,
         "in_progress": 0,
-        "todo": 2,
+        "todo": 1,
         "blocked": 0
       },
       {
