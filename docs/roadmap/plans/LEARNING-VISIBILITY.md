@@ -292,3 +292,76 @@ Stumble detector at the after-turn seam (only when skills were loaded): correcti
   list `record_uses` consumes) to the frontend. That list is the honest input for "used N skills you
   approved" — the candidate list the ladder gets is every indexed skill, not the ones that reached
   the turn, and plumbing the wrong one would ship an inflated count.
+
+---
+
+## Execution log — LV-2 (S2 legibility: skills-used chip + tappable learned chips)
+
+- **PROVENANCE — this work existed on one local branch with no remote ref and no PR.** Two commits
+  (`952e823e` meta + origin discriminator, `a1068cad` the two chip surfaces) were written, gated and
+  then never pushed; the duplicate-work guard found them. They rebased onto `03729754` with **no
+  conflicts**. This entry is the log they never got, written by a later session that judged them
+  rather than rebuilding them. **Not started over — the two commits' content is intact.**
+- **T2.1 DONE, and it took the DISCOVERY at the end of the LV-1 log seriously.** That note warned
+  that the ladder's `loaded_skills` is the CANDIDATE list (every indexed skill) and that plumbing it
+  would ship an inflated count. The implementation instead narrows the assembler's existing
+  `skill_decisions` (CE2-9, written at `context_engine.py:194`) to
+  `_SKILL_USED_STATES = (ADMITTED, REDUCED)` — semantically identical to
+  `SkillAllocation.loaded` (`skills/allocation.py:194`), which is the input `record_uses`
+  consumes at `context.py:1768`. So the chip and the turn-time use counter cannot answer
+  "used" two different ways. REFUSED is excluded by name, not just by state.
+- **Zero new channels, verified two ways.** The payload rides `meta` on the finalized assistant
+  message — the proven `memory_citations` seam — so nothing new is broadcast. Pinned by a static
+  rail over every `broadcast_ws` name in `chat_runner` **with a vacuity floor** (the regex must
+  still match every call site, or a new channel would read as none) plus a runtime half asserting a
+  real turn broadcasts only known names.
+- **DEVIATION (rebaseline, not a weakening) — the WS baseline drifted on rebase.** `queue_push`
+  arrived from `57194f48` (PR2-10's ACP mid-turn steer echo) and reds the pinned set. It appears
+  **zero** times in the LV-2 diff, and the rail's own vacuity floor held (49/49 call sites matched),
+  so the name was added with that provenance recorded beside it. The red was upstream, not ours.
+- **The three tap-through routes were verified against what each surface RENDERS, not its name.**
+  `proposal` → `#/skills?mode=proposals` (`SkillsPage.tsx:43` selects `SkillProposals`, which
+  accepts/rejects; the bare `#/skills` lands on Installed and shows no proposal at all).
+  `lesson`/`facet` → `#/settings/memory?tab=studio`, which reads `api.lessons()`
+  (`MemoryPanel.tsx:273`), deletes via `api.deleteLesson` (`:431`) and edits via "Save lesson"
+  (`:843`) — so the lesson store's own artifact is showable and editable there. `?tab=lessons` is
+  already an alias folding into `studio` (`:64`). Exactly three `learned` emitters exist in
+  `chat_runner` and all three now carry `origin`.
+- **GAP FOUND AND CLOSED — the LOOP half rested on two unpinned backend seams.** The chat chip reads
+  meta off a message the page already holds, but the cockpit cannot: it resolves the worker key from
+  `GET /api/loops/{id}` and reads the transcript over `GET /api/chat/sessions/{key}`. Both fail
+  SILENTLY, because the chip's honest "absent when nothing loaded" rule renders a dropped
+  `session_key` and a clobbered `meta` identically as *no chip* — nothing would have gone red. Two
+  tests now pin them: `session_key` survives into `get_redacted` (the function `api_loop_get` calls),
+  and `_prepare_messages` does not let its `cls`-derived `meta` overwrite `skills_used`.
+- **A first draft of that first test was WRONG and falsification caught it.** It asserted on the
+  `_redact_loop` helper and stayed GREEN when the endpoint's own view popped the key — it pinned a
+  layer below where the regression happens. Rewritten to drive `get_redacted` against a real loop
+  row under `tmp_path`, where the same mutation reds with `KeyError: 'session_key'`.
+- **Falsification (four mutations, each grep-confirmed applied, each restored from a file copy).**
+  (1) adding `REFUSED` to `_SKILL_USED_STATES` reds the admitted/reduced test; (2) deleting the
+  `SkillsUsedChip` render in `ChatPage.tsx` reds the inertness rail — so that rail genuinely detects
+  a correct-but-uncalled helper; (3) popping `session_key` in `get_redacted` reds the new loop test;
+  (4) making the `cls` meta overwrite unconditional reds the new clobber test.
+- **Accessibility, measured rather than read.** The tappable element is `TextLink`, and the a11y tree
+  reports `role=link` with a non-empty, per-origin-DISTINCT accessible name for all three
+  ("Review in Skill proposals →" / "Review lessons in Memory →" / "Manage in Memory →"), no
+  `aria-hidden`, natively focusable. Both count chips are non-interactive (`<div title>` in chat,
+  `MetaPill`'s `<span title>` in the cockpit), so `title` is a hover affordance only, not an
+  accessible name — which is why the count is also in the visible label. That matches the sibling
+  spend/elapsed pills exactly, so no new idiom was introduced.
+- **Activity segments do not rehydrate.** `insertActivity` (`coalesceReducers.ts:54`) is the only
+  production producer, driven solely by the live `activity_event`. So the learned chip is inherently
+  session-scoped — which is what the criterion asks ("within the session") — and making the ledger
+  link conditional on `origin` regresses nothing for reloaded history, because the chip never
+  survived a reload. The degrade path is reachable only under FE/BE version skew.
+- **SURFACED, NOT DECIDED (owner taste calls).** The learned chip's tap target sits inside
+  `ContextLedger`, which is collapsed by default — collapsed you see "learned 1", and the link needs
+  one disclosure. That is pre-existing ledger behavior, not something LV-2 introduced, so it was left
+  alone rather than redesigned inside this atom.
+- **Gate:** `make lint` green (black 2031 files, isort, flake8, mypy — 1001 source files);
+  **11 passed** in `test_lv2_skills_used_meta.py` (9 pre-existing + 2 added) and 69 passed across
+  `test_after_turn_review.py` + `test_skill_allocation.py`; `scripts/gate_report.py` **all 6 gates
+  PASS**; web **unscoped** `npm run test:web` **479 files / 5073 tests passed**, plus
+  `npm run typecheck:web` and `npm run build` green from the repo root. Probe sweep 16 hits,
+  **0** introduced by this diff.
