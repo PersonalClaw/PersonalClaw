@@ -1558,13 +1558,20 @@ export interface PromptSyntaxConstruct { category: string; label: string; snippe
 export interface PromptSyntax { functions: PromptSyntaxFn[]; constructs: PromptSyntaxConstruct[] }
 export interface SkillItem { key: string; name: string; description: string; always: boolean; path?: string; source: string; type: string; loaded_by_agents: string[]; integrity?: 'intact' | 'tampered' | 'unverified'; agent?: string }
 export interface EphemeralDraft { slug: string; title: string; body: string; created_at: string }
-export interface SkillProposal { id: string; slug: string; description: string; triggers: string; kind: string; refine_target?: string; session_key: string; created_at: string; status: string; procedure_preview: string }
+/** `trigger` is the STUMBLE that produced a refine proposal (`correction` | `failure_retry` |
+ *  `rejection`), or absent/'' for one a model proposed. It is the review surface's answer to
+ *  "why am I being asked this?" — a refine row without it can only say what it changes. */
+export interface SkillProposal { id: string; slug: string; description: string; triggers: string; kind: string; refine_target?: string; trigger?: string; session_key: string; created_at: string; status: string; procedure_preview: string }
 /** The most recent skill-ladder pass. `null` on the feed means the ladder has never
  *  run — which is the only thing that distinguishes an idle ladder from a broken one
  *  when `proposals` is empty. Both looked identical before this existed. */
 export interface SkillLadderReview { verdict: string; elapsed_ms: number; session_key: string; detail: string; at: string }
 export interface SkillProposalFeed { proposals: SkillProposal[]; lastReview: SkillLadderReview | null }
-export interface SkillProposalDetail extends SkillProposal { procedure_md: string; source_excerpt: string }
+/** `diff`/`version` are present only for a `kind: 'refine'` proposal, and are DERIVED per
+ *  request from the skill's current body — never stored. An empty `diff` is meaningful, not a
+ *  load failure: the refine target no longer exists, or the refinement changes nothing.
+ *  `version` is the refinement version accepting this proposal would create. */
+export interface SkillProposalDetail extends SkillProposal { procedure_md: string; source_excerpt: string; diff?: string; version?: number }
 /** One group of the learning summary block (LV-3). `count` is the EXACT group size;
  *  `names` is a bounded sample of it, so a renderer must never show `names.length` as
  *  the count — that would silently under-report the moment a group got busy. */
@@ -4891,8 +4898,11 @@ export const api = {
    *  reads of one collection — the drift this file's own callers already warn about. */
   skillProposals: () => get<SkillProposalFeed>('/api/skills/proposals'),
   skillProposalDetail: (id: string) => get<SkillProposalDetail>(`/api/skills/proposals/${encodeURIComponent(id)}`),
+  /** `version` is the refinement version this accept WROTE (0 for a `kind: 'new'` accept,
+   *  which creates a skill rather than versioning one). Returned because a refinement of a
+   *  skill that already had refinements is otherwise indistinguishable from its first. */
   acceptSkillProposal: (id: string, edits?: { description?: string; procedure_md?: string }) =>
-    post<{ ok: boolean; name: string }>(`/api/skills/proposals/${encodeURIComponent(id)}/accept`, edits ?? {}),
+    post<{ ok: boolean; name: string; version: number }>(`/api/skills/proposals/${encodeURIComponent(id)}/accept`, edits ?? {}),
   rejectSkillProposal: (id: string) => del(`/api/skills/proposals/${encodeURIComponent(id)}`),
   /** The learning summary block (LV-3). 404s when `learning.enabled` is off — the
    *  caller must let the block be ABSENT in that case rather than render zeros, which

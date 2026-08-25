@@ -121,6 +121,11 @@ class SkillProposal:
     created_at: str
     kind: str = "new"  # "new" | "refine"
     refine_target: str = ""  # for kind="refine", the existing skill name
+    # Which stumble produced this refine proposal (``after_turn_review.STUMBLE_TRIGGERS``), or
+    # "" for a model-proposed one. Carried rather than inferred because it is what the review
+    # surface answers "why am I being asked this?" with, and it rides through accept into the
+    # overlay record so the applied refinement keeps saying where it came from.
+    trigger: str = ""
     source_excerpt: str = ""  # FENCED excerpt of the driving trace (review only)
     status: str = "pending"  # pending | accepted | rejected
 
@@ -136,6 +141,7 @@ class SkillProposal:
             "triggers": self.triggers,
             "kind": self.kind,
             "refine_target": self.refine_target,
+            "trigger": self.trigger,
             "session_key": self.session_key,
             "created_at": self.created_at,
             "status": self.status,
@@ -158,6 +164,7 @@ def enqueue(
     created_at: str,
     kind: str = "new",
     refine_target: str = "",
+    trigger: str = "",
     source_excerpt: str = "",
 ) -> SkillProposal | None:
     """Add a synthesized skill to the review queue. Returns the proposal, or None
@@ -190,6 +197,7 @@ def enqueue(
         created_at=created_at,
         kind=kind,
         refine_target=refine_target,
+        trigger=trigger,
         source_excerpt=fenced,
     )
     try:
@@ -379,7 +387,23 @@ class AcceptError(Exception):
     """Raised when a proposal can't be accepted (invalid / write failed)."""
 
 
-def accept(pid: str, *, description: str | None = None, procedure_md: str | None = None) -> str:
+@dataclass(frozen=True)
+class AcceptResult:
+    """What an accept DID — the skill it touched and, for a refine, which version it wrote.
+
+    ``accept`` used to return the bare name, so the one question a refinement raises — "which
+    version of this skill did I just approve?" — had no answer anywhere on the accept path.
+    ``version`` is the 1-based overlay refinement version (see ``overlays.Refinement``), and
+    ``0`` for a ``kind="new"`` accept, which creates a skill rather than versioning one.
+    """
+
+    name: str
+    version: int = 0
+
+
+def accept(
+    pid: str, *, description: str | None = None, procedure_md: str | None = None
+) -> AcceptResult:
     """Accept a pending proposal and clear it from the queue.
 
     A ``kind="refine"`` proposal that names a resolvable ``refine_target`` applies as a SIDECAR
@@ -389,8 +413,9 @@ def accept(pid: str, *, description: str | None = None, procedure_md: str | None
     intact, and reverting the refinement is the deletion of exactly one file. Everything else —
     ``kind="new"``, or a refine whose target no longer exists — CREATES a new ``auto/`` skill.
 
-    Optional ``description``/``procedure_md`` apply reviewer edits. Returns the
-    written/updated skill name. Raises ``AcceptError`` on failure."""
+    Optional ``description``/``procedure_md`` apply reviewer edits. Returns an
+    :class:`AcceptResult` naming the written/updated skill AND, for a refine, the refinement
+    version it wrote. Raises ``AcceptError`` on failure."""
     prop = _load(pid)
     if prop is None:
         raise AcceptError(f"no proposal {pid!r}")
@@ -408,19 +433,20 @@ def accept(pid: str, *, description: str | None = None, procedure_md: str | None
     if prop.kind == "refine" and prop.refine_target:
         if loader.load_skill(prop.refine_target) is not None:
             try:
-                overlays.apply_overlay(
+                version = overlays.apply_overlay(
                     prop.refine_target,
                     description=eff_description,
                     procedure_md=eff_procedure,
                     created_at=prop.created_at,
+                    trigger=prop.trigger,
                 )
             except (OSError, ValueError) as exc:
                 raise AcceptError(f"could not overlay skill {prop.refine_target!r}: {exc}") from exc
             name = prop.refine_target
             reject(pid)  # clear the now-accepted proposal
             _resolve_inbox_item(pid, "handled")
-            logger.info("Accepted refine proposal %s → overlaid %s", pid, name)
-            return name
+            logger.info("Accepted refine proposal %s → overlaid %s v%d", pid, name, version)
+            return AcceptResult(name, version)
         # Target vanished (deleted since proposal) — fall through to create-new
         # rather than 500'ing, so the Accept button still resolves the proposal.
         logger.info(
@@ -445,4 +471,4 @@ def accept(pid: str, *, description: str | None = None, procedure_md: str | None
     # before reject() would let reject() overwrite it back to dismissed.
     _resolve_inbox_item(pid, "handled")
     logger.info("Accepted skill proposal %s → %s", pid, created)
-    return created
+    return AcceptResult(created)
