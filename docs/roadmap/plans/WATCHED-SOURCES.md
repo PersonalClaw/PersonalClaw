@@ -1093,3 +1093,22 @@ Trigger-side work (`web_watch` wiring, morning-digest template install, triage d
   therefore PARTIAL in one respect worth recording: the digest is invocable and fully tested, but
   nothing in the shipped product calls it yet** — a bundled clock trigger (or a template that
   references it) is the missing user-reachable half and belongs with the Sources UI.
+  🔴 **Two gate findings worth keeping, both fixed rather than worked around.**
+  (1) `scripts/gate_report.py`'s `structural-duplication` gate caught `source_streams.py`
+  re-deriving a durable write (`durable-write:_maybe_trim`, count 0 → 1): the trim was a local
+  `mkstemp` + `os.replace`. Replaced with the canonical `personalclaw.atomic_write.atomic_write`;
+  the gate is back to 6/6 PASS with 0 failures. A local copy of a crash-safety guarantee is exactly
+  the second implementation that later drifts from the first.
+  (2) **`monkeypatch.setattr("personalclaw.config.loader.config_dir", …)` is not undoable when it
+  is live during a consumer's FIRST import.** `providers/entity_routes.py:22` does `from
+  personalclaw.config.loader import config_dir`, so the consumer keeps the LAMBDA and monkeypatch's
+  undo — which restores only the loader module's attribute — cannot reach the copy. Under xdist this
+  made the `mute_all` vacuity test read the PREVIOUS test's home in the same worker
+  (env=`…/test_mute_all…/home`, actual=`…/test_digest_makes_ONE_item…/home`), so `mute_all` was
+  never seen and the notification delivered — a red that pointed at the digest bypassing the gate
+  when the gate was fine. Both new test files now use `PERSONALCLAW_HOME` alone as the lever
+  (`config_dir()` reads it per call and caches nothing, so it CANNOT be baked in), the digest file
+  additionally re-points `entity_routes.config_dir` at the real live function to undo any bake-in a
+  sibling suite performed, and both fixtures ASSERT the redirect binds. The `mute_all` test also
+  asserts its precondition (`notification_allowed(INFO) is False`) before running the digest, so an
+  isolation leak now fails at the precondition instead of masquerading as a security-control bypass.
