@@ -1,6 +1,6 @@
 """Native knowledge provider (#30 Task A).
 
-The ONE bundled provider. It offers the 12 typed-create entry points, stores items
+The ONE bundled provider. It offers the 13 typed-create entry points, stores items
 in the knowledge library (the ``items`` table = the uber-pool), and **enqueues each
 new item for node-graph ingestion**. External providers register their items into the
 same library via the queue (see ``knowledge/ingest_queue.py``).
@@ -18,13 +18,16 @@ from personalclaw.knowledge_providers.base import KnowledgeItem, KnowledgeProvid
 
 logger = logging.getLogger(__name__)
 
-# The 12 native typed-create entry points.
+# The 13 native typed-create entry points. `decision` (PROACTIVE-ASSISTANT §2.1) is a text
+# type like note/journal — a document about the user's life — and rides the same Passthrough
+# graph. Its structured fields live in the item's metadata JSON, so no column was added.
 NATIVE_TYPES = (
     "note",
     "fleeting",
     "journal",
     "gist",
     "bookmark",
+    "decision",
     "image",
     "audio",
     "video",
@@ -33,7 +36,7 @@ NATIVE_TYPES = (
     "sheet",
     "slides",
 )
-_TEXT_TYPES = {"note", "fleeting", "journal", "gist", "bookmark"}
+_TEXT_TYPES = {"note", "fleeting", "journal", "gist", "bookmark", "decision"}
 
 
 class NativeKnowledgeProvider(KnowledgeProvider):

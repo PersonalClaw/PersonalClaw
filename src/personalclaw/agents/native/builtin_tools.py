@@ -149,6 +149,12 @@ _CATEGORY_OF: dict[str, str] = {
     "knowledge_get": "knowledge",
     "knowledge_update": "knowledge",
     "knowledge_stats": "knowledge",
+    # decision journal (PROACTIVE-ASSISTANT §2.2) — same category as the knowledge tools:
+    # a decision IS a knowledge item, so the journal cannot be installed or removed
+    # independently of the library its entries live in.
+    "log_decision": "knowledge",
+    "decision_list": "knowledge",
+    "decision_resolve": "knowledge",
     # tasks (installable app) — the Project→TaskList→Task CONTAINER hierarchy.
     "task_create": "tasks",
     "task_list": "tasks",
@@ -269,6 +275,26 @@ def _enrich_in_background(item_id: str) -> None:
     task = asyncio.create_task(_run())
     _bg_ingest_tasks.add(task)
     task.add_done_callback(_bg_ingest_tasks.discard)
+
+
+def _decision_domains() -> tuple[str, ...]:
+    """The decision-journal domain vocabulary, read from the module that OWNS it.
+
+    Same reasoning as ``_structural_verbs``: spelling the six strings into this schema would
+    let the tool advertise a domain :mod:`personalclaw.decisions` rejects, and the model would
+    keep sending it. Imported lazily so building the registry on every session start does not
+    pull in the knowledge + trigger + memory stack.
+    """
+    from personalclaw.decisions import DECISION_DOMAINS
+
+    return DECISION_DOMAINS
+
+
+def _decision_grades() -> tuple[str, ...]:
+    """The resolution-grade vocabulary, read from the module that OWNS it."""
+    from personalclaw.decisions import RESOLUTION_GRADES
+
+    return RESOLUTION_GRADES
 
 
 def _ok_capped(
@@ -725,6 +751,82 @@ class NativeBuiltinToolProvider(ToolProvider):
                     "count, a by-type breakdown, and the most common tags. No args."
                 ),
                 parameters={**s, "properties": {}},
+            ),
+            # ── Decision journal (PROACTIVE-ASSISTANT §2.2) ──
+            # Beside the knowledge tools and in the SAME category, because a decision IS a
+            # knowledge item — a separate app would make the journal removable independently
+            # of the library its entries live in.
+            ToolDefinition(
+                name="log_decision",
+                provider=self.name,
+                requires_approval=False,
+                risk_level=RiskLevel.CAUTION,
+                description=(
+                    "Record a decision the user is making, with the prediction they expect, "
+                    "and schedule ONE review at its horizon. Offer this when you notice a "
+                    "decision being made — never log one silently. Args: summary (str, "
+                    "required — the decision in one line), expectation (str, required — what "
+                    "the user predicts will happen), confidence (number 0-1, required), "
+                    f"domain ({'|'.join(_decision_domains())}, default 'other'), "
+                    "content (str — the reasoning, context and stakes, free prose), "
+                    "review_horizon (str YYYY-MM-DD — defaults to the configured horizon), "
+                    "tags (list of str)."
+                ),
+                parameters={
+                    **s,
+                    "properties": {
+                        "summary": {"type": "string"},
+                        "expectation": {"type": "string"},
+                        "confidence": {"type": "number"},
+                        "domain": {"type": "string", "enum": list(_decision_domains())},
+                        "content": {"type": "string"},
+                        "review_horizon": {"type": "string"},
+                        "tags": {"type": "array", "items": {"type": "string"}},
+                    },
+                    "required": ["summary", "expectation", "confidence"],
+                },
+            ),
+            ToolDefinition(
+                name="decision_list",
+                provider=self.name,
+                requires_approval=False,
+                risk_level=RiskLevel.SAFE,
+                description=(
+                    "List the user's logged decisions. Args: status "
+                    "('pending'|'resolved'|'abandoned'|'overdue' — 'overdue' means pending "
+                    "past its review horizon), domain (str), limit (int, default 25)."
+                ),
+                parameters={
+                    **s,
+                    "properties": {
+                        "status": {"type": "string"},
+                        "domain": {"type": "string"},
+                        "limit": {"type": "integer"},
+                    },
+                },
+            ),
+            ToolDefinition(
+                name="decision_resolve",
+                provider=self.name,
+                requires_approval=False,
+                risk_level=RiskLevel.CAUTION,
+                description=(
+                    "Capture what actually happened for a logged decision. Writes the "
+                    "expectation-vs-outcome lesson to memory. Args: id (str, required), "
+                    "outcome (str, required — what actually happened, in the user's own "
+                    f"words), grade ({'|'.join(_decision_grades())}, required; 'too_early' "
+                    "defers the review instead of resolving it). Never invent an outcome — "
+                    "ask the user."
+                ),
+                parameters={
+                    **s,
+                    "properties": {
+                        "id": {"type": "string"},
+                        "outcome": {"type": "string"},
+                        "grade": {"type": "string", "enum": list(_decision_grades())},
+                    },
+                    "required": ["id", "outcome", "grade"],
+                },
             ),
             # ── Tasks (Project → TaskList → Task) ──
             ToolDefinition(
@@ -2181,6 +2283,122 @@ class NativeBuiltinToolProvider(ToolProvider):
                 f"Knowledge library: {ov['total']} items, {ov['entities']} entities.\n"
                 f"By type: {by_type}\n"
                 f"Top tags: {top_tags}"
+            ),
+        )
+
+    # ── Decision journal (PROACTIVE-ASSISTANT §2.2) ──
+
+    async def _t_log_decision(self, a: dict) -> ToolResult:
+        from personalclaw.decisions import DecisionError, log_decision
+
+        def _log() -> dict:
+            # `enqueue=_enrich_in_background` is the wiring that makes a logged decision
+            # vector-searchable: `decisions.log_decision` deliberately does not reach for the
+            # gateway's ingest queue itself, so the caller supplies the ingestion path. Passing
+            # nothing here would leave every logged decision keyword-only forever — the same
+            # defect the comment on `_enrich_in_background` records for agent-authored notes.
+            return log_decision(
+                summary=str(a.get("summary", "")),
+                content=str(a.get("content", "")),
+                expectation=str(a.get("expectation", "")),
+                confidence=a.get("confidence"),
+                domain=str(a.get("domain", "other") or "other"),
+                review_horizon=str(a.get("review_horizon", "") or ""),
+                tags=[str(t) for t in a["tags"]] if isinstance(a.get("tags"), list) else None,
+                enqueue=_enrich_in_background,
+            )
+
+        try:
+            row = await asyncio.get_event_loop().run_in_executor(None, _log)
+        except DecisionError as exc:
+            return ToolResult(success=False, error=f"log_decision: {exc}")
+        return ToolResult(
+            success=True,
+            output=(
+                f"Logged decision '{row['summary']}' (id={row['id']}, {row['domain']}).\n"
+                f"Expecting: {row['expectation']} at {row['confidence']:.0%} confidence.\n"
+                f"One review scheduled for {row['review_horizon']} "
+                f"(trigger {row['reminder_trigger_id']})."
+            ),
+        )
+
+    async def _t_decision_list(self, a: dict) -> ToolResult:
+        from personalclaw.decisions import DecisionError, list_decisions
+
+        try:
+            limit = int(a.get("limit", 25) or 25)
+        except (ValueError, TypeError):
+            limit = 25
+
+        def _list() -> list[dict]:
+            return list_decisions(
+                status=str(a.get("status", "") or ""),
+                domain=str(a.get("domain", "") or ""),
+                limit=limit,
+            )
+
+        try:
+            rows = await asyncio.get_event_loop().run_in_executor(None, _list)
+        except DecisionError as exc:
+            return ToolResult(success=False, error=f"decision_list: {exc}")
+        if not rows:
+            return ToolResult(success=True, output="(no matching decisions)")
+        lines = []
+        for r in rows:
+            bits = [f"[{r['status']}]", str(r["summary"]), f"(id={r['id']})", f"@{r['domain']}"]
+            if r["status"] == "pending":
+                bits.append(f"review {r['review_horizon']}")
+                if r.get("overdue"):
+                    bits.append("OVERDUE")
+                if r.get("stale_pending"):
+                    bits.append("stale (deferred twice)")
+            elif r["outcome_grade"]:
+                bits.append(f"→ {r['outcome_grade']}")
+            lines.append("- " + " ".join(bits))
+        return _ok_capped("\n".join(lines), session_key=self._session_key)
+
+    async def _t_decision_resolve(self, a: dict) -> ToolResult:
+        from personalclaw.decisions import DecisionError, resolve_decision
+
+        item_id = str(a.get("id", "")).strip()
+        if not item_id:
+            return ToolResult(success=False, error="decision_resolve requires 'id'")
+
+        def _resolve() -> dict:
+            return resolve_decision(
+                item_id,
+                outcome=str(a.get("outcome", "")),
+                grade=str(a.get("grade", "")),
+                enqueue=_enrich_in_background,
+            )
+
+        try:
+            row = await asyncio.get_event_loop().run_in_executor(None, _resolve)
+        except DecisionError as exc:
+            return ToolResult(success=False, error=f"decision_resolve: {exc}")
+        if row["status"] == "pending":
+            if row.get("stale_pending"):
+                return ToolResult(
+                    success=True,
+                    output=(
+                        f"Decision {row['id']} has been deferred twice already — leaving it "
+                        f"pending with no further reminders. It shows as stale in the journal."
+                    ),
+                )
+            return ToolResult(
+                success=True,
+                output=(
+                    f"Too early — review rescheduled for {row['review_horizon']} "
+                    f"(deferral {row['deferrals']} of 2)."
+                ),
+            )
+        lesson = row["lesson_memory_key"]
+        tail = f"Lesson written to memory as {lesson}." if lesson else "No lesson was written."
+        return ToolResult(
+            success=True,
+            output=(
+                f"Resolved '{row['summary']}' as {row['outcome_grade']} "
+                f"(expected: {row['expectation']}).\n{tail}"
             ),
         )
 
