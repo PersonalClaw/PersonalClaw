@@ -20,7 +20,7 @@ from datetime import datetime, timezone
 
 import pytest
 
-from personalclaw.evals import ablation
+from personalclaw.evals import ablation, harvest
 from personalclaw.evals import overlay as overlay_lib
 from personalclaw.evals import skills_bench
 from personalclaw.evals.matrix import FAILED, PASSED, VERIFIER_ABSENT, CellResult, MatrixResult
@@ -47,10 +47,27 @@ SKILL_BODY = (
 
 @pytest.fixture()
 def bench_home(tmp_path, monkeypatch):
+    """Isolate the run store AND the evals scenario library under a tmp home.
+
+    `$PERSONALCLAW_HOME` is what actually redirects an import-bound store: `workflows.store` and
+    `evals.store` bind `config_dir` as a module-level SYMBOL, and `config_dir()` re-reads the env
+    var on every call. Deliberately NOT also patching `personalclaw.config.loader.config_dir` here:
+    conftest's real-home rail already re-points every binding of that function object, and adding a
+    second patch on top of it was MEASURED to leak the run store between tests in one process — six
+    tests in this file reuse the fixed run id `run-a` and started failing on
+    `UNIQUE constraint failed: runs.id`. The redirect is asserted rather than assumed.
+    """
     home = tmp_path / "home"
     home.mkdir()
     monkeypatch.setenv("PERSONALCLAW_HOME", str(home))
     monkeypatch.delenv(SUPPRESSED_SKILLS_ENV, raising=False)
+    from personalclaw.evals import scenarios as _sc
+    from personalclaw.workflows import store as _wf_store
+
+    assert _sc.installed_dir().is_relative_to(home), "the library must not resolve to the real home"
+    assert _wf_store._db_path().is_relative_to(
+        home
+    ), "the run store must not resolve to the real home"
     return home
 
 
@@ -183,13 +200,18 @@ def test_consulted_runs_reads_the_wf2_r13_ledger_event(bench_home):
     assert skills_bench.consulted_runs("other") != []
 
 
-def test_ref_matching_is_not_a_substring_test():
-    assert skills_bench._ref_names_skill("skill:code/foo", "code/foo") is True
-    assert skills_bench._ref_names_skill("code/foo", "code/foo") is True
-    assert skills_bench._ref_names_skill("skill:code/foo", "foo") is True
-    # `foo` must not match `foo-bar`, or one skill's bench replays another's runs.
-    assert skills_bench._ref_names_skill("skill:code/foo-bar", "foo") is False
-    assert skills_bench._ref_names_skill("", "foo") is False
+def test_ref_matching_is_the_shared_matcher_and_not_a_substring_test():
+    """The bench must not own a second copy of this predicate.
+
+    Both readers of a `consulted` ref — the live event scan here and the frozen
+    `harvest.consulted_refs` scope the replay population uses — go through ONE function, or they
+    disagree about `foo` vs `foo-bar` and one skill's bench replays another skill's runs.
+    """
+    assert skills_bench.harvest.ref_names_skill is harvest.ref_names_skill
+    assert not hasattr(skills_bench, "_ref_names_skill")
+    assert harvest.ref_names_skill("skill:code/foo", "code/foo") is True
+    assert harvest.ref_names_skill("skill:code/foo", "foo") is True
+    assert harvest.ref_names_skill("skill:code/foo-bar", "foo") is False
 
 
 def test_no_consulted_run_is_a_refusal_not_a_zero_delta(bench_home, loader):
@@ -198,6 +220,132 @@ def test_no_consulted_run_is_a_refusal_not_a_zero_delta(bench_home, loader):
     assert report.delta is None
     assert "no replay population" in report.reason
     assert report.consulted_run_ids == []
+
+
+# ── the replay population: the consulted runs' OWN harvested inputs ───────────
+
+
+def _harvest_case(workflow: str, refs: tuple[str, ...]) -> str:
+    """Harvest one terminal run that consulted `refs`, and return its case name."""
+    from personalclaw.evals import harvest as hv
+    from personalclaw.workflows import store as wf_store
+    from personalclaw.workflows.journal import Journal
+    from personalclaw.workflows.models import InstanceState, RunStatus, WorkflowRun
+
+    run = wf_store.create(WorkflowRun(id="", workflow_name=workflow))
+    run.status = RunStatus.COMPLETE
+    run = wf_store.save(run)
+    journal = Journal(run_id=run.id)
+    journal.run_started(workflow, inputs={"topic": workflow}, spec_version=1)
+    journal.step_completed("root.fetch", "fetch", epoch=1, cache_key="ck", state=InstanceState.DONE)
+    for index, ref in enumerate(refs):
+        journal.consulted("root.fetch", f"n{index}", ref=ref)
+    journal.run_finished(RunStatus.COMPLETE.value, elapsed_secs=1.0, tokens=1)
+    report = hv.harvest()
+    return next(c.name for c in report.cases if c.run_id == run.id)
+
+
+def test_the_default_subject_is_a_consulted_runs_own_harvested_case(bench_home, loader):
+    """The clause: "replays consulted runs" — in the INPUTS, not only in the population.
+
+    Both directions in one call: the case whose run consulted this skill is what gets replayed,
+    and the case whose run consulted a DIFFERENT skill is not, even though both are in the suite.
+    """
+    from personalclaw.evals import harvest as hv
+
+    mine = _harvest_case("release-triage", (f"skill:{SKILL_NAME}",))
+    theirs = _harvest_case("other-flow", ("skill:some/other",))
+    assert {c["name"] for c in hv.load_harvested_suite()} == {mine, theirs}, "vacuity floor"
+
+    population = skills_bench.replay_population(SKILL_NAME)
+    assert type(population) is skills_bench.ReplayPopulation
+    assert population.subject == mine
+    assert theirs not in population.candidates
+
+    seen: list = []
+    report = skills_bench.bench_skill(
+        SKILL_NAME,
+        loader=loader,
+        trials=1,
+        now=NOW,
+        run_matrix=_fake_matrix(
+            {skills_bench.ARM_SURFACED: [0.9], skills_bench.ARM_SUPPRESSED: [0.4]}, seen=seen
+        ),
+    )
+    spec, _matrix_id = seen[0]
+    # The subject handed to the REAL MatrixSpec is the harvested case, not a hand-named scenario.
+    assert spec.subject == mine
+    assert report.subject == mine
+    assert report.subject_origin == "harvested"
+    assert report.subject_run_id and report.subject_run_id in report.consulted_run_ids
+    assert report.subject_candidates == [mine]
+    assert report.verdict == ablation.KEEP
+
+
+def test_an_explicit_subject_is_recorded_as_the_operators_and_not_a_replay(bench_home, loader):
+    """The two claims must stay distinguishable in the report."""
+    _harvest_case("release-triage", (f"skill:{SKILL_NAME}",))
+    report = skills_bench.bench_skill(
+        SKILL_NAME,
+        subject="triage-scenario",
+        loader=loader,
+        trials=1,
+        now=NOW,
+        run_matrix=_fake_matrix(
+            {skills_bench.ARM_SURFACED: [0.9], skills_bench.ARM_SUPPRESSED: [0.4]}
+        ),
+    )
+    assert report.subject == "triage-scenario"
+    assert report.subject_origin == "operator"
+    assert report.subject_run_id == ""
+    assert report.subject_candidates == []
+
+
+def test_a_consulted_run_with_no_harvested_case_refuses_before_spending(bench_home, loader):
+    """The live ledger says the skill was consulted, but no case was harvested from it.
+
+    Replaying SOMETHING ELSE here would attribute a delta to a skill the artifact never loaded,
+    so the harvest's own refusal sentence is carried through and no matrix is spent.
+    """
+    _seed_consulted_run("run-a", [f"skill:{SKILL_NAME}"])
+
+    def _must_not_run(spec, *, matrix_id, **kwargs):  # pragma: no cover - asserted absent
+        raise AssertionError("the bench must not replay an artifact the skill never touched")
+
+    report = skills_bench.bench_skill(SKILL_NAME, loader=loader, now=NOW, run_matrix=_must_not_run)
+    assert report.consulted_run_ids == ["run-a"], "vacuity floor: the population WAS found"
+    assert report.verdict == ablation.INCONCLUSIVE
+    assert report.delta is None
+    assert report.subject == ""
+    assert "no replay population" in report.reason
+    assert f"consulted {SKILL_NAME!r}" in report.reason
+
+
+def test_the_cli_bench_reaches_the_filter_with_no_subject_flag(bench_home, loader, capsys):
+    """The CALL SITE, driven the way a user types it: `personalclaw ablation --skill <name>`.
+
+    `--subject` defaults to `""`, so before this the default invocation refused outright — a
+    defaulted field is an unsupplied input, and the bench was dead in practice. This asserts the
+    real dispatch chain resolves the subject from the consulted runs instead.
+    """
+    import argparse
+
+    from personalclaw import cli, cli_commands
+
+    assert cli._ablation is cli_commands._ablation, "the CLI must dispatch to this function"
+    mine = _harvest_case("release-triage", (f"skill:{SKILL_NAME}",))
+    _harvest_case("other-flow", ("skill:some/other",))
+
+    cli_commands._ablation(
+        argparse.Namespace(
+            list_components=False, skill=SKILL_NAME, subject="", dry_run=True, trials=1, budget=0.0
+        )
+    )
+    out = capsys.readouterr().out
+    assert mine in out
+    assert "(harvested)" in out
+    assert "harvested candidates: 1" in out
+    assert "--dry-run: nothing was called." in out
 
 
 # ── the bench end to end ──────────────────────────────────────────────────────
