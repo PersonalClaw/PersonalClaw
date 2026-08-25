@@ -5304,7 +5304,7 @@
     {
       "plan": "WATCHED-SOURCES",
       "code": "WS",
-      "status": "in_progress",
+      "status": "done",
       "atoms": [
         {
           "id": "WS-1",

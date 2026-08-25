@@ -151,3 +151,39 @@ def test_the_leading_atom_count_matches_the_dag() -> None:
             wrong.append(f"{f.name}: says {claimed} atoms, dag has {counts[code]}")
     assert checked >= 6, f"only {checked} files carry a leading atom count — matcher may be stale"
     assert not wrong, "stale atom counts:\n  " + "\n  ".join(wrong)
+
+
+def test_a_plans_status_field_agrees_with_its_own_atoms() -> None:
+    """A plan whose every atom is ``done`` must not still claim ``in_progress``.
+
+    Measured 2026-08-25: `WATCHED-SOURCES` reached 9/9 when `WS-7` flipped, and its
+    ``status`` stayed ``in_progress``. The whole suite — 37 tests over the three roadmap
+    files — passed with that drift present, because nothing here read `plan["status"]` at
+    all; only the dashboard's generated health line mentioned it, and a generated artifact
+    nobody is required to open is not a gate. The merge-train playbook already says to
+    "fold in any plan whose LAST atom just flipped", so this rails the step rather than
+    trusting it to be remembered.
+
+    Asserted in one direction only. ``done`` with every atom done is required, but a plan
+    NOT marked done while atoms remain open is normal, and ``in_progress`` versus some
+    other not-done value is the owner's vocabulary, not this test's business.
+    """
+    dag = _dag()
+    finished_but_open: list[str] = []
+    fully_done = 0
+    for plan in dag["plans"]:
+        atoms = plan.get("atoms") or []
+        if not atoms or any(a["status"] != "done" for a in atoms):
+            continue
+        fully_done += 1
+        if plan.get("status") != "done":
+            finished_but_open.append(
+                f"{plan.get('plan')} ({plan.get('code')}): "
+                f"{len(atoms)}/{len(atoms)} atoms done but status={plan.get('status')!r}"
+            )
+    # Vacuity floor: if no plan is fully done, the loop above never ran a real check and
+    # the assertion below would pass on an empty dag or a broken atom-status read.
+    assert fully_done >= 5, f"only {fully_done} fully-done plans found — the check is vacuous"
+    assert not finished_but_open, "plan status contradicts its atoms:\n  " + "\n  ".join(
+        finished_but_open
+    )
