@@ -73,6 +73,16 @@ class InboundClient:
     agent: str = ""
     tools: list[str] = field(default_factory=list)
     scope: dict[str, Any] = field(default_factory=dict)
+    #: The ProviderEntry this client's captured traffic is forwarded to (§7.1) — a
+    #: **config.json provider NAME, never a URL**. That distinction is the whole
+    #: security argument for letting this be writable: the record selects among
+    #: providers the operator already configured, and the destination host comes from
+    #: that entry's own `options`/spec, so no value here can name a host the operator
+    #: never named. The resolved URL is then still pre-flighted against
+    #: `external_access.capture.upstream_allowlist` before any socket opens
+    #: (`capture_proxy._handle`). Empty means "no pinned upstream" — the caller must
+    #: then use passthrough with its OWN key; it never means "pick one for me".
+    upstream: str = ""
     rate_overrides: dict[str, Any] = field(default_factory=dict)
     disabled: bool = False
     created_at: str = ""
@@ -125,6 +135,7 @@ def load_clients() -> dict[str, InboundClient]:
                 agent=str(row.get("agent", "") or ""),
                 tools=[str(t) for t in (row.get("tools") or []) if isinstance(t, str)],
                 scope=dict(row.get("scope") or {}),
+                upstream=str(row.get("upstream", "") or ""),
                 rate_overrides=dict(row.get("rate_overrides") or {}),
                 # `disabled` is read with plain `bool`, NOT `_expose_flag`: this flag's
                 # True is the CLOSED position, so an unparseable value must read as
@@ -168,6 +179,7 @@ def create_client(
     agent: str = "",
     tools: list[str] | None = None,
     scope: dict[str, Any] | None = None,
+    upstream: str = "",
     rate_overrides: dict[str, Any] | None = None,
 ) -> tuple[InboundClient, str]:
     """Register a client and return ``(record, token)``.
@@ -175,6 +187,12 @@ def create_client(
     The token is returned ONCE, to be shown once. Only its hash is persisted, so
     there is deliberately no way to recover it later — rotation is cheap and a
     re-readable bearer credential is one an unattended process can also read.
+
+    ``upstream`` names a config.json ProviderEntry (see :class:`InboundClient`), not a
+    URL. It is stored verbatim and NOT validated here: this function is the persistence
+    seam and a provider may legitimately be configured after the client is registered.
+    Validation belongs to the operator-facing route, which refuses an unknown name up
+    front the same way it refuses an unknown surface.
     """
     token = secrets.token_urlsafe(48)  # ~64 chars, comfortably past MIN_TOKEN_BYTES
     client = InboundClient(
@@ -185,6 +203,7 @@ def create_client(
         agent=agent,
         tools=list(tools or []),
         scope=dict(scope or {}),
+        upstream=upstream,
         rate_overrides=dict(rate_overrides or {}),
         disabled=False,
         created_at=_now(),
