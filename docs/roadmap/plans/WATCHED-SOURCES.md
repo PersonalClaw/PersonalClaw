@@ -1112,3 +1112,25 @@ Trigger-side work (`web_watch` wiring, morning-digest template install, triage d
   sibling suite performed, and both fixtures ASSERT the redirect binds. The `mute_all` test also
   asserts its precondition (`notification_allowed(INFO) is False`) before running the digest, so an
   isolation leak now fails at the precondition instead of masquerading as a security-control bypass.
+
+- **[2026-08-25][`WS-7`] CORRECTION — this atom was briefly flipped `done` and that was WRONG.** A
+  roadmap tick read the `**DONE — \`WS-7\` streams: …**` opener of the entry above, verified the four
+  `done_when` deliverables against `origin/main` (`fc597af4`), found them all present, and flipped the
+  status. It did **not** read to the end of the same entry, where the bold ruling sits ~80 lines below
+  the opener: *"This atom is therefore PARTIAL in one respect worth recording: the digest is invocable
+  and fully tested, but **nothing in the shipped product calls it yet**"*. The flip was reverted before
+  merging; `dag.json` stays `todo` and now carries a `blocked_reason` quoting that ruling.
+  **The failure mode is worth more than the fix.** Every deliverable *existed*, so a symbol-and-path
+  check passed cleanly. What was missing was a **caller** — `run_morning_digest` has no bundled clock
+  trigger pointing at it — which is precisely the inert-control shape this repo's own census doctrine
+  says to test for: *"a census that asks only 'is there a caller?' is one level too shallow — ask
+  'would deleting the caller be caught?'"*. Here the answer is that deleting the caller would be caught
+  by nothing, because there is no caller. **An entry's opener is not its verdict; the last ruling in an
+  entry is.**
+  🔴 **`tools/audit_landed_atoms.py` had this atom right and its REASON wrong, which is why the reason
+  matters.** It bucketed `WS-7` as LANDED-BUT-GATED — correct — but justified it as *"the log names an
+  owner call / BLOCKED"*, matching the unrelated sentence *"a naming wart worth an owner call later; it
+  is not worth a fourth vocabulary now"*. A correct verdict resting on a wrong reason invites exactly
+  the override that happened here. That reason is fixed separately (the deferral filter demotes the
+  `later` clause), moving `WS-7` to `PARTIAL_OR_UNMET` — *"the log names an unmet clause"* — which is
+  the true one. Its LANDED-AND-CLEAN sibling error on `MRT-5` is fixed in the same change.
