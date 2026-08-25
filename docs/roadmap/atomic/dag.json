@@ -6426,7 +6426,7 @@
         {
           "id": "LV-3",
           "title": "S2 digest section: learning summary block (new/refined/pending counts + names)",
-          "status": "todo",
+          "status": "done",
           "scope": "Session 2 T2.3 (register block with plan-42 digest builder; fallback to skills-page header + DISCOVERY if 42 S5 not landed)",
           "done_when": "weekly digest (or fallback skills-page header) shows the learning block with real counts and names",
           "deps": [
@@ -7729,8 +7729,8 @@
         "plan": "LV"
       },
       {
-        "id": "LV-3",
-        "title": "S2 digest section: learning summary block (new/refined/pending counts + names)",
+        "id": "LV-4",
+        "title": "Periodic identity report: compose_identity_report + delivery/schedule/config/FE (amendment)",
         "plan": "LV"
       },
       {
@@ -10105,9 +10105,9 @@
         "code": "LV",
         "plan": "LEARNING-VISIBILITY",
         "total_atoms": 7,
-        "done": 2,
+        "done": 3,
         "in_progress": 0,
-        "todo": 5,
+        "todo": 4,
         "blocked": 0
       },
       {
