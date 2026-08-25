@@ -2918,7 +2918,8 @@
           "deps": [
             "EXT:WORKFLOWS-V2-AUTOMATION-SUBSTRATE:one-shot clock/at trigger with delete_after_run (commitment-conversion pattern)",
             "EXT:WORKFLOWS-V2-LEARNING-FLYWHEEL:LEARN-R18 pending\u2192resolved lesson lifecycle (write_lesson)"
-          ]
+          ],
+          "blocked_reason": "PARTIAL (2026-08-25). Four of five clauses met. UNMET AS WORDED: the decision-review WorkflowDef delivers the horizon card but does NOT capture the outcome \u2014 capture, status=resolved and the R18 lesson all happen in decision_resolve. The horizon fires with nobody present, so the only in-workflow way to 'capture' is a stage/invoke-agent inventing what happened. OWNER RULING NEEDED: re-word the clause to match the split, or specify the to-chat linked-session mechanism \u00a72.3 gestures at (does not exist, not this atom's scope). ALSO UNMET: no frontend \u2014 that is PA-6, and calibration() already computes the strip so PA-6 is FE-only."
         },
         {
           "id": "PA-5",
