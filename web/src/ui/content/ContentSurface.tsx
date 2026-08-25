@@ -109,9 +109,18 @@ export const ContentSurface = forwardRef<ContentSurfaceHandle, ContentSurfacePro
   // "disk moved under an unedited view" (follow it) from "user is editing" (keep).
   const draftBaseRef = useRef(content)
 
-  const editable = isEditable(type) && !readOnly && !truncated && !!onSave
+  // A type may bring its OWN editor (DOCUMENT-FIDELITY-EDITOR §C4). It replaces Monaco
+  // and owns its own persistence, because what it edits is not the string draft — so it
+  // makes a type editable WITHOUT an `onSave`, and it suppresses every affordance that
+  // acts on that draft (`draftEditable` below). Handing a custom editor the surface's
+  // Save would post the string draft to the host's text-save path: for a binary document
+  // whose `content` is only a raw-URL ref, that is a save that destroys the body.
+  const CustomEditor = type.edit?.render
+  const custom = !!CustomEditor && !readOnly && !truncated
+  const editable = isEditable(type) && !readOnly && !truncated && (!!onSave || custom)
+  const draftEditable = editable && !custom
   const previewable = !!type.preview
-  const splittable = editable && previewable && !!type.edit?.split
+  const splittable = draftEditable && previewable && !!type.edit?.split
 
   // Seed draft from the host cache (survives tab-switch unmount) else from content.
   const [draft, setDraft] = useState(() => draftStore?.get(docId)?.draft ?? content)
@@ -144,8 +153,13 @@ export const ContentSurface = forwardRef<ContentSurfaceHandle, ContentSurfacePro
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [docId, content])
 
-  const dirty = editable && draft !== content
-  useEffect(() => { onDirtyChange?.(dirty) }, [dirty, onDirtyChange])
+  const dirty = draftEditable && draft !== content
+  // A custom editor's unsaved state is ITS state, so it reports it rather than being
+  // derived from a draft it does not use. Folded into one flag so the toolbar dot and the
+  // host's tab marker read the same thing whichever editor is mounted.
+  const [customDirty, setCustomDirty] = useState(false)
+  const anyDirty = dirty || customDirty
+  useEffect(() => { onDirtyChange?.(anyDirty) }, [anyDirty, onDirtyChange])
   useEffect(() => { onDraftChange?.(draft, dirty) }, [draft, dirty, onDraftChange])
   // Mirror the unsaved draft into the host cache so it survives unmount; clear when clean.
   useEffect(() => {
@@ -195,6 +209,9 @@ export const ContentSurface = forwardRef<ContentSurfaceHandle, ContentSurfacePro
   }
 
   function renderEditor(split = false) {
+    if (CustomEditor && custom) {
+      return createElement(CustomEditor, { slug: docId, title, mode, readOnly, onDirty: setCustomDirty })
+    }
     return (
       <Suspense fallback={<Centered><Loader2 size={18} className="animate-spin text-on-surface-low" /></Centered>}>
         <MonacoEditor height="100%" path={path} language={language || type.edit?.language || 'plaintext'} value={draft}
@@ -208,7 +225,7 @@ export const ContentSurface = forwardRef<ContentSurfaceHandle, ContentSurfacePro
             // (IEditorOptions.ariaLabel); naming it from the document makes the announcement
             // specific. `title` is required here, so no fallback branch is needed.
             ariaLabel: `${title} — editor`,
-            readOnly: !editable, fontSize: 13, minimap: { enabled: view !== 'split' }, scrollBeyondLastLine: false, wordWrap: wrap ? 'on' : 'off', lineNumbers: 'on', automaticLayout: true, padding: { top: 10, bottom: 10 }, tabSize: 2, renderWhitespace: 'selection' }} />
+            readOnly: !draftEditable, fontSize: 13, minimap: { enabled: view !== 'split' }, scrollBeyondLastLine: false, wordWrap: wrap ? 'on' : 'off', lineNumbers: 'on', automaticLayout: true, padding: { top: 10, bottom: 10 }, tabSize: 2, renderWhitespace: 'selection' }} />
       </Suspense>
     )
   }
@@ -252,7 +269,7 @@ export const ContentSurface = forwardRef<ContentSurfaceHandle, ContentSurfacePro
         <div className="flex flex-wrap items-center gap-s border-b border-outline/40 px-m py-1.5">
           {headerLeft}
           {truncated && <span className="shrink-0 rounded px-1.5 py-0.5 text-[0.75rem] text-on-surface-low" style={{ background: 'var(--color-surface-high)' }} title="Only the first part of this large file was loaded — read-only so a save can't truncate the rest.">truncated · read-only</span>}
-          {dirty && <span className="size-1.5 shrink-0 rounded-full" style={{ background: 'var(--color-primary)' }} title="Unsaved changes" />}
+          {anyDirty && <span className="size-1.5 shrink-0 rounded-full" style={{ background: 'var(--color-primary)' }} title="Unsaved changes" />}
           {/* This cluster wraps too, and both halves are needed: it is 399px wide on its own at a
               390px viewport, so letting only the OUTER row wrap would drop it onto a line it still
               could not fit. `justify-end` keeps every wrapped line flush right, matching where
@@ -267,7 +284,7 @@ export const ContentSurface = forwardRef<ContentSurfaceHandle, ContentSurfacePro
                 <ToggleBtn icon={Code2} label="Edit" on={view === 'edit'} onClick={() => setView('edit')} compact={compact} indicatorId={viewToggleId} />
               </div>
             )}
-            {view !== 'preview' && editable && (
+            {view !== 'preview' && draftEditable && (
               <>
                 <SquareIconButton icon={WrapText} label="Toggle word wrap" on={wrap} iconSize={13} onClick={() => setWrap((w) => !w)} />
                 <SquareIconButton icon={copied ? Check : Copy} label="Copy contents" iconSize={13} onClick={copy} />
@@ -291,7 +308,7 @@ export const ContentSurface = forwardRef<ContentSurfaceHandle, ContentSurfacePro
                 )}
               </div>
             )}
-            {editable && (
+            {draftEditable && (
               <>
                 <button onClick={() => setDraft(content)} disabled={!dirty} type="button"
                   className="inline-flex size-7 items-center justify-center rounded-md text-on-surface-low hover:bg-surface-high hover:text-on-surface disabled:opacity-40" title="Revert unsaved changes"><RotateCcw size={13} /></button>

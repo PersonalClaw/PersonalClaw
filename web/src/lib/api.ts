@@ -3110,6 +3110,10 @@ export interface DashboardConfig {
   // MI-4 master opt-in for the composer's screen-share control. OFF by default; the
   // server refuses a frame while it is off, so this is a real gate, not just UI state.
   screen_share_enabled: boolean
+  // DFE-5 master opt-in for editing a generated office document in place. OFF by
+  // default; the server refuses `PUT …/model` while it is off, so — like the flag
+  // above — this is a real gate rather than a UI preference.
+  document_editing: boolean
   // Vestigial server field from the retired customizable-bento dashboard (the
   // grid + per-user layout persistence were dropped in the v2 launcher-forward
   // redesign — everyone gets one curated content-first layout now). No FE
@@ -3539,6 +3543,40 @@ export interface Artifact {
    *  shared chat transcripts). Read here so the UI stops OFFERING an edit rather than
    *  letting the user type into an editor whose save always 400s. */
   readonly: boolean
+}
+
+// ── the document model the editor edits (DOCUMENT-FIDELITY-EDITOR §C1/§C4) ──
+// Mirrors `personalclaw/documents/model.py` field for field. Every field is REQUIRED
+// here even though the server defaults them, because this same shape is posted BACK and
+// `document_from_dict` is strict — an optional field a UI forgot to echo would be a
+// silently dropped run/style, which is the exact fidelity failure the plan exists to
+// prevent. `loss` is the report the parse produced: what the model could not hold.
+export interface DocumentRun { text: string; bold: boolean; italic: boolean; code: boolean; link: string }
+export interface DocumentParagraphStyle { align: string; space_before_pt: number; space_after_pt: number; line_spacing: number }
+export interface DocumentCell { runs: DocumentRun[]; text: string; bold: boolean; align: string }
+export interface DocumentPageSetup { orientation: string; margin_in: number }
+export interface DocumentBlock {
+  kind: 'heading' | 'paragraph' | 'bullets' | 'numbered' | 'table' | 'image' | 'pagebreak' | 'code'
+  text: string; level: number; items: string[]; rows: string[][]
+  artifact_slug: string; runs: DocumentRun[]; cells: DocumentCell[][]
+  style: DocumentParagraphStyle | null
+}
+export interface DocumentModelJson { title: string; blocks: DocumentBlock[]; page: DocumentPageSetup | null }
+/** One thing the parse could not represent — `where` locates it, `detail` names it. */
+export interface DocumentLossItem {
+  kind: string; detail: string; where: string
+  block_index: number; paragraph_ordinal: number
+}
+/** `lossless` and `summary` are the SERVER's verdict, carried beside the items on
+ *  purpose (`LossReport.to_dict`'s own note): a client that re-derived lossless as
+ *  `items.length === 0` is right today and wrong the first time a purely informational
+ *  item is added. So the editor reads these — it never recomputes them. */
+export interface DocumentLossReport {
+  lossless: boolean; kinds: string[]; summary: string; items: DocumentLossItem[]
+}
+export interface DocumentModelResponse {
+  slug: string; kind: string; version: number; mime: string
+  model: DocumentModelJson; loss: DocumentLossReport
 }
 
 /** One deployed artifact (PEP-8). `url` is the stable in-gateway path the artifact is
@@ -5741,6 +5779,20 @@ export const api = {
   artifactVersions: (slug: string) => get<{ slug: string; versions: number[] }>(`/api/artifacts/${encodeURIComponent(slug)}/versions`),
   artifactVersion: (slug: string, n: number) => get<Artifact>(`/api/artifacts/${encodeURIComponent(slug)}/versions/${n}`),
   artifactEvents: (slug: string) => get<{ slug: string; events: ArtifactEvent[] }>(`/api/artifacts/${encodeURIComponent(slug)}/events`),
+
+  // ── the document editor's read/save pair (DOCUMENT-FIDELITY-EDITOR §C4) ──
+  // Structure in both directions: the browser is handed a parsed MODEL and hands one
+  // back, and the server re-renders it with the shipped writer. No OOXML crosses here.
+  // `If-Match` is REQUIRED on the save (not optional): two tabs editing one document
+  // must collide with a 409 rather than have the second silently overwrite the first,
+  // so this is spelled out with `fetch` — the shared `put` helper carries no headers.
+  artifactModel: (slug: string) => get<DocumentModelResponse>(`/api/artifacts/${encodeURIComponent(slug)}/model`),
+  saveArtifactModel: (slug: string, version: number, model: DocumentModelJson) =>
+    fetch(`/api/artifacts/${encodeURIComponent(slug)}/model`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', 'If-Match': String(version), ...SK },
+      body: JSON.stringify({ model }),
+    }).then(j<{ slug: string; version: number; mime: string }>),
 
   // ── local static artifact deploy (PEP-8) ──
   // Deploying publishes an html/widget artifact at a stable IN-GATEWAY url

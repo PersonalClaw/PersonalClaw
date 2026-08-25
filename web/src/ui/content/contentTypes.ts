@@ -35,6 +35,35 @@ export interface EditCapability {
   /** Split edit↔preview makes sense (markdown/infographic/document: yes;
    *  a binary image: no). Requires a preview renderer to be set. */
   split?: boolean
+  /** A NON-MONACO editor for this type (DOCUMENT-FIDELITY-EDITOR §C4). When present,
+   *  <ContentSurface> renders THIS instead of Monaco — and, because such an editor
+   *  edits something other than the string draft (an office document edits a parsed
+   *  MODEL), it also owns its own persistence: the surface's Save/Revert/word-wrap
+   *  affordances, which all act on the string draft, are suppressed. Absent = today's
+   *  Monaco path, unchanged for every existing type. */
+  render?: ComponentType<DocumentEditorProps>
+}
+
+/** Props a non-Monaco editor receives from <ContentSurface>.
+ *
+ *  Deliberately NOT the parsed model + its loss report: the surface would have to know
+ *  the document API to supply those, and it is the ONE type-agnostic dispatcher. The
+ *  editor owns its own read (it is the only thing that knows what "its content" means),
+ *  its own save, and its own version/If-Match handling; the surface hands it the identity
+ *  of the document and the host's read-only posture, and takes a dirty signal back so the
+ *  host's unsaved-changes chrome still works. */
+export interface DocumentEditorProps {
+  /** Artifact slug — the document's identity on the server. */
+  slug: string
+  /** Display title (used in the editor's own error copy). */
+  title: string
+  /** Dark/light, for a renderer that needs it. */
+  mode: 'dark' | 'light'
+  /** The host offers no edit (historical version, frozen record): show, never save. */
+  readOnly?: boolean
+  /** Raised whenever the editor's unsaved state flips, so the host's dirty dot and
+   *  tab markers work for a custom editor exactly as they do for Monaco. */
+  onDirty?: (dirty: boolean) => void
 }
 
 /** Where this type's content originates (agent-facing), so generation lives

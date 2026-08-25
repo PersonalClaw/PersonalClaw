@@ -662,7 +662,14 @@ async def api_artifact_model_write(request: web.Request) -> web.Response:
 
     ``{"model": {...}}`` rather than a bare model so the body has room for the save-time
     fields §C5 will need (a lossy-edit acknowledgement) without changing shape later.
+
+    **``dashboard.document_editing`` is enforced HERE, not only in the UI** (§C6). This
+    route is the ONLY way an edit can reach the bytes, and re-rendering a document is
+    lossy by construction — so with the switch off the write is refused for every client,
+    not just for the one that hides its editor. Read per request, so turning the consent
+    off closes the path on the very next save rather than at the next restart.
     """
+    from personalclaw.config import AppConfig
     from personalclaw.documents.model_json import document_from_dict
     from personalclaw.documents.registry import get_writer
 
@@ -670,6 +677,16 @@ async def api_artifact_model_write(request: web.Request) -> web.Response:
     if _is_restricted_session(state, request):
         _audit(request, "artifact.model_write", "denied", "restricted_session")
         return json_error("forbidden", message="restricted session", status=403)
+    if not AppConfig.load().dashboard.document_editing:
+        _audit(request, "artifact.model_write", "denied", "document_editing_off")
+        return json_error(
+            "document_editing_off",
+            message=(
+                "in-place document editing is off; turn on Settings › Documents › "
+                "'Edit documents in place' to allow a re-render of this file"
+            ),
+            status=403,
+        )
     prov, refusal = _writable_provider(request)
     if refusal is not None:
         return refusal
