@@ -337,6 +337,188 @@ def test_a_superseded_entry_is_ignored(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
+# verdict precedence — a flip phrase is not the last word
+# ---------------------------------------------------------------------------
+
+# One entry routinely carries a flip phrase AND a reason not to flip, because it QUOTES the
+# entry it is overturning. `{ruling}` is the only thing that differs between the two runs
+# below, so the assertion is about precedence and nothing else.
+_REAUDIT_ENTRY = (
+    "## Execution log\n\n"
+    "- **2026-08-24 — `ZZ-1` re-audited against `origin/main`: two thirds are LANDED AND\n"
+    "  LIVE; the last third is on main but INERT. {ruling}** The 2026-08-23 entry above says\n"
+    '  "complete in code … atom stays `todo` only because this code is\n'
+    '  unmerged"; the code is now merged and that reading does not survive the merge.\n'
+)
+_REFUSED = "The atom is PARTIALLY satisfied and must NOT be flipped `done` yet."
+_ACCEPTED = "The atom is COMPLETE."
+
+
+def _bucket_for_zz1(plans: Path) -> object:
+    """Drive the whole path a human acts on: split -> classify -> attribute -> bucket.
+
+    Asserting ``_verdict_for`` in isolation is necessary but not sufficient — the bucket is
+    what the tool prints as a recommendation, so the bucket is what the test pins. Evidence is
+    held STRONG and constant so the only free variable is the log.
+    """
+    atom = make_atom()
+    keys = extract_keys(atom)
+    probe(keys, make_corpus({"src/widgets/thing.py": "def make_widget(): return WidgetThing()"}))
+    return classify(atom, keys, scan_plan_logs(plans).get("ZZ-1", []))
+
+
+def test_a_refusal_to_flip_keeps_an_atom_out_of_the_just_flip_it_bucket(tmp_path: Path) -> None:
+    """Measured on ``origin/main`` at ``fc597af4``: FLIP tested first inverted the tool's own
+    one recommendation. ``--bucket clean`` returned exactly one atom, ``MRT-5``, "log says
+    complete-but-unmerged" — while the excerpt printed beside it read "The atom is PARTIALLY
+    satisfied and **must NOT be flipped ``done`` yet**". The flip phrase it short-circuited on
+    was 306 chars in, inside a quotation of the entry being overturned.
+
+    Note that ``\\bpartial\\b`` does not rescue this: the entry writes "PARTIALLY", which the
+    trailing word boundary rejects. The refusal needs its own pattern set.
+    """
+    plans = tmp_path / "plans"
+    plans.mkdir()
+    plan = plans / "ZZ-PLAN.md"
+
+    plan.write_text(_REAUDIT_ENTRY.format(ruling=_REFUSED))
+    refused = _bucket_for_zz1(plans)
+    assert refused.bucket == GATED, refused.why  # type: ignore[attr-defined]
+    assert refused.bucket != CLEAN  # type: ignore[attr-defined]
+
+    # VACUITY: the fixture has to be *able* to reach CLEAN, or "not CLEAN" proves nothing — a
+    # typo'd id, a missing `## Execution log`, or absent evidence would each read as clean-free
+    # while measuring nothing. Same entry, same quoted flip phrase, refusal sentence dropped.
+    plan.write_text(_REAUDIT_ENTRY.format(ruling=_ACCEPTED))
+    assert _bucket_for_zz1(plans).bucket == CLEAN  # type: ignore[attr-defined]
+
+
+# `PCS-7`'s real entry, reduced: a headline that unambiguously declares the flip, and 6810
+# chars later the word "unmeasured" about a DIFFERENT surface it explicitly left alone.
+_FLIP_HEADLINE = (
+    "## Execution log\n\n"
+    "- **2026-08-22 — `ZZ-1`: the numbers ship AND soul guardrail 4 is measured. {tail1}Atom\n"
+    "  stays `todo` only because this code is unmerged**; flip it when the PR lands.\n"
+    "  {tail2}\n"
+)
+_FILLER = (
+    "The cache-hit ratio the dashboard reports is a different surface and it belongs to "
+    "whoever owns the context-percent tile; it is recorded here rather than widened, "
+    "because widening it now would pull an unrelated plan into this session's scope. "
+)
+
+
+def test_a_weak_keyword_in_the_body_does_not_overturn_a_headline_flip(tmp_path: Path) -> None:
+    """Blanket inversion was measured wrong, so the inversion is scoped to the headline.
+
+    ``GATED``/``PARTIAL`` are weak keyword sets. Letting them win from anywhere in a
+    multi-thousand-character entry scored ``PCS-7`` — whose headline says "the numbers ship AND
+    soul guardrail 4 is measured … flip it when the PR lands" — as PARTIAL, off the single word
+    "unmeasured" in a body clause about someone else's surface. That tripped the
+    ``KNOWN_LANDED`` ground-truth rail in ``self_check``, which is the correct outcome for a
+    regression and the reason this narrower rule exists.
+    """
+    plans = tmp_path / "plans"
+    plans.mkdir()
+    plan = plans / "ZZ-PLAN.md"
+
+    body = _FILLER * 3 + "see `G8`'s honest-unmeasured work, left alone."
+    plan.write_text(_FLIP_HEADLINE.format(tail1="", tail2=body))
+    assert len(_FLIP_HEADLINE.format(tail1="", tail2=body)) > 900, "filler must clear HEADLINE"
+    kept = _bucket_for_zz1(plans)
+    assert kept.bucket == CLEAN, kept.why  # type: ignore[attr-defined]
+
+    # VACUITY: the same word in the HEADLINE must overturn the very same flip phrase, or the
+    # test above is only measuring a pattern set that never matches anything.
+    plan.write_text(_FLIP_HEADLINE.format(tail1="One clause is unmeasured. ", tail2=body))
+    moved = _bucket_for_zz1(plans)
+    assert moved.bucket == GATED, moved.why  # type: ignore[attr-defined]
+
+
+# The same root cause as `MRT-5` pointing the other way: a phrase matched anywhere in the
+# entry, with no notion of whether it qualifies THIS atom's completion or names work declined
+# for now. `{clause}` is again the only free variable.
+_DEFERRAL_ENTRY = (
+    "## Execution log\n\n"
+    "- **DONE — `ZZ-1` streams: the events + saved queries + digest handoff.** Three new\n"
+    "  modules under `widgets/`; `make_widget` returns a `WidgetThing` and the end-to-end\n"
+    "  test drives every link. {clause}\n"
+)
+_DEFERRED = (
+    "The `app:` prefix on a core-contributed source is a naming wart worth an owner call "
+    "later; it is not worth a fourth vocabulary now."
+)
+_STANDING = (
+    "The `app:` prefix on a core-contributed source needs an owner call before this atom "
+    "can close."
+)
+
+
+def test_a_gate_declined_for_now_is_not_read_as_this_atoms_gate(tmp_path: Path) -> None:
+    """``WS-7`` was reported "the log names an owner call / BLOCKED" off a deferred nicety.
+
+    The sentence was "a naming wart worth an owner call **later**; it is **not worth** a fourth
+    vocabulary now" — declined work, not a gate on the atom. Same defect family as
+    ``ENTRY_START``'s bleed, one level finer: intra-entry instead of inter-entry. The bucket a
+    false reason produces may still be the safe one, which is exactly why ``decide_log`` already
+    records that a right bucket with a false reason is worse than no reason at all.
+    """
+    plans = tmp_path / "plans"
+    plans.mkdir()
+    plan = plans / "ZZ-PLAN.md"
+
+    plan.write_text(_DEFERRAL_ENTRY.format(clause=_DEFERRED))
+    deferred = _bucket_for_zz1(plans)
+    assert deferred.bucket == UNKNOWN, deferred.why  # type: ignore[attr-defined]
+
+    # VACUITY: strip the two deferral markers and the very same "owner call" must still gate
+    # the atom, or this only proves GATED_PATTERNS never matches the fixture at all.
+    plan.write_text(_DEFERRAL_ENTRY.format(clause=_STANDING))
+    standing = _bucket_for_zz1(plans)
+    assert standing.bucket == GATED, standing.why  # type: ignore[attr-defined]
+    assert "owner call" in standing.why  # type: ignore[attr-defined]
+
+
+def test_the_real_ws7_gate_is_its_own_partial_not_the_deferred_naming_wart(
+    real_log_hits: dict,
+) -> None:
+    """``WS-7`` stays out of the clean bucket, but for the reason its own entry states.
+
+    Worth being explicit, because the atom looks complete from the outside (three shipped
+    modules, 13 passing tests, a ``**DONE —`` opener): the entry ALSO says, in bold, "**This
+    atom is therefore PARTIAL in one respect worth recording: the digest is invocable and fully
+    tested, but nothing in the shipped product calls it yet**". That is the module's
+    shipped-but-inert shape, which may only move an atom OUT of the clean bucket. So the fix
+    corrects the stated reason and must NOT free the atom.
+    """
+    own = "WATCHED-SOURCES.md"
+    hits = [h for h in real_log_hits.get("WS-7", []) if h.plan_file == own]
+    assert hits, f"WS-7 has no entry in {own}: the scan or the plan moved, and this test is mute"
+    verdict, hit = decide_log(hits, own_plan_file=own)
+    assert verdict == LogVerdict.PARTIAL, f"deciding entry: {hit.excerpt[:200] if hit else None}"
+    assert verdict != LogVerdict.GATED
+
+
+def test_the_real_mrt5_reaudit_is_no_longer_read_as_a_flip(real_log_hits: dict) -> None:
+    """The defect, pinned on the data that produced it rather than on a synthetic string.
+
+    If the owner later authors a genuine flip entry for ``MRT-5`` this test fails, and the fix
+    is to re-read the new deciding entry — not to loosen the assertion.
+    """
+    own = "MODEL-ROUTING-TELEMETRY.md"
+    hits = [h for h in real_log_hits.get("MRT-5", []) if h.plan_file == own]
+    assert hits, f"MRT-5 has no entry in {own}: the scan or the plan moved, and this test is mute"
+    verdict, hit = decide_log(hits, own_plan_file=own)
+    assert hit is not None
+    assert "must NOT be flipped" in hit.excerpt, hit.excerpt[:200]
+    assert verdict != LogVerdict.FLIP, f"deciding entry: {hit.excerpt[:200]}"
+
+    # The earlier 2026-08-23 entry is still a FLIP — the fix changes precedence WITHIN an
+    # entry, it does not blind the scanner to the phrase (`KNOWN_LANDED` depends on that).
+    assert any(h.verdict == LogVerdict.FLIP for h in hits)
+
+
+# ---------------------------------------------------------------------------
 # bucketing
 # ---------------------------------------------------------------------------
 
