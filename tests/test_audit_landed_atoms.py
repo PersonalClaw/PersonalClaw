@@ -77,6 +77,7 @@ from tools.audit_landed_atoms import (
     score_evidence,
     select_tests,
     self_check,
+    split_caveats,
 )
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -301,13 +302,162 @@ def test_a_headline_subject_outranks_a_body_cross_reference() -> None:
     assert verdict == LogVerdict.PARTIAL and hit is not None and hit.headline
 
 
-def test_a_body_only_mention_can_never_declare_an_atom_flippable() -> None:
-    """`DCU-3` inherited `DCU-2`'s "flip it when the PR lands" from a body mention."""
+def test_a_cross_reference_declares_no_verdict_at_all() -> None:
+    """`DCU-3` inherited `DCU-2`'s "flip it when the PR lands" from a body mention.
+
+    The FLIP half was already asymmetric. The GATED half used to hold too, on the reasoning that
+    a cross-reference may keep an atom out of the flippable bucket even if it may not put it in.
+    Measured cost of that asymmetry: ``DCU-3``, ``EI-2`` and ``LV-7`` all read LANDED-BUT-GATED
+    — the *landed* half asserted on a sibling's paperwork — while ``macos_driver.py`` and a
+    ``docker`` sandbox provider are simply not on the ref. Both halves now return ``NO_SIGNAL``.
+    """
     hits = [LogHit(LogVerdict.FLIP, 5, "…DCU-2 COMPLETE… mentions DCU-3…", "P.md", headline=False)]
     assert decide_log(hits, own_plan_file="P.md")[0] == LogVerdict.NONE
-    # but a body-only GATE still holds — the asymmetry is deliberate
     gated = [LogHit(LogVerdict.GATED, 5, "blocked", "P.md", headline=False)]
-    assert decide_log(gated, own_plan_file="P.md")[0] == LogVerdict.GATED
+    assert decide_log(gated, own_plan_file="P.md")[0] == LogVerdict.NONE
+    # VACUITY: the same GATED entry, this time with the atom as its subject, must still gate —
+    # or this passes merely because decide_log stopped returning anything.
+    own = [LogHit(LogVerdict.GATED, 5, "blocked", "P.md", headline=True)]
+    assert decide_log(own, own_plan_file="P.md")[0] == LogVerdict.GATED
+
+
+def test_subject_is_a_precondition_and_last_wins_only_orders_within_it() -> None:
+    """The order between the two precedence rules, which used to be undefined.
+
+    ``ES-7``'s ruling sat 146 lines below the entry that outranked it, so "headline beats body"
+    and "last entry wins" could disagree by a whole section. They no longer can: a
+    cross-reference is not a late ruling to be weighed, it is not a ruling.
+    """
+    hits = [
+        LogHit(LogVerdict.PARTIAL, 100, "own entry", "P.md", headline=True),
+        LogHit(LogVerdict.GATED, 9000, "a neighbour's entry, much later", "P.md", headline=False),
+    ]
+    verdict, hit = decide_log(hits, own_plan_file="P.md")
+    assert verdict == LogVerdict.PARTIAL and hit is not None and hit.position == 100
+    # VACUITY: make the late entry a subject entry and last-wins takes over immediately.
+    later = [hits[0], replace(hits[1], headline=True)]
+    assert decide_log(later, own_plan_file="P.md")[0] == LogVerdict.GATED
+
+
+_SIBLING_ENTRY = (
+    "## Execution log\n\n"
+    "- **2026-08-24 — `ZZ-2` DONE (composition, tool surface, thin shim), except the one\n"
+    "  clause that needs `ZZ-1`.** Shipped the chain; `ZZ-1`'s driver is the missing half and\n"
+    "  the atom is therefore BLOCKED on it. `make_widget` is called from the dispatch.\n"
+)
+
+
+def test_an_id_in_a_headline_is_not_automatically_that_entrys_subject(tmp_path: Path) -> None:
+    """Measured: ``DCU-3`` was gated by ``DCU-4``'s DONE entry, which names it in its headline.
+
+    "`DCU-4` DONE (…) except the one clause that needs `DCU-3`" is a ruling on DCU-4 and a
+    statement of what DCU-4 is waiting for. Attributing it to both made ``DCU-3`` LANDED-BUT-
+    GATED while ``computer_use/`` holds no ``macos_driver.py``, ``macos_ffi.py`` or ``types.py``.
+    """
+    plans = tmp_path / "plans"
+    plans.mkdir()
+    (plans / "ZZ-PLAN.md").write_text(_SIBLING_ENTRY)
+    hits = scan_plan_logs(plans)
+
+    assert [h.headline for h in hits["ZZ-2"]] == [True], "the first id IS the subject"
+    assert hits["ZZ-1"] and not any(h.headline for h in hits["ZZ-1"]), "ZZ-1 is a cross-reference"
+    assert _bucket_for_zz1(plans).bucket == UNKNOWN  # type: ignore[attr-defined]
+
+    # VACUITY, two ways. Naming ZZ-1 FIRST must gate it, or the fixture never carried a gate;
+    # and the sibling ZZ-2 must still be gated by its own entry, or subject resolution is
+    # returning nothing at all.
+    (plans / "ZZ-PLAN.md").write_text(_SIBLING_ENTRY.replace("`ZZ-2`", "`ZZ-1`", 1))
+    swapped = _bucket_for_zz1(plans)
+    assert swapped.bucket == GATED, swapped.why  # type: ignore[attr-defined]
+
+
+def test_a_bare_subject_outranks_a_backticked_id_later_in_the_headline(tmp_path: Path) -> None:
+    """``CA-7``'s own ruling opens with its id UNBACKTICKED, then backticks a sibling.
+
+    "**CA-7 PARTIAL — the atom stays ``todo``.**" … "for the same reason ``CA-6``'s log already
+    recorded against ``CA-7``/``CA-8``" — all within the 260-char headline. Reading only
+    backticks handed CA-7's own PARTIAL to CA-6 and left CA-7 with no verdict, which is the
+    mirror image of the defect this fix exists to close. Subject-first is the rule; backticking
+    is typography.
+    """
+    plans = tmp_path / "plans"
+    plans.mkdir()
+    entry = (
+        "## Execution log\n\n"
+        "- **{lead} PARTIAL — the atom stays `todo`.** The native-client half is built, tested\n"
+        "  and gated; the two `done_when` clauses that need a real tunnel are not observed here,\n"
+        "  for the same reason `ZZ-2`'s log already recorded against `ZZ-1`.\n"
+    )
+    (plans / "ZZ-PLAN.md").write_text(entry.format(lead="ZZ-1"))
+    hits = scan_plan_logs(plans)
+    assert [h.headline for h in hits["ZZ-1"]] == [True]
+    assert not any(h.headline for h in hits["ZZ-2"]), "the backticked sibling is not the subject"
+    gated = _bucket_for_zz1(plans)
+    assert gated.bucket == GATED, gated.why  # type: ignore[attr-defined]
+
+    # VACUITY: drop ZZ-1 from the headline entirely and it must lose the verdict again, or this
+    # passes on the body mention rather than on the bare subject.
+    (plans / "ZZ-PLAN.md").write_text(entry.format(lead="The native client"))
+    assert not any(h.headline for h in scan_plan_logs(plans).get("ZZ-1", []))
+    assert _bucket_for_zz1(plans).bucket == UNKNOWN  # type: ignore[attr-defined]
+
+
+def test_a_bracketed_entry_tag_declares_the_subject_without_backticks(tmp_path: Path) -> None:
+    """``- [2026-08-23][ES-7]`` was unreadable: ``ENTRY_START`` splits on it, ``MENTION`` cannot.
+
+    Measured on ``origin/main``: ``ES-7`` is written that way **fifteen** times in its own plan
+    and is backticked exactly ONCE — inside the ``[harvest]`` entry that says of itself "Not an
+    atom of its own". So its entire verdict came from a cross-reference in a neighbour, and
+    every ruling it ever wrote about itself was invisible.
+    """
+    plans = tmp_path / "plans"
+    plans.mkdir()
+    tagged = (
+        "## Execution log\n\n"
+        "- [2026-08-24][ZZ-1 §3.3] **The filter — the gap above is now closed in INPUTS. Atom\n"
+        "  still `todo`** (§3.3's plural replay remains, below). `make_widget` returns a\n"
+        "  `WidgetThing` and the end-to-end test drives every link.\n"
+    )
+    (plans / "ZZ-PLAN.md").write_text(tagged)
+    hits = scan_plan_logs(plans)
+    assert hits["ZZ-1"] and all(h.headline for h in hits["ZZ-1"]), "the tag is the subject"
+    gated = _bucket_for_zz1(plans)
+    assert gated.bucket == GATED, gated.why  # type: ignore[attr-defined]
+
+    # VACUITY: strip the tag to an untagged date and the very same prose attributes to nobody,
+    # which is the state this test exists to end.
+    (plans / "ZZ-PLAN.md").write_text(tagged.replace("[2026-08-24][ZZ-1 §3.3]", "[2026-08-24]"))
+    assert "ZZ-1" not in scan_plan_logs(plans)
+
+
+def test_the_still_todo_marker_is_load_bearing_on_its_own(tmp_path: Path) -> None:
+    """The one ``PARTIAL_PATTERNS`` member this fix adds, pinned by itself.
+
+    Needed because ``ES-7``'s ruling entry states its verdict as "Atom still ``todo``" and
+    nothing else — no "PARTIAL", no "unmet" — so without this marker the deciding entry carried
+    no verdict and an earlier one that ES-7's own log supersedes ruled instead. Deliberately
+    ``still`` and not ``stays``: "Atom stays ``todo`` **only because this code is unmerged**" is
+    the canonical FLIP phrase, and PARTIAL is tested before FLIP from the headline.
+    """
+    plans = tmp_path / "plans"
+    plans.mkdir()
+    entry = (
+        "## Execution log\n\n"
+        "- [2026-08-24][ZZ-1] **The filter — the gap above is now closed in INPUTS. Atom\n"
+        "  {verdict}** `make_widget` returns a `WidgetThing`.\n"
+    )
+    (plans / "ZZ-PLAN.md").write_text(entry.format(verdict="still `todo`."))
+    assert _bucket_for_zz1(plans).bucket == GATED  # type: ignore[attr-defined]
+
+    # VACUITY: the same entry with no verdict phrase must classify as no signal at all.
+    (plans / "ZZ-PLAN.md").write_text(entry.format(verdict="shipped in one commit."))
+    assert "ZZ-1" not in scan_plan_logs(plans)
+
+    # and the FLIP phrase it is deliberately narrower than must survive intact
+    (plans / "ZZ-PLAN.md").write_text(
+        entry.format(verdict="stays `todo` only because this code is unmerged.")
+    )
+    assert _bucket_for_zz1(plans).bucket == CLEAN  # type: ignore[attr-defined]
 
 
 def test_only_the_owning_plan_adjudicates_an_atom() -> None:
@@ -542,6 +692,56 @@ def test_the_real_ws7_gate_is_its_own_partial_not_the_deferred_naming_wart(
     assert verdict != LogVerdict.GATED
 
 
+@pytest.mark.parametrize(
+    ("atom_id", "own_plan"),
+    [
+        ("DCU-3", "DESKTOP-COMPUTER-USE.md"),
+        ("EI-2", "EXECUTION-ISOLATION.md"),
+        ("LV-7", "LEARNING-VISIBILITY.md"),
+    ],
+)
+def test_the_real_inherited_verdicts_are_gone(
+    real_verdicts: list, real_log_hits: dict, atom_id: str, own_plan: str
+) -> None:
+    """Three atoms bucketed LANDED-BUT-GATED with nothing of their own on the ref.
+
+    Each was scored off a sibling's entry in its own plan — ``DCU-3`` off ``DCU-4``'s DONE
+    headline, ``EI-2`` off ``EI-8``'s STOP POINT, ``LV-7`` off a ``run_matrix`` DISCOVERY — while
+    ``computer_use/`` has no ``macos_driver.py`` and ``sandbox_providers/`` holds only
+    ``base``/``none``/``registry``. The bucket is what a human acts on, so the bucket is pinned.
+    """
+    hits = [h for h in real_log_hits.get(atom_id, []) if h.plan_file == own_plan]
+    assert hits, f"{atom_id} has no entry at all in {own_plan}: this test is mute"
+    assert not any(h.headline for h in hits), (
+        f"{atom_id} now has an entry of its own in {own_plan} — re-read it rather than "
+        f"loosening this: {[h.excerpt[:90] for h in hits if h.headline]}"
+    )
+    assert decide_log(hits, own_plan_file=own_plan) == (LogVerdict.NONE, None)
+
+    verdict = next(v for v in real_verdicts if v.atom.id == atom_id)
+    assert verdict.bucket in (OPEN, UNKNOWN), verdict.why
+    assert verdict.bucket != GATED
+
+
+def test_the_real_es7_verdict_comes_from_its_own_tagged_entry(real_log_hits: dict) -> None:
+    """``ES-7``'s ruling is 146 lines below the entry that used to outrank it.
+
+    Before: the only backticked mention, inside ``[harvest]``'s headline — an entry that says of
+    itself "Not an atom of its own". After: its own ``- [2026-08-24][ES-7 §3.3]`` entry, the one
+    that records "the gap above is now closed in INPUTS. Atom still ``todo``".
+    """
+    own = "EVALUATION-SUBSTRATE.md"
+    hits = [h for h in real_log_hits.get("ES-7", []) if h.plan_file == own]
+    assert len(hits) > 1, f"only {len(hits)} ES-7 entries — the tag scan regressed"
+    verdict, hit = decide_log(hits, own_plan_file=own)
+    assert hit is not None
+    assert "[ES-7" in hit.excerpt, hit.excerpt[:200]
+    assert "[harvest]" not in hit.excerpt, hit.excerpt[:200]
+    assert "Not an atom of its own" not in hit.excerpt, hit.excerpt[:200]
+    assert "now closed in INPUTS" in hit.excerpt, hit.excerpt[:200]
+    assert verdict == LogVerdict.PARTIAL
+
+
 def test_the_real_mrt5_reaudit_is_no_longer_read_as_a_flip(real_log_hits: dict) -> None:
     """The defect, pinned on the data that produced it rather than on a synthetic string.
 
@@ -618,6 +818,81 @@ def test_the_real_dcu2_caveat_is_actually_found_on_main(real_corpus: Corpus) -> 
     caveats = scan_code_caveats(real_corpus)
     assert "DCU-2" in caveats, "the DCU-2 zero-caller census on main was not detected"
     assert any("call_sites" in path for path, _ in caveats["DCU-2"])
+
+
+def test_an_inertness_note_is_refuted_by_a_call_site_on_the_ref() -> None:
+    """A note is a claim about the ref, so the ref gets to answer it.
+
+    Measured: ``DCU-2`` stayed LANDED-BUT-GATED on three past-tense notes all written *after*
+    ``DCU-4`` supplied the caller — including one in ``DCU-4``'s own module that says eight lines
+    lower "and this module is that caller". The signal is one-directional and has no expiry, so a
+    historical narrative pinned the fixed atom permanently.
+    """
+    atom = make_atom()
+    keys = extract_keys(atom)
+    caveat = [("src/widgets/notes.py", "ZZ-1 shipped make_widget as a provably inert function")]
+
+    # nothing calls it -> the note stands, and the atom is gated. This is the founding case.
+    probe(keys, make_corpus({"src/widgets/thing.py": "def make_widget(): return WidgetThing()"}))
+    inert = make_corpus({"src/widgets/thing.py": "def make_widget(): return WidgetThing()"})
+    live, refuted = split_caveats(keys, caveat, inert)
+    assert (live, refuted) == (caveat, []), "a definition is not a call site"
+    flip = [LogHit(LogVerdict.FLIP, 1, "…", "ZZ-PLAN.md", headline=True)]
+    assert classify(atom, keys, flip, live, refuted).bucket == GATED
+
+    # a real caller in impl -> the note is refuted and the atom is clean again
+    wired = make_corpus(
+        {
+            "src/widgets/thing.py": "def make_widget(): return WidgetThing()",
+            "src/widgets/service.py": "from . import thing\n\ndef go():\n    thing.make_widget()\n",
+        }
+    )
+    keys2 = extract_keys(atom)
+    probe(keys2, wired)
+    live2, refuted2 = split_caveats(keys2, caveat, wired)
+    assert live2 == [] and len(refuted2) == 1
+    assert refuted2[0][2] == "src/widgets/service.py calls make_widget()"
+    clean = classify(atom, keys2, flip, live2, refuted2)
+    assert clean.bucket == CLEAN
+    assert "REFUTED on the ref" in clean.why
+
+
+def test_a_test_only_caller_cannot_refute_an_inertness_note() -> None:
+    """The whole point of the signal is "shipped, tested, and nothing in production calls it".
+
+    ``tests/`` is outside ``IMPL_PREFIXES``, so a ratchet that drives the symbol directly — which
+    is exactly how these three screens were tested — must not read as the caller it complains
+    about being missing.
+    """
+    atom = make_atom()
+    keys = extract_keys(atom)
+    corpus = make_corpus(
+        {
+            "src/widgets/thing.py": "def make_widget(): return WidgetThing()",
+            "tests/test_widgets.py": "from widgets.thing import make_widget\n\nmake_widget()\n",
+        }
+    )
+    probe(keys, corpus)
+    caveat = [("tests/test_widget_call_sites.py", "ZZ-1's screens have zero production callers")]
+    live, refuted = split_caveats(keys, caveat, corpus)
+    assert (live, refuted) == (caveat, [])
+
+
+def test_the_real_dcu2_notes_are_all_refuted_by_dcu4s_dispatch(real_corpus: Corpus) -> None:
+    """The defect pinned on the data that produced it, both halves.
+
+    If the owner later removes the dispatch's calls this test fails and the fix is to re-read the
+    ref, not to loosen the assertion. ``DCU-2`` is one of the five ``KNOWN_LANDED`` atoms, so a
+    regression here also shows up in ``self_check``.
+    """
+    atoms = {a.id: a for a in load_atoms()}
+    keys = extract_keys(atoms["DCU-2"])
+    probe(keys, real_corpus)
+    notes = scan_code_caveats(real_corpus).get("DCU-2", [])
+    assert notes, "no DCU-2 inertness note on the ref: this test is mute"
+    live, refuted = split_caveats(keys, notes, real_corpus)
+    assert live == [], f"still-live notes: {[w for w, _ in live]}"
+    assert any("service.py calls" in proof for _, _, proof in refuted), refuted
 
 
 def test_a_gate_in_the_log_keeps_a_landed_atom_out_of_the_clean_bucket() -> None:
@@ -1074,13 +1349,24 @@ def test_the_check_separates_a_railed_wire_from_an_unrailed_one(wire_repo: Path)
     ).stdout.strip()
 
 
-def test_the_check_leaves_no_snapshot_directory_behind(wire_repo: Path) -> None:
+def test_the_check_leaves_no_snapshot_directory_behind(
+    wire_repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """ "Leaves nothing behind" has to mean the filesystem, not just the git tree.
 
     Measured: 22 ``wirecheck-snap-*`` directories accumulated in ``$TMPDIR`` over one session —
     several still holding a byte copy of a source file — because ``check_atom_wires`` created a
     Snapshot per atom and only the CLI ever disposed of one.
+
+    ``$TMPDIR`` is redirected into this test's own directory first, because it is SHARED across
+    xdist workers: a sibling worker's in-flight snapshot appeared in the after-minus-before set
+    and read as this call's leak. Measured when a change to this file reshuffled the sharding so
+    two wire-check tests ran concurrently. Redirecting makes the assertion stronger, not looser —
+    the only ``wirecheck-snap-*`` that can appear here is one this call created.
     """
+    sandbox = tmp_path / "tmpdir"
+    sandbox.mkdir()
+    monkeypatch.setattr(tempfile, "tempdir", str(sandbox))
     before = set(Path(tempfile.gettempdir()).glob("wirecheck-snap-*"))
     report = check_atom_wires(wire_repo, ZZ9, max_wires=1, cap=8, timeout=180, with_cov=False)
     assert report.checks, report.refusal
