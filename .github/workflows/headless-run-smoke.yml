@@ -1,0 +1,93 @@
+# Headless CLI smoke test — `personalclaw run` (EXTERNAL-ACCESS §9.5).
+#
+# The as-a-user validation for the scripted entry point: it installs the wheel-equivalent
+# package and drives the `personalclaw run` command a CI pipeline would actually type.
+#
+# WHY IT IS NOT IN ci.yml: a real turn needs a configured model binding and therefore a
+# provider credential. The main gate must stay green for a fork PR with no secrets, so
+# this workflow is opt-in — `workflow_dispatch` for a maintainer, and a `schedule` so a
+# regression in the headless path surfaces without anyone remembering to ask.
+#
+# It is ALSO the reference recipe. `docs/reference/cli.md` points contributors here, so
+# the steps below are deliberately plain: probe, run, parse, assert.
+name: headless-run-smoke
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 7 * * 1"  # Mondays, 07:00 UTC
+
+concurrency:
+  group: headless-run-smoke-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    # A turn boots a transient gateway and waits on a model round-trip; the default
+    # 360-minute budget would let a wedged provider hold a runner for hours.
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+      - name: Install (locked)
+        run: uv sync --locked --extra dev
+
+      # The parser-level half of the contract, and the only half that needs NO
+      # credential: the subcommand exists, is wired, and refuses a blank prompt. Kept as
+      # its own step so a dispatch without secrets still reports something useful rather
+      # than failing at the first model call.
+      - name: run is registered and refuses a blank prompt
+        run: |
+          uv run personalclaw run --help > /dev/null
+          if uv run personalclaw run -p "" 2>/dev/null; then
+            echo "::error::an empty prompt was accepted — the guard is inert"
+            exit 1
+          fi
+          echo "blank-prompt guard holds"
+
+      - name: Configure an isolated home
+        run: |
+          echo "PERSONALCLAW_HOME=${{ runner.temp }}/pclaw-home" >> "$GITHUB_ENV"
+
+      # Bind a model from repository secrets. Skipped (not failed) when the secret is
+      # absent, so a fork or a secretless dispatch still runs the steps above.
+      - name: Bind a chat model
+        id: bind
+        env:
+          PCLAW_SMOKE_CREDENTIAL: ${{ secrets.PCLAW_SMOKE_CREDENTIAL }}
+          PCLAW_SMOKE_PROVIDER: ${{ vars.PCLAW_SMOKE_PROVIDER }}
+        run: |
+          if [ -z "${PCLAW_SMOKE_CREDENTIAL:-}" ]; then
+            echo "no PCLAW_SMOKE_CREDENTIAL — skipping the turn half of the smoke test"
+            echo "bound=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          uv run personalclaw setup --agent-only
+          uv run personalclaw setup \
+            --provider "${PCLAW_SMOKE_PROVIDER:?set the PCLAW_SMOKE_PROVIDER repo variable}" \
+            --credential "PCLAW_SMOKE_CREDENTIAL"
+          echo "bound=true" >> "$GITHUB_OUTPUT"
+
+      - name: Headless turn smoke test
+        if: steps.bind.outputs.bound == 'true'
+        run: bash scripts/ci_smoke_run.sh
+
+      # A headless run must not leave a gateway behind. `run` kills the transient
+      # gateway it started by pid; assert that rather than trusting it, because a leaked
+      # gateway on a self-hosted runner would outlive the job.
+      - name: No gateway left running
+        if: always()
+        run: |
+          if pgrep -f "personalclaw gateway" > /dev/null; then
+            echo "::error::a gateway survived the run — transient teardown leaked"
+            pgrep -af "personalclaw gateway" || true
+            exit 1
+          fi
+          echo "no gateway left running"
