@@ -1119,3 +1119,51 @@ with no `content`/`summary`/`claims`/`citations`, and `knowledge/updates.py` ret
 *"nothing proposed — supply content, summary, claims or citations"* in exactly that case, so the
 staleness banner's only offered action files no proposal. Its tests cover only the 404/400/503
 paths, never the success path. The synthesis drain here routes through `queue_draft` instead.
+## Execution log — Session 8 (PR2-7: the automation would-execute description)
+
+**DONE — `PR2-7`** (PR #2023). `POST /api/doctor/simulate/automation {trigger_id}` answers the five
+named facts as five named keys, rendered in a new **Simulators** section of `DoctorPanel.tsx` beside
+the surfacing simulator. `WOULD_EXECUTE_FACTS` names the five as data so a rail asserts totality
+instead of a reviewer counting them.
+
+**Every resolver reused, none re-derived.** `schedule_view._next_run_ts` (persisted `next_fire_at`
+first, `arm.next_fire` only for an unarmed row) + `describe_cadence` + `_inline_action` +
+`session_key_of`; `wakeup.session_key_for`; `screen.requested_capabilities` /
+`provider_is_read_only` / `unfenced_actions` — the same three the firepath capability gate calls,
+including decision 7's read-only default; `tools.run(dry_run=True, runner=None)`, the exact local
+answer `mcp_automation`'s `automation_run` dispatches a `dry_run` to, plus `manual_gate_plan`;
+`secrets.references`, which NAMES secret keys and never resolves them. Zero edits under `triggers/`.
+
+**Zero side effects, proven.** `test_the_dry_run_leaves_the_store_byte_identical` byte-compares
+`triggers.json` and pins `run_count`/`next_fire_at`/`last_fired_at`/`last_run_id`;
+`test_no_action_executes_and_no_model_is_called` monkeypatches `one_shot_completion` and both
+providers' `execute` to raise, and the endpoint still returns 200.
+
+**Falsifications** (mutate live, grep back, red, restore from a file copy): next-fire source pinned
+to `computed` → red; drop `$vars` from `render_saved_prompt` → red; bypass `session_key_for` → red;
+drop the `provider_is_read_only` filter from `needs_fence` → red; bypass `supports_dry_run` → red;
+hard-code the FE `armed` label → red. The capability-fence one was re-run at integration on the
+rebased tip: it reds the read-only case while both write-capable cases stay green, so the fence is
+doing work rather than mirroring its own input.
+
+**Rebase conflicts (DFE-4 landed on `main` mid-run), resolved:** `http_errors.py` had two disjoint
+append-only blocks at the same tail — kept BOTH, no shared key, append-only rail and wire-envelope
+census both pass. `reference/index.md` is generated — took `main`'s side and re-rendered, verified by
+ARITHMETIC (768/775 → 769/776, exactly the one route this atom adds), because a bare re-render exits
+0 even when it writes a truncated file.
+
+**DEVIATION (two ratchets fired; the cause was fixed, not the rail).** `primitiveAdoption`: raw
+`<input>`/`<select>` exceeded the baseline, so the controls moved to `ui/forms`' `TextInput`/`Select`
+rather than raising the baseline. `promisedMechanismsExist`: the empty-state copy said "…and it will
+appear here", which was both a census violation and FALSE — the list reads once on mount. It now
+says "Create one on the Automations page, then reopen this panel."
+
+**DEVIATION (a third chokepoint exemption).** Reading `supports_dry_run` makes `handlers/doctor.py`
+a `get_action_provider` caller, so `test_action_provider_chokepoints` needed an exemption. It ships
+with an asserted-difference test mirroring `REVERSAL_SITE`: no `.execute(`, `supports_dry_run`
+present, `runner=None` present — that last assert is the load-bearing one.
+
+**DISCOVERY / adjacent scope taken deliberately.** The §3.1 surfacing simulator endpoint
+`doctorSimulateSurfacing` shipped in PR2-4 with ZERO frontend consumers — an inert control. This
+atom's criterion says "beside the surfacing simulator", which is unsatisfiable with nothing to sit
+beside, so ~50 lines build that surface too.
