@@ -839,6 +839,43 @@ TOOL_META: dict[str, dict[str, Any]] = {
         ],
     },
     # ── personalclaw-tasks-tools ─────────────────────────────────────────────
+    # ── Decision journal (PROACTIVE-ASSISTANT §2.2, PA-4) ──
+    "log_decision": {
+        "response_type": "decision.detail",
+        "error_codes": [],
+        "examples": [
+            {
+                "summary": "Log a decision with the prediction it is betting on",
+                "args": {
+                    "summary": "Ship the digest as opt-in rather than default-on",
+                    "expectation": "Under a third of users enable it in the first month",
+                    "confidence": 0.6,
+                    "domain": "technical",
+                },
+            },
+        ],
+    },
+    "decision_list": {
+        "response_type": "decision.list",
+        "error_codes": [],
+        "examples": [
+            {"summary": "List decisions past their review horizon", "args": {"status": "overdue"}}
+        ],
+    },
+    "decision_resolve": {
+        "response_type": "decision.detail",
+        "error_codes": [],
+        "examples": [
+            {
+                "summary": "Record what actually happened",
+                "args": {
+                    "id": "dec_abc123",
+                    "outcome": "Enabled by 41% in three weeks",
+                    "grade": "worse",
+                },
+            },
+        ],
+    },
     "task_create": {
         "response_type": "task.detail",
         "error_codes": [],
