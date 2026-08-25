@@ -1067,3 +1067,55 @@ seam → call-site test red; delete the turn-start reset → replay guard red.
 requeues `undelivered_steers()` at turn end, a surviving `_steer_pending` would let the next
 turn deliver a second copy of a steer already sitting in the visible queue. The native path
 clears at turn start for exactly this reason; the ACP side may want the same line.
+
+## Execution log — Session 7 (PR2-9: memory-pipeline alarm + the three degraded drains)
+
+**DONE — `PR2-9`** (PR #2022). All three `done_when` clauses, plus the call site that keeps them
+from shipping as declared-but-inert controls.
+
+1. **Memory-pipeline WARN from real records.** `_probe_memory_pipeline` reads
+   `StagingStore.health()` + `cost_by_op()` + a new `pending_count()`, and raises three WARN
+   shapes: flush errors, an all-OK streak >= 10 with nothing produced across the 7d window
+   (criterion #5 verbatim), and a >= 200 unconsumed backlog. Per-op cost rides as evidence.
+   The probe answers from an absent `learning.db` instead of opening one, because `StagingStore`
+   writes its schema on first cursor and a read-only probe must not create state.
+2. **`knowledge_ingest` + `memory_extraction` drains.** The knowledge drain re-enqueues items the
+   LLM-free ingest graph left `processing_status='partial'` / `"insights: model unavailable"`
+   through the live ingest queue; the memory drain compiles `pending()` into one propose-only
+   `lesson_batch` carrying `staging_refs`, then `mark_consumed`. That trio had zero production
+   callers before this, and `staging_refs` had no writer outside a test.
+3. **`synthesis_watchers` contract.** Floor names `append_evidence` (evidence still lands with no
+   model; only the compiled summary falls behind). Backlog is stale synthesized items via
+   `knowledge.staleness`, bounded to a 200-item sweep; the drain files one propose-only recompile
+   per stale synthesis through `knowledge.updates.queue_draft`, never rewriting in place.
+
+**The firing seam.** `contract.drain` had no call site anywhere in the tree. `_maybe_notify` now
+fires it on the unavailable→available flip (§5.1), before the notification and independent of any
+notify sink. `evaluate` runs under `asyncio.to_thread`, so `create_task` would raise —
+`_fire_drain` schedules onto a running loop when there is one and otherwise runs to completion in
+the worker thread. Criterion #3's last phrase closed with it: `backlog` is measured *before* the
+drain, so the recovery notification used to announce a queue the drain had just emptied.
+
+**Falsifications** (mutate live, grep the mutation back, observe red, restore from a file copy):
+the streak threshold → red; the heuristic-stamp `LIKE` predicate → red; drop the `mark_consumed`
+write → red; blank the draft target → red; unwire the `_fire_drain` call → red; revert the
+recovery wording → red. Every guard carries a vacuity assertion, including
+`test_feature_off_surfaces_still_have_no_drain`, so "has a drain" is not a property of every
+contract. The `_fire_drain` falsification was re-run at integration on the rebased tip.
+
+**DEVIATION (clause 2 naming).** The criterion says "registers the KNOW-R17 heuristic extractor".
+KNOW-R17's stamp as actually shipped is `insights: model unavailable`, not the
+`extraction: heuristic` its wording implies. The contract registers the mechanism that exists and
+records the discrepancy in a comment rather than inventing the named artifact.
+
+**DEVIATION (drain placement).** Drain bodies live in `degraded.py` beside the existing backlog
+probes, not as `resilience/remediation.py` jobs. The module docstring anticipated drains becoming
+§4 remediation jobs once that engine landed; it has landed, but re-homing them as registered jobs
+(budget + cooldown + ledger) is a distinct change and a clean follow-up.
+
+**DISCOVERY (not fixed here — outside the atom).** `POST /api/knowledge/items/{id}/regenerate` is
+inert. `dashboard/handlers/knowledge.py` calls `propose_update(store, item_id, auto_accept=False)`
+with no `content`/`summary`/`claims`/`citations`, and `knowledge/updates.py` returns
+*"nothing proposed — supply content, summary, claims or citations"* in exactly that case, so the
+staleness banner's only offered action files no proposal. Its tests cover only the 404/400/503
+paths, never the success path. The synthesis drain here routes through `queue_draft` instead.
