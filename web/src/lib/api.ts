@@ -1868,6 +1868,83 @@ export interface JudgeBenchView {
   pin: Record<string, unknown> | null
   runs: string[]
 }
+/** One ARM's aggregate inside an ablation report (`evals.matrix.aggregate()`).
+ *
+ *  `mean_score` is `null` when the arm produced no SCORED cell — every cell came back
+ *  `verifier_absent`. That is not a zero: §1.2's three-state contract says an absent
+ *  verifier is never a failure, and an arm with no measurement is exactly why a report
+ *  comes back `inconclusive` rather than `remove`. */
+export interface AblationArmAggregate {
+  /** outcome -> count. `verifier_absent` is counted here and never averaged into the mean. */
+  counts: Record<string, number>
+  total: number
+  scored_count: number
+  mean_score: number | null
+}
+/** One component's keep/remove/lighten report (EVALUATION-SUBSTRATE §3.1 / ES-7).
+ *
+ *  Everything arrives DECIDED — the verdict, the deltas, and the `epsilon` they were compared
+ *  against. A frontend that re-derived "is this a real delta" would eventually disagree with
+ *  the runner, and the copy shipping the permissive answer would be the UI. */
+export interface AblationReportView {
+  component_id: string
+  kind: string
+  target: string
+  subject: string
+  /** `keep` | `remove` | `lighten` | `inconclusive`. `inconclusive` is NOT one of
+   *  `verdict_vocabulary`'s three recommendations — it means an arm was never measured, so
+   *  there is no delta to read, and it must never be collapsed into `remove`. */
+  verdict: string
+  /** arm (`on` | `off` | `cheap`) -> aggregate. `cheap` is ABSENT unless the component
+   *  declares a cheap form; an undeclared cheap arm would score identically to `on` and be
+   *  reported as a fabricated `lighten`, so the runner omits it rather than defaulting it. */
+  arms: Record<string, AblationArmAggregate>
+  /** `on − off`. `null` when either arm is unmeasured. */
+  delta: number | null
+  /** `on − cheap`. `null` when no cheap arm ran. */
+  cheap_delta: number | null
+  epsilon: number
+  matrix_id: string
+  trials: number
+  created_at: string
+  /** The live files the byte-identity guard watched, with their unchanged digests — the
+   *  report's own proof that the run never mutated the real config. */
+  live_state: Record<string, string>
+}
+/** One registered ablatable component, from `evals/ablation_registry.json`. */
+export interface AblationRegistryRow {
+  component_id: string
+  kind: string
+  target: string
+  subject: string
+  off_value: unknown
+  cheap_value: unknown
+  live_refs: string[]
+  description: string
+}
+/** One past cadence run. `proposal` is the filed LEARN-R9 retirement proposal id, or
+ *  `not_filed:<reason>` when a `remove` verdict did not file one, or '' for a verdict that
+ *  never files. The distinction matters: a `remove` with nothing filed is a dropped
+ *  recommendation, not a completed one. */
+export interface AblationHistoryEntry {
+  ts: string
+  component_id: string
+  verdict: string
+  matrix_id: string
+  delta: number | null
+  proposal: string
+}
+export interface AblationView {
+  report: AblationReportView
+  /** The three real recommendations, in the runner's own order. */
+  verdict_vocabulary: string[]
+  registry: AblationRegistryRow[]
+  /** The last 20 cadence runs, oldest first. */
+  history: AblationHistoryEntry[]
+  last_run_ts: string
+  cadence_days: number
+  due: boolean
+}
 /** One arm-mask row of the retrieval ablation (ES-3 / §5.3).
  *
  *  `p_at_k` is `null` when the mask retrieved NOTHING — 0/0, undefined, and deliberately
@@ -4906,6 +4983,13 @@ export const api = {
    *  `personalclaw judge-bench`, because the full matrix is 540 judge calls and a click
    *  must not start one. 404 carries a distinct code for "no benchmark yet" vs "evals off". */
   judgeBench: () => get<JudgeBenchView>('/api/evals/judge-bench'),
+  /** The newest keep/remove/lighten ablation report (ES-7 §3.1). Read-only for the bench's
+   *  reason: a POST would hold a request open for a multi-cell matrix and spend real money on
+   *  a click. The RUN is `personalclaw ablation` or the monthly cadence. 404 carries THREE
+   *  distinct codes — `evals_disabled`, `ablation_absent`, and a 500 `ablation_unreadable` —
+   *  because they send a user to three different places (the switch, the registry, a bug), and
+   *  one state for all of them would make the panel's empty state a guess. */
+  ablation: () => get<AblationView>('/api/evals/ablation'),
   /** Pre-registered template A/B studies (ES-5). Read-only for the same reason as the
    *  bench: a k=5 paired study is ten template runs plus six judge calls per pair. §2.1 is
    *  also explicit that the human REGISTERS and the substrate RUNS, so there is deliberately

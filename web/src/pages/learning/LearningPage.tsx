@@ -7,7 +7,8 @@ import { Segmented } from '../../ui/forms'
 import { InlineError } from '../../ui/InlineError'
 import { EmptyState, ListSkeleton, LoadError } from '../../ui/ListScaffold'
 import { useQuery } from '../../lib/data'
-import { api, type JudgeBenchView, type LearningHealth, type LearningInbox, type LearningRow, type RetrievalBenchView, type StagingWeek, type StudyRow } from '../../lib/api'
+import { api, type AblationView, type JudgeBenchView, type LearningHealth, type LearningInbox, type LearningRow, type RetrievalBenchView, type StagingWeek, type StudyRow } from '../../lib/api'
+import { AblationPanel } from './AblationPanel'
 import { HealthPanel } from './HealthPanel'
 import { JudgeBenchPanel } from './JudgeBenchPanel'
 import { RetrievalBenchPanel } from './RetrievalBenchPanel'
@@ -19,6 +20,15 @@ import {
 } from './learningMeta'
 import { HEALTH_KEY, JUDGE_BENCH_KEY, RETRIEVAL_BENCH_KEY, STUDIES_KEY, WEEK_KEY, proposalsKey, refreshAfterDecision, refreshEverything } from './proposalCache'
 import { PageTitle } from '../../ui/PageTitle'
+
+/** The ablation report's cache key.
+ *
+ *  Module-level rather than inline so `dataLayerAdoption`'s census can resolve it, and declared
+ *  HERE rather than in `proposalCache.ts` because it has exactly one reader — the drift that file
+ *  guards against is a key spelled out at several call sites, which this is not. It follows from
+ *  that that the Refresh control re-reads it by calling this panel's own `refresh` beside
+ *  `refreshEverything`: with one reader, a refetch IS the invalidation. */
+const ABLATION_KEY = 'learning:ablation'
 
 /** The Learning page — the Proposal Inbox plus the capture week panel.
  *
@@ -73,6 +83,16 @@ export function LearningPage() {
     () => api.retrievalBench(),
   )
 
+  // The keep/remove/lighten ablation report (ES-7). `error` is read for the judge table's two
+  // reasons and a third: this route mints THREE distinct codes (evals off / nothing has run /
+  // unreadable artifacts), and the panel needs the error to tell them apart. Swallowing it would
+  // render all three as nothing at all — and "no ablation has run" is the state a user is in
+  // for months, so it is precisely the one that must not look like a bug or like silence.
+  const { data: ablation, error: ablationError, refresh: refreshAblation } = useQuery<AblationView>(
+    ABLATION_KEY,
+    () => api.ablation(),
+  )
+
   // Kind chips carry their counts, so a filter never has to be clicked to discover it is empty.
   const kindChips = useMemo(() => {
     const counts = inbox?.by_kind ?? {}
@@ -112,7 +132,16 @@ export function LearningPage() {
         right={
           <QuietButton
             title="Refresh"
-            onClick={() => refreshEverything(refreshProposals, refreshWeek, refreshHealth, refreshJudgeBench, refreshStudies, refreshRetrieval)}
+            onClick={() => {
+              refreshEverything(refreshProposals, refreshWeek, refreshHealth, refreshJudgeBench, refreshStudies, refreshRetrieval)
+              // The ablation report moves only when `personalclaw ablation` or the monthly cadence
+              // runs — terminal-side, so its staleness is invisible to the page, exactly like the
+              // judge and retrieval tables. It refreshes here rather than inside
+              // `refreshEverything` because its key has a single reader, so the refetch is the
+              // whole invalidation; adding a seventh positional parameter over there would buy
+              // nothing and couple two files for one call.
+              refreshAblation()
+            }}
           >
             <RefreshCw size={14} /> Refresh
           </QuietButton>
@@ -145,6 +174,8 @@ export function LearningPage() {
           <StudiesPanel studies={studies?.studies} error={studiesError} onRetry={refreshStudies} />
 
           <RetrievalBenchPanel bench={retrievalBench} error={retrievalError} onRetry={refreshRetrieval} />
+
+          <AblationPanel view={ablation} error={ablationError} onRetry={refreshAblation} />
 
 
           <div className="flex flex-col gap-m">
