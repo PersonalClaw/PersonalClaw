@@ -48,10 +48,66 @@ from personalclaw.dashboard.state import (
 )
 from personalclaw.http_errors import json_error
 from personalclaw.security import is_sensitive_path, redact_credentials, redact_exfiltration_urls
-from personalclaw.sel import SecurityEvent, sel
+from personalclaw.sel import sel
 from personalclaw.validation import _AGENT_NAME_RE
 
 logger = logging.getLogger(__name__)
+
+
+async def _run_chat_scoped(state: DashboardState, session: _ChatSession, message: str) -> None:
+    """Run one turn with an inbound turn's SPEND SCOPE bound (EXTERNAL-ACCESS §9.5).
+
+    §9.5 asks that headless CLI turns "ride SpendMeter scope_key=cli". Nothing on the
+    chat path bound a run scope at all — ``set_current_run_key`` had exactly one
+    production caller (the trigger-fire seam), so every chat turn charged with an empty
+    run key and ``run_totals`` for any chat scope was 0.0 by construction.
+
+    Binding happens HERE rather than inside ``run_chat`` because this is a fresh task:
+    a ContextVar set in a task dies with it, so the scope cannot leak into the caller's
+    context and there is no reset to get wrong in a 2900-line function's teardown. The
+    two direct-await callers of ``run_chat`` (the gateway's nudge loop, tests) are
+    therefore untouched — they bind no scope, exactly as before.
+
+    An ``inbound:cli:`` session scopes to ``cli``; another ``inbound:`` surface scopes to
+    its own surface name, so the HTTP dialects EA-2/EA-5 add are attributable without
+    being lumped in with the CLI. A dashboard session binds nothing, keeping every
+    interactive turn byte-identical to today.
+    """
+    from personalclaw.guardrails.policy import INBOUND_PREFIX
+
+    key = session.key or ""
+    if not key.startswith(INBOUND_PREFIX):
+        await run_chat(state, session, message)
+        return
+
+    from personalclaw.cli_run import CLI_RUN_KEY, CLI_SESSION_PREFIX
+    from personalclaw.guardrails.budgets import (
+        get_meter,
+        safety_budget_for_inbound,
+        set_current_run_budget,
+        set_current_run_key,
+    )
+
+    if key.startswith(CLI_SESSION_PREFIX):
+        run_key = CLI_RUN_KEY
+    else:
+        parts = key.split(":")
+        run_key = parts[1] if len(parts) > 1 and parts[1] else "inbound"
+    set_current_run_key(run_key)
+    # The ceiling beside the key: binding attribution without a budget gets you a number
+    # nothing enforces (the mistake `run_totals("doctor")` shipped). The HEADLESS
+    # profile's budget is the operator's configured per-day ceiling via
+    # `safety_profile_for`, so an inbound turn cannot outspend a local one.
+    set_current_run_budget(safety_budget_for_inbound())
+    try:
+        await run_chat(state, session, message)
+    finally:
+        # Drop the per-scope counter so a long-lived gateway does not retain one total
+        # per inbound turn forever (the leak the trigger seam's `end_run` call fixed).
+        try:
+            get_meter().end_run(run_key)
+        except Exception:  # noqa: BLE001 — bookkeeping must not mask a turn's outcome
+            logger.debug("end_run failed for %s", run_key, exc_info=True)
 
 
 async def api_chat(request: web.Request) -> web.StreamResponse:
@@ -278,39 +334,7 @@ async def api_chat(request: web.Request) -> web.StreamResponse:
     except Exception:
         logger.debug("idle re-arm on user input failed", exc_info=True)
 
-    # ── Orchestrator stop detection ─────────────────────────────────
-    _stop_words = {"stop", "cancel", "abort"}
-    tracker = session._orch_tracker
-    if (
-        tracker is not None
-        and tracker.has_escalated
-        and not tracker.stopped
-        and message.strip().lower().split()[0] in _stop_words
-    ):
-        tracker.stop()
-        session._auto_run = False
-        # Cancel running agents for this session
-        if state.subagents:
-            session_key = f"dashboard:{session.key}"
-            mgr = state.subagents
-            for a in mgr.running_agents_for(session_key):
-                t = mgr._tasks.get(a["id"])
-                if t and not t.done():
-                    t.cancel()
-        stop_msg = "🛑 [SYSTEM] Orchestration stopped by user."
-        session.append("assistant", stop_msg, "msg msg-a")
-        state.broadcast_ws(
-            "chat_message", {"session": session.key, "role": "assistant", "content": stop_msg}
-        )
-        state.broadcast_ws("chat_done", {"session": session.key})
-        return web.json_response({"ok": True, "stopped": True})
-
-    # ── Reset rounds after user guidance (not a stop) ───────────────
-    if tracker is not None and tracker.has_escalated:
-        tracker.reset_after_guidance()
-        logger.info("Rounds reset after user guidance for session %s", session.key)
-
-    task = asyncio.create_task(run_chat(state, session, message))
+    task = asyncio.create_task(_run_chat_scoped(state, session, message))
     session.task = task
     session._recovery_retrigger_count = 0
     state._background_tasks.add(task)
@@ -1123,22 +1147,6 @@ async def api_chat_session_stop(request: web.Request) -> web.Response:
     # First press: soft stop
     session._stop_state = "soft_pending"
     session._queue.clear()
-    _was_auto = session._auto_run
-    session._auto_run = False
-    if _was_auto:
-        sel().log(
-            SecurityEvent(
-                event_id=uuid.uuid4().hex,
-                timestamp=datetime.now(tz=timezone.utc).isoformat(),
-                event_type="auto_run_stopped",
-                caller_identity=f"dashboard:{session.key}",
-                agent=getattr(session, "agent", ""),
-                source="dashboard",
-                operation="stop",
-                outcome="stopped",
-                resources=f"session={session.key}",
-            )
-        )
 
     # Insert stop_event message into transcript
     stop_id = f"stop-{uuid.uuid4().hex}"
@@ -1500,7 +1508,6 @@ async def api_chat_session_interrupt(request: web.Request) -> web.Response:
         state.broadcast_ws("queue_promoted", {"session": name, "queue_id": str(queue_id)})
 
     session._stop_state = "soft_pending"
-    session._auto_run = False
 
     stop_id = f"stop-{uuid.uuid4().hex}"
     session._stop_event_id = stop_id

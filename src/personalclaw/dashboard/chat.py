@@ -125,7 +125,6 @@ from personalclaw.dashboard.chat_title import (  # noqa: F401
     _generate_title_via_provider,
     _maybe_auto_title,
     _persist_title,
-    _reset_auto_run_for_new_plan,
     api_chat_session_generate_title,
     api_chat_session_rename,
 )

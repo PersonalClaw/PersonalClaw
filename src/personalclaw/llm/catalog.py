@@ -286,7 +286,7 @@ def _app_declared_types(markers: tuple[str, ...]) -> frozenset[str]:
     never be the thing that breaks it."""
     try:
         import personalclaw.sdk.model  # noqa: F401 — package import order (sdk.model first)
-        from personalclaw.sdk.provider_helpers import spec_types_declaring_models
+        from personalclaw.llm.branded_specs import spec_types_declaring_models
 
         return spec_types_declaring_models(markers)
     except Exception:  # noqa: BLE001 — a family lookup must never break a restore

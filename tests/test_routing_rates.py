@@ -40,11 +40,11 @@ def registered_pricing(monkeypatch):
     """Register an app-declared pricing map for a provider type, isolated per test."""
 
     def _register(provider_type: str, pricing: dict[str, dict[str, float]]) -> None:
-        from personalclaw.sdk import provider_helpers
+        from personalclaw.llm import branded_specs
 
-        specs = dict(provider_helpers._REGISTERED_SPECS)
+        specs = dict(branded_specs._REGISTERED_SPECS)
         specs[provider_type] = BrandedProviderSpec(type=provider_type, pricing=pricing)
-        monkeypatch.setattr(provider_helpers, "_REGISTERED_SPECS", specs)
+        monkeypatch.setattr(branded_specs, "_REGISTERED_SPECS", specs)
 
     return _register
 

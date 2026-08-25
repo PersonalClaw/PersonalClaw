@@ -223,8 +223,6 @@ class _ChatSession:
         "_stop_state",
         "_stop_event_id",
         "_dirty",
-        "_orch_tracker",
-        "_auto_run",
         "_recovery_chat_triggered",
         "_stage_titles",
         "_stage_descriptions",
@@ -263,6 +261,7 @@ class _ChatSession:
         "_declared_file_change_idx",
         "_acp_breaker",
         "_memory_citations",
+        "_skills_used",
         "_side",
         "_extra_tool_roots",
         "_unattended",
@@ -380,8 +379,6 @@ class _ChatSession:
         self._stop_state: str = "idle"  # 'idle' | 'soft_pending' | 'killing'
         self._stop_event_id: str | None = None  # transcript message id for in-flight stop
         self._dirty: bool = False  # True when messages changed since last flush
-        self._orch_tracker: Any = None  # OrchestrationTracker, set by gateway
-        self._auto_run: bool = False  # "Go All" — skip stage gates
         self._recovery_chat_triggered: bool = False  # guard against concurrent failure recovery
         self._stage_titles: list[str] = []  # stage titles extracted from plan
         self._stage_descriptions: list[list[str]] = []  # bullet points per stage
@@ -467,6 +464,13 @@ class _ChatSession:
         # context's metadata, and attached to each finalized assistant message's meta so
         # the frontend can turn a `[Memory N]` token into a deep-link to the episode.
         self._memory_citations: list[dict] = []
+        # Skills whose content actually reached THIS turn's prompt, as
+        # [{name, state, loaded_tokens}]. Reset per turn,
+        # populated from the assembled context's `skill_decisions` metadata, and attached
+        # to each finalized assistant message's meta so the frontend can show "used N
+        # skills" without a second channel. A REFUSED skill is deliberately absent: it was
+        # named to the agent but never loaded, so counting it would overstate the turn.
+        self._skills_used: list[dict] = []
         # Ephemeral side-chat buffer (None = closed). Side Q&A lives ONLY here,
         # never in self.messages — see dashboard/side_state.py.
         self._side: "SideState | None" = None

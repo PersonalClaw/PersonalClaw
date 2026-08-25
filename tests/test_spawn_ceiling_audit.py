@@ -230,6 +230,16 @@ _OPERATOR_EXEMPT: dict[str, str] = {
     "cli_server.py::_spawn_detached_gateway::subprocess.Popen": (
         "operator: launch the gateway itself"
     ),
+    # `personalclaw run` boots a transient gateway when none is listening. Same class as
+    # `_spawn_detached_gateway` above: the operator typed the command, and the argv is a
+    # fixed literal (`-m personalclaw gateway --port auto --no-open --json-ready`). The
+    # agent-controlled value — the prompt — travels over loopback HTTP and never reaches
+    # argv, so there is no agent-influenced input for a ceiling to cap. Capping it would
+    # also be wrong: the child IS a gateway, and a gateway must not run under an agent's
+    # fd/memory ceiling.
+    "cli_run.py::start_transient_gateway::subprocess.Popen": (
+        "operator: launch the gateway itself (headless `run` bootstrap)"
+    ),
     "cli_server.py::_install::subprocess.run": "operator: self-update package install",
     "cli_server.py::_refresh_agent_config::subprocess.run": (
         "operator: post-update `setup --agent-only` re-run"

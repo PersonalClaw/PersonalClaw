@@ -240,6 +240,65 @@ Examples:
     chat_parser.add_argument("-m", "--message", help="Single message (non-interactive)")
     chat_parser.add_argument("--model", help="Model to use (default: from config)")
 
+    # run — headless one-shot scripted turn.
+    # NOTE: `run` is a NEW TOP-LEVEL command. The pre-existing `run` in this parser is
+    # `spawn run` (a nested subagent verb, line ~466) — a different namespace, so there
+    # is no collision. `chat -m` is deliberately NOT extended: it talks to a provider
+    # factory with no gateway, session, safety profile or approval gate, so folding a
+    # gated headless mode into it would have meant two behaviours behind one flag.
+    run_parser = sub.add_parser(
+        "run",
+        help="Run one headless turn against the local gateway (scripting/CI)",
+        epilog="""
+Examples:
+  personalclaw run -p 'summarise my open PRs'
+  personalclaw run -p 'what changed today?' --format json | jq -r .result
+  personalclaw run -p 'audit this repo' --cwd . --format streaming-json
+  personalclaw run -p 'fix the typo in README' --allow      # writes need the grant
+
+Read-only by default: every non-read-only tool is denied unless --allow is passed.
+The posture is announced on stderr, so stdout stays pipeable.
+""",
+        formatter_class=_fmt,
+    )
+    run_parser.add_argument(
+        "-p",
+        "--prompt",
+        required=True,
+        help="The prompt for this one turn (required; must be non-empty)",
+    )
+    run_parser.add_argument(
+        "--format",
+        choices=["plain", "json", "streaming-json"],
+        default="plain",
+        help="plain = final text; json = one result document; streaming-json = NDJSON of the WS frames",  # noqa: E501
+    )
+    run_parser.add_argument("--agent", default="", help="Agent to run the turn as")
+    run_parser.add_argument("--model", default="", help="Model override for this turn")
+    run_parser.add_argument(
+        "--session",
+        default="",
+        help="Named persistent session to continue (default: a fresh stateless one-shot)",
+    )
+    run_parser.add_argument("--cwd", default="", help="Working directory for the turn's tools")
+    run_parser.add_argument(
+        "--allow",
+        action="store_true",
+        help="Grant write/execute tools for this run (default is read-only; the grant is printed to stderr)",  # noqa: E501
+    )
+    run_parser.add_argument(
+        "--timeout",
+        type=float,
+        default=0.0,
+        help="Seconds to wait for the turn (default 600)",
+    )
+    run_parser.add_argument(
+        "--port",
+        type=int,
+        default=None,
+        help="Gateway port to use (default: resolved like every other client command)",
+    )
+
     # doctor
     doctor_parser = sub.add_parser("doctor", help="Verify PersonalClaw setup")
     doctor_parser.add_argument(
@@ -556,6 +615,32 @@ Examples:
     )
     inbound_confirm.add_argument("confirm_token", help="The confirm_token the bridge returned")
 
+    # capture — telemetry import for agents that cannot be proxied
+    # (EXTERNAL-ACCESS §8). The proxy half of capture needs no CLI; this half does,
+    # because the input is a file a human exported from another tool.
+    capture_parser = sub.add_parser(
+        "capture", help="Import exported agent logs into the capture store"
+    )
+    capture_sub = capture_parser.add_subparsers(dest="capture_action")
+    capture_import = capture_sub.add_parser(
+        "import", help="Normalise an exported agent log and stage it"
+    )
+    capture_import.add_argument("file", help="Path to the exported log")
+    capture_import.add_argument(
+        "--format",
+        default="jsonl",
+        choices=("jsonl", "json", "sse"),
+        help="jsonl (Claude Code session), json (OpenAI request log), sse (raw event dump)",
+    )
+    capture_import.add_argument(
+        "--source",
+        default="import",
+        help="Label recorded on every staged record (e.g. the agent's name)",
+    )
+    capture_import.add_argument(
+        "--json", dest="as_json", action="store_true", help="Emit the report as JSON"
+    )
+
     # auth — the owner login. Setting a password is CLI-only on
     # purpose: a plaintext credential should never ride in an HTTP body.
     auth_parser = sub.add_parser("auth", help="Manage the owner login (password, 2FA)")
@@ -781,6 +866,46 @@ no-delta verdict files a retirement proposal — removing anything stays your ca
         "--dry-run",
         action="store_true",
         help="Print the cell preflight and exit without calling a model",
+    )
+
+    # retrieval-eval
+    ret_parser = sub.add_parser(
+        "retrieval-eval",
+        help="Per-arm P@5/R@5 ablation over your knowledge and memory retrieval",
+        epilog="""
+Examples:
+  personalclaw retrieval-eval                     # mine + score BOTH stores, separately
+  personalclaw retrieval-eval --store knowledge   # one store only
+  personalclaw retrieval-eval --mine              # (re)mine the qrels and stop
+  personalclaw retrieval-eval --card              # the hand-labeling card, as JSON
+  personalclaw retrieval-eval --card > card.json  # ...then edit "relevant" per query
+  personalclaw retrieval-eval --label card.json   # fold the hand labels back in
+
+Both stores are read-only here: a run that wrote to knowledge.db or memory.db refuses to
+report. Every mask's P@5/R@5 lands under ~/.personalclaw/evals/matrices/<run>/, and the
+per-arm marginal contribution is the leave-one-out delta with an enable/hold verdict.
+""",
+        formatter_class=_fmt,
+    )
+    ret_parser.add_argument(
+        "--store",
+        default="both",
+        choices=["both", "knowledge", "memory"],
+        help="Which store to measure (default: both, run separately)",
+    )
+    ret_parser.add_argument(
+        "-k", type=int, default=5, dest="k", help="Cutoff for P@k/R@k (default: 5)"
+    )
+    ret_parser.add_argument(
+        "--mine",
+        action="store_true",
+        help="Mine the qrels from your events, save the benchmark, and stop",
+    )
+    ret_parser.add_argument(
+        "--card", action="store_true", help="Print the hand-labeling card as JSON and stop"
+    )
+    ret_parser.add_argument(
+        "--label", default="", help="Apply a completed hand-label card (a JSON file)"
     )
 
     sub.add_parser("update", help="Update PersonalClaw to the latest version")
@@ -1134,6 +1259,10 @@ Examples:
         except (_BridgeResolveErr, _LLMResolveErr) as exc:
             print(str(exc), file=sys.stderr)
             raise SystemExit(1) from None
+    elif args.command == "run":
+        from personalclaw.cli_run import _run
+
+        _run(args)
     elif args.command == "gateway":
         gw_kwargs = _resolve_gateway_args(args)
         asyncio.run(_gateway(**gw_kwargs))
@@ -1175,6 +1304,8 @@ Examples:
         asyncio.run(_study(args))
     elif args.command == "ablation":
         _ablation(args)
+    elif args.command == "retrieval-eval":
+        _retrieval_eval(args)
     elif args.command == "security":
         _security(args)
     elif args.command == "update":
@@ -1229,6 +1360,10 @@ Examples:
         rc = _inbound_cmd(args)
         if rc:
             raise SystemExit(rc)
+    elif args.command == "capture":
+        rc = _capture_cmd(args)
+        if rc:
+            raise SystemExit(rc)
     elif args.command == "auth":
         rc = _auth_cmd(args)
         if rc:
@@ -1268,6 +1403,7 @@ from personalclaw.cli_commands import (  # noqa: E402
     _learn,
     _memory_cmd,
     _pair,
+    _retrieval_eval,
     _run_eval,
     _security,
     _spawn,
@@ -1293,6 +1429,7 @@ from personalclaw.cli_setup import (  # noqa: E402
 )
 from personalclaw.durability.shards import backup_cmd as _backup_cmd  # noqa: E402
 from personalclaw.inbound.auth import inbound_cmd as _inbound_cmd  # noqa: E402
+from personalclaw.inbound.capture_import import capture_cmd as _capture_cmd  # noqa: E402
 
 
 def _workflow_cmd(args) -> int:  # noqa: ANN001

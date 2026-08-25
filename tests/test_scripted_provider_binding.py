@@ -99,7 +99,7 @@ _REAL_CAPABILITY = ProviderCapability(
 def _real_factory(*, entry: ProviderEntry, session_key: str | None = None, **kwargs: object):
     """A real provider's factory, refusing through the PRODUCTION credential path.
 
-    ``sdk.provider_helpers._resolve_credential`` is the one helper every shipped
+    ``llm.branded_specs.resolve_credential`` is the one helper every shipped
     model-app factory calls, and it is what raises ``CredentialMissing`` — so this
     stand-in exercises the real refusal instead of imitating it.
     """
@@ -109,9 +109,9 @@ def _real_factory(*, entry: ProviderEntry, session_key: str | None = None, **kwa
     # ImportError on a partially initialized module. Production always reaches
     # ``sdk.model`` first; this keeps the test on the same order.
     import personalclaw.sdk.model  # noqa: F401
-    from personalclaw.sdk.provider_helpers import _resolve_credential
+    from personalclaw.llm.branded_specs import resolve_credential
 
-    _resolve_credential(entry, kwargs, label=_REAL_TYPE)
+    resolve_credential(entry, kwargs, label=_REAL_TYPE)
     # Reaching this line means the credential check did NOT refuse — which is
     # exactly the auth hole the rail exists to catch. Return rather than raise, so
     # the failure reads as the honest "DID NOT RAISE CredentialMissing".

@@ -281,6 +281,31 @@ class LossReport:
         counts = {kind: len(self.of_kind(kind)) for kind in self.kinds()}
         return ", ".join(f"{kind}×{count}" for kind, count in counts.items())
 
+    def to_dict(self) -> dict[str, object]:
+        """JSON-ready view for the surface that must warn before an edit (§C5).
+
+        Carries the DERIVED answers (``lossless``, ``kinds``, ``summary``) beside the
+        items rather than leaving a client to re-derive them. A report is evidence, and
+        the verdict a user is shown must be the one this module computes — a frontend
+        that re-implemented ``lossless`` as ``items.length === 0`` would be right today
+        and wrong the first time a purely informational item is added.
+        """
+        return {
+            "lossless": self.lossless,
+            "kinds": self.kinds(),
+            "summary": self.summary(),
+            "items": [
+                {
+                    "kind": item.kind,
+                    "detail": item.detail,
+                    "block_index": item.block_index,
+                    "paragraph_ordinal": item.paragraph_ordinal,
+                    "where": item.where,
+                }
+                for item in self.items
+            ],
+        }
+
 
 def parse_docx(data: bytes) -> tuple[DocumentModel, LossReport]:
     """Parse .docx bytes into a `DocumentModel` and the report of what did not fit.

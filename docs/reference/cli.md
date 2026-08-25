@@ -50,6 +50,66 @@ Chat with the agent from the terminal.
 | `-m, --message TEXT` | Send a single message non-interactively. |
 | `--model NAME` | Model to use for this run (default: the configured chat binding). |
 
+## `personalclaw run`
+
+Run ONE headless turn against the local gateway and exit — the scripting/CI entry
+point. Unlike `chat -m` (which talks to a provider directly, with no gateway, session,
+safety profile or tool gate), `run` drives the same `POST /api/chat` + `/api/ws` pair the
+dashboard uses, so a scripted turn is gated exactly like an interactive one.
+
+| Flag | Effect |
+|---|---|
+| `-p, --prompt TEXT` | **Required.** The prompt for this turn. An empty or whitespace-only value is refused (exit 2). |
+| `--format {plain,json,streaming-json}` | `plain` (default) = final text only, pipes cleanly; `json` = one `{result, session, turns, tool_calls, tokens, duration_ms}` document; `streaming-json` = NDJSON of the `chat_chunk`/`tool_call`/`chat_done` WS frames the dashboard consumes. |
+| `--agent NAME` | Agent to run the turn as (default: the configured default agent). |
+| `--model NAME` | Model override for this turn. |
+| `--session KEY` | Continue a **named persistent** session (`inbound:cli:<key>`). Omitted = a fresh stateless one-shot per invocation. |
+| `--cwd DIR` | Working directory for the turn's tools. |
+| `--allow` | Grant write/execute tools. **Default is read-only.** |
+| `--timeout SECS` | Ceiling on the turn (default 600). |
+| `--port PORT` | Gateway port (default: resolved like every other client command). |
+
+Exit code is `0` when the turn succeeded, `1` on a failed turn or transport error, and
+`2` on a refused invocation (blank prompt, or a read-only run on an ACP agent).
+
+### Safety posture
+
+A `run` turn uses an `inbound:cli:` session key, which classifies as **unattended**, so
+it resolves through the `HEADLESS` safety profile by construction.
+
+* **Read-only by default.** The session's *task mode* is set to `ask`, so every
+  non-read-only tool call is denied before the approval gate — the same gate the native
+  runtime enforces, which Trust/YOLO cannot bypass. A tool the classifier cannot read
+  (an opaque shell command, an unlabelled external MCP tool) is **denied**, not allowed.
+* **`--allow` is the explicit write grant** (task mode `agent`).
+* **The posture is always announced on stderr**, for both modes, so stdout stays
+  pipeable and a script is self-documenting about what it asked for.
+* **ACP-backed agents are refused in read-only mode** (exit 2). An unattended ACP turn
+  runs with permissions bypassed so the dialect never asks, which means the task-mode
+  gate never sees a tool call and read-only cannot be enforced. Use `--allow` to opt
+  into the full grant you would really be getting, or point `--agent` at a
+  native-runtime agent where read-only *is* enforced.
+* Spend is attributed to the SpendMeter run scope `cli`, under the `HEADLESS` profile's
+  budget (your configured per-day ceiling).
+
+### Gateway lifecycle
+
+`run` probes `/api/healthz` on the resolved port. If a gateway is already running it
+**reuses** it (minting a token via `.local_secret`, so `run` must share that gateway's
+`PERSONALCLAW_HOME`) and leaves it running. If none is running, `run` starts a
+**transient** gateway on an ephemeral port, uses its `--json-ready` handshake, and kills
+it by pid on exit.
+
+### CI smoke test
+
+```bash
+# One turn, machine-readable, fails the job on a failed turn.
+personalclaw run -p 'Reply with exactly: OK' --format json | jq -er '.result'
+```
+
+A ready-made script and GitHub Action live at `scripts/ci_smoke_run.sh` and
+`.github/workflows/headless-run-smoke.yml`.
+
 ## `personalclaw setup`
 
 Install agent config and configure credentials (interactive wizard).

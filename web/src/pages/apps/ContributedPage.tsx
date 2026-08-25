@@ -49,7 +49,9 @@ export function ContributedPage({ app, host, src, mountFunction = 'mount' }: Pro
     const ctx: AppContext = host ? Object.assign(app, { host }) : app
     // Load the bundle, rewriting its bare specifiers (react / @personalclaw/app-sdk / …)
     // to host-provided module shims so they resolve without a document import map.
-    loadContributedModule(src)
+    // `ctx` carries the app's declared uiCapabilities, which decide whether the gated
+    // SDK subpaths (`/ui` shell primitives, `/genui` widgets) are in that rewrite set.
+    loadContributedModule(src, ctx)
       .then((mod) => {
         if (cancelled || !hostRef.current) return
         const fn = mod[mountFunction] as MountFn | undefined

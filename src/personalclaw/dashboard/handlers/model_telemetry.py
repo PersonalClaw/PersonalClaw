@@ -94,6 +94,14 @@ async def api_routing_policy_put(request: web.Request) -> web.Response:
 
     ``order`` requires ``query_class``: an order is always recorded per class, because "which model
     first" has no single answer across kinds of work — that is the whole premise of the table.
+
+    **Every lever is validated before any lever is applied.** Interleaving the two (validate mode,
+    write mode, validate order, reject) made a 400 that had already moved the store: a body
+    carrying a good ``mode`` and a malformed ``order`` answered ``400 order must be a list of
+    refs`` with the new mode persisted, so the client saw "nothing applied" while the table had
+    changed under it. ``mode``/``pin`` and ``order`` live in different stores, so there is no
+    single write to make atomic — the fix is to have nothing left to reject once the first write
+    goes out.
     """
     from personalclaw.providers.use_cases import VALID_USE_CASES
     from personalclaw.routing.policy import MODES, set_mode, set_order, set_pin
@@ -108,30 +116,46 @@ async def api_routing_policy_put(request: web.Request) -> web.Response:
     if use_case not in VALID_USE_CASES:
         return json_error("bad_request", message=f"unknown use_case {use_case!r}", status=400)
 
+    # ── validate ────────────────────────────────────────────────────────────────
+    mode: str | None = None
+    if "mode" in body:
+        mode = str(body.get("mode", "") or "")
+        if mode not in MODES:
+            return json_error(
+                "bad_request", message=f"mode must be one of {list(MODES)}", status=400
+            )
+    pin: str | None = None
+    if "pin" in body:
+        pin = str(body.get("pin") or "")
+    order: list[str] | None = None
+    query_class = ""
+    if "order" in body:
+        raw_order = body.get("order")
+        if not isinstance(raw_order, list) or not all(isinstance(r, str) for r in raw_order):
+            return json_error("bad_request", message="order must be a list of refs", status=400)
+        query_class = str(body.get("query_class", "") or "")
+        if not query_class:
+            return json_error(
+                "bad_request",
+                message="query_class is required when setting an order",
+                status=400,
+            )
+        order = list(raw_order)
+    if mode is None and pin is None and order is None:
+        return json_error(
+            "bad_request", message="nothing to change: send mode, pin, and/or order", status=400
+        )
+
+    # ── apply ───────────────────────────────────────────────────────────────────
     applied: list[str] = []
     try:
-        if "mode" in body:
-            mode = str(body.get("mode", "") or "")
-            if mode not in MODES:
-                return json_error(
-                    "bad_request", message=f"mode must be one of {list(MODES)}", status=400
-                )
+        if mode is not None:
             set_mode(use_case, mode)
             applied.append("mode")
-        if "pin" in body:
-            set_pin(use_case, str(body.get("pin") or ""))
+        if pin is not None:
+            set_pin(use_case, pin)
             applied.append("pin")
-        if "order" in body:
-            order = body.get("order")
-            if not isinstance(order, list) or not all(isinstance(r, str) for r in order):
-                return json_error("bad_request", message="order must be a list of refs", status=400)
-            query_class = str(body.get("query_class", "") or "")
-            if not query_class:
-                return json_error(
-                    "bad_request",
-                    message="query_class is required when setting an order",
-                    status=400,
-                )
+        if order is not None:
             set_order(use_case, query_class, order)
             applied.append("order")
     except ValueError as exc:
@@ -141,10 +165,6 @@ async def api_routing_policy_put(request: web.Request) -> web.Response:
         return web.json_response(
             {"error": {"code": "internal", "message": "could not save the routing policy"}},
             status=500,
-        )
-    if not applied:
-        return json_error(
-            "bad_request", message="nothing to change: send mode, pin, and/or order", status=400
         )
     return web.json_response({"ok": True, "use_case": use_case, "applied": applied})
 

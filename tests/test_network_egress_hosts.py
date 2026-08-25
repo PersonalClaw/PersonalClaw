@@ -203,8 +203,11 @@ def test_the_release_check_is_the_only_unprompted_destination():
     """The one host the product contacts without the user asking for that thing.
 
     Pinned deliberately: this is the sentence the privacy posture rests on, and it should
-    take a failing test to change it. `updates.check_enabled` exists precisely because this
-    request happens on a schedule.
+    take a failing test to change it. This docstring used to claim an
+    ``updates.check_enabled`` opt-out existed "precisely because this request happens on a
+    schedule" — no such field exists anywhere in ``src/``, and the check is unconditional
+    (``test_self_update.py::test_auto_update_gates_the_apply_not_the_check``). The schedule
+    is real; the opt-out was not.
     """
     unprompted = sorted(h for h, j in _table().items() if "FETCHED, unprompted" in j)
     assert unprompted == ["api.github.com"], (

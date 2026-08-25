@@ -4,7 +4,6 @@ import logging
 
 from aiohttp import web
 
-from personalclaw.config.loader import config_dir
 from personalclaw.dashboard.chat_utils import _history_key_for
 from personalclaw.dashboard.state import DashboardState, _ChatSession
 from personalclaw.llm.base import EVENT_COMPLETE, EVENT_PERMISSION_REQUEST, EVENT_TEXT_CHUNK
@@ -41,19 +40,6 @@ def _build_title_prompt(messages: list[dict[str, str]]) -> str | None:
     if not lines:
         return None
     return render_use_case_prompt("title", {"transcript": "\n".join(lines)})
-
-
-def _reset_auto_run_for_new_plan(session: "_ChatSession") -> None:
-    """Clear auto-run state so a new plan requires fresh user approval."""
-    session_dir = config_dir() / "sessions" / session.key
-    if session_dir.exists():
-        for f in session_dir.glob("stage_*_result.md"):
-            try:
-                f.unlink()
-            except OSError:
-                pass
-    session._orch_tracker = None
-    session._auto_run = False
 
 
 async def _stream_background_prompt(state: DashboardState, prompt: str) -> str:

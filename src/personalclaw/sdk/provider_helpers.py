@@ -21,16 +21,25 @@ header) does NOT use these — it subclasses the protocol client directly.
 
 from __future__ import annotations
 
-import os
-from dataclasses import dataclass, field
 from typing import Any, Callable
 
-from personalclaw.llm.subscription_credentials import (
+# ── Re-exported from CORE ────────────────────────────────────────────────────
+# The spec dataclass, the registry it lands in, and the credential ladder live in
+# ``personalclaw.llm.branded_specs`` — below this boundary, because they are core state and
+# core policy that four core modules read. They are re-exported here so an app's import path
+# is unchanged; only the direction of the dependency moved. See that module's docstring.
+from personalclaw.llm import branded_specs  # noqa: E402
+from personalclaw.llm.branded_specs import (  # noqa: E402,F401
+    BrandedProviderSpec,
+    resolve_credential,
+    resolve_spec_secret,
+)
+from personalclaw.llm.subscription_credentials import (  # noqa: F401
     SubscriptionSource,
     register_subscription_source,
     resolve_subscription_credential,
 )
-from personalclaw.sdk.model import (
+from personalclaw.sdk.model import (  # noqa: F401
     AnthropicProvider,
     Capability,
     ConnectionResult,
@@ -48,164 +57,6 @@ from personalclaw.sdk.model import (
     infer_capabilities,
     openai_compatible_list_models,
 )
-
-
-@dataclass(frozen=True)
-class BrandedProviderSpec:
-    """Everything that distinguishes one OpenAI-/Anthropic-compatible provider app
-    from another. The rest of the wiring is identical (see module docstring)."""
-
-    type: str  # the provider TYPE this app registers (e.g. "groq")
-    protocol: str = "openai"  # "openai" | "anthropic" — which wire client to build
-    default_base_url: str = ""  # the provider's OpenAI-/Anthropic-compatible base URL
-    api_key_env: str = ""  # env var consulted when config carries no api_key
-    default_model: str = ""  # model when neither entry nor config pins one
-    max_tokens: int | None = None  # anthropic requires a max_tokens; openai leaves None
-    capabilities: frozenset[Capability] = field(default_factory=frozenset)
-    fallback_models: tuple[dict[str, Any], ...] = ()  # catalog rows when discovery is unavailable
-    notes: str = ""
-    # Graded prompt-cache support this provider declares. Defaults NONE (no caching
-    # hint). An app whose family caches a stable prefix on its own sets AUTOMATIC; one
-    # needing a per-request marker sets EXPLICIT. Threaded into ProviderCapability below.
-    prompt_cache: PromptCache = PromptCache.NONE
-    # OPTIONAL per-model prices this app ships: {model_pattern: {in_per_mtok, out_per_mtok}}
-    # in USD per 1,000,000 tokens, where model_pattern is a model id or a glob
-    # ("claude-sonnet-*"). Prices belong beside default_model/capabilities — the same place the
-    # rest of an app's model facts live. Read by routing/rates.py:rate_for as the app-default
-    # tier, under the user's ~/.personalclaw/model_rates.json overlay. Empty means
-    # "this app declares no prices", which resolves to a lower tier and never to a free model.
-    # ``hash=False`` keeps the frozen dataclass hashable despite the dict (equality still counts
-    # it); treat the map as read-only, like every other field on a frozen spec.
-    pricing: dict[str, dict[str, float]] = field(default_factory=dict, hash=False)
-    # OPTIONAL id of a registered :class:`SubscriptionSource` (see
-    # ``llm/subscription_credentials.py``). Set it when this provider's vendor bills by
-    # SUBSCRIPTION and the user has no API key to paste — they signed the vendor's own agent
-    # CLI in, and the token lives in a store that CLI owns. The resolver reads that store
-    # READ-ONLY and sits at ONE fixed place in the credential order (below the explicit
-    # entry.credential and options.api_key, above spec.api_key_env) — it is NOT a second way
-    # to set an API key and can never override a key the user chose. Empty (the norm) means
-    # this app rides no subscription.
-    credential_source: str = ""
-
-    def to_dict(self) -> dict[str, Any]:
-        """A JSON-round-trippable view of the spec (enums → their values, tuples → lists).
-
-        Paired with :meth:`from_dict` so ``from_dict(spec.to_dict()) == spec`` — the round-trip
-        discipline the repo enforces on every persisted/serialized shape, so a later-added field
-        (``pricing`` was one) can't silently fail to survive a save/load.
-        """
-        return {
-            "type": self.type,
-            "protocol": self.protocol,
-            "default_base_url": self.default_base_url,
-            "api_key_env": self.api_key_env,
-            "default_model": self.default_model,
-            "max_tokens": self.max_tokens,
-            "capabilities": sorted(c.value for c in self.capabilities),
-            "fallback_models": [dict(m) for m in self.fallback_models],
-            "notes": self.notes,
-            "prompt_cache": self.prompt_cache.value,
-            "pricing": {
-                str(pattern): {str(k): float(v) for k, v in dict(row).items()}
-                for pattern, row in self.pricing.items()
-            },
-            "credential_source": self.credential_source,
-        }
-
-    @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> BrandedProviderSpec:
-        """Rebuild a spec from :meth:`to_dict` output. Unknown keys are ignored; absent keys take
-        the field default (so an older serialized spec still loads)."""
-        raw_cache = data.get("prompt_cache", PromptCache.NONE)
-        return cls(
-            type=str(data.get("type", "")),
-            protocol=str(data.get("protocol", "openai")),
-            default_base_url=str(data.get("default_base_url", "")),
-            api_key_env=str(data.get("api_key_env", "")),
-            default_model=str(data.get("default_model", "")),
-            max_tokens=(int(data["max_tokens"]) if data.get("max_tokens") is not None else None),
-            capabilities=frozenset(Capability(c) for c in data.get("capabilities", ()) or ()),
-            fallback_models=tuple(dict(m) for m in data.get("fallback_models", ()) or ()),
-            notes=str(data.get("notes", "")),
-            prompt_cache=PromptCache(raw_cache),
-            pricing={
-                str(pattern): {str(k): float(v) for k, v in dict(row).items()}
-                for pattern, row in (data.get("pricing", {}) or {}).items()
-            },
-            credential_source=str(data.get("credential_source", "") or ""),
-        )
-
-
-def _resolve_credential(entry: ProviderEntry, kwargs: dict, *, label: str) -> Credential | None:
-    """Resolve a ProviderEntry's credential via the optional credential_store
-    (registry contract), or None when the entry declares none. Mirrors the
-    credential handling every model _factory uses."""
-    if not entry.credential:
-        return None
-    store = kwargs.get("credential_store")
-    if store is None:
-        raise CredentialMissing(
-            f"{label} provider entry {entry.name!r} declares credential "
-            f"{entry.credential!r} but no credential_store was passed to build()"
-        )
-    cred = store.resolve(entry.credential)  # type: ignore[attr-defined]
-    if cred is None or cred.secret is None:
-        raise CredentialMissing(f"{label} credential {entry.credential!r} is not configured")
-    return cred
-
-
-def _resolve_spec_secret(
-    spec: BrandedProviderSpec, *, explicit_key: str = ""
-) -> tuple[Credential | None, str]:
-    """The ONE credential-resolution order a branded spec's secret follows, shared by every
-    surface that needs it (both factories and the catalog).
-
-    ``explicit_key`` is whatever the calling surface offers as an explicit, user-typed key:
-    ``entry.options["api_key"]`` on the registry path, ``config["api_key"]`` on the config
-    path. The order below it:
-
-      1. ``explicit_key`` — the per-instance key the Add-Provider flow persists. MUST win
-         over the env so a ZAI/Alibaba instance uses ITS key, not a global
-         ANTHROPIC_API_KEY/OPENAI_API_KEY meant for another provider (the "wrong key → 401"
-         bug), else
-      2. the spec's subscription ``credential_source`` — an already-signed-in agent CLI's own
-         store, read READ-ONLY. BELOW every explicit choice so it can never silently outrank
-         a credential the user set, and ABOVE the env so a subscription app works with
-         nothing configured at all, else
-      3. the spec's ``api_key_env``.
-
-    Independent hops, not an ``elif`` chain: a source that is merely not signed in must fall
-    THROUGH to ``api_key_env``, never short-circuit it.
-
-    Returns ``(credential, reason)``. ``credential`` is None when no secret was found at all,
-    and each caller decides what that means — a factory substitutes the anon placeholder so
-    the protocol client can still be constructed, while the catalog reports "not configured".
-    ``reason`` carries the resolver's displayable, secret-free explanation when the spec
-    declares a subscription source that is NOT usable ("" otherwise), so a caller can say
-    "sign in with `x login` first" instead of naming an env var the app doesn't have.
-
-    ``entry.credential`` (the explicit credential-store descriptor) outranks everything here
-    but is registry-only, so it is resolved by :func:`_resolve_credential` BEFORE this is
-    consulted: five hops on the registry path, four on the config path, identical tail.
-    """
-    if explicit_key:
-        return (Credential(name=spec.type, kind="api_key", secret=explicit_key, source="file"), "")
-    reason = ""
-    if spec.credential_source:
-        auth = resolve_subscription_credential(spec.credential_source)
-        if auth.logged_in and auth.secret:
-            # ``source="file"`` is factually where it came from (the CLI's own on-disk
-            # store); the credential-store Literal is deliberately not widened for this.
-            return (
-                Credential(name=spec.type, kind="oauth2", secret=auth.secret, source="file"),
-                "",
-            )
-        reason = auth.reason
-    if spec.api_key_env:
-        env_key = os.environ.get(spec.api_key_env, "")
-        if env_key:
-            return (Credential(name=spec.type, kind="api_key", secret=env_key, source="env"), "")
-    return (None, reason)
 
 
 def _build_provider(
@@ -260,13 +111,13 @@ class BrandedCatalog(ModelCatalog):
     def _resolved_key(self) -> tuple[str, str]:
         """This catalog's effective key, plus the honest reason when there isn't one.
 
-        Same shared order as both factories (:func:`_resolve_spec_secret`), so a subscription
+        Same shared order as both factories (:func:`resolve_spec_secret`), so a subscription
         app the user is signed into gets probed with its CLI's token instead of being told to
         set an API-key env var it deliberately doesn't have. Returns ``("", reason)`` when no
         secret resolves; ``reason`` is the resolver's secret-free sentence, or ``""`` for an
         ordinary key-based app that simply has no key set.
         """
-        cred, reason = _resolve_spec_secret(self._spec, explicit_key=self._explicit_api_key)
+        cred, reason = resolve_spec_secret(self._spec, explicit_key=self._explicit_api_key)
         return (str(cred.secret or "") if cred is not None else "", reason)
 
     def _no_key_detail(self, reason: str) -> str:
@@ -390,77 +241,6 @@ class BrandedCatalog(ModelCatalog):
 #: same import-time side effect that registers the type + catalog) so core can read an installed
 #: app's DECLARATIONS — today its prices — without the app having to push them anywhere. Last-wins
 #: on re-registration, mirroring ``register_catalog``.
-_REGISTERED_SPECS: dict[str, BrandedProviderSpec] = {}
-
-
-def registered_spec(provider: str) -> BrandedProviderSpec | None:
-    """The registered spec for ``provider``, or None.
-
-    ``provider`` may be a provider TYPE ("groq") or a user-named INSTANCE of one ("groq-work" —
-    instances are named freely in ``active_models.json``). Resolution: exact type, then
-    case-insensitive type, then — only when EXACTLY ONE registered type appears in the name — that
-    type. An ambiguous or unrecognized name resolves to None rather than to a guess.
-    """
-    name = str(provider or "").strip()
-    if not name:
-        return None
-    spec = _REGISTERED_SPECS.get(name)
-    if spec is not None:
-        return spec
-    lowered = name.lower()
-    for known, known_spec in _REGISTERED_SPECS.items():
-        if known.lower() == lowered:
-            return known_spec
-    hits = [s for known, s in _REGISTERED_SPECS.items() if known and known.lower() in lowered]
-    return hits[0] if len(hits) == 1 else None
-
-
-def spec_pricing(provider: str) -> dict[str, dict[str, float]]:
-    """The app-declared ``{model_pattern: {in_per_mtok, out_per_mtok}}`` map for ``provider``, or
-    an empty map when the provider is unknown or declares no prices (never a fabricated rate)."""
-    spec = registered_spec(provider)
-    return dict(spec.pricing) if spec is not None and spec.pricing else {}
-
-
-def spec_credential_source(provider: str) -> str:
-    """The app-declared subscription ``credential_source`` for ``provider``, or ``""``.
-
-    The core-facing reader that lets ``providers/loader.py`` derive an ``availability()``
-    probe for a subscription provider app without importing the app or knowing its vendor.
-    Same shape and precedent as :func:`spec_pricing`: one narrow question answered from the
-    registered spec, keeping :func:`registered_spec` module-internal.
-    """
-    spec = registered_spec(provider)
-    return str(spec.credential_source) if spec is not None and spec.credential_source else ""
-
-
-def spec_types_declaring_models(markers: tuple[str, ...]) -> frozenset[str]:
-    """Registered provider TYPES whose app declares at least one model id containing one of
-    ``markers`` (case-insensitive), looking at its ``default_model`` and ``fallback_models``.
-
-    The narrow reader behind ``llm/catalog.model_family_provider_types``: it answers "which
-    installed apps say they serve this model family?" so that map does not have to name every
-    app by hand. Marker semantics stay in ``catalog.py`` (all model-id classification lives
-    there); this side only knows what each spec DECLARED. Same precedent as :func:`spec_pricing`
-    and :func:`spec_credential_source` — one narrow question, :func:`registered_spec` stays
-    module-internal.
-
-    An app that declares no models (pure live discovery) contributes nothing, which is the
-    honest answer: nothing was declared.
-    """
-    wanted = tuple(m.lower() for m in markers if m)
-    if not wanted:
-        return frozenset()
-    out: set[str] = set()
-    for provider_type, spec in _REGISTERED_SPECS.items():
-        declared = [str(spec.default_model or "")] + [
-            str(row.get("id", "") or "") for row in spec.fallback_models
-        ]
-        if any(m in model_id.lower() for model_id in declared if model_id for m in wanted):
-            out.add(provider_type)
-    return frozenset(out)
-
-
 def register_branded_app(spec: BrandedProviderSpec) -> tuple[Callable, Callable, Callable]:
     """Wire a branded/generic protocol provider app into the default registry and
     return its ``(_factory, create_provider, create_catalog)`` trio.
@@ -476,7 +256,7 @@ def register_branded_app(spec: BrandedProviderSpec) -> tuple[Callable, Callable,
         *, entry: ProviderEntry, session_key: str | None = None, **kwargs: object
     ) -> ModelProvider:
         del session_key  # these providers are stateless
-        cred = _resolve_credential(entry, kwargs, label=spec.type)
+        cred = resolve_credential(entry, kwargs, label=spec.type)
         options = dict(entry.options or {})
         # Pop BOTH base_url and endpoint unconditionally (a short-circuit `or` would
         # leave the second in options → leak). base_url wins if both are set.
@@ -488,7 +268,7 @@ def register_branded_app(spec: BrandedProviderSpec) -> tuple[Callable, Callable,
         #      else 2. the per-instance api_key in entry.options, else 3. the spec's
         #      subscription credential_source, else 4. the spec's api_key_env, else
         #      5. the anon placeholder.
-        # Hops 2-4 live in `_resolve_spec_secret` so the config path below resolves the SAME
+        # Hops 2-4 live in `resolve_spec_secret` so the config path below resolves the SAME
         # order from the SAME code. Two hand-maintained ladders drift, and this one had:
         # `create_provider` carried no subscription hop at all, so a subscription app wired
         # the documented way (`implementation: "provider:create_provider"`) built a provider
@@ -498,7 +278,7 @@ def register_branded_app(spec: BrandedProviderSpec) -> tuple[Callable, Callable,
         _snake_key = str(options.pop("api_key", "") or "")
         _camel_key = str(options.pop("apiKey", "") or "")
         if cred is None:
-            cred, _ = _resolve_spec_secret(spec, explicit_key=_snake_key or _camel_key)
+            cred, _ = resolve_spec_secret(spec, explicit_key=_snake_key or _camel_key)
         # Drop remaining routing/label fields that are NOT model-call params so they
         # don't leak into extra_options → request_kwargs → the SDK's stream()/create()
         # ("unexpected keyword argument …"). Only genuine call params (temperature,
@@ -540,7 +320,7 @@ def register_branded_app(spec: BrandedProviderSpec) -> tuple[Callable, Callable,
         # app manifest's `implementation: "provider:create_provider"` names, so a
         # subscription app must resolve its CLI's token here too. Both key spellings are
         # accepted for the same reason the entry path pops both.
-        cred, _ = _resolve_spec_secret(
+        cred, _ = resolve_spec_secret(
             spec, explicit_key=str(cfg.get("api_key", "") or cfg.get("apiKey", "") or "")
         )
         cred = cred or _anon_credential(spec)
@@ -577,7 +357,9 @@ def register_branded_app(spec: BrandedProviderSpec) -> tuple[Callable, Callable,
     except ProviderResolutionError:
         pass  # already registered (idempotent against reload)
     get_default_registry().register_catalog(spec.type, create_catalog)
-    _REGISTERED_SPECS[spec.type] = spec  # so core can read this app's declarations (pricing)
+    branded_specs._REGISTERED_SPECS[spec.type] = (
+        spec  # so core can read this app's declarations (pricing)
+    )
 
     return _factory, create_provider, create_catalog
 
@@ -598,12 +380,13 @@ __all__ = [
     "SubscriptionSource",
     "register_subscription_source",
     "register_branded_app",
-    # ``registered_spec`` is deliberately NOT exported: ``spec_pricing`` and
-    # ``spec_credential_source`` are the only core-facing readers of the registry, and a
-    # public SDK export with no consumer is a declared-but-inert surface (the inert-surface
-    # ratchet catches exactly that). It stays module-internal until a real caller needs the
-    # whole spec.
-    "spec_pricing",
-    "spec_credential_source",
-    "spec_types_declaring_models",
+    # The registry ACCESSORS are deliberately not exported here, by this file's own rule:
+    # a public SDK export with no consumer is a declared-but-inert surface, and the
+    # inert-surface ratchet catches exactly that. ``registered_spec``, ``spec_pricing``,
+    # ``spec_credential_source`` and ``spec_types_declaring_models`` were exported only
+    # because CORE read them through this facade; core now imports them from
+    # ``personalclaw.llm.branded_specs``, which is where they live, so every one of these
+    # exports lost its last consumer. No app has ever used them (measured: 0 hits across
+    # the apps repo, against 18 for ``BrandedProviderSpec`` and 27 for
+    # ``register_branded_app``). They come back here the day an app needs one.
 ]
