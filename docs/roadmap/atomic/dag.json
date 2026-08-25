@@ -5753,13 +5753,14 @@
         {
           "id": "APE-11",
           "title": "UI SDK exports design-system shell primitives + tokens + uiCapabilities block + generative-widget path",
-          "status": "todo",
+          "status": "done",
           "scope": "Sessions 3-4 T4.1 + V3-4 (contributed-page half); Contract C1 (uiCapabilities)",
           "done_when": "a fixture app page renders using host Button/Surface/tokens via @personalclaw/app-sdk and is indistinguishable from a native page; generative-widget contribution path works",
           "deps": [
             "EXT:DESIGN-SYSTEM-CONSISTENCY:shell primitives/tokens to export",
             "EXT:AMBIENT-SURFACES:generative-UI layer"
-          ]
+          ],
+          "pr": 2006
         },
         {
           "id": "APE-12",
@@ -7509,8 +7510,8 @@
         "plan": "APE"
       },
       {
-        "id": "APE-11",
-        "title": "UI SDK exports design-system shell primitives + tokens + uiCapabilities block + generative-widget path",
+        "id": "APE-6",
+        "title": "Migrate Minutes + Growth backend+UI apps to the current design system",
         "plan": "APE"
       },
       {
@@ -10052,9 +10053,9 @@
         "code": "APE",
         "plan": "APP-PLATFORM-EVOLUTION",
         "total_atoms": 12,
-        "done": 9,
+        "done": 10,
         "in_progress": 0,
-        "todo": 3,
+        "todo": 2,
         "blocked": 0
       },
       {
