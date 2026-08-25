@@ -327,7 +327,7 @@
     {
       "plan": "KNOWLEDGE-LIBRARY",
       "code": "KL",
-      "status": "in_progress",
+      "status": "done",
       "summary": "Plan status is IN PROGRESS. Done: S1 collections primitive, all of S2 (read/favorite curation, tags taxonomy, bulk ops), and the S3 dedup/merge store+API backend. Not started: S3 reading view (T3.1), S3 dedup/merge FRONTEND (T3.2 has backend only, \"no frontend consumer yet\"), S3 library home (T3.3, wants AMBIENT-SURFACES coordination), and the full H1.1-H1.5 indexing amendment (chunking, sqlite-vec ANN, resumable backfill). The indexing amendment is a distinct sub-scope from the library UX and sequences on its own linear chain.",
       "atoms": [
         {
@@ -404,7 +404,7 @@
         {
           "id": "KL-8",
           "title": "S3 library home: recently-added / continue-reading / favorites / collection counts",
-          "status": "todo",
+          "status": "done",
           "scope": "Session 3 \u2014 T3.3 (library home, composable surface); Design \u00a7S3 (coordinate with AMBIENT-SURFACES 20 tile registry)",
           "done_when": "a library home component renders live per-collection counts, recently-added, favorites, and a continue-reading section that resumes at the persisted reading position; built as a composable surface that consumes the AMBIENT-SURFACES tile registry if landed, standalone otherwise",
           "deps": [
@@ -7716,11 +7716,6 @@
         "plan": "ET"
       },
       {
-        "id": "KL-8",
-        "title": "S3 library home: recently-added / continue-reading / favorites / collection counts",
-        "plan": "KL"
-      },
-      {
         "id": "LMMV-7",
         "title": "Session 5b \u2014 Hardening: per-model context-budget helper, refresh/registry-drift/destructive-test regressions, full-matrix as-a-user validation",
         "plan": "LMMV"
@@ -9594,9 +9589,9 @@
         "code": "KL",
         "plan": "KNOWLEDGE-LIBRARY",
         "total_atoms": 17,
-        "done": 16,
+        "done": 17,
         "in_progress": 0,
-        "todo": 1,
+        "todo": 0,
         "blocked": 0
       },
       {
