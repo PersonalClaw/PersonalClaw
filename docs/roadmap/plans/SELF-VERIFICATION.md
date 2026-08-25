@@ -507,3 +507,80 @@ Sessions 1-2 ship standalone value immediately; 3-4 are the ones that must not s
   **`_apply`'s RUNNING branch is reachable only by `stage`** — `engine.py:778` is the only
   `InstanceState.RUNNING` return in the engine, asserted by an `ast` ratchet rather than a grep, because
   a text scan counts comments.
+
+- [2026-08-25][SV-9 clause 3] **Clause 3 stays PARTIAL — but the gate MOVED, and the new one is named.**
+  The 2026-08-23 entry above blamed *session tool policy*: no `mcp__chrome-devtools__*` tool was exposed
+  and a `ToolSearch` for `navigate_page,take_snapshot,click` returned *"No matching deferred tools found."*
+  **That half has cleared.** The same `ToolSearch` now returns full schemas for `navigate_page`,
+  `take_snapshot`, `click`, `new_page`, `list_console_messages`, `fill`, `select_page`, `list_pages`,
+  `evaluate_script` and `take_screenshot` — the tools reach the driving session. A gateway built from this
+  commit was stood up on an isolated dev home (`--port 10731`, `PERSONALCLAW_AUTH_MODE=none`, SPA built and
+  `static/dist` symlinked via the Makefile recipe, never a `cp -R`) and served the SPA at `/` (200).
+  **What blocks the drive now is browser-profile CONTENTION, and it is not something a driving session can
+  route around.** `new_page` and `list_pages` both fail with *"The browser is already running for
+  `~/.cache/chrome-devtools-mcp/chrome-profile`. Use --isolated…"*. Root-caused in the server's own build,
+  not guessed:
+  1. `browser.js:139` derives the profile dir as
+     `~/.cache/chrome-devtools-mcp/chrome-profile{-<channel>}` — a function of the server's `--channel`
+     CLI arg only. **No tool parameter can change it**, so every concurrent session contends for ONE dir.
+  2. A live sibling session holds it. Chrome pid 14504 (16h45m old, `about:blank`) was launched by
+     `chrome-devtools-mcp` pid 20305, whose own parent is a *running* claude-code process — so it is a live
+     sibling's browser, not an orphan, and killing it is out of bounds (the pool shares the machine).
+  3. It cannot be attached to either. It runs `--remote-debugging-pipe`, which writes **no**
+     `DevToolsActivePort` file, and `--auto-connect` resolves a browser *only* by reading that file out of
+     `options.userDataDir` (`browser.js:61-79`). Pipe transport + absent port file = unattachable.
+  4. `ensureBrowserLaunched` has no fallback: the puppeteer `SingletonLock` failure is re-thrown verbatim
+     (`browser.js:196-204`). `--isolated` is a server-launch flag, unreachable from inside a session.
+  A private Chrome on a private profile was tried and **abandoned as a foreign-instance hazard**: port 9222
+  is already held by the user's own real Chrome (pid 903), the private one only got the IPv6 bind, and
+  `--auto-connect` would not have found it anyway (point 3). It was killed by PID.
+  **Owner decision, outside this atom's fence:** add `--isolated` (or an explicit per-session
+  `--user-data-dir`) to the `chrome-devtools` MCP server args in the harness config. That retires this whole
+  contention class permanently and is the last thing standing between clause 3 and a real drive. Until then
+  clause 3 is blocked on **harness configuration**, not on PersonalClaw and not on tool availability.
+  **No UI mutation was faked. Again.**
+
+- [2026-08-25][SV-9 clause 3] **The backend half of the drive WAS proved live, and is labelled as exactly
+  that — not as clause 3.** Against the gateway from this commit, all four fields the Self-QA panel writes
+  were PATCHed through `/api/config/personalclaw` and **read back off disk** from
+  `.dev-home/config.json`: `enabled false→true`, `watched_repo ""→"/private/tmp/sv9drive-wt"`,
+  `max_scenarios_per_fire 3→7`, `fix_branch_enabled false→true`, each `HTTP 200`, and a bogus
+  `agent.self_qa.nope` correctly `HTTP 400 "field not editable"`. **This is the API path, not the UI path** —
+  it de-risks the eventual drive and proves the round-trip lands, but it is *not* the clause, which requires
+  the mutation to travel through the rendered control.
+  **The template's full autonomous loop did not run** and was not attempted: `scenario-gen` (GENERATIVE) and
+  `execute` (AGENTIC, which is the node that would hold the Chrome DevTools MCP tools) both need live model
+  calls, and `execute` needs the very browser that is contended. The blocking sub-step is `execute`.
+
+- [2026-08-25][SV-9 clause 3] 🔴 **Railed instead: the quiet-revert the drive exists to catch was UNRAILED
+  on SV-9's own FE surface.** `AgentDefaultsPanel.tsx:76-79` warns in a comment that reusing the flat
+  `patch` for a Self-QA row would PATCH `agent.<field>` — *"a path the server's allowlist rejects, so the
+  control would appear to work and then quietly revert."* Nothing asserted it. The existing
+  `test_every_field_has_a_write_path` derives its paths from `SelfQaConfig`, so it is **one-sided**: it
+  proves dataclass↔allowlist agreement and stays green no matter which closure the panel actually calls.
+  A one-token drift (`patch={patch}` for `patch={patchSelfQa}`) ships an inert control whose failure mode is
+  *looking like it saved* — precisely the class a render check never sees, and precisely why clause 3 exists.
+  Closed by `TestTheSelfQaPanelRowsPatchTheNestedPath`, which reads the **call site** (the panel source) and
+  then closes the loop on the backend by asserting the flat path each mis-bound row *would* have sent is
+  **not** editable — because if `agent.<field>` were editable, a mis-bind would be harmless and the rail
+  would measure nothing. Both `agent.self_qa.<f>` present and `agent.<f>` absent are asserted for all four.
+  Scope and matcher hazards handled deliberately: the section is bounded by real markup
+  (`<Section title="Self-QA companion"` → the next `</Section>`), never a character window; elements are
+  split on `<` followed by an uppercase letter, because scanning to the first `>` truncates at the `<sha>`
+  inside a `hint` string, and that same rule excludes `</Section>` and `<div`.
+  **Two vacuity floors**, since a scanner that matches nothing reads as clean: the discovered row set is
+  pinned to the exact four names (not a count, so a rename cannot be absorbed by an addition), and the block
+  must NOT contain `approval_mode` — a flat-`patch` row in a *sibling* section — and must be shorter than the
+  whole file, so a slipped boundary reds rather than silently widening.
+  **Falsified three times on LIVE lines, each grepped back before running and each restored from a file
+  copy** (never `git checkout`): (1) `field="enabled" patch={patchSelfQa}` → `patch={patch}` reds
+  `test_every_row_is_bound_to_the_nested_patcher` with
+  `assert 'patch={patchSelfQa}' in 'ToggleRow label="Enable the companion" … patch={patch}…'` (1 failed);
+  (2) inserting `"agent.enabled": {"type": "bool"}` into `_EDITABLE_CONFIG` reds
+  `test_the_flat_path_each_row_would_have_sent_is_rejected` with `assert 'agent.enabled' not in {…}`
+  (1 failed); (3) renaming a row's `field` reds **both** the vacuity floor and the backend half
+  (2 failed / 2 passed). Tree verified clean after every restore.
+  ⚠️ **A manual drive is not a regression rail** — this rail does not make clause 3 met. It makes the one
+  contract the drive would have exercised permanent, so that when the harness flag lands the drive is
+  confirming a rail rather than discovering a bug.
+  **SV-9 stays `todo`.** Clauses 1/2/4 remain MET; clause 3 remains PARTIAL, now blocked on harness config.
