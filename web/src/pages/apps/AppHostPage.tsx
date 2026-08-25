@@ -26,7 +26,12 @@ export function AppHostPage({ sub }: Pick<RouteProps, 'sub'>) {
   if (!page?.entryPoint) return <Center><Blocks size={20} /> This app contributes no UI page.</Center>
 
   const permissions = (manifest.permissions ?? {}) as AppPermissions
-  const ctx: AppContext = { name, permissions }
+  // APE-11: the declared UI capabilities travel with the ctx, because the bundle loader
+  // reads them to decide which SDK subpaths this app's imports may resolve to. Read off
+  // the manifest the same way `permissions` is — `AppManifest.to_dict()` emits the key
+  // only when non-empty, so absent legitimately means "declared none".
+  const uiCapabilities = (manifest.uiCapabilities ?? []) as string[]
+  const ctx: AppContext = { name, permissions, uiCapabilities }
   const src = `/apps/${encodeURIComponent(name)}/ui/${page.entryPoint}`
   const title = page.label || (manifest.displayName as string) || name
   const icon = (page as { icon?: string }).icon || (manifest.icon as string) || ''

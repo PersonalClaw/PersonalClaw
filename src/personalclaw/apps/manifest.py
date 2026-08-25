@@ -1148,6 +1148,24 @@ class ProviderConfig:
 #: non-claims (predates the system / ships no frontend), so neither is verified.
 DESIGN_SYSTEM_LEVELS = frozenset({"v2", "legacy", "n/a"})
 
+# The CLOSED vocabulary of declared UI capabilities (APE-11). Each entry names one
+# host UI surface a contributed page may reach through ``@personalclaw/app-sdk``:
+#
+# * ``shell-primitives`` — the app's bundle may import the host design-system
+#   components (``Button``/``Surface``) and the resolved token contract from
+#   ``@personalclaw/app-sdk/ui``, so its page is built from the SAME primitives a
+#   native page is and inherits theme/token correctness instead of restyling.
+# * ``generative-widget`` — the app may render a generative-UI widget: it supplies
+#   the genui DSL body and the HOST parses, validates against its own component
+#   registry, and renders it. The app contributes a *widget*, never a component
+#   TYPE — the registry stays host-owned, so model/app text can only reach
+#   components the host already registered.
+#
+# Closed on purpose: an unrecognised capability is an install error, not a silently
+# dropped string, for the same reason ``quality.designSystem`` is closed — a
+# capability the host does not know about reads exactly like one it refused.
+UI_CAPABILITIES = frozenset({"shell-primitives", "generative-widget"})
+
 #: The axis names, in card order. Named once so the verifier, the wire and the
 #: Store badges cannot drift into three different axis vocabularies.
 QUALITY_AXES = ("tested", "designSystem", "a11y")
@@ -1259,6 +1277,9 @@ _KNOWN_FIELDS = frozenset(
         "skills",
         # Declared quality bar (APE-4) — self-declared, CI-verified for first-party.
         "quality",
+        # Declared UI capabilities (APE-11) — which host UI surfaces the app's page
+        # reaches through the UI SDK. Typed, so a junk entry is an install error.
+        "uiCapabilities",
         # Legacy fields (stripped — no runtime consumer): parsed to extra for
         # forward-compat but no longer modeled as typed attributes.
         "agents",
@@ -1387,6 +1408,19 @@ class AppManifest:
     # so a dishonest declaration is a red build rather than a nicer-looking card.
     quality: QualityDeclaration | None = None
 
+    # --- Declared UI capabilities (APE-11) ---
+    # Which host UI surfaces this app's contributed page may reach through the UI SDK
+    # (vocabulary + rationale: ``UI_CAPABILITIES`` above). A DECLARATION, in the same
+    # spirit as ``permissions.network``: the browser gate in ``appSdk.tsx`` resolves
+    # the gated SDK subpaths only for a declaring app, but a contributed page already
+    # runs in the HOST React tree (``ContributedPage`` mounts it with ``createRoot``, no
+    # iframe), so an undeclared app can reach the same DOM and the same ``window`` by
+    # other means. This is therefore NOT a security boundary and nothing here should be
+    # described as enforcement — it is the ``permissions.network`` shape: what the
+    # declaration buys is legibility. The app states which host surfaces it builds on,
+    # and the host has one place to read that instead of inferring it from a bundle.
+    uiCapabilities: list[str] = field(default_factory=list)  # noqa: N815
+
     # --- Discovery ---
     tags: list[str] = field(default_factory=list)
 
@@ -1505,6 +1539,22 @@ class AppManifest:
                     f"quality.designSystem must be one of "
                     f"{sorted(DESIGN_SYSTEM_LEVELS)}, got: {self.quality.designSystem!r}"
                 )
+
+        # Declared UI capabilities (APE-11). An unknown entry is an INSTALL error for
+        # the same reason an unknown designSystem level is: the UI SDK gate can only
+        # answer "did this app declare X" for an X it knows, so an unrecognised string
+        # would be indistinguishable from declaring nothing while LOOKING like a grant
+        # in the manifest. Duplicates are rejected too — a capability list that says the
+        # same thing twice is a manifest the author did not mean to write.
+        unknown_caps = [c for c in self.uiCapabilities if c not in UI_CAPABILITIES]
+        if unknown_caps:
+            errors.append(
+                f"uiCapabilities entries must be one of {sorted(UI_CAPABILITIES)}, "
+                f"got unknown: {sorted(set(unknown_caps))}"
+            )
+        if len(set(self.uiCapabilities)) != len(self.uiCapabilities):
+            dupes = sorted({c for c in self.uiCapabilities if self.uiCapabilities.count(c) > 1})
+            errors.append(f"uiCapabilities has duplicate entries: {dupes}")
 
         return errors
 
@@ -1635,6 +1685,12 @@ class AppManifest:
             quality_d = self.quality.to_dict()
             if quality_d:
                 d["quality"] = quality_d
+        # APE-11: emitted only when non-empty, so "declared no UI capability" stays
+        # ABSENT on the wire rather than arriving as `[]`. The browser gate treats both
+        # identically, but a Store surface that later discloses this must be able to
+        # tell "declares nothing" from "declares an empty list" without guessing.
+        if self.uiCapabilities:
+            d["uiCapabilities"] = list(self.uiCapabilities)
         if self.native:
             d["native"] = True
         if self.tags:
@@ -1742,6 +1798,12 @@ class AppManifest:
             ],
             native=bool(data.get("native", False)),
             quality=quality_cfg,
+            # APE-11: kept VERBATIM (no filtering to the known set) so an unrecognised
+            # entry reaches ``validate()`` and is reported. Silently dropping it here
+            # would turn a typo'd capability into "declared nothing" — the app would
+            # install clean and its page would then fail to resolve the SDK subpath with
+            # no explanation anywhere.
+            uiCapabilities=[str(c) for c in data.get("uiCapabilities", []) if c],  # noqa: N815
             tags=[str(t) for t in data.get("tags", []) if t],
             extra=extra,
         )
