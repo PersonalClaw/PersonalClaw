@@ -1009,6 +1009,30 @@ def _visit_branch(
     )
 
 
+def case_key(value: Any) -> str:
+    """The case key a resolved branch selector matches on.
+
+    A template is JSON, so the only spelling an author can write for a boolean case is
+    ``true``/``false``. Python spells the same values ``True``/``False``, and a bare
+    ``str(value)`` handed the engine ``"True"`` — which matches neither case. Every branch
+    routing on a real boolean therefore failed with "matched no case" for BOTH values, so such a
+    branch was dead in both directions rather than wrong in one. Measured on the shipped
+    ``self-qa`` template: a user-impacting commit triaged correctly and then died at the next
+    node, every time.
+
+    Normalised HERE, at the one place a selector becomes a key, because ``_select_case`` is
+    called by the engine's branch dispatch *and* twice by the frontier — normalising at a call
+    site would let dispatch and the edge decisions disagree about which case a run took.
+
+    Only ``bool`` is normalised. A selector that resolves to the *string* ``"True"`` keeps its
+    own spelling: folding that in too would make ``"True"`` and ``"true"`` one case and silently
+    merge two branches an author wrote as distinct.
+    """
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    return str(value)
+
+
 def _select_case(node: Node, ctx: BindingContext) -> tuple[str, Node] | None:
     """Resolve `config.on` and pick a case. Returns None when the selector cannot be
     resolved yet."""
@@ -1022,7 +1046,7 @@ def _select_case(node: Node, ctx: BindingContext) -> tuple[str, Node] | None:
         value = resolve_expr(inner, ctx)
     except BindingError:
         return None
-    key = str(value)
+    key = case_key(value)
     if key in node.cases:
         return key, node.cases[key]
     if node.default_case is not None:

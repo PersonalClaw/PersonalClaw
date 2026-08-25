@@ -405,3 +405,53 @@ Sessions 1-2 ship standalone value immediately; 3-4 are the ones that must not s
   refiner folds — including the ones this entry made visible — is attributed to the node `""`. Not touched
   here (it is neither a surfacing defect nor SV-9's), but it means the "a repeatedly SKIPPED step is a failure
   of the template" mechanism at `refiner.py:410` cannot name the step it is talking about.
+
+- [2026-08-24][SV-9 clause 3] 🔴 **A REAL DEAD BRANCH, found by actually driving the template — and
+  clause 3 is still BLOCKED behind a second, deeper one.** Drove `self-qa` from the dashboard's
+  Definitions tab against a gateway built from this branch (isolated home, port 10077), with the commit
+  under test being a real user-impacting one (`07b0c24a`, the SC#6 surfacing commit).
+  1. **FIXED here.** The run died at node 2 with `branch selector matched no case and the node has no
+     default`. `triage` returns a real Python `bool`; `tick._select_case` keyed the selector on
+     `str(value)` → `"True"`; a template is JSON so the only spelling an author can write is `true`.
+     So `route` matched neither case — the branch was dead in BOTH directions, and the whole scenario
+     subtree was unreachable from any real run. **Three of self-qa's branches and one of
+     knowledge-lint's** had the same shape (`verdict`, `fix-route`; `knowledge-lint.route`), so this was
+     a library-wide class defect, not a typo. Normalised in the new `tick.case_key`, at the one place a
+     selector becomes a key — `_select_case` is called by branch dispatch AND twice by the frontier, so
+     normalising at a call site would let dispatch and the edge decisions disagree about which case a
+     run took. `bool` only; the string `"True"` still fails to route, and that is the vacuity floor
+     (folding it in would merge two cases an author wrote as distinct). After the fix, measured on a
+     second run: `route → done`, `no-impact → skipped`, scenario subtree RUNNING.
+     **`test_an_impactful_commit_reaches_the_scenario_subtree` passed the entire time it was broken** —
+     it asserted `route["cases"]["true"]` was PRESENT in the JSON, never that the engine could select
+     it. Replaced by `test_the_ENGINE_selects_that_case_not_just_the_JSON_declaring_it`, which drives
+     the shipped node through the shipped dispatcher with the shipped provider's output shape, plus a
+     library-wide ratchet in `test_workflows_bundled.py` that reds naming `knowledge-lint.route`.
+  2. **BLOCKED — not this atom's, not fixed: a `stage` node's spawn completion has NO CONSUMER.**
+     `engine.dispatch_stage` spawns, returns `RUNNING` carrying `{"subagent_id": info.id}`, and
+     **nothing in the repo reads `subagent_id`** (`git grep` finds only the write site).
+     `controller._apply`'s RUNNING branch pops the instance out of `_inflight`, so neither
+     `_enforce_stall_timeouts` nor `node_timeout_total` can see it either — both iterate `_inflight`.
+     Its comment says "the watchdog reconciles it"; `workflows/watchdog.py` only reaps at the RUN level
+     (`_reap_if_finished` requires every instance already terminal). Measured: `scenario-gen`'s subagent
+     reported `done: True, error: ""` while the node stayed RUNNING with no `step_completed` fifteen
+     minutes later, controller spinning at ~20% CPU. Corroborated independently — the dev home carried
+     two runs stuck `Running` (`produce-and-audit`, `deep-research`) and one `Cancelled` at 324h 27m.
+     This blocks every template with a `stage` node, so it is a WF2 engine seam and a multi-session
+     scope, not SV-9's. **Clause 3 cannot close until it lands.**
+  3. **The MCP half of clause 3 IS satisfied, measured.** With `chrome-devtools` in
+     `$PERSONALCLAW_HOME/mcp.json` and the (already installed) `mcp-tools` app, the running gateway's
+     `/api/tools` lists all 29 `mcp/chrome-devtools/*` tools — so the earlier entry's "gated by session
+     tool policy" was about the *implementing* session, and the product's own path works. What is
+     missing is that **nothing declares or checks that dependency**: the template declares
+     `git`/`ffmpeg` under `metadata.requirements.binaries` and `preflight` has no MCP-server check, so a
+     run without the server burns a scenario instead of blocking at start.
+  4. **Two inert template fields on the execute stage.** `tools_posture: "full"` and
+     `isolation: "fresh"` are never read by `dispatch_stage` — `tools_posture` appears in `src/` only in
+     bundled templates, `loop_run_map.py`'s prose and `template_lint.py`; `isolation` is read only by
+     GATE dispatch (`engine.py:1562`, `cross_model`). The previous entry's claim that the design binds
+     "via the ambient MCP connector config + `tools_posture: full`" rests half on a field the stage
+     dispatcher ignores. Not touched (the field is on ten bundled templates; deleting only self-qa's
+     would be inconsistent), but it is not a control.
+  Gate: `make lint` clean · targeted pytest 12 passed (clause-3 class + the library ratchet) · both
+  vacuity floors falsified by mutating `case_key` live and observing red · `gate_report.py` 6/6.
