@@ -1182,3 +1182,171 @@ def test_seeding_never_reaches_for_the_installer(tmp_path, monkeypatch):
     body = seed_src.split('"""', 2)[-1]
     for forbidden in ("install", "resolve", "clone", "requests", "urlopen"):
         assert forbidden not in body, f"the seeder must not {forbidden} anything"
+
+
+# --- ET-4 negative clause, pinned structurally ------------------------------------
+# "the scanner gate at install is unchanged (no new install path)" is a claim about
+# what does NOT exist, and the behavioural rail above can only prove the ONE route it
+# drives. A second route that skipped the gate would leave it green. So the census
+# below pins the chokepoint itself: every app tree that lands on disk goes through
+# ``default_scanner.scan(<staged tree>)``, and that call exists in exactly two places
+# in the whole package. A third one is a new install path by definition.
+
+
+def _scanner_gate_call_sites(token: str) -> set[tuple[str, str]]:
+    """Census ``token`` across the shipped package → {(module path, enclosing def)}.
+
+    Enclosing *function* rather than line number on purpose: a gate can be moved into
+    a different function while the line count stays put, and the function is what the
+    caller reaches. Uses ``ast`` so a match inside a string or comment still resolves
+    to a real def (or to ``<module>`` if it is not inside one at all).
+    """
+    import ast
+
+    import personalclaw
+
+    pkg_root = Path(personalclaw.__file__).resolve().parent
+    files = sorted(p for p in pkg_root.rglob("*.py"))
+    # Vacuity floor: a broken glob (wrong root, wrong suffix) reads as "no call sites"
+    # and would make every assertion below trivially true.
+    assert len(files) > 100, f"census walked only {len(files)} files under {pkg_root}"
+
+    sites: set[tuple[str, str]] = set()
+    for path in files:
+        text = path.read_text(encoding="utf-8")
+        if token not in text:
+            continue
+        tree = ast.parse(text)
+        owners: list[tuple[int, int, str]] = [
+            (n.lineno, n.end_lineno or n.lineno, n.name)
+            for n in ast.walk(tree)
+            if isinstance(n, ast.FunctionDef | ast.AsyncFunctionDef)
+        ]
+        for lineno, line in enumerate(text.splitlines(), start=1):
+            if token not in line:
+                continue
+            enclosing = [name for start, end, name in owners if start <= lineno <= end]
+            sites.add(
+                (
+                    path.relative_to(pkg_root).as_posix(),
+                    enclosing[-1] if enclosing else "<module>",
+                )
+            )
+    return sites
+
+
+def test_the_install_scanner_gate_has_exactly_two_call_sites():
+    """No new install path — pinned by census, not by reading a diff.
+
+    ``default_scanner.scan(`` is the supply-chain gate over a STAGED tree. The whole
+    package reaches it from three places, and only two of them are app installs:
+
+    * ``app_manager.install`` — first install of an app.
+    * ``app_manager.update`` — re-install over an existing app.
+    * ``supply_chain.scan_dir`` — the module-level re-export, whose only production
+      caller is ``skills/marketplace.py`` (a SKILL, not an app). Listed so the census
+      is the real one rather than a filtered one; it is not an app install path.
+
+    Adding a registry-aware install route (the tempting shortcut is "it came from the
+    curated registry, skip the scan") must either add a fourth call site — which reds
+    this — or route around the scanner entirely, which reds
+    ``test_a_registry_listed_app_still_hits_the_scanner_gate``. Between the two rails
+    there is no third way to add an ungated install path.
+
+    If you are here because this test went red: the fix is not to widen the expected
+    set. It is to justify the new install path, and then widen it deliberately.
+    """
+    expected = {
+        ("apps/app_manager.py", "install"),
+        ("apps/app_manager.py", "update"),
+        ("supply_chain.py", "scan_dir"),
+    }
+    assert _scanner_gate_call_sites("default_scanner.scan(") == expected
+
+    # Vacuity control: the same census over a token that is not in the package must
+    # come back empty. Without this, a walker that silently reads nothing (or an
+    # `ast.parse` that raised into a swallowed except) would look like agreement.
+    assert _scanner_gate_call_sites("default_scanner.scan_every_registry_app(") == set()
+
+
+# --- ET-4 listing clause: the seeded source's index has ONE accepted filename -------
+# "a fresh dev home lists registry apps in the Store" is the atom's one clause that
+# cannot be closed from inside core, and the reasons are outside it: the seeded URL
+# `https://github.com/PersonalClaw/registry.git` does not exist yet (`git ls-remote` →
+# "Repository not found"), and ET-3's staged index is `{"apps": []}` until ET-6 lists
+# something.
+#
+# What IS reachable is the CONTRACT between the two halves, and it turns out to be one
+# filename and nothing else. Core enumerates a source's apps from an index named
+# `catalog._REGISTRY_FILENAME` at the source root — the same contract for every git and
+# local source. ET-3 publishes the same content under `registry.json`. Measured: an
+# ET-3 schema-valid row lists with NO core change when the index carries core's name,
+# and lists nothing when it carries ET-3's. So the rail below pins the filename as the
+# whole of the remaining gap, so that whoever closes it (ET-5 owns reading the richer
+# `maintainer`/`last_validated` fields) reaches for a rename rather than a parser
+# change — and so that a future parser that quietly stops reading an ET-3-shaped row
+# reds here instead of in a user's empty Store.
+
+_STAGED_REGISTRY = Path(__file__).resolve().parent.parent / "scratch" / "registry"
+
+
+def _et3_shaped_row(name: str) -> dict:
+    """One listing row carrying every key ET-3's row schema marks required.
+
+    Built against the schema rather than copied from it, so a new required field in
+    `registry.schema.json` reds this instead of drifting silently.
+    """
+    schema = json.loads((_STAGED_REGISTRY / "registry.schema.json").read_text(encoding="utf-8"))
+    required = schema["properties"]["apps"]["items"]["required"]
+    assert required, "the row schema declares no required fields — fixture is vacuous"
+    row = {
+        "name": name,
+        "repo": f"https://github.com/acme/{name}.git",
+        "types": ["tool"],
+        "permissions_declared": [],
+        "license": "MIT",
+        "maintainer": "acme",
+        "added": "2026-08-25",
+    }
+    missing = set(required) - set(row)
+    assert not missing, f"ET-3's row schema now requires {sorted(missing)} — widen the fixture"
+    return row
+
+
+def _seed_registry_publishing(index_name: str, tmp_path, monkeypatch) -> list[str]:
+    """Publish one ET-3-shaped row under ``index_name`` in a local git repo, seed it as
+    the default registry source, and return the app names the Store lists."""
+    monkeypatch.setattr(catalog, "_DEFAULT_GIT_SOURCES", ())
+    monkeypatch.setenv("PERSONALCLAW_FIRST_PARTY_APPS_DIR", str(tmp_path / "nope"))
+    catalog._registry_cache.clear()
+    catalog._git_scan_cache.clear()
+
+    repo = tmp_path / f"registry-{index_name}"
+    repo.mkdir()
+    (repo / index_name).write_text(
+        json.dumps({"apps": [_et3_shaped_row("probe-app")]}), encoding="utf-8"
+    )
+    git = ["git", "-c", "user.email=t@example.invalid", "-c", "user.name=t"]
+    subprocess.run(["git", "init", "-q", "-b", "main"], cwd=repo, check=True)
+    subprocess.run([*git, "add", index_name], cwd=repo, check=True)
+    subprocess.run([*git, "commit", "-q", "-m", "index"], cwd=repo, check=True)
+
+    monkeypatch.setattr(catalog, "_REGISTRY_GIT_SOURCE", str(repo))
+    sources = tmp_path / "apps" / "app-sources.json"
+    if sources.exists():
+        sources.unlink()
+    assert catalog.seed_default_git_sources() == [str(repo)]
+    return [e["name"] for e in catalog.available_catalog().get("remoteApps", [])]
+
+
+def test_the_seeded_registry_lists_only_under_cores_index_filename(tmp_path, monkeypatch):
+    """The seeded default lists an ET-3-shaped row — and only when the index is named
+    what core reads. The negative half is the measured gap; the positive half is what
+    stops it being a rail that matches nothing.
+    """
+    assert _seed_registry_publishing(catalog._REGISTRY_FILENAME, tmp_path, monkeypatch) == [
+        "probe-app"
+    ]
+    # ET-3's own filename. Same bytes, same row, same seeded source — no listing. This
+    # is the entire remaining distance to the atom's unmet clause.
+    assert _seed_registry_publishing("registry.json", tmp_path, monkeypatch) == []
