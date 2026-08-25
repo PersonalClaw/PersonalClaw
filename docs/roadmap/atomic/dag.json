@@ -4303,7 +4303,8 @@
           "deps": [
             "EA-1",
             "EXT:LEARNING-FLYWHEEL:learning.db staging tier + capture_hygiene fence rule (records without it; mining hookup is one adapter)"
-          ]
+          ],
+          "blocked_reason": "PARTIAL (2026-08-25). The 'forward to a client-record upstream ProviderEntry' clause is NOW CLOSED -- InboundClient.upstream ships, create_client takes it, and capture_proxy resolves it through the shared credential ladder with a pre-flight egress guard at capture_proxy.py:534. TWO clauses remain, both found while closing that one. (1) POST /capture/import DOES NOT EXIST: git grep add_post finds only the two /capture/v1/* routes, while the CLI half ships at cli.py:621-628. That is an independent unmet done_when clause and it alone keeps this atom todo. (2) upstream_allowlist has NO FRONTEND CONTROL: backend round-trip is 4-of-5 (dataclass+_meta at loader.py:3894, load() :5178, to_dict asserted in test_ea5_capture_store.py:793, PATCH allowlist core.py:718) but git grep upstream_allowlist -- web/src is EMPTY, while the neighbouring capture_retention_days has a control at ExternalAccessPanel.tsx:206. Consequence worth stating: the default allowlist is EMPTY and an empty list DENIES EVERYTHING (fail-closed, correctly), so a user who enables capture hits a total refusal with no UI to fix it. Clears when /capture/import lands and the allowlist gets a control; the second is a web/ change with its own gate."
         },
         {
           "id": "EA-6",
