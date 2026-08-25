@@ -358,7 +358,14 @@ def registration_from_dict(data: object) -> StudyRegistration:
             decision_rule=str(data.get("decision_rule") or ""),
             model_fingerprint=dict(data.get("model_fingerprint") or {}),
             budget_usd=float(data.get("budget_usd") or 0.0),
-            agreement_floor=float(data.get("agreement_floor") or 0.6),
+            # NOT `or 0.6`: a floor of 0.0 is falsy and a legitimate registration — a user
+            # whose `judge_agreement_floor` is 0 registers one. Coercing it to 0.6 made the
+            # round-trip lossy, so the rehydrated registration hashed differently from the
+            # one on disk and the seal would have called an honest study tampered. A default
+            # is what an ABSENT key means, never what a zero means.
+            agreement_floor=(
+                0.6 if data.get("agreement_floor") is None else float(data["agreement_floor"])
+            ),
             registered_ts=float(data.get("registered_ts") or 0.0),
         )
     except (KeyError, TypeError, ValueError) as exc:
@@ -404,6 +411,12 @@ def register_study(
     if reg.k < 1:
         raise StudyError(f"k must be at least 1, got {reg.k}")
     parsed = [parse_locked_check(c) for c in locked_checks]
+    # 🔴 The seal goes down BEFORE the registration, so a registration can never exist on
+    # disk without one. The other order has a real failure mode: a registration written and
+    # then a seal write that fails leaves a permanently `invalidated` study. This order's
+    # failure mode is a stray journal row for a study that was never written, which
+    # `read_study_seal`'s first-wins read makes inert.
+    store.append_study_seal(reg.study_id, reg.sha256(), ts=reg.registered_ts)
     store.write_study_registration(reg.study_id, reg.to_dict(), rubric_text=rubric_text)
     for check in parsed:
         store.write_locked_check(reg.study_id, check.id, check.to_dict())
@@ -433,6 +446,50 @@ def _model_fingerprint() -> dict:
 
 
 # ── §2.3 the rubric pin, and what breaks it ──────────────────────────────────
+
+SEAL_OK = "ok"
+SEAL_UNSEALED = "registration_unsealed"
+SEAL_TAMPERED = "registration_tampered"
+
+
+def seal_status(reg: StudyRegistration) -> tuple[str, str]:
+    """``(status, detail)`` — is this registration the one that was registered?
+
+    🔴 This is the clause the rest of §2.1 rests on, and without it the rest of §2.1 is
+    decoration. ``registration.json`` carries ``rubric_sha256``, ``k`` and
+    ``agreement_floor`` — the study's whole decision rule — and both it and the pinned
+    rubric live in the same directory, owned by the same user. So :func:`rubric_status`
+    alone is defeated by two coordinated edits: rewrite ``rubric.md`` and set
+    ``rubric_sha256`` to the new rubric's hash. Every hash in the study directory then
+    agrees with every other one, and the study reads as pristine. An experimenter who saw
+    `judge_unreliable` could equally lower ``agreement_floor`` and re-run.
+
+    The seal is the one record of the registered design that is NOT in the directory under
+    verification (``evals/study_seals.tsv``, append-only, first row wins). A mismatch is
+    ``invalidated``, decided on the hash — the same standard, and the same remedy, as a
+    moved rubric.
+
+    An UNSEALED registration is also ``invalidated``, not tolerated: "no seal" and "the seal
+    was removed" are indistinguishable from here, and the permissive reading of an
+    indistinguishable pair is exactly the hole. A study registered before this journal
+    existed therefore has to be re-registered — a clean break under the pre-1.0 banner,
+    which costs one command and buys a study whose design is provable.
+    """
+    sealed = store.read_study_seal(reg.study_id)
+    if sealed is None:
+        return (
+            SEAL_UNSEALED,
+            "no seal was recorded for this study, so its registration cannot be shown to be "
+            "the one that was registered",
+        )
+    live = reg.sha256()
+    if live != sealed:
+        return (
+            SEAL_TAMPERED,
+            f"registration hashes to {live[:12]}, the seal recorded {sealed[:12]}",
+        )
+    return SEAL_OK, ""
+
 
 RUBRIC_OK = "ok"
 RUBRIC_LIVE_EDITED = "live_rubric_edited"
@@ -1169,21 +1226,28 @@ def decide(
     *,
     cases: Sequence[CaseOutcome],
     locked: Sequence[LockedOutcome],
+    seal_state: str = SEAL_OK,
+    seal_detail: str = "",
     rubric_state: str = RUBRIC_OK,
     rubric_detail: str = "",
 ) -> StudyResult:
     """Turn the measurements into one verdict, in a fixed and documented precedence.
 
-    1. **Rubric pin broken → ``invalidated``.** Checked first because a study whose rubric
-       moved has no interpretation, so nothing downstream of it means anything.
-    2. **Locked-check regression → ``loss``.** §2.1's decision rule says "ANY locked-check
+    1. **Registration seal broken → ``invalidated``.** Checked before the rubric because
+       ``rubric_sha256`` is a FIELD of the registration: a rubric pin read out of an
+       unverified registration verifies nothing (see :func:`seal_status`). Every check below
+       reads its threshold from the registration too, so this is the first question that can
+       be asked and answered without assuming the answer.
+    2. **Rubric pin broken → ``invalidated``.** A study whose rubric moved has no
+       interpretation, so nothing downstream of it means anything.
+    3. **Locked-check regression → ``loss``.** §2.1's decision rule says "ANY locked-check
        regression = fail regardless", and this outranks the agreement floor too: a
        deterministic regression is knowledge even when the judge is noise, and discarding
        it because the judge was bad would throw away the one measurement that did not
        depend on the judge.
-    3. **Agreement below the floor → ``judge_unreliable``.** No winner is declared from
+    4. **Agreement below the floor → ``judge_unreliable``.** No winner is declared from
        judgements that flip with position.
-    4. Otherwise the win rate decides, over DECIDED cases only.
+    5. Otherwise the win rate decides, over DECIDED cases only.
     """
     wins = sum(1 for c in cases if c.outcome == ARM_NEW)
     losses = sum(1 for c in cases if c.outcome == ARM_OLD)
@@ -1223,6 +1287,13 @@ def decide(
         locked_outcomes=tuple(locked),
         locked_regressions=regressions,
     )
+    if seal_state != SEAL_OK:
+        return replace(
+            measured,
+            verdict=VERDICT_INVALIDATED,
+            fail_reason=seal_state,
+            detail=seal_detail,
+        )
     if rubric_state != RUBRIC_OK:
         return replace(
             measured,
@@ -1475,6 +1546,16 @@ async def run_study(
         from personalclaw.evals.study_arms import live_arm_runner
 
         arm_runner = live_arm_runner
+    # 🔴 The seal before the rubric, and both before a single arm runs. The rubric pin lives
+    # INSIDE the registration, so verifying it first would be verifying a claim against
+    # itself; and either failure means this run may not be interpreted, so neither may spend
+    # money finding out. Deleting this block is what the seal tests assert against: they
+    # require the arm runner to have been called ZERO times.
+    seal_state, seal_detail = seal_status(reg)
+    if seal_state != SEAL_OK:
+        return persist(
+            reg, decide(reg, cases=[], locked=[], seal_state=seal_state, seal_detail=seal_detail)
+        )
     pinned_rubric = store.read_study_rubric(reg.study_id)
     state, detail = rubric_status(reg, live_rubric_text)
     if state != RUBRIC_OK:
@@ -1612,6 +1693,9 @@ def study_view(study_id: str) -> dict | None:
         "decision_rule": reg.decision_rule,
         "rubric_sha256": reg.rubric_sha256,
         "registration_sha256": reg.sha256(),
+        # The seal's own verdict, not just the recomputed hash: a hash rendered next to the
+        # file it was computed from tells a reader nothing about whether that file moved.
+        "seal_status": seal_status(reg)[0],
         "agreement_floor": reg.agreement_floor,
         "budget_usd": reg.budget_usd,
         "registered_ts": reg.registered_ts,

@@ -1085,3 +1085,200 @@ def test_the_registration_hash_is_canonical_and_order_independent(eval_home):
     restored = studies.registration_from_dict(store.read_study_registration(reg.study_id))
     assert restored == reg
     assert restored.sha256() == reg.sha256()
+
+
+# ── 🔴 §2.1 the registration SEAL — what makes every pin above more than decor ─
+#
+# Every rail above this line reads its own threshold out of `registration.json`:
+# `rubric_sha256` pins the rubric, `agreement_floor` sets the judge floor, `k` sets the
+# design. Before the seal, that file and the pinned rubric it pins lived in the same
+# directory with the same owner, so the whole of §2.1 was defeated by editing the file the
+# checks are read FROM — no forgery of a hash required, just a text editor. These tests
+# assert the seal on the two things a self-referential hash can never do: catch an edit to
+# the design, and catch a rubric forgery whose own hash check comes back clean.
+
+
+def _rewrite_registration(study_id: str, **fields) -> studies.StudyRegistration:
+    """Edit `registration.json` in place the way an experimenter with a shell would.
+
+    Deliberately goes AROUND `register_study`: the API refuses a second registration
+    (`StudySealedError`), so an attack that had to call it never starts. The file is the
+    attack surface, so the file is what these tests edit — and the ``0400`` mode is a
+    tripwire, not a lock, which is exactly why the two `chmod` calls here are honest.
+    """
+    path = store.registration_path(study_id)
+    path.chmod(stat.S_IRUSR | stat.S_IWUSR)
+    raw = json.loads(path.read_text(encoding="utf-8"))
+    raw.update(fields)
+    path.write_text(json.dumps(raw, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    path.chmod(stat.S_IRUSR)
+    return studies.registration_from_dict(raw)
+
+
+def test_the_seal_is_recorded_OUTSIDE_the_study_directory(eval_home):
+    """The positive floor, and the property the whole mechanism rests on.
+
+    A hash stored beside the file it pins is pinned by nothing: whoever can edit the
+    registration can edit a sidecar in the same directory in the same breath.
+    """
+    reg = register()
+    journal = store.study_seals_path()
+    assert journal.is_file(), "registering a study must seal it"
+    assert store.study_dir(reg.study_id) not in journal.parents
+    assert journal.parent == store.evals_root()
+    assert store.read_study_seal(reg.study_id) == reg.sha256()
+    assert studies.seal_status(reg) == (studies.SEAL_OK, "")
+    assert studies.study_view(reg.study_id)["seal_status"] == studies.SEAL_OK
+
+
+@pytest.mark.asyncio
+async def test_an_edited_registration_is_INVALIDATED_and_spends_NOTHING(eval_home):
+    """The cheat this closes: lower the agreement floor after seeing `judge_unreliable`.
+
+    `agreement_floor` is not documentation — `decide` reads the verdict threshold out of it.
+    So an edited registration is not a cosmetic problem, it is a different study wearing the
+    registered one's id.
+    """
+    reg = register()
+    tampered = _rewrite_registration(reg.study_id, agreement_floor=0.01)
+    assert tampered.agreement_floor == 0.01, "vacuity floor: the mutation applied"
+    state, detail = studies.seal_status(tampered)
+    assert state == studies.SEAL_TAMPERED
+    assert reg.sha256()[:12] in detail, "the detail names what was registered"
+
+    runner = arm_runner()
+    caller = RecordingCaller(prefers(NEW_OUT))
+    result = await studies.run_study(
+        reg=tampered,
+        cases=cases(1),
+        old_template_body=OLD_BODY,
+        new_template_body=NEW_BODY,
+        arm_runner=runner,
+        caller=caller,
+    )
+    assert result.verdict == studies.VERDICT_INVALIDATED
+    assert result.fail_reason == studies.SEAL_TAMPERED
+    # The CALL SITE assertion: deleting the seal check in `run_study` makes these two red.
+    assert runner.calls == [], "a study that may not be interpreted may not spend"
+    assert caller.prompts == []
+    assert result.evidence_ref == "" and result.demotion_proposal_id == ""
+    # §2.4's append-only honesty applies to this outcome too.
+    assert (store.read_study_verdict(reg.study_id) or {})["fail_reason"] == studies.SEAL_TAMPERED
+    assert [r["verdict"] for r in store.read_results()] == [studies.VERDICT_INVALIDATED]
+
+
+@pytest.mark.asyncio
+async def test_a_forged_rubric_pin_that_the_RUBRIC_CHECK_calls_OK_is_still_invalidated(eval_home):
+    """🔴 The discriminating test — the one thing `rubric_status` structurally cannot do.
+
+    Rewrite the pinned rubric AND set `rubric_sha256` to the new rubric's hash. Both live in
+    `evals/studies/<id>/`, so after two edits every hash in that directory agrees with every
+    other one and the four-way rubric check returns `ok`. The first assertion below is that
+    floor: it proves this study is invisible to the pre-seal implementation, so the red the
+    seal produces is a red nothing else was catching.
+    """
+    reg = register()
+    forged_rubric = "correctness (target 0)\nlegibility (target 0)\n"
+    rubric_path = store.rubric_path(reg.study_id)
+    rubric_path.chmod(stat.S_IRUSR | stat.S_IWUSR)
+    rubric_path.write_text(forged_rubric, encoding="utf-8")
+    rubric_path.chmod(stat.S_IRUSR)
+    forged = _rewrite_registration(reg.study_id, rubric_sha256=studies.rubric_sha256(forged_rubric))
+
+    assert studies.rubric_status(forged, forged_rubric) == (
+        studies.RUBRIC_OK,
+        "",
+    ), "floor: the rubric check is defeated by this pair, which is why the seal exists"
+
+    runner = arm_runner()
+    result = await studies.run_study(
+        reg=forged,
+        cases=cases(1),
+        old_template_body=OLD_BODY,
+        new_template_body=NEW_BODY,
+        arm_runner=runner,
+        live_rubric_text=forged_rubric,
+        caller=RecordingCaller(prefers(NEW_OUT)),
+    )
+    assert result.verdict == studies.VERDICT_INVALIDATED
+    assert result.fail_reason == studies.SEAL_TAMPERED
+    assert runner.calls == []
+
+
+@pytest.mark.asyncio
+async def test_an_UNSEALED_registration_is_invalidated_not_tolerated(eval_home):
+    """ "No seal" and "the seal was deleted" are indistinguishable, so both invalidate.
+
+    The permissive reading of an indistinguishable pair is the whole hole: an attacker who
+    can edit the registration can also delete a journal, and would then be *rewarded* for it.
+    """
+    reg = register()
+    store.study_seals_path().unlink()
+    assert store.read_study_seal(reg.study_id) is None
+    assert studies.seal_status(reg)[0] == studies.SEAL_UNSEALED
+
+    runner = arm_runner()
+    result = await studies.run_study(
+        reg=reg,
+        cases=cases(1),
+        old_template_body=OLD_BODY,
+        new_template_body=NEW_BODY,
+        arm_runner=runner,
+        caller=RecordingCaller(prefers(NEW_OUT)),
+    )
+    assert result.verdict == studies.VERDICT_INVALIDATED
+    assert result.fail_reason == studies.SEAL_UNSEALED
+    assert runner.calls == []
+
+
+def test_an_APPENDED_forged_seal_cannot_override_the_first(eval_home):
+    """First row wins, so the cheapest attack on the journal is a no-op.
+
+    Floor in the same test: a seal appended for a study that had none IS read back. Without
+    that, "first wins" would be indistinguishable from a read that never sees appended rows
+    at all, and the negative assertion would be vacuous.
+    """
+    reg = register()
+    tampered = _rewrite_registration(reg.study_id, hypothesis="something else entirely")
+    store.append_study_seal(reg.study_id, tampered.sha256(), ts=1.0)
+    assert store.read_study_seal(reg.study_id) == reg.sha256()
+    assert studies.seal_status(tampered)[0] == studies.SEAL_TAMPERED
+
+    store.append_study_seal("st-never-registered", "deadbeef", ts=2.0)
+    assert store.read_study_seal("st-never-registered") == "deadbeef", "floor: appends ARE read"
+
+
+def test_a_registration_can_never_be_on_disk_without_its_seal(eval_home, monkeypatch):
+    """Ordering rail: seal first, registration second.
+
+    The other order has a live failure mode — a registration written and then a seal write
+    that fails leaves a study that is permanently `invalidated` and cannot be re-registered
+    under its own id, which is the one state with no remedy.
+    """
+    monkeypatch.setattr(
+        store,
+        "append_study_seal",
+        lambda *a, **k: (_ for _ in ()).throw(OSError("journal is read-only")),
+    )
+    with pytest.raises(OSError):
+        register()
+    assert list(store.studies_dir().glob("*/registration.json")) == []
+
+
+def test_a_zero_agreement_floor_ROUND_TRIPS_or_the_seal_calls_an_honest_study_tampered(
+    eval_home, monkeypatch
+):
+    """Found by the vacuity floor above, not by reading: `float(x or 0.6)` ate a real 0.0.
+
+    A floor of 0 is what a user who does not want the agreement gate configures, and the CLI
+    verifies the seal against the registration REHYDRATED FROM DISK. So a lossy read is not
+    cosmetic once a seal exists — it invalidates an honest study, permanently, with a message
+    accusing its owner of tampering. On the `or 0.6` read this test is red: 0.0 comes back as
+    0.6, the rehydrated registration hashes differently, and `seal_status` says tampered.
+    """
+    monkeypatch.setattr(studies, "_config_defaults", lambda: (5, 0.0))
+    reg = register(k=0, agreement_floor=0.0)
+    assert reg.agreement_floor == 0.0, "vacuity floor: the zero floor was actually registered"
+    restored = studies.registration_from_dict(store.read_study_registration(reg.study_id))
+    assert restored.agreement_floor == 0.0, "a zero floor must survive the read"
+    assert studies.seal_status(restored) == (studies.SEAL_OK, "")

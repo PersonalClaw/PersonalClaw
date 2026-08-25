@@ -61,12 +61,14 @@ from personalclaw.evals import harvest, store, studies
 from personalclaw.evals.studies import (
     DEFAULT_JUDGE_SAMPLES,
     LOW_POWER_CASES,
+    SEAL_OK,
     ArmOutput,
     StudyCase,
     StudyError,
     StudyRegistration,
     StudyResult,
     WorkerPayload,
+    seal_status,
 )
 
 logger = logging.getLogger(__name__)
@@ -621,7 +623,21 @@ async def arm_bodies_for_study(reg: StudyRegistration) -> tuple[str, str]:
     Reads the live template and the proposal's typed ops. Both are refusals rather than
     fallbacks: measuring a template that no longer exists, or a proposal whose ops are gone,
     would produce two identical arms and a confident tie.
+
+    🔴 The registration seal is checked here FIRST, which is what makes the seal reach the
+    command a user types. `run_study` also refuses (with a persisted `invalidated` verdict),
+    but the CLI calls this function before its spend preflight, so refusing here means
+    `personalclaw study --run` AND `--dry-run` both report a tampered registration instead of
+    quoting a budget for a study that may not be interpreted. There are no arms to build for
+    a registration that is not the one that was registered.
     """
+    seal_state, seal_detail = seal_status(reg)
+    if seal_state != SEAL_OK:
+        raise StudyArmError(
+            f"study {reg.study_id} cannot be run: {seal_state} — {seal_detail}. "
+            "A pre-registration that cannot be shown to be the registered one is not a "
+            "pre-registration; register a new study."
+        )
     workflow_name = str(reg.subject.get("template_id") or "")
     proposal_id = str(reg.subject.get("diff_proposal_id") or "")
     if not workflow_name:
