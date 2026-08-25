@@ -156,3 +156,37 @@ def import_bound_guarded_names(source: str) -> set[str]:
 
     _walk(tree)
     return found
+
+
+def trailing_args(function_name: str) -> tuple[str, ...]:
+    """The dummy arguments AFTER ``cache_root``, derived from the live signature.
+
+    The coverage cell used to pass ``(real_root, "some/model")`` to every entry point with
+    a single hardcoded name exception, so the two one-argument functions were not both
+    covered: ``reclaimable_bytes(cache_root)`` was being called with TWO arguments and the
+    cell passed only because the wrapper raises BEFORE forwarding. Measured by neutralizing
+    the detection: that cell then failed with ``TypeError: reclaimable_bytes() takes 1
+    positional argument but 2 were given`` rather than the ``DID NOT RAISE`` every other
+    cell reported — i.e. it was asserting the guard fires, but through a call the real
+    function could never accept.
+
+    Deriving the arity from :func:`inspect.signature` of the recorded ORIGINAL means a
+    signature change re-shapes the call instead of stranding the cell, and the call the
+    rail is proven against is one the real function would actually accept.
+    """
+    import inspect
+
+    original = ORIGINALS.get(function_name)
+    if original is None:  # pragma: no cover — the autouse fixture records every name
+        raise AssertionError(
+            f"{function_name} has no recorded original; the model-root fixture must run "
+            f"before the arity can be derived from the live signature."
+        )
+
+    positional = [
+        p
+        for p in inspect.signature(original).parameters.values()
+        if p.kind in (p.POSITIONAL_ONLY, p.POSITIONAL_OR_KEYWORD) and p.default is p.empty
+    ]
+    # ``cache_root`` is supplied by the caller; everything else required gets a dummy.
+    return tuple("some/model" for _ in positional[1:])

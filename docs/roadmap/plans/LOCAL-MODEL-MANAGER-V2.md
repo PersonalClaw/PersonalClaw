@@ -1029,3 +1029,60 @@ hides all six with a "6 hidden" notice and an empty state that explains itself.
 - **`O216`: `origin/main` is not green.** A pristine full run on `origin/main` reds
   `test_loop_worktree_sparse::TestPoolBound::test_batch_creates_every_worktree` — the documented
   sparse-cone flake. Recorded so a future pass does not attribute it to its own change.
+
+## Execution log — `LMMV-7` (Session 5b hardening) — fourth pass
+
+- [2026-08-24][LMMV-7] **PARTIAL — the atom stays `todo`. This pass was a FALSIFICATION pass, not a
+  build: the entire brief scope was already on `origin/main` at `0d90f5ab`.** The pass was briefed to
+  build clause 1 plus the three regression locks (a)/(b)/(c) as if none existed. All four are shipped —
+  `local_models/budgets.py` consumed at `llm_helpers.py:498` and `context_headroom.py:389-392`;
+  (a)+(b) in `tests/test_local_model_refresh_invariants.py`; (c) as the autouse
+  `_forbid_real_model_roots` fixture (`tests/conftest.py:307-350`) + `tests/real_model_root_guard.py`
+  + `tests/test_local_model_root_guard.py`. **Nothing was rebuilt** — a second rail over the same
+  invariant is dead code, and the third pass (2026-08-23) had already recorded them MET. What this pass
+  adds is the evidence that verification *by reading* could not give: each rail was driven RED by
+  mutating the live source line it depends on.
+- [2026-08-24][LMMV-7] **(a) the two-population invariant — falsified.** Mutated
+  `stt/registry.refresh_providers()` (`:99-101`) from the targeted `for name in list(_remote_names):
+  _providers.pop(name, None)` to `_providers.clear()` — the original regression verbatim. **2 reds:**
+  `test_refresh_keeps_the_bundled_population_remote_tracked[personalclaw.stt.registry]` (`assert None is
+  <_Bundled>`) and `test_a_registered_sidecar_proxy_survives_a_use_case_refresh`. The AST census
+  (`test_every_use_case_registry_that_refreshes_declares_a_transient_population`) reconciles the four
+  refreshers both ways, so a fifth registry inherits the invariant when it is written.
+- [2026-08-24][LMMV-7] **(b) registry drift — falsified on two of its three legs, independently.**
+  Keying: mutated `providers/registry.py:1019` `name=ext.name` → `name=provider.name` → **2 reds**
+  (`test_model_type_handler_keys_a_sidecar_proxy_by_the_app_name` + the survival gate). Duck-type:
+  dropped `"stt"` from `_DOWNLOADABLE_CAPS` (`local_models/registry.py:228`) → **3 reds**, including
+  `test_sidecar_proxy_satisfies_the_local_model_duck_type` directly. The third leg (refresh survival) is
+  red under both mutations *and* under (a)'s, i.e. it is genuinely the point where the two invariants meet.
+- [2026-08-24][LMMV-7] **(c) the model-root rail — falsified in both directions.** Coupling to live
+  source: renamed `layouts.reclaimable_bytes` (`layouts.py:235`) → the autouse fixture raises
+  `layouts.reclaimable_bytes no longer exists; update GUARDED_FUNCTIONS…` at SETUP of every test in the
+  file. That is the intended blast radius — a renamed cache-root entry point stops the suite until it is
+  re-listed, rather than silently narrowing the rail. Detection: neutralized `offending_root`'s comparison
+  → **15+ reds**, most reporting `DID NOT RAISE AssertionError`, which is the proof the vacuity
+  assertions are load-bearing and deliberately reach for real model dirs.
+- [2026-08-24][LMMV-7] 🔴 **Closed `G175`, which the third pass recorded as STILL UNVERIFIED — and
+  localized it to a name.** The finding was "one guarded-entry-point cell passes only because the wrapper
+  raises before forwarding, so it never exercises the real arity." Measured which: **two** of the seven
+  entry points take `cache_root` alone (`cleanup_candidates` AND `reclaimable_bytes`), but
+  `test_every_guarded_entry_point_is_wrapped` special-cased only `cleanup_candidates`. So
+  `reclaimable_bytes` was asserted through `fn(real_root, "some/model")` — a call the real one-argument
+  function can never accept. It surfaced as `TypeError: reclaimable_bytes() takes 1 positional argument
+  but 2 were given` while every sibling cell reported `DID NOT RAISE`, i.e. the cell was proving the
+  guard fires *through a call shape that was itself wrong*. Fixed by DERIVING the trailing arguments from
+  the live signature (`real_model_root_guard.trailing_args`, read off the recorded unwrapped
+  `ORIGINALS[name]` — never off the module attribute, which the fixture has already replaced and which
+  would confirm itself). Two new rails: the derived shape must be a call the real function accepts, and
+  the derived arity must be non-uniform across the population (otherwise a constant would do, which is
+  exactly the bug). Falsified by reverting `trailing_args` to the old uniform `("some/model",)` → **3
+  reds**, both one-argument cells plus the non-uniformity floor.
+- [2026-08-24][LMMV-7] **Clause 4 remains NOT MET — the atom stays a PARTIAL for the same reason all
+  three prior passes left it open:** *"the full download/delete/bind/RUN matrix across all 6 providers
+  validated as a user."* It needs real model weights downloaded per provider, so it is
+  environment-gated, not code-gated. `G172` (diarization has no run route) and `G173`
+  (`PERSONALCLAW_HOME` does not isolate `faster-whisper` / `diarization-onnx` weights, which root at
+  `XDG_CACHE_HOME`/`~/.cache`) both stand un-retested this pass.
+- [2026-08-24][LMMV-7] **Suite-wide validation of the `conftest.py` guard is DEFERRED to the owner's
+  full union gate.** This pass changed no `src/` file and no `conftest.py` line; the two files it
+  touched are the rail's own detection module and its own test. Coverage reported below.

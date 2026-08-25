@@ -145,12 +145,18 @@ def test_every_guarded_entry_point_is_wrapped(fn_name):
     Completeness of the *list itself* is a separate question, answered by
     ``test_the_guarded_set_covers_every_cache_root_entry_point`` — parametrizing over
     ``GUARDED_FUNCTIONS`` here can only ever check the names already in it.
+
+    The trailing arguments are DERIVED from the live signature
+    (``real_model_root_guard.trailing_args``), not hardcoded: two of the seven entry points
+    take ``cache_root`` alone, and naming only one of them as the exception meant the other
+    was called with an arity the real function cannot accept, passing purely because the
+    wrapper raises before it forwards.
     """
     fn = getattr(layouts, fn_name)
     assert fn.__name__ == "_guarded", f"layouts.{fn_name} is not behind the model-root rail"
     real_root = real_model_root_guard.REAL_HOME / ".cache" / "huggingface"
     with pytest.raises(AssertionError, match="REAL model root"):
-        fn(real_root, "some/model") if fn_name != "cleanup_candidates" else fn(real_root)
+        fn(real_root, *real_model_root_guard.trailing_args(fn_name))
 
 
 # ── The rail's one soft edge: it is an attribute lookup deep, not alias deep ───
@@ -272,6 +278,43 @@ def test_no_test_module_import_binds_a_guarded_layouts_name():
 def test_the_import_binding_detector_flags_the_offending_shape_only(source, expected):
     """The scan's vacuity floor: prove it fires, and prove it does not over-fire."""
     assert real_model_root_guard.import_bound_guarded_names(source) == expected
+
+
+@pytest.mark.parametrize("fn_name", real_model_root_guard.GUARDED_FUNCTIONS)
+def test_the_coverage_cells_call_shape_is_one_the_real_function_accepts(fn_name, tmp_path):
+    """The arity the coverage cell asserts through must be a REAL call, not a lucky raise.
+
+    ``test_every_guarded_entry_point_is_wrapped`` proves the wrapper fires on a real root,
+    but the wrapper raises before forwarding — so a wrong arity there is invisible. Drive
+    the same derived argument shape against the UNWRAPPED original on a tmp root: a
+    ``TypeError`` here means the coverage cell was asserting through a call the real
+    function cannot accept, which is how ``reclaimable_bytes`` hid behind a two-argument
+    call for one argument.
+
+    Vacuity: the derived tuple is asserted to disagree across the population, so a
+    ``trailing_args`` that always returned ``()`` (or always one dummy) would fail below
+    rather than make every cell trivially callable.
+    """
+    original = real_model_root_guard.ORIGINALS[fn_name]
+    extra = real_model_root_guard.trailing_args(fn_name)
+    original(tmp_path, *extra)  # must not raise TypeError
+
+
+def test_the_derived_arity_is_not_uniform_across_the_guarded_population():
+    """Vacuity floor for ``trailing_args``: the population really has two shapes.
+
+    Two of the seven entry points take ``cache_root`` alone. If that ever stopped being
+    true the derivation would be pointless, and a constant would do — so state it, because
+    the whole reason the previous hardcoded exception was wrong is that it named ONE of the
+    two one-argument functions.
+    """
+    shapes = {
+        fn: real_model_root_guard.trailing_args(fn)
+        for fn in real_model_root_guard.GUARDED_FUNCTIONS
+    }
+    zero_arg = {fn for fn, extra in shapes.items() if extra == ()}
+    assert zero_arg == {"cleanup_candidates", "reclaimable_bytes"}, sorted(zero_arg)
+    assert set(shapes) - zero_arg, "every entry point took cache_root alone — derivation is moot"
 
 
 def test_a_tmp_root_still_reaches_the_real_implementation(tmp_path):
