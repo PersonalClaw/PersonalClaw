@@ -455,3 +455,55 @@ Sessions 1-2 ship standalone value immediately; 3-4 are the ones that must not s
      would be inconsistent), but it is not a control.
   Gate: `make lint` clean · targeted pytest 12 passed (clause-3 class + the library ratchet) · both
   vacuity floors falsified by mutating `case_key` live and observing red · `gate_report.py` 6/6.
+
+- **[2026-08-25][`SV-9`] THE WF2 ENGINE SEAM IS FIXED — this atom's clause-3 blocker is cleared.** The
+  entry above recorded that `engine.dispatch_stage` returns RUNNING carrying `{"subagent_id": info.id}`
+  and that nothing reads it, hanging every template with a `stage` node, and correctly scoped the fix as
+  a WF2 seam rather than SV-9's own work. That seam now has a consumer.
+  **Two corrections to the diagnosis in that entry.** The pop is not in `_apply` — `_apply`'s RUNNING
+  branch (`controller.py:2794-2800`) only sets state and stashes output; the pop is at `:2686` in
+  `_await_progress`, which drains every done task *before* `_apply` runs. And the node was **doubly**
+  invisible: `_await_progress` is the ONLY caller of `_enforce_stall_timeouts` (`:2682`), so once
+  `_inflight` empties the sweep stops being invoked at all rather than merely missing the entry, and the
+  tick loop spins on `await asyncio.sleep(0)` (`:571-578`) — which is also the CPU burn that was
+  observed. `node_timeout_total` never could have seen it either: it bounds the awaited dispatcher
+  coroutine (`:2539`), which for a stage ends at the spawn.
+  **Half the fix was already built and simply unread.** `SubagentManager._reaper_loop`
+  (`subagent.py:739`) already force-kills a child past its timeout and `_force_reap` already sets
+  `info.done=True` with `info.error="Reaped after Ns..."` (`:791-793`). So the deadline governing a
+  spawned worker existed; one reader closed both halves and no new timeout was invented. Liveness stays
+  owned solely by `SubagentManager.get` (`subagent.py:1632`) — the same lookup `sessions.py:388` uses —
+  reached from the controller via `self.services.subagents`, so there is no second registry.
+  **`_inflight` was deliberately NOT the home**, and the reason is worth keeping: every consumer of that
+  dict assumes `entry.task` is a live awaitable — `_await_progress` selects on it with FIRST_COMPLETED,
+  and the stall sweep and `_cancel_inflight` cancel it. Re-inserting a finished task makes
+  `asyncio.wait` return instantly forever and re-apply the same RUNNING result every tick; a
+  never-resolving placeholder means fabricating a fake task to satisfy a signature. What the controller
+  legitimately owns is the *id*, which is instance state — so `NodeInstance.subagent_id` is a foreign
+  key exactly as `output_ref` points into the output store.
+  **The reconciler is reached, proved at integration.** Removing its one call site
+  (`controller.py:858`) reds **4 of 6** in `tests/test_workflows_stage_completion.py`, including *"the
+  controller never asked the subagent manager whether the spawn finished"* and *"a finished stage is
+  still running — this is the fifteen-minute hang"*. And the bug itself was proved real the same way:
+  the test commit was landed separately from the fix, so checking out the test-only commit reproduces
+  **4 failed / 2 passed** on a fix-free tree.
+  **Fixed en route:** `_outputs.setdefault(node.id, ...)` was keyed by NODE id, so a `foreach` fan-out of
+  stages kept only the first leaf's id — and it put an engine internal into the `{{nodes.X}}` binding
+  namespace.
+  🔴 **Deliberately NOT fixed, flagged rather than smuggled in.** (a) The `asyncio.sleep(0)` busy-spin at
+  `:571-578` still spins while a stage is dispatched — now for the subagent's duration instead of
+  forever; fixing it properly changes `_await_progress`/the idle branch for EVERY node kind, which is
+  outside a bug fix. (b) `dispatch_stage` deliberately retains its lease (`engine.py:773-776`), so a
+  rewind inside the TTL still gets `DEGRADED "another worker holds the claim"` — pre-existing.
+  (c) `cache_key=""` on the reconciled `step_completed`: the awaited dispatch that owned the key returned
+  at the spawn, so inventing one would let a resume serve a cache hit for a subagent result the run never
+  computed. Consequence: a resumed run re-runs a completed stage, which is also today's behaviour since
+  stages never complete at all. (d) `audit.py:39 STALE_RUNNING_SECS = 6h` still only *reports*
+  stuck-RUNNING nodes; it remains the backstop for the unknown-id case.
+  **`SV-9` stays `todo`** — this clears its clause-3 blocker, it does not implement SV-9.
+  **Gate:** `make lint` clean (mypy 1011 files); the new file **6 passed** (4 failed / 2 passed without
+  the fix); **all 61 suites importing `workflows.controller`/`workflows.engine` → 2370 passed, 0 failed**;
+  `gate_report.py` 6/6 PASS; probe sweep 16. No `web/` or `desktop/` files.
+  **`_apply`'s RUNNING branch is reachable only by `stage`** — `engine.py:778` is the only
+  `InstanceState.RUNNING` return in the engine, asserted by an `ast` ratchet rather than a grep, because
+  a text scan counts comments.
