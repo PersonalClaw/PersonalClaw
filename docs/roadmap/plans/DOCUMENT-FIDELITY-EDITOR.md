@@ -818,3 +818,78 @@ correct URL and returns `200 application/pdf`.
   across the three docx suites · `gate_report.py` 6/6 PASS · probe sweep 16, diff-scoped introduced 0.
   Flipping DFE-3 does NOT complete this plan — DFE-4..DFE-8 remain `todo`, so the plan status is unchanged.
 
+
+## Execution log — DFE-4 (binary write path + model read/render endpoints) — **DONE**
+
+- [2026-08-24][S2 · atom `DFE-4`] **DONE.** Three routes on one shared guard chain in
+  `artifacts/handlers.py`: `PUT /api/artifacts/{slug}/raw` (bytes in), `GET
+  /api/artifacts/{slug}/model` (parsed model + loss report out), and `PUT
+  /api/artifacts/{slug}/model` (model in, rendered by the SHIPPED writer server-side, then
+  through the *same* guarded write path as `…/raw` so there is one write, not two).
+  Supporting: `kind_for_mime()` + `ArtifactVersionConflict` in `artifacts/models.py`,
+  `update_binary(expect_version=…)` on the provider and `native.py`, a new
+  `documents/model_json.py` (strict JSON⇄`DocumentModel`), `LossReport.to_dict()`, and 12
+  codes in `http_errors.py`.
+
+  All five behavioural clauses plus the reference clause hold, each falsified by mutating the
+  live line, grepping the mutation back, observing the red, and restoring from a file copy
+  (SHA-verified, never `git checkout`). The load-bearing one is clause 2: **the cap is decided
+  from `Content-Length` before the artifact lookup and before any `await request.read()`**, and
+  its test asserts the *instrument* ("the body was buffered before the size cap was checked")
+  rather than a status code — moving the check after the read reds it while the router-level
+  413 test still passes, which is exactly why the status-code test alone would have been
+  vacuous. Re-verified independently after the agent reported: 29/29 in the new suite, 6/6
+  `gate_report`, and that same mutation reproduced and restored byte-identical.
+
+- **DEVIATION from §C3's parenthetical — raw body, not `multipart/form-data`.** §C3 says
+  `(multipart/form-data: file=<bytes>)`, which is incompatible with the very next line of the
+  same block ("cap enforced BEFORE the body is buffered"): a multipart frame's
+  `Content-Length` is the frame's, not the part's, and extracting the part requires reading it.
+  The route therefore takes the bytes as the body with `Content-Type` as the MIME. Nothing in
+  the product needs multipart — the editor's save path posts a *model*, not bytes.
+
+- **`If-Match` had no precedent in this repo — measured, not assumed.** `git grep` for
+  `If-Match`/`if_match` across `src/` and `tests/` returned **zero** hits; the only related
+  thing is *outbound* `If-None-Match` in `self_update.py`. So the convention is defined here:
+  `If-Match: <version>` carrying the artifact's own monotonic integer, quoted/weak forms
+  tolerated because clients add them unasked. No opaque ETag is minted — a second identifier
+  for a thing that already has a version is a second thing to keep in sync.
+
+- **Added a status the plan does not name: 428.** A *missing* `If-Match` is
+  `if_match_required`/428, kept distinct from *stale*/409, because the remedies differ (add the
+  header vs. reload and re-apply) and conflating them tells a client to reload when its version
+  was fine.
+
+- **The precondition is compared inside the provider's lock, not only in the handler.** A
+  handler-only comparison leaves the check-then-write race the precondition exists to close.
+  This also matters because `_write_bytes` **truncates** to the cap rather than refusing, so a
+  late check yields a corrupt document instead of an error.
+
+- **FINDING — the shipped writer's own output is not lossless on first parse.**
+  `render_docx(model)` → `parse_docx` reports one `page_property` item: python-docx's default
+  template ships asymmetric margins (1.00in top/bottom, 1.25in left/right) while `PageSetup`
+  holds a single `margin_in`. The second lap is lossless. The report is doing its job, but it
+  means "a freshly generated document is lossless" is **false**, and §C5's editor warning will
+  fire on every generated `.docx` until `PageSetup` grows per-edge margins — `T3.1`'s
+  territory, not this atom's. Pinned by `test_the_loss_report_names_what_did_not_fit`.
+
+- **Scope note on "no route hands raw OOXML to a client."** `GET …/raw` deliberately does — it
+  is the download affordance and predates this atom. What the clause guarantees is that the
+  *editor circuit* (`GET`/`PUT …/model`) never does, asserted structurally by
+  `test_only_the_download_route_serves_document_bytes` with a vacuity check that the download
+  handler *can* return a raw body.
+
+- **`PUT …/model` refuses xlsx/pptx/pdf even though writers exist.** `_MODEL_KINDS = ("docx",)`
+  gates both halves on the *parser*, deliberately: without a read half, a save could only
+  overwrite with content the editor never loaded.
+
+- **Plan defect — §C2 cites `documents/parsers/docx_parser.py`.** The shipped file is
+  `documents/docx_parser.py`; there is no `parsers/` package. Cosmetic, but the plan's own file
+  reference is wrong.
+
+- Gates: `make lint` clean (black 2033 files, isort, flake8, **mypy 1002 source files**) ·
+  new suite **29/29** · 24 touched suites **620 passed** · `gate_report` **6/6 PASS** ·
+  wire-error census + agent-reference + append-only rails **30/30** · full `make test`
+  **26209 passed / 0 failed** · `~/.personalclaw` unchanged by the run · `web/` untouched.
+  Offline reference regenerated (`routes.md` +3 rows, `index.md` 769→772) plus the two rows
+  added to the hand-curated `docs/reference/api-overview.md`.
