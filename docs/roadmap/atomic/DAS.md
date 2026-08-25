@@ -2,9 +2,9 @@
 
 **Source plan:** [`DURABILITY-AND-SYNC`](../plans/DURABILITY-AND-SYNC.md)  
 **Code:** `DAS`  
-**Source status:** in_progress
+**Source status:** done
 
-Sessions 1-2 (inventory, safe snapshots, shard format+validate, scheduled service+retention+drills, backups FE, and the full inventory-driven merge/restore/export sweep incl. T2-M1..M3) are DONE. Remaining: Session 3 sync core + git/dir transports, its conflict-handling half, Session 4 rsync/s3 transports + encryption, Session 5 time-travel and the §6 portability endpoints + remaining FE.
+DURABILITY-AND-SYNC is fully shipped. Sessions 1-2 (inventory, safe snapshots, shard format+validate, scheduled service+retention+drills, backups FE, the inventory-driven merge/restore/export sweep), Session 3 (sync core + git-sync/dir-sync + conflict handling), Session 4 (rsync-sync/s3-sync transports + AES-256-GCM shard encryption + the SYNC egress profile), and Session 5 (workspace time-travel + the §6 portability endpoints and FE) are all DONE. The two Session-4 transports ship as first-party apps in PersonalClawApps (rsync-sync, s3-sync); core owns the encryption codec and the pinned SYNC EgressPolicy.
 
 Each atom below executes start-to-finish in one go. If an atom lists dependencies, they must be `done` before it starts — that is the whole point of the split: no atom should ever need pausing to go execute other work.
 
@@ -17,7 +17,7 @@ Each atom below executes start-to-finish in one go. If an atom lists dependencie
 | `DAS-5` | ✅ | Inventory-driven merge/restore/export sweep + restore endpoint (T2-M1..M3, Sessions 2d-2l) | `DAS-1`, `DAS-3` | restore --mode merge dispatches all five StateEntry merge strategies (append_dedup incl. SEL key-gated fail-closed, sqlite_attach_ignore with FTS rebuild, union_by_id, lww_by_updated_at, replace_only skipped loudly); --components everything superset restores 19/19 files 0 lost; --dry-run prints per-entry merge plan matching the real merge; POST /api/durability/restore mirrors CLI with non-empty-home (home_is_populated) auto-detect + gateway-running refusal; create_export_zip/apply_import_zip made inventory-driven (no-secret asserted on bytes); triggers.json added to inventory; success criteria 1-2 and amendment gaps 2-3 met; full pytest -n4 green |
 | `DAS-6` | ✅ | Sync core + git-sync + dir-sync transports (Session 3) | `DAS-2`, `DAS-5` | `sync` added to PROVIDER_TYPES AND a SyncTypeHandler registered in the same commit (test_manifest_types_match_handlers green); sdk/sync.py re-exports SyncTransportProvider/SyncObject/PushResult; sync_transports/registry.py flat register/get; a shard import/restore function added (S2k noted shards were write-only); pull→merge-import→export-union→push cycle with registry.json machine seqs + CAS retry, stale_after_secs staleness window, durable outbox with typed deliverer outcomes + consumed-only cursor, deterministic per-strategy merges + tombstones, derived indexes rebuilt-not-synced; git-sync + dir-sync first-party apps; criterion 4 met (two machines converge over a git repo/synced folder incl. tombstoned delete) |
 | `DAS-7` | ✅ | Conflict handling — records + review queue + propose-only LLM merge (Session 3) | `DAS-6` | sha-divergence on the same entity id with both sides edited since the common ancestor (ancestor sha in registry) produces a conflict record in a review queue; a background one_shot_completion(use_case="background") pass drafts a proposed merge + rationale surfaced as needs-review, never auto-applied; local version stays authoritative and both versions persist in the shared store until resolved; memory-domain conflicts route to the memory review surface and knowledge-domain to the knowledge UI; criterion 5 met (offline same-task edit yields a conflict-review item, applies nothing until accepted) |
-| `DAS-8` | ⬜ | rsync-sync + s3-sync transports + end-to-end encryption (Session 4) | `DAS-6` | rsync-sync (subprocess over ssh) and s3-sync (signed PUT/GET/LIST via net.fetch with a derived SYNC EgressPolicy through egress_policy_for(), host-pinned + raised max_bytes, never hand-rolled aiohttp) shipped as first-party apps; AES-256-GCM per shard with per-shard HKDF key from passphrase + first-write-wins salt object, routing/metadata fields kept plaintext, plaintext-in-encrypted-store rejected on send AND receive as permanent skip, missing salt = hard setup error; per-transport encryption defaults (ON for s3/dir, OFF for git); secret=True entries excluded before any transport; criteria 7-8 met |
+| `DAS-8` | ✅ | rsync-sync + s3-sync transports + end-to-end encryption (Session 4) | `DAS-6` | rsync-sync (subprocess over ssh) and s3-sync (signed PUT/GET/LIST via net.fetch with a derived SYNC EgressPolicy through egress_policy_for(), host-pinned + raised max_bytes, never hand-rolled aiohttp) shipped as first-party apps; AES-256-GCM per shard with per-shard HKDF key from passphrase + first-write-wins salt object, routing/metadata fields kept plaintext, plaintext-in-encrypted-store rejected on send AND receive as permanent skip, missing salt = hard setup error; per-transport encryption defaults (ON for s3/dir, OFF for git); secret=True entries excluded before any transport; criteria 7-8 met |
 | `DAS-9` | ✅ | Workspace time-travel — adaptive-debounce git + rollback/revert/preview + panel (Session 5, §5) | — | state-history git repos cover config.json/entity_settings, skills/, the memory markdown tree (workspace/memory, _ext, plan_memory), prompts/+prompt_snippets, projects/<id>/context; adaptive-debounce commits (10s→0, serialized per root) hooked at the atomic_write post-write seam; hourly git commit of the memory tree/shards lands (the deferred §3 piece); rollback (hard reset, prior HEAD preserved in service refs) vs revert (reverse-merge, loud overlap failure) with a mandatory preview; secrets gitignored yet preserved across rollbacks; Settings → Durability → Time Travel panel (timeline, diff preview, rollback/revert, what-changed-while-I-slept filter); criterion 6 met; time-travel never syncs |
 | `DAS-10` | ✅ | §6 DSAR portability endpoints + remaining Durability FE (Session 5, §6) | `DAS-5`, `DAS-6`, `DAS-7` | POST /api/durability/export (full or per-domain shard zip, secret∪derived excluded, §2 manifest inside), POST /api/durability/import {mode:merge\|replace} extending validate_import_zip/apply_import_zip to the full inventory with MANIFEST v3 (v1\|2 back-compat), GET /api/durability/archive + POST /api/durability/archive/{id}/restore with per-domain row counts and last-drill validate status; separate memory vs knowledge export buttons (knowledge includes files/ originals); Settings → Durability panel gains archive browser, sync config via standard /api/providers routes, and the conflict review queue; criteria 9-10 met (memory/knowledge separately exportable + separate conflict surfaces; a third-party type:"sync" app registers/configures/syncs with zero core changes) |
 
@@ -99,23 +99,26 @@ one-sided fast-forward; only the end-to-end criterion-5 test caught it.
 
 ### `DAS-8` — rsync-sync + s3-sync transports + end-to-end encryption (Session 4)
 
-**Status:** todo — **PARTIAL (2026-08-17).** The §4.4 encryption half and the §4.3 `SYNC` egress
-derivation landed complete and LIVE (`durability/crypto.py`; `net/policy.py`'s `SYNC` +
-`sync_egress_policy()`; wired through `push_engine`/`pull_engine`/`run_sync_cycle`/`run_sync_job`;
-`durability.sync_encrypt` tri-state round-tripped; `sdk/sync.py` + `sdk/net.py` re-exports).
-**Unmet:** the two transports are not shipped as first-party apps — those live in the sibling
-`PersonalClawApps` repo (`apps/catalog.py::_first_party_source` resolves `<workspace>/apps`, never
-a path inside core), the same cross-repo ordering `DAS-6d-iii` recorded for `dir-sync`/`git-sync`.
-SigV4 request signing is app work. Criterion 7 is met and adversarially verified on pushed bytes;
-criterion 8 is met over a real on-disk transport, but its literal "encrypted **S3** store" wording
-needs `s3-sync` to exist. Core's half is the contract-owner half, so both apps are buildable with
-zero further core changes. Two findings that a call-level test would have missed: treating every
-decrypt failure as §4.4's "permanent skip" **permanently lost every peer seq pulled during a single
-mistyped-passphrase cycle** (plaintext now advances the cursor, a failed tag holds), and a pinned
-private endpoint is reachable with no operator opt-in because the pin is its own allow-list entry
-(intended posture for user-owned storage; the cloud metadata services are denied separately). One
-owner decision is flagged in the plan's execution log: the encryption default for a transport §4.4
-does not name.
+**Status:** done — both halves landed, in two commits across two repos. **Core (2026-08-17):** the
+§4.4 encryption codec and the §4.3 `SYNC` egress derivation, complete and LIVE
+(`durability/crypto.py` — Argon2id stretch then HKDF-Expand per object, AES-256-GCM, first-write-wins
+salt, both-direction plaintext rejection; `net/policy.py`'s `SYNC` + `sync_egress_policy()`, host-pinned
+by absence with `max_bytes` raised to 200MB; wired through
+`push_engine`/`pull_engine`/`run_sync_cycle`/`run_sync_job`; `durability.sync_encrypt` tri-state
+round-tripped; `sdk/sync.py` + `sdk/net.py` re-exports). **Apps (2026-08-18):** `rsync-sync` and
+`s3-sync` shipped as first-party apps in the sibling `PersonalClawApps` repo — the same cross-repo
+ordering `DAS-6d-iii` recorded for `dir-sync`/`git-sync` — with SigV4 signing from the standard
+library, every request through `sdk.net.fetch` under `sync_egress_policy(endpoint)`, and rsync driven
+as an argv list over `ssh -o BatchMode=yes` with no shell. Criteria 7 and 8 are both met, criterion 8
+now over the signed S3 wire as literally worded. Two findings that a call-level test would have
+missed: treating every decrypt failure as §4.4's "permanent skip" **permanently lost every peer seq
+pulled during a single mistyped-passphrase cycle** (plaintext now advances the cursor, a failed tag
+holds), and a pinned private endpoint is reachable with no operator opt-in because the pin is its own
+allow-list entry (intended posture for user-owned storage; the cloud metadata services are denied
+separately). Two items remain open but sit **outside** this atom's done_when: the flagged owner review
+of the encryption default for a transport §4.4 does not name (shipped `rsync-sync`→ON, unnamed
+third-party→OFF), and live-remote verification (a non-production S3 bucket, a real sshd, GNU rsync
+3.x) which is environment-gated, not unbuilt.
 
 §4.3 (rsync-sync, s3-sync); §4.4 Encryption for untrusted stores; Provider & Config Plug-in Map (SYNC EgressPolicy); Implementation Order Session 4
 
