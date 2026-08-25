@@ -479,6 +479,49 @@ def test_a_gate_declined_for_now_is_not_read_as_this_atoms_gate(tmp_path: Path) 
     assert "owner call" in standing.why  # type: ignore[attr-defined]
 
 
+@pytest.mark.parametrize(
+    "marker",
+    [
+        "The `app:` prefix needs an owner call, tracked as a follow-up.",
+        "The `app:` prefix needs an owner call and is worth an atom row of its own.",
+        "The `app:` prefix needs an owner call and is worth a separate atom.",
+        "The `app:` prefix needs an owner call, but it is not worth the churn today.",
+    ],
+    ids=["follow-up", "worth-an-atom-row", "worth-a-separate-atom", "not-worth"],
+)
+def test_every_deferral_marker_is_load_bearing_on_its_own(tmp_path: Path, marker: str) -> None:
+    """Each ``DEFERRAL_PATTERNS`` entry must be able to suppress a gate BY ITSELF.
+
+    Measured at integration: neutering four of the five markers left the whole suite green, so
+    only ``\\blater\\b`` was pinned and the other four could have been typo'd without any test
+    noticing — the "declared but never run" family, applied to the fix's own patterns. Each case
+    below carries exactly ONE marker and no other, so the parametrized id names the pattern that
+    fails.
+
+    The vacuity floor is the second half: the identical sentence WITHOUT its marker must still
+    gate the atom, or this would pass merely because the fixture never triggers
+    ``GATED_PATTERNS`` in the first place.
+    """
+    plans = tmp_path / "plans"
+    plans.mkdir()
+    plan = plans / "ZZ-PLAN.md"
+
+    # Two scope facts this fixture has to respect, both learned by writing it wrong first:
+    # (1) the marker must sit in the SAME clause as the gate phrase, because the filter drops a
+    #     CLAUSE, so a marker in a neighbouring sentence correctly leaves the gate standing; and
+    # (2) the clause must sit BEYOND `HEADLINE` (260 chars), because GATED_PATTERNS is matched
+    #     against the headline BEFORE the clause-scoped pass runs. The deferral filter is a
+    #     body-only mechanism by construction — a gate named in the headline is never excused.
+    pad = "  Background prose that carries no verdict keyword at all. " * 5
+
+    plan.write_text(_DEFERRAL_ENTRY.format(clause=pad + marker))
+    assert _bucket_for_zz1(plans).bucket == UNKNOWN  # type: ignore[attr-defined]
+
+    plan.write_text(_DEFERRAL_ENTRY.format(clause=pad + "The `app:` prefix needs an owner call."))
+    standing = _bucket_for_zz1(plans)
+    assert standing.bucket == GATED, standing.why  # type: ignore[attr-defined]
+
+
 def test_the_real_ws7_gate_is_its_own_partial_not_the_deferred_naming_wart(
     real_log_hits: dict,
 ) -> None:
