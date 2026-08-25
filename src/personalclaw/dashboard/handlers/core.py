@@ -830,6 +830,12 @@ _EDITABLE_CONFIG: dict[str, dict] = {
     # (the route re-reads config per request) and on the next drain, so a slot staged
     # while it was on is dropped rather than delivered.
     "dashboard.screen_share_enabled": {"type": "bool"},
+    # DFE-5 — the in-place document editor's master switch (default OFF). Runtime-editable
+    # for the same reason as the flag above: it is a consent knob for a LOSSY path, so
+    # withdrawing it must not need a restart. `PUT /api/artifacts/{slug}/model` re-reads it
+    # per request, so flipping it off closes the write immediately — the UI hiding the
+    # editor is the second layer, not the only one.
+    "dashboard.document_editing": {"type": "bool"},
     # P25: opt-in tmux-backed terminal persistence (survives a gateway restart). Read as a
     # raw dict from config.json by handlers/terminal.py::_get_config — a 3-part nested path.
     "dashboard.terminal.persist": {"type": "bool"},
