@@ -177,7 +177,7 @@ async def test_a_bypassed_request_is_404_when_the_surface_is_disabled(monkeypatc
             )
             assert resp.status == 404, path
             # 404 is the handler's own refusal, not a middleware denial (403/401).
-            assert (await resp.json())["error"] == "not available"
+            assert (await resp.json())["error"]["code"] == "service_unavailable"
     finally:
         await client.close()
 
@@ -198,7 +198,7 @@ async def test_a_bypassed_request_is_403_when_the_peer_is_remote(monkeypatch):
                 headers={"Authorization": f"Bearer {token}"},
             )
             assert resp.status == 403, path
-            assert (await resp.json())["error"] == "forbidden"
+            assert (await resp.json())["error"]["code"] == "forbidden"
     finally:
         await client.close()
 
@@ -216,6 +216,6 @@ async def test_a_bypassed_request_is_401_when_the_bearer_is_wrong(monkeypatch):
                 headers={"Authorization": "Bearer not-the-token"},
             )
             assert resp.status == 401, path
-            assert (await resp.json())["error"] == "unauthorized"
+            assert (await resp.json())["error"]["code"] == "unauthorized"
     finally:
         await client.close()
