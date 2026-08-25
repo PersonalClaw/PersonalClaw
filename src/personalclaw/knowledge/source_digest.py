@@ -274,17 +274,37 @@ async def run_morning_digest(
     )
 
 
+#: What the digest says when no narrative could be produced. The items are already durable in
+#: the library by this point, so the honest body names the gap and points at them — it is not a
+#: deferral, and the cursor still advances (a re-run would re-summarise items the user already
+#: has). This string is the DEGRADED-MODE FLOOR for ``source_digest`` in
+#: ``resilience/degraded.py``; changing one without the other makes the contract a lie.
+UNSYNTHESISED_BODY = "Digest synthesis was unavailable. The collected items are in your library."
+
+
 async def _synthesise(prompt: str, completion_fn: Callable[..., Awaitable[str]] | None) -> str:
-    """The background one-shot. A failure becomes a plain-text digest, not a lost run."""
+    """The background one-shot. No narrative becomes a plain-text digest, not a lost run.
+
+    An EMPTY completion takes the same path as a raised one. ``one_shot_completion`` returns a
+    falsy value rather than raising when nothing is bound — which is exactly the degraded case —
+    so the original ``or ""`` handed an empty string onward and the digest wrote an empty note,
+    notified with an empty body, and advanced the cursor anyway. The docstring already promised a
+    plain-text digest; only the exception path delivered it.
+    """
     try:
         if completion_fn is not None:
-            return str(await completion_fn(prompt, use_case="background") or "")
-        from personalclaw.llm_helpers import one_shot_completion
+            narrative = str(await completion_fn(prompt, use_case="background") or "")
+        else:
+            from personalclaw.llm_helpers import one_shot_completion
 
-        return str(await one_shot_completion(prompt, use_case="background") or "")
+            narrative = str(await one_shot_completion(prompt, use_case="background") or "")
     except Exception:  # noqa: BLE001 — the items are already in the library; say so plainly
         logger.warning("digest synthesis failed; writing an unsynthesised digest", exc_info=True)
-        return "Digest synthesis was unavailable. The collected items are in your library."
+        return UNSYNTHESISED_BODY
+    if not narrative.strip():
+        logger.warning("digest synthesis produced nothing; writing an unsynthesised digest")
+        return UNSYNTHESISED_BODY
+    return narrative
 
 
 def _notify(state: Any, *, title: str, body: str, item_count: int) -> bool:
