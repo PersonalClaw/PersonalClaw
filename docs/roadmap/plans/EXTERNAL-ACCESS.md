@@ -719,3 +719,20 @@ No new session; session count stays ~7. Session 2 gains the three sharpenings ab
   child, so a turn bound to an ACP agent still writes its transcript under the operator's real `$HOME`.
   `run` neither introduces nor worsens that — and the ACP refusal above means a read-only `run` cannot
   reach it at all.
+- [2026-08-24][EA-9] ✅ **ATOM FLIPPED `done` (PR #2011).** Integration re-ran the gate on the branch
+  rebased onto `origin/main` = `0d90f5ab` (not inherited from the implementation run): `make lint` pass;
+  `pytest tests/test_cli_run.py tests/test_spawn_ceiling_audit.py tests/test_dashboard_chat.py` **321
+  passed**; `pytest tests/test_guardrails_{budgets,ceiling,profiles}.py tests/test_cli.py` **191
+  passed**; `scripts/gate_report.py` **6/6**; probe sweep 16 pre-existing, 0 introduced. Falsification
+  re-run independently: inverting the fail-closed default at `cli_run.py:271`
+  (`return "agent" if allow else "ask"` → `return "agent"`, mutation grepped back to confirm it applied)
+  produced **3 red**, including the CALL SITE
+  (`test_run_sets_the_task_mode_through_the_task_mode_endpoint`, `assert 'agent' == 'ask'`) rather than
+  only the unit — so the rail is wired, not merely present. Restored from a file copy; 36 passed.
+  **The flip is justified against the criterion, not the surrounding surface:** `EA-9`'s `done_when`
+  names no ACP behavior, so the ACP read-only refusal recorded above remains an OPEN OWNER CALL in
+  adjacent scope (accept the asymmetry, or fund a per-tool-call ACP gate) and does not hold the atom
+  `todo`. Its ACP arm is still asserted from the code path plus a monkeypatched binding, never a live
+  ACP CLI. The three mechanism DEVIATIONS (task mode over `SafetyProfile.tool_grants`, no
+  `SpendMeter.scope_key`, readiness probe not reusable) each deliver the criterion's effect and are
+  logged above.
