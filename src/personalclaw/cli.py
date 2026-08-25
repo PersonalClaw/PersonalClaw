@@ -240,6 +240,65 @@ Examples:
     chat_parser.add_argument("-m", "--message", help="Single message (non-interactive)")
     chat_parser.add_argument("--model", help="Model to use (default: from config)")
 
+    # run — headless one-shot scripted turn (EXTERNAL-ACCESS §9.5).
+    # NOTE: `run` is a NEW TOP-LEVEL command. The pre-existing `run` in this parser is
+    # `spawn run` (a nested subagent verb, line ~466) — a different namespace, so there
+    # is no collision. `chat -m` is deliberately NOT extended: it talks to a provider
+    # factory with no gateway, session, safety profile or approval gate, so folding a
+    # gated headless mode into it would have meant two behaviours behind one flag.
+    run_parser = sub.add_parser(
+        "run",
+        help="Run one headless turn against the local gateway (scripting/CI)",
+        epilog="""
+Examples:
+  personalclaw run -p 'summarise my open PRs'
+  personalclaw run -p 'what changed today?' --format json | jq -r .result
+  personalclaw run -p 'audit this repo' --cwd . --format streaming-json
+  personalclaw run -p 'fix the typo in README' --allow      # writes need the grant
+
+Read-only by default: every non-read-only tool is denied unless --allow is passed.
+The posture is announced on stderr, so stdout stays pipeable.
+""",
+        formatter_class=_fmt,
+    )
+    run_parser.add_argument(
+        "-p",
+        "--prompt",
+        required=True,
+        help="The prompt for this one turn (required; must be non-empty)",
+    )
+    run_parser.add_argument(
+        "--format",
+        choices=["plain", "json", "streaming-json"],
+        default="plain",
+        help="plain = final text; json = one result document; streaming-json = NDJSON of the WS frames",  # noqa: E501
+    )
+    run_parser.add_argument("--agent", default="", help="Agent to run the turn as")
+    run_parser.add_argument("--model", default="", help="Model override for this turn")
+    run_parser.add_argument(
+        "--session",
+        default="",
+        help="Named persistent session to continue (default: a fresh stateless one-shot)",
+    )
+    run_parser.add_argument("--cwd", default="", help="Working directory for the turn's tools")
+    run_parser.add_argument(
+        "--allow",
+        action="store_true",
+        help="Grant write/execute tools for this run (default is read-only; the grant is printed to stderr)",  # noqa: E501
+    )
+    run_parser.add_argument(
+        "--timeout",
+        type=float,
+        default=0.0,
+        help="Seconds to wait for the turn (default 600)",
+    )
+    run_parser.add_argument(
+        "--port",
+        type=int,
+        default=None,
+        help="Gateway port to use (default: resolved like every other client command)",
+    )
+
     # doctor
     doctor_parser = sub.add_parser("doctor", help="Verify PersonalClaw setup")
     doctor_parser.add_argument(
@@ -1160,6 +1219,10 @@ Examples:
         except (_BridgeResolveErr, _LLMResolveErr) as exc:
             print(str(exc), file=sys.stderr)
             raise SystemExit(1) from None
+    elif args.command == "run":
+        from personalclaw.cli_run import _run
+
+        _run(args)
     elif args.command == "gateway":
         gw_kwargs = _resolve_gateway_args(args)
         asyncio.run(_gateway(**gw_kwargs))

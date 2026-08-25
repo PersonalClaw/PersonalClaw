@@ -616,3 +616,106 @@ No new session; session count stays ~7. Session 2 gains the three sharpenings ab
   into one session per client, because `conversation_fingerprint({})` is the digest of the empty
   string — correct as "unknown conversation opening" is one bucket, but worth knowing before someone
   reads a per-turn session count.
+
+## Execution log — `EA-9` (§9.5 Headless CLI mode: `personalclaw run`)
+
+- [2026-08-24][EA-9] ✅ **DONE — `src/personalclaw/cli_run.py` + a top-level `run` subcommand.** Driven end
+  to end before any claim: `personalclaw run -p "Reply with exactly the word: PONG"` printed `PONG` on
+  stdout and exited 0, having auto-started a transient gateway and killed it by pid. All three formatters
+  drive (`plain`, `json`, `streaming-json`), gateway REUSE drives (stderr shows only the posture line and
+  the standing gateway survives), and `--session` continuity drives across two separate invocations
+  (turn 1 was told a codeword, turn 2 recalled it; the default key answered `NONE` — so the flag is a
+  real switch, not decoration).
+- [2026-08-24][EA-9] **NOT an extension of `chat -m`, deliberately.** `cli_chat._chat` builds a provider
+  factory directly: no gateway, no session store, no SafetyProfile, no tool-approval gate, no spend
+  attribution. It is a provider smoke test. §9.5 says "against the local gateway", so `run` is a *client*
+  of `POST /api/chat` + `/api/ws` — one turn path, one stream contract. The pre-existing `run` verb is
+  `spawn run` (a nested subagent verb), a different namespace; a test asserts both dispatch.
+- [2026-08-24][EA-9] 🔴 **The read-only rail shipped INERT first, and only driving it found that.**
+  `run` initially set the posture via session-create's `mode` key. That writes `_ChatSession.mode`; the
+  tool gate reads `_ChatSession._task_mode`. Measured: the session was created, stderr announced
+  "read-only", and the agent then wrote a file to disk. The real write path is
+  `POST /api/chat/task-mode` (`apply_task_mode` is the ONE write path because the mode is TWO writes).
+  After the fix the same prompt was refused, only `read_file` ran, and the file did not exist; with
+  `--allow` the write landed. Both directions are asserted, and the test also asserts create does *not*
+  carry `mode` — the field that looks like a rail and enforces nothing.
+- [2026-08-24][EA-9] **DEVIATION — read-only is enforced by TASK MODE, not `SafetyProfile.tool_grants`.**
+  §9.5 says the run "inherits the §2.3 headless SafetyProfile (read-only defaults)". `tool_grants` has
+  **no enforcement point anywhere in the tree** — `policy.py`'s own docstring says it lands "when that
+  engine lands and consumes `tool_grants`". Worse, HEADLESS's `approval="hook_based"` resolves through
+  `llm_helpers._resolve_permission`, whose fall-through when no hook DENIES or AUTO_APPROVES is
+  **auto-approve**. So neither half of the profile contains anything. `task_modes.task_mode_denies` is
+  deny-by-default, runs BEFORE approval, and is documented as un-bypassable by Trust/YOLO — it is the
+  only read-only posture in this codebase that holds, so `ask`/`agent` is what `run` sets.
+- [2026-08-24][EA-9] 🔴 **OWNER DECISION SURFACED — a read-only headless turn on an ACP agent is
+  REFUSED (exit 2), because the rail provably cannot hold there.** Three facts compose:
+  `SessionManager.set_task_mode`'s docstring — *"ACP runtimes are gated in the dashboard permission
+  handler instead (they have no such setter)"*; that handler fires only on an `EVENT_PERMISSION_REQUEST`;
+  and an unattended turn makes `chat_runner` set `acp_mode="bypassPermissions"`, whose whole purpose is
+  to stop the dialect asking. So the one gate that could enforce read-only on ACP is the one the
+  unattended posture switches off. Suppressing the bypass is not an option — the turn would hang forever
+  on an approval no human is there to give. `run` therefore refuses and names `--allow` (an honest full
+  grant) or a native-runtime agent. **Owner call available:** accept this asymmetry, or fund a
+  per-tool-call ACP gate that does not depend on the dialect asking. Verified empirically only on the
+  NATIVE runtime (the drive above used `provider: native`); the ACP arm is asserted from the code path
+  plus a monkeypatched binding, not from a live ACP CLI.
+- [2026-08-24][EA-9] 🔴 **A measured classification gap, fixed: `dashboard:inbound:cli:<id>` classified
+  ATTENDED.** `chat_utils._history_key_for` wraps a chat session's key as `dashboard:<key>` for the
+  provider/history layer, and the guardrail readers downstream of a turn (egress tier, rung ceiling,
+  denylist) see only the wrapped form. Measured before the fix: `is_unattended_session("inbound:cli:abc")`
+  True, `is_unattended_session("dashboard:inbound:cli:abc")` **False** and INTERACTIVE — one headless turn
+  presenting two postures depending on who asked. `is_unattended_session` now treats the wrapper as
+  transparent **for the inbound family only**, with a vacuity test proving `dashboard:mychat` and
+  `dashboard:cron-ish` do not move.
+- [2026-08-24][EA-9] **DEVIATION — `inbound:` went in `policy._EXTRA_UNATTENDED_PREFIXES`, not
+  `session._STATELESS_PREFIXES`.** EA-2's scope names the latter, but that list is the PROVIDER
+  resume/pool axis: a key on it never resumes its ACP session and never claims a warm process. Putting
+  `inbound:` there would contradict §9.5's own `--session` clause, which exists so a named headless
+  session can CONTINUE a conversation. Unattended and stateless are two different questions; the
+  guardrails list answers only the first. **EA-2 should not re-add it to the session list without
+  re-deciding the `--session` semantics.**
+- [2026-08-24][EA-9] **DEVIATION — `SpendMeter` has no `scope_key`.** §9.5 says "budgets ride SpendMeter
+  scope_key=cli"; `grep -rn 'scope_key' src/` returns **zero hits**. The real mechanism is `run_key` bound
+  ambiently via `set_current_run_key` + `set_current_run_budget`. Also measured: **nothing on the chat
+  path bound a run scope at all** — `set_current_run_key` had exactly one production caller (the
+  trigger-fire seam), so every chat turn charged with an empty run key. Added `_run_chat_scoped` in
+  `chat_handlers`, which binds `run_key="cli"` for an `inbound:cli:` session and the surface's own name
+  for another `inbound:` surface, and binds NOTHING for a dashboard session (asserted, so interactive
+  accounting is unchanged). Bound in the fresh task, so the ContextVar dies with it and there is no reset
+  to get wrong in a 2900-line function's teardown.
+- [2026-08-24][EA-9] 🔴 **A 2s liveness probe misread a live gateway as absent — and that is
+  DESTRUCTIVE, not cosmetic.** Measured: a busy-but-alive gateway answered `/api/healthz` in >2s; three
+  probes read False, the fourth returned True in 0.67s. `run`'s response to "absent" is to boot a SECOND
+  gateway on the same home, and because `.local_secret` is a per-process random value written to one
+  shared path, the newcomer overwrites it and the ORIGINAL gateway can no longer mint a token (observed
+  as `token mint failed: HTTP Error 403` three times in a row). The probe now retries with a 10s
+  per-attempt timeout, short-circuiting only on `ConnectionRefusedError` (unambiguous). **Pre-existing and
+  NOT fixed here: two gateways sharing a home fight over `.local_secret`, which breaks `personalclaw
+  token` for the older one.** Worth its own atom.
+- [2026-08-24][EA-9] **DEVIATION — auth rides `?token=`, not `Authorization: Bearer`.** `token_auth` reads
+  primary owner auth from the query param or the cookie ONLY; its Bearer branch narrows an
+  already-authenticated request to an app scope and never authenticates. Measured: a Bearer-only
+  `POST /api/chat/sessions` answered `403 {"error": "Token required"}`.
+- [2026-08-24][EA-9] **DEVIATION — `"tokens"` reads the dashboard-wrapped ledger key.** No WS frame
+  carries token counts, so the count comes from `usage_ledger`. It keys rows by `dashboard:<session>`;
+  querying the bare key matched nothing and printed a confident `"tokens": 0` for a turn that had really
+  billed 22,979. Now goes through `_history_key_for`, so the query cannot drift from the write site.
+- [2026-08-24][EA-9] **The readiness probe was NOT reused, because there is nothing reusable.** §9.5 says
+  "reusing the doctor's readiness probe". `cli_doctor`'s probe is inlined in `_doctor()`, returns nothing,
+  and only prints; `personalclaw status` has a second independent copy. Both hit the auth-GATED
+  `/api/status` and then read 401/403 as "up". `run` probes `/api/healthz`, which is auth-exempt by
+  design and needs no treat-the-error-as-success branch. **Consolidating those three probes is a real
+  follow-up** — there is no canonical one today.
+- [2026-08-24][EA-9] **CI recipe + validation shipped:** `scripts/ci_smoke_run.sh` (drives all three
+  formats, asserts the `inbound:cli:` prefix is present in the json doc, and asserts the blank-prompt
+  guard) and `.github/workflows/headless-run-smoke.yml` (dispatch + weekly; the no-credential half still
+  runs, and a final step fails the job if a gateway survived). The script's own vacuity was proved: a
+  stub `personalclaw` that exits 0 and prints nothing fails it at step 1.
+- [2026-08-24][EA-9] **Transcript containment: nothing escaped.** The drive left transcripts under the
+  isolated home (`$PERSONALCLAW_HOME/sessions/dashboard_inbound_cli_*.jsonl`), nothing newer than a
+  pre-run marker appeared under `~/.claude/projects`, and `~/.personalclaw` was byte-unchanged
+  throughout. `run` itself shells out to nothing but a gateway; it makes loopback HTTP calls. **The
+  standing ACP-transcript P0 is unchanged and untouched:** `acp/transport.py` never sets `HOME` for the
+  child, so a turn bound to an ACP agent still writes its transcript under the operator's real `$HOME`.
+  `run` neither introduces nor worsens that — and the ACP refusal above means a read-only `run` cannot
+  reach it at all.
