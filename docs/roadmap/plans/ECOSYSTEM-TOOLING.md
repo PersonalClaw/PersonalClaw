@@ -357,3 +357,47 @@ PR validation workflow: manifest fetch+parse (core `apps/manifest.py`), repo liv
   remaining owner action — pushing `scratch/app-template/` to `personalclaw/app-template` — is
   Owner task 1 and sits outside this atom's done-when, which says "prepared in-tree under
   `scratch/` (owner pushes to the org repo)".
+
+- **2026-08-24 — `ET-4` VERIFIED against `main`, and one real gap closed: the boot WIRE had no rail.**
+  Session opened to implement `ET-4`; the deliverable was already on `main` in `2d9d1a36`
+  (`feat(apps): ET-4 seed the app registry as a removable default git source`), so this entry records
+  an independent verification plus the one thing that was genuinely missing. **Premise correction for
+  the atom table:** `ET-4` reads `⬜` in `atomic/ET.md` while its implementation is merged.
+  **Measured gap.** Every pre-existing `ET-4` rail asserts the SEEDER by calling
+  `catalog.seed_default_git_sources()` directly; nothing asserted the CALL SITE. Deleting
+  `app.on_startup.append(_app_sources_seed_startup)` (`dashboard/server.py:1474`) left
+  **112 selected tests green** (`test_app_catalog.py` + `test_config_roundtrip.py` +
+  `test_config_patch.py`) while first-run seeding silently never happened — a seeder nobody calls,
+  and the done-clause is "seeds on first run", not "a helper exists". Closed by
+  `tests/test_gateway_boot_app_source_seed.py`: three rails that boot the REAL gateway
+  (`start_dashboard(port=0)`) on an isolated `PERSONALCLAW_HOME` and assert what the Store reads over
+  HTTP — a fresh boot seeds the registry as a default that is NOT builtin (so the remove control
+  shows), a real `DELETE /api/apps/sources` survives a SECOND real boot, and a flag-off boot acquires
+  no network source at all. That third one is the positive control: it proves the two above observe
+  the boot rather than a constant. Falsified both directions — dropping the wire reds the two seeding
+  rails (flag-off stays green, correctly insensitive); making the seeder consult the wrong key so it
+  re-seeds reds the reboot assertion itself at `:134`, which is the exact failure mode the atom exists
+  to prevent. `PERSONALCLAW_HOME` is the isolation seam (it redirects both `config_dir` bindings at
+  once, asserted through both before any boot).
+- **2026-08-24 — `ET-4` as-a-user drive on an isolated home: every clause holds EXCEPT the listing
+  one, and the reason is stronger than previously recorded.** Two real gateways, isolated
+  `PERSONALCLAW_HOME`, tokenless loopback. Fresh home → `apps/app-sources.json` =
+  `{"git": [registry], "local": [], "seeded": ["registry"]}`. `GET /api/apps/catalog` labels it a
+  removable default: `defaultGitSources` = [PersonalClawApps, registry] but `builtinGitSources` =
+  [PersonalClawApps] only, which is what makes `AppsSection.tsx:841` show "Default" **and** the remove
+  control. `DELETE /api/apps/sources` → row gone, marker survives. Proc A killed, **proc B** started on
+  the same home → registry STILL absent. Scanner gate proven unchanged the strong way: `2d9d1a36`
+  touches neither `apps/app_manager.py`, `apps/source.py`, nor `supply_chain/` — the commit's file list
+  does not contain them, so there is no new install path by construction.
+  **UNMET clause, and the cause is not the one on record:** "a fresh dev home lists registry apps in
+  the Store" — observed `remoteApps: 0` live. The 2026-08-18 entry attributed this to an empty
+  `registry.json` plus the `app-registry.json` filename mismatch. Measured tonight, the binding
+  constraint is simpler and earlier: **`https://github.com/PersonalClaw/registry.git` does not exist**
+  (`git ls-remote` → `remote: Repository not found`, exit 128). So the clause is unprovable until the
+  owner pushes the registry repo, and the filename gap behind it is untestable until then — neither is
+  reachable from inside core. Two mitigating facts for the shipped default, both measured: the failed
+  fetch is **quiet** (zero registry lines in `gateway.log`; fail-soft as designed) and **cached** —
+  first `/api/apps/catalog` 2.76s, second 0.57s — and the Store is not empty meanwhile (`gitApps: 50`
+  from the bundled apps source). **Owner decision, not an atom call:** `registry_source_enabled`
+  defaults to `True` (`config/loader.py:4938`), so until that repo exists every fresh install carries a
+  default source that 404s. Ship order (publish repo before/with the flag default) is an owner call.
