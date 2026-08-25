@@ -46,6 +46,16 @@ function mockApi(over: Record<string, unknown>) {
       // skills
       skills: () => Promise.resolve([]),
       skillProposals: () => Promise.resolve({ proposals: [], lastReview: null }),
+      // LV-3's learning summary block reads this on `#/skills` mount. Resolved with a zero
+      // total so the block stays ABSENT here — these tests are about the list's own
+      // failed-vs-empty distinction, and a block rendering above it would be noise in the
+      // assertions below. An unmocked method throws inside the fetcher and surfaces as the
+      // page's error state, which is what made both cases red before this entry existed.
+      learningSummary: () => Promise.resolve({
+        window_days: 7, total: 0,
+        new_skills: { count: 0, names: [] }, refined_skills: { count: 0, names: [] },
+        pending_proposals: { count: 0, names: [] }, facts: { count: 0, names: [] },
+      }),
       // knowledge
       knowledgeCollections: () => Promise.resolve([]),
       knowledgeItems: () => Promise.resolve({ items: [] }),

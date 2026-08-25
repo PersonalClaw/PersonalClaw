@@ -498,13 +498,20 @@ class SkillsLoader:
         self._fm_cache[key] = (mtime, meta)
         return meta
 
-    def list_skills(self, *, with_usage: bool = False) -> list[dict]:
+    def list_skills(self, *, with_usage: bool = False, with_provenance: bool = False) -> list[dict]:
         """Return list of skill metadata dicts with key, name, description, path, dir, always.
 
         When *with_usage* is set, each dict also carries ``use_count`` and
         ``last_used_at`` from the sidecar usage counter (skill-use-counter) —
         the live use signal consumed by surfacing-ranking (#26) and the
         library curator (#27). Lazy-imported to avoid an import cycle.
+
+        When *with_provenance* is set, each dict also carries ``created_at`` and
+        ``refined_at`` from :class:`AutoSkillProvenance`'s frontmatter (empty for a
+        skill that never carried provenance — a marketplace install, say). Opt-in for
+        the same reason ``with_usage`` is: ``/api/skills`` has a pinned payload shape,
+        and widening it for every caller to serve one panel would be a needless
+        contract change. The learning-summary block (LV-3) is the consumer.
         """
         usage: dict = {}
         if with_usage:
@@ -536,6 +543,9 @@ class SkillsLoader:
                 u = usage.get(name)
                 row["use_count"] = u.count if u else 0
                 row["last_used_at"] = u.last_used_at if u else ""
+            if with_provenance:
+                row["created_at"] = meta.get("created_at", "")
+                row["refined_at"] = meta.get("refined_at", "")
             skills.append(row)
         return skills
 

@@ -21,6 +21,7 @@ import { toneChipSkin } from '../../design/accent'
 import { SkillInspector } from './SkillInspector'
 import { MarketplaceDetail } from './MarketplaceDetail'
 import { SkillProposals } from './SkillProposals'
+import { LearningSummaryBlock } from './LearningSummaryBlock'
 import { PageTitle } from '../../ui/PageTitle'
 
 const SKILL_TEMPLATE = `---
@@ -131,6 +132,10 @@ function Installed({ onBrowse, onProposals, query, setQuery }: { onBrowse: () =>
         )}
       >
         <div className="mx-auto px-l py-l" style={{ maxWidth: 'var(--content-width)' }}>
+          {/* LV-3's learning summary block. Above the list, INSIDE the content column so it
+              shares the list's measure. Renders itself away when learning is off or nothing
+              was learned in the window, so it costs a fresh install nothing. */}
+          <LearningSummaryBlock />
           {items === undefined && itemsErr ? (
             <LoadError what="installed skills" error={itemsErr} onRetry={load} />
           ) : filtered === null ? <ListSkeleton rows={6} what="installed skills" /> : filtered.length === 0 ? (

@@ -1565,6 +1565,21 @@ export interface SkillProposal { id: string; slug: string; description: string; 
 export interface SkillLadderReview { verdict: string; elapsed_ms: number; session_key: string; detail: string; at: string }
 export interface SkillProposalFeed { proposals: SkillProposal[]; lastReview: SkillLadderReview | null }
 export interface SkillProposalDetail extends SkillProposal { procedure_md: string; source_excerpt: string }
+/** One group of the learning summary block (LV-3). `count` is the EXACT group size;
+ *  `names` is a bounded sample of it, so a renderer must never show `names.length` as
+ *  the count — that would silently under-report the moment a group got busy. */
+export interface LearningSummaryGroup { count: number; names: string[] }
+/** The learning summary block: what was learned in the last `window_days` days.
+ *  `total` is the sum of the four group counts and is what decides whether the block
+ *  is worth rendering at all. */
+export interface LearningSummary {
+  window_days: number
+  total: number
+  new_skills: LearningSummaryGroup
+  refined_skills: LearningSummaryGroup
+  pending_proposals: LearningSummaryGroup
+  facts: LearningSummaryGroup
+}
 export interface SkillIntegrity { name: string; integrity: 'intact' | 'tampered' | 'unverified'; ok: boolean; unlocked: boolean; mutated: string[]; missing: string[]; added: string[]; summary: string }
 export interface SkillFile { path: string; size: number }
 export interface SkillMarketplace { name: string; type: string }
@@ -4879,6 +4894,10 @@ export const api = {
   acceptSkillProposal: (id: string, edits?: { description?: string; procedure_md?: string }) =>
     post<{ ok: boolean; name: string }>(`/api/skills/proposals/${encodeURIComponent(id)}/accept`, edits ?? {}),
   rejectSkillProposal: (id: string) => del(`/api/skills/proposals/${encodeURIComponent(id)}`),
+  /** The learning summary block (LV-3). 404s when `learning.enabled` is off — the
+   *  caller must let the block be ABSENT in that case rather than render zeros, which
+   *  would claim nothing was learned when the truthful answer is "not being tracked". */
+  learningSummary: (days?: number) => get<LearningSummary>(`/api/learning/summary${days ? `?days=${days}` : ''}`),
   // Ephemeral session-skill drafts (skill-ephemeral-promotion).
   ephemeralSkills: (session: string) =>
     get<{ drafts: EphemeralDraft[] }>(`/api/skills/ephemeral/${encodeURIComponent(session)}`).then((d) => d.drafts),
