@@ -257,6 +257,14 @@ HTTP_ERROR_CODES: dict[str, str] = {
         "The posted document model is not a valid model. The message names the offending path."
     ),
     "render_failed": "The document model was valid but the writer could not render it.",
+    # ── automation would-execute simulator (handlers/doctor.py — PLATFORM-RESILIENCE §3.3) ──
+    # Two codes, not the generic `bad_request`/`not_found` pair, because the trust surface
+    # branches on them: a missing id is a client bug the UI can fix by disabling its own
+    # button, while an id that resolves to nothing means the automation was deleted under a
+    # stale list and the panel has to refetch. `unknown_trigger` also carries the id it looked
+    # up (`error_extra`), so a support log says WHICH automation vanished.
+    "trigger_id_required": "A trigger id is required to describe what an automation would do.",
+    "unknown_trigger": "No automation exists with that id.",
 }
 
 

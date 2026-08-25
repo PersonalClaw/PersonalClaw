@@ -439,6 +439,61 @@ export interface SurfacingCandidate {
   reason: string
 }
 
+// The automation would-execute description (PLATFORM-RESILIENCE §3.3) — the five facts §3.3
+// names, each read from a shipped resolver server-side. `epoch`/`at` are empty when the trigger
+// has no next fire at all (a `manual` or expired row), which is a THIRD state distinct from
+// armed and computed: `source` is what tells them apart, so read it rather than truthiness on
+// `at`.
+export interface AutomationNextFire {
+  cadence: string
+  at: string
+  epoch: number | null
+  source: 'armed' | 'computed' | 'none'
+  armed: boolean
+}
+export interface AutomationActionConfig {
+  provider: string
+  config: Record<string, unknown>
+  vars: Record<string, unknown>
+  // Secret KEYS the config references. The values are never resolved by a preview, so this is
+  // the honest answer to "which credential does this use?".
+  secret_refs: string[]
+  rendered: string
+  render_error: string
+}
+export interface AutomationCapabilityGrants {
+  declared: Record<string, string[]>
+  requested: Record<string, string[]>
+  // What still needs an explicit opt-in after decision 7's read-only default has been applied.
+  needs_fence: Record<string, string[]>
+  refused: { key: string; value: string; reason: string }[]
+  granted: boolean
+}
+export interface AutomationObserveMode {
+  provider: string
+  provider_known: boolean
+  supported: boolean
+  // `observe` = a real observe-mode run is possible (the spawn-based LLM providers);
+  // `preview` = the T9 rule, this provider has no observe mode so we describe instead.
+  mode: 'observe' | 'preview'
+  executed: boolean
+  ok: boolean
+  detail: string
+  gate_plan: { enforced?: string[]; bypassed?: string[]; dry_run?: boolean; executes?: boolean }
+}
+export interface AutomationWouldExecute {
+  trigger: {
+    id: string; name: string; kind: string; enabled: boolean; state: string; ok: boolean
+    issues: { path: string; message: string; severity: string; closest: string }[]
+  }
+  next_fire: AutomationNextFire
+  action_config: AutomationActionConfig
+  session_key: { key: string; declared: string; mode: 'pinned' | 'conversation' | 'fresh' }
+  capability_grants: AutomationCapabilityGrants
+  observe_mode: AutomationObserveMode
+  dry_run: boolean
+}
+
 // Health-scored remediation engine (PLATFORM-RESILIENCE §4).
 export interface RemediationJobRow {
   id: string
@@ -3966,6 +4021,10 @@ export const api = {
     post<{ query: string; candidates: SurfacingCandidate[] }>(
       '/api/doctor/simulate/surfacing', { text },
     ),
+  // The §3.3 automation half, beside the surfacing simulator above. Read-only: nothing executes,
+  // no credential is resolved, no model is called, and the trigger row is never written.
+  doctorSimulateAutomation: (triggerId: string) =>
+    post<AutomationWouldExecute>('/api/doctor/simulate/automation', { trigger_id: triggerId }),
   doctorCrash: (filename: string) =>
     get<Record<string, unknown>>(`/api/doctor/crash/${encodeURIComponent(filename)}`),
   // ── Remediation engine (PLATFORM-RESILIENCE §4) ──
