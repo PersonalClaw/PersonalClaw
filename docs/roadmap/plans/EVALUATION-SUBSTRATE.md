@@ -1160,3 +1160,114 @@ Sharpens, doesn't append: RunPin + scenario library extend **Session 1** (the st
   `test_durability_inventory` + `test_snapshot` **320 passed**, the three refiner suites **123 passed**,
   eight new seal tests green; probe residue **16 tree-wide, 0 introduced**; every falsification restored
   from a file copy at the literal path and grepped back.
+---
+
+## Execution log — ES-11 (bundled optimize-harness template + the budgeted search) — §8 **PARTIAL**, atom stays `todo`
+
+- **[2026-08-25][ES-11] DONE — the deliverable that did not exist now does.** Census before starting:
+  21 bundled templates, **none** matching `optimi` or `harness`; `no_improvement_halt` **absent from
+  `src/` and `tests/` entirely**. Two of the criterion's three halt conditions were already real
+  (`hypothesis_abandon_after` at `loop/tick.py:202`/`:543`, `budget_usd` across 11 files); the third
+  was a declared strategy with no executor. Landed: `src/personalclaw/evals/optimize.py` (the search)
+  and `workflows/bundled/optimize-harness/workflow.json` (the declarative packaging).
+  `tests/test_workflows_bundled.py`'s `EXPECTED` ratchet moves **21 → 22**.
+
+- **`no_improvement_halt`'s call site is `optimize.run_search`, halt check 3.** DEVIATION recorded
+  deliberately: it is NOT a second name for `loop/tick.py`'s `no_progress_stop`. Those are the same
+  RULE (`max(window) <= window[0]`) over different SUBJECTS — loop cycles there, search candidates
+  here — so `optimize.no_improvement` reproduces tick's arithmetic exactly rather than aliasing its
+  field. Adding `no_improvement_halt` to `TickConfig` beside `no_progress_stop` would have minted a
+  second dialect of "it stopped improving" for one shared consumer, and `runtime_hints.execution.breaker`
+  has **no live reader at all** today (`execution_hints.py` says so explicitly — that plumbing is
+  WF2LOO-7's, not this atom's). `tick.py` was therefore not touched.
+
+- **"Nothing live mutates" is proven by OBSERVATION, twice over, because one detector is not enough.**
+  (i) `LiveWitness` content-hashes the live artifact + its `.pclaw-lock.json` before the search and
+  re-hashes after; drift raises `LiveMutationError`. (ii) The engine's own `scope.snapshot` brackets
+  **the proposer call**, not just the candidate write — a diff taken after the proposer returned would
+  observe only `run_search`'s own writes and score every escape as clean. The two detectors catch
+  different things and the test suite is what separates them: a scorer that persists a change raises
+  (i), and a proposer that writes the live file and restores **identical bytes** defeats (i) by
+  construction and is caught by (ii) as `scope_violation`. The end-to-end byte-comparison test uses the
+  test file's **own** hasher, not `LiveWitness` — a witness certifying itself would pass with an empty
+  dict on both sides.
+
+- **The dual gate is railed one half at a time**, each holding the other satisfied: a candidate that
+  beats the best-ever but misses the suite threshold is `below_suite_threshold`; one that clears the
+  threshold but ties or misses the best-ever is `not_best_ever`. Ties lose. The best-ever floor is
+  captured **once** (`capture_best_ever`, counted to exactly one call across a 3-iteration search) —
+  a per-iteration re-read would fold the candidate being scored into the floor meant to pin it and the
+  second half would be free.
+
+- **A frozen-region touch is refused, not recorded**, on two paths that must both hold: the module's
+  `scope_check` (frozen beats allowed — a frozen path *nested inside* an allowed root still violates,
+  which is the one rule `allowed_write_paths` cannot express) and the template's `verify_scope`
+  expression gate. **Measured during falsification:** deleting the frozen half of `scope_check` reds
+  only the `frozen_BEATS_allowed` unit test — the two end-to-end tests still pass, because a frozen
+  root that sits *outside* the sandbox is already caught by the plain allowed-scope diff. So the
+  frozen rule's unique contribution is observable only in the nested case, and that is where it is
+  railed. Recorded rather than papered over.
+
+- **What is NOT closed, precisely.** (i) The winner arrives as a **template-version diff** only. The
+  LEARN-R3 **skill sidecar overlay** half of the criterion's "template version diff OR sidecar overlay"
+  is unbuildable today: there is no skill-sidecar apply/revert mechanism in the tree (`git grep sidecar`
+  finds agent-runner metadata and app execution modes, nothing for skills), so that arm awaits LEARN-R3.
+  The criterion's OR is satisfied; the second disjunct is not available. (ii) The search's per-iteration
+  ledger lives in the sandbox's `.experience/index.json` and in `search.json`; it does **not** append
+  `results.tsv` rows, because `store.append_result` requires a complete `RunPin` and a candidate scored
+  by a caller-supplied scorer has no honest model fingerprint to pin. The gate READS `results.tsv` (the
+  best-ever floor) — writing to it is the model-attribution problem ES-3 already flagged as an owner
+  call, and inventing a pin here would put unattributable rows in the shared ledger. (iii) Nothing wires
+  the template to a trigger or a Learning-page surface; it is a starter a user runs, which is what §8
+  asks for, but the FE half of §10 is untouched by this atom. (iv) The template's propose stage needs a
+  real model to run end to end, so the *composed* run is not covered by an offline test — every
+  mechanism it depends on is, and the template↔module seam is asserted by name in both directions
+  (subcommands ⊆ `COMMANDS`, `PC_OPT_*` keys ⊆ the module's env tables), so a renamed subcommand or a
+  dropped env key reds the suite rather than failing at run time.
+  **The atom therefore stays `todo`:** clause (i) is a named disjunct of the criterion that no code in
+  this tree can satisfy yet.
+
+- **No config field was added.** `loader.py` is at 5900 lines against a 6000-line ceiling
+  `test_structural_baseline.py` marks FORBIDDEN TO RAISE, with the rail's ≥100-line headroom demand
+  exactly at the floor — so a new `DashboardConfig` field would red that gate with nothing left to
+  compress. The search's whole envelope is declared per-run as template **inputs** instead
+  (`budget_usd` required with no default, the three windows with defaults), which is the right home for
+  it anyway: a per-search dollar ceiling is not a global setting.
+
+- **Falsification.** Three live mutations, each grepped back before running and each restored from a
+  literal-path file copy: (1) `if False and no_improvement(...)` → `test_no_improvement_halt_HALTS` red
+  (`ITERATIONS_EXHAUSTED` instead of `NO_IMPROVEMENT`); (2) `beats_best_ever` forced to `True` →
+  `test_half_B_alone_cannot_admit` + `test_a_TIE_with_the_best_ever_loses` red; (3) frozen half of
+  `scope_check` removed → `test_frozen_BEATS_allowed` red (and the finding recorded above).
+
+- **The `verdict-type` ratchet caught this atom minting a 25th verdict dialect, and the fix was
+  the rename the ratchet's own rationale prescribes.** The first draft named the scope-diff
+  result `ScopeVerdict` and gave `DualGate` a `.verdict()` method; `structural-duplication`
+  reported `optimize.py: re-derived implementations rose 0 -> 1; new site(s):
+  ['verdict-type:ScopeVerdict']`. That is a scope diff in the write-scope domain, not a judge
+  verdict — so it is now `FrozenScopeReport` (composing the engine's own `scope.ScopeReport`
+  rather than restating it) and `DualGate.decide()`. **`structural-baseline.json` is byte-
+  unchanged**: a fresh render after the rename matches the committed file exactly, so the
+  ratchet was satisfied by fixing the code and nothing was blessed.
+
+- **One generated artifact moved and it is this atom's:** `tests/fixtures/frontier_golden/bundled.jsonl`
+  gains **19 rows, 0 removed** — every added row is `optimize-harness`, and `policies.jsonl` is
+  byte-unchanged, so no existing template's schedule shifted. The rows read
+  `preflight` → `propose` → `scope_check` → `verify_scope` → `adjudicate`, which is the intended
+  order and independent confirmation that the loop body schedules the frozen-region check BEFORE
+  the adjudication rather than beside it. Regenerated by running the WORKTREE's copy of
+  `tests/test_workflows_frontier_golden.py` (its `GOLDEN_DIR` is `Path(__file__).parent/...`, so
+  the write landed in the worktree and not in the main checkout — verified).
+
+- **Also driven as a real subprocess, not only in-process** — `python3 -m personalclaw.evals.optimize`
+  is what the template's bash nodes actually type, so it was exercised that way against a temp home:
+  `preflight` witnesses 2 files and reports the envelope; `scope-check` returns `clean`; after
+  tampering with the live `workflow.json` the same command returns `scope_violation` naming the exact
+  path; `adjudicate` then reports `clears_suite_threshold: true` AND `beats_best_ever: true` and STILL
+  `admitted: false, outcome: scope_violation` — "dead regardless of score", observed rather than
+  asserted; an unbudgeted `preflight` exits 1 with a JSON refusal rather than a traceback.
+
+- **Gate:** `make lint` clean (black 2065 files, isort, flake8, mypy 1015 source files);
+  `make test` **26699 passed, 0 failed, 30 skipped, 12 xfailed** (424s); `scripts/gate_report.py`
+  **6/6**; `tests/test_evals_optimize.py` 47 tests; probe residue **16 tree-wide with 0 introduced**;
+  worktree clean. No `web/` change (this atom ships no FE surface — see the not-closed list).
