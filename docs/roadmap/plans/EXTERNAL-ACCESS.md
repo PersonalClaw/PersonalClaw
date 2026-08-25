@@ -736,3 +736,49 @@ No new session; session count stays ~7. Session 2 gains the three sharpenings ab
   ACP CLI. The three mechanism DEVIATIONS (task mode over `SafetyProfile.tool_grants`, no
   `SpendMeter.scope_key`, readiness probe not reusable) each deliver the criterion's effect and are
   logged above.
+
+- **[2026-08-25][`EA-5`] The pinned-upstream clause is CLOSED. Atom stays `todo` on two others.** The
+  entry above stated the clearer as *"one field on `InboundClient`, a `create_client` kwarg, and a test"*
+  and that was accurate — but the reason it was so small is worth recording: **nearly all the machinery
+  was already on `main` and simply read a field that did not exist.** `_client_upstream_name`
+  (`capture_proxy.py:238`) already read `client.upstream`; `_resolve_upstream:281` → `_provider_upstream:329`
+  already resolved a ProviderEntry through the shared credential ladder; the pre-flight `evaluate` already
+  ran. So the change is ~19 lines of source, not a new forwarding path.
+  **Also corrected: `InboundClient` has ELEVEN fields, not the seven the briefing claimed** —
+  `rate_overrides`, `disabled`, `created_at` and `last_seen_at` were missed. No `upstream`, which was the
+  part that mattered.
+  **The security posture was followed, not chosen, and rests on one property: `upstream` is a
+  ProviderEntry NAME, never a URL.** The destination comes from that entry's own `options`/spec, so no
+  value a client record can hold names a host the operator did not already configure — and the resolved
+  URL is *still* pre-flighted at `capture_proxy.py:534` (`evaluate(upstream.url, policy)`) before
+  `_forward:564`, the module's sole socket. Policy is `LISTED` with `allow_only=True`, so an empty
+  allowlist denies. Two independent layers.
+  **The `scope["upstream"]` fallback was DELETED rather than kept.** Its own docstring called it a hedge
+  "depending on which lands first"; the field landed, nothing writes `scope["upstream"]` (git-grepped), and
+  removing it leaves exactly ONE place a client can name a credential-bearing egress target.
+  **Guard proved non-decorative at integration.** Making the deny branch dead
+  (`if False and not decision.allow`) reds 2 of 10 — including
+  `test_a_pinned_upstream_off_the_allowlist_never_reaches_the_network`, which flips from
+  `upstream_denied` to `upstream_failed`: the request reaches the socket and fails there instead of being
+  refused. That is the assertion doing its job. The test carries two independent witnesses — `_forward`
+  replaced by a tripwire, and a live stub upstream recording nothing.
+  🔴 **UNMET clause 1 — `POST /capture/import` DOES NOT EXIST.** `git grep add_post` finds only the two
+  `/capture/v1/*` routes; the CLI half ships (`cli.py:621-628`). Found while enumerating, independent of
+  this work, and it alone keeps `EA-5` `todo`.
+  🔴 **UNMET clause 2 — `upstream_allowlist` has NO frontend control, and the consequence is user-facing.**
+  Backend round-trip is 4-of-5 (dataclass + `_meta` `loader.py:3894`, `load()` `:5178`, `to_dict` asserted
+  at `test_ea5_capture_store.py:793`, PATCH allowlist `core.py:718`), but `git grep upstream_allowlist --
+  web/src` is **empty** while the neighbouring `capture_retention_days` has a control at
+  `ExternalAccessPanel.tsx:206`. The default allowlist is empty and an empty list denies everything —
+  fail-closed, which is correct — so **a user who enables capture hits a total refusal with no UI to fix
+  it.** A `web/` change with its own gate; flagged rather than bundled here.
+  **Judgment calls, named.** `upstream` was NOT added to `PINNED_BINDINGS`: that tuple is contract-tested
+  to 403 a conflicting *request argument*, and there is no request arg named `upstream`, so adding it makes
+  that test unsatisfiable. Route validation is labelled a legibility guard rather than the boundary and
+  fails **open** on an unreadable registry — refusing every client creation on an unrelated registry
+  failure buys no safety when the value cannot name a host anyway. And passthrough still lets a pinned
+  client override with its own key (pre-existing, `_resolve_upstream:286`) — the caller's own key, still
+  allowlist-checked, so not exfiltration.
+  **Gate:** `make lint` clean (mypy 1011 files); at integration on the rebased tip, the 6 suites importing
+  `inbound.capture_proxy`/`inbound.clients` plus the new file → **260 passed, 0 failed**; the new file alone
+  **10 passed**; `gate_report.py` 6/6 PASS; probe sweep 16. No `web/` files.
