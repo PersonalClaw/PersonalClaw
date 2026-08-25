@@ -1443,7 +1443,8 @@
           "done_when": "every existing content type still renders Monaco (asserted); an office type mounts the new editor; a user bolds a word, saves, and the downloaded file opens bold in Word (read-back); a lossy doc warns before edit and at save-confirm and revert restores pre-edit bytes exactly (byte-compare); test_config_roundtrip green and document_editing=off restores today's read-only preview. V2 gate holds (incl. two-tab race \u2192 409, not silent loss).",
           "deps": [
             "DFE-4"
-          ]
+          ],
+          "blocked_reason": "IMPLEMENTED, awaiting OWNER RATIFICATION (2026-08-25). Every done_when clause is met and gated green, but PLATFORM-PRIMITIVES.md:1305 records this atom as 'gated on owner task 2 (the editing-library decision, E5)'. The implementation TOOK that decision \u2014 option (c), hand-rolled controlled components over the block model, NO new frontend dependency \u2014 on the reasoning that a rich-text framework edits a document DOM while this editor edits a DocumentModel, so adopting one means a second document representation plus a mapping, i.e. the second fidelity story \u00a7C2 refuses. Stated cost: the editor is STRUCTURAL (per-block fields + select-and-mark), not WYSIWYG. Ratify option (c) and this flips with no code change; choose otherwise and the editor is rewritten. NOT flipped, because the atom's recorded gate is an owner call. PR pending."
         },
         {
           "id": "DFE-6",
