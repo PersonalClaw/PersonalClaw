@@ -33,6 +33,14 @@ from pathlib import Path
 import pytest
 
 import personalclaw.sdk.model  # noqa: F401 — sdk.model must import before provider_helpers
+
+# ``SubscriptionSource`` + ``register_subscription_source`` are imported through the SDK
+# facade on purpose: that is the ONLY path an app may use, so exercising it here is what
+# proves the app-facing surface works (and keeps it out of the inert-surface census).
+from personalclaw.llm.branded_specs import (
+    BrandedProviderSpec,
+    spec_credential_source,
+)
 from personalclaw.llm.capabilities import Capability
 from personalclaw.llm.credentials import Credential
 from personalclaw.llm.registry import ProviderEntry
@@ -41,16 +49,10 @@ from personalclaw.llm.subscription_credentials import (
     resolve_subscription_credential,
     subscription_source_status,
 )
-
-# ``SubscriptionSource`` + ``register_subscription_source`` are imported through the SDK
-# facade on purpose: that is the ONLY path an app may use, so exercising it here is what
-# proves the app-facing surface works (and keeps it out of the inert-surface census).
 from personalclaw.sdk.provider_helpers import (
-    BrandedProviderSpec,
     SubscriptionSource,
     register_branded_app,
     register_subscription_source,
-    spec_credential_source,
 )
 
 SECRET = "sk-subscription-TOKEN-do-not-leak-9f3a"
@@ -716,11 +718,11 @@ def test_credential_source_defaults_empty_so_an_older_serialized_spec_still_load
 def test_spec_credential_source_answers_for_a_named_instance_and_never_guesses() -> None:
     """Mirrors ``spec_pricing``: resolves a user-named INSTANCE of a type, and returns ``""``
     (never a source id) for an unknown provider."""
-    from personalclaw.sdk import provider_helpers
+    from personalclaw.llm import branded_specs
 
     spec = BrandedProviderSpec(type="acme", credential_source="acme-cli")
     with pytest.MonkeyPatch.context() as mp:
-        mp.setattr(provider_helpers, "_REGISTERED_SPECS", {"acme": spec})
+        mp.setattr(branded_specs, "_REGISTERED_SPECS", {"acme": spec})
         assert spec_credential_source("acme") == "acme-cli"
         assert spec_credential_source("acme-work") == "acme-cli"
         assert spec_credential_source("unknown") == ""
@@ -933,9 +935,9 @@ def test_the_catalog_resolves_the_key_per_call_so_a_later_login_is_seen(
 def _only_registered(mp: pytest.MonkeyPatch, **specs: BrandedProviderSpec) -> None:
     """Make the registered-spec table exactly ``specs`` (process-global state otherwise leaks
     a fake app into an unrelated test — the same reason ``_SOURCES`` is isolated)."""
-    from personalclaw.sdk import provider_helpers
+    from personalclaw.llm import branded_specs
 
-    mp.setattr(provider_helpers, "_REGISTERED_SPECS", dict(specs))
+    mp.setattr(branded_specs, "_REGISTERED_SPECS", dict(specs))
 
 
 def test_a_branded_app_declaring_claude_models_is_recognized_as_serving_them(

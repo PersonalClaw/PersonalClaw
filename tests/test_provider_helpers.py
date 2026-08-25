@@ -19,6 +19,7 @@ import types
 import pytest
 
 import personalclaw.sdk.model  # noqa: F401 — ensure package import order
+from personalclaw.llm import branded_specs
 from personalclaw.llm.capabilities import Capability
 from personalclaw.llm.registry import ProviderEntry
 from personalclaw.sdk.provider_helpers import (
@@ -227,30 +228,26 @@ def test_spec_with_pricing_is_still_hashable():
 def test_registered_spec_and_spec_pricing_resolve_a_named_instance(monkeypatch):
     """``spec_pricing`` answers for the provider TYPE and for a user-named instance of it, and
     returns an empty map (never a rate) for an unknown provider."""
-    from personalclaw.sdk import provider_helpers
-
     spec = BrandedProviderSpec(type="acme", pricing={"acme-large": {"in_per_mtok": 3.0}})
-    monkeypatch.setattr(provider_helpers, "_REGISTERED_SPECS", {"acme": spec})
+    monkeypatch.setattr(branded_specs, "_REGISTERED_SPECS", {"acme": spec})
 
-    assert provider_helpers.registered_spec("acme") is spec
-    assert provider_helpers.registered_spec("acme-work") is spec  # named instance of the type
-    assert provider_helpers.registered_spec("unknown") is None
-    assert provider_helpers.spec_pricing("acme") == {"acme-large": {"in_per_mtok": 3.0}}
-    assert provider_helpers.spec_pricing("unknown") == {}
+    assert branded_specs.registered_spec("acme") is spec
+    assert branded_specs.registered_spec("acme-work") is spec  # named instance of the type
+    assert branded_specs.registered_spec("unknown") is None
+    assert branded_specs.spec_pricing("acme") == {"acme-large": {"in_per_mtok": 3.0}}
+    assert branded_specs.spec_pricing("unknown") == {}
 
 
 def test_register_branded_app_records_the_spec_for_core_lookup():
     """The registration side effect is what makes app-declared pricing visible to
     routing/rates.py — with no app→core push and no core→app import."""
-    from personalclaw.sdk import provider_helpers
-
     spec = BrandedProviderSpec(
         type="acme-pricing-probe", pricing={"acme-large": {"in_per_mtok": 2.0, "out_per_mtok": 4.0}}
     )
     try:
         register_branded_app(spec)
-        assert provider_helpers.spec_pricing("acme-pricing-probe") == {
+        assert branded_specs.spec_pricing("acme-pricing-probe") == {
             "acme-large": {"in_per_mtok": 2.0, "out_per_mtok": 4.0}
         }
     finally:
-        provider_helpers._REGISTERED_SPECS.pop("acme-pricing-probe", None)
+        branded_specs._REGISTERED_SPECS.pop("acme-pricing-probe", None)

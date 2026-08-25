@@ -28,15 +28,11 @@ from typing import Any, Callable
 # ``personalclaw.llm.branded_specs`` — below this boundary, because they are core state and
 # core policy that four core modules read. They are re-exported here so an app's import path
 # is unchanged; only the direction of the dependency moved. See that module's docstring.
+from personalclaw.llm import branded_specs  # noqa: E402
 from personalclaw.llm.branded_specs import (  # noqa: E402,F401
-    _REGISTERED_SPECS,
     BrandedProviderSpec,
-    _resolve_credential,
-    _resolve_spec_secret,
-    registered_spec,
-    spec_credential_source,
-    spec_pricing,
-    spec_types_declaring_models,
+    resolve_credential,
+    resolve_spec_secret,
 )
 from personalclaw.llm.subscription_credentials import (  # noqa: F401
     SubscriptionSource,
@@ -115,13 +111,13 @@ class BrandedCatalog(ModelCatalog):
     def _resolved_key(self) -> tuple[str, str]:
         """This catalog's effective key, plus the honest reason when there isn't one.
 
-        Same shared order as both factories (:func:`_resolve_spec_secret`), so a subscription
+        Same shared order as both factories (:func:`resolve_spec_secret`), so a subscription
         app the user is signed into gets probed with its CLI's token instead of being told to
         set an API-key env var it deliberately doesn't have. Returns ``("", reason)`` when no
         secret resolves; ``reason`` is the resolver's secret-free sentence, or ``""`` for an
         ordinary key-based app that simply has no key set.
         """
-        cred, reason = _resolve_spec_secret(self._spec, explicit_key=self._explicit_api_key)
+        cred, reason = resolve_spec_secret(self._spec, explicit_key=self._explicit_api_key)
         return (str(cred.secret or "") if cred is not None else "", reason)
 
     def _no_key_detail(self, reason: str) -> str:
@@ -260,7 +256,7 @@ def register_branded_app(spec: BrandedProviderSpec) -> tuple[Callable, Callable,
         *, entry: ProviderEntry, session_key: str | None = None, **kwargs: object
     ) -> ModelProvider:
         del session_key  # these providers are stateless
-        cred = _resolve_credential(entry, kwargs, label=spec.type)
+        cred = resolve_credential(entry, kwargs, label=spec.type)
         options = dict(entry.options or {})
         # Pop BOTH base_url and endpoint unconditionally (a short-circuit `or` would
         # leave the second in options → leak). base_url wins if both are set.
@@ -272,7 +268,7 @@ def register_branded_app(spec: BrandedProviderSpec) -> tuple[Callable, Callable,
         #      else 2. the per-instance api_key in entry.options, else 3. the spec's
         #      subscription credential_source, else 4. the spec's api_key_env, else
         #      5. the anon placeholder.
-        # Hops 2-4 live in `_resolve_spec_secret` so the config path below resolves the SAME
+        # Hops 2-4 live in `resolve_spec_secret` so the config path below resolves the SAME
         # order from the SAME code. Two hand-maintained ladders drift, and this one had:
         # `create_provider` carried no subscription hop at all, so a subscription app wired
         # the documented way (`implementation: "provider:create_provider"`) built a provider
@@ -282,7 +278,7 @@ def register_branded_app(spec: BrandedProviderSpec) -> tuple[Callable, Callable,
         _snake_key = str(options.pop("api_key", "") or "")
         _camel_key = str(options.pop("apiKey", "") or "")
         if cred is None:
-            cred, _ = _resolve_spec_secret(spec, explicit_key=_snake_key or _camel_key)
+            cred, _ = resolve_spec_secret(spec, explicit_key=_snake_key or _camel_key)
         # Drop remaining routing/label fields that are NOT model-call params so they
         # don't leak into extra_options → request_kwargs → the SDK's stream()/create()
         # ("unexpected keyword argument …"). Only genuine call params (temperature,
@@ -324,7 +320,7 @@ def register_branded_app(spec: BrandedProviderSpec) -> tuple[Callable, Callable,
         # app manifest's `implementation: "provider:create_provider"` names, so a
         # subscription app must resolve its CLI's token here too. Both key spellings are
         # accepted for the same reason the entry path pops both.
-        cred, _ = _resolve_spec_secret(
+        cred, _ = resolve_spec_secret(
             spec, explicit_key=str(cfg.get("api_key", "") or cfg.get("apiKey", "") or "")
         )
         cred = cred or _anon_credential(spec)
@@ -361,7 +357,9 @@ def register_branded_app(spec: BrandedProviderSpec) -> tuple[Callable, Callable,
     except ProviderResolutionError:
         pass  # already registered (idempotent against reload)
     get_default_registry().register_catalog(spec.type, create_catalog)
-    _REGISTERED_SPECS[spec.type] = spec  # so core can read this app's declarations (pricing)
+    branded_specs._REGISTERED_SPECS[spec.type] = (
+        spec  # so core can read this app's declarations (pricing)
+    )
 
     return _factory, create_provider, create_catalog
 
