@@ -48,7 +48,7 @@ from personalclaw.dashboard.state import (
 )
 from personalclaw.http_errors import json_error
 from personalclaw.security import is_sensitive_path, redact_credentials, redact_exfiltration_urls
-from personalclaw.sel import SecurityEvent, sel
+from personalclaw.sel import sel
 from personalclaw.validation import _AGENT_NAME_RE
 
 logger = logging.getLogger(__name__)
@@ -333,38 +333,6 @@ async def api_chat(request: web.Request) -> web.StreamResponse:
         notify_activity(session_key=session.key, store=TriggerStore(base_dir=config_dir()))
     except Exception:
         logger.debug("idle re-arm on user input failed", exc_info=True)
-
-    # ── Orchestrator stop detection ─────────────────────────────────
-    _stop_words = {"stop", "cancel", "abort"}
-    tracker = session._orch_tracker
-    if (
-        tracker is not None
-        and tracker.has_escalated
-        and not tracker.stopped
-        and message.strip().lower().split()[0] in _stop_words
-    ):
-        tracker.stop()
-        session._auto_run = False
-        # Cancel running agents for this session
-        if state.subagents:
-            session_key = f"dashboard:{session.key}"
-            mgr = state.subagents
-            for a in mgr.running_agents_for(session_key):
-                t = mgr._tasks.get(a["id"])
-                if t and not t.done():
-                    t.cancel()
-        stop_msg = "🛑 [SYSTEM] Orchestration stopped by user."
-        session.append("assistant", stop_msg, "msg msg-a")
-        state.broadcast_ws(
-            "chat_message", {"session": session.key, "role": "assistant", "content": stop_msg}
-        )
-        state.broadcast_ws("chat_done", {"session": session.key})
-        return web.json_response({"ok": True, "stopped": True})
-
-    # ── Reset rounds after user guidance (not a stop) ───────────────
-    if tracker is not None and tracker.has_escalated:
-        tracker.reset_after_guidance()
-        logger.info("Rounds reset after user guidance for session %s", session.key)
 
     task = asyncio.create_task(_run_chat_scoped(state, session, message))
     session.task = task
@@ -1179,22 +1147,6 @@ async def api_chat_session_stop(request: web.Request) -> web.Response:
     # First press: soft stop
     session._stop_state = "soft_pending"
     session._queue.clear()
-    _was_auto = session._auto_run
-    session._auto_run = False
-    if _was_auto:
-        sel().log(
-            SecurityEvent(
-                event_id=uuid.uuid4().hex,
-                timestamp=datetime.now(tz=timezone.utc).isoformat(),
-                event_type="auto_run_stopped",
-                caller_identity=f"dashboard:{session.key}",
-                agent=getattr(session, "agent", ""),
-                source="dashboard",
-                operation="stop",
-                outcome="stopped",
-                resources=f"session={session.key}",
-            )
-        )
 
     # Insert stop_event message into transcript
     stop_id = f"stop-{uuid.uuid4().hex}"
@@ -1556,7 +1508,6 @@ async def api_chat_session_interrupt(request: web.Request) -> web.Response:
         state.broadcast_ws("queue_promoted", {"session": name, "queue_id": str(queue_id)})
 
     session._stop_state = "soft_pending"
-    session._auto_run = False
 
     stop_id = f"stop-{uuid.uuid4().hex}"
     session._stop_event_id = stop_id
