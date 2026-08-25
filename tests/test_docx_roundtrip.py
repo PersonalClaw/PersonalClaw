@@ -30,9 +30,11 @@ writer can express stays in the comparison, which is what makes the regressions 
 
 from __future__ import annotations
 
+from dataclasses import astuple, dataclass, fields
+
 import pytest
 
-from personalclaw.documents.docx_parser import parse_docx
+from personalclaw.documents.docx_parser import LossReport, parse_docx
 from personalclaw.documents.model import (
     BLOCK_KINDS,
     Block,
@@ -268,6 +270,75 @@ def test_table_cells_survive_the_round_trip():
     assert rich.cells[2][0].runs[0].link == _OTHER_URL
     assert rich.cells[2][1].runs[0].code is True
     assert plain.rows == [["plain h1", "plain h2"], ["r1c1", "r1c2"]]
+
+
+# --------------------------------------------------------------------------------------
+# what comes back out — the CLASSES, which a projection cannot see
+# --------------------------------------------------------------------------------------
+
+
+def test_the_parse_returns_the_SHIPPED_model_classes():
+    """The one claim `_canonical` structurally cannot make.
+
+    Every assertion above this line compares primitives — strings, floats, tuples — so a
+    parser that built its own look-alike dataclasses would satisfy all of them while
+    handing `documents/model.py`'s consumers objects they cannot use. Nor does
+    `test_parse_write_parse_is_stable` catch it: both of its sides come from the parser, so
+    a uniformly wrong class agrees with itself. Only `test_page_setup_survives_the_round_trip`
+    pins one class today (dataclass `__eq__` is class-scoped), and `PageSetup` is the one
+    field that carries no user content.
+
+    This is DFE-2's hazard restated on DFE-3's seam: there, the round-trip clause was proved
+    against hand-built doubles while no test imported the shipped `Run` at all. `type(...) is`
+    rather than `isinstance(...)`, because a subclass the parser invented would pass
+    `isinstance` and still not be the type the model documents.
+
+    The sets are their own vacuity floor: an empty collection makes `set() == {Run}` false,
+    so a fixture that stopped producing runs, cells or styles reds here instead of passing
+    over nothing.
+    """
+    parsed, report = parse_docx(render_docx(_rich_model()))
+
+    assert type(parsed) is DocumentModel
+    assert type(report) is LossReport
+    assert type(parsed.page) is PageSetup
+    assert {type(block) for block in parsed.blocks} == {Block}
+    assert {type(run) for block in parsed.blocks for run in block.runs} == {Run}
+    assert {type(cell) for block in parsed.blocks for row in block.cells for cell in row} == {Cell}
+    assert {type(block.style) for block in parsed.blocks if block.style is not None} == {
+        ParagraphStyle
+    }
+
+
+def test_the_shipped_class_check_discriminates_by_CLASS_not_by_SHAPE():
+    """The floor under the test above.
+
+    `type(x) is Run` would be worth nothing if it were really asserting "has these fields":
+    the whole point is that a structurally identical stand-in must still be rejected. The
+    double below carries `Run`'s exact field names, order and defaults — asserted, so it
+    cannot drift into a straw man — and is still not a `Run`.
+    """
+
+    @dataclass
+    class _LookAlikeRun:
+        text: str = ""
+        bold: bool = False
+        italic: bool = False
+        code: bool = False
+        link: str = ""
+
+    double, real = _LookAlikeRun(text="bold", bold=True), Run(text="bold", bold=True)
+
+    # The double is shape-identical, or the rejection below proves nothing.
+    assert [(f.name, f.default) for f in fields(_LookAlikeRun)] == [
+        (f.name, f.default) for f in fields(Run)
+    ]
+    assert astuple(double) == astuple(real)
+
+    assert type(double) is not Run
+    # And this is WHY the check bites: dataclass equality is class-scoped, so a look-alike
+    # is not even equal to the real thing — the model's consumers would reject it too.
+    assert double != real
 
 
 # --------------------------------------------------------------------------------------
