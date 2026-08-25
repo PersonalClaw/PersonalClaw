@@ -235,13 +235,24 @@ _PROVIDER_SPECS: tuple[ActionTypeSpec, ...] = (
         providers=("artifact-update", "render-report"),
     ),
     # `usage-recap` (MRT-3) shares this class rather than minting its own: both are
-    # deterministic, no-model, local-only notification writers, so a separate key would be a
-    # second name for one governed behavior. Neither leaves the machine.
+    # local-only notification writers, so a separate key would be a second name for one governed
+    # behavior. Nothing here leaves the machine.
+    #
+    # PA-2's `triage-digest` joins on the same reasoning `source-digest` uses in the
+    # knowledge-write class above, and the reasoning is worth stating because it CORRECTS this
+    # comment's earlier "deterministic, no-model" wording: what this class governs is the EFFECT
+    # (one local notification write), not the powers used to compose it. `triage-digest` spends
+    # model calls — a classifier gate and one proposal pass — so the class is no longer
+    # uniformly no-model. Those extra powers are governed where they can be evaluated: the
+    # write-capable fence in `triggers/screen.py`, the gate's own drop path, and the spend
+    # callers registered in `guardrails/audit.py`. Minting `action.triage` instead would be a
+    # second name for "writes one notification", which is exactly what the sibling comments
+    # above refuse to do.
     ActionTypeSpec(
         key="action.digest",
         floor=RUNG_AUTONOMOUS,
         ceiling=RUNG_AUTONOMOUS,
-        providers=("notification-digest", "usage-recap"),
+        providers=("notification-digest", "usage-recap", "triage-digest"),
     ),
     # Spawns an LLM turn. `leaves_machine` because the turn's own toolset can reach the
     # network — the profile it runs under bounds that, not this declaration.
