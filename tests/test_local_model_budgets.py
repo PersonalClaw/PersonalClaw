@@ -331,6 +331,131 @@ async def test_an_unknown_model_still_carries_the_fallback_budget(captured_resol
     assert captured_resolve[0]["max_tokens"] == DEFAULT_OUTPUT_TOKENS
 
 
+# ── The FOURTH resolution path: the last-resort registry build ─────────────────
+
+
+def _fake_local_type():
+    """The minimal ``ProviderCapability`` ``register_type`` needs for the fake type."""
+    from personalclaw.llm.capabilities import Capability, ProviderCapability
+
+    return ProviderCapability(
+        type="fakelocal",
+        capabilities=frozenset({Capability.CHAT}),
+        supports_streaming=True,
+        supports_tools=False,
+        supports_embeddings=False,
+        supports_vision=False,
+        max_context_tokens=8192,
+    )
+
+
+@pytest.fixture
+def last_resort_build(monkeypatch):
+    """Force the bridge to fail so ``one_shot_completion`` takes its last-resort build.
+
+    That path exists for a single-provider setup with no active selection: the bridge
+    resolve raises, is swallowed, and the first registered entry is built directly. It is
+    a REAL resolution path and it used to receive no build kwargs at all, so the budget
+    stopped at the adapters' hardcoded cap there while the other three paths derived one.
+
+    Returns the list of kwargs the type factory was called with, which is where the
+    assertion has to live: the bridge is not on this path, so ``captured_resolve`` cannot
+    see it.
+    """
+    from personalclaw.llm.registry import ProviderEntry, ProviderRegistry
+
+    seen: list[dict] = []
+
+    def _factory(**kwargs):
+        seen.append(dict(kwargs))
+        return _StubProvider()
+
+    reg = ProviderRegistry()
+    reg.register_type(_fake_local_type(), _factory)
+    reg.register_entry(ProviderEntry(name="FakeLocal", type="fakelocal", model="tiny-chat"))
+    monkeypatch.setattr("personalclaw.llm.registry.get_default_registry", lambda: reg)
+
+    # An empty chain keeps the walk off the multi-entry branch, and a raising bridge is
+    # what actually drops the call through to the last-resort build.
+    monkeypatch.setattr("personalclaw.providers.use_cases.resolution_chain", lambda uc: [])
+
+    def _raise(use_case, **kwargs):
+        raise RuntimeError("pretend the bridge cannot resolve anything")
+
+    monkeypatch.setattr(
+        "personalclaw.providers.provider_bridge.resolve_provider_for_use_case", _raise
+    )
+    return seen
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("declared_output", [1024, 512])
+async def test_the_last_resort_build_carries_the_catalog_budget(
+    clean_registry, last_resort_build, declared_output
+):
+    """The fourth path derives its budget too — asserted where the factory sees it.
+
+    Parametrized over TWO declared caps rather than pinning one number: the budget has to
+    MOVE with the catalog for this to be a derivation instead of a coincidence, and both
+    values differ from ``DEFAULT_OUTPUT_TOKENS`` so a regression back to the hardcoded
+    constant cannot satisfy either case.
+    """
+    from personalclaw.llm_helpers import one_shot_completion
+
+    _register(
+        clean_registry,
+        _FakeLocalProvider(
+            "FakeLocal",
+            [LocalModel(name="tiny-chat", context_tokens=8192, output_tokens=declared_output)],
+        ),
+    )
+
+    text = await one_shot_completion("hello", use_case="reasoning")
+
+    assert text == "ok"
+    assert len(last_resort_build) == 1
+    assert last_resort_build[0]["max_tokens"] == declared_output
+    # Vacuity: the whole point is that this is NOT the constant the adapters hardcoded.
+    assert declared_output != DEFAULT_OUTPUT_TOKENS
+
+
+@pytest.mark.asyncio
+async def test_the_last_resort_build_still_works_when_the_factory_rejects_kwargs(
+    clean_registry, monkeypatch
+):
+    """A factory that refuses an extra kwarg must still get built — fail-soft, not fatal.
+
+    This path is reached precisely BECAUSE the bridge already failed, and one reason a
+    bridge resolve fails is a factory with a strict signature. Passing the derived kwargs
+    unconditionally would turn today's working degraded build into a hard failure for
+    exactly that provider, so the strict factory is the case that pins the retry.
+    """
+    from personalclaw.llm.registry import ProviderEntry, ProviderRegistry
+    from personalclaw.llm_helpers import one_shot_completion
+
+    calls: list[dict] = []
+
+    def _strict_factory(*, entry, session_key=None):
+        calls.append({"entry": entry.name})
+        return _StubProvider()
+
+    reg = ProviderRegistry()
+    reg.register_type(_fake_local_type(), _strict_factory)
+    reg.register_entry(ProviderEntry(name="Strict", type="fakelocal", model="tiny-chat"))
+    monkeypatch.setattr("personalclaw.llm.registry.get_default_registry", lambda: reg)
+    monkeypatch.setattr("personalclaw.providers.use_cases.resolution_chain", lambda uc: [])
+
+    def _raise(use_case, **kwargs):
+        raise RuntimeError("pretend the bridge cannot resolve anything")
+
+    monkeypatch.setattr(
+        "personalclaw.providers.provider_bridge.resolve_provider_for_use_case", _raise
+    )
+
+    assert await one_shot_completion("hello", use_case="reasoning") == "ok"
+    assert calls == [{"entry": "Strict"}]
+
+
 @pytest.mark.asyncio
 async def test_the_budget_rides_alongside_a_pinned_temperature(clean_registry, captured_resolve):
     """The budget must not displace the existing ``temperature`` build kwarg."""
