@@ -343,13 +343,13 @@ def _provider_upstream(name: str) -> tuple[str, str]:
     provider 401 at first use (see that function's docstring).
     """
     from personalclaw.config import config_dir
-    from personalclaw.llm.credentials import CredentialStore
-    from personalclaw.llm.registry import get_default_registry
-    from personalclaw.sdk.provider_helpers import (
+    from personalclaw.llm.branded_specs import (
         _resolve_credential,
         _resolve_spec_secret,
         registered_spec,
     )
+    from personalclaw.llm.credentials import CredentialStore
+    from personalclaw.llm.registry import get_default_registry
 
     entry = get_default_registry().get_entry(name)
     spec = registered_spec(entry.type)
