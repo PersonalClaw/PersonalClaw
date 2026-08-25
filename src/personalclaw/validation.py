@@ -828,6 +828,10 @@ ALLOWED_HOOK_PROVIDERS = frozenset(
         # no task provider.
         "selfqa-triage",
         "selfqa-file-finding",
+        # PROACTIVE-ASSISTANT §1.1-§1.5 (PA-2): the triage digest. Added here in the SAME commit
+        # that registers it in `action_providers.registry` — a provider in one set but not the
+        # other is the mismatch that makes a trigger save and then fail to run.
+        "triage-digest",
         # WORKFLOWS-V2 Slice 3: re-added in the SAME commit that re-registers the v2
         # provider. Listing a provider that cannot be dispatched is worse than omitting
         # it — the trigger would validate, save, and then fail at run time.

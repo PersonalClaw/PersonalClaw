@@ -296,3 +296,97 @@ Where each new piece plugs into the pluggable-provider architecture — nothing 
 8. Nothing in the triage or journal code paths writes to the other store: grep-level audit shows knowledge writes only in §2 paths, memory writes only in §1.4 rules + §2.4 lessons.
 9. Kill the gateway between digest delivery and a reply: the reply still acts (stable event-id, idempotent ack) or refuses with "digest expired" — never a wrong-target execution.
 10. Disabling `proactive.triage_enabled` retires the system triggers and the rules manager renders rules as dormant-but-kept; re-enabling is lossless.
+
+---
+
+## Execution log — `PA-2` (Triage pipeline: §1.1 collect → §1.2 classifier gate → §1.3 tiered strict-JSON proposals → §1.5 rank + deliver + the "Morning triage" template) — **PARTIAL**
+
+- [2026-08-25][PA-2] **DONE (4 of 4 done_when clauses MET), one §1.2 prose sub-clause deferred.**
+  Ships `proactive/{manifest,collect,gate,proposals,rank,pipeline}.py`, the `triage-digest` action
+  provider, the bundled `morning-triage` WorkflowDef, two use-case prompts
+  (`triage_classify`/`triage_propose`), two ledger kinds and 62 tests
+  (`tests/test_proactive_triage.py`).
+  **Clause 1 (collect → stable ordinal manifest):** three lanes (inbox rows in
+  `pending`/`seen`; `channel:` sessions whose last turn is not the assistant's; recent runs
+  weighted by their OWN `effect` rows, so no run instrumentation is added). Ordinals are assigned
+  after a deterministic sort, so two collects over one window mint the same ids — without that, a
+  re-collect after a restart renumbers the window and `3 yes` acts on a different item, which is
+  criterion 9's wrong-target execution reached with no adversary. Dedup is by provenance
+  fingerprint, not rendered text.
+  **Clause 2 (the gate drops/surfaces; zero-item windows short-circuit):** `drop` removes the item
+  from the digest *and* from the proposal stage's id space; `surface` keeps it visible but
+  unproposable. Four spend guards: empty window ⇒ zero calls and NO delivery; no applicable rule
+  or the switch off ⇒ no gate call; nothing survived the gate ⇒ no proposal call (the digest still
+  renders, for free, so the user sees the filter worked); and exactly ONE proposal call, ever.
+  The gate fails **OPEN** (unparseable output, an unknown verdict token, an unmentioned item all
+  resolve to `propose`) — the opposite direction from §1.3, and the same split PA-1 recorded for
+  `ProactiveConfig`.
+  **Clause 3 (ONE strict-JSON call, ≤8, tier-clamped, exact ordinals):** `parse_proposals`
+  enforces every constraint in Python regardless of provider, because `output_type` only reaches
+  providers that advertise native schema enforcement (`_enforces_json_schema_natively`);
+  `proposal_schema()` emits the `additionalProperties: false` + `item_id` enum form for those that
+  do. The tier clamp only ever RAISES: external reach (`reply_draft`) floors at `medium`,
+  destructive (`dismiss`) at `high`, an unknown action at `high`, while `archive`/`mute_thread`
+  stay `trivial`-capable per §1.6's reversibility argument. Fail CLOSED with no retry loop.
+  **Clause 4 (materiality-ranked digest, notify gate, one normal WorkflowRun):** ranking is
+  `MATERIALITY_ORDER` (AUTO-R2) and nothing else; the body is assembled deterministically from
+  typed fields — never a second model call over fenced content; delivery rides
+  `triggers.delivery.Delivery.to_notify_kwargs()` into `DashboardState.notify` at `info`, so
+  `notification_allowed()`'s quiet-hours branch defers a morning digest (criterion 1) while the
+  notification carries a `statusUrl` deep-linking THIS run's journal and an `event_id` DERIVED
+  from `(trigger_id, run_id)` — railed both ways, so a re-delivery dedupes rather than arriving
+  twice (criterion 9's substrate). The run is the bundled template's own WorkflowRun.
+- [2026-08-25][PA-2] DEVIATION: **§1.2's per-source NL filter rules live in the template node's
+  `action_config`, not in a new store.** The plan does not say where they live; a bundled template
+  is copied into the user's `defs/` on instantiate, so the rules end up editable exactly where the
+  schedule and the capability set already are, versioned by the engine. A parallel rules store
+  would be a second thing to back up and a second place "why was this dropped?" has to be looked
+  up. PA-5's §5.2 rules manager can render them from the installed def.
+- [2026-08-25][PA-2] DEVIATION: **the pipeline is an `action` node, not a chain of `infer` nodes.**
+  Same reasoning `selfqa-triage` recorded: the zero-item short-circuit must happen before a model
+  is reachable, the ordinal contract must be *enforced* rather than requested, and the drop /
+  refusal rationales must be *recorded* (`journal.step_skipped` carries no reason).
+- [2026-08-25][PA-2] DEVIATION: **`GateVerdict` was renamed `GateDisposition`.** The
+  `structural-duplication` gate counted it as a 24th verdict-shaped type outside
+  `judge_contract.py` (`verdict-type:GateVerdict`, 0 → 1). A routing disposition over an attention
+  item is not a judgment of produced work, so merging into `JudgeVerdict` would be wrong; the
+  family's own rationale sanctions the alternative — "it should not be NAMED a verdict, and that
+  rename shrinks this number too". Renamed through the type, the field and the wire key, so the
+  concept is not called a verdict anywhere. `gate_report.py`: 6/6 PASS.
+- [2026-08-25][PA-2] DEFERRED (§1.2 prose, NOT a `done_when` clause): **the cross-run
+  fingerprint-keyed gate-decision cache.** A persisted decision cache is a new store — state-shape
+  work whose cost only grows — and no `done_when` clause needs it; the short-circuit clause is
+  satisfied by the precondition guard, which is measurably free. The fingerprint it would key on
+  already exists (`CollectedItem.fingerprint`, asserted stable across a re-render), so this is one
+  module later, not a redesign.
+- [2026-08-25][PA-2] NOT IN SCOPE (correctly PA-3/PA-5): nothing is auto-executed and no approval
+  rule is consulted — §1.4's routing table and §1.6's budget floor are PA-3, the digest card is
+  PA-5. The pipeline's output is proposals plus a delivered digest; PA-1's `match_rules` is
+  deliberately NOT called yet, because the thing it routes (an execution) does not exist here.
+- [2026-08-25][PA-2] SHARED-FILE TOUCHES (each one line or one block, each required for the atom
+  not to be inert): `action_providers/registry.py` (register), `validation.py`
+  (`ALLOWED_HOOK_PROVIDERS`), `triggers/screen.py` (`WRITE_CAPABLE_PROVIDERS` — it spends and
+  delivers unattended), `ledger/kinds.py` (`skipped_triage`, `proposal_refused`, both into
+  `LEDGER_KINDS` so `read_events` can see them), `guardrails/audit.py` (`CALLERS` gained
+  `triage_gate` + `triage_propose` — two values, not one, so a spend audit can tell the cheap call
+  from the expensive one), `prompt_providers/catalog.py` (two `BundledPrompt` rows),
+  `tests/test_workflows_bundled.py` (the `EXPECTED` template-set ratchet). `decisions.py` was NOT
+  touched: PA-4's decision journal is a separate seam and this atom's criterion does not reach it.
+- [2026-08-25][PA-2] FALSIFICATION: mutated the live refusal path in `apply_gate` —
+  `dropped.append(item)` → `proposable.append(item)`, i.e. a gate that admits everything —
+  confirmed the mutation by grepping the two lines back, and observed **6 reds**: the drop rail,
+  the digest-body-absence rail, the fail-open unmentioned-item count, the id-space narrowing, the
+  `skipped_triage` ledger row, and the "a gate-emptied window makes no proposal call" spend guard.
+  Restored from a file copy and re-greped. The rail's vacuity floor is `_FIXTURE_SIZE = 3`, the
+  literal size of the test fixture, asserted directly — so a gate that dropped nothing (both legs
+  equal) and one that dropped everything (both legs zero) each fail, which a floor read off
+  `manifest.counts()` could not achieve.
+- [2026-08-25][PA-2] Gate: `make lint` green (black/isort/flake8/mypy, 1019 source files),
+  `python scripts/gate_report.py` **6/6 PASS**, targeted **604 passed / 0 failed** across
+  `test_proactive_triage` (62 new) + the twelve gates a new registered surface drifts —
+  `test_workflows_bundled`, `test_triggers_capability_fence`, `test_action_provider_chokepoints`,
+  `test_ledger_golden`, `test_agent_reference` (reference regen produced NO drift: an action
+  provider is not something `render_reference()` enumerates), `test_config_roundtrip`,
+  `test_proactive_approval`, `test_prompt_use_cases`, `test_prompts`,
+  `test_native_hook_providers`, `test_triggers_delivery`. Real-home rail clean; probe sweep 16
+  total / 0 diff-introduced; tree clean, one signed-off commit.

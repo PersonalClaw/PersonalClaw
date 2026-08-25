@@ -105,6 +105,19 @@ def _ensure_default_providers_registered() -> None:
         )
 
         register_action_provider(SelfQaFindingActionProvider())
+    if "triage-digest" not in _providers:
+        # PROACTIVE-ASSISTANT §1.1-§1.5 (PA-2) — the triage digest's one call site. Registered
+        # unconditionally, NOT behind `proactive.triage_enabled`: a provider the bundled
+        # "Morning triage" template names must be dispatchable whenever that template can be
+        # instantiated, and a registration that depends on config is one the run-start preflight
+        # cannot see. The switch is enforced inside `execute`, where a refusal is reportable.
+        # Added to ALLOWED_HOOK_PROVIDERS and to `triggers/screen.py`'s write-capable set in the
+        # SAME commit — a provider in one set but not the others saves and then fails to run.
+        from personalclaw.action_providers.triage_digest_provider import (
+            TriageDigestActionProvider,
+        )
+
+        register_action_provider(TriageDigestActionProvider())
     if "run-prompt" not in _providers:
         from personalclaw.action_providers.run_prompt_provider import RunPromptActionProvider
 
