@@ -554,3 +554,30 @@ the platforms to validate on) — Session 1–2 ship macOS + honest refusals, pe
   **Two other full-suite reds, both accounted for:** `test_planning_runner::test_poll_exits_early_
   when_loop_deactivated_without_sentinel` asserted `6.29 < 5` under a loaded machine (a concurrent
   `make test` plus other agents) and passes on `-n0`; the risk-level rail above was mine and is fixed.
+
+- **[2026-08-25][`DCU-2`] DONE — its gate was inertness, and `DCU-4` landing IS the caller.** The atom's
+  own entry ends on the audit finding that all three screens had ZERO production callers, so read alone it
+  still reads blocked. The entry immediately below it rules otherwise: *"**`DCU-2`'s three screens now fire
+  from a real driving path** — its audit's central finding closed."* Verified against code before flipping
+  rather than taken from either entry.
+  **Clause by clause, each satisfied THROUGH the real dispatch:** a non-allowlisted app refuses —
+  `computer_use/service.py:542` `policy.check_app(app, tool=tool)  # step 2 — before any window is walked`,
+  railed by `test_computer_use_dispatch.py:259`; typing into a secure field refuses — `service.py:547`
+  `policy.check_input_target(element, tool=tool)  # step 4`, railed at `:269`; every attempt writes a SEL
+  record — `service.py:178` `gate.require_computer_use(`, railed by four tests at `:349`, `:370`, `:397`
+  and `:407`. **172 passed** across `test_computer_use_dispatch.py`, `test_computer_use_call_sites.py`,
+  `test_computer_use_gate.py` and `test_computer_use_policy.py`.
+  **"Would deleting the caller be caught?" — YES, proved by mutation at integration.** Replacing the
+  `check_input_target` call with `pass` reds **6** tests: the exact-equality census
+  (`test_the_dcu2_screens_are_consulted_only_by_the_dispatch`, `sites == _EXPECTED_CALL_SITES`) plus the
+  behavioural pair (`..._sees_the_REWALKED_element...` → `DID NOT RAISE ComputerUsePolicyRefusal`, and
+  `..._runs_every_screen_before_the_acting_driver_call`). This is the atom's own inertness ratchet, shipped
+  at population ZERO and **flipped rather than deleted** by `DCU-4` — its docstring says why: *"a call
+  REMOVED from the dispatch reds too. Without the equality this file would go green again the moment
+  somebody deleted the `check_input_target` call — returning it to exactly the inert state it was written
+  to complain about."*
+  **The "DELIBERATELY NOT BUILT" chain rail in the entry above is NOT an unmet `done_when` clause.** That
+  paragraph defers a rail binding steps 2/4/5, recorded as needing a central dispatch that did not exist
+  yet ("a central-dispatch rail has no dispatch to bind to yet"). `DCU-4` supplied the dispatch, and
+  `test_computer_use_call_sites.py` is now that rail. `done_when` names exactly three behavioural clauses
+  and none of them mentions it.
