@@ -63,11 +63,16 @@ class SourceEngine:
         providers_lister: Callable[[], list[Any]] | None = None,
         config_loader: Callable[[], Any] | None = None,
         now_fn: Callable[[], float] | None = None,
+        event_spool: Any | None = None,
     ) -> None:
         self._store = store
         self._queue = ingest_queue
         self._providers_lister = providers_lister or _default_providers
         self._config_loader = config_loader or self._load_config
+        # Built lazily (see `_spool`) rather than here: a test that sets
+        # PERSONALCLAW_HOME after constructing the engine must still get the isolated path,
+        # and resolving config_dir in __init__ would have frozen the real home.
+        self._event_spool = event_spool
         import time
 
         self._now_fn = now_fn or time.time
@@ -86,6 +91,81 @@ class SourceEngine:
         from personalclaw.config.loader import AppConfig
 
         return AppConfig.load().sources
+
+    # ── stream events (§6.1) ───────────────────────────────────────────────────────
+
+    @property
+    def _spool(self) -> Any:
+        """The interim JSONL spool the stream events land on (§6.1).
+
+        Interim by the plan's own dependency note — AUTOMATION-SUBSTRATE's event bus does not
+        exist yet, and the note explicitly sanctions spooling until it does. The engine holds
+        exactly one emit seam so the bus replaces one object, not N call sites."""
+        if self._event_spool is None:
+            from personalclaw.knowledge.source_streams import SourceEventSpool
+
+            self._event_spool = SourceEventSpool()
+        return self._event_spool
+
+    def _emit_ingested(self, source: dict, item: Any, item_id: str, change: str) -> None:
+        """``SourceItemIngested`` for one (re-)indexed item (§6.1).
+
+        Emitted HERE — inside the persist path, after the item is durable and enqueued —
+        rather than from a batch at the end of the poll, because only this frame knows the
+        ``item_id`` the store minted, and an event announcing an item the store rejected (the
+        novelty gate returned None) would be a phantom no consumer could resolve.
+
+        The title rides FENCED (``fenced_snippet``): a digest reads these records and hands
+        them to a model, so the fence goes on at write time, not at every future read."""
+        from personalclaw.knowledge.source_streams import SOURCE_ITEM_INGESTED, fenced_snippet
+
+        sid = source["id"]
+        self._spool.emit(
+            SOURCE_ITEM_INGESTED,
+            {
+                "source_id": sid,
+                "item_id": item_id,
+                "guid": item.guid,
+                "title": fenced_snippet(getattr(item, "title", "") or "", sid),
+                "url": getattr(item, "url", "") or "",
+                "change": change,
+            },
+        )
+
+    def _emit_poll_completed(
+        self,
+        source_id: str,
+        *,
+        new_count: int,
+        escalations: list[str],
+        budget_spent: int = 0,
+    ) -> None:
+        """``SourcePollCompleted`` for one poll (§6.1).
+
+        Emitted on EVERY exit of :meth:`poll_source`, not just the successful one — the same
+        reasoning that made ``next_poll_at`` unconditional. A poll event that appears only on
+        success makes a source that stopped producing indistinguishable from one that is
+        producing nothing, which is the single question a stream consumer asks.
+
+        ``budget_spent`` reads a provider-declared ``requests_used`` when the poll result
+        carries one. 🔴 MEASURED (2026-08-24): ``SourcePollResult`` has no such field today —
+        only ``SourcePreview`` does (``knowledge_providers/base.py:163``), while
+        ``web_source.poll`` builds a ``_Budget`` counter it never returns
+        (``web_source.py:1314``). So this reads 0 for every shipped provider until that field
+        is added; it is duck-typed rather than hardcoded 0 so adding it is a one-line change
+        on the provider side, and NOT invented here because fabricating a request count would
+        make the audit surface lie."""
+        from personalclaw.knowledge.source_streams import SOURCE_POLL_COMPLETED
+
+        self._spool.emit(
+            SOURCE_POLL_COMPLETED,
+            {
+                "source_id": source_id,
+                "new_count": int(new_count),
+                "escalations": list(escalations),
+                "budget_spent": int(budget_spent),
+            },
+        )
 
     # ── enrollment ─────────────────────────────────────────────────────────────────
 
@@ -190,6 +270,7 @@ class SourceEngine:
                 error_summary=f"provider {source['provider']!r} not enrolled (poll-capable)",
                 next_poll_at=next_at,
             )
+            self._emit_poll_completed(sid, new_count=0, escalations=[])
             return 0
         cursor = self._store.get_source_cursor(sid)
         try:
@@ -212,6 +293,7 @@ class SourceEngine:
                 error_summary=str(exc)[:200],
                 next_poll_at=next_at,
             )
+            self._emit_poll_completed(sid, new_count=0, escalations=[])
             return 0
         escalations = list(getattr(result, "escalations", None) or [])
         if result.error:
@@ -228,6 +310,12 @@ class SourceEngine:
                 error_summary=result.error[:200],
                 escalations=escalations,
                 next_poll_at=next_at,
+            )
+            self._emit_poll_completed(
+                sid,
+                new_count=0,
+                escalations=escalations,
+                budget_spent=int(getattr(result, "requests_used", 0) or 0),
             )
             return 0
         max_items = int(cfg.max_items_per_poll)
@@ -246,6 +334,14 @@ class SourceEngine:
             health_status=HEALTH_OK,
             next_poll_at=next_at,
             escalations=escalations,
+        )
+        # After the cursor, so a consumer that sees `SourcePollCompleted` knows the poll is
+        # fully durable — the event is the poll's commit marker, not a progress ping.
+        self._emit_poll_completed(
+            sid,
+            new_count=new_count,
+            escalations=escalations,
+            budget_spent=int(getattr(result, "requests_used", 0) or 0),
         )
         return new_count
 
@@ -367,6 +463,9 @@ class SourceEngine:
         if declared:
             self._store.record_also_seen_in(item_id, *declared)
         self._enqueue(item_id)
+        from personalclaw.knowledge_providers.base import CHANGE_CREATED
+
+        self._emit_ingested(source, item, item_id, CHANGE_CREATED)
         return 1
 
     def _reindex_modified(self, source: dict, item: Any) -> int:
@@ -397,6 +496,9 @@ class SourceEngine:
             fields["file_metadata"] = meta
         self._store.update_item(item_id, **fields)
         self._enqueue(item_id)
+        from personalclaw.knowledge_providers.base import CHANGE_MODIFIED
+
+        self._emit_ingested(source, item, item_id, CHANGE_MODIFIED)
         return 1
 
     def _archive_deleted(self, source: dict, item: Any) -> int:
