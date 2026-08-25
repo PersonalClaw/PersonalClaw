@@ -15,6 +15,11 @@ created here, because a dir with no writer is dead scaffolding. The single
 ``StateEntry`` for ``evals`` (in ``durability/inventory.py``) claims the whole tree
 for backup regardless of which subtrees exist yet.
 
+ES-5's second append-only file is ``study_seals.tsv`` — one row per registered study,
+recording the hash of its pre-registration. It sits at the evals ROOT rather than in
+the study's own directory on purpose: a hash kept beside the file it pins is pinned by
+nothing (see :func:`study_seals_path`).
+
 ES-2 also makes the ledger PINNED: :func:`append_result` takes a required ``pin``
 and refuses a row whose pin is absent or incomplete. That refusal is the one
 chokepoint every future writer (matrix, study, gate) passes through, so "a run
@@ -207,6 +212,69 @@ def append_result(row: dict, *, pin: "RunPin") -> None:
         if need_header:
             fh.write("\t".join(RESULTS_COLUMNS) + "\n")
         fh.write(line + "\n")
+
+
+#: The append-only registration-seal journal's columns (§2.1). Appended, never inserted,
+#: for the same reason as :data:`RESULTS_COLUMNS`.
+SEAL_COLUMNS: tuple[str, ...] = ("study_id", "registration_sha256", "sealed_ts")
+
+
+def study_seals_path() -> Path:
+    """``evals/study_seals.tsv`` — the append-only registration-seal journal (§2.1).
+
+    Deliberately OUTSIDE ``studies/<id>/``. A hash kept beside the file it pins is pinned
+    by nothing: the study directory's own ``rubric_sha256`` lives in ``registration.json``,
+    so an editor with write access to that one directory can rewrite the rubric AND the
+    hash that pins it and leave a study that looks perfectly consistent. The seal is the
+    one record of what was registered that is not in the directory being verified.
+    """
+    return evals_root() / "study_seals.tsv"
+
+
+def append_study_seal(study_id: str, registration_sha256: str, *, ts: float) -> Path:
+    """Seal one study's registration hash. Append-only, first row wins on read.
+
+    Appended rather than written per-study so a forged seal cannot *replace* the real one:
+    :func:`read_study_seal` returns the FIRST row for an id, so the cheapest attack (append
+    the hash of the edited registration) changes nothing, and the next cheapest (rewrite or
+    truncate the journal) is a different and much louder act than editing one JSON field.
+    This is tamper-EVIDENT, not tamper-proof — the same standard as the pinned rubric, one
+    directory further out.
+    """
+    path = study_seals_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    need_header = not path.exists()
+    row = {
+        "study_id": study_id,
+        "registration_sha256": registration_sha256,
+        "sealed_ts": f"{ts:.6f}",
+    }
+    with path.open("a", encoding="utf-8") as fh:
+        if need_header:
+            fh.write("\t".join(SEAL_COLUMNS) + "\n")
+        fh.write("\t".join(_tsv_cell(row.get(col)) for col in SEAL_COLUMNS) + "\n")
+    return path
+
+
+def read_study_seal(study_id: str) -> str | None:
+    """The FIRST sealed registration hash for ``study_id``, or ``None`` when unsealed.
+
+    First-wins is the whole mechanism (see :func:`append_study_seal`). A malformed or short
+    row is skipped rather than raising: an unreadable journal line must not be able to make
+    a sealed study look unsealed by aborting the read.
+    """
+    path = study_seals_path()
+    if not path.exists():
+        return None
+    with path.open("r", encoding="utf-8") as fh:
+        lines = fh.read().splitlines()
+    for line in lines[1:]:  # skip header
+        cells = line.split("\t")
+        if len(cells) < 2:
+            continue
+        if cells[0] == study_id and cells[1]:
+            return cells[1]
+    return None
 
 
 def read_results() -> list[dict]:
