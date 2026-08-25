@@ -15,6 +15,13 @@ flag flips for a *defensible* reason and stays down for everything else:
 4. **An observed item is never stale.** "Stale" on a note would mean a different thing
    (the world moved on from a fact) with a different remedy, so the rule is asserted
    directly rather than left to be inferred from the synthesized cases.
+5. **Regenerate has to actually file a proposal.** The banner's one action was an inert
+   control — it reported ``ok: true`` while the update layer filed nothing — and it survived
+   because every regenerate test here pinned a REFUSAL path (404/400/503) and none pinned the
+   success path. So the success case asserts the pending row EXISTS in the proposal store and
+   carries the recomputed prose; a body-shape assertion would have passed against the broken
+   route. Its two honest empty outcomes (nothing cited, no model) are pinned beside it,
+   because "filed nothing" and "reported success" must never be the same response again.
 """
 
 from __future__ import annotations
@@ -215,3 +222,141 @@ def test_regenerate_without_the_update_pipeline_is_an_explicit_503(store, monkey
     assert resp.status == 503
     assert body["reason"] == "updates_unavailable"
     assert "unavailable" in body["error"]
+
+
+# ── the regenerate SUCCESS path (and its two honest empties) ──
+
+SOURCE_BODY = "the M2 cold start measured 4.2s after a fresh boot"
+REGENERATED = "Regenerated: cold start is 4.2s on the M2 [1]."
+
+
+@pytest.fixture
+def queue(store, tmp_path, monkeypatch):
+    """The proposal queue, redirected under tmp_path — asserted, not assumed.
+
+    ``proposals._dir()`` resolves ``config_dir`` lazily from ``personalclaw.config.loader``
+    (which the ``store`` fixture patches), but ``personalclaw.config`` re-exports the name at
+    import time, so a caller that bound it from there would still write the developer's own
+    ``~/.personalclaw``. Both bindings are patched and the redirect is then ASSERTED: an
+    unasserted patch is how a destructive test quietly stops being isolated.
+    """
+    import personalclaw.config as config_pkg
+    from personalclaw.learning import proposals
+
+    if hasattr(config_pkg, "config_dir"):
+        monkeypatch.setattr(config_pkg, "config_dir", lambda: tmp_path)
+    assert str(proposals._dir()).startswith(str(tmp_path))
+    return proposals
+
+
+def _synthesis(store, monkeypatch, *, text: str = REGENERATED) -> tuple[str, list[str]]:
+    """A synthesized item citing one source, with the model call replaced. Returns the prompts.
+
+    The seam is ``updates._synthesis_completion`` rather than ``one_shot_completion`` itself, so
+    the test drives the real route through the real recompute and only the provider is faked.
+    """
+    source = _item(store, "note", "Cited source")
+    store.update_item(source, content=SOURCE_BODY)
+    insight = _item(store, "insight", "Overview of alpha", tags=["alpha"])
+    _cite(store, insight, source)
+
+    prompts: list[str] = []
+
+    async def _fake(prompt: str) -> str:
+        prompts.append(prompt)
+        return text
+
+    monkeypatch.setattr("personalclaw.knowledge.updates._synthesis_completion", _fake)
+    return insight, prompts
+
+
+def _pending(queue, item_id: str) -> list:
+    from personalclaw.knowledge import updates
+
+    return [p for p in queue.list_pending(updates.DRAFT_KIND) if p.target == item_id]
+
+
+def test_regenerate_files_a_proposal_carrying_the_recomputed_synthesis(store, queue, monkeypatch):
+    """The success path, asserted in the STORE rather than in the response body.
+
+    The response shape did not change when this was fixed, so a test that read only the body
+    would have passed against the inert route. What separates the two is whether a pending row
+    exists afterwards and whether it carries the recomputed prose.
+    """
+    insight, prompts = _synthesis(store, monkeypatch)
+
+    resp, body = _post_regenerate(store, insight)
+
+    assert resp.status == 200
+    assert body["ok"] is True
+    assert body["proposal"]["pending"] is True
+    proposal_id = body["proposal"]["proposal_id"]
+    assert proposal_id
+
+    # The recompute read the SOURCE, not just the document: a regeneration that never looked at
+    # the material the banner counted would be a fresh invention wearing the same button.
+    assert "cold start measured 4.2s" in prompts[0]
+
+    rows = _pending(queue, insight)
+    assert [r.id for r in rows] == [proposal_id]
+    assert REGENERATED in rows[0].body
+
+    # And the item itself is untouched until the owner accepts — the whole point of a proposal.
+    assert store.get_item(insight)["content"] == "body of Overview of alpha"
+
+
+def test_regenerating_twice_is_one_review_not_two(store, queue, monkeypatch):
+    """A second click re-surfaces the SAME row. The banner shows a different sentence for it."""
+    insight, _prompts = _synthesis(store, monkeypatch)
+
+    _post_regenerate(store, insight)
+    resp, body = _post_regenerate(store, insight)
+
+    assert resp.status == 200
+    assert body["ok"] is True
+    assert body["already_pending"] is True
+    assert len(_pending(queue, insight)) == 1
+
+
+def test_regenerate_files_nothing_and_says_so_when_the_synthesis_cites_nothing(
+    store, queue, monkeypatch
+):
+    """The old bug, pinned from the other side: filing nothing must never report success.
+
+    Before the fix this exact request answered ``200 {"ok": true, ...}`` with a proposal that
+    was never queued. It now answers ``ok: false`` with the layer's own reason — the sentence
+    the banner renders verbatim — and the queue is still empty.
+    """
+    insight = _item(store, "insight", "Overview of alpha", tags=["alpha"])
+    calls: list[str] = []
+
+    async def _fake(prompt: str) -> str:
+        calls.append(prompt)
+        return REGENERATED
+
+    monkeypatch.setattr("personalclaw.knowledge.updates._synthesis_completion", _fake)
+
+    resp, body = _post_regenerate(store, insight)
+
+    assert resp.status == 200
+    assert body["ok"] is False
+    assert body["proposal"]["proposal_id"] == ""
+    assert "cites no sources" in body["proposal"]["reason"]
+    # No model call at all: asking a model to consolidate nothing invites it to invent the
+    # document, which is the one thing a synthesis may not do.
+    assert calls == []
+    assert _pending(queue, insight) == []
+
+
+def test_regenerate_without_a_model_is_an_explicit_503(store, queue, monkeypatch):
+    """`one_shot_completion` returns a falsy value instead of raising, so the empty text IS the
+    signal. A regeneration that produced nothing says so; it does not file an empty proposal."""
+    insight, prompts = _synthesis(store, monkeypatch, text="")
+
+    resp, body = _post_regenerate(store, insight)
+
+    assert resp.status == 503
+    assert body["reason"] == "model_unavailable"
+    assert "Settings" in body["error"]
+    assert prompts, "the recompute must have been attempted, not short-circuited"
+    assert _pending(queue, insight) == []
