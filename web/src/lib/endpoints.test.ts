@@ -14,6 +14,9 @@ import {
   parseEndpointKey,
   parseRegistry,
   removeEndpoint,
+  WS_PATH,
+  endpointSocket,
+  endpointSocketUrl,
   saveRegistry,
   serializeRegistry,
   setActive,
@@ -427,5 +430,61 @@ describe('newEndpointId', () => {
 
   it('survives a rand that returns exactly 1', () => {
     expect(newEndpointId(() => 1)).toBe('ep_aaaaaaaaaaaa')
+  })
+})
+
+// ── the native socket URL (CA-7) ─────────────────────────────────────────────────────────────
+//
+// What is being measured: the scheme MAP, not the string. A native shell has no `location` to be
+// relative to, so this helper is the only thing standing between "remote implies TLS" being
+// derived and being remembered per platform. Every refusal is asserted as `undefined` rather
+// than a coerced guess, because a guessed scheme dials a socket somewhere unintended.
+
+describe('endpointSocketUrl', () => {
+  it('maps https to wss and http to ws, from the endpoint\'s OWN scheme', () => {
+    expect(endpointSocketUrl('https://pc.example.com')).toBe('wss://pc.example.com/api/ws')
+    expect(endpointSocketUrl('http://claw.local:10000')).toBe('ws://claw.local:10000/api/ws')
+  })
+
+  it('carries the port through, so two gateways on one host stay distinct', () => {
+    expect(endpointSocketUrl('https://work.example:10443')).toBe('wss://work.example:10443/api/ws')
+  })
+
+  it('defaults to WS_PATH and accepts an explicit path with or without a leading slash', () => {
+    expect(endpointSocketUrl('https://h')).toBe(`wss://h${WS_PATH}`)
+    expect(endpointSocketUrl('https://h', '/api/ws/terminal/s1')).toBe('wss://h/api/ws/terminal/s1')
+    expect(endpointSocketUrl('https://h', 'api/ws')).toBe('wss://h/api/ws')
+  })
+
+  it('refuses rather than guesses: empty, unparseable, bare host, and non-http schemes', () => {
+    expect(endpointSocketUrl('')).toBeUndefined()
+    expect(endpointSocketUrl('   ')).toBeUndefined()
+    // A bare host parses as the `claw.local:` scheme with an opaque path — guessing `https` for it
+    // would invent a protocol the owner never declared.
+    expect(endpointSocketUrl('claw.local:10000')).toBeUndefined()
+    expect(endpointSocketUrl('not a url')).toBeUndefined()
+    expect(endpointSocketUrl('file:///etc/passwd')).toBeUndefined()
+    expect(endpointSocketUrl('ws://already.ws')).toBeUndefined()
+    expect(endpointSocketUrl('wss://already.wss')).toBeUndefined()
+  })
+
+  it('never carries a credential — the device session rides as the cookie', () => {
+    const url = endpointSocketUrl('https://pc.example.com/?token=sekrit')
+    expect(url).toBe('wss://pc.example.com/api/ws')
+    expect(url).not.toContain('token')
+    expect(url).not.toContain('sekrit')
+  })
+
+  it('endpointSocket derives from a registry row, and answers undefined for no row', () => {
+    expect(endpointSocket(WORK)).toBe('wss://work.example:10000/api/ws')
+    expect(endpointSocket(HOME)).toBe('ws://claw.local:10000/api/ws')
+    expect(endpointSocket(undefined)).toBeUndefined()
+  })
+
+  it('a remote row over TLS gets wss WITHOUT anything consulting `kind`', () => {
+    // The map is derived from the URL, so a mislabelled row still dials correctly. `kind` is a
+    // lifecycle fact (did this shell spawn it), not a transport fact.
+    expect(endpointSocket({ ...WORK, kind: 'local' })).toBe('wss://work.example:10000/api/ws')
+    expect(endpointSocket({ ...HOME, kind: 'remote' })).toBe('ws://claw.local:10000/api/ws')
   })
 })
