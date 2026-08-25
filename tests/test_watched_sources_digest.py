@@ -41,10 +41,30 @@ INJECTION = (
 
 @pytest.fixture(autouse=True)
 def _isolated_home(tmp_path, monkeypatch):
+    """Redirect the home via ``PERSONALCLAW_HOME`` AND repair the import-bound copy.
+
+    🔴 MEASURED (2026-08-24), and the reason this fixture does NOT patch
+    ``config.loader.config_dir``: a `monkeypatch.setattr` on that name that is live when a
+    consumer module is imported for the FIRST time gets baked into the consumer permanently —
+    ``providers/entity_routes.py:22`` does ``from personalclaw.config.loader import config_dir``,
+    so the consumer keeps the LAMBDA and monkeypatch's undo (which restores only the loader
+    module's attribute) cannot reach it. Under xdist that made
+    ``test_mute_all_suppresses_the_digest_notification`` read the PREVIOUS test's home in the
+    same worker: env=`…/test_mute_all…/home`, actual=`…/test_digest_makes_ONE_item…/home`, so
+    ``mute_all`` was never seen and the notification was delivered.
+
+    So: the env var is the lever (``config_dir()`` reads it per call and caches nothing), and
+    ``entity_routes.config_dir`` is re-pointed at the REAL live function to undo any bake-in a
+    sibling suite performed. Both, plus an assertion that the redirect actually binds.
+    """
+    from personalclaw.config.loader import config_dir as live_config_dir
+    from personalclaw.providers import entity_routes
+
     home = tmp_path / "home"
     home.mkdir()
     monkeypatch.setenv("PERSONALCLAW_HOME", str(home))
-    monkeypatch.setattr("personalclaw.config.loader.config_dir", lambda: home)
+    monkeypatch.setattr(entity_routes, "config_dir", live_config_dir)
+    assert entity_routes._entity_settings_path("notifications").parent.parent == home
     return home
 
 
@@ -198,9 +218,16 @@ async def test_mute_all_suppresses_the_digest_notification(store, tmp_path, _iso
 
     Only possible if `notification_allowed()` is genuinely in the path — a digest that pushed
     its own notification would deliver here and the clause would be satisfied by a bypass."""
+    from personalclaw import notification_kinds
+    from personalclaw.providers import entity_routes
+
     settings_dir = _isolated_home / "entity_settings"
     settings_dir.mkdir(parents=True, exist_ok=True)
     (settings_dir / "notifications.json").write_text(json.dumps({"mute_all": True}))
+    # PRECONDITION, asserted rather than assumed: the gate must actually be closed. Without
+    # this line a home-isolation leak reads as "the digest bypassed the gate" — a confusing red
+    # pointing at the wrong file (measured; see `_isolated_home`).
+    assert entity_routes.notification_allowed(notification_kinds.INFO) is False
 
     spool = SourceEventSpool(tmp_path / "events.jsonl")
     await _ingest(store, spool, [SourceItem(guid="g1", title="Release 2.0", content="stable")])
