@@ -77,8 +77,11 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `POST /api/artifacts/{slug}/events` — record a 'referenced' impression.
 - `GET /api/artifacts/{slug}/extract` — extracted text for a binary document artifact.
 - `PATCH /api/artifacts/{slug}/folder` — file an artifact (``{folder_id}``; "" = unfiled).
+- `GET /api/artifacts/{slug}/model` — the parsed document model + its loss report.
+- `PUT /api/artifacts/{slug}/model` — re-render a posted model into the artifact (§C3).
 - `POST /api/artifacts/{slug}/pin` — pin or unpin (``{"pinned": bool}``).
 - `GET /api/artifacts/{slug}/raw` — stream a binary artifact's bytes.
+- `PUT /api/artifacts/{slug}/raw` — replace a binary artifact's bytes (§C3).
 - `POST /api/artifacts/{slug}/regenerate` — re-run image generation at this slug.
 - `GET /api/artifacts/{slug}/versions` — _(no summary)_
 - `GET /api/artifacts/{slug}/versions/{version}` — immutable historical content.

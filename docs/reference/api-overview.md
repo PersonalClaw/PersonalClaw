@@ -252,6 +252,8 @@ per-route contract.
 |---|---|
 | `GET/POST /api/artifacts` · `GET/PATCH/DELETE /api/artifacts/{slug}` | Generated artifact CRUD. |
 | `GET /api/artifacts/{slug}/raw` | Raw artifact content. |
+| `PUT /api/artifacts/{slug}/raw` | Replace a binary artifact's bytes. Body = the bytes, `Content-Type` = their MIME, `If-Match: <version>` required (409 on a stale version). |
+| `GET/PUT /api/artifacts/{slug}/model` | The parsed document model + its loss report; the PUT re-renders a posted model server-side, so a client never handles document bytes. |
 | `POST /api/artifacts/{slug}/regenerate` | Regenerate from its source prompt. |
 | `GET /api/artifacts/{slug}/versions` · `GET .../versions/{version}` | Version history. |
 | `GET/POST /api/artifacts/{slug}/events` | Artifact event log. |

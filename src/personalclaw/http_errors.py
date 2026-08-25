@@ -197,6 +197,51 @@ HTTP_ERROR_CODES: dict[str, str] = {
         "platform, or the ceilinged driver subprocess failed. Nothing was changed on the "
         "desktop."
     ),
+    # ── binary artifact write + document model (artifacts/handlers.py — DFE §C3) ──
+    #
+    # Every row here is a DIFFERENT thing for the caller to do, which is the whole test
+    # for a distinct code. A document editor that could only see "409" would have to
+    # guess between "reload the document", "you sent the wrong file type" and "this
+    # artifact has no binary body at all" — three remedies, one of which destroys the
+    # user's work if guessed wrong.
+    "kind_not_binary": (
+        "The artifact's kind stores its body as text, so it has no binary body to replace. "
+        "Fix: PATCH the artifact instead."
+    ),
+    "if_match_required": (
+        "A whole-body write must declare the version it is replacing via `If-Match`. Fix: read "
+        "the artifact, then resend with `If-Match: <version>`."
+    ),
+    "if_match_malformed": (
+        "The `If-Match` header is not an artifact version number. Fix: send the integer "
+        "`version` the artifact reported."
+    ),
+    "version_conflict": (
+        "The artifact moved since it was read, so the write would have destroyed somebody "
+        "else's edit. Fix: reload and re-apply. The `error` object names the current version."
+    ),
+    "content_length_required": (
+        "The request declared no `Content-Length`, so its size cannot be checked before the "
+        "body is read. Fix: send a length-delimited body, not a chunked one."
+    ),
+    "mime_kind_mismatch": (
+        "The body's `Content-Type` belongs to a different artifact kind than the addressed "
+        "artifact. Fix: send the format this artifact already is, or create a new artifact."
+    ),
+    "unsupported_media_type": (
+        "The body's `Content-Type` is not a binary artifact format this build can store."
+    ),
+    "model_unavailable": (
+        "No document parser or writer ships for this artifact's kind, so it has no editable "
+        "model. Fix: read the bytes via the raw route instead."
+    ),
+    "model_parse_failed": (
+        "The stored bytes could not be parsed as a document of this artifact's kind."
+    ),
+    "invalid_model": (
+        "The posted document model is not a valid model. The message names the offending path."
+    ),
+    "render_failed": "The document model was valid but the writer could not render it.",
 }
 
 
