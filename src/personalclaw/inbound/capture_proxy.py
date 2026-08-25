@@ -56,6 +56,7 @@ from typing import Any, Awaitable, Callable
 
 from aiohttp import web
 
+from personalclaw.http_errors import json_error
 from personalclaw.inbound import auth
 from personalclaw.inbound.audit import audit
 from personalclaw.inbound.gate import admission_problem
@@ -182,7 +183,7 @@ def _admit(request: web.Request, route: str) -> tuple[web.Response | None, str, 
     problem, status = admission_problem(CAPTURE_SURFACE)
     if problem:
         audit(CAPTURE_SURFACE, route=route, status=status, refused=problem)
-        return _json({"error": "not available"}, status=status), problem, ""
+        return json_error("service_unavailable", status=status), problem, ""
 
     # §7.1: loopback-only, ALWAYS. Checked here and not via `peer_allowed` because
     # `peer_allowed`'s non-loopback branch exists to honour a declared public URL, and
@@ -191,14 +192,14 @@ def _admit(request: web.Request, route: str) -> tuple[web.Response | None, str, 
     if not auth.is_loopback(request):
         why = "the capture proxy is loopback-only by construction"
         audit(CAPTURE_SURFACE, route=route, status=403, refused=why)
-        return _json({"error": "forbidden"}, status=403), why, ""
+        return json_error("forbidden", message=why, status=403), why, ""
 
     presented = (request.headers.get("Authorization") or "").removeprefix("Bearer ").strip()
     surface_ok = auth.verify_bearer(CAPTURE_SURFACE, presented)
     client, _why = _lookup_client(presented)
     if not surface_ok and client is None:
         audit(CAPTURE_SURFACE, route=route, status=401, refused="bad bearer")
-        return _json({"error": "unauthorized"}, status=401), "bad bearer", ""
+        return json_error("unauthorized", status=401), "bad bearer", ""
     return None, "", getattr(client, "client_id", "") or CAPTURE_SURFACE
 
 
@@ -332,9 +333,9 @@ def _provider_upstream(name: str) -> tuple[str, str]:
     `sdk.provider_helpers.create_provider`'s registry factory uses, reusing the same two
     functions so this surface cannot drift into a fourth spelling of it:
 
-      1. ``entry.credential`` through the credential store — `_resolve_credential`
+      1. ``entry.credential`` through the credential store — `resolve_credential`
       2. ``entry.options["api_key"]`` / ``["apiKey"]``, then the spec's subscription
-         source, then ``spec.api_key_env`` — `_resolve_spec_secret`
+         source, then ``spec.api_key_env`` — `resolve_spec_secret`
 
     and base URL the same way the factory reads it: ``options["base_url"]``, else
     ``options["endpoint"]``, else ``spec.default_base_url``. A private-name import is
@@ -344,9 +345,9 @@ def _provider_upstream(name: str) -> tuple[str, str]:
     """
     from personalclaw.config import config_dir
     from personalclaw.llm.branded_specs import (
-        _resolve_credential,
-        _resolve_spec_secret,
         registered_spec,
+        resolve_credential,
+        resolve_spec_secret,
     )
     from personalclaw.llm.credentials import CredentialStore
     from personalclaw.llm.registry import get_default_registry
@@ -358,12 +359,12 @@ def _provider_upstream(name: str) -> tuple[str, str]:
     if not base and spec is not None:
         base = str(spec.default_base_url or "")
 
-    cred = _resolve_credential(
+    cred = resolve_credential(
         entry, {"credential_store": CredentialStore(config_dir())}, label=name
     )
     if cred is None and spec is not None:
         explicit = str(options.get("api_key", "") or "") or str(options.get("apiKey", "") or "")
-        cred, _reason = _resolve_spec_secret(spec, explicit_key=explicit)
+        cred, _reason = resolve_spec_secret(spec, explicit_key=explicit)
     secret = str(getattr(cred, "secret", "") or "") if cred is not None else ""
     return base, secret
 
@@ -524,7 +525,7 @@ async def _handle(request: web.Request, dialect: str, route: str) -> web.StreamR
     upstream, why = _resolve_upstream(cfg, client, dialect, request)
     if upstream is None:
         audit(CAPTURE_SURFACE, route=route, status=502, refused=why, client_id=client_id)
-        return _json({"error": "upstream unavailable", "reason": why}, status=502)
+        return json_error("upstream_unavailable", status=502, error_extra={"reason": why})
 
     # ── Egress pre-flight. Nothing above this line opened a connection, and nothing
     # below it runs on a deny: the guard decides before `_forward` (the sole socket)
@@ -536,13 +537,13 @@ async def _handle(request: web.Request, dialect: str, route: str) -> web.StreamR
         audit(
             CAPTURE_SURFACE, route=route, status=502, refused=decision.reason, client_id=client_id
         )
-        return _json(
-            {
-                "error": "upstream denied",
+        return json_error(
+            "upstream_denied",
+            status=502,
+            error_extra={
                 "reason": decision.reason,
                 "recovery_hints": list(decision.recovery_hints),
             },
-            status=502,
         )
 
     stream = _wants_stream(body)
@@ -573,7 +574,7 @@ async def _handle(request: web.Request, dialect: str, route: str) -> web.StreamR
         if sent is not None:  # already streaming — the caller keeps what it got
             await sent.write_eof()
             return sent
-        return _json({"error": "upstream failed", "reason": str(exc)}, status=502)
+        return json_error("upstream_failed", status=502, error_extra={"reason": str(exc)})
 
     duration_ms = int((time.monotonic() - started) * 1000)
     stream_text = ""
