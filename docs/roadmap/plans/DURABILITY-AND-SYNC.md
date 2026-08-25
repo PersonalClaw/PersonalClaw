@@ -2045,6 +2045,97 @@ half) is live and safe today; only cross-machine DELETE convergence waits on thi
   home on every request.
 ---
 
+## Execution log — DAS-8c (landed-or-not audit; DAS-8 flipped `done`)
+
+- [2026-08-24][DAS-8c] **DONE — DAS-8 was already fully landed; nothing was rebuilt.** The atom
+  was still `todo` while both of its halves were on `main`, so it was measured clause by clause
+  rather than re-implemented. Core @ `03729754`, apps @ `9f284a69`. **Every clause of the
+  `done_when` is met, and each has its own test class:** AES-256-GCM (`crypto.py:222,229`) with
+  Argon2id stretch (`:191`) then HKDF-Expand per object key (`:211-213`) →
+  `TestCiphertextIsActuallyCiphertext`/`TestPerShardKeys`; first-write-wins salt
+  (`ensure_salt` `:273`) → `TestFirstWriteWinsSalt`; routing plaintext (`ROUTING_KEYS` `:90`,
+  `is_routing_key` `:172`) → `TestRoutingFieldsStayPlaintext`; both-direction plaintext
+  rejection → `TestPlaintextRejectedBothDirections`; missing salt/passphrase a hard setup error
+  (`MissingSalt` `:290`, `MissingPassphrase` `:478`); per-transport defaults
+  (`DEFAULT_ENCRYPT_BY_TRANSPORT` `:110` — `s3-sync`/`dir-sync`/`rsync-sync` ON, `git-sync` OFF)
+  → `TestPerTransportDefaults`; `secret=True` excluded before any transport (`shards.py:20`,
+  unconditional) → `TestCriterion7SecretsNeverTransported`; host-pin + raised `max_bytes`
+  (`net/policy.py:161-168` `allow_hosts=()` fail-closed, `max_bytes=200_000_000`; the pin applied
+  AFTER operator layering at `:411`) → `TestSyncEgressPinning`; criteria 7-8 →
+  `TestCriterion7SecretsNeverTransported`/`TestCriterion8EndToEnd`. **144 passed** across
+  `test_durability_sync_crypto` + `test_durability_sync_cycle` + `test_config_roundtrip` +
+  the two roadmap-sync suites, real-home rail clean.
+
+- [2026-08-24][DAS-8c] **The apps half is on `PersonalClawApps` `origin/main`** — commit
+  `eb1848ad` "feat(apps): DAS-8 s3-sync + rsync-sync durability transports (#45)", 10 files.
+  `s3-sync/provider.py`: SigV4 from `hashlib`/`hmac` (`:109-119`, `:250-263`), ONE egress
+  chokepoint `_request()` (`:266`) whose sole `fetch` call (`:295`) runs under
+  `sync_egress_policy(self._endpoint)` (`:287`) — which is `egress_policy_for(SYNC)` +
+  the pin, so the done_when's "through `egress_policy_for()`" is satisfied by delegation, not by
+  name; PUT `:310`/`:450`, GET `:397`/`:432`, LIST `:355`/`:465`; zero `aiohttp`/`boto3`/`botocore`/
+  `requests` in production (only `urllib.parse` for URL encoding, and an AST test at `:244-259`
+  pins that a second unguarded client cannot appear). `rsync-sync/provider.py`: `subprocess.run`
+  argv-only `shell=False` (`:205-212`) over `ssh -o BatchMode=yes` (`:196-201`), push `:216`,
+  list `:263`, pull `:282`. Both import core only via `personalclaw.sdk.*`.
+
+- [2026-08-24][DAS-8c] **REACHABILITY, not mere presence — the encryption path is live and its
+  deletion is caught.** Chain: durability boot loop (`service.py:694`, gated on `sync_enabled`)
+  → `run_sync_job` (`:418`) → `run_sync_cycle(encrypt=cfg.sync_encrypt)` (`:451-456`) →
+  `codec_for(transport, setting=encrypt)` (`sync_cycle.py:115`) → threaded into
+  `pull_from_peers(codec=…)` (`:134`, consumed at `pull_engine.py:136`
+  `codec.decrypt_after_pull`) and `publish_export(codec=…)` (`:159`, consumed at
+  `push_engine.py:96` `codec.encrypt_for_push`). **Falsified:** mutating `sync_cycle.py:115` to
+  `codec = None if codec_for else None`, grepped back to confirm it applied, reds **5** tests in
+  `TestCriterion8EndToEnd` with use-level messages — *"manifest.json landed on the remote as
+  plaintext"*, *"the wrong passphrase still imported A's rows"*, *"the salt was unreadable
+  without the key"*, *"assert True is False"* (fail-closed). Restored from a file copy, not
+  `git checkout`. So this is a use test, not a mechanism test.
+
+- [2026-08-24][DAS-8c] **NOT inert — the three usual failure shapes were checked and none
+  applies.** `durability.sync_encrypt` is a config field with a real reader, not a dead knob:
+  full round trip (dataclass `loader.py:3621` + `_meta`, `load` via `_safe_choice` `:4971`,
+  `to_dict`, `_EDITABLE_CONFIG` PATCH allowlist `handlers/core.py:655`, `config-baseline.json:459`)
+  AND it is READ at `service.py:455` (passed into the cycle), `:717` (`_resolved_encryption`) and
+  `:748` (`status()['sync']['encrypted']` reports the RESOLVED boolean, not the raw `"auto"`).
+  All three tri-state values are written by callers, not just defaulted. The one honest caveat:
+  **`sync_egress_policy` has no production caller inside core** — only the SDK re-export
+  (`sdk/net.py:21`, `sdk/sync.py:34`) and tests. Its executor is `s3-sync` in the sibling repo,
+  which is the deliberate contract-owner split this plan recorded; so deleting core's caller is
+  caught by the APP's suite, not by core's. That app test is the strong form: it spies on
+  `sdk_net.fetch` and asserts what the transport actually handed it — `allow_only`, the exact
+  `allow_hosts` pin, and surviving denies — with a vacuity floor (*"fetch was never called — the
+  transport bypassed the chokepoint"*), added precisely because asserting against the policy
+  function alone had let a widened pin stay green.
+
+- [2026-08-24][DAS-8c] **Why the two PARTIAL headers above did not close, and why that no longer
+  blocks.** DAS-8's UNMET item 1 (the two apps) was closed by DAS-8b. DAS-8b's own four UNMET
+  items are **all environment- or owner-gated verification, and none is a clause of the
+  done_when**: (1) no live S3 remote — every AWS profile on this machine is Amazon-internal
+  production and production-safety forbids writing an unidentified account, so `s3-sync` is driven
+  against a loopback stub with the signature cross-checked against botocore; (2) the ssh hop is
+  proved at argv level, no sshd contacted; (3) two-machine convergence over these two specific
+  transports not re-run (core proved criterion 4 over a real transport in DAS-6d-iii and the codec
+  boundary is transport-agnostic); (4) `rsync-sync` unverified against GNU rsync 3.x — macOS ships
+  openrsync, and the flag set was chosen 2.6.9-compatible for exactly that reason. These stay
+  recorded as follow-ups; they do not hold the atom.
+
+- [2026-08-24][DAS-8c] **DAS-8 completes the plan.** All 10 DAS atoms are now `done`, so
+  `dag.json`'s plan `status` flipped `in_progress` → `done` in the same commit (otherwise the
+  dashboard reports a stale plan-status field) and the plan `summary`, which still listed Sessions
+  3/4/5 as "Remaining", was rewritten to match. `regen_dag_derived.py` rewrote the derived block
+  (DAS `done` 9→10, `todo` 1→0; DAS-8 dropped from the ready list) and `--check` is clean.
+
+- [2026-08-24][DAS-8c] **Two adjacent findings, deliberately NOT fixed here (one concern per
+  commit).** (a) In `docs/roadmap/atomic/DAS.md` the *Atom scopes* prose for **`DAS-6` (line 68)
+  and `DAS-10` (line 134)** still reads `**Status:** todo` while both are `✅` in the table and
+  `done` in `dag.json` — `test_roadmap_atomic_status_sync.py` only checks the table emoji, so this
+  prose drift is invisible to the gate. (b) `rsync-sync/app.json` declares **no `permissions`
+  block**, so `permissions.network` defaults `False` (`apps/manifest.py:449`): the install-consent
+  card discloses no egress for a transport that ships state to a remote ssh host, and
+  `providers/registry.py:351` derives `leaves_machine` from that field. Latent today only because
+  the app declares no `autonomy` block (`registry.py:348` early-returns).
+---
+
 ## Execution log — DAS-9 (§5 workspace time-travel) — **PARTIAL**
 
 - [2026-08-18][DAS-9] **DONE — the engine, the seam, the debounce, rollback/revert/preview, the
