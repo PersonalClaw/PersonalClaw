@@ -1008,3 +1008,88 @@ Trigger-side work (`web_watch` wiring, morning-digest template install, triage d
   through the ordinary app path and polls on the engine's schedule with no Sources UI in existence,
   and `GET /api/knowledge/source-recipes` answers. The entry says exactly that and does not promise
   the paste-URL create-flow UI, which is `WS-9`'s.
+
+- **DONE — `WS-7` streams: `SourceItemIngested`/`SourcePollCompleted`/`SourceQueryMatched` + saved
+  queries + digest handoff (§6.1, §6.2, §6.4, §8, §11 step 5's events half).** Three new modules under
+  `knowledge/`: `source_streams.py` (the events + the interim spool), `source_queries.py` (saved
+  queries + the trigger bridge) and `source_digest.py` (the §6.2 digest). `source_engine.py` gains two
+  emit seams and one query-evaluation call on the real poll path.
+  **INTERIM SPOOL, not a bus — measured, not assumed.** `git grep 'event_bus\|EventBus'` over
+  `src/personalclaw/` returns ZERO hits, so AUTOMATION-SUBSTRATE's bus does not exist. The atom's own
+  dep note sanctions the spool until it lands, so `SourceEventSpool` is an append-only JSONL log plus
+  an absolute-`seq` cursor and nothing else: no subscriber registry, no dispatch, no delivery
+  semantics. That is the smallest thing the bus can later drain, and building bus machinery here would
+  have minted a second mechanism for the substrate to delete. It trims at 5000 records keeping 2500,
+  with `seq` written INTO each record so a consumer's cursor survives a trim.
+  **`SourcePollCompleted` fires on EVERY exit of `poll_source`** (not-enrolled, provider raised, soft
+  error, success) — the same reasoning that made `next_poll_at` unconditional in WS-3: a poll event
+  visible only on success makes a source that STOPPED producing indistinguishable from one producing
+  nothing, which is the only question a stream consumer asks.
+  🔴 **`budget_spent` reads 0 for every shipped provider, and that is deliberate.** §6.1 specifies
+  `{source_id, new_count, escalations, budget_spent}`, but `SourcePollResult` carries no request count
+  — only `SourcePreview` does (`knowledge_providers/base.py:163`), while `web_source.poll` builds a
+  `_Budget` counter (`web_source.py:1314`) it never returns. The field is read duck-typed
+  (`getattr(result, "requests_used", 0)`) so adding it is a one-line provider-side change; it was NOT
+  filled with a derived number, because a fabricated request count makes the egress audit surface lie.
+  **Follow-up worth an atom row: add `requests_used` to `SourcePollResult` and populate it at
+  `web_source.poll`'s five return sites.**
+  🔴 **§6.4's literal trigger shape does not exist and was NOT built.** The plan says a Trigger
+  subscribes with `{source: SourceQueryMatched, pattern: {query_id}}`. The SHIPPED matcher's `source`
+  is one of three enum values (`event_triggers.EVENT_SOURCES` = memory/inbox/app) and its pattern kinds
+  are a closed set, so the literal shape would require a FOURTH event source — a second matcher for one
+  producer, which the substrate's own round-2 amendment forbids ("no new trigger kind, no second
+  matcher"). DEVIATION: the match fires through `trigger_sources.registry.emit`, the existing single
+  app-source ingestion point, which namespaces it to `app:watched-sources:SourceQueryMatched`, fences
+  the text at origin and reaches `event_triggers`. The query id rides `meta.query_id` — exactly where
+  the inbox bridge puts `sender`/`address`. A user subscribes with an ordinary `AppEvent` trigger whose
+  `event_glob` matches that name; `test_a_subscribed_trigger_fires_END_TO_END` drives every link.
+  The `app:` prefix on a core-contributed source is a naming wart worth an owner call later; it is not
+  worth a fourth vocabulary now.
+  **Only `SourceQueryMatched` is declared to triggers.** `SourceItemIngested`/`SourcePollCompleted`
+  stay on the spool: declaring an event in the browsable vocabulary that never reaches the bus is the
+  "declared kind without a runtime" defect, and bridging a per-item event to triggers is a firehose
+  this atom was not asked to open.
+  **Matching reads the STRUCTURAL row, never the event payload.** The payload's title is fenced, and
+  §6.1 says payload content never participates in pattern matching. A matcher that stripped a fence to
+  look inside it would be a fence-break with extra steps, so saved queries read title/url/content as
+  the provider emitted them and the digest re-resolves each item from the store.
+  **The digest is a callable, NOT a bundled workflow template.** There is no bundled morning-digest
+  template on `main` (no `templates/` dir under `workflows/`, no "morning" template anywhere), and
+  inventing a template format for one consumer would have put `fence_untrusted` inside a
+  user-editable prompt string — a security control a template author could delete. A clock trigger
+  calls `run_morning_digest`. Synthesis is `one_shot_completion(use_case="background")`, the item is
+  ONE `note`/`digest` row, and the notification goes through `DashboardState.notify` →
+  `notification_allowed()` with the gate NOT re-implemented.
+  🔴 **The digest notification uses `notification_kinds.INFO`, not a dedicated kind.** A
+  `source_digest` kind belongs in `notification_kinds.py`'s registry (plus its inventory ratchets),
+  which is outside this atom's file fence; `INFO` is registered, ranks correctly and is configurable
+  today. **Follow-up: a dedicated kind alongside the Sources UI (`WS-9`/`WS-10`).**
+  **SC#8 is asserted adversarially, not structurally.** A real injection payload rides scraped
+  CONTENT through the real poll path into the real prompt; the guard asserts it appears exactly once
+  and only inside `<untrusted_content source=source:… source_type=watched_source
+  transformation_path=digest>`, that the instruction giving the fence meaning precedes every block,
+  and that a payload carrying the CLOSE marker cannot end the fence early (exactly one close marker
+  survives). Containment is asserted too: the run's only writes are one note and one notification, so
+  a model that obeyed the injection could change the digest's prose and nothing else.
+  **Falsified twice.** (i) `_emit_ingested`'s event name mutated to `SourceItemIngestedX` (grepped
+  back) → 5 reds in `test_watched_sources_streams.py` including the two count assertions; restored by
+  `cp` from `/tmp`. (ii) `fence_item` short-circuited to return the raw body (grepped back) → both
+  injection guards red (`substring not found` on the fence attributes, and the payload outside the
+  span); restored by `cp`. Every guard carries a vacuity assertion: the deduped second poll emits
+  ZERO further ingested events, the two `new_count` values DIFFER, two of three items fail the saved
+  query, `mute_all` suppresses the digest notification, and the exploding-LLM patch is proven to fire.
+  **A frozen test clock was a measured false green.** `_due_delay` compares against the store's
+  wall-clock `last_poll_at`, so a clock at `t=1_000_000` leaves every polled source permanently "not
+  due" and every later `tick()` a silent no-op that reads as "no second event emitted". The clock is
+  real-time based and advances past the SOURCE ROW's own `poll_interval_secs` (3600 from
+  `create_source`, which wins over the config default) — a 60s nudge was not enough.
+  No `web/` change, so no FE gate. No new config field, enum, trigger kind or `_EDITABLE_CONFIG`
+  entry. Three new state files under `<home>/sources/`: `events.jsonl`, `saved_queries.json`,
+  `digest_cursor.json` — all resolved per call through `config_dir()`, never import-bound, and every
+  test asserts the redirect lands under `tmp_path`.
+  **CHANGELOG: no.** Nothing here has a user-reachable entry point yet: saved queries have no UI
+  (`WS-9`/`WS-10` own the Sources section) and `run_morning_digest` has no bundled clock trigger
+  pointing at it. The events + fence are the substrate the next atoms consume. **This atom is
+  therefore PARTIAL in one respect worth recording: the digest is invocable and fully tested, but
+  nothing in the shipped product calls it yet** — a bundled clock trigger (or a template that
+  references it) is the missing user-reachable half and belongs with the Sources UI.
