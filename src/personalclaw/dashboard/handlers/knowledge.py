@@ -18,6 +18,7 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
     from personalclaw.knowledge.restructure import RestructureError
 
 from personalclaw.dashboard.sse import stream_response
+from personalclaw.http_errors import json_error
 from personalclaw.knowledge.artifact_ingest import ARTIFACT_ITEM_TYPE, ARTIFACT_SOURCE_PROVIDER
 from personalclaw.knowledge.embedder import create_embedder_from_config, floats_to_bytes
 from personalclaw.knowledge.llm_pool import LLMPool
@@ -2349,7 +2350,7 @@ async def library_home(request: web.Request) -> web.Response:
     try:
         limit = min(_HOME_SHELF_MAX, max(1, int(request.query.get("limit", _HOME_SHELF_LIMIT))))
     except ValueError:
-        return web.json_response({"error": "invalid limit"}, status=400)
+        return json_error("invalid_limit", status=400)
     collections = []
     for coll in store.list_collections():
         count, capped = _collection_count(store, coll)
