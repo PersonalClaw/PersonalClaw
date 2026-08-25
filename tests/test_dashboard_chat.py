@@ -2885,86 +2885,6 @@ class TestApiChatAgentPassing:
             mock_emit.assert_called_once_with("session-r", "new-agent", outcome="denied_running")
 
 
-class TestStageFailureEscalation:
-    """Test that stage failures trigger human question logic (escalation)."""
-
-    def test_single_failure_allows_retry(self):
-        """A single task failure does NOT trigger escalation — retry is allowed."""
-        from personalclaw.context_management import OrchestrationTracker
-
-        tracker = OrchestrationTracker()
-        tracker.record_round(1)
-        # First failure: should not escalate
-        hit_limit = tracker.record_failure("task-a")
-        assert not hit_limit
-        assert not tracker.has_escalated
-        assert tracker.failure_count("task-a") == 1
-
-    def test_repeated_failures_trigger_escalation(self):
-        """After MAX_TASK_FAILURES (3), has_escalated becomes True."""
-        from personalclaw.context_management import (
-            MAX_TASK_FAILURES,
-            OrchestrationTracker,
-        )
-
-        tracker = OrchestrationTracker()
-        tracker.record_round(1)
-        for i in range(MAX_TASK_FAILURES - 1):
-            assert not tracker.record_failure("task-a")
-        # The Nth failure triggers escalation
-        assert tracker.record_failure("task-a")
-        assert tracker.has_escalated
-
-    def test_success_resets_failure_count(self):
-        """record_success clears the failure counter for a task."""
-        from personalclaw.context_management import OrchestrationTracker
-
-        tracker = OrchestrationTracker()
-        tracker.record_round(1)
-        tracker.record_failure("task-a")
-        tracker.record_failure("task-a")
-        assert tracker.failure_count("task-a") == 2
-        tracker.record_success("task-a")
-        assert tracker.failure_count("task-a") == 0
-        assert not tracker.has_escalated
-
-    def test_stage_round_limit_triggers_escalation(self):
-        """After MAX_STAGE_ROUNDS (3) rounds in a stage, has_escalated is True."""
-        from personalclaw.context_management import MAX_STAGE_ROUNDS, OrchestrationTracker
-
-        tracker = OrchestrationTracker()
-        for i in range(MAX_STAGE_ROUNDS):
-            tracker.record_round(1)
-        assert tracker.has_escalated
-
-    def test_reset_after_guidance_clears_rounds(self):
-        """User guidance resets round counters, allowing retry."""
-        from personalclaw.context_management import MAX_STAGE_ROUNDS, OrchestrationTracker
-
-        tracker = OrchestrationTracker()
-        for i in range(MAX_STAGE_ROUNDS):
-            tracker.record_round(1)
-        assert tracker.has_escalated
-        tracker.reset_after_guidance()
-        assert not tracker.has_escalated
-        assert tracker.round_count(1) == 0
-
-    def test_force_fail_after_max_escalations(self):
-        """After MAX_STAGE_ESCALATIONS resets, stage is force-failed."""
-        from personalclaw.context_management import (
-            MAX_STAGE_ESCALATIONS,
-            MAX_STAGE_ROUNDS,
-            OrchestrationTracker,
-        )
-
-        tracker = OrchestrationTracker()
-        for _esc in range(MAX_STAGE_ESCALATIONS):
-            for _r in range(MAX_STAGE_ROUNDS):
-                tracker.record_round(1)
-            tracker.reset_after_guidance()
-        assert tracker.is_force_failed(1)
-
-
 # ── Tests: prompt-busy session recovery ──
 
 
@@ -4054,23 +3974,6 @@ class TestFolderAssignmentPersistence:
 
         meta = json.loads(path.read_text().split("\n")[0])
         assert meta.get("folder_id") == "f-force"
-
-
-class TestNewPlanResetsAutoRun:
-    """Regression: _auto_run must reset when a new plan is detected."""
-
-    def test_has_plan_resets_auto_run(self):
-        """When LLM generates a new plan mid-execution, auto_run must be cleared."""
-        from personalclaw.dashboard.chat import _reset_auto_run_for_new_plan
-
-        session = _ChatSession("plan-reset")
-        session._auto_run = True
-        session._orch_tracker = MagicMock()
-
-        _reset_auto_run_for_new_plan(session)
-
-        assert session._auto_run is False, "_auto_run must be reset for new plan"
-        assert session._orch_tracker is None
 
 
 # ── Regenerate + variant switching ──

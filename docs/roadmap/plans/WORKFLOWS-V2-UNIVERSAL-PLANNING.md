@@ -1176,3 +1176,36 @@ session. It lands there now.
   "nine modules" are `loop/classify.py`, `loop/code_classify.py`, `loop/plan_walkthrough.py`, the four
   `loop/*_plan_briefs.py`, **and `planning/runner.py` + `planning/session.py`** — the last two are named in the
   `done_when` and are what make this a package-structure change rather than seven file deletions.
+- **2026-08-24 — DONE (`WF2UNI-12`, row-1 residue CLOSED as a clean break). The atom stays `todo`: only row 1's
+  residue was closed, clause 2 remains BLOCKED per the entry above.** Every fact in the 2026-08-17 DISCOVERY was
+  re-measured against `origin/main` = `0d90f5ab` rather than inherited. **The claim HELD, with drifted line numbers
+  and two under-counts.** `_auto_run = True` appears in **0** places under `src/` or `web/src/` — the only assignment
+  of `True` anywhere is `tests/test_dashboard_chat.py:4067`, a test. `_orch_tracker` is assigned `None` at
+  `state.py:381` (the DISCOVERY said `:370`) and, unrecorded before, also at `chat_title.py:55`; no site anywhere
+  assigns it a tracker. So the two consumer blocks and the SEL emission were unreachable. Corrections to the
+  DISCOVERY: (a) `chat_handlers.py` had **two** dead tracker consumers, not one — the stop-detection block at `:283`
+  (recorded as `:259`) *and* an unrecorded `reset_after_guidance()` block at `:309`; (b) the SEL emission sat at
+  `:1133`, not `:1045`; (c) `_reset_auto_run_for_new_plan` (`chat_title.py:46`) had **zero** callers in `src/` at all
+  — only a re-export import in `chat.py:128` and one test — making it a fully dead function, and it held the only
+  `stage_*_result.md` glob in the repo (nothing writes those files). Confirmed inert from the frontend: the seven
+  symbols return **0** hits across `web/src/`. `auto_run_stopped` had exactly one emission site and no registry,
+  ratchet or inventory entry, so no expected-count moves with it. **Deleted:** `OrchestrationTracker` and
+  `MAX_TASK_FAILURES`/`MAX_STAGE_ROUNDS`/`MAX_STAGE_ESCALATIONS` (`context_management.py`); both tracker-gated blocks
+  in `api_chat_send`; the `auto_run_stopped` SEL emission plus its now-stranded `SecurityEvent` import; the two dead
+  `session._auto_run = False` resets on the stop and interrupt paths; `_reset_auto_run_for_new_plan` and its
+  `chat.py` re-export plus the then-stranded `config_dir` import; and the `_orch_tracker`/`_auto_run` `_ChatSession`
+  slots and initializers. Runtime sweep for all seven symbols over `src/ tests/ web/src/` went **86 to 0**; repo-wide
+  the only survivors are this plan's own prose. Net -404/+1 over 7 files; `web/` untouched. **Gate:** `make lint`
+  PASS (black 2031 files, isort, flake8, mypy 1001 files clean) - targeted `pytest --no-cov` over the 2 touched
+  suites plus 7 that exercise the send/stop/interrupt paths and `_ChatSession.__slots__`: **471 passed, 0 failed** -
+  `scripts/gate_report.py` **all 6 gates PASS** (`inert-surface` included). **Falsification, two parts.**
+  Unreachability was proven dynamically, not just statically: the pre-deletion `chat_handlers.py` and `state.py`
+  were restored from file copies and `raise AssertionError` inserted as the first statement of all three deleted
+  branch bodies (grepped back at `:290`/`:311`/`:1131` to confirm the insertion took); the 7 chat-path suites then
+  ran **458 passed with 0 probe hits**, so no test can reach any of the three. Coverage was proven real by mutating
+  a surviving live line adjacent to the deletion — `api_chat_stop`'s `session._stop_state = "soft_pending"` (line
+  1092, the line the deleted `_was_auto` read followed) to `"idle"`, grepped back as `# MUTANT` and `ast.parse`-d to
+  rule out a collection error: **3 failed, 336 passed**, red at
+  `TestStopTurnSessionState::test_stop_turn_session_state_transitions_soft` (`assert ['idle'] == ['soft_pending']`)
+  and `::test_stop_event_replace_in_place`. Both restores were `cp` from a `/tmp` copy using the literal path, never
+  `git checkout`, verified by md5 match and an empty `git status`; the re-run returned **339 passed**.
