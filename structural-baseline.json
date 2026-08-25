@@ -365,11 +365,10 @@
         ]
       },
       "src/personalclaw/llm/catalog.py": {
-        "edges": 3,
+        "edges": 2,
         "violations": [
           "core-must-not-import-its-own-published-facade -> personalclaw.sdk.model",
-          "core-must-not-import-its-own-published-facade -> personalclaw.sdk.net",
-          "core-must-not-import-its-own-published-facade -> personalclaw.sdk.provider_helpers"
+          "core-must-not-import-its-own-published-facade -> personalclaw.sdk.net"
         ]
       },
       "src/personalclaw/mcp_core.py": {
@@ -391,12 +390,6 @@
           "core-must-not-import-the-http-surface -> personalclaw.dashboard.handlers.core"
         ]
       },
-      "src/personalclaw/providers/loader.py": {
-        "edges": 1,
-        "violations": [
-          "core-must-not-import-its-own-published-facade -> personalclaw.sdk.provider_helpers"
-        ]
-      },
       "src/personalclaw/providers/routes.py": {
         "edges": 1,
         "violations": [
@@ -410,10 +403,9 @@
         ]
       },
       "src/personalclaw/routing/rates.py": {
-        "edges": 2,
+        "edges": 1,
         "violations": [
-          "core-must-not-import-its-own-published-facade -> personalclaw.sdk.model",
-          "core-must-not-import-its-own-published-facade -> personalclaw.sdk.provider_helpers"
+          "core-must-not-import-its-own-published-facade -> personalclaw.sdk.model"
         ]
       },
       "src/personalclaw/sdk/channel.py": {
@@ -493,12 +485,12 @@
     ],
     "totals": {
       "by_rule": {
-        "core-must-not-import-its-own-published-facade": 10,
+        "core-must-not-import-its-own-published-facade": 7,
         "core-must-not-import-the-http-surface": 57,
         "ledger-is-a-leaf": 0
       },
-      "edges": 67,
-      "files": 34
+      "edges": 64,
+      "files": 33
     }
   },
   "structural-size": {

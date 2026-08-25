@@ -215,7 +215,7 @@ def _app_default_rate(provider: str, model: str) -> ModelRate | None:
     visible on the next call."""
     try:
         import personalclaw.sdk.model  # noqa: F401 — package import order (sdk.model first)
-        from personalclaw.sdk.provider_helpers import spec_pricing
+        from personalclaw.llm.branded_specs import spec_pricing
 
         table = spec_pricing(provider)
     except Exception:  # noqa: BLE001 — a pricing lookup must never break a call
