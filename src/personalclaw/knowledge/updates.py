@@ -417,4 +417,16 @@ async def regenerate_synthesis(store: Any, item_id: str, *, completion: Any = No
             f"{SYNTHESIS_USE_CASE} use case in Settings → Models"
         )
 
-    return await propose_update(store, item_id, content=text, auto_accept=False)
+    # Carry the attribution the recompute actually used. Without this the gate at
+    # `semantics.check_persist` refuses every synthesized recompile — correctly, because an
+    # unattributed synthesis "reads as fact on retrieval" — and the refusal is invisible until
+    # a `kind` is set on the row. The marker rows in `item_citations` are the document's own
+    # declared provenance; the stored form is `"<marker>:<item_id>"`, the shape
+    # `knowledge_persist_provider` writes as `cited.stored`. Derived from the SAME rows
+    # `synthesis_sources` re-read, so the proposal cannot claim a source the prompt never saw.
+    cited = [
+        f"{int(c.get('marker') or 0)}:{str(c.get('source_item_id') or '')}"
+        for c in store.item_citations(item_id)
+        if str(c.get("source_item_id") or "")
+    ]
+    return await propose_update(store, item_id, content=text, citations=cited, auto_accept=False)
