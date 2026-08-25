@@ -31,6 +31,7 @@ from __future__ import annotations
 import logging
 import re
 import time
+from dataclasses import dataclass
 
 from personalclaw.guardrails.audit import caller_scope
 from personalclaw.security import fence_untrusted
@@ -110,6 +111,121 @@ def is_environment_failure_claim(text: str) -> bool:
     lesson/skill, or the agent learns to refuse valid actions later.
     """
     return bool(text and _ENV_FAILURE_RE.search(text))
+
+
+# ── Stumble detection (LEARNING-VISIBILITY S3) ───────────────────────────────
+#
+# A stumble is a turn where a skill was LOADED and the turn still went wrong. It is the
+# trigger for a refine proposal, and it is a CLASSIFIER — so what it declines to fire on is
+# as much of the design as what it fires on. Stated plainly:
+#
+#   FIRES on, and only on, three observable signals:
+#     * `correction`     — the user pushed back on the previous turn (`is_correction_signal`).
+#     * `failure_retry`  — one tool FAILED and the same tool was invoked again afterwards.
+#                          The retry is the evidence: a single failure is a fact of life, a
+#                          failure the agent had to work around is a gap in the procedure.
+#     * `rejection`      — the user DENIED an action the agent asked to take (a `denied`
+#                          tool outcome). The strongest signal of the three: it is the user
+#                          saying no to the skill's own instruction, not to its wording.
+#
+#   DELIBERATELY IGNORES (each of these is a false positive this classifier must not produce):
+#     * Any turn with no skill loaded — there is nothing to refine, and inventing a target
+#       would file a refine proposal against a skill that had no part in the turn.
+#     * Any turn whose text reads as an ENVIRONMENT failure (`is_environment_failure_claim`,
+#       either side). A flaky network must never harden into a refinement, which is the same
+#       guardrail the ladder applies at its own entry.
+#     * A tool that failed and was never retried — an abandoned step is not a worked-around
+#       procedure gap, and treating every red tool call as a stumble would fire on most turns.
+#     * A `denied` outcome for a tool that also succeeded later in the turn: the user steered
+#       rather than refused, and the correction (if any) is the signal that carries it.
+#     * Mid-sentence negations ("…do not use tools"), which `is_correction_signal` already
+#       excludes by requiring directional negations to OPEN the message.
+#
+# It never calls a model. A stumble is decided from the turn's own record, so the refinement
+# arm has a full no-model floor: it degrades to *not proposing*, never to guessing.
+
+STUMBLE_TRIGGERS = ("correction", "failure_retry", "rejection")
+
+
+@dataclass(frozen=True)
+class StumbleSignal:
+    """A turn that used a skill and still went wrong.
+
+    ``trigger`` is one of :data:`STUMBLE_TRIGGERS`; ``detail`` is a short, non-user-text
+    fragment for the log (a tool name, or the empty string) — never the user's message, so a
+    log line can be quoted in a bug report without carrying session content.
+    """
+
+    trigger: str
+    detail: str = ""
+
+
+def detect_stumble(
+    *,
+    user_message: str,
+    assistant_text: str,
+    used_skills: list[str],
+    tool_outcomes: list[tuple[str, str]] | None = None,
+) -> StumbleSignal | None:
+    """Classify this turn as a stumble, or ``None``. See the block comment above for the
+    full fires-on / ignores contract.
+
+    ``used_skills`` must be the skills whose content actually REACHED the prompt (the
+    ``ADMITTED``/``REDUCED`` allocation, which is what ``chat_runner`` already narrows for
+    the LV-2 chip) — not the candidate index. The candidate list is every indexed skill, so
+    passing it would make "a skill was loaded" true on every turn.
+
+    ``tool_outcomes`` is the turn's ``(tool, outcome)`` sequence in ORDER, as drained from
+    the provider. Order is load-bearing: `failure_retry` is a failure *followed by* another
+    call to the same tool, and the same multiset with the calls reversed is a success the
+    agent then broke, which is not a procedure gap.
+    """
+    if not used_skills:
+        return None
+    # Same guardrail, same predicate, both sides — an env failure can no more refine a skill
+    # than it can teach a lesson.
+    if is_environment_failure_claim(user_message) or is_environment_failure_claim(assistant_text):
+        return None
+    outcomes = list(tool_outcomes or [])
+    if is_correction_signal(user_message):
+        return StumbleSignal("correction")
+    denied = _denied_without_recovery(outcomes)
+    if denied:
+        return StumbleSignal("rejection", denied)
+    retried = _failed_then_retried(outcomes)
+    if retried:
+        return StumbleSignal("failure_retry", retried)
+    return None
+
+
+def _failed_then_retried(outcomes: list[tuple[str, str]]) -> str:
+    """The first tool that FAILED and was then invoked again, or ``""``.
+
+    The retry is what makes this a signal rather than noise: it says the agent had to work
+    around the procedure it was given. A failure at the very end of the turn — nothing after
+    it — is an abandoned step, and returns ``""``.
+    """
+    for i, (tool, outcome) in enumerate(outcomes):
+        if outcome != "failed":
+            continue
+        if any(later == tool for later, _o in outcomes[i + 1 :]):
+            return tool
+    return ""
+
+
+def _denied_without_recovery(outcomes: list[tuple[str, str]]) -> str:
+    """The first tool the user DENIED and that never succeeded afterwards, or ``""``.
+
+    A denial the agent recovered from (the same tool succeeding later) is the user steering a
+    parameter, not refusing the procedure — so it is not a stumble. Only a denial that stood
+    is the user saying no to what the skill told the agent to do.
+    """
+    for i, (tool, outcome) in enumerate(outcomes):
+        if outcome != "denied":
+            continue
+        if not any(later == tool and o == "success" for later, o in outcomes[i + 1 :]):
+            return tool
+    return ""
 
 
 def record_procedural_outcomes(service, outcomes, *, scope_ref: str | None = None) -> int:

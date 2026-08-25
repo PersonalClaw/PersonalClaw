@@ -56,8 +56,14 @@ function badgeTokens(): { file: string; token: string; uppercased: boolean }[] {
   return hits
 }
 
-/** Lowercase badge tokens with no prose counterpart in the app — deliberately left as-is. */
-const EXEMPT = new Set(['esc', 'manual', 'suppressed', 'refine', 'multi-instance', 'span', 'div'])
+/** Lowercase badge tokens with no prose counterpart in the app — deliberately left as-is.
+ *
+ *  `refine` LEFT this list (LV-5), and it left by converging, not by being excused: the skill
+ *  proposal pill no longer renders the bare `kind` value at all. It renders "Refine", plus the
+ *  stumble that produced the proposal ("Refine · you corrected it") — so there is no lowercase
+ *  machine token on screen for the exemption to describe. This rail's own honesty check is what
+ *  noticed; that is the check doing its job, so the entry was removed rather than the check. */
+const EXEMPT = new Set(['esc', 'manual', 'suppressed', 'multi-instance', 'span', 'div'])
 
 /** The three concepts whose prose spelling already ships. */
 const CONVERGED: [string, string][] = [

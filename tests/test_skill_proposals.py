@@ -71,8 +71,9 @@ def test_source_excerpt_is_fenced(home):
 
 def test_accept_writes_live_skill_and_clears(home):
     p = _enqueue()
-    name = proposals.accept(p.id)
-    assert name == "auto/release-flow"
+    result = proposals.accept(p.id)
+    # version 0: a `kind="new"` accept CREATES a skill, it does not version one.
+    assert (result.name, result.version) == ("auto/release-flow", 0)
     # It's now a real (live) auto skill…
     assert SkillsLoader(install_builtins=False).load_skill("auto/release-flow") is not None
     # …and the proposal is gone from the queue.
@@ -105,8 +106,8 @@ def test_accept_refine_overlays_target_without_mutating_it(home):
         description="Always link the design doc",
         procedure_md="When creating a task, attach the design doc link.",
     )
-    name = proposals.accept(p.id)
-    assert name == "task-and-project"
+    result = proposals.accept(p.id)
+    assert (result.name, result.version) == ("task-and-project", 1)
     # The base file is UNCHANGED — the overlay never rewrites it.
     assert target.read_text(encoding="utf-8") == original
     # …but a load merges the overlay in, so the refinement is live.
@@ -127,8 +128,9 @@ def test_accept_refine_missing_target_falls_back_to_create(home):
         refine_target="no-such-skill",
         procedure_md="steps for a skill whose target vanished",
     )
-    name = proposals.accept(p.id)
-    assert name == "auto/gone-target"
+    result = proposals.accept(p.id)
+    # The target vanished, so this fell back to create-new: no version was written.
+    assert (result.name, result.version) == ("auto/gone-target", 0)
     assert SkillsLoader(install_builtins=False).load_skill("auto/gone-target") is not None
     assert proposals.list_pending() == []
 
