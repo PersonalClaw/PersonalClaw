@@ -400,6 +400,41 @@ class TestBranch:
         r = await dispatch_branch(_n({"kind": "branch", "id": "r", "cases": {}}), _ctx())
         assert r.state == InstanceState.FAILED
 
+    BOOL_NODE = {
+        "kind": "branch",
+        "id": "r",
+        "config": {"on": "{{inputs.flag}}", "enum": ["true", "false"]},
+        "cases": {
+            "true": {"kind": "transform", "id": "ct", "config": {"expr": "1"}},
+            "false": {"kind": "transform", "id": "cf", "config": {"expr": "0"}},
+        },
+    }
+
+    @pytest.mark.parametrize("value,case", [(True, "true"), (False, "false")])
+    async def test_a_boolean_selector_routes_to_the_json_case_it_was_written_as(
+        self, value: bool, case: str
+    ) -> None:
+        """A template is JSON, so `true`/`false` is the ONLY spelling an author can write.
+
+        `str(True)` is `"True"`, which matched neither case — so a branch routing on a real
+        boolean was dead in BOTH directions, not wrong in one. Measured on the shipped `self-qa`
+        template: a user-impacting commit triaged correctly and then died at the next node.
+        """
+        r = await dispatch_branch(_n(self.BOOL_NODE), _ctx(inputs={"flag": value}))
+        assert r.state == InstanceState.DONE
+        assert r.output == {"case": case}
+
+    async def test_the_string_True_is_NOT_folded_into_the_true_case(self) -> None:
+        """Vacuity floor for the normalisation: it is `bool`-only, on purpose.
+
+        Folding the string `"True"` in as well would make `"True"` and `"true"` one case and
+        silently merge two branches an author wrote as distinct — so this must still be a
+        routing failure, exactly as it was before booleans were normalised.
+        """
+        r = await dispatch_branch(_n(self.BOOL_NODE), _ctx(inputs={"flag": "True"}))
+        assert r.state == InstanceState.FAILED
+        assert r.failure.failure_class == FailureClass.USER
+
 
 class TestAction:
     class _Result:

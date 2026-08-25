@@ -284,6 +284,42 @@ class TestConventions:
                 "nodes.triage.output" in str((b.config or {}).get("on", "")) for b in branches
             ), f"{name}: no branch reads the triage verdict"
 
+    def test_every_boolean_branch_in_the_library_is_selectable_by_the_engine(self) -> None:
+        """A JSON template can only spell a boolean case `true`/`false`; Python spells the value
+        `True`/`False`. The engine used to key the selector on `str(value)`, so every branch here
+        failed "matched no case" for BOTH values — dead in both directions, and invisible to a
+        declarative check that only asserted the cases were PRESENT in the file.
+
+        Two floors, because this rail's failure mode is looking clean:
+
+        * the census must be NON-EMPTY, or a rename of `enum` silently makes it vacuous;
+        * `str(True)` must NOT be a declared case, which is what makes `case_key`'s normalisation
+          load-bearing rather than incidental — if a template ever spelled its cases `"True"`,
+          this rail would pass while telling us nothing.
+        """
+        from personalclaw.workflows.tick import case_key
+
+        census: list[tuple[str, str]] = []
+        for name in template_names():
+            root = Node.from_dict(_pipeline(_raw(name))["root"])
+            for _p, node in walk(root):
+                if node.kind.value != "branch":
+                    continue
+                enum = (node.config or {}).get("enum")
+                if not isinstance(enum, list) or {str(v) for v in enum} != {"true", "false"}:
+                    continue
+                census.append((name, node.id))
+                for value in (True, False):
+                    assert case_key(value) in node.cases, (
+                        f"{name}.{node.id}: the engine keys a {value!r} selector as "
+                        f"{case_key(value)!r}, which is not one of {sorted(node.cases)}"
+                    )
+                assert str(True) not in node.cases, (
+                    f"{name}.{node.id} spells a case {str(True)!r} — Python's repr, not JSON's; "
+                    "that would make this rail vacuous"
+                )
+        assert census, "no boolean-enum branch found: this rail is measuring nothing"
+
     def test_a_verification_gate_is_engine_executed_not_model_declared(self) -> None:
         """The code template's gate runs a COMMAND. A gate that asked the model whether it was
         done would make done-ness self-reported, which is the failure the gate exists for."""

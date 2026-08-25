@@ -722,11 +722,32 @@ class TestClauseThreeScenarioDrivesTheUI:
 
     **What is asserted here is the template contract, not a UI drive.** Executing this clause
     end-to-end needs a reachable Chrome DevTools MCP server and a running gateway built from the
-    commit under test; that was not available in this environment, and no test here pretends
-    otherwise. What these tests do enforce is every property of the shipped template that the
-    clause depends on — the routing, the MCP binding, the state-mutation requirement, and the
-    engine-enforced proof gate — so the parts that CAN be checked are checked rather than
-    assumed.
+    commit under test. Both were obtained on 2026-08-24 and the clause STILL does not close — the
+    two things in the way are recorded here so the next session does not re-derive them:
+
+    1. **FIXED.** `route` could select neither of its own cases, because the engine keyed a
+       boolean selector as `str(True)` → `"True"` and a JSON template can only spell the case
+       `true`. So the entire scenario subtree was unreachable from a real run while the
+       declarative assertion below passed. `test_the_ENGINE_selects_that_case_...` is the rail
+       that would have caught it, and now does.
+    2. **NOT this atom's, and NOT fixed here.** A `stage` node's spawn completion has no
+       consumer: `dispatch_stage` returns RUNNING carrying `{"subagent_id": ...}` and nothing in
+       the repo reads that key, while `_apply` pops the instance out of `_inflight` — so neither
+       the stall clock nor the total timeout can see it either. Measured: `scenario-gen`'s
+       subagent reported `done: True, error: ""` and the node was still RUNNING with no
+       `step_completed` fifteen minutes later. That is the engine's stage seam, not the
+       companion's, and it blocks every template with a stage node.
+
+    What these tests do enforce is every property of the shipped template that the clause depends
+    on — the routing (now through the real dispatcher), the MCP binding, the state-mutation
+    requirement, and the engine-enforced proof gate.
+
+    The MCP half of the clause IS satisfied and was measured separately: with `chrome-devtools`
+    in `$PERSONALCLAW_HOME/mcp.json` and the `mcp-tools` app installed, the running gateway's
+    `/api/tools` lists all 29 `mcp/chrome-devtools/*` tools, so a stage subagent can drive the
+    browser. Nothing declares or checks that dependency, which is its own gap — the template
+    declares `git`/`ffmpeg` under `metadata.requirements.binaries` and preflight has no
+    equivalent for an MCP server.
     """
 
     @staticmethod
@@ -764,6 +785,60 @@ class TestClauseThreeScenarioDrivesTheUI:
         assert "nodes.triage.output.impactful" in impactful_case["config"]["items"]
         for node_id in ("scenario-gen", "execute", "evidence", "file-findings"):
             assert node_id in nodes, f"the scenario subtree has no {node_id} node"
+
+    @pytest.mark.parametrize(
+        "has_impactful,case", [(True, "true"), (False, "false")], ids=["impactful", "skip-only"]
+    )
+    def test_the_ENGINE_selects_that_case_not_just_the_JSON_declaring_it(
+        self, has_impactful: bool, case: str
+    ):
+        """The case above being PRESENT in the spec is not the same as the engine taking it.
+
+        Measured: it did not. `triage` returns a real Python `bool`, the engine keyed the selector
+        on `str(value)` → `"True"`, and a template written in JSON can only spell its cases
+        `true`/`false` — so `route` failed "matched no case" for BOTH verdicts and the whole
+        scenario subtree was unreachable from a real run. The declarative assertion above passed
+        the entire time. So this drives the SHIPPED `route` node through the SHIPPED dispatcher
+        with the SHIPPED provider's output shape.
+        """
+        from personalclaw.workflows.bindings import BindingContext
+        from personalclaw.workflows.engine import dispatch_branch
+        from personalclaw.workflows.models import InstanceState, Node
+
+        route = Node.from_dict(self._nodes(self._spec())["route"])
+        verdict = CommitTriage(sha="a" * 40, impact=IMPACT_USER, rationale="shipped code changed")
+        output = {
+            "has_impactful": has_impactful,
+            "impactful": [verdict.to_dict()] if has_impactful else [],
+            "skipped": [] if has_impactful else [verdict.to_dict()],
+        }
+        result = asyncio.run(
+            dispatch_branch(route, BindingContext(node_outputs={"triage": output}))
+        )
+        assert result.state == InstanceState.DONE, (
+            f"the shipped route branch could not select its own {case!r} case: "
+            f"{result.failure and result.failure.cause_plain}"
+        )
+        assert result.output == {"case": case}
+
+    def test_a_stringly_typed_has_impactful_is_NOT_quietly_accepted(self):
+        """Vacuity floor for the test above: it must be the BOOLEAN that routes.
+
+        If the rail passed for the string `"True"` too it would no longer be measuring the
+        normalisation that made the branch reachable — it would be measuring a
+        case-insensitive match that also merges two distinct cases.
+        """
+        from personalclaw.workflows.bindings import BindingContext
+        from personalclaw.workflows.engine import dispatch_branch
+        from personalclaw.workflows.models import InstanceState, Node
+
+        route = Node.from_dict(self._nodes(self._spec())["route"])
+        result = asyncio.run(
+            dispatch_branch(
+                route, BindingContext(node_outputs={"triage": {"has_impactful": "True"}})
+            )
+        )
+        assert result.state == InstanceState.FAILED
 
     def test_the_execute_stage_binds_chrome_devtools_mcp(self):
         """The clause names the driver. A stage that does not say so drives nothing."""
