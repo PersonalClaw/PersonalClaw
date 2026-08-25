@@ -1235,7 +1235,7 @@ def _scanner_gate_call_sites(token: str) -> set[tuple[str, str]]:
     return sites
 
 
-def test_the_install_scanner_gate_has_exactly_two_call_sites():
+def test_the_install_scanner_gate_has_exactly_three_call_sites():
     """No new install path — pinned by census, not by reading a diff.
 
     ``default_scanner.scan(`` is the supply-chain gate over a STAGED tree. The whole

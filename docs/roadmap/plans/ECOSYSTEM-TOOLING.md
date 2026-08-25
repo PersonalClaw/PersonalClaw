@@ -401,3 +401,65 @@ PR validation workflow: manifest fetch+parse (core `apps/manifest.py`), repo liv
   from the bundled apps source). **Owner decision, not an atom call:** `registry_source_enabled`
   defaults to `True` (`config/loader.py:4938`), so until that repo exists every fresh install carries a
   default source that 404s. Ship order (publish repo before/with the flag default) is an owner call.
+
+## Execution log — `ET-4` (default-source seeding) — 2026-08-25
+
+- [2026-08-25][ET-4] **Three of five clauses were already met and railed on main** — verified against code,
+  not taken from the plan header. Seeding: `catalog.py:631 seed_default_git_sources`, wired at
+  `server.py:1490` (`app.on_startup.append(_app_sources_seed_startup)`), flag at `loader.py:1199-1200`,
+  with the **call site** railed by `tests/test_gateway_boot_app_source_seed.py` (boots the real gateway on
+  an isolated home). Removable-default UI: `AppsSection.tsx:799-800`, railed with vacuity by
+  `web/src/pages/apps/sourceLabels.test.tsx`. Removal surviving restart: that same boot test boots twice
+  on one home and a real `DELETE /api/apps/sources` survives the second boot.
+- [2026-08-25][ET-4] **Added the missing rail for the negative clause.** "The scanner gate at install is
+  unchanged (no new install path)" had been proved only behaviourally, by driving one route, plus a
+  source-text scan of the seeder — neither of which can stop a **second** ungated route from being added
+  later. Now an AST census of `default_scanner.scan(` keyed on **enclosing function** pins exactly three
+  sites: `app_manager.install`, `app_manager.update`, and `supply_chain.scan_dir` (whose only production
+  caller is `skills/marketplace.py:430` — a skill, not an app). The census found the third; an expectation
+  of two was wrong, which is precisely why it is a census and not a grep. Vacuity: the walker asserts it
+  visited >100 files, and a control census over an absent token must return `set()`.
+- [2026-08-25][ET-4] **Falsified in BOTH directions.** Adding a fourth site (`_registry_fast_install`
+  calling the scanner) reds and the failure *names* the new site. Removing an existing one — replacing the
+  update path's `default_scanner.scan(staged, tier)` with an ungated stub — also reds
+  (`assert {...} == {...}`). The removal direction is the one that matters more, since a deleted gate is an
+  outage rather than drift, and it was not covered by the first pass.
+- [2026-08-25][ET-4] **Renamed `test_the_install_scanner_gate_has_exactly_two_call_sites` to
+  `..._three_call_sites`.** It asserted three while naming two — a stale name on a census test is a trap
+  for the next reader, who will believe the name over the assertion.
+- [2026-08-25][ET-4] **UNMET clause, and the whole remaining distance is ONE FILENAME.** "A fresh dev home
+  lists registry apps in the Store" fails on three re-measured blockers: (1)
+  `git ls-remote https://github.com/PersonalClaw/registry.git` → `remote: Repository not found` (owner
+  task 1); (2) `scratch/registry/registry.json` is `{"apps": []}` until `ET-6`; (3) core reads
+  `app-registry.json` (`_REGISTRY_FILENAME`, `catalog.py:197`) while ET-3 publishes `registry.json`.
+  Blocker 3 is now **measured, not inferred**: a local git source publishing one schema-valid row lists
+  **1 app** when its index is named `app-registry.json` and **0 apps** when named `registry.json`. So no
+  parser change is needed and ET-3's row shape already suffices — this **corrects the 2026-08-18 entry's
+  framing**, which read as though `RegistryPointer` might also need widening. Pinned in code so a future
+  parser change that stops reading an ET-3-shaped row reds in CI rather than in a user's empty Store.
+- [2026-08-25][ET-4] **OWNER DECISION — deliberately not taken unilaterally.** Rename
+  `scratch/registry/registry.json` → `app-registry.json` (42 references across 14 files, all inside
+  unpublished `scratch/registry/` plus 2 in `tests/test_registry_validation.py`, **zero runtime blast
+  radius**), versus widening core (rejected 2026-08-18 because it changes listing behaviour for every
+  source). The rename looks like the right convergence direction — `app-registry.json` is core's
+  source-root index contract for *every* git and local source, so ET-3's name is the drift. **It is
+  cheapest now:** `registry.schema.json`'s `$id` is already
+  `https://raw.githubusercontent.com/personalclaw/registry/main/registry.schema.json` and
+  `scratch/registry/README.md:34-36` already promises "listed apps appear in the Store", so after
+  publication the rename becomes a breaking change to a public repo and to contributor PRs. Left to the
+  owner because the plan assigns this gap to `ET-5`/T2.3, which will touch `_parse_registry` anyway.
+- [2026-08-25][ET-4] **PARTIAL — stays `todo`**, with a `blocked_reason` recording the unmet clause and the
+  owner decision so the readiness census stops returning it as freshly startable.
+- [2026-08-25][ET-4] **LANDMINE — the real-home rail is PROCESS-GLOBAL and a sibling pool member can red an
+  innocent full-suite run.** The first `make test` exited 1 on `dir-entries-changed skills (704 bytes)`
+  under `~/.personalclaw`. Not caused by this diff and not reproducible: `test_app_catalog.py` alone
+  reported the real home unchanged, no gateway was running (real `gateway.log` last written 24 Aug 22:18),
+  and a second full run came back unchanged with exit 0. A concurrent agent wrote `~/.personalclaw/skills/*`
+  inside the first run's window (mtimes 05:15). **Any concurrent pool member touching the real home reds
+  an unrelated suite**, so a lone red on that rail during parallel execution needs a re-run before it is
+  treated as a finding.
+- [2026-08-25][ET-4] **Gate:** `make lint` clean (mypy 1011 source files); targeted
+  `test_app_catalog.py` + `test_gateway_boot_app_source_seed.py` + `test_registry_validation.py` +
+  `test_supply_chain_gates.py` → **108 passed, 0 failed** (paths confirmed to exist first);
+  `test_app_catalog.py` alone 54 passed; `make test` **26517 passed, 0 failed**;
+  `scripts/gate_report.py` 6/6 PASS; probe sweep 16, 0 introduced. No `web/` changes.
