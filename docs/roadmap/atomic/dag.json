@@ -889,7 +889,7 @@
         {
           "id": "PR2-9",
           "title": "Richer memory-pipeline alarm + flywheel/knowledge degraded floors (\u00a73.2 richer, \u00a75.2)",
-          "status": "todo",
+          "status": "done",
           "scope": "\u00a73.2 Memory-pipeline probe set; \u00a75.2 Per-surface tiers (knowledge / memory / synthesis)",
           "done_when": "the memory-pipeline Doctor row raises a FLUSH_OK-streak WARN from real LEARN-R19 records (staging backlog + per-op cost, criterion #5); degraded knowledge_ingest registers the KNOW-R17 heuristic extractor, memory_extraction registers the LEARN-R19 staging drain, and the synthesis-watcher append_evidence contract is registered with a drain (criterion #3 full re-enrichment flow).",
           "deps": [
@@ -897,7 +897,8 @@
             "PR2-4",
             "EXT:WORKFLOWS-V2-LEARNING-FLYWHEEL:LEARN-R19 staging outcomes + cost metering",
             "EXT:WORKFLOWS-V2-KNOWLEDGE-SYNTHESIS:KNOW-R17 heuristic extraction floor"
-          ]
+          ],
+          "pr": 2022
         },
         {
           "id": "PR2-10",
@@ -7829,11 +7830,6 @@
         "plan": "PR2"
       },
       {
-        "id": "PR2-9",
-        "title": "Richer memory-pipeline alarm + flywheel/knowledge degraded floors (\u00a73.2 richer, \u00a75.2)",
-        "plan": "PR2"
-      },
-      {
         "id": "PUBL-10",
         "title": "Publicize once the DISCOVERABILITY-LAUNCH gate is green",
         "plan": "PUBL"
@@ -9624,9 +9620,9 @@
         "code": "PR2",
         "plan": "PLATFORM-RESILIENCE",
         "total_atoms": 11,
-        "done": 8,
+        "done": 9,
         "in_progress": 0,
-        "todo": 3,
+        "todo": 2,
         "blocked": 0
       },
       {
