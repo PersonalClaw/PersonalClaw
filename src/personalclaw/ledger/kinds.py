@@ -139,10 +139,23 @@ CASCADE_BLOCKED = "cascade_blocked"
 WORKSPACE_PROVISIONED = "workspace_provisioned"
 WORKSPACE_TEARDOWN = "workspace_teardown"
 
+#: PROACTIVE-ASSISTANT §1.2/§1.3: what the triage digest DID NOT do. `skipped_triage` is the
+#: classifier gate's drop with the rationale and the rule that drove it; `proposal_refused` is a
+#: proposal the ordinal contract, the action set or the cap rejected. Ledger kinds because a
+#: digest's most dangerous failure is a SILENT one — an item the gate swallowed because a rule
+#: was broader than the user thought, or a proposal dropped because the model invented an id,
+#: both look identical to "nothing happened" from the digest body. These two rows are the only
+#: place that difference exists, and the reply grammar's `always no` audit trail (criterion 3)
+#: reads the first of them.
+SKIPPED_TRIAGE = "skipped_triage"
+PROPOSAL_REFUSED = "proposal_refused"
+
 #: The subset a downstream refiner reads. Named so a drift test can assert the engine
 #: still emits all of them.
 LEDGER_KINDS = frozenset(
     {
+        SKIPPED_TRIAGE,
+        PROPOSAL_REFUSED,
         STEP_COMPLETED,
         STEP_FAILED,
         STEP_SKIPPED,

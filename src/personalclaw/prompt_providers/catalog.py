@@ -379,6 +379,53 @@ BUNDLED_PROMPTS: tuple[BundledPrompt, ...] = (
             ),
         ),
     ),
+    # PROACTIVE-ASSISTANT §1.2/§1.3 (PA-2): the triage digest's two background calls. Registered
+    # BESIDE the inbox prompts on purpose — same resolution path, same fencing, same
+    # `use_case="background"` axis — so the triage pipeline extends the inbox's one-shot pattern
+    # instead of standing up a second background-LLM stack.
+    BundledPrompt(
+        name="task-triage-classify",
+        use_case="triage_classify",
+        filename="task-triage-classify.md",
+        kind="user",
+        category="internal",
+        description="The triage digest's cheap relevance gate: give each collected item a drop/surface/propose disposition against the user's own per-source filter rules.",  # noqa: E501
+        variables=(
+            PromptVariable(
+                name="rules",
+                type="textarea",
+                required=True,
+                description="The user's per-source filter rules, one per line.",
+            ),
+            PromptVariable(
+                name="items",
+                type="textarea",
+                required=True,
+                description="The fenced, ordinal-numbered collect manifest.",
+            ),
+        ),
+    ),
+    BundledPrompt(
+        name="task-triage-propose",
+        use_case="triage_propose",
+        filename="task-triage-propose.md",
+        kind="user",
+        category="internal",
+        description="The triage digest's ONE strict-JSON proposal call: bind at most N tiered action proposals to the exact ordinals of the collect manifest.",  # noqa: E501
+        variables=(
+            PromptVariable(
+                name="items",
+                type="textarea",
+                required=True,
+                description="The fenced, ordinal-numbered items that survived the gate.",
+            ),
+            PromptVariable(
+                name="max_proposals",
+                required=True,
+                description="The hard cap on proposals for this run.",
+            ),
+        ),
+    ),
     # P10 — the generalized, user-parameterized recurring DIGEST. Unlike task-inbox-digest
     # (a one-shot text summarizer over pasted messages), this is an AGENT directive fired by
     # the ``run-prompt`` action on a Schedule Trigger: the agent GATHERS the named sources
