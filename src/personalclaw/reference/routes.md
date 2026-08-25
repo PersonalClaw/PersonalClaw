@@ -352,6 +352,7 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `GET /api/knowledge/items/{id}/sections` — the section boundaries a split may cut on.
 - `GET /api/knowledge/items/{id}/staleness` — has the corpus moved under this synthesis?
 - `GET /api/knowledge/items/{id}/thumbnail` — - serve a generated thumbnail (image/webp).
+- `GET /api/knowledge/library-home` — the four shelves of the library landing surface.
 - `GET /api/knowledge/providers` — _(no summary)_
 - `POST /api/knowledge/regenerate-intelligence` — - re-run the full ingestion
 - `GET /api/knowledge/reports` — every definition, newest state as persisted.
