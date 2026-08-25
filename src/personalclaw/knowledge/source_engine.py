@@ -64,15 +64,17 @@ class SourceEngine:
         config_loader: Callable[[], Any] | None = None,
         now_fn: Callable[[], float] | None = None,
         event_spool: Any | None = None,
+        query_store: Any | None = None,
     ) -> None:
         self._store = store
         self._queue = ingest_queue
         self._providers_lister = providers_lister or _default_providers
         self._config_loader = config_loader or self._load_config
-        # Built lazily (see `_spool`) rather than here: a test that sets
+        # Built lazily (see `_spool`/`_queries`) rather than here: a test that sets
         # PERSONALCLAW_HOME after constructing the engine must still get the isolated path,
         # and resolving config_dir in __init__ would have frozen the real home.
         self._event_spool = event_spool
+        self._saved_queries = query_store
         import time
 
         self._now_fn = now_fn or time.time
@@ -107,6 +109,15 @@ class SourceEngine:
             self._event_spool = SourceEventSpool()
         return self._event_spool
 
+    @property
+    def _queries(self) -> Any:
+        """The saved-source-query store the ingest path evaluates against (§6.4)."""
+        if self._saved_queries is None:
+            from personalclaw.knowledge.source_queries import SavedQueryStore
+
+            self._saved_queries = SavedQueryStore()
+        return self._saved_queries
+
     def _emit_ingested(self, source: dict, item: Any, item_id: str, change: str) -> None:
         """``SourceItemIngested`` for one (re-)indexed item (§6.1).
 
@@ -131,6 +142,25 @@ class SourceEngine:
                 "change": change,
             },
         )
+        # Saved queries are evaluated HERE, in the same act as the ingest event (§6.4: "the
+        # engine evaluates saved queries against each SourceItemIngested batch"). They read the
+        # STRUCTURAL item — raw title/url/content — not the payload above, whose title is
+        # fenced: matching a fenced string would mean seeing through the fence markers.
+        # Deterministic and token-free by construction; `source_queries` imports no LLM path.
+        try:
+            from personalclaw.knowledge import source_queries
+
+            source_queries.evaluate(
+                item_id=item_id,
+                source_id=sid,
+                title=getattr(item, "title", "") or "",
+                url=getattr(item, "url", "") or "",
+                content=getattr(item, "content", "") or "",
+                spool=self._spool,
+                store=self._queries,
+            )
+        except Exception:  # noqa: BLE001 — a query fault must not lose the ingested item
+            logger.debug("saved source query evaluation failed for %s", item_id, exc_info=True)
 
     def _emit_poll_completed(
         self,
