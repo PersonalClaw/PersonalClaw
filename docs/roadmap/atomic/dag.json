@@ -867,13 +867,14 @@
         {
           "id": "PR2-7",
           "title": "Automation would-execute rendering on the trust surface (\u00a73.3)",
-          "status": "todo",
+          "status": "done",
           "scope": "\u00a73.3 Automation dry-run affordance",
           "done_when": "the trust surface renders a per-trigger would-execute description (resolved next-fire, rendered action_config with $vars, target session key, capability grants, observe-mode result) via AUTOMATION-SUBSTRATE's automation_run(dry_run)/AUTO-R15 dry-fire, beside the surfacing simulator (criterion #4 automation half).",
           "deps": [
             "PR2-4",
             "EXT:WORKFLOWS-V2-AUTOMATION-SUBSTRATE:automation_run(dry_run) + AUTO-R15 dry-fire smoke gate"
-          ]
+          ],
+          "pr": 2023
         },
         {
           "id": "PR2-8",
@@ -7819,11 +7820,6 @@
         "plan": "PP"
       },
       {
-        "id": "PR2-7",
-        "title": "Automation would-execute rendering on the trust surface (\u00a73.3)",
-        "plan": "PR2"
-      },
-      {
         "id": "PR2-8",
         "title": "Re-home remediation engine onto AUTOMATION-SUBSTRATE adaptive-clock trigger + runs-inbox digest (\u00a74.3/\u00a74.4)",
         "plan": "PR2"
@@ -9624,9 +9620,9 @@
         "code": "PR2",
         "plan": "PLATFORM-RESILIENCE",
         "total_atoms": 11,
-        "done": 8,
+        "done": 9,
         "in_progress": 0,
-        "todo": 3,
+        "todo": 2,
         "blocked": 0
       },
       {
