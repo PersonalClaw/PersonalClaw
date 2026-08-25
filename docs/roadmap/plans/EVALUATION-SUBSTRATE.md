@@ -849,12 +849,36 @@ Sharpens, doesn't append: RunPin + scenario library extend **Session 1** (the st
   forever. The code watches `("chat", "reasoning", "background")` and keeps `PLAN_WATCHED_USE_CASES` as
   the record of the discrepancy. **The plan text should be corrected.**
 
-- ⚠️ **One inert surface deliberately left open and flagged.** `GET /api/evals/ablation` ships with **no
-  frontend consumer**, unlike ES-4's sibling `/api/evals/judge-bench` which renders as `JudgeBenchPanel`
-  on the Learning page. The route is registered, tested and in `routes.md`, but nothing reads it. FE is
-  not in ES-7's `done_when` and the drive could not gate a web change from its worktree, so it was
-  reported rather than half-shipped. Closing it is roughly a 250-line `AblationPanel` mirroring
-  `JudgeBenchPanel`.
+- ⚠️ ~~**One inert surface deliberately left open and flagged.**~~ **CLOSED 2026-08-25.**
+  `GET /api/evals/ablation` shipped with **no frontend consumer**, unlike ES-4's sibling
+  `/api/evals/judge-bench` which renders as `JudgeBenchPanel` on the Learning page. The route was
+  registered, tested and in `routes.md`, but nothing read it. FE was not in ES-7's `done_when` and the
+  drive could not gate a web change from its worktree, so it was reported rather than half-shipped.
+  It is now consumed: `web/src/pages/learning/AblationPanel.tsx` + an `api.ablation()` client, rendered
+  from `LearningPage.tsx` beside `RetrievalBenchPanel`. **This does NOT flip ES-7** — the FE was never
+  in its `done_when`; the row it closes is this note.
+
+  Two findings from closing it, both worth carrying:
+
+  1. **The isolation-test trap the original note describes is reproducible one level up.** A suite that
+     only mounts `AblationPanel` stays fully green with the `<AblationPanel …>` render deleted from
+     `LearningPage` — measured, not assumed: with the render removed, 10 of 11 cases passed and only the
+     call-site rail went red. So the load-bearing test is `is rendered BY LearningPage, and the api
+     client is actually called`, which asserts both halves (the request fires AND the payload paints) and
+     carries a vacuity floor proving the heading query is not satisfiable by an empty tree. Mirroring
+     `JudgeBenchPanel.test.tsx`'s shape alone would have shipped the same inert-control gap as a green
+     suite.
+  2. **The panel honours all THREE of the handler's codes, not two.** `api_evals_ablation` deliberately
+     mints `evals_disabled` / `ablation_absent` / `ablation_unreadable` because they send a reader to
+     three different places (the switch, the registry, a bug). `JudgeBenchPanel` collapses `evals_disabled`
+     into its generic `LoadError`; this panel does not, since "no ablation has run yet" is the state a user
+     occupies for **months** (monthly cadence, registry starts empty) and is therefore precisely the state
+     that must not read as a failure — nor a failure as it.
+
+  One forced touch outside the change's natural surface: `proposalCache.test.tsx`'s `vi.mock` of
+  `lib/api` enumerates every read `LearningPage` makes, so adding a seventh made 5 of its 9 cases throw
+  inside a passive effect. Its own comment already documents that obligation; `ablation` was added as the
+  fifth entry in the same form.
 
 - [2026-08-23][ES-7] **A died-mid-flight commit was RED four ways while its tree was clean** — worth
   remembering as a diagnostic: a clean `git status` is not evidence of a green commit. 10 of 38 ablation
