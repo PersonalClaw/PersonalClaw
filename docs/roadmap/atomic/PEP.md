@@ -12,7 +12,7 @@ Each atom below executes start-to-finish in one go. If an atom lists dependencie
 |---|---|---|---|---|
 | `PEP-1` | ✅ | PresetEmptyState primitive + Triggers/Schedule preset on-ramp | — | On a fresh dev home the Triggers empty state shows preset cards; clicking e.g. 'Morning briefing' opens the create flow pre-filled to a working schedule trigger; the expert blank-create path still works unchanged; keyboard/focus a11y verified. |
 | `PEP-2` | ✅ | Cross-surface preset empty-state sweep | `PEP-1` | No list surface presents a bare form with no on-ramp; each empty surface deep-links into its existing create flow; expert paths unchanged; validation recorded with screenshots. |
-| `PEP-3` | ⬜ | App Store persistent category/source rail + card polish | `EXT:APP-PLATFORM-EVOLUTION:quality-manifest-block` | Wide viewport shows the rail persistently and narrow falls back to the dropdown; selecting a category/source filters the grid and survives reload via the URL; cards render art-forward with and without hero art; rail is keyboard-navigable with aria-pressed category buttons. |
+| `PEP-3` | ✅ | App Store persistent category/source rail + card polish | `EXT:APP-PLATFORM-EVOLUTION:quality-manifest-block` | Wide viewport shows the rail persistently and narrow falls back to the dropdown; selecting a category/source filters the grid and survives reload via the URL; cards render art-forward with and without hero art; rail is keyboard-navigable with aria-pressed category buttons. |
 | `PEP-4` | ✅ | Onboarding import engine (scanners + writers) | — | A fixture ~/.claude yields instruction+mcp+skills items with secrets counted-and-skipped and re-scan idempotent; importing the fixture creates the memories, MCP entries, and skills/imported/claude_code/*, and a conflicting item reports 'conflict' rather than silently overwriting. |
 | `PEP-5` | ⬜ | Onboarding import step UI | `PEP-4`, `EXT:ONBOARDING-UX:step-stack-primitive` | Fresh home with a fixture source shows the step; import completes without any secret appearing; re-entry shows already-imported items as 'existing'; skip path works; validation recorded. |
 | `PEP-6` | ✅ | Artifact folders | — | Folders CRUD; filing is metadata-only (no updated_at bump); renaming a folder leaves artifact records untouched; deleting a folder falls its members back to unfiled; membership persists across reload; nested folders validated. |
@@ -95,11 +95,80 @@ Reuse the PresetEmptyState primitive across the remaining list surfaces: Workflo
 
 ### `PEP-3` — App Store persistent category/source rail + card polish
 
-**Status:** todo
+**Status:** done
 
 Add a StoreSideRail with a CATEGORIES block (canonical categories derived from installed+catalog tags, live counts, select-to-filter, 'All' resets) and a SOURCES block (Built-in badge + each registered source with app count + Add-source into the existing sources flow), reusing the existing filter state; the current dropdown FilterMenu/SourcesPopover become the narrow-screen fallback. The rail is always open on wide screens and collapses on narrow, with category/source selection deep-linked in the URL (hash-router). Polish app cards to an art-forward shape: hero-image column with a deterministic gradient+icon fallback, name / 2-line-clamp description / category / action; render the quality/permission badge from the app-platform quality manifest block rather than inventing a second badge. No hardcoded colors (token-lint passes).
 
 **Done when:** Wide viewport shows the rail persistently and narrow falls back to the dropdown; selecting a category/source filters the grid and survives reload via the URL; cards render art-forward with and without hero art; rail is keyboard-navigable with aria-pressed category buttons.
+
+**DONE — all four `done_when` clauses MET.** `web/src/pages/apps/StoreSideRail.tsx` is the rail
+(CATEGORIES + SOURCES, each block led by its reset entry with live counts), rendered by
+`AppsSection.tsx` inside the `isStore` branch of `WorkbenchLayout`'s children — i.e. by
+`#/apps?view=store`, the destination `app/App.tsx` routes `case 'apps'` to. The source dimension is a
+new URL param `?ssrc=`, keyed on `sourceGroup().key` so the rail, the existing source dividers and the
+grid cannot disagree about what "this source" means; the category dimension REUSES the existing
+`?stag=`. `storeCategories`/`storeSources` is ONE derivation feeding both the rail and the dropdown,
+and its counts are taken over `storeUniverse` — the exact set the grid can render.
+
+**Card anatomy is now singular.** Every card is banner-topped: the app's own `heroUrl` when it declares
+one, otherwise the deterministic gradient from `appArt.ts` (FNV-1a over the app NAME → an angle plus a
+guaranteed-distinct pair of scheme tokens, composed with `color-mix`, so it is stable across reloads and
+correct in all twelve schemes with zero literal colors). The banner carries `data-art="hero" |
+"generated"` so a test can tell the two paths apart without parsing a background string. The icon tile
+became unconditional as well, since `AppIcon` already resolves an absent/legacy icon to the Blocks
+glyph — that deletes the old four-shape card (hero+icon / hero-only / icon-only / neither), where the
+hero-less card read as an image that had failed to load.
+
+**17 tests in `web/src/pages/apps/storeRail.test.tsx`, every one driving `AppsSection`** — nothing
+mounts the rail directly, because a rail with its own green isolation suite is the inert-control shape.
+Falsified three ways: disabling the render line (`{false && isMobile &&`) turned **10 of 17** red;
+deleting the `ssrc` grid filter turned the re-mounted source test red on the CARD CENSUS
+(`['Ledger','Notes','Timer']` vs `['Notes','Timer']`); hardcoding `aria-pressed={false}` turned 4 red,
+including the accessibility-tree query, which proves that query reads the tree and not a class.
+URL-survival is proven by READING THE URL BACK from a `URLSearchParams`-backed fake router and
+RE-MOUNTING a fresh component from only that string — not by asserting `setQuery` was called, which a
+page that writes the URL and then reads its own `useState` would also pass.
+
+**Three DEVIATIONS, each forced by a global ratchet or a measured premise.**
+1. **No arrow-key cursor on the rail.** The first version had ArrowUp/Down/Home/End roving;
+   `ui/popupItemRoles.test.tsx` failed it — a cursor over a mapped list of buttons with no container
+   role. The two escapes were to declare `role="listbox"` (which forces `aria-selected` on options and
+   would have DROPPED the `aria-pressed` this atom's `done_when` names) or to drop the cursor. Dropped
+   the cursor: an arrow-driven list is a different APG pattern implying a roving tabindex and ONE tab
+   stop, and bolting arrows onto independently-tabbable toggle buttons is neither pattern. Keyboard
+   navigability is now Tab + Enter/Space over native buttons, driven end-to-end by a test that tabs
+   through all seven entries in DOM order.
+2. **The row became a shared primitive, `ui/FilterRow.tsx`** (+ its required `FilterRow.doc.ts`).
+   `design/primitiveAdoption` counts a page-level raw button as new bespoke chrome and may only
+   shrink, and the rail row was a deliberate copy of `ui/FilterMenu`'s private `Row` anyway. Extracting
+   it — and pointing FilterMenu at it — makes "one control at two viewport widths" structural instead
+   of a resemblance someone has to maintain, and keeps the ratchet at its measured 265 rather than
+   asking it for slack. `FilterMenu`'s rendered output is unchanged (`pressed` is opt-in; the dropdown
+   leaves it undefined because its trailing check already announces the choice).
+3. **Categories are derived from `storeUniverse`, not "installed+catalog"** as the scope sentence says.
+   The Store deliberately EXCLUDES installed apps (they live in the Library, a 2026-07-05 decision
+   recorded in `AppsSection.tsx`), so a category counted over installed apps would advertise a filter
+   whose grid comes back empty — a count maintained beside a table it does not describe. Labels are
+   humanised by `categoryLabel()` (`dev-tools` → `Dev tools`) because a raw author-controlled slug in a
+   rail heading reads as a leaked identifier; the KEY stays the raw tag, so the URL is unchanged.
+
+The scope's "render the quality/permission badge from the quality manifest block rather than inventing a
+second badge" was already satisfied before this atom — `QualityBadges` (APE-4) is on the card and was
+left exactly as it was.
+
+**Gates:** `make lint` clean (black 2065 files, isort, flake8, mypy 1014 files) · `npm run typecheck:web`
+clean · `npm run test:web` **488 files / 5197 tests, all green** (the full suite, not path-scoped — three
+of the four findings above came ONLY from global ratchets: `popupItemRoles`, `primitiveAdoption`,
+`uiDocs.drift`) · `npm run build` clean · `scripts/gate_report.py` **6/6 PASS** · probe sweep 16 total,
+0 diff-introduced.
+
+**Full `make test`: 26656 passed, 1 failed — PRE-EXISTING and NOT this diff.**
+`tests/test_lv5_refinement_arm.py::test_v3_arc_flawed_skill_stumble_refine_approve_rerun` asserts the
+literal `"## Refinement v1 (2026-08-25, from a correction)"`, while `skills/overlays.py:206` derives that
+stamp from a UTC `created_at`. Measured on this machine: local date 2026-08-25, UTC date 2026-08-26 — so
+the hardcoded LOCAL authoring date and the UTC-derived stamp disagree for the ~7 hours a day after UTC
+rolls over. Reproduced in isolation against a diff containing ZERO python files. Landed by `c5d4762c`
+(LV-5 S3); left alone because that area belongs to another agent this session.
 
 ### `PEP-4` — Onboarding import engine (scanners + writers)
 

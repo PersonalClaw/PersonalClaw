@@ -747,3 +747,30 @@ Rows 1–3 are roughly two sessions and deliver the most visible "less daunting,
   searchable from the Settings home tile via added "always-on conventions" search text. Named
   `AlwaysOnConventions.tsx`, not `*Panel.tsx`, because `panelHeadingLevel.test.tsx` correctly treats
   every `*Panel.tsx` as a sub-route page requiring a `<PanelHeader>` h1 — this is a section, not a page.
+
+- [2026-08-25][PEP-3] **DONE** — persistent Store category/source rail + one card anatomy (PR #2065).
+  `web/src/pages/apps/StoreSideRail.tsx` (CATEGORIES + SOURCES, each block led by its reset entry with
+  live counts) renders from `AppsSection.tsx:614` inside `WorkbenchLayout`'s `isStore` branch — the
+  surface `app/App.tsx:151` routes `case 'apps'` to. New URL dimension `?ssrc=`, keyed on
+  `sourceGroup().key` so the rail and the existing source dividers agree. `appArt.ts` supplies the
+  deterministic token gradient; the card's four shapes collapsed to one anatomy, so a hero-less card no
+  longer reads as a failed image load. 17 tests in `storeRail.test.tsx`, all driving `AppsSection`
+  rather than the rail directly.
+  All four `done_when` clauses MET, each with a vacuity half: URL survival proven by rebuilding a
+  router from the serialized search string alone; viewport split asserted **outside** the rail's own
+  subtree (matching inside it produced a false failure first); both hero paths pinned via
+  `data-art`; `aria-pressed` read off the accessibility tree, not class names.
+  Falsification (re-run at integration): `{false && !isMobile && (` at `AppsSection.tsx:614` →
+  10 failed / 7 passed of 17.
+- [2026-08-25][PEP-3] **DEVIATION** — categories derive from `storeUniverse`, not the scope prose's
+  "installed+catalog tags". The Store excludes installed apps, so an installed-derived category would
+  advertise a filter whose grid comes back empty. No `done_when` clause is affected. **Owner: ratify
+  the scope-prose correction or say categories should span installed apps too.**
+- [2026-08-25][PEP-3] **DEVIATION** — the arrow-key cursor was dropped. `ui/popupItemRoles.test.tsx`
+  flagged a cursor over a mapped list with no container role, and declaring `role="listbox"` would
+  force `aria-selected`, removing the `aria-pressed` this atom's clause explicitly names. Tab +
+  Enter/Space is the whole keyboard model.
+- [2026-08-25][PEP-3] **DEVIATION** — the rail row was extracted to `ui/FilterRow.tsx` (+ its
+  `.doc.ts`, required by `uiDocs.drift`) and `ui/FilterMenu.tsx` now renders it, output unchanged.
+  Forced by `design/primitiveAdoption`: the row was a copy of FilterMenu's private `Row`, so
+  extraction removed a duplicate instead of buying ratchet slack.
