@@ -156,6 +156,14 @@ HTTP_ERROR_CODES: dict[str, str] = {
     # withholds. The rows below are the ones a caller who ALREADY authenticated needs in
     # order to tell its own mistakes apart.
     "unauthorized": "The request carried no usable bearer credential.",
+    # ── capture proxy (inbound/capture_proxy.py — EXTERNAL-ACCESS §7) ──
+    # A 502 here is always about the UPSTREAM the caller's own agent named, never about
+    # PersonalClaw's own state, so the three are kept apart: `unavailable` is "nothing named
+    # an upstream", `denied` is "the operator's egress allow-list refused it" (a decision
+    # somebody can change), and `failed` is "the call was made and the far side broke".
+    "upstream_unavailable": "No upstream base URL could be resolved for this dialect.",
+    "upstream_denied": "The resolved upstream is not on the operator's egress allow-list.",
+    "upstream_failed": "The upstream call was attempted and did not complete.",
     "service_unavailable": "The service is temporarily suspended; retry later.",
     "unknown_action": "The named control-bridge action does not exist.",
     "action_not_bound": "The calling client's bindings do not include this action.",

@@ -114,7 +114,7 @@ class BrandedProviderSpec:
         )
 
 
-def _resolve_credential(entry: ProviderEntry, kwargs: dict, *, label: str) -> Credential | None:
+def resolve_credential(entry: ProviderEntry, kwargs: dict, *, label: str) -> Credential | None:
     """Resolve a ProviderEntry's credential via the optional credential_store
     (registry contract), or None when the entry declares none. Mirrors the
     credential handling every model _factory uses."""
@@ -132,7 +132,7 @@ def _resolve_credential(entry: ProviderEntry, kwargs: dict, *, label: str) -> Cr
     return cred
 
 
-def _resolve_spec_secret(
+def resolve_spec_secret(
     spec: BrandedProviderSpec, *, explicit_key: str = ""
 ) -> tuple[Credential | None, str]:
     """The ONE credential-resolution order a branded spec's secret follows, shared by every
@@ -163,7 +163,7 @@ def _resolve_spec_secret(
     "sign in with `x login` first" instead of naming an env var the app doesn't have.
 
     ``entry.credential`` (the explicit credential-store descriptor) outranks everything here
-    but is registry-only, so it is resolved by :func:`_resolve_credential` BEFORE this is
+    but is registry-only, so it is resolved by :func:`resolve_credential` BEFORE this is
     consulted: five hops on the registry path, four on the config path, identical tail.
     """
     if explicit_key:
