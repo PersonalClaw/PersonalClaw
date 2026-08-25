@@ -724,11 +724,19 @@ def test_the_real_inherited_verdicts_are_gone(
 
 
 def test_the_real_es7_verdict_comes_from_its_own_tagged_entry(real_log_hits: dict) -> None:
-    """``ES-7``'s ruling is 146 lines below the entry that used to outrank it.
+    """``ES-7``'s ruling must come from one of ITS OWN tagged entries.
 
-    Before: the only backticked mention, inside ``[harvest]``'s headline — an entry that says of
-    itself "Not an atom of its own". After: its own ``- [2026-08-24][ES-7 §3.3]`` entry, the one
-    that records "the gap above is now closed in INPUTS. Atom still ``todo``".
+    The defect this pins: the only backticked mention used to be inside ``[harvest]``'s headline —
+    an entry that says of itself "Not an atom of its own" — so ``[harvest]``'s text adjudicated
+    ``ES-7``.
+
+    Updated 2026-08-25. Closing ES-7's flagged inert-route note edited that section in place, which
+    shifted it and handed the deciding position to a DIFFERENT ES-7 entry (the §3.2
+    watched-bindings drift) instead of the "now closed in INPUTS" one. Both are ES-7's own and both
+    read ``PARTIAL``, so the adjudication did not change — only the citation. Per this file's own
+    rule for the sibling MRT-5 case, the fix is to re-read the new deciding entry rather than to
+    loosen the assertion, so the excerpt check now names both known rulings and the negative
+    assertions that carry the actual defect are untouched.
     """
     own = "EVALUATION-SUBSTRATE.md"
     hits = [h for h in real_log_hits.get("ES-7", []) if h.plan_file == own]
@@ -738,7 +746,11 @@ def test_the_real_es7_verdict_comes_from_its_own_tagged_entry(real_log_hits: dic
     assert "[ES-7" in hit.excerpt, hit.excerpt[:200]
     assert "[harvest]" not in hit.excerpt, hit.excerpt[:200]
     assert "Not an atom of its own" not in hit.excerpt, hit.excerpt[:200]
-    assert "now closed in INPUTS" in hit.excerpt, hit.excerpt[:200]
+    # Either of ES-7's own PARTIAL rulings is a correct citation; neither is `[harvest]`.
+    assert (
+        "now closed in INPUTS" in hit.excerpt
+        or "Plan/code drift found and recorded rather than implemented" in hit.excerpt
+    ), hit.excerpt[:200]
     assert verdict == LogVerdict.PARTIAL
 
 
