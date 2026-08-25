@@ -382,12 +382,13 @@ __all__ = [
     "SubscriptionSource",
     "register_subscription_source",
     "register_branded_app",
-    # ``registered_spec`` is deliberately NOT exported: ``spec_pricing`` and
-    # ``spec_credential_source`` are the only core-facing readers of the registry, and a
-    # public SDK export with no consumer is a declared-but-inert surface (the inert-surface
-    # ratchet catches exactly that). It stays module-internal until a real caller needs the
-    # whole spec.
-    "spec_pricing",
-    "spec_credential_source",
-    "spec_types_declaring_models",
+    # The registry ACCESSORS are deliberately not exported here, by this file's own rule:
+    # a public SDK export with no consumer is a declared-but-inert surface, and the
+    # inert-surface ratchet catches exactly that. ``registered_spec``, ``spec_pricing``,
+    # ``spec_credential_source`` and ``spec_types_declaring_models`` were exported only
+    # because CORE read them through this facade; core now imports them from
+    # ``personalclaw.llm.branded_specs``, which is where they live, so every one of these
+    # exports lost its last consumer. No app has ever used them (measured: 0 hits across
+    # the apps repo, against 18 for ``BrandedProviderSpec`` and 27 for
+    # ``register_branded_app``). They come back here the day an app needs one.
 ]
