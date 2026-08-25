@@ -325,6 +325,20 @@ class StagingStore:
         with self._cursor() as cur:
             return [_row_to_entry(r) for r in cur.execute(sql, params).fetchall()]
 
+    def pending_count(self) -> int:
+        """How many captured entries are still unconsumed — the drain's backlog.
+
+        Separate from :meth:`pending` because that answers "which ones" under a
+        ``limit``, which cannot answer "how many" once the backlog passes the limit: a
+        caller counting a capped page reports the cap, so a queue growing past it reads
+        as perfectly stable. ``should_batch`` already computes this count inline; a
+        backlog probe or a health row needs it without also deciding to batch.
+        """
+        with self._cursor() as cur:
+            return int(
+                cur.execute("SELECT COUNT(*) FROM staging WHERE consumed_by IS NULL;").fetchone()[0]
+            )
+
     def mark_consumed(self, ids: list[int], marker: str) -> int:
         """Mark entries as consumed by a batch pass. Does NOT edit content.
 

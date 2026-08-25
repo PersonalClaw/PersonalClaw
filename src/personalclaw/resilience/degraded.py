@@ -11,20 +11,30 @@ pending-enrichment count. Availability is the cheap no-instantiate probe
 ``can_resolve_use_case`` over every needed use-case — so this registry is derived,
 never persisted (§7: recomputable, so never stored).
 
-Scope note (honest, verified against code 2026-07-25): three floors the plan names
-are **future infrastructure** and are NOT built here — LEARN-R19's memory-staging
-log, KNOW-R17's heuristic knowledge extractor, and the synthesis watchers all live
-in unbuilt Workflows-v2 plans. This session registers the floors that exist *today*
-(with real backlog probes where a store already tracks the deficit, and an honest
-``0`` where the queue is future infra) and the ``drain`` hook is ``None`` for every
-contract — drains become §4 remediation-engine jobs when that lands.
+Scope note (verified against code 2026-08-24): the three floors this module used to
+call "future infrastructure" now EXIST, so they are declared rather than deferred
+(PR2-9). LEARN-R19's staging log is real (``learning.staging.StagingStore``:
+``flush_records`` + unconsumed-entry backlog), the no-model knowledge-ingest tier is
+real (the raw/LLM-free ingest graph, which lands an item ``partial`` with
+"insights: model unavailable" — the stamp KNOW-R17 describes), and synthesis
+watchers are real (``mode: append_evidence`` persists evidence with no model while
+``knowledge.staleness`` counts what the compiled section has not caught up with).
+
+Each of those three surfaces therefore carries BOTH halves of the contract: a
+backlog probe that counts its own deficit and a ``drain`` that re-enriches it when a
+provider returns. Drains are fired here, on the unavailable→available transition
+(§5.1) — ``evaluate`` runs in a worker thread, so :func:`_fire_drain` schedules onto
+a running loop when there is one and otherwise runs the coroutine to completion in
+that thread. A drain reports how many items it moved; it never raises into the
+caller and never blocks the poll it rides on.
 """
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from dataclasses import dataclass
-from typing import Awaitable, Callable, Optional
+from typing import Any, Awaitable, Callable, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -32,7 +42,17 @@ logger = logging.getLogger(__name__)
 # items awaiting model-enrichment for its surface (0 when the surface has no queue,
 # or when the backing store isn't present yet).
 BacklogProbe = Callable[[], int]
-DrainFn = Callable[[], Awaitable[None]]
+# A drain takes the live gateway state when there is one (some drains need a running
+# worker — the knowledge one re-enqueues through the ingest queue that lives on it) and
+# returns how many items it moved, so a recovery is reportable as work done rather than
+# as a hook that fired. ``None`` state is legal: a drain that cannot reach what it needs
+# returns 0 rather than guessing.
+DrainFn = Callable[[Optional[object]], Awaitable[int]]
+
+#: How many items one drain pass moves. Bounded because a drain rides a recovery
+#: transition, not a job queue: 500 knowledge items re-enqueued in one burst would spend
+#: the model budget the user just got back on a backlog they never asked to clear first.
+DRAIN_BATCH = 50
 
 
 @dataclass(frozen=True)
@@ -43,7 +63,9 @@ class DegradedContract:
     ``active_models`` use-cases the surface needs to run at full capability. ``floor``
     is the human statement of what still works with no model. ``backlog_probe``
     returns the pending-enrichment count (read-only, fail-safe). ``drain`` re-enriches
-    the backlog when a provider returns — ``None`` until the §4 engine owns drains.
+    the backlog when a provider returns; it is ``None`` for a surface whose floor is
+    "feature off" or "honestly unavailable", because those have nothing to queue and a
+    drain hook there would be a control nothing can ever move.
     """
 
     surface: str
@@ -137,6 +159,12 @@ def _maybe_notify(contract: DegradedContract, available: bool, backlog: int, sta
     _last_available[contract.surface] = available
     if prev is None or prev == available:
         return  # first sight (silent baseline) or no change
+    drained: Optional[int] = None
+    if available and contract.drain is not None:
+        # §5.1: the unavailable→available flip is what fires the drain. Before the
+        # notification, and independent of whether a notify sink exists — the
+        # re-enrichment is the promise the floor made; the message about it is not.
+        drained = _fire_drain(contract, state)
     notify_fn = getattr(state, "notify", None)
     if not callable(notify_fn):
         return
@@ -148,7 +176,17 @@ def _maybe_notify(contract: DegradedContract, available: bool, backlog: int, sta
                 f"No model for {', '.join(contract.use_cases)} — {contract.floor}",
             )
         else:  # recovered
-            tail = f" · {backlog} item(s) awaiting re-enrichment" if backlog else ""
+            # §5.2 criterion #3 wants the recovery to summarize what was RE-ENRICHED, and
+            # `backlog` was measured BEFORE the drain ran — reporting it after a drain that
+            # just cleared it would announce a queue that no longer exists. So: the drained
+            # count when the drain finished here, the standing backlog when it moved nothing
+            # or is still running, and nothing at all when there was never a queue.
+            if drained:
+                tail = f" · {drained} item(s) re-enriched"
+            elif backlog:
+                tail = f" · {backlog} item(s) awaiting re-enrichment"
+            else:
+                tail = ""
             notify_fn(
                 "info",
                 f"{contract.surface} recovered",
@@ -156,6 +194,48 @@ def _maybe_notify(contract: DegradedContract, available: bool, backlog: int, sta
             )
     except Exception:
         logger.debug("degraded: notify failed for %s", contract.surface, exc_info=True)
+
+
+def _fire_drain(contract: DegradedContract, state: object) -> Optional[int]:
+    """Run one contract's drain on a recovery, from whichever thread we are on.
+
+    Returns how many items it moved when it ran to completion here, and ``None`` when it
+    was scheduled onto a running loop (nobody can honestly report a count for work that
+    has not happened yet).
+
+    ``evaluate`` is called through ``asyncio.to_thread`` (the Doctor route), so there is
+    usually NO running loop here and ``create_task`` would raise — the drain would look
+    wired and never run. So: schedule when a loop is running (never block it), and
+    otherwise drive the coroutine to completion in this worker thread, which is already
+    off the request path. Either way a fault is swallowed and logged: a broken drain must
+    not turn a RECOVERY into an error.
+    """
+    drain = contract.drain
+    if drain is None:
+        return None
+
+    async def _run() -> int:
+        try:
+            moved = int(await drain(state) or 0)
+        except Exception:
+            logger.debug("degraded: drain failed for %s", contract.surface, exc_info=True)
+            return 0
+        if moved:
+            logger.info("degraded: drained %d item(s) for %s", moved, contract.surface)
+        return moved
+
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        loop = None
+    try:
+        if loop is not None:
+            loop.create_task(_run())
+            return None
+        return asyncio.run(_run())
+    except Exception:
+        logger.debug("degraded: drain dispatch failed for %s", contract.surface, exc_info=True)
+        return None
 
 
 def degraded_surfaces() -> list[str]:
@@ -190,6 +270,214 @@ def _search_backlog() -> int:
     return int(get_knowledge_store().count_items_missing_embedding())
 
 
+def _memory_staging_backlog() -> int:
+    """Unconsumed LEARN-R19 staging entries — the captures no consolidation pass has
+    compiled into a proposal yet.
+
+    Reads the store WITHOUT creating it: ``StagingStore.__init__`` only computes paths
+    (the schema is written on the first cursor), so a home that never staged anything is
+    answered from the absent file. A backlog probe that materialised ``learning.db`` would
+    be a write on every poll of a read-only rollup.
+    """
+    from personalclaw.learning.staging import get_store
+
+    store = get_store()
+    if not store.path.exists():
+        return 0
+    return store.pending_count()
+
+
+async def _memory_staging_drain(state: Optional[object] = None) -> int:
+    """Compile the staged captures that piled up while no model was bound into ONE
+    propose-only lesson batch, then mark exactly those entries consumed.
+
+    The pieces LEARN-R19 built for this were all present and unused: ``pending`` reads the
+    queue, ``staging_refs`` carries the provenance onto the proposal, and ``mark_consumed``
+    is the one mutation staging allows. This is their first caller.
+
+    A proposal that was NOT written (a prior decision forbids re-filing, or an inferred
+    batch is still under the evidence floor) consumes nothing: marking the entries consumed
+    in exchange for a proposal that does not exist would delete the only record of the
+    captures. The backlog therefore stays visible, which is the honest report.
+    """
+    from personalclaw.learning import proposals
+    from personalclaw.learning.staging import get_store
+
+    store = get_store()
+    if not store.path.exists():
+        return 0
+    entries = store.pending(limit=DRAIN_BATCH)
+    if not entries:
+        return 0
+    ids = [int(e.id) for e in entries]
+    _verdict, prop = proposals.enqueue(
+        kind=proposals.Kind.LESSON_BATCH.value,
+        title=f"{len(entries)} capture(s) staged while no model was bound",
+        body="\n".join(f"- {e.content}" for e in entries),
+        provenance="inferred",
+        source_cadence=str(entries[0].cadence or ""),
+        staging_refs=ids,
+        # `occurrences=1`/`min_evidence=1`, the convention for a single first-class
+        # signal: the batch IS the evidence. Passing `len(entries)` would claim N
+        # independent observations of ONE claim, which is what the floor exists to
+        # count — and would then hide every backlog under three entries behind it.
+        occurrences=1,
+        min_evidence=1,
+    )
+    if prop is None:
+        return 0
+    store.mark_consumed(ids, f"degraded-drain:{prop.id}")
+    return len(ids)
+
+
+#: The heuristic-tier stamp, as it actually exists (KNOW-R17's ``extraction: heuristic``
+#: by another name): the LLM-free ingest graph completes, the insights stage finds no
+#: model, and the runner downgrades the item to ``partial`` recording exactly that reason.
+#: Archived items are excluded for the same reason the batch regen route excludes them —
+#: a drain should not spend the model the user just got back on content they put away.
+_HEURISTIC_ITEMS_SQL = (
+    "SELECT id FROM items WHERE processing_status = 'partial' "
+    "AND COALESCE(processing_error, '') LIKE '%model unavailable%' "
+    "AND status = 'active' AND COALESCE(is_archived, 0) = 0"
+)
+
+
+def _knowledge_heuristic_backlog() -> int:
+    """Items the heuristic tier filed: captured, indexed, embedded — un-extracted."""
+    from personalclaw.knowledge import get_knowledge_store
+
+    store = get_knowledge_store()
+    row = store.db.execute(
+        f"SELECT COUNT(*) FROM ({_HEURISTIC_ITEMS_SQL})"
+    ).fetchone()  # noqa: S608
+    return int((row[0] if row else 0) or 0)
+
+
+async def _knowledge_heuristic_drain(state: Optional[object] = None) -> int:
+    """Re-extract the heuristic-tier items in place, through the ONE ingestion path.
+
+    Re-enqueues onto the live ingest queue rather than calling the graph directly: that
+    queue owns the LLM pool and the embedder factory, and it serialises against the store's
+    single-threaded connection. Calling ``ingest_item`` from here with no pool would re-run
+    the same LLM-free graph and re-file the item ``partial`` — a drain that provably
+    changes nothing.
+
+    Without a live queue (a Doctor run outside the gateway) this reports 0 and moves
+    nothing. Claiming a re-enrichment that has no worker would be worse than saying no.
+    """
+    getter = getattr(state, "knowledge_ingest_queue", None)
+    if not callable(getter):
+        return 0
+    try:
+        queue = getter()
+    except Exception:
+        logger.debug("degraded: ingest queue unavailable for knowledge drain", exc_info=True)
+        return 0
+    if queue is None:
+        return 0
+    from personalclaw.knowledge import get_knowledge_store
+
+    store = get_knowledge_store()
+    rows = store.db.execute(
+        f"{_HEURISTIC_ITEMS_SQL} LIMIT ?",  # noqa: S608
+        (DRAIN_BATCH,),
+    ).fetchall()
+    moved = 0
+    for row in rows:
+        item_id = str(row[0])
+        # Status-only transition — not a user edit, so `updated_at` must not move (the
+        # same `touch=False` the regenerate route uses; a bumped stamp would re-stale
+        # every synthesis that cites this item).
+        store.update_item(item_id, processing_status="queued", touch=False)
+        queue.enqueue(item_id)
+        moved += 1
+    return moved
+
+
+#: How many synthesized items one staleness sweep looks at. Bounded because staleness is
+#: a per-item join (cited sources + tag-overlap), so an unbounded sweep would make a
+#: cheap rollup the most expensive query in the poll.
+_SYNTHESIS_SCAN_CAP = 200
+
+
+def _stale_synthesized_ids(store: Any, limit: int) -> list[str]:
+    """The synthesized items the corpus has moved underneath, oldest-compiled first."""
+    from personalclaw.knowledge.semantics import SYNTHESIZED_KINDS
+    from personalclaw.knowledge.staleness import staleness_for
+
+    kinds = sorted(SYNTHESIZED_KINDS)
+    marks = ",".join("?" for _ in kinds)
+    rows = store.db.execute(
+        f"SELECT id FROM items WHERE item_type IN ({marks}) "  # noqa: S608
+        "AND status = 'active' AND COALESCE(is_archived, 0) = 0 "
+        "ORDER BY updated_at ASC LIMIT ?",
+        (*kinds, int(_SYNTHESIS_SCAN_CAP)),
+    ).fetchall()
+    out: list[str] = []
+    for row in rows:
+        item_id = str(row[0])
+        try:
+            if staleness_for(store, item_id).stale:
+                out.append(item_id)
+        except Exception:
+            logger.debug("degraded: staleness read failed for %s", item_id, exc_info=True)
+        if len(out) >= limit:
+            break
+    return out
+
+
+def _synthesis_stale_backlog() -> int:
+    """Compiled sections the corpus has moved past — the rewrite queue for this surface."""
+    from personalclaw.knowledge import get_knowledge_store
+
+    return len(_stale_synthesized_ids(get_knowledge_store(), _SYNTHESIS_SCAN_CAP))
+
+
+async def _synthesis_evidence_drain(state: Optional[object] = None) -> int:
+    """Queue a compiled-section rewrite for each synthesis whose evidence moved on.
+
+    ``mode: append_evidence`` is the floor: with no model the dated evidence entries still
+    land (persist-raw-first), and only the compiled summary above them goes stale. So the
+    drain's unit of work is one rewrite request per stale synthesis, filed through
+    ``knowledge.updates.queue_draft`` — the single enqueue site for knowledge proposals,
+    which is what keeps a machine-authored rewrite behind the same human gate a hand-written
+    draft clears. It deliberately does NOT rewrite in place: a synthesis the reader may
+    already have acted on must not change under them.
+
+    Idempotent by the proposal queue's own content fingerprint: a second recovery over the
+    same stale item REINFORCES the pending row instead of filing a duplicate.
+    """
+    from personalclaw.knowledge import get_knowledge_store
+    from personalclaw.knowledge.staleness import staleness_for
+    from personalclaw.knowledge.updates import queue_draft
+
+    store = get_knowledge_store()
+    queued = 0
+    for item_id in _stale_synthesized_ids(store, DRAIN_BATCH):
+        item = store.get_item(item_id) or {}
+        report = staleness_for(store, item_id)
+        title = str(item.get("title") or item_id)
+        _verdict, pid, _skip = queue_draft(
+            title=f"Recompile “{title}” — its sources moved",
+            body=(
+                f"{report.new_source_items} new source item(s) and "
+                f"{report.changed_sources} changed cited source(s) landed after this "
+                "synthesis was compiled. A model is available again: recompile the "
+                "compiled section over the current corpus. The dated evidence entries "
+                "below it were appended without a model and are already current."
+            ),
+            target=item_id,
+            source_cadence="degraded-recovery",
+            # `occurrences` deliberately unsupplied: the evidence floor counts repeated
+            # observations of an inference, and staleness is a computed fact about this
+            # one item. `queue_draft` takes no `min_evidence`, so supplying a count here
+            # would file every rewrite request under a floor of three and drop it.
+        )
+        if pid:
+            queued += 1
+    return queued
+
+
 # ── The initial contract set (only floors that exist in code today) ──────────
 
 
@@ -217,25 +505,51 @@ def _register_builtin_contracts() -> None:
         )
     )
     # memory extraction — deterministic preference-facet capture continues; only the
-    # LLM skill-ladder review pauses. (LEARN-R19's staging queue is future infra, so
-    # there is no pending-enrichment count to report yet — honestly 0.)
+    # LLM skill-ladder review pauses. Every pass records its outcome in the LEARN-R19
+    # staging log whether or not it produced anything, so the backlog is the unconsumed
+    # captures and the drain is the consolidation pass over them.
     register_contract(
         DegradedContract(
             surface="memory_extraction",
             use_cases=("chat",),
             floor="Deterministic preference-facet capture keeps running without a model; only the "
-            "LLM after-turn review pauses.",
+            "LLM after-turn review pauses. Every pass is still recorded in the staging log, and "
+            "the captures wait there for a consolidation pass rather than being dropped.",
+            backlog_probe=_memory_staging_backlog,
+            drain=_memory_staging_drain,
         )
     )
-    # knowledge ingest — raw text is captured and stored without a model (passthrough /
-    # document-read nodes); only LLM entity/insight extraction is skipped, leaving the
-    # item 'partial'. (KNOW-R17's heuristic extractor is future infra.)
+    # knowledge ingest — raw text is captured and stored without a model (the LLM-free
+    # ingest graph: passthrough / document-read / structural link / local embed); only LLM
+    # entity/insight extraction is skipped, which lands the item 'partial' recording
+    # "insights: model unavailable". That stamp IS the heuristic tier's queue marker
+    # (KNOW-R17), so it is both the backlog and what the drain re-extracts in place.
     register_contract(
         DegradedContract(
             surface="knowledge_ingest",
             use_cases=("chat",),
-            floor="Documents are still captured and stored without a model; entity and insight "
-            "extraction is skipped and the item is marked partial until a model returns.",
+            floor="Documents are still captured, indexed and embedded locally without a model "
+            "through the LLM-free ingest graph; entity and insight extraction is skipped and the "
+            "item is marked partial ('insights: model unavailable') until a model returns, when "
+            "it is re-extracted in place.",
+            backlog_probe=_knowledge_heuristic_backlog,
+            drain=_knowledge_heuristic_drain,
+        )
+    )
+    # synthesis watchers — `mode: append_evidence` is the floor and needs no model: the
+    # dated evidence entries land as they arrive (persist-raw-first), and only the compiled
+    # section above them falls behind. `knowledge.staleness` counts exactly how far behind,
+    # and the drain queues one propose-only recompile per stale synthesis.
+    register_contract(
+        DegradedContract(
+            surface="synthesis_watchers",
+            use_cases=("chat",),
+            floor="Watchers keep appending dated evidence entries without a model "
+            "(append_evidence persists raw first); only the compiled summary above them stops "
+            "being rewritten, and each synthesis says how many new sources it has not caught up "
+            "with. A recompile is proposed, never applied in place.",
+            backlog_probe=_synthesis_stale_backlog,
+            drain=_synthesis_evidence_drain,
         )
     )
     # scheduled research reports (WF2KNO-12) — with no model a run cannot write its finding,

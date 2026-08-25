@@ -348,3 +348,150 @@ async def test_the_inventory_probe_CAPS_its_evidence(tmp_path):
 
     assert len(res.evidence["undeclared_dbs"]) == 20
     assert res.evidence["undeclared_db_count"] == 30
+
+
+# ── memory-pipeline: the FLUSH_OK-streak alarm over REAL LEARN-R19 records (PR2-9) ──
+#
+# The probe used to report structural presence and never alarm, on the stated grounds that
+# "the richer FLUSH_OK-streak WARN arrives with the flywheel's records". The records exist
+# now, so these tests are written against real ones: a `StagingStore` under `tmp_path`, its
+# own `record_flush`/`stage` writers, and the REGISTERED row (`run_capability`) rather than
+# the probe function alone — a probe that computes a WARN nothing surfaces is not a WARN.
+
+
+def _staging(home):
+    from personalclaw.learning.staging import StagingStore
+
+    return StagingStore(home)
+
+
+def _flush(store, outcome: str, *, cadence: str = "per_turn", cost: float = 0.0) -> None:
+    from personalclaw.learning.staging import FlushOutcome
+
+    store.record_flush(cadence=cadence, outcome=FlushOutcome(outcome), cost_usd=cost)
+
+
+async def _memory_row(home):
+    """The registered `memory-pipeline` capability row, exactly as the Doctor reports it."""
+    report = await doctor.run_capability("memory-pipeline", DoctorContext(home=home))
+    assert report["probes"], "the memory-pipeline row must have at least one registered probe"
+    return report["probes"][0]
+
+
+@pytest.mark.asyncio
+async def test_memory_pipeline_warns_on_a_flush_ok_streak_with_nothing_produced(tmp_path):
+    """The dead-read signature: passes completing, over and over, producing nothing.
+
+    Written from real `flush_records` rows, and asserted through the registered capability
+    row so the WARN is one a user can actually see.
+    """
+    store = _staging(tmp_path)
+    for _ in range(12):
+        _flush(store, "flush_ok", cost=0.001)
+    store.close()
+
+    row = await _memory_row(tmp_path)
+
+    assert row["ok"] is False, row["detail"]
+    assert "consecutive flush_ok" in row["detail"]
+    assert row["evidence"]["all_ok_streak"] == 12
+    assert row["evidence"]["produced"] == 0
+
+
+@pytest.mark.asyncio
+async def test_memory_pipeline_stays_ok_when_a_pass_actually_produced(tmp_path):
+    """VACUITY. The same twelve OK passes must NOT warn once production is real —
+    otherwise the streak rule is a clock, not a signal, and would light on every home."""
+    store = _staging(tmp_path)
+    for _ in range(12):
+        _flush(store, "flush_ok")
+    _flush(store, "flush_produced")  # most recent → the streak is broken
+    store.close()
+
+    row = await _memory_row(tmp_path)
+
+    assert row["ok"] is True, row["detail"]
+    assert row["evidence"]["all_ok_streak"] == 0
+    assert row["evidence"]["produced"] == 1
+
+
+@pytest.mark.asyncio
+async def test_memory_pipeline_stays_ok_over_a_short_quiet_window(tmp_path):
+    """VACUITY. A handful of turns that taught nothing is the NORMAL case — the threshold
+    is what separates a quiet week from a dead reader, so a run under it must pass."""
+    store = _staging(tmp_path)
+    for _ in range(3):
+        _flush(store, "flush_ok")
+    store.close()
+
+    row = await _memory_row(tmp_path)
+
+    assert row["ok"] is True, row["detail"]
+    assert row["evidence"]["all_ok_streak"] == 3
+
+
+@pytest.mark.asyncio
+async def test_memory_pipeline_warns_on_an_unconsumed_staging_backlog(tmp_path):
+    """Capture works, the drain does not: the atom's "staging backlog" clause.
+
+    Uses the real `stage` writer, so the count is the store's own unconsumed-entry count
+    rather than a number this test invented.
+    """
+    store = _staging(tmp_path)
+    for i in range(doctor._MEMORY_BACKLOG_WARN + 5):
+        store.stage(cadence="per_turn", kind="lesson", content=f"staged lesson {i}")
+    _flush(store, "flush_produced")  # production is real, so ONLY the backlog can warn
+    store.close()
+
+    row = await _memory_row(tmp_path)
+
+    assert row["ok"] is False, row["detail"]
+    assert "unconsumed" in row["detail"]
+    assert row["evidence"]["staging_backlog"] == doctor._MEMORY_BACKLOG_WARN + 5
+
+
+@pytest.mark.asyncio
+async def test_memory_pipeline_warns_on_a_flush_error(tmp_path):
+    """A pass that RAISED used to vanish into a debug log. It is a first-class WARN now."""
+    store = _staging(tmp_path)
+    _flush(store, "flush_error")
+    _flush(store, "flush_produced")
+    store.close()
+
+    row = await _memory_row(tmp_path)
+
+    assert row["ok"] is False, row["detail"]
+    assert "flush error" in row["detail"]
+    assert row["evidence"]["errors"] == 1
+
+
+@pytest.mark.asyncio
+async def test_memory_pipeline_reports_the_per_op_cost_split(tmp_path):
+    """ "Was it expensive" is one number; "expensive at WHAT" is the question that leads to a
+    change. The atom's per-op clause: the cadence split rides along as evidence, dearest
+    first."""
+    store = _staging(tmp_path)
+    _flush(store, "flush_produced", cadence="per_turn", cost=0.02)
+    _flush(store, "flush_produced", cadence="session_end", cost=0.50)
+    store.close()
+
+    row = await _memory_row(tmp_path)
+
+    by_op = row["evidence"]["cost_by_op"]
+    assert [entry["op"] for entry in by_op] == ["session_end", "per_turn"]  # dearest first
+    assert by_op[0]["cost_usd"] == 0.5
+    assert row["evidence"]["cost_usd"] == 0.52
+
+
+@pytest.mark.asyncio
+async def test_memory_pipeline_never_CREATES_the_staging_log(tmp_path):
+    """Read-only by contract, in the strict sense. `StagingStore` writes its schema on the
+    first cursor, so a probe that "just reads" would materialise `learning.db` in the home
+    on every Doctor run — a write from the one module that promises never to make one."""
+    from personalclaw.learning.staging import DB_FILE
+
+    row = await _memory_row(tmp_path)
+
+    assert row["ok"] is True, row["detail"]
+    assert row["evidence"] == {"staging_log": False}
+    assert not (tmp_path / DB_FILE).exists(), "the probe opened (and so created) the staging log"
