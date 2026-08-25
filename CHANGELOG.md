@@ -10,6 +10,27 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Added
 
+- **Your watched sources now write you a morning digest, without you scheduling anything.** At 07:00
+  PersonalClaw reads whatever your watched web sources collected since the last digest, writes one
+  short note into your library summarising it, and sends you one notification pointing at it. One
+  note and one notification per morning, however many items came in — a digest that posted per source
+  would be the flood it exists to prevent. Everything was already there except the alarm clock; this
+  is the alarm clock.
+  **A quiet morning is silent.** No new items means no note, no notification, and no model call — so
+  this costs nothing on an install with no sources, and it does not train you to ignore it by saying
+  "nothing happened" every day.
+  **It respects your notification settings, because it does not have its own.** The digest is
+  delivered through the same gate as everything else, so muting all notifications, raising the
+  minimum severity, or being inside quiet hours suppresses it. The note is still written either
+  way — your library is not a notification.
+  **It cannot post the same digest twice.** The window it read is only marked as read once the note
+  is safely written, so a restart or a retry re-reads at most one morning rather than skipping one,
+  and a second run over an already-summarised window does nothing at all.
+  **Scraped pages still cannot give it instructions.** Every title and body goes into the summary
+  prompt wrapped as untrusted data, and the run's only powers are writing that one note and sending
+  that one notification — no tools, no shell. It shows up as `system:source-digest` under
+  Automations if you want to run it by hand, retime it, or turn it off.
+
 - **App cards now tell you whether an app is tested, styled like the rest of PersonalClaw, and
   accessible — and for our own apps, a card that claims it and isn't fails the build.** An app can
   declare a `quality` block in its manifest (`tested`, `designSystem`, `a11y`) and the Store shows it

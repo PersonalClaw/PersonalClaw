@@ -1928,6 +1928,20 @@ class GatewayOrchestrator:
                 reconcile_usage_recap_cron(_trigger_store)
             except Exception:
                 logger.warning("usage-recap-cron reconcile failed", exc_info=True)
+            # 🔴 The morning source digest (WATCHED-SOURCES §6.2). THIS LINE IS WS-7's MISSING
+            # HALF: `run_morning_digest` shipped fully tested with zero callers, which its own
+            # execution log records as the atom's one PARTIAL clause. Same else-branch as the
+            # recap above for the same reason — an unattended writer must not fire in a harness
+            # run. Creation only: "morning" is the feature, not a setting, so there is no
+            # schedule to converge and no config field behind it.
+            try:
+                from personalclaw.action_providers.source_digest_provider import (
+                    reconcile_source_digest_cron,
+                )
+
+                reconcile_source_digest_cron(_trigger_store)
+            except Exception:
+                logger.warning("source-digest-cron reconcile failed", exc_info=True)
             # 🔴 THE BOOT SWEEP (§3.1/§3.4, criterion 7 — S142). `service.boot` is what recovers
             # the exactly-one-upcoming invariant, STAGGERS an overdue population, and produces the
             # missed-fire review. It had **zero callers**: boot ran `migrate_and_arm`, which only
