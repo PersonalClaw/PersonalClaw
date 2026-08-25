@@ -631,6 +631,35 @@ GATED_PATTERNS = (
     r"awaiting the owner",
 )
 ACTIVE_PATTERNS = (r"\bin flight\b", r"\bin-flight\b", r"pr open\b")
+# An entry that explicitly REFUSES the flip. This set exists because the flip act is the
+# thing being negated, and no other set reliably carries that. Measured: ``MRT-5``'s
+# 2026-08-24 re-audit reads "The atom is PARTIALLY satisfied and must NOT be flipped `done`
+# yet", then QUOTES the entry it overturns — "atom stays `todo` only because this code is
+# unmerged" — so the chunk carries a flip phrase *and* its own rebuttal. ``\bpartial\b`` does
+# not rescue it either: the entry writes "PARTIALLY", which the trailing word boundary
+# rejects. Anchored on flip/done on purpose: a bare ``not yet`` would collide head-on with the
+# legitimate FLIP phrase "only because this code is not yet on main".
+NEGATION_PATTERNS = (
+    r"not (?:be |get |yet be )?flipp(?:ed|able|ing)\b",
+    r"\b(?:do|does|must|should|can|will)(?:n't| not) flip\b",
+    r"not (?:be )?marked?(?: as)? `?done`?\b",
+    r"not ready to (?:flip|mark)\b",
+)
+# A gate named in a DEFERRAL clause is not a gate on this atom's completion. Measured on
+# ``WS-7``: its entry was reported "the log names an owner call / BLOCKED" off one clause —
+# "the ``app:`` prefix on a core-contributed source is a naming wart worth an owner call
+# LATER; it is NOT WORTH a fourth vocabulary now" — a cosmetic nicety explicitly declined for
+# now. This is ``ENTRY_START``'s bleed problem one level finer: **intra-entry** rather than
+# inter-entry. Deliberately narrow, and deliberately does NOT cover ``NEGATION_PATTERNS`` or
+# the headline: silencing a real gate is the expensive direction, so only weak keywords found
+# in a body clause that also carries a deferral marker are discarded.
+DEFERRAL_PATTERNS = (
+    r"\bfollow-?ups?\b",
+    r"\blater\b",
+    r"\bnot worth\b",
+    r"\bworth an atom(?: row)?\b",
+    r"\bworth a (?:separate|future|later|new) atom\b",
+)
 SUPERSEDED = re.compile(r"superseded", re.I)
 
 HEADLINE = 260  # chars of an entry treated as its headline (where its subject is named)
@@ -651,6 +680,18 @@ def _normalise(text: str) -> str:
     return re.sub(r"\s+", " ", text)
 
 
+def _clauses(low: str) -> list[str]:
+    """Sentence/semicolon clauses of an already-normalised entry.
+
+    The scope has to be a clause, not the entry. A deferral marker excuses only the clause it
+    sits in; widen the scope to the whole entry and one "later" anywhere suppresses every gate
+    in it — which silences real gates, the expensive direction. Semicolons are split on for the
+    same reason (narrower scope, less suppression), not because ``WS-7`` needs it: its marker
+    and its keyword share one clause under either split.
+    """
+    return [c for c in re.split(r"(?<=[.;!?])\s+", low) if c]
+
+
 @dataclass
 class LogHit:
     verdict: str
@@ -661,12 +702,58 @@ class LogHit:
 
 
 def _verdict_for(chunk: str) -> str:
+    """Classify one log entry. **A negation, a gate or an unmet clause beats a flip phrase.**
+
+    FLIP is tested LAST among the "not done" signals, and that ordering is the whole point.
+    An entry routinely carries a flip phrase *and* a reason not to flip — because it quotes
+    the entry it is overturning, or because two of three clauses landed. Testing FLIP first
+    short-circuited on the flip phrase and put the atom in LANDED-AND-CLEAN, the just-flip-it
+    bucket. Measured on ``origin/main`` at ``fc597af4``: ``MRT-5`` was the census's ONE
+    actionable recommendation while its own printed excerpt said "must NOT be flipped ``done``
+    yet".
+
+    The costs are asymmetric and that asymmetry is the argument: a false FLIP writes ``done``
+    onto inert code, the roadmap then claims shipped work that does not work, and nothing
+    downstream re-checks it. A false PARTIAL costs one re-audit.
+
+    Two signals overturn a flip phrase, and they are scoped differently on purpose:
+
+    * ``NEGATION_PATTERNS`` win **anywhere in the entry**. The set is narrow and it names the
+      flip act itself, so a match is a deliberate refusal wherever it sits.
+    * ``GATED``/``PARTIAL`` win only from the **headline** — the same first ``HEADLINE`` chars
+      that ``scan_plan_logs`` already treats as where an entry states its subject. These are
+      weak keyword sets, and letting them win from the body was measured to be wrong:
+      ``PCS-7``'s entry declares "the numbers ship AND soul guardrail 4 is measured … flip it
+      when the PR lands" in its headline, then 6810 chars later mentions "see ``G8``'s
+      honest-**unmeasured** work" about a different surface it explicitly left alone. Blanket
+      inversion scored that as PARTIAL and tripped the ``KNOWN_LANDED`` ground-truth rail. So
+      the doctrine is the one this module already uses for ids: **a ruling in the headline
+      outranks a keyword in the body.**
+
+    A body keyword is additionally read **per clause**, and a clause carrying a
+    ``DEFERRAL_PATTERNS`` marker is dropped: "worth an owner call later" names work declined
+    for now, not a gate on this atom. Same errors-in-both-directions root cause, and the
+    reason it matters even when the bucket is unchanged is already written down at
+    ``decide_log``: a bucket that is right for a reason that is false is worse than no reason.
+
+    GATED-vs-PARTIAL order is left as it was: ``classify`` maps both to the same bucket
+    (``GATED`` with evidence, ``OPEN`` without), so their relative order changes only the
+    ``why`` label, never a human's decision.
+    """
     low = _normalise(chunk).lower()
+    head = _normalise(chunk[:HEADLINE]).lower()
+    if any(re.search(p, low) for p in NEGATION_PATTERNS):
+        return LogVerdict.PARTIAL
+    if any(re.search(p, head) for p in GATED_PATTERNS):
+        return LogVerdict.GATED
+    if any(re.search(p, head) for p in PARTIAL_PATTERNS):
+        return LogVerdict.PARTIAL
     if any(re.search(p, low) for p in FLIP_PATTERNS):
         return LogVerdict.FLIP
-    if any(re.search(p, low) for p in GATED_PATTERNS):
+    standing = [c for c in _clauses(low) if not any(re.search(d, c) for d in DEFERRAL_PATTERNS)]
+    if any(re.search(p, c) for c in standing for p in GATED_PATTERNS):
         return LogVerdict.GATED
-    if any(re.search(p, low) for p in PARTIAL_PATTERNS):
+    if any(re.search(p, c) for c in standing for p in PARTIAL_PATTERNS):
         return LogVerdict.PARTIAL
     if any(re.search(p, low) for p in ACTIVE_PATTERNS):
         return LogVerdict.ACTIVE
