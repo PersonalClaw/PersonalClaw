@@ -2690,7 +2690,8 @@
             "LMMV-4",
             "LMMV-5",
             "LMMV-6"
-          ]
+          ],
+          "blocked_reason": "PARTIAL, ENVIRONMENT-GATED (2026-08-25, fifth pass). Every CODE clause is met on main: the derived output budget reaches the reasoning axis via _entry_kw (llm_helpers.py:498) on all four resolution paths (the fourth, last-resort, was fixed 2026-08-25); the two-population and registry-drift regressions live in tests/test_local_model_refresh_invariants.py:62-198 and :217-314; the suite-level fs fixture is the autouse _forbid_real_model_roots in tests/conftest.py:307-355. The ONLY unmet clause is the full download/delete/bind/RUN matrix across all six providers 'as a user', which needs real model weights per provider and cannot be satisfied from a code change. Two standing environment gaps: G172 diarization has no run route at all, and G173 PERSONALCLAW_HOME does not isolate weights for faster-whisper / diarization-onnx (they root at XDG_CACHE_HOME) -- and G173 is NOT fixable from core, since stt/registry.py:45 ships that backend as an app, so it is a PersonalClawApps deliverable. Clears when the owner runs the matrix on a machine with the weights, or descopes clause 4. FIVE passes have now re-derived this -- do not spend another slot re-verifying the code clauses."
         },
         {
           "id": "LMMV-8",

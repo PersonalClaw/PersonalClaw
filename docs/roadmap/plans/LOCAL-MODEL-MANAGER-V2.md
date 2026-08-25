@@ -1086,3 +1086,52 @@ hides all six with a "6 hidden" notice and an empty state that explains itself.
 - [2026-08-24][LMMV-7] **Suite-wide validation of the `conftest.py` guard is DEFERRED to the owner's
   full union gate.** This pass changed no `src/` file and no `conftest.py` line; the two files it
   touched are the rail's own detection module and its own test. Coverage reported below.
+
+## Execution log — `LMMV-7` (Session 5b hardening) — fifth pass
+
+- [2026-08-25][LMMV-7] **DISCOVERY — `one_shot_completion` has FOUR resolution paths, not the three
+  its own docstrings claimed.** The pin (`llm_helpers.py:535`), chain-advance (`:556`) and plain
+  (`:588`) paths all funnel through `_entry_kw` and so ride the derived budget. The **last-resort
+  build** — reached only when there is no active selection *and* the bridge resolve raised — called
+  `registry.build(entries[0].name)` with **no kwargs at all**. It was the one remaining place a
+  completion still inherited the adapters' hardcoded `4096`, and it silently dropped a pinned
+  `temperature` too. That is precisely the "derived, never hardcoded" the atom's clause 1 exists to
+  establish, so the docstrings were describing a coverage the code did not have.
+- [2026-08-25][LMMV-7] **FIXED.** The last-resort path now derives the ref from the entry it is about
+  to build and passes `**(await _entry_kw(fallback_ref))`. `registry.build` forwards kwargs to the
+  type factory exactly as `provider_bridge` does (`registry.py:249`, bridge at
+  `provider_bridge.py:1145`), so this is the shape already in use rather than a new mechanism. The
+  three path-name docstrings were corrected to say four.
+- [2026-08-25][LMMV-7] **JUDGMENT CALL — the build is deliberately fail-soft, and the retry is not
+  dead code.** This path is reached *because* the bridge already failed, and one reason a bridge
+  resolve fails is a factory with a strict signature. Passing kwargs unconditionally would convert
+  today's working degraded build into a hard `TypeError` for exactly that provider. A rejected kwarg
+  therefore falls back to the bare build. Proved reachable: replacing the retry with `raise` reds
+  `test_the_last_resort_build_still_works_when_the_factory_rejects_kwargs` with
+  `TypeError: _strict_factory() got an unexpected keyword argument 'max_tokens'`.
+- [2026-08-25][LMMV-7] **Clause 1 verified met, and its headline rail driven red for the first time.**
+  No prior pass had mutated it. Setting `kw["max_tokens"] = 4096` in `_entry_kw` reds 5 tests
+  including `test_catalog_context_tokens_moves_the_budget_that_reaches_the_call[8192-1024-1024]`
+  (`assert 4096 == 1024`). **Honest caveat:** the parametrized cell `[8192-0-DEFAULT_OUTPUT_TOKENS]`
+  stays green because it expects exactly `4096` and cannot discriminate a hardcoded `4096` — two of
+  three cells carry the discrimination. A second, independent falsification dropping only the model
+  qualifier from `fallback_ref` reds `test_the_last_resort_build_carries_the_catalog_budget` with
+  `assert 4096 == 512` / `== 1024`, which pins the model-qualified ref specifically.
+- [2026-08-25][LMMV-7] **PARTIAL — stays `todo`, and now carries a `blocked_reason` so a sixth pass
+  does not re-derive this.** Clause 4 (the download/delete/bind/RUN matrix across all six providers,
+  as a user) is **environment-gated, not code-gated**: it needs real weights per provider. `G172`
+  (diarization has no run route) and `G173` (`PERSONALCLAW_HOME` does not isolate `faster-whisper` /
+  `diarization-onnx` weights, which root at `XDG_CACHE_HOME`) both stand. **`G173` is not fixable from
+  core** — `stt/registry.py:45` ships that backend as an app and `git grep "def cache_dir" -- src/`
+  returns only the ABC at `local_models/provider.py:207`, so it is a PersonalClawApps deliverable.
+- [2026-08-25][LMMV-7] **Gate:** `make lint` clean (mypy 1011 source files); **135 passed / 0 failed**
+  across `test_local_model_budgets.py`, `test_context_headroom.py`,
+  `test_local_model_refresh_invariants.py`, `test_local_model_root_guard.py`,
+  `test_resilience_degraded_lint.py`, `test_llm_helpers.py`; a 35-file regression sweep over every
+  test referencing `one_shot_completion`/`llm_helpers` at **1091 passed, 0 failed**;
+  `scripts/gate_report.py` all 6 gates PASS; probe sweep 16, 0 introduced. No `web/` changes, no new
+  `one_shot_completion` call site, so `_CALL_SITE_SURFACES` is untouched.
+- [2026-08-25][LMMV-7] **Process note worth keeping.** The first regression-sweep invocation used an
+  unquoted `$FILES` and zsh did not word-split it: pytest collected **0 items** and reported "no tests
+  ran" — an UNRUN leg that reads like a pass. Re-run via `$(cat ...)`. The same shape bit the roadmap
+  gate on the same day by naming a `tests/test_docs_lint.py` that does not exist.
