@@ -28,6 +28,7 @@ api.github.com — FETCHED, unprompted. The release-check endpoint (`self_update
 # ── Fetched, but only because the user asked for that specific thing ───────────
 codeload.github.com — FETCHED on `personalclaw app new`: downloads the app-template tarball. User-initiated, one-shot, never on a schedule.
 hn.algolia.com — FETCHED only if the user enables the shipped Hacker News feed preset. A preset is a suggestion; nothing polls it until it is turned on.
+api.anthropic.com — FETCHED only when the user points their OWN agent at the loopback capture proxy (`inbound/capture_proxy.py`), and then only as the relay destination for that agent's own inference request. Not PersonalClaw data and not a schedule: the product originates nothing here. It appears as a `_DIALECT_DEFAULT_BASE` string, used only when neither the agent's `X-PClaw-Upstream-Base-Url` header nor a configured ProviderEntry names an upstream, and the resolved base is still evaluated against the operator's allow-list — a default is a convenience, never a waiver. The proxy binds loopback only.
 news.ycombinator.com — same preset as above (the item-link host in its rendered rows).
 doi.org — a RESOLVER url built from a DOI the user supplied in a knowledge source. Not fetched unless that source is fetched.
 arxiv.org — the PDF url built from an arXiv identifier the user supplied. Same shape as doi.org.
@@ -47,4 +48,4 @@ github.com — repository links: docstring references to upstream specs (the Age
 agentskills.io — named in a docstring as the source of the skill-manifest FORMAT the loader implements. The format is implemented locally; nothing is fetched.
 docs.astral.sh — the uv documentation URL printed in an installer error message, so a user missing pip is told where to get uv.
 pypi.org — an EXAMPLE url inside `triggers/web_poll`'s docstring, showing what a user's watch expression looks like.
-api.openai.com — the default base url for an OpenAI-COMPATIBLE endpoint in `llm/catalog`. Reached only when a user configures a model against that default; core ships no OpenAI credentials and no OpenAI provider (that lives in an app bundle). Kept here as a default STRING, which is why it appears in core at all.
+api.openai.com — the default base url for an OpenAI-COMPATIBLE endpoint, in `llm/catalog` and in `inbound/capture_proxy.py`'s `_DIALECT_DEFAULT_BASE`. Core ships no OpenAI credentials and no OpenAI provider (that lives in an app bundle), so the catalog site is a default STRING only. The capture-proxy site CAN be reached, but only when the user routes their own agent through the loopback proxy and names no upstream of their own — see `api.anthropic.com` above, same shape, same allow-list guard.
