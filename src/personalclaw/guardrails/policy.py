@@ -23,6 +23,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING
 
+from personalclaw.constants import DASHBOARD_SESSION_PREFIX
 from personalclaw.guardrails.autonomy import RUNG_AUTO_WITH_UNDO, RUNG_AUTONOMOUS
 from personalclaw.guardrails.budgets import Budget
 
@@ -182,8 +183,21 @@ UNATTENDED_DISPATCH_PREFIX = "unattended:"
 # stateless prefixes. Kept here (not in session.py) since it's a guardrail concern.
 _LOOP_PREFIXES = ("loop-", "loop:")
 
+#: Inbound-access session keys — ``inbound:<surface>:<client>`` for the HTTP dialects and
+#: ``inbound:cli:<...>`` for headless ``personalclaw run`` (EXTERNAL-ACCESS §2.3/§9.5).
+#: A caller reaching in from outside the dashboard is unattended BY DEFINITION: no human
+#: is watching the turn, so it resolves through HEADLESS.
+#:
+#: Deliberately here and NOT in ``session._STATELESS_PREFIXES`` (which EA-2's scope names).
+#: That list is the PROVIDER-resume/pool axis: a key on it never resumes its ACP session
+#: and never claims a warm process. Putting ``inbound:`` there would have silently
+#: contradicted §9.5's own ``--session`` clause, which exists to let a named headless
+#: session CONTINUE a conversation. Unattended and stateless are two different questions;
+#: this module answers only the first one.
+INBOUND_PREFIX = "inbound:"
+
 #: Every prefix this module classifies as unattended on top of session.py's own.
-_EXTRA_UNATTENDED_PREFIXES = (*_LOOP_PREFIXES, UNATTENDED_DISPATCH_PREFIX)
+_EXTRA_UNATTENDED_PREFIXES = (*_LOOP_PREFIXES, UNATTENDED_DISPATCH_PREFIX, INBOUND_PREFIX)
 
 
 def unattended_dispatch_key(origin: str) -> str:
@@ -196,10 +210,37 @@ def unattended_dispatch_key(origin: str) -> str:
     return f"{UNATTENDED_DISPATCH_PREFIX}{(origin or 'unknown').strip()}"
 
 
+#: The dashboard's provider-key wrapper. ``chat_utils._history_key_for`` turns a chat
+#: session's own key into ``dashboard:<key>`` for the provider/history layer, so the
+#: guardrail readers downstream of a turn see the WRAPPED form while ``chat_runner``'s
+#: own classification reads the bare one.
+#:
+#: 🔴 Measured: ``is_unattended_session("inbound:cli:abc")`` was True while
+#: ``is_unattended_session("dashboard:inbound:cli:abc")`` was False, and
+#: ``profile_for_session`` on the wrapped key returned INTERACTIVE. A headless CLI turn
+#: therefore presented the unattended posture to the one caller that reads
+#: ``session.key`` and the ATTENDED posture to every caller downstream of the provider
+#: key — the egress tier, the rung ceiling and the denylist among them. Stripping the
+#: wrapper is done for the INBOUND family only: a plain ``dashboard:mychat`` still
+#: matches nothing after stripping and stays attended, so no interactive session's
+#: classification moves.
+#:
+#: Aliased from ``constants`` rather than re-declared: ``chat_utils`` applies the wrapper
+#: and ``usage_ledger`` keys rows by it, so a private copy here would be the same literal
+#: a third time, free to drift from the layer that writes it.
+_DASHBOARD_WRAPPER = DASHBOARD_SESSION_PREFIX
+
+
 def is_unattended_session(session_key: str) -> bool:
     """True when ``session_key`` names an unattended run (cron/subagent/channel/inbox/
-    side/loop worker, a sessionless ``unattended:`` dispatch, or the ``_bg`` background
-    key) — the keys that resolve through HEADLESS by construction."""
+    side/loop worker, an ``inbound:`` access surface, a sessionless ``unattended:``
+    dispatch, or the ``_bg`` background key) — the keys that resolve through HEADLESS by
+    construction.
+
+    Accepts either the bare session key or the dashboard-wrapped provider form of an
+    inbound key (see ``_DASHBOARD_WRAPPER``), so the posture does not depend on which
+    layer is asking.
+    """
     from personalclaw.session import _STATELESS_PREFIXES, BACKGROUND_KEY
 
     key = session_key or ""
@@ -208,6 +249,8 @@ def is_unattended_session(session_key: str) -> bool:
     # it matches no prefix. It's an exact key, not a prefix, hence the equality check.
     if key == BACKGROUND_KEY:
         return True
+    if key.startswith(_DASHBOARD_WRAPPER + INBOUND_PREFIX):
+        key = key[len(_DASHBOARD_WRAPPER) :]
     return any(key.startswith(p) for p in (*_STATELESS_PREFIXES, *_EXTRA_UNATTENDED_PREFIXES))
 
 

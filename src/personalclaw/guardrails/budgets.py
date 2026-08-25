@@ -331,6 +331,28 @@ def reset_meter() -> None:
     _METER = None
 
 
+def safety_budget_for_inbound() -> Budget:
+    """The run ceiling for one inbound-access turn (EXTERNAL-ACCESS §9.5).
+
+    The HEADLESS profile's budget, which ``safety_profile_for`` fills from the operator's
+    configured ``max_tokens_per_day`` / ``max_dollars_per_day`` when the profile declares
+    none of its own. So an inbound turn is capped by the same numbers the operator already
+    set for unattended work — no new knob, and no unlimited-by-omission hole.
+
+    Lives here, next to the ContextVar it feeds, rather than in ``policy``: this is the
+    budget-binding seam's helper, and importing it from ``policy`` would point the
+    dependency the wrong way (``policy`` already imports ``budgets``).
+
+    Fail-SAFE, not fail-open: an unreadable config leaves ``safety_profile_for``
+    returning the base profile, whose budget is unlimited — the same ceiling every
+    non-inbound turn has today, so a config fault can never make an inbound turn
+    *cheaper to abuse* than the interactive path it sits beside.
+    """
+    from personalclaw.guardrails.policy import HEADLESS, safety_profile_for
+
+    return safety_profile_for(HEADLESS).budget
+
+
 def budget_from_config() -> Budget:
     """Build the day-scope :class:`Budget` from the loaded GuardrailsConfig.
 
