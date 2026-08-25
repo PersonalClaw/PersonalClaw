@@ -331,3 +331,60 @@ export function saveRegistry(
 ): void {
   store.setItem(key, serializeRegistry(reg))
 }
+
+// ── the native socket URL (CA-7) ─────────────────────────────────────────────────────────────
+
+/** The `/api/ws` path every gateway serves its multiplexed event socket on. */
+export const WS_PATH = '/api/ws'
+
+/** Turn an endpoint's `base_url` into the WebSocket URL a NATIVE client opens.
+ *
+ * 🪤 THIS IS THE ONE PLACE A `base_url` IS LEGITIMATELY PREPENDED TO A PATH, and it does not
+ * contradict the "load `base_url` as an origin, never prepend it" rule in the companion guide.
+ * That rule is about a **WebView**: it loads the served SPA, and the SPA's own socket is
+ * origin-relative (`useChatSocket.ts` builds `${proto}://${location.host}/api/ws`), so a shell
+ * that also prepends would produce a second, wrong URL. A **native** client has no document and
+ * therefore no `location` to be relative to — it has only the string in the registry row. So it
+ * must build the URL, and building it in one shared place is the difference between one
+ * implementation and one per platform.
+ *
+ * 🔑 THE SCHEME MAP IS THE WHOLE POINT. `https:` → `wss:` and `http:` → `ws:`. Getting this wrong
+ * is not a cosmetic bug: opening `ws://` against a TLS-terminating tunnel fails the handshake,
+ * and opening `wss://` against a plain-http LAN gateway fails it the other way. Because the map
+ * is derived from the endpoint's OWN scheme, a `remote` row reached over the owner's tunnel gets
+ * `wss://` automatically — nothing has to remember that remote implies TLS.
+ *
+ * Returns `undefined` — never a guess — when `base_url` is unparseable or carries a scheme that
+ * is not http/https. A `file:`, `data:` or bare-host row is a broken registry entry, and a
+ * shell that gets `undefined` can say "this endpoint is misconfigured" on that row. Coercing it
+ * would produce a socket that dials somewhere unintended, which is strictly worse than a refusal.
+ *
+ * The URL carries no credential: the device session rides as the session cookie, which is why
+ * the companion guide forbids the `?token=` query parameter (it IP-binds and a phone changes IP).
+ */
+export function endpointSocketUrl(baseUrl: string, path: string = WS_PATH): string | undefined {
+  const raw = String(baseUrl ?? '').trim()
+  if (!raw) return undefined
+  let url: URL
+  try {
+    url = new URL(raw)
+  } catch {
+    // No base is supplied on purpose: a bare host like `claw.local:10000` parses as the `claw.local:`
+    // SCHEME with an opaque path, so guessing a scheme for it would silently invent a protocol.
+    return undefined
+  }
+  const proto = url.protocol === 'https:' ? 'wss:' : url.protocol === 'http:' ? 'ws:' : ''
+  if (!proto) return undefined
+  if (!url.host) return undefined
+  const suffix = path.startsWith('/') ? path : `/${path}`
+  return `${proto}//${url.host}${suffix}`
+}
+
+/** `endpointSocketUrl` for a registry row. Convenience only — same rules, same refusals. */
+export function endpointSocket(
+  endpoint: CompanionEndpoint | undefined,
+  path: string = WS_PATH,
+): string | undefined {
+  if (!endpoint) return undefined
+  return endpointSocketUrl(endpoint.base_url, path)
+}
